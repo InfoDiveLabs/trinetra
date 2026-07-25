@@ -111,6 +111,12 @@ func TestMigrateTelegramChannelAddsWhenTokenSetAndNoneExists(t *testing.T) {
 	if got.Settings["chat_id"] != "chat1" {
 		t.Errorf("chat_id = %q, want chat1", got.Settings["chat_id"])
 	}
+	// config.Default() sets the legacy global CriticalOverridesQuiet to true;
+	// the migrated channel must carry it over so back-compat users see no
+	// change in whether critical alerts bypass quiet hours.
+	if !got.CriticalOverridesQuiet {
+		t.Error("migrated channel should carry over CriticalOverridesQuiet=true from the legacy global default")
+	}
 }
 
 func TestMigrateTelegramChannelNoopWithoutToken(t *testing.T) {

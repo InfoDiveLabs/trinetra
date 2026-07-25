@@ -181,6 +181,30 @@ func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snap
 	return snap
 }
 
+// eventToAlert converts an anomaly Event (the internal alert-state
+// transition) into the channel-agnostic Alert the Dispatcher understands.
+// Body is left empty: e.Text already carries the full human-readable
+// message and is used verbatim as the Title.
+func eventToAlert(e Event, nowUnix int64) Alert {
+	sev := SevWarning
+	if e.Critical {
+		sev = SevCritical
+	}
+	return Alert{
+		Key:      e.Key,
+		Title:    e.Text,
+		Body:     "",
+		Severity: sev,
+		Kind:     e.Kind,
+		Source:   "anomaly",
+		Time:     nowUnix,
+	}
+}
+
+// dispatcherTimeout bounds how long the Dispatcher gives each channel to
+// deliver a single Alert before treating it as timed out (see Dispatcher.Dispatch).
+const dispatcherTimeout = 15 * time.Second
+
 func cmdDaemon(args []string) int {
 	// pidfile for SIGHUP reload
 	_ = os.MkdirAll(stateDir, 0o755)
@@ -209,28 +233,41 @@ func cmdDaemon(args []string) int {
 	if migrateTelegramChannel(cfg) {
 		_ = saveCfg(cfg)
 	}
+	// dispatcher fans outbound alerts (anomalies, boot report, digests) out to
+	// every configured Channel. It is stored alongside cfg, guarded by the
+	// same mutex, and rebuilt-then-pointer-swapped (never mutated in place)
+	// whenever the channel set could have changed, mirroring the cfg
+	// pointer-swap pattern below.
+	dispatcher := NewDispatcher(channelsFromConfig(cfg), dispatcherTimeout)
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, sighup)
 	go func() {
 		for range hup {
 			if c, err := config.Load(cfgPath); err == nil {
+				nd := NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
 				mu.Lock()
 				cfg = c
+				dispatcher = nd
 				mu.Unlock()
 				fmt.Fprintln(stdout, "config reloaded")
 			}
 		}
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
+	getDispatcher := func() *Dispatcher { mu.RLock(); defer mu.RUnlock(); return dispatcher }
 	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
 	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
 	// the in-use struct: getCfg readers read fields after releasing the RLock.
+	// The dispatcher is rebuilt here too: a zero-config Telegram channel built
+	// before the chat id was auto-captured would otherwise bake in an empty
+	// chat id and keep failing silently until the next SIGHUP.
 	setChatID := func(id string) {
 		mu.Lock()
 		defer mu.Unlock()
 		nc := *cfg // shallow struct copy
 		nc.Telegram.ChatID = id
 		cfg = &nc // swap pointer; existing readers keep old struct
+		dispatcher = NewDispatcher(channelsFromConfig(cfg), dispatcherTimeout)
 		_ = saveCfg(cfg)
 	}
 
@@ -249,10 +286,15 @@ func cmdDaemon(args []string) int {
 	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
 		if ev, ok := reconstructPowerDown(last, clock.Now(), time.Duration(c0.SampleInterval)*time.Second); ok {
 			_ = st.AppendDown(ev)
-			if tg := tgClient(c0); tg != nil {
-				snap := collectSnapshot(x, fs, &prevCPU, da)
-				_ = tg.SendMessage(formatBootReport([]DownEvent{ev}, renderStatus(snap)))
-			}
+			snap := collectSnapshot(x, fs, &prevCPU, da)
+			now := clock.Now().Unix()
+			getDispatcher().Dispatch(Alert{
+				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap)),
+				Severity: SevInfo,
+				Kind:     "fire",
+				Source:   "boot",
+				Time:     now,
+			}, false) // reports bypass quiet hours
 		}
 	}
 
@@ -284,29 +326,23 @@ func cmdDaemon(args []string) int {
 			_ = st.AppendDown(ev)
 		}
 
-		// anomalies
+		// anomalies: each channel's own Route (severity/kind filters,
+		// CriticalOverridesQuiet) now decides delivery, so no gating happens
+		// here beyond computing whether quiet hours are active.
 		events := alerts.Evaluate(buildChecks(snap, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
-		if tg := tgClient(c); tg != nil {
-			quiet := inQuietHours(c.QuietHours, now)
-			for _, e := range events {
-				if quiet && !(e.Critical && c.CriticalOverridesQuiet) {
-					continue
-				}
-				if e.Kind == "fire" {
-					_ = tg.SendMessage(formatFire(e))
-				} else {
-					_ = tg.SendMessage(formatRecover(e))
-				}
-			}
-			// scheduled digests
-			if matchDaily(c.Schedule.Daily, now, lastDaily) {
-				lastDaily = now
-				_ = tg.SendMessage(digestNow(st, now, 1, "📊 daily digest"))
-			}
-			if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
-				lastWeekly = now
-				_ = tg.SendMessage(digestNow(st, now, 7, "📆 weekly rollup"))
-			}
+		disp := getDispatcher()
+		quiet := inQuietHours(c.QuietHours, now)
+		for _, e := range events {
+			disp.Dispatch(eventToAlert(e, now.Unix()), quiet)
+		}
+		// scheduled digests bypass quiet hours, like the boot report.
+		if matchDaily(c.Schedule.Daily, now, lastDaily) {
+			lastDaily = now
+			disp.Dispatch(Alert{Title: digestNow(st, now, 1, "📊 daily digest"), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+		}
+		if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
+			lastWeekly = now
+			disp.Dispatch(Alert{Title: digestNow(st, now, 7, "📆 weekly rollup"), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		_ = baseline.Save(st.BaselinePath())
 		_ = alerts.Save(st.AlertStatePath())
@@ -314,13 +350,6 @@ func cmdDaemon(args []string) int {
 
 		<-ticker.C
 	}
-}
-
-func tgClient(c *config.Config) *telegram.Client {
-	if c.Telegram.Token == "" || c.Telegram.ChatID == "" {
-		return nil
-	}
-	return telegram.New(c.Telegram.Token, c.Telegram.ChatID)
 }
 
 func digestNow(st *Store, now time.Time, days int, title string) string {

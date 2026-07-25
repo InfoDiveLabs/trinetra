@@ -91,9 +91,12 @@ func channelsFromConfig(c *config.Config) []Channel {
 // telegram-typed channel already exists. It reports whether it changed c,
 // so callers can decide whether to persist. Idempotent: safe to call on
 // every CLI invocation and daemon startup. The legacy telegram.token/
-// telegram.chat_id keys keep working regardless (tgClient in daemon.go
-// still reads them directly) — this only makes the channel exist so it
-// shows up in `channel list` and can be managed like any other channel.
+// telegram.chat_id keys keep working regardless (buildNotifier's telegram
+// case and pollLoop in daemon.go still read them directly, as a fallback and
+// for the command-reply interface respectively) — this makes the channel
+// exist so it shows up in `channel list` and can be managed like any other
+// channel, and carries the legacy global CriticalOverridesQuiet setting over
+// into the new channel's Route so migrated users see no behavior change.
 func migrateTelegramChannel(c *config.Config) bool {
 	if c.Telegram.Token == "" {
 		return false
@@ -119,6 +122,14 @@ func migrateTelegramChannel(c *config.Config) bool {
 		Enabled:     true,
 		MinSeverity: "info",
 		Settings:    map[string]string{"chat_id": c.Telegram.ChatID},
+		// Carry over the legacy global CriticalOverridesQuiet (true by
+		// default, see config.Default) into the migrated channel's own Route
+		// field. Now that outbound sends go through the per-channel Route
+		// exclusively (see daemon.go's Dispatcher wiring) rather than
+		// consulting the global flag directly, dropping this would silently
+		// regress "critical alerts bypass quiet hours" for anyone who never
+		// touched channel config.
+		CriticalOverridesQuiet: c.CriticalOverridesQuiet,
 	})
 	return true
 }
