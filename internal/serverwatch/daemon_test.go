@@ -536,6 +536,41 @@ func TestDigestNowFromStore(t *testing.T) {
 	}
 }
 
+// TestDigestNowRes1m covers a weekly-style window (days=7) whose start is
+// older than raw retention, so PickResolution selects Res1m for peaks. The
+// sample count is always taken at Res1m regardless, so it stays cadence-stable
+// (~per-minute) rather than inflating to the ~5s raw cadence. memStore ignores
+// res and serves one series, so this exercises the code path and asserts the
+// count reflects the points inside the window.
+func TestDigestNowRes1m(t *testing.T) {
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	store := newMemStore(StoreOptions{})
+
+	// Three points spread across the 7-day window, all older than a 48h raw
+	// retention so the peak query resolves to Res1m.
+	for i, off := range []time.Duration{6 * 24 * time.Hour, 5 * 24 * time.Hour, 4 * 24 * time.Hour} {
+		ts := now.Add(-off).Unix()
+		cpu := float64(10 + i*20) // 10, 30, 50
+		if err := store.Append(ts, MetricSet{"cpu": cpu, "mem": cpu + 5}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := digestNow(store, now, 7, "📆 weekly rollup", 48*time.Hour)
+	if !strings.Contains(s, "peak CPU: 50%") {
+		t.Errorf("digest = %q, want peak CPU 50%%", s)
+	}
+	if !strings.Contains(s, "peak mem: 55%") {
+		t.Errorf("digest = %q, want peak mem 55%%", s)
+	}
+	if !strings.Contains(s, "samples: 3") {
+		t.Errorf("digest = %q, want samples: 3 (1m-based count)", s)
+	}
+	if !strings.Contains(s, "(7d)") {
+		t.Errorf("digest = %q, want 7d window label", s)
+	}
+}
+
 // TestDigestNowNilStore verifies digestNow degrades to an empty digest
 // (rather than panicking) when the SampleStore failed to open at startup.
 func TestDigestNowNilStore(t *testing.T) {

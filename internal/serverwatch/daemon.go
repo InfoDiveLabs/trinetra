@@ -630,6 +630,9 @@ func digestNow(store SampleStore, now time.Time, days int, title string, rawRete
 	if store == nil {
 		return buildDigest(title, window, 0, 0, 0, nil)
 	}
+	// Peaks use the coarsest resolution that still covers the window (raw for
+	// recent windows → finer recent peaks; 1m for windows older than raw
+	// retention).
 	res := PickResolution(since, nowUnix, nowUnix, rawRetention)
 	cpuPts, _ := store.Query("cpu", since, nowUnix, res)
 	memPts, _ := store.Query("mem", since, nowUnix, res)
@@ -645,7 +648,13 @@ func digestNow(store SampleStore, now time.Time, days int, title string, rawRete
 			peakMem = p.Max
 		}
 	}
-	return buildDigest(title, window, peakCPU, peakMem, len(cpuPts), downs)
+	// Sample count is always taken at 1m resolution so the reported "samples:
+	// N" is cadence-stable: querying peaks at RAW (5s) resolution for a recent
+	// window would otherwise inflate the count ~12x versus the old per-minute
+	// persisted-sample cadence. (memStore ignores res and serves one series,
+	// so the count there reflects whatever was appended.)
+	countPts, _ := store.Query("cpu", since, nowUnix, Res1m)
+	return buildDigest(title, window, peakCPU, peakMem, len(countPts), downs)
 }
 
 func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess) {

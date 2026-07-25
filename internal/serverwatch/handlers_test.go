@@ -61,6 +61,27 @@ func TestHandleHistoryFromStore(t *testing.T) {
 	}
 }
 
+// TestHandleDownFromStore verifies /down (the same handler branch as
+// /history) reads the downtime event via store.Events.
+func TestHandleDownFromStore(t *testing.T) {
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	store := newMemStore(StoreOptions{})
+	end := now.Add(-1 * time.Hour)
+	start := end.Add(-15 * time.Minute)
+	if err := store.AppendEvent(DownEvent{
+		Type:        "net_down",
+		Start:       start.Unix(),
+		End:         end.Unix(),
+		DurationSec: int64(end.Sub(start) / time.Second),
+	}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	r := handleCommand("/down", store, Snapshot{TS: now.Unix()})
+	if !strings.Contains(r, "net_down") {
+		t.Fatalf("/down should contain event, got %q", r)
+	}
+}
+
 // TestHandleHistoryNilStore verifies /history degrades to an empty reply
 // (rather than panicking) when the SampleStore failed to open at startup.
 func TestHandleHistoryNilStore(t *testing.T) {
