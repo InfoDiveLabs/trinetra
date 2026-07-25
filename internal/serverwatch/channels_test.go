@@ -85,6 +85,27 @@ func TestMigrateTelegramChannelNoopWithoutToken(t *testing.T) {
 	}
 }
 
+func TestMigrateTelegramChannelNoopWhenNameTakenByOtherType(t *testing.T) {
+	c := config.Default()
+	c.Telegram.Token = "tok"
+	// A channel already NAMED "telegram" but of a different type (e.g. a
+	// hand-edited/restored webhook). Name is the unique key everywhere, so
+	// migration must not append a second {Name:"telegram"}.
+	c.AddChannel(config.ChannelConfig{Name: "telegram", Type: "webhook", Enabled: true})
+	before := len(c.Channels)
+
+	if migrateTelegramChannel(c) {
+		t.Fatal("expected no migration when a channel named telegram already exists")
+	}
+	if len(c.Channels) != before {
+		t.Fatalf("expected no channel appended, len went %d -> %d", before, len(c.Channels))
+	}
+	got, _ := c.GetChannel("telegram")
+	if got.Type != "webhook" {
+		t.Fatalf("existing channel must be untouched, type = %q", got.Type)
+	}
+}
+
 func TestMigrateTelegramChannelIdempotent(t *testing.T) {
 	c := config.Default()
 	c.Telegram.Token = "tok"

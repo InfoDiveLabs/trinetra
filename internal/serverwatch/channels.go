@@ -77,6 +77,16 @@ func migrateTelegramChannel(c *config.Config) bool {
 	if c.Telegram.Token == "" {
 		return false
 	}
+	// Guard on Name (the unique key used everywhere else — GetChannel/
+	// RemoveChannel/SetChannelField/list all key on Name), not just Type: a
+	// config that already has a channel *named* "telegram" of any type (e.g.
+	// hand-edited/restored as a webhook) must not get a second one appended,
+	// which would collapse in list, strand one on remove, and shadow the
+	// other from the CLI. Also skip if a telegram-typed channel exists under
+	// any name, since the migration goal (a working telegram channel) is met.
+	if _, ok := c.GetChannel("telegram"); ok {
+		return false
+	}
 	for _, cc := range c.Channels {
 		if cc.Type == "telegram" {
 			return false
