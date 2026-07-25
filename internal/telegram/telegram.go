@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -17,11 +18,19 @@ type Client struct {
 }
 
 func New(token, chatID string) *Client {
+	base := "https://api.telegram.org/bot" + token
+	// Test/validation override: point the client at a mock Telegram server.
+	// The env var holds the host only (e.g. "http://mocktg:8080"); the
+	// "/bot<token>" suffix is appended here so the mock sees the same paths
+	// the real API would.
+	if v := os.Getenv("TELEGRAM_BASE_URL"); v != "" {
+		base = v + "/bot" + token
+	}
 	return &Client{
 		Token:   token,
 		ChatID:  chatID,
 		HTTP:    &http.Client{Timeout: 65 * time.Second},
-		BaseURL: "https://api.telegram.org/bot" + token,
+		BaseURL: base,
 	}
 }
 

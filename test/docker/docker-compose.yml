@@ -1,0 +1,19 @@
+services:
+  mocktg:
+    build:
+      context: ../..
+      dockerfile: test/docker/Dockerfile
+    command: ["mocktg"]
+    environment:
+      ADDR: ":8080"
+  sw:
+    build:
+      context: ../..
+      dockerfile: test/docker/Dockerfile
+    depends_on: [mocktg]
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      TELEGRAM_BASE_URL: "http://mocktg:8080"
+    command: ["sleep", "infinity"]
