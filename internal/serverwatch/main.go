@@ -57,6 +57,10 @@ func Main(args []string) int {
 		return cmdStatus(args[1:])
 	case "doctor":
 		return cmdDoctor(args[1:])
+	case "migrate":
+		return cmdMigrate(args[1:])
+	case "dump":
+		return cmdDump(args[1:])
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s\n", args[0], usage)
 		return 2
@@ -78,7 +82,9 @@ usage:
   serverwatch healthchecks set <url> | off
   serverwatch channel list|add|remove|set|test
   serverwatch status
-  serverwatch doctor`
+  serverwatch doctor
+  serverwatch migrate
+  serverwatch dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]`
 
 func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
 

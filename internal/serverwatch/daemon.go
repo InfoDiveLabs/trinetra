@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -364,18 +363,10 @@ func cmdDaemon(args []string) int {
 	// startup — see the design note in this task: the old JSONL Store above
 	// remains the live backend for reads (history/handlers/digests switch
 	// over in a later task), and both are written every sample so existing
-	// reads keep working during the migration. RawRetention/RollupRetention
-	// are duration strings already validated by config (validateRetentionDuration),
-	// so a parse failure here is unexpected; fall back to the backend's
-	// built-in defaults (StoreOptions.withDefaults) rather than treating it
-	// as fatal.
-	rawRet, _ := time.ParseDuration(cfg.Storage.RawRetention)
-	rollupRet, _ := time.ParseDuration(cfg.Storage.RollupRetention)
-	store, err := OpenStore(cfg.Storage.Backend, filepath.Join(stateDir), StoreOptions{
-		RawRetention:    rawRet,
-		RollupRetention: rollupRet,
-		EventRetention:  rollupRet,
-	})
+	// reads keep working during the migration. openConfiguredStore (migrate.go)
+	// centralizes the backend/retention lookup so `migrate`/`dump` open the
+	// exact same store this daemon writes to.
+	store, err := openConfiguredStore(cfg)
 	if err != nil {
 		// Not fatal: the old Store above still works, so degrade to
 		// store-writes-disabled rather than crash-looping under
