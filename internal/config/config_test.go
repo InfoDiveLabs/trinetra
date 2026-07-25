@@ -125,6 +125,38 @@ func TestFastIntervalRejectedIfBreaksExistingMultiple(t *testing.T) {
 	}
 }
 
+func TestFastIntervalCheckedAgainstEffectiveSampleIntervalOnBareConfig(t *testing.T) {
+	// A directly-constructed &Config{} has SampleInterval==0, which Load()
+	// back-fills to 60. Set("fast_interval","7") must reject rather than
+	// succeed silently and let Load() persist an inconsistent 60%7!=0 config.
+	c := &Config{}
+	if err := c.Set("fast_interval", "7"); err == nil {
+		t.Fatal("expected error: effective sample_interval 60 is not a multiple of 7")
+	}
+	if c.FastInterval != 0 {
+		t.Fatalf("FastInterval mutated to %d after rejected Set, want unchanged 0", c.FastInterval)
+	}
+	// A divisor of the effective 60 is accepted.
+	if err := c.Set("fast_interval", "6"); err != nil {
+		t.Fatalf("fast_interval 6 divides effective sample_interval 60, expected success: %v", err)
+	}
+}
+
+func TestSampleIntervalConflictsWithPriorFastIntervalSet(t *testing.T) {
+	// Symmetric case: set fast_interval first, then a conflicting
+	// sample_interval Set must error.
+	c := Default()
+	if err := c.Set("fast_interval", "10"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("sample_interval", "55"); err == nil {
+		t.Fatal("expected error: 55 is not a multiple of fast_interval 10")
+	}
+	if err := c.Set("sample_interval", "50"); err != nil {
+		t.Fatalf("50 is a multiple of 10, expected success: %v", err)
+	}
+}
+
 func TestTieredIntervalValidation(t *testing.T) {
 	c := Default()
 	if err := c.Set("fast_interval", "0"); err == nil {

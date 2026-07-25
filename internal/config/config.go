@@ -313,7 +313,7 @@ func (c *Config) Set(key, val string) error {
 		if err != nil || n < 1 {
 			return fmt.Errorf("fast_interval must be an integer >= 1")
 		}
-		if si := c.SampleInterval; si != 0 && si%n != 0 {
+		if si := c.effectiveSampleInterval(); si%n != 0 {
 			return fmt.Errorf("fast_interval %d would make sample_interval %d no longer a multiple of it; adjust sample_interval first", n, si)
 		}
 		c.FastInterval = n
@@ -401,6 +401,18 @@ func (c *Config) effectiveFastInterval() int {
 		return 5
 	}
 	return c.FastInterval
+}
+
+// effectiveSampleInterval mirrors effectiveFastInterval for the slow tier: a
+// zero-value SampleInterval (bare &Config{}) will be back-filled to 60 by
+// Load(), so fast_interval validation must check against that same 60 rather
+// than skipping the multiple check and letting Load() persist an inconsistent
+// config.
+func (c *Config) effectiveSampleInterval() int {
+	if c.SampleInterval <= 0 {
+		return 60
+	}
+	return c.SampleInterval
 }
 
 // Unset resets a key to its default by copying the default value into the field.
