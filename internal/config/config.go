@@ -14,10 +14,15 @@ import (
 // Config is persisted as JSON. Zero values mean "use default"; Get resolves
 // the effective value by falling back to Default() for unset scalar keys.
 type Config struct {
-	SampleInterval int     `json:"sample_interval,omitempty"` // seconds
-	BaselineSigma  float64 `json:"baseline_sigma,omitempty"`
-	QuietHours     string  `json:"quiet_hours,omitempty"` // "23-8" or ""
-	Telegram       struct {
+	// SampleInterval is the slow tier: seconds between full baseline samples.
+	SampleInterval int `json:"sample_interval,omitempty"`
+	// FastInterval is the fast tier: seconds between lightweight checks.
+	FastInterval int `json:"fast_interval,omitempty"`
+	// HeartbeatInterval is the seconds between liveness heartbeats.
+	HeartbeatInterval int     `json:"heartbeat_interval,omitempty"`
+	BaselineSigma     float64 `json:"baseline_sigma,omitempty"`
+	QuietHours        string  `json:"quiet_hours,omitempty"` // "23-8" or ""
+	Telegram          struct {
 		Token  string `json:"token,omitempty"`
 		ChatID string `json:"chat_id,omitempty"`
 	} `json:"telegram"`
@@ -180,8 +185,10 @@ func (c *Config) SetChannelField(name, key, value string) error {
 // Default returns the baked-in defaults. A fresh install works with only a token.
 func Default() *Config {
 	c := &Config{
-		SampleInterval: 60,
-		BaselineSigma:  3,
+		SampleInterval:    60,
+		FastInterval:      5,
+		HeartbeatInterval: 30,
+		BaselineSigma:     3,
 	}
 	c.Thresholds.DiskPct = 90
 	c.Thresholds.TempC = 80
@@ -207,6 +214,12 @@ func Load(path string) (*Config, error) {
 	}
 	if c.SampleInterval == 0 {
 		c.SampleInterval = 60
+	}
+	if c.FastInterval == 0 {
+		c.FastInterval = 5
+	}
+	if c.HeartbeatInterval == 0 {
+		c.HeartbeatInterval = 30
 	}
 	if c.BaselineSigma == 0 {
 		c.BaselineSigma = 3
@@ -248,6 +261,10 @@ func (c *Config) Get(key string) (string, bool) {
 	switch key {
 	case "sample_interval":
 		return strconv.Itoa(c.SampleInterval), true
+	case "fast_interval":
+		return strconv.Itoa(c.FastInterval), true
+	case "heartbeat_interval":
+		return strconv.Itoa(c.HeartbeatInterval), true
 	case "baseline_sigma":
 		return trimFloat(c.BaselineSigma), true
 	case "quiet_hours":
@@ -286,7 +303,26 @@ func (c *Config) Set(key, val string) error {
 		if err != nil || n < 5 {
 			return fmt.Errorf("sample_interval must be an integer >= 5")
 		}
+		fi := c.effectiveFastInterval()
+		if n%fi != 0 {
+			return fmt.Errorf("sample_interval %d must be an integer multiple of fast_interval %d", n, fi)
+		}
 		c.SampleInterval = n
+	case "fast_interval":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("fast_interval must be an integer >= 1")
+		}
+		if si := c.SampleInterval; si != 0 && si%n != 0 {
+			return fmt.Errorf("fast_interval %d would make sample_interval %d no longer a multiple of it; adjust sample_interval first", n, si)
+		}
+		c.FastInterval = n
+	case "heartbeat_interval":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("heartbeat_interval must be an integer >= 1")
+		}
+		c.HeartbeatInterval = n
 	case "baseline_sigma":
 		v, err := f()
 		if err != nil {
@@ -354,6 +390,17 @@ func (c *Config) Set(key, val string) error {
 		return fmt.Errorf("unknown key %q", key)
 	}
 	return nil
+}
+
+// effectiveFastInterval returns c.FastInterval, or the baked-in default (5)
+// if the receiver is a zero-value Config (e.g. constructed directly rather
+// than via Default()/Load()) so sample_interval validation never divides by
+// zero.
+func (c *Config) effectiveFastInterval() int {
+	if c.FastInterval <= 0 {
+		return 5
+	}
+	return c.FastInterval
 }
 
 // Unset resets a key to its default by copying the default value into the field.

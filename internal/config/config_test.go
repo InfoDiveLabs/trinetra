@@ -17,6 +17,12 @@ func TestDefaultsAndGet(t *testing.T) {
 	if got, _ := c.Get("baseline_sigma"); got != "3" {
 		t.Fatalf("baseline_sigma default = %q, want 3", got)
 	}
+	if got, _ := c.Get("fast_interval"); got != "5" {
+		t.Fatalf("fast_interval default = %q, want 5", got)
+	}
+	if got, _ := c.Get("heartbeat_interval"); got != "30" {
+		t.Fatalf("heartbeat_interval default = %q, want 30", got)
+	}
 }
 
 func TestSetUnsetRoundTrip(t *testing.T) {
@@ -53,6 +59,120 @@ func TestSaveLoad(t *testing.T) {
 	}
 	if got, _ := c2.Get("thresholds.disk_pct"); got != "80" {
 		t.Fatalf("disk_pct = %q", got)
+	}
+}
+
+func TestTieredIntervalSetUnsetRoundTrip(t *testing.T) {
+	c := Default()
+	if err := c.Set("fast_interval", "10"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("fast_interval"); got != "10" {
+		t.Fatalf("fast_interval after set = %q, want 10", got)
+	}
+	if err := c.Unset("fast_interval"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("fast_interval"); got != "5" {
+		t.Fatalf("fast_interval after unset = %q, want default 5", got)
+	}
+
+	if err := c.Set("heartbeat_interval", "45"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("heartbeat_interval"); got != "45" {
+		t.Fatalf("heartbeat_interval after set = %q, want 45", got)
+	}
+	if err := c.Unset("heartbeat_interval"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("heartbeat_interval"); got != "30" {
+		t.Fatalf("heartbeat_interval after unset = %q, want default 30", got)
+	}
+}
+
+func TestSampleIntervalMustBeMultipleOfFastInterval(t *testing.T) {
+	c := Default()
+	if err := c.Set("fast_interval", "5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("sample_interval", "63"); err == nil {
+		t.Fatal("expected error: 63 is not a multiple of fast_interval 5")
+	}
+	if err := c.Set("sample_interval", "60"); err != nil {
+		t.Fatalf("60 is a multiple of 5, expected success: %v", err)
+	}
+	if got, _ := c.Get("sample_interval"); got != "60" {
+		t.Fatalf("sample_interval = %q, want 60", got)
+	}
+}
+
+func TestFastIntervalRejectedIfBreaksExistingMultiple(t *testing.T) {
+	c := Default()
+	if err := c.Set("sample_interval", "60"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("fast_interval", "7"); err == nil {
+		t.Fatal("expected error: fast_interval 7 breaks sample_interval 60's multiple relationship")
+	}
+	// fast_interval must remain unchanged after the rejected Set.
+	if got, _ := c.Get("fast_interval"); got != "5" {
+		t.Fatalf("fast_interval = %q, want unchanged 5", got)
+	}
+	// A fast_interval that keeps the relationship intact still works.
+	if err := c.Set("fast_interval", "10"); err != nil {
+		t.Fatalf("fast_interval 10 divides sample_interval 60 evenly, expected success: %v", err)
+	}
+}
+
+func TestTieredIntervalValidation(t *testing.T) {
+	c := Default()
+	if err := c.Set("fast_interval", "0"); err == nil {
+		t.Error("expected error for fast_interval 0")
+	}
+	if err := c.Set("fast_interval", "abc"); err == nil {
+		t.Error("expected error for non-integer fast_interval")
+	}
+	if err := c.Set("heartbeat_interval", "0"); err == nil {
+		t.Error("expected error for heartbeat_interval 0")
+	}
+	if err := c.Set("heartbeat_interval", "abc"); err == nil {
+		t.Error("expected error for non-integer heartbeat_interval")
+	}
+	// sample_interval min-5 rule must still hold.
+	if err := c.Set("sample_interval", "4"); err == nil {
+		t.Error("expected error for sample_interval below 5")
+	}
+}
+
+func TestTieredIntervalsPersistAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("fast_interval", "10"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("heartbeat_interval", "20"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("sample_interval", "50"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("fast_interval"); got != "10" {
+		t.Fatalf("fast_interval after load = %q, want 10", got)
+	}
+	if got, _ := c2.Get("heartbeat_interval"); got != "20" {
+		t.Fatalf("heartbeat_interval after load = %q, want 20", got)
+	}
+	if got, _ := c2.Get("sample_interval"); got != "50" {
+		t.Fatalf("sample_interval after load = %q, want 50", got)
 	}
 }
 
