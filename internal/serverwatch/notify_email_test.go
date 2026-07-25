@@ -69,7 +69,10 @@ func TestEmailNotifierSend(t *testing.T) {
 	if !strings.Contains(msg, "From: alerts@example.com") {
 		t.Errorf("msg missing From header, got:\n%s", msg)
 	}
-	if !strings.Contains(msg, formatAlert(a)) {
+	// The body is the formatAlert output with line endings normalized to
+	// CRLF for SMTP consistency.
+	wantBody := strings.ReplaceAll(formatAlert(a), "\n", "\r\n")
+	if !strings.Contains(msg, wantBody) {
 		t.Errorf("msg missing formatAlert body, got:\n%s", msg)
 	}
 }
@@ -94,6 +97,51 @@ func TestEmailNotifierSendNoAuthWithoutUsername(t *testing.T) {
 	}
 	if gotAuth != nil {
 		t.Errorf("expected nil auth without username, got %v", gotAuth)
+	}
+}
+
+func TestEmailHeaderInjection(t *testing.T) {
+	var gotMsg []byte
+	stub := func(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+		gotMsg = msg
+		return nil
+	}
+	n := &emailNotifier{
+		name: "mail", host: "h", port: "587",
+		from: "alerts@example.com", to: []string{"a@example.com"}, send: stub,
+	}
+
+	// Title is system-derived and can legally contain CR/LF on Linux; a
+	// malicious one must not be able to inject headers or body content.
+	a := Alert{Title: "disk full\r\nBcc: evil@example.com", Body: "b", Kind: "fire"}
+	if err := n.Send(context.Background(), a); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	msg := string(gotMsg)
+
+	// The injection surface is the header block (everything before the
+	// blank line that separates headers from body). The body legitimately
+	// reflects the Title, so "Bcc:"/evil@ appearing there is harmless text,
+	// not a smuggled header — scope the assertions to the header block.
+	headers, _, ok := strings.Cut(msg, "\r\n\r\n")
+	if !ok {
+		t.Fatalf("message has no header/body separator:\n%s", msg)
+	}
+	// No header LINE may be a Bcc: the CRLF injected via Title must have been
+	// stripped, so "Bcc: evil@example.com" can only survive (harmlessly) as
+	// mid-line text folded into the Subject value, never as its own header.
+	subjectLines := 0
+	for _, line := range strings.Split(headers, "\r\n") {
+		if strings.HasPrefix(line, "Bcc:") {
+			t.Errorf("header injection: a header line is a Bcc header: %q", line)
+		}
+		if strings.HasPrefix(line, "Subject:") {
+			subjectLines++
+		}
+	}
+	if subjectLines != 1 {
+		t.Errorf("expected exactly 1 Subject line, got %d:\n%s", subjectLines, headers)
 	}
 }
 
