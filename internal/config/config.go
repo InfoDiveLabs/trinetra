@@ -60,6 +60,23 @@ type Config struct {
 		RawRetention    string `json:"raw_retention,omitempty"`
 		RollupRetention string `json:"rollup_retention,omitempty"`
 	} `json:"storage"`
+	// Collect holds opt-in toggles for the expensive extended collectors
+	// (docs/ROADMAP.md Epic #69). A nil pointer means "unset -> use the
+	// documented default" so an explicit false survives Save/Load: a plain
+	// bool with `omitempty` would drop a false value from the JSON and Load
+	// would then re-fill it from Default() (true) instead of honoring it.
+	Collect struct {
+		// ContainerStats gates the slow-tier `docker stats` collector
+		// (internal/serverwatch/docker.go dockerAccess.stats). Defaults to
+		// true; nil is treated as true everywhere it's read.
+		ContainerStats *bool `json:"container_stats,omitempty"`
+	} `json:"collect"`
+}
+
+// ContainerStatsEnabled reports whether the docker-stats collector
+// (collect.container_stats) is enabled: unset (nil) defaults to true.
+func (c *Config) ContainerStatsEnabled() bool {
+	return c.Collect.ContainerStats == nil || *c.Collect.ContainerStats
 }
 
 type TargetOverride struct {
@@ -349,6 +366,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.Storage.RawRetention, true
 	case "storage.rollup_retention":
 		return c.Storage.RollupRetention, true
+	case "collect.container_stats":
+		return strconv.FormatBool(c.ContainerStatsEnabled()), true
 	}
 	return "", false
 }
@@ -459,6 +478,12 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.Storage.RollupRetention = val
+	case "collect.container_stats":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("collect.container_stats: %w", err)
+		}
+		c.Collect.ContainerStats = &b
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}

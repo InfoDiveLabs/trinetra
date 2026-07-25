@@ -19,6 +19,12 @@ type Snapshot struct {
 	Containers   map[string]string  `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
 	FailedUnits  []string           `json:"failed_units,omitempty"` // systemctl --failed unit names
 	SmartHealth  map[string]string  `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
+	// ContainerStats is the live per-container cpu%/mem/net snapshot from
+	// `docker stats --no-stream` (opt-in via collect.container_stats,
+	// slow-tier only). Keyed by container name. See docker.go/daemon.go
+	// (dockerAccess.stats, containerMetricSet) for the collector and the
+	// bounded (cpu+mem only) series this feeds into the SampleStore.
+	ContainerStats map[string]ContainerStat `json:"container_stats,omitempty"`
 }
 
 func renderStatus(s Snapshot) string {

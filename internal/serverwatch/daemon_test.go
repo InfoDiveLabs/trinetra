@@ -362,6 +362,9 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 		case "df":
 			return []byte("Filesystem 1B-blocks Used Available Capacity Mounted\n/dev/sda1 100 90 10 90% /\n"), nil
 		case "docker":
+			if len(args) > 0 && args[0] == "stats" {
+				return []byte("web\t3.00%\t100MiB / 1GiB\t1MB / 1MB\n"), nil
+			}
 			return []byte("web\trunning\tUp 3 hours\n"), nil
 		case "systemctl":
 			return []byte("nginx.service loaded failed failed A high performance web server\n"), nil
@@ -380,7 +383,7 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 	connDial = func(host string) bool { return true }
 	defer func() { connDial = origDial }()
 
-	snap := collectSlow(x, fs, da)
+	snap := collectSlow(x, fs, da, config.Default())
 
 	if snap.Disks["/"] != 90 {
 		t.Errorf("Disks[/] = %v, want 90", snap.Disks["/"])
@@ -400,9 +403,131 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 	if snap.DockerAccess != "socket" {
 		t.Errorf("DockerAccess = %q, want socket", snap.DockerAccess)
 	}
+	// collect.container_stats defaults to true and docker is available -> populated.
+	if snap.ContainerStats["web"].CPUPct != 3 {
+		t.Errorf("ContainerStats[web].CPUPct = %v, want 3", snap.ContainerStats["web"].CPUPct)
+	}
+	if snap.ContainerStats["web"].MemMiB != 100 {
+		t.Errorf("ContainerStats[web].MemMiB = %v, want 100", snap.ContainerStats["web"].MemMiB)
+	}
 	// The fast-tier fields must NOT be touched by collectSlow.
 	if snap.CPU != 0 || snap.MemPct != 0 || snap.Load1 != 0 {
 		t.Errorf("collectSlow populated fast fields: cpu=%v mem=%v load1=%v", snap.CPU, snap.MemPct, snap.Load1)
+	}
+}
+
+// TestCollectSlowSkipsContainerStatsWhenDisabled asserts the
+// collect.container_stats=false opt-out actually suppresses the
+// `docker stats` call: the fake Exec fails the test if "stats" is
+// requested, so ContainerStats staying nil is proof the call was skipped.
+func TestCollectSlowSkipsContainerStatsWhenDisabled(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		if name == "docker" && len(args) > 0 && args[0] == "stats" {
+			t.Fatal("docker stats must not be called when collect.container_stats is disabled")
+		}
+		if name == "docker" {
+			return []byte("web\trunning\tUp\n"), nil
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: true, method: "socket"}
+	c := config.Default()
+	if err := c.Set("collect.container_stats", "false"); err != nil {
+		t.Fatal(err)
+	}
+	snap := collectSlow(x, fs, da, c)
+	if snap.ContainerStats != nil {
+		t.Errorf("ContainerStats = %+v, want nil when disabled", snap.ContainerStats)
+	}
+}
+
+// TestCollectSlowSkipsContainerStatsWhenDockerUnavailable mirrors the
+// existing container-list guard: da.available=false must skip the stats
+// call entirely, not just leave the result empty.
+func TestCollectSlowSkipsContainerStatsWhenDockerUnavailable(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		if name == "docker" {
+			t.Fatal("docker must not be called at all when unavailable")
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+	snap := collectSlow(x, fs, da, config.Default())
+	if snap.ContainerStats != nil {
+		t.Errorf("ContainerStats = %+v, want nil when docker unavailable", snap.ContainerStats)
+	}
+}
+
+// TestCollectSlowSkipsContainerStatsOnNilConfig asserts collectSlow never
+// panics when called with a nil *config.Config (defensive: any future
+// one-shot caller without a config handy should degrade gracefully rather
+// than crash).
+func TestCollectSlowSkipsContainerStatsOnNilConfig(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		if name == "docker" && len(args) > 0 && args[0] == "stats" {
+			t.Fatal("docker stats must not be called with a nil config")
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: true, method: "socket"}
+	snap := collectSlow(x, fs, da, nil)
+	if snap.ContainerStats != nil {
+		t.Errorf("ContainerStats = %+v, want nil with nil config", snap.ContainerStats)
+	}
+}
+
+// TestCollectSlowContainerStatsErrorDegradesGracefully asserts a docker
+// stats error (daemon busy, container churn mid-call, etc.) leaves
+// ContainerStats nil for this tick rather than propagating the error or
+// crashing the rest of collectSlow.
+func TestCollectSlowContainerStatsErrorDegradesGracefully(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		if name == "docker" && len(args) > 0 && args[0] == "stats" {
+			return nil, errors.New("docker daemon busy")
+		}
+		if name == "docker" {
+			return []byte("web\trunning\tUp\n"), nil
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: true, method: "socket"}
+	snap := collectSlow(x, fs, da, config.Default())
+	if snap.ContainerStats != nil {
+		t.Errorf("ContainerStats = %+v, want nil on stats error", snap.ContainerStats)
+	}
+	// The rest of the slow collection must still have succeeded.
+	if snap.Containers["web"] != "running" {
+		t.Errorf("Containers[web] = %q, want running (rest of collectSlow unaffected)", snap.Containers["web"])
+	}
+}
+
+func TestContainerMetricSet(t *testing.T) {
+	snap := Snapshot{ContainerStats: map[string]ContainerStat{
+		"web": {Name: "web", CPUPct: 11.2, MemMiB: 512, NetRxMB: 2.1, NetTxMB: 0.4},
+		"db":  {Name: "db", CPUPct: 0.5, MemMiB: 1536, NetRxMB: 0.5, NetTxMB: 0.1},
+	}}
+	ms := containerMetricSet(snap)
+	want := MetricSet{
+		"docker:web:cpu": 11.2, "docker:web:mem": 512,
+		"docker:db:cpu": 0.5, "docker:db:mem": 1536,
+	}
+	if len(ms) != len(want) {
+		t.Fatalf("containerMetricSet = %+v, want %+v", ms, want)
+	}
+	for k, v := range want {
+		if ms[k] != v {
+			t.Errorf("containerMetricSet[%q] = %v, want %v", k, ms[k], v)
+		}
+	}
+}
+
+func TestContainerMetricSetEmpty(t *testing.T) {
+	if ms := containerMetricSet(Snapshot{}); len(ms) != 0 {
+		t.Fatalf("containerMetricSet(empty) = %+v, want empty", ms)
 	}
 }
 

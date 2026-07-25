@@ -559,6 +559,68 @@ func TestStorageRetentionPersistsAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+func TestContainerStatsDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("collect.container_stats"); got != "true" {
+		t.Fatalf("collect.container_stats default = %q, want true", got)
+	}
+	if err := c.Set("collect.container_stats", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.container_stats"); got != "false" {
+		t.Fatalf("collect.container_stats after set false = %q, want false", got)
+	}
+	if err := c.Set("collect.container_stats", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.container_stats"); got != "true" {
+		t.Fatalf("collect.container_stats after set true = %q, want true", got)
+	}
+	if err := c.Set("collect.container_stats", "bogus"); err == nil {
+		t.Fatal("collect.container_stats set to bogus: want error, got nil")
+	}
+	if err := c.Unset("collect.container_stats"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.container_stats"); got != "true" {
+		t.Fatalf("collect.container_stats after unset = %q, want default true", got)
+	}
+}
+
+func TestContainerStatsPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("collect.container_stats", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("collect.container_stats"); got != "false" {
+		t.Fatalf("collect.container_stats after save/load = %q, want false (explicit false must persist)", got)
+	}
+
+	// And the reverse: an explicit true set after a prior false must also persist.
+	if err := c2.Set("collect.container_stats", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c3, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c3.Get("collect.container_stats"); got != "true" {
+		t.Fatalf("collect.container_stats after second save/load = %q, want true", got)
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")

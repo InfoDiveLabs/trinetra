@@ -163,6 +163,25 @@ func slowMetricSet(s Snapshot) MetricSet {
 	return ms
 }
 
+// containerMetricSet converts a Snapshot's per-container docker stats
+// (s.ContainerStats, filled by collectSlow when collect.container_stats is
+// enabled) into a MetricSet: one "docker:<name>:cpu" and one
+// "docker:<name>:mem" entry per container. This is the write-path
+// counterpart of the docker-stats collector, appended to the SampleStore
+// alongside slowMetricSet on slow ticks. Net rx/tx are surfaced live via
+// Snapshot.ContainerStats/status.json but deliberately NOT persisted as
+// series here: one cpu + one mem series per running container is the
+// cardinality this design accepts (docs/ROADMAP.md #71/#76); adding net
+// series per container would double it again for comparatively low value.
+func containerMetricSet(s Snapshot) MetricSet {
+	ms := make(MetricSet, len(s.ContainerStats)*2)
+	for name, cs := range s.ContainerStats {
+		ms["docker:"+name+":cpu"] = cs.CPUPct
+		ms["docker:"+name+":mem"] = cs.MemMiB
+	}
+	return ms
+}
+
 // shouldHeartbeat reports whether at least intervalSec seconds have passed
 // since lastUnix (the last written heartbeat), given the current time
 // nowUnix. lastUnix==0 (no heartbeat written yet) always returns true so the
@@ -231,8 +250,11 @@ func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 // systemctl/smartctl, plus the network connectivity dial. These are all
 // either subprocess spawns or (for the connectivity check) multi-second
 // network timeouts, so they run on the slow tier (sample_interval) rather
-// than every fast tick.
-func collectSlow(x Exec, fs FileSource, da dockerAccess) Snapshot {
+// than every fast tick. c gates the opt-in docker-stats collector
+// (collect.container_stats); it may be nil (treated as disabled) so tests
+// and any future one-shot caller that doesn't have a config handy still get
+// a Snapshot back rather than a panic.
+func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config) Snapshot {
 	var snap Snapshot
 	snap.DockerAccess = da.method
 	if out, err := x.Run("df", "-PB1"); err == nil {
@@ -251,6 +273,18 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess) Snapshot {
 			snap.Containers = map[string]string{}
 			for _, ct := range cs {
 				snap.Containers[ct.Name] = ct.State
+			}
+		}
+	}
+	// per-container cpu/mem/net (opt-in, docker-availability-gated): a stats
+	// error (docker daemon busy, container churn mid-call, etc.) just leaves
+	// ContainerStats nil for this tick rather than failing the whole
+	// collectSlow pass.
+	if da.available && c != nil && c.ContainerStatsEnabled() {
+		if cs, err := da.stats(x); err == nil {
+			snap.ContainerStats = map[string]ContainerStat{}
+			for _, s := range cs {
+				snap.ContainerStats[s.Name] = s
 			}
 		}
 	}
@@ -285,15 +319,16 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess) Snapshot {
 // Telegram command wants a fresh, complete status). The tiered sampler loop
 // in cmdDaemon does NOT use this: it calls collectFast/collectSlow directly
 // so it can run collectSlow only every Nth fast tick.
-func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snapshot {
+func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess, c *config.Config) Snapshot {
 	snap := collectFast(x, fs, prev)
-	slow := collectSlow(x, fs, da)
+	slow := collectSlow(x, fs, da, c)
 	snap.Disks = slow.Disks
 	snap.Online = slow.Online
 	snap.DockerAccess = slow.DockerAccess
 	snap.Containers = slow.Containers
 	snap.FailedUnits = slow.FailedUnits
 	snap.SmartHealth = slow.SmartHealth
+	snap.ContainerStats = slow.ContainerStats
 	return snap
 }
 
@@ -472,7 +507,7 @@ func cmdDaemon(args []string) int {
 			if store != nil {
 				_ = store.AppendEvent(ev)
 			}
-			snap := collectSnapshot(x, fs, &prevCPU, da)
+			snap := collectSnapshot(x, fs, &prevCPU, da, c0)
 			now := clock.Now().Unix()
 			dispatchAndLog(getDispatcher(), alog, Alert{
 				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap)),
@@ -522,13 +557,14 @@ func cmdDaemon(args []string) int {
 		// rather than waiting up to N-1 fast ticks for disks/docker/etc.
 		isSlowTick := tick%n == 0
 		if isSlowTick {
-			slow := collectSlow(x, fs, da)
+			slow := collectSlow(x, fs, da, c)
 			merged.Disks = slow.Disks
 			merged.Online = slow.Online
 			merged.DockerAccess = slow.DockerAccess
 			merged.Containers = slow.Containers
 			merged.FailedUnits = slow.FailedUnits
 			merged.SmartHealth = slow.SmartHealth
+			merged.ContainerStats = slow.ContainerStats
 		}
 		merged.TS = now.Unix()
 
@@ -559,6 +595,9 @@ func cmdDaemon(args []string) int {
 
 			if store != nil {
 				_ = store.Append(merged.TS, slowMetricSet(merged))
+				if cm := containerMetricSet(merged); len(cm) > 0 {
+					_ = store.Append(merged.TS, cm)
+				}
 			}
 
 			// net_down interval tracking: Online is a slow-tier field, only
@@ -716,7 +755,7 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 				c = getCfg()
 				tg = telegram.New(c.Telegram.Token, c.Telegram.ChatID)
 			}
-			snap := collectSnapshot(x, fs, &prevCPU, da)
+			snap := collectSnapshot(x, fs, &prevCPU, da, c)
 			snap.TS = time.Now().Unix()
 			_ = tg.SendMessage(handleCommand(u.Text, store, snap))
 		}
