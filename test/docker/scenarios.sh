@@ -38,7 +38,7 @@ wait_for_message() {
   done
   echo "ASSERT FAIL: '$needle' not found within ${timeout}s. recorded messages:"
   echo "$msgs"
-  echo "--- daemon logs (sw) ---"; compose exec -T sw sh -c 'cat /var/lib/serverwatch/*.log 2>/dev/null' || true
+  echo "--- daemon logs (sw) ---"; compose logs sw 2>/dev/null | tail -40 || true
   echo "--- compose ps ---"; compose ps || true
   exit 1
 }
@@ -101,7 +101,9 @@ wait_for_message "CPU" 30
 # ---------------------------------------------------------------------------
 echo "== scenario 3: CPU anomaly =="
 compose exec -d sw stress-ng --cpu 0 --timeout 45s
-wait_for_message "ALERT" 45
+# Bind the assertion to an actual CPU breach (anomaly.go breach-reason format,
+# e.g. "cpu = 97.0 ≥ threshold 95.0") so unrelated docker noise can't satisfy it.
+wait_for_message "cpu =" 45
 
 # ---------------------------------------------------------------------------
 # Scenario 5 (docker-down): throwaway container discovered, stopped -> alert
@@ -111,9 +113,11 @@ docker run -d --name "$VICTIM" busybox sleep 3600 >/dev/null
 sleep 8   # let a sample discover it while it is running
 docker stop "$VICTIM" >/dev/null
 wait_for_message "docker:$VICTIM" 45
-# and it should be visible via the /docker command
+# and it should be visible via the /docker command. /_messages is cumulative,
+# so assert on a string only renderDocker emits ("name (state)") — never the
+# alert text — to actually exercise the command round-trip.
 inject "/docker"
-wait_for_message "$VICTIM" 30
+wait_for_message "$VICTIM (exited)" 30
 
 # ---------------------------------------------------------------------------
 # Scenario 4 (downtime): kill daemon, wait > 2*interval, restart -> boot report
