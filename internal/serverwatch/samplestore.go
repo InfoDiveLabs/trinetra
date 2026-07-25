@@ -3,10 +3,10 @@
 // daemon/handlers/digests and the concrete time-series storage engine.
 //
 // The existing JSONL Store (store.go) remains the live backend used by
-// callers for now; this file only adds the new interface plus an in-memory
+// callers for now; this file adds the new interface plus an in-memory
 // reference backend used for tests and the "memory" storage.backend option.
-// A later task (s7) adds the default "tsfile" backend and migrates callers
-// (s10) onto SampleStore.
+// The default "tsfile" backend lives in tsfile.go (s7). A later task (s10)
+// migrates callers onto SampleStore.
 package serverwatch
 
 import (
@@ -68,9 +68,9 @@ func OpenStore(backend, dir string) (SampleStore, error) {
 	switch backend {
 	case "memory":
 		return newMemStore(), nil
+	case "tsfile":
+		return newTSFileStore(dir)
 	default:
-		// Covers "tsfile" (not yet implemented — lands in s7, which will
-		// also make it the default) and any unrecognized name.
 		return nil, fmt.Errorf("storage backend %q not implemented yet", backend)
 	}
 }

@@ -196,8 +196,10 @@ func TestOpenStoreBackendSelection(t *testing.T) {
 		defer s.Close()
 	}
 
-	if _, err := OpenStore("tsfile", t.TempDir()); err == nil {
-		t.Fatal("tsfile backend: want not-implemented error, got nil")
+	if s, err := OpenStore("tsfile", t.TempDir()); err != nil {
+		t.Fatalf("tsfile backend: %v", err)
+	} else {
+		defer s.Close()
 	}
 
 	if _, err := OpenStore("bogus", t.TempDir()); err == nil {
