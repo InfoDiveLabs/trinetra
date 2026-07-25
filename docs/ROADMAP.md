@@ -76,6 +76,17 @@ Fast tier (5s) for CPU/load/mem/swap driving detection + live status; 1-min aggr
 - #54 Integrate `SampleStore` across daemon/handlers/digests
 - #55 Tiered + storage docs & config update
 
+### Epic [#69 Extended datapoint collection (UI data coverage)](https://github.com/Suraj-Tiwari/server-monitor/issues/69)
+Collect the extra data the UI shows, cheaply — must land before the UI's stats/history tasks. Bounded time-series vs live snapshots vs event-log; opt-in, slow-tier collectors; ~tens of MB on disk thanks to tsfile.
+- #70 Alert event log + ack + delivery record (powers Alerts history)
+- #71 Per-container CPU/mem/net (docker stats) → series
+- #72 Network throughput series (/proc/net/dev deltas)
+- #73 Full systemd unit inventory (live snapshot)
+- #74 Process snapshot: top-N + counts (live, no series)
+- #75 Schema extras: load5/15, inodes, fs type/device, SMART attrs, fill projection
+- #76 Extended-collection config toggles + cardinality/disk guardrails
+- #77 Integrate into status.json + SampleStore + docs
+
 ### Epic [#56 Web UI (HTMX + passkeys, multi-user)](https://github.com/Suraj-Tiwari/server-monitor/issues/56)
 HTMX UI with passkey-only auth, roles (admin/viewer/public), web-based config, live dashboard (SSE) + history graphs (uPlot), and an admin-curated public view. Dependency-isolated web build (cli-only stays stdlib); self-configuring serving modes (reverse proxy/Cloudflare Tunnel, autocert, manual TLS). _(Detailed design kept local, not in-repo.)_
 - #57 Module + build variants (cli-only vs cli+web)
