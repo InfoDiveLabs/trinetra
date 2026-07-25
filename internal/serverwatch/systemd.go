@@ -269,6 +269,3 @@ func cmdDoctor(args []string) int {
 	fmt.Fprintf(stdout, "targets discovered: %d\n", len(Discover(x, fs)))
 	return 0
 }
-
-// TEMP stub — real daemon lands in Task 14. Remove/replace then.
-func cmdDaemon(args []string) int { return 0 }
