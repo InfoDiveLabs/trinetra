@@ -1,6 +1,8 @@
 package serverwatch
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -30,6 +32,68 @@ func TestNoPowerDownOnClockSkew(t *testing.T) {
 	boot := time.Unix(1000, 0) // clock went backwards
 	if _, ok := reconstructPowerDown(last, boot, 60*time.Second); ok {
 		t.Fatal("backwards clock must not emit a negative-duration event")
+	}
+}
+
+func TestPowerDownExactlyAtThreshold(t *testing.T) {
+	last := time.Unix(1000, 0)
+	interval := 60 * time.Second
+	// gap == 2*interval exactly -> NOT a downtime event.
+	boot := time.Unix(1000+120, 0)
+	if _, ok := reconstructPowerDown(last, boot, interval); ok {
+		t.Fatal("gap == 2*interval must not emit an event")
+	}
+	// Just over the threshold -> event with exact integer duration.
+	bootOver := time.Unix(1000+121, 0)
+	ev, ok := reconstructPowerDown(last, bootOver, interval)
+	if !ok {
+		t.Fatal("gap just over 2*interval should emit an event")
+	}
+	if ev.Type != "power_down" || ev.Start != 1000 || ev.End != 1121 || ev.DurationSec != 121 {
+		t.Fatalf("event = %+v", ev)
+	}
+}
+
+func TestNoPowerDownWhenBootEqualsLastBeat(t *testing.T) {
+	last := time.Unix(1000, 0)
+	boot := time.Unix(1000, 0) // boot == lastBeat, zero gap
+	if _, ok := reconstructPowerDown(last, boot, 60*time.Second); ok {
+		t.Fatal("boot == lastBeat must not emit an event")
+	}
+}
+
+func TestHeartbeatRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "heartbeat")
+	now := time.Unix(1721900000, 0)
+	if err := writeHeartbeat(p, now); err != nil {
+		t.Fatalf("writeHeartbeat: %v", err)
+	}
+	got, ok := readHeartbeat(p, osFS{})
+	if !ok {
+		t.Fatal("readHeartbeat ok=false, want true")
+	}
+	if got.Unix() != now.Unix() {
+		t.Fatalf("got Unix=%d want %d", got.Unix(), now.Unix())
+	}
+}
+
+func TestReadHeartbeatMissing(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "does-not-exist")
+	if _, ok := readHeartbeat(p, osFS{}); ok {
+		t.Fatal("readHeartbeat on missing file should return ok=false")
+	}
+}
+
+func TestReadHeartbeatCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "heartbeat")
+	if err := os.WriteFile(p, []byte("notanumber"), 0o644); err != nil {
+		t.Fatalf("setup write: %v", err)
+	}
+	if _, ok := readHeartbeat(p, osFS{}); ok {
+		t.Fatal("readHeartbeat on corrupt content should return ok=false")
 	}
 }
 

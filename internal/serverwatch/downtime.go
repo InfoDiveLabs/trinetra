@@ -40,13 +40,13 @@ func reconstructPowerDown(lastBeat, boot time.Time, interval time.Duration) (Dow
 		Type:        "power_down",
 		Start:       lastBeat.Unix(),
 		End:         boot.Unix(),
-		DurationSec: int64(gap.Seconds()),
+		DurationSec: int64(gap / time.Second),
 	}, true
 }
 
 // NetTracker records live internet-down intervals while the process is running.
 type NetTracker struct {
-	downSince int64 // 0 = currently online
+	downSince int64 // 0 = currently online; sentinel assumes real epoch-second timestamps (never 0 in practice)
 }
 
 func (n *NetTracker) Update(online bool, now int64) (DownEvent, bool) {
