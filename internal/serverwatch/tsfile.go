@@ -5,9 +5,9 @@
 // Layout under dir:
 //
 //	<dir>/ts/raw/<safeMetric>.tsd  — raw samples, one record per Append
-//	<dir>/ts/1m/<safeMetric>.tsd   — 1-minute rollups (populated by a future
-//	                                 downsampler task; Query on an absent
-//	                                 file just returns no points)
+//	<dir>/ts/1m/<safeMetric>.tsd   — 1-minute rollups, populated by Downsample
+//	                                 (Query on an absent file just returns no
+//	                                 points)
 //	<dir>/ts/events.tsd            — downtime events
 //
 // Every file starts with a fixed 16-byte header (magic, version, record
@@ -28,6 +28,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -43,34 +44,27 @@ const (
 	tsEventTypeNet   = uint8(2) // net_down
 )
 
-// Retention windows. Real per-resolution config (storage.raw_retention /
-// storage.rollup_retention) is a later task (s8); these are fixed defaults
-// matching docs/DESIGN-storage.md in the meantime.
-const (
-	tsRawRetentionSeconds    = 48 * 3600
-	tsRollupRetentionSeconds = 30 * 24 * 3600
-	tsEventRetentionSeconds  = 30 * 24 * 3600
-)
-
 // tsFileStore is the on-disk binary SampleStore backend. Safe for concurrent
-// use: a single RWMutex serializes writers (Append/AppendEvent/Prune)
-// against each other and against readers (Query/Events), which also keeps a
-// Query from ever observing a file mid-append.
+// use: a single RWMutex serializes writers (Append/AppendEvent/Prune/
+// Downsample) against each other and against readers (Query/Events), which
+// also keeps a Query from ever observing a file mid-append.
 type tsFileStore struct {
-	mu  sync.RWMutex
-	dir string // <configured dir>/ts
+	mu   sync.RWMutex
+	dir  string // <configured dir>/ts
+	opts StoreOptions
 }
 
 // newTSFileStore creates the tsfile directory layout under dir and returns a
-// ready-to-use store.
-func newTSFileStore(dir string) (*tsFileStore, error) {
+// ready-to-use store. opts configures per-resolution retention (see
+// StoreOptions); zero values fall back to the documented defaults.
+func newTSFileStore(dir string, opts StoreOptions) (*tsFileStore, error) {
 	root := filepath.Join(dir, "ts")
 	for _, sub := range []string{"raw", "1m"} {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
 			return nil, fmt.Errorf("tsfile: create %s: %w", sub, err)
 		}
 	}
-	return &tsFileStore{dir: root}, nil
+	return &tsFileStore{dir: root, opts: opts.withDefaults()}, nil
 }
 
 const tsHexDigits = "0123456789ABCDEF"
@@ -478,25 +472,172 @@ func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 	return nil
 }
 
-// Prune drops samples and events older than fixed retention windows
-// relative to now (see tsRawRetentionSeconds etc; per-resolution
-// configuration is a later task).
+// Prune drops samples and events older than the store's per-resolution
+// retention windows (s.opts), relative to now: raw at RawRetention, 1m
+// rollups and events at RollupRetention/EventRetention respectively.
 func (s *tsFileStore) Prune(now int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.pruneDir(filepath.Join(s.dir, "raw"), now-tsRawRetentionSeconds); err != nil {
+	if err := s.pruneDir(filepath.Join(s.dir, "raw"), now-int64(s.opts.RawRetention.Seconds())); err != nil {
 		return err
 	}
-	if err := s.pruneDir(filepath.Join(s.dir, "1m"), now-tsRollupRetentionSeconds); err != nil {
+	if err := s.pruneDir(filepath.Join(s.dir, "1m"), now-int64(s.opts.RollupRetention.Seconds())); err != nil {
 		return err
 	}
-	eventCut := now - tsEventRetentionSeconds
+	eventCut := now - int64(s.opts.EventRetention.Seconds())
 	keepEvent := func(rec []byte) bool {
 		end := int64(binary.BigEndian.Uint64(rec[16:24]))
 		return end >= eventCut
 	}
 	return pruneFileGeneric(s.eventsPath(), keepEvent)
+}
+
+// tsRollupBucketSeconds is the 1m resolution's bucket width. A bucket's key
+// is its start (floor(ts/60)*60); the bucket is "completed" once
+// key+tsRollupBucketSeconds <= now.
+const tsRollupBucketSeconds = int64(60)
+
+// lastRecordTS returns the ts of the last record in path, or
+// math.MinInt64 if the file doesn't exist or is empty (meaning "no progress
+// yet, roll every completed bucket").
+func lastRecordTS(path string) (int64, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return math.MinInt64, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	if _, err := readTSHeader(f); err != nil {
+		return 0, fmt.Errorf("tsfile: %s: %w", path, err)
+	}
+	n, err := readCount(f)
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return math.MinInt64, nil
+	}
+	var buf [8]byte
+	if _, err := f.ReadAt(buf[:], recordOffset(n-1)); err != nil {
+		return 0, err
+	}
+	return sampleRecordTS(buf[:]), nil
+}
+
+// downsampleFile rolls rawPath's points into 1-minute min/avg/max buckets
+// and appends any newly-completed buckets to oneMPath, in bucket order.
+//
+// Idempotent + gap-safe: it reads oneMPath's last written bucket key
+// (lastBucket) and only considers raw points whose bucket key is strictly
+// greater than lastBucket, so a second call with the same or a later now
+// never re-rolls or duplicates a bucket. A bucket is only rolled once it is
+// fully in the past (key+60 <= now), so the current, still-filling minute is
+// left alone until a later Downsample call once it too has completed.
+func downsampleFile(rawPath, oneMPath string, now int64) error {
+	lastBucket, err := lastRecordTS(oneMPath)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Open(rawPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := readTSHeader(f); err != nil {
+		return fmt.Errorf("tsfile: %s: %w", rawPath, err)
+	}
+	n, err := readCount(f)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+
+	type bucket struct {
+		min, max, sum float64
+		count         int64
+	}
+	buckets := make(map[int64]*bucket)
+	var order []int64
+
+	var buf [32]byte
+	for i := int64(0); i < n; i++ {
+		if _, err := f.ReadAt(buf[:], recordOffset(i)); err != nil {
+			return err
+		}
+		p := decodeSampleRecord(buf[:])
+		key := (p.TS / tsRollupBucketSeconds) * tsRollupBucketSeconds
+		if key <= lastBucket {
+			continue // already rolled (or older than what's already rolled)
+		}
+		if key+tsRollupBucketSeconds > now {
+			continue // bucket not yet fully in the past
+		}
+		b, ok := buckets[key]
+		if !ok {
+			b = &bucket{min: p.Avg, max: p.Avg}
+			buckets[key] = b
+			order = append(order, key)
+		}
+		v := p.Avg // raw points always set Min=Avg=Max=value
+		if v < b.min {
+			b.min = v
+		}
+		if v > b.max {
+			b.max = v
+		}
+		b.sum += v
+		b.count++
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+
+	for _, key := range order {
+		b := buckets[key]
+		rec := encodeSampleRecord(key, b.min, b.sum/float64(b.count), b.max)
+		if err := appendRecord(oneMPath, tsResolution1m, rec); err != nil {
+			return fmt.Errorf("tsfile: downsample append %s: %w", oneMPath, err)
+		}
+	}
+	return nil
+}
+
+// Downsample rolls each metric's completed raw buckets into its 1m file (see
+// downsampleFile). Called under the store's write lock, alongside
+// Append/AppendEvent/Prune, so it never races a concurrent Query observing a
+// 1m file mid-append.
+func (s *tsFileStore) Downsample(now int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rawDir := filepath.Join(s.dir, "raw")
+	entries, err := os.ReadDir(rawDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, ent := range entries {
+		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsd") {
+			continue
+		}
+		rawPath := filepath.Join(rawDir, ent.Name())
+		oneMPath := filepath.Join(s.dir, "1m", ent.Name())
+		if err := downsampleFile(rawPath, oneMPath, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close releases any resources held by the store. tsFileStore opens files

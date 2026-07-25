@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
-func openTSFile(t *testing.T, dir string) SampleStore {
+func openTSFile(t *testing.T, dir string, opts StoreOptions) SampleStore {
 	t.Helper()
-	s, err := OpenStore("tsfile", dir)
+	s, err := OpenStore("tsfile", dir, opts)
 	if err != nil {
 		t.Fatalf("OpenStore(tsfile): %v", err)
 	}
@@ -18,7 +19,7 @@ func openTSFile(t *testing.T, dir string) SampleStore {
 
 func TestTSFileAppendQuery(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	if err := s.Append(100, MetricSet{"cpu": 10, "mem": 50}); err != nil {
@@ -75,7 +76,7 @@ func TestTSFileAppendQuery(t *testing.T) {
 
 func TestTSFileBinarySearchSubRange(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	const n = 1000
@@ -121,7 +122,7 @@ func TestTSFileBinarySearchSubRange(t *testing.T) {
 
 func TestTSFilePersistence(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 
 	if err := s.Append(1, MetricSet{"cpu": 1}); err != nil {
 		t.Fatal(err)
@@ -136,7 +137,7 @@ func TestTSFilePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s2 := openTSFile(t, dir)
+	s2 := openTSFile(t, dir, StoreOptions{})
 	defer s2.Close()
 
 	pts, err := s2.Query("cpu", 0, 1000, ResRaw)
@@ -158,7 +159,7 @@ func TestTSFilePersistence(t *testing.T) {
 
 func TestTSFileBadMagicHeaderError(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	if err := s.Append(1, MetricSet{"cpu": 1}); err != nil {
@@ -182,7 +183,7 @@ func TestTSFileBadMagicHeaderError(t *testing.T) {
 
 func TestTSFileCorruptionTruncatedTail(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	for i := int64(1); i <= 5; i++ {
@@ -218,7 +219,7 @@ func TestTSFileCorruptionTruncatedTail(t *testing.T) {
 
 func TestTSFileEventsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	e1 := DownEvent{Type: "power_down", Start: 100, End: 200, DurationSec: 100}
@@ -260,7 +261,7 @@ func TestTSFileEventsRoundTrip(t *testing.T) {
 
 func TestTSFilePrune(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	const day = int64(86400)
@@ -322,7 +323,7 @@ func TestTSFilePrune(t *testing.T) {
 
 func TestTSFileSafeMetricDistinctFiles(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	metrics := []string{"docker:web", "disk:/", "net:eth0:rx"}
@@ -353,7 +354,7 @@ func TestTSFileSafeMetricDistinctFiles(t *testing.T) {
 
 func TestTSFileConcurrentAppend(t *testing.T) {
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	var wg sync.WaitGroup
@@ -414,7 +415,7 @@ func TestSafeMetricInjective(t *testing.T) {
 	// And each must round-trip independently via Append/Query (distinct files,
 	// no interleaving).
 	dir := t.TempDir()
-	s := openTSFile(t, dir)
+	s := openTSFile(t, dir, StoreOptions{})
 	defer s.Close()
 
 	all := []string{"a/b", "a_b", "a:b", "a b", "disk:/mnt/my disk", "disk:/mnt/my/disk"}
@@ -431,6 +432,156 @@ func TestSafeMetricInjective(t *testing.T) {
 		if len(pts) != 1 || pts[0].Avg != float64(i+1) {
 			t.Fatalf("metric %q = %+v, want exactly one point %v (no cross-series interleaving)", m, pts, i+1)
 		}
+	}
+}
+
+func TestTSFileDownsampleRollsCompletedMinutes(t *testing.T) {
+	dir := t.TempDir()
+	s := openTSFile(t, dir, StoreOptions{})
+	defer s.Close()
+
+	// 3 minute-buckets (0, 60, 120), several distinct values per minute so
+	// Min/Avg/Max differ from a single repeated value.
+	appends := []struct {
+		ts int64
+		v  float64
+	}{
+		{0, 10}, {20, 20}, {40, 30}, // minute 0: min=10 avg=20 max=30
+		{60, 5}, {90, 15}, // minute 1: min=5 avg=10 max=15
+		{120, 100}, {150, 200}, // minute 2: min=100 avg=150 max=200
+	}
+	for _, a := range appends {
+		if err := s.Append(a.ts, MetricSet{"cpu": a.v}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// now=180 is exactly the end of minute-bucket 120 (120+60=180<=180), so
+	// all three buckets are fully in the past.
+	now := int64(180)
+	if err := s.Downsample(now); err != nil {
+		t.Fatal(err)
+	}
+
+	pts, err := s.Query("cpu", 0, 1000, Res1m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 3 {
+		t.Fatalf("1m points = %+v, want 3 completed minute buckets", pts)
+	}
+	want := []Point{
+		{TS: 0, Min: 10, Avg: 20, Max: 30},
+		{TS: 60, Min: 5, Avg: 10, Max: 15},
+		{TS: 120, Min: 100, Avg: 150, Max: 200},
+	}
+	for i, p := range pts {
+		w := want[i]
+		if p.TS != w.TS || p.Min != w.Min || p.Avg != w.Avg || p.Max != w.Max {
+			t.Fatalf("bucket %d = %+v, want %+v", i, p, w)
+		}
+	}
+
+	// Idempotent: a second Downsample call must not duplicate any bucket.
+	if err := s.Downsample(now); err != nil {
+		t.Fatal(err)
+	}
+	pts2, err := s.Query("cpu", 0, 1000, Res1m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts2) != 3 {
+		t.Fatalf("after second Downsample, 1m points = %+v, want still 3 (no duplicates)", pts2)
+	}
+}
+
+func TestTSFileDownsampleSkipsIncompleteCurrentMinute(t *testing.T) {
+	dir := t.TempDir()
+	s := openTSFile(t, dir, StoreOptions{})
+	defer s.Close()
+
+	if err := s.Append(0, MetricSet{"cpu": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(30, MetricSet{"cpu": 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	// now=30 falls inside minute-bucket 0 (ends at 60): not yet complete.
+	if err := s.Downsample(30); err != nil {
+		t.Fatal(err)
+	}
+	pts, err := s.Query("cpu", 0, 1000, Res1m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 0 {
+		t.Fatalf("1m points = %+v, want none (current minute incomplete)", pts)
+	}
+
+	// Once now reaches the bucket's end, it becomes eligible.
+	if err := s.Downsample(60); err != nil {
+		t.Fatal(err)
+	}
+	pts, err = s.Query("cpu", 0, 1000, Res1m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 1 || pts[0].TS != 0 {
+		t.Fatalf("1m points = %+v, want one bucket at ts=0", pts)
+	}
+}
+
+func TestTSFilePerResolutionRetention(t *testing.T) {
+	dir := t.TempDir()
+	opts := StoreOptions{RawRetention: 2 * time.Hour, RollupRetention: 24 * time.Hour, EventRetention: 24 * time.Hour}
+	s := openTSFile(t, dir, opts)
+	defer s.Close()
+
+	const hour = int64(3600)
+	now := int64(48 * hour)
+
+	// Raw: one point older than RawRetention (2h), one within it.
+	if err := s.Append(now-3*hour, MetricSet{"cpu": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(now-1*hour, MetricSet{"cpu": 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1m: one bucket older than RollupRetention (24h), one within it but
+	// outside RawRetention (2h) — both produced via Downsample so the
+	// on-disk encoding matches what Downsample itself writes.
+	oldBucket := ((now - 30*hour) / 60) * 60
+	recentBucket := ((now - 10*hour) / 60) * 60
+	if err := s.Append(oldBucket, MetricSet{"mem": 5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(recentBucket, MetricSet{"mem": 6}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Downsample(now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Prune(now); err != nil {
+		t.Fatal(err)
+	}
+
+	rawPts, err := s.Query("cpu", 0, now, ResRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rawPts) != 1 || rawPts[0].TS != now-1*hour {
+		t.Fatalf("raw after prune = %+v, want just the point within RawRetention (2h)", rawPts)
+	}
+
+	rollupPts, err := s.Query("mem", 0, now, Res1m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rollupPts) != 1 || rollupPts[0].TS != recentBucket {
+		t.Fatalf("1m after prune = %+v, want just the bucket within RollupRetention (24h)", rollupPts)
 	}
 }
 

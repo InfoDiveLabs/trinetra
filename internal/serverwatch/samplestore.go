@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 // MetricSet maps a metric id (e.g. "cpu", "mem", "disk:/") to its current
@@ -53,47 +54,100 @@ type SampleStore interface {
 	Events(from, to int64) ([]DownEvent, error)
 	// Prune applies the backend's retention policy relative to nowUnix.
 	Prune(nowUnix int64) error
+	// Downsample rolls completed raw buckets into the 1m resolution, relative
+	// to nowUnix (a bucket is "completed" once its end has passed). It is
+	// idempotent: calling it repeatedly with the same or later nowUnix never
+	// re-rolls or duplicates a bucket already written. Backends that don't
+	// distinguish resolutions (memStore) may no-op.
+	Downsample(nowUnix int64) error
 	// Close releases any resources held by the backend.
 	Close() error
 }
 
-// OpenStore constructs a SampleStore for the named backend rooted at dir.
+// StoreOptions configures a SampleStore's per-resolution retention policy
+// (docs/DESIGN-storage.md "Resolutions, downsampling & retention"). Zero
+// values are replaced with sensible defaults (48h/720h/720h) by each
+// backend's constructor, so callers may pass a bare StoreOptions{} to get
+// the documented defaults.
+type StoreOptions struct {
+	RawRetention    time.Duration
+	RollupRetention time.Duration
+	EventRetention  time.Duration
+}
+
+// defaultRawRetention/defaultRollupRetention/defaultEventRetention match the
+// defaults documented in docs/DESIGN-storage.md and config.Default().
+const (
+	defaultRawRetention    = 48 * time.Hour
+	defaultRollupRetention = 720 * time.Hour // 30d
+	defaultEventRetention  = 720 * time.Hour // 30d
+)
+
+// withDefaults returns opts with any zero/negative field replaced by the
+// package defaults.
+func (o StoreOptions) withDefaults() StoreOptions {
+	if o.RawRetention <= 0 {
+		o.RawRetention = defaultRawRetention
+	}
+	if o.RollupRetention <= 0 {
+		o.RollupRetention = defaultRollupRetention
+	}
+	if o.EventRetention <= 0 {
+		o.EventRetention = defaultEventRetention
+	}
+	return o
+}
+
+// PickResolution returns the coarsest resolution that still satisfies a
+// query over [from, to]: ResRaw when the range's start falls within the
+// high-resolution window (from >= nowUnix - rawRetention), else Res1m. This
+// mirrors docs/DESIGN-storage.md: "Query picks the coarsest resolution that
+// satisfies the requested range (recent = raw, long = 1m)". Pure function;
+// callers combine it with Query.
+func PickResolution(from, to int64, nowUnix int64, rawRetention time.Duration) Resolution {
+	cutoff := nowUnix - int64(rawRetention.Seconds())
+	if from >= cutoff {
+		return ResRaw
+	}
+	return Res1m
+}
+
+// OpenStore constructs a SampleStore for the named backend rooted at dir,
+// applying opts (retention policy) to it.
 //
 // This is the extension point called out in docs/DESIGN-storage.md: adding a
 // new backend (the "tsfile" default in s7, or a future "sqlite"/"remote")
 // means adding a case here, not touching any caller. "memory" is a reference
 // backend usable today: fully functional but non-persistent, intended for
 // tests and the storage.backend=memory config option.
-func OpenStore(backend, dir string) (SampleStore, error) {
+func OpenStore(backend, dir string, opts StoreOptions) (SampleStore, error) {
 	switch backend {
 	case "memory":
-		return newMemStore(), nil
+		return newMemStore(opts), nil
 	case "tsfile":
-		return newTSFileStore(dir)
+		return newTSFileStore(dir, opts)
 	default:
 		return nil, fmt.Errorf("storage backend %q not implemented yet", backend)
 	}
 }
 
-// memRetentionSeconds is a simple fixed retention window for the in-memory
-// backend. Real per-resolution retention policy (storage.raw_retention /
-// storage.rollup_retention) is a later task (s8) that applies to the tsfile
-// backend; memStore just needs "some" bound so long-running tests/processes
-// don't grow without limit.
-const memRetentionSeconds = 30 * 24 * 60 * 60 // 30 days
-
 // memStore is an in-memory reference implementation of SampleStore. It does
 // not downsample: Query returns whatever was Append-ed for the metric,
-// regardless of the requested Resolution (downsampling raw->1m is the
-// tsfile/s8 backend's job). Safe for concurrent use.
+// regardless of the requested Resolution, and Downsample is a no-op — a
+// single series backs every resolution, so nothing needs rolling up. Because
+// Res1m queries are served from the same raw series, Prune bounds it by
+// opts.RollupRetention (the longer of the two windows) rather than
+// RawRetention, so 1m-resolution history isn't lost early. Safe for
+// concurrent use.
 type memStore struct {
 	mu     sync.Mutex
 	series map[string][]Point
 	events []DownEvent
+	opts   StoreOptions
 }
 
-func newMemStore() *memStore {
-	return &memStore{series: make(map[string][]Point)}
+func newMemStore(opts StoreOptions) *memStore {
+	return &memStore{series: make(map[string][]Point), opts: opts.withDefaults()}
 }
 
 func (m *memStore) Append(ts int64, ms MetricSet) error {
@@ -142,11 +196,13 @@ func (m *memStore) Events(from, to int64) ([]DownEvent, error) {
 	return out, nil
 }
 
-// Prune drops points and events older than nowUnix - memRetentionSeconds.
+// Prune drops points older than nowUnix - RollupRetention (see the memStore
+// doc comment for why RollupRetention, not RawRetention, bounds the single
+// series) and events older than nowUnix - EventRetention.
 func (m *memStore) Prune(nowUnix int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cut := nowUnix - memRetentionSeconds
+	cut := nowUnix - int64(m.opts.RollupRetention.Seconds())
 	for metric, pts := range m.series {
 		kept := pts[:0:0]
 		for _, p := range pts {
@@ -156,14 +212,20 @@ func (m *memStore) Prune(nowUnix int64) error {
 		}
 		m.series[metric] = kept
 	}
+	eventCut := nowUnix - int64(m.opts.EventRetention.Seconds())
 	kept := m.events[:0:0]
 	for _, e := range m.events {
-		if e.End >= cut {
+		if e.End >= eventCut {
 			kept = append(kept, e)
 		}
 	}
 	m.events = kept
 	return nil
 }
+
+// Downsample is a no-op for memStore: it keeps only raw data and serves any
+// resolution from that same series (see the type doc comment), so there is
+// nothing to roll up.
+func (m *memStore) Downsample(nowUnix int64) error { return nil }
 
 func (m *memStore) Close() error { return nil }

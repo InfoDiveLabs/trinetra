@@ -3,10 +3,11 @@ package serverwatch
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestMemStoreAppendQuery(t *testing.T) {
-	s, err := OpenStore("memory", t.TempDir())
+	s, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestMemStoreAppendQuery(t *testing.T) {
 }
 
 func TestMemStoreEventsRoundTrip(t *testing.T) {
-	s, err := OpenStore("memory", t.TempDir())
+	s, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestMemStoreEventsRoundTrip(t *testing.T) {
 }
 
 func TestMemStorePrune(t *testing.T) {
-	s, err := OpenStore("memory", t.TempDir())
+	s, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestMemStorePrune(t *testing.T) {
 }
 
 func TestMemStoreConcurrentAppend(t *testing.T) {
-	s, err := OpenStore("memory", t.TempDir())
+	s, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,19 +191,81 @@ func TestMemStoreConcurrentAppend(t *testing.T) {
 }
 
 func TestOpenStoreBackendSelection(t *testing.T) {
-	if s, err := OpenStore("memory", t.TempDir()); err != nil {
+	if s, err := OpenStore("memory", t.TempDir(), StoreOptions{}); err != nil {
 		t.Fatalf("memory backend: %v", err)
 	} else {
 		defer s.Close()
 	}
 
-	if s, err := OpenStore("tsfile", t.TempDir()); err != nil {
+	if s, err := OpenStore("tsfile", t.TempDir(), StoreOptions{}); err != nil {
 		t.Fatalf("tsfile backend: %v", err)
 	} else {
 		defer s.Close()
 	}
 
-	if _, err := OpenStore("bogus", t.TempDir()); err == nil {
+	if _, err := OpenStore("bogus", t.TempDir(), StoreOptions{}); err == nil {
 		t.Fatal("bogus backend: want error, got nil")
+	}
+}
+
+// TestOpenStoreOptionsPlumbed asserts that a StoreOptions passed to OpenStore
+// actually governs Prune for both backends: a custom, short RawRetention
+// should cause data older than that window (but within the default 30d) to
+// be pruned, which would NOT be pruned under the package defaults.
+func TestOpenStoreOptionsPlumbed(t *testing.T) {
+	const day = int64(86400)
+	now := int64(60 * day)
+	opts := StoreOptions{RawRetention: time.Hour, RollupRetention: time.Hour, EventRetention: time.Hour}
+
+	for _, backend := range []string{"memory", "tsfile"} {
+		t.Run(backend, func(t *testing.T) {
+			s, err := OpenStore(backend, t.TempDir(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+
+			if err := s.Append(now-2*day, MetricSet{"cpu": 1}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Append(now-1, MetricSet{"cpu": 2}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Prune(now); err != nil {
+				t.Fatal(err)
+			}
+			pts, err := s.Query("cpu", 0, now, ResRaw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pts) != 1 || pts[0].TS != now-1 {
+				t.Fatalf("%s: after prune with 1h retention, points = %+v, want just the recent one", backend, pts)
+			}
+		})
+	}
+}
+
+func TestPickResolution(t *testing.T) {
+	const day = int64(86400)
+	now := int64(100 * day)
+	rawRetention := 48 * time.Hour
+
+	cases := []struct {
+		name string
+		from int64
+		want Resolution
+	}{
+		{"well within raw window", now - int64(time.Hour.Seconds()), ResRaw},
+		{"exactly at the boundary", now - int64(rawRetention.Seconds()), ResRaw},
+		{"just past the boundary", now - int64(rawRetention.Seconds()) - 1, Res1m},
+		{"far in the past", now - 30*day, Res1m},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := PickResolution(tc.from, now, now, rawRetention)
+			if got != tc.want {
+				t.Fatalf("PickResolution(from=%d, now=%d, rawRetention=%v) = %v, want %v", tc.from, now, rawRetention, got, tc.want)
+			}
+		})
 	}
 }

@@ -474,3 +474,106 @@ func TestStorageBackendPersistsAcrossSaveLoad(t *testing.T) {
 		t.Fatalf("storage.backend after save/load = %q, want memory", got)
 	}
 }
+
+func TestStorageRetentionDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("storage.raw_retention"); got != "48h" {
+		t.Fatalf("storage.raw_retention default = %q, want 48h", got)
+	}
+	if got, _ := c.Get("storage.rollup_retention"); got != "720h" {
+		t.Fatalf("storage.rollup_retention default = %q, want 720h", got)
+	}
+
+	if err := c.Set("storage.raw_retention", "24h"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("storage.raw_retention"); got != "24h" {
+		t.Fatalf("storage.raw_retention after set = %q, want 24h", got)
+	}
+	if err := c.Set("storage.rollup_retention", "336h"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("storage.rollup_retention"); got != "336h" {
+		t.Fatalf("storage.rollup_retention after set = %q, want 336h", got)
+	}
+
+	if err := c.Unset("storage.raw_retention"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("storage.raw_retention"); got != "48h" {
+		t.Fatalf("storage.raw_retention after unset = %q, want default 48h", got)
+	}
+	if err := c.Unset("storage.rollup_retention"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("storage.rollup_retention"); got != "720h" {
+		t.Fatalf("storage.rollup_retention after unset = %q, want default 720h", got)
+	}
+}
+
+func TestStorageRetentionRejectsBadDuration(t *testing.T) {
+	c := Default()
+	if err := c.Set("storage.raw_retention", "banana"); err == nil {
+		t.Fatal("storage.raw_retention set to banana: want error, got nil")
+	}
+	if got, _ := c.Get("storage.raw_retention"); got != "48h" {
+		t.Fatalf("storage.raw_retention after rejected set = %q, want unchanged 48h", got)
+	}
+	if err := c.Set("storage.rollup_retention", "banana"); err == nil {
+		t.Fatal("storage.rollup_retention set to banana: want error, got nil")
+	}
+	if got, _ := c.Get("storage.rollup_retention"); got != "720h" {
+		t.Fatalf("storage.rollup_retention after rejected set = %q, want unchanged 720h", got)
+	}
+	// Zero/negative durations are not useful retention windows either.
+	if err := c.Set("storage.raw_retention", "0h"); err == nil {
+		t.Fatal("storage.raw_retention set to 0h: want error, got nil")
+	}
+	if err := c.Set("storage.raw_retention", "-1h"); err == nil {
+		t.Fatal("storage.raw_retention set to -1h: want error, got nil")
+	}
+}
+
+func TestStorageRetentionPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("storage.raw_retention", "12h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("storage.rollup_retention", "168h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("storage.raw_retention"); got != "12h" {
+		t.Fatalf("storage.raw_retention after save/load = %q, want 12h", got)
+	}
+	if got, _ := c2.Get("storage.rollup_retention"); got != "168h" {
+		t.Fatalf("storage.rollup_retention after save/load = %q, want 168h", got)
+	}
+}
+
+func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	// Simulate a config.json written before storage retention keys existed.
+	if err := os.WriteFile(p, []byte(`{"storage":{"backend":"tsfile"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("storage.raw_retention"); got != "48h" {
+		t.Fatalf("backfilled storage.raw_retention = %q, want 48h", got)
+	}
+	if got, _ := c.Get("storage.rollup_retention"); got != "720h" {
+		t.Fatalf("backfilled storage.rollup_retention = %q, want 720h", got)
+	}
+}

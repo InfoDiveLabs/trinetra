@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is persisted as JSON. Zero values mean "use default"; Get resolves
@@ -52,6 +53,12 @@ type Config struct {
 		// internal/serverwatch/samplestore.go and docs/DESIGN-storage.md).
 		// One of validStorageBackends; defaults to "tsfile".
 		Backend string `json:"backend,omitempty"`
+		// RawRetention/RollupRetention are duration strings (time.ParseDuration
+		// syntax, e.g. "48h") controlling how long the tsfile backend keeps raw
+		// and 1m-rollup samples respectively (see docs/DESIGN-storage.md). The
+		// event retention window reuses RollupRetention. Defaults: 48h / 720h.
+		RawRetention    string `json:"raw_retention,omitempty"`
+		RollupRetention string `json:"rollup_retention,omitempty"`
 	} `json:"storage"`
 }
 
@@ -95,6 +102,20 @@ func validateStorageBackend(s string) error {
 		return nil
 	}
 	return fmt.Errorf("storage.backend %q invalid: want one of tsfile|memory", s)
+}
+
+// validateRetentionDuration rejects anything time.ParseDuration can't parse,
+// plus non-positive durations (a zero or negative retention window is never
+// a useful policy: it would mean "keep nothing").
+func validateRetentionDuration(key, s string) error {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("%s %q invalid: %w (want a duration like 48h)", key, s, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%s %q invalid: must be positive", key, s)
+	}
+	return nil
 }
 
 // validateMinSeverity accepts "" (meaning "use the permissive default") or
@@ -216,6 +237,8 @@ func Default() *Config {
 	c.Thresholds.SwapPct = 50
 	c.CriticalOverridesQuiet = true
 	c.Storage.Backend = "tsfile"
+	c.Storage.RawRetention = "48h"
+	c.Storage.RollupRetention = "720h"
 	return c
 }
 
@@ -246,6 +269,12 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Storage.Backend == "" {
 		c.Storage.Backend = "tsfile"
+	}
+	if c.Storage.RawRetention == "" {
+		c.Storage.RawRetention = "48h"
+	}
+	if c.Storage.RollupRetention == "" {
+		c.Storage.RollupRetention = "720h"
 	}
 	return c, nil
 }
@@ -316,6 +345,10 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.CriticalOverridesQuiet), true
 	case "storage.backend":
 		return c.Storage.Backend, true
+	case "storage.raw_retention":
+		return c.Storage.RawRetention, true
+	case "storage.rollup_retention":
+		return c.Storage.RollupRetention, true
 	}
 	return "", false
 }
@@ -416,6 +449,16 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.Storage.Backend = val
+	case "storage.raw_retention":
+		if err := validateRetentionDuration("storage.raw_retention", val); err != nil {
+			return err
+		}
+		c.Storage.RawRetention = val
+	case "storage.rollup_retention":
+		if err := validateRetentionDuration("storage.rollup_retention", val); err != nil {
+			return err
+		}
+		c.Storage.RollupRetention = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
