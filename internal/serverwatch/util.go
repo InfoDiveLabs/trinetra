@@ -31,3 +31,11 @@ func trimSpace(b []byte) []byte {
 }
 
 func pidFile() string { return stateDir + "/serverwatch.pid" }
+
+func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
