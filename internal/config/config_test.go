@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -52,6 +53,26 @@ func TestSaveLoad(t *testing.T) {
 	}
 	if got, _ := c2.Get("thresholds.disk_pct"); got != "80" {
 		t.Fatalf("disk_pct = %q", got)
+	}
+}
+
+func TestSaveTightensPermissions(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	// Pre-create the file with looser 0644 perms.
+	if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := Default()
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("mode = %o, want 600", perm)
 	}
 }
 

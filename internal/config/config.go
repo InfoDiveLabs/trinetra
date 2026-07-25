@@ -90,7 +90,13 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return err
+	}
+	// os.WriteFile only applies the mode when it creates the file; if the file
+	// pre-existed with looser perms it keeps them. This file holds the plaintext
+	// telegram token, so tighten to 0600 on every save regardless of prior mode.
+	return os.Chmod(path, 0o600)
 }
 
 // Get returns the effective string value for a dotted key.
