@@ -23,6 +23,7 @@ type Check struct {
 	Threshold    float64
 	HasThreshold bool
 	Critical     bool
+	Interval     int // seconds between samples for this metric's tier
 }
 
 type Event struct {
@@ -46,7 +47,7 @@ func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma float64, nowUni
 			events = append(events, Event{Key: c.Key, Kind: "recover", Text: c.Key + " back to normal", Critical: c.Critical})
 		}
 		// feed baseline AFTER evaluating so a spike doesn't hide itself
-		b.Observe(c.Key, c.Value)
+		b.Observe(c.Key, c.Value, c.Interval)
 	}
 	return events
 }

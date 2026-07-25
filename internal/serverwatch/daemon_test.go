@@ -38,6 +38,32 @@ func TestBuildChecksHonorsConfig(t *testing.T) {
 	}
 }
 
+func TestBuildChecksSetsIntervalPerTier(t *testing.T) {
+	c := config.Default()
+	c.FastInterval = 5
+	c.SampleInterval = 60
+	snap := Snapshot{
+		CPU:     50,
+		MemPct:  40,
+		SwapPct: 1,
+		TempC:   55,
+		Disks:   map[string]float64{"/": 85},
+	}
+	checks := buildChecks(snap, c, nil)
+	got := map[string]int{}
+	for _, ch := range checks {
+		got[ch.Key] = ch.Interval
+	}
+	for _, key := range []string{"cpu", "mem", "swap", "temp"} {
+		if got[key] != 5 {
+			t.Fatalf("%s.Interval = %d, want fast_interval 5", key, got[key])
+		}
+	}
+	if got["disk:/"] != 60 {
+		t.Fatalf("disk:/.Interval = %d, want sample_interval 60", got["disk:/"])
+	}
+}
+
 func TestBuildChecksDiscovery(t *testing.T) {
 	c := config.Default()
 	snap := Snapshot{

@@ -16,23 +16,25 @@ import (
 
 func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert) []Check {
 	var checks []Check
-	add := func(key string, val, thr float64, hasThr, crit bool) {
+	fastInterval := c.FastInterval
+	slowInterval := c.SampleInterval
+	add := func(key string, val, thr float64, hasThr, crit bool, interval int) {
 		if !c.TargetEnabled(key) {
 			return
 		}
 		if o, ok := c.TargetThreshold(key); ok {
 			thr, hasThr = o, true
 		}
-		checks = append(checks, Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit})
+		checks = append(checks, Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: interval})
 	}
-	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false)
-	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false)
-	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false)
+	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false, fastInterval)
+	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false, fastInterval)
+	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false, fastInterval)
 	if snap.TempC > 0 {
-		add("temp", snap.TempC, c.Thresholds.TempC, true, false)
+		add("temp", snap.TempC, c.Thresholds.TempC, true, false, fastInterval)
 	}
 	for mount, pct := range snap.Disks {
-		add("disk:"+mount, pct, c.Thresholds.DiskPct, true, true)
+		add("disk:"+mount, pct, c.Thresholds.DiskPct, true, true, slowInterval)
 	}
 	// docker containers: running=ok(0), anything else=bad(1)
 	for name, state := range snap.Containers {
@@ -44,7 +46,7 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 		if state != "running" {
 			v = 1
 		}
-		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true})
+		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
 	}
 	// SMART: FAILED=bad(1), otherwise ok(0)
 	for dev, health := range snap.SmartHealth {
@@ -56,7 +58,7 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 		if health == "FAILED" {
 			v = 1
 		}
-		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true})
+		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
 	}
 	// systemd: only failed units appear in the list. Emit value=1 for each,
 	// AND value=0 for any active service:* alert no longer failed (so it recovers).
@@ -67,11 +69,11 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 		if !c.TargetEnabled(key) {
 			continue
 		}
-		checks = append(checks, Check{Key: key, Value: 1, Threshold: 1, HasThreshold: true, Critical: true})
+		checks = append(checks, Check{Key: key, Value: 1, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
 	}
 	for key := range active {
 		if strings.HasPrefix(key, "service:") && !failed[key] {
-			checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true})
+			checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
 		}
 	}
 	// docker/smart recovery sweep: if a container is REMOVED (not just stopped)
@@ -82,12 +84,12 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 	for key := range active {
 		if strings.HasPrefix(key, "docker:") {
 			if _, ok := snap.Containers[strings.TrimPrefix(key, "docker:")]; !ok {
-				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true})
+				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
 			}
 		}
 		if strings.HasPrefix(key, "smart:") {
 			if _, ok := snap.SmartHealth[strings.TrimPrefix(key, "smart:")]; !ok {
-				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true})
+				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
 			}
 		}
 	}
