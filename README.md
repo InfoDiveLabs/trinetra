@@ -25,6 +25,9 @@ sudo serverwatch telegram set-token <token>   # only required setting; chat id i
                                                # from your first message to the bot
 ```
 
+Get the `<token>` from Telegram's **@BotFather** (`/newbot`, follow the prompts,
+copy the token it gives you) before running `telegram set-token`.
+
 Send the bot any message once so it learns your chat id, then try `/stats` or
 `/help`. From here everything else is optional — defaults already work.
 
@@ -58,7 +61,9 @@ serverwatch help                          this usage text
 
 Every `config`/`monitor`/`schedule`/`quiet-hours`/`healthchecks`/`telegram`
 write updates `config.json` and sends `SIGHUP` to the running daemon, which
-reloads live — no restart needed.
+reloads live — **except `sample_interval`**, which takes effect only on the
+next daemon restart (`systemctl restart serverwatch`), because the sampler
+ticker is created once at startup and not reset on reload.
 
 ### Config keys
 
@@ -167,10 +172,13 @@ speak. Set it with `serverwatch healthchecks set <url>`; turn it off with
 - **Threshold/baseline alerts** — one message when a check crosses (⚠️, or 🚨
   if critical), one ✅ recovery message when it clears; no repeat spam while
   sustained (hysteresis, tracked in `alerts.json`).
-- **Daily digest** — `serverwatch schedule daily HH:MM`: sample count, peak
-  CPU/mem, and a downtime summary for the prior 24h.
+- **Daily digest** — `serverwatch schedule daily HH:MM`: currently reports the
+  downtime summary for the prior 24h. (Peak CPU/mem stats are part of the
+  message format but not yet populated — they render as 0 until a later task
+  wires sample lookback in.)
 - **Weekly rollup** — `serverwatch schedule weekly <dow>@HH:MM` (e.g.
-  `mon@09:00`): same digest content over the prior period.
+  `mon@09:00`): same digest content over the prior period, with the same
+  peak-stats caveat.
 
 `quiet-hours HH-HH` (wraps midnight, e.g. `23-8`) suppresses non-critical
 alerts in that window; a check whose `Critical` flag is set (currently: any
