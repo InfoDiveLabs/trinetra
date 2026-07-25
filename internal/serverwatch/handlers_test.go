@@ -66,6 +66,26 @@ func TestHandleHistory(t *testing.T) {
 	}
 }
 
+func TestHandleDockerAndServices(t *testing.T) {
+	st := NewStore(t.TempDir(), fixedClock{time.Unix(1000, 0)})
+	snap := Snapshot{
+		Containers:  map[string]string{"web": "running", "db": "exited"},
+		FailedUnits: []string{"nginx.service"},
+	}
+	d := handleCommand("/docker", st, snap)
+	if !strings.Contains(d, "web") || !strings.Contains(d, "db") {
+		t.Fatalf("/docker = %q", d)
+	}
+	s := handleCommand("/services", st, snap)
+	if !strings.Contains(s, "nginx.service") {
+		t.Fatalf("/services = %q", s)
+	}
+	empty := handleCommand("/services", st, Snapshot{})
+	if !strings.Contains(empty, "no failed units") {
+		t.Fatalf("/services empty = %q", empty)
+	}
+}
+
 func TestInQuietHours(t *testing.T) {
 	// window 23-8 wraps midnight
 	at := func(h int) time.Time { return time.Date(2026, 7, 25, h, 0, 0, 0, time.UTC) }

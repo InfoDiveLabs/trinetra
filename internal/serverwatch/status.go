@@ -16,6 +16,9 @@ type Snapshot struct {
 	Disks        map[string]float64 `json:"disks"`
 	Online       bool               `json:"online"`
 	DockerAccess string             `json:"docker_access"`
+	Containers   map[string]string  `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
+	FailedUnits  []string           `json:"failed_units,omitempty"` // systemctl --failed unit names
+	SmartHealth  map[string]string  `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
 }
 
 func renderStatus(s Snapshot) string {
@@ -52,6 +55,39 @@ func renderDisks(disks map[string]float64) string {
 	b.WriteString("disks:")
 	for _, m := range mts {
 		fmt.Fprintf(&b, "\n  %s %.0f%%", m, disks[m])
+	}
+	return b.String()
+}
+
+func renderDocker(cs map[string]string) string {
+	if len(cs) == 0 {
+		return "docker: no containers (or unavailable)"
+	}
+	names := make([]string, 0, len(cs))
+	for n := range cs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	b.WriteString("containers:")
+	for _, n := range names {
+		mark := "✅"
+		if cs[n] != "running" {
+			mark = "❌"
+		}
+		fmt.Fprintf(&b, "\n  %s %s (%s)", mark, n, cs[n])
+	}
+	return b.String()
+}
+
+func renderServices(units []string) string {
+	if len(units) == 0 {
+		return "systemd: no failed units ✅"
+	}
+	var b strings.Builder
+	b.WriteString("failed units:")
+	for _, u := range units {
+		fmt.Fprintf(&b, "\n  ❌ %s", u)
 	}
 	return b.String()
 }

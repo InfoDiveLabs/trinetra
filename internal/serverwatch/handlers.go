@@ -13,6 +13,8 @@ const helpText = `commands:
 /net — connectivity
 /history [days] — downtime history (default 7)
 /down — recent downtime events
+/docker — container states
+/services — failed systemd units
 /help — this message`
 
 func handleCommand(text string, st *Store, snap Snapshot) string {
@@ -40,6 +42,10 @@ func handleCommand(text string, st *Store, snap Snapshot) string {
 			return "error reading downtime: " + err.Error()
 		}
 		return formatDowntimeList(evs)
+	case "/docker":
+		return renderDocker(snap.Containers)
+	case "/services":
+		return renderServices(snap.FailedUnits)
 	case "/help":
 		return helpText
 	default:

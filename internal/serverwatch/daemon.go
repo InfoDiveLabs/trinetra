@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 	"serverwatch/internal/telegram"
 )
 
-func buildChecks(snap Snapshot, c *config.Config) []Check {
+func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert) []Check {
 	var checks []Check
 	add := func(key string, val, thr float64, hasThr, crit bool) {
 		if !c.TargetEnabled(key) {
@@ -32,6 +33,46 @@ func buildChecks(snap Snapshot, c *config.Config) []Check {
 	}
 	for mount, pct := range snap.Disks {
 		add("disk:"+mount, pct, c.Thresholds.DiskPct, true, true)
+	}
+	// docker containers: running=ok(0), anything else=bad(1)
+	for name, state := range snap.Containers {
+		key := "docker:" + name
+		if !c.TargetEnabled(key) {
+			continue
+		}
+		v := 0.0
+		if state != "running" {
+			v = 1
+		}
+		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true})
+	}
+	// SMART: FAILED=bad(1), otherwise ok(0)
+	for dev, health := range snap.SmartHealth {
+		key := "smart:" + dev
+		if !c.TargetEnabled(key) {
+			continue
+		}
+		v := 0.0
+		if health == "FAILED" {
+			v = 1
+		}
+		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true})
+	}
+	// systemd: only failed units appear in the list. Emit value=1 for each,
+	// AND value=0 for any active service:* alert no longer failed (so it recovers).
+	failed := map[string]bool{}
+	for _, u := range snap.FailedUnits {
+		key := "service:" + u
+		failed[key] = true
+		if !c.TargetEnabled(key) {
+			continue
+		}
+		checks = append(checks, Check{Key: key, Value: 1, Threshold: 1, HasThreshold: true, Critical: true})
+	}
+	for key := range active {
+		if strings.HasPrefix(key, "service:") && !failed[key] {
+			checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true})
+		}
 	}
 	return checks
 }
@@ -86,6 +127,37 @@ func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snap
 		}
 	}
 	snap.Online = checkOnline(defaultConnHosts, realDial)
+
+	// docker containers (ps -a lists all, so state is always known -> recovery works)
+	if da.available {
+		if cs, err := da.list(x); err == nil {
+			snap.Containers = map[string]string{}
+			for _, ct := range cs {
+				snap.Containers[ct.Name] = ct.State
+			}
+		}
+	}
+	// failed systemd units
+	if out, err := runMaybeSudo(x, "systemctl", "--failed", "--plain", "--no-legend"); err == nil {
+		snap.FailedUnits = parseFailedUnits(string(out))
+	}
+	// SMART health for every discovered device (all queried each cycle -> recovery works)
+	if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
+		snap.SmartHealth = map[string]string{}
+		for _, dev := range parseSmartScan(string(out)) {
+			h := "UNKNOWN"
+			if ho, herr := runMaybeSudo(x, "smartctl", "-H", dev); herr == nil {
+				if passed, ok := parseSmartHealth(string(ho)); ok {
+					if passed {
+						h = "PASSED"
+					} else {
+						h = "FAILED"
+					}
+				}
+			}
+			snap.SmartHealth[dev] = h
+		}
+	}
 	return snap
 }
 
@@ -173,7 +245,7 @@ func cmdDaemon(args []string) int {
 		}
 
 		// anomalies
-		events := alerts.Evaluate(buildChecks(snap, c), baseline, c.BaselineSigma, now.Unix())
+		events := alerts.Evaluate(buildChecks(snap, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
 		if tg := tgClient(c); tg != nil {
 			quiet := inQuietHours(c.QuietHours, now)
 			for _, e := range events {

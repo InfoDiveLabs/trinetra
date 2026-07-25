@@ -16,7 +16,7 @@ func TestBuildChecksHonorsConfig(t *testing.T) {
 		MemPct: 40,
 		Disks:  map[string]float64{"/": 85, "/boot": 99},
 	}
-	checks := buildChecks(snap, c)
+	checks := buildChecks(snap, c, nil)
 	var haveRoot, haveBoot bool
 	for _, ch := range checks {
 		if ch.Key == "disk:/" {
@@ -34,6 +34,31 @@ func TestBuildChecksHonorsConfig(t *testing.T) {
 	}
 	if haveBoot {
 		t.Fatal("disabled target must not produce a check")
+	}
+}
+
+func TestBuildChecksDiscovery(t *testing.T) {
+	c := config.Default()
+	snap := Snapshot{
+		Containers:  map[string]string{"web": "running", "db": "exited"},
+		FailedUnits: []string{"nginx.service"},
+		SmartHealth: map[string]string{"/dev/sda": "PASSED", "/dev/sdb": "FAILED"},
+	}
+	active := map[string]ActiveAlert{"service:cron.service": {Since: 1}} // was failing, now recovered
+	checks := buildChecks(snap, c, active)
+	want := map[string]float64{
+		"docker:web": 0, "docker:db": 1,
+		"smart:/dev/sda": 0, "smart:/dev/sdb": 1,
+		"service:nginx.service": 1, "service:cron.service": 0, // 0 => recovery
+	}
+	got := map[string]float64{}
+	for _, ch := range checks {
+		got[ch.Key] = ch.Value
+	}
+	for k, v := range want {
+		if gv, ok := got[k]; !ok || gv != v {
+			t.Fatalf("check %s = %v (present=%v), want %v", k, gv, ok, v)
+		}
 	}
 }
 
