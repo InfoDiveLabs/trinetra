@@ -115,6 +115,17 @@ func cmdDaemon(args []string) int {
 		}
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
+	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
+	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
+	// the in-use struct: getCfg readers read fields after releasing the RLock.
+	setChatID := func(id string) {
+		mu.Lock()
+		defer mu.Unlock()
+		nc := *cfg // shallow struct copy
+		nc.Telegram.ChatID = id
+		cfg = &nc // swap pointer; existing readers keep old struct
+		_ = saveCfg(cfg)
+	}
 
 	// state
 	baseline := NewBaseline()
@@ -139,7 +150,7 @@ func cmdDaemon(args []string) int {
 	}
 
 	// telegram long-poller (owns its own prevCPU internally)
-	go pollLoop(getCfg, st, x, fs, da)
+	go pollLoop(getCfg, setChatID, st, x, fs, da)
 
 	// sampler loop
 	var lastDaily, lastWeekly time.Time
@@ -205,18 +216,19 @@ func dailyDigestNow(st *Store, now time.Time) string {
 	return buildDailyDigest(nil, downs)
 }
 
-func pollLoop(getCfg func() *config.Config, st *Store, x Exec, fs FileSource, da dockerAccess) {
+func pollLoop(getCfg func() *config.Config, setChatID func(string), st *Store, x Exec, fs FileSource, da dockerAccess) {
 	// The poller owns its CPUStat; it is never shared with the sampler goroutine.
-	var prevCPU CPUStat
 	offset := 0
+	var prevCPU CPUStat
 	for {
 		c := getCfg()
-		tg := tgClient(c)
-		if tg == nil {
-			// no token yet; try to capture chat id is impossible without token.
+		// GetUpdates needs only a token; gate on token so we can learn the chat
+		// id from the first inbound message (zero-config Telegram setup).
+		if c.Telegram.Token == "" {
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		tg := telegram.New(c.Telegram.Token, c.Telegram.ChatID)
 		ups, err := tg.GetUpdates(offset, 50)
 		if err != nil {
 			time.Sleep(3 * time.Second)
@@ -224,10 +236,11 @@ func pollLoop(getCfg func() *config.Config, st *Store, x Exec, fs FileSource, da
 		}
 		for _, u := range ups {
 			offset = u.UpdateID + 1
-			// auto-capture chat id on first message
+			// auto-capture chat id on first message (race-safe pointer swap)
 			if c.Telegram.ChatID == "" && u.ChatID != "" {
-				c.Telegram.ChatID = u.ChatID
-				_ = saveCfg(c)
+				setChatID(u.ChatID)
+				c = getCfg()
+				tg = telegram.New(c.Telegram.Token, c.Telegram.ChatID)
 			}
 			snap := collectSnapshot(x, fs, &prevCPU, da)
 			snap.TS = time.Now().Unix()
