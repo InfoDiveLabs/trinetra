@@ -87,7 +87,11 @@ func copyFile(src, dst string, perm os.FileMode) error {
 
 func cmdTelegram(args []string) int {
 	if len(args) == 2 && args[0] == "set-token" {
-		c, _ := loadCfg()
+		c, err := loadCfg()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		_ = c.Set("telegram.token", args[1])
 		if err := saveCfg(c); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -101,7 +105,11 @@ func cmdTelegram(args []string) int {
 }
 
 func cmdMonitor(args []string) int {
-	c, _ := loadCfg()
+	c, err := loadCfg()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: monitor list|enable|disable|threshold")
 		return 2
@@ -149,21 +157,33 @@ func cmdMonitor(args []string) int {
 }
 
 func cmdSchedule(args []string) int {
-	c, _ := loadCfg()
+	c, err := loadCfg()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if len(args) < 1 {
 		fmt.Fprintln(stderr, "usage: schedule daily HH:MM | weekly dow@HH:MM | off")
 		return 2
 	}
 	switch args[0] {
 	case "daily":
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: schedule daily HH:MM | weekly dow@HH:MM | off")
+			return 2
+		}
 		val := ""
-		if len(args) == 2 && args[1] != "off" {
+		if args[1] != "off" {
 			val = args[1]
 		}
 		_ = c.Set("schedule.daily", val)
 	case "weekly":
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: schedule daily HH:MM | weekly dow@HH:MM | off")
+			return 2
+		}
 		val := ""
-		if len(args) == 2 && args[1] != "off" {
+		if args[1] != "off" {
 			val = args[1]
 		}
 		_ = c.Set("schedule.weekly", val)
@@ -180,9 +200,17 @@ func cmdSchedule(args []string) int {
 }
 
 func cmdQuietHours(args []string) int {
-	c, _ := loadCfg()
+	c, err := loadCfg()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: quiet-hours <HH-HH> | off")
+		return 2
+	}
 	val := ""
-	if len(args) == 1 && args[0] != "off" {
+	if args[0] != "off" {
 		val = args[0]
 	}
 	_ = c.Set("quiet_hours", val)
@@ -195,7 +223,11 @@ func cmdQuietHours(args []string) int {
 }
 
 func cmdHealthchecks(args []string) int {
-	c, _ := loadCfg()
+	c, err := loadCfg()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if len(args) == 2 && args[0] == "set" {
 		_ = c.Set("healthchecks.url", args[1])
 	} else if len(args) == 1 && args[0] == "off" {
