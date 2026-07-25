@@ -2,6 +2,7 @@ package serverwatch
 
 import (
 	"fmt"
+	"strings"
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/telegram"
@@ -144,7 +145,7 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 		}
 		return &ntfyNotifier{
 			name:   cc.Name,
-			server: server,
+			server: strings.TrimRight(server, "/"),
 			topic:  topic,
 			token:  cc.Settings["token"],
 		}, nil
@@ -159,7 +160,7 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 		}
 		return &gotifyNotifier{
 			name:   cc.Name,
-			server: server,
+			server: strings.TrimRight(server, "/"),
 			token:  token,
 		}, nil
 	default:

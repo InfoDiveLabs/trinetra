@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -83,10 +84,10 @@ func (n *ntfyNotifier) Send(ctx context.Context, a Alert) error {
 		return err
 	}
 
-	url := n.server + "/" + n.topic
+	reqURL := n.server + "/" + n.topic
 	body := formatAlert(a)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBufferString(body))
 	if err != nil {
 		return fmt.Errorf("ntfy %s: build request: %w", n.name, err)
 	}
@@ -182,8 +183,12 @@ func (g *gotifyNotifier) Send(ctx context.Context, a Alert) error {
 		return fmt.Errorf("gotify %s: encode message: %w", g.name, err)
 	}
 
-	url := fmt.Sprintf("%s/message?token=%s", g.server, g.token)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	// g.token is url.QueryEscape'd since Gotify tokens are configuration
+	// (not validated ahead of time here) and could in principle contain
+	// characters ('&', '=', '%', ...) that would otherwise corrupt the query
+	// string or smuggle extra parameters into it.
+	reqURL := fmt.Sprintf("%s/message?token=%s", g.server, url.QueryEscape(g.token))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("gotify %s: build request: %w", g.name, err)
 	}
