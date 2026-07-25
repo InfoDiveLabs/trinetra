@@ -35,8 +35,26 @@ func Main(args []string) int {
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, usage)
 		return 0
-	// Later tasks add: install, uninstall, daemon, telegram, monitor,
-	// schedule, quiet-hours, healthchecks, status, doctor.
+	case "install":
+		return cmdInstall(args[1:])
+	case "uninstall":
+		return cmdUninstall(args[1:])
+	case "daemon":
+		return cmdDaemon(args[1:])
+	case "telegram":
+		return cmdTelegram(args[1:])
+	case "monitor":
+		return cmdMonitor(args[1:])
+	case "schedule":
+		return cmdSchedule(args[1:])
+	case "quiet-hours":
+		return cmdQuietHours(args[1:])
+	case "healthchecks":
+		return cmdHealthchecks(args[1:])
+	case "status":
+		return cmdStatus(args[1:])
+	case "doctor":
+		return cmdDoctor(args[1:])
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s\n", args[0], usage)
 		return 2
@@ -47,7 +65,17 @@ const usage = `serverwatch — home server monitor
 usage:
   serverwatch config get [key]
   serverwatch config set <key> <value>
-  serverwatch config unset <key>`
+  serverwatch config unset <key>
+  serverwatch install
+  serverwatch uninstall [--purge]
+  serverwatch daemon
+  serverwatch telegram set-token <token>
+  serverwatch monitor list|enable|disable|threshold
+  serverwatch schedule daily HH:MM | weekly dow@HH:MM | off
+  serverwatch quiet-hours <HH-HH>|off
+  serverwatch healthchecks set <url> | off
+  serverwatch status
+  serverwatch doctor`
 
 func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
 
