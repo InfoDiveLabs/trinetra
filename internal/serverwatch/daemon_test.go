@@ -119,6 +119,138 @@ func TestBuildChecksDockerSmartRecovery(t *testing.T) {
 	}
 }
 
+func TestBuildFastChecksOnlyCheapMetrics(t *testing.T) {
+	c := config.Default()
+	snap := Snapshot{
+		CPU:         50,
+		MemPct:      40,
+		SwapPct:     1,
+		TempC:       55,
+		Disks:       map[string]float64{"/": 85},
+		Containers:  map[string]string{"web": "running"},
+		FailedUnits: []string{"nginx.service"},
+		SmartHealth: map[string]string{"/dev/sda": "PASSED"},
+	}
+	checks := buildFastChecks(snap, c)
+	got := map[string]bool{}
+	for _, ch := range checks {
+		got[ch.Key] = true
+	}
+	want := []string{"cpu", "mem", "swap", "temp"}
+	if len(got) != len(want) {
+		t.Fatalf("buildFastChecks returned %d checks (%v), want exactly %v", len(got), keysOf(got), want)
+	}
+	for _, k := range want {
+		if !got[k] {
+			t.Errorf("buildFastChecks missing %q", k)
+		}
+	}
+	for _, ch := range checks {
+		if ch.Interval != c.FastInterval {
+			t.Errorf("%s.Interval = %d, want fast_interval %d", ch.Key, ch.Interval, c.FastInterval)
+		}
+	}
+}
+
+func TestBuildSlowChecksOnlyExpensiveMetrics(t *testing.T) {
+	c := config.Default()
+	snap := Snapshot{
+		CPU:         50, // must be ignored by buildSlowChecks
+		MemPct:      40,
+		Disks:       map[string]float64{"/": 85},
+		Containers:  map[string]string{"web": "running"},
+		FailedUnits: []string{"nginx.service"},
+		SmartHealth: map[string]string{"/dev/sda": "PASSED"},
+	}
+	active := map[string]ActiveAlert{"service:cron.service": {Since: 1}}
+	checks := buildSlowChecks(snap, c, active)
+	got := map[string]bool{}
+	for _, ch := range checks {
+		got[ch.Key] = true
+		if ch.Key == "cpu" || ch.Key == "mem" || ch.Key == "swap" || ch.Key == "temp" {
+			t.Fatalf("buildSlowChecks must not emit fast-tier key %q", ch.Key)
+		}
+		if ch.Interval != c.SampleInterval {
+			t.Errorf("%s.Interval = %d, want sample_interval %d", ch.Key, ch.Interval, c.SampleInterval)
+		}
+	}
+	for _, k := range []string{"disk:/", "docker:web", "service:nginx.service", "service:cron.service", "smart:/dev/sda"} {
+		if !got[k] {
+			t.Errorf("buildSlowChecks missing %q", k)
+		}
+	}
+}
+
+func keysOf(m map[string]bool) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+// TestFastSlowUnionMatchesBuildChecks guards against a check silently
+// dropping out of both tiers during future edits: the union of
+// buildFastChecks and buildSlowChecks must always contain exactly the same
+// keys as the combined buildChecks (kept as a thin fast+slow wrapper).
+func TestFastSlowUnionMatchesBuildChecks(t *testing.T) {
+	c := config.Default()
+	snap := Snapshot{
+		CPU: 50, MemPct: 40, SwapPct: 1, TempC: 55,
+		Disks:       map[string]float64{"/": 85, "/boot": 10},
+		Containers:  map[string]string{"web": "running", "db": "exited"},
+		FailedUnits: []string{"nginx.service"},
+		SmartHealth: map[string]string{"/dev/sda": "PASSED", "/dev/sdb": "FAILED"},
+	}
+	active := map[string]ActiveAlert{
+		"service:cron.service": {Since: 1},
+		"docker:old-web":       {Since: 1},
+		"smart:/dev/sdz":       {Since: 1},
+	}
+	keySet := func(cs []Check) map[string]bool {
+		m := map[string]bool{}
+		for _, c := range cs {
+			m[c.Key] = true
+		}
+		return m
+	}
+	union := keySet(buildFastChecks(snap, c))
+	for k := range keySet(buildSlowChecks(snap, c, active)) {
+		union[k] = true
+	}
+	all := keySet(buildChecks(snap, c, active))
+	if len(union) != len(all) {
+		t.Fatalf("fast+slow union = %v (%d keys), buildChecks = %v (%d keys)", keysOf(union), len(union), keysOf(all), len(all))
+	}
+	for k := range all {
+		if !union[k] {
+			t.Errorf("buildChecks key %q missing from fast+slow union", k)
+		}
+	}
+}
+
+func TestShouldHeartbeat(t *testing.T) {
+	cases := []struct {
+		name        string
+		last, now   int64
+		intervalSec int
+		want        bool
+	}{
+		{"before interval elapsed", 100, 129, 30, false},
+		{"exactly at interval", 100, 130, 30, true},
+		{"after interval", 100, 200, 30, true},
+		{"first heartbeat ever (last=0 sentinel)", 0, 1700000000, 30, true},
+		{"zero interval always heartbeats", 100, 101, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldHeartbeat(tc.last, tc.now, tc.intervalSec); got != tc.want {
+				t.Errorf("shouldHeartbeat(%d, %d, %d) = %v, want %v", tc.last, tc.now, tc.intervalSec, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPingHealthchecks(t *testing.T) {
 	called := ""
 	pingHealthchecks("http://hc/abc", func(u string) error { called = u; return nil })

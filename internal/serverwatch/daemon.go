@@ -14,27 +14,52 @@ import (
 	"serverwatch/internal/telegram"
 )
 
-func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert) []Check {
+// buildFastChecks builds anomaly Checks for the cheap, high-frequency
+// metrics (cpu/mem/swap/temp) that collectFast populates every fast tick.
+// These are safe to evaluate on every fast_interval tick.
+func buildFastChecks(snap Snapshot, c *config.Config) []Check {
 	var checks []Check
 	fastInterval := c.FastInterval
-	slowInterval := c.SampleInterval
-	add := func(key string, val, thr float64, hasThr, crit bool, interval int) {
+	add := func(key string, val, thr float64, hasThr, crit bool) {
 		if !c.TargetEnabled(key) {
 			return
 		}
 		if o, ok := c.TargetThreshold(key); ok {
 			thr, hasThr = o, true
 		}
-		checks = append(checks, Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: interval})
+		checks = append(checks, Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: fastInterval})
 	}
-	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false, fastInterval)
-	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false, fastInterval)
-	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false, fastInterval)
+	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false)
+	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false)
+	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false)
 	if snap.TempC > 0 {
-		add("temp", snap.TempC, c.Thresholds.TempC, true, false, fastInterval)
+		add("temp", snap.TempC, c.Thresholds.TempC, true, false)
+	}
+	return checks
+}
+
+// buildSlowChecks builds anomaly Checks for the expensive metrics
+// (disk/docker/service/smart) that collectSlow only refreshes on slow
+// ticks. active is the current AlertState.Active map: it drives the
+// service/docker/smart recovery sweeps below, which must fire a value=0
+// check for any active alert whose target has disappeared from the
+// snapshot entirely (removed container, vanished device, recovered
+// systemd unit), since the loop only calls this on slow ticks and an
+// alert must not stay stuck active between them.
+func buildSlowChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert) []Check {
+	var checks []Check
+	slowInterval := c.SampleInterval
+	add := func(key string, val, thr float64, hasThr, crit bool) {
+		if !c.TargetEnabled(key) {
+			return
+		}
+		if o, ok := c.TargetThreshold(key); ok {
+			thr, hasThr = o, true
+		}
+		checks = append(checks, Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: slowInterval})
 	}
 	for mount, pct := range snap.Disks {
-		add("disk:"+mount, pct, c.Thresholds.DiskPct, true, true, slowInterval)
+		add("disk:"+mount, pct, c.Thresholds.DiskPct, true, true)
 	}
 	// docker containers: running=ok(0), anything else=bad(1)
 	for name, state := range snap.Containers {
@@ -94,6 +119,29 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 		}
 	}
 	return checks
+}
+
+// buildChecks returns the full fast+slow check set. It exists for callers
+// that want a single, complete evaluation (tests comparing against the
+// per-tier split); the sampler loop in cmdDaemon calls buildFastChecks and
+// buildSlowChecks directly so it can run the slow half only on slow ticks.
+func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert) []Check {
+	checks := buildFastChecks(snap, c)
+	checks = append(checks, buildSlowChecks(snap, c, active)...)
+	return checks
+}
+
+// shouldHeartbeat reports whether at least intervalSec seconds have passed
+// since lastUnix (the last written heartbeat), given the current time
+// nowUnix. lastUnix==0 (no heartbeat written yet) always returns true so the
+// very first tick after startup writes one immediately. intervalSec<=0 is
+// treated as "always heartbeat" rather than dividing by/blocking on a
+// misconfigured interval.
+func shouldHeartbeat(lastUnix, nowUnix int64, intervalSec int) bool {
+	if intervalSec <= 0 {
+		return true
+	}
+	return nowUnix-lastUnix >= int64(intervalSec)
 }
 
 func pingHealthchecks(url string, httpGet func(string) error) {
@@ -337,7 +385,7 @@ func cmdDaemon(args []string) int {
 	// boot/recovery report from heartbeat gap
 	c0 := getCfg()
 	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
-		if ev, ok := reconstructPowerDown(last, clock.Now(), time.Duration(c0.SampleInterval)*time.Second); ok {
+		if ev, ok := reconstructPowerDown(last, clock.Now(), time.Duration(c0.HeartbeatInterval)*time.Second); ok {
 			_ = st.AppendDown(ev)
 			snap := collectSnapshot(x, fs, &prevCPU, da)
 			now := clock.Now().Unix()
@@ -368,6 +416,7 @@ func cmdDaemon(args []string) int {
 	n := slowEvery(lastFast, lastSlow)
 	tick := 0
 	var merged Snapshot
+	var lastHeartbeat int64 // unix seconds; 0 sentinel forces an immediate first heartbeat
 	for {
 		c := getCfg()
 		if c.FastInterval != lastFast || c.SampleInterval != lastSlow {
@@ -398,7 +447,13 @@ func cmdDaemon(args []string) int {
 		}
 		merged.TS = now.Unix()
 
-		_ = writeHeartbeat(st.HeartbeatPath(), now)
+		// heartbeat has its own cadence (HeartbeatInterval), independent of
+		// fast/slow: it exists only so a future boot can measure how long the
+		// process was gone, so writing it more often than that buys nothing.
+		if shouldHeartbeat(lastHeartbeat, now.Unix(), c.HeartbeatInterval) {
+			_ = writeHeartbeat(st.HeartbeatPath(), now)
+			lastHeartbeat = now.Unix()
+		}
 		_ = st.WriteStatus(merged) // every fast tick: status.json is the live view
 
 		if isSlowTick {
@@ -420,15 +475,26 @@ func cmdDaemon(args []string) int {
 
 		// anomalies: each channel's own Route (severity/kind filters,
 		// CriticalOverridesQuiet) now decides delivery, so no gating happens
-		// here beyond computing whether quiet hours are active. Re-evaluating
-		// every fast tick against slow-tier values that haven't changed since
-		// the last slow tick is harmless: AlertState's fire-once dedup means
-		// re-evaluating an unchanged check is a no-op.
-		events := alerts.Evaluate(buildChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
+		// here beyond computing whether quiet hours are active. Fast checks
+		// (cpu/mem/swap/temp) are evaluated every fast tick since they're
+		// cheap and change every tick; slow checks (disk/docker/service/
+		// smart, plus their recovery sweeps) only change on slow ticks, so
+		// they're evaluated then. Evaluate only touches keys present in the
+		// checks it's given, so the slow keys' active state is left alone
+		// between slow ticks rather than being spuriously re-fired/recovered.
 		disp := getDispatcher()
 		quiet := inQuietHours(c.QuietHours, now)
+		events := alerts.Evaluate(buildFastChecks(merged, c), baseline, c.BaselineSigma, now.Unix())
 		for _, e := range events {
 			disp.Dispatch(eventToAlert(e, now.Unix()), quiet)
+		}
+		stateChanged := len(events) > 0
+		if isSlowTick {
+			slowEvents := alerts.Evaluate(buildSlowChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
+			for _, e := range slowEvents {
+				disp.Dispatch(eventToAlert(e, now.Unix()), quiet)
+			}
+			stateChanged = stateChanged || len(slowEvents) > 0
 		}
 		// scheduled digests bypass quiet hours, like the boot report.
 		if matchDaily(c.Schedule.Daily, now, lastDaily) {
@@ -439,9 +505,16 @@ func cmdDaemon(args []string) int {
 			lastWeekly = now
 			disp.Dispatch(Alert{Title: digestNow(st, now, 7, "📆 weekly rollup"), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
-		_ = baseline.Save(st.BaselinePath())
-		_ = alerts.Save(st.AlertStatePath())
+		// alerts.json only changes when a fire/recover transition happened;
+		// baseline.json's stats are updated every fast tick in memory but only
+		// need to hit disk at the slow cadence. Both were previously saved
+		// unconditionally every fast tick, which is 12x today's default
+		// (fast=5s, slow=60s) write volume for no benefit.
+		if stateChanged {
+			_ = alerts.Save(st.AlertStatePath())
+		}
 		if isSlowTick {
+			_ = baseline.Save(st.BaselinePath())
 			_ = st.PruneOlderThan(30)
 		}
 
