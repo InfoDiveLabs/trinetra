@@ -12,17 +12,26 @@ Telegram long-poller (commands answered in ~1s). `Restart=always` +
 
 ## Quick start
 
-Build on your dev machine, ship the binary, install on the server:
+**Option A — prebuilt binary** (from the [Releases](https://github.com/Suraj-Tiwari/server-monitor/releases) page):
 
 ```bash
-cd server-watcher
-make linux                                    # dist/serverwatch-linux-amd64, -arm64
-scp dist/serverwatch-linux-amd64 myserver:/tmp/serverwatch
-
-ssh myserver
+# on the server (pick the arch: amd64 / arm64 / arm for older Pis)
+curl -fsSL -o /tmp/serverwatch \
+  https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/serverwatch-linux-amd64
+chmod +x /tmp/serverwatch
 sudo /tmp/serverwatch install                 # copies to /usr/local/bin, writes+enables the systemd unit
 sudo serverwatch telegram set-token <token>   # only required setting; chat id is auto-captured
                                                # from your first message to the bot
+```
+
+**Option B — build from source** and ship the binary:
+
+```bash
+make linux                                    # dist/serverwatch-linux-amd64, -arm64
+scp dist/serverwatch-linux-amd64 myserver:/tmp/serverwatch
+ssh myserver
+sudo /tmp/serverwatch install
+sudo serverwatch telegram set-token <token>
 ```
 
 Get the `<token>` from Telegram's **@BotFather** (`/newbot`, follow the prompts,
@@ -30,6 +39,9 @@ copy the token it gives you) before running `telegram set-token`.
 
 Send the bot any message once so it learns your chat id, then try `/stats` or
 `/help`. From here everything else is optional — defaults already work.
+
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full install/verify/manage
+guide and **[docs/DESIGN.md](docs/DESIGN.md)** for the architecture.
 
 ## CLI reference
 
