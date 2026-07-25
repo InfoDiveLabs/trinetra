@@ -41,7 +41,8 @@ Send the bot any message once so it learns your chat id, then try `/stats` or
 `/help`. From here everything else is optional — defaults already work.
 
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full install/verify/manage
-guide and **[docs/DESIGN.md](docs/DESIGN.md)** for the architecture.
+guide, **[docs/DESIGN.md](docs/DESIGN.md)** for the architecture, and
+**[docs/ROADMAP.md](docs/ROADMAP.md)** for status and planned work.
 
 ## CLI reference
 
