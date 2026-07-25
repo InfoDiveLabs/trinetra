@@ -83,7 +83,7 @@ usage:
   serverwatch channel list|add|remove|set|test
   serverwatch status
   serverwatch doctor
-  serverwatch migrate
+  serverwatch migrate [--force]
   serverwatch dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]`
 
 func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
