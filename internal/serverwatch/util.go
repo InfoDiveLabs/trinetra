@@ -8,6 +8,10 @@ import (
 
 func jsonIndent(v any) ([]byte, error) { return json.MarshalIndent(v, "", "  ") }
 
+// errNotExist is the shared "file not found" sentinel used by fake FileSource
+// implementations in tests.
+var errNotExist = os.ErrNotExist
+
 // reloadDaemon sends SIGHUP to a running daemon via its pidfile. Best-effort.
 func reloadDaemon() {
 	b, err := os.ReadFile(pidFile())
