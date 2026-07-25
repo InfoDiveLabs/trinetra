@@ -75,6 +75,13 @@ type Config struct {
 		// deltas -> bytes/sec). Defaults to true; nil is treated as true
 		// everywhere it's read.
 		NetThroughput *bool `json:"net_throughput,omitempty"`
+		// Services gates the slow-tier full systemd unit inventory collector
+		// (internal/serverwatch/discover.go listUnits/parseUnits, snapshot
+		// -only — never persisted as a SampleStore series). Defaults to
+		// true; nil is treated as true everywhere it's read. The existing
+		// `systemctl --failed` alerting collection is separate and always
+		// runs regardless of this setting.
+		Services *bool `json:"services,omitempty"`
 	} `json:"collect"`
 }
 
@@ -88,6 +95,12 @@ func (c *Config) ContainerStatsEnabled() bool {
 // collector (collect.net_throughput) is enabled: unset (nil) defaults to true.
 func (c *Config) NetThroughputEnabled() bool {
 	return c.Collect.NetThroughput == nil || *c.Collect.NetThroughput
+}
+
+// ServicesEnabled reports whether the systemd unit inventory collector
+// (collect.services) is enabled: unset (nil) defaults to true.
+func (c *Config) ServicesEnabled() bool {
+	return c.Collect.Services == nil || *c.Collect.Services
 }
 
 type TargetOverride struct {
@@ -381,6 +394,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.ContainerStatsEnabled()), true
 	case "collect.net_throughput":
 		return strconv.FormatBool(c.NetThroughputEnabled()), true
+	case "collect.services":
+		return strconv.FormatBool(c.ServicesEnabled()), true
 	}
 	return "", false
 }
@@ -503,6 +518,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.net_throughput: %w", err)
 		}
 		c.Collect.NetThroughput = &b
+	case "collect.services":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("collect.services: %w", err)
+		}
+		c.Collect.Services = &b
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}

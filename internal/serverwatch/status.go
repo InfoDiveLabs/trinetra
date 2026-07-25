@@ -32,6 +32,13 @@ type Snapshot struct {
 	// prior sample to diff against yet) and whenever the collector is
 	// disabled. Keyed by interface name.
 	NetRates map[string]IfaceRate `json:"net_rates,omitempty"`
+	// Units is the live, full systemd service-unit inventory (opt-in via
+	// collect.services, slow-tier only, see daemon.go collectSlow and
+	// discover.go listUnits/parseUnits), for the Monitoring "services" tab.
+	// Deliberately a snapshot only — NOT fed into the SampleStore as a
+	// series (unit-name cardinality) — unlike FailedUnits above, which
+	// continues to drive service:* alerting unchanged.
+	Units []UnitInfo `json:"units,omitempty"`
 }
 
 func renderStatus(s Snapshot) string {

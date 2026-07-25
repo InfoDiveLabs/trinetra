@@ -505,6 +505,87 @@ func TestCollectSlowContainerStatsErrorDegradesGracefully(t *testing.T) {
 	}
 }
 
+// TestCollectSlowPopulatesUnits asserts collect.services (default true, and
+// unrelated to docker availability/config) fills snap.Units with the full
+// systemd unit inventory, alongside (not instead of) the existing
+// FailedUnits alerting collection.
+func TestCollectSlowPopulatesUnits(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch name {
+		case "df":
+			return []byte("Filesystem 1B-blocks Used Available Capacity Mounted\n/dev/sda1 100 90 10 90% /\n"), nil
+		case "systemctl":
+			if len(args) > 0 && args[0] == "--failed" {
+				return []byte("nginx.service loaded failed failed A high performance web server\n"), nil
+			}
+			return []byte("nginx.service    loaded active   running A high performance web server\n" +
+				"cron.service     loaded active   running Regular background program\n"), nil
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+
+	origDial := connDial
+	connDial = func(host string) bool { return true }
+	defer func() { connDial = origDial }()
+
+	snap := collectSlow(x, fs, da, config.Default())
+
+	if len(snap.Units) != 2 {
+		t.Fatalf("Units = %+v, want 2 entries", snap.Units)
+	}
+	if len(snap.FailedUnits) != 1 || snap.FailedUnits[0] != "nginx.service" {
+		t.Errorf("FailedUnits = %+v, want unchanged [nginx.service]", snap.FailedUnits)
+	}
+}
+
+// TestCollectSlowSkipsUnitsWhenDisabled asserts collect.services=false
+// suppresses the `systemctl list-units` call (the fake Exec fails the test
+// if it's requested), while the --failed alerting call still runs.
+func TestCollectSlowSkipsUnitsWhenDisabled(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		if name == "systemctl" && len(args) > 0 && args[0] == "list-units" {
+			t.Fatal("systemctl list-units must not be called when collect.services is disabled")
+		}
+		if name == "systemctl" {
+			return []byte("nginx.service loaded failed failed A high performance web server\n"), nil
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+	c := config.Default()
+	if err := c.Set("collect.services", "false"); err != nil {
+		t.Fatal(err)
+	}
+	snap := collectSlow(x, fs, da, c)
+	if snap.Units != nil {
+		t.Errorf("Units = %+v, want nil when collect.services disabled", snap.Units)
+	}
+	if len(snap.FailedUnits) != 1 {
+		t.Errorf("FailedUnits = %+v, want the --failed alerting collection unaffected", snap.FailedUnits)
+	}
+}
+
+// TestCollectSlowSkipsUnitsOnNilConfig mirrors the container-stats nil-config
+// guard: collectSlow must not panic (or call list-units) with a nil
+// *config.Config.
+func TestCollectSlowSkipsUnitsOnNilConfig(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		if name == "systemctl" && len(args) > 0 && args[0] == "list-units" {
+			t.Fatal("systemctl list-units must not be called with a nil config")
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+	snap := collectSlow(x, fs, da, nil)
+	if snap.Units != nil {
+		t.Errorf("Units = %+v, want nil with nil config", snap.Units)
+	}
+}
+
 func TestContainerMetricSet(t *testing.T) {
 	snap := Snapshot{ContainerStats: map[string]ContainerStat{
 		"web": {Name: "web", CPUPct: 11.2, MemMiB: 512, NetRxMB: 2.1, NetTxMB: 0.4},

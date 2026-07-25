@@ -305,9 +305,20 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config) Snaps
 			}
 		}
 	}
-	// failed systemd units
+	// failed systemd units (alerting collection — always runs, unaffected by
+	// collect.services below)
 	if out, err := runMaybeSudo(x, "systemctl", "--failed", "--plain", "--no-legend"); err == nil {
 		snap.FailedUnits = parseFailedUnits(string(out))
+	}
+	// full systemd unit inventory (opt-in via collect.services, snapshot-only:
+	// see UnitInfo/listUnits in discover.go for why this is never persisted
+	// to the SampleStore as a series). A nil config, disabled collector, or
+	// systemctl error all just leave snap.Units nil for this tick rather than
+	// failing the rest of collectSlow.
+	if c != nil && c.ServicesEnabled() {
+		if units, err := listUnits(x); err == nil {
+			snap.Units = units
+		}
 	}
 	// SMART health for every discovered device (all queried each cycle -> recovery works)
 	if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
@@ -346,6 +357,7 @@ func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess, c *c
 	snap.FailedUnits = slow.FailedUnits
 	snap.SmartHealth = slow.SmartHealth
 	snap.ContainerStats = slow.ContainerStats
+	snap.Units = slow.Units
 	return snap
 }
 
@@ -586,6 +598,7 @@ func cmdDaemon(args []string) int {
 			merged.FailedUnits = slow.FailedUnits
 			merged.SmartHealth = slow.SmartHealth
 			merged.ContainerStats = slow.ContainerStats
+			merged.Units = slow.Units
 
 			// net throughput (opt-in via collect.net_throughput): /proc/net/dev
 			// holds cumulative counters, so netRate.Rates diffs this sample

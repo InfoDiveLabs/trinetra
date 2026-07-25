@@ -11,6 +11,58 @@ type Target struct {
 	Available bool
 }
 
+// UnitInfo is one systemd service unit's live state, as parsed from
+// `systemctl list-units --type=service --all --plain --no-legend`. This is a
+// full inventory (not just failures) for the Monitoring "services" tab, kept
+// deliberately snapshot-only: see listUnits/collectSlow for why it is never
+// persisted to the SampleStore as a series.
+type UnitInfo struct {
+	Name        string
+	Load        string
+	Active      string
+	Sub         string
+	Description string
+}
+
+// parseUnits parses `systemctl list-units --type=service --all --plain
+// --no-legend` output. Each line is UNIT LOAD ACTIVE SUB DESCRIPTION,
+// whitespace-separated with DESCRIPTION free-form (may itself contain
+// spaces), so only the first 4 fields are split out positionally and the
+// remainder of the line is joined back as Description. Blank/whitespace-only
+// lines and any line with fewer than 5 fields (malformed/truncated output)
+// are skipped rather than aborting the whole batch.
+func parseUnits(s string) []UnitInfo {
+	var out []UnitInfo
+	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 5 {
+			continue
+		}
+		out = append(out, UnitInfo{
+			Name:        f[0],
+			Load:        f[1],
+			Active:      f[2],
+			Sub:         f[3],
+			Description: strings.Join(f[4:], " "),
+		})
+	}
+	return out
+}
+
+// listUnits runs `systemctl list-units` (via runMaybeSudo: systemctl is
+// usually root-accessible without sudo, but the sudo fallback is harmless if
+// it isn't) and parses the full unit inventory. Snapshot-only: unlike
+// parseFailedUnits below (used for --failed alerting), this is never fed
+// into the SampleStore as a series — full unit-name cardinality per host
+// makes that a bad fit for time-series storage.
+func listUnits(x Exec) ([]UnitInfo, error) {
+	out, err := runMaybeSudo(x, "systemctl", "list-units", "--type=service", "--all", "--plain", "--no-legend")
+	if err != nil {
+		return nil, err
+	}
+	return parseUnits(string(out)), nil
+}
+
 func parseFailedUnits(s string) []string {
 	var out []string
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
