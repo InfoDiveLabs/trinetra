@@ -24,7 +24,7 @@ func handleCommand(text string, st *Store, snap Snapshot) string {
 	case "/stats", "/status":
 		return renderStatus(snap)
 	case "/disk":
-		return renderStatus(Snapshot{Disks: snap.Disks})
+		return renderDisks(snap.Disks)
 	case "/net":
 		return "internet: " + onlineStr(snap.Online)
 	case "/history", "/down":

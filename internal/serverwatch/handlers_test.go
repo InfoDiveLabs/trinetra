@@ -21,6 +21,51 @@ func TestHandleHelpAndStats(t *testing.T) {
 	}
 }
 
+func TestHandleDisk(t *testing.T) {
+	dir := t.TempDir()
+	st := NewStore(dir, fixedClock{time.Unix(1000, 0)})
+	snap := Snapshot{Disks: map[string]float64{"/": 42, "/boot": 10}, Online: true}
+	r := handleCommand("/disk", st, snap)
+	if !strings.Contains(r, "/ 42%") {
+		t.Fatalf("disk reply missing usage, got %q", r)
+	}
+	if strings.Contains(r, "internet") || strings.Contains(r, "DOWN") {
+		t.Fatalf("disk reply must not fabricate connectivity, got %q", r)
+	}
+}
+
+func TestHandleNet(t *testing.T) {
+	dir := t.TempDir()
+	st := NewStore(dir, fixedClock{time.Unix(1000, 0)})
+	if r := handleCommand("/net", st, Snapshot{Online: true}); !strings.Contains(r, "up") {
+		t.Fatalf("net up = %q", r)
+	}
+	if r := handleCommand("/net", st, Snapshot{Online: false}); !strings.Contains(r, "DOWN") {
+		t.Fatalf("net down = %q", r)
+	}
+}
+
+func TestHandleHistory(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	st := NewStore(dir, fixedClock{now})
+	end := now.Add(-2 * time.Hour)
+	start := end.Add(-30 * time.Minute)
+	if err := st.AppendDown(DownEvent{
+		Type:        "power_down",
+		Start:       start.Unix(),
+		End:         end.Unix(),
+		DurationSec: int64(end.Sub(start) / time.Second),
+	}); err != nil {
+		t.Fatalf("AppendDown: %v", err)
+	}
+	snap := Snapshot{TS: now.Unix()}
+	r := handleCommand("/history 7", st, snap)
+	if !strings.Contains(r, "power_down") {
+		t.Fatalf("history should contain event, got %q", r)
+	}
+}
+
 func TestInQuietHours(t *testing.T) {
 	// window 23-8 wraps midnight
 	at := func(h int) time.Time { return time.Date(2026, 7, 25, h, 0, 0, 0, time.UTC) }

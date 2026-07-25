@@ -39,6 +39,23 @@ func renderStatus(s Snapshot) string {
 	return b.String()
 }
 
+func renderDisks(disks map[string]float64) string {
+	if len(disks) == 0 {
+		return "no filesystems discovered"
+	}
+	mts := make([]string, 0, len(disks))
+	for m := range disks {
+		mts = append(mts, m)
+	}
+	sort.Strings(mts)
+	var b strings.Builder
+	b.WriteString("disks:")
+	for _, m := range mts {
+		fmt.Fprintf(&b, "\n  %s %.0f%%", m, disks[m])
+	}
+	return b.String()
+}
+
 func onlineStr(up bool) string {
 	if up {
 		return "up ✅"
