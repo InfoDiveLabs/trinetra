@@ -202,6 +202,13 @@ func cmdDaemon(args []string) int {
 		fmt.Fprintln(stderr, "config load failed, using defaults:", err)
 		cfg = config.Default()
 	}
+	// Back-fill a "telegram" channel from legacy telegram.token/chat_id, if
+	// any, so it's visible to `channel list` from the moment the daemon next
+	// touches this config. Best-effort: a save failure here must not stop
+	// the daemon from starting.
+	if migrateTelegramChannel(cfg) {
+		_ = saveCfg(cfg)
+	}
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, sighup)
 	go func() {

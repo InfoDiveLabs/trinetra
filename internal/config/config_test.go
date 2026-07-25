@@ -156,6 +156,114 @@ func TestLoadMissingIsDefault(t *testing.T) {
 	}
 }
 
+func TestChannelAddGetRemoveRoundTrip(t *testing.T) {
+	c := Default()
+	c.AddChannel(ChannelConfig{Name: "tg", Type: "telegram", Enabled: true, MinSeverity: "info"})
+	got, ok := c.GetChannel("tg")
+	if !ok || got.Type != "telegram" {
+		t.Fatalf("GetChannel = %+v, ok=%v", got, ok)
+	}
+	if _, ok := c.GetChannel("nope"); ok {
+		t.Fatal("expected unknown channel to report not found")
+	}
+	if !c.RemoveChannel("tg") {
+		t.Fatal("expected RemoveChannel to report found")
+	}
+	if _, ok := c.GetChannel("tg"); ok {
+		t.Fatal("expected channel gone after remove")
+	}
+	if c.RemoveChannel("tg") {
+		t.Fatal("expected second RemoveChannel of same name to report false")
+	}
+}
+
+func TestSetChannelField(t *testing.T) {
+	c := Default()
+	c.AddChannel(ChannelConfig{Name: "tg", Type: "telegram", Enabled: true, MinSeverity: "info"})
+
+	if err := c.SetChannelField("tg", "enabled", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetChannelField("tg", "min_severity", "critical"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetChannelField("tg", "include_kinds", "disk,cpu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetChannelField("tg", "exclude_kinds", "smart"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetChannelField("tg", "critical_overrides_quiet", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetChannelField("tg", "setting.chat_id", "12345"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetChannelField("tg", "type", "webhook"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.GetChannel("tg")
+	if got.Enabled {
+		t.Error("enabled should be false")
+	}
+	if got.Type != "webhook" {
+		t.Errorf("type = %q, want webhook", got.Type)
+	}
+	if got.MinSeverity != "critical" {
+		t.Errorf("min_severity = %q", got.MinSeverity)
+	}
+	if len(got.IncludeKinds) != 2 || got.IncludeKinds[0] != "disk" || got.IncludeKinds[1] != "cpu" {
+		t.Errorf("include_kinds = %v", got.IncludeKinds)
+	}
+	if len(got.ExcludeKinds) != 1 || got.ExcludeKinds[0] != "smart" {
+		t.Errorf("exclude_kinds = %v", got.ExcludeKinds)
+	}
+	if !got.CriticalOverridesQuiet {
+		t.Error("critical_overrides_quiet should be true")
+	}
+	if got.Settings["chat_id"] != "12345" {
+		t.Errorf("settings.chat_id = %q", got.Settings["chat_id"])
+	}
+
+	if err := c.SetChannelField("tg", "min_severity", "bogus"); err == nil {
+		t.Error("expected error for invalid min_severity")
+	}
+	if err := c.SetChannelField("nope", "enabled", "true"); err == nil {
+		t.Error("expected error for unknown channel")
+	}
+	if err := c.SetChannelField("tg", "unknown_key", "x"); err == nil {
+		t.Error("expected error for unknown field")
+	}
+	if err := c.SetChannelField("tg", "enabled", "not-a-bool"); err == nil {
+		t.Error("expected error for invalid bool")
+	}
+}
+
+func TestChannelsPersistAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	c.AddChannel(ChannelConfig{
+		Name: "tg", Type: "telegram", Enabled: true, MinSeverity: "warning",
+		Settings: map[string]string{"chat_id": "1"},
+	})
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := c2.GetChannel("tg")
+	if !ok {
+		t.Fatal("channel missing after load")
+	}
+	if got.MinSeverity != "warning" || got.Settings["chat_id"] != "1" {
+		t.Errorf("channel after load = %+v", got)
+	}
+}
+
 func TestTargetOverrides(t *testing.T) {
 	c := Default()
 	if !c.TargetEnabled("docker:foo") {

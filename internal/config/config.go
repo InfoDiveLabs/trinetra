@@ -39,11 +39,142 @@ type Config struct {
 	Targets map[string]TargetOverride `json:"targets,omitempty"`
 	// CriticalOverridesQuiet lets disk-full-imminent style alerts bypass quiet hours.
 	CriticalOverridesQuiet bool `json:"critical_overrides_quiet,omitempty"`
+	// Channels holds user-defined notification channels, managed via
+	// `serverwatch channel add|list|remove|set|test`.
+	Channels []ChannelConfig `json:"channels,omitempty"`
 }
 
 type TargetOverride struct {
 	Disabled  bool     `json:"disabled,omitempty"`
 	Threshold *float64 `json:"threshold,omitempty"`
+}
+
+// ChannelConfig describes one user-configured notification channel. The
+// concrete delivery mechanism (Telegram, email, webhook, ...) is chosen by
+// Type and is built elsewhere (package serverwatch's buildNotifier factory);
+// this package only stores and validates the configuration.
+type ChannelConfig struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Enabled bool   `json:"enabled"`
+	// Settings holds type-specific key/value config, e.g. {"chat_id": "..."}.
+	Settings map[string]string `json:"settings,omitempty"`
+	// MinSeverity is "info" | "warning" | "critical". Empty is treated as the
+	// permissive default ("info") wherever routing is evaluated.
+	MinSeverity            string   `json:"min_severity,omitempty"`
+	IncludeKinds           []string `json:"include_kinds,omitempty"`
+	ExcludeKinds           []string `json:"exclude_kinds,omitempty"`
+	CriticalOverridesQuiet bool     `json:"critical_overrides_quiet,omitempty"`
+}
+
+// validSeverities is a local allowlist mirroring serverwatch.Severity's
+// string form. config cannot import package serverwatch (that would create
+// an import cycle, since serverwatch imports config), so severity strings
+// are validated here independently rather than via serverwatch.ParseSeverity.
+var validSeverities = map[string]bool{"info": true, "warning": true, "critical": true}
+
+// validateMinSeverity accepts "" (meaning "use the permissive default") or
+// one of info|warning|critical.
+func validateMinSeverity(s string) error {
+	if s == "" || validSeverities[s] {
+		return nil
+	}
+	return fmt.Errorf("min_severity %q invalid: want info|warning|critical or empty", s)
+}
+
+// AddChannel appends a new channel. Callers are responsible for checking
+// for an existing channel of the same name first, if that matters to them.
+func (c *Config) AddChannel(cc ChannelConfig) {
+	c.Channels = append(c.Channels, cc)
+}
+
+// RemoveChannel deletes the channel named name, reporting whether one was
+// found.
+func (c *Config) RemoveChannel(name string) bool {
+	for i, cc := range c.Channels {
+		if cc.Name == name {
+			c.Channels = append(c.Channels[:i], c.Channels[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// GetChannel returns a pointer to the named channel's config (so callers
+// such as SetChannelField can mutate it in place), or (nil, false) if no
+// channel by that name exists.
+func (c *Config) GetChannel(name string) (*ChannelConfig, bool) {
+	for i := range c.Channels {
+		if c.Channels[i].Name == name {
+			return &c.Channels[i], true
+		}
+	}
+	return nil, false
+}
+
+// splitKinds parses a comma-separated kind list, trimming whitespace and
+// dropping empty elements. An empty string yields a nil slice (clears the
+// field).
+func splitKinds(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// SetChannelField updates one field of an existing channel by name. Valid
+// keys: enabled, type, min_severity, critical_overrides_quiet,
+// include_kinds, exclude_kinds (comma-separated), and setting.<k> which
+// writes into the channel's Settings map.
+func (c *Config) SetChannelField(name, key, value string) error {
+	cc, ok := c.GetChannel(name)
+	if !ok {
+		return fmt.Errorf("unknown channel %q", name)
+	}
+	switch {
+	case key == "enabled":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("enabled: %w", err)
+		}
+		cc.Enabled = b
+	case key == "type":
+		cc.Type = value
+	case key == "min_severity":
+		if err := validateMinSeverity(value); err != nil {
+			return err
+		}
+		cc.MinSeverity = value
+	case key == "critical_overrides_quiet":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("critical_overrides_quiet: %w", err)
+		}
+		cc.CriticalOverridesQuiet = b
+	case key == "include_kinds":
+		cc.IncludeKinds = splitKinds(value)
+	case key == "exclude_kinds":
+		cc.ExcludeKinds = splitKinds(value)
+	case strings.HasPrefix(key, "setting."):
+		k := strings.TrimPrefix(key, "setting.")
+		if k == "" {
+			return fmt.Errorf("empty setting key")
+		}
+		if cc.Settings == nil {
+			cc.Settings = map[string]string{}
+		}
+		cc.Settings[k] = value
+	default:
+		return fmt.Errorf("unknown channel field %q", key)
+	}
+	return nil
 }
 
 // Default returns the baked-in defaults. A fresh install works with only a token.

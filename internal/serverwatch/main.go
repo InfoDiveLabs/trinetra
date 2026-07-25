@@ -51,6 +51,8 @@ func Main(args []string) int {
 		return cmdQuietHours(args[1:])
 	case "healthchecks":
 		return cmdHealthchecks(args[1:])
+	case "channel":
+		return cmdChannel(args[1:])
 	case "status":
 		return cmdStatus(args[1:])
 	case "doctor":
@@ -74,6 +76,7 @@ usage:
   serverwatch schedule daily HH:MM | weekly dow@HH:MM | off
   serverwatch quiet-hours <HH-HH>|off
   serverwatch healthchecks set <url> | off
+  serverwatch channel list|add|remove|set|test
   serverwatch status
   serverwatch doctor`
 
