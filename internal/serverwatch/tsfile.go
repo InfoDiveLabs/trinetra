@@ -73,28 +73,38 @@ func newTSFileStore(dir string) (*tsFileStore, error) {
 	return &tsFileStore{dir: root}, nil
 }
 
-// safeMetric maps a metric id to a filesystem-safe, deterministic, and
-// (for the ids actually in use) collision-free filename stem. Path-unsafe
-// characters are replaced with '_'.
+const tsHexDigits = "0123456789ABCDEF"
+
+// safeMetric maps a metric id to a filesystem-safe filename stem via a
+// reversible, injective encoding: bytes in the unreserved set
+// [A-Za-z0-9._-] pass through literally, and every other byte (including
+// '%', '/', ':', space, control bytes) is percent-encoded as %XX with
+// uppercase hex. Distinct ids therefore always produce distinct filenames —
+// this prevents unrelated series (e.g. discovery-driven mounts "/mnt/my disk"
+// vs "/mnt/my/disk") from silently colliding into one .tsd file. The result
+// stays human-readable for the common ASCII ids. Empty id maps to "%00" so
+// it is never an empty or dot filename.
 func safeMetric(id string) string {
 	if id == "" {
-		return "_"
+		return "%00"
 	}
 	var b strings.Builder
 	b.Grow(len(id))
-	for _, r := range id {
-		switch {
-		case r == '/' || r == '\\' || r == ':' || r == ' ' || r < 0x20:
-			b.WriteByte('_')
-		default:
-			b.WriteRune(r)
+	for i := 0; i < len(id); i++ { // byte-wise: encoding must be reversible
+		c := id[i]
+		unreserved := (c >= 'A' && c <= 'Z') ||
+			(c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') ||
+			c == '.' || c == '_' || c == '-'
+		if unreserved {
+			b.WriteByte(c)
+			continue
 		}
+		b.WriteByte('%')
+		b.WriteByte(tsHexDigits[c>>4])
+		b.WriteByte(tsHexDigits[c&0x0f])
 	}
-	safe := b.String()
-	if safe == "." || safe == ".." || safe == "" {
-		return "_"
-	}
-	return safe
+	return b.String()
 }
 
 func (s *tsFileStore) resDir(res Resolution) string {
@@ -102,13 +112,6 @@ func (s *tsFileStore) resDir(res Resolution) string {
 		return filepath.Join(s.dir, "1m")
 	}
 	return filepath.Join(s.dir, "raw")
-}
-
-func resolutionSeconds(res Resolution) uint32 {
-	if res == Res1m {
-		return tsResolution1m
-	}
-	return tsResolutionRaw
 }
 
 func (s *tsFileStore) metricPath(metric string, res Resolution) string {
@@ -255,7 +258,10 @@ func decodeEventRecord(b []byte) DownEvent {
 // ---- SampleStore implementation ----
 
 // Append records one timestamped sample of each metric in ms to its raw
-// series file (creating the file, with header, on first write).
+// series file (creating the file, with header, on first write). Callers must
+// Append in nondecreasing ts order: records are stored in write order and
+// Query relies on that ordering for its binary search (out-of-order appends
+// are not re-sorted or indexed).
 func (s *tsFileStore) Append(ts int64, ms MetricSet) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -270,7 +276,9 @@ func (s *tsFileStore) Append(ts int64, ms MetricSet) error {
 
 // Query returns the points for metric within [from, to] at the given
 // resolution. An absent series file is not an error: it just means no data
-// exists yet at that resolution.
+// exists yet at that resolution. Query assumes records are stored in
+// nondecreasing ts order (the Append contract) and binary-searches on that
+// invariant.
 func (s *tsFileStore) Query(metric string, from, to int64, res Resolution) ([]Point, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -376,10 +384,14 @@ func (s *tsFileStore) Events(from, to int64) ([]DownEvent, error) {
 }
 
 // pruneFileGeneric rewrites path keeping only records for which keep
-// returns true. It is crash-safe: it builds the new contents in a temp file
-// and atomically renames it over path, so a crash mid-prune leaves either
-// the untouched original or the fully-written replacement, never a partial
-// file. A missing path is not an error (nothing to prune).
+// returns true. It is crash-durable: it builds the new contents in a temp
+// file, fsyncs that temp file's data to disk, atomically renames it over
+// path, then fsyncs the parent directory so the rename itself is durable.
+// Without the data fsync a crash could commit the rename while the new
+// file's blocks are still unflushed, leaving a zero-length/truncated live
+// file that Query would then fail to read. A crash mid-prune thus leaves
+// either the untouched original or the fully-written replacement, never a
+// partial file. A missing path is not an error (nothing to prune).
 func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -421,10 +433,29 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 			}
 		}
 	}
+	// Flush the temp file's data to disk before the rename commits it.
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
 	if err := out.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	// Make the rename itself durable by fsyncing the parent directory.
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir fsyncs a directory so a rename into it survives a crash.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func (s *tsFileStore) pruneDir(dir string, cut int64) error {

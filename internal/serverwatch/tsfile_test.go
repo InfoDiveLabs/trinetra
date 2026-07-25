@@ -397,6 +397,43 @@ func TestTSFileConcurrentAppend(t *testing.T) {
 	}
 }
 
+func TestSafeMetricInjective(t *testing.T) {
+	// Previously-colliding pairs must now map to distinct filenames.
+	pairs := [][2]string{
+		{"a/b", "a_b"},
+		{"a:b", "a b"},
+		{"disk:/mnt/my disk", "disk:/mnt/my/disk"},
+	}
+	for _, p := range pairs {
+		s1, s2 := safeMetric(p[0]), safeMetric(p[1])
+		if s1 == s2 {
+			t.Fatalf("safeMetric collision: %q and %q both -> %q", p[0], p[1], s1)
+		}
+	}
+
+	// And each must round-trip independently via Append/Query (distinct files,
+	// no interleaving).
+	dir := t.TempDir()
+	s := openTSFile(t, dir)
+	defer s.Close()
+
+	all := []string{"a/b", "a_b", "a:b", "a b", "disk:/mnt/my disk", "disk:/mnt/my/disk"}
+	for i, m := range all {
+		if err := s.Append(int64(i+1), MetricSet{m: float64(i + 1)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, m := range all {
+		pts, err := s.Query(m, 0, 1000, ResRaw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pts) != 1 || pts[0].Avg != float64(i+1) {
+			t.Fatalf("metric %q = %+v, want exactly one point %v (no cross-series interleaving)", m, pts, i+1)
+		}
+	}
+}
+
 func TestSafeMetricDeterministicAndDistinct(t *testing.T) {
 	cases := []string{"docker:web", "disk:/", "net:eth0:rx", "cpu", ""}
 	seen := map[string]string{}
