@@ -44,14 +44,15 @@ func TestChannelAddListSetRemoveTestViaCLI(t *testing.T) {
 		t.Fatalf("settings.chat_id = %q, want 123", got.Settings["chat_id"])
 	}
 
-	// test: buildNotifier isn't implemented for any type yet, so this must
-	// fail clearly and non-zero.
+	// test: telegram is implemented now, but this channel has a chat_id and
+	// no token (neither in Settings nor in config.Telegram), so buildNotifier
+	// must fail clearly and non-zero rather than panic or silently no-op.
 	errb.Reset()
 	if code := Main([]string{"channel", "test", "tg"}); code == 0 {
-		t.Fatalf("expected non-zero exit for not-implemented channel type, stderr=%s", errb.String())
+		t.Fatalf("expected non-zero exit for missing token, stderr=%s", errb.String())
 	}
-	if !strings.Contains(errb.String(), "not implemented") {
-		t.Errorf("expected 'not implemented' in stderr, got %q", errb.String())
+	if !strings.Contains(errb.String(), "token") {
+		t.Errorf("expected 'token' in stderr, got %q", errb.String())
 	}
 
 	if code := Main([]string{"channel", "remove", "tg"}); code != 0 {

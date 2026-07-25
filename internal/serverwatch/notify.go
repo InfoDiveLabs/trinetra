@@ -31,6 +31,28 @@ func formatRecover(e Event) string {
 	return fmt.Sprintf("✅ RECOVERED: %s", e.Text)
 }
 
+// formatAlert renders a channel-agnostic Alert as a plain, phone-friendly
+// message: a severity marker, the Title, then the Body on its own line. A
+// "recover" Alert always gets the ✅ marker regardless of Severity; "fire"
+// Alerts get a marker scaled to Severity (🚨 critical, ⚠️ warning, ℹ️ info).
+func formatAlert(a Alert) string {
+	return fmt.Sprintf("%s %s\n%s", alertMarker(a), a.Title, a.Body)
+}
+
+func alertMarker(a Alert) string {
+	if a.Kind == "recover" {
+		return "✅"
+	}
+	switch a.Severity {
+	case SevCritical:
+		return "🚨"
+	case SevWarning:
+		return "⚠️"
+	default:
+		return "ℹ️"
+	}
+}
+
 func formatBootReport(evs []DownEvent, snap string) string {
 	var b strings.Builder
 	b.WriteString("🔌 server-watcher back online")

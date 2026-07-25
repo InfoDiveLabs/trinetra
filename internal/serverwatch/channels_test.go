@@ -7,10 +7,46 @@ import (
 )
 
 func TestBuildNotifierNotImplementedForEveryType(t *testing.T) {
-	for _, typ := range []string{"telegram", "email", "webhook", "whatever"} {
-		if _, err := buildNotifier(config.ChannelConfig{Name: "x", Type: typ}); err == nil {
+	c := config.Default()
+	for _, typ := range []string{"email", "webhook", "whatever"} {
+		if _, err := buildNotifier(config.ChannelConfig{Name: "x", Type: typ}, c); err == nil {
 			t.Errorf("buildNotifier(type=%q) expected not-implemented error, got nil", typ)
 		}
+	}
+}
+
+func TestBuildNotifierTelegram(t *testing.T) {
+	// Settings override the config-level secret when both are present.
+	c := config.Default()
+	c.Telegram.Token = "cfg-token"
+	c.Telegram.ChatID = "cfg-chat"
+	cc := config.ChannelConfig{Name: "tg", Type: "telegram", Settings: map[string]string{
+		"token": "override-token", "chat_id": "override-chat",
+	}}
+	n, err := buildNotifier(cc, c)
+	if err != nil {
+		t.Fatalf("buildNotifier: %v", err)
+	}
+	if n.Name() != "tg" {
+		t.Errorf("Name() = %q, want tg", n.Name())
+	}
+
+	// Falls back to config-level token/chat_id when Settings has none.
+	cc2 := config.ChannelConfig{Name: "tg2", Type: "telegram"}
+	if _, err := buildNotifier(cc2, c); err != nil {
+		t.Errorf("buildNotifier with config-level secrets: %v", err)
+	}
+
+	// Missing token entirely (neither Settings nor config) errors.
+	if _, err := buildNotifier(config.ChannelConfig{Name: "tg3", Type: "telegram"}, config.Default()); err == nil {
+		t.Error("expected error when token is unavailable")
+	}
+
+	// Missing chat_id entirely errors too.
+	noChat := config.Default()
+	noChat.Telegram.Token = "tok"
+	if _, err := buildNotifier(config.ChannelConfig{Name: "tg4", Type: "telegram"}, noChat); err == nil {
+		t.Error("expected error when chat_id is unavailable")
 	}
 }
 
@@ -48,11 +84,13 @@ func TestChannelsFromConfigSkipsUnavailableNotifiers(t *testing.T) {
 		Name: "tg", Type: "telegram", Enabled: true,
 		MinSeverity: "warning", IncludeKinds: []string{"disk"},
 	})
-	// Every type is currently unimplemented, so channelsFromConfig must
-	// build zero Channels (and not panic on the nil Notifier).
+	// The telegram channel has no token/chat_id available (neither in
+	// Settings nor in config.Telegram), so buildNotifier errors and
+	// channelsFromConfig must build zero Channels (and not panic on the nil
+	// Notifier).
 	got := channelsFromConfig(c)
 	if len(got) != 0 {
-		t.Fatalf("expected 0 channels (no types implemented yet), got %d", len(got))
+		t.Fatalf("expected 0 channels (telegram channel missing secrets), got %d", len(got))
 	}
 }
 

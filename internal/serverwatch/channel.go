@@ -158,7 +158,7 @@ func cmdChannelTest(c *config.Config, args []string) int {
 		fmt.Fprintf(stderr, "unknown channel %q\n", name)
 		return 1
 	}
-	n, err := buildNotifier(*cc)
+	n, err := buildNotifier(*cc, c)
 	if err != nil {
 		// Deliberately surfaces buildNotifier's "not implemented yet" error
 		// as-is: `channel test` starts working automatically once a later
