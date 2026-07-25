@@ -228,8 +228,13 @@ func cmdDaemon(args []string) int {
 	var lastDaily, lastWeekly time.Time
 	ticker := time.NewTicker(time.Duration(getCfg().SampleInterval) * time.Second)
 	defer ticker.Stop()
+	lastInterval := getCfg().SampleInterval
 	for {
 		c := getCfg()
+		if c.SampleInterval != lastInterval {
+			ticker.Reset(time.Duration(c.SampleInterval) * time.Second)
+			lastInterval = c.SampleInterval
+		}
 		now := clock.Now()
 		snap := collectSnapshot(x, fs, &prevCPU, da)
 		snap.TS = now.Unix()
@@ -261,11 +266,11 @@ func cmdDaemon(args []string) int {
 			// scheduled digests
 			if matchDaily(c.Schedule.Daily, now, lastDaily) {
 				lastDaily = now
-				_ = tg.SendMessage(dailyDigestNow(st, now))
+				_ = tg.SendMessage(digestNow(st, now, 1, "📊 daily digest"))
 			}
 			if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
 				lastWeekly = now
-				_ = tg.SendMessage(dailyDigestNow(st, now))
+				_ = tg.SendMessage(digestNow(st, now, 7, "📆 weekly rollup"))
 			}
 		}
 		_ = baseline.Save(st.BaselinePath())
@@ -283,9 +288,11 @@ func tgClient(c *config.Config) *telegram.Client {
 	return telegram.New(c.Telegram.Token, c.Telegram.ChatID)
 }
 
-func dailyDigestNow(st *Store, now time.Time) string {
-	downs, _ := st.DownSince(now.AddDate(0, 0, -1).Unix())
-	return buildDailyDigest(nil, downs)
+func digestNow(st *Store, now time.Time, days int, title string) string {
+	since := now.AddDate(0, 0, -days).Unix()
+	samples, _ := st.SamplesSince(since)
+	downs, _ := st.DownSince(since)
+	return buildDigest(title, samples, downs)
 }
 
 func pollLoop(getCfg func() *config.Config, setChatID func(string), st *Store, x Exec, fs FileSource, da dockerAccess) {

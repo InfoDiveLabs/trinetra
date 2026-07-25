@@ -30,6 +30,22 @@ func TestSampleAppendAndPrune(t *testing.T) {
 	}
 }
 
+func TestSamplesSince(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Unix(1_000_000_000, 0)
+	s := NewStore(dir, fixedClock{now})
+	_ = s.AppendSample(Sample{TS: now.Add(-2 * time.Hour).Unix(), CPU: 10})
+	_ = s.AppendSample(Sample{TS: now.Add(-30 * time.Minute).Unix(), CPU: 80})
+	_ = s.AppendSample(Sample{TS: now.Add(-48 * time.Hour).Unix(), CPU: 5}) // outside 24h
+	got, err := s.SamplesSince(now.Add(-24 * time.Hour).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 samples in last 24h, got %d", len(got))
+	}
+}
+
 func TestDownAppendAndQuery(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Unix(2_000_000_000, 0)

@@ -61,9 +61,9 @@ serverwatch help                          this usage text
 
 Every `config`/`monitor`/`schedule`/`quiet-hours`/`healthchecks`/`telegram`
 write updates `config.json` and sends `SIGHUP` to the running daemon, which
-reloads live — **except `sample_interval`**, which takes effect only on the
-next daemon restart (`systemctl restart serverwatch`), because the sampler
-ticker is created once at startup and not reset on reload.
+reloads live — including `sample_interval`: the sampler ticker is reset in
+place, so a new interval takes effect on the very next tick, no restart
+needed.
 
 ### Config keys
 
@@ -121,10 +121,13 @@ the daemon for a missing tool.
 
 **What actually alerts today:** the sampler evaluates threshold + baseline
 checks on `cpu`, `mem`, `swap`, `temp`, and each discovered `disk:<mount>`
-(see thresholds above). Docker/interface/SMART targets are discovered, listed
-in `monitor list`, and can carry per-target overrides, but container state,
-interface throughput and SMART health do not yet drive alert firing — that's
-future work, not implemented in this build.
+(see thresholds above), plus three binary checks: Docker container up/down
+(`docker:<name>`, running=ok/anything else=bad), failed systemd units
+(`service:<unit>`, from `systemctl --failed`, recovers once the unit is no
+longer listed), and SMART health (`smart:<device>`, `FAILED`=bad). All of
+these carry the same fire/recover + hysteresis behavior as the scalar checks.
+Interface targets (`iface:<name>`) are discovered and listed in `monitor list`
+but throughput doesn't yet drive alert firing — that's future work.
 
 ## Downtime tracking
 
@@ -161,6 +164,8 @@ speak. Set it with `serverwatch healthchecks set <url>`; turn it off with
 /net              internet reachability
 /history [days]   downtime events in the last N days (default 7)
 /down             alias for /history
+/docker           container states
+/services         failed systemd units
 /help             this list
 ```
 
@@ -172,13 +177,11 @@ speak. Set it with `serverwatch healthchecks set <url>`; turn it off with
 - **Threshold/baseline alerts** — one message when a check crosses (⚠️, or 🚨
   if critical), one ✅ recovery message when it clears; no repeat spam while
   sustained (hysteresis, tracked in `alerts.json`).
-- **Daily digest** — `serverwatch schedule daily HH:MM`: currently reports the
-  downtime summary for the prior 24h. (Peak CPU/mem stats are part of the
-  message format but not yet populated — they render as 0 until a later task
-  wires sample lookback in.)
+- **Daily digest** — `serverwatch schedule daily HH:MM`: peak CPU/mem over the
+  prior 24h (from the real sample history, not a placeholder) plus the
+  downtime summary for that window.
 - **Weekly rollup** — `serverwatch schedule weekly <dow>@HH:MM` (e.g.
-  `mon@09:00`): same digest content over the prior period, with the same
-  peak-stats caveat.
+  `mon@09:00`): same content, computed over the prior 7 days.
 
 `quiet-hours HH-HH` (wraps midnight, e.g. `23-8`) suppresses non-critical
 alerts in that window; a check whose `Critical` flag is set (currently: any

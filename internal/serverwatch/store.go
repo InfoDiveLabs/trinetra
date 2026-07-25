@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -98,6 +99,39 @@ func (s *Store) DownSince(sinceUnix int64) ([]DownEvent, error) {
 		}
 	}
 	return out, sc.Err()
+}
+
+func (s *Store) SamplesSince(sinceUnix int64) ([]Sample, error) {
+	files, _ := filepath.Glob(filepath.Join(s.samplesDir(), "*.jsonl"))
+	sort.Strings(files)
+	var out []Sample
+	for _, f := range files {
+		// skip whole files whose day ends before the cutoff
+		base := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+		if d, err := time.Parse("2006-01-02", base); err == nil {
+			if d.Add(24 * time.Hour).Unix() < sinceUnix {
+				continue
+			}
+		}
+		fh, err := os.Open(f)
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(fh)
+		sc.Buffer(make([]byte, 64*1024), 1024*1024)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			var smp Sample
+			if json.Unmarshal([]byte(line), &smp) == nil && smp.TS >= sinceUnix {
+				out = append(out, smp)
+			}
+		}
+		fh.Close()
+	}
+	return out, nil
 }
 
 func (s *Store) WriteStatus(v any) error {
