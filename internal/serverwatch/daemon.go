@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,6 +130,38 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 	checks := buildFastChecks(snap, c)
 	checks = append(checks, buildSlowChecks(snap, c, active)...)
 	return checks
+}
+
+// fastMetricSet converts the fast-tier fields of a Snapshot into the
+// MetricSet a SampleStore Append expects, for the write-path counterpart of
+// buildFastChecks: every fast tick appends these as raw samples. temp is
+// omitted when TempC<=0 (no thermal zone discovered), mirroring
+// buildFastChecks' own "if snap.TempC > 0" gate.
+func fastMetricSet(s Snapshot) MetricSet {
+	ms := MetricSet{
+		"cpu":   s.CPU,
+		"mem":   s.MemPct,
+		"swap":  s.SwapPct,
+		"load1": s.Load1,
+	}
+	if s.TempC > 0 {
+		ms["temp"] = s.TempC
+	}
+	return ms
+}
+
+// slowMetricSet converts the slow-tier fields of a Snapshot into a
+// MetricSet, for the write-path counterpart of buildSlowChecks: one
+// "disk:<mount>" metric per discovered mount. Scope is deliberately narrower
+// than buildSlowChecks: docker/service/smart are binary health states
+// already handled by the alert system, not numeric series worth storing in
+// the SampleStore, so only disk usage percentages are appended here.
+func slowMetricSet(s Snapshot) MetricSet {
+	ms := make(MetricSet, len(s.Disks))
+	for mount, pct := range s.Disks {
+		ms["disk:"+mount] = pct
+	}
+	return ms
 }
 
 // shouldHeartbeat reports whether at least intervalSec seconds have passed
@@ -327,6 +360,36 @@ func cmdDaemon(args []string) int {
 		fmt.Fprintln(stderr, "config load failed, using defaults:", err)
 		cfg = config.Default()
 	}
+	// New SampleStore (raw appends + downsample + prune), opened once here at
+	// startup — see the design note in this task: the old JSONL Store above
+	// remains the live backend for reads (history/handlers/digests switch
+	// over in a later task), and both are written every sample so existing
+	// reads keep working during the migration. RawRetention/RollupRetention
+	// are duration strings already validated by config (validateRetentionDuration),
+	// so a parse failure here is unexpected; fall back to the backend's
+	// built-in defaults (StoreOptions.withDefaults) rather than treating it
+	// as fatal.
+	rawRet, _ := time.ParseDuration(cfg.Storage.RawRetention)
+	rollupRet, _ := time.ParseDuration(cfg.Storage.RollupRetention)
+	store, err := OpenStore(cfg.Storage.Backend, filepath.Join(stateDir), StoreOptions{
+		RawRetention:    rawRet,
+		RollupRetention: rollupRet,
+		EventRetention:  rollupRet,
+	})
+	if err != nil {
+		// Not fatal: the old Store above still works, so degrade to
+		// store-writes-disabled rather than crash-looping under
+		// systemd Restart=always.
+		fmt.Fprintln(stderr, "sample store open failed, store writes disabled:", err)
+		store = nil
+	}
+	if store != nil {
+		defer store.Close()
+	}
+	// NOTE: the store is opened once here and is NOT re-opened on a SIGHUP
+	// config reload below — if storage.backend/retention changes on reload,
+	// the running store keeps its original settings until next restart. Kept
+	// intentionally simple; revisit if that proves surprising in practice.
 	// Back-fill a "telegram" channel from legacy telegram.token/chat_id, if
 	// any, so it's visible to `channel list` from the moment the daemon next
 	// touches this config. Best-effort: a save failure here must not stop
@@ -387,6 +450,9 @@ func cmdDaemon(args []string) int {
 	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
 		if ev, ok := reconstructPowerDown(last, clock.Now(), time.Duration(c0.HeartbeatInterval)*time.Second); ok {
 			_ = st.AppendDown(ev)
+			if store != nil {
+				_ = store.AppendEvent(ev)
+			}
 			snap := collectSnapshot(x, fs, &prevCPU, da)
 			now := clock.Now().Unix()
 			getDispatcher().Dispatch(Alert{
@@ -456,6 +522,13 @@ func cmdDaemon(args []string) int {
 		}
 		_ = st.WriteStatus(merged) // every fast tick: status.json is the live view
 
+		// New SampleStore write path (dual-write alongside the old JSONL
+		// Store above until reads migrate in s10): every fast tick appends
+		// the cheap fast-tier metrics as raw samples.
+		if store != nil {
+			_ = store.Append(merged.TS, fastMetricSet(merged))
+		}
+
 		if isSlowTick {
 			// Persisted Sample + pruning + healthchecks stay on the slow
 			// cadence: a Sample/ping every fast tick would be 12x today's
@@ -465,11 +538,18 @@ func cmdDaemon(args []string) int {
 			_ = st.AppendSample(Sample{TS: merged.TS, CPU: merged.CPU, MemPct: merged.MemPct, SwapPct: merged.SwapPct, Load1: merged.Load1, TempC: merged.TempC, Disks: merged.Disks})
 			pingHealthchecks(c.Healthchecks.URL, httpPing)
 
+			if store != nil {
+				_ = store.Append(merged.TS, slowMetricSet(merged))
+			}
+
 			// net_down interval tracking: Online is a slow-tier field, only
 			// meaningfully updated on slow ticks, so only feed the tracker
 			// when it was actually just refreshed.
 			if ev, closed := net.Update(merged.Online, now.Unix()); closed {
 				_ = st.AppendDown(ev)
+				if store != nil {
+					_ = store.AppendEvent(ev)
+				}
 			}
 		}
 
@@ -516,6 +596,10 @@ func cmdDaemon(args []string) int {
 		if isSlowTick {
 			_ = baseline.Save(st.BaselinePath())
 			_ = st.PruneOlderThan(30)
+			if store != nil {
+				_ = store.Downsample(now.Unix())
+				_ = store.Prune(now.Unix())
+			}
 		}
 
 		tick++

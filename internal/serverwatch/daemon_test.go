@@ -442,3 +442,92 @@ func TestEventToAlertDispatchRespectsQuietHours(t *testing.T) {
 		t.Errorf("quiet-respecting channel received %d alerts outside quiet hours, want 1", got)
 	}
 }
+
+func TestFastMetricSet(t *testing.T) {
+	snap := Snapshot{CPU: 12, MemPct: 34, SwapPct: 5, Load1: 1.5, TempC: 60}
+	ms := fastMetricSet(snap)
+	want := MetricSet{"cpu": 12, "mem": 34, "swap": 5, "load1": 1.5, "temp": 60}
+	if len(ms) != len(want) {
+		t.Fatalf("fastMetricSet = %+v, want %+v", ms, want)
+	}
+	for k, v := range want {
+		if ms[k] != v {
+			t.Errorf("fastMetricSet[%q] = %v, want %v", k, ms[k], v)
+		}
+	}
+}
+
+func TestFastMetricSetOmitsTempWhenZero(t *testing.T) {
+	snap := Snapshot{CPU: 12, MemPct: 34, SwapPct: 5, Load1: 1.5, TempC: 0}
+	ms := fastMetricSet(snap)
+	if _, ok := ms["temp"]; ok {
+		t.Fatalf("fastMetricSet with TempC=0 = %+v, want no \"temp\" key", ms)
+	}
+	if len(ms) != 4 {
+		t.Fatalf("fastMetricSet = %+v, want exactly cpu/mem/swap/load1", ms)
+	}
+}
+
+func TestSlowMetricSet(t *testing.T) {
+	snap := Snapshot{Disks: map[string]float64{"/": 40, "/boot": 12}}
+	ms := slowMetricSet(snap)
+	want := MetricSet{"disk:/": 40, "disk:/boot": 12}
+	if len(ms) != len(want) {
+		t.Fatalf("slowMetricSet = %+v, want %+v", ms, want)
+	}
+	for k, v := range want {
+		if ms[k] != v {
+			t.Errorf("slowMetricSet[%q] = %v, want %v", k, ms[k], v)
+		}
+	}
+}
+
+func TestSlowMetricSetNoDisks(t *testing.T) {
+	ms := slowMetricSet(Snapshot{})
+	if len(ms) != 0 {
+		t.Fatalf("slowMetricSet with no disks = %+v, want empty", ms)
+	}
+}
+
+func TestSamplerMetricSetsWriteThroughToStore(t *testing.T) {
+	// Integration-style: exercise the actual write path a fast/slow tick
+	// takes — fastMetricSet/slowMetricSet feeding SampleStore.Append — against
+	// a real (memory) backend, then read it back via Query.
+	store, err := OpenStore("memory", t.TempDir(), StoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	snap := Snapshot{
+		TS:      1700000000,
+		CPU:     42,
+		MemPct:  55,
+		SwapPct: 2,
+		Load1:   0.8,
+		TempC:   50,
+		Disks:   map[string]float64{"/": 70},
+	}
+	if err := store.Append(snap.TS, fastMetricSet(snap)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(snap.TS, slowMetricSet(snap)); err != nil {
+		t.Fatal(err)
+	}
+
+	cpuPts, err := store.Query("cpu", snap.TS, snap.TS, ResRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cpuPts) != 1 || cpuPts[0].Avg != 42 {
+		t.Fatalf("cpu query = %+v, want one point avg 42", cpuPts)
+	}
+
+	diskPts, err := store.Query("disk:/", snap.TS, snap.TS, ResRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diskPts) != 1 || diskPts[0].Avg != 70 {
+		t.Fatalf("disk:/ query = %+v, want one point avg 70", diskPts)
+	}
+}
