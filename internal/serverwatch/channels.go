@@ -133,6 +133,35 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			contentType: "application/json",
 			tmpl:        discordTmpl,
 		}, nil
+	case "ntfy":
+		topic := cc.Settings["topic"]
+		if topic == "" {
+			return nil, fmt.Errorf("ntfy channel %q: topic not configured (set channel setting.topic)", cc.Name)
+		}
+		server := cc.Settings["server"]
+		if server == "" {
+			server = defaultNtfyServer
+		}
+		return &ntfyNotifier{
+			name:   cc.Name,
+			server: server,
+			topic:  topic,
+			token:  cc.Settings["token"],
+		}, nil
+	case "gotify":
+		server := cc.Settings["server"]
+		if server == "" {
+			return nil, fmt.Errorf("gotify channel %q: server not configured (set channel setting.server)", cc.Name)
+		}
+		token := cc.Settings["token"]
+		if token == "" {
+			return nil, fmt.Errorf("gotify channel %q: token not configured (set channel setting.token to a Gotify application token)", cc.Name)
+		}
+		return &gotifyNotifier{
+			name:   cc.Name,
+			server: server,
+			token:  token,
+		}, nil
 	default:
 		return nil, fmt.Errorf("channel type %q not implemented yet", cc.Type)
 	}
