@@ -32,6 +32,7 @@ func (s *Store) downPath() string       { return filepath.Join(s.dir, "downtime.
 func (s *Store) HeartbeatPath() string  { return filepath.Join(s.dir, "heartbeat") }
 func (s *Store) BaselinePath() string   { return filepath.Join(s.dir, "baseline.json") }
 func (s *Store) AlertStatePath() string { return filepath.Join(s.dir, "alerts.json") }
+func (s *Store) AlertLogPath() string   { return filepath.Join(s.dir, "alertlog.jsonl") }
 
 func (s *Store) AppendSample(smp Sample) error {
 	if err := os.MkdirAll(s.samplesDir(), 0o755); err != nil {

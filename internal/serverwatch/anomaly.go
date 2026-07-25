@@ -9,6 +9,12 @@ import (
 type ActiveAlert struct {
 	Since  int64  `json:"since"`
 	Reason string `json:"reason"`
+	// Acked/AckedAt record a manual `serverwatch alerts ack <key>`. Both are
+	// omitempty so an alerts.json written before these fields existed still
+	// unmarshals cleanly (missing fields simply zero-value: Acked=false,
+	// AckedAt=0), and so a not-yet-acked alert doesn't grow the JSON.
+	Acked   bool  `json:"acked,omitempty"`
+	AckedAt int64 `json:"acked_at,omitempty"`
 }
 
 type AlertState struct {
@@ -50,6 +56,32 @@ func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma float64, nowUni
 		b.Observe(c.Key, c.Value, c.Interval)
 	}
 	return events
+}
+
+// Ack marks the active alert at key as acknowledged, recording nowUnix as
+// AckedAt. It errors if key has no active alert (nothing to acknowledge).
+func (s *AlertState) Ack(key string, nowUnix int64) error {
+	a, ok := s.Active[key]
+	if !ok {
+		return fmt.Errorf("no active alert for key %q", key)
+	}
+	a.Acked = true
+	a.AckedAt = nowUnix
+	s.Active[key] = a
+	return nil
+}
+
+// Unack clears a prior acknowledgement on the active alert at key. It errors
+// if key has no active alert.
+func (s *AlertState) Unack(key string) error {
+	a, ok := s.Active[key]
+	if !ok {
+		return fmt.Errorf("no active alert for key %q", key)
+	}
+	a.Acked = false
+	a.AckedAt = 0
+	s.Active[key] = a
+	return nil
 }
 
 func (c Check) breach(b *Baseline, sigma float64) (bool, string) {

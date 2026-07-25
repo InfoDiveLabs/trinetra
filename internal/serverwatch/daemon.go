@@ -338,6 +338,33 @@ func eventToAlert(e Event, nowUnix int64) Alert {
 // deliver a single Alert before treating it as timed out (see Dispatcher.Dispatch).
 const dispatcherTimeout = 15 * time.Second
 
+// alertLogRetention bounds how long AlertEvents are kept in the alert log
+// (see PruneAlertLog), mirroring the ~30-day retention used elsewhere for
+// similar append-only histories.
+const alertLogRetention = 30 * 24 * time.Hour
+
+// dispatchAndLog calls disp.Dispatch and, best-effort, records the outcome
+// as an AlertEvent in alog: this is the single choke point every alert
+// dispatch in the daemon (anomaly fire/recover, boot report, digests) goes
+// through so the alert log stays a complete history. alog may be nil (kept
+// symmetrical with the store's nil-degrades-gracefully convention elsewhere
+// in this file) in which case logging is simply skipped.
+func dispatchAndLog(disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []DeliveryResult {
+	results := disp.Dispatch(a, quiet)
+	if alog != nil {
+		_ = alog.AppendAlertEvent(AlertEvent{
+			Time:      a.Time,
+			Key:       a.Key,
+			Title:     a.Title,
+			Severity:  a.Severity.String(),
+			Kind:      a.Kind,
+			Source:    a.Source,
+			Delivered: deliveriesFrom(results),
+		})
+	}
+	return results
+}
+
 func cmdDaemon(args []string) int {
 	// pidfile for SIGHUP reload
 	_ = os.MkdirAll(stateDir, 0o755)
@@ -431,6 +458,7 @@ func cmdDaemon(args []string) int {
 	baseline := NewBaseline()
 	baseline.LoadFrom(st.BaselinePath(), fs)
 	alerts := LoadAlertState(st.AlertStatePath(), fs)
+	alog := NewAlertLog(st.AlertLogPath())
 	var net NetTracker
 	// prevCPU belongs solely to the sampler goroutine (this function). The
 	// poller keeps its OWN CPUStat so no *CPUStat is shared across goroutines.
@@ -446,7 +474,7 @@ func cmdDaemon(args []string) int {
 			}
 			snap := collectSnapshot(x, fs, &prevCPU, da)
 			now := clock.Now().Unix()
-			getDispatcher().Dispatch(Alert{
+			dispatchAndLog(getDispatcher(), alog, Alert{
 				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap)),
 				Severity: SevInfo,
 				Kind:     "fire",
@@ -556,24 +584,24 @@ func cmdDaemon(args []string) int {
 		quiet := inQuietHours(c.QuietHours, now)
 		events := alerts.Evaluate(buildFastChecks(merged, c), baseline, c.BaselineSigma, now.Unix())
 		for _, e := range events {
-			disp.Dispatch(eventToAlert(e, now.Unix()), quiet)
+			dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
 		}
 		stateChanged := len(events) > 0
 		if isSlowTick {
 			slowEvents := alerts.Evaluate(buildSlowChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
 			for _, e := range slowEvents {
-				disp.Dispatch(eventToAlert(e, now.Unix()), quiet)
+				dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
 			}
 			stateChanged = stateChanged || len(slowEvents) > 0
 		}
 		// scheduled digests bypass quiet hours, like the boot report.
 		if matchDaily(c.Schedule.Daily, now, lastDaily) {
 			lastDaily = now
-			disp.Dispatch(Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			dispatchAndLog(disp, alog, Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
 			lastWeekly = now
-			disp.Dispatch(Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			dispatchAndLog(disp, alog, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		// alerts.json only changes when a fire/recover transition happened;
 		// baseline.json's stats are updated every fast tick in memory but only
@@ -585,6 +613,7 @@ func cmdDaemon(args []string) int {
 		}
 		if isSlowTick {
 			_ = baseline.Save(st.BaselinePath())
+			_ = alog.PruneAlertLog(now.Add(-alertLogRetention).Unix())
 			if store != nil {
 				_ = store.Downsample(now.Unix())
 				_ = store.Prune(now.Unix())

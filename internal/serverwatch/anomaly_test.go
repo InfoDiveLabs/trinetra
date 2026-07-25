@@ -1,6 +1,9 @@
 package serverwatch
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestAnomalyThresholdFireOnceThenRecover(t *testing.T) {
 	s := NewAlertState()
@@ -55,5 +58,81 @@ func TestAnomalyEvaluatePassesIntervalToObserve(t *testing.T) {
 	}
 	if b.Stats["cpu"].Alpha >= b.Stats["disk:/"].Alpha {
 		t.Fatalf("cpu (5s) alpha %v should be < disk:/ (60s) alpha %v", b.Stats["cpu"].Alpha, b.Stats["disk:/"].Alpha)
+	}
+}
+
+func TestAckSetsAckedAndAckedAt(t *testing.T) {
+	s := NewAlertState()
+	s.Active["disk:/"] = ActiveAlert{Since: 100, Reason: "disk:/ = 95.0 ≥ threshold 90.0"}
+
+	if err := s.Ack("disk:/", 200); err != nil {
+		t.Fatalf("Ack: %v", err)
+	}
+	got := s.Active["disk:/"]
+	if !got.Acked || got.AckedAt != 200 {
+		t.Fatalf("after Ack: %+v", got)
+	}
+}
+
+func TestAckOfNonActiveKeyErrors(t *testing.T) {
+	s := NewAlertState()
+	if err := s.Ack("disk:/", 200); err == nil {
+		t.Fatal("expected error acking a key with no active alert")
+	}
+}
+
+func TestUnackClearsAckState(t *testing.T) {
+	s := NewAlertState()
+	s.Active["disk:/"] = ActiveAlert{Since: 100, Reason: "r", Acked: true, AckedAt: 200}
+
+	if err := s.Unack("disk:/"); err != nil {
+		t.Fatalf("Unack: %v", err)
+	}
+	got := s.Active["disk:/"]
+	if got.Acked || got.AckedAt != 0 {
+		t.Fatalf("after Unack: %+v", got)
+	}
+}
+
+func TestUnackOfNonActiveKeyErrors(t *testing.T) {
+	s := NewAlertState()
+	if err := s.Unack("disk:/"); err == nil {
+		t.Fatal("expected error unacking a key with no active alert")
+	}
+}
+
+// TestAckPersistsViaSaveLoadBackCompat confirms the new Acked/AckedAt fields
+// round-trip through Save/LoadAlertState, and that an old alerts.json written
+// before these fields existed still loads fine (back-compat).
+func TestAckPersistsViaSaveLoadBackCompat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alerts.json")
+	fs := osFS{}
+
+	s := NewAlertState()
+	s.Active["cpu"] = ActiveAlert{Since: 100, Reason: "cpu hot"}
+	if err := s.Ack("cpu", 150); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := LoadAlertState(path, fs)
+	got := reloaded.Active["cpu"]
+	if !got.Acked || got.AckedAt != 150 {
+		t.Fatalf("reloaded active alert = %+v, want Acked=true AckedAt=150", got)
+	}
+
+	// Old-format alerts.json, written before Acked/AckedAt existed.
+	oldJSON := `{"active":{"mem":{"since":50,"reason":"mem high"}}}`
+	oldPath := filepath.Join(dir, "old_alerts.json")
+	if err := writeFileAtomic(oldPath, []byte(oldJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := LoadAlertState(oldPath, fs)
+	memAlert, ok := old.Active["mem"]
+	if !ok || memAlert.Acked || memAlert.Since != 50 {
+		t.Fatalf("old-format load = %+v ok=%v, want present, not acked", memAlert, ok)
 	}
 }
