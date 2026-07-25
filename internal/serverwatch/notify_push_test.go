@@ -185,15 +185,32 @@ func TestGotifyPriorityMapping(t *testing.T) {
 }
 
 func TestGotifyTokenNotInErrorString(t *testing.T) {
+	// A token WITH reserved characters, so url.QueryEscape is exercised: it
+	// must still not appear (raw) in any returned error string.
+	const secret = "a b&c=d/e+f%g"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	n := &gotifyNotifier{name: "gotify", server: srv.URL, token: "super-secret-token"}
+	n := &gotifyNotifier{name: "gotify", server: srv.URL, token: secret}
 	err := n.Send(context.Background(), Alert{Title: "t", Severity: SevInfo, Kind: "fire"})
 	msg := errString(t, err)
-	if strings.Contains(msg, "super-secret-token") {
+	if strings.Contains(msg, secret) {
+		t.Errorf("error leaks token: %q", msg)
+	}
+}
+
+// TestGotifyMalformedServerNoTokenLeak covers the http.NewRequestWithContext
+// error branch: a malformed server URL makes url.Parse fail, and the raw
+// *url.Error embeds the whole request URL (token and all). The returned
+// error must be a static, token-free message.
+func TestGotifyMalformedServerNoTokenLeak(t *testing.T) {
+	const secret = "super-secret-token"
+	n := &gotifyNotifier{name: "gotify", server: "http://exa mple.com", token: secret}
+	err := n.Send(context.Background(), Alert{Title: "t", Severity: SevInfo, Kind: "fire"})
+	msg := errString(t, err)
+	if strings.Contains(msg, secret) {
 		t.Errorf("error leaks token: %q", msg)
 	}
 }

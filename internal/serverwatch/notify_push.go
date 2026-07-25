@@ -84,7 +84,7 @@ func (n *ntfyNotifier) Send(ctx context.Context, a Alert) error {
 		return err
 	}
 
-	reqURL := n.server + "/" + n.topic
+	reqURL := n.server + "/" + url.PathEscape(n.topic)
 	body := formatAlert(a)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBufferString(body))
@@ -190,7 +190,10 @@ func (g *gotifyNotifier) Send(ctx context.Context, a Alert) error {
 	reqURL := fmt.Sprintf("%s/message?token=%s", g.server, url.QueryEscape(g.token))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("gotify %s: build request: %w", g.name, err)
+		// err is a *url.Error that embeds reqURL (token and all) when
+		// g.server is malformed, so it must not be wrapped: return a static,
+		// token-free message just like the client.Do branch below.
+		return fmt.Errorf("gotify %s: invalid server URL", g.name)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
