@@ -92,6 +92,3 @@ func runMaybeSudo(x Exec, name string, args ...string) ([]byte, error) {
 	}
 	return x.Run("sudo", append([]string{name}, args...)...)
 }
-
-// TEMP stub — real implementation lands in Task 9 (net.go). Remove then.
-func parseNetDevNames(s string) []string { return nil }

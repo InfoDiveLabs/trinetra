@@ -3,6 +3,7 @@ package serverwatch
 import (
 	"encoding/json"
 	"os"
+	"sort"
 	"strconv"
 )
 
@@ -35,6 +36,8 @@ func trimSpace(b []byte) []byte {
 }
 
 func pidFile() string { return stateDir + "/serverwatch.pid" }
+
+func sortStrings(s []string) { sort.Strings(s) }
 
 func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
