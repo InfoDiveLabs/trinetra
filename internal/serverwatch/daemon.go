@@ -359,18 +359,19 @@ func cmdDaemon(args []string) int {
 		fmt.Fprintln(stderr, "config load failed, using defaults:", err)
 		cfg = config.Default()
 	}
-	// New SampleStore (raw appends + downsample + prune), opened once here at
-	// startup — see the design note in this task: the old JSONL Store above
-	// remains the live backend for reads (history/handlers/digests switch
-	// over in a later task), and both are written every sample so existing
-	// reads keep working during the migration. openConfiguredStore (migrate.go)
-	// centralizes the backend/retention lookup so `migrate`/`dump` open the
-	// exact same store this daemon writes to.
+	// SampleStore (raw appends + downsample + prune), opened once here at
+	// startup: this is now the SOLE writer of samples/downtime events, and the
+	// sole read path for history/handlers/digests below. The old JSONL Store
+	// (st) above remains only for status.json, the heartbeat file, and the
+	// baseline/alert-state path helpers — none of which are sample data.
+	// openConfiguredStore (migrate.go) centralizes the backend/retention
+	// lookup so `migrate`/`dump` open the exact same store this daemon writes
+	// to.
 	store, err := openConfiguredStore(cfg)
 	if err != nil {
-		// Not fatal: the old Store above still works, so degrade to
-		// store-writes-disabled rather than crash-looping under
-		// systemd Restart=always.
+		// Not fatal: degrade to store-writes-disabled (and reads returning
+		// empty via the nil-store guards in digestNow/handleCommand) rather
+		// than crash-looping under systemd Restart=always.
 		fmt.Fprintln(stderr, "sample store open failed, store writes disabled:", err)
 		store = nil
 	}
@@ -440,7 +441,6 @@ func cmdDaemon(args []string) int {
 	c0 := getCfg()
 	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
 		if ev, ok := reconstructPowerDown(last, clock.Now(), time.Duration(c0.HeartbeatInterval)*time.Second); ok {
-			_ = st.AppendDown(ev)
 			if store != nil {
 				_ = store.AppendEvent(ev)
 			}
@@ -457,7 +457,7 @@ func cmdDaemon(args []string) int {
 	}
 
 	// telegram long-poller (owns its own prevCPU internally)
-	go pollLoop(getCfg, setChatID, st, x, fs, da)
+	go pollLoop(getCfg, setChatID, store, x, fs, da)
 
 	// sampler loop: ticks at fast_interval. Every Nth fast tick (N computed by
 	// slowEvery from fast_interval/sample_interval) ALSO runs collectSlow and
@@ -513,20 +513,20 @@ func cmdDaemon(args []string) int {
 		}
 		_ = st.WriteStatus(merged) // every fast tick: status.json is the live view
 
-		// New SampleStore write path (dual-write alongside the old JSONL
-		// Store above until reads migrate in s10): every fast tick appends
-		// the cheap fast-tier metrics as raw samples.
+		// SampleStore write path: every fast tick appends the cheap fast-tier
+		// metrics as raw samples. This is the sole write path for sample
+		// data now — the legacy JSONL Store's AppendSample/AppendDown are no
+		// longer called (see the dual-write removal note at store opening
+		// above); migrate.go's one-shot importer still reads any
+		// already-on-disk legacy files via Store.SamplesSince/DownSince.
 		if store != nil {
 			_ = store.Append(merged.TS, fastMetricSet(merged))
 		}
 
 		if isSlowTick {
-			// Persisted Sample + pruning + healthchecks stay on the slow
-			// cadence: a Sample/ping every fast tick would be 12x today's
-			// volume (default fast=5s, slow=60s) for no added signal, since
-			// only the slow fields (and CPU/mem/swap/load1, unchanged in
-			// their statistical meaning at either cadence) feed digests.
-			_ = st.AppendSample(Sample{TS: merged.TS, CPU: merged.CPU, MemPct: merged.MemPct, SwapPct: merged.SwapPct, Load1: merged.Load1, TempC: merged.TempC, Disks: merged.Disks})
+			// Healthchecks pings stay on the slow cadence: pinging every fast
+			// tick would be 12x today's volume (default fast=5s, slow=60s)
+			// for no added signal.
 			pingHealthchecks(c.Healthchecks.URL, httpPing)
 
 			if store != nil {
@@ -537,7 +537,6 @@ func cmdDaemon(args []string) int {
 			// meaningfully updated on slow ticks, so only feed the tracker
 			// when it was actually just refreshed.
 			if ev, closed := net.Update(merged.Online, now.Unix()); closed {
-				_ = st.AppendDown(ev)
 				if store != nil {
 					_ = store.AppendEvent(ev)
 				}
@@ -570,11 +569,11 @@ func cmdDaemon(args []string) int {
 		// scheduled digests bypass quiet hours, like the boot report.
 		if matchDaily(c.Schedule.Daily, now, lastDaily) {
 			lastDaily = now
-			disp.Dispatch(Alert{Title: digestNow(st, now, 1, "📊 daily digest"), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			disp.Dispatch(Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
 			lastWeekly = now
-			disp.Dispatch(Alert{Title: digestNow(st, now, 7, "📆 weekly rollup"), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			disp.Dispatch(Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		// alerts.json only changes when a fire/recover transition happened;
 		// baseline.json's stats are updated every fast tick in memory but only
@@ -586,7 +585,6 @@ func cmdDaemon(args []string) int {
 		}
 		if isSlowTick {
 			_ = baseline.Save(st.BaselinePath())
-			_ = st.PruneOlderThan(30)
 			if store != nil {
 				_ = store.Downsample(now.Unix())
 				_ = store.Prune(now.Unix())
@@ -598,10 +596,28 @@ func cmdDaemon(args []string) int {
 	}
 }
 
-func digestNow(st *Store, now time.Time, days int, title string) string {
+// configuredRawRetention returns cfg.Storage.RawRetention parsed as a
+// Duration, falling back to defaultRawRetention when unset/unparseable —
+// mirroring the fallback each SampleStore backend applies internally via
+// StoreOptions.withDefaults. Needed here too since PickResolution takes the
+// raw duration directly rather than going through a backend.
+func configuredRawRetention(cfg *config.Config) time.Duration {
+	d, err := time.ParseDuration(cfg.Storage.RawRetention)
+	if err != nil || d <= 0 {
+		return defaultRawRetention
+	}
+	return d
+}
+
+// digestNow builds a digest by querying store's cpu/mem series and downtime
+// events over the window [now-days*24h, now]. rawRetention (the configured
+// raw-resolution retention window) drives PickResolution so the query uses
+// raw points when the window fits inside it and 1m rollups otherwise. When
+// store is nil (OpenStore failed at daemon startup) it degrades to an
+// all-zero/empty digest rather than crashing.
+func digestNow(store SampleStore, now time.Time, days int, title string, rawRetention time.Duration) string {
 	since := now.AddDate(0, 0, -days).Unix()
-	samples, _ := st.SamplesSince(since)
-	downs, _ := st.DownSince(since)
+	nowUnix := now.Unix()
 	var window string
 	switch days {
 	case 1:
@@ -611,10 +627,28 @@ func digestNow(st *Store, now time.Time, days int, title string) string {
 	default:
 		window = fmt.Sprintf("%dd", days)
 	}
-	return buildDigest(title, window, samples, downs)
+	if store == nil {
+		return buildDigest(title, window, 0, 0, 0, nil)
+	}
+	res := PickResolution(since, nowUnix, nowUnix, rawRetention)
+	cpuPts, _ := store.Query("cpu", since, nowUnix, res)
+	memPts, _ := store.Query("mem", since, nowUnix, res)
+	downs, _ := store.Events(since, nowUnix)
+	var peakCPU, peakMem float64
+	for _, p := range cpuPts {
+		if p.Max > peakCPU {
+			peakCPU = p.Max
+		}
+	}
+	for _, p := range memPts {
+		if p.Max > peakMem {
+			peakMem = p.Max
+		}
+	}
+	return buildDigest(title, window, peakCPU, peakMem, len(cpuPts), downs)
 }
 
-func pollLoop(getCfg func() *config.Config, setChatID func(string), st *Store, x Exec, fs FileSource, da dockerAccess) {
+func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess) {
 	// The poller owns its CPUStat; it is never shared with the sampler goroutine.
 	offset := 0
 	var prevCPU CPUStat
@@ -642,7 +676,7 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), st *Store, x
 			}
 			snap := collectSnapshot(x, fs, &prevCPU, da)
 			snap.TS = time.Now().Unix()
-			_ = tg.SendMessage(handleCommand(u.Text, st, snap))
+			_ = tg.SendMessage(handleCommand(u.Text, store, snap))
 		}
 	}
 }

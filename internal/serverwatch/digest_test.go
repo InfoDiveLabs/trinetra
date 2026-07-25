@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,11 +53,14 @@ func TestMatchWeekly(t *testing.T) {
 }
 
 func TestBuildDailyDigest(t *testing.T) {
-	s := buildDailyDigest(
-		[]Sample{{CPU: 10}, {CPU: 80}, {CPU: 20}},
-		[]DownEvent{{Type: "net_down", DurationSec: 120}},
-	)
+	s := buildDailyDigest(80, 55, 3, []DownEvent{{Type: "net_down", DurationSec: 120}})
 	if s == "" {
 		t.Fatal("digest empty")
+	}
+	if !strings.Contains(s, "80%") || !strings.Contains(s, "55%") {
+		t.Fatalf("digest missing peak values, got %q", s)
+	}
+	if !strings.Contains(s, "samples: 3") {
+		t.Fatalf("digest missing sample count, got %q", s)
 	}
 }

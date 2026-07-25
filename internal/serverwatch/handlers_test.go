@@ -7,25 +7,21 @@ import (
 )
 
 func TestHandleHelpAndStats(t *testing.T) {
-	dir := t.TempDir()
-	st := NewStore(dir, fixedClock{time.Unix(1000, 0)})
 	snap := Snapshot{CPU: 12, MemPct: 40, Online: true}
-	if r := handleCommand("/help", st, snap); !strings.Contains(r, "/stats") {
+	if r := handleCommand("/help", nil, snap); !strings.Contains(r, "/stats") {
 		t.Fatalf("help = %q", r)
 	}
-	if r := handleCommand("/stats", st, snap); !strings.Contains(r, "CPU") {
+	if r := handleCommand("/stats", nil, snap); !strings.Contains(r, "CPU") {
 		t.Fatalf("stats = %q", r)
 	}
-	if r := handleCommand("/gibberish", st, snap); !strings.Contains(r, "/stats") {
+	if r := handleCommand("/gibberish", nil, snap); !strings.Contains(r, "/stats") {
 		t.Fatalf("unknown should show help, got %q", r)
 	}
 }
 
 func TestHandleDisk(t *testing.T) {
-	dir := t.TempDir()
-	st := NewStore(dir, fixedClock{time.Unix(1000, 0)})
 	snap := Snapshot{Disks: map[string]float64{"/": 42, "/boot": 10}, Online: true}
-	r := handleCommand("/disk", st, snap)
+	r := handleCommand("/disk", nil, snap)
 	if !strings.Contains(r, "/ 42%") {
 		t.Fatalf("disk reply missing usage, got %q", r)
 	}
@@ -35,52 +31,59 @@ func TestHandleDisk(t *testing.T) {
 }
 
 func TestHandleNet(t *testing.T) {
-	dir := t.TempDir()
-	st := NewStore(dir, fixedClock{time.Unix(1000, 0)})
-	if r := handleCommand("/net", st, Snapshot{Online: true}); !strings.Contains(r, "up") {
+	if r := handleCommand("/net", nil, Snapshot{Online: true}); !strings.Contains(r, "up") {
 		t.Fatalf("net up = %q", r)
 	}
-	if r := handleCommand("/net", st, Snapshot{Online: false}); !strings.Contains(r, "DOWN") {
+	if r := handleCommand("/net", nil, Snapshot{Online: false}); !strings.Contains(r, "DOWN") {
 		t.Fatalf("net down = %q", r)
 	}
 }
 
-func TestHandleHistory(t *testing.T) {
-	dir := t.TempDir()
+// TestHandleHistoryFromStore verifies /history reads downtime events from the
+// SampleStore (store.Events) rather than the legacy JSONL Store.
+func TestHandleHistoryFromStore(t *testing.T) {
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
-	st := NewStore(dir, fixedClock{now})
+	store := newMemStore(StoreOptions{})
 	end := now.Add(-2 * time.Hour)
 	start := end.Add(-30 * time.Minute)
-	if err := st.AppendDown(DownEvent{
+	if err := store.AppendEvent(DownEvent{
 		Type:        "power_down",
 		Start:       start.Unix(),
 		End:         end.Unix(),
 		DurationSec: int64(end.Sub(start) / time.Second),
 	}); err != nil {
-		t.Fatalf("AppendDown: %v", err)
+		t.Fatalf("AppendEvent: %v", err)
 	}
 	snap := Snapshot{TS: now.Unix()}
-	r := handleCommand("/history 7", st, snap)
+	r := handleCommand("/history 7", store, snap)
 	if !strings.Contains(r, "power_down") {
 		t.Fatalf("history should contain event, got %q", r)
 	}
 }
 
+// TestHandleHistoryNilStore verifies /history degrades to an empty reply
+// (rather than panicking) when the SampleStore failed to open at startup.
+func TestHandleHistoryNilStore(t *testing.T) {
+	r := handleCommand("/history 7", nil, Snapshot{TS: time.Now().Unix()})
+	if !strings.Contains(r, "no downtime") {
+		t.Fatalf("nil-store history = %q, want a degrade-to-empty reply", r)
+	}
+}
+
 func TestHandleDockerAndServices(t *testing.T) {
-	st := NewStore(t.TempDir(), fixedClock{time.Unix(1000, 0)})
 	snap := Snapshot{
 		Containers:  map[string]string{"web": "running", "db": "exited"},
 		FailedUnits: []string{"nginx.service"},
 	}
-	d := handleCommand("/docker", st, snap)
+	d := handleCommand("/docker", nil, snap)
 	if !strings.Contains(d, "web") || !strings.Contains(d, "db") {
 		t.Fatalf("/docker = %q", d)
 	}
-	s := handleCommand("/services", st, snap)
+	s := handleCommand("/services", nil, snap)
 	if !strings.Contains(s, "nginx.service") {
 		t.Fatalf("/services = %q", s)
 	}
-	empty := handleCommand("/services", st, Snapshot{})
+	empty := handleCommand("/services", nil, Snapshot{})
 	if !strings.Contains(empty, "no failed units") {
 		t.Fatalf("/services empty = %q", empty)
 	}

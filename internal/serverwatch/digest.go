@@ -46,28 +46,25 @@ func matchWeekly(spec string, now, lastRun time.Time) bool {
 	return matchDaily(parts[1], now, lastRun)
 }
 
-func buildDigest(title, window string, samples []Sample, downs []DownEvent) string {
-	var peakCPU, peakMem float64
-	for _, s := range samples {
-		if s.CPU > peakCPU {
-			peakCPU = s.CPU
-		}
-		if s.MemPct > peakMem {
-			peakMem = s.MemPct
-		}
-	}
+// buildDigest renders a digest message from precomputed stats: peakCPU/
+// peakMem (already the max over whatever window the caller queried),
+// sampleCount (how many points backed those peaks), and downs (the downtime
+// events overlapping the window). Precomputed rather than raw []Sample so
+// callers can source the numbers from a SampleStore query (digestNow) without
+// this function knowing anything about storage.
+func buildDigest(title, window string, peakCPU, peakMem float64, sampleCount int, downs []DownEvent) string {
 	var totalDown int64
 	for _, d := range downs {
 		totalDown += d.DurationSec
 	}
 	var b strings.Builder
 	b.WriteString(title)
-	fmt.Fprintf(&b, "\nsamples: %d", len(samples))
+	fmt.Fprintf(&b, "\nsamples: %d", sampleCount)
 	fmt.Fprintf(&b, "\npeak CPU: %.0f%%  peak mem: %.0f%%", peakCPU, peakMem)
 	fmt.Fprintf(&b, "\ndowntime (%s): %s across %d events", window, humanDur(totalDown), len(downs))
 	return b.String()
 }
 
-func buildDailyDigest(samples []Sample, downs []DownEvent) string {
-	return buildDigest("📊 daily digest", "24h", samples, downs)
+func buildDailyDigest(peakCPU, peakMem float64, sampleCount int, downs []DownEvent) string {
+	return buildDigest("📊 daily digest", "24h", peakCPU, peakMem, sampleCount, downs)
 }

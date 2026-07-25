@@ -2,6 +2,7 @@ package serverwatch
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -486,6 +487,61 @@ func TestSlowMetricSetNoDisks(t *testing.T) {
 	ms := slowMetricSet(Snapshot{})
 	if len(ms) != 0 {
 		t.Fatalf("slowMetricSet with no disks = %+v, want empty", ms)
+	}
+}
+
+// TestDigestNowFromStore seeds a memory SampleStore with cpu/mem points and a
+// downtime event inside the digest window, and asserts digestNow (reading
+// exclusively via store.Query/store.Events, no legacy Store involved)
+// reports the right peaks, sample count, and downtime summary.
+func TestDigestNowFromStore(t *testing.T) {
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	store := newMemStore(StoreOptions{})
+
+	within := now.Add(-2 * time.Hour).Unix()
+	if err := store.Append(within, MetricSet{"cpu": 30, "mem": 40}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(now.Add(-1*time.Hour).Unix(), MetricSet{"cpu": 77, "mem": 61}); err != nil {
+		t.Fatal(err)
+	}
+	// Outside the 1-day window: must not affect peaks or sample count.
+	if err := store.Append(now.AddDate(0, 0, -5).Unix(), MetricSet{"cpu": 99, "mem": 99}); err != nil {
+		t.Fatal(err)
+	}
+
+	end := now.Add(-3 * time.Hour)
+	start := end.Add(-10 * time.Minute)
+	if err := store.AppendEvent(DownEvent{
+		Type:        "net_down",
+		Start:       start.Unix(),
+		End:         end.Unix(),
+		DurationSec: int64(end.Sub(start) / time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := digestNow(store, now, 1, "📊 daily digest", 48*time.Hour)
+	if !strings.Contains(s, "peak CPU: 77%") {
+		t.Errorf("digest = %q, want peak CPU 77%%", s)
+	}
+	if !strings.Contains(s, "peak mem: 61%") {
+		t.Errorf("digest = %q, want peak mem 61%%", s)
+	}
+	if !strings.Contains(s, "samples: 2") {
+		t.Errorf("digest = %q, want samples: 2 (points inside window only)", s)
+	}
+	if !strings.Contains(s, "across 1 events") {
+		t.Errorf("digest = %q, want downtime summary across 1 events", s)
+	}
+}
+
+// TestDigestNowNilStore verifies digestNow degrades to an empty digest
+// (rather than panicking) when the SampleStore failed to open at startup.
+func TestDigestNowNilStore(t *testing.T) {
+	s := digestNow(nil, time.Now(), 1, "📊 daily digest", 48*time.Hour)
+	if !strings.Contains(s, "samples: 0") {
+		t.Errorf("nil-store digest = %q, want samples: 0", s)
 	}
 }
 

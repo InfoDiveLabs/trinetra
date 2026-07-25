@@ -17,7 +17,7 @@ const helpText = `commands:
 /services — failed systemd units
 /help — this message`
 
-func handleCommand(text string, st *Store, snap Snapshot) string {
+func handleCommand(text string, store SampleStore, snap Snapshot) string {
 	fields := strings.Fields(text)
 	if len(fields) == 0 {
 		return helpText
@@ -36,8 +36,13 @@ func handleCommand(text string, st *Store, snap Snapshot) string {
 				days = n
 			}
 		}
+		// Guard nil store: if OpenStore failed at daemon startup, degrade to
+		// an empty history reply rather than a nil-pointer panic.
+		if store == nil {
+			return formatDowntimeList(nil)
+		}
 		since := time.Unix(snap.TS, 0).AddDate(0, 0, -days).Unix()
-		evs, err := st.DownSince(since)
+		evs, err := store.Events(since, snap.TS)
 		if err != nil {
 			return "error reading downtime: " + err.Error()
 		}
