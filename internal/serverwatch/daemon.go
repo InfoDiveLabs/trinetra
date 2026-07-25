@@ -292,7 +292,16 @@ func digestNow(st *Store, now time.Time, days int, title string) string {
 	since := now.AddDate(0, 0, -days).Unix()
 	samples, _ := st.SamplesSince(since)
 	downs, _ := st.DownSince(since)
-	return buildDigest(title, samples, downs)
+	var window string
+	switch days {
+	case 1:
+		window = "24h"
+	case 7:
+		window = "7d"
+	default:
+		window = fmt.Sprintf("%dd", days)
+	}
+	return buildDigest(title, window, samples, downs)
 }
 
 func pollLoop(getCfg func() *config.Config, setChatID func(string), st *Store, x Exec, fs FileSource, da dockerAccess) {

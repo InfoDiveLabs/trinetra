@@ -46,7 +46,7 @@ func matchWeekly(spec string, now, lastRun time.Time) bool {
 	return matchDaily(parts[1], now, lastRun)
 }
 
-func buildDigest(title string, samples []Sample, downs []DownEvent) string {
+func buildDigest(title, window string, samples []Sample, downs []DownEvent) string {
 	var peakCPU, peakMem float64
 	for _, s := range samples {
 		if s.CPU > peakCPU {
@@ -64,10 +64,10 @@ func buildDigest(title string, samples []Sample, downs []DownEvent) string {
 	b.WriteString(title)
 	fmt.Fprintf(&b, "\nsamples: %d", len(samples))
 	fmt.Fprintf(&b, "\npeak CPU: %.0f%%  peak mem: %.0f%%", peakCPU, peakMem)
-	fmt.Fprintf(&b, "\ndowntime (24h): %s across %d events", humanDur(totalDown), len(downs))
+	fmt.Fprintf(&b, "\ndowntime (%s): %s across %d events", window, humanDur(totalDown), len(downs))
 	return b.String()
 }
 
 func buildDailyDigest(samples []Sample, downs []DownEvent) string {
-	return buildDigest("📊 daily digest", samples, downs)
+	return buildDigest("📊 daily digest", "24h", samples, downs)
 }
