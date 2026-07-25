@@ -1,6 +1,6 @@
 # Storage design (future-safe time-series)
 
-Status: **planned** (tracked under the "Tiered sampling + efficient storage" epic).
+Status: **implemented (v0.2 / Epic #44)** (the "Tiered sampling + efficient storage" epic).
 This supersedes the current JSONL sample store for time-series data.
 
 ## Goals

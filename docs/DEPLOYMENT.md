@@ -145,8 +145,8 @@ sudo serverwatch config set storage.rollup_retention 1440h  # default 720h (30d)
 
 - `storage.backend` — `tsfile` (default; durable, on-disk) or `memory`
   (non-persistent; mainly for tests).
-- `storage.raw_retention` — how long full-resolution (`fast_interval`)
-  samples are kept before being pruned.
+- `storage.raw_retention` — how long raw-resolution samples are kept before
+  being pruned (all raw metrics, fast- and slow-tier alike).
 - `storage.rollup_retention` — how long 1-minute rollups and downtime events
   are kept.
 

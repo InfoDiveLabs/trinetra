@@ -4,16 +4,12 @@
 // (store.go) and re-appends it into the configured SampleStore, then
 // archives the legacy files.
 //
-// Idempotency note: the daemon dual-writes every sample to BOTH the legacy
-// JSONL Store and the SampleStore during the migration window (see
-// daemon.go). So after `migrate` archives samples/, a still-running daemon
-// will RECREATE samples/ with fresh records — records already present in the
-// SampleStore. Archiving alone therefore does NOT make migrate safe to
-// re-run: a second run would re-import (and duplicate) that recreated data.
-// To make migrate a true one-shot we drop a marker file (<oldDir>/.migrated,
-// containing the unix time of the import) after the first successful import
-// and refuse to import again while it exists. `--force` bypasses the marker
-// for a deliberate re-import.
+// Idempotency note: archiving the legacy files alone does NOT make migrate
+// safe to re-run — a second run would re-read whatever legacy data is on disk
+// and re-import (duplicate) it. To make migrate a true one-shot we drop a
+// marker file (<oldDir>/.migrated, containing the unix time of the import)
+// after the first successful import and refuse to import again while it
+// exists. `--force` bypasses the marker for a deliberate re-import.
 package serverwatch
 
 import (
@@ -55,8 +51,8 @@ func readMarker(oldDir string) (time.Time, bool) {
 //
 // It is a guarded one-shot: unless force is set, an existing marker file
 // (see migratedMarker) short-circuits the whole operation to (0, 0, nil)
-// with skipped=true — this is what prevents a double-import when the daemon
-// has recreated the legacy files via dual-write since the first migrate.
+// with skipped=true — this is what prevents a double-import of the same
+// legacy files on a second run.
 //
 // When it does import, it: appends every sample/event, calls
 // store.Downsample(now), archives the legacy files by renaming them to a
@@ -157,9 +153,8 @@ func archiveDest(base string, now int64) string {
 // cmdMigrate opens the configured SampleStore and imports every legacy JSONL
 // record found in stateDir into it (see migrateLegacy). It is a guarded
 // one-shot: once a marker file records a successful import it refuses to run
-// again (printing when it was migrated) unless --force is passed, so the
-// daemon's dual-write recreation of the legacy files can never cause a
-// duplicate import.
+// again (printing when it was migrated) unless --force is passed, so a second
+// invocation can never cause a duplicate import of the legacy files.
 func cmdMigrate(args []string) int {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
