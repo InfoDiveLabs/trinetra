@@ -113,9 +113,13 @@ func httpPing(url string) error {
 	return nil
 }
 
-func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snapshot {
+// collectFast gathers the cheap, high-frequency resources: /proc reads for
+// CPU/mem/swap/load, plus the /sys thermal read (also cheap). prev is the
+// caller's single-goroutine-owned CPUStat used to compute CPU% as a delta
+// across ticks; it is mutated in place. collectFast never shells out, so it
+// is safe to call every fast_interval tick without load on the host.
+func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 	var snap Snapshot
-	snap.DockerAccess = da.method
 	if b, err := fs.Read("/proc/stat"); err == nil {
 		if cur, err := parseProcStat(string(b)); err == nil {
 			if prev.Total != 0 {
@@ -133,6 +137,22 @@ func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snap
 	if b, err := fs.Read("/proc/loadavg"); err == nil {
 		snap.Load1, _, _, _ = parseLoadavg(string(b))
 	}
+	if zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp"); len(zones) > 0 {
+		if b, err := fs.Read(zones[0]); err == nil {
+			snap.TempC, _ = parseThermal(string(b))
+		}
+	}
+	return snap
+}
+
+// collectSlow gathers the expensive resources: shelling out to df/docker/
+// systemctl/smartctl, plus the network connectivity dial. These are all
+// either subprocess spawns or (for the connectivity check) multi-second
+// network timeouts, so they run on the slow tier (sample_interval) rather
+// than every fast tick.
+func collectSlow(x Exec, fs FileSource, da dockerAccess) Snapshot {
+	var snap Snapshot
+	snap.DockerAccess = da.method
 	if out, err := x.Run("df", "-PB1"); err == nil {
 		snap.Disks = map[string]float64{}
 		for _, d := range mustDF(string(out)) {
@@ -141,12 +161,7 @@ func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snap
 			}
 		}
 	}
-	if zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp"); len(zones) > 0 {
-		if b, err := fs.Read(zones[0]); err == nil {
-			snap.TempC, _ = parseThermal(string(b))
-		}
-	}
-	snap.Online = checkOnline(defaultConnHosts, realDial)
+	snap.Online = checkOnline(defaultConnHosts, connDial)
 
 	// docker containers (ps -a lists all, so state is always known -> recovery works)
 	if da.available {
@@ -179,6 +194,42 @@ func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snap
 		}
 	}
 	return snap
+}
+
+// collectSnapshot runs both tiers and merges them into one full Snapshot.
+// It exists for the two one-shot callers that need a complete picture right
+// now rather than a tiered cadence: the boot/recovery report (a single
+// collection before the sampler loop starts) and pollLoop (each inbound
+// Telegram command wants a fresh, complete status). The tiered sampler loop
+// in cmdDaemon does NOT use this: it calls collectFast/collectSlow directly
+// so it can run collectSlow only every Nth fast tick.
+func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess) Snapshot {
+	snap := collectFast(x, fs, prev)
+	slow := collectSlow(x, fs, da)
+	snap.Disks = slow.Disks
+	snap.Online = slow.Online
+	snap.DockerAccess = slow.DockerAccess
+	snap.Containers = slow.Containers
+	snap.FailedUnits = slow.FailedUnits
+	snap.SmartHealth = slow.SmartHealth
+	return snap
+}
+
+// slowEvery returns N, the number of fast_interval ticks between slow-tier
+// (collectSlow) collections: the sampler loop runs collectSlow on every Nth
+// fast tick, computed from the configured cadence. Always returns >= 1 so
+// the slow tier still runs (worst case, every fast tick) rather than the
+// loop dividing by zero or never collecting slow data at all when the
+// config is missing, zero, or an inverted/non-multiple ratio.
+func slowEvery(fastInterval, sampleInterval int) int {
+	if fastInterval <= 0 {
+		return 1
+	}
+	n := sampleInterval / fastInterval
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 // eventToAlert converts an anomaly Event (the internal alert-state
@@ -301,35 +352,77 @@ func cmdDaemon(args []string) int {
 	// telegram long-poller (owns its own prevCPU internally)
 	go pollLoop(getCfg, setChatID, st, x, fs, da)
 
-	// sampler loop
+	// sampler loop: ticks at fast_interval. Every Nth fast tick (N computed by
+	// slowEvery from fast_interval/sample_interval) ALSO runs collectSlow and
+	// refreshes the slow-tier fields on merged; between slow ticks, merged
+	// keeps the last-collected slow values (status.json/anomaly eval always
+	// see a full, if not maximally fresh, Snapshot). merged is local to this
+	// single goroutine, same as prevCPU, so no locking is needed for it.
 	var lastDaily, lastWeekly time.Time
-	ticker := time.NewTicker(time.Duration(getCfg().SampleInterval) * time.Second)
-	defer ticker.Stop()
-	lastInterval := getCfg().SampleInterval
+	fastTicker := time.NewTicker(time.Duration(getCfg().FastInterval) * time.Second)
+	defer fastTicker.Stop()
+	lastFast := getCfg().FastInterval
+	lastSlow := getCfg().SampleInterval
+	n := slowEvery(lastFast, lastSlow)
+	tick := 0
+	var merged Snapshot
 	for {
 		c := getCfg()
-		if c.SampleInterval != lastInterval {
-			ticker.Reset(time.Duration(c.SampleInterval) * time.Second)
-			lastInterval = c.SampleInterval
+		if c.FastInterval != lastFast || c.SampleInterval != lastSlow {
+			fastTicker.Reset(time.Duration(c.FastInterval) * time.Second)
+			lastFast = c.FastInterval
+			lastSlow = c.SampleInterval
+			n = slowEvery(lastFast, lastSlow)
+			tick = 0 // realign: the new N is measured from this reload point
 		}
 		now := clock.Now()
-		snap := collectSnapshot(x, fs, &prevCPU, da)
-		snap.TS = now.Unix()
+
+		fast := collectFast(x, fs, &prevCPU)
+		merged.CPU, merged.MemPct, merged.SwapPct, merged.Load1, merged.TempC =
+			fast.CPU, fast.MemPct, fast.SwapPct, fast.Load1, fast.TempC
+
+		// tick==0 also runs the slow tier so the very first status.json/
+		// anomaly eval after startup or a reload is already fully populated,
+		// rather than waiting up to N-1 fast ticks for disks/docker/etc.
+		isSlowTick := tick%n == 0
+		if isSlowTick {
+			slow := collectSlow(x, fs, da)
+			merged.Disks = slow.Disks
+			merged.Online = slow.Online
+			merged.DockerAccess = slow.DockerAccess
+			merged.Containers = slow.Containers
+			merged.FailedUnits = slow.FailedUnits
+			merged.SmartHealth = slow.SmartHealth
+		}
+		merged.TS = now.Unix()
 
 		_ = writeHeartbeat(st.HeartbeatPath(), now)
-		_ = st.AppendSample(Sample{TS: snap.TS, CPU: snap.CPU, MemPct: snap.MemPct, SwapPct: snap.SwapPct, Load1: snap.Load1, TempC: snap.TempC, Disks: snap.Disks})
-		_ = st.WriteStatus(snap)
-		pingHealthchecks(c.Healthchecks.URL, httpPing)
+		_ = st.WriteStatus(merged) // every fast tick: status.json is the live view
 
-		// net_down interval tracking
-		if ev, closed := net.Update(snap.Online, now.Unix()); closed {
-			_ = st.AppendDown(ev)
+		if isSlowTick {
+			// Persisted Sample + pruning + healthchecks stay on the slow
+			// cadence: a Sample/ping every fast tick would be 12x today's
+			// volume (default fast=5s, slow=60s) for no added signal, since
+			// only the slow fields (and CPU/mem/swap/load1, unchanged in
+			// their statistical meaning at either cadence) feed digests.
+			_ = st.AppendSample(Sample{TS: merged.TS, CPU: merged.CPU, MemPct: merged.MemPct, SwapPct: merged.SwapPct, Load1: merged.Load1, TempC: merged.TempC, Disks: merged.Disks})
+			pingHealthchecks(c.Healthchecks.URL, httpPing)
+
+			// net_down interval tracking: Online is a slow-tier field, only
+			// meaningfully updated on slow ticks, so only feed the tracker
+			// when it was actually just refreshed.
+			if ev, closed := net.Update(merged.Online, now.Unix()); closed {
+				_ = st.AppendDown(ev)
+			}
 		}
 
 		// anomalies: each channel's own Route (severity/kind filters,
 		// CriticalOverridesQuiet) now decides delivery, so no gating happens
-		// here beyond computing whether quiet hours are active.
-		events := alerts.Evaluate(buildChecks(snap, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
+		// here beyond computing whether quiet hours are active. Re-evaluating
+		// every fast tick against slow-tier values that haven't changed since
+		// the last slow tick is harmless: AlertState's fire-once dedup means
+		// re-evaluating an unchanged check is a no-op.
+		events := alerts.Evaluate(buildChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
 		disp := getDispatcher()
 		quiet := inQuietHours(c.QuietHours, now)
 		for _, e := range events {
@@ -346,9 +439,12 @@ func cmdDaemon(args []string) int {
 		}
 		_ = baseline.Save(st.BaselinePath())
 		_ = alerts.Save(st.AlertStatePath())
-		_ = st.PruneOlderThan(30)
+		if isSlowTick {
+			_ = st.PruneOlderThan(30)
+		}
 
-		<-ticker.C
+		tick++
+		<-fastTicker.C
 	}
 }
 

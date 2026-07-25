@@ -60,3 +60,9 @@ func realDial(host string) bool {
 	_ = c.Close()
 	return true
 }
+
+// connDial is the dial function collectSlow uses for the connectivity check.
+// Overridable for tests (mirrors the cfgPath/stateDir/stdout/stderr pattern
+// in main.go): swapping it out lets tests exercise collectSlow's Online
+// field with a fake instead of hitting the real network.
+var connDial = realDial

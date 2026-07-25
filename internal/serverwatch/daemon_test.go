@@ -147,6 +147,106 @@ func TestEventToAlert(t *testing.T) {
 	}
 }
 
+func TestSlowEvery(t *testing.T) {
+	cases := []struct {
+		fast, slow, want int
+	}{
+		{5, 60, 12}, // default config: 12 fast ticks per slow tick
+		{60, 60, 1}, // equal intervals: slow tier every tick
+		{10, 65, 6}, // non-multiple: floor division, still exact-ish
+		{60, 30, 1}, // slow < fast: guard to minimum of 1
+		{0, 60, 1},  // guard against fast<=0 (would divide by zero)
+		{-5, 60, 1}, // guard against negative fast
+	}
+	for _, c := range cases {
+		if got := slowEvery(c.fast, c.slow); got != c.want {
+			t.Errorf("slowEvery(%d, %d) = %d, want %d", c.fast, c.slow, got, c.want)
+		}
+	}
+}
+
+func TestCollectFastPopulatesCheapFields(t *testing.T) {
+	fs := fakeFS{
+		files: map[string]string{
+			"/proc/meminfo": "MemTotal:       1000 kB\nMemAvailable:    500 kB\nSwapTotal:       200 kB\nSwapFree:        100 kB\n",
+			"/proc/loadavg": "1.50 1.00 0.50 1/200 1234",
+		},
+	}
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		t.Fatalf("collectFast must not exec external commands, got %q", name)
+		return nil, nil
+	}}
+	var prev CPUStat
+	snap := collectFast(x, fs, &prev)
+
+	if snap.MemPct != 50 {
+		t.Errorf("MemPct = %v, want 50", snap.MemPct)
+	}
+	if snap.SwapPct != 50 {
+		t.Errorf("SwapPct = %v, want 50", snap.SwapPct)
+	}
+	if snap.Load1 != 1.5 {
+		t.Errorf("Load1 = %v, want 1.5", snap.Load1)
+	}
+	// The slow-tier fields must NOT be touched by collectFast.
+	if snap.Disks != nil {
+		t.Errorf("collectFast populated Disks: %+v, want nil", snap.Disks)
+	}
+	if snap.Containers != nil {
+		t.Errorf("collectFast populated Containers: %+v, want nil", snap.Containers)
+	}
+}
+
+func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch name {
+		case "df":
+			return []byte("Filesystem 1B-blocks Used Available Capacity Mounted\n/dev/sda1 100 90 10 90% /\n"), nil
+		case "docker":
+			return []byte("web\trunning\tUp 3 hours\n"), nil
+		case "systemctl":
+			return []byte("nginx.service loaded failed failed A high performance web server\n"), nil
+		case "smartctl":
+			if len(args) > 0 && args[0] == "--scan" {
+				return []byte("/dev/sda -d sat # /dev/sda [SAT], ATA device\n"), nil
+			}
+			return []byte("SMART overall-health self-assessment test result: PASSED\n"), nil
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: true, method: "socket"}
+
+	origDial := connDial
+	connDial = func(host string) bool { return true }
+	defer func() { connDial = origDial }()
+
+	snap := collectSlow(x, fs, da)
+
+	if snap.Disks["/"] != 90 {
+		t.Errorf("Disks[/] = %v, want 90", snap.Disks["/"])
+	}
+	if snap.Containers["web"] != "running" {
+		t.Errorf("Containers[web] = %q, want running", snap.Containers["web"])
+	}
+	if len(snap.FailedUnits) != 1 || snap.FailedUnits[0] != "nginx.service" {
+		t.Errorf("FailedUnits = %+v", snap.FailedUnits)
+	}
+	if snap.SmartHealth["/dev/sda"] != "PASSED" {
+		t.Errorf("SmartHealth[/dev/sda] = %q, want PASSED", snap.SmartHealth["/dev/sda"])
+	}
+	if !snap.Online {
+		t.Error("Online = false, want true (fake dial always succeeds)")
+	}
+	if snap.DockerAccess != "socket" {
+		t.Errorf("DockerAccess = %q, want socket", snap.DockerAccess)
+	}
+	// The fast-tier fields must NOT be touched by collectSlow.
+	if snap.CPU != 0 || snap.MemPct != 0 || snap.Load1 != 0 {
+		t.Errorf("collectSlow populated fast fields: cpu=%v mem=%v load1=%v", snap.CPU, snap.MemPct, snap.Load1)
+	}
+}
+
 // TestEventToAlertDispatchRespectsQuietHours exercises eventToAlert feeding
 // straight into a Dispatcher built from fake, in-memory Channels (rather than
 // going through config), asserting that quiet-hours gating is honored
