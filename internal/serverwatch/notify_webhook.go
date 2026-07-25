@@ -41,10 +41,18 @@ type webhookView struct {
 	Title    string
 	Body     string
 	Severity string
-	Kind     string
-	Key      string
-	Source   string
-	Time     int64
+	// Marker is the same emoji alertMarker (notify.go) puts in front of
+	// formatAlert's plain-text rendering (🚨/⚠️/ℹ️, or ✅ for a "recover"
+	// Alert regardless of Severity). The slack/discord presets (presets.go)
+	// use it instead of the textual Severity so their messages mirror
+	// formatAlert's style; the generic default template still uses Severity
+	// since it predates Marker and changing it would alter existing users'
+	// webhook payloads.
+	Marker string
+	Kind   string
+	Key    string
+	Source string
+	Time   int64
 }
 
 // webhookFuncMap supplies the "json" template func: it JSON-marshals its
@@ -52,6 +60,12 @@ type webhookView struct {
 // surrounding quotes for string values. Templates use it as
 // {{.Title | json}} (or, as in defaultWebhookTemplate, on a composed
 // string) to safely embed arbitrary text inside a JSON body.
+//
+// It also supplies "truncate", used by the Discord preset (presets.go) to
+// keep the composed message under Discord's 2000-character content limit.
+// Piped as {{ pipeline | truncate 1900 }}, it cuts pipeline down to at most
+// n runes; slicing by rune (not byte) avoids splitting a multi-byte UTF-8
+// sequence in half.
 var webhookFuncMap = template.FuncMap{
 	"json": func(v any) (string, error) {
 		b, err := json.Marshal(v)
@@ -59,6 +73,13 @@ var webhookFuncMap = template.FuncMap{
 			return "", err
 		}
 		return string(b), nil
+	},
+	"truncate": func(n int, s string) string {
+		r := []rune(s)
+		if len(r) <= n {
+			return s
+		}
+		return string(r[:n])
 	},
 }
 
@@ -104,6 +125,7 @@ func (w *webhookNotifier) Send(ctx context.Context, a Alert) error {
 		Title:    a.Title,
 		Body:     a.Body,
 		Severity: a.Severity.String(),
+		Marker:   alertMarker(a),
 		Kind:     a.Kind,
 		Key:      a.Key,
 		Source:   a.Source,

@@ -109,6 +109,30 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			contentType: contentType,
 			tmpl:        tmpl,
 		}, nil
+	case "slack":
+		url := cc.Settings["url"]
+		if url == "" {
+			return nil, fmt.Errorf("slack channel %q: url not configured (set channel setting.url to the Slack incoming-webhook URL)", cc.Name)
+		}
+		return &webhookNotifier{
+			name:        cc.Name,
+			url:         url,
+			method:      "POST",
+			contentType: "application/json",
+			tmpl:        slackTmpl,
+		}, nil
+	case "discord":
+		url := cc.Settings["url"]
+		if url == "" {
+			return nil, fmt.Errorf("discord channel %q: url not configured (set channel setting.url to the Discord webhook URL)", cc.Name)
+		}
+		return &webhookNotifier{
+			name:        cc.Name,
+			url:         url,
+			method:      "POST",
+			contentType: "application/json",
+			tmpl:        discordTmpl,
+		}, nil
 	default:
 		return nil, fmt.Errorf("channel type %q not implemented yet", cc.Type)
 	}
