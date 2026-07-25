@@ -40,7 +40,12 @@ func (b *Baseline) Z(key string, v float64) (float64, bool) {
 	if s == nil || s.Count < baselineReady {
 		return 0, false
 	}
-	sd := math.Sqrt(s.Var)
+	factor := 1 - math.Pow(1-baselineAlpha, float64(s.Count))
+	if factor < 1e-12 {
+		return 0, false // not enough weight accumulated yet
+	}
+	corrected := s.Var / factor
+	sd := math.Sqrt(corrected)
 	if sd < 1e-9 {
 		if v == s.Mean {
 			return 0, true
@@ -63,6 +68,7 @@ func (b *Baseline) LoadFrom(path string, fs FileSource) {
 	if err != nil {
 		return
 	}
+	b.Stats = map[string]*stat{}
 	_ = json.Unmarshal(bs, b)
 	if b.Stats == nil {
 		b.Stats = map[string]*stat{}

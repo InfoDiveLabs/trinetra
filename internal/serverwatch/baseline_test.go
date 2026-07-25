@@ -1,6 +1,9 @@
 package serverwatch
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestBaselineZScore(t *testing.T) {
 	b := NewBaseline()
@@ -17,6 +20,25 @@ func TestBaselineZScore(t *testing.T) {
 	zn, _ := b.Z("cpu", 10)
 	if zn > 1 {
 		t.Fatalf("norm z = %v, expected small", zn)
+	}
+}
+
+func TestBaselineZScoreVaryingData(t *testing.T) {
+	b := NewBaseline()
+	vals := []float64{8, 9, 10, 11, 12}
+	for i := 0; i < 400; i++ {
+		b.Observe("cpu", vals[i%len(vals)])
+	}
+	z, ready := b.Z("cpu", 10)
+	if !ready {
+		t.Fatal("should be ready after 400 obs")
+	}
+	if math.Abs(z) >= 2 {
+		t.Fatalf("in-range z = %v, expected |z| < 2", z)
+	}
+	zo, _ := b.Z("cpu", 100)
+	if zo < 3 {
+		t.Fatalf("outlier z = %v, expected >= 3", zo)
 	}
 }
 
