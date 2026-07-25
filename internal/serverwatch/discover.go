@@ -5,7 +5,7 @@ import (
 )
 
 type Target struct {
-	ID        string // namespaced: docker:web, service:nginx.service, disk:/, iface:eth0, temp:zone0, smart:/dev/sda
+	ID        string // namespaced: docker:web, service:nginx.service, disk:/, iface:eth0, temp, smart:/dev/sda
 	Kind      string
 	Display   string
 	Available bool
@@ -57,11 +57,16 @@ func Discover(x Exec, fs FileSource) []Target {
 		}
 	}
 
-	// thermal
+	// thermal: collectSnapshot only reads zone[0] into a single snap.TempC, and
+	// buildChecks keys the anomaly check on the plain id "temp". Emit exactly ONE
+	// target with that same id so `monitor disable temp` / `monitor threshold
+	// temp 70` line up with the check (per-zone ids were a silent no-op).
 	if zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp"); len(zones) > 0 {
-		for _, z := range zones {
-			ts = append(ts, Target{ID: "temp:" + z, Kind: "temp", Display: z, Available: true})
+		display := "cpu-thermal"
+		if zones[0] != "" {
+			display = zones[0]
 		}
+		ts = append(ts, Target{ID: "temp", Kind: "temp", Display: display, Available: true})
 	}
 
 	// smart

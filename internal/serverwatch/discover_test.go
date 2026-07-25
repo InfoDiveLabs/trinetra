@@ -25,6 +25,39 @@ func TestParseFailedUnits(t *testing.T) {
 	}
 }
 
+func TestDiscoverTempSingleID(t *testing.T) {
+	// Two thermal zones present, but Discover must emit exactly ONE target with
+	// the plain id "temp" so `monitor disable temp` lines up with buildChecks.
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		return nil, errNotExist // no docker/df/smartctl
+	}}
+	fs := fakeFS{
+		files: map[string]string{},
+		globs: map[string][]string{
+			"/sys/class/thermal/thermal_zone*/temp": {
+				"/sys/class/thermal/thermal_zone0/temp",
+				"/sys/class/thermal/thermal_zone1/temp",
+			},
+		},
+	}
+	ts := Discover(x, fs)
+	var temps []Target
+	for _, tg := range ts {
+		if tg.Kind == "temp" {
+			temps = append(temps, tg)
+		}
+	}
+	if len(temps) != 1 {
+		t.Fatalf("want exactly 1 temp target, got %+v", temps)
+	}
+	if temps[0].ID != "temp" {
+		t.Fatalf("temp id = %q, want %q", temps[0].ID, "temp")
+	}
+	if !temps[0].Available {
+		t.Fatal("temp target should be Available")
+	}
+}
+
 func TestParseSmartScan(t *testing.T) {
 	s := "/dev/sda -d sat # /dev/sda [SAT], ATA device\n/dev/sdb -d sat # ...\n"
 	d := parseSmartScan(s)

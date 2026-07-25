@@ -62,6 +62,36 @@ func TestBuildChecksDiscovery(t *testing.T) {
 	}
 }
 
+func TestBuildChecksDockerSmartRecovery(t *testing.T) {
+	c := config.Default()
+	// Snapshot no longer contains "old-web" (container removed) nor "/dev/sdz"
+	// (smartctl --scan started erroring / device gone). Their alerts are active.
+	snap := Snapshot{
+		Containers:  map[string]string{"web": "running"},
+		SmartHealth: map[string]string{"/dev/sda": "PASSED"},
+	}
+	active := map[string]ActiveAlert{
+		"docker:old-web": {Since: 1},
+		"smart:/dev/sdz": {Since: 1},
+	}
+	checks := buildChecks(snap, c, active)
+	got := map[string]float64{}
+	for _, ch := range checks {
+		got[ch.Key] = ch.Value
+	}
+	// The vanished targets must synthesize a value=0 recovery check.
+	if v, ok := got["docker:old-web"]; !ok || v != 0 {
+		t.Fatalf("docker:old-web = %v present=%v, want recovery 0", v, ok)
+	}
+	if v, ok := got["smart:/dev/sdz"]; !ok || v != 0 {
+		t.Fatalf("smart:/dev/sdz = %v present=%v, want recovery 0", v, ok)
+	}
+	// Still-present targets keep their normal check.
+	if v, ok := got["docker:web"]; !ok || v != 0 {
+		t.Fatalf("docker:web = %v present=%v", v, ok)
+	}
+}
+
 func TestPingHealthchecks(t *testing.T) {
 	called := ""
 	pingHealthchecks("http://hc/abc", func(u string) error { called = u; return nil })

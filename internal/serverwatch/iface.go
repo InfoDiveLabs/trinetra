@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,11 @@ type Exec interface {
 type osExec struct{}
 
 func (osExec) Run(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+	// Bound external commands: a hung df/docker/systemctl/smartctl would
+	// otherwise block the sampler goroutine forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 type FileSource interface {

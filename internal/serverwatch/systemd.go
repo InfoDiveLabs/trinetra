@@ -176,7 +176,10 @@ func cmdSchedule(args []string) int {
 		if args[1] != "off" {
 			val = args[1]
 		}
-		_ = c.Set("schedule.daily", val)
+		if err := c.Set("schedule.daily", val); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	case "weekly":
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, "usage: schedule daily HH:MM | weekly dow@HH:MM | off")
@@ -186,7 +189,10 @@ func cmdSchedule(args []string) int {
 		if args[1] != "off" {
 			val = args[1]
 		}
-		_ = c.Set("schedule.weekly", val)
+		if err := c.Set("schedule.weekly", val); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	default:
 		fmt.Fprintln(stderr, "usage: schedule daily HH:MM | weekly dow@HH:MM | off")
 		return 2
@@ -213,7 +219,10 @@ func cmdQuietHours(args []string) int {
 	if args[0] != "off" {
 		val = args[0]
 	}
-	_ = c.Set("quiet_hours", val)
+	if err := c.Set("quiet_hours", val); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if err := saveCfg(c); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

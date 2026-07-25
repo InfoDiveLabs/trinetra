@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Config is persisted as JSON. Zero values mean "use default"; Get resolves
@@ -90,13 +91,25 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	// Atomic write: a crash mid-write must never truncate/corrupt the live file.
+	// Write to a temp sibling, tighten perms (this file holds the plaintext
+	// telegram token), then rename over the target. Rename is atomic on the
+	// same filesystem, so readers see either the old or the new file, never a
+	// partial one. os.WriteFile only applies the mode when it creates the file,
+	// so Chmod the temp explicitly before the rename.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	// os.WriteFile only applies the mode when it creates the file; if the file
-	// pre-existed with looser perms it keeps them. This file holds the plaintext
-	// telegram token, so tighten to 0600 on every save regardless of prior mode.
-	return os.Chmod(path, 0o600)
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Get returns the effective string value for a dotted key.
@@ -150,6 +163,9 @@ func (c *Config) Set(key, val string) error {
 		}
 		c.BaselineSigma = v
 	case "quiet_hours":
+		if err := validateQuietHours(val); err != nil {
+			return err
+		}
 		c.QuietHours = val
 	case "telegram.token":
 		c.Telegram.Token = val
@@ -158,8 +174,14 @@ func (c *Config) Set(key, val string) error {
 	case "healthchecks.url":
 		c.Healthchecks.URL = val
 	case "schedule.daily":
+		if err := validateDaily(val); err != nil {
+			return err
+		}
 		c.Schedule.Daily = val
 	case "schedule.weekly":
+		if err := validateWeekly(val); err != nil {
+			return err
+		}
 		c.Schedule.Weekly = val
 	case "thresholds.disk_pct":
 		v, err := f()
@@ -251,4 +273,70 @@ func (c *Config) SetTargetThreshold(target string, v float64) {
 
 func trimFloat(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// parseHM validates an "HH:MM" clock string (00-23:00-59). Used by schedule keys.
+func parseHM(s string) error {
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("want HH:MM")
+	}
+	h, err := strconv.Atoi(parts[0])
+	if err != nil || h < 0 || h > 23 {
+		return fmt.Errorf("hour must be 00-23")
+	}
+	m, err := strconv.Atoi(parts[1])
+	if err != nil || m < 0 || m > 59 {
+		return fmt.Errorf("minute must be 00-59")
+	}
+	return nil
+}
+
+var daysOfWeek = map[string]bool{
+	"sun": true, "mon": true, "tue": true, "wed": true,
+	"thu": true, "fri": true, "sat": true,
+}
+
+// validateDaily accepts "" (cleared) or "HH:MM".
+func validateDaily(s string) error {
+	if s == "" {
+		return nil
+	}
+	if err := parseHM(s); err != nil {
+		return fmt.Errorf("schedule.daily %q invalid: %v (want HH:MM or empty)", s, err)
+	}
+	return nil
+}
+
+// validateWeekly accepts "" (cleared) or "dow@HH:MM" (dow in sun..sat).
+func validateWeekly(s string) error {
+	if s == "" {
+		return nil
+	}
+	parts := strings.SplitN(s, "@", 2)
+	if len(parts) != 2 || !daysOfWeek[strings.ToLower(parts[0])] {
+		return fmt.Errorf("schedule.weekly %q invalid: want dow@HH:MM (dow in sun..sat) or empty", s)
+	}
+	if err := parseHM(parts[1]); err != nil {
+		return fmt.Errorf("schedule.weekly %q invalid: %v (want dow@HH:MM or empty)", s, err)
+	}
+	return nil
+}
+
+// validateQuietHours accepts "" (cleared) or "H-H"/"HH-HH" with each hour 0-23.
+func validateQuietHours(s string) error {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, "-")
+	if len(parts) != 2 {
+		return fmt.Errorf("quiet_hours %q invalid: want H-H (0-23) or empty", s)
+	}
+	for _, p := range parts {
+		h, err := strconv.Atoi(p)
+		if err != nil || h < 0 || h > 23 {
+			return fmt.Errorf("quiet_hours %q invalid: hours must be 0-23 or empty", s)
+		}
+	}
+	return nil
 }

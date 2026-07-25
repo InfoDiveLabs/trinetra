@@ -74,6 +74,23 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 			checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true})
 		}
 	}
+	// docker/smart recovery sweep: if a container is REMOVED (not just stopped)
+	// or `docker ps`/`smartctl --scan` starts erroring, the target disappears
+	// from the snapshot maps entirely, so no check is emitted above and an
+	// active alert would stay stuck forever. Mirror the service: sweep and emit
+	// value=0 for any active docker:/smart: alert whose target is gone.
+	for key := range active {
+		if strings.HasPrefix(key, "docker:") {
+			if _, ok := snap.Containers[strings.TrimPrefix(key, "docker:")]; !ok {
+				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true})
+			}
+		}
+		if strings.HasPrefix(key, "smart:") {
+			if _, ok := snap.SmartHealth[strings.TrimPrefix(key, "smart:")]; !ok {
+				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true})
+			}
+		}
+	}
 	return checks
 }
 
@@ -85,7 +102,10 @@ func pingHealthchecks(url string, httpGet func(string) error) {
 }
 
 func httpPing(url string) error {
-	resp, err := http.Get(url)
+	// A bare http.Get has no timeout: a hung healthchecks endpoint would block
+	// the sampler loop indefinitely. Bound it.
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -173,7 +193,15 @@ func cmdDaemon(args []string) int {
 
 	// config with hot reload
 	var mu sync.RWMutex
-	cfg, _ := config.Load(cfgPath)
+	// config.Load returns (nil, err) on unreadable/corrupt JSON. Discarding the
+	// error would leave cfg nil and panic on the next deref; under systemd
+	// Restart=always that becomes an unrecoverable crash-loop. Fall back to
+	// defaults so the daemon stays up and the config is CLI-repairable.
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "config load failed, using defaults:", err)
+		cfg = config.Default()
+	}
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, sighup)
 	go func() {

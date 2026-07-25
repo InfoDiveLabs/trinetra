@@ -83,13 +83,26 @@ func saveCfg(c *config.Config) error { return c.Save(cfgPath) }
 
 func cmdConfig(args []string) int {
 	c, err := loadCfg()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	if len(args) == 0 {
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		fmt.Fprintln(stderr, "usage: config get|set|unset")
 		return 2
+	}
+	// A corrupt config must stay CLI-repairable: for the mutating set/unset
+	// subcommands, fall back to defaults on a load error so `config set ...` can
+	// rewrite a clean file. `get` keeps erroring (nothing to repair by reading).
+	if err != nil {
+		switch args[0] {
+		case "set", "unset":
+			fmt.Fprintf(stderr, "warning: existing config unreadable (%v); starting from defaults\n", err)
+			c = config.Default()
+		default:
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	switch args[0] {
 	case "get":

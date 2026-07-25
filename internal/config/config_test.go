@@ -76,6 +76,76 @@ func TestSaveTightensPermissions(t *testing.T) {
 	}
 }
 
+func TestSaveAtomicOverwriteRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	// First save.
+	c := Default()
+	_ = c.Set("telegram.token", "first")
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	// Overwrite atomically with a new value; the .tmp must not linger.
+	_ = c.Set("telegram.token", "second")
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file should not remain after Save: err=%v", err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("mode = %o, want 600", perm)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("telegram.token"); got != "second" {
+		t.Fatalf("token after overwrite = %q, want second", got)
+	}
+}
+
+func TestSetScheduleAndQuietHoursValidation(t *testing.T) {
+	valid := []struct{ key, val string }{
+		{"schedule.daily", ""},
+		{"schedule.daily", "09:00"},
+		{"schedule.daily", "23:59"},
+		{"schedule.weekly", ""},
+		{"schedule.weekly", "mon@09:00"},
+		{"schedule.weekly", "SUN@00:00"},
+		{"quiet_hours", ""},
+		{"quiet_hours", "23-8"},
+		{"quiet_hours", "0-23"},
+	}
+	for _, tc := range valid {
+		c := Default()
+		if err := c.Set(tc.key, tc.val); err != nil {
+			t.Errorf("Set(%q,%q) unexpected error: %v", tc.key, tc.val, err)
+		}
+	}
+	invalid := []struct{ key, val string }{
+		{"schedule.daily", "9am"},
+		{"schedule.daily", "24:00"},
+		{"schedule.daily", "09:60"},
+		{"schedule.weekly", "funday@09:00"},
+		{"schedule.weekly", "mon-09:00"},
+		{"schedule.weekly", "mon@25:00"},
+		{"quiet_hours", "23"},
+		{"quiet_hours", "23-24"},
+		{"quiet_hours", "a-b"},
+	}
+	for _, tc := range invalid {
+		c := Default()
+		if err := c.Set(tc.key, tc.val); err == nil {
+			t.Errorf("Set(%q,%q) expected error, got nil", tc.key, tc.val)
+		}
+	}
+}
+
 func TestLoadMissingIsDefault(t *testing.T) {
 	c, err := Load(filepath.Join(t.TempDir(), "nope.json"))
 	if err != nil {
