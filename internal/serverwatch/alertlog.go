@@ -84,6 +84,9 @@ func (l *AlertLog) AlertEventsSince(sinceUnix int64) ([]AlertEvent, error) {
 // daemon's slow tick) to bound the log to roughly the caller's chosen
 // retention window; it is a no-op (not an error) if the log doesn't exist yet.
 func (l *AlertLog) PruneAlertLog(beforeUnix int64) error {
+	if _, err := os.Stat(l.path); os.IsNotExist(err) {
+		return nil // nothing to prune; don't create an empty file
+	}
 	evs, err := l.AlertEventsSince(beforeUnix)
 	if err != nil {
 		return err

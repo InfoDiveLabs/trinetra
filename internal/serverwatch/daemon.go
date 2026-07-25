@@ -609,6 +609,10 @@ func cmdDaemon(args []string) int {
 		// unconditionally every fast tick, which is 12x today's default
 		// (fast=5s, slow=60s) write volume for no benefit.
 		if stateChanged {
+			// Pull any CLI-written ack flags back onto the in-memory state
+			// before saving, or this save would clobber a `serverwatch alerts
+			// ack` that landed on disk since the daemon last loaded.
+			alerts.MergeAckFromDisk(st.AlertStatePath(), fs)
 			_ = alerts.Save(st.AlertStatePath())
 		}
 		if isSlowTick {

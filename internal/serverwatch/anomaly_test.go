@@ -136,3 +136,69 @@ func TestAckPersistsViaSaveLoadBackCompat(t *testing.T) {
 		t.Fatalf("old-format load = %+v ok=%v, want present, not acked", memAlert, ok)
 	}
 }
+
+// TestMergeAckFromDiskPreservesCLIAck replays the durability bug: the daemon
+// holds AlertState in memory and re-saves on a fire/recover; a CLI `alerts
+// ack` written to disk in between must survive that save rather than being
+// clobbered. MergeAckFromDisk (called just before Save) is what preserves it.
+func TestMergeAckFromDiskPreservesCLIAck(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alerts.json")
+	fs := osFS{}
+
+	// Daemon's in-memory state with an active, un-acked alert, saved to disk.
+	daemon := NewAlertState()
+	daemon.Active["disk:/"] = ActiveAlert{Since: 100, Reason: "disk full"}
+	if err := daemon.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// CLI acks it: loads from disk, acks, saves back.
+	cli := LoadAlertState(path, fs)
+	if err := cli.Ack("disk:/", 150); err != nil {
+		t.Fatal(err)
+	}
+	if err := cli.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// Daemon now hits a fire/recover elsewhere and re-saves its (stale,
+	// un-acked) in-memory copy. Without the merge this reverts the ack.
+	daemon.MergeAckFromDisk(path, fs)
+	if err := daemon.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := LoadAlertState(path, fs)
+	got := reloaded.Active["disk:/"]
+	if !got.Acked || got.AckedAt != 150 {
+		t.Fatalf("ack was reverted by daemon save: %+v", got)
+	}
+}
+
+// TestMergeAckFromDiskIgnoresRemovedKeys confirms merge only touches keys
+// still active in memory: a stale on-disk ack for a recovered/removed alert
+// must not resurrect it.
+func TestMergeAckFromDiskIgnoresRemovedKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alerts.json")
+	fs := osFS{}
+
+	onDisk := NewAlertState()
+	onDisk.Active["cpu"] = ActiveAlert{Since: 1, Reason: "old", Acked: true, AckedAt: 5}
+	if err := onDisk.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// In memory, "cpu" has since recovered (absent) and "mem" is newly active.
+	mem := NewAlertState()
+	mem.Active["mem"] = ActiveAlert{Since: 200, Reason: "mem high"}
+	mem.MergeAckFromDisk(path, fs)
+
+	if _, ok := mem.Active["cpu"]; ok {
+		t.Fatal("merge must not resurrect a removed key")
+	}
+	if mem.Active["mem"].Acked {
+		t.Fatalf("mem should be untouched (absent from disk): %+v", mem.Active["mem"])
+	}
+}

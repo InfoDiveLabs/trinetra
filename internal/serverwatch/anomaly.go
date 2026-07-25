@@ -71,6 +71,27 @@ func (s *AlertState) Ack(key string, nowUnix int64) error {
 	return nil
 }
 
+// MergeAckFromDisk reconciles the in-memory AlertState with ack flags that a
+// CLI `alerts ack`/`unack` may have written to disk while the daemon was
+// running. The daemon holds AlertState in memory and re-saves its own copy on
+// every fire/recover transition, which would otherwise clobber a CLI ack; so
+// immediately before each save the daemon calls this to pull the on-disk
+// Acked/AckedAt back onto any key that is STILL active in memory. Keys not
+// active in memory are ignored (a stale on-disk ack for a since-recovered
+// alert must not resurrect it), and keys absent from disk are left untouched.
+func (s *AlertState) MergeAckFromDisk(path string, fs FileSource) {
+	disk := LoadAlertState(path, fs)
+	for key, mem := range s.Active {
+		d, ok := disk.Active[key]
+		if !ok {
+			continue
+		}
+		mem.Acked = d.Acked
+		mem.AckedAt = d.AckedAt
+		s.Active[key] = mem
+	}
+}
+
 // Unack clears a prior acknowledgement on the active alert at key. It errors
 // if key has no active alert.
 func (s *AlertState) Unack(key string) error {

@@ -64,6 +64,7 @@ func cmdAlertsAck(args []string, ack bool) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	reloadDaemon() // best-effort SIGHUP so a running daemon re-reads the ack promptly
 	if ack {
 		fmt.Fprintf(stdout, "%s acknowledged\n", key)
 	} else {
