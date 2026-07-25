@@ -23,8 +23,8 @@ func TestMatchDaily(t *testing.T) {
 
 func TestMatchWeekly(t *testing.T) {
 	zero := time.Time{}
-	monday := time.Date(2026, 7, 20, 9, 0, 30, 0, time.UTC)  // Monday
-	tuesday := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)  // Tuesday
+	monday := time.Date(2026, 7, 20, 9, 0, 30, 0, time.UTC)    // Monday
+	tuesday := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)    // Tuesday
 	prevMonday := time.Date(2026, 7, 13, 9, 0, 5, 0, time.UTC) // previous Monday
 
 	if !matchWeekly("mon@09:00", monday, zero) {

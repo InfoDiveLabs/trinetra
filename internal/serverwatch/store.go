@@ -109,7 +109,7 @@ func (s *Store) SamplesSince(sinceUnix int64) ([]Sample, error) {
 		// skip whole files whose day ends before the cutoff
 		base := strings.TrimSuffix(filepath.Base(f), ".jsonl")
 		if d, err := time.Parse("2006-01-02", base); err == nil {
-			if d.Add(24 * time.Hour).Unix() < sinceUnix {
+			if d.Add(24*time.Hour).Unix() < sinceUnix {
 				continue
 			}
 		}
