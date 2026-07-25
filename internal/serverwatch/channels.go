@@ -14,12 +14,12 @@ import (
 // kept in Config.Telegram.Token rather than duplicated into every telegram
 // channel's Settings map.
 //
-// EXTENSION POINT: later tasks (webhook, ...) add cases here as each
-// channel type's concrete Notifier implementation lands. Until a type has a
-// case, every Type value falls through to the default branch and reports
-// "not implemented yet" — this lets the config/CLI/routing plumbing in this
-// task be built, tested, and used (via `channel add`/`channel set`) well
-// before any notifier actually exists, and `channel test` starts working
+// EXTENSION POINT: later tasks add cases here as each channel type's
+// concrete Notifier implementation lands. Until a type has a case, every
+// Type value falls through to the default branch and reports "not
+// implemented yet" — this lets the config/CLI/routing plumbing in this task
+// be built, tested, and used (via `channel add`/`channel set`) well before
+// any notifier actually exists, and `channel test` starts working
 // automatically the moment a case is added.
 func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) {
 	switch cc.Type {
@@ -76,6 +76,38 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			from:     from,
 			to:       to,
 			starttls: starttls,
+		}, nil
+	case "webhook":
+		url := cc.Settings["url"]
+		if url == "" {
+			return nil, fmt.Errorf("webhook channel %q: url not configured (set channel setting.url)", cc.Name)
+		}
+
+		method := cc.Settings["method"]
+		if method == "" {
+			method = "POST"
+		}
+
+		contentType := cc.Settings["content_type"]
+		if contentType == "" {
+			contentType = "application/json"
+		}
+
+		tmplStr := cc.Settings["template"]
+		if tmplStr == "" {
+			tmplStr = defaultWebhookTemplate
+		}
+		tmpl, err := parseWebhookTemplate(tmplStr)
+		if err != nil {
+			return nil, fmt.Errorf("webhook channel %q: %w", cc.Name, err)
+		}
+
+		return &webhookNotifier{
+			name:        cc.Name,
+			url:         url,
+			method:      method,
+			contentType: contentType,
+			tmpl:        tmpl,
 		}, nil
 	default:
 		return nil, fmt.Errorf("channel type %q not implemented yet", cc.Type)

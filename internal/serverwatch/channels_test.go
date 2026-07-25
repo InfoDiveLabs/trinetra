@@ -8,7 +8,7 @@ import (
 
 func TestBuildNotifierNotImplementedForEveryType(t *testing.T) {
 	c := config.Default()
-	for _, typ := range []string{"webhook", "whatever"} {
+	for _, typ := range []string{"whatever"} {
 		if _, err := buildNotifier(config.ChannelConfig{Name: "x", Type: typ}, c); err == nil {
 			t.Errorf("buildNotifier(type=%q) expected not-implemented error, got nil", typ)
 		}
