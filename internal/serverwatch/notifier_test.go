@@ -3,6 +3,7 @@ package serverwatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -146,6 +147,31 @@ func TestDispatcherRecoversPanic(t *testing.T) {
 	}
 	if len(ok.received()) != 1 {
 		t.Error("expected 'ok' notifier to still receive the alert")
+	}
+}
+
+func TestDispatcherTimeoutsRunConcurrentlyNotSerially(t *testing.T) {
+	// Regression guard: if Dispatch ever waited out each notifier's timeout
+	// one at a time instead of racing them all in parallel, N slow
+	// notifiers would take N*timeout instead of ~timeout.
+	const n = 8
+	notifiers := make([]Notifier, n)
+	for i := range notifiers {
+		notifiers[i] = &fakeNotifier{name: fmt.Sprintf("slow%d", i), block: time.Second}
+	}
+	d := NewDispatcher(notifiers, 50*time.Millisecond)
+
+	start := time.Now()
+	results := d.Dispatch(Alert{Key: "many"})
+	elapsed := time.Since(start)
+
+	if elapsed >= 300*time.Millisecond {
+		t.Fatalf("Dispatch took %v with %d slow notifiers; expected ~timeout, not timeout*%d", elapsed, n, n)
+	}
+	for _, r := range results {
+		if r.Err == nil {
+			t.Errorf("channel %s: expected timeout error", r.Channel)
+		}
 	}
 }
 

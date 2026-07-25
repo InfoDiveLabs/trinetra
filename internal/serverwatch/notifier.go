@@ -83,9 +83,17 @@ func NewDispatcher(notifiers []Notifier, timeout time.Duration) *Dispatcher {
 	return &Dispatcher{notifiers: notifiers, timeout: timeout}
 }
 
-// Dispatch sends a to every notifier concurrently and waits for all of them
-// to finish or time out, returning one DeliveryResult per notifier. It never
-// panics: a Notifier.Send that panics is recovered and reported as an error.
+// Dispatch sends a to every notifier concurrently, returning one
+// DeliveryResult per notifier. It never panics: a Notifier.Send that panics
+// is recovered and reported as an error.
+//
+// Dispatch itself returns within roughly d.timeout regardless of whether a
+// given Notifier.Send honors its context: each send runs in its own
+// goroutine and Dispatch races that goroutine's result against a local
+// timer rather than blocking on it, so a Send that ignores ctx and hangs
+// forever cannot delay Dispatch's return (though its goroutine will leak
+// until the misbehaving call eventually completes — cooperative
+// cancellation via ctx remains the well-behaved path).
 func (d *Dispatcher) Dispatch(a Alert) []DeliveryResult {
 	results := make([]DeliveryResult, len(d.notifiers))
 
@@ -94,12 +102,28 @@ func (d *Dispatcher) Dispatch(a Alert) []DeliveryResult {
 		wg.Add(1)
 		go func(i int, n Notifier) {
 			defer wg.Done()
-			results[i] = DeliveryResult{Channel: n.Name(), Err: sendSafely(n, a, d.timeout)}
+			results[i] = DeliveryResult{Channel: n.Name(), Err: d.collect(n, a)}
 		}(i, n)
 	}
 	wg.Wait()
 
 	return results
+}
+
+// collect runs n.Send in its own goroutine and races its result against a
+// local timer, so it returns within roughly d.timeout even if n.Send
+// ignores its context and never returns (the goroutine then leaks until
+// that call eventually completes).
+func (d *Dispatcher) collect(n Notifier, a Alert) error {
+	done := make(chan error, 1)
+	go func() { done <- sendSafely(n, a, d.timeout) }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(d.timeout):
+		return fmt.Errorf("notifier %s timed out after %s", n.Name(), d.timeout)
+	}
 }
 
 // sendSafely calls n.Send under a timeout, recovering any panic and turning
