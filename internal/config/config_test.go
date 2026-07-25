@@ -430,3 +430,47 @@ func TestTargetOverrides(t *testing.T) {
 		t.Fatalf("threshold = %v ok=%v", v, ok)
 	}
 }
+
+func TestStorageBackendDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("storage.backend"); got != "tsfile" {
+		t.Fatalf("storage.backend default = %q, want tsfile", got)
+	}
+	if err := c.Set("storage.backend", "memory"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("storage.backend"); got != "memory" {
+		t.Fatalf("storage.backend after set = %q, want memory", got)
+	}
+	if err := c.Set("storage.backend", "bogus"); err == nil {
+		t.Fatal("storage.backend set to bogus: want error, got nil")
+	}
+	if got, _ := c.Get("storage.backend"); got != "memory" {
+		t.Fatalf("storage.backend after rejected set = %q, want unchanged memory", got)
+	}
+	if err := c.Unset("storage.backend"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("storage.backend"); got != "tsfile" {
+		t.Fatalf("storage.backend after unset = %q, want default tsfile", got)
+	}
+}
+
+func TestStorageBackendPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("storage.backend", "memory"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("storage.backend"); got != "memory" {
+		t.Fatalf("storage.backend after save/load = %q, want memory", got)
+	}
+}

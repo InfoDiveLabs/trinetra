@@ -47,6 +47,12 @@ type Config struct {
 	// Channels holds user-defined notification channels, managed via
 	// `serverwatch channel add|list|remove|set|test`.
 	Channels []ChannelConfig `json:"channels,omitempty"`
+	Storage  struct {
+		// Backend selects the SampleStore implementation (see
+		// internal/serverwatch/samplestore.go and docs/DESIGN-storage.md).
+		// One of validStorageBackends; defaults to "tsfile".
+		Backend string `json:"backend,omitempty"`
+	} `json:"storage"`
 }
 
 type TargetOverride struct {
@@ -77,6 +83,19 @@ type ChannelConfig struct {
 // an import cycle, since serverwatch imports config), so severity strings
 // are validated here independently rather than via serverwatch.ParseSeverity.
 var validSeverities = map[string]bool{"info": true, "warning": true, "critical": true}
+
+// validStorageBackends allowlists storage.backend. "tsfile" is the design's
+// default backend (docs/DESIGN-storage.md, lands in a later task); "memory"
+// is the in-memory reference SampleStore (internal/serverwatch/samplestore.go).
+var validStorageBackends = map[string]bool{"tsfile": true, "memory": true}
+
+// validateStorageBackend rejects anything outside validStorageBackends.
+func validateStorageBackend(s string) error {
+	if validStorageBackends[s] {
+		return nil
+	}
+	return fmt.Errorf("storage.backend %q invalid: want one of tsfile|memory", s)
+}
 
 // validateMinSeverity accepts "" (meaning "use the permissive default") or
 // one of info|warning|critical.
@@ -196,6 +215,7 @@ func Default() *Config {
 	c.Thresholds.MemPct = 90
 	c.Thresholds.SwapPct = 50
 	c.CriticalOverridesQuiet = true
+	c.Storage.Backend = "tsfile"
 	return c
 }
 
@@ -223,6 +243,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.BaselineSigma == 0 {
 		c.BaselineSigma = 3
+	}
+	if c.Storage.Backend == "" {
+		c.Storage.Backend = "tsfile"
 	}
 	return c, nil
 }
@@ -291,6 +314,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return trimFloat(c.Thresholds.SwapPct), true
 	case "critical_overrides_quiet":
 		return strconv.FormatBool(c.CriticalOverridesQuiet), true
+	case "storage.backend":
+		return c.Storage.Backend, true
 	}
 	return "", false
 }
@@ -386,6 +411,11 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.CriticalOverridesQuiet = b
+	case "storage.backend":
+		if err := validateStorageBackend(val); err != nil {
+			return err
+		}
+		c.Storage.Backend = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
