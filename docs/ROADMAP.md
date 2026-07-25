@@ -38,17 +38,60 @@ Verified by the full unit suite + `go test -race` + a dockerized end-to-end harn
 - v0.1.0 release with `linux-amd64/arm64/arm` + `darwin-amd64/arm64` binaries and checksums
 - Final whole-branch review fixes: config crash-loop guard, exec/HTTP timeouts, temp-target key, schedule validation
 
-## Planned / follow-ups
+## Planned
 
-Open issues on the board:
+Everything below is tracked on the board as issues nested under epics.
 
+### Post-release hardening (follow-ups)
 - [#1 Deploy to the home server and verify](https://github.com/Suraj-Tiwari/server-monitor/issues/1)
 - [#2 systemd watchdog (WatchdogSec + sd_notify)](https://github.com/Suraj-Tiwari/server-monitor/issues/2)
 - [#3 `//go:build unix` tag for signal_unix.go](https://github.com/Suraj-Tiwari/server-monitor/issues/3)
 - [#4 Throttle SMART health checks](https://github.com/Suraj-Tiwari/server-monitor/issues/4)
 - [#5 Improve binary-state alert wording](https://github.com/Suraj-Tiwari/server-monitor/issues/5)
 
+### Epic [#33 Multi-channel alerting](https://github.com/Suraj-Tiwari/server-monitor/issues/33)
+Channel-agnostic alerting: a `Notifier` abstraction + dispatcher with severity/type routing, pluggable channels (stdlib-only).
+- #34 Notifier interface + Alert model + concurrent dispatcher
+- #35 Severity levels + per-channel routing/filters
+- #36 Channel config store + CLI + telegram migration
+- #37 Refactor Telegram outbound into a Notifier channel
+- #38 Wire dispatcher into daemon alert/digest/boot-report paths
+- #39 Email (SMTP) channel
+- #40 Generic webhook channel with body templating
+- #41 Slack + Discord presets
+- #42 ntfy / Gotify channel
+- #43 `channel test` command + docs
+
+### Epic [#44 Tiered sampling + efficient storage](https://github.com/Suraj-Tiwari/server-monitor/issues/44)
+Fast tier (5s) for CPU/load/mem/swap driving detection + live status; 1-min aggregate persistence; a future-safe time-series store replacing JSON. Design: [docs/DESIGN-storage.md](DESIGN-storage.md).
+- #45 Config keys (fast_interval, heartbeat_interval) + validation
+- #46 Split collectors into fast/slow tiers
+- #47 Per-metric baseline alpha derived from tier interval
+- #48 Per-tier anomaly eval + live status.json + heartbeat cadence
+- #49 In-memory fast ring buffer + 1-min aggregate
+- #50 `SampleStore` interface + swappable backend
+- #51 `tsfile` backend (versioned binary, per-series, corruption-tolerant)
+- #52 Resolution tiers + downsampling + per-resolution retention
+- #53 Migration (JSONL→tsfile) + `dump`/`migrate` CLI
+- #54 Integrate `SampleStore` across daemon/handlers/digests
+- #55 Tiered + storage docs & config update
+
+### Epic [#56 Web UI (HTMX + passkeys, multi-user)](https://github.com/Suraj-Tiwari/server-monitor/issues/56)
+HTMX UI with passkey-only auth, roles (admin/viewer/public), web-based config, live dashboard (SSE) + history graphs (uPlot), and an admin-curated public view. Dependency-isolated web build (cli-only stays stdlib); self-configuring serving modes (reverse proxy/Cloudflare Tunnel, autocert, manual TLS). _(Detailed design kept local, not in-repo.)_
+- #57 Module + build variants (cli-only vs cli+web)
+- #58 HTTP server skeleton (ServeMux + html/template + embedded htmx/uPlot)
+- #59 Serving modes (proxy/autocert/manual) + rpID/origin validation + security headers
+- #60 WebAuthn passkey registration + credential store
+- #61 WebAuthn login + sessions + CSRF + logout
+- #62 User store + RBAC (admin/viewer) + bootstrap + enrollment tokens
+- #63 User management pages (admin)
+- #64 Live dashboard via SSE
+- #65 History graphs (uPlot, SampleStore)
+- #66 Web config editor (+ audit log)
+- #67 Public view (exposure config + admin panel picker + curated anon route)
+- #68 Docs + deploy recipes + web systemd unit
+
 ## Not planned (yet)
 
 - CI/CD (intentionally deferred).
-- Multi-host aggregation, web UI, metrics export (Prometheus). Out of scope for a single-host worker.
+- Multi-host aggregation, external metrics export (Prometheus/remote-write) — enabled later by the `SampleStore` interface, but out of scope now.
