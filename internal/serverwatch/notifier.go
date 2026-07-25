@@ -3,6 +3,7 @@ package serverwatch
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -69,23 +70,93 @@ type DeliveryResult struct {
 	Err     error
 }
 
-// Dispatcher fans an Alert out to a set of Notifiers concurrently, bounding
-// each delivery attempt with a timeout so one slow or broken channel can't
-// hold up the others.
+// targetKind derives the general category an alert's key refers to, taking
+// everything before the first ':' (e.g. "disk:/" -> "disk", "cpu" -> "cpu").
+func targetKind(key string) string {
+	if i := strings.IndexByte(key, ':'); i >= 0 {
+		return key[:i]
+	}
+	return key
+}
+
+// Route describes the conditions under which a channel should receive an
+// Alert.
+type Route struct {
+	// MinSeverity is the lowest Severity this route will let through.
+	MinSeverity Severity
+	// IncludeKinds, if non-empty, restricts delivery to alerts whose
+	// target-kind (see targetKind) is in this list.
+	IncludeKinds []string
+	// ExcludeKinds blocks delivery for alerts whose target-kind is in this
+	// list, regardless of IncludeKinds.
+	ExcludeKinds []string
+	// CriticalOverridesQuiet, when true, lets SevCritical alerts through
+	// during quiet hours even though everything else is suppressed.
+	CriticalOverridesQuiet bool
+}
+
+// Allows reports whether a should be delivered on this route, given whether
+// quiet hours are currently active.
+func (r Route) Allows(a Alert, quiet bool) bool {
+	if a.Severity < r.MinSeverity {
+		return false
+	}
+
+	kind := targetKind(a.Key)
+	if len(r.IncludeKinds) > 0 && !containsString(r.IncludeKinds, kind) {
+		return false
+	}
+	if containsString(r.ExcludeKinds, kind) {
+		return false
+	}
+
+	if quiet {
+		if a.Severity < SevCritical {
+			return false
+		}
+		if !r.CriticalOverridesQuiet {
+			return false
+		}
+	}
+
+	return true
+}
+
+func containsString(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Channel pairs a Notifier with the Route that gates which alerts it
+// receives.
+type Channel struct {
+	N       Notifier
+	Route   Route
+	Enabled bool
+}
+
+// Dispatcher fans an Alert out to a set of enabled, routing-matched Channels
+// concurrently, bounding each delivery attempt with a timeout so one slow or
+// broken channel can't hold up the others.
 type Dispatcher struct {
-	notifiers []Notifier
-	timeout   time.Duration
+	channels []Channel
+	timeout  time.Duration
 }
 
-// NewDispatcher builds a Dispatcher that sends to notifiers, giving each
+// NewDispatcher builds a Dispatcher that sends to channels, giving each
 // Send call up to timeout to complete.
-func NewDispatcher(notifiers []Notifier, timeout time.Duration) *Dispatcher {
-	return &Dispatcher{notifiers: notifiers, timeout: timeout}
+func NewDispatcher(channels []Channel, timeout time.Duration) *Dispatcher {
+	return &Dispatcher{channels: channels, timeout: timeout}
 }
 
-// Dispatch sends a to every notifier concurrently, returning one
-// DeliveryResult per notifier. It never panics: a Notifier.Send that panics
-// is recovered and reported as an error.
+// Dispatch sends a to every enabled channel whose Route allows it (given
+// whether quiet hours are active), returning one DeliveryResult per channel
+// actually attempted. It never panics: a Notifier.Send that panics is
+// recovered and reported as an error.
 //
 // Dispatch itself returns within roughly d.timeout regardless of whether a
 // given Notifier.Send honors its context: each send runs in its own
@@ -94,16 +165,23 @@ func NewDispatcher(notifiers []Notifier, timeout time.Duration) *Dispatcher {
 // forever cannot delay Dispatch's return (though its goroutine will leak
 // until the misbehaving call eventually completes — cooperative
 // cancellation via ctx remains the well-behaved path).
-func (d *Dispatcher) Dispatch(a Alert) []DeliveryResult {
-	results := make([]DeliveryResult, len(d.notifiers))
+func (d *Dispatcher) Dispatch(a Alert, quiet bool) []DeliveryResult {
+	var matched []Channel
+	for _, c := range d.channels {
+		if c.Enabled && c.Route.Allows(a, quiet) {
+			matched = append(matched, c)
+		}
+	}
+
+	results := make([]DeliveryResult, len(matched))
 
 	var wg sync.WaitGroup
-	for i, n := range d.notifiers {
+	for i, c := range matched {
 		wg.Add(1)
 		go func(i int, n Notifier) {
 			defer wg.Done()
 			results[i] = DeliveryResult{Channel: n.Name(), Err: d.collect(n, a)}
-		}(i, n)
+		}(i, c.N)
 	}
 	wg.Wait()
 

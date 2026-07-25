@@ -48,14 +48,20 @@ func (f *fakeNotifier) received() []Alert {
 	return out
 }
 
+// allowAllChannel wraps a fake notifier in a Channel whose zero-value Route
+// (MinSeverity=SevInfo, no kind filters) allows everything when not quiet.
+func allowAllChannel(n Notifier) Channel {
+	return Channel{N: n, Route: Route{}, Enabled: true}
+}
+
 func TestDispatcherFansOutToAll(t *testing.T) {
 	n1 := &fakeNotifier{name: "n1"}
 	n2 := &fakeNotifier{name: "n2"}
 	n3 := &fakeNotifier{name: "n3"}
-	d := NewDispatcher([]Notifier{n1, n2, n3}, time.Second)
+	d := NewDispatcher([]Channel{allowAllChannel(n1), allowAllChannel(n2), allowAllChannel(n3)}, time.Second)
 
 	a := Alert{Key: "cpu", Title: "CPU high", Body: "cpu at 99%", Severity: SevWarning, Kind: "fire", Source: "host1", Time: 1234}
-	results := d.Dispatch(a)
+	results := d.Dispatch(a, false)
 
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
@@ -77,10 +83,10 @@ func TestDispatcherIsolatesFailures(t *testing.T) {
 	failing := &fakeNotifier{name: "failing", err: errors.New("send failed")}
 	ok1 := &fakeNotifier{name: "ok1"}
 	ok2 := &fakeNotifier{name: "ok2"}
-	d := NewDispatcher([]Notifier{failing, ok1, ok2}, time.Second)
+	d := NewDispatcher([]Channel{allowAllChannel(failing), allowAllChannel(ok1), allowAllChannel(ok2)}, time.Second)
 
 	a := Alert{Key: "disk", Kind: "fire", Severity: SevCritical}
-	results := d.Dispatch(a)
+	results := d.Dispatch(a, false)
 
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
@@ -106,10 +112,10 @@ func TestDispatcherIsolatesFailures(t *testing.T) {
 func TestDispatcherTimeout(t *testing.T) {
 	slow := &fakeNotifier{name: "slow", block: 2 * time.Second}
 	fast := &fakeNotifier{name: "fast"}
-	d := NewDispatcher([]Notifier{slow, fast}, 50*time.Millisecond)
+	d := NewDispatcher([]Channel{allowAllChannel(slow), allowAllChannel(fast)}, 50*time.Millisecond)
 
 	start := time.Now()
-	results := d.Dispatch(Alert{Key: "mem", Kind: "fire"})
+	results := d.Dispatch(Alert{Key: "mem", Kind: "fire"}, false)
 	elapsed := time.Since(start)
 
 	if elapsed >= 200*time.Millisecond {
@@ -131,9 +137,9 @@ func TestDispatcherTimeout(t *testing.T) {
 func TestDispatcherRecoversPanic(t *testing.T) {
 	panicky := &fakeNotifier{name: "panicky", panics: true}
 	ok := &fakeNotifier{name: "ok"}
-	d := NewDispatcher([]Notifier{panicky, ok}, time.Second)
+	d := NewDispatcher([]Channel{allowAllChannel(panicky), allowAllChannel(ok)}, time.Second)
 
-	results := d.Dispatch(Alert{Key: "swap", Kind: "fire"})
+	results := d.Dispatch(Alert{Key: "swap", Kind: "fire"}, false)
 
 	byChannel := map[string]error{}
 	for _, r := range results {
@@ -155,14 +161,14 @@ func TestDispatcherTimeoutsRunConcurrentlyNotSerially(t *testing.T) {
 	// one at a time instead of racing them all in parallel, N slow
 	// notifiers would take N*timeout instead of ~timeout.
 	const n = 8
-	notifiers := make([]Notifier, n)
-	for i := range notifiers {
-		notifiers[i] = &fakeNotifier{name: fmt.Sprintf("slow%d", i), block: time.Second}
+	channels := make([]Channel, n)
+	for i := range channels {
+		channels[i] = allowAllChannel(&fakeNotifier{name: fmt.Sprintf("slow%d", i), block: time.Second})
 	}
-	d := NewDispatcher(notifiers, 50*time.Millisecond)
+	d := NewDispatcher(channels, 50*time.Millisecond)
 
 	start := time.Now()
-	results := d.Dispatch(Alert{Key: "many"})
+	results := d.Dispatch(Alert{Key: "many"}, false)
 	elapsed := time.Since(start)
 
 	if elapsed >= 300*time.Millisecond {
