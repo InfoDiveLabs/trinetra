@@ -5,10 +5,15 @@ A single Go binary that monitors a Linux/systemd home server and reports over
 and a rolling baseline, all logic stdlib-only. Everything configurable is set
 through the `serverwatch` CLI; there is no hand-edited config file.
 
-It runs as one systemd service with two goroutines: a sampler loop (collect
-metrics, update the baseline, evaluate thresholds, write a heartbeat) and a
-Telegram long-poller (commands answered in ~1s). `Restart=always` +
-`WantedBy=multi-user.target` mean it survives crashes and starts at boot.
+It runs as one systemd service with two goroutines: a tiered sampler loop —
+a **fast tier** (CPU/mem/swap/load/temp every `fast_interval`, default 5s)
+that drives live status and anomaly detection, plus a **slow tier**
+(disk/docker/systemd/SMART/network every `sample_interval`, default 60s) for
+the pricier checks — and a Telegram long-poller (commands answered in ~1s).
+`Restart=always` + `WantedBy=multi-user.target` mean it survives crashes and
+starts at boot. Sample data (fast-tier metrics + per-disk usage) is persisted
+to a compact binary time-series store (see On-server layout below and
+[docs/DESIGN-storage.md](docs/DESIGN-storage.md)).
 
 ## Quick start
 
@@ -75,23 +80,68 @@ serverwatch channel test <name>           send a synthetic test alert through on
 
 serverwatch status                        print /var/lib/serverwatch/status.json (current snapshot)
 serverwatch doctor                        run discovery + permission probes, print what works
+serverwatch migrate [--force]             one-shot import of legacy JSONL samples/downtime into the
+                                           configured time-series store; re-run is a no-op unless
+                                           --force (see On-server layout below)
+serverwatch dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]
+                                           export one metric's series (e.g. `cpu`, `disk:/`) for
+                                           humans or graphing tools
 serverwatch help                          this usage text
 ```
 
 Every `config`/`monitor`/`schedule`/`quiet-hours`/`healthchecks`/`telegram`
 write updates `config.json` and sends `SIGHUP` to the running daemon, which
-reloads live — including `sample_interval`: the sampler ticker is reset in
-place, so a new interval takes effect on the very next tick, no restart
-needed.
+reloads live — including `fast_interval`/`sample_interval` (the sampler
+ticker is reset in place, so a new interval takes effect on the very next
+tick) and `heartbeat_interval`, no restart needed. `storage.*` keys are the
+exception: the running time-series store isn't reopened on `SIGHUP`, so a
+`storage.backend`/retention change only takes effect after
+`systemctl restart serverwatch`.
 
 ### Config keys
 
-`config get`/`set`/`unset` accept: `sample_interval` (seconds, min 5, default
-60), `baseline_sigma` (default 3), `quiet_hours` (`"HH-HH"` or empty),
-`telegram.token`, `telegram.chat_id`, `healthchecks.url`, `schedule.daily`,
-`schedule.weekly`, `thresholds.disk_pct` (90), `thresholds.temp_c` (80),
-`thresholds.cpu_pct` (95), `thresholds.mem_pct` (90), `thresholds.swap_pct`
-(50), `critical_overrides_quiet` (bool, default true).
+`config get`/`set`/`unset` accept:
+
+- `fast_interval` (seconds, min 1, default 5) — the fast tier's cadence.
+- `sample_interval` (seconds, min 5, default 60) — the slow tier's cadence;
+  must be an integer multiple of `fast_interval` (and `fast_interval` is
+  rejected if lowering it would break that multiple — adjust
+  `sample_interval` first).
+- `heartbeat_interval` (seconds, min 1, default 30) — liveness heartbeat
+  cadence, independent of both tiers.
+- `baseline_sigma` (default 3), `quiet_hours` (`"HH-HH"` or empty),
+  `telegram.token`, `telegram.chat_id`, `healthchecks.url`, `schedule.daily`,
+  `schedule.weekly`, `thresholds.disk_pct` (90), `thresholds.temp_c` (80),
+  `thresholds.cpu_pct` (95), `thresholds.mem_pct` (90),
+  `thresholds.swap_pct` (50), `critical_overrides_quiet` (bool, default
+  true).
+- `storage.backend` (`tsfile` or `memory`, default `tsfile`) — the
+  time-series backend (see [docs/DESIGN-storage.md](docs/DESIGN-storage.md)).
+- `storage.raw_retention` (duration string, default `48h`) — how long raw
+  samples are kept.
+- `storage.rollup_retention` (duration string, default `720h`/30d) — how
+  long 1-minute rollups and downtime events are kept.
+
+### Sampling tiers
+
+The sampler loop ticks at `fast_interval`; every Nth tick (N =
+`sample_interval / fast_interval`) it also runs the slow tier:
+
+- **Fast tier** — cheap, no subprocess: `/proc` reads for CPU/mem/swap/load
+  plus the thermal-zone temperature. Drives `status.json`, the rolling
+  baseline, and the cpu/mem/swap/temp anomaly checks. Each fast tick appends
+  a raw sample per metric (`cpu`, `mem`, `swap`, `load1`, `temp`) to the
+  time-series store.
+- **Slow tier** — the pricier checks: `df` for disk usage, `docker ps`,
+  `systemctl --failed`, `smartctl`, and the internet-connectivity dial.
+  Drives the disk/docker/service/smart anomaly checks and their recovery
+  sweeps, and pings `healthchecks.url` if set. Each slow tick also appends
+  `disk:<mount>` samples to the store; docker/service/smart are alert states
+  only — not yet stored as time-series (see the extended-collection work in
+  [docs/ROADMAP.md](docs/ROADMAP.md)).
+- **Heartbeat** — on its own `heartbeat_interval` cadence, independent of
+  both tiers: rewrites `heartbeat` so a future boot can measure how long the
+  process was down (see Downtime tracking below).
 
 ### `<target>` namespacing
 
@@ -108,13 +158,27 @@ needed.
 /etc/serverwatch/config.json              config + secrets (0600, root-owned)
 /etc/systemd/system/serverwatch.service   the unit `install` writes
 /var/lib/serverwatch/
-  status.json          current snapshot — check this first
-  heartbeat            last-alive unix timestamp, rewritten every sample
-  samples/YYYY-MM-DD.jsonl   per-day metric samples, pruned past 30 days
-  downtime.jsonl        downtime events (power_down / net_down), 30-day retention
-  baseline.json         rolling per-metric mean/stddev
-  alerts.json           active-alert state (fire-once + recovery dedup)
+  status.json           current snapshot — check this first
+  heartbeat             last-alive unix timestamp, rewritten every heartbeat_interval
+  ts/raw/<metric>.tsd    raw samples per metric, binary (storage.raw_retention, default 48h)
+  ts/1m/<metric>.tsd     1-minute min/avg/max rollups (storage.rollup_retention, default 720h/30d)
+  ts/events.tsd          downtime events (power_down / net_down), same rollup_retention window
+  baseline.json          rolling per-metric mean/stddev
+  alerts.json            active-alert state (fire-once + recovery dedup)
 ```
+
+`<metric>` is the metric id (`cpu`, `mem`, `swap`, `load1`, `temp`,
+`disk:/mount`, ...) with any non-filename-safe byte percent-encoded, e.g.
+`disk:/` → `disk%3A%2F.tsd`. Use `serverwatch dump --metric <id>` rather than
+reading these files directly.
+
+**Upgrading from the old JSONL store:** a pre-upgrade install has
+`samples/YYYY-MM-DD.jsonl` + `downtime.jsonl` instead of `ts/`. Run
+`serverwatch migrate` once to import that history into the time-series store
+above; it archives the legacy files to `*.migrated` (never deletes them) and
+is safe to leave un-run — a fresh `ts/` directory is created and used
+regardless, `migrate` only back-fills old history. See
+[docs/DESIGN-storage.md](docs/DESIGN-storage.md) for the on-disk format.
 
 ## Self-discovery + docker-under-sudo
 
@@ -150,26 +214,29 @@ but throughput doesn't yet drive alert firing — that's future work.
 
 ## Downtime tracking
 
-Two failure modes, tracked separately, at minute (sample-interval) resolution,
-written to `downtime.jsonl`:
+Two failure modes, tracked separately, stored as events in the time-series
+store (`ts/events.tsd`, retained for `storage.rollup_retention`, default
+720h/30d):
 
 **A — power down / process not running (reconstructed from heartbeat).** Every
-sample the daemon rewrites `heartbeat` with the current time. On startup it
-reads the previous heartbeat; if `now − last_heartbeat > 2 × sample_interval`,
-it records a `power_down` event (`start`/`end`/`duration_sec`) and, once a
-Telegram token + chat id are set, sends a boot/recovery message with the gap
-and a fresh snapshot. Needs nothing external — it works from local state alone.
+`heartbeat_interval` the daemon rewrites `heartbeat` with the current time. On
+startup it reads the previous heartbeat; if
+`now − last_heartbeat > 2 × heartbeat_interval`, it records a `power_down`
+event (`start`/`end`/`duration_sec`) and, once a Telegram token + chat id are
+set, sends a boot/recovery message with the gap and a fresh snapshot. Needs
+nothing external — it works from local state alone.
 
-**B — box up, internet down (logged live).** Each sample checks connectivity
-(reach `1.1.1.1:53` / `8.8.8.8:53`). A downward flip opens a `net_down`
-interval; the next successful check closes it and appends the completed event.
+**B — box up, internet down (logged live).** Each slow-tier tick
+(`sample_interval`) checks connectivity (reach `1.1.1.1:53` / `8.8.8.8:53`). A
+downward flip opens a `net_down` interval; the next successful check closes it
+and appends the completed event.
 
 **C — real-time "it's down now" push (optional healthchecks.io dead-man
-switch).** When `healthchecks.url` is set, every sample pings it. If the box
-is off or its own internet is down, pings stop and healthchecks.io messages
-you directly — the only mechanism that can alert while the box itself can't
-speak. Set it with `serverwatch healthchecks set <url>`; turn it off with
-`serverwatch healthchecks off`.
+switch).** When `healthchecks.url` is set, every slow-tier tick pings it. If
+the box is off or its own internet is down, pings stop and healthchecks.io
+messages you directly — the only mechanism that can alert while the box
+itself can't speak. Set it with `serverwatch healthchecks set <url>`; turn it
+off with `serverwatch healthchecks off`.
 
 `/history [days]` (default 7) and `/down` render A+B over Telegram.
 

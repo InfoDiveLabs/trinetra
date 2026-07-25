@@ -2,7 +2,8 @@
 
 Step-by-step for getting `serverwatch` running on a Linux/systemd home server and
 verifying it works. For the architecture and design rationale, see
-[DESIGN.md](DESIGN.md).
+[DESIGN.md](DESIGN.md); for the time-series storage engine specifically, see
+[DESIGN-storage.md](DESIGN-storage.md).
 
 ## 0. Prerequisites
 
@@ -95,8 +96,8 @@ sudo serverwatch monitor list
 
 ## 5. Tune what you care about (all optional)
 
-Everything is CLI-managed; changes hot-reload via SIGHUP (no restart needed,
-except `sample_interval` — see note):
+Everything is CLI-managed; changes hot-reload via SIGHUP — including the
+sampling cadence (no restart needed, except `storage.*` — see note):
 
 ```bash
 sudo serverwatch config set thresholds.disk_pct 85     # alert when any fs >= 85%
@@ -109,8 +110,69 @@ sudo serverwatch quiet-hours 23-8                       # suppress non-critical 
 sudo serverwatch config get                             # show the effective config
 ```
 
-> `sample_interval` changes take effect on the next daemon restart:
-> `sudo systemctl restart serverwatch`.
+The daemon samples in two tiers (see **Storage & retention** below for
+detail):
+
+```bash
+sudo serverwatch config set fast_interval 10           # slow down the cheap CPU/mem/swap/load/temp tier
+sudo serverwatch config set sample_interval 120        # slow down the pricier disk/docker/systemd/SMART tier
+                                                        # (must stay a multiple of fast_interval)
+sudo serverwatch config set heartbeat_interval 60       # liveness heartbeat cadence
+```
+
+`fast_interval`, `sample_interval`, and `heartbeat_interval` all take effect
+on the next tick via SIGHUP — no restart needed.
+
+> `storage.*` keys (backend, retention) are the exception: the running
+> time-series store isn't reopened on SIGHUP, so a change only takes effect
+> after `sudo systemctl restart serverwatch`.
+
+### Storage & retention
+
+Sample data (the fast tier's `cpu`/`mem`/`swap`/`load1`/`temp` and the slow
+tier's `disk:<mount>` usage) is written to a compact binary time-series store
+under `/var/lib/serverwatch/ts/` — see
+[DESIGN-storage.md](DESIGN-storage.md) for the on-disk format and rationale.
+Docker/systemd/SMART are alert states, not yet stored as series.
+
+Config keys:
+
+```bash
+sudo serverwatch config get storage.backend            # tsfile (default) | memory
+sudo serverwatch config set storage.raw_retention 72h  # default 48h
+sudo serverwatch config set storage.rollup_retention 1440h  # default 720h (30d)
+```
+
+- `storage.backend` — `tsfile` (default; durable, on-disk) or `memory`
+  (non-persistent; mainly for tests).
+- `storage.raw_retention` — how long full-resolution (`fast_interval`)
+  samples are kept before being pruned.
+- `storage.rollup_retention` — how long 1-minute rollups and downtime events
+  are kept.
+
+**Upgrading from a pre-storage-epic install:** older installs wrote
+`samples/YYYY-MM-DD.jsonl` + `downtime.jsonl` instead of `ts/`. Run once,
+after upgrading the binary:
+
+```bash
+sudo serverwatch migrate         # one-shot import into the time-series store
+```
+
+It imports every legacy record, then archives the old files to `*.migrated`
+(never deletes them). It's idempotent — a marker file makes a second run a
+no-op — so it's safe to include in an upgrade script; pass `--force` to force
+a re-import.
+
+**Exporting/graphing a series:**
+
+```bash
+serverwatch dump --metric cpu --since 24h --format csv > cpu.csv
+serverwatch dump --metric disk:/ --since 30d --res 1m --format json
+```
+
+`--res raw|1m` picks the resolution explicitly; `--format csv|json` picks the
+output shape. Useful for feeding an external plotting tool without standing
+up a full metrics stack.
 
 ## 6. Notification channels (optional)
 
@@ -193,17 +255,21 @@ systemctl status serverwatch            # is it running?
 journalctl -u serverwatch -f            # live logs
 serverwatch status                      # current snapshot (also /var/lib/serverwatch/status.json)
 sudo serverwatch config get             # effective config
-sudo systemctl restart serverwatch      # after a sample_interval change or upgrade
+sudo systemctl restart serverwatch      # after a storage.* config change or a binary upgrade
 ```
 
 ## 9. Upgrading
 
 Download/build a newer binary and re-run install (it overwrites the binary and
-reloads the unit; your config and 30-day history are preserved):
+reloads the unit; your config and time-series history are preserved):
 
 ```bash
 sudo /tmp/serverwatch install
 ```
+
+Upgrading from a pre-storage-epic install (no `ts/` directory yet)? Run
+`serverwatch migrate` once afterward to pull the old JSONL history into the
+new store — see **Storage & retention** in step 5.
 
 ## 10. Uninstalling
 
@@ -219,13 +285,18 @@ sudo serverwatch uninstall --purge    # also delete /etc/serverwatch and /var/li
 /etc/serverwatch/config.json                config + secrets (0600)
 /etc/systemd/system/serverwatch.service     the unit
 /var/lib/serverwatch/
-  status.json        current snapshot
-  heartbeat          last-alive timestamp (drives downtime reconstruction)
-  samples/*.jsonl    per-day metric samples (30-day retention)
-  downtime.jsonl     power_down + net_down events (30-day)
-  baseline.json      rolling per-metric mean/variance
-  alerts.json        active-alert state (dedup + recovery)
+  status.json           current snapshot
+  heartbeat             last-alive timestamp (drives downtime reconstruction)
+  ts/raw/<metric>.tsd    raw samples, binary (storage.raw_retention, default 48h)
+  ts/1m/<metric>.tsd     1-minute rollups (storage.rollup_retention, default 720h/30d)
+  ts/events.tsd          power_down + net_down events (rollup_retention window)
+  baseline.json          rolling per-metric mean/variance
+  alerts.json            active-alert state (dedup + recovery)
 ```
+
+Pre-upgrade installs instead have `samples/*.jsonl` + `downtime.jsonl`; run
+`serverwatch migrate` to archive them (to `*.migrated`) and import their data
+into `ts/` — see **Storage & retention** in step 5.
 
 ## Troubleshooting
 
