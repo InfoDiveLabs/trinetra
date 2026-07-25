@@ -67,6 +67,12 @@ serverwatch schedule weekly dow@HH:MM | off   weekly rollup, e.g. `mon@09:00`
 serverwatch quiet-hours HH-HH | off       suppress non-critical pings in a window (wraps midnight)
 serverwatch healthchecks set <url> | off  healthchecks.io dead-man-switch URL (optional)
 
+serverwatch channel list                  list configured notification channels + their routing
+serverwatch channel add <name> --type <t> [--set k=v ...]   add a channel (see Notification channels)
+serverwatch channel set <name> <key> <value>   update a channel's routing or setting.<key>
+serverwatch channel remove <name>         delete a channel
+serverwatch channel test <name>           send a synthetic test alert through one channel
+
 serverwatch status                        print /var/lib/serverwatch/status.json (current snapshot)
 serverwatch doctor                        run discovery + permission probes, print what works
 serverwatch help                          this usage text
@@ -200,6 +206,62 @@ speak. Set it with `serverwatch healthchecks set <url>`; turn it off with
 alerts in that window; a check whose `Critical` flag is set (currently: any
 `disk:<mount>` threshold breach) still gets through if
 `critical_overrides_quiet` is true (the default).
+
+## Notification channels
+
+Telegram (Quick start above) is the original always-on channel, but every
+threshold/baseline alert, the boot/recovery report, and the daily/weekly
+digest now fan out through a **Dispatcher** to any number of independently
+configured channels — email, generic webhooks, Slack, Discord,
+[ntfy](https://ntfy.sh), and [Gotify](https://gotify.net) — each with its own
+enable flag and routing. healthchecks.io (see Downtime tracking above) stays
+separate: it's a dead-man switch, not part of this fan-out.
+
+A channel receives an alert only if it's **enabled** *and* its route allows
+it:
+
+- `min_severity` — lowest severity (`info` | `warning` | `critical`) it
+  accepts; empty/default is `info` (everything).
+- `include_kinds` / `exclude_kinds` — comma-separated target kinds to
+  restrict or block delivery to. The kinds an alert can carry are `cpu`,
+  `mem`, `swap`, `temp`, `disk`, `docker`, `service`, `smart` (taken from the
+  part of the target id before `:`, e.g. `disk:/` → `disk`). The boot report
+  and daily/weekly digest carry no kind, so they still reach a channel unless
+  `include_kinds` is set (an empty `include_kinds` means "all kinds").
+- `critical_overrides_quiet` — per-channel: if true, `critical` alerts still
+  reach this channel during quiet hours.
+
+A pre-existing `telegram.token` (from `telegram set-token`) auto-migrates
+into a real `telegram`-typed channel the moment any `channel` subcommand
+runs, so upgrading from a Telegram-only setup needs no action — it shows up
+in `channel list` like any other channel, and the legacy `telegram.token`/
+`telegram.chat_id` keys keep working as a fallback.
+
+| Type | Settings (`channel set <name> setting.<key> <value>`) |
+|------|--------------------------------------------------------|
+| `telegram` | `chat_id` (required unless already migrated); `token` (falls back to legacy `telegram.token`) |
+| `email` | `host`, `from`, `to` (comma-separated) required; `port` (587), `username`, `password`, `starttls` (`true`) optional |
+| `webhook` | `url` required; `method` (`POST`), `content_type` (`application/json`), `template` (a `text/template` body; defaults to a generic `{"text": "..."}` payload) optional |
+| `slack` | `url` (Slack incoming-webhook URL) required — fixed Slack-formatted body |
+| `discord` | `url` (Discord webhook URL) required — fixed Discord-formatted body, truncated to Discord's 2000-char limit |
+| `ntfy` | `topic` required; `server` (`https://ntfy.sh`), `token` (for protected topics) optional |
+| `gotify` | `server`, `token` (Gotify application token) required |
+
+```bash
+serverwatch channel add ops-email --type email
+serverwatch channel set ops-email setting.host smtp.fastmail.com
+serverwatch channel set ops-email setting.from serverwatch@home.lan
+serverwatch channel set ops-email setting.to ops@home.lan
+serverwatch channel set ops-email min_severity critical   # only page email for criticals
+serverwatch channel test ops-email                         # send a synthetic test alert now
+serverwatch channel list                                   # see every channel + its routing
+```
+
+Other `channel set` keys: `enabled true|false`, `include_kinds disk,docker`,
+`exclude_kinds smart`, `critical_overrides_quiet true|false`. `channel
+remove <name>` deletes a channel. Every `channel add`/`set`/`remove` writes
+`config.json` and signals the running daemon the same way `config set` does
+— no restart needed.
 
 ## `serverwatch doctor`
 

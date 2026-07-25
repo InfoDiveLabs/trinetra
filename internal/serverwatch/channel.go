@@ -160,16 +160,17 @@ func cmdChannelTest(c *config.Config, args []string) int {
 	}
 	n, err := buildNotifier(*cc, c)
 	if err != nil {
-		// Deliberately surfaces buildNotifier's "not implemented yet" error
-		// as-is: `channel test` starts working automatically once a later
-		// task adds a case for this type, with no change needed here.
+		// Every channel type buildNotifier knows about (telegram, email,
+		// webhook, slack, discord, ntfy, gotify) is implemented; an error
+		// here means this channel's own settings are incomplete or invalid
+		// (e.g. a missing token/url), not that the type is unsupported.
 		fmt.Fprintf(stderr, "channel %q: %v\n", name, err)
 		return 1
 	}
 	a := Alert{
 		Key:      "test",
 		Title:    "serverwatch test",
-		Body:     fmt.Sprintf("test notification from serverwatch for channel %q", name),
+		Body:     "This is a test notification from serverwatch.",
 		Severity: SevInfo,
 		Kind:     "fire",
 		Source:   "cli",
@@ -178,10 +179,10 @@ func cmdChannelTest(c *config.Config, args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := n.Send(ctx, a); err != nil {
-		fmt.Fprintf(stderr, "test send via %q failed: %v\n", name, err)
+		fmt.Fprintf(stderr, "channel %q: send failed: %v\n", name, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "test alert sent via %q\n", name)
+	fmt.Fprintf(stdout, "sent test notification via %q (%s)\n", name, cc.Type)
 	return 0
 }
 

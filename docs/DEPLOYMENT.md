@@ -112,7 +112,69 @@ sudo serverwatch config get                             # show the effective con
 > `sample_interval` changes take effect on the next daemon restart:
 > `sudo systemctl restart serverwatch`.
 
-## 6. Real-time "server is down NOW" alert (optional)
+## 6. Notification channels (optional)
+
+Telegram (step 3) is the original always-on channel. On top of it, serverwatch
+can fan every threshold/baseline alert, the boot/recovery report, and the
+daily/weekly digest out to any number of additional channels — email, generic
+webhooks, Slack, Discord, [ntfy](https://ntfy.sh), and
+[Gotify](https://gotify.net) — each independently enabled and routed. The
+healthchecks.io dead-man switch (next step) is separate and not part of this
+fan-out.
+
+### The model
+
+Every outbound alert goes to a Dispatcher, which sends it to every
+**enabled** channel whose route matches:
+
+- `min_severity` — the lowest severity (`info` | `warning` | `critical`) the
+  channel accepts. Default `info` (everything gets through).
+- `include_kinds` / `exclude_kinds` — comma-separated target kinds to
+  restrict or block a channel to. Valid kinds are `cpu`, `mem`, `swap`,
+  `temp`, `disk`, `docker`, `service`, `smart` (the part of a target id
+  before `:`, e.g. `disk:/` → `disk`). The boot report and digests carry no
+  kind, so they still reach a channel unless `include_kinds` is set.
+- `critical_overrides_quiet` — per-channel: if true, `critical` alerts still
+  reach this channel during quiet hours (step 5's `quiet-hours` window).
+
+A pre-existing `telegram.token` auto-migrates into a real `telegram`-typed
+channel the first time any `channel` subcommand runs, so an existing
+Telegram-only install needs no changes — it just shows up in `channel list`.
+
+### Supported channel types
+
+| Type | Required settings | Optional settings |
+|------|--------------------|--------------------|
+| `telegram` | `chat_id` (unless already migrated from legacy config) | `token` (falls back to legacy `telegram.token`) |
+| `email` | `host`, `from`, `to` (comma-separated) | `port` (default `587`), `username`, `password`, `starttls` (default `true`) |
+| `webhook` | `url` | `method` (default `POST`), `content_type` (default `application/json`), `template` (a Go `text/template` body; defaults to a generic `{"text": "..."}` payload) |
+| `slack` | `url` (Slack incoming-webhook URL) | — (fixed Slack-formatted body) |
+| `discord` | `url` (Discord webhook URL) | — (fixed Discord-formatted body, truncated to Discord's 2000-char limit) |
+| `ntfy` | `topic` | `server` (default `https://ntfy.sh`), `token` (for protected topics) |
+| `gotify` | `server`, `token` (Gotify application token) | — |
+
+All settings above are per-channel key/value pairs, written with `channel set
+<name> setting.<key> <value>` (or `--set key=value` at `channel add` time).
+
+### Managing channels
+
+```bash
+sudo serverwatch channel add ops-email --type email
+sudo serverwatch channel set ops-email setting.host smtp.fastmail.com
+sudo serverwatch channel set ops-email setting.from serverwatch@home.lan
+sudo serverwatch channel set ops-email setting.to ops@home.lan
+sudo serverwatch channel set ops-email min_severity critical    # only page email for criticals
+sudo serverwatch channel test ops-email                          # send a synthetic test alert now
+sudo serverwatch channel list                                    # every channel + its routing
+```
+
+Other useful `channel set` keys: `enabled true|false`, `include_kinds
+disk,docker`, `exclude_kinds smart`, `critical_overrides_quiet true|false`.
+`channel remove <name>` deletes a channel. Every `channel add`/`set`/`remove`
+writes `config.json` and signals the running daemon (`SIGHUP`), same as
+`config set` — no restart needed.
+
+## 7. Real-time "server is down NOW" alert (optional)
 
 The daemon reconstructs downtime from its own heartbeat and reports it on the
 next boot ("back online, was down 02:14→06:47"). For an *instant* alert while the
@@ -124,7 +186,7 @@ Telegram directly:
 sudo serverwatch healthchecks set https://hc-ping.com/<your-uuid>
 ```
 
-## 7. Managing the service
+## 8. Managing the service
 
 ```bash
 systemctl status serverwatch            # is it running?
@@ -134,7 +196,7 @@ sudo serverwatch config get             # effective config
 sudo systemctl restart serverwatch      # after a sample_interval change or upgrade
 ```
 
-## 8. Upgrading
+## 9. Upgrading
 
 Download/build a newer binary and re-run install (it overwrites the binary and
 reloads the unit; your config and 30-day history are preserved):
@@ -143,7 +205,7 @@ reloads the unit; your config and 30-day history are preserved):
 sudo /tmp/serverwatch install
 ```
 
-## 9. Uninstalling
+## 10. Uninstalling
 
 ```bash
 sudo serverwatch uninstall            # stop + remove the unit (keeps config + history)
@@ -179,3 +241,9 @@ sudo serverwatch uninstall --purge    # also delete /etc/serverwatch and /var/li
   expose SMART; those are simply skipped.
 - **Alerts too noisy/quiet:** adjust `thresholds.*`, `baseline_sigma`, or disable
   specific targets with `monitor disable <target>`.
+- **A notification channel isn't delivering:** run `serverwatch channel test
+  <name>` first — it builds the channel and sends one synthetic alert,
+  reporting a clear success/failure independent of routing. If that succeeds
+  but real alerts still don't arrive, check `serverwatch channel list` for
+  `enabled=false` or a `min_severity`/`include_kinds`/`exclude_kinds` that's
+  filtering them out.
