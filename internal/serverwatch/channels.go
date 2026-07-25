@@ -14,7 +14,7 @@ import (
 // kept in Config.Telegram.Token rather than duplicated into every telegram
 // channel's Settings map.
 //
-// EXTENSION POINT: later tasks (t6 email, ...) add cases here as each
+// EXTENSION POINT: later tasks (webhook, ...) add cases here as each
 // channel type's concrete Notifier implementation lands. Until a type has a
 // case, every Type value falls through to the default branch and reports
 // "not implemented yet" — this lets the config/CLI/routing plumbing in this
@@ -39,6 +39,44 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			return nil, fmt.Errorf("telegram channel %q: chat_id not configured (set channel setting.chat_id or telegram.chat_id)", cc.Name)
 		}
 		return &telegramNotifier{client: telegram.New(token, chatID), name: cc.Name}, nil
+	case "email":
+		host := cc.Settings["host"]
+		if host == "" {
+			return nil, fmt.Errorf("email channel %q: host not configured (set channel setting.host)", cc.Name)
+		}
+		from := cc.Settings["from"]
+		if from == "" {
+			return nil, fmt.Errorf("email channel %q: from not configured (set channel setting.from)", cc.Name)
+		}
+		toRaw := cc.Settings["to"]
+		if toRaw == "" {
+			return nil, fmt.Errorf("email channel %q: to not configured (set channel setting.to)", cc.Name)
+		}
+		to := splitEmailList(toRaw)
+		if len(to) == 0 {
+			return nil, fmt.Errorf("email channel %q: to not configured (set channel setting.to)", cc.Name)
+		}
+
+		port := cc.Settings["port"]
+		if port == "" {
+			port = "587"
+		}
+
+		starttls := true
+		if v, ok := cc.Settings["starttls"]; ok {
+			starttls = v != "false" && v != "0"
+		}
+
+		return &emailNotifier{
+			name:     cc.Name,
+			host:     host,
+			port:     port,
+			username: cc.Settings["username"],
+			password: cc.Settings["password"],
+			from:     from,
+			to:       to,
+			starttls: starttls,
+		}, nil
 	default:
 		return nil, fmt.Errorf("channel type %q not implemented yet", cc.Type)
 	}
