@@ -621,6 +621,67 @@ func TestContainerStatsPersistsAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+func TestNetThroughputDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("collect.net_throughput"); got != "true" {
+		t.Fatalf("collect.net_throughput default = %q, want true", got)
+	}
+	if err := c.Set("collect.net_throughput", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.net_throughput"); got != "false" {
+		t.Fatalf("collect.net_throughput after set false = %q, want false", got)
+	}
+	if err := c.Set("collect.net_throughput", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.net_throughput"); got != "true" {
+		t.Fatalf("collect.net_throughput after set true = %q, want true", got)
+	}
+	if err := c.Set("collect.net_throughput", "bogus"); err == nil {
+		t.Fatal("collect.net_throughput set to bogus: want error, got nil")
+	}
+	if err := c.Unset("collect.net_throughput"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.net_throughput"); got != "true" {
+		t.Fatalf("collect.net_throughput after unset = %q, want default true", got)
+	}
+}
+
+func TestNetThroughputPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("collect.net_throughput", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("collect.net_throughput"); got != "false" {
+		t.Fatalf("collect.net_throughput after save/load = %q, want false (explicit false must persist)", got)
+	}
+
+	if err := c2.Set("collect.net_throughput", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c3, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c3.Get("collect.net_throughput"); got != "true" {
+		t.Fatalf("collect.net_throughput after second save/load = %q, want true", got)
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")

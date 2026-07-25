@@ -70,6 +70,11 @@ type Config struct {
 		// (internal/serverwatch/docker.go dockerAccess.stats). Defaults to
 		// true; nil is treated as true everywhere it's read.
 		ContainerStats *bool `json:"container_stats,omitempty"`
+		// NetThroughput gates the slow-tier per-interface network throughput
+		// collector (internal/serverwatch/net.go NetRateCalc, /proc/net/dev
+		// deltas -> bytes/sec). Defaults to true; nil is treated as true
+		// everywhere it's read.
+		NetThroughput *bool `json:"net_throughput,omitempty"`
 	} `json:"collect"`
 }
 
@@ -77,6 +82,12 @@ type Config struct {
 // (collect.container_stats) is enabled: unset (nil) defaults to true.
 func (c *Config) ContainerStatsEnabled() bool {
 	return c.Collect.ContainerStats == nil || *c.Collect.ContainerStats
+}
+
+// NetThroughputEnabled reports whether the per-interface network throughput
+// collector (collect.net_throughput) is enabled: unset (nil) defaults to true.
+func (c *Config) NetThroughputEnabled() bool {
+	return c.Collect.NetThroughput == nil || *c.Collect.NetThroughput
 }
 
 type TargetOverride struct {
@@ -368,6 +379,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.Storage.RollupRetention, true
 	case "collect.container_stats":
 		return strconv.FormatBool(c.ContainerStatsEnabled()), true
+	case "collect.net_throughput":
+		return strconv.FormatBool(c.NetThroughputEnabled()), true
 	}
 	return "", false
 }
@@ -484,6 +497,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.container_stats: %w", err)
 		}
 		c.Collect.ContainerStats = &b
+	case "collect.net_throughput":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("collect.net_throughput: %w", err)
+		}
+		c.Collect.NetThroughput = &b
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}

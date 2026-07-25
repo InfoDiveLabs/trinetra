@@ -182,6 +182,23 @@ func containerMetricSet(s Snapshot) MetricSet {
 	return ms
 }
 
+// netRateMetricSet converts a NetRateCalc.Rates() result into a MetricSet:
+// one "net:<iface>:rx" and one "net:<iface>:tx" entry (bytes/sec) per
+// interface, for the write-path counterpart of the net-throughput collector
+// (opt-in via collect.net_throughput). rates is nil/empty on the first slow
+// tick after startup (NetRateCalc has no prior sample to diff against yet)
+// and whenever the collector is disabled, in which case this returns an
+// empty MetricSet — the sampler loop's caller skips the Append entirely in
+// that case, same as containerMetricSet's len()>0 guard.
+func netRateMetricSet(rates map[string]IfaceRate) MetricSet {
+	ms := make(MetricSet, len(rates)*2)
+	for iface, r := range rates {
+		ms["net:"+iface+":rx"] = r.RxBps
+		ms["net:"+iface+":tx"] = r.TxBps
+	}
+	return ms
+}
+
 // shouldHeartbeat reports whether at least intervalSec seconds have passed
 // since lastUnix (the last written heartbeat), given the current time
 // nowUnix. lastUnix==0 (no heartbeat written yet) always returns true so the
@@ -498,6 +515,10 @@ func cmdDaemon(args []string) int {
 	// prevCPU belongs solely to the sampler goroutine (this function). The
 	// poller keeps its OWN CPUStat so no *CPUStat is shared across goroutines.
 	var prevCPU CPUStat
+	// netRate belongs solely to the sampler goroutine too (same pattern as
+	// prevCPU): it accumulates the previous /proc/net/dev sample across slow
+	// ticks so it can diff cumulative counters into bytes/sec rates.
+	var netRate NetRateCalc
 	da := probeDocker(x, fs)
 
 	// boot/recovery report from heartbeat gap
@@ -565,6 +586,18 @@ func cmdDaemon(args []string) int {
 			merged.FailedUnits = slow.FailedUnits
 			merged.SmartHealth = slow.SmartHealth
 			merged.ContainerStats = slow.ContainerStats
+
+			// net throughput (opt-in via collect.net_throughput): /proc/net/dev
+			// holds cumulative counters, so netRate.Rates diffs this sample
+			// against the one from the previous slow tick to get bytes/sec.
+			// Disabled or a read/parse failure just clears NetRates for this
+			// tick rather than failing the rest of the slow collection.
+			merged.NetRates = nil
+			if c.NetThroughputEnabled() {
+				if b, err := fs.Read("/proc/net/dev"); err == nil {
+					merged.NetRates = netRate.Rates(parseNetDev(string(b)), now.Unix())
+				}
+			}
 		}
 		merged.TS = now.Unix()
 
@@ -597,6 +630,12 @@ func cmdDaemon(args []string) int {
 				_ = store.Append(merged.TS, slowMetricSet(merged))
 				if cm := containerMetricSet(merged); len(cm) > 0 {
 					_ = store.Append(merged.TS, cm)
+				}
+				// nm is empty on the very first slow tick (netRate has no
+				// prior sample yet) and whenever collect.net_throughput is
+				// disabled, so the len()>0 guard skips the Append then too.
+				if nm := netRateMetricSet(merged.NetRates); len(nm) > 0 {
+					_ = store.Append(merged.TS, nm)
 				}
 			}
 

@@ -615,6 +615,28 @@ func TestSlowMetricSetNoDisks(t *testing.T) {
 	}
 }
 
+func TestNetRateMetricSet(t *testing.T) {
+	snap := Snapshot{NetRates: map[string]IfaceRate{
+		"eth0": {RxBps: 1234.5, TxBps: 67.8},
+	}}
+	ms := netRateMetricSet(snap.NetRates)
+	want := MetricSet{"net:eth0:rx": 1234.5, "net:eth0:tx": 67.8}
+	if len(ms) != len(want) {
+		t.Fatalf("netRateMetricSet = %+v, want %+v", ms, want)
+	}
+	for k, v := range want {
+		if ms[k] != v {
+			t.Errorf("netRateMetricSet[%q] = %v, want %v", k, ms[k], v)
+		}
+	}
+}
+
+func TestNetRateMetricSetEmpty(t *testing.T) {
+	if ms := netRateMetricSet(nil); len(ms) != 0 {
+		t.Fatalf("netRateMetricSet(nil) = %+v, want empty", ms)
+	}
+}
+
 // TestDigestNowFromStore seeds a memory SampleStore with cpu/mem points and a
 // downtime event inside the digest window, and asserts digestNow (reading
 // exclusively via store.Query/store.Events, no legacy Store involved)

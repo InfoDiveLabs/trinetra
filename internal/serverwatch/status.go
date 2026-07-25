@@ -25,6 +25,13 @@ type Snapshot struct {
 	// (dockerAccess.stats, containerMetricSet) for the collector and the
 	// bounded (cpu+mem only) series this feeds into the SampleStore.
 	ContainerStats map[string]ContainerStat `json:"container_stats,omitempty"`
+	// NetRates is the live per-interface network throughput (bytes/sec),
+	// computed by NetRateCalc from consecutive /proc/net/dev samples
+	// (opt-in via collect.net_throughput, slow-tier only, see daemon.go's
+	// sampler loop and net.go). Empty/nil on the very first slow tick (no
+	// prior sample to diff against yet) and whenever the collector is
+	// disabled. Keyed by interface name.
+	NetRates map[string]IfaceRate `json:"net_rates,omitempty"`
 }
 
 func renderStatus(s Snapshot) string {
