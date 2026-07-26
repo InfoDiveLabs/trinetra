@@ -12,6 +12,20 @@
  * once they render real markup into the same hooks.
  */
 (function(){
+  // ---- chart colors ----
+  // uPlot series draw to a <canvas>, whose 2D context can't resolve CSS
+  // custom properties: assigning strokeStyle='var(--info)' silently no-ops
+  // (the context keeps its previous/default color) instead of resolving the
+  // token, which is why the history/dashboard line charts rendered with
+  // effectively invisible strokes in both themes. Chart lines therefore use
+  // this fixed, theme-independent bright palette rather than var(--…)
+  // tokens; keys mirror the style.css custom properties they stand in for
+  // (--signal/--info/--cyan/--violet/--warn/--crit) so the mapping stays
+  // recognizable next to the legend swatches (those ARE plain DOM elements
+  // and can use var(--…) directly, since normal CSS -- not a canvas context
+  // -- resolves them).
+  var CHART_COLORS={signal:'#f5a623',info:'#4aa3ff',cyan:'#34d399',violet:'#a78bfa',warn:'#ffb454',crit:'#ff5c5c'};
+
   // ---- gradient defs ----
   document.body.insertAdjacentHTML('afterbegin','<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'+
     ['gInfo','gViolet','gOk','gCrit','gCyan','gSig'].map(function(id){return '<linearGradient id="'+id+'" x1="0" y1="0" x2="0" y2="1"><stop class="a" offset="0"/><stop class="b" offset="1"/></linearGradient>';}).join('')+'</defs></svg>');
@@ -131,7 +145,7 @@
       var el=document.getElementById(id);
       if(!el||!window.uPlot) return null;
       var uSeries=[{}];
-      series.forEach(function(lbl,i){uSeries.push({label:lbl,stroke:colors[i],width:1.5});});
+      series.forEach(function(lbl,i){uSeries.push({label:lbl,stroke:colors[i],width:1.8,fill:colors[i]+'22'});});
       var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:[{},{}]};
       var data=[[]]; series.forEach(function(){data.push([]);});
       var u=new uPlot(opts,data,el);
@@ -142,11 +156,11 @@
     function pushPoint(arr,v){arr.push(v); if(arr.length>MAXPTS) arr.shift();}
 
     function renderCharts(){
-      var hero=ensureChart('chart-hero',['cpu %','load'],['var(--info)','var(--signal)']);
+      var hero=ensureChart('chart-hero',['cpu %','load'],[CHART_COLORS.info,CHART_COLORS.signal]);
       if(hero) hero.setData([buf.t,buf.cpu,buf.load]);
-      var mem=ensureChart('chart-mem',['mem %'],['var(--violet)']);
+      var mem=ensureChart('chart-mem',['mem %'],[CHART_COLORS.violet]);
       if(mem) mem.setData([buf.t,buf.mem]);
-      var net=ensureChart('chart-net',['rx','tx'],['var(--cyan)','var(--signal)']);
+      var net=ensureChart('chart-net',['rx','tx'],[CHART_COLORS.cyan,CHART_COLORS.signal]);
       if(net) net.setData([buf.t,buf.rx,buf.tx]);
     }
 
@@ -205,7 +219,7 @@
   // GET /api/downtime (downtimeResponse: {events:[{type,start,end,
   // duration_sec}]}) — a proportional timeline SVG + one row per event,
   // matching the mockup's markup.
-  var HISTORY_COLORS=['var(--signal)','var(--info)','var(--cyan)','var(--violet)','var(--warn)','var(--crit)'];
+  var HISTORY_COLORS=[CHART_COLORS.signal,CHART_COLORS.info,CHART_COLORS.cyan,CHART_COLORS.violet,CHART_COLORS.warn,CHART_COLORS.crit];
   var HISTORY_RANGE_SECONDS={'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000};
 
   function historyFmtDur(sec){
@@ -234,7 +248,7 @@
       if(charts[el.id]) return charts[el.id];
       if(!window.uPlot) return null;
       var series=[{}];
-      labels.forEach(function(lbl,i){series.push({label:lbl,stroke:HISTORY_COLORS[i%HISTORY_COLORS.length],width:1.5});});
+      labels.forEach(function(lbl,i){var c=HISTORY_COLORS[i%HISTORY_COLORS.length]; series.push({label:lbl,stroke:c,width:1.8,fill:c+'22'});});
       var data=[[]]; labels.forEach(function(){data.push([]);});
       var opts={
         width:el.clientWidth||600,
