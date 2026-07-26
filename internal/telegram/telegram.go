@@ -3,6 +3,7 @@ package telegram
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,19 +35,95 @@ func New(token, chatID string) *Client {
 	}
 }
 
+// telegramMaxMessageLen is Telegram's hard limit on a single sendMessage
+// text (4096 characters). Renderers (internal/serverwatch/status.go) are
+// designed to stay well under this via summary-first/only-failures
+// rendering, but this is the safety net for whatever still doesn't: a
+// message this size used to come back as an HTTP 400 that daemon.go
+// silently discarded (see fix-disk-telegram-brief.md), leaving the user
+// with no reply at all.
+const telegramMaxMessageLen = 4096
+
+// SendMessage sends text as one or more Telegram messages (chunked if text
+// exceeds telegramMaxMessageLen, see chunkMessage), with parse_mode=HTML so
+// renderers' <pre>/<b> tags render instead of showing as literal text.
+// Callers rendering dynamic content (mount names, container names, etc.)
+// into HTML-mode text MUST html-escape it themselves — SendMessage does not
+// re-escape, since it also carries pre-built <pre>/<b> markup that must NOT
+// be escaped. If any chunk fails to send, SendMessage returns that error
+// immediately (a partial multi-chunk delivery is reported, not swallowed).
 func (c *Client) SendMessage(text string) error {
+	for _, chunk := range chunkMessage(text, telegramMaxMessageLen) {
+		if err := c.sendOne(chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) sendOne(text string) error {
 	form := url.Values{}
 	form.Set("chat_id", c.ChatID)
 	form.Set("text", text)
+	form.Set("parse_mode", "HTML")
 	resp, err := c.HTTP.PostForm(c.BaseURL+"/sendMessage", form)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		var apiErr struct {
+			Description string `json:"description"`
+		}
+		_ = json.Unmarshal(body, &apiErr)
+		if apiErr.Description != "" {
+			return fmt.Errorf("sendMessage status %d: %s", resp.StatusCode, apiErr.Description)
+		}
 		return fmt.Errorf("sendMessage status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// chunkMessage splits s into parts of at most limit characters, breaking on
+// newline boundaries so a single logical line is never split across two
+// Telegram messages — UNLESS a single line itself exceeds limit, in which
+// case that line alone is hard-split (there is no better boundary to use).
+// Returns []string{s} unchanged when s already fits in one chunk (the
+// common case, so callers pay nothing extra for short messages).
+func chunkMessage(s string, limit int) []string {
+	if len(s) <= limit {
+		return []string{s}
+	}
+	var chunks []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			chunks = append(chunks, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, line := range strings.Split(s, "\n") {
+		// Hard-split a single line longer than the whole limit: there's no
+		// newline to break on, so this is the one case content-within-a-line
+		// gets split.
+		for len(line) > limit {
+			flush()
+			chunks = append(chunks, line[:limit])
+			line = line[limit:]
+		}
+		add := line
+		if cur.Len() > 0 {
+			add = "\n" + line
+		}
+		if cur.Len()+len(add) > limit {
+			flush()
+			add = line
+		}
+		cur.WriteString(add)
+	}
+	flush()
+	return chunks
 }
 
 type Update struct {
