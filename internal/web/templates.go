@@ -72,13 +72,14 @@ type navEntry struct {
 // navItems mirrors the mockup app.js NAV array verbatim (headings, paths,
 // icons, labels, badge counts, admin gating) with mockup .html paths
 // swapped for the server's real routes. Later tasks implement the routes
-// these link to (monitoring, alerts, history, config, channels, users,
-// public-settings); for now they render as plain links even before their
-// handlers exist.
+// these link to (alerts, history, config, channels, users, public-settings);
+// for now they render as plain links even before their handlers exist. The
+// mockup's Monitoring entry is intentionally omitted: that page was never
+// built and a link to a route that 404s is worse than no link (see
+// docs/ROADMAP.md / field feedback) -- add it back once /monitoring exists.
 var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Monitor"}},
 	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
-	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring", Badge: "220"}},
 	{NavItem: NavItem{Href: "/alerts", Icon: "!", Label: "Alerts", Badge: "2"}},
 	{NavItem: NavItem{Href: "/history", Icon: "◔", Label: "History"}},
 	{NavItem: NavItem{Heading: "Admin"}, AdminOnly: true},

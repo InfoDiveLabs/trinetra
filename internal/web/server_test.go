@@ -78,6 +78,35 @@ func TestServerServesDashboardAndAssets(t *testing.T) {
 	}
 }
 
+// TestNavHasNoMonitoringLink pins the /monitoring 404 fix: that page was
+// never built, so the nav (and dashboard) must not link to it. Checks both
+// the rendered nav markup and navForRole/navItems directly, so a future
+// regression is caught whether it's reintroduced via the nav list or a
+// stray template link.
+func TestNavHasNoMonitoringLink(t *testing.T) {
+	for _, role := range []string{"viewer", "admin"} {
+		for _, item := range navForRole(role) {
+			if item.Href == "/monitoring" {
+				t.Errorf("navForRole(%q) still has a /monitoring entry: %+v", role, item)
+			}
+		}
+	}
+
+	d := enrollTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / (admin) status = %d, want 200", rr.Code)
+	}
+	if body := rr.Body.String(); strings.Contains(body, `href="/monitoring"`) {
+		t.Errorf("dashboard body still contains a /monitoring link:\n%s", body)
+	}
+}
+
 // TestServerServesJSAssetWithApplicationJavascriptType pins the JS content
 // type explicitly: http.FileServer's default mime lookup can vary by OS
 // mime.types, so newHandler must not rely on it for .js.

@@ -67,7 +67,7 @@
   </div>
 
   <div class="grid g-2" style="margin-top:14px">
-    <div class="panel"><div class="head"><span class="eyebrow">Top containers · CPU</span><a href="/monitoring" class="note mono">all →</a></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Top containers · CPU</span></div>
       <div class="hbars">
         {{if .TopCPUBars}}
         {{range .TopCPUBars}}
@@ -75,7 +75,7 @@
         {{end}}
         {{else}}<div class="note">no container stats available</div>{{end}}
       </div></div>
-    <div class="panel"><div class="head"><span class="eyebrow">Top containers · Memory</span><a href="/monitoring" class="note mono">all →</a></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Top containers · Memory</span></div>
       <div class="hbars">
         {{if .TopMemBars}}
         {{range .TopMemBars}}
@@ -85,7 +85,7 @@
       </div></div>
   </div>
 
-  <div class="section-label"><span class="eyebrow">Filesystems</span><a href="/monitoring" class="note mono">details →</a></div>
+  <div class="section-label"><span class="eyebrow">Filesystems</span></div>
   <div class="panel pad0"><table>
     <thead><tr><th>Mount</th><th>Device</th><th style="width:220px">Usage</th><th>Free</th><th>Trend</th></tr></thead>
     <tbody>
