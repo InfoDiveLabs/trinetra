@@ -60,8 +60,8 @@ func maybeStartWeb(d WebDeps) func() {
 // below is a plain read (range/index); nothing here ever assigns into
 // snap.Disks, snap.Containers, snap.ContainerStats, snap.NetRates, or
 // snap.DiskDetail — doing so would race against the sampler loop the next
-// time it replaces that field. New slices/maps built here (webDisks,
-// topByCPU, ...) are this function's own, never aliases into snap.
+// time it replaces that field. New slices built here (v.Disks, v.NetIfaces,
+// v.TopCPUContainers, ...) are this function's own, never aliases into snap.
 func buildDashboardView(snap Snapshot) web.DashboardView {
 	v := web.DashboardView{
 		TS:      snap.TS,
