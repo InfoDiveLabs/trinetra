@@ -173,6 +173,48 @@ func TestSendMessageIncludesAPIErrorDescription(t *testing.T) {
 	}
 }
 
+// TestSendMessageChunkKeepsPreBalanced asserts that when a chunk boundary
+// falls inside a <pre>...</pre> block, each emitted chunk is individually
+// tag-balanced (the split closes </pre> and the next chunk reopens <pre>),
+// so no chunk reaches Telegram as unbalanced HTML → 400.
+func TestSendMessageChunkKeepsPreBalanced(t *testing.T) {
+	var mu sync.Mutex
+	var texts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		texts = append(texts, r.FormValue("text"))
+		mu.Unlock()
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	c := New("tok", "123")
+	c.BaseURL = srv.URL
+
+	// A <pre>-wrapped table well over the 4096 limit: 300 lines inside one
+	// <pre> block => forced to split mid-block.
+	var sb strings.Builder
+	sb.WriteString("<pre>\n")
+	for i := 0; i < 300; i++ {
+		sb.WriteString("row of table data here padded out a bit\n")
+	}
+	sb.WriteString("</pre>")
+	if err := c.SendMessage(sb.String()); err != nil {
+		t.Fatal(err)
+	}
+	if len(texts) < 2 {
+		t.Fatalf("want the oversized <pre> table split into multiple chunks, got %d", len(texts))
+	}
+	for i, part := range texts {
+		if len(part) > 4096 {
+			t.Fatalf("chunk %d of %d chars exceeds 4096 limit", i, len(part))
+		}
+		if o, cl := strings.Count(part, "<pre>"), strings.Count(part, "</pre>"); o != cl {
+			t.Fatalf("chunk %d has unbalanced <pre> (%d open, %d close)", i, o, cl)
+		}
+	}
+}
+
 func lens(ss []string) []int {
 	out := make([]int, len(ss))
 	for i, s := range ss {

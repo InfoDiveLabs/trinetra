@@ -87,40 +87,108 @@ func (c *Client) sendOne(text string) error {
 
 // chunkMessage splits s into parts of at most limit characters, breaking on
 // newline boundaries so a single logical line is never split across two
-// Telegram messages — UNLESS a single line itself exceeds limit, in which
-// case that line alone is hard-split (there is no better boundary to use).
-// Returns []string{s} unchanged when s already fits in one chunk (the
-// common case, so callers pay nothing extra for short messages).
+// Telegram messages — UNLESS a single line itself exceeds the per-chunk
+// budget, in which case that line is hard-split (there is no better boundary
+// to use). Returns []string{s} unchanged when s already fits in one chunk
+// (the common case, so callers pay nothing extra for short messages).
+//
+// Because SendMessage sends parse_mode=HTML, a chunk boundary that falls
+// inside a <pre>...</pre> block would leave one chunk with an unclosed
+// <pre> and the next with a stray </pre> — unbalanced HTML that Telegram
+// rejects with a 400. chunkMessage tracks <pre> nesting across the split:
+// a chunk that ends still inside a block gets a synthetic </pre> appended,
+// and the continuation chunk gets a synthetic <pre> prepended, so every
+// emitted chunk is individually tag-balanced. (renderStatus/renderDisks
+// only ever emit a single, non-nested <pre> block, which this handles;
+// deeper nesting is tracked defensively but not expected.)
 func chunkMessage(s string, limit int) []string {
 	if len(s) <= limit {
 		return []string{s}
 	}
+	const openTag = "<pre>"
+	const closeTag = "</pre>"
 	var chunks []string
-	var cur strings.Builder
-	flush := func() {
-		if cur.Len() > 0 {
-			chunks = append(chunks, cur.String())
-			cur.Reset()
+	var cur []string // lines buffered for the current chunk (no synthetic tags)
+	curLen := 0      // len(strings.Join(cur, "\n"))
+	depth := 0       // <pre> nesting after all lines consumed so far
+	startedInPre := false
+
+	// reserve is the space a chunk must leave for synthetic tags: a leading
+	// "<pre>\n" if it continues a block opened earlier, and a trailing
+	// "\n</pre>" if it will still be inside a block when flushed.
+	reserve := func() int {
+		r := 0
+		if startedInPre {
+			r += len(openTag) + 1
 		}
+		if depth > 0 {
+			r += 1 + len(closeTag)
+		}
+		return r
 	}
+	emit := func(body string) {
+		if startedInPre {
+			body = openTag + "\n" + body
+		}
+		if depth > 0 {
+			body = body + "\n" + closeTag
+		}
+		chunks = append(chunks, body)
+		startedInPre = depth > 0
+	}
+	flush := func() {
+		if len(cur) == 0 {
+			return
+		}
+		emit(strings.Join(cur, "\n"))
+		cur = nil
+		curLen = 0
+	}
+	addLine := func(line string) {
+		depth += strings.Count(line, openTag) - strings.Count(line, closeTag)
+		if depth < 0 {
+			depth = 0
+		}
+		if len(cur) == 0 {
+			curLen = len(line)
+		} else {
+			curLen += 1 + len(line)
+		}
+		cur = append(cur, line)
+	}
+
 	for _, line := range strings.Split(s, "\n") {
-		// Hard-split a single line longer than the whole limit: there's no
-		// newline to break on, so this is the one case content-within-a-line
-		// gets split.
-		for len(line) > limit {
+		// Hard-split a single line longer than the per-chunk budget: there's
+		// no newline to break on. Each piece is emitted as its own balanced
+		// chunk (with tag wrapping, though pre tables have short rows so this
+		// path is effectively never hit for <pre> content).
+		for {
+			budget := limit - reserve()
+			if budget < 1 {
+				budget = 1
+			}
+			if len(line) <= budget {
+				break
+			}
 			flush()
-			chunks = append(chunks, line[:limit])
-			line = line[limit:]
+			piece := line[:budget]
+			line = line[budget:]
+			d := depth + strings.Count(piece, openTag) - strings.Count(piece, closeTag)
+			if d < 0 {
+				d = 0
+			}
+			depth = d
+			emit(piece)
 		}
-		add := line
-		if cur.Len() > 0 {
-			add = "\n" + line
+		// Newline-boundary packing: flush if this whole line won't fit.
+		joined := len(line)
+		if len(cur) > 0 {
+			joined = curLen + 1 + len(line)
 		}
-		if cur.Len()+len(add) > limit {
+		if joined+reserve() > limit {
 			flush()
-			add = line
 		}
-		cur.WriteString(add)
+		addLine(line)
 	}
 	flush()
 	return chunks
