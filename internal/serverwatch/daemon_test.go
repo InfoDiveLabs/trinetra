@@ -347,6 +347,12 @@ func TestCollectFastPopulatesCheapFields(t *testing.T) {
 	if snap.Load1 != 1.5 {
 		t.Errorf("Load1 = %v, want 1.5", snap.Load1)
 	}
+	if snap.Load5 != 1.0 {
+		t.Errorf("Load5 = %v, want 1.0", snap.Load5)
+	}
+	if snap.Load15 != 0.5 {
+		t.Errorf("Load15 = %v, want 0.5", snap.Load15)
+	}
 	// The slow-tier fields must NOT be touched by collectFast.
 	if snap.Disks != nil {
 		t.Errorf("collectFast populated Disks: %+v, want nil", snap.Disks)
@@ -383,7 +389,7 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 	connDial = func(host string) bool { return true }
 	defer func() { connDial = origDial }()
 
-	snap := collectSlow(x, fs, da, config.Default())
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
 
 	if snap.Disks["/"] != 90 {
 		t.Errorf("Disks[/] = %v, want 90", snap.Disks["/"])
@@ -416,6 +422,136 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 	}
 }
 
+// TestCollectSlowPopulatesDiskDetailAndSmartAttrs asserts collectSlow merges
+// `df -PT -B1` (device/fstype/usage/size) with `df -Pi` (inode%) into
+// snap.DiskDetail keyed by mount, alongside snap.Disks, and fills
+// snap.SmartAttrs from `smartctl -A <dev>` for every discovered SMART
+// device (alongside snap.SmartHealth).
+func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "df" && len(args) > 0 && args[0] == "-PT":
+			return []byte("Filesystem Type 1-blocks Used Available Capacity Mounted on\n" +
+				"/dev/sda1 ext4 100 90 10 90% /\n"), nil
+		case name == "df" && len(args) > 0 && args[0] == "-Pi":
+			return []byte("Filesystem Inodes IUsed IFree IUse% Mounted on\n" +
+				"/dev/sda1 1000 700 300 70% /\n"), nil
+		case name == "df":
+			return []byte("Filesystem 1B-blocks Used Available Capacity Mounted\n/dev/sda1 100 90 10 90% /\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "--scan":
+			return []byte("/dev/sda -d sat # /dev/sda [SAT], ATA device\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "-H":
+			return []byte("SMART overall-health self-assessment test result: PASSED\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "-A":
+			return []byte("ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE\n" +
+				"194 Temperature_Celsius     0x0022   109   095   000    Old_age   Always       -       37\n"), nil
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+
+	origDial := connDial
+	connDial = func(host string) bool { return true }
+	defer func() { connDial = origDial }()
+
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
+
+	if snap.Disks["/"] != 90 {
+		t.Fatalf("Disks[/] = %v, want 90 (unchanged)", snap.Disks["/"])
+	}
+	dd, ok := snap.DiskDetail["/"]
+	if !ok {
+		t.Fatalf("DiskDetail missing mount /: %+v", snap.DiskDetail)
+	}
+	if dd.Device != "/dev/sda1" || dd.FsType != "ext4" {
+		t.Errorf("DiskDetail[/] device/fstype = %q/%q, want /dev/sda1/ext4", dd.Device, dd.FsType)
+	}
+	if dd.UsagePct != 90 || dd.FreeBytes != 10 || dd.SizeBytes != 100 {
+		t.Errorf("DiskDetail[/] = %+v", dd)
+	}
+	if dd.InodePct != 70 {
+		t.Errorf("DiskDetail[/].InodePct = %v, want 70", dd.InodePct)
+	}
+	if dd.DaysToFullKnown {
+		t.Errorf("DiskDetail[/].DaysToFullKnown = true, want false (nil store)")
+	}
+	if snap.SmartAttrs["/dev/sda"].TempC != 37 {
+		t.Errorf("SmartAttrs[/dev/sda].TempC = %v, want 37", snap.SmartAttrs["/dev/sda"].TempC)
+	}
+}
+
+// TestCollectSlowDiskDetailProjectsDaysToFull asserts that when a store IS
+// supplied, collectSlow fills DiskDetail.DaysToFull/DaysToFullKnown from a
+// rising "disk:<mount>" history in that store, exercising the
+// projectMountDaysToFull wiring end-to-end (not just projectDaysToFull in
+// isolation).
+func TestCollectSlowDiskDetailProjectsDaysToFull(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "df" && len(args) > 0 && args[0] == "-PT":
+			return []byte("Filesystem Type 1-blocks Used Available Capacity Mounted on\n" +
+				"/dev/sda1 ext4 100 90 10 90% /\n"), nil
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+
+	origDial := connDial
+	connDial = func(host string) bool { return true }
+	defer func() { connDial = origDial }()
+
+	store := newMemStore(StoreOptions{})
+	const day = 86400
+	const nowUnix = 10 * day
+	// A rising history for "disk:/" over the last few days: 2%/day.
+	for i := 0; i <= 5; i++ {
+		ts := nowUnix - int64((5-i)*day)
+		pct := 80 + float64(i)*2
+		_ = store.Append(ts, MetricSet{"disk:/": pct})
+	}
+
+	snap := collectSlow(x, fs, da, config.Default(), store, nowUnix)
+
+	dd, ok := snap.DiskDetail["/"]
+	if !ok {
+		t.Fatalf("DiskDetail missing mount /: %+v", snap.DiskDetail)
+	}
+	if !dd.DaysToFullKnown {
+		t.Fatalf("DaysToFullKnown = false, want true for a rising history")
+	}
+	if dd.DaysToFull <= 0 {
+		t.Errorf("DaysToFull = %v, want > 0", dd.DaysToFull)
+	}
+}
+
+// TestSmartMetricSet asserts smartMetricSet emits one "smart:<dev>:temp"
+// entry per device with a known (>0) temperature, and omits devices whose
+// attribute set didn't report one.
+func TestSmartMetricSet(t *testing.T) {
+	snap := Snapshot{SmartAttrs: map[string]SmartAttr{
+		"/dev/sda": {TempC: 37, WearPct: 5, ReallocSectors: 2},
+		"/dev/sdb": {TempC: 0},
+	}}
+	ms := smartMetricSet(snap)
+	want := MetricSet{"smart:/dev/sda:temp": 37}
+	if len(ms) != len(want) {
+		t.Fatalf("smartMetricSet = %+v, want %+v", ms, want)
+	}
+	for k, v := range want {
+		if ms[k] != v {
+			t.Errorf("smartMetricSet[%q] = %v, want %v", k, ms[k], v)
+		}
+	}
+}
+
+func TestSmartMetricSetEmpty(t *testing.T) {
+	if ms := smartMetricSet(Snapshot{}); len(ms) != 0 {
+		t.Fatalf("smartMetricSet(empty) = %+v, want empty", ms)
+	}
+}
+
 // TestCollectSlowSkipsContainerStatsWhenDisabled asserts the
 // collect.container_stats=false opt-out actually suppresses the
 // `docker stats` call: the fake Exec fails the test if "stats" is
@@ -436,7 +572,7 @@ func TestCollectSlowSkipsContainerStatsWhenDisabled(t *testing.T) {
 	if err := c.Set("collect.container_stats", "false"); err != nil {
 		t.Fatal(err)
 	}
-	snap := collectSlow(x, fs, da, c)
+	snap := collectSlow(x, fs, da, c, nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil when disabled", snap.ContainerStats)
 	}
@@ -454,7 +590,7 @@ func TestCollectSlowSkipsContainerStatsWhenDockerUnavailable(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: false}
-	snap := collectSlow(x, fs, da, config.Default())
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil when docker unavailable", snap.ContainerStats)
 	}
@@ -473,7 +609,7 @@ func TestCollectSlowSkipsContainerStatsOnNilConfig(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: true, method: "socket"}
-	snap := collectSlow(x, fs, da, nil)
+	snap := collectSlow(x, fs, da, nil, nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil with nil config", snap.ContainerStats)
 	}
@@ -495,7 +631,7 @@ func TestCollectSlowContainerStatsErrorDegradesGracefully(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: true, method: "socket"}
-	snap := collectSlow(x, fs, da, config.Default())
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil on stats error", snap.ContainerStats)
 	}
@@ -530,7 +666,7 @@ func TestCollectSlowPopulatesUnits(t *testing.T) {
 	connDial = func(host string) bool { return true }
 	defer func() { connDial = origDial }()
 
-	snap := collectSlow(x, fs, da, config.Default())
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
 
 	if len(snap.Units) != 2 {
 		t.Fatalf("Units = %+v, want 2 entries", snap.Units)
@@ -559,7 +695,7 @@ func TestCollectSlowSkipsUnitsWhenDisabled(t *testing.T) {
 	if err := c.Set("collect.services", "false"); err != nil {
 		t.Fatal(err)
 	}
-	snap := collectSlow(x, fs, da, c)
+	snap := collectSlow(x, fs, da, c, nil, 0)
 	if snap.Units != nil {
 		t.Errorf("Units = %+v, want nil when collect.services disabled", snap.Units)
 	}
@@ -580,7 +716,7 @@ func TestCollectSlowSkipsUnitsOnNilConfig(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: false}
-	snap := collectSlow(x, fs, da, nil)
+	snap := collectSlow(x, fs, da, nil, nil, 0)
 	if snap.Units != nil {
 		t.Errorf("Units = %+v, want nil with nil config", snap.Units)
 	}
@@ -651,9 +787,9 @@ func TestEventToAlertDispatchRespectsQuietHours(t *testing.T) {
 }
 
 func TestFastMetricSet(t *testing.T) {
-	snap := Snapshot{CPU: 12, MemPct: 34, SwapPct: 5, Load1: 1.5, TempC: 60}
+	snap := Snapshot{CPU: 12, MemPct: 34, SwapPct: 5, Load1: 1.5, Load5: 1.2, Load15: 0.9, TempC: 60}
 	ms := fastMetricSet(snap)
-	want := MetricSet{"cpu": 12, "mem": 34, "swap": 5, "load1": 1.5, "temp": 60}
+	want := MetricSet{"cpu": 12, "mem": 34, "swap": 5, "load1": 1.5, "load5": 1.2, "load15": 0.9, "temp": 60}
 	if len(ms) != len(want) {
 		t.Fatalf("fastMetricSet = %+v, want %+v", ms, want)
 	}
@@ -665,13 +801,13 @@ func TestFastMetricSet(t *testing.T) {
 }
 
 func TestFastMetricSetOmitsTempWhenZero(t *testing.T) {
-	snap := Snapshot{CPU: 12, MemPct: 34, SwapPct: 5, Load1: 1.5, TempC: 0}
+	snap := Snapshot{CPU: 12, MemPct: 34, SwapPct: 5, Load1: 1.5, Load5: 1.2, Load15: 0.9, TempC: 0}
 	ms := fastMetricSet(snap)
 	if _, ok := ms["temp"]; ok {
 		t.Fatalf("fastMetricSet with TempC=0 = %+v, want no \"temp\" key", ms)
 	}
-	if len(ms) != 4 {
-		t.Fatalf("fastMetricSet = %+v, want exactly cpu/mem/swap/load1", ms)
+	if len(ms) != 6 {
+		t.Fatalf("fastMetricSet = %+v, want exactly cpu/mem/swap/load1/load5/load15", ms)
 	}
 }
 

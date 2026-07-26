@@ -6,12 +6,46 @@ import (
 	"strings"
 )
 
+// DiskDetail is the live per-mount filesystem detail beyond the plain
+// usage-percentage carried by Snapshot.Disks: device path, filesystem type,
+// inode usage, free/total bytes, and (when the SampleStore has enough
+// history) a linear fill-rate projection. Populated by collectSlow from
+// `df -PT -B1` (device/fstype/usage/size/free) merged with `df -Pi`
+// (inode%), keyed by mount — see parseDFTypes/parseDFInodes in collect.go
+// and projectDaysToFull in projection.go. Additive/live only: the existing
+// Snapshot.Disks map is untouched since alerting (buildSlowChecks) and the
+// SampleStore series (slowMetricSet) both depend on it.
+type DiskDetail struct {
+	Device, FsType       string
+	UsagePct, InodePct   float64
+	FreeBytes, SizeBytes uint64
+	// DaysToFull/DaysToFullKnown are a linear-projection estimate of how many
+	// days remain until the mount reaches 100% used, computed by
+	// projectDaysToFull from the mount's "disk:<mount>" SampleStore series.
+	// DaysToFullKnown is false when the projection isn't meaningful (a nil
+	// store, fewer than 2 history points, or a flat/declining trend).
+	DaysToFull      float64
+	DaysToFullKnown bool
+}
+
+// SmartAttr is a device's parsed `smartctl -A` attributes: temperature,
+// wear/life-remaining percentage, and reallocated-sector count. See
+// parseSmartAttrs in smart.go. Fields are tolerant of absence (0 = not
+// reported by this device) since attribute sets vary by vendor/SSD vs HDD.
+type SmartAttr struct {
+	TempC          int
+	WearPct        int
+	ReallocSectors int
+}
+
 type Snapshot struct {
 	TS           int64              `json:"ts"`
 	CPU          float64            `json:"cpu"`
 	MemPct       float64            `json:"mem_pct"`
 	SwapPct      float64            `json:"swap_pct"`
 	Load1        float64            `json:"load1"`
+	Load5        float64            `json:"load5"`
+	Load15       float64            `json:"load15"`
 	TempC        float64            `json:"temp_c"`
 	Disks        map[string]float64 `json:"disks"`
 	Online       bool               `json:"online"`
@@ -19,6 +53,16 @@ type Snapshot struct {
 	Containers   map[string]string  `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
 	FailedUnits  []string           `json:"failed_units,omitempty"` // systemctl --failed unit names
 	SmartHealth  map[string]string  `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
+	// DiskDetail is the live per-mount device/fstype/inode%/size detail (see
+	// the DiskDetail type doc comment above), keyed by mount. Additive to
+	// Disks, always collected in collectSlow (no config toggle — matches how
+	// Disks itself has no toggle).
+	DiskDetail map[string]DiskDetail `json:"disk_detail,omitempty"`
+	// SmartAttrs is the live per-device SMART attribute detail (temperature,
+	// wear%, reallocated sectors; see the SmartAttr type doc comment above),
+	// keyed by device path. Populated alongside SmartHealth for every
+	// discovered SMART device.
+	SmartAttrs map[string]SmartAttr `json:"smart_attrs,omitempty"`
 	// ContainerStats is the live per-container cpu%/mem/net snapshot from
 	// `docker stats --no-stream` (opt-in via collect.container_stats,
 	// slow-tier only). Keyed by container name. See docker.go/daemon.go

@@ -138,10 +138,12 @@ func buildChecks(snap Snapshot, c *config.Config, active map[string]ActiveAlert)
 // buildFastChecks' own "if snap.TempC > 0" gate.
 func fastMetricSet(s Snapshot) MetricSet {
 	ms := MetricSet{
-		"cpu":   s.CPU,
-		"mem":   s.MemPct,
-		"swap":  s.SwapPct,
-		"load1": s.Load1,
+		"cpu":    s.CPU,
+		"mem":    s.MemPct,
+		"swap":   s.SwapPct,
+		"load1":  s.Load1,
+		"load5":  s.Load5,
+		"load15": s.Load15,
 	}
 	if s.TempC > 0 {
 		ms["temp"] = s.TempC
@@ -195,6 +197,25 @@ func netRateMetricSet(rates map[string]IfaceRate) MetricSet {
 	for iface, r := range rates {
 		ms["net:"+iface+":rx"] = r.RxBps
 		ms["net:"+iface+":tx"] = r.TxBps
+	}
+	return ms
+}
+
+// smartMetricSet converts a Snapshot's per-device SMART attributes
+// (s.SmartAttrs, filled by collectSlow for every discovered SMART device)
+// into a MetricSet: one "smart:<dev>:temp" entry per device whose parsed
+// Temperature_Celsius/Airflow_Temperature attribute is known (TempC>0).
+// Devices with TempC==0 (attribute absent, or smartctl -A failed for that
+// device this tick) are omitted rather than appending a misleading zero —
+// this is the write-path counterpart of the SMART-attribute collector,
+// appended to the SampleStore alongside slowMetricSet on slow ticks, mirroring
+// containerMetricSet/netRateMetricSet's len()>0-guarded Append pattern.
+func smartMetricSet(s Snapshot) MetricSet {
+	ms := make(MetricSet, len(s.SmartAttrs))
+	for dev, a := range s.SmartAttrs {
+		if a.TempC > 0 {
+			ms["smart:"+dev+":temp"] = float64(a.TempC)
+		}
 	}
 	return ms
 }
@@ -253,7 +274,7 @@ func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 		}
 	}
 	if b, err := fs.Read("/proc/loadavg"); err == nil {
-		snap.Load1, _, _, _ = parseLoadavg(string(b))
+		snap.Load1, snap.Load5, snap.Load15, _ = parseLoadavg(string(b))
 	}
 	if zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp"); len(zones) > 0 {
 		if b, err := fs.Read(zones[0]); err == nil {
@@ -270,8 +291,12 @@ func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 // than every fast tick. c gates the opt-in docker-stats collector
 // (collect.container_stats); it may be nil (treated as disabled) so tests
 // and any future one-shot caller that doesn't have a config handy still get
-// a Snapshot back rather than a panic.
-func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config) Snapshot {
+// a Snapshot back rather than a panic. store/nowUnix feed the disk
+// fill-rate projection (DiskDetail.DaysToFull*, via projectDaysToFull over
+// the last ~7d of each mount's "disk:<mount>" series); store may be nil (no
+// SampleStore configured, or a one-shot caller with none handy), in which
+// case every mount's projection is simply left unknown.
+func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64) Snapshot {
 	var snap Snapshot
 	snap.DockerAccess = da.method
 	if out, err := x.Run("df", "-PB1"); err == nil {
@@ -280,6 +305,32 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config) Snaps
 			if isRealMount(d.Mount) {
 				snap.Disks[d.Mount] = d.UsedPct
 			}
+		}
+	}
+	// disk detail (device/fstype/inode%/size), additive to snap.Disks above:
+	// `df -PT -B1` gives device/fstype/usage/size/free per mount, `df -Pi`
+	// gives inode-used%; parseDFTypes/parseDFInodes are pure and keyed by
+	// mount so they merge directly. Either call failing just narrows what
+	// DiskDetail can report for this tick rather than failing collectSlow.
+	if out, err := x.Run("df", "-PT", "-B1"); err == nil {
+		types := parseDFTypes(string(out))
+		var inodes map[string]float64
+		if iout, ierr := x.Run("df", "-Pi"); ierr == nil {
+			inodes = parseDFInodes(string(iout))
+		}
+		snap.DiskDetail = map[string]DiskDetail{}
+		for mount, d := range types {
+			if !isRealMount(mount) {
+				continue
+			}
+			if pct, ok := inodes[mount]; ok {
+				d.InodePct = pct
+			}
+			if days, ok := projectMountDaysToFull(store, mount, d.UsagePct, c, nowUnix); ok {
+				d.DaysToFull = days
+				d.DaysToFullKnown = true
+			}
+			snap.DiskDetail[mount] = d
 		}
 	}
 	snap.Online = checkOnline(defaultConnHosts, connDial)
@@ -323,6 +374,7 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config) Snaps
 	// SMART health for every discovered device (all queried each cycle -> recovery works)
 	if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
 		snap.SmartHealth = map[string]string{}
+		snap.SmartAttrs = map[string]SmartAttr{}
 		for _, dev := range parseSmartScan(string(out)) {
 			h := "UNKNOWN"
 			if ho, herr := runMaybeSudo(x, "smartctl", "-H", dev); herr == nil {
@@ -335,6 +387,12 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config) Snaps
 				}
 			}
 			snap.SmartHealth[dev] = h
+			// SMART attribute detail (temp/wear/realloc): a failure here just
+			// leaves this device out of SmartAttrs for the tick, same as the
+			// health check above.
+			if ao, aerr := runMaybeSudo(x, "smartctl", "-A", dev); aerr == nil {
+				snap.SmartAttrs[dev] = parseSmartAttrs(string(ao))
+			}
 		}
 	}
 	return snap
@@ -347,15 +405,17 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config) Snaps
 // Telegram command wants a fresh, complete status). The tiered sampler loop
 // in cmdDaemon does NOT use this: it calls collectFast/collectSlow directly
 // so it can run collectSlow only every Nth fast tick.
-func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess, c *config.Config) Snapshot {
+func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64) Snapshot {
 	snap := collectFast(x, fs, prev)
-	slow := collectSlow(x, fs, da, c)
+	slow := collectSlow(x, fs, da, c, store, nowUnix)
 	snap.Disks = slow.Disks
+	snap.DiskDetail = slow.DiskDetail
 	snap.Online = slow.Online
 	snap.DockerAccess = slow.DockerAccess
 	snap.Containers = slow.Containers
 	snap.FailedUnits = slow.FailedUnits
 	snap.SmartHealth = slow.SmartHealth
+	snap.SmartAttrs = slow.SmartAttrs
 	snap.ContainerStats = slow.ContainerStats
 	snap.Units = slow.Units
 	return snap
@@ -545,8 +605,8 @@ func cmdDaemon(args []string) int {
 			if store != nil {
 				_ = store.AppendEvent(ev)
 			}
-			snap := collectSnapshot(x, fs, &prevCPU, da, c0)
 			now := clock.Now().Unix()
+			snap := collectSnapshot(x, fs, &prevCPU, da, c0, store, now)
 			dispatchAndLog(getDispatcher(), alog, Alert{
 				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap)),
 				Severity: SevInfo,
@@ -587,21 +647,23 @@ func cmdDaemon(args []string) int {
 		now := clock.Now()
 
 		fast := collectFast(x, fs, &prevCPU)
-		merged.CPU, merged.MemPct, merged.SwapPct, merged.Load1, merged.TempC =
-			fast.CPU, fast.MemPct, fast.SwapPct, fast.Load1, fast.TempC
+		merged.CPU, merged.MemPct, merged.SwapPct, merged.Load1, merged.Load5, merged.Load15, merged.TempC =
+			fast.CPU, fast.MemPct, fast.SwapPct, fast.Load1, fast.Load5, fast.Load15, fast.TempC
 
 		// tick==0 also runs the slow tier so the very first status.json/
 		// anomaly eval after startup or a reload is already fully populated,
 		// rather than waiting up to N-1 fast ticks for disks/docker/etc.
 		isSlowTick := tick%n == 0
 		if isSlowTick {
-			slow := collectSlow(x, fs, da, c)
+			slow := collectSlow(x, fs, da, c, store, now.Unix())
 			merged.Disks = slow.Disks
+			merged.DiskDetail = slow.DiskDetail
 			merged.Online = slow.Online
 			merged.DockerAccess = slow.DockerAccess
 			merged.Containers = slow.Containers
 			merged.FailedUnits = slow.FailedUnits
 			merged.SmartHealth = slow.SmartHealth
+			merged.SmartAttrs = slow.SmartAttrs
 			merged.ContainerStats = slow.ContainerStats
 			merged.Units = slow.Units
 
@@ -666,6 +728,13 @@ func cmdDaemon(args []string) int {
 				// disabled, so the len()>0 guard skips the Append then too.
 				if nm := netRateMetricSet(merged.NetRates); len(nm) > 0 {
 					_ = store.Append(merged.TS, nm)
+				}
+				// sm is empty whenever no discovered SMART device reported a
+				// parseable temperature attribute this tick (SmartAttrs nil/
+				// empty, or every device's TempC==0), so the len()>0 guard
+				// skips the Append then too, mirroring netRateMetricSet above.
+				if sm := smartMetricSet(merged); len(sm) > 0 {
+					_ = store.Append(merged.TS, sm)
 				}
 			}
 
@@ -824,8 +893,9 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 				c = getCfg()
 				tg = telegram.New(c.Telegram.Token, c.Telegram.ChatID)
 			}
-			snap := collectSnapshot(x, fs, &prevCPU, da, c)
-			snap.TS = time.Now().Unix()
+			nowUnix := time.Now().Unix()
+			snap := collectSnapshot(x, fs, &prevCPU, da, c, store, nowUnix)
+			snap.TS = nowUnix
 			_ = tg.SendMessage(handleCommand(u.Text, store, snap))
 		}
 	}

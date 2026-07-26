@@ -140,6 +140,70 @@ func parseDF(s string) ([]DiskUsage, error) {
 	return out, nil
 }
 
+// parseDFTypes parses `df -PT -B1` output (POSIX 1-byte blocks, with the
+// filesystem-type column -T inserts after the device column): "Filesystem
+// Type 1-blocks Used Available Capacity Mounted on". Returns a map keyed by
+// mount, filling everything parseDF captures (device path is column 0,
+// implicitly) plus FsType, so it can be merged with parseDFInodes into a
+// Snapshot.DiskDetail map. Malformed lines (fewer than 7 fields) are skipped
+// rather than aborting the batch.
+func parseDFTypes(s string) map[string]DiskDetail {
+	out := map[string]DiskDetail{}
+	sc := bufio.NewScanner(strings.NewReader(s))
+	first := true
+	for sc.Scan() {
+		if first {
+			first = false
+			continue // header
+		}
+		f := strings.Fields(sc.Text())
+		if len(f) < 7 {
+			continue
+		}
+		total, err1 := strconv.ParseUint(f[2], 10, 64)
+		avail, err2 := strconv.ParseUint(f[4], 10, 64)
+		pct, err3 := strconv.ParseFloat(strings.TrimSuffix(f[5], "%"), 64)
+		if err1 != nil || err2 != nil || err3 != nil {
+			continue
+		}
+		mount := f[6]
+		out[mount] = DiskDetail{
+			Device:    f[0],
+			FsType:    f[1],
+			UsagePct:  pct,
+			FreeBytes: avail,
+			SizeBytes: total,
+		}
+	}
+	return out
+}
+
+// parseDFInodes parses `df -Pi` output: "Filesystem Inodes IUsed IFree
+// IUse% Mounted on". Returns a map of mount -> inode-used percentage.
+// Malformed lines (fewer than 6 fields, or a non-numeric IUse% such as the
+// "-" some filesystems report when they don't track inodes) are skipped.
+func parseDFInodes(s string) map[string]float64 {
+	out := map[string]float64{}
+	sc := bufio.NewScanner(strings.NewReader(s))
+	first := true
+	for sc.Scan() {
+		if first {
+			first = false
+			continue // header
+		}
+		f := strings.Fields(sc.Text())
+		if len(f) < 6 {
+			continue
+		}
+		pct, err := strconv.ParseFloat(strings.TrimSuffix(f[4], "%"), 64)
+		if err != nil {
+			continue
+		}
+		out[f[5]] = pct
+	}
+	return out
+}
+
 func parseThermal(s string) (float64, error) {
 	milli, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil {

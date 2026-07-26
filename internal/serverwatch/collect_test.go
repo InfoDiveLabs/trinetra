@@ -55,6 +55,52 @@ func TestParseDF(t *testing.T) {
 	}
 }
 
+func TestParseDFTypes(t *testing.T) {
+	s := "Filesystem     Type  1-blocks      Used Available Capacity Mounted on\n" +
+		"/dev/sda1      ext4       100        90        10       90% /\n" +
+		"tmpfs          tmpfs       50         0        50        0% /run\n" +
+		"malformed line with too few fields\n"
+	d := parseDFTypes(s)
+	if len(d) != 2 {
+		t.Fatalf("rows = %d, want 2 (malformed line skipped): %+v", len(d), d)
+	}
+	root, ok := d["/"]
+	if !ok {
+		t.Fatalf("missing mount / in %+v", d)
+	}
+	if root.Device != "/dev/sda1" || root.FsType != "ext4" {
+		t.Fatalf("root = %+v, want device /dev/sda1 fstype ext4", root)
+	}
+	if math.Abs(root.UsagePct-90) > 0.001 || root.FreeBytes != 10 || root.SizeBytes != 100 {
+		t.Fatalf("root = %+v", root)
+	}
+	run, ok := d["/run"]
+	if !ok || run.FsType != "tmpfs" || run.Device != "tmpfs" {
+		t.Fatalf("run = %+v, want fstype/device tmpfs", run)
+	}
+}
+
+func TestParseDFInodes(t *testing.T) {
+	s := "Filesystem      Inodes   IUsed   IFree IUse% Mounted on\n" +
+		"/dev/sda1        1000     900     100   90% /\n" +
+		"tmpfs             500       0     500    0% /run\n" +
+		"special             -       -       -    - /proc\n" +
+		"short line\n"
+	m := parseDFInodes(s)
+	if len(m) != 2 {
+		t.Fatalf("rows = %d, want 2 (non-numeric + short lines skipped): %+v", len(m), m)
+	}
+	if math.Abs(m["/"]-90) > 0.001 {
+		t.Fatalf("m[/] = %v, want 90", m["/"])
+	}
+	if math.Abs(m["/run"]-0) > 0.001 {
+		t.Fatalf("m[/run] = %v, want 0", m["/run"])
+	}
+	if _, ok := m["/proc"]; ok {
+		t.Fatalf("m[/proc] should be absent (non-numeric IUse%%): %+v", m)
+	}
+}
+
 func TestParseThermal(t *testing.T) {
 	c, err := parseThermal("52000\n")
 	if err != nil || math.Abs(c-52) > 0.001 {
