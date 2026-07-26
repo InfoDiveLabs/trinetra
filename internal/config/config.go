@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -101,6 +102,20 @@ type Config struct {
 		// sample_interval. Unset/0 -> default 1800s (30 min).
 		SmartInterval int `json:"smart_interval,omitempty"`
 	} `json:"collect"`
+	// Web holds the embedded web UI server's settings (internal/web,
+	// `-tags web` builds only — see docs/ROADMAP.md epic #56). The default
+	// !web build never reads these, but the keys live here (untagged) so
+	// they're manageable via `serverwatch config set` regardless of which
+	// binary is installed.
+	Web struct {
+		// Enabled toggles the embedded web server. Defaults to false: the
+		// web UI is opt-in even in the serverwatch-web binary.
+		Enabled bool `json:"enabled,omitempty"`
+		// Listen is the "host:port" the web server binds, validated with
+		// net.SplitHostPort. Defaults to 127.0.0.1:8088 (localhost-only;
+		// front it with a reverse proxy for LAN/WAN exposure).
+		Listen string `json:"listen,omitempty"`
+	} `json:"web"`
 }
 
 // ContainerStatsEnabled reports whether the docker-stats collector
@@ -194,6 +209,15 @@ func validateRetentionDuration(key, s string) error {
 	}
 	if d <= 0 {
 		return fmt.Errorf("%s %q invalid: must be positive", key, s)
+	}
+	return nil
+}
+
+// validateListen rejects anything net.SplitHostPort can't parse into a
+// host/port pair — the same "host:port" shape http.Server.Addr expects.
+func validateListen(s string) error {
+	if _, _, err := net.SplitHostPort(s); err != nil {
+		return fmt.Errorf("web.listen %q invalid: %w (want host:port)", s, err)
 	}
 	return nil
 }
@@ -319,6 +343,7 @@ func Default() *Config {
 	c.Storage.Backend = "tsfile"
 	c.Storage.RawRetention = "48h"
 	c.Storage.RollupRetention = "720h"
+	c.Web.Listen = "127.0.0.1:8088"
 	return c
 }
 
@@ -355,6 +380,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Storage.RollupRetention == "" {
 		c.Storage.RollupRetention = "720h"
+	}
+	if c.Web.Listen == "" {
+		c.Web.Listen = "127.0.0.1:8088"
 	}
 	return c, nil
 }
@@ -441,6 +469,10 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.SmartAttrsEnabled()), true
 	case "collect.smart_interval":
 		return strconv.Itoa(c.SmartIntervalSec()), true
+	case "web.enabled":
+		return strconv.FormatBool(c.Web.Enabled), true
+	case "web.listen":
+		return c.Web.Listen, true
 	}
 	return "", false
 }
@@ -587,6 +619,17 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.smart_interval must be an integer >= 1")
 		}
 		c.Collect.SmartInterval = n
+	case "web.enabled":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("web.enabled: %w", err)
+		}
+		c.Web.Enabled = b
+	case "web.listen":
+		if err := validateListen(val); err != nil {
+			return err
+		}
+		c.Web.Listen = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}

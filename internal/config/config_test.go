@@ -922,6 +922,77 @@ func TestSmartIntervalPersistsAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+func TestWebEnabledListenDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("web.enabled"); got != "false" {
+		t.Fatalf("web.enabled default = %q, want false", got)
+	}
+	if got, _ := c.Get("web.listen"); got != "127.0.0.1:8088" {
+		t.Fatalf("web.listen default = %q, want 127.0.0.1:8088", got)
+	}
+
+	if err := c.Set("web.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.enabled"); got != "true" {
+		t.Fatalf("web.enabled after set = %q, want true", got)
+	}
+	if err := c.Set("web.listen", "0.0.0.0:9090"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.listen"); got != "0.0.0.0:9090" {
+		t.Fatalf("web.listen after set = %q, want 0.0.0.0:9090", got)
+	}
+
+	if err := c.Unset("web.enabled"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.enabled"); got != "false" {
+		t.Fatalf("web.enabled after unset = %q, want default false", got)
+	}
+	if err := c.Unset("web.listen"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.listen"); got != "127.0.0.1:8088" {
+		t.Fatalf("web.listen after unset = %q, want default 127.0.0.1:8088", got)
+	}
+}
+
+func TestWebListenRejectsUnparsableHostPort(t *testing.T) {
+	c := Default()
+	if err := c.Set("web.listen", "not-a-host-port"); err == nil {
+		t.Fatal("web.listen set to \"not-a-host-port\": want error, got nil")
+	}
+	if got, _ := c.Get("web.listen"); got != "127.0.0.1:8088" {
+		t.Fatalf("web.listen after rejected set = %q, want unchanged 127.0.0.1:8088", got)
+	}
+}
+
+func TestWebEnabledListenPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("web.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("web.listen", "127.0.0.1:9999"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("web.enabled"); got != "true" {
+		t.Fatalf("web.enabled after save/load = %q, want true", got)
+	}
+	if got, _ := c2.Get("web.listen"); got != "127.0.0.1:9999" {
+		t.Fatalf("web.listen after save/load = %q, want 127.0.0.1:9999", got)
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")
