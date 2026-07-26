@@ -3,7 +3,25 @@
 Tracking board: **[Home Server project](https://github.com/users/Suraj-Tiwari/projects/1)**
 (cards grouped by *Area*; open follow-ups are linked issues).
 
-**Current release:** [v0.1.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0) — feature-complete for a single home server.
+**Current release:** [v0.2.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.2.0) — multi-channel alerting, tiered sampling + time-series storage, extended data collection.
+**Previous:** [v0.1.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0) — feature-complete for a single home server.
+
+## Delivered (v0.2.0)
+
+Every task below shipped test-first with an independent per-task review; verified by the full unit
+suite + `go test -race` + the dockerized end-to-end harness.
+
+- **Epic #33 — Multi-channel alerting:** `Notifier`/dispatcher abstraction with severity + target
+  routing; seven channels (Telegram, Email/SMTP, generic webhook, Slack, Discord, ntfy, Gotify);
+  `channel` CLI + automatic Telegram migration.
+- **Epic #44 — Tiered sampling + efficient storage:** fast (5s) / slow (60s) tiers; `SampleStore`
+  interface + `tsfile` binary backend (versioned, per-series, corruption-tolerant, crash-durable
+  prune); raw + 1m resolutions, downsampling, per-resolution retention; `dump`/`migrate` CLI.
+- **Epic #69 — Extended datapoint collection:** alert event log + ack/delivery; per-container
+  cpu/mem series; net throughput series; systemd inventory + process snapshots (live); load5/15,
+  inodes, fstype, fill projection, SMART attributes; opt-in `collect.*` toggles + `doctor` guardrail.
+- **Post-release hardening:** systemd watchdog (#2), `//go:build unix` (#3), throttled SMART scans
+  via `collect.smart_interval` (#4), human wording for binary-state alerts (#5).
 
 ## Delivered (v0.1.0)
 
@@ -43,13 +61,10 @@ Verified by the full unit suite + `go test -race` + a dockerized end-to-end harn
 Everything below is tracked on the board as issues nested under epics.
 
 ### Post-release hardening (follow-ups)
-- [#1 Deploy to the home server and verify](https://github.com/Suraj-Tiwari/server-monitor/issues/1)
-- [#2 systemd watchdog (WatchdogSec + sd_notify)](https://github.com/Suraj-Tiwari/server-monitor/issues/2)
-- [#3 `//go:build unix` tag for signal_unix.go](https://github.com/Suraj-Tiwari/server-monitor/issues/3)
-- [#4 Throttle SMART health checks](https://github.com/Suraj-Tiwari/server-monitor/issues/4)
-- [#5 Improve binary-state alert wording](https://github.com/Suraj-Tiwari/server-monitor/issues/5)
+- [#1 Deploy to the home server and verify](https://github.com/Suraj-Tiwari/server-monitor/issues/1) — pending (manual, on-server)
+- ~~#2 systemd watchdog~~ · ~~#3 `//go:build unix`~~ · ~~#4 Throttle SMART~~ · ~~#5 binary-state alert wording~~ — shipped in v0.2.0
 
-### Epic [#33 Multi-channel alerting](https://github.com/Suraj-Tiwari/server-monitor/issues/33)
+### ✅ Epic [#33 Multi-channel alerting](https://github.com/Suraj-Tiwari/server-monitor/issues/33)
 Channel-agnostic alerting: a `Notifier` abstraction + dispatcher with severity/type routing, pluggable channels (stdlib-only).
 - #34 Notifier interface + Alert model + concurrent dispatcher
 - #35 Severity levels + per-channel routing/filters
@@ -62,7 +77,7 @@ Channel-agnostic alerting: a `Notifier` abstraction + dispatcher with severity/t
 - #42 ntfy / Gotify channel
 - #43 `channel test` command + docs
 
-### Epic [#44 Tiered sampling + efficient storage](https://github.com/Suraj-Tiwari/server-monitor/issues/44)
+### ✅ Epic [#44 Tiered sampling + efficient storage](https://github.com/Suraj-Tiwari/server-monitor/issues/44)
 Fast tier (5s) for CPU/load/mem/swap driving detection + live status; 1-min aggregate persistence; a future-safe time-series store replacing JSON. Design: [docs/DESIGN-storage.md](DESIGN-storage.md).
 - #45 Config keys (fast_interval, heartbeat_interval) + validation
 - #46 Split collectors into fast/slow tiers
@@ -76,7 +91,7 @@ Fast tier (5s) for CPU/load/mem/swap driving detection + live status; 1-min aggr
 - #54 Integrate `SampleStore` across daemon/handlers/digests
 - #55 Tiered + storage docs & config update
 
-### Epic [#69 Extended datapoint collection (UI data coverage)](https://github.com/Suraj-Tiwari/server-monitor/issues/69)
+### ✅ Epic [#69 Extended datapoint collection (UI data coverage)](https://github.com/Suraj-Tiwari/server-monitor/issues/69)
 Collect the extra data the UI shows, cheaply — must land before the UI's stats/history tasks. Bounded time-series vs live snapshots vs event-log; opt-in, slow-tier collectors; ~tens of MB on disk thanks to tsfile.
 - #70 Alert event log + ack + delivery record (powers Alerts history)
 - #71 Per-container CPU/mem/net (docker stats) → series
