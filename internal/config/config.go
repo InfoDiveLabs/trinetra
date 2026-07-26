@@ -88,6 +88,13 @@ type Config struct {
 		// persisted as a SampleStore series (per-process cardinality).
 		// Defaults to true; nil is treated as true everywhere it's read.
 		Processes *bool `json:"processes,omitempty"`
+		// SmartAttrs gates the slow-tier per-device `smartctl -A` attribute
+		// reads (internal/serverwatch/daemon.go collectSlow, feeding the
+		// "smart:<dev>:temp" series) — the heaviest optional per-device call.
+		// Defaults to true; nil is treated as true everywhere it's read. The
+		// cheaper `smartctl --scan`/`-H` health checks are unaffected and
+		// always run regardless of this setting.
+		SmartAttrs *bool `json:"smart_attrs,omitempty"`
 	} `json:"collect"`
 }
 
@@ -113,6 +120,12 @@ func (c *Config) ServicesEnabled() bool {
 // (collect.processes) is enabled: unset (nil) defaults to true.
 func (c *Config) ProcessesEnabled() bool {
 	return c.Collect.Processes == nil || *c.Collect.Processes
+}
+
+// SmartAttrsEnabled reports whether the per-device SMART attribute reads
+// collector (collect.smart_attrs) is enabled: unset (nil) defaults to true.
+func (c *Config) SmartAttrsEnabled() bool {
+	return c.Collect.SmartAttrs == nil || *c.Collect.SmartAttrs
 }
 
 type TargetOverride struct {
@@ -410,6 +423,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.ServicesEnabled()), true
 	case "collect.processes":
 		return strconv.FormatBool(c.ProcessesEnabled()), true
+	case "collect.smart_attrs":
+		return strconv.FormatBool(c.SmartAttrsEnabled()), true
 	}
 	return "", false
 }
@@ -544,6 +559,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.processes: %w", err)
 		}
 		c.Collect.Processes = &b
+	case "collect.smart_attrs":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("collect.smart_attrs: %w", err)
+		}
+		c.Collect.SmartAttrs = &b
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}

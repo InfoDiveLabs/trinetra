@@ -481,6 +481,60 @@ func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 	}
 }
 
+// TestCollectSlowSkipsSmartAttrsWhenDisabled asserts collect.smart_attrs=false
+// suppresses the `smartctl -A <dev>` call (the fake Exec fails the test if
+// it's requested) while the cheaper `--scan`/`-H` health check still runs and
+// still populates snap.SmartHealth.
+func TestCollectSlowSkipsSmartAttrsWhenDisabled(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "smartctl" && len(args) > 0 && args[0] == "--scan":
+			return []byte("/dev/sda -d sat # /dev/sda [SAT], ATA device\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "-H":
+			return []byte("SMART overall-health self-assessment test result: PASSED\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "-A":
+			t.Fatal("smartctl -A must not be called when collect.smart_attrs is disabled")
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+	c := config.Default()
+	if err := c.Set("collect.smart_attrs", "false"); err != nil {
+		t.Fatal(err)
+	}
+	snap := collectSlow(x, fs, da, c, nil, 0)
+	if snap.SmartAttrs != nil {
+		t.Errorf("SmartAttrs = %+v, want nil when collect.smart_attrs disabled", snap.SmartAttrs)
+	}
+	if snap.SmartHealth["/dev/sda"] != "PASSED" {
+		t.Errorf("SmartHealth[/dev/sda] = %q, want PASSED (health check unaffected)", snap.SmartHealth["/dev/sda"])
+	}
+}
+
+// TestCollectSlowSkipsSmartAttrsOnNilConfig mirrors the container-stats/units
+// nil-config guard: collectSlow must not panic (or call `smartctl -A`) with
+// a nil *config.Config.
+func TestCollectSlowSkipsSmartAttrsOnNilConfig(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "smartctl" && len(args) > 0 && args[0] == "--scan":
+			return []byte("/dev/sda -d sat # /dev/sda [SAT], ATA device\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "-H":
+			return []byte("SMART overall-health self-assessment test result: PASSED\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "-A":
+			t.Fatal("smartctl -A must not be called with a nil config")
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+	snap := collectSlow(x, fs, da, nil, nil, 0)
+	if snap.SmartAttrs != nil {
+		t.Errorf("SmartAttrs = %+v, want nil with nil config", snap.SmartAttrs)
+	}
+}
+
 // TestCollectSlowDiskDetailProjectsDaysToFull asserts that when a store IS
 // supplied, collectSlow fills DiskDetail.DaysToFull/DaysToFullKnown from a
 // rising "disk:<mount>" history in that store, exercising the

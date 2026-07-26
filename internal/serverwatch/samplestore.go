@@ -62,6 +62,14 @@ type SampleStore interface {
 	Downsample(nowUnix int64) error
 	// Close releases any resources held by the backend.
 	Close() error
+	// Stats reports the storage engine's cardinality/disk cost: seriesCount
+	// is the number of distinct time series the backend is tracking
+	// (tsFileStore: the number of .tsd files on disk across raw/1m/events;
+	// memStore: the number of in-memory metric series) and diskBytes is the
+	// total bytes those series occupy on disk (always 0 for memStore, which
+	// is non-persistent). `serverwatch doctor` surfaces this as a
+	// cardinality/disk guardrail (docs/ROADMAP.md Epic #69 x7).
+	Stats() (seriesCount int, diskBytes int64, err error)
 }
 
 // StoreOptions configures a SampleStore's per-resolution retention policy
@@ -229,3 +237,12 @@ func (m *memStore) Prune(nowUnix int64) error {
 func (m *memStore) Downsample(nowUnix int64) error { return nil }
 
 func (m *memStore) Close() error { return nil }
+
+// Stats reports the number of in-memory metric series and always 0
+// diskBytes (memStore is non-persistent; see the SampleStore.Stats doc
+// comment).
+func (m *memStore) Stats() (int, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.series), 0, nil
+}

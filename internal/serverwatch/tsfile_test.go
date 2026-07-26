@@ -602,3 +602,64 @@ func TestSafeMetricDeterministicAndDistinct(t *testing.T) {
 		seen[safe] = m
 	}
 }
+
+// TestTSFileStoreStats asserts tsFileStore.Stats counts the .tsd files
+// written under ts/raw (+ ts/1m once Downsample has run, + events.tsd once
+// an event is appended) and sums their on-disk sizes, giving `serverwatch
+// doctor` its cardinality/disk guardrail numbers (docs/ROADMAP.md Epic #69
+// x7).
+func TestTSFileStoreStats(t *testing.T) {
+	dir := t.TempDir()
+	s := openTSFile(t, dir, StoreOptions{})
+	defer s.Close()
+
+	if err := s.Append(100, MetricSet{"cpu": 10, "mem": 50}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(200, MetricSet{"cpu": 20, "mem": 60}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, size, err := s.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 2 {
+		t.Errorf("seriesCount = %d, want >= 2 (cpu.tsd, mem.tsd)", n)
+	}
+	if size <= 0 {
+		t.Errorf("diskBytes = %d, want > 0", size)
+	}
+
+	// AppendEvent adds one more file (events.tsd) to the count/size.
+	if err := s.AppendEvent(DownEvent{Type: "power_down", Start: 1, End: 2, DurationSec: 1}); err != nil {
+		t.Fatal(err)
+	}
+	n2, size2, err := s.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != n+1 {
+		t.Errorf("seriesCount after AppendEvent = %d, want %d (+1 for events.tsd)", n2, n+1)
+	}
+	if size2 <= size {
+		t.Errorf("diskBytes after AppendEvent = %d, want > %d", size2, size)
+	}
+}
+
+// TestTSFileStoreStatsEmptyDir asserts Stats on a freshly-opened store (no
+// Append yet) reports zero series and zero bytes rather than erroring — the
+// ts/raw and ts/1m directories exist (created by newTSFileStore) but are
+// empty, and events.tsd doesn't exist yet.
+func TestTSFileStoreStatsEmptyDir(t *testing.T) {
+	s := openTSFile(t, t.TempDir(), StoreOptions{})
+	defer s.Close()
+
+	n, size, err := s.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || size != 0 {
+		t.Errorf("Stats() on empty store = (%d, %d), want (0, 0)", n, size)
+	}
+}

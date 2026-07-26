@@ -804,6 +804,67 @@ func TestProcessesPersistsAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+func TestSmartAttrsDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("collect.smart_attrs"); got != "true" {
+		t.Fatalf("collect.smart_attrs default = %q, want true", got)
+	}
+	if err := c.Set("collect.smart_attrs", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.smart_attrs"); got != "false" {
+		t.Fatalf("collect.smart_attrs after set false = %q, want false", got)
+	}
+	if err := c.Set("collect.smart_attrs", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.smart_attrs"); got != "true" {
+		t.Fatalf("collect.smart_attrs after set true = %q, want true", got)
+	}
+	if err := c.Set("collect.smart_attrs", "bogus"); err == nil {
+		t.Fatal("collect.smart_attrs set to bogus: want error, got nil")
+	}
+	if err := c.Unset("collect.smart_attrs"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.smart_attrs"); got != "true" {
+		t.Fatalf("collect.smart_attrs after unset = %q, want default true", got)
+	}
+}
+
+func TestSmartAttrsPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("collect.smart_attrs", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("collect.smart_attrs"); got != "false" {
+		t.Fatalf("collect.smart_attrs after save/load = %q, want false (explicit false must persist)", got)
+	}
+
+	if err := c2.Set("collect.smart_attrs", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c3, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c3.Get("collect.smart_attrs"); got != "true" {
+		t.Fatalf("collect.smart_attrs after second save/load = %q, want true", got)
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")

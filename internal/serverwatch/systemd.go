@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+
+	"serverwatch/internal/config"
 )
 
 const unitPath = "/etc/systemd/system/serverwatch.service"
@@ -276,5 +279,52 @@ func cmdDoctor(args []string) int {
 	zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp")
 	fmt.Fprintf(stdout, "thermal zones: %d\n", len(zones))
 	fmt.Fprintf(stdout, "targets discovered: %d\n", len(Discover(x, fs)))
+
+	// Cardinality/disk guardrail visibility (docs/ROADMAP.md Epic #69 x7): a
+	// corrupt config just falls back to defaults here (same as cmdConfig's
+	// set/unset repair path) since doctor is a read-only diagnostic, not
+	// worth failing over.
+	c, err := loadCfg()
+	if err != nil {
+		c = config.Default()
+	}
+	var store SampleStore
+	if s, serr := openConfiguredStore(c); serr == nil {
+		store = s
+		defer store.Close()
+	}
+	fmt.Fprint(stdout, collectorSummary(c, store))
 	return 0
+}
+
+// onOff renders a bool as "on"/"off" for the doctor collector summary.
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
+}
+
+// collectorSummary renders the `serverwatch doctor` cardinality/disk
+// guardrail output (docs/ROADMAP.md Epic #69 x7): the on/off state of every
+// opt-in extended collector, plus the configured SampleStore's series count
+// and on-disk footprint. store may be nil (the configured backend failed to
+// open), in which case the series/disk line reads "unavailable" instead of
+// panicking or erroring.
+func collectorSummary(c *config.Config, store SampleStore) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "collectors: container_stats=%s net_throughput=%s services=%s processes=%s smart_attrs=%s\n",
+		onOff(c.ContainerStatsEnabled()), onOff(c.NetThroughputEnabled()), onOff(c.ServicesEnabled()),
+		onOff(c.ProcessesEnabled()), onOff(c.SmartAttrsEnabled()))
+	if store == nil {
+		b.WriteString("time-series: unavailable\n")
+		return b.String()
+	}
+	n, diskBytes, err := store.Stats()
+	if err != nil {
+		b.WriteString("time-series: unavailable\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "time-series: %d series, %.1f MB on disk (raw+1m)\n", n, float64(diskBytes)/(1024*1024))
+	return b.String()
 }

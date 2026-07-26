@@ -374,7 +374,16 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 	// SMART health for every discovered device (all queried each cycle -> recovery works)
 	if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
 		snap.SmartHealth = map[string]string{}
-		snap.SmartAttrs = map[string]SmartAttr{}
+		// SMART attribute detail (temp/wear/realloc, opt-in via
+		// collect.smart_attrs) is the heaviest optional per-device call: one
+		// extra smartctl invocation per discovered device, every slow tick. A
+		// nil config or disabled collector skips it entirely (snap.SmartAttrs
+		// stays nil), leaving the cheap --scan/-H health check above
+		// unaffected.
+		attrsEnabled := c != nil && c.SmartAttrsEnabled()
+		if attrsEnabled {
+			snap.SmartAttrs = map[string]SmartAttr{}
+		}
 		for _, dev := range parseSmartScan(string(out)) {
 			h := "UNKNOWN"
 			if ho, herr := runMaybeSudo(x, "smartctl", "-H", dev); herr == nil {
@@ -387,9 +396,11 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 				}
 			}
 			snap.SmartHealth[dev] = h
-			// SMART attribute detail (temp/wear/realloc): a failure here just
-			// leaves this device out of SmartAttrs for the tick, same as the
-			// health check above.
+			if !attrsEnabled {
+				continue
+			}
+			// A failure here just leaves this device out of SmartAttrs for
+			// the tick, same as the health check above.
 			if ao, aerr := runMaybeSudo(x, "smartctl", "-A", dev); aerr == nil {
 				snap.SmartAttrs[dev] = parseSmartAttrs(string(ao))
 			}

@@ -644,3 +644,42 @@ func (s *tsFileStore) Downsample(now int64) error {
 // per operation rather than holding descriptors open, so there is nothing
 // to flush or close here.
 func (s *tsFileStore) Close() error { return nil }
+
+// Stats reports cardinality/disk cost: seriesCount is the total number of
+// .tsd files under ts/raw and ts/1m, plus events.tsd if it exists, and
+// diskBytes is their combined size on disk. See the SampleStore.Stats doc
+// comment for how `serverwatch doctor` uses this.
+func (s *tsFileStore) Stats() (int, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int
+	var size int64
+	for _, sub := range []string{"raw", "1m"} {
+		entries, err := os.ReadDir(filepath.Join(s.dir, sub))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return 0, 0, err
+		}
+		for _, ent := range entries {
+			if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsd") {
+				continue
+			}
+			fi, err := ent.Info()
+			if err != nil {
+				return 0, 0, err
+			}
+			count++
+			size += fi.Size()
+		}
+	}
+	if fi, err := os.Stat(s.eventsPath()); err == nil {
+		count++
+		size += fi.Size()
+	} else if !os.IsNotExist(err) {
+		return 0, 0, err
+	}
+	return count, size, nil
+}

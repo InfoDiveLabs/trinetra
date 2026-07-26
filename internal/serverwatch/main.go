@@ -95,6 +95,30 @@ func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
 
 func saveCfg(c *config.Config) error { return c.Save(cfgPath) }
 
+// configForDisplay returns a shallow copy of c with every collect.* toggle
+// resolved to its effective value (nil -> the documented default, true).
+// c.Collect's *bool fields carry `omitempty` so Save/Load can tell "never
+// set" from "explicitly false" apart on disk; a raw json.Marshal of c would
+// therefore silently drop any toggle still at its default, which is exactly
+// the cardinality/disk-cost information `config get` (full dump) exists to
+// surface. The copy is shallow (maps/slices like Targets/Channels stay
+// shared with c) since only Collect's value fields are mutated here, and c
+// itself is never touched.
+func configForDisplay(c *config.Config) *config.Config {
+	d := *c
+	containerStats := c.ContainerStatsEnabled()
+	netThroughput := c.NetThroughputEnabled()
+	services := c.ServicesEnabled()
+	processes := c.ProcessesEnabled()
+	smartAttrs := c.SmartAttrsEnabled()
+	d.Collect.ContainerStats = &containerStats
+	d.Collect.NetThroughput = &netThroughput
+	d.Collect.Services = &services
+	d.Collect.Processes = &processes
+	d.Collect.SmartAttrs = &smartAttrs
+	return &d
+}
+
 func cmdConfig(args []string) int {
 	c, err := loadCfg()
 	if len(args) == 0 {
@@ -121,7 +145,7 @@ func cmdConfig(args []string) int {
 	switch args[0] {
 	case "get":
 		if len(args) == 1 {
-			b, _ := jsonMarshalIndent(c)
+			b, _ := jsonMarshalIndent(configForDisplay(c))
 			fmt.Fprintln(stdout, string(b))
 			return 0
 		}

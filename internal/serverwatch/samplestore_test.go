@@ -245,6 +245,34 @@ func TestOpenStoreOptionsPlumbed(t *testing.T) {
 	}
 }
 
+// TestMemStoreStats asserts memStore.Stats reports the number of in-memory
+// metric series and always 0 disk bytes (it is non-persistent).
+func TestMemStoreStats(t *testing.T) {
+	s, err := OpenStore("memory", t.TempDir(), StoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.Append(100, MetricSet{"cpu": 10, "mem": 50}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(200, MetricSet{"cpu": 20}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, bytes, err := s.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("seriesCount = %d, want 2 (cpu, mem)", n)
+	}
+	if bytes != 0 {
+		t.Errorf("diskBytes = %d, want 0 (memStore is non-persistent)", bytes)
+	}
+}
+
 func TestPickResolution(t *testing.T) {
 	const day = int64(86400)
 	now := int64(100 * day)
