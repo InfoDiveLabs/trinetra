@@ -63,7 +63,13 @@ func newHandler(d Deps) http.Handler {
 	// dashboardHandler was before the live-dashboard task, proving the
 	// RBAC gate + shell wiring work before the pages have anything real to
 	// show.
-	mux.HandleFunc("GET /config", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Configuration", "Thresholds, monitors, schedules, channels")))
+	// /config (Task 10/#66): the real config editor — thresholds, monitors
+	// (enable/disable + per-target threshold), schedules, quiet hours. GET is
+	// requireRole(RoleAdmin, ...) like the other admin routes; POST additionally
+	// needs requireCSRF (configMutation, handlers_config.go), since it's a
+	// config-wide mutation exactly like the /users/* mutations below.
+	mux.HandleFunc("GET /config", requireRole(RoleAdmin, configPageHandler(d)))
+	mux.HandleFunc("POST /config", configMutation(configSaveHandler(d)))
 	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Channels", "Notification channel management")))
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Public view", "Curated public dashboard settings")))
 

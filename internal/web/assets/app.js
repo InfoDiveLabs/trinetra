@@ -476,6 +476,49 @@
     });
   }
 
+  // ---- quiet-hours preview (templates/config.html, Task 10/#66) ----
+  // Ported from ui-mockup/config.html's inline <script> (the "redesigned
+  // quiet-hours control" the task brief calls out to preserve), moved into
+  // this external file because the strict CSP (security.go, script-src
+  // 'self' 'nonce-...', no unsafe-inline) doesn't authorize inline <script>
+  // blocks — only this file and the one nonce'd boot tag in base.html.
+  // Adapted from the mockup's <input type=time> (HH:MM) to hour-only
+  // <select> elements: config.QuietHours only stores whole hours
+  // ("H-H"/"HH-HH" — see internal/config/config.go's validateQuietHours),
+  // so minute-granularity in the UI would silently be lossy.
+  (function(){
+    var panel=document.getElementById('qh');
+    if(!panel) return;
+    var on=document.getElementById('qhOn'), from=document.getElementById('qhFrom'), to=document.getElementById('qhTo'),
+        bar=document.getElementById('qhBar'), sum=document.getElementById('qhSummary');
+    function h12(h){var ap=h<12?'am':'pm',hh=h%12;if(hh===0)hh=12;return hh+':00'+ap;}
+    function seg(a,b){var d=document.createElement('div');d.className='mute';d.style.left=(a/1440*100)+'%';d.style.width=((b-a)/1440*100)+'%';bar.appendChild(d);}
+    function render(){
+      bar.innerHTML='';
+      var enabled=on.checked;
+      panel.classList.toggle('qh-off',!enabled);
+      if(enabled){
+        var a=(+from.value)*60, b=(+to.value)*60;
+        if(a===b){ seg(0,1440); }
+        else if(a<b){ seg(a,b); }
+        else { seg(a,1440); seg(0,b); } // wraps midnight
+      }
+      var n=document.createElement('div'); n.className='now';
+      var now=new Date(), nm=now.getHours()*60+now.getMinutes();
+      n.style.left=(nm/1440*100)+'%'; bar.appendChild(n);
+      if(!enabled){ sum.textContent='off — alerts any time'; sum.className='badge'; }
+      else {
+        var fh=+from.value, th=+to.value, dur=((th-fh+24)%24)||24;
+        var wraps=fh>th;
+        sum.textContent='quiet '+h12(fh)+' → '+h12(th)+(wraps?' (next day)':'')+' · '+dur+'h';
+        sum.className='badge warn';
+      }
+    }
+    on.addEventListener('change',render);
+    from.addEventListener('change',render); to.addEventListener('change',render);
+    render();
+  })();
+
   // ---- logout (base.html topbar sign-out button) ----
   var logoutBtn=document.getElementById('logoutBtn');
   if(logoutBtn){

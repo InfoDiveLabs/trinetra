@@ -1,0 +1,73 @@
+{{define "content"}}
+<div id="config-page">
+  <form method="post" action="/config">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+
+    <div class="section-label"><span class="eyebrow">When to alert</span></div>
+    <p class="note" style="margin:-4px 0 14px">A metric triggers an alert if it crosses a fixed limit <em>or</em> deviates sharply from its own recent normal.</p>
+    <div class="panel"><div class="head"><span class="eyebrow">Thresholds</span></div>
+      <div class="grid g-4" style="gap:0 14px">
+        <label class="field"><span class="lb">Disk full at (%)</span><input type="number" step="any" name="disk_pct" value="{{.DiskPct}}"><span class="hint">Alert when any filesystem is this full.</span></label>
+        <label class="field"><span class="lb">Memory high at (%)</span><input type="number" step="any" name="mem_pct" value="{{.MemPct}}"></label>
+        <label class="field"><span class="lb">Temperature high at (°C)</span><input type="number" step="any" name="temp_c" value="{{.TempC}}"></label>
+        <label class="field"><span class="lb">Anomaly sensitivity</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}"><span class="hint">Also flag a reading this many standard deviations from its 7-day norm. Lower = more sensitive (more alerts); 3 is a good default.</span></label>
+      </div>
+    </div>
+
+    <div class="panel" id="qh" style="margin-top:14px">
+      <div class="head"><span class="eyebrow">Quiet hours</span><input type="checkbox" class="switch" id="qhOn" name="quiet_enabled" value="1" {{if .QuietEnabled}}checked{{end}}></div>
+      <p class="note" style="margin:-4px 0 14px">Mute non-critical alerts overnight. Critical alerts can still come through (set per channel). The blue line is now.</p>
+      <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+        <label class="field" style="margin:0"><span class="lb">From</span>
+          <select id="qhFrom" name="quiet_from" style="width:140px">
+            {{range .QuietHours}}<option value="{{.}}" {{if eq . $.QuietFrom}}selected{{end}}>{{printf "%02d:00" .}}</option>{{end}}
+          </select></label>
+        <label class="field" style="margin:0"><span class="lb">To</span>
+          <select id="qhTo" name="quiet_to" style="width:140px">
+            {{range .QuietHours}}<option value="{{.}}" {{if eq . $.QuietTo}}selected{{end}}>{{printf "%02d:00" .}}</option>{{end}}
+          </select></label>
+        <div class="badge" id="qhSummary" style="margin-bottom:9px"></div>
+      </div>
+      <div id="qhBar" class="qh-bar" style="margin-top:16px"></div>
+      <div class="note mono" style="display:flex;justify-content:space-between;margin-top:6px"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+    </div>
+
+    <div class="section-label"><span class="eyebrow">What to monitor</span></div>
+    <p class="note" style="margin:-4px 0 14px">Turn any target off, or set a per-target limit that overrides the global threshold above. Leave "Alert at" blank to use the global threshold.</p>
+    <div class="panel pad0"><table>
+      <thead><tr><th>Target</th><th>Alert at</th><th style="text-align:right">Monitor</th></tr></thead>
+      <tbody>
+        {{range $t := .Targets}}
+        <tr>
+          <td class="mono">{{$t.Name}}</td>
+          <td><input type="hidden" name="target_name" value="{{$t.Name}}">
+            <input type="text" class="mono" name="target_threshold" value="{{$t.Threshold}}" placeholder="global" style="width:90px"></td>
+          <td style="text-align:right"><input type="checkbox" class="switch" name="target_enabled" value="{{$t.Name}}" {{if $t.Enabled}}checked{{end}}></td>
+        </tr>
+        {{else}}
+        <tr><td colspan="3" class="note">No targets discovered yet.</td></tr>
+        {{end}}
+      </tbody></table></div>
+
+    <div class="section-label"><span class="eyebrow">Alerting</span></div>
+    <p class="note" style="margin:-4px 0 14px">Where alerts go, and a way to be told when the whole server is unreachable.</p>
+    <div class="panel"><div class="head"><span class="eyebrow">Delivery &amp; offline detection</span><a href="/channels" class="btn ghost">Manage channels →</a></div>
+      <label class="field"><span class="lb">Dead-man switch URL (optional)</span><input type="text" name="deadman_url" value="{{.DeadmanURL}}"><span class="hint">serverwatch pings this URL on every heartbeat. If the server (or its internet) dies, the pings stop and the external service (e.g. healthchecks.io) alerts you — the one case the server can't report itself.</span></label></div>
+
+    <div class="grid g-2" style="margin-top:14px">
+      <div class="panel"><div class="head"><span class="eyebrow">Daily digest</span><input type="checkbox" class="switch" name="daily_enabled" value="1" {{if .DailyEnabled}}checked{{end}}></div>
+        <p class="note" style="margin:-4px 0 12px">A once-a-day summary: peaks, disk trend, and any downtime.</p>
+        <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+          <label class="field" style="margin:0"><span class="lb">Send at</span><input type="time" name="daily_time" value="{{.DailyTime}}" style="width:140px"></label></div></div>
+      <div class="panel"><div class="head"><span class="eyebrow">Weekly rollup</span><input type="checkbox" class="switch" name="weekly_enabled" value="1" {{if .WeeklyEnabled}}checked{{end}}></div>
+        <p class="note" style="margin:-4px 0 12px">A longer 7-day summary: trends, total downtime, top offenders.</p>
+        <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+          <label class="field" style="margin:0;min-width:120px"><span class="lb">Day</span>
+            <select name="weekly_day">{{range .Weekdays}}<option value="{{.}}" {{if eq . $.WeeklyDay}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+          <label class="field" style="margin:0"><span class="lb">Send at</span><input type="time" name="weekly_time" value="{{.WeeklyTime}}" style="width:140px"></label></div></div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:24px"><button class="btn primary" type="submit">Save changes</button><span class="spacer"></span><span class="note mono">saving reloads the daemon live — no restart</span></div>
+  </form>
+</div>
+{{end}}
