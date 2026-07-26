@@ -212,6 +212,11 @@ func (s *jsonUserStore) saveLocked(users []*User) error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return fmt.Errorf("web: write %s: %w", tmp, err)
 	}
+	// Explicit Chmod after a 0600 WriteFile is belt-and-suspenders: WriteFile
+	// only applies the mode when it CREATES the file, so on the (rare) path
+	// where a stale tmp from a previous crash already exists with wider
+	// perms, this tightens it back to 0600. 0600 has no group/world bits to
+	// widen, so it can never loosen perms.
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("web: chmod %s: %w", tmp, err)
@@ -241,9 +246,12 @@ func (s *jsonUserStore) Get(id string) (*User, bool) {
 }
 
 // ByName returns the first user with the given Name, or (nil, false) if
-// none exists. Names aren't (yet) enforced unique by this store — the
-// caller (enrollBeginHandler) is responsible for treating a match as "reuse
-// this account" rather than creating a duplicate.
+// none exists. TODO(#62): this store does not (yet) enforce Name uniqueness
+// on Put; enrollBeginHandler uses ByName only to REJECT a duplicate-name
+// enrollment (never to attach to an existing account), so the takeover risk
+// is closed regardless, but Task 6's user-management/Put path should add a
+// uniqueness constraint so two accounts can't share a name in the first
+// place.
 func (s *jsonUserStore) ByName(name string) (*User, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

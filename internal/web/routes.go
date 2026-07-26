@@ -109,10 +109,19 @@ type enrollBeginRequest struct {
 }
 
 // enrollBeginHandler starts a WebAuthn registration ceremony (beginRegistration,
-// auth_webauthn.go) for the posted name: an existing account of that name
-// gets a new credential appended (so one user can register a second
-// device/key), otherwise a brand-new *User is created (not yet persisted —
-// finishRegistration's store.Put is what actually writes it).
+// auth_webauthn.go) for the posted name, creating a brand-new *User (not yet
+// persisted — finishRegistration's store.Put is what actually writes it).
+//
+// SECURITY: this endpoint is UNAUTHENTICATED, so it must ONLY ever create a
+// new account — it must never attach a credential to an existing one. An
+// earlier version looked the name up with store.ByName and, on a match, ran
+// the ceremony against the existing *User (with its existing role); that was
+// a cross-account credential-injection / account-takeover bug (an anonymous
+// caller could POST name="admin" and bind their own passkey to the admin
+// account). So a name that already exists is rejected with 409 here.
+// TODO(#62): adding a second passkey to an EXISTING account (multi-device)
+// must instead go through an authenticated session (the account's own owner)
+// or an admin-issued invite token — never this anonymous path.
 //
 // Role assignment is deliberately a stub: every new account here defaults
 // to RoleViewer. First-run bootstrap (the first-ever registered passkey
@@ -139,15 +148,18 @@ func enrollBeginHandler(d Deps) http.HandlerFunc {
 		}
 
 		store := newUserStore(d.StateDir)
-		u, ok := store.ByName(name)
-		if !ok {
-			id, err := newUserID()
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			u = &User{ID: id, Name: name, Role: RoleViewer, Created: time.Now().Unix()}
+		if _, exists := store.ByName(name); exists {
+			// Never attach to an existing account from this unauthenticated
+			// endpoint — see the SECURITY note above.
+			http.Error(w, "an account with that name already exists; adding a passkey to an existing account will require an admin invite", http.StatusConflict)
+			return
 		}
+		id, err := newUserID()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		u := &User{ID: id, Name: name, Role: RoleViewer, Created: time.Now().Unix()}
 
 		creation, err := beginRegistration(w, r, wa, u)
 		if err != nil {

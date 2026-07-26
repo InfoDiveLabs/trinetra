@@ -157,40 +157,66 @@ func TestEnrollHandlersEndToEndPersistCredential(t *testing.T) {
 	}
 }
 
-// TestEnrollBeginHandlerReusesExistingUserByName pins that re-enrolling the
-// same name (e.g. registering a second device) appends to the existing
-// account rather than creating a duplicate.
-func TestEnrollBeginHandlerReusesExistingUserByName(t *testing.T) {
+// TestEnrollBeginHandlerRejectsExistingName pins the account-takeover fix:
+// the unauthenticated /enroll/begin endpoint must REJECT (409) a name that
+// already exists rather than run the ceremony against the existing account.
+// An earlier version reused the existing *User, which let an anonymous
+// caller bind their own passkey to (e.g.) the admin account.
+func TestEnrollBeginHandlerRejectsExistingName(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)
-	existing := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleAdmin, Created: 1}
+	existing := &User{ID: mustNewUserID(t), Name: "admin", Role: RoleAdmin, Created: 1}
 	if err := store.Put(existing); err != nil {
 		t.Fatalf("seed Put: %v", err)
 	}
 
 	h := newHandler(d)
-	beginBody, _ := json.Marshal(map[string]string{"name": "on-call"})
+	beginBody, _ := json.Marshal(map[string]string{"name": "admin"})
 	req := httptest.NewRequest(http.MethodPost, "/enroll/begin", bytes.NewReader(beginBody))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("POST /enroll/begin status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("POST /enroll/begin for existing name status = %d, want 409", rr.Code)
+	}
+	// No ceremony cookie should have been set for a rejected enrollment.
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == enrollSessionCookie && c.Value != "" {
+			t.Errorf("rejected enrollment set a ceremony cookie %q", c.Value)
+		}
+	}
+}
+
+// TestEnrollDuplicateNameDoesNotTakeOverAccount is the end-to-end proof of
+// the same fix: a duplicate-name enrollment attempt must leave the existing
+// account completely untouched — same role, zero injected credentials.
+func TestEnrollDuplicateNameDoesNotTakeOverAccount(t *testing.T) {
+	d := enrollTestDeps(t)
+	store := newUserStore(d.StateDir)
+	existing := &User{ID: mustNewUserID(t), Name: "admin", Role: RoleAdmin, Created: 1}
+	if err := store.Put(existing); err != nil {
+		t.Fatalf("seed Put: %v", err)
 	}
 
-	var resp struct {
-		PublicKey struct {
-			User struct {
-				ID string `json:"id"`
-			} `json:"user"`
-		} `json:"publicKey"`
+	h := newHandler(d)
+	beginBody, _ := json.Marshal(map[string]string{"name": "admin"})
+	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", bytes.NewReader(beginBody))
+	beginRR := httptest.NewRecorder()
+	h.ServeHTTP(beginRR, beginReq)
+	if beginRR.Code != http.StatusConflict {
+		t.Fatalf("POST /enroll/begin status = %d, want 409", beginRR.Code)
 	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
+
+	// The seeded account must be exactly as it was: still admin, still zero
+	// credentials — no anonymous passkey injected.
+	got, ok := store.Get(existing.ID)
+	if !ok {
+		t.Fatal("existing account disappeared")
 	}
-	// The creation options' user.id is base64url of the WebAuthn user
-	// handle (User.ID); it must match the existing seeded account's ID
-	// rather than a freshly minted one, proving ByName's lookup was used.
-	if want := b64url([]byte(existing.ID)); resp.PublicKey.User.ID != want {
-		t.Errorf("creation options user.id = %q, want %q (existing account's id)", resp.PublicKey.User.ID, want)
+	if got.Role != RoleAdmin {
+		t.Errorf("existing account role = %q, want admin (unchanged)", got.Role)
+	}
+	if len(got.Credentials) != 0 {
+		t.Errorf("existing account gained %d credentials, want 0 (no takeover)", len(got.Credentials))
 	}
 }

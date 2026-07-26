@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -80,6 +81,19 @@ func webAuthnConfig(cfg *config.Config, r *http.Request) (*webauthn.WebAuthn, er
 	})
 }
 
+// ceremonyTTL bounds how long a stashed ceremony is retained/valid: it
+// mirrors the enrollSessionCookie MaxAge (5 min) so a stash entry never
+// outlives the cookie that references it.
+const ceremonyTTL = 5 * time.Minute
+
+// ceremonyMaxEntries caps the stash size as a hard backstop against a flood
+// of /enroll/begin calls arriving faster than they expire (each ceremony is
+// tiny, but the endpoint is unauthenticated). Once the cap is hit, put
+// refuses new ceremonies rather than growing without bound; legitimate
+// enrollment is a single interactive request, so this ceiling is far above
+// any honest concurrency.
+const ceremonyMaxEntries = 1024
+
 // regCeremony is what beginRegistration stashes and finishRegistration
 // retrieves: the go-webauthn SessionData the ceremony needs to verify the
 // attestation, plus the pending *User being enrolled (not yet persisted —
@@ -87,19 +101,29 @@ func webAuthnConfig(cfg *config.Config, r *http.Request) (*webauthn.WebAuthn, er
 type regCeremony struct {
 	user    *User
 	session *webauthn.SessionData
+	// expires is when this entry becomes eligible for eviction (put-time +
+	// ceremonyTTL); take treats an expired entry as absent.
+	expires time.Time
 }
 
 // ceremonyStash is a TEMPORARY in-memory, single-process stand-in for the
 // real session store (Task 5/#61 — TODO(#61): replace this with the
 // server-side session store once it lands; this map doesn't survive a
-// process restart, isn't shared across multiple web server instances, and
-// never expires entries early, none of which matter for a single-process
-// daemon serving a short-lived registration ceremony but all of which a
-// real session store must handle). Keyed by a random id set in
-// enrollSessionCookie, a short-lived cookie scoped to /enroll.
+// process restart and isn't shared across multiple web server instances,
+// neither of which matters for a single-process daemon serving a
+// short-lived registration ceremony but both of which a real session store
+// must handle). Keyed by a random id set in enrollSessionCookie, a
+// short-lived cookie scoped to /enroll.
+//
+// Because /enroll/begin is unauthenticated, the stash bounds its own growth:
+// every put first evicts expired entries (see ceremonyTTL) and, if still at
+// ceremonyMaxEntries, refuses the new ceremony — so an anonymous caller
+// looping POST /enroll/begin can't grow this map without limit (pre-auth
+// DoS). now is overridable so a test can drive expiry deterministically.
 type ceremonyStash struct {
 	mu   sync.Mutex
 	data map[string]regCeremony
+	now  func() time.Time
 }
 
 // regCeremonies is the package-level stash beginRegistration/
@@ -108,28 +132,62 @@ type ceremonyStash struct {
 // scaffolding removed in #61, not a persisted or user-facing store.
 var regCeremonies = &ceremonyStash{data: make(map[string]regCeremony)}
 
-// put stores c under a fresh random id and returns it.
+// clock returns the stash's time source, defaulting to time.Now when unset
+// (the production package-level regCeremonies leaves now nil).
+func (s *ceremonyStash) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// evictExpiredLocked drops every entry whose TTL has elapsed. Callers must
+// hold s.mu. O(n) over the map, but n is bounded by ceremonyMaxEntries and
+// this only runs on put (a low-frequency, interactive path).
+func (s *ceremonyStash) evictExpiredLocked(now time.Time) {
+	for id, c := range s.data {
+		if !c.expires.After(now) {
+			delete(s.data, id)
+		}
+	}
+}
+
+// put stores c under a fresh random id and returns it, first evicting
+// expired entries and refusing (error) if the stash is still at its size
+// cap — see ceremonyStash's doc.
 func (s *ceremonyStash) put(c regCeremony) (string, error) {
 	id, err := newRandomID(18)
 	if err != nil {
 		return "", err
 	}
+	now := s.clock()
+	c.expires = now.Add(ceremonyTTL)
+
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.evictExpiredLocked(now)
+	if len(s.data) >= ceremonyMaxEntries {
+		return "", fmt.Errorf("web: too many pending enrollments; try again shortly")
+	}
 	s.data[id] = c
-	s.mu.Unlock()
 	return id, nil
 }
 
 // take retrieves and deletes the ceremony stored under id (one-shot: a
-// cookie value is only ever valid for a single finishRegistration call).
+// cookie value is only ever valid for a single finishRegistration call). An
+// entry whose TTL has elapsed is treated as absent (and removed).
 func (s *ceremonyStash) take(id string) (regCeremony, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.data[id]
-	if ok {
-		delete(s.data, id)
+	if !ok {
+		return regCeremony{}, false
 	}
-	return c, ok
+	delete(s.data, id)
+	if !c.expires.After(s.clock()) {
+		return regCeremony{}, false
+	}
+	return c, true
 }
 
 // beginRegistration starts a WebAuthn registration ceremony for u: it asks
