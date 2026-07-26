@@ -40,8 +40,10 @@ func TestEnrollPageRendersBareLayout(t *testing.T) {
 	if strings.Contains(body, `class="side"`) || strings.Contains(body, `class="topbar"`) {
 		t.Errorf("enroll page rendered the app shell (nav/topbar), want bare layout:\n%s", body)
 	}
-	if !strings.Contains(body, `<script src="/assets/app.js" nonce="`) {
-		t.Errorf("enroll page missing nonce'd app.js boot script:\n%s", body)
+	// app.js is cache-busted with a ?v=<hash> query (see assetURL), so match
+	// the versioned URL rather than the bare path, but still require the nonce.
+	if !strings.Contains(body, `<script src="/assets/app.js?v=`) || !strings.Contains(body, `nonce="`) {
+		t.Errorf("enroll page missing nonce'd (versioned) app.js boot script:\n%s", body)
 	}
 }
 
