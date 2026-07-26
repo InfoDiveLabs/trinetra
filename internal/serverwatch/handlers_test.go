@@ -4,26 +4,32 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"serverwatch/internal/config"
 )
 
 func TestHandleHelpAndStats(t *testing.T) {
 	snap := Snapshot{CPU: 12, MemPct: 40, Online: true}
-	if r := handleCommand("/help", nil, snap); !strings.Contains(r, "/stats") {
+	if r := handleCommand("/help", nil, snap, config.Default()); !strings.Contains(r, "/stats") {
 		t.Fatalf("help = %q", r)
 	}
-	if r := handleCommand("/stats", nil, snap); !strings.Contains(r, "CPU") {
+	if r := handleCommand("/stats", nil, snap, config.Default()); !strings.Contains(r, "CPU") {
 		t.Fatalf("stats = %q", r)
 	}
-	if r := handleCommand("/gibberish", nil, snap); !strings.Contains(r, "/stats") {
+	if r := handleCommand("/gibberish", nil, snap, config.Default()); !strings.Contains(r, "/stats") {
 		t.Fatalf("unknown should show help, got %q", r)
 	}
 }
 
 func TestHandleDisk(t *testing.T) {
 	snap := Snapshot{Disks: map[string]float64{"/": 42, "/boot": 10}, Online: true}
-	r := handleCommand("/disk", nil, snap)
-	if !strings.Contains(r, "/ 42%") {
+	r := handleCommand("/disk", nil, snap, config.Default())
+	if !strings.Contains(r, "42%") || !strings.Contains(r, "10%") {
 		t.Fatalf("disk reply missing usage, got %q", r)
+	}
+	// sorted by use%% descending: "/" (42%%) must lead "/boot" (10%%).
+	if strings.Index(r, "42%") > strings.Index(r, "10%") {
+		t.Fatalf("disk reply not sorted by use%% desc, got %q", r)
 	}
 	if strings.Contains(r, "internet") || strings.Contains(r, "DOWN") {
 		t.Fatalf("disk reply must not fabricate connectivity, got %q", r)
@@ -31,10 +37,10 @@ func TestHandleDisk(t *testing.T) {
 }
 
 func TestHandleNet(t *testing.T) {
-	if r := handleCommand("/net", nil, Snapshot{Online: true}); !strings.Contains(r, "up") {
+	if r := handleCommand("/net", nil, Snapshot{Online: true}, config.Default()); !strings.Contains(r, "up") {
 		t.Fatalf("net up = %q", r)
 	}
-	if r := handleCommand("/net", nil, Snapshot{Online: false}); !strings.Contains(r, "DOWN") {
+	if r := handleCommand("/net", nil, Snapshot{Online: false}, config.Default()); !strings.Contains(r, "DOWN") {
 		t.Fatalf("net down = %q", r)
 	}
 }
@@ -55,7 +61,7 @@ func TestHandleHistoryFromStore(t *testing.T) {
 		t.Fatalf("AppendEvent: %v", err)
 	}
 	snap := Snapshot{TS: now.Unix()}
-	r := handleCommand("/history 7", store, snap)
+	r := handleCommand("/history 7", store, snap, config.Default())
 	if !strings.Contains(r, "power_down") {
 		t.Fatalf("history should contain event, got %q", r)
 	}
@@ -76,7 +82,7 @@ func TestHandleDownFromStore(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendEvent: %v", err)
 	}
-	r := handleCommand("/down", store, Snapshot{TS: now.Unix()})
+	r := handleCommand("/down", store, Snapshot{TS: now.Unix()}, config.Default())
 	if !strings.Contains(r, "net_down") {
 		t.Fatalf("/down should contain event, got %q", r)
 	}
@@ -85,7 +91,7 @@ func TestHandleDownFromStore(t *testing.T) {
 // TestHandleHistoryNilStore verifies /history degrades to an empty reply
 // (rather than panicking) when the SampleStore failed to open at startup.
 func TestHandleHistoryNilStore(t *testing.T) {
-	r := handleCommand("/history 7", nil, Snapshot{TS: time.Now().Unix()})
+	r := handleCommand("/history 7", nil, Snapshot{TS: time.Now().Unix()}, config.Default())
 	if !strings.Contains(r, "no downtime") {
 		t.Fatalf("nil-store history = %q, want a degrade-to-empty reply", r)
 	}
@@ -96,15 +102,15 @@ func TestHandleDockerAndServices(t *testing.T) {
 		Containers:  map[string]string{"web": "running", "db": "exited"},
 		FailedUnits: []string{"nginx.service"},
 	}
-	d := handleCommand("/docker", nil, snap)
+	d := handleCommand("/docker", nil, snap, config.Default())
 	if !strings.Contains(d, "web") || !strings.Contains(d, "db") {
 		t.Fatalf("/docker = %q", d)
 	}
-	s := handleCommand("/services", nil, snap)
+	s := handleCommand("/services", nil, snap, config.Default())
 	if !strings.Contains(s, "nginx.service") {
 		t.Fatalf("/services = %q", s)
 	}
-	empty := handleCommand("/services", nil, Snapshot{})
+	empty := handleCommand("/services", nil, Snapshot{}, config.Default())
 	if !strings.Contains(empty, "no failed units") {
 		t.Fatalf("/services empty = %q", empty)
 	}

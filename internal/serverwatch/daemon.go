@@ -749,7 +749,7 @@ func cmdDaemon(args []string) int {
 			now := clock.Now().Unix()
 			snap := collectSnapshot(x, fs, &prevCPU, da, c0, store, now)
 			dispatchAndLog(getDispatcher(), alog, Alert{
-				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap)),
+				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap, c0)),
 				Severity: SevInfo,
 				Kind:     "fire",
 				Source:   "boot",
@@ -1039,7 +1039,9 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			nowUnix := time.Now().Unix()
 			snap := collectSnapshot(x, fs, &prevCPU, da, c, store, nowUnix)
 			snap.TS = nowUnix
-			_ = tg.SendMessage(handleCommand(u.Text, store, snap))
+			if err := tg.SendMessage(handleCommand(u.Text, store, snap, c)); err != nil {
+				fmt.Fprintln(stderr, "telegram send:", err)
+			}
 		}
 	}
 }

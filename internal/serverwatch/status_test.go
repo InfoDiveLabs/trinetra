@@ -2,8 +2,12 @@ package serverwatch
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+
+	"serverwatch/internal/config"
 )
 
 // newFullSnapshot returns a Snapshot with every extended-collection field
@@ -145,5 +149,175 @@ func TestMergeSlowFieldsCopiesEverySlowTierField(t *testing.T) {
 				"if this field is genuinely not collectSlow's to set, add it to slowMergeExcludedFields instead",
 				name, got, want)
 		}
+	}
+}
+
+// TestRenderStatusAllClear asserts the redesigned /stats,/status overview:
+// a header, a <pre> resource table, one summary-count line per category, and
+// (since nothing is failing) a single "all systems normal" line with no
+// per-mount/per-container detail enumeration.
+func TestRenderStatusAllClear(t *testing.T) {
+	s := Snapshot{
+		CPU: 10, MemPct: 20, SwapPct: 0, Load1: 0.1, TempC: 40,
+		Online:      true,
+		Disks:       map[string]float64{"/": 30, "/boot": 5},
+		Containers:  map[string]string{"web": "running"},
+		SmartHealth: map[string]string{"/dev/sda": "PASSED"},
+	}
+	r := renderStatus(s, config.Default())
+	if !strings.Contains(r, "✅ all clear") {
+		t.Fatalf("want header all clear, got %q", r)
+	}
+	if !strings.Contains(r, "<pre>") || !strings.Contains(r, "</pre>") {
+		t.Fatalf("want a <pre> resource table, got %q", r)
+	}
+	if !strings.Contains(r, "Disks: 2 ok / 0 warn / 0 CRIT (of 2)") {
+		t.Fatalf("want disk summary counts, got %q", r)
+	}
+	if !strings.Contains(r, "Docker: 1/1 running (0 down)") {
+		t.Fatalf("want docker summary counts, got %q", r)
+	}
+	if !strings.Contains(r, "systemd: 0 failed") {
+		t.Fatalf("want systemd summary, got %q", r)
+	}
+	if !strings.Contains(r, "SMART: 1 ok / 0 FAILED") {
+		t.Fatalf("want smart summary, got %q", r)
+	}
+	if !strings.Contains(r, "Internet: up") {
+		t.Fatalf("want internet summary, got %q", r)
+	}
+	if !strings.Contains(r, "✅ all systems normal") {
+		t.Fatalf("want the all-systems-normal closing line, got %q", r)
+	}
+	if strings.Contains(r, "<b>Disks:</b>") || strings.Contains(r, "<b>Docker") {
+		t.Fatalf("must NOT enumerate healthy mounts/containers, got %q", r)
+	}
+}
+
+// TestRenderStatusOnlyFailures asserts that when something IS failing, the
+// header reflects severity and the detail section lists ONLY the failing
+// disk/container/unit/smart entries (not the healthy ones), each with its
+// value, and never lists a healthy disk in the failure detail.
+func TestRenderStatusOnlyFailures(t *testing.T) {
+	c := config.Default() // Thresholds.DiskPct = 90 by default
+	s := Snapshot{
+		Online: true,
+		Disks:  map[string]float64{"/": 95, "/boot": 10}, // / over threshold, /boot healthy
+		Containers: map[string]string{
+			"web": "running", "db": "exited",
+		},
+		FailedUnits: []string{"nginx.service"},
+		SmartHealth: map[string]string{"/dev/sda": "FAILED", "/dev/sdb": "PASSED"},
+	}
+	r := renderStatus(s, c)
+	if !strings.Contains(r, "❌") {
+		t.Fatalf("want a critical marker in the header, got %q", r)
+	}
+	if !strings.Contains(r, "/ 95%") {
+		t.Fatalf("want the failing disk listed with its %%, got %q", r)
+	}
+	if strings.Contains(r, "<b>Disks:</b>\n  ") && strings.Contains(r, "/boot 10%") {
+		t.Fatalf("must not list the healthy /boot mount in the failure detail, got %q", r)
+	}
+	if !strings.Contains(r, "db") || !strings.Contains(r, "exited") {
+		t.Fatalf("want the down container listed, got %q", r)
+	}
+	if !strings.Contains(r, "nginx.service") {
+		t.Fatalf("want the failed unit listed, got %q", r)
+	}
+	if !strings.Contains(r, "/dev/sda") {
+		t.Fatalf("want the FAILED smart device listed, got %q", r)
+	}
+	if strings.Contains(r, "/dev/sdb") {
+		t.Fatalf("must not list the healthy /dev/sdb smart device in failure detail, got %q", r)
+	}
+}
+
+// TestRenderStatusCapsFailureDetailLists asserts a long list of failures
+// (e.g. many down containers) is bounded to a sane max with a "+N more"
+// suffix, so the message can never overflow Telegram's 4096-char limit
+// regardless of how many things are broken.
+func TestRenderStatusCapsFailureDetailLists(t *testing.T) {
+	containers := map[string]string{}
+	for i := 0; i < 15; i++ {
+		containers[fmt.Sprintf("app%02d", i)] = "exited"
+	}
+	s := Snapshot{Online: true, Containers: containers}
+	r := renderStatus(s, config.Default())
+	if !strings.Contains(r, "+5 more") {
+		t.Fatalf("want a capped list with '+5 more' suffix (15 down, cap 10), got %q", r)
+	}
+}
+
+// TestRenderStatusEscapesHTML asserts dynamic content (container/unit/mount
+// names) is HTML-escaped, since SendMessage now sends with parse_mode=HTML:
+// an unescaped '<'/'>'/'&' in a name would corrupt the whole message.
+func TestRenderStatusEscapesHTML(t *testing.T) {
+	s := Snapshot{
+		Online:      true,
+		Containers:  map[string]string{"web<script>": "exited"},
+		FailedUnits: []string{"a&b.service"},
+	}
+	r := renderStatus(s, config.Default())
+	if strings.Contains(r, "<script>") {
+		t.Fatalf("container name must be HTML-escaped, got %q", r)
+	}
+	if !strings.Contains(r, "&lt;script&gt;") {
+		t.Fatalf("want escaped container name, got %q", r)
+	}
+	if strings.Contains(r, "a&b.service") {
+		t.Fatalf("unit name must be HTML-escaped, got %q", r)
+	}
+	if !strings.Contains(r, "a&amp;b.service") {
+		t.Fatalf("want escaped unit name, got %q", r)
+	}
+}
+
+// TestRenderStatusNilConfigDoesNotPanic guards handleCommand's nil-config
+// degrade path (mirrors the existing nil-store guard style in this
+// package): a caller without a config handy still gets a rendered reply
+// rather than a panic.
+func TestRenderStatusNilConfigDoesNotPanic(t *testing.T) {
+	s := Snapshot{CPU: 50, Online: true}
+	r := renderStatus(s, nil)
+	if !strings.Contains(r, "CPU") {
+		t.Fatalf("nil-config render = %q, want it to still render", r)
+	}
+}
+
+// TestRenderDisksTableSortedAndCapped asserts /disk's redesigned compact
+// table: a summary count line, mounts sorted by use%% descending, free space
+// shown from DiskDetail, and a top-15 cap ("+N more") as a guarantee even
+// though Part A already keeps the real-mount count small.
+func TestRenderDisksTableSortedAndCapped(t *testing.T) {
+	disks := map[string]float64{"/": 10, "/boot": 90, "/mnt/data": 50}
+	detail := map[string]DiskDetail{
+		"/boot": {FreeBytes: 1024},
+	}
+	r := renderDisks(disks, detail)
+	if !strings.Contains(r, "3 filesystems") {
+		t.Fatalf("want a summary count line, got %q", r)
+	}
+	iBoot := strings.Index(r, "/boot")
+	iData := strings.Index(r, "/mnt/data")
+	iRoot := strings.Index(r, "/ ")
+	if iBoot == -1 || iData == -1 || iRoot == -1 {
+		t.Fatalf("want all three mounts listed, got %q", r)
+	}
+	if !(iBoot < iData && iData < iRoot) {
+		t.Fatalf("want mounts sorted by use%% desc (boot 90 > data 50 > root 10), got %q", r)
+	}
+	if !strings.Contains(r, "1.0KiB") && !strings.Contains(r, "1.0K") {
+		t.Fatalf("want /boot's free bytes rendered human-readable, got %q", r)
+	}
+
+	// Cap test: more than 15 real mounts still gets bounded.
+	many := map[string]float64{}
+	for i := 0; i < 20; i++ {
+		many[fmt.Sprintf("/m%02d", i)] = float64(i)
+	}
+	r2 := renderDisks(many, nil)
+	if !strings.Contains(r2, "+5 more") {
+		t.Fatalf("want a '+5 more' cap suffix for 20 mounts, got %q", r2)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"serverwatch/internal/config"
 )
 
 const helpText = `commands:
@@ -17,16 +19,20 @@ const helpText = `commands:
 /services — failed systemd units
 /help — this message`
 
-func handleCommand(text string, store SampleStore, snap Snapshot) string {
+// handleCommand dispatches an inbound Telegram command to its renderer. c is
+// the live config (thresholds for renderStatus's ok/warn/crit markers); it
+// may be nil (renderStatus degrades to config.Default() rather than
+// panicking), mirroring the existing nil-store degrade pattern below.
+func handleCommand(text string, store SampleStore, snap Snapshot, c *config.Config) string {
 	fields := strings.Fields(text)
 	if len(fields) == 0 {
 		return helpText
 	}
 	switch fields[0] {
 	case "/stats", "/status":
-		return renderStatus(snap)
+		return renderStatus(snap, c)
 	case "/disk":
-		return renderDisks(snap.Disks)
+		return renderDisks(snap.Disks, snap.DiskDetail)
 	case "/net":
 		return "internet: " + onlineStr(snap.Online)
 	case "/history", "/down":
