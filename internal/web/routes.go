@@ -3,9 +3,11 @@
 package web
 
 import (
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // newHandler builds the full ServeMux Start binds an http.Server around.
@@ -23,6 +25,9 @@ func newHandler(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", assetHandler(assetsSub)))
 	mux.HandleFunc("GET /{$}", dashboardHandler(d))
+	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
+	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
+	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
 	return securityHeaders(mux)
 }
 
@@ -79,5 +84,100 @@ func dashboardHandler(d Deps) http.HandlerFunc {
 		if err := renderPage(w, "dashboard.html", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
+	}
+}
+
+// enrollPageHandler renders the passkey-registration page (ported from
+// ui-mockup/enroll.html — see templates/enroll.html) through the bare/
+// centered layout (base_bare.html/BarePageData, templates.go): unlike the
+// dashboard/app-shell pages, there's no signed-in session yet to fill a
+// sidebar/topbar with. assets/app.js wires the page's form to
+// /enroll/begin and /enroll/finish via navigator.credentials.create.
+func enrollPageHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := newBarePageData(r, "Set up passkey")
+		if err := renderBarePage(w, "enroll.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// enrollBeginRequest is POST /enroll/begin's JSON body: the account name
+// typed into the enroll page's #enrollName input.
+type enrollBeginRequest struct {
+	Name string `json:"name"`
+}
+
+// enrollBeginHandler starts a WebAuthn registration ceremony (beginRegistration,
+// auth_webauthn.go) for the posted name: an existing account of that name
+// gets a new credential appended (so one user can register a second
+// device/key), otherwise a brand-new *User is created (not yet persisted —
+// finishRegistration's store.Put is what actually writes it).
+//
+// Role assignment is deliberately a stub: every new account here defaults
+// to RoleViewer. First-run bootstrap (the first-ever registered passkey
+// becomes admin) and admin-issued invite tokens gating who may enroll at
+// all are Task 6/#62's job per the design doc's Auth section — out of
+// scope for this task, which only wires the attestation ceremony itself.
+func enrollBeginHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req enrollBeginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+
+		wa, err := webAuthnConfig(d.Cfg(), r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		store := newUserStore(d.StateDir)
+		u, ok := store.ByName(name)
+		if !ok {
+			id, err := newUserID()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			u = &User{ID: id, Name: name, Role: RoleViewer, Created: time.Now().Unix()}
+		}
+
+		creation, err := beginRegistration(w, r, wa, u)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(creation); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// enrollFinishHandler completes the ceremony enrollBeginHandler started: it
+// verifies the browser's attestation response (the request body) against
+// the session enrollBeginHandler stashed (finishRegistration, keyed by the
+// enrollSessionCookie it set) and, only on success, persists the new
+// credential to <StateDir>/users.json.
+func enrollFinishHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		wa, err := webAuthnConfig(d.Cfg(), r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		store := newUserStore(d.StateDir)
+		if err := finishRegistration(w, r, wa, store); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

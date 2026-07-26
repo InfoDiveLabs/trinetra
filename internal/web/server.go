@@ -3,18 +3,14 @@
 package web
 
 import (
-	"github.com/go-webauthn/webauthn/webauthn"
-
 	"serverwatch/internal/config"
 )
 
-// webauthnStub proves this file — and therefore the whole `-tags web` build
-// graph — actually reaches into github.com/go-webauthn/webauthn, so
-// TestDefaultBuildIsStdlibOnly (internal/serverwatch/buildtag_test.go)
-// exercises a real third-party dependency rather than an empty stand-in.
-// Task 4 (issue #60) replaces this with real registration/login ceremonies
-// backed by a *webauthn.WebAuthn built from web.rp_id/web.origin.
-var webauthnStub *webauthn.WebAuthn
+// The `-tags web` build's reach into github.com/go-webauthn/webauthn (what
+// used to be pinned here by a placeholder stub, see git history) is now the
+// real registration ceremony: webAuthnConfig/beginRegistration/
+// finishRegistration in auth_webauthn.go, and *User's webauthn.User
+// implementation in users.go (issue #60).
 
 // Deps is what the web server needs from the running daemon, expressed
 // without importing internal/serverwatch (see the design note atop

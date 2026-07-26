@@ -102,4 +102,55 @@
   // Task 9 wires uPlot (already embedded, see assets/uPlot.iife.min.js +
   // uPlot.min.css) against SampleStore history queries for the history page.
   window.swBootHistoryCharts=function(){};
+
+  // ---- passkey enrollment (templates/enroll.html) ----
+  // navigator.credentials.create()'s PublicKeyCredentialCreationOptions (and
+  // the credential it returns) carry several fields as ArrayBuffers, but the
+  // wire format to/from the server (internal/web/auth_webauthn.go,
+  // go-webauthn's protocol package) is base64url text throughout. These two
+  // helpers are the only place that boundary is crossed.
+  function b64urlToBuf(s){
+    var pad=s.length%4===0?'':'='.repeat(4-(s.length%4));
+    var bin=atob((s+pad).replace(/-/g,'+').replace(/_/g,'/'));
+    var bytes=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    return bytes.buffer;
+  }
+  function bufToB64url(buf){
+    var bytes=new Uint8Array(buf), bin='';
+    for(var i=0;i<bytes.byteLength;i++) bin+=String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+
+  var enrollBtn=document.getElementById('enrollBtn');
+  if(enrollBtn){
+    enrollBtn.addEventListener('click',function(){
+      var nameEl=document.getElementById('enrollName'), statusEl=document.getElementById('enrollStatus');
+      var name=(nameEl&&nameEl.value||'').trim();
+      if(!name){ if(statusEl) statusEl.textContent='Enter a name first.'; return; }
+      if(statusEl) statusEl.textContent='Waiting for your device…';
+      fetch('/enroll/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
+        .then(function(r){ if(!r.ok) throw new Error('could not start enrollment'); return r.json(); })
+        .then(function(opts){
+          var pk=opts.publicKey;
+          pk.challenge=b64urlToBuf(pk.challenge);
+          pk.user.id=b64urlToBuf(pk.user.id);
+          if(pk.excludeCredentials) pk.excludeCredentials.forEach(function(c){ c.id=b64urlToBuf(c.id); });
+          return navigator.credentials.create({publicKey:pk});
+        })
+        .then(function(cred){
+          return fetch('/enroll/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            id:cred.id,
+            rawId:bufToB64url(cred.rawId),
+            type:cred.type,
+            response:{
+              clientDataJSON:bufToB64url(cred.response.clientDataJSON),
+              attestationObject:bufToB64url(cred.response.attestationObject)
+            }
+          })});
+        })
+        .then(function(r){ if(!r.ok) throw new Error('could not finish enrollment'); if(statusEl) statusEl.textContent='Passkey created — you can sign in now.'; })
+        .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
+    });
+  }
 })();

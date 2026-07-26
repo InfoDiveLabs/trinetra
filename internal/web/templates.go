@@ -152,3 +152,37 @@ func renderPage(w http.ResponseWriter, page string, data PageData) error {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
+
+// BarePageData is what a "bare"/centered page (enroll now; login and the
+// public dashboard in later tasks, per the mockup's login.html/public.html
+// which use the same centered `.card`/`.center` styling rather than the app
+// shell) renders against: just the title and the CSP nonce its boot script
+// needs, none of PageData's nav/topbar/role fields — those pages render
+// before there's a signed-in session (or, for /public, deliberately without
+// one) so the sidebar/topbar shell has nothing to fill in.
+type BarePageData struct {
+	// Title feeds the <title> tag, same as PageData.Title.
+	Title string
+	// Nonce is this request's CSP nonce (see security.go), threaded onto
+	// base_bare.html's boot script tag exactly like PageData.Nonce.
+	Nonce string
+}
+
+// newBarePageData builds the BarePageData a bare-layout page handler needs.
+func newBarePageData(r *http.Request, title string) BarePageData {
+	return BarePageData{Title: title, Nonce: nonceFromContext(r)}
+}
+
+// renderBarePage is renderPage's counterpart for the bare/centered layout:
+// it parses base_bare.html together with the named page template instead of
+// base.html. See BarePageData's doc for why a page needs this instead of
+// renderPage.
+func renderBarePage(w http.ResponseWriter, page string, data BarePageData) error {
+	tmpl, err := template.New("base_bare.html").Funcs(funcMap).
+		ParseFS(templatesFS, "templates/base_bare.html", "templates/"+page)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return tmpl.ExecuteTemplate(w, "base_bare.html", data)
+}
