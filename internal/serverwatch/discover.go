@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -93,11 +94,23 @@ func Discover(x Exec, fs FileSource) []Target {
 		ts = append(ts, Target{ID: "docker", Kind: "docker", Display: "docker (unavailable)", Available: false})
 	}
 
-	// filesystems
-	if out, err := x.Run("df", "-PB1"); err == nil {
-		for _, d := range mustDF(string(out)) {
-			if isRealMount(d.Mount) {
-				ts = append(ts, Target{ID: "disk:" + d.Mount, Kind: "disk", Display: d.Mount, Available: true})
+	// filesystems: use the TYPED df (`df -PT`) so we can apply the same
+	// isRealMount && isRealFsType gate collectSlow uses to fill snap.Disks.
+	// Without the fstype gate, a root daemon on a docker host would surface
+	// one `disk:<overlay>` target per container (plus squashfs/tmpfs/nsfs
+	// pseudo-mounts) in `monitor list`/`monitor threshold`, none of which
+	// ever populate snap.Disks — the two paths must agree on what a real
+	// disk is (see collectSlow and fix-disk-telegram-brief.md).
+	if out, err := x.Run("df", "-PT"); err == nil {
+		typed := parseDFTypes(string(out))
+		mounts := make([]string, 0, len(typed))
+		for mount := range typed {
+			mounts = append(mounts, mount)
+		}
+		sort.Strings(mounts) // stable target order (df map iteration is random)
+		for _, mount := range mounts {
+			if isRealMount(mount) && isRealFsType(typed[mount].FsType) {
+				ts = append(ts, Target{ID: "disk:" + mount, Kind: "disk", Display: mount, Available: true})
 			}
 		}
 	}
@@ -188,8 +201,6 @@ func isRealFsType(fstype string) bool {
 	}
 	return true
 }
-
-func mustDF(s string) []DiskUsage { d, _ := parseDF(s); return d }
 
 // runMaybeSudo tries a command directly, then via sudo.
 func runMaybeSudo(x Exec, name string, args ...string) ([]byte, error) {

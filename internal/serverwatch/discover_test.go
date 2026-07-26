@@ -78,6 +78,42 @@ func TestDiscoverTempSingleID(t *testing.T) {
 	}
 }
 
+// TestDiscoverFiltersPseudoAndOverlayMounts asserts Discover applies the
+// same isRealMount && isRealFsType gate as collectSlow (via the typed
+// `df -PT`), so `monitor list`/`monitor threshold` can't surface docker
+// overlay / squashfs / tmpfs mounts that never populate snap.Disks. The two
+// paths must agree on which mounts are real disk targets.
+func TestDiscoverFiltersPseudoAndOverlayMounts(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		if name == "df" && len(args) > 0 && args[0] == "-PT" {
+			return []byte("Filesystem     Type     1-blocks   Used   Available Capacity Mounted on\n" +
+				"/dev/sda1      ext4     100        60     40        60% /\n" +
+				"/dev/sda2      ext4     200        20     180       10% /boot\n" +
+				"overlay        overlay  999        999    0         100% /var/lib/docker/overlay2/abc/merged\n" +
+				"/dev/loop0     squashfs 12         12     0         100% /snap/core/1234\n" +
+				"tmpfs          tmpfs    1000       0      1000      0% /dev/shm\n"), nil
+		}
+		return nil, errNotExist // no docker/smartctl/other df variants
+	}}
+	fs := fakeFS{}
+	ts := Discover(x, fs)
+	var disks []string
+	for _, tg := range ts {
+		if tg.Kind == "disk" {
+			disks = append(disks, tg.Display)
+		}
+	}
+	want := map[string]bool{"/": true, "/boot": true}
+	if len(disks) != len(want) {
+		t.Fatalf("disk targets = %v, want exactly %v", disks, want)
+	}
+	for _, d := range disks {
+		if !want[d] {
+			t.Errorf("Discover surfaced junk disk target %q", d)
+		}
+	}
+}
+
 func TestParseSmartScan(t *testing.T) {
 	s := "/dev/sda -d sat # /dev/sda [SAT], ATA device\n/dev/sdb -d sat # ...\n"
 	d := parseSmartScan(s)
