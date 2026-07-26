@@ -779,6 +779,10 @@ func cmdDaemon(args []string) int {
 		}
 		_ = st.WriteStatus(merged) // every fast tick: status.json is the live view
 
+		// feed the systemd watchdog (WatchdogSec in the unit). No-op when not run
+		// under systemd. A wedged sampler loop stops pinging -> systemd restarts us.
+		_ = sdNotify("WATCHDOG=1")
+
 		// SampleStore write path: every fast tick appends the cheap fast-tier
 		// metrics as raw samples. This is the sole write path for sample
 		// data now — the legacy JSONL Store's AppendSample/AppendDown are no
