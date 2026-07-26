@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 )
 
@@ -35,12 +34,13 @@ type EnrollToken struct {
 
 // tokenStore is a file-backed (<StateDir>/enroll_tokens.json) enrollment
 // token store, structured the same way as jsonUserStore/jsonSessionStore: no
-// in-memory cache, every method reloads from disk under s.mu so Issue/
-// Redeem's read-modify-write can't race a concurrent goroutine within this
-// process (a second process editing the file concurrently is out of scope,
-// same caveat as the other two stores).
+// in-memory cache, every method reloads from disk under the shared per-path
+// lock (fileStoreMutex, users.go) so Issue/Redeem's read-modify-write can't
+// race a concurrent goroutine within this process — including one holding a
+// DIFFERENT tokenStore instance over the same file, which the handlers create
+// per request (a second OS process editing the file concurrently is out of
+// scope, same caveat as the other two stores).
 type tokenStore struct {
-	mu   sync.Mutex
 	path string
 	// now overrides the store's clock; nil (the production default) means
 	// time.Now. Tests set this directly to drive expiry deterministically,
@@ -66,7 +66,7 @@ func (s *tokenStore) clock() time.Time {
 
 // loadLocked reads and parses the store file, returning (nil, nil) if it
 // doesn't exist yet (a fresh install/StateDir, or one where no token has
-// ever been issued). Callers must hold s.mu.
+// ever been issued). Callers must hold the store's fileStoreMutex.
 func (s *tokenStore) loadLocked() ([]*EnrollToken, error) {
 	b, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
@@ -88,7 +88,7 @@ func (s *tokenStore) loadLocked() ([]*EnrollToken, error) {
 // never be group/world-readable, the same reasoning as sessions.json.
 // Atomic (write-temp + rename) so a crash mid-write can never leave a
 // truncated/corrupt file behind, mirroring jsonUserStore/jsonSessionStore's
-// own saveLocked. Callers must hold s.mu.
+// own saveLocked. Callers must hold the store's fileStoreMutex.
 func (s *tokenStore) saveLocked(toks []*EnrollToken) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -131,8 +131,9 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 	now := s.clock()
 	et := &EnrollToken{Token: tok, Role: role, Expires: now.Add(ttl).Unix()}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return ""
@@ -149,8 +150,9 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 // token, expired, or already used — returns an error and leaves the store
 // untouched.
 func (s *tokenStore) Redeem(tok string) (Role, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return "", err
@@ -179,8 +181,9 @@ func (s *tokenStore) Redeem(tok string) (Role, error) {
 // used — the same eager disk-space-reclaim role as SessionStore.GC,
 // decoupled from Redeem's own immediate (lazy) expiry/used check.
 func (s *tokenStore) GC(now int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return

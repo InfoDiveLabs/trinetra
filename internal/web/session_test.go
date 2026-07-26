@@ -6,9 +6,65 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
+
+// TestSessionStoreConcurrentNewNoLostUpdate is the shared-per-path-lock
+// regression pin for sessions. Each handler builds a FRESH jsonSessionStore
+// per request (newSessionStore), so a per-INSTANCE mutex would serialize
+// nothing across concurrent requests: two New calls would each load the whole
+// file, append their own session, and save it back — last-writer-wins — losing
+// one session and, worse, colliding on the shared "sessions.json.tmp" temp
+// path. In production this is a concurrent login racing another login/logout/GC
+// clobbering a just-created session → intermittent auth failures. With the
+// process-wide per-path lock (fileStoreMutex), both New calls serialize and
+// both sessions must survive.
+func TestSessionStoreConcurrentNewNoLostUpdate(t *testing.T) {
+	dir := t.TempDir()
+	const n = 8
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	ids := make([]string, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			// A fresh store per goroutine, mirroring the per-request handler
+			// pattern — the shared lock must be keyed on the file, not the
+			// instance.
+			sess, err := newSessionStore(dir).New("user", time.Hour)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			ids[i] = sess.ID
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent New[%d]: %v", i, err)
+		}
+	}
+	// Every created session must still be retrievable — none lost to a
+	// last-writer-wins clobber.
+	final := newSessionStore(dir)
+	for i, id := range ids {
+		if id == "" {
+			t.Fatalf("New[%d] returned an empty session ID", i)
+		}
+		if _, ok := final.Get(id); !ok {
+			t.Errorf("session %d (%s) was lost — clobbered by a concurrent write", i, id)
+		}
+	}
+}
 
 // TestSessionStoreRoundTripsWith0600Perms pins the basic New/Get contract
 // and the on-disk file's permissions: sessions.json holds bearer-equivalent

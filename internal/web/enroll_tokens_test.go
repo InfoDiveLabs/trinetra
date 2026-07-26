@@ -9,9 +9,84 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
+
+// TestTokenStoreConcurrentIssueNoLostUpdate is the shared-per-path-lock
+// regression pin for enrollment tokens: like sessions, each handler builds a
+// fresh tokenStore per request (newTokenStore), so concurrent Issue calls
+// through separate instances on the same file must all persist — a
+// per-instance mutex would let two Issues load→append→save the whole file,
+// last-writer-wins, silently dropping a token (and colliding on the shared
+// .tmp path). With fileStoreMutex they serialize and every token redeems.
+func TestTokenStoreConcurrentIssueNoLostUpdate(t *testing.T) {
+	dir := t.TempDir()
+	const n = 8
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	toks := make([]string, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			toks[i] = newTokenStore(dir).Issue(RoleViewer, time.Hour)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	redeemer := newTokenStore(dir)
+	for i, tok := range toks {
+		if tok == "" {
+			t.Fatalf("Issue[%d] returned an empty token", i)
+		}
+		if _, err := redeemer.Redeem(tok); err != nil {
+			t.Errorf("token %d was lost or corrupted — Redeem: %v", i, err)
+		}
+	}
+}
+
+// TestTokenStoreConcurrentRedeemSingleUse pins single-use enforcement under
+// concurrency: many goroutines racing to redeem the SAME token (each via its
+// own tokenStore instance) must yield exactly one success — the shared
+// per-path lock serializes the load→mark-used→save so no two callers can both
+// observe it unused and both consume it.
+func TestTokenStoreConcurrentRedeemSingleUse(t *testing.T) {
+	dir := t.TempDir()
+	tok := newTokenStore(dir).Issue(RoleAdmin, time.Hour)
+	if tok == "" {
+		t.Fatal("Issue returned an empty token")
+	}
+	const n = 8
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, results[i] = newTokenStore(dir).Redeem(tok)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	successes := 0
+	for _, err := range results {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Errorf("concurrent Redeem successes = %d, want exactly 1 (single-use)", successes)
+	}
+}
 
 // TestTokenStoreIssueRedeemRoundTrip pins the core contract: a token Issue
 // mints must Redeem back to the same Role exactly once.

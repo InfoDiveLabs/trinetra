@@ -201,44 +201,46 @@ func countAdmins(users []*User) int {
 // else in this daemon does that). Given the low request volume of an
 // enrollment/login ceremony, the extra disk I/O per call is not a concern.
 type jsonUserStore struct {
-	// mu is SHARED across every jsonUserStore instance pointing at the same
-	// file (see userStoreMutex): the handlers construct a fresh jsonUserStore
-	// per request (newUserStore), so a per-INSTANCE mutex would serialize
-	// nothing across concurrent requests and the read-modify-write guarantee
-	// this store's doc promises — including the last-admin guard's atomic
-	// check-then-write (SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin) — would
-	// be a fiction. Keying the lock on the absolute path makes it truly
-	// process-wide per file.
-	mu   *sync.Mutex
 	path string
 }
 
-// userStoreMutexes holds one *sync.Mutex per absolute users.json path, so all
-// jsonUserStore instances for the same file share a single lock. Guarded by
-// userStoreMutexesMu (a plain lock over the map itself, held only briefly to
+// fileStoreMutexes holds one *sync.Mutex per absolute file path, so every
+// file-backed store instance (jsonUserStore, jsonSessionStore, tokenStore)
+// pointing at the SAME file shares a single lock — fetched via fileStoreMutex
+// at lock time rather than held in a struct field, so it works even for the
+// stores constructed as bare struct literals in tests. Guarded by
+// fileStoreMutexesMu (a plain lock over the map itself, held only briefly to
 // fetch/create the per-path mutex — never while doing store I/O).
+//
+// This is what makes these stores' long-standing read-modify-write safety
+// (and jsonUserStore's atomic last-admin guard) actually hold: every handler
+// constructs a FRESH store per request (newUserStore/newSessionStore/
+// newCeremonyStore/newTokenStore), so a per-INSTANCE mutex would serialize
+// nothing across concurrent requests — two writers would each load→modify→
+// save the whole file (last-writer-wins lost updates) and collide on the
+// shared "<path>.tmp" temp file. A path-keyed, process-wide lock closes both.
 var (
-	userStoreMutexes   = map[string]*sync.Mutex{}
-	userStoreMutexesMu sync.Mutex
+	fileStoreMutexes   = map[string]*sync.Mutex{}
+	fileStoreMutexesMu sync.Mutex
 )
 
-// userStoreMutex returns the process-wide mutex for path (creating it on
-// first use), so every jsonUserStore over the same file serializes against
-// one another. filepath.Abs canonicalizes the key so two spellings of the
-// same path share the lock; on the (essentially impossible) Abs error it
-// falls back to the raw path, which still shares a lock among identical
-// spellings.
-func userStoreMutex(path string) *sync.Mutex {
+// fileStoreMutex returns the process-wide mutex for path (creating it on
+// first use). filepath.Abs canonicalizes the key so two spellings of the same
+// path share the lock; on the (essentially impossible) Abs error it falls
+// back to the raw path, which still shares a lock among identical spellings.
+// Distinct paths (e.g. sessions.json vs ceremonies.json) get distinct locks,
+// which is correct — they are independent files.
+func fileStoreMutex(path string) *sync.Mutex {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	userStoreMutexesMu.Lock()
-	defer userStoreMutexesMu.Unlock()
-	mu, ok := userStoreMutexes[abs]
+	fileStoreMutexesMu.Lock()
+	defer fileStoreMutexesMu.Unlock()
+	mu, ok := fileStoreMutexes[abs]
 	if !ok {
 		mu = &sync.Mutex{}
-		userStoreMutexes[abs] = mu
+		fileStoreMutexes[abs] = mu
 	}
 	return mu
 }
@@ -249,12 +251,11 @@ func userStoreMutex(path string) *sync.Mutex {
 // when stateDir doesn't exist yet or is "" (e.g. a test/handler that never
 // reaches an auth route).
 func newUserStore(stateDir string) *jsonUserStore {
-	path := filepath.Join(stateDir, "users.json")
-	return &jsonUserStore{mu: userStoreMutex(path), path: path}
+	return &jsonUserStore{path: filepath.Join(stateDir, "users.json")}
 }
 
 // loadLocked reads and parses the store file, returning (nil, nil) if it
-// doesn't exist yet (a fresh install/StateDir). Callers must hold s.mu.
+// doesn't exist yet (a fresh install/StateDir). Callers must hold the store's fileStoreMutex.
 func (s *jsonUserStore) loadLocked() ([]*User, error) {
 	b, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
@@ -275,7 +276,7 @@ func (s *jsonUserStore) loadLocked() ([]*User, error) {
 // metadata, not a secret by itself, but there's no reason to leave it
 // group/world-readable either. Atomic (write-temp + rename) so a crash
 // mid-write can never leave a truncated/corrupt file behind, mirroring
-// internal/config.Config.Save's approach. Callers must hold s.mu.
+// internal/config.Config.Save's approach. Callers must hold the store's fileStoreMutex.
 func (s *jsonUserStore) saveLocked(users []*User) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -308,8 +309,9 @@ func (s *jsonUserStore) saveLocked(users []*User) error {
 // Get returns the user with the given WebAuthn user handle (User.ID), or
 // (nil, false) if none exists or the store can't be read.
 func (s *jsonUserStore) Get(id string) (*User, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -330,8 +332,9 @@ func (s *jsonUserStore) Get(id string) (*User, bool) {
 // uniqueness constraint so two accounts can't share a name in the first
 // place.
 func (s *jsonUserStore) ByName(name string) (*User, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -347,8 +350,9 @@ func (s *jsonUserStore) ByName(name string) (*User, bool) {
 // Put inserts u, or replaces the existing user with the same ID, and
 // persists the result.
 func (s *jsonUserStore) Put(u *User) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -376,8 +380,9 @@ func (s *jsonUserStore) Put(u *User) error {
 // store and is rejected (tokenless enrollment is closed the moment one
 // account exists).
 func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -392,8 +397,9 @@ func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
 
 // List returns every stored user, or nil if the store is empty/unreadable.
 func (s *jsonUserStore) List() []*User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil
@@ -404,8 +410,9 @@ func (s *jsonUserStore) List() []*User {
 // Delete removes the user with the given ID, reporting an error if no such
 // user exists.
 func (s *jsonUserStore) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -427,8 +434,9 @@ func (s *jsonUserStore) Delete(id string) error {
 // one admin left, sees itself as the last one, and is rejected with
 // errLastAdmin. Promotions and no-op same-role writes are never blocked.
 func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -455,8 +463,9 @@ func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
 // counterpart of SetRoleUnlessLastAdmin, with the identical atomicity
 // guarantee against a concurrent second remover.
 func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err

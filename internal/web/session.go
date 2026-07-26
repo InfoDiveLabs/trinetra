@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"serverwatch/internal/config"
@@ -124,12 +123,14 @@ const ceremonyMaxEntries = 1024
 
 // jsonSessionStore is SessionStore backed by a single JSON file
 // (<StateDir>/sessions.json). Like jsonUserStore, it does not cache parsed
-// sessions in memory between calls: every method reloads from disk under
-// s.mu, so Put/Delete/New's read-modify-write can't race a concurrent
-// goroutine within this process (a second process editing the file
-// concurrently is out of scope, same as jsonUserStore).
+// sessions in memory between calls: every method reloads from disk under the
+// shared per-path lock (fileStoreMutex, users.go), so New/Put/Delete/GC's
+// read-modify-write can't race a concurrent goroutine within this process —
+// including one holding a DIFFERENT jsonSessionStore instance over the same
+// file, which the handlers create per request (newSessionStore/
+// newCeremonyStore). A second OS process editing the file concurrently is out
+// of scope, same as jsonUserStore.
 type jsonSessionStore struct {
-	mu   sync.Mutex
 	path string
 	// now overrides the store's clock; nil (the production default, see
 	// newSessionStore) means time.Now. Tests set this directly to drive
@@ -179,7 +180,7 @@ func (s *jsonSessionStore) clock() time.Time {
 }
 
 // loadLocked reads and parses the store file, returning (nil, nil) if it
-// doesn't exist yet. Callers must hold s.mu.
+// doesn't exist yet. Callers must hold the store's fileStoreMutex.
 func (s *jsonSessionStore) loadLocked() ([]*Session, error) {
 	b, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
@@ -263,8 +264,9 @@ func (s *jsonSessionStore) New(userID string, ttl time.Duration) (*Session, erro
 		CSRF:    csrf,
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return nil, err
@@ -283,8 +285,9 @@ func (s *jsonSessionStore) New(userID string, ttl time.Duration) (*Session, erro
 // Get returns the session with the given ID, or (nil, false) if absent or
 // expired per the store's clock.
 func (s *jsonSessionStore) Get(id string) (*Session, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -304,8 +307,9 @@ func (s *jsonSessionStore) Get(id string) (*Session, bool) {
 // Put persists sess, replacing any existing record with the same ID or
 // appending it if none matches.
 func (s *jsonSessionStore) Put(sess *Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -323,8 +327,9 @@ func (s *jsonSessionStore) Put(sess *Session) error {
 // Delete removes the session with the given ID. Absent is a no-op (see the
 // SessionStore doc).
 func (s *jsonSessionStore) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -341,8 +346,9 @@ func (s *jsonSessionStore) Delete(id string) error {
 // GC removes every session whose Expires is <= now, saving only if that
 // actually dropped something.
 func (s *jsonSessionStore) GC(now int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return
