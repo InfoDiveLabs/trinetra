@@ -38,6 +38,21 @@ func buildFastChecks(snap Snapshot, c *config.Config) []Check {
 	return checks
 }
 
+// binaryCheck builds a Check for a binary health state (docker/service/
+// smart: either "ok" or "bad", never a graduated numeric reading), so
+// fire/recover text can be human wording (e.g. "container web is down
+// (exited)") instead of the generic "<key> = 1.0 ≥ threshold 1.0" numeric
+// format. Kept as one helper so docker/service/smart wording stays DRY
+// across the primary loops and the recovery-sweep sites below.
+func binaryCheck(key string, bad bool, fireMsg, recoverMsg string, interval int) Check {
+	v := 0.0
+	if bad {
+		v = 1
+	}
+	return Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true,
+		Interval: interval, FireMsg: fireMsg, RecoverMsg: recoverMsg}
+}
+
 // buildSlowChecks builds anomaly Checks for the expensive metrics
 // (disk/docker/service/smart) that collectSlow only refreshes on slow
 // ticks. active is the current AlertState.Active map: it drives the
@@ -67,11 +82,10 @@ func buildSlowChecks(snap Snapshot, c *config.Config, active map[string]ActiveAl
 		if !c.TargetEnabled(key) {
 			continue
 		}
-		v := 0.0
-		if state != "running" {
-			v = 1
-		}
-		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
+		bad := state != "running"
+		fireMsg := fmt.Sprintf("container %s is down (%s)", name, state)
+		recoverMsg := fmt.Sprintf("container %s recovered", name)
+		checks = append(checks, binaryCheck(key, bad, fireMsg, recoverMsg, slowInterval))
 	}
 	// SMART: FAILED=bad(1), otherwise ok(0)
 	for dev, health := range snap.SmartHealth {
@@ -79,11 +93,10 @@ func buildSlowChecks(snap Snapshot, c *config.Config, active map[string]ActiveAl
 		if !c.TargetEnabled(key) {
 			continue
 		}
-		v := 0.0
-		if health == "FAILED" {
-			v = 1
-		}
-		checks = append(checks, Check{Key: key, Value: v, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
+		bad := health == "FAILED"
+		fireMsg := fmt.Sprintf("SMART FAILED on %s", dev)
+		recoverMsg := fmt.Sprintf("SMART health recovered on %s", dev)
+		checks = append(checks, binaryCheck(key, bad, fireMsg, recoverMsg, slowInterval))
 	}
 	// systemd: only failed units appear in the list. Emit value=1 for each,
 	// AND value=0 for any active service:* alert no longer failed (so it recovers).
@@ -94,11 +107,15 @@ func buildSlowChecks(snap Snapshot, c *config.Config, active map[string]ActiveAl
 		if !c.TargetEnabled(key) {
 			continue
 		}
-		checks = append(checks, Check{Key: key, Value: 1, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
+		fireMsg := fmt.Sprintf("unit %s failed", u)
+		recoverMsg := fmt.Sprintf("unit %s recovered", u)
+		checks = append(checks, binaryCheck(key, true, fireMsg, recoverMsg, slowInterval))
 	}
 	for key := range active {
 		if strings.HasPrefix(key, "service:") && !failed[key] {
-			checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
+			u := strings.TrimPrefix(key, "service:")
+			recoverMsg := fmt.Sprintf("unit %s recovered", u)
+			checks = append(checks, binaryCheck(key, false, "", recoverMsg, slowInterval))
 		}
 	}
 	// docker/smart recovery sweep: if a container is REMOVED (not just stopped)
@@ -108,13 +125,17 @@ func buildSlowChecks(snap Snapshot, c *config.Config, active map[string]ActiveAl
 	// value=0 for any active docker:/smart: alert whose target is gone.
 	for key := range active {
 		if strings.HasPrefix(key, "docker:") {
-			if _, ok := snap.Containers[strings.TrimPrefix(key, "docker:")]; !ok {
-				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
+			name := strings.TrimPrefix(key, "docker:")
+			if _, ok := snap.Containers[name]; !ok {
+				recoverMsg := fmt.Sprintf("container %s recovered", name)
+				checks = append(checks, binaryCheck(key, false, "", recoverMsg, slowInterval))
 			}
 		}
 		if strings.HasPrefix(key, "smart:") {
-			if _, ok := snap.SmartHealth[strings.TrimPrefix(key, "smart:")]; !ok {
-				checks = append(checks, Check{Key: key, Value: 0, Threshold: 1, HasThreshold: true, Critical: true, Interval: slowInterval})
+			dev := strings.TrimPrefix(key, "smart:")
+			if _, ok := snap.SmartHealth[dev]; !ok {
+				recoverMsg := fmt.Sprintf("SMART health recovered on %s", dev)
+				checks = append(checks, binaryCheck(key, false, "", recoverMsg, slowInterval))
 			}
 		}
 	}

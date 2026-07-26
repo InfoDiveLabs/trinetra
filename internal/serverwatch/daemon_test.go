@@ -182,6 +182,99 @@ func TestBuildSlowChecksOnlyExpensiveMetrics(t *testing.T) {
 	}
 }
 
+// TestBuildSlowChecksBinaryWording confirms docker/service/smart checks
+// carry human FireMsg/RecoverMsg wording (issue #5) while numeric checks
+// (disk) are left alone with no FireMsg/RecoverMsg set.
+func TestBuildSlowChecksBinaryWording(t *testing.T) {
+	c := config.Default()
+	snap := Snapshot{
+		Disks:       map[string]float64{"/": 85},
+		Containers:  map[string]string{"web": "exited"},
+		FailedUnits: []string{"nginx.service"},
+		SmartHealth: map[string]string{"/dev/sdb": "FAILED"},
+	}
+	active := map[string]ActiveAlert{}
+	checks := buildSlowChecks(snap, c, active)
+
+	byKey := map[string]Check{}
+	for _, ch := range checks {
+		byKey[ch.Key] = ch
+	}
+
+	docker, ok := byKey["docker:web"]
+	if !ok {
+		t.Fatal("missing docker:web check")
+	}
+	if docker.FireMsg != "container web is down (exited)" {
+		t.Errorf("docker:web FireMsg = %q, want %q", docker.FireMsg, "container web is down (exited)")
+	}
+	if docker.RecoverMsg != "container web recovered" {
+		t.Errorf("docker:web RecoverMsg = %q, want %q", docker.RecoverMsg, "container web recovered")
+	}
+
+	service, ok := byKey["service:nginx.service"]
+	if !ok {
+		t.Fatal("missing service:nginx.service check")
+	}
+	if service.FireMsg != "unit nginx.service failed" {
+		t.Errorf("service FireMsg = %q, want %q", service.FireMsg, "unit nginx.service failed")
+	}
+	if service.RecoverMsg != "unit nginx.service recovered" {
+		t.Errorf("service RecoverMsg = %q, want %q", service.RecoverMsg, "unit nginx.service recovered")
+	}
+
+	smart, ok := byKey["smart:/dev/sdb"]
+	if !ok {
+		t.Fatal("missing smart:/dev/sdb check")
+	}
+	if smart.FireMsg != "SMART FAILED on /dev/sdb" {
+		t.Errorf("smart FireMsg = %q, want %q", smart.FireMsg, "SMART FAILED on /dev/sdb")
+	}
+	if smart.RecoverMsg != "SMART health recovered on /dev/sdb" {
+		t.Errorf("smart RecoverMsg = %q, want %q", smart.RecoverMsg, "SMART health recovered on /dev/sdb")
+	}
+
+	disk, ok := byKey["disk:/"]
+	if !ok {
+		t.Fatal("missing disk:/ check")
+	}
+	if disk.FireMsg != "" || disk.RecoverMsg != "" {
+		t.Errorf("disk:/ must stay numeric, got FireMsg=%q RecoverMsg=%q", disk.FireMsg, disk.RecoverMsg)
+	}
+}
+
+// TestBuildSlowChecksRecoverySweepWording confirms the value=0 recovery-sweep
+// sites (for a service no longer failed, or a docker/smart target that
+// disappeared from the snapshot) also carry the human RecoverMsg, so a
+// recovery emitted from any of these sites still reads humanely.
+func TestBuildSlowChecksRecoverySweepWording(t *testing.T) {
+	c := config.Default()
+	snap := Snapshot{
+		Containers:  map[string]string{},
+		SmartHealth: map[string]string{},
+	}
+	active := map[string]ActiveAlert{
+		"service:cron.service": {Since: 1},
+		"docker:old-web":       {Since: 1},
+		"smart:/dev/sdz":       {Since: 1},
+	}
+	checks := buildSlowChecks(snap, c, active)
+	byKey := map[string]Check{}
+	for _, ch := range checks {
+		byKey[ch.Key] = ch
+	}
+
+	if got := byKey["service:cron.service"]; got.RecoverMsg != "unit cron.service recovered" {
+		t.Errorf("service sweep RecoverMsg = %q, want %q", got.RecoverMsg, "unit cron.service recovered")
+	}
+	if got := byKey["docker:old-web"]; got.RecoverMsg != "container old-web recovered" {
+		t.Errorf("docker sweep RecoverMsg = %q, want %q", got.RecoverMsg, "container old-web recovered")
+	}
+	if got := byKey["smart:/dev/sdz"]; got.RecoverMsg != "SMART health recovered on /dev/sdz" {
+		t.Errorf("smart sweep RecoverMsg = %q, want %q", got.RecoverMsg, "SMART health recovered on /dev/sdz")
+	}
+}
+
 func keysOf(m map[string]bool) []string {
 	ks := make([]string, 0, len(m))
 	for k := range m {
