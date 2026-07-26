@@ -627,22 +627,39 @@ func cmdDaemon(args []string) int {
 	// whenever the channel set could have changed, mirroring the cfg
 	// pointer-swap pattern below.
 	dispatcher := NewDispatcher(channelsFromConfig(cfg), dispatcherTimeout)
+	// applyConfig swaps the shared cfg pointer and rebuilds the dispatcher
+	// under mu (mirroring setChatID's pointer-swap pattern below). It does
+	// NOT persist: callers that already have c on disk (the SIGHUP handler,
+	// which just re-read cfgPath) call this directly; reload (below) persists
+	// first, then applies.
+	applyConfig := func(c *config.Config) {
+		mu.Lock()
+		cfg = c
+		dispatcher = NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
+		mu.Unlock()
+	}
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, sighup)
 	go func() {
 		for range hup {
 			if c, err := config.Load(cfgPath); err == nil {
-				nd := NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
-				mu.Lock()
-				cfg = c
-				dispatcher = nd
-				mu.Unlock()
+				applyConfig(c)
 				fmt.Fprintln(stdout, "config reloaded")
 			}
 		}
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
 	getDispatcher := func() *Dispatcher { mu.RLock(); defer mu.RUnlock(); return dispatcher }
+	// reload persists newCfg to disk then applies it in-process: the closure
+	// WebDeps.Reload exposes to a future web config editor (issue #66) so
+	// writes take effect immediately, without a SIGHUP round-trip.
+	reload := func(newCfg *config.Config) error {
+		if err := saveCfg(newCfg); err != nil {
+			return err
+		}
+		applyConfig(newCfg)
+		return nil
+	}
 	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
 	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
 	// the in-use struct: getCfg readers read fields after releasing the RLock.
@@ -683,6 +700,26 @@ func cmdDaemon(args []string) int {
 	// c.SmartIntervalSec() instead of scanning every slow tick.
 	var smartState smartCache
 	da := probeDocker(x, fs)
+
+	// maybeStartWeb is always called, in both build variants: the default
+	// (no `web` tag) build's maybeStartWeb (daemon_noweb.go) is a no-op that
+	// never references internal/web, so this call site itself carries no
+	// third-party dependency. Only the `-tags web` build (daemon_web.go)
+	// actually starts anything, and only once WebDeps.Enabled is wired to a
+	// real cfg.Web.Enabled (config keys land in issue #58) does it bind a
+	// listener. See web_deps.go for the full seam design.
+	stopWeb := maybeStartWeb(WebDeps{
+		Cfg:            getCfg,
+		Reload:         reload,
+		Store:          store,
+		Snapshot:       latestSnapshot,
+		StateDir:       stateDir,
+		AlertLogPath:   st.AlertLogPath(),
+		AlertStatePath: st.AlertStatePath(),
+		Enabled:        false, // TODO(#58): cfg.Web.Enabled once the web.* config keys exist
+		Listen:         "",    // TODO(#58): cfg.Web.Listen
+	})
+	defer stopWeb()
 
 	// boot/recovery report from heartbeat gap
 	c0 := getCfg()
@@ -769,6 +806,13 @@ func cmdDaemon(args []string) int {
 			}
 		}
 		merged.TS = now.Unix()
+		// Publish a COPY of merged into snapshotHub for lock-free readers
+		// (WebDeps.Snapshot, ultimately a future web dashboard/SSE handler):
+		// merged itself stays exclusively owned by this goroutine, so every
+		// other field mutation above is safe without a lock, but the published
+		// pointer must not alias a struct this loop keeps mutating in place.
+		snap := merged
+		snapshotHub.Store(&snap)
 
 		// heartbeat has its own cadence (HeartbeatInterval), independent of
 		// fast/slow: it exists only so a future boot can measure how long the
