@@ -23,7 +23,7 @@ func newHandler(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", assetHandler(assetsSub)))
 	mux.HandleFunc("GET /{$}", dashboardHandler(d))
-	return mux
+	return securityHeaders(mux)
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type

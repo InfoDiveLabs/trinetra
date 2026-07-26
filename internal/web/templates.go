@@ -113,6 +113,11 @@ type PageData struct {
 	// Nav is Role's filtered nav list, precomputed so the template doesn't
 	// need role-aware logic beyond the active-link comparison.
 	Nav []NavItem
+	// Nonce is this request's per-response CSP nonce (see security.go's
+	// securityHeaders/nonceFromContext), rendered onto the single htmx boot
+	// script tag in base.html so it's authorized under the CSP's
+	// script-src 'nonce-...' directive.
+	Nonce string
 }
 
 // newPageData builds the PageData every page handler needs, deriving Role
@@ -126,6 +131,7 @@ func newPageData(r *http.Request, title, sub, status string) PageData {
 		Role:   role,
 		Active: r.URL.Path,
 		Nav:    navForRole(role),
+		Nonce:  nonceFromContext(r),
 	}
 }
 
