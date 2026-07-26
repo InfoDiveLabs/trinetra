@@ -309,7 +309,13 @@ func usersRemoveHandler(d Deps) http.HandlerFunc {
 
 // usersRevokeCredentialHandler removes exactly one credential ({credParam},
 // see credentialFromParam) from {id}'s Credentials, leaving every other
-// credential — this user's or anyone else's — untouched.
+// credential — this user's or anyone else's — untouched. Refuses (409) to
+// revoke the sole remaining admin's last credential — see
+// UserStore.RevokeCredentialUnlessLastAdmin's doc for why: it's the third
+// zero-admin lockout vector, alongside usersRoleHandler's demote guard and
+// usersRemoveHandler's remove guard, and the atomic store method (rather
+// than this handler's old Get-then-Put) is also what closes the
+// read-modify-write race against a concurrent finishLogin.
 func usersRevokeCredentialHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -318,27 +324,20 @@ func usersRevokeCredentialHandler(d Deps) http.HandlerFunc {
 			http.Error(w, "invalid credential", http.StatusBadRequest)
 			return
 		}
+		revoked := credentialParam(want)
 
 		store := newUserStore(d.StateDir)
-		u, ok := store.Get(id)
-		if !ok {
+		switch err := store.RevokeCredentialUnlessLastAdmin(id, string(want)); {
+		case errors.Is(err, errUserNotFound):
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
-		}
-		idx := -1
-		for i, c := range u.Credentials {
-			if string(c.ID) == string(want) {
-				idx = i
-				break
-			}
-		}
-		if idx == -1 {
+		case errors.Is(err, errCredentialNotFound):
 			http.Error(w, "credential not found", http.StatusNotFound)
 			return
-		}
-		revoked := credentialParam(want)
-		u.Credentials = append(u.Credentials[:idx], u.Credentials[idx+1:]...)
-		if err := store.Put(u); err != nil {
+		case errors.Is(err, errLastAdminCredential):
+			http.Error(w, "refusing to revoke the last remaining admin's last credential", http.StatusConflict)
+			return
+		case err != nil:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

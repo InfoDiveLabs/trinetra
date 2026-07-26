@@ -169,15 +169,32 @@ type UserStore interface {
 	// atomicity guarantee as SetRoleUnlessLastAdmin. Returns errUserNotFound
 	// if id is unknown.
 	RemoveUnlessLastAdmin(id string) error
+	// RevokeCredentialUnlessLastAdmin removes credential credID from user
+	// id's Credentials, but refuses (errLastAdminCredential) if id is the
+	// sole remaining admin AND credID is their last credential — closing the
+	// third zero-admin lockout vector (a sole admin with zero usable
+	// passkeys can never sign in again: re-enrollment needs either an empty
+	// store or an admin-issued token, neither of which is available). Same
+	// single-critical-section atomicity guarantee as SetRoleUnlessLastAdmin/
+	// RemoveUnlessLastAdmin, which also closes the read-modify-write race
+	// against a concurrent finishLogin (auth_webauthn.go), whose
+	// Get-mutate-signCount-Put on the same file shares this store's
+	// path-keyed fileStoreMutex. Returns errUserNotFound if id is unknown,
+	// errCredentialNotFound if credID isn't among id's Credentials.
+	RevokeCredentialUnlessLastAdmin(id, credID string) error
 }
 
-// errLastAdmin/errUserNotFound are the sentinel errors the atomic guard
-// methods (SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin) return so callers
-// (handlers_users.go) can map them to the right HTTP status (409/404) via
-// errors.Is without string-matching.
+// errLastAdmin/errUserNotFound/errLastAdminCredential/errCredentialNotFound
+// are the sentinel errors the atomic guard methods
+// (SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin/
+// RevokeCredentialUnlessLastAdmin) return so callers (handlers_users.go) can
+// map them to the right HTTP status (409/404) via errors.Is without
+// string-matching.
 var (
-	errLastAdmin    = errors.New("web: refusing to leave the store with no admin")
-	errUserNotFound = errors.New("web: user not found")
+	errLastAdmin           = errors.New("web: refusing to leave the store with no admin")
+	errUserNotFound        = errors.New("web: user not found")
+	errLastAdminCredential = errors.New("web: refusing to revoke the last admin's last credential")
+	errCredentialNotFound  = errors.New("web: credential not found")
 )
 
 // countAdmins reports how many of users hold RoleAdmin — the last-admin
@@ -484,6 +501,56 @@ func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
 		return errLastAdmin
 	}
 	users = append(users[:idx], users[idx+1:]...)
+	return s.saveLocked(users)
+}
+
+// RevokeCredentialUnlessLastAdmin removes credential credID from user id's
+// Credentials under a SINGLE s.mu critical section — load, last-admin
+// check, and write all happen while holding the lock, exactly like
+// SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin. It refuses
+// (errLastAdminCredential) only when id is the sole remaining admin (fewer
+// than 2 admins in the store) AND credID is the last entry in their
+// Credentials — removing it would leave that admin, and therefore the
+// system, with no admin able to complete a login ceremony, and
+// re-enrollment is closed the moment the store is non-empty. Revoking a
+// non-last credential, or a credential belonging to a non-last admin (one
+// among two-or-more), is never blocked. Sharing s's fileStoreMutex with
+// every other jsonUserStore method (in particular Put, which is what
+// finishLogin's signCount update calls) is what closes the companion
+// read-modify-write race: a concurrent revoke and login-finish now
+// serialize instead of one clobbering the other's write.
+func (s *jsonUserStore) RevokeCredentialUnlessLastAdmin(id, credID string) error {
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
+	users, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	var target *User
+	for _, u := range users {
+		if u.ID == id {
+			target = u
+			break
+		}
+	}
+	if target == nil {
+		return errUserNotFound
+	}
+	idx := -1
+	for i, c := range target.Credentials {
+		if string(c.ID) == credID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return errCredentialNotFound
+	}
+	if target.Role == RoleAdmin && countAdmins(users) <= 1 && len(target.Credentials) <= 1 {
+		return errLastAdminCredential
+	}
+	target.Credentials = append(target.Credentials[:idx], target.Credentials[idx+1:]...)
 	return s.saveLocked(users)
 }
 

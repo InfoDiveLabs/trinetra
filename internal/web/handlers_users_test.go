@@ -325,6 +325,140 @@ func TestUsersRevokeCredentialRemovesOnlyThatOne(t *testing.T) {
 	}
 }
 
+// TestUsersRevokeCredentialRefusesLastAdminsLastCredential pins the third
+// zero-admin lockout vector (issue #63 follow-up): revoking the sole
+// remaining admin's ONLY credential must be refused with a 409, leaving the
+// credential (and the admin role) untouched — otherwise the admin has zero
+// usable passkeys and, with the store non-empty, no bootstrap or
+// admin-issued-invite path back in.
+func TestUsersRevokeCredentialRefusesLastAdminsLastCredential(t *testing.T) {
+	d, users, sessions := rbacTestDeps(t)
+	h := newHandler(d)
+	solo, cookie, csrf := seedAdmin(t, "solo", users, sessions)
+	onlyCred := Credential{ID: []byte{7, 7, 7}, PublicKey: []byte{1}}
+	solo.Credentials = []Credential{onlyCred}
+	if err := users.Put(solo); err != nil {
+		t.Fatalf("seed credential Put: %v", err)
+	}
+
+	param := credentialParam(onlyCred.ID)
+	rr := postForm(h, "/users/"+solo.ID+"/credentials/"+param+"/revoke", url.Values{}, cookie, csrf)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("revoking sole admin's last credential status = %d, want 409, body: %s", rr.Code, rr.Body.String())
+	}
+
+	got, ok := users.Get(solo.ID)
+	if !ok {
+		t.Fatal("sole admin disappeared after refused revoke")
+	}
+	if got.Role != RoleAdmin {
+		t.Errorf("role after refused revoke = %v, want still admin", got.Role)
+	}
+	if len(got.Credentials) != 1 || string(got.Credentials[0].ID) != string(onlyCred.ID) {
+		t.Fatalf("credentials after refused revoke = %+v, want the untouched original credential", got.Credentials)
+	}
+}
+
+// TestUsersRevokeCredentialWorksWhenAdminHasAnother pins the positive case
+// alongside the refusal above: revoking one of the sole admin's TWO
+// credentials succeeds (the guard only fires when it's their LAST one), and
+// the admin is left with the other, still able to log in.
+func TestUsersRevokeCredentialWorksWhenAdminHasAnother(t *testing.T) {
+	d, users, sessions := rbacTestDeps(t)
+	h := newHandler(d)
+	solo, cookie, csrf := seedAdmin(t, "solo", users, sessions)
+	keep := Credential{ID: []byte{1, 2, 3}, PublicKey: []byte{1}}
+	drop := Credential{ID: []byte{4, 5, 6}, PublicKey: []byte{2}}
+	solo.Credentials = []Credential{keep, drop}
+	if err := users.Put(solo); err != nil {
+		t.Fatalf("seed credentials Put: %v", err)
+	}
+
+	param := credentialParam(drop.ID)
+	rr := postForm(h, "/users/"+solo.ID+"/credentials/"+param+"/revoke", url.Values{}, cookie, csrf)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("revoking a non-last credential status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+
+	got, ok := users.Get(solo.ID)
+	if !ok {
+		t.Fatal("sole admin disappeared")
+	}
+	if len(got.Credentials) != 1 || string(got.Credentials[0].ID) != string(keep.ID) {
+		t.Fatalf("credentials after revoke = %+v, want only the kept one", got.Credentials)
+	}
+}
+
+// TestRevokeCredentialUnlessLastAdminConcurrentWithPut is the TOCTOU/lost-
+// update regression pin for the revoke path, mirroring
+// TestRemoveUnlessLastAdminConcurrent/TestSetRoleUnlessLastAdminConcurrent
+// below but pairing RevokeCredentialUnlessLastAdmin against a concurrent
+// Put shaped exactly like finishLogin's (auth_webauthn.go) Get-mutate-
+// signCount-Put: both goroutines go through their OWN newUserStore instance
+// on the same file (as concurrent HTTP requests would), so only the shared
+// path-keyed fileStoreMutex can serialize them. Neither operation must be
+// lost: credA must end up revoked and credB's signCount bump must persist —
+// before the fix (a raw, lockless Get-then-Put in the handler) the two
+// read-modify-writes could interleave and either resurrect credA or drop
+// the signCount update.
+func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
+	dir := t.TempDir()
+	seed := newUserStore(dir)
+	credA := Credential{ID: []byte{1, 1, 1}, PublicKey: []byte{9}}
+	credB := Credential{ID: []byte{2, 2, 2}, PublicKey: []byte{9}}
+	u := &User{ID: "u1", Name: "u1", Role: RoleAdmin, Created: 1, Credentials: []Credential{credA, credB}}
+	if err := seed.Put(u); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	var revokeErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		revokeErr = newUserStore(dir).RevokeCredentialUnlessLastAdmin("u1", string(credA.ID))
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		// Mirrors finishLogin's Get -> mutate matched credential's SignCount
+		// -> Put sequence (auth_webauthn.go), against credB so it never
+		// collides with the revoke's own last-admin bookkeeping.
+		s := newUserStore(dir)
+		got, ok := s.Get("u1")
+		if !ok {
+			return
+		}
+		for i := range got.Credentials {
+			if string(got.Credentials[i].ID) == string(credB.ID) {
+				got.Credentials[i].SignCount = 42
+			}
+		}
+		_ = s.Put(got)
+	}()
+	close(start)
+	wg.Wait()
+
+	if revokeErr != nil {
+		t.Fatalf("RevokeCredentialUnlessLastAdmin: %v", revokeErr)
+	}
+	final, ok := newUserStore(dir).Get("u1")
+	if !ok {
+		t.Fatal("user disappeared after concurrent revoke+Put")
+	}
+	if len(final.Credentials) != 1 {
+		t.Fatalf("credentials after concurrent revoke+Put = %+v, want exactly 1 (credA gone, credB survives)", final.Credentials)
+	}
+	if string(final.Credentials[0].ID) != string(credB.ID) {
+		t.Fatalf("surviving credential = %v, want credB (%v) — credA resurrected by a lost update", final.Credentials[0].ID, credB.ID)
+	}
+	if final.Credentials[0].SignCount != 42 {
+		t.Errorf("credB signCount = %d, want 42 (the concurrent Put's signCount bump was lost)", final.Credentials[0].SignCount)
+	}
+}
+
 // TestRemoveUnlessLastAdminConcurrent is the TOCTOU regression pin for the
 // remove path. Two goroutines each try to remove one of the two (and only
 // two) admins, each through its OWN newUserStore instance pointed at the
