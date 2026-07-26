@@ -3,8 +3,26 @@
 Tracking board: **[Home Server project](https://github.com/users/Suraj-Tiwari/projects/1)**
 (cards grouped by *Area*; open follow-ups are linked issues).
 
-**Current release:** [v0.2.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.2.0) — multi-channel alerting, tiered sampling + time-series storage, extended data collection.
-**Previous:** [v0.1.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0) — feature-complete for a single home server.
+**Current release:** [v0.3.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.0) — embedded HTMX web UI with passkey auth, multi-user RBAC, web config, live dashboard + history, and a curated public view (`serverwatch-web` build; default binary stays stdlib-only).
+**Previous:** [v0.2.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.2.0) — multi-channel alerting, tiered sampling + time-series storage, extended data collection · [v0.1.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0) — single home server.
+
+## Delivered (v0.3.0)
+
+Every task shipped test-first with an independent per-task review, then a final whole-branch review;
+verified by the full unit suite + `go test -race` on both the default and `-tags web` builds. See
+[docs/WEB.md](WEB.md).
+
+**Epic #56 — Web UI (HTMX + passkeys, multi-user):**
+- Embedded in the daemon as a goroutine (`-tags web` build) sharing the live snapshot, SampleStore,
+  and config; the default `serverwatch` binary stays **100% stdlib** (enforced by a build test).
+- Passkey-only **WebAuthn** auth; server-side sessions + CSRF; RBAC (admin/viewer) + first-passkey
+  bootstrap + single-use enrollment tokens; strict CSP (nonce'd scripts).
+- Self-configuring serving modes: **proxy** (Cloudflare Tunnel/nginx/Caddy), **autocert**, **manual** TLS;
+  startup rpID/origin validation.
+- Live dashboard (SSE), history graphs (uPlot + SampleStore), web config editor (thresholds/monitors/
+  schedules/channels → in-process reload + audit log), alerts page (+ack), admin user management, and an
+  admin-curated **anonymous public view** (server-side panel allowlist).
+- UI ported from the local HTML mockup; htmx + uPlot vendored/embedded (no CDN).
 
 ## Delivered (v0.2.0)
 
@@ -102,7 +120,7 @@ Collect the extra data the UI shows, cheaply — must land before the UI's stats
 - #76 Extended-collection config toggles + cardinality/disk guardrails
 - #77 Integrate into status.json + SampleStore + docs
 
-### Epic [#56 Web UI (HTMX + passkeys, multi-user)](https://github.com/Suraj-Tiwari/server-monitor/issues/56)
+### ✅ Epic [#56 Web UI (HTMX + passkeys, multi-user)](https://github.com/Suraj-Tiwari/server-monitor/issues/56)
 HTMX UI with passkey-only auth, roles (admin/viewer/public), web-based config, live dashboard (SSE) + history graphs (uPlot), and an admin-curated public view. Dependency-isolated web build (cli-only stays stdlib); self-configuring serving modes (reverse proxy/Cloudflare Tunnel, autocert, manual TLS). _(Detailed design kept local, not in-repo.)_
 - #57 Module + build variants (cli-only vs cli+web)
 - #58 HTTP server skeleton (ServeMux + html/template + embedded htmx/uPlot)
