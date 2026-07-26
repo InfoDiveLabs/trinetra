@@ -29,7 +29,9 @@ type Check struct {
 	Threshold    float64
 	HasThreshold bool
 	Critical     bool
-	Interval     int // seconds between samples for this metric's tier
+	Interval     int    // seconds between samples for this metric's tier
+	FireMsg      string // optional human fire message; overrides the numeric format in breach()
+	RecoverMsg   string // optional human recover message; overrides the default "<key> back to normal"
 }
 
 type Event struct {
@@ -50,7 +52,11 @@ func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma float64, nowUni
 			events = append(events, Event{Key: c.Key, Kind: "fire", Text: reason, Critical: c.Critical})
 		case !breach && active:
 			delete(s.Active, c.Key)
-			events = append(events, Event{Key: c.Key, Kind: "recover", Text: c.Key + " back to normal", Critical: c.Critical})
+			recoverText := c.Key + " back to normal"
+			if c.RecoverMsg != "" {
+				recoverText = c.RecoverMsg
+			}
+			events = append(events, Event{Key: c.Key, Kind: "recover", Text: recoverText, Critical: c.Critical})
 		}
 		// feed baseline AFTER evaluating so a spike doesn't hide itself
 		b.Observe(c.Key, c.Value, c.Interval)
@@ -107,6 +113,9 @@ func (s *AlertState) Unack(key string) error {
 
 func (c Check) breach(b *Baseline, sigma float64) (bool, string) {
 	if c.HasThreshold && c.Value >= c.Threshold {
+		if c.FireMsg != "" {
+			return true, c.FireMsg
+		}
 		return true, fmt.Sprintf("%s = %.1f ≥ threshold %.1f", c.Key, c.Value, c.Threshold)
 	}
 	if z, ready := b.Z(c.Key, c.Value); ready && math.Abs(z) >= sigma {

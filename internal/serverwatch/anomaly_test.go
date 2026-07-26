@@ -28,6 +28,48 @@ func TestAnomalyThresholdFireOnceThenRecover(t *testing.T) {
 	}
 }
 
+// TestBreachUsesFireMsgWhenSet confirms a threshold breach returns the
+// Check's FireMsg verbatim (for binary health checks like docker/service/
+// smart, which want human wording instead of the numeric comparison), and
+// falls back to the numeric string when FireMsg is empty (regression guard
+// for the existing numeric checks).
+func TestBreachUsesFireMsgWhenSet(t *testing.T) {
+	withMsg := Check{Key: "docker:web", Value: 1, Threshold: 1, HasThreshold: true, FireMsg: "container web is down (exited)"}
+	if breach, reason := withMsg.breach(NewBaseline(), 3); !breach || reason != "container web is down (exited)" {
+		t.Fatalf("breach with FireMsg = (%v, %q), want (true, %q)", breach, reason, "container web is down (exited)")
+	}
+
+	noMsg := Check{Key: "disk:/", Value: 95, Threshold: 90, HasThreshold: true}
+	if breach, reason := noMsg.breach(NewBaseline(), 3); !breach || reason != "disk:/ = 95.0 ≥ threshold 90.0" {
+		t.Fatalf("breach without FireMsg = (%v, %q), want numeric fallback", breach, reason)
+	}
+}
+
+// TestEvaluateRecoverUsesRecoverMsgWhenSet confirms a recover transition's
+// Event.Text is the Check's RecoverMsg when set, otherwise the default
+// "<key> back to normal".
+func TestEvaluateRecoverUsesRecoverMsgWhenSet(t *testing.T) {
+	s := NewAlertState()
+	b := NewBaseline()
+	fire := Check{Key: "docker:web", Value: 1, Threshold: 1, HasThreshold: true, RecoverMsg: "container web recovered"}
+	s.Evaluate([]Check{fire}, b, 3, 100)
+
+	recover := Check{Key: "docker:web", Value: 0, Threshold: 1, HasThreshold: true, RecoverMsg: "container web recovered"}
+	ev := s.Evaluate([]Check{recover}, b, 3, 160)
+	if len(ev) != 1 || ev[0].Kind != "recover" || ev[0].Text != "container web recovered" {
+		t.Fatalf("recover with RecoverMsg = %+v, want text %q", ev, "container web recovered")
+	}
+
+	// No RecoverMsg -> default wording.
+	s2 := NewAlertState()
+	b2 := NewBaseline()
+	s2.Evaluate([]Check{{Key: "cpu", Value: 95, Threshold: 90, HasThreshold: true}}, b2, 3, 100)
+	ev2 := s2.Evaluate([]Check{{Key: "cpu", Value: 10, Threshold: 90, HasThreshold: true}}, b2, 3, 160)
+	if len(ev2) != 1 || ev2[0].Text != "cpu back to normal" {
+		t.Fatalf("recover without RecoverMsg = %+v, want default wording", ev2)
+	}
+}
+
 func TestAnomalyBaselineDeviation(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
