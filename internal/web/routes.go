@@ -35,7 +35,7 @@ func newHandler(d Deps) http.Handler {
 	// ceremony endpoint like /enroll or /login), so it's CSRF-protected —
 	// see requireCSRF's doc (middleware.go) for why those other POSTs
 	// aren't.
-	mux.Handle("POST /logout", requireCSRF(http.HandlerFunc(logoutHandler(d))))
+	mux.Handle("POST /logout", requireCSRF(logoutHandler(d)))
 
 	// sessionMiddleware runs for every request so any handler/template can
 	// read the current session (sessionFromContext) — including
