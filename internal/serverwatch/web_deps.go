@@ -85,11 +85,12 @@ type WebDeps struct {
 	// AlertStatePath is the path to alerts.json (ack state), for a future
 	// alerts page's ack round-trip.
 	AlertStatePath string
-	// Enabled mirrors cfg.Web.Enabled. Config keys for the web server
-	// (web.enabled/web.listen) don't exist yet (added in issue #58); until
-	// then this is always false and Listen is always empty.
+	// Enabled mirrors cfg.Web.Enabled (the web.enabled config key), read
+	// once at daemon startup in cmdDaemon — see daemon.go.
 	Enabled bool
-	// Listen mirrors cfg.Web.Listen (see Enabled above).
+	// Listen mirrors cfg.Web.Listen (the web.listen config key), a
+	// "host:port" string validated by internal/config.Config.Set via
+	// net.SplitHostPort. See Enabled above.
 	Listen string
 }
 

@@ -705,9 +705,14 @@ func cmdDaemon(args []string) int {
 	// (no `web` tag) build's maybeStartWeb (daemon_noweb.go) is a no-op that
 	// never references internal/web, so this call site itself carries no
 	// third-party dependency. Only the `-tags web` build (daemon_web.go)
-	// actually starts anything, and only once WebDeps.Enabled is wired to a
-	// real cfg.Web.Enabled (config keys land in issue #58) does it bind a
-	// listener. See web_deps.go for the full seam design.
+	// actually starts anything, and only when Enabled (cfg.Web.Enabled) does
+	// it bind a listener. Enabled/Listen are read once at daemon startup
+	// (like c0 below) rather than through getCfg on every access: a SIGHUP
+	// reload that flips web.enabled/web.listen takes effect on the next
+	// daemon restart, not in-process — starting/stopping the listener
+	// live is out of scope for this seam. See web_deps.go for the full
+	// design note.
+	cfgAtStart := getCfg()
 	stopWeb := maybeStartWeb(WebDeps{
 		Cfg:            getCfg,
 		Reload:         reload,
@@ -716,8 +721,8 @@ func cmdDaemon(args []string) int {
 		StateDir:       stateDir,
 		AlertLogPath:   st.AlertLogPath(),
 		AlertStatePath: st.AlertStatePath(),
-		Enabled:        false, // TODO(#58): cfg.Web.Enabled once the web.* config keys exist
-		Listen:         "",    // TODO(#58): cfg.Web.Listen
+		Enabled:        cfgAtStart.Web.Enabled,
+		Listen:         cfgAtStart.Web.Listen,
 	})
 	defer stopWeb()
 
