@@ -3,12 +3,12 @@ module serverwatch
 go 1.22
 
 require (
+	github.com/fxamacker/cbor/v2 v2.6.0
 	github.com/go-webauthn/webauthn v0.10.2
 	golang.org/x/crypto v0.21.0
 )
 
 require (
-	github.com/fxamacker/cbor/v2 v2.6.0 // indirect
 	github.com/go-webauthn/x v0.1.9 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/google/go-tpm v0.9.0 // indirect
