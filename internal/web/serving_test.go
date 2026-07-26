@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -179,14 +180,73 @@ func TestSecurityHeadersSetsCSPNonceContentTypeReferrer(t *testing.T) {
 	if !strings.Contains(csp, "script-src 'self' 'nonce-") {
 		t.Errorf("CSP %q missing script-src 'self' 'nonce-...'", csp)
 	}
-	if strings.Contains(csp, "unsafe-inline") {
-		t.Errorf("CSP %q must not contain unsafe-inline", csp)
+	// script-src must stay STRICT (nonce-based, never unsafe-inline) — that's
+	// the directive that actually matters for XSS. style-src, by contrast,
+	// deliberately allows 'unsafe-inline' because the ported mockup uses
+	// inline style="…" pervasively (see securityHeaders' comment).
+	scriptDir, styleDir := cspDirective(csp, "script-src"), cspDirective(csp, "style-src")
+	if strings.Contains(scriptDir, "unsafe-inline") {
+		t.Errorf("script-src %q must not contain unsafe-inline", scriptDir)
+	}
+	if !strings.Contains(styleDir, "unsafe-inline") {
+		t.Errorf("style-src %q must contain 'unsafe-inline' for the mockup's inline styles", styleDir)
 	}
 	if got := rr.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 	if got := rr.Header().Get("Referrer-Policy"); got == "" {
 		t.Error("Referrer-Policy header missing")
+	}
+}
+
+// cspDirective returns the single CSP directive (e.g. "script-src") from a
+// full policy string, or "" if absent — lets a test assert on one directive
+// without a false match from another directive's value.
+func cspDirective(csp, name string) string {
+	for _, d := range strings.Split(csp, ";") {
+		d = strings.TrimSpace(d)
+		if strings.HasPrefix(d, name+" ") || d == name {
+			return d
+		}
+	}
+	return ""
+}
+
+// TestBaseTemplateHasNoInlineEventHandlers pins that the strict script-src
+// (no unsafe-inline) can actually hold: base.html must carry no inline
+// on*="..." event handlers (they'd be blocked by CSP and silently break),
+// and the theme button must instead expose the id app.js binds via
+// addEventListener. A regression here (someone re-adding onclick=) would
+// break the theme toggle under any CSP-enforcing browser.
+func TestBaseTemplateHasNoInlineEventHandlers(t *testing.T) {
+	b, err := templatesFS.ReadFile("templates/base.html")
+	if err != nil {
+		t.Fatalf("read base.html: %v", err)
+	}
+	src := string(b)
+	// Match inline event-handler attributes (onclick=, onchange=, ...) while
+	// not tripping on unrelated attrs; the leading space/quote/> boundary
+	// avoids matching substrings inside other attribute values.
+	re := regexp.MustCompile(`(?i)[\s"'>]on[a-z]+\s*=`)
+	if loc := re.FindString(src); loc != "" {
+		t.Errorf("base.html contains an inline event handler %q; move it to app.js (strict CSP blocks inline JS)", strings.TrimSpace(loc))
+	}
+	if !strings.Contains(src, `id="themeBtn"`) {
+		t.Error(`base.html theme button missing id="themeBtn" (app.js binds its click via addEventListener)`)
+	}
+}
+
+// TestAppJSBindsThemeButton pins the other half of the theme-toggle move:
+// app.js must wire #themeBtn via addEventListener rather than relying on the
+// removed inline onclick.
+func TestAppJSBindsThemeButton(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "themeBtn") || !strings.Contains(src, "addEventListener") {
+		t.Error("app.js must bind #themeBtn via addEventListener")
 	}
 }
 

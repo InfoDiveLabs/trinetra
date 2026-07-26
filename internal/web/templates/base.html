@@ -33,7 +33,7 @@
       {{if eq .Role "viewer"}}<span class="pill ro-pill">read-only</span>{{end}}
       <span class="hb hb-gen" title="heartbeat"></span>
       <span class="pill"><span class="led {{.Status}}"></span> {{statusText .Status}}</span>
-      <button class="icon-btn" onclick="swToggleTheme()" title="Toggle theme (T)">◑</button>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme (T)">◑</button>
     </header>
     <div class="wrap">
       {{block "content" .}}{{end}}

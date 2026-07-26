@@ -21,6 +21,12 @@
   try{ if(localStorage.sw_theme) setTheme(localStorage.sw_theme); else if(matchMedia('(prefers-color-scheme:light)').matches) setTheme('light'); else setTheme('dark'); }catch(e){setTheme('dark');}
   window.swToggleTheme=function(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');};
   document.addEventListener('keydown',function(e){ if((e.key==='t'||e.key==='T') && !/input|textarea|select/i.test(document.activeElement.tagName)) window.swToggleTheme(); });
+  // Wire the topbar theme button here rather than via an inline onclick=:
+  // the strict Content-Security-Policy (internal/web/security.go,
+  // script-src 'self' 'nonce-…' with no unsafe-inline) blocks inline event
+  // handlers, so base.html carries id="themeBtn" and we bind it in JS.
+  var themeBtn=document.getElementById('themeBtn');
+  if(themeBtn) themeBtn.addEventListener('click',window.swToggleTheme);
 
   // ---- heartbeat mini ----
   function ekg(mid,sp,count,W,H,gF,gT){var d='M0,'+mid,i,x;for(i=0;i<count;i++){x=10+i*sp;if(x>=gF&&x<=gT){d+=' L'+x+','+mid;continue;}d+=' L'+(x-6)+','+mid+' L'+(x-3)+','+(mid-4)+' L'+x+','+(mid-H*0.55)+' L'+(x+3)+','+(mid+6)+' L'+(x+6)+','+mid;}d+=' L'+W+','+mid;return d;}

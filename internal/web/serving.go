@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -247,7 +248,16 @@ func serveAutocert(d Deps, handler http.Handler, domainsCSV string) (stop func()
 	go srv.ServeTLS(ln, "", "") //nolint:errcheck // cert/key come from TLSConfig.GetCertificate via m, not files.
 
 	challengeSrv := &http.Server{Addr: ":80", Handler: m.HTTPHandler(nil)}
-	go challengeSrv.ListenAndServe() //nolint:errcheck // best-effort; only needed for HTTP-01 issuance/renewal.
+	go func() {
+		// The :80 HTTP-01 challenge listener is required for autocert to
+		// obtain/renew certificates; a bind failure (e.g. :80 already taken,
+		// or no CAP_NET_BIND_SERVICE) would otherwise silently block issuance
+		// with no clue why, so surface it. ErrServerClosed is the normal
+		// outcome of the stop func's Shutdown below and isn't worth logging.
+		if err := challengeSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintln(os.Stderr, "web: autocert HTTP-01 challenge listener on :80 failed:", err)
+		}
+	}()
 
 	return func() {
 		shutdownServer(srv)()

@@ -58,8 +58,15 @@ func securityHeaders(next http.Handler) http.Handler {
 		}
 
 		h := w.Header()
+		// script-src is STRICT: 'self' plus this request's nonce only, no
+		// unsafe-inline — that's where the real XSS risk is, and the single
+		// inline handler (the theme button) was moved into app.js so nothing
+		// needs it. style-src, however, allows 'unsafe-inline': the ported
+		// mockup (our required visual base) uses inline style="…" attributes
+		// pervasively across every page; inline styles are low XSS risk and
+		// rewriting them all into classes is out of scope ("mockup as base").
 		h.Set("Content-Security-Policy", fmt.Sprintf(
-			"default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+			"default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'unsafe-inline'; img-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
 			nonce,
 		))
 		h.Set("X-Content-Type-Options", "nosniff")
