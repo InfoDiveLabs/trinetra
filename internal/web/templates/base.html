@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}} · serverwatch</title>
 <meta name="csrf-token" content="{{.CSRF}}">
-<link rel="stylesheet" href="/assets/style.css">
-<link rel="stylesheet" href="/assets/uPlot.min.css">
+<link rel="stylesheet" href="{{asset "/assets/style.css"}}">
+<link rel="stylesheet" href="{{asset "/assets/uPlot.min.css"}}">
 </head>
 <body data-role="{{.Role}}">
 <div class="app">
@@ -41,8 +41,8 @@
     </div>
   </div>
 </div>
-<script src="/assets/htmx.min.js" nonce="{{.Nonce}}"></script>
-<script src="/assets/uPlot.iife.min.js"></script>
-<script src="/assets/app.js"></script>
+<script src="{{asset "/assets/htmx.min.js"}}" nonce="{{.Nonce}}"></script>
+<script src="{{asset "/assets/uPlot.iife.min.js"}}"></script>
+<script src="{{asset "/assets/app.js"}}"></script>
 </body>
 </html>

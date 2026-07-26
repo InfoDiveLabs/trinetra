@@ -3,10 +3,44 @@
 package web
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"html/template"
+	"io/fs"
 	"net/http"
 )
+
+// assetVersion is a short content hash over every embedded asset, appended as
+// a ?v= query to asset URLs (see the "asset" template helper). Because the
+// hash changes whenever any asset's bytes change, each build produces fresh
+// asset URLs — defeating stale browser/CDN (Cloudflare) caching of old JS/CSS
+// that would otherwise persist for the CDN's edge-TTL. Computed once at
+// startup; embed.FS reads are in-memory.
+var assetVersion = computeAssetVersion()
+
+func computeAssetVersion() string {
+	h := sha256.New()
+	_ = fs.WalkDir(assetsFS, "assets", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		b, rerr := assetsFS.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		h.Write([]byte(p))
+		h.Write(b)
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+// assetURL appends the content-hash version to an asset path so the template
+// emits e.g. /assets/app.js?v=<hash>. Paired with the immutable Cache-Control
+// the asset handler sets, this gives correct long-lived caching: unchanged
+// assets stay cached forever, a changed asset gets a new URL.
+func assetURL(path string) string { return path + "?v=" + assetVersion }
 
 // templatesFS embeds internal/web/templates: base.html (the ported mockup
 // shell — nav/topbar/content blocks, see that file's comments) plus one file
@@ -37,6 +71,9 @@ var funcMap = template.FuncMap{
 	// memBarPct (handlers_monitoring.go) is templates/monitoring.html's
 	// container/process memory-meter width normalizer.
 	"memBarPct": memBarPct,
+	// asset appends the build's content-hash to an asset path for cache-busting
+	// (see assetVersion); templates reference assets via {{asset "/assets/x"}}.
+	"asset": assetURL,
 }
 
 // statusText maps a topbar status ("ok"/"warn"/"crit") to its display text.

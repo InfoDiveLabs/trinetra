@@ -158,6 +158,11 @@ func assetHandler(assets fs.FS) http.Handler {
 		if ct := contentTypeByExt(r.URL.Path); ct != "" {
 			w.Header().Set("Content-Type", ct)
 		}
+		// Assets are addressed by content-hashed URLs (templates append
+		// ?v=<hash> via the "asset" helper), so a given URL's bytes never
+		// change — cache them immutably. A new build changes the hash, hence
+		// the URL, so browsers/CDN fetch the new asset instead of a stale one.
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fileServer.ServeHTTP(w, r)
 	})
 }
