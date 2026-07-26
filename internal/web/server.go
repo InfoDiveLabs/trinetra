@@ -25,13 +25,13 @@ const sessionGCInterval = 10 * time.Minute
 
 // Deps is what the web server needs from the running daemon, expressed
 // without importing internal/serverwatch (see the design note atop
-// internal/serverwatch/web_deps.go): Store and Snapshot are left opaque
-// (`any`) here on purpose, since this task's routes (GET /assets/, GET /)
-// don't yet consume either — a later task (dashboard/SSE, history) will
-// define the minimal web-local interfaces those need, and
+// internal/serverwatch/web_deps.go). Store is still left opaque (`any`)
+// here on purpose, since no route in this build consumes it yet — a later
+// task (history) will define the minimal web-local interface it needs, and
 // internal/serverwatch/daemon_web.go will adapt serverwatch's concrete
-// SampleStore/Snapshot into them at the call site, same as it already does
-// for these two fields.
+// SampleStore into it at the call site, the same way it now adapts
+// serverwatch's concrete Snapshot into this package's own DashboardView for
+// the Snapshot field below.
 type Deps struct {
 	// Cfg returns the current config (race-safe against the daemon's reload).
 	Cfg func() *config.Config
@@ -40,9 +40,14 @@ type Deps struct {
 	// Store is the daemon's sample store for history queries; opaque here
 	// (see the type doc above), may be nil.
 	Store any
-	// Snapshot returns the latest merged snapshot; opaque here (see the type
-	// doc above).
-	Snapshot func() any
+	// Snapshot returns the latest live snapshot, already projected into this
+	// package's own DashboardView (dashboard_view.go) by
+	// internal/serverwatch/daemon_web.go's adapter — see that type's doc for
+	// why the projection (rather than serverwatch.Snapshot itself) is what
+	// crosses this boundary. Lock-free/cheap: safe to call from any
+	// goroutine, any number of times (dashboardHandler on every GET /, the
+	// SSE handler on every tick).
+	Snapshot func() DashboardView
 	// StateDir is the daemon's state directory.
 	StateDir string
 	// AlertLogPath is the path to the append-only alert log.

@@ -21,7 +21,7 @@ func testDeps(t *testing.T) Deps {
 	return Deps{
 		Cfg:      func() *config.Config { return config.Default() },
 		Reload:   func(*config.Config) error { return nil },
-		Snapshot: func() any { return nil },
+		Snapshot: func() DashboardView { return DashboardView{} },
 		Enabled:  true,
 		Listen:   "127.0.0.1:0",
 	}
