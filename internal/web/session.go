@@ -97,15 +97,30 @@ type SessionStore interface {
 	GC(now int64)
 }
 
-// sessionMaxEntries hard-caps the store's size as a backstop against an
-// unauthenticated flood of /enroll/begin or /login/begin calls (each mints a
-// ceremony placeholder here) arriving faster than they expire — the same
-// concern Task 4's ceremonyStash guarded against with its own
-// ceremonyMaxEntries. New refuses to mint another record once the store
-// (after evicting anything already expired) is at this cap; legitimate
-// traffic — interactive ceremonies plus however many users are actually
-// signed in at once — sits far below it.
+// sessionMaxEntries hard-caps the authenticated-session store's size. New
+// refuses to mint another record once the store (after evicting anything
+// already expired) is at this cap; the number of users actually signed in at
+// once sits far below it.
+//
+// CRITICAL: unauthenticated WebAuthn ceremony placeholders do NOT count
+// against this cap — they live in a SEPARATE store instance
+// (newCeremonyStore, bounded by ceremonyMaxEntries) precisely so that a
+// pre-auth flood of /login/begin or /enroll/begin can never fill this store
+// and cause finishLogin's post-assertion sessions.New to refuse a user
+// presenting a valid passkey (an availability bug). The two stores share
+// this type but nothing else — separate files, separate caps.
 const sessionMaxEntries = 4096
+
+// ceremonyMaxEntries hard-caps the SEPARATE ceremony-placeholder store
+// (newCeremonyStore) — the bound Task 4's temporary in-memory ceremonyStash
+// enforced with its own same-named constant, now applied to the file-backed
+// store that replaced it (issue #61). Because /login/begin and /enroll/begin
+// are unauthenticated, an attacker can flood them; when this store fills,
+// only further ceremony begins are refused — real, authenticated sessions
+// (a different store, above) are unaffected. A single interactive ceremony
+// is one short-lived (ceremonyTTL) record, so this ceiling sits far above
+// any honest concurrency.
+const ceremonyMaxEntries = 1024
 
 // jsonSessionStore is SessionStore backed by a single JSON file
 // (<StateDir>/sessions.json). Like jsonUserStore, it does not cache parsed
@@ -120,10 +135,12 @@ type jsonSessionStore struct {
 	// newSessionStore) means time.Now. Tests set this directly to drive
 	// expiry/GC deterministically, mirroring auth_webauthn.go's ceremonyStash.
 	now func() time.Time
-	// maxEntries overrides sessionMaxEntries when non-zero. Tests use a
-	// small cap so TestSessionNewRefusesWhenFull doesn't need thousands of
-	// real (O(n) read-modify-write) disk round trips to exercise the same
-	// refusal path production hits at sessionMaxEntries.
+	// maxEntries overrides the default sessionMaxEntries cap when non-zero.
+	// newCeremonyStore sets it to ceremonyMaxEntries so the ceremony-
+	// placeholder store is bounded independently of the authenticated-
+	// session store; tests also set a small cap to exercise the refusal
+	// path without thousands of real (O(n) read-modify-write) disk round
+	// trips.
 	maxEntries int
 }
 
@@ -136,11 +153,20 @@ func (s *jsonSessionStore) capEntries() int {
 	return sessionMaxEntries
 }
 
-// newSessionStore returns a SessionStore rooted at <stateDir>/sessions.json.
-// Like newUserStore, this touches no disk until an operation is actually
-// performed.
+// newSessionStore returns the AUTHENTICATED-session store, rooted at
+// <stateDir>/sessions.json (cap sessionMaxEntries). Like newUserStore, this
+// touches no disk until an operation is actually performed.
 func newSessionStore(stateDir string) *jsonSessionStore {
 	return &jsonSessionStore{path: filepath.Join(stateDir, "sessions.json")}
+}
+
+// newCeremonyStore returns the SEPARATE, independently-bounded store for
+// in-flight WebAuthn ceremony placeholders (registration and login),
+// rooted at <stateDir>/ceremonies.json (cap ceremonyMaxEntries). Keeping
+// these out of the authenticated-session store is what stops a pre-auth
+// ceremony flood from starving real logins — see sessionMaxEntries' doc.
+func newCeremonyStore(stateDir string) *jsonSessionStore {
+	return &jsonSessionStore{path: filepath.Join(stateDir, "ceremonies.json"), maxEntries: ceremonyMaxEntries}
 }
 
 // clock returns the store's time source, defaulting to time.Now when s.now

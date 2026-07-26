@@ -56,7 +56,7 @@ func cosePublicKeyCBORForKey(t *testing.T, priv *ecdsa.PrivateKey) []byte {
 // THIS key rather than a throwaway one — so the private key can go on to
 // sign a login assertion in the same test. Returns the credential ID and
 // private key.
-func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store UserStore, sessions SessionStore, u *User, origin, rpID string) (credID []byte, priv *ecdsa.PrivateKey) {
+func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store UserStore, ceremonies SessionStore, u *User, origin, rpID string) (credID []byte, priv *ecdsa.PrivateKey) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -65,7 +65,7 @@ func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store 
 
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	creation, err := beginRegistration(beginRR, beginReq, wa, u, sessions)
+	creation, err := beginRegistration(beginRR, beginReq, wa, u, ceremonies)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
@@ -102,7 +102,7 @@ func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store 
 	finishReq := httptest.NewRequest(http.MethodPost, "/enroll/finish", bytes.NewReader(body))
 	finishReq.AddCookie(cookieFrom(t, beginRR, enrollSessionCookie))
 	finishRR := httptest.NewRecorder()
-	if err := finishRegistration(finishRR, finishReq, wa, store, sessions); err != nil {
+	if err := finishRegistration(finishRR, finishReq, wa, store, ceremonies); err != nil {
 		t.Fatalf("finishRegistration: %v", err)
 	}
 	return credID, priv
@@ -167,14 +167,15 @@ func assertionResponseBody(t *testing.T, priv *ecdsa.PrivateKey, challenge, orig
 func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
+	ceremonies := newCeremonyStore(t.TempDir())
 	sessions := newSessionStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
-	credID, priv := registerVirtualCredentialDirect(t, wa, store, sessions, u, testOrigin, testRPID)
+	credID, priv := registerVirtualCredentialDirect(t, wa, store, ceremonies, u, testOrigin, testRPID)
 
 	beginReq := httptest.NewRequest(http.MethodPost, "/login/begin", nil)
 	beginRR := httptest.NewRecorder()
-	assertion, err := beginLogin(beginRR, beginReq, wa, sessions)
+	assertion, err := beginLogin(beginRR, beginReq, wa, ceremonies)
 	if err != nil {
 		t.Fatalf("beginLogin: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {
 	finishReq.AddCookie(cookieFrom(t, beginRR, loginCeremonyCookie))
 	finishRR := httptest.NewRecorder()
 
-	if err := finishLogin(finishRR, finishReq, wa, store, sessions, time.Hour); err != nil {
+	if err := finishLogin(finishRR, finishReq, wa, store, ceremonies, sessions, time.Hour); err != nil {
 		t.Fatalf("finishLogin: %v", err)
 	}
 
@@ -219,6 +220,67 @@ func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {
 	}
 }
 
+// TestCeremonyFloodDoesNotStarveValidLogin is the availability pin for the
+// separate ceremony store (session.go): an unauthenticated flood of ceremony
+// begins fills only the bounded CEREMONY store, and must never prevent a user
+// presenting a VALID passkey from minting an authenticated session — the
+// bug that would exist if ceremony placeholders and real sessions shared one
+// capped store.
+func TestCeremonyFloodDoesNotStarveValidLogin(t *testing.T) {
+	wa := testWebAuthn(t, testRPID, testOrigin)
+	store := newUserStore(t.TempDir())
+	// Small ceremony cap so the flood is a handful of cheap writes rather
+	// than ceremonyMaxEntries of them; the authenticated-session store is a
+	// distinct instance (distinct file, distinct cap).
+	const ceremonyCap = 8
+	ceremonies := &jsonSessionStore{path: t.TempDir() + "/ceremonies.json", maxEntries: ceremonyCap}
+	sessions := newSessionStore(t.TempDir())
+
+	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
+	credID, priv := registerVirtualCredentialDirect(t, wa, store, ceremonies, u, testOrigin, testRPID)
+
+	// A legitimate login ceremony begins BEFORE the flood, so its placeholder
+	// is already stashed when the attacker starts hammering /login/begin.
+	beginReq := httptest.NewRequest(http.MethodPost, "/login/begin", nil)
+	beginRR := httptest.NewRecorder()
+	assertion, err := beginLogin(beginRR, beginReq, wa, ceremonies)
+	if err != nil {
+		t.Fatalf("beginLogin: %v", err)
+	}
+	loginCookie := cookieFrom(t, beginRR, loginCeremonyCookie)
+
+	// Flood the ceremony store to its cap. Once full, further ceremony begins
+	// are refused (that part is fine — it only rate-limits new ceremonies).
+	flooded := false
+	for i := 0; i < ceremonyCap*2; i++ {
+		if _, err := ceremonies.New("", ceremonyTTL); err != nil {
+			flooded = true
+			break
+		}
+	}
+	if !flooded {
+		t.Fatal("flood never reached the ceremony cap; test setup is wrong")
+	}
+	if _, err := ceremonies.New("", ceremonyTTL); err == nil {
+		t.Fatal("ceremony store is not actually full after the flood")
+	}
+
+	// The valid, already-begun login must STILL finish and issue a session:
+	// finishLogin mints it in the authenticated-session store, which the
+	// ceremony flood cannot touch.
+	loginBody := assertionResponseBody(t, priv, assertion.Response.Challenge.String(), testOrigin, testRPID, credID, []byte(u.ID), 2)
+	finishReq := httptest.NewRequest(http.MethodPost, "/login/finish", bytes.NewReader(loginBody))
+	finishReq.AddCookie(loginCookie)
+	finishRR := httptest.NewRecorder()
+	if err := finishLogin(finishRR, finishReq, wa, store, ceremonies, sessions, time.Hour); err != nil {
+		t.Fatalf("finishLogin under ceremony flood = %v, want success (flood must not starve a valid login)", err)
+	}
+	sessCookie := cookieFrom(t, finishRR, sessionCookieName)
+	if _, ok := sessions.Get(sessCookie.Value); !ok {
+		t.Fatal("valid login issued no usable session despite the ceremony flood")
+	}
+}
+
 // TestLoginRejectsSignCountRegression pins clone detection: a second login
 // whose assertion counter does not exceed the credential's last stored
 // SignCount must be rejected outright (no session issued), and the stored
@@ -228,16 +290,17 @@ func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {
 func TestLoginRejectsSignCountRegression(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
+	ceremonies := newCeremonyStore(t.TempDir())
 	sessions := newSessionStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
-	credID, priv := registerVirtualCredentialDirect(t, wa, store, sessions, u, testOrigin, testRPID)
+	credID, priv := registerVirtualCredentialDirect(t, wa, store, ceremonies, u, testOrigin, testRPID)
 
 	// First, legitimate login: counter advances 1 (registration) -> 5.
 	doLogin := func(counter uint32) error {
 		beginReq := httptest.NewRequest(http.MethodPost, "/login/begin", nil)
 		beginRR := httptest.NewRecorder()
-		assertion, err := beginLogin(beginRR, beginReq, wa, sessions)
+		assertion, err := beginLogin(beginRR, beginReq, wa, ceremonies)
 		if err != nil {
 			t.Fatalf("beginLogin: %v", err)
 		}
@@ -245,7 +308,7 @@ func TestLoginRejectsSignCountRegression(t *testing.T) {
 		finishReq := httptest.NewRequest(http.MethodPost, "/login/finish", bytes.NewReader(body))
 		finishReq.AddCookie(cookieFrom(t, beginRR, loginCeremonyCookie))
 		finishRR := httptest.NewRecorder()
-		return finishLogin(finishRR, finishReq, wa, store, sessions, time.Hour)
+		return finishLogin(finishRR, finishReq, wa, store, ceremonies, sessions, time.Hour)
 	}
 
 	if err := doLogin(5); err != nil {
@@ -282,14 +345,18 @@ func TestLoginRejectsExpiredCeremonySession(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
 	now := time.Unix(1_700_000_000, 0)
-	sessions := &jsonSessionStore{path: t.TempDir() + "/sessions.json", now: func() time.Time { return now }}
+	// Clock-controlled ceremony store so the ceremony placeholder can be
+	// aged past ceremonyTTL; the authenticated-session store is separate and
+	// never reached (finishLogin fails at the ceremony Get).
+	ceremonies := &jsonSessionStore{path: t.TempDir() + "/ceremonies.json", now: func() time.Time { return now }, maxEntries: ceremonyMaxEntries}
+	sessions := newSessionStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
-	credID, priv := registerVirtualCredentialDirect(t, wa, store, sessions, u, testOrigin, testRPID)
+	credID, priv := registerVirtualCredentialDirect(t, wa, store, ceremonies, u, testOrigin, testRPID)
 
 	beginReq := httptest.NewRequest(http.MethodPost, "/login/begin", nil)
 	beginRR := httptest.NewRecorder()
-	assertion, err := beginLogin(beginRR, beginReq, wa, sessions)
+	assertion, err := beginLogin(beginRR, beginReq, wa, ceremonies)
 	if err != nil {
 		t.Fatalf("beginLogin: %v", err)
 	}
@@ -298,12 +365,12 @@ func TestLoginRejectsExpiredCeremonySession(t *testing.T) {
 	// Advance well past ceremonyTTL before finishing.
 	now = now.Add(ceremonyTTL + time.Minute)
 
-	body := assertionResponseBody(t, priv, assertion.Response.Challenge.String(), testOrigin, testRPID, credID, []byte(u.ID), 1)
+	body := assertionResponseBody(t, priv, assertion.Response.Challenge.String(), testOrigin, testRPID, credID, []byte(u.ID), 2)
 	finishReq := httptest.NewRequest(http.MethodPost, "/login/finish", bytes.NewReader(body))
 	finishReq.AddCookie(cookie)
 	finishRR := httptest.NewRecorder()
 
-	if err := finishLogin(finishRR, finishReq, wa, store, sessions, time.Hour); err == nil {
+	if err := finishLogin(finishRR, finishReq, wa, store, ceremonies, sessions, time.Hour); err == nil {
 		t.Fatal("finishLogin with expired ceremony session = nil error, want rejection")
 	}
 	for _, c := range finishRR.Result().Cookies() {
@@ -334,10 +401,11 @@ func TestLoginHTTPHandlersAndLogoutCSRFFlow(t *testing.T) {
 		t.Fatalf("webAuthnConfig: %v", err)
 	}
 	store := newUserStore(d.StateDir)
+	ceremonies := newCeremonyStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
-	credID, priv := registerVirtualCredentialDirect(t, wa, store, sessions, u, "http://example.com", "example.com")
+	credID, priv := registerVirtualCredentialDirect(t, wa, store, ceremonies, u, "http://example.com", "example.com")
 
 	beginRR := httptest.NewRecorder()
 	h.ServeHTTP(beginRR, httptest.NewRequest(http.MethodPost, "/login/begin", nil))

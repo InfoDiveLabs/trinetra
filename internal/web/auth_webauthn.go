@@ -114,7 +114,7 @@ type regCeremonyData struct {
 // w so the browser echoes the same ceremony id back to /enroll/finish. The
 // caller (enrollBeginHandler, routes.go) is responsible for JSON-encoding
 // the returned creation options onto the response body.
-func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, u *User, sessions SessionStore) (*protocol.CredentialCreation, error) {
+func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, u *User, ceremonies SessionStore) (*protocol.CredentialCreation, error) {
 	creation, sessionData, err := wa.BeginRegistration(u)
 	if err != nil {
 		return nil, fmt.Errorf("web: begin registration: %w", err)
@@ -123,12 +123,12 @@ func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebA
 	if err != nil {
 		return nil, fmt.Errorf("web: encode registration ceremony: %w", err)
 	}
-	sess, err := sessions.New("", ceremonyTTL)
+	sess, err := ceremonies.New("", ceremonyTTL)
 	if err != nil {
 		return nil, err
 	}
 	sess.Data = data
-	if err := sessions.Put(sess); err != nil {
+	if err := ceremonies.Put(sess); err != nil {
 		return nil, err
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -136,7 +136,7 @@ func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebA
 		Value:    sess.ID,
 		Path:     "/enroll",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   300, // 5 minutes: ample time for a passkey prompt; matches ceremonyTTL.
 	})
@@ -152,16 +152,16 @@ func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebA
 // via store.Put. A tampered/invalid attestation (wrong origin, wrong
 // challenge, corrupted signature, replayed/reused cookie, ...) returns an
 // error and nothing is persisted.
-func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, store UserStore, sessions SessionStore) error {
+func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, store UserStore, ceremonies SessionStore) error {
 	cookie, err := r.Cookie(enrollSessionCookie)
 	if err != nil {
 		return fmt.Errorf("web: missing or expired enrollment session: %w", err)
 	}
-	sess, ok := sessions.Get(cookie.Value)
+	sess, ok := ceremonies.Get(cookie.Value)
 	if !ok {
 		return fmt.Errorf("web: enrollment session not found (expired or already used)")
 	}
-	_ = sessions.Delete(cookie.Value) // one-shot: a cookie value is only ever valid for a single finishRegistration call.
+	_ = ceremonies.Delete(cookie.Value) // one-shot: a cookie value is only ever valid for a single finishRegistration call.
 	// Clear the cookie regardless of outcome below: it's single-use either way.
 	http.SetCookie(w, &http.Cookie{
 		Name:     enrollSessionCookie,
@@ -203,7 +203,7 @@ func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.Web
 // userHandle (see DiscoverableUserHandler). The resulting SessionData is
 // stashed the same way beginRegistration stashes its own (a ceremony Session
 // keyed by loginCeremonyCookie, ttl ceremonyTTL).
-func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, sessions SessionStore) (*protocol.CredentialAssertion, error) {
+func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, ceremonies SessionStore) (*protocol.CredentialAssertion, error) {
 	assertion, sessionData, err := wa.BeginDiscoverableLogin()
 	if err != nil {
 		return nil, fmt.Errorf("web: begin login: %w", err)
@@ -212,12 +212,12 @@ func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, s
 	if err != nil {
 		return nil, fmt.Errorf("web: encode login ceremony: %w", err)
 	}
-	sess, err := sessions.New("", ceremonyTTL)
+	sess, err := ceremonies.New("", ceremonyTTL)
 	if err != nil {
 		return nil, err
 	}
 	sess.Data = data
-	if err := sessions.Put(sess); err != nil {
+	if err := ceremonies.Put(sess); err != nil {
 		return nil, err
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -225,7 +225,7 @@ func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, s
 		Value:    sess.ID,
 		Path:     "/login",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   300, // 5 minutes: matches ceremonyTTL.
 	})
@@ -250,16 +250,16 @@ func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, s
 // "use up" a counter value the legitimate authenticator hasn't reached yet).
 // Only on a clean (non-regressed) counter is the credential's stored
 // SignCount advanced and persisted.
-func finishLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, users UserStore, sessions SessionStore, ttl time.Duration) error {
+func finishLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, users UserStore, ceremonies, sessions SessionStore, ttl time.Duration) error {
 	cookie, err := r.Cookie(loginCeremonyCookie)
 	if err != nil {
 		return fmt.Errorf("web: missing or expired login session: %w", err)
 	}
-	sess, ok := sessions.Get(cookie.Value)
+	sess, ok := ceremonies.Get(cookie.Value)
 	if !ok {
 		return fmt.Errorf("web: login session not found (expired or already used)")
 	}
-	_ = sessions.Delete(cookie.Value) // one-shot, same as the registration ceremony.
+	_ = ceremonies.Delete(cookie.Value) // one-shot, same as the registration ceremony.
 	http.SetCookie(w, &http.Cookie{
 		Name:     loginCeremonyCookie,
 		Value:    "",

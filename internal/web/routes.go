@@ -175,8 +175,8 @@ func enrollBeginHandler(d Deps) http.HandlerFunc {
 		}
 		u := &User{ID: id, Name: name, Role: RoleViewer, Created: time.Now().Unix()}
 
-		sessions := newSessionStore(d.StateDir)
-		creation, err := beginRegistration(w, r, wa, u, sessions)
+		ceremonies := newCeremonyStore(d.StateDir)
+		creation, err := beginRegistration(w, r, wa, u, ceremonies)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -201,8 +201,8 @@ func enrollFinishHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		store := newUserStore(d.StateDir)
-		sessions := newSessionStore(d.StateDir)
-		if err := finishRegistration(w, r, wa, store, sessions); err != nil {
+		ceremonies := newCeremonyStore(d.StateDir)
+		if err := finishRegistration(w, r, wa, store, ceremonies); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -234,8 +234,8 @@ func loginBeginHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		sessions := newSessionStore(d.StateDir)
-		assertion, err := beginLogin(w, r, wa, sessions)
+		ceremonies := newCeremonyStore(d.StateDir)
+		assertion, err := beginLogin(w, r, wa, ceremonies)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -261,8 +261,9 @@ func loginFinishHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		store := newUserStore(d.StateDir)
+		ceremonies := newCeremonyStore(d.StateDir)
 		sessions := newSessionStore(d.StateDir)
-		if err := finishLogin(w, r, wa, store, sessions, sessionTTL(d.Cfg())); err != nil {
+		if err := finishLogin(w, r, wa, store, ceremonies, sessions, sessionTTL(d.Cfg())); err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}

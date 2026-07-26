@@ -4,6 +4,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"strings"
 	"time"
@@ -78,7 +79,10 @@ func requireCSRF(next http.Handler) http.Handler {
 				return
 			}
 			token := csrfTokenFromRequest(r)
-			if token == "" || token != sess.CSRF {
+			// Constant-time compare so a token guess can't be narrowed by
+			// timing the response; the empty-token guard also short-circuits
+			// before the compare (a missing token is never valid).
+			if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(sess.CSRF)) != 1 {
 				http.Error(w, "forbidden: missing or invalid CSRF token", http.StatusForbidden)
 				return
 			}

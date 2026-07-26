@@ -203,9 +203,9 @@ func TestBeginRegistrationReturnsCreationOptionsAndSetsCookie(t *testing.T) {
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	r := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	rr := httptest.NewRecorder()
-	sessions := newSessionStore(t.TempDir())
+	ceremonies := newCeremonyStore(t.TempDir())
 
-	creation, err := beginRegistration(rr, r, wa, u, sessions)
+	creation, err := beginRegistration(rr, r, wa, u, ceremonies)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
@@ -233,12 +233,12 @@ func TestBeginRegistrationReturnsCreationOptionsAndSetsCookie(t *testing.T) {
 func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
-	sessions := newSessionStore(t.TempDir())
+	ceremonies := newCeremonyStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	creation, err := beginRegistration(beginRR, beginReq, wa, u, sessions)
+	creation, err := beginRegistration(beginRR, beginReq, wa, u, ceremonies)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T
 	finishReq.AddCookie(cookieFrom(t, beginRR, enrollSessionCookie))
 	finishRR := httptest.NewRecorder()
 
-	if err := finishRegistration(finishRR, finishReq, wa, store, sessions); err != nil {
+	if err := finishRegistration(finishRR, finishReq, wa, store, ceremonies); err != nil {
 		t.Fatalf("finishRegistration: %v", err)
 	}
 
@@ -277,12 +277,12 @@ func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T
 func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
-	sessions := newSessionStore(t.TempDir())
+	ceremonies := newCeremonyStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	if _, err := beginRegistration(beginRR, beginReq, wa, u, sessions); err != nil {
+	if _, err := beginRegistration(beginRR, beginReq, wa, u, ceremonies); err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 	finishReq.AddCookie(cookieFrom(t, beginRR, enrollSessionCookie))
 	finishRR := httptest.NewRecorder()
 
-	if err := finishRegistration(finishRR, finishReq, wa, store, sessions); err == nil {
+	if err := finishRegistration(finishRR, finishReq, wa, store, ceremonies); err == nil {
 		t.Fatal("finishRegistration(tampered challenge) = nil error, want error")
 	}
 	if _, ok := store.Get(u.ID); ok {
@@ -310,12 +310,12 @@ func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 func TestRegistrationRejectsWrongOrigin(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
-	sessions := newSessionStore(t.TempDir())
+	ceremonies := newCeremonyStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	creation, err := beginRegistration(beginRR, beginReq, wa, u, sessions)
+	creation, err := beginRegistration(beginRR, beginReq, wa, u, ceremonies)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestRegistrationRejectsWrongOrigin(t *testing.T) {
 	finishReq.AddCookie(cookieFrom(t, beginRR, enrollSessionCookie))
 	finishRR := httptest.NewRecorder()
 
-	err = finishRegistration(finishRR, finishReq, wa, store, sessions)
+	err = finishRegistration(finishRR, finishReq, wa, store, ceremonies)
 	if err == nil {
 		t.Fatal("finishRegistration(wrong origin) = nil error, want error")
 	}
