@@ -95,6 +95,11 @@ type Config struct {
 		// cheaper `smartctl --scan`/`-H` health checks are unaffected and
 		// always run regardless of this setting.
 		SmartAttrs *bool `json:"smart_attrs,omitempty"`
+		// SmartInterval is the minimum seconds between SMART scans (smartctl
+		// --scan/-H/-A). SMART health changes rarely and the scan is the
+		// heaviest slow-tier call, so it is throttled independently of
+		// sample_interval. Unset/0 -> default 1800s (30 min).
+		SmartInterval int `json:"smart_interval,omitempty"`
 	} `json:"collect"`
 }
 
@@ -126,6 +131,15 @@ func (c *Config) ProcessesEnabled() bool {
 // collector (collect.smart_attrs) is enabled: unset (nil) defaults to true.
 func (c *Config) SmartAttrsEnabled() bool {
 	return c.Collect.SmartAttrs == nil || *c.Collect.SmartAttrs
+}
+
+// SmartIntervalSec is the effective SMART-scan throttle in seconds; unset/<=0
+// defaults to 1800 (30 min). Set it as low as sample_interval to scan every slow tick.
+func (c *Config) SmartIntervalSec() int {
+	if c.Collect.SmartInterval <= 0 {
+		return 1800
+	}
+	return c.Collect.SmartInterval
 }
 
 type TargetOverride struct {
@@ -425,6 +439,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.ProcessesEnabled()), true
 	case "collect.smart_attrs":
 		return strconv.FormatBool(c.SmartAttrsEnabled()), true
+	case "collect.smart_interval":
+		return strconv.Itoa(c.SmartIntervalSec()), true
 	}
 	return "", false
 }
@@ -565,6 +581,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.smart_attrs: %w", err)
 		}
 		c.Collect.SmartAttrs = &b
+	case "collect.smart_interval":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("collect.smart_interval must be an integer >= 1")
+		}
+		c.Collect.SmartInterval = n
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}

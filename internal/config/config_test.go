@@ -865,6 +865,63 @@ func TestSmartAttrsPersistsAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+func TestSmartIntervalSecDefault(t *testing.T) {
+	c := Default()
+	if got := c.SmartIntervalSec(); got != 1800 {
+		t.Fatalf("SmartIntervalSec() default = %d, want 1800", got)
+	}
+	if got, _ := c.Get("collect.smart_interval"); got != "1800" {
+		t.Fatalf("collect.smart_interval default = %q, want 1800", got)
+	}
+}
+
+func TestSmartIntervalSetGetRoundTrip(t *testing.T) {
+	c := Default()
+	if err := c.Set("collect.smart_interval", "60"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.SmartIntervalSec(); got != 60 {
+		t.Fatalf("SmartIntervalSec() after set 60 = %d, want 60", got)
+	}
+	if got, _ := c.Get("collect.smart_interval"); got != "60" {
+		t.Fatalf("collect.smart_interval after set 60 = %q, want 60", got)
+	}
+	if err := c.Unset("collect.smart_interval"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.smart_interval"); got != "1800" {
+		t.Fatalf("collect.smart_interval after unset = %q, want default 1800", got)
+	}
+}
+
+func TestSmartIntervalSetRejectsInvalid(t *testing.T) {
+	c := Default()
+	for _, v := range []string{"0", "-5", "bogus"} {
+		if err := c.Set("collect.smart_interval", v); err == nil {
+			t.Errorf("collect.smart_interval set to %q: want error, got nil", v)
+		}
+	}
+}
+
+func TestSmartIntervalPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("collect.smart_interval", "300"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("collect.smart_interval"); got != "300" {
+		t.Fatalf("collect.smart_interval after save/load = %q, want 300", got)
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")
