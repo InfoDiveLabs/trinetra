@@ -81,6 +81,16 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(channelsTestHandler(d)))
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Public view", "Curated public dashboard settings")))
 
+	// /alerts (Task 10/#66): alert history (Deps.AlertLogPath) + active
+	// alerts (Deps.AlertStatePath), viewer+ per the design doc — this
+	// resolves the earlier placeholder note that /alerts must be
+	// viewer-gated, not admin-only. Ack, however, is admin-only + CSRF: it
+	// mutates shared alert state everyone else's view depends on.
+	mux.HandleFunc("GET /alerts", requireRole(RoleViewer, alertsPageHandler(d)))
+	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleAdmin, func(w http.ResponseWriter, r *http.Request) {
+		requireCSRF(alertsAckHandler(d)).ServeHTTP(w, r)
+	}))
+
 	// /users (Task 7/#63): the real user-management page — list accounts,
 	// issue/re-issue enrollment tokens, change roles, remove accounts, revoke
 	// individual passkeys. GET is requireRole(RoleAdmin, ...) like the other
