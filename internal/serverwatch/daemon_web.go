@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
+	"time"
 
+	"serverwatch/internal/config"
 	"serverwatch/internal/web"
 )
 
@@ -26,7 +28,7 @@ func maybeStartWeb(d WebDeps) func() {
 	wd := web.Deps{
 		Cfg:            d.Cfg,
 		Reload:         d.Reload,
-		Store:          d.Store,
+		Store:          seriesStoreFor(d.Store, d.Cfg),
 		Snapshot:       func() web.DashboardView { return buildDashboardView(d.Snapshot()) },
 		StateDir:       d.StateDir,
 		AlertLogPath:   d.AlertLogPath,
@@ -106,6 +108,70 @@ func buildDashboardView(snap Snapshot) web.DashboardView {
 	}
 
 	return v
+}
+
+// seriesStoreFor adapts d.Store (a native serverwatch.SampleStore, possibly
+// nil when store-writes-disabled mode leaves the daemon without one) into
+// the web.SeriesStore interface (internal/web/series_store.go) — the Task 9
+// (#65) resolution of the Task 1 placeholder that made WebDeps.Store widen
+// straight into web.Deps.Store as `any`, mirroring buildDashboardView's role
+// for Deps.Snapshot.
+//
+// A nil store returns a true nil web.SeriesStore, NOT a non-nil interface
+// wrapping a nil *seriesStoreAdapter: assigning a typed nil pointer into an
+// interface value produces a non-nil interface whose method set still
+// panics on first use, and internal/web's `d.Store != nil` nil-check
+// (handlers_history.go) exists precisely to treat "no store" as "empty
+// series" without ever calling into one — so this indirection matters, not
+// just style.
+func seriesStoreFor(store SampleStore, cfg func() *config.Config) web.SeriesStore {
+	if store == nil {
+		return nil
+	}
+	return &seriesStoreAdapter{store: store, cfg: cfg}
+}
+
+// seriesStoreAdapter is the concrete web.SeriesStore seriesStoreFor builds:
+// it wraps a native SampleStore and resolves the raw-vs-1m Resolution
+// argument SampleStore.Query needs internally (via PickResolution and the
+// daemon's configured storage.raw_retention), so internal/web — which holds
+// this only as a web.SeriesStore — never needs a Resolution type of its own.
+type seriesStoreAdapter struct {
+	store SampleStore
+	// cfg returns the daemon's current config (race-safe against SIGHUP
+	// reload, same as WebDeps.Cfg) so Query can read the LIVE
+	// storage.raw_retention on every call rather than a value captured once
+	// at daemon startup. May be nil in tests that don't care about a
+	// specific retention window; Query falls back to defaultRawRetention
+	// then, mirroring configuredRawRetention's own nil-safety.
+	cfg func() *config.Config
+}
+
+// Query implements web.SeriesStore: PickResolution picks raw vs 1m from the
+// requested range, "now", and the configured raw retention, then delegates
+// to the wrapped SampleStore.Query and widens each returned Point into a
+// web.SeriesPoint. A store error is returned as-is (propagated, not
+// swallowed) — internal/web's seriesAPIHandler is what decides an error
+// still renders as an empty 200 response, not this adapter's job.
+func (a *seriesStoreAdapter) Query(metric string, from, to int64) ([]web.SeriesPoint, error) {
+	rawRetention := defaultRawRetention
+	if a.cfg != nil {
+		if cfg := a.cfg(); cfg != nil {
+			rawRetention = configuredRawRetention(cfg)
+		}
+	}
+	now := time.Now().Unix()
+	res := PickResolution(from, to, now, rawRetention)
+
+	pts, err := a.store.Query(metric, from, to, res)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.SeriesPoint, len(pts))
+	for i, p := range pts {
+		out[i] = web.SeriesPoint{TS: p.TS, Min: p.Min, Avg: p.Avg, Max: p.Max}
+	}
+	return out, nil
 }
 
 // topContainers builds the "top by CPU%"/"top by memory" container lists
