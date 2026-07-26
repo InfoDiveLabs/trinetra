@@ -5,6 +5,7 @@ package web
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"time"
@@ -221,6 +222,7 @@ func usersInviteHandler(d Deps) http.HandlerFunc {
 			TTL:      ttlValue,
 			TTLLabel: ttlLabel(ttlValue),
 		}
+		logAudit(d, r, "user.invite", string(role), "", "ttl="+ttlValue)
 		store := newUserStore(d.StateDir)
 		data := buildUsersPageData(r, store, issued)
 		if err := renderUsersFragment(w, data); err != nil {
@@ -250,6 +252,10 @@ func usersRoleHandler(d Deps) http.HandlerFunc {
 		}
 
 		store := newUserStore(d.StateDir)
+		oldRole := ""
+		if u, ok := store.Get(id); ok {
+			oldRole = string(u.Role)
+		}
 		switch err := store.SetRoleUnlessLastAdmin(id, newRole); {
 		case errors.Is(err, errUserNotFound):
 			http.Error(w, "user not found", http.StatusNotFound)
@@ -261,6 +267,7 @@ func usersRoleHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		logAudit(d, r, "user.role", id, oldRole, string(newRole))
 
 		data := buildUsersPageData(r, store, nil)
 		if err := renderUsersFragment(w, data); err != nil {
@@ -276,6 +283,10 @@ func usersRemoveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		store := newUserStore(d.StateDir)
+		oldSummary := ""
+		if u, ok := store.Get(id); ok {
+			oldSummary = fmt.Sprintf("name=%s role=%s", u.Name, u.Role)
+		}
 		switch err := store.RemoveUnlessLastAdmin(id); {
 		case errors.Is(err, errUserNotFound):
 			http.Error(w, "user not found", http.StatusNotFound)
@@ -287,6 +298,7 @@ func usersRemoveHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		logAudit(d, r, "user.remove", id, oldSummary, "")
 
 		data := buildUsersPageData(r, store, nil)
 		if err := renderUsersFragment(w, data); err != nil {
@@ -324,11 +336,13 @@ func usersRevokeCredentialHandler(d Deps) http.HandlerFunc {
 			http.Error(w, "credential not found", http.StatusNotFound)
 			return
 		}
+		revoked := credentialParam(want)
 		u.Credentials = append(u.Credentials[:idx], u.Credentials[idx+1:]...)
 		if err := store.Put(u); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		logAudit(d, r, "user.credential.revoke", id, revoked, "")
 
 		data := buildUsersPageData(r, store, nil)
 		if err := renderUsersFragment(w, data); err != nil {

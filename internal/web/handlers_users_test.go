@@ -441,3 +441,61 @@ func TestUsersMutationsRequireAdminRole(t *testing.T) {
 		t.Fatalf("POST /users/invite as viewer status = %d, want 403, body: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// TestUsersMutationsWriteAuditRecords pins the audit-log retrofit (issue
+// #66's "ALSO retrofit the Task-7 user-management mutations to write audit
+// records"): invite, role change, remove, and credential revoke each append
+// an AuditRecord with the expected Action/Key.
+func TestUsersMutationsWriteAuditRecords(t *testing.T) {
+	d, users, sessions := rbacTestDeps(t)
+	h := newHandler(d)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	// invite
+	rr := postForm(h, "/users/invite", url.Values{"role": {"viewer"}, "ttl": {"1h"}}, cookie, csrf)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /users/invite status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+
+	// role change
+	target := &User{ID: mustNewUserID(t), Name: "bob", Role: RoleViewer, Created: 1,
+		Credentials: []Credential{{ID: []byte{9, 9, 9}, PublicKey: []byte{1}}}}
+	if err := users.Put(target); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	if rr := postForm(h, "/users/"+target.ID+"/role", url.Values{"role": {"admin"}}, cookie, csrf); rr.Code != http.StatusOK {
+		t.Fatalf("POST .../role status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+
+	// credential revoke
+	credParam := credentialParam([]byte{9, 9, 9})
+	if rr := postForm(h, "/users/"+target.ID+"/credentials/"+credParam+"/revoke", url.Values{}, cookie, csrf); rr.Code != http.StatusOK {
+		t.Fatalf("POST .../revoke status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+
+	// remove
+	if rr := postForm(h, "/users/"+target.ID+"/remove", url.Values{}, cookie, csrf); rr.Code != http.StatusOK {
+		t.Fatalf("POST .../remove status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+
+	recs := readAuditRecords(t, d.StateDir)
+	wantActions := map[string]bool{
+		"user.invite":            false,
+		"user.role":              false,
+		"user.credential.revoke": false,
+		"user.remove":            false,
+	}
+	for _, r := range recs {
+		if _, ok := wantActions[r.Action]; ok {
+			wantActions[r.Action] = true
+		}
+		if r.User != "root" {
+			t.Errorf("audit record %+v: user = %q, want root", r, r.User)
+		}
+	}
+	for action, found := range wantActions {
+		if !found {
+			t.Errorf("no audit record with action %q, got: %+v", action, recs)
+		}
+	}
+}
