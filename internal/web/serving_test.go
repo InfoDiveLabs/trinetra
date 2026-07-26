@@ -279,9 +279,12 @@ func TestSecurityHeadersHSTSOnlyOverTLS(t *testing.T) {
 // the exact same value the rendered page's boot script carries, so the
 // browser actually executes it under the CSP that names it.
 func TestSecurityHeadersNoncePropagatesToTemplate(t *testing.T) {
+	// GET /enroll (an anonymous, always-reachable page that renders a
+	// nonce'd boot script) rather than GET /, which is now viewer+ and would
+	// redirect an anonymous request to /login before rendering any page.
 	h := newHandler(testDeps(t))
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/enroll", nil))
 
 	csp := rr.Header().Get("Content-Security-Policy")
 	start := strings.Index(csp, "'nonce-")

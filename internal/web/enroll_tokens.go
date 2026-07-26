@@ -216,22 +216,33 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 	return func() { close(done) }
 }
 
-// resolveEnrollRole determines what Role a NEW /enroll/begin registration
-// should receive:
+// resolveEnrollRole decides, at /enroll/begin, how a NEW registration should
+// proceed:
 //
-//   - a non-blank token: whatever Role tokens.Redeem(token) grants (Redeem
-//     itself enforces unknown/expired/used rejection).
-//   - no token, and the user store has no accounts yet: RoleAdmin — the
-//     first-run bootstrap the design doc's Auth section calls for.
+//   - a non-blank token: role is whatever tokens.Redeem(token) grants (Redeem
+//     enforces unknown/expired/used rejection, and burns the single-use
+//     token now); bootstrap is false. The role is final.
+//   - no token, and the user store has no accounts yet: this is a first-run
+//     bootstrap ATTEMPT — bootstrap is true and role is left empty. The
+//     account's admin role is NOT decided here: two concurrent tokenless
+//     begins would both see an empty store, so the authoritative "0 users ⇒
+//     admin, else refuse" decision is deferred to finish time
+//     (jsonUserStore.CreateFirstAdmin, under the write lock). This begin-time
+//     check is only a fast-fail for the obviously-closed case below.
 //   - no token, and at least one account already exists: an error. Open,
 //     tokenless enrollment is only ever valid for the very first account;
 //     every subsequent one needs an admin-issued invite.
-func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (Role, error) {
+//
+// A true bootstrap result is threaded through the ceremony (regCeremonyData.
+// Bootstrap) so finishRegistration knows to route through CreateFirstAdmin
+// rather than a plain Put.
+func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role Role, bootstrap bool, err error) {
 	if token != "" {
-		return tokens.Redeem(token)
+		r, err := tokens.Redeem(token)
+		return r, false, err
 	}
 	if len(users.List()) == 0 {
-		return RoleAdmin, nil
+		return "", true, nil
 	}
-	return "", fmt.Errorf("web: enrollment is closed; an admin-issued invite token is required")
+	return "", false, fmt.Errorf("web: enrollment is closed; an admin-issued invite token is required")
 }

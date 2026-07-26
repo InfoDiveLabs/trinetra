@@ -65,7 +65,7 @@ func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store 
 
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	creation, err := beginRegistration(beginRR, beginReq, wa, u, ceremonies)
+	creation, err := beginRegistration(beginRR, beginReq, wa, u, false, ceremonies)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}

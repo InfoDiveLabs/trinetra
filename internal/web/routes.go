@@ -24,7 +24,13 @@ func newHandler(d Deps) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", assetHandler(assetsSub)))
-	mux.HandleFunc("GET /{$}", dashboardHandler(d))
+	// The dashboard is viewer+ per the design doc's route table (only
+	// /public is anonymous), so it's gated behind requireRole(RoleViewer,
+	// ...): any signed-in account (viewer or admin) may see it; an anonymous
+	// visitor is redirected to /login. The other viewer+ routes
+	// (/history, /alerts, /monitoring) are gated the same way by the tasks
+	// that register them.
+	mux.HandleFunc("GET /{$}", requireRole(RoleViewer, dashboardHandler(d)))
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
 	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
@@ -179,12 +185,17 @@ type enrollBeginRequest struct {
 // a future admin-managed flow — never this anonymous path.
 //
 // Role assignment (issue #62, resolved): resolveEnrollRole
-// (enroll_tokens.go) decides the new account's Role — an admin-issued
+// (enroll_tokens.go) decides how the new account proceeds — an admin-issued
 // enrollment token's Role if one was posted (tokenStore.Redeem also
-// enforces the token being unknown/expired/already-used), otherwise
-// RoleAdmin for the very first account ever (first-run bootstrap) or a
-// flat refusal once any account already exists: unauthenticated open
-// enrollment is only ever valid for that first account.
+// enforces the token being unknown/expired/already-used, and burns the
+// single-use token now), or a tokenless first-run BOOTSTRAP attempt when no
+// account exists yet, or a flat refusal once any account already exists:
+// unauthenticated open enrollment is only ever valid for that first
+// account. For a bootstrap attempt the admin role is NOT assigned here —
+// that decision is deferred to finish time (finishRegistration ->
+// jsonUserStore.CreateFirstAdmin, under the write lock) so two concurrent
+// tokenless enrollments can't both observe an empty store and both become
+// admin (the bootstrap TOCTOU).
 func enrollBeginHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req enrollBeginRequest
@@ -214,7 +225,7 @@ func enrollBeginHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		role, err := resolveEnrollRole(newTokenStore(d.StateDir), store, strings.TrimSpace(req.Token))
+		role, bootstrap, err := resolveEnrollRole(newTokenStore(d.StateDir), store, strings.TrimSpace(req.Token))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
@@ -225,10 +236,15 @@ func enrollBeginHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// For a bootstrap (tokenless first-run) enrollment, role is left empty
+		// here on purpose: finishRegistration -> CreateFirstAdmin assigns
+		// RoleAdmin atomically with the write, so the "first account becomes
+		// admin" decision can't be duplicated by two racing enrollments. For a
+		// token enrollment, role is already the token's final grant.
 		u := &User{ID: id, Name: name, Role: role, Created: time.Now().Unix()}
 
 		ceremonies := newCeremonyStore(d.StateDir)
-		creation, err := beginRegistration(w, r, wa, u, ceremonies)
+		creation, err := beginRegistration(w, r, wa, u, bootstrap, ceremonies)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

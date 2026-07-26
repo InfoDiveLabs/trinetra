@@ -153,6 +153,10 @@ type UserStore interface {
 	Put(u *User) error
 	List() []*User
 	Delete(id string) error
+	// CreateFirstAdmin atomically persists u as the very first account (role
+	// forced to RoleAdmin) IFF the store is still empty, else fails — the
+	// first-run bootstrap decision made under the same lock as the write.
+	CreateFirstAdmin(u *User) error
 }
 
 // jsonUserStore is UserStore backed by a single JSON file
@@ -283,6 +287,33 @@ func (s *jsonUserStore) Put(u *User) error {
 			return s.saveLocked(users)
 		}
 	}
+	users = append(users, u)
+	return s.saveLocked(users)
+}
+
+// CreateFirstAdmin atomically persists u as the first-ever account, forcing
+// its role to RoleAdmin — but ONLY if the store is still empty; otherwise it
+// returns an error and writes nothing. Both the emptiness check and the
+// append happen under the SAME s.mu, which is what closes the first-run
+// bootstrap TOCTOU: an earlier design decided "0 users ⇒ admin" at
+// /enroll/begin (before the WebAuthn round-trip) and only wrote the account
+// at /enroll/finish, so two tokenless enrollments started before either
+// finished both observed an empty store and both became admin. Deciding it
+// here, at finish, under the write lock means whichever finish acquires the
+// lock first becomes the sole admin and every later one sees a non-empty
+// store and is rejected (tokenless enrollment is closed the moment one
+// account exists).
+func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	if len(users) != 0 {
+		return fmt.Errorf("web: enrollment is closed; the first account already exists")
+	}
+	u.Role = RoleAdmin
 	users = append(users, u)
 	return s.saveLocked(users)
 }

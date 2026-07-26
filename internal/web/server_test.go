@@ -27,18 +27,35 @@ func testDeps(t *testing.T) Deps {
 	}
 }
 
-// TestServerServesDashboardAndAssets pins newHandler's two routes: GET /
-// renders the base layout (brand + nav) around the dashboard placeholder,
-// and GET /assets/style.css serves the embedded mockup CSS verbatim with a
+// TestServerServesDashboardAndAssets pins newHandler's routes: GET / is
+// viewer+ (requireRole(RoleViewer, ...)), so a SIGNED-IN request renders the
+// base layout (brand + nav) around the dashboard placeholder while an
+// anonymous one redirects to /login; and GET /assets/style.css serves the
+// embedded mockup CSS verbatim (anonymously — assets aren't gated) with a
 // text/css content type. httptest.NewRecorder exercises the handler
 // directly, no real port bound.
 func TestServerServesDashboardAndAssets(t *testing.T) {
-	h := newHandler(testDeps(t))
+	d := enrollTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
 
+	// Anonymous GET / must redirect to /login now that the dashboard is
+	// viewer+ (requireRole), not render the page.
+	anon := httptest.NewRecorder()
+	h.ServeHTTP(anon, httptest.NewRequest(http.MethodGet, "/", nil))
+	if anon.Code != http.StatusFound {
+		t.Fatalf("anonymous GET / status = %d, want %d (redirect to /login)", anon.Code, http.StatusFound)
+	}
+	if loc := anon.Header().Get("Location"); loc != "/login" {
+		t.Errorf("anonymous GET / Location = %q, want /login", loc)
+	}
+
+	// A signed-in viewer reaches the dashboard placeholder.
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
 	if rr.Code != http.StatusOK {
-		t.Fatalf("GET / status = %d, want 200", rr.Code)
+		t.Fatalf("GET / (signed in) status = %d, want 200", rr.Code)
 	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "serverwatch") {

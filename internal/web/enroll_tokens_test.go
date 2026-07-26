@@ -125,18 +125,24 @@ func TestTokenStoreGCRemovesExpiredRecords(t *testing.T) {
 
 // TestResolveEnrollRoleBootstrapsFirstUserAsAdmin pins the first-run
 // bootstrap rule directly against resolveEnrollRole: an empty store with no
-// token supplied resolves to RoleAdmin.
+// token supplied resolves to a bootstrap attempt (role deferred to finish,
+// not decided here — see the TOCTOU fix), not a rejection.
 func TestResolveEnrollRoleBootstrapsFirstUserAsAdmin(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
 	users := newUserStore(dir)
 
-	role, err := resolveEnrollRole(tokens, users, "")
+	role, bootstrap, err := resolveEnrollRole(tokens, users, "")
 	if err != nil {
 		t.Fatalf("resolveEnrollRole(bootstrap): %v", err)
 	}
-	if role != RoleAdmin {
-		t.Errorf("bootstrap role = %q, want %q", role, RoleAdmin)
+	if !bootstrap {
+		t.Error("resolveEnrollRole(empty store, no token) bootstrap = false, want true")
+	}
+	// Role is intentionally NOT decided at begin for a bootstrap attempt;
+	// CreateFirstAdmin forces RoleAdmin atomically at finish time.
+	if role != "" {
+		t.Errorf("bootstrap role = %q, want \"\" (decided at finish)", role)
 	}
 }
 
@@ -151,13 +157,14 @@ func TestResolveEnrollRoleClosedAfterBootstrap(t *testing.T) {
 		t.Fatalf("seed Put: %v", err)
 	}
 
-	if _, err := resolveEnrollRole(tokens, users, ""); err == nil {
+	if _, _, err := resolveEnrollRole(tokens, users, ""); err == nil {
 		t.Fatal("resolveEnrollRole(no token, users exist) = nil error, want rejection (enrollment closed)")
 	}
 }
 
 // TestResolveEnrollRoleHonorsValidToken pins that a valid token's role wins
-// even when the store already has users (the normal post-bootstrap path).
+// even when the store already has users (the normal post-bootstrap path),
+// and that it is NOT a bootstrap attempt.
 func TestResolveEnrollRoleHonorsValidToken(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
@@ -167,9 +174,12 @@ func TestResolveEnrollRoleHonorsValidToken(t *testing.T) {
 	}
 
 	tok := tokens.Issue(RoleViewer, time.Hour)
-	role, err := resolveEnrollRole(tokens, users, tok)
+	role, bootstrap, err := resolveEnrollRole(tokens, users, tok)
 	if err != nil {
 		t.Fatalf("resolveEnrollRole(valid token): %v", err)
+	}
+	if bootstrap {
+		t.Error("resolveEnrollRole(valid token) bootstrap = true, want false")
 	}
 	if role != RoleViewer {
 		t.Errorf("role = %q, want %q", role, RoleViewer)
@@ -352,5 +362,80 @@ func TestEnrollExpiredTokenRejected(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("POST /enroll/begin with expired token status = %d, want 403, body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// enrollBeginRR runs POST /enroll/begin for name (no token) and returns the
+// challenge + ceremony cookie, failing the test on a non-200.
+func enrollBeginRR(t *testing.T, h http.Handler, name string) (challenge string, cookie *http.Cookie) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"name": name})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/enroll/begin", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /enroll/begin(%q) status = %d, want 200, body: %s", name, rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		PublicKey struct {
+			Challenge string `json:"challenge"`
+		} `json:"publicKey"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode begin(%q): %v", name, err)
+	}
+	return resp.PublicKey.Challenge, cookieFrom(t, rr, enrollSessionCookie)
+}
+
+// enrollFinishRR completes an enrollment for a challenge/cookie pair from
+// enrollBeginRR and returns the finish status code.
+func enrollFinishRR(t *testing.T, h http.Handler, challenge string, cookie *http.Cookie) int {
+	t.Helper()
+	body, _ := creationResponseBody(t, challenge, "http://example.com", "example.com")
+	req := httptest.NewRequest(http.MethodPost, "/enroll/finish", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr.Code
+}
+
+// TestBootstrapRaceYieldsExactlyOneAdmin is the TOCTOU regression pin: two
+// tokenless enrollments that BOTH begin against an empty store (each reads
+// zero users, each is a bootstrap attempt) must not both become admin. The
+// admin-or-refuse decision is made atomically at finish time
+// (jsonUserStore.CreateFirstAdmin, under the write lock), so whichever finish
+// commits first becomes the sole admin and the second — now seeing a
+// non-empty store — is rejected. This reproduces the reviewer's live repro
+// (two /enroll/begin, then two /enroll/finish) and asserts exactly one
+// account exists afterward and it is admin.
+func TestBootstrapRaceYieldsExactlyOneAdmin(t *testing.T) {
+	d := enrollTestDeps(t)
+	h := newHandler(d)
+
+	// Both begins run FIRST, against the still-empty store — this is the
+	// window where the old (begin-time) decision made both admin.
+	ch1, cookie1 := enrollBeginRR(t, h, "racer-1")
+	ch2, cookie2 := enrollBeginRR(t, h, "racer-2")
+
+	// Now both finishes. The first to commit wins the sole admin slot.
+	code1 := enrollFinishRR(t, h, ch1, cookie1)
+	code2 := enrollFinishRR(t, h, ch2, cookie2)
+
+	if code1 != http.StatusNoContent {
+		t.Fatalf("first bootstrap finish status = %d, want 204", code1)
+	}
+	if code2 == http.StatusNoContent {
+		t.Fatal("second bootstrap finish succeeded (204); want rejection — a second silent admin is exactly the TOCTOU bug")
+	}
+
+	store := newUserStore(d.StateDir)
+	all := store.List()
+	if len(all) != 1 {
+		t.Fatalf("store has %d accounts after the bootstrap race, want exactly 1", len(all))
+	}
+	if all[0].Role != RoleAdmin {
+		t.Errorf("sole bootstrap account role = %q, want %q", all[0].Role, RoleAdmin)
+	}
+	if all[0].Name != "racer-1" {
+		t.Errorf("sole account name = %q, want racer-1 (the finish that won the lock)", all[0].Name)
 	}
 }

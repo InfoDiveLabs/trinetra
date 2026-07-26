@@ -105,6 +105,12 @@ const ceremonyTTL = 5 * time.Minute
 type regCeremonyData struct {
 	User     *User                 `json:"user"`
 	WebAuthn *webauthn.SessionData `json:"webauthn"`
+	// Bootstrap marks a tokenless first-run enrollment whose admin-or-refuse
+	// decision must be made atomically at finish time (see finishRegistration
+	// and jsonUserStore.CreateFirstAdmin) rather than trusting the empty-store
+	// read that happened back at /enroll/begin — the TOCTOU fix. False for a
+	// token-based enrollment, whose role is already final on User.Role.
+	Bootstrap bool `json:"bootstrap,omitempty"`
 }
 
 // beginRegistration starts a WebAuthn registration ceremony for u: it asks
@@ -113,13 +119,15 @@ type regCeremonyData struct {
 // ceremonyTTL — see regCeremonyData's doc), and sets enrollSessionCookie on
 // w so the browser echoes the same ceremony id back to /enroll/finish. The
 // caller (enrollBeginHandler, routes.go) is responsible for JSON-encoding
-// the returned creation options onto the response body.
-func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, u *User, ceremonies SessionStore) (*protocol.CredentialCreation, error) {
+// the returned creation options onto the response body. bootstrap flags a
+// tokenless first-run enrollment so finishRegistration resolves the admin
+// role atomically at write time (see regCeremonyData.Bootstrap).
+func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, u *User, bootstrap bool, ceremonies SessionStore) (*protocol.CredentialCreation, error) {
 	creation, sessionData, err := wa.BeginRegistration(u)
 	if err != nil {
 		return nil, fmt.Errorf("web: begin registration: %w", err)
 	}
-	data, err := json.Marshal(regCeremonyData{User: u, WebAuthn: sessionData})
+	data, err := json.Marshal(regCeremonyData{User: u, WebAuthn: sessionData, Bootstrap: bootstrap})
 	if err != nil {
 		return nil, fmt.Errorf("web: encode registration ceremony: %w", err)
 	}
@@ -187,6 +195,20 @@ func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.Web
 		SignCount:  cred.Authenticator.SignCount,
 		Transports: transportsToStrings(cred.Transport),
 	})
+	// A tokenless first-run enrollment (Bootstrap) must decide "am I the first
+	// account, and therefore admin?" atomically with the write, NOT trust the
+	// empty-store read from /enroll/begin — otherwise two concurrent tokenless
+	// enrollments both begin against an empty store and both persist as admin.
+	// CreateFirstAdmin re-checks emptiness under the same lock as the append,
+	// so exactly one bootstrap enrollment wins (becomes admin) and any later
+	// one is rejected. A token-based enrollment's role is already final on
+	// data.User.Role, so it takes the ordinary Put path.
+	if data.Bootstrap {
+		if err := store.CreateFirstAdmin(data.User); err != nil {
+			return fmt.Errorf("web: persist bootstrap admin: %w", err)
+		}
+		return nil
+	}
 	if err := store.Put(data.User); err != nil {
 		return fmt.Errorf("web: persist user: %w", err)
 	}
