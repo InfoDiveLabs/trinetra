@@ -305,6 +305,17 @@ func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 	return snap
 }
 
+// smartCache holds the last SMART scan so collectSlow can reuse it between
+// scans (SMART health rarely changes and smartctl --scan + -H/-A per device
+// is the heaviest slow-tier call). lastScan is the unix time of the last
+// real scan; zero (or nil health) means "never scanned yet" so the first
+// slow tick scans.
+type smartCache struct {
+	lastScan int64
+	health   map[string]string
+	attrs    map[string]SmartAttr
+}
+
 // collectSlow gathers the expensive resources: shelling out to df/docker/
 // systemctl/smartctl, plus the network connectivity dial. These are all
 // either subprocess spawns or (for the connectivity check) multi-second
@@ -316,8 +327,10 @@ func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 // fill-rate projection (DiskDetail.DaysToFull*, via projectDaysToFull over
 // the last ~7d of each mount's "disk:<mount>" series); store may be nil (no
 // SampleStore configured, or a one-shot caller with none handy), in which
-// case every mount's projection is simply left unknown.
-func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64) Snapshot {
+// case every mount's projection is simply left unknown. sc/smartIntervalSec
+// throttle the SMART scan (see the SMART block below): sc may be nil for
+// one-shot callers that always want a fresh scan.
+func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64, sc *smartCache, smartIntervalSec int) Snapshot {
 	var snap Snapshot
 	snap.DockerAccess = da.method
 	if out, err := x.Run("df", "-PB1"); err == nil {
@@ -392,8 +405,19 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			snap.Units = units
 		}
 	}
-	// SMART health for every discovered device (all queried each cycle -> recovery works)
-	if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
+	// SMART health for every discovered device (all queried each cycle ->
+	// recovery works), throttled to smartIntervalSec: smartctl --scan/-H/-A
+	// is the heaviest slow-tier call and SMART health rarely changes, so
+	// between scans this reuses sc's cached results instead of shelling out.
+	// sc == nil or a never-yet-populated cache always scans (one-shot
+	// callers pass sc == nil so they're never throttled).
+	doScan := sc == nil || sc.health == nil || nowUnix-sc.lastScan >= int64(smartIntervalSec)
+	if !doScan {
+		snap.SmartHealth = sc.health
+		if c != nil && c.SmartAttrsEnabled() {
+			snap.SmartAttrs = sc.attrs
+		}
+	} else if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
 		snap.SmartHealth = map[string]string{}
 		// SMART attribute detail (temp/wear/realloc, opt-in via
 		// collect.smart_attrs) is the heaviest optional per-device call: one
@@ -425,6 +449,14 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			if ao, aerr := runMaybeSudo(x, "smartctl", "-A", dev); aerr == nil {
 				snap.SmartAttrs[dev] = parseSmartAttrs(string(ao))
 			}
+		}
+		if sc != nil {
+			// Cached maps are read-only downstream (buildSlowChecks/
+			// smartMetricSet only read them), so sharing the map reference
+			// between sc and snap is safe: no deep-copy needed.
+			sc.health = snap.SmartHealth
+			sc.attrs = snap.SmartAttrs
+			sc.lastScan = nowUnix
 		}
 	}
 	return snap
@@ -463,7 +495,9 @@ func mergeSlowFields(merged *Snapshot, slow Snapshot) {
 // so it can run collectSlow only every Nth fast tick.
 func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64) Snapshot {
 	snap := collectFast(x, fs, prev)
-	slow := collectSlow(x, fs, da, c, store, nowUnix)
+	// nil, 0: one-shot callers (boot report, pollLoop) always want a fresh
+	// SMART scan rather than sharing/throttling against the sampler loop's cache.
+	slow := collectSlow(x, fs, da, c, store, nowUnix, nil, 0)
 	mergeSlowFields(&snap, slow)
 	return snap
 }
@@ -643,6 +677,11 @@ func cmdDaemon(args []string) int {
 	// per-pid jiffies sample across slow ticks so collectProcesses can diff
 	// cumulative CPU jiffies into a per-process CPU%.
 	var procCPU ProcCPUCalc
+	// smartState is the sampler goroutine's single smartCache instance (same
+	// single-owner pattern as netRate/procCPU): it persists the last SMART
+	// scan across slow ticks so collectSlow can throttle smartctl calls to
+	// c.SmartIntervalSec() instead of scanning every slow tick.
+	var smartState smartCache
 	da := probeDocker(x, fs)
 
 	// boot/recovery report from heartbeat gap
@@ -702,7 +741,7 @@ func cmdDaemon(args []string) int {
 		// rather than waiting up to N-1 fast ticks for disks/docker/etc.
 		isSlowTick := tick%n == 0
 		if isSlowTick {
-			slow := collectSlow(x, fs, da, c, store, now.Unix())
+			slow := collectSlow(x, fs, da, c, store, now.Unix(), &smartState, c.SmartIntervalSec())
 			mergeSlowFields(&merged, slow)
 
 			// net throughput (opt-in via collect.net_throughput): /proc/net/dev

@@ -482,7 +482,7 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 	connDial = func(host string) bool { return true }
 	defer func() { connDial = origDial }()
 
-	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0, nil, 0)
 
 	if snap.Disks["/"] != 90 {
 		t.Errorf("Disks[/] = %v, want 90", snap.Disks["/"])
@@ -548,7 +548,7 @@ func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 	connDial = func(host string) bool { return true }
 	defer func() { connDial = origDial }()
 
-	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0, nil, 0)
 
 	if snap.Disks["/"] != 90 {
 		t.Fatalf("Disks[/] = %v, want 90 (unchanged)", snap.Disks["/"])
@@ -596,7 +596,7 @@ func TestCollectSlowSkipsSmartAttrsWhenDisabled(t *testing.T) {
 	if err := c.Set("collect.smart_attrs", "false"); err != nil {
 		t.Fatal(err)
 	}
-	snap := collectSlow(x, fs, da, c, nil, 0)
+	snap := collectSlow(x, fs, da, c, nil, 0, nil, 0)
 	if snap.SmartAttrs != nil {
 		t.Errorf("SmartAttrs = %+v, want nil when collect.smart_attrs disabled", snap.SmartAttrs)
 	}
@@ -622,9 +622,91 @@ func TestCollectSlowSkipsSmartAttrsOnNilConfig(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: false}
-	snap := collectSlow(x, fs, da, nil, nil, 0)
+	snap := collectSlow(x, fs, da, nil, nil, 0, nil, 0)
 	if snap.SmartAttrs != nil {
 		t.Errorf("SmartAttrs = %+v, want nil with nil config", snap.SmartAttrs)
+	}
+}
+
+// smartScanFakeExec returns a fakeExec that serves canned smartctl/df output
+// and counts every `smartctl --scan` invocation via *scans, so throttle tests
+// can assert whether a real scan happened.
+func smartScanFakeExec(scans *int) fakeExec {
+	return fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "df":
+			return []byte("Filesystem 1B-blocks Used Available Capacity Mounted\n/dev/sda1 100 90 10 90% /\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "--scan":
+			*scans++
+			return []byte("/dev/sda -d sat # /dev/sda [SAT], ATA device\n"), nil
+		case name == "smartctl" && len(args) > 0 && args[0] == "-H":
+			return []byte("SMART overall-health self-assessment test result: PASSED\n"), nil
+		}
+		return nil, errNotExist
+	}}
+}
+
+// TestCollectSlowSmartThrottleReusesCache asserts that a second collectSlow
+// call sharing one *smartCache within smartIntervalSec of the first does NOT
+// re-invoke smartctl, yet still returns the cached SmartHealth so status.json
+// and the recovery sweep keep seeing current values every slow tick.
+func TestCollectSlowSmartThrottleReusesCache(t *testing.T) {
+	var scans int
+	x := smartScanFakeExec(&scans)
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+	var sc smartCache
+
+	snap1 := collectSlow(x, fs, da, config.Default(), nil, 1000, &sc, 1800)
+	if scans != 1 {
+		t.Fatalf("scans after first call = %d, want 1", scans)
+	}
+	if snap1.SmartHealth["/dev/sda"] != "PASSED" {
+		t.Fatalf("first call SmartHealth[/dev/sda] = %q, want PASSED", snap1.SmartHealth["/dev/sda"])
+	}
+
+	snap2 := collectSlow(x, fs, da, config.Default(), nil, 1005, &sc, 1800)
+	if scans != 1 {
+		t.Errorf("scans after second call (5s later, interval 1800s) = %d, want still 1 (cached)", scans)
+	}
+	if snap2.SmartHealth["/dev/sda"] != "PASSED" {
+		t.Errorf("second call SmartHealth[/dev/sda] = %q, want PASSED (from cache)", snap2.SmartHealth["/dev/sda"])
+	}
+}
+
+// TestCollectSlowSmartRescansAfterInterval asserts that once nowUnix has
+// advanced past smartIntervalSec since the last real scan, collectSlow scans
+// again rather than reusing the cache indefinitely.
+func TestCollectSlowSmartRescansAfterInterval(t *testing.T) {
+	var scans int
+	x := smartScanFakeExec(&scans)
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+	var sc smartCache
+
+	collectSlow(x, fs, da, config.Default(), nil, 1000, &sc, 1800)
+	if scans != 1 {
+		t.Fatalf("scans after first call = %d, want 1", scans)
+	}
+
+	collectSlow(x, fs, da, config.Default(), nil, 1000+1800, &sc, 1800)
+	if scans != 2 {
+		t.Errorf("scans after second call (interval elapsed) = %d, want 2 (re-scanned)", scans)
+	}
+}
+
+// TestCollectSlowSmartNilCacheAlwaysScans asserts the one-shot path (nil
+// *smartCache, e.g. collectSnapshot) never throttles: every call scans.
+func TestCollectSlowSmartNilCacheAlwaysScans(t *testing.T) {
+	var scans int
+	x := smartScanFakeExec(&scans)
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+
+	collectSlow(x, fs, da, config.Default(), nil, 1000, nil, 0)
+	collectSlow(x, fs, da, config.Default(), nil, 1005, nil, 0)
+	if scans != 2 {
+		t.Errorf("scans with nil cache across two calls = %d, want 2 (always scan)", scans)
 	}
 }
 
@@ -659,7 +741,7 @@ func TestCollectSlowDiskDetailProjectsDaysToFull(t *testing.T) {
 		_ = store.Append(ts, MetricSet{"disk:/": pct})
 	}
 
-	snap := collectSlow(x, fs, da, config.Default(), store, nowUnix)
+	snap := collectSlow(x, fs, da, config.Default(), store, nowUnix, nil, 0)
 
 	dd, ok := snap.DiskDetail["/"]
 	if !ok {
@@ -719,7 +801,7 @@ func TestCollectSlowSkipsContainerStatsWhenDisabled(t *testing.T) {
 	if err := c.Set("collect.container_stats", "false"); err != nil {
 		t.Fatal(err)
 	}
-	snap := collectSlow(x, fs, da, c, nil, 0)
+	snap := collectSlow(x, fs, da, c, nil, 0, nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil when disabled", snap.ContainerStats)
 	}
@@ -737,7 +819,7 @@ func TestCollectSlowSkipsContainerStatsWhenDockerUnavailable(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: false}
-	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0, nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil when docker unavailable", snap.ContainerStats)
 	}
@@ -756,7 +838,7 @@ func TestCollectSlowSkipsContainerStatsOnNilConfig(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: true, method: "socket"}
-	snap := collectSlow(x, fs, da, nil, nil, 0)
+	snap := collectSlow(x, fs, da, nil, nil, 0, nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil with nil config", snap.ContainerStats)
 	}
@@ -778,7 +860,7 @@ func TestCollectSlowContainerStatsErrorDegradesGracefully(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: true, method: "socket"}
-	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0, nil, 0)
 	if snap.ContainerStats != nil {
 		t.Errorf("ContainerStats = %+v, want nil on stats error", snap.ContainerStats)
 	}
@@ -813,7 +895,7 @@ func TestCollectSlowPopulatesUnits(t *testing.T) {
 	connDial = func(host string) bool { return true }
 	defer func() { connDial = origDial }()
 
-	snap := collectSlow(x, fs, da, config.Default(), nil, 0)
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0, nil, 0)
 
 	if len(snap.Units) != 2 {
 		t.Fatalf("Units = %+v, want 2 entries", snap.Units)
@@ -842,7 +924,7 @@ func TestCollectSlowSkipsUnitsWhenDisabled(t *testing.T) {
 	if err := c.Set("collect.services", "false"); err != nil {
 		t.Fatal(err)
 	}
-	snap := collectSlow(x, fs, da, c, nil, 0)
+	snap := collectSlow(x, fs, da, c, nil, 0, nil, 0)
 	if snap.Units != nil {
 		t.Errorf("Units = %+v, want nil when collect.services disabled", snap.Units)
 	}
@@ -863,7 +945,7 @@ func TestCollectSlowSkipsUnitsOnNilConfig(t *testing.T) {
 	}}
 	fs := fakeFS{}
 	da := dockerAccess{available: false}
-	snap := collectSlow(x, fs, da, nil, nil, 0)
+	snap := collectSlow(x, fs, da, nil, nil, 0, nil, 0)
 	if snap.Units != nil {
 		t.Errorf("Units = %+v, want nil with nil config", snap.Units)
 	}
