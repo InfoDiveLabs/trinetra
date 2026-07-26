@@ -53,8 +53,20 @@ func newHandler(d Deps) http.Handler {
 	// show.
 	mux.HandleFunc("GET /config", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Configuration", "Thresholds, monitors, schedules, channels")))
 	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Channels", "Notification channel management")))
-	mux.HandleFunc("GET /users", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Users", "Accounts, roles, and enrollment tokens")))
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Public view", "Curated public dashboard settings")))
+
+	// /users (Task 7/#63): the real user-management page — list accounts,
+	// issue/re-issue enrollment tokens, change roles, remove accounts, revoke
+	// individual passkeys. GET is requireRole(RoleAdmin, ...) like the other
+	// admin routes above; every mutation additionally needs requireCSRF
+	// (usersMutation, handlers_users.go), since these change someone ELSE's
+	// account rather than the caller's own session (unlike POST /logout,
+	// which only needs the CSRF half).
+	mux.HandleFunc("GET /users", requireRole(RoleAdmin, usersPageHandler(d)))
+	mux.HandleFunc("POST /users/invite", usersMutation(usersInviteHandler(d)))
+	mux.HandleFunc("POST /users/{id}/role", usersMutation(usersRoleHandler(d)))
+	mux.HandleFunc("POST /users/{id}/remove", usersMutation(usersRemoveHandler(d)))
+	mux.HandleFunc("POST /users/{id}/credentials/{credParam}/revoke", usersMutation(usersRevokeCredentialHandler(d)))
 
 	// sessionMiddleware runs for every request so any handler/template can
 	// read the current session (sessionFromContext) — including
