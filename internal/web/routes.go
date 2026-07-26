@@ -33,9 +33,22 @@ func newHandler(d Deps) http.Handler {
 // across machines. http.ServeContent (which FileServer calls internally)
 // only fills in Content-Type when it isn't already set, so pre-setting it
 // here wins.
+//
+// It also suppresses http.FileServer's built-in directory index: a request
+// whose path ends in "/" (e.g. "/assets/" after StripPrefix leaves "/") is
+// 404'd rather than served as an <a href> listing of every embedded asset.
+// The web only ever links concrete files, so an index is pure information
+// leakage.
 func assetHandler(assets fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// After StripPrefix("/assets/"), "/assets/" arrives as "" and
+		// "/assets/sub/" as "sub/"; both are directory requests that
+		// http.FileServer would answer with an index — 404 them instead.
+		if r.URL.Path == "" || strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
 		if ct := contentTypeByExt(r.URL.Path); ct != "" {
 			w.Header().Set("Content-Type", ct)
 		}

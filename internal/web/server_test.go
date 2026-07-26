@@ -79,6 +79,32 @@ func TestServerServesJSAssetWithApplicationJavascriptType(t *testing.T) {
 	}
 }
 
+// TestAssetsDirectoryListingSuppressed pins that GET /assets/ (no filename)
+// does not leak an http.FileServer directory index of every embedded asset:
+// it must 404, while a concrete asset under it still serves 200 with its
+// content type.
+func TestAssetsDirectoryListingSuppressed(t *testing.T) {
+	h := newHandler(testDeps(t))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/assets/", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("GET /assets/ status = %d, want 404 (no directory listing)", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "style.css") {
+		t.Errorf("GET /assets/ leaked a directory listing:\n%s", rr.Body.String())
+	}
+
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/assets/style.css", nil))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("GET /assets/style.css status = %d, want 200", rr2.Code)
+	}
+	if ct := rr2.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/css") {
+		t.Errorf("content-type = %q, want text/css prefix", ct)
+	}
+}
+
 // TestStartBindsWhenEnabled exercises the other half of Start not covered by
 // TestStartReturnsNoopStop (Task 1's Enabled=false stub path): when Enabled
 // is true, Start must actually bind a listener on Listen and return a stop
