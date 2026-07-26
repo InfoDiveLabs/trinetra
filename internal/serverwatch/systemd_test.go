@@ -15,6 +15,7 @@ func TestRenderUnit(t *testing.T) {
 		"[Unit]", "[Service]", "[Install]",
 		"ExecStart=/usr/local/bin/serverwatch daemon",
 		"Restart=always",
+		"WatchdogSec=",
 		"WantedBy=multi-user.target",
 	} {
 		if !strings.Contains(u, want) {

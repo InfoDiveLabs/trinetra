@@ -11,6 +11,12 @@ import (
 
 const unitPath = "/etc/systemd/system/serverwatch.service"
 
+// renderUnit renders the systemd unit file installed by cmdInstall.
+// WatchdogSec=90 pairs with the sdNotify("WATCHDOG=1") ping the sampler
+// loop sends every fast tick (default 5s), far inside this 90s window; if
+// the sampler loop wedges, no ping is sent and systemd restarts the unit.
+// Type=simple still works here: WATCHDOG=1 from the main PID is accepted
+// regardless of Type, unlike READY=1 which needs Type=notify.
 func renderUnit(binPath string) string {
 	return fmt.Sprintf(`[Unit]
 Description=server-watcher host monitor
@@ -22,6 +28,7 @@ Type=simple
 ExecStart=%s daemon
 Restart=always
 RestartSec=5
+WatchdogSec=90
 User=root
 StandardOutput=journal
 StandardError=journal
