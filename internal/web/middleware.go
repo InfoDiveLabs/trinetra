@@ -42,6 +42,73 @@ func sessionFromContext(r *http.Request) (*Session, bool) {
 	return sess, ok && sess != nil
 }
 
+// userCtxKey is the unexported context key userMiddleware stores the
+// current request's *User under (only present when sessionMiddleware found
+// a live session AND that session's UserID resolves to a real account),
+// for requireRole/currentRole (templates.go) to read back via
+// userFromContext.
+type userCtxKey struct{}
+
+// userMiddleware resolves sessionFromContext's Session into the *User it
+// names (store.Get(sess.UserID)) and stashes it in the request context, the
+// "user" step of requireRole's doc'd "session→user→role gate". It runs
+// after sessionMiddleware (routes.go's newHandler wiring) and, like it,
+// always calls next regardless of whether a user was resolved — requiring
+// one is requireRole's job, not this middleware's.
+//
+// A session with an empty UserID (an in-flight WebAuthn ceremony
+// placeholder — see Session.UserID's doc) never resolves to a user here,
+// but in practice one never reaches this middleware anyway: ceremony
+// placeholders live under the separate sw_enroll/sw_login cookies, not
+// sw_session, so sessionFromContext never surfaces one to begin with.
+func userMiddleware(store UserStore, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sess, ok := sessionFromContext(r); ok && sess.UserID != "" {
+			if u, ok := store.Get(sess.UserID); ok {
+				r = r.WithContext(context.WithValue(r.Context(), userCtxKey{}, u))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// userFromContext returns the *User userMiddleware stashed for this
+// request, or (nil, false) if the request is anonymous (no session, or a
+// session whose UserID no longer resolves to an account — e.g. a deleted
+// user with a still-live session record).
+func userFromContext(r *http.Request) (*User, bool) {
+	u, ok := r.Context().Value(userCtxKey{}).(*User)
+	return u, ok && u != nil
+}
+
+// requireRole gates next behind the signed-in request's role satisfying
+// min: RoleViewer admits any authenticated user (viewer or admin);
+// RoleAdmin admits only admins. This is the RBAC gate the design doc's
+// "middleware maps session→user→role" line calls for — routes.go's
+// newHandler wires it onto the admin-only routes (config/channels/users/
+// public-settings, the mockup app.js's ADMIN_PAGES).
+//
+// No session/user at all (anonymous) redirects to /login regardless of
+// min: an anonymous visitor isn't unauthorized, they just haven't signed in
+// yet, so send them to do that. A signed-in user whose role falls short of
+// min instead renders the mockup's "Admin only" denied panel with 403 —
+// they ARE authenticated, just not authorized, so bouncing them to /login
+// would accomplish nothing (their passkey already works fine).
+func requireRole(min Role, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		if min == RoleAdmin && u.Role != RoleAdmin {
+			renderDenied(w, r)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // csrfTokenFromRequest reads the caller-supplied CSRF token off r: the
 // X-CSRF-Token header (what app.js sends alongside a fetch()'d mutation,
 // reading it from base.html's csrf-token meta tag) or, failing that, a

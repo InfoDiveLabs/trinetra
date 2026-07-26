@@ -37,12 +37,28 @@ func newHandler(d Deps) http.Handler {
 	// aren't.
 	mux.Handle("POST /logout", requireCSRF(logoutHandler(d)))
 
+	// Admin-only routes: the mockup app.js's ADMIN_PAGES list
+	// (config.html/channels.html/users.html/public-settings.html), gated by
+	// requireRole(RoleAdmin, ...) (middleware.go). Real content (config
+	// editor, channel management, user management, public-view curation) is
+	// later tasks' job — these are placeholders in exactly the same spirit
+	// dashboardHandler was before the live-dashboard task, proving the
+	// RBAC gate + shell wiring work before the pages have anything real to
+	// show.
+	mux.HandleFunc("GET /config", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Configuration", "Thresholds, monitors, schedules, channels")))
+	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Channels", "Notification channel management")))
+	mux.HandleFunc("GET /users", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Users", "Accounts, roles, and enrollment tokens")))
+	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Public view", "Curated public dashboard settings")))
+
 	// sessionMiddleware runs for every request so any handler/template can
 	// read the current session (sessionFromContext) — including
 	// requireCSRF above, which relies on it having already populated the
-	// context by the time /logout's handler chain reaches it.
+	// context by the time /logout's handler chain reaches it. userMiddleware
+	// runs just inside it, resolving that session into the *User requireRole
+	// and currentRole (templates.go) both read via userFromContext.
 	sessions := newSessionStore(d.StateDir)
-	return securityHeaders(sessionMiddleware(sessions, mux))
+	users := newUserStore(d.StateDir)
+	return securityHeaders(sessionMiddleware(sessions, userMiddleware(users, mux)))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type
@@ -96,6 +112,21 @@ func dashboardHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := newPageData(r, "Dashboard", "Overview", "ok")
 		if err := renderPage(w, "dashboard.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// adminPlaceholderHandler renders a bare "coming later" panel (templates/
+// admin_placeholder.html) through the full app-shell layout for one of the
+// admin-only routes (see newHandler's requireRole(RoleAdmin, ...) wiring):
+// title/sub are threaded straight into PageData.Title/Sub the same way
+// dashboardHandler does. Every caller has already passed requireRole by the
+// time this runs, so it does no authorization of its own.
+func adminPlaceholderHandler(d Deps, title, sub string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := newPageData(r, title, sub, "ok")
+		if err := renderPage(w, "admin_placeholder.html", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}

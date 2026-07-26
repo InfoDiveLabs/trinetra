@@ -90,12 +90,17 @@ func navForRole(role string) []NavItem {
 	return out
 }
 
-// currentRole is a stub: every request is treated as admin until Task 5/6
-// add real sessions/RBAC (see the design doc's Security checklist and
-// Pages/routes tables). Kept as a single seam so those tasks only need to
-// change this one function's body.
+// currentRole returns the signed-in request's role ("admin"/"viewer"), or
+// "" for an anonymous one. userMiddleware (middleware.go) is what actually
+// resolves the session into a *User this reads back via userFromContext;
+// this is purely the cosmetic input to nav filtering (navForRole) and the
+// topbar/sidebar role badge — access control itself is requireRole's job,
+// not this function's.
 func currentRole(r *http.Request) string {
-	return "admin"
+	if u, ok := userFromContext(r); ok {
+		return string(u.Role)
+	}
+	return ""
 }
 
 // PageData is what every page template renders against: base.html's shell
@@ -155,13 +160,36 @@ func newPageData(r *http.Request, title, sub, status string) PageData {
 // low; a future task can cache per-page *template.Template if this shows up
 // in profiling.
 func renderPage(w http.ResponseWriter, page string, data PageData) error {
+	return renderPageStatus(w, page, data, http.StatusOK)
+}
+
+// renderPageStatus is renderPage's counterpart for a non-200 response (today
+// only requireRole's 403 denied panel, middleware.go's renderDenied): same
+// base.html + page-template parse/execute, but with the given status code
+// written before the body.
+func renderPageStatus(w http.ResponseWriter, page string, data PageData, status int) error {
 	tmpl, err := template.New("base.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base.html", "templates/"+page)
 	if err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	return tmpl.ExecuteTemplate(w, "base.html", data)
+}
+
+// renderDenied renders the mockup's "Admin only" denied panel (templates/
+// denied.html, ported from ui-mockup/assets/app.js's `.panel.denied` markup)
+// through the full app-shell layout with a 403 status — requireRole
+// (middleware.go) calls this when a signed-in user's role falls short of a
+// route's required minimum. It still renders through the normal PageData/
+// nav (the visitor IS signed in, so the shell should look like it does
+// everywhere else), just with the content block replaced.
+func renderDenied(w http.ResponseWriter, r *http.Request) {
+	data := newPageData(r, "Admin only", "Access denied", "ok")
+	if err := renderPageStatus(w, "denied.html", data, http.StatusForbidden); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // BarePageData is what a "bare"/centered page (enroll now; login and the

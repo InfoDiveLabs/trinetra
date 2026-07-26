@@ -1,0 +1,8 @@
+{{define "content"}}
+<div class="panel">
+  <div class="head"><span class="eyebrow">{{.Title}}</span></div>
+  <p class="note">{{.Sub}} lands in a later task. This route is reachable only by an admin —
+  requireRole's RBAC gate is what this task wires up; the page's real content is a future task's job,
+  the same way dashboard.html was a placeholder before the live dashboard task.</p>
+</div>
+{{end}}
