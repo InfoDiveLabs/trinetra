@@ -1,0 +1,26 @@
+{{define "content"}}
+<div id="history-page" data-history data-range="24h">
+  <div class="toolbar">
+    <div class="chips" id="historyRange" style="display:flex;gap:8px">
+      <button class="chip" data-range="1h">1h</button>
+      <button class="chip" data-range="6h">6h</button>
+      <button class="chip on" data-range="24h">24h</button>
+      <button class="chip" data-range="7d">7d</button>
+      <button class="chip" data-range="30d">30d</button>
+    </div>
+    <span class="spacer"></span>
+    <span class="note mono">resolution 1-min · raw 5s ≤48h</span>
+  </div>
+
+  <div class="grid g-2">
+    <div class="panel"><div class="head"><span class="eyebrow">CPU %</span></div>
+      <div id="chart-history-cpu" class="u-chart" data-metric="cpu" style="height:240px"></div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Memory %</span></div>
+      <div id="chart-history-mem" class="u-chart" data-metric="mem" style="height:240px"></div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Load average · 1m</span></div>
+      <div id="chart-history-load" class="u-chart" data-metric="load1" style="height:240px"></div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Temperature °C</span></div>
+      <div id="chart-history-temp" class="u-chart" data-metric="temp" style="height:240px"></div></div>
+  </div>
+</div>
+{{end}}

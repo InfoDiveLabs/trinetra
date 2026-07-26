@@ -36,6 +36,12 @@ func newHandler(d Deps) http.Handler {
 	// like the dashboard itself — it carries the same live metrics, just
 	// pushed instead of polled.
 	mux.HandleFunc("GET /events", requireRole(RoleViewer, eventsHandler(d)))
+	// /history + /api/series (Task 9/#65): time-range history graphs backed
+	// by the daemon's SampleStore (Deps.Store, a SeriesStore — see
+	// series_store.go). Viewer-gated exactly like the dashboard/events above:
+	// history is read-only data, same role floor as the rest of "Monitor".
+	mux.HandleFunc("GET /history", requireRole(RoleViewer, historyPageHandler(d)))
+	mux.HandleFunc("GET /api/series", requireRole(RoleViewer, seriesAPIHandler(d)))
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
 	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))

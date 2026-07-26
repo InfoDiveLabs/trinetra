@@ -25,21 +25,23 @@ const sessionGCInterval = 10 * time.Minute
 
 // Deps is what the web server needs from the running daemon, expressed
 // without importing internal/serverwatch (see the design note atop
-// internal/serverwatch/web_deps.go). Store is still left opaque (`any`)
-// here on purpose, since no route in this build consumes it yet — a later
-// task (history) will define the minimal web-local interface it needs, and
-// internal/serverwatch/daemon_web.go will adapt serverwatch's concrete
-// SampleStore into it at the call site, the same way it now adapts
-// serverwatch's concrete Snapshot into this package's own DashboardView for
-// the Snapshot field below.
+// internal/serverwatch/web_deps.go). Store is this package's own SeriesStore
+// interface (series_store.go) — the Task 9 (#65) resolution of the Task 1
+// placeholder that made this field `any`, mirroring Task 8's DashboardView
+// resolution of Deps.Snapshot: internal/serverwatch/daemon_web.go adapts the
+// daemon's concrete SampleStore into a SeriesStore at the call site, so this
+// package never needs to import serverwatch's SampleStore/Point/Resolution
+// types.
 type Deps struct {
 	// Cfg returns the current config (race-safe against the daemon's reload).
 	Cfg func() *config.Config
 	// Reload validates, persists, and applies a new config in-process.
 	Reload func(*config.Config) error
-	// Store is the daemon's sample store for history queries; opaque here
-	// (see the type doc above), may be nil.
-	Store any
+	// Store is the daemon's sample store for history queries (SeriesStore,
+	// series_store.go). May be nil (e.g. store-writes-disabled mode) —
+	// every consumer (seriesAPIHandler, handlers_history.go) must handle
+	// that as "no data" rather than assuming it's always set.
+	Store SeriesStore
 	// Snapshot returns the latest live snapshot, already projected into this
 	// package's own DashboardView (dashboard_view.go) by
 	// internal/serverwatch/daemon_web.go's adapter — see that type's doc for
