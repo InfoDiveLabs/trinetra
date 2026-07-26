@@ -993,6 +993,156 @@ func TestWebEnabledListenPersistsAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+func TestWebModeDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("web.mode"); got != "proxy" {
+		t.Fatalf("web.mode default = %q, want proxy", got)
+	}
+	if err := c.Set("web.mode", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.mode"); got != "manual" {
+		t.Fatalf("web.mode after set = %q, want manual", got)
+	}
+	if err := c.Unset("web.mode"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.mode"); got != "proxy" {
+		t.Fatalf("web.mode after unset = %q, want default proxy", got)
+	}
+}
+
+func TestWebModeRejectsInvalid(t *testing.T) {
+	c := Default()
+	for _, v := range []string{"", "https", "PROXY", "bogus"} {
+		if err := c.Set("web.mode", v); err == nil {
+			t.Errorf("web.mode set to %q: want error, got nil", v)
+		}
+	}
+	if got, _ := c.Get("web.mode"); got != "proxy" {
+		t.Fatalf("web.mode after rejected sets = %q, want unchanged proxy", got)
+	}
+	for _, v := range []string{"proxy", "autocert", "manual"} {
+		if err := c.Set("web.mode", v); err != nil {
+			t.Errorf("web.mode set to %q: want nil error, got %v", v, err)
+		}
+	}
+}
+
+func TestWebRPIDOriginAutocertTLSGetSetUnset(t *testing.T) {
+	c := Default()
+	for _, tc := range []struct{ key, want string }{
+		{"web.rp_id", ""},
+		{"web.origin", ""},
+		{"web.autocert_domains", ""},
+		{"web.tls_cert", ""},
+		{"web.tls_key", ""},
+	} {
+		if got, ok := c.Get(tc.key); !ok || got != tc.want {
+			t.Fatalf("%s default = %q (ok=%v), want %q", tc.key, got, ok, tc.want)
+		}
+	}
+
+	sets := map[string]string{
+		"web.rp_id":            "monitor.example.com",
+		"web.origin":           "https://monitor.example.com",
+		"web.autocert_domains": "monitor.example.com,alt.example.com",
+		"web.tls_cert":         "/etc/serverwatch/tls.crt",
+		"web.tls_key":          "/etc/serverwatch/tls.key",
+	}
+	for k, v := range sets {
+		if err := c.Set(k, v); err != nil {
+			t.Fatalf("Set(%q, %q): %v", k, v, err)
+		}
+		if got, _ := c.Get(k); got != v {
+			t.Fatalf("%s after set = %q, want %q", k, got, v)
+		}
+	}
+
+	for k := range sets {
+		if err := c.Unset(k); err != nil {
+			t.Fatalf("Unset(%q): %v", k, err)
+		}
+		if got, _ := c.Get(k); got != "" {
+			t.Fatalf("%s after unset = %q, want empty default", k, got)
+		}
+	}
+}
+
+func TestWebSessionTTLDefaultSetUnsetRejectsInvalid(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("web.session_ttl"); got != "24h" {
+		t.Fatalf("web.session_ttl default = %q, want 24h", got)
+	}
+	if err := c.Set("web.session_ttl", "1h"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.session_ttl"); got != "1h" {
+		t.Fatalf("web.session_ttl after set = %q, want 1h", got)
+	}
+	for _, v := range []string{"", "not-a-duration", "0h", "-5m"} {
+		if err := c.Set("web.session_ttl", v); err == nil {
+			t.Errorf("web.session_ttl set to %q: want error, got nil", v)
+		}
+	}
+	if got, _ := c.Get("web.session_ttl"); got != "1h" {
+		t.Fatalf("web.session_ttl after rejected sets = %q, want unchanged 1h", got)
+	}
+	if err := c.Unset("web.session_ttl"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("web.session_ttl"); got != "24h" {
+		t.Fatalf("web.session_ttl after unset = %q, want default 24h", got)
+	}
+}
+
+func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("web.mode", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("web.rp_id", "monitor.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("web.origin", "https://monitor.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("web.autocert_domains", "monitor.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("web.tls_cert", "/etc/serverwatch/tls.crt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("web.tls_key", "/etc/serverwatch/tls.key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("web.session_ttl", "12h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ key, want string }{
+		{"web.mode", "manual"},
+		{"web.rp_id", "monitor.example.com"},
+		{"web.origin", "https://monitor.example.com"},
+		{"web.autocert_domains", "monitor.example.com"},
+		{"web.tls_cert", "/etc/serverwatch/tls.crt"},
+		{"web.tls_key", "/etc/serverwatch/tls.key"},
+		{"web.session_ttl", "12h"},
+	} {
+		if got, _ := c2.Get(tc.key); got != tc.want {
+			t.Fatalf("%s after save/load = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")

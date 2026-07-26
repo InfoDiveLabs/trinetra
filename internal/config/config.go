@@ -115,6 +115,36 @@ type Config struct {
 		// net.SplitHostPort. Defaults to 127.0.0.1:8088 (localhost-only;
 		// front it with a reverse proxy for LAN/WAN exposure).
 		Listen string `json:"listen,omitempty"`
+		// Mode selects how internal/web binds/serves: "proxy" (plain HTTP,
+		// origin trusted from a local reverse proxy's X-Forwarded-* headers),
+		// "autocert" (built-in Let's Encrypt via
+		// golang.org/x/crypto/acme/autocert), or "manual" (TLSCert/TLSKey).
+		// One of validWebModes; defaults to "proxy". See
+		// internal/web/serving.go (issue #59).
+		Mode string `json:"mode,omitempty"`
+		// RPID is the WebAuthn relying party ID: the public hostname
+		// passkeys are scoped to (no scheme/port). Required in autocert/
+		// manual modes; may be left empty in proxy mode, where it/Origin are
+		// instead derived per-request from the trusted reverse proxy's
+		// forwarded headers.
+		RPID string `json:"rp_id,omitempty"`
+		// Origin is the full public origin ("https://host[:port]") passkey
+		// ceremonies validate the browser's reported origin against. Its
+		// host must match RPID exactly. Required in autocert/manual modes;
+		// see RPID above for proxy mode.
+		Origin string `json:"origin,omitempty"`
+		// AutocertDomains is a comma-separated allowlist of hostnames
+		// autocert.Manager's HostPolicy will request/renew certificates for.
+		// Required (non-empty) in autocert mode.
+		AutocertDomains string `json:"autocert_domains,omitempty"`
+		// TLSCert/TLSKey are PEM file paths http.Server.ServeTLS loads in
+		// manual mode. Both required (non-empty) in manual mode.
+		TLSCert string `json:"tls_cert,omitempty"`
+		TLSKey  string `json:"tls_key,omitempty"`
+		// SessionTTL is a duration string (time.ParseDuration syntax, e.g.
+		// "24h") controlling how long a signed-in web session stays valid.
+		// Defaults to "24h".
+		SessionTTL string `json:"session_ttl,omitempty"`
 	} `json:"web"`
 }
 
@@ -220,6 +250,25 @@ func validateListen(s string) error {
 		return fmt.Errorf("web.listen %q invalid: %w (want host:port)", s, err)
 	}
 	return nil
+}
+
+// validWebModes allowlists web.mode: see internal/web/serving.go (issue #59)
+// for what each mode does.
+var validWebModes = map[string]bool{"proxy": true, "autocert": true, "manual": true}
+
+// validateWebMode rejects anything outside validWebModes (including "").
+func validateWebMode(s string) error {
+	if validWebModes[s] {
+		return nil
+	}
+	return fmt.Errorf("web.mode %q invalid: want one of proxy|autocert|manual", s)
+}
+
+// validateSessionTTL rejects anything time.ParseDuration can't parse, plus
+// non-positive durations, mirroring validateRetentionDuration's rules for
+// storage.raw_retention/rollup_retention.
+func validateSessionTTL(s string) error {
+	return validateRetentionDuration("web.session_ttl", s)
 }
 
 // validateMinSeverity accepts "" (meaning "use the permissive default") or
@@ -344,6 +393,8 @@ func Default() *Config {
 	c.Storage.RawRetention = "48h"
 	c.Storage.RollupRetention = "720h"
 	c.Web.Listen = "127.0.0.1:8088"
+	c.Web.Mode = "proxy"
+	c.Web.SessionTTL = "24h"
 	return c
 }
 
@@ -383,6 +434,12 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Web.Listen == "" {
 		c.Web.Listen = "127.0.0.1:8088"
+	}
+	if c.Web.Mode == "" {
+		c.Web.Mode = "proxy"
+	}
+	if c.Web.SessionTTL == "" {
+		c.Web.SessionTTL = "24h"
 	}
 	return c, nil
 }
@@ -473,6 +530,20 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.Web.Enabled), true
 	case "web.listen":
 		return c.Web.Listen, true
+	case "web.mode":
+		return c.Web.Mode, true
+	case "web.rp_id":
+		return c.Web.RPID, true
+	case "web.origin":
+		return c.Web.Origin, true
+	case "web.autocert_domains":
+		return c.Web.AutocertDomains, true
+	case "web.tls_cert":
+		return c.Web.TLSCert, true
+	case "web.tls_key":
+		return c.Web.TLSKey, true
+	case "web.session_ttl":
+		return c.Web.SessionTTL, true
 	}
 	return "", false
 }
@@ -630,6 +701,26 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.Web.Listen = val
+	case "web.mode":
+		if err := validateWebMode(val); err != nil {
+			return err
+		}
+		c.Web.Mode = val
+	case "web.rp_id":
+		c.Web.RPID = val
+	case "web.origin":
+		c.Web.Origin = val
+	case "web.autocert_domains":
+		c.Web.AutocertDomains = val
+	case "web.tls_cert":
+		c.Web.TLSCert = val
+	case "web.tls_key":
+		c.Web.TLSKey = val
+	case "web.session_ttl":
+		if err := validateSessionTTL(val); err != nil {
+			return err
+		}
+		c.Web.SessionTTL = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
