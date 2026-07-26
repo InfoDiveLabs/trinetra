@@ -64,7 +64,7 @@ func appendAudit(stateDir string, rec AuditRecord) error {
 	if rec.Time == 0 {
 		rec.Time = time.Now().Unix()
 	}
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(auditLogPath(stateDir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
