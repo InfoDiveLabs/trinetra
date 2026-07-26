@@ -1143,6 +1143,94 @@ func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+// TestPublicEnabledPanelsDefaultSetUnset pins public.enabled/public.panels
+// (issue #67): both default to "off"/empty, Set/Get round-trip, and Unset
+// restores the defaults — mirroring TestWebEnabledListenDefaultSetUnset.
+func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("public.enabled"); got != "false" {
+		t.Fatalf("public.enabled default = %q, want false", got)
+	}
+	if got, _ := c.Get("public.panels"); got != "" {
+		t.Fatalf("public.panels default = %q, want empty", got)
+	}
+
+	if err := c.Set("public.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("public.enabled"); got != "true" {
+		t.Fatalf("public.enabled after set = %q, want true", got)
+	}
+	if err := c.Set("public.panels", "cpu,mem,disk:/"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("public.panels"); got != "cpu,mem,disk:/" {
+		t.Fatalf("public.panels after set = %q, want cpu,mem,disk:/", got)
+	}
+
+	if err := c.Unset("public.enabled"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("public.enabled"); got != "false" {
+		t.Fatalf("public.enabled after unset = %q, want default false", got)
+	}
+	if err := c.Unset("public.panels"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("public.panels"); got != "" {
+		t.Fatalf("public.panels after unset = %q, want default empty", got)
+	}
+}
+
+// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist at the
+// config layer: only the fixed catalog (or "disk:<mount>") may be stored in
+// public.panels — anything else (typos, or someone trying to smuggle a
+// non-metric identifier like "users"/"config" into the curated list) is
+// rejected with no write, exactly like the other validated config keys.
+func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {
+	c := Default()
+	for _, v := range []string{"bogus", "cpu,bogus", "disk:", "users", "config", "channels"} {
+		if err := c.Set("public.panels", v); err == nil {
+			t.Errorf("public.panels set to %q: want error, got nil", v)
+		}
+	}
+	if got, _ := c.Get("public.panels"); got != "" {
+		t.Fatalf("public.panels after rejected sets = %q, want unchanged empty", got)
+	}
+	for _, v := range []string{"cpu", "mem", "swap", "load", "temp", "uptime", "services", "containers", "net", "disk:/", "disk:/data"} {
+		if err := c.Set("public.panels", v); err != nil {
+			t.Errorf("public.panels set to %q: want nil error, got %v", v, err)
+		}
+	}
+}
+
+// TestPublicEnabledPanelsPersistAcrossSaveLoad pins the Save/Load round trip
+// for both keys together, mirroring TestWebEnabledListenPersistsAcrossSaveLoad.
+func TestPublicEnabledPanelsPersistAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("public.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("public.panels", "cpu,mem,disk:/data,uptime"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("public.enabled"); got != "true" {
+		t.Fatalf("public.enabled after save/load = %q, want true", got)
+	}
+	if got, _ := c2.Get("public.panels"); got != "cpu,mem,disk:/data,uptime" {
+		t.Fatalf("public.panels after save/load = %q, want cpu,mem,disk:/data,uptime", got)
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")

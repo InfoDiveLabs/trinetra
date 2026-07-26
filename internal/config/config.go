@@ -146,6 +146,23 @@ type Config struct {
 		// Defaults to "24h".
 		SessionTTL string `json:"session_ttl,omitempty"`
 	} `json:"web"`
+	// Public holds the admin-curated exposure settings for the anonymous
+	// /public status page (internal/web, `-tags web` builds only -- see
+	// docs/ROADMAP.md issue #67). Both fields default to "off"/empty:
+	// nothing is exposed anonymously until an admin explicitly enables it
+	// AND curates which panels are visible.
+	Public struct {
+		// Enabled toggles GET /public. Defaults to false; when false the
+		// route 404s rather than revealing that a public page exists.
+		Enabled bool `json:"enabled,omitempty"`
+		// Panels is the server-side-enforced allowlist of panel/metric ids
+		// exposed on /public -- e.g. "cpu", "mem", "disk:/", "uptime". Only
+		// ids validatePublicPanel accepts may ever be stored here;
+		// internal/web builds the public page by iterating exactly this
+		// list against the live snapshot, so a metric absent from it can
+		// never appear on the page even though it's present elsewhere.
+		Panels []string `json:"panels,omitempty"`
+	} `json:"public"`
 }
 
 // ContainerStatsEnabled reports whether the docker-stats collector
@@ -269,6 +286,56 @@ func validateWebMode(s string) error {
 // storage.raw_retention/rollup_retention.
 func validateSessionTTL(s string) error {
 	return validateRetentionDuration("web.session_ttl", s)
+}
+
+// validPublicPanels is the fixed catalog of static panel ids public.panels
+// may name (internal/web's public-view allowlist, issue #67).
+// "disk:<mount>" is validated separately in validatePublicPanel since the
+// mount suffix is dynamic (one entry per filesystem the daemon reports).
+var validPublicPanels = map[string]bool{
+	"cpu": true, "mem": true, "swap": true, "load": true, "temp": true,
+	"uptime": true, "services": true, "containers": true, "net": true,
+}
+
+// validatePublicPanel rejects any panel id public.panels wouldn't
+// recognize: one of validPublicPanels, or "disk:<mount>" with a non-empty
+// mount suffix. This is the single source of truth for what may ever be
+// written to public.panels — internal/web's /settings/public handler
+// reuses it (via Set) rather than re-implementing the allowlist, and
+// internal/web's /public handler only ever renders ids that passed this
+// check, so a stray/malicious value can never reach that unauthenticated
+// page.
+func validatePublicPanel(s string) error {
+	if validPublicPanels[s] {
+		return nil
+	}
+	if strings.HasPrefix(s, "disk:") && s != "disk:" {
+		return nil
+	}
+	return fmt.Errorf("public panel %q invalid: want one of cpu|mem|swap|load|temp|uptime|services|containers|net or disk:<mount>", s)
+}
+
+// parsePublicPanels parses a comma-separated public.panels value into a
+// slice, trimming whitespace and dropping empty entries (mirroring
+// splitKinds), validating every entry against validatePublicPanel. Returns
+// the first validation error, if any — the caller (Set) must not persist a
+// partially-valid list.
+func parsePublicPanels(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if err := validatePublicPanel(p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // validateMinSeverity accepts "" (meaning "use the permissive default") or
@@ -544,6 +611,10 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.Web.TLSKey, true
 	case "web.session_ttl":
 		return c.Web.SessionTTL, true
+	case "public.enabled":
+		return strconv.FormatBool(c.Public.Enabled), true
+	case "public.panels":
+		return strings.Join(c.Public.Panels, ","), true
 	}
 	return "", false
 }
@@ -721,6 +792,18 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.Web.SessionTTL = val
+	case "public.enabled":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("public.enabled: %w", err)
+		}
+		c.Public.Enabled = b
+	case "public.panels":
+		panels, err := parsePublicPanels(val)
+		if err != nil {
+			return err
+		}
+		c.Public.Panels = panels
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
