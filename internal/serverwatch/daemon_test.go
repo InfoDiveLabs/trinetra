@@ -399,6 +399,46 @@ func TestEventToAlert(t *testing.T) {
 	}
 }
 
+// TestEventToAlertEscapesHTML is the Critical regression: anomaly alerts are
+// dispatched via SendMessage (now parse_mode=HTML), and Event.Text embeds
+// live container/unit/device names (via buildSlowChecks' FireMsg/RecoverMsg
+// and breach()). A name containing <, >, or & would produce unbalanced HTML,
+// Telegram would 400, and the alert — the core alerting path — would be
+// silently dropped. eventToAlert must HTML-escape e.Text at the source (it's
+// plain text), leaving the intentional-HTML boot/digest paths untouched (see
+// TestBootReportKeepsIntentionalHTML).
+func TestEventToAlertEscapesHTML(t *testing.T) {
+	a := eventToAlert(Event{Key: "docker:web", Kind: "fire", Text: "container <b>x</b> is down (&exited)", Critical: true}, 0)
+	if strings.Contains(a.Title, "<b>") || strings.Contains(a.Title, "</b>") {
+		t.Fatalf("Title not escaped: %q", a.Title)
+	}
+	if !strings.Contains(a.Title, "&lt;b&gt;") || !strings.Contains(a.Title, "&amp;exited") {
+		t.Fatalf("Title should be HTML-escaped, got %q", a.Title)
+	}
+	// The rendered message (what actually reaches SendMessage) must carry no
+	// stray raw angle brackets from the dynamic content.
+	msg := formatAlert(a)
+	if strings.Contains(msg, "<b>") || strings.Contains(msg, "</b>") {
+		t.Fatalf("formatAlert leaked raw tags: %q", msg)
+	}
+}
+
+// TestBootReportKeepsIntentionalHTML proves the escaping in eventToAlert did
+// NOT over-reach into the boot-report path: formatBootReport wraps
+// renderStatus' deliberate <pre>/<b> markup, which must survive verbatim (not
+// become visible &lt;pre&gt;). This is the counterpart guard to
+// TestEventToAlertEscapesHTML.
+func TestBootReportKeepsIntentionalHTML(t *testing.T) {
+	snap := Snapshot{CPU: 10, Online: true, Disks: map[string]float64{"/": 30}}
+	report := formatBootReport([]DownEvent{{Type: "power_down", Start: 0, End: 60, DurationSec: 60}}, renderStatus(snap, config.Default()))
+	if !strings.Contains(report, "<pre>") || !strings.Contains(report, "</pre>") {
+		t.Fatalf("boot report lost its intentional <pre> markup: %q", report)
+	}
+	if strings.Contains(report, "&lt;pre&gt;") {
+		t.Fatalf("boot report's HTML was wrongly escaped: %q", report)
+	}
+}
+
 func TestSlowEvery(t *testing.T) {
 	cases := []struct {
 		fast, slow, want int

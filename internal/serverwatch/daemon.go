@@ -2,6 +2,7 @@ package serverwatch
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"os/signal"
@@ -527,6 +528,16 @@ func slowEvery(fastInterval, sampleInterval int) int {
 // transition) into the channel-agnostic Alert the Dispatcher understands.
 // Body is left empty: e.Text already carries the full human-readable
 // message and is used verbatim as the Title.
+//
+// e.Text is PLAIN text that embeds live container/unit/device names (via
+// buildSlowChecks' FireMsg/RecoverMsg and breach()), so it is HTML-escaped
+// here at the source. The Telegram sink now sends parse_mode=HTML, and a
+// name containing <, >, or & would otherwise produce unbalanced HTML → a
+// Telegram 400 → the alert (the core alerting path) silently dropped. This
+// escaping is done at the plain-text source rather than in formatAlert,
+// because other dispatched alerts (the boot report, digests) carry
+// INTENTIONAL HTML from renderStatus that must not be escaped — see
+// formatBootReport / the boot/digest Alert{} sites in cmdDaemon.
 func eventToAlert(e Event, nowUnix int64) Alert {
 	sev := SevWarning
 	if e.Critical {
@@ -534,7 +545,7 @@ func eventToAlert(e Event, nowUnix int64) Alert {
 	}
 	return Alert{
 		Key:      e.Key,
-		Title:    e.Text,
+		Title:    html.EscapeString(e.Text),
 		Body:     "",
 		Severity: sev,
 		Kind:     e.Kind,
