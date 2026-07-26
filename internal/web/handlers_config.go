@@ -17,8 +17,8 @@ import (
 // configMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
 // mirroring usersMutation (handlers_users.go): only an admin session may
 // POST /config, and only with a valid CSRF token.
-func configMutation(next http.HandlerFunc) http.HandlerFunc {
-	return requireRole(RoleAdmin, func(w http.ResponseWriter, r *http.Request) {
+func configMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
+	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
@@ -194,7 +194,7 @@ func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 		hours[i] = i
 	}
 	return ConfigPageData{
-		PageData:      newPageData(r, "Configuration", "Thresholds, monitors, schedules, quiet hours", "ok"),
+		PageData:      newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours", "ok"),
 		DiskPct:       trimFloatText(cfg.Thresholds.DiskPct),
 		TempC:         trimFloatText(cfg.Thresholds.TempC),
 		MemPct:        trimFloatText(cfg.Thresholds.MemPct),

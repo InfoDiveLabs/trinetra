@@ -97,7 +97,7 @@ func buildMonitoringPageData(r *http.Request, d Deps) MonitoringPageData {
 	warnCrit := view.DisksWarnCritCount()
 
 	return MonitoringPageData{
-		PageData:        newPageData(r, "Monitoring", "Containers · services · filesystems · processes", monitoringStatus(view, total-up)),
+		PageData:        newPageData(r, d, "Monitoring", "Containers · services · filesystems · processes", monitoringStatus(view, total-up)),
 		View:            view,
 		ContainersUp:    up,
 		ContainersTotal: total,

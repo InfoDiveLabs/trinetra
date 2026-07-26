@@ -155,7 +155,7 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	alerts := loadActiveAlerts(d.AlertStatePath)
 	status := dashboardStatus(view, alerts)
 	return DashboardPageData{
-		PageData: newPageData(r, "Dashboard", "Overview · live", status),
+		PageData: newPageData(r, d, "Dashboard", "Overview · live", status),
 		View:     view,
 		Alerts:   alerts,
 		TopCPUBars: containerBars(view.TopCPUContainers,

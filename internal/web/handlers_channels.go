@@ -16,8 +16,8 @@ import (
 // channelsMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
 // mirroring usersMutation/configMutation: every /channels* mutation (add,
 // update, remove, test) needs both gates.
-func channelsMutation(next http.HandlerFunc) http.HandlerFunc {
-	return requireRole(RoleAdmin, func(w http.ResponseWriter, r *http.Request) {
+func channelsMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
+	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
@@ -189,7 +189,7 @@ type ChannelsPageData struct {
 
 func buildChannelsPageData(r *http.Request, d Deps, testResult string) ChannelsPageData {
 	cfg := d.Cfg()
-	page := newPageData(r, "Notification channels", "Where alerts are delivered", "ok")
+	page := newPageData(r, d, "Notification channels", "Where alerts are delivered", "ok")
 
 	newModal := newChannelModalData
 	newModal.CSRF = page.CSRF

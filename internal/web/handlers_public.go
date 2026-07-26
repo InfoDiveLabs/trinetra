@@ -23,8 +23,8 @@ const publicRefreshSeconds = 30
 // publicSettingsMutation composes requireRole(RoleAdmin, ...) with
 // requireCSRF, mirroring configMutation/channelsMutation: only an admin
 // session may POST /settings/public, and only with a valid CSRF token.
-func publicSettingsMutation(next http.HandlerFunc) http.HandlerFunc {
-	return requireRole(RoleAdmin, func(w http.ResponseWriter, r *http.Request) {
+func publicSettingsMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
+	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
@@ -268,7 +268,7 @@ func buildPublicSettingsPageData(r *http.Request, d Deps) PublicSettingsPageData
 		snap = d.Snapshot()
 	}
 	return PublicSettingsPageData{
-		PageData: newPageData(r, "Public view", "Choose what the world sees", "ok"),
+		PageData: newPageData(r, d, "Public view", "Choose what the world sees", "ok"),
 		Enabled:  cfg.Public.Enabled,
 		Panels:   buildPublicSettingsRows(cfg.Public.Panels, snap),
 	}

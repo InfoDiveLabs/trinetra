@@ -17,8 +17,8 @@ import (
 // only with a valid CSRF token (requireCSRF) — unlike POST /logout
 // (routes.go), which only needs the latter, since these mutate someone
 // ELSE's account rather than the caller's own session.
-func usersMutation(next http.HandlerFunc) http.HandlerFunc {
-	return requireRole(RoleAdmin, func(w http.ResponseWriter, r *http.Request) {
+func usersMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
+	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
@@ -107,7 +107,7 @@ func ttlLabel(value string) string {
 // (and, if issued is non-nil, the just-minted invite to render alongside
 // it), tagging the requesting session's own account with IsSelf so the
 // template can show "(you)" the way the mockup does.
-func buildUsersPageData(r *http.Request, store UserStore, issued *IssuedInvite) UsersPageData {
+func buildUsersPageData(r *http.Request, d Deps, store UserStore, issued *IssuedInvite) UsersPageData {
 	self, _ := userFromContext(r)
 	all := store.List()
 	rows := make([]UserRow, 0, len(all))
@@ -131,7 +131,7 @@ func buildUsersPageData(r *http.Request, store UserStore, issued *IssuedInvite) 
 		})
 	}
 	return UsersPageData{
-		PageData: newPageData(r, "Users", "Accounts, roles, and enrollment tokens", "ok"),
+		PageData: newPageData(r, d, "Users", "Accounts, roles, and enrollment tokens", "ok"),
 		Users:    rows,
 		Issued:   issued,
 	}
@@ -173,7 +173,7 @@ func renderUsersFragment(w http.ResponseWriter, data UsersPageData) error {
 func usersPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		store := newUserStore(d.StateDir)
-		data := buildUsersPageData(r, store, nil)
+		data := buildUsersPageData(r, d, store, nil)
 		if err := renderUsersPage(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -224,7 +224,7 @@ func usersInviteHandler(d Deps) http.HandlerFunc {
 		}
 		logAudit(d, r, "user.invite", string(role), "", "ttl="+ttlValue)
 		store := newUserStore(d.StateDir)
-		data := buildUsersPageData(r, store, issued)
+		data := buildUsersPageData(r, d, store, issued)
 		if err := renderUsersFragment(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -269,7 +269,7 @@ func usersRoleHandler(d Deps) http.HandlerFunc {
 		}
 		logAudit(d, r, "user.role", id, oldRole, string(newRole))
 
-		data := buildUsersPageData(r, store, nil)
+		data := buildUsersPageData(r, d, store, nil)
 		if err := renderUsersFragment(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -300,7 +300,7 @@ func usersRemoveHandler(d Deps) http.HandlerFunc {
 		}
 		logAudit(d, r, "user.remove", id, oldSummary, "")
 
-		data := buildUsersPageData(r, store, nil)
+		data := buildUsersPageData(r, d, store, nil)
 		if err := renderUsersFragment(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -343,7 +343,7 @@ func usersRevokeCredentialHandler(d Deps) http.HandlerFunc {
 		}
 		logAudit(d, r, "user.credential.revoke", id, revoked, "")
 
-		data := buildUsersPageData(r, store, nil)
+		data := buildUsersPageData(r, d, store, nil)
 		if err := renderUsersFragment(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

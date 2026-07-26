@@ -30,26 +30,26 @@ func newHandler(d Deps) http.Handler {
 	// visitor is redirected to /login. The other viewer+ routes
 	// (/history, /alerts, /monitoring) are gated the same way by the tasks
 	// that register them.
-	mux.HandleFunc("GET /{$}", requireRole(RoleViewer, dashboardHandler(d)))
+	mux.HandleFunc("GET /{$}", requireRole(RoleViewer, d, dashboardHandler(d)))
 	// /events (Task 8/#64): the SSE stream dashboard.html's live tiles/charts
 	// subscribe to (assets/app.js's swBootSSE, sse.go). Viewer-gated exactly
 	// like the dashboard itself — it carries the same live metrics, just
 	// pushed instead of polled.
-	mux.HandleFunc("GET /events", requireRole(RoleViewer, eventsHandler(d)))
+	mux.HandleFunc("GET /events", requireRole(RoleViewer, d, eventsHandler(d)))
 	// /history + /api/series (Task 9/#65): time-range history graphs backed
 	// by the daemon's SampleStore (Deps.Store, a SeriesStore — see
 	// series_store.go). Viewer-gated exactly like the dashboard/events above:
 	// history is read-only data, same role floor as the rest of "Monitor".
-	mux.HandleFunc("GET /history", requireRole(RoleViewer, historyPageHandler(d)))
-	mux.HandleFunc("GET /api/series", requireRole(RoleViewer, seriesAPIHandler(d)))
-	mux.HandleFunc("GET /api/downtime", requireRole(RoleViewer, downtimeAPIHandler(d)))
+	mux.HandleFunc("GET /history", requireRole(RoleViewer, d, historyPageHandler(d)))
+	mux.HandleFunc("GET /api/series", requireRole(RoleViewer, d, seriesAPIHandler(d)))
+	mux.HandleFunc("GET /api/downtime", requireRole(RoleViewer, d, downtimeAPIHandler(d)))
 	// /monitoring: the detailed per-entity view (containers/systemd units/
 	// processes/filesystems), ported from ui-mockup/monitoring.html. Same
 	// viewer+ floor as the rest of "Monitor" — see monitoringHandler
 	// (handlers_monitoring.go) and web.MonitoringView/
 	// internal/serverwatch/daemon_web.go's buildMonitoringView adapter for
 	// where its data comes from.
-	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, monitoringHandler(d)))
+	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, d, monitoringHandler(d)))
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
 	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
@@ -75,17 +75,17 @@ func newHandler(d Deps) http.Handler {
 	// requireRole(RoleAdmin, ...) like the other admin routes; POST additionally
 	// needs requireCSRF (configMutation, handlers_config.go), since it's a
 	// config-wide mutation exactly like the /users/* mutations below.
-	mux.HandleFunc("GET /config", requireRole(RoleAdmin, configPageHandler(d)))
-	mux.HandleFunc("POST /config", configMutation(configSaveHandler(d)))
+	mux.HandleFunc("GET /config", requireRole(RoleAdmin, d, configPageHandler(d)))
+	mux.HandleFunc("POST /config", configMutation(d, configSaveHandler(d)))
 	// /channels (Task 10/#66): CRUD over config.Channels, ported from
 	// ui-mockup/channels.html's table + add/edit modal. GET is
 	// requireRole(RoleAdmin, ...) like /config; every mutation additionally
 	// needs requireCSRF (channelsMutation, handlers_channels.go).
-	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, channelsPageHandler(d)))
-	mux.HandleFunc("POST /channels", channelsMutation(channelsAddHandler(d)))
-	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(channelsUpdateHandler(d)))
-	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(channelsRemoveHandler(d)))
-	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(channelsTestHandler(d)))
+	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, d, channelsPageHandler(d)))
+	mux.HandleFunc("POST /channels", channelsMutation(d, channelsAddHandler(d)))
+	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(d, channelsUpdateHandler(d)))
+	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(d, channelsRemoveHandler(d)))
+	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(d, channelsTestHandler(d)))
 	// /settings/public + /public (Task 11/#67): the admin-curated exposure
 	// picker (GET/POST /settings/public, admin-only + CSRF on the mutation —
 	// publicSettingsMutation, handlers_public.go) plus the curated
@@ -94,8 +94,8 @@ func newHandler(d Deps) http.Handler {
 	// table marks anon, and publicPageHandler enforces its own "enabled
 	// -> 404" + server-side panel allowlist instead — see that handler's
 	// SECURITY doc).
-	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, publicSettingsPageHandler(d)))
-	mux.HandleFunc("POST /settings/public", publicSettingsMutation(publicSettingsSaveHandler(d)))
+	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, d, publicSettingsPageHandler(d)))
+	mux.HandleFunc("POST /settings/public", publicSettingsMutation(d, publicSettingsSaveHandler(d)))
 	mux.HandleFunc("GET /public", publicPageHandler(d))
 
 	// /alerts (Task 10/#66): alert history (Deps.AlertLogPath) + active
@@ -103,8 +103,8 @@ func newHandler(d Deps) http.Handler {
 	// resolves the earlier placeholder note that /alerts must be
 	// viewer-gated, not admin-only. Ack, however, is admin-only + CSRF: it
 	// mutates shared alert state everyone else's view depends on.
-	mux.HandleFunc("GET /alerts", requireRole(RoleViewer, alertsPageHandler(d)))
-	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleAdmin, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /alerts", requireRole(RoleViewer, d, alertsPageHandler(d)))
+	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsAckHandler(d)).ServeHTTP(w, r)
 	}))
 
@@ -115,11 +115,11 @@ func newHandler(d Deps) http.Handler {
 	// (usersMutation, handlers_users.go), since these change someone ELSE's
 	// account rather than the caller's own session (unlike POST /logout,
 	// which only needs the CSRF half).
-	mux.HandleFunc("GET /users", requireRole(RoleAdmin, usersPageHandler(d)))
-	mux.HandleFunc("POST /users/invite", usersMutation(usersInviteHandler(d)))
-	mux.HandleFunc("POST /users/{id}/role", usersMutation(usersRoleHandler(d)))
-	mux.HandleFunc("POST /users/{id}/remove", usersMutation(usersRemoveHandler(d)))
-	mux.HandleFunc("POST /users/{id}/credentials/{credParam}/revoke", usersMutation(usersRevokeCredentialHandler(d)))
+	mux.HandleFunc("GET /users", requireRole(RoleAdmin, d, usersPageHandler(d)))
+	mux.HandleFunc("POST /users/invite", usersMutation(d, usersInviteHandler(d)))
+	mux.HandleFunc("POST /users/{id}/role", usersMutation(d, usersRoleHandler(d)))
+	mux.HandleFunc("POST /users/{id}/remove", usersMutation(d, usersRemoveHandler(d)))
+	mux.HandleFunc("POST /users/{id}/credentials/{credParam}/revoke", usersMutation(d, usersRevokeCredentialHandler(d)))
 
 	// sessionMiddleware runs for every request so any handler/template can
 	// read the current session (sessionFromContext) — including
@@ -183,7 +183,7 @@ func contentTypeByExt(name string) string {
 // time this runs, so it does no authorization of its own.
 func adminPlaceholderHandler(d Deps, title, sub string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		data := newPageData(r, title, sub, "ok")
+		data := newPageData(r, d, title, sub, "ok")
 		if err := renderPage(w, "admin_placeholder.html", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

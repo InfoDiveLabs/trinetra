@@ -244,7 +244,7 @@ func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
 	uptime, hasUptime := uptimePct30d(d)
 
 	return AlertsPageData{
-		PageData:     newPageData(r, "Alerts & incidents", "Firing now + history", status),
+		PageData:     newPageData(r, d, "Alerts & incidents", "Firing now + history", status),
 		ActiveAlerts: activeAlertRows(active),
 		History:      alertHistoryRows(events),
 		FiringCount:  firing,

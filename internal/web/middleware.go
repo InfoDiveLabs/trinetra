@@ -94,7 +94,12 @@ func userFromContext(r *http.Request) (*User, bool) {
 // min instead renders the mockup's "Admin only" denied panel with 403 —
 // they ARE authenticated, just not authorized, so bouncing them to /login
 // would accomplish nothing (their passkey already works fine).
-func requireRole(min Role, next http.HandlerFunc) http.HandlerFunc {
+//
+// d is threaded through only so a 403 can render the denied panel with the
+// same live nav (renderDenied -> newPageData -> navCountsFor, templates.go)
+// every other page shows — it plays no role in the authorization decision
+// itself.
+func requireRole(min Role, d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r)
 		if !ok {
@@ -102,7 +107,7 @@ func requireRole(min Role, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if min == RoleAdmin && u.Role != RoleAdmin {
-			renderDenied(w, r)
+			renderDenied(w, r, d)
 			return
 		}
 		next(w, r)

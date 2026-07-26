@@ -73,38 +73,59 @@ type navEntry struct {
 }
 
 // navItems mirrors the mockup app.js NAV array verbatim (headings, paths,
-// icons, labels, badge counts, admin gating) with mockup .html paths
-// swapped for the server's real routes. Later tasks implement the routes
-// these link to (alerts, history, config, channels, users, public-settings);
-// for now they render as plain links even before their handlers exist. The
-// mockup's Monitoring entry is intentionally omitted: that page was never
-// built and a link to a route that 404s is worse than no link (see
-// docs/ROADMAP.md / field feedback) -- add it back once /monitoring exists.
+// icons, labels, admin gating) with mockup .html paths swapped for the
+// server's real routes. Badge values are deliberately NOT set here: the
+// mockup's hardcoded demo counts (Monitoring 220 / Alerts 2 / Channels 5 /
+// Users 3) are computed fresh per request instead (navCountsFor, badgeFor
+// below) so they never go stale.
 var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Monitor"}},
 	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
-	{NavItem: NavItem{Href: "/alerts", Icon: "!", Label: "Alerts", Badge: "2"}},
+	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring"}},
+	{NavItem: NavItem{Href: "/alerts", Icon: "!", Label: "Alerts"}},
 	{NavItem: NavItem{Href: "/history", Icon: "◔", Label: "History"}},
 	{NavItem: NavItem{Heading: "Admin"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/config", Icon: "⚙", Label: "Configuration"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels", Badge: "5"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users", Badge: "3"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/settings/public", Icon: "◈", Label: "Public view"}, AdminOnly: true},
 }
 
-// navForRole returns navItems filtered to what role may see: viewers get
-// everything except AdminOnly entries, admins get everything. This is the
+// navForRole returns navItems filtered to what role may see (viewers get
+// everything except AdminOnly entries, admins get everything — the
 // server-side equivalent of the mockup app.js NAV.filter(role==='admin' ||
-// !n.admin).
-func navForRole(role string) []NavItem {
+// !n.admin)) with each entry's Badge filled in from counts via badgeFor.
+func navForRole(role string, counts NavCounts) []NavItem {
 	out := make([]NavItem, 0, len(navItems))
 	for _, n := range navItems {
 		if n.AdminOnly && role != "admin" {
 			continue
 		}
-		out = append(out, n.NavItem)
+		item := n.NavItem
+		item.Badge = badgeFor(item.Href, counts)
+		out = append(out, item)
 	}
 	return out
+}
+
+// badgeFor maps a nav entry's Href to the NavCounts field it displays,
+// rendered through badgeText (nav_counts.go) so a zero/unknown count is an
+// empty string (no badge) rather than a stale "0". Hrefs with no counter
+// (Dashboard, History, Configuration, Public view) and section headings
+// (empty Href) fall through to "" harmlessly.
+func badgeFor(href string, counts NavCounts) string {
+	switch href {
+	case "/monitoring":
+		return badgeText(counts.Monitoring)
+	case "/alerts":
+		return badgeText(counts.Alerts)
+	case "/channels":
+		return badgeText(counts.Channels)
+	case "/users":
+		return badgeText(counts.Users)
+	default:
+		return ""
+	}
 }
 
 // currentRole returns the signed-in request's role ("admin"/"viewer"), or
@@ -149,8 +170,10 @@ type PageData struct {
 }
 
 // newPageData builds the PageData every page handler needs, deriving Role
-// from the request and Active from its path.
-func newPageData(r *http.Request, title, sub, status string) PageData {
+// from the request and Active from its path. d is used only to compute the
+// nav's live badge counts (navCountsFor) — every other field is unchanged
+// from the request/session.
+func newPageData(r *http.Request, d Deps, title, sub, status string) PageData {
 	role := currentRole(r)
 	csrf := ""
 	if sess, ok := sessionFromContext(r); ok {
@@ -162,7 +185,7 @@ func newPageData(r *http.Request, title, sub, status string) PageData {
 		Status: status,
 		Role:   role,
 		Active: r.URL.Path,
-		Nav:    navForRole(role),
+		Nav:    navForRole(role, navCountsFor(d)),
 		Nonce:  nonceFromContext(r),
 		CSRF:   csrf,
 	}
@@ -202,8 +225,8 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 // route's required minimum. It still renders through the normal PageData/
 // nav (the visitor IS signed in, so the shell should look like it does
 // everywhere else), just with the content block replaced.
-func renderDenied(w http.ResponseWriter, r *http.Request) {
-	data := newPageData(r, "Admin only", "Access denied", "ok")
+func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
+	data := newPageData(r, d, "Admin only", "Access denied", "ok")
 	if err := renderPageStatus(w, "denied.html", data, http.StatusForbidden); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
