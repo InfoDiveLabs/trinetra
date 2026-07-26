@@ -3,12 +3,6 @@
 package web
 
 import (
-	"context"
-	"fmt"
-	"net"
-	"net/http"
-	"time"
-
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"serverwatch/internal/config"
@@ -57,30 +51,26 @@ type Deps struct {
 	Listen string
 }
 
-// Start is the web server's entry point: given Deps, it binds an
-// http.Server on Deps.Listen when Deps.Enabled and returns a stop func that
-// gracefully shuts it down. If Deps.Enabled is false, Start binds nothing
-// and returns a no-op stop and a nil error — the daemon always calls
-// maybeStartWeb/Start unconditionally (see internal/serverwatch/web_deps.go),
-// so "disabled" has to be a valid, harmless outcome here rather than an
-// error.
+// Start is the web server's entry point: given Deps, it binds and serves
+// (per cfg.Web.Mode — see serving.go's listenAndServe) when Deps.Enabled and
+// returns a stop func that gracefully shuts it down. If Deps.Enabled is
+// false, Start binds nothing and returns a no-op stop and a nil error — the
+// daemon always calls maybeStartWeb/Start unconditionally (see
+// internal/serverwatch/web_deps.go), so "disabled" has to be a valid,
+// harmless outcome here rather than an error.
 //
-// issue #59 adds serving modes (proxy/autocert/manual) + rpID/origin
-// validation, at which point a validation failure would also legitimately
-// return a non-nil error even when Enabled is true.
+// When Enabled is true, Start first calls validateOrigin (issue #59) to
+// fail fast on a passkey-unsafe or incomplete web.* config BEFORE binding
+// anything: a non-nil return here means the caller (maybeStartWeb) must
+// log it and treat the web server as not started, while the daemon itself
+// keeps running.
 func Start(d Deps) (stop func(), err error) {
 	if !d.Enabled {
 		return func() {}, nil
 	}
-	ln, err := net.Listen("tcp", d.Listen)
-	if err != nil {
-		return nil, fmt.Errorf("web: listen %s: %w", d.Listen, err)
+	cfg := d.Cfg()
+	if err := validateOrigin(cfg); err != nil {
+		return nil, err
 	}
-	srv := &http.Server{Handler: newHandler(d)}
-	go srv.Serve(ln) //nolint:errcheck // Shutdown below always yields http.ErrServerClosed; nothing else to log yet.
-	return func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	}, nil
+	return listenAndServe(d, newHandler(d))
 }
