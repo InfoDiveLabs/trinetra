@@ -23,8 +23,17 @@ type Config struct {
 	// HeartbeatInterval is the seconds between liveness heartbeats.
 	HeartbeatInterval int     `json:"heartbeat_interval,omitempty"`
 	BaselineSigma     float64 `json:"baseline_sigma,omitempty"`
-	QuietHours        string  `json:"quiet_hours,omitempty"` // "23-8" or ""
-	Telegram          struct {
+	// BaselineMinPct is the minimum relative deviation (fraction of the
+	// baseline mean, e.g. 0.15 = 15%) a value must ALSO clear -- alongside
+	// BaselineSigma -- before a baseline (non-threshold) anomaly fires. It
+	// exists because a noisy-but-stable metric's EWMA variance can be
+	// underestimated, making a small, normal wobble read as many sigma from
+	// the mean; requiring the value to also be materially far from the mean
+	// in relative terms suppresses that flapping. Threshold-based alerts
+	// (disk/docker/etc.) are unaffected.
+	BaselineMinPct float64 `json:"baseline_min_pct,omitempty"`
+	QuietHours     string  `json:"quiet_hours,omitempty"` // "23-8" or ""
+	Telegram       struct {
 		Token  string `json:"token,omitempty"`
 		ChatID string `json:"chat_id,omitempty"`
 	} `json:"telegram"`
@@ -449,6 +458,7 @@ func Default() *Config {
 		FastInterval:      5,
 		HeartbeatInterval: 30,
 		BaselineSigma:     3,
+		BaselineMinPct:    0.15,
 	}
 	c.Thresholds.DiskPct = 90
 	c.Thresholds.TempC = 80
@@ -489,6 +499,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.BaselineSigma == 0 {
 		c.BaselineSigma = 3
+	}
+	if c.BaselineMinPct == 0 {
+		c.BaselineMinPct = 0.15
 	}
 	if c.Storage.Backend == "" {
 		c.Storage.Backend = "tsfile"
@@ -551,6 +564,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.Itoa(c.HeartbeatInterval), true
 	case "baseline_sigma":
 		return trimFloat(c.BaselineSigma), true
+	case "baseline_min_pct":
+		return trimFloat(c.BaselineMinPct), true
 	case "quiet_hours":
 		return c.QuietHours, true
 	case "telegram.token":
@@ -653,6 +668,15 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.BaselineSigma = v
+	case "baseline_min_pct":
+		v, err := f()
+		if err != nil {
+			return err
+		}
+		if v < 0 {
+			return fmt.Errorf("baseline_min_pct must be >= 0")
+		}
+		c.BaselineMinPct = v
 	case "quiet_hours":
 		if err := validateQuietHours(val); err != nil {
 			return err

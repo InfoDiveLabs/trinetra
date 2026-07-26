@@ -41,10 +41,10 @@ type Event struct {
 	Critical bool
 }
 
-func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma float64, nowUnix int64) []Event {
+func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma, minPct float64, nowUnix int64) []Event {
 	var events []Event
 	for _, c := range checks {
-		breach, reason := c.breach(b, sigma)
+		breach, reason := c.breach(b, sigma, minPct)
 		_, active := s.Active[c.Key]
 		switch {
 		case breach && !active:
@@ -111,7 +111,13 @@ func (s *AlertState) Unack(key string) error {
 	return nil
 }
 
-func (c Check) breach(b *Baseline, sigma float64) (bool, string) {
+// meanFloor bounds the denominator of the minPct relative-deviation gate so
+// a metric whose baseline mean sits near zero doesn't divide by (near) zero
+// -- without it, a metric like a rarely-nonzero counter would satisfy the
+// "relative" gate trivially for any nonzero value, defeating its purpose.
+const meanFloor = 1.0
+
+func (c Check) breach(b *Baseline, sigma, minPct float64) (bool, string) {
 	if c.HasThreshold && c.Value >= c.Threshold {
 		if c.FireMsg != "" {
 			return true, c.FireMsg
@@ -119,6 +125,21 @@ func (c Check) breach(b *Baseline, sigma float64) (bool, string) {
 		return true, fmt.Sprintf("%s = %.1f ≥ threshold %.1f", c.Key, c.Value, c.Threshold)
 	}
 	if z, ready := b.Z(c.Key, c.Value); ready && math.Abs(z) >= sigma {
+		// A metric can be many sigma from its mean while barely moving in
+		// absolute/relative terms if its EWMA variance is underestimated
+		// (e.g. a temp sensor cycling narrowly, or ~stable mem%) -- that's
+		// exactly the "noisy but stable" flapping this gate exists to
+		// suppress. Only fire the baseline alert when the value is ALSO
+		// materially far from the mean, not just many (underestimated)
+		// standard deviations from it.
+		mean, _ := b.Mean(c.Key)
+		denom := math.Abs(mean)
+		if denom < meanFloor {
+			denom = meanFloor
+		}
+		if math.Abs(c.Value-mean) < minPct*denom {
+			return false, ""
+		}
 		return true, fmt.Sprintf("%s = %.1f is %.1fσ from baseline", c.Key, c.Value, z)
 	}
 	return false, ""

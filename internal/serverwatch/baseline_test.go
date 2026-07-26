@@ -74,6 +74,25 @@ func TestBaselineZScoreVaryingData(t *testing.T) {
 	}
 }
 
+// TestBaselineMeanAccessor confirms Mean returns the tracked EWMA mean for a
+// known key and (0, false) for a key that has never been observed.
+func TestBaselineMeanAccessor(t *testing.T) {
+	b := NewBaseline()
+	if _, ok := b.Mean("cpu"); ok {
+		t.Fatal("Mean of unknown key should be (0, false)")
+	}
+	for i := 0; i < 50; i++ {
+		b.Observe("cpu", 43, 5)
+	}
+	mean, ok := b.Mean("cpu")
+	if !ok {
+		t.Fatal("Mean should be ready once a stat exists")
+	}
+	if math.Abs(mean-43) > 0.5 {
+		t.Fatalf("Mean = %v, want ~43", mean)
+	}
+}
+
 func TestBaselineNotReadyEarly(t *testing.T) {
 	b := NewBaseline()
 	b.Observe("mem", 50, 60)

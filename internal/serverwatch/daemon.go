@@ -913,13 +913,13 @@ func cmdDaemon(args []string) int {
 		// between slow ticks rather than being spuriously re-fired/recovered.
 		disp := getDispatcher()
 		quiet := inQuietHours(c.QuietHours, now)
-		events := alerts.Evaluate(buildFastChecks(merged, c), baseline, c.BaselineSigma, now.Unix())
+		events := alerts.Evaluate(buildFastChecks(merged, c), baseline, c.BaselineSigma, c.BaselineMinPct, now.Unix())
 		for _, e := range events {
 			dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
 		}
 		stateChanged := len(events) > 0
 		if isSlowTick {
-			slowEvents := alerts.Evaluate(buildSlowChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, now.Unix())
+			slowEvents := alerts.Evaluate(buildSlowChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, c.BaselineMinPct, now.Unix())
 			for _, e := range slowEvents {
 				dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
 			}

@@ -17,6 +17,9 @@ func TestDefaultsAndGet(t *testing.T) {
 	if got, _ := c.Get("baseline_sigma"); got != "3" {
 		t.Fatalf("baseline_sigma default = %q, want 3", got)
 	}
+	if got, _ := c.Get("baseline_min_pct"); got != "0.15" {
+		t.Fatalf("baseline_min_pct default = %q, want 0.15", got)
+	}
 	if got, _ := c.Get("fast_interval"); got != "5" {
 		t.Fatalf("fast_interval default = %q, want 5", got)
 	}
@@ -38,6 +41,28 @@ func TestSetUnsetRoundTrip(t *testing.T) {
 	}
 	if got, _ := c.Get("sample_interval"); got != "60" {
 		t.Fatalf("after unset = %q, want default 60", got)
+	}
+}
+
+// TestBaselineMinPctRoundTrip confirms baseline_min_pct sets, gets, validates
+// (>= 0), and unsets back to its 0.15 default -- the config-side plumbing
+// for the minimum-relative-deviation anomaly gate.
+func TestBaselineMinPctRoundTrip(t *testing.T) {
+	c := Default()
+	if err := c.Set("baseline_min_pct", "0.2"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("baseline_min_pct"); got != "0.2" {
+		t.Fatalf("after set = %q, want 0.2", got)
+	}
+	if err := c.Set("baseline_min_pct", "-0.1"); err == nil {
+		t.Fatal("expected error for negative baseline_min_pct")
+	}
+	if err := c.Unset("baseline_min_pct"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("baseline_min_pct"); got != "0.15" {
+		t.Fatalf("after unset = %q, want default 0.15", got)
 	}
 }
 

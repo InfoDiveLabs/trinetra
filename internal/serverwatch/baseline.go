@@ -59,6 +59,18 @@ func (b *Baseline) Observe(key string, v float64, intervalSec int) {
 	s.Var = (1 - alpha) * (s.Var + diff*incr)
 }
 
+// Mean returns the tracked EWMA mean for key and whether a stat exists for
+// it yet (unlike Z, this does NOT require baselineReady observations --
+// callers needing the relative-deviation gate want the current running
+// mean as soon as one exists, not only once the baseline is "ready").
+func (b *Baseline) Mean(key string) (float64, bool) {
+	s := b.Stats[key]
+	if s == nil {
+		return 0, false
+	}
+	return s.Mean, true
+}
+
 func (b *Baseline) Z(key string, v float64) (float64, bool) {
 	s := b.Stats[key]
 	if s == nil || s.Count < baselineReady {
