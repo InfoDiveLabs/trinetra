@@ -2,7 +2,10 @@ module serverwatch
 
 go 1.22
 
-require github.com/go-webauthn/webauthn v0.10.2
+require (
+	github.com/go-webauthn/webauthn v0.10.2
+	golang.org/x/crypto v0.21.0
+)
 
 require (
 	github.com/fxamacker/cbor/v2 v2.6.0 // indirect
@@ -12,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.21.0 // indirect
+	golang.org/x/net v0.21.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 )
