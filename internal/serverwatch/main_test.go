@@ -50,6 +50,12 @@ func TestConfigGetAllShowsAllCollectKeys(t *testing.T) {
 			t.Errorf("config get (full dump) missing %q; output:\n%s", key, got)
 		}
 	}
+	// smart_interval is an int (not a *bool) but is likewise omitted from a raw
+	// marshal when unset; the full dump must still surface its effective 1800s
+	// default (see configForDisplay).
+	if !strings.Contains(got, `"smart_interval": 1800`) {
+		t.Errorf("config get (full dump) missing smart_interval default 1800; output:\n%s", got)
+	}
 }
 
 func TestUnknownCommand(t *testing.T) {

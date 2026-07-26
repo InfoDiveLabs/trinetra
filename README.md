@@ -146,8 +146,12 @@ exception: the running time-series store isn't reopened on `SIGHUP`, so a
   `smartctl -A` attribute reads (`smart_attrs` in `status.json`, feeds the
   `smart:<dev>:temp` series; the cheaper `--scan`/`-H` health check always
   runs regardless).
+- `collect.smart_interval` (int seconds, default `1800` — 30 min) — throttles
+  the SMART scan (`smartctl --scan`/`-H`/`-A`); cached results still flow to
+  `status.json` every slow tick between scans. Set as low as `sample_interval`
+  to scan every slow tick.
 
-  All five `collect.*` keys are opt-**out**: unset/absent means enabled.
+  All five `collect.*` toggles above are opt-**out**: unset/absent means enabled.
   Turn one off with, e.g., `serverwatch config set collect.processes false`
   — useful on a small device, or a host with hundreds of short-lived
   processes/containers, where the default collection is more than you need.

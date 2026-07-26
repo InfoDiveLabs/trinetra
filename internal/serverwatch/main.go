@@ -116,6 +116,7 @@ func configForDisplay(c *config.Config) *config.Config {
 	d.Collect.Services = &services
 	d.Collect.Processes = &processes
 	d.Collect.SmartAttrs = &smartAttrs
+	d.Collect.SmartInterval = c.SmartIntervalSec()
 	return &d
 }
 

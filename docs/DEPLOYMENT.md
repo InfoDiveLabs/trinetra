@@ -196,7 +196,14 @@ sudo serverwatch config set collect.net_throughput false   # skip /proc/net/dev 
 sudo serverwatch config set collect.services false         # skip the full systemd unit inventory
 sudo serverwatch config set collect.processes false        # skip the process-table overview
 sudo serverwatch config set collect.smart_attrs false      # skip `smartctl -A` (temp/wear/realloc)
+sudo serverwatch config set collect.smart_interval 600      # SMART scan throttle, seconds (default 1800 = 30 min)
 ```
+
+`collect.smart_interval` (seconds, default `1800` = 30 min) throttles the SMART
+scan (`smartctl --scan`/`-H`/`-A`) independently of `sample_interval` — SMART
+health rarely changes and the scan is the heaviest slow-tier call. Cached
+results still flow to `status.json` and the recovery sweep every slow tick
+between scans; set it as low as `sample_interval` to scan every slow tick.
 
 Turning one off is useful on a small device, or a host with hundreds of
 short-lived processes/containers, where the default collection is more than
