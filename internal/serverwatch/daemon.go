@@ -333,30 +333,34 @@ type smartCache struct {
 func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64, sc *smartCache, smartIntervalSec int) Snapshot {
 	var snap Snapshot
 	snap.DockerAccess = da.method
-	if out, err := x.Run("df", "-PB1"); err == nil {
-		snap.Disks = map[string]float64{}
-		for _, d := range mustDF(string(out)) {
-			if isRealMount(d.Mount) {
-				snap.Disks[d.Mount] = d.UsedPct
-			}
-		}
-	}
-	// disk detail (device/fstype/inode%/size), additive to snap.Disks above:
-	// `df -PT -B1` gives device/fstype/usage/size/free per mount, `df -Pi`
-	// gives inode-used%; parseDFTypes/parseDFInodes are pure and keyed by
-	// mount so they merge directly. Either call failing just narrows what
-	// DiskDetail can report for this tick rather than failing collectSlow.
+	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed
+	// `df -PT -B1` call (device/fstype/usage/size/free per mount), gated by
+	// isRealMount && isRealFsType. This used to be two separate df calls —
+	// snap.Disks from untyped `df -PB1` (path-prefix filtering only) and
+	// snap.DiskDetail from the typed call — which meant snap.Disks had no
+	// fstype to filter on. On a root daemon on a real docker host, `df`
+	// lists one `overlay` mount per container (plus squashfs/tmpfs/nsfs
+	// pseudo-mounts), so snap.Disks silently exploded to 70+ junk entries:
+	// this fed 70+ bogus "disk:<mount>" series into the tsfile store, and
+	// blew the /stats,/status,/disk Telegram replies past the 4096-char
+	// limit (see fix-disk-telegram-brief.md). Deriving both maps from the
+	// same typed+filtered source keeps them in lockstep and closes that gap.
+	// `df -Pi` (inode-used%) is a separate call since -T and -i are mutually
+	// exclusive df flags; either call failing just narrows what this tick
+	// can report rather than failing collectSlow.
 	if out, err := x.Run("df", "-PT", "-B1"); err == nil {
 		types := parseDFTypes(string(out))
 		var inodes map[string]float64
 		if iout, ierr := x.Run("df", "-Pi"); ierr == nil {
 			inodes = parseDFInodes(string(iout))
 		}
+		snap.Disks = map[string]float64{}
 		snap.DiskDetail = map[string]DiskDetail{}
 		for mount, d := range types {
-			if !isRealMount(mount) {
+			if !isRealMount(mount) || !isRealFsType(d.FsType) {
 				continue
 			}
+			snap.Disks[mount] = d.UsagePct
 			if pct, ok := inodes[mount]; ok {
 				d.InodePct = pct
 			}

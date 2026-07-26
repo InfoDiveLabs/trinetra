@@ -457,20 +457,21 @@ func TestCollectFastPopulatesCheapFields(t *testing.T) {
 
 func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
-		switch name {
-		case "df":
-			return []byte("Filesystem 1B-blocks Used Available Capacity Mounted\n/dev/sda1 100 90 10 90% /\n"), nil
-		case "docker":
+		switch {
+		case name == "df" && len(args) > 0 && args[0] == "-PT":
+			return []byte("Filesystem Type 1-blocks Used Available Capacity Mounted on\n/dev/sda1 ext4 100 90 10 90% /\n"), nil
+		case name == "df" && len(args) > 0 && args[0] == "-Pi":
+			return []byte("Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sda1 1000 100 900 10% /\n"), nil
+		case name == "docker":
 			if len(args) > 0 && args[0] == "stats" {
 				return []byte("web\t3.00%\t100MiB / 1GiB\t1MB / 1MB\n"), nil
 			}
 			return []byte("web\trunning\tUp 3 hours\n"), nil
-		case "systemctl":
+		case name == "systemctl":
 			return []byte("nginx.service loaded failed failed A high performance web server\n"), nil
-		case "smartctl":
-			if len(args) > 0 && args[0] == "--scan" {
-				return []byte("/dev/sda -d sat # /dev/sda [SAT], ATA device\n"), nil
-			}
+		case name == "smartctl" && len(args) > 0 && args[0] == "--scan":
+			return []byte("/dev/sda -d sat # /dev/sda [SAT], ATA device\n"), nil
+		case name == "smartctl":
 			return []byte("SMART overall-health self-assessment test result: PASSED\n"), nil
 		}
 		return nil, errNotExist
@@ -571,6 +572,64 @@ func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 	}
 	if snap.SmartAttrs["/dev/sda"].TempC != 37 {
 		t.Errorf("SmartAttrs[/dev/sda].TempC = %v, want 37", snap.SmartAttrs["/dev/sda"].TempC)
+	}
+}
+
+// TestCollectSlowFiltersDockerOverlayAndPseudoMounts is the regression test
+// for the field bug (fix-disk-telegram-brief.md): a root daemon on a real
+// docker host sees dozens of `overlay` mounts (one per container) plus
+// squashfs/tmpfs/nsfs pseudo-mounts in `df -PT -B1`. collectSlow must derive
+// BOTH snap.Disks and snap.DiskDetail from the typed df output, gated by
+// isRealMount && isRealFsType, so only the real ext4 mounts survive in
+// either map — not the ~70+ junk entries that used to blow past Telegram's
+// 4096-char message limit.
+func TestCollectSlowFiltersDockerOverlayAndPseudoMounts(t *testing.T) {
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "df" && len(args) > 0 && args[0] == "-PT":
+			return []byte("Filesystem     Type     1-blocks   Used   Available Capacity Mounted on\n" +
+				"/dev/sda1      ext4     100        60     40        60% /\n" +
+				"/dev/sda2      ext4     200        20     180       10% /boot\n" +
+				"/dev/sdb1      ext4     500        100    400       20% /mnt/data\n" +
+				"overlay        overlay  999999     999999 0         100% /var/lib/docker/overlay2/abc123/merged\n" +
+				"/dev/loop0     squashfs 12345      12345  0         100% /snap/core/1234\n" +
+				"tmpfs          tmpfs    1000       0      1000      0% /dev/shm\n"), nil
+		case name == "df" && len(args) > 0 && args[0] == "-Pi":
+			return nil, errNotExist
+		}
+		return nil, errNotExist
+	}}
+	fs := fakeFS{}
+	da := dockerAccess{available: false}
+
+	origDial := connDial
+	connDial = func(host string) bool { return true }
+	defer func() { connDial = origDial }()
+
+	snap := collectSlow(x, fs, da, config.Default(), nil, 0, nil, 0)
+
+	wantDisks := map[string]float64{"/": 60, "/boot": 10, "/mnt/data": 20}
+	if len(snap.Disks) != len(wantDisks) {
+		t.Fatalf("Disks = %+v, want exactly %+v", snap.Disks, wantDisks)
+	}
+	for m, pct := range wantDisks {
+		if snap.Disks[m] != pct {
+			t.Errorf("Disks[%s] = %v, want %v", m, snap.Disks[m], pct)
+		}
+	}
+	for _, junk := range []string{"/var/lib/docker/overlay2/abc123/merged", "/snap/core/1234", "/dev/shm"} {
+		if _, ok := snap.Disks[junk]; ok {
+			t.Errorf("Disks contains junk mount %q, want filtered out", junk)
+		}
+		if _, ok := snap.DiskDetail[junk]; ok {
+			t.Errorf("DiskDetail contains junk mount %q, want filtered out", junk)
+		}
+	}
+	if len(snap.DiskDetail) != len(wantDisks) {
+		t.Fatalf("DiskDetail = %+v, want exactly the same %d real mounts as Disks", snap.DiskDetail, len(wantDisks))
+	}
+	if dd := snap.DiskDetail["/mnt/data"]; dd.FsType != "ext4" || dd.Device != "/dev/sdb1" {
+		t.Errorf("DiskDetail[/mnt/data] = %+v, want fstype ext4 device /dev/sdb1", dd)
 	}
 }
 

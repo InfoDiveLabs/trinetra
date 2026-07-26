@@ -137,6 +137,55 @@ func isRealMount(m string) bool {
 			return false
 		}
 	}
+	// Defense-in-depth: reject known container/snap runtime mount roots even
+	// if isRealFsType's fstype denylist somehow doesn't catch them (e.g. a
+	// bind-mount or future overlay driver reporting a real-looking fstype).
+	// A root daemon on a docker host otherwise sees one mount per container
+	// under /var/lib/docker/overlay2/<hash>/merged — this is the field bug
+	// that motivated this whole filter (see fix-disk-telegram-brief.md).
+	for _, p := range []string{
+		"/var/lib/docker/", "/var/lib/containers/", "/var/lib/kubelet/",
+		"/snap/", "/var/snap/",
+	} {
+		if strings.HasPrefix(m, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// isRealFsType reports whether fstype names a real, user-facing block-device
+// filesystem (ext2/3/4, xfs, btrfs, zfs, vfat, exfat, f2fs, ntfs, reiserfs,
+// jfs, ...) as opposed to a pseudo/virtual/container filesystem (overlay,
+// tmpfs, proc, sysfs, cgroup, squashfs, ...). This is the robust
+// discriminator for the docker-host field bug: `df` on a root daemon lists
+// one `overlay` mount per container plus assorted pseudo-filesystems, and
+// path-prefix filtering (isRealMount) alone can't catch mounts outside the
+// known container-runtime directories, so this denylists filesystem TYPES
+// instead. Case-insensitive since some platforms/tools report fstype in
+// mixed case. "fuse.*" is treated as pseudo (FUSE-backed virtual/network
+// mounts like fuse.sshfs) except "fuseblk", which backs real block-device
+// filesystems (e.g. NTFS-3G) and is kept.
+func isRealFsType(fstype string) bool {
+	if fstype == "" {
+		return false
+	}
+	f := strings.ToLower(fstype)
+	if f == "fuseblk" {
+		return true
+	}
+	if f == "fuse" || strings.HasPrefix(f, "fuse.") {
+		return false
+	}
+	switch f {
+	case "overlay", "overlay2", "aufs",
+		"tmpfs", "devtmpfs", "ramfs",
+		"squashfs", "nsfs",
+		"proc", "sysfs", "cgroup", "cgroup2", "mqueue", "hugetlbfs",
+		"tracefs", "securityfs", "pstore", "fusectl", "debugfs", "configfs",
+		"bpf", "autofs", "binfmt_misc", "rpc_pipefs":
+		return false
+	}
 	return true
 }
 

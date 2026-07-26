@@ -85,3 +85,55 @@ func TestParseSmartScan(t *testing.T) {
 		t.Fatalf("devices = %+v", d)
 	}
 }
+
+// TestIsRealFsType asserts the fstype denylist: real block-device
+// filesystems (ext4/xfs/btrfs/...) pass, pseudo/virtual/container
+// filesystems (overlay, tmpfs, squashfs, proc, ...) are rejected, matching
+// case-insensitively, with fuseblk kept but other fuse.* rejected.
+func TestIsRealFsType(t *testing.T) {
+	real := []string{"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "vfat", "exfat", "f2fs", "ntfs", "reiserfs", "jfs", "EXT4", "fuseblk"}
+	for _, f := range real {
+		if !isRealFsType(f) {
+			t.Errorf("isRealFsType(%q) = false, want true", f)
+		}
+	}
+	pseudo := []string{
+		"overlay", "overlay2", "tmpfs", "devtmpfs", "squashfs", "nsfs",
+		"proc", "sysfs", "cgroup", "cgroup2", "mqueue", "hugetlbfs",
+		"tracefs", "securityfs", "pstore", "fusectl", "debugfs", "configfs",
+		"bpf", "autofs", "binfmt_misc", "ramfs", "rpc_pipefs",
+		"fuse.sshfs", "FUSE.glusterfs", "OVERLAY", "",
+	}
+	for _, f := range pseudo {
+		if isRealFsType(f) {
+			t.Errorf("isRealFsType(%q) = true, want false", f)
+		}
+	}
+}
+
+// TestIsRealMountRejectsContainerAndSnapPrefixes is defense-in-depth
+// alongside isRealFsType: even if a mount's reported fstype looked
+// real-ish, a mount path under a known container-runtime or snap root
+// should never surface as a monitored disk.
+func TestIsRealMountRejectsContainerAndSnapPrefixes(t *testing.T) {
+	rejected := []string{
+		"/var/lib/docker/overlay2/abc123/merged",
+		"/var/lib/docker/",
+		"/var/lib/containers/storage/overlay/def456/merged",
+		"/var/lib/kubelet/pods/xyz/volumes",
+		"/snap/core/1234",
+		"/snap/",
+		"/var/snap/lxd/common",
+	}
+	for _, m := range rejected {
+		if isRealMount(m) {
+			t.Errorf("isRealMount(%q) = true, want false", m)
+		}
+	}
+	kept := []string{"/", "/boot", "/mnt/data", "/home"}
+	for _, m := range kept {
+		if !isRealMount(m) {
+			t.Errorf("isRealMount(%q) = false, want true", m)
+		}
+	}
+}
