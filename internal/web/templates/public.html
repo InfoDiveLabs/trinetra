@@ -1,0 +1,15 @@
+{{define "head_extra"}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
+{{define "content"}}
+<div style="max-width:900px;margin:0 auto;padding:40px 24px">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px"><span class="lamp"></span><h2 style="margin:0">Status</h2></div>
+  <p class="note" style="margin:0 0 22px">Public read-only view</p>
+
+  <div class="grid g-3">
+    {{range .Panels}}<div class="tile"><div class="k"><span class="eyebrow">{{.Label}}</span></div><div class="val">{{.Value}}</div>{{if .Sub}}<div class="sub">{{.Sub}}</div>{{end}}</div>
+    {{else}}<p class="note">Nothing is published yet.</p>
+    {{end}}
+  </div>
+
+  <p class="note" style="text-align:center;margin-top:26px">powered by serverwatch</p>
+</div>
+{{end}}

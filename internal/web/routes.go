@@ -79,7 +79,17 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(channelsUpdateHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(channelsRemoveHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(channelsTestHandler(d)))
-	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Public view", "Curated public dashboard settings")))
+	// /settings/public + /public (Task 11/#67): the admin-curated exposure
+	// picker (GET/POST /settings/public, admin-only + CSRF on the mutation —
+	// publicSettingsMutation, handlers_public.go) plus the curated
+	// anonymous status page itself (GET /public — deliberately NOT gated by
+	// requireRole/requireCSRF: it's the one route the design doc's route
+	// table marks anon, and publicPageHandler enforces its own "enabled
+	// -> 404" + server-side panel allowlist instead — see that handler's
+	// SECURITY doc).
+	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, publicSettingsPageHandler(d)))
+	mux.HandleFunc("POST /settings/public", publicSettingsMutation(publicSettingsSaveHandler(d)))
+	mux.HandleFunc("GET /public", publicPageHandler(d))
 
 	// /alerts (Task 10/#66): alert history (Deps.AlertLogPath) + active
 	// alerts (Deps.AlertStatePath), viewer+ per the design doc — this
