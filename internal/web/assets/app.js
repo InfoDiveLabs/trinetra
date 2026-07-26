@@ -95,10 +95,90 @@
   document.addEventListener('click',function(e){var c=e.target.closest('.chip');if(c&&c.parentElement&&c.parentElement.classList.contains('chips')){c.parentElement.querySelectorAll('.chip').forEach(function(x){x.classList.remove('on')});c.classList.add('on');}});
   document.addEventListener('click',function(e){var s=e.target.closest('.switch');if(s)s.classList.toggle('on');});
 
-  // ---- live data boot (stubs; filled in by Task 8 (SSE) / Task 9 (uPlot)) ----
-  // Task 8 wires an EventSource against /events here to push live snapshot
-  // updates into the dashboard/monitoring tiles without a page reload.
-  window.swBootSSE=function(){};
+  // ---- live dashboard (Task 8: SSE + uPlot) ----
+  // dashboard.html wraps its live content in <div id="dashboard-live">
+  // (present only on that page, so this is a no-op everywhere else) with
+  // fixed element IDs (#val-cpu, #chart-hero, ...) the tile/chart updates
+  // below target. No inline handlers/scripts are used anywhere here — the
+  // strict CSP (security.go, script-src 'self' 'nonce-...') only ever
+  // authorizes this external file.
+  //
+  // swBootSSE opens an EventSource against /events (viewer-gated exactly
+  // like GET /, see routes.go) and, for each "snapshot" frame (JSON-encoded
+  // web.DashboardView, sse.go), updates the tiles' text/led-class in place
+  // and appends the point to a small client-side rolling buffer that feeds
+  // the three live uPlot charts. There is no history backfill here — full
+  // time-range charts (querying the SampleStore) are Task 9; these charts
+  // only ever show what's arrived over this SSE connection so far.
+  window.swBootSSE=function(){
+    if(!window.EventSource) return;
+    var MAXPTS=120; // ~ a few minutes at a 5s fast tick
+    var buf={t:[],cpu:[],load:[],mem:[],rx:[],tx:[]};
+    var charts={};
+
+    function setText(id,txt){var el=document.getElementById(id); if(el) el.textContent=txt;}
+    function setLed(id,cls){var el=document.getElementById(id); if(el) el.className='led '+cls;}
+    function led(v,warn,crit){return v>=crit?'crit':(v>=warn?'warn':'ok');}
+    function loadLed(load1,cores){var c=cores>0?cores:1; return led(load1,0.7*c,c);}
+    function humanRate(bps){
+      if(bps>=1048576) return (bps/1048576).toFixed(1)+' MB/s';
+      if(bps>=1024) return Math.round(bps/1024)+' KB/s';
+      return Math.round(bps)+' B/s';
+    }
+
+    function ensureChart(id,series,colors){
+      if(charts[id]) return charts[id];
+      var el=document.getElementById(id);
+      if(!el||!window.uPlot) return null;
+      var uSeries=[{}];
+      series.forEach(function(lbl,i){uSeries.push({label:lbl,stroke:colors[i],width:1.5});});
+      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:[{},{}]};
+      var data=[[]]; series.forEach(function(){data.push([]);});
+      var u=new uPlot(opts,data,el);
+      charts[id]=u;
+      return u;
+    }
+
+    function pushPoint(arr,v){arr.push(v); if(arr.length>MAXPTS) arr.shift();}
+
+    function renderCharts(){
+      var hero=ensureChart('chart-hero',['cpu %','load'],['var(--info)','var(--signal)']);
+      if(hero) hero.setData([buf.t,buf.cpu,buf.load]);
+      var mem=ensureChart('chart-mem',['mem %'],['var(--violet)']);
+      if(mem) mem.setData([buf.t,buf.mem]);
+      var net=ensureChart('chart-net',['rx','tx'],['var(--cyan)','var(--signal)']);
+      if(net) net.setData([buf.t,buf.rx,buf.tx]);
+    }
+
+    var es=new EventSource('/events');
+    es.addEventListener('snapshot',function(ev){
+      var s;
+      try{ s=JSON.parse(ev.data); }catch(e){ return; }
+
+      setText('val-cpu',Math.round(s.cpu)+'%'); setLed('led-cpu',led(s.cpu,70,90));
+      setText('val-mem',Math.round(s.mem_pct)+'%'); setLed('led-mem',led(s.mem_pct,75,90));
+      setText('sub-mem-chart',Math.round(s.mem_pct)+'%');
+      setText('val-swap',Math.round(s.swap_pct)+'%'); setLed('led-swap',led(s.swap_pct,40,80));
+      setText('val-load1',s.load1.toFixed(2));
+      setText('sub-load','5m '+s.load5.toFixed(2)+' · 15m '+s.load15.toFixed(2));
+      setLed('led-load',loadLed(s.load1,s.cores));
+      if(s.temp_c>0){ setText('val-temp',Math.round(s.temp_c)+'°C'); setLed('led-temp',led(s.temp_c,70,85)); }
+      setText('val-net',humanRate(s.net_rx_bps)+'↓');
+      setText('sub-net','↑'+humanRate(s.net_tx_bps));
+      setText('sub-net-chart','↓'+humanRate(s.net_rx_bps)+' ↑'+humanRate(s.net_tx_bps));
+      if(s.processes){
+        setText('val-proc',String(s.processes.total));
+        setText('sub-proc',s.processes.running+' run · '+s.processes.zombie+' zombie');
+      }
+
+      pushPoint(buf.t,s.ts); pushPoint(buf.cpu,s.cpu); pushPoint(buf.load,s.load1);
+      pushPoint(buf.mem,s.mem_pct); pushPoint(buf.rx,s.net_rx_bps); pushPoint(buf.tx,s.net_tx_bps);
+      renderCharts();
+    });
+  };
+  var liveRoot=document.getElementById('dashboard-live');
+  if(liveRoot) window.swBootSSE();
+
   // Task 9 wires uPlot (already embedded, see assets/uPlot.iife.min.js +
   // uPlot.min.css) against SampleStore history queries for the history page.
   window.swBootHistoryCharts=function(){};
