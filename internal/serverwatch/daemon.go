@@ -531,6 +531,11 @@ func cmdDaemon(args []string) int {
 	// prevCPU): it accumulates the previous /proc/net/dev sample across slow
 	// ticks so it can diff cumulative counters into bytes/sec rates.
 	var netRate NetRateCalc
+	// procCPU is the sampler goroutine's single ProcCPUCalc instance (same
+	// single-owner pattern as prevCPU/netRate): it accumulates the previous
+	// per-pid jiffies sample across slow ticks so collectProcesses can diff
+	// cumulative CPU jiffies into a per-process CPU%.
+	var procCPU ProcCPUCalc
 	da := probeDocker(x, fs)
 
 	// boot/recovery report from heartbeat gap
@@ -610,6 +615,18 @@ func cmdDaemon(args []string) int {
 				if b, err := fs.Read("/proc/net/dev"); err == nil {
 					merged.NetRates = netRate.Rates(parseNetDev(string(b)), now.Unix())
 				}
+			}
+
+			// process-table overview (opt-in via collect.processes): like net
+			// throughput above, this is stateful across slow ticks (procCPU
+			// diffs cumulative per-pid jiffies into CPU%), so it's called
+			// directly here rather than folded into collectSlow, which has no
+			// persistent-calc parameter. Disabled just leaves merged.Processes
+			// at its zero value for this tick; collectProcesses itself already
+			// guards against vanished/malformed /proc entries.
+			merged.Processes = ProcSnapshot{}
+			if c.ProcessesEnabled() {
+				merged.Processes = collectProcesses(fs, &procCPU, os.Getpagesize()/1024)
 			}
 		}
 		merged.TS = now.Unix()

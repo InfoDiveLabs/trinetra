@@ -82,6 +82,12 @@ type Config struct {
 		// `systemctl --failed` alerting collection is separate and always
 		// runs regardless of this setting.
 		Services *bool `json:"services,omitempty"`
+		// Processes gates the slow-tier process-table overview collector
+		// (internal/serverwatch/proc.go collectProcesses: counts + top-N by
+		// CPU/mem, for the Monitoring "processes" tab). Snapshot-only — never
+		// persisted as a SampleStore series (per-process cardinality).
+		// Defaults to true; nil is treated as true everywhere it's read.
+		Processes *bool `json:"processes,omitempty"`
 	} `json:"collect"`
 }
 
@@ -101,6 +107,12 @@ func (c *Config) NetThroughputEnabled() bool {
 // (collect.services) is enabled: unset (nil) defaults to true.
 func (c *Config) ServicesEnabled() bool {
 	return c.Collect.Services == nil || *c.Collect.Services
+}
+
+// ProcessesEnabled reports whether the process-table overview collector
+// (collect.processes) is enabled: unset (nil) defaults to true.
+func (c *Config) ProcessesEnabled() bool {
+	return c.Collect.Processes == nil || *c.Collect.Processes
 }
 
 type TargetOverride struct {
@@ -396,6 +408,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.NetThroughputEnabled()), true
 	case "collect.services":
 		return strconv.FormatBool(c.ServicesEnabled()), true
+	case "collect.processes":
+		return strconv.FormatBool(c.ProcessesEnabled()), true
 	}
 	return "", false
 }
@@ -524,6 +538,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.services: %w", err)
 		}
 		c.Collect.Services = &b
+	case "collect.processes":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("collect.processes: %w", err)
+		}
+		c.Collect.Processes = &b
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}

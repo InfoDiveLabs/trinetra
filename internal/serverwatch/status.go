@@ -39,6 +39,14 @@ type Snapshot struct {
 	// series (unit-name cardinality) — unlike FailedUnits above, which
 	// continues to drive service:* alerting unchanged.
 	Units []UnitInfo `json:"units,omitempty"`
+	// Processes is the live process-table overview (counts + top-N by
+	// CPU/mem), computed by collectProcesses (opt-in via collect.processes,
+	// slow-tier only, see daemon.go's sampler loop and proc.go). Deliberately
+	// a snapshot only for the Monitoring "processes" tab — NOT fed into the
+	// SampleStore as a series, since per-process cardinality (hundreds of
+	// short-lived pids per host) is exactly the trap this design avoids,
+	// mirroring Units above.
+	Processes ProcSnapshot `json:"processes,omitempty"`
 }
 
 func renderStatus(s Snapshot) string {

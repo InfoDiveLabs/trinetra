@@ -743,6 +743,67 @@ func TestServicesPersistsAcrossSaveLoad(t *testing.T) {
 	}
 }
 
+func TestProcessesDefaultSetUnset(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("collect.processes"); got != "true" {
+		t.Fatalf("collect.processes default = %q, want true", got)
+	}
+	if err := c.Set("collect.processes", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.processes"); got != "false" {
+		t.Fatalf("collect.processes after set false = %q, want false", got)
+	}
+	if err := c.Set("collect.processes", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.processes"); got != "true" {
+		t.Fatalf("collect.processes after set true = %q, want true", got)
+	}
+	if err := c.Set("collect.processes", "bogus"); err == nil {
+		t.Fatal("collect.processes set to bogus: want error, got nil")
+	}
+	if err := c.Unset("collect.processes"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("collect.processes"); got != "true" {
+		t.Fatalf("collect.processes after unset = %q, want default true", got)
+	}
+}
+
+func TestProcessesPersistsAcrossSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	if err := c.Set("collect.processes", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c2.Get("collect.processes"); got != "false" {
+		t.Fatalf("collect.processes after save/load = %q, want false (explicit false must persist)", got)
+	}
+
+	if err := c2.Set("collect.processes", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	c3, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c3.Get("collect.processes"); got != "true" {
+		t.Fatalf("collect.processes after second save/load = %q, want true", got)
+	}
+}
+
 func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")
