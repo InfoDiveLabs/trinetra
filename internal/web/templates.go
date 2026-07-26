@@ -34,6 +34,9 @@ var funcMap = template.FuncMap{
 	"diskWarnPct":     func() float64 { return DiskWarnPct },
 	"diskCriticalPct": func() float64 { return DiskCriticalPct },
 	"subInt":          subInt,
+	// memBarPct (handlers_monitoring.go) is templates/monitoring.html's
+	// container/process memory-meter width normalizer.
+	"memBarPct": memBarPct,
 }
 
 // statusText maps a topbar status ("ok"/"warn"/"crit") to its display text.

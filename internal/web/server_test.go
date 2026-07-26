@@ -78,20 +78,12 @@ func TestServerServesDashboardAndAssets(t *testing.T) {
 	}
 }
 
-// TestNavHasNoMonitoringLink pins the /monitoring 404 fix: that page was
-// never built, so the nav (and dashboard) must not link to it. Checks both
-// the rendered nav markup and navForRole/navItems directly, so a future
-// regression is caught whether it's reintroduced via the nav list or a
-// stray template link.
-func TestNavHasNoMonitoringLink(t *testing.T) {
-	for _, role := range []string{"viewer", "admin"} {
-		for _, item := range navForRole(role) {
-			if item.Href == "/monitoring" {
-				t.Errorf("navForRole(%q) still has a /monitoring entry: %+v", role, item)
-			}
-		}
-	}
-
+// TestDashboardLinksToMonitoringPage pins the reverse of the earlier
+// /monitoring 404 fix (284abbd): now that /monitoring is a real, working
+// page, the dashboard's "Top containers"/"Filesystems" panels must link to
+// it again — a dead link was worse than no link, but a live link that's
+// missing is just as much a regression once the target exists.
+func TestDashboardLinksToMonitoringPage(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
@@ -102,8 +94,17 @@ func TestNavHasNoMonitoringLink(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET / (admin) status = %d, want 200", rr.Code)
 	}
-	if body := rr.Body.String(); strings.Contains(body, `href="/monitoring"`) {
-		t.Errorf("dashboard body still contains a /monitoring link:\n%s", body)
+	body := rr.Body.String()
+	if !strings.Contains(body, `href="/monitoring"`) {
+		t.Errorf("dashboard body missing a /monitoring link:\n%s", body)
+	}
+
+	// And the link actually resolves: GET /monitoring itself renders for a
+	// signed-in viewer rather than 404ing.
+	mrr := httptest.NewRecorder()
+	h.ServeHTTP(mrr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/monitoring"))
+	if mrr.Code != http.StatusOK {
+		t.Fatalf("GET /monitoring (viewer) status = %d, want 200, body: %s", mrr.Code, mrr.Body.String())
 	}
 }
 

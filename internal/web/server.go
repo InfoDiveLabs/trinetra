@@ -55,6 +55,15 @@ type Deps struct {
 	// goroutine, any number of times (dashboardHandler on every GET /, the
 	// SSE handler on every tick).
 	Snapshot func() DashboardView
+	// Monitoring returns the live snapshot projected into this package's own
+	// MonitoringView (monitoring_view.go) by
+	// internal/serverwatch/daemon_web.go's buildMonitoringView adapter — the
+	// /monitoring detail page's counterpart to Snapshot/DashboardView above.
+	// Lock-free/cheap, same contract as Snapshot: safe to call from any
+	// goroutine, any number of times. May be nil in tests that don't exercise
+	// /monitoring; monitoringHandler (handlers_monitoring.go) must check
+	// before calling, exactly like every other Deps func field.
+	Monitoring func() MonitoringView
 	// StateDir is the daemon's state directory.
 	StateDir string
 	// AlertLogPath is the path to the append-only alert log.

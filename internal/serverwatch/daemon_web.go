@@ -31,6 +31,7 @@ func maybeStartWeb(d WebDeps) func() {
 		Store:          seriesStoreFor(d.Store, d.Cfg),
 		Events:         eventsStoreFor(d.Store),
 		Snapshot:       func() web.DashboardView { return buildDashboardView(d.Snapshot()) },
+		Monitoring:     func() web.MonitoringView { return buildMonitoringView(d.Snapshot(), d.Cfg()) },
 		StateDir:       d.StateDir,
 		AlertLogPath:   d.AlertLogPath,
 		AlertStatePath: d.AlertStatePath,
@@ -110,6 +111,107 @@ func buildDashboardView(snap Snapshot) web.DashboardView {
 	}
 
 	return v
+}
+
+// buildMonitoringView adapts a serverwatch.Snapshot plus the daemon's
+// current config (for the collect.services/collect.processes opt-in
+// toggles — see the doc atop web.MonitoringView) into a web.MonitoringView,
+// the /monitoring detail page's counterpart to buildDashboardView above.
+// Same CONCURRENCY contract as buildDashboardView: every access below is a
+// read-only range/index against snap's map/slice fields, never an
+// assignment into them.
+//
+// cfg may be nil (a caller without a config handy, e.g. some tests): both
+// collector toggles then default to "disabled" — the safer read when the
+// actual setting is unknown, rather than assuming the collector ran and
+// showing an empty table as if it deliberately reported zero units/processes.
+func buildMonitoringView(snap Snapshot, cfg *config.Config) web.MonitoringView {
+	var v web.MonitoringView
+
+	if len(snap.Containers) > 0 {
+		names := make([]string, 0, len(snap.Containers))
+		for name := range snap.Containers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		v.Containers = make([]web.MonitoringContainerView, 0, len(names))
+		for _, name := range names {
+			row := web.MonitoringContainerView{Name: name, State: snap.Containers[name]}
+			if cs, ok := snap.ContainerStats[name]; ok {
+				row.CPUPct = cs.CPUPct
+				row.MemMiB = cs.MemMiB
+				row.NetRxMB = cs.NetRxMB
+				row.NetTxMB = cs.NetTxMB
+				row.HasStats = true
+			}
+			v.Containers = append(v.Containers, row)
+		}
+	}
+
+	// FailedUnits is always collected (systemctl --failed, the same
+	// alerting input service:* checks use) regardless of collect.services —
+	// copy it out (never alias snap.FailedUnits) so this stays read-only
+	// against the published Snapshot, same as every other field here.
+	if len(snap.FailedUnits) > 0 {
+		v.FailedUnits = append([]string(nil), snap.FailedUnits...)
+	}
+
+	if cfg != nil && cfg.ServicesEnabled() {
+		v.UnitsEnabled = true
+		v.Units = make([]web.MonitoringUnitView, 0, len(snap.Units))
+		for _, u := range snap.Units {
+			v.Units = append(v.Units, web.MonitoringUnitView{
+				Name: u.Name, Load: u.Load, Active: u.Active, Sub: u.Sub, Description: u.Description,
+			})
+		}
+		sort.Slice(v.Units, func(i, j int) bool { return v.Units[i].Name < v.Units[j].Name })
+	}
+
+	if cfg != nil && cfg.ProcessesEnabled() {
+		v.ProcessesEnabled = true
+		v.ProcessesTotal = snap.Processes.Total
+		v.Processes = make([]web.MonitoringProcessView, 0, len(snap.Processes.Top))
+		for _, p := range snap.Processes.Top {
+			v.Processes = append(v.Processes, web.MonitoringProcessView{
+				PID: p.PID, Name: p.Name, State: p.State, CPUPct: p.CPUPct, MemMiB: p.MemMiB, Threads: p.Threads,
+			})
+		}
+	}
+
+	v.Disks = monitoringDiskViews(snap.Disks, snap.DiskDetail)
+
+	return v
+}
+
+// monitoringDiskViews is diskViews' (above) counterpart for the Monitoring
+// page's richer filesystems table: same mount-sorted merge of Snapshot.Disks
+// + Snapshot.DiskDetail, but keeping FSType/InodePct too (which
+// buildDashboardView's compact table doesn't need).
+func monitoringDiskViews(disks map[string]float64, detail map[string]DiskDetail) []web.MonitoringDiskView {
+	if len(disks) == 0 {
+		return nil
+	}
+	mounts := make([]string, 0, len(disks))
+	for m := range disks {
+		mounts = append(mounts, m)
+	}
+	sort.Strings(mounts)
+
+	out := make([]web.MonitoringDiskView, 0, len(mounts))
+	for _, m := range mounts {
+		dv := web.MonitoringDiskView{Mount: m, UsagePct: disks[m]}
+		if dd, ok := detail[m]; ok {
+			dv.Device = dd.Device
+			dv.FSType = dd.FsType
+			dv.InodePct = dd.InodePct
+			dv.FreeBytes = dd.FreeBytes
+			dv.SizeBytes = dd.SizeBytes
+			dv.DaysToFull = dd.DaysToFull
+			dv.DaysToFullKnown = dd.DaysToFullKnown
+		}
+		out = append(out, dv)
+	}
+	return out
 }
 
 // seriesStoreFor adapts d.Store (a native serverwatch.SampleStore, possibly

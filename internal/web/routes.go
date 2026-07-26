@@ -43,6 +43,13 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /history", requireRole(RoleViewer, historyPageHandler(d)))
 	mux.HandleFunc("GET /api/series", requireRole(RoleViewer, seriesAPIHandler(d)))
 	mux.HandleFunc("GET /api/downtime", requireRole(RoleViewer, downtimeAPIHandler(d)))
+	// /monitoring: the detailed per-entity view (containers/systemd units/
+	// processes/filesystems), ported from ui-mockup/monitoring.html. Same
+	// viewer+ floor as the rest of "Monitor" — see monitoringHandler
+	// (handlers_monitoring.go) and web.MonitoringView/
+	// internal/serverwatch/daemon_web.go's buildMonitoringView adapter for
+	// where its data comes from.
+	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, monitoringHandler(d)))
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
 	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
