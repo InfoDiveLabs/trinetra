@@ -3,8 +3,19 @@
 package web
 
 import (
+	"time"
+
 	"serverwatch/internal/config"
 )
+
+// sessionGCInterval is how often Start's background sweep removes expired
+// records from <StateDir>/sessions.json (session.go's SessionStore.GC).
+// Session/ceremony expiry itself is enforced immediately and independently
+// by SessionStore.Get treating an expired record as absent (see
+// jsonSessionStore.Get) — this ticker only reclaims disk space/file size
+// for records nobody ever looks up again after they expire, so an interval
+// this coarse costs nothing in correctness.
+const sessionGCInterval = 10 * time.Minute
 
 // The `-tags web` build's reach into github.com/go-webauthn/webauthn (what
 // used to be pinned here by a placeholder stub, see git history) is now the
@@ -68,5 +79,24 @@ func Start(d Deps) (stop func(), err error) {
 	if err := validateOrigin(cfg); err != nil {
 		return nil, err
 	}
-	return listenAndServe(d, newHandler(d))
+
+	// The session store (session.go) needs a periodic GC sweep independent
+	// of any particular request — see sessionGCInterval's doc — so it's
+	// started once here, alongside the listener, rather than per-request
+	// like newHandler's other per-call newSessionStore/newUserStore uses.
+	gcStop := newSessionStore(d.StateDir).startGC(sessionGCInterval)
+
+	// listenerStop (NOT the named return "stop") is deliberate: the returned
+	// closure below calls listenerStop, and if it instead captured "stop" by
+	// name, assigning the closure itself to "stop" via `return func(){...}`
+	// would make the closure call itself — infinite recursion.
+	listenerStop, err := listenAndServe(d, newHandler(d))
+	if err != nil {
+		gcStop()
+		return nil, err
+	}
+	return func() {
+		listenerStop()
+		gcStop()
+	}, nil
 }
