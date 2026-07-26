@@ -29,6 +29,7 @@ func maybeStartWeb(d WebDeps) func() {
 		Cfg:            d.Cfg,
 		Reload:         d.Reload,
 		Store:          seriesStoreFor(d.Store, d.Cfg),
+		Events:         eventsStoreFor(d.Store),
 		Snapshot:       func() web.DashboardView { return buildDashboardView(d.Snapshot()) },
 		StateDir:       d.StateDir,
 		AlertLogPath:   d.AlertLogPath,
@@ -131,11 +132,30 @@ func seriesStoreFor(store SampleStore, cfg func() *config.Config) web.SeriesStor
 	return &seriesStoreAdapter{store: store, cfg: cfg}
 }
 
-// seriesStoreAdapter is the concrete web.SeriesStore seriesStoreFor builds:
-// it wraps a native SampleStore and resolves the raw-vs-1m Resolution
-// argument SampleStore.Query needs internally (via PickResolution and the
-// daemon's configured storage.raw_retention), so internal/web — which holds
-// this only as a web.SeriesStore — never needs a Resolution type of its own.
+// eventsStoreFor adapts d.Store (a native serverwatch.SampleStore, possibly
+// nil) into the web.EventsStore interface (internal/web/events_store.go),
+// backing the history page's "Downtime · 30d" panel — the downtime
+// counterpart of seriesStoreFor. It reuses the SAME seriesStoreAdapter
+// (which satisfies both web.SeriesStore and web.EventsStore), so the daemon
+// hands the web one wrapper for both history feeds. cfg isn't needed for
+// Events (no resolution to pick), so it's left nil here.
+//
+// A nil store returns a true nil web.EventsStore, NOT a non-nil interface
+// wrapping a nil *seriesStoreAdapter — same nil-interface gotcha
+// seriesStoreFor guards against (see its doc).
+func eventsStoreFor(store SampleStore) web.EventsStore {
+	if store == nil {
+		return nil
+	}
+	return &seriesStoreAdapter{store: store}
+}
+
+// seriesStoreAdapter is the concrete web.SeriesStore/web.EventsStore
+// seriesStoreFor/eventsStoreFor build: it wraps a native SampleStore and
+// resolves the raw-vs-1m Resolution argument SampleStore.Query needs
+// internally (via PickResolution and the daemon's configured
+// storage.raw_retention), so internal/web — which holds this only as a
+// web.SeriesStore/web.EventsStore — never needs a Resolution type of its own.
 type seriesStoreAdapter struct {
 	store SampleStore
 	// cfg returns the daemon's current config (race-safe against SIGHUP
@@ -170,6 +190,23 @@ func (a *seriesStoreAdapter) Query(metric string, from, to int64) ([]web.SeriesP
 	out := make([]web.SeriesPoint, len(pts))
 	for i, p := range pts {
 		out[i] = web.SeriesPoint{TS: p.TS, Min: p.Min, Avg: p.Avg, Max: p.Max}
+	}
+	return out, nil
+}
+
+// Events implements web.EventsStore: it delegates to the wrapped
+// SampleStore.Events (downtime events overlapping [from, to]) and widens
+// each native DownEvent into a web.DownEventView. A store error is returned
+// as-is — internal/web's downtimeAPIHandler decides an error still renders
+// as an empty 200, not this adapter's job.
+func (a *seriesStoreAdapter) Events(from, to int64) ([]web.DownEventView, error) {
+	evs, err := a.store.Events(from, to)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.DownEventView, len(evs))
+	for i, e := range evs {
+		out[i] = web.DownEventView{Type: e.Type, Start: e.Start, End: e.End, DurationSec: e.DurationSec}
 	}
 	return out, nil
 }

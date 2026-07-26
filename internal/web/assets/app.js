@@ -179,65 +179,194 @@
   var liveRoot=document.getElementById('dashboard-live');
   if(liveRoot) window.swBootSSE();
 
-  // ---- history graphs (Task 9: /api/series + uPlot) ----
+  // ---- history graphs (Task 9: /api/series + /api/downtime + uPlot) ----
   // templates/history.html wraps its charts in <div id="history-page"
   // data-history data-range="24h"> (present only on that page, so this is a
-  // no-op everywhere else); each chart is a plain <div data-metric="...">
-  // hook uPlot mounts into, and the time-range chips (#historyRange,
-  // data-range="1h|6h|24h|7d|30d") pick the [from,to] window every chart
-  // queries. No inline handlers/scripts anywhere here — same strict CSP as
-  // the rest of this file (security.go, script-src 'self' 'nonce-...').
+  // no-op everywhere else); the time-range chips (#historyRange,
+  // data-range="1h|6h|24h|7d|30d") pick the [from,to] window the metric
+  // charts query. No inline handlers/scripts anywhere here — same strict CSP
+  // as the rest of this file (security.go, script-src 'self' 'nonce-...').
   //
-  // swBootHistoryCharts fetches GET /api/series?metric=&from=&to= (viewer-
-  // gated exactly like /history itself, see routes.go) per chart and feeds
-  // uPlot's own [ts[], avg[], min[], max[]] response shape straight into
-  // setData — no reshaping needed, since handlers_history.go's seriesResponse
-  // already matches uPlot's parallel-array format.
+  // Each chart hook is one of:
+  //   - <div data-metric="cpu">                 single-series (cpu/mem/temp)
+  //   - <div data-metrics="load1,load5,load15"  multi-series: the mockup's
+  //          data-labels="1m,5m,15m">           full load chart, and the
+  //                                             per-mount disk-usage panel
+  //          (data-metrics="disk:/,disk:/data", data-labels="/,/data"),
+  //          whose mounts history.html resolves server-side from the live
+  //          snapshot (handlers_history.go).
+  // Every /api/series response is uPlot's own [ts[], avg[], min[], max[]]
+  // parallel-array shape (handlers_history.go's seriesResponse), so a
+  // single-series chart feeds it straight in; a multi-series chart fetches
+  // each metric and merges them on a shared, sorted timestamp axis (gaps ->
+  // null, which uPlot renders as a break).
+  //
+  // The "Downtime · 30d" panel (<div data-downtime>) is filled from
+  // GET /api/downtime (downtimeResponse: {events:[{type,start,end,
+  // duration_sec}]}) — a proportional timeline SVG + one row per event,
+  // matching the mockup's markup.
+  var HISTORY_COLORS=['var(--signal)','var(--info)','var(--cyan)','var(--violet)','var(--warn)','var(--crit)'];
+  var HISTORY_RANGE_SECONDS={'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000};
+
+  function historyFmtDur(sec){
+    sec=Math.max(0,Math.round(sec));
+    var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+    if(h>0) return h+'h '+m+'m';
+    if(m>0) return m+'m';
+    return s+'s';
+  }
+  function historyFmtTs(sec){
+    var d=new Date(sec*1000);
+    function p(n){return ('0'+n).slice(-2);}
+    var mon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    return mon+' '+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());
+  }
+
   window.swBootHistoryCharts=function(){
     var root=document.querySelector('[data-history]');
     if(!root) return;
 
-    var RANGE_SECONDS={'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000};
     var charts={};
 
-    function ensureChart(el){
+    // ensureChart mounts (once) a uPlot with one line per label in labels,
+    // colored from HISTORY_COLORS; subsequent calls reuse the instance.
+    function ensureChart(el,labels){
       if(charts[el.id]) return charts[el.id];
       if(!window.uPlot) return null;
+      var series=[{}];
+      labels.forEach(function(lbl,i){series.push({label:lbl,stroke:HISTORY_COLORS[i%HISTORY_COLORS.length],width:1.5});});
+      var data=[[]]; labels.forEach(function(){data.push([]);});
       var opts={
         width:el.clientWidth||600,
         height:el.clientHeight||240,
-        series:[{},{label:'avg',stroke:'var(--info)',width:1.5}],
+        series:series,
         cursor:{show:true},
         legend:{show:false},
         axes:[{},{}]
       };
-      var u=new uPlot(opts,[[],[]],el);
+      var u=new uPlot(opts,data,el);
       charts[el.id]=u;
       return u;
     }
 
     function currentRange(){
-      var span=RANGE_SECONDS[root.dataset.range]||RANGE_SECONDS['24h'];
+      var span=HISTORY_RANGE_SECONDS[root.dataset.range]||HISTORY_RANGE_SECONDS['24h'];
       var to=Math.floor(Date.now()/1000);
       return {from:to-span, to:to};
     }
 
-    function loadChart(el){
-      var metric=el.dataset.metric;
-      if(!metric) return;
-      var range=currentRange();
+    function fetchSeries(metric,range){
       var url='/api/series?metric='+encodeURIComponent(metric)+'&from='+range.from+'&to='+range.to;
-      fetch(url,{credentials:'same-origin'})
+      return fetch(url,{credentials:'same-origin'})
         .then(function(r){ if(!r.ok) throw new Error('series fetch failed'); return r.json(); })
-        .then(function(data){
-          var u=ensureChart(el);
-          if(!u || !data || !data.series || data.series.length<2) return;
-          u.setData([data.series[0],data.series[1]]);
-        })
-        .catch(function(){ /* leave the last-good chart state in place */ });
+        .then(function(data){ return (data&&data.series&&data.series.length>=2)?data.series:[[],[]]; });
     }
 
-    var chartEls=root.querySelectorAll('[data-metric]');
+    // mergeSeries aligns N single-metric responses (each [ts[],avg[],...])
+    // onto one sorted union timestamp axis, so a multi-line chart shares an
+    // x-axis even if the metrics' points don't line up 1:1. Returns uPlot
+    // data: [unionTs, avg0AlignedToUnion, avg1..., ...] with null for a
+    // timestamp a given metric has no sample at.
+    function mergeSeries(responses){
+      var tsSet={};
+      responses.forEach(function(s){ (s[0]||[]).forEach(function(t){tsSet[t]=true;}); });
+      var union=Object.keys(tsSet).map(Number).sort(function(a,b){return a-b;});
+      var cols=[union];
+      responses.forEach(function(s){
+        var lookup={}, ts=s[0]||[], avg=s[1]||[];
+        for(var i=0;i<ts.length;i++) lookup[ts[i]]=avg[i];
+        cols.push(union.map(function(t){ return (t in lookup)?lookup[t]:null; }));
+      });
+      return cols;
+    }
+
+    function loadChart(el){
+      var range=currentRange();
+      var multi=el.dataset.metrics;
+      if(multi){
+        var metrics=multi.split(',').map(function(s){return s.trim();}).filter(Boolean);
+        if(!metrics.length) return;
+        var labels=(el.dataset.labels||multi).split(',').map(function(s){return s.trim();});
+        Promise.all(metrics.map(function(m){return fetchSeries(m,range);}))
+          .then(function(responses){
+            var u=ensureChart(el,labels);
+            if(u) u.setData(mergeSeries(responses));
+            if(el.id==='chart-history-disk') renderDiskLegend(labels);
+          })
+          .catch(function(){});
+      } else {
+        var metric=el.dataset.metric;
+        if(!metric) return;
+        fetchSeries(metric,range)
+          .then(function(series){
+            var u=ensureChart(el,['avg']);
+            if(u) u.setData([series[0],series[1]]);
+          })
+          .catch(function(){});
+      }
+    }
+
+    function renderDiskLegend(labels){
+      var box=document.getElementById('historyDiskLegend');
+      if(!box) return;
+      box.innerHTML=labels.map(function(lbl,i){
+        return '<span><i style="background:'+HISTORY_COLORS[i%HISTORY_COLORS.length]+'"></i>'+lbl+'</span>';
+      }).join('');
+    }
+
+    // renderDowntime fills the "Downtime · 30d" panel from /api/downtime: a
+    // proportional timeline bar (green "up" base + a colored segment per
+    // event) and one row per event, mirroring ui-mockup/history.html.
+    function renderDowntime(){
+      var panel=document.querySelector('[data-downtime]');
+      if(!panel) return;
+      var span=HISTORY_RANGE_SECONDS['30d'];
+      var to=Math.floor(Date.now()/1000), from=to-span;
+      fetch('/api/downtime?from='+from+'&to='+to,{credentials:'same-origin'})
+        .then(function(r){ if(!r.ok) throw new Error('downtime fetch failed'); return r.json(); })
+        .then(function(data){
+          var events=(data&&data.events)||[];
+          var rows=document.getElementById('downtimeRows');
+          var timeline=document.getElementById('downtimeTimeline');
+          var summary=document.getElementById('downtimeSummary');
+
+          var W=1200, total=0, segs='';
+          events.forEach(function(e){
+            total+=e.duration_sec||Math.max(0,(e.end-e.start));
+            var x=Math.max(0,Math.min(W,(e.start-from)/span*W));
+            var w=Math.max(2,((e.end-e.start)/span)*W);
+            var color=e.type==='power_down'?'var(--crit)':'var(--warn)';
+            segs+='<rect x="'+x.toFixed(1)+'" y="14" width="'+w.toFixed(1)+'" height="16" fill="'+color+'"/>';
+          });
+          if(timeline){
+            timeline.innerHTML='<svg width="100%" height="46" viewBox="0 0 '+W+' 46" preserveAspectRatio="none">'+
+              '<rect x="0" y="14" width="'+W+'" height="16" rx="3" fill="var(--ok)" opacity=".65"/>'+segs+'</svg>';
+          }
+          if(summary){
+            var pct=(100*(1-total/span));
+            summary.textContent='total '+historyFmtDur(total)+' · '+pct.toFixed(2)+'%';
+          }
+          if(rows){
+            if(!events.length){
+              rows.innerHTML='<div class="row"><span class="led ok"></span><div class="name"><b>No downtime recorded</b><div class="note">100% uptime over the last 30 days</div></div></div>';
+              return;
+            }
+            rows.innerHTML=events.slice().sort(function(a,b){return b.start-a.start;}).map(function(e){
+              var led=e.type==='power_down'?'crit':'warn';
+              var dur=historyFmtDur(e.duration_sec||Math.max(0,(e.end-e.start)));
+              return '<div class="row"><span class="led '+led+'"></span>'+
+                '<div class="name">'+e.type+' · '+historyFmtTs(e.start)+' → '+historyFmtTs(e.end)+'</div>'+
+                '<span class="mono note">'+dur+'</span></div>';
+            }).join('');
+          }
+        })
+        .catch(function(){
+          var rows=document.getElementById('downtimeRows');
+          if(rows) rows.innerHTML='<div class="note">could not load downtime</div>';
+        });
+    }
+
+    var chartEls=root.querySelectorAll('[data-metric],[data-metrics]');
     function loadAll(){ chartEls.forEach(loadChart); }
 
     var rangeBar=document.getElementById('historyRange');
@@ -251,6 +380,7 @@
     }
 
     loadAll();
+    renderDowntime();
   };
   var historyRoot=document.querySelector('[data-history]');
   if(historyRoot) window.swBootHistoryCharts();

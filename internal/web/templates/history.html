@@ -17,10 +17,27 @@
       <div id="chart-history-cpu" class="u-chart" data-metric="cpu" style="height:240px"></div></div>
     <div class="panel"><div class="head"><span class="eyebrow">Memory %</span></div>
       <div id="chart-history-mem" class="u-chart" data-metric="mem" style="height:240px"></div></div>
-    <div class="panel"><div class="head"><span class="eyebrow">Load average · 1m</span></div>
-      <div id="chart-history-load" class="u-chart" data-metric="load1" style="height:240px"></div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Load average</span>
+      <div class="legend"><span><i style="background:var(--signal)"></i>1m</span><span><i style="background:var(--info)"></i>5m</span><span><i style="background:var(--cyan)"></i>15m</span></div></div>
+      <div id="chart-history-load" class="u-chart" data-metrics="load1,load5,load15" data-labels="1m,5m,15m" style="height:240px"></div></div>
     <div class="panel"><div class="head"><span class="eyebrow">Temperature °C</span></div>
       <div id="chart-history-temp" class="u-chart" data-metric="temp" style="height:240px"></div></div>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Disk usage · per filesystem</span></div>
+  <div class="panel">
+    {{if .DiskMounts}}
+    <div class="legend" id="historyDiskLegend" style="margin-bottom:8px"></div>
+    <div id="chart-history-disk" class="u-chart" data-metrics="{{.DiskMetrics}}" data-labels="{{.DiskLabels}}" style="height:240px"></div>
+    {{else}}
+    <div class="note">no filesystems discovered</div>
+    {{end}}
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Downtime · 30d</span><span class="note mono" id="downtimeSummary"></span></div>
+  <div class="panel" id="downtime-panel" data-downtime>
+    <div id="downtimeTimeline"></div>
+    <div class="rows" id="downtimeRows" style="margin-top:6px"><div class="note">loading downtime…</div></div>
   </div>
 </div>
 {{end}}

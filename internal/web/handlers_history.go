@@ -4,8 +4,11 @@ package web
 
 import (
 	"encoding/json"
+	"html/template"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // maxSeriesRangeSeconds bounds a single /api/series request's [from, to]
@@ -89,7 +92,18 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 
 		resp := emptySeriesResponse(metric)
 		if d.Store != nil {
-			if pts, err := d.Store.Query(metric, from, to); err == nil && len(pts) > 0 {
+			pts, err := d.Store.Query(metric, from, to)
+			switch {
+			case err != nil:
+				// A genuine storage fault still renders as an empty 200 (the
+				// UI stays resilient — a picked metric this daemon can't serve
+				// is an ordinary outcome, not a page-breaking error), but log
+				// it server-side so a real storage-layer failure isn't
+				// operationally invisible. An unrecognized metric is NOT an
+				// error in either backend (memStore/tsfile return an empty
+				// series, no error), so this path only fires on an actual fault.
+				log.Printf("web: /api/series query metric=%q from=%d to=%d: %v", metric, from, to, err)
+			case len(pts) > 0:
 				ts := make([]float64, len(pts))
 				avg := make([]float64, len(pts))
 				mn := make([]float64, len(pts))
@@ -111,17 +125,118 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// historyPageHandler renders GET /history: ported from
-// ui-mockup/history.html (templates/history.html) through the full
-// app-shell layout, same as dashboardHandler. The page itself carries no
-// server-rendered chart data — assets/app.js's swBootHistoryCharts fetches
-// every chart's points from /api/series client-side once the page loads,
-// driven by the metric/time-range chips' data attributes.
-func historyPageHandler(d Deps) http.HandlerFunc {
+// downtimeResponse is GET /api/downtime's JSON body: the downtime events
+// overlapping the requested range, for templates/history.html's
+// "Downtime · 30d" timeline/rows (assets/app.js's swBootHistoryCharts).
+type downtimeResponse struct {
+	Events []DownEventView `json:"events"`
+}
+
+// downtimeAPIHandler serves GET /api/downtime?from=&to=: the downtime-event
+// feed the history page's "Downtime · 30d" panel fetches. Same validation
+// and graceful-degradation contract as seriesAPIHandler — from/to validated
+// as a hard 400 (parseSeriesRange), a nil Deps.Events or an events-store
+// error both render as an empty 200 (the latter logged server-side) rather
+// than a 500. requireRole(RoleViewer, ...) (routes.go) has already gated it.
+func downtimeAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		data := newPageData(r, "History", "Metrics & downtime", "ok")
-		if err := renderPage(w, "history.html", data); err != nil {
+		from, to, ok := parseSeriesRange(r)
+		if !ok {
+			http.Error(w, "invalid from/to range", http.StatusBadRequest)
+			return
+		}
+
+		resp := downtimeResponse{Events: []DownEventView{}}
+		if d.Events != nil {
+			evs, err := d.Events.Events(from, to)
+			if err != nil {
+				log.Printf("web: /api/downtime query from=%d to=%d: %v", from, to, err)
+			} else if len(evs) > 0 {
+				resp.Events = evs
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// HistoryPageData is what templates/history.html renders against: the shared
+// PageData plus the current filesystem mounts (from the live snapshot) the
+// "Disk usage" panel graphs one series per — the mounts have to be resolved
+// server-side because internal/web can't enumerate the store's metric names,
+// and the live DashboardView (Deps.Snapshot) is the same mount list the
+// dashboard's filesystems table already uses.
+type HistoryPageData struct {
+	PageData
+	// DiskMounts is the sorted mount paths (DashboardView.Disks) the disk
+	// panel graphs; empty when no filesystems are known (renders a note).
+	DiskMounts []string
+	// DiskMetrics is DiskMounts as the comma-joined "disk:<mount>" metric
+	// list history.html hands the disk chart's data-metrics attribute, and
+	// DiskLabels the parallel comma-joined mount labels for its legend.
+	DiskMetrics string
+	DiskLabels  string
+}
+
+// historyPageHandler renders GET /history: ported from
+// ui-mockup/history.html (templates/history.html) through the full
+// app-shell layout, same as dashboardHandler. The metric charts carry no
+// server-rendered points — assets/app.js's swBootHistoryCharts fetches them
+// from /api/series (and downtime from /api/downtime) client-side once the
+// page loads, driven by the metric/time-range chips' data attributes. The
+// one thing resolved server-side is the disk panel's per-mount series list,
+// since internal/web can't enumerate the store's metric names itself.
+func historyPageHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mounts := historyDiskMounts(d)
+		metrics := make([]string, len(mounts))
+		for i, m := range mounts {
+			metrics[i] = "disk:" + m
+		}
+		data := HistoryPageData{
+			PageData:    newPageData(r, "History", "Metrics & downtime", "ok"),
+			DiskMounts:  mounts,
+			DiskMetrics: strings.Join(metrics, ","),
+			DiskLabels:  strings.Join(mounts, ","),
+		}
+		if err := renderHistoryPage(w, data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// renderHistoryPage renders templates/history.html through the full
+// app-shell layout (base.html) against HistoryPageData — the same
+// parse/execute shape renderDashboardPage (handlers_dashboard.go) uses,
+// mirrored here because this page needs HistoryPageData's extra disk-mount
+// fields alongside the shared PageData ones.
+func renderHistoryPage(w http.ResponseWriter, data HistoryPageData) error {
+	tmpl, err := template.New("base.html").Funcs(funcMap).
+		ParseFS(templatesFS, "templates/base.html", "templates/history.html")
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return tmpl.ExecuteTemplate(w, "base.html", data)
+}
+
+// historyDiskMounts returns the current filesystem mounts (DashboardView.
+// Disks, already sorted by mount by the daemon_web.go adapter) for the disk
+// panel's per-mount series, or nil when there's no snapshot/no disks.
+func historyDiskMounts(d Deps) []string {
+	if d.Snapshot == nil {
+		return nil
+	}
+	view := d.Snapshot()
+	if len(view.Disks) == 0 {
+		return nil
+	}
+	mounts := make([]string, 0, len(view.Disks))
+	for _, disk := range view.Disks {
+		mounts = append(mounts, disk.Mount)
+	}
+	return mounts
 }

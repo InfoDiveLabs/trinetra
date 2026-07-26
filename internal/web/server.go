@@ -42,6 +42,11 @@ type Deps struct {
 	// every consumer (seriesAPIHandler, handlers_history.go) must handle
 	// that as "no data" rather than assuming it's always set.
 	Store SeriesStore
+	// Events is the daemon's downtime event log (EventsStore,
+	// events_store.go), backing the history page's "Downtime · 30d" panel.
+	// Like Store, may be nil (store-writes-disabled mode) — downtimeAPIHandler
+	// must treat nil as "no events" rather than assuming it's set.
+	Events EventsStore
 	// Snapshot returns the latest live snapshot, already projected into this
 	// package's own DashboardView (dashboard_view.go) by
 	// internal/serverwatch/daemon_web.go's adapter — see that type's doc for
