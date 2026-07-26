@@ -2,12 +2,45 @@ package serverwatch
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"serverwatch/internal/config"
 )
+
+// TestCopyFileAtomicReplace guards the rename-based copyFile: it must replace
+// an existing dst (the running-binary upgrade path) with the new content and
+// perm, and leave no ".tmp-install" scratch behind. rename(2) — not a
+// truncating write — is what makes this ETXTBSY-safe for a live daemon.
+func TestCopyFileAtomicReplace(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+	if err := os.WriteFile(src, []byte("NEW-BINARY"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("OLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst, 0o755); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "NEW-BINARY" {
+		t.Errorf("dst content = %q, want NEW-BINARY", got)
+	}
+	if fi, _ := os.Stat(dst); fi.Mode().Perm() != 0o755 {
+		t.Errorf("dst perm = %v, want 0755", fi.Mode().Perm())
+	}
+	if _, err := os.Stat(dst + ".tmp-install"); !os.IsNotExist(err) {
+		t.Errorf("temp file left behind: %v", err)
+	}
+}
 
 func TestRenderUnit(t *testing.T) {
 	u := renderUnit("/usr/local/bin/serverwatch")

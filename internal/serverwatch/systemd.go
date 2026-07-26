@@ -95,12 +95,32 @@ func cmdUninstall(args []string) int {
 	return 0
 }
 
+// copyFile copies src to dst atomically: it writes a temp file in dst's
+// directory then renames it into place. rename(2) swaps the directory entry
+// without truncating the existing file, so this succeeds even when dst is a
+// currently-running executable — a plain truncating write (os.WriteFile over
+// dst) fails there with ETXTBSY "text file busy". This is what lets
+// `serverwatch install` upgrade the binary of a live daemon in place.
 func copyFile(src, dst string, perm os.FileMode) error {
 	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, b, perm)
+	tmp := dst + ".tmp-install"
+	if err := os.WriteFile(tmp, b, perm); err != nil {
+		return err
+	}
+	// os.WriteFile honors perm only when creating; force it in case tmp
+	// pre-existed with different bits, so the renamed dst is executable.
+	if err := os.Chmod(tmp, perm); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func cmdTelegram(args []string) int {
