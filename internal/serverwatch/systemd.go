@@ -17,6 +17,14 @@ const unitPath = "/etc/systemd/system/serverwatch.service"
 // the sampler loop wedges, no ping is sent and systemd restarts the unit.
 // Type=simple still works here: WATCHDOG=1 from the main PID is accepted
 // regardless of Type, unlike READY=1 which needs Type=notify.
+//
+// There is no separate "web" unit: cmdInstall (below) always copies
+// os.Executable() — whichever binary is currently running — to
+// /usr/local/bin/serverwatch and writes this exact same unit around it. So
+// installing the `serverwatch-web` binary (`go build -tags web`, `make
+// web`/`web-cross`) and then `serverwatch config set web.enabled true` is
+// the entire path to a web-capable service; no unit change is needed. See
+// docs/WEB.md for the web.*/public.* config keys and serving modes.
 func renderUnit(binPath string) string {
 	return fmt.Sprintf(`[Unit]
 Description=server-watcher host monitor

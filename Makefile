@@ -1,6 +1,6 @@
 BIN=serverwatch
 
-.PHONY: test vet build linux web web-cross validate fmt
+.PHONY: test vet build linux web web-cross release validate fmt
 
 test:
 	go test ./...
@@ -43,6 +43,16 @@ web-cross:
 	GOOS=darwin GOARCH=amd64 go build -tags web -o dist/$(BIN)-web-darwin-amd64 ./cmd/serverwatch
 	GOOS=darwin GOARCH=arm64 go build -o dist/$(BIN)-darwin-arm64 ./cmd/serverwatch
 	GOOS=darwin GOARCH=arm64 go build -tags web -o dist/$(BIN)-web-darwin-arm64 ./cmd/serverwatch
+
+# release is the full cut a GitHub release ships: web-cross's whole matrix
+# (serverwatch + serverwatch-web, every platform above) plus a
+# dist/checksums.txt covering every artifact, so `sha256sum -c checksums.txt`
+# verifies a downloaded binary against the same file the release page links.
+# rm -f first so a re-run never appends onto (or hashes) a stale checksums.txt
+# from a previous invocation.
+release: web-cross
+	rm -f dist/checksums.txt
+	cd dist && sha256sum $(BIN)-* > checksums.txt
 
 validate:
 	bash test/docker/scenarios.sh
