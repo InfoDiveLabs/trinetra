@@ -153,4 +153,54 @@
         .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
     });
   }
+
+  // ---- passkey login (templates/login.html) ----
+  // No username field — the mockup's login page is a single "Continue with
+  // passkey" button, so this uses navigator.credentials.get() against a
+  // client-side discoverable ("resident key") credential: the authenticator
+  // itself surfaces which stored passkey matches this site, and the server
+  // resolves the account afterward from the assertion's userHandle
+  // (internal/web/auth_webauthn.go's beginLogin/finishLogin).
+  var loginBtn=document.getElementById('loginBtn');
+  if(loginBtn){
+    loginBtn.addEventListener('click',function(){
+      var statusEl=document.getElementById('loginStatus');
+      if(statusEl) statusEl.textContent='Waiting for your device…';
+      fetch('/login/begin',{method:'POST',credentials:'same-origin'})
+        .then(function(r){ if(!r.ok) throw new Error('could not start sign-in'); return r.json(); })
+        .then(function(opts){
+          var pk=opts.publicKey;
+          pk.challenge=b64urlToBuf(pk.challenge);
+          if(pk.allowCredentials) pk.allowCredentials.forEach(function(c){ c.id=b64urlToBuf(c.id); });
+          return navigator.credentials.get({publicKey:pk});
+        })
+        .then(function(cred){
+          return fetch('/login/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            id:cred.id,
+            rawId:bufToB64url(cred.rawId),
+            type:cred.type,
+            response:{
+              clientDataJSON:bufToB64url(cred.response.clientDataJSON),
+              authenticatorData:bufToB64url(cred.response.authenticatorData),
+              signature:bufToB64url(cred.response.signature),
+              userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null
+            }
+          })});
+        })
+        .then(function(r){ if(!r.ok) throw new Error('sign-in failed'); if(statusEl) statusEl.textContent='Signed in — redirecting…'; window.location.assign('/'); })
+        .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
+    });
+  }
+
+  // ---- logout (base.html topbar sign-out button) ----
+  var logoutBtn=document.getElementById('logoutBtn');
+  if(logoutBtn){
+    logoutBtn.addEventListener('click',function(){
+      var meta=document.querySelector('meta[name="csrf-token"]');
+      var csrf=meta?meta.content:'';
+      fetch('/logout',{method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf}})
+        .then(function(){ window.location.assign('/login'); })
+        .catch(function(){ window.location.assign('/login'); });
+    });
+  }
 })();

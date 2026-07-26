@@ -28,7 +28,21 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
 	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
-	return securityHeaders(mux)
+	mux.HandleFunc("GET /login", loginPageHandler(d))
+	mux.HandleFunc("POST /login/begin", loginBeginHandler(d))
+	mux.HandleFunc("POST /login/finish", loginFinishHandler(d))
+	// /logout is a signed-in session's own mutation (not a pre-auth
+	// ceremony endpoint like /enroll or /login), so it's CSRF-protected —
+	// see requireCSRF's doc (middleware.go) for why those other POSTs
+	// aren't.
+	mux.Handle("POST /logout", requireCSRF(http.HandlerFunc(logoutHandler(d))))
+
+	// sessionMiddleware runs for every request so any handler/template can
+	// read the current session (sessionFromContext) — including
+	// requireCSRF above, which relies on it having already populated the
+	// context by the time /logout's handler chain reaches it.
+	sessions := newSessionStore(d.StateDir)
+	return securityHeaders(sessionMiddleware(sessions, mux))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type
@@ -161,7 +175,8 @@ func enrollBeginHandler(d Deps) http.HandlerFunc {
 		}
 		u := &User{ID: id, Name: name, Role: RoleViewer, Created: time.Now().Unix()}
 
-		creation, err := beginRegistration(w, r, wa, u)
+		sessions := newSessionStore(d.StateDir)
+		creation, err := beginRegistration(w, r, wa, u, sessions)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -186,10 +201,87 @@ func enrollFinishHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		store := newUserStore(d.StateDir)
-		if err := finishRegistration(w, r, wa, store); err != nil {
+		sessions := newSessionStore(d.StateDir)
+		if err := finishRegistration(w, r, wa, store, sessions); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// loginPageHandler renders the passkey sign-in page (ported from
+// ui-mockup/login.html — see templates/login.html) through the bare/
+// centered layout, same as enrollPageHandler: there's no session yet to fill
+// an app-shell sidebar/topbar with.
+func loginPageHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := newBarePageData(r, "Sign in")
+		if err := renderBarePage(w, "login.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// loginBeginHandler starts a WebAuthn login (assertion) ceremony
+// (beginLogin, auth_webauthn.go) using client-side discoverable
+// credentials — the login page's single "Continue with passkey" button
+// posts here with no body, no username.
+func loginBeginHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		wa, err := webAuthnConfig(d.Cfg(), r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sessions := newSessionStore(d.StateDir)
+		assertion, err := beginLogin(w, r, wa, sessions)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(assertion); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// loginFinishHandler completes the ceremony loginBeginHandler started: it
+// verifies the browser's assertion response (the request body) against the
+// session loginBeginHandler stashed (finishLogin, keyed by the
+// loginCeremonyCookie it set), resolves the signing-in account from the
+// assertion's userHandle, rejects a cloned-authenticator signCount
+// regression, and — only on success — sets the sw_session cookie.
+func loginFinishHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		wa, err := webAuthnConfig(d.Cfg(), r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		store := newUserStore(d.StateDir)
+		sessions := newSessionStore(d.StateDir)
+		if err := finishLogin(w, r, wa, store, sessions, sessionTTL(d.Cfg())); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// logoutHandler deletes the caller's signed-in session (if any — see
+// requireCSRF's route wiring in newHandler, which already required a valid
+// session/CSRF pair to reach here) and clears the sw_session cookie.
+// Idempotent: a repeat call (or one with no session, which requireCSRF
+// would already have rejected) just clears the cookie again.
+func logoutHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessions := newSessionStore(d.StateDir)
+		if sess, ok := sessionFromContext(r); ok {
+			_ = sessions.Delete(sess.ID)
+		}
+		clearSessionCookie(w, r)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

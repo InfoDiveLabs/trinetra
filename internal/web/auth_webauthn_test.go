@@ -16,7 +16,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -204,8 +203,9 @@ func TestBeginRegistrationReturnsCreationOptionsAndSetsCookie(t *testing.T) {
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	r := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	rr := httptest.NewRecorder()
+	sessions := newSessionStore(t.TempDir())
 
-	creation, err := beginRegistration(rr, r, wa, u)
+	creation, err := beginRegistration(rr, r, wa, u, sessions)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
@@ -233,11 +233,12 @@ func TestBeginRegistrationReturnsCreationOptionsAndSetsCookie(t *testing.T) {
 func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
+	sessions := newSessionStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	creation, err := beginRegistration(beginRR, beginReq, wa, u)
+	creation, err := beginRegistration(beginRR, beginReq, wa, u, sessions)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
@@ -249,7 +250,7 @@ func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T
 	finishReq.AddCookie(cookieFrom(t, beginRR, enrollSessionCookie))
 	finishRR := httptest.NewRecorder()
 
-	if err := finishRegistration(finishRR, finishReq, wa, store); err != nil {
+	if err := finishRegistration(finishRR, finishReq, wa, store, sessions); err != nil {
 		t.Fatalf("finishRegistration: %v", err)
 	}
 
@@ -276,11 +277,12 @@ func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T
 func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
+	sessions := newSessionStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	if _, err := beginRegistration(beginRR, beginReq, wa, u); err != nil {
+	if _, err := beginRegistration(beginRR, beginReq, wa, u, sessions); err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
 
@@ -292,7 +294,7 @@ func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 	finishReq.AddCookie(cookieFrom(t, beginRR, enrollSessionCookie))
 	finishRR := httptest.NewRecorder()
 
-	if err := finishRegistration(finishRR, finishReq, wa, store); err == nil {
+	if err := finishRegistration(finishRR, finishReq, wa, store, sessions); err == nil {
 		t.Fatal("finishRegistration(tampered challenge) = nil error, want error")
 	}
 	if _, ok := store.Get(u.ID); ok {
@@ -308,11 +310,12 @@ func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 func TestRegistrationRejectsWrongOrigin(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
+	sessions := newSessionStore(t.TempDir())
 
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
 	beginReq := httptest.NewRequest(http.MethodPost, "/enroll/begin", nil)
 	beginRR := httptest.NewRecorder()
-	creation, err := beginRegistration(beginRR, beginReq, wa, u)
+	creation, err := beginRegistration(beginRR, beginReq, wa, u, sessions)
 	if err != nil {
 		t.Fatalf("beginRegistration: %v", err)
 	}
@@ -324,7 +327,7 @@ func TestRegistrationRejectsWrongOrigin(t *testing.T) {
 	finishReq.AddCookie(cookieFrom(t, beginRR, enrollSessionCookie))
 	finishRR := httptest.NewRecorder()
 
-	err = finishRegistration(finishRR, finishReq, wa, store)
+	err = finishRegistration(finishRR, finishReq, wa, store, sessions)
 	if err == nil {
 		t.Fatal("finishRegistration(wrong origin) = nil error, want error")
 	}
@@ -380,77 +383,9 @@ func TestWebAuthnConfigDerivesFromRequestOriginInProxyMode(t *testing.T) {
 	}
 }
 
-// TestCeremonyStashExpiresEntries pins that a stashed ceremony older than
-// ceremonyTTL is treated as absent by take (and not leaked): with a
-// controllable clock, an entry put at t0 is gone once the clock advances
-// past t0+ceremonyTTL.
-func TestCeremonyStashExpiresEntries(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	s := &ceremonyStash{data: make(map[string]regCeremony), now: func() time.Time { return now }}
-
-	id, err := s.put(regCeremony{user: &User{ID: "u1"}})
-	if err != nil {
-		t.Fatalf("put: %v", err)
-	}
-
-	// Still within TTL: take succeeds.
-	now = now.Add(ceremonyTTL - time.Second)
-	if _, ok := s.take(id); !ok {
-		t.Fatal("take within TTL = not found, want found")
-	}
-
-	// Put another, then advance past the TTL: take must report absent.
-	id2, err := s.put(regCeremony{user: &User{ID: "u2"}})
-	if err != nil {
-		t.Fatalf("put 2: %v", err)
-	}
-	now = now.Add(ceremonyTTL + time.Second)
-	if _, ok := s.take(id2); ok {
-		t.Fatal("take after TTL = found, want expired/absent")
-	}
-}
-
-// TestCeremonyStashEvictsExpiredOnPut pins the pre-auth DoS bound: put
-// evicts entries whose TTL has elapsed, so a caller repeatedly starting
-// ceremonies (without ever finishing them) doesn't grow the map without
-// limit — once the clock moves past the TTL, stale entries are reclaimed.
-func TestCeremonyStashEvictsExpiredOnPut(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	s := &ceremonyStash{data: make(map[string]regCeremony), now: func() time.Time { return now }}
-
-	for i := 0; i < 50; i++ {
-		if _, err := s.put(regCeremony{user: &User{ID: "u"}}); err != nil {
-			t.Fatalf("put %d: %v", i, err)
-		}
-	}
-	if got := len(s.data); got != 50 {
-		t.Fatalf("stash size = %d, want 50 before expiry", got)
-	}
-
-	// Advance past the TTL and put one more: the 50 stale entries are
-	// evicted, leaving only the fresh one.
-	now = now.Add(ceremonyTTL + time.Second)
-	if _, err := s.put(regCeremony{user: &User{ID: "fresh"}}); err != nil {
-		t.Fatalf("put fresh: %v", err)
-	}
-	if got := len(s.data); got != 1 {
-		t.Errorf("stash size after expiry+put = %d, want 1 (stale entries evicted)", got)
-	}
-}
-
-// TestCeremonyStashRefusesWhenFull pins the hard size cap: once the stash is
-// at ceremonyMaxEntries of still-live ceremonies, put refuses rather than
-// growing further.
-func TestCeremonyStashRefusesWhenFull(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	s := &ceremonyStash{data: make(map[string]regCeremony), now: func() time.Time { return now }}
-
-	for i := 0; i < ceremonyMaxEntries; i++ {
-		if _, err := s.put(regCeremony{user: &User{ID: "u"}}); err != nil {
-			t.Fatalf("put %d: %v", i, err)
-		}
-	}
-	if _, err := s.put(regCeremony{user: &User{ID: "overflow"}}); err == nil {
-		t.Fatal("put at capacity = nil error, want refusal")
-	}
-}
+// Ceremony-stash-specific expiry/eviction/capacity tests used to live here
+// (Task 4's temporary in-memory ceremonyStash). That type is gone — both
+// registration and login ceremonies now stash their SessionData in the real
+// SessionStore (session.go), whose equivalent expiry/GC/capacity behavior is
+// pinned in session_test.go (TestSessionGetTreatsExpiredAsAbsent,
+// TestSessionGCRemovesExpiredRecords, TestSessionNewRefusesWhenFull).

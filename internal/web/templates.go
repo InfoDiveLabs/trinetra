@@ -118,12 +118,22 @@ type PageData struct {
 	// script tag in base.html so it's authorized under the CSP's
 	// script-src 'nonce-...' directive.
 	Nonce string
+	// CSRF is the current session's anti-CSRF token (requireCSRF,
+	// middleware.go), rendered into base.html's csrf-token meta tag so
+	// app.js can read it into the X-CSRF-Token header of a mutating
+	// fetch()/htmx request (e.g. the topbar's sign-out button). Empty when
+	// there's no signed-in session in the request context.
+	CSRF string
 }
 
 // newPageData builds the PageData every page handler needs, deriving Role
 // from the request and Active from its path.
 func newPageData(r *http.Request, title, sub, status string) PageData {
 	role := currentRole(r)
+	csrf := ""
+	if sess, ok := sessionFromContext(r); ok {
+		csrf = sess.CSRF
+	}
 	return PageData{
 		Title:  title,
 		Sub:    sub,
@@ -132,6 +142,7 @@ func newPageData(r *http.Request, title, sub, status string) PageData {
 		Active: r.URL.Path,
 		Nav:    navForRole(role),
 		Nonce:  nonceFromContext(r),
+		CSRF:   csrf,
 	}
 }
 

@@ -3,12 +3,13 @@
 package web
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -18,10 +19,13 @@ import (
 )
 
 // enrollSessionCookie names the cookie beginRegistration/finishRegistration
-// use to correlate the two halves of a registration ceremony. See
-// regCeremonies' doc for why this is a cookie-keyed in-memory map rather
-// than the real session store (that's Task 5/#61).
+// use to correlate the two halves of a registration ceremony; see
+// regCeremonyData's doc for what's stashed under it.
 const enrollSessionCookie = "sw_enroll"
+
+// loginCeremonyCookie is enrollSessionCookie's counterpart for the login
+// (assertion) ceremony beginLogin/finishLogin run.
+const loginCeremonyCookie = "sw_login"
 
 // newRandomID returns a fresh, unguessable identifier of n random bytes,
 // URL-safe base64-encoded (so it drops cleanly into a cookie value or a
@@ -81,138 +85,60 @@ func webAuthnConfig(cfg *config.Config, r *http.Request) (*webauthn.WebAuthn, er
 	})
 }
 
-// ceremonyTTL bounds how long a stashed ceremony is retained/valid: it
-// mirrors the enrollSessionCookie MaxAge (5 min) so a stash entry never
-// outlives the cookie that references it.
+// ceremonyTTL bounds how long a stashed WebAuthn ceremony (registration or
+// login) is retained/valid: it mirrors the enroll/login ceremony cookies'
+// MaxAge (5 min) so a stashed Session never outlives the cookie that
+// references it.
 const ceremonyTTL = 5 * time.Minute
 
-// ceremonyMaxEntries caps the stash size as a hard backstop against a flood
-// of /enroll/begin calls arriving faster than they expire (each ceremony is
-// tiny, but the endpoint is unauthenticated). Once the cap is hit, put
-// refuses new ceremonies rather than growing without bound; legitimate
-// enrollment is a single interactive request, so this ceiling is far above
-// any honest concurrency.
-const ceremonyMaxEntries = 1024
-
-// regCeremony is what beginRegistration stashes and finishRegistration
-// retrieves: the go-webauthn SessionData the ceremony needs to verify the
-// attestation, plus the pending *User being enrolled (not yet persisted —
+// regCeremonyData is what beginRegistration JSON-encodes into a ceremony
+// Session's Data field (session.go) and finishRegistration decodes back out:
+// the go-webauthn SessionData the ceremony needs to verify the attestation,
+// plus the pending *User being enrolled (not yet persisted —
 // finishRegistration's store.Put is the first time it's written).
-type regCeremony struct {
-	user    *User
-	session *webauthn.SessionData
-	// expires is when this entry becomes eligible for eviction (put-time +
-	// ceremonyTTL); take treats an expired entry as absent.
-	expires time.Time
-}
-
-// ceremonyStash is a TEMPORARY in-memory, single-process stand-in for the
-// real session store (Task 5/#61 — TODO(#61): replace this with the
-// server-side session store once it lands; this map doesn't survive a
-// process restart and isn't shared across multiple web server instances,
-// neither of which matters for a single-process daemon serving a
-// short-lived registration ceremony but both of which a real session store
-// must handle). Keyed by a random id set in enrollSessionCookie, a
-// short-lived cookie scoped to /enroll.
 //
-// Because /enroll/begin is unauthenticated, the stash bounds its own growth:
-// every put first evicts expired entries (see ceremonyTTL) and, if still at
-// ceremonyMaxEntries, refuses the new ceremony — so an anonymous caller
-// looping POST /enroll/begin can't grow this map without limit (pre-auth
-// DoS). now is overridable so a test can drive expiry deterministically.
-type ceremonyStash struct {
-	mu   sync.Mutex
-	data map[string]regCeremony
-	now  func() time.Time
-}
-
-// regCeremonies is the package-level stash beginRegistration/
-// finishRegistration share. A package-level var (rather than threading a
-// store through Deps) is acceptable here because it's explicitly temporary
-// scaffolding removed in #61, not a persisted or user-facing store.
-var regCeremonies = &ceremonyStash{data: make(map[string]regCeremony)}
-
-// clock returns the stash's time source, defaulting to time.Now when unset
-// (the production package-level regCeremonies leaves now nil).
-func (s *ceremonyStash) clock() time.Time {
-	if s.now != nil {
-		return s.now()
-	}
-	return time.Now()
-}
-
-// evictExpiredLocked drops every entry whose TTL has elapsed. Callers must
-// hold s.mu. O(n) over the map, but n is bounded by ceremonyMaxEntries and
-// this only runs on put (a low-frequency, interactive path).
-func (s *ceremonyStash) evictExpiredLocked(now time.Time) {
-	for id, c := range s.data {
-		if !c.expires.After(now) {
-			delete(s.data, id)
-		}
-	}
-}
-
-// put stores c under a fresh random id and returns it, first evicting
-// expired entries and refusing (error) if the stash is still at its size
-// cap — see ceremonyStash's doc.
-func (s *ceremonyStash) put(c regCeremony) (string, error) {
-	id, err := newRandomID(18)
-	if err != nil {
-		return "", err
-	}
-	now := s.clock()
-	c.expires = now.Add(ceremonyTTL)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.evictExpiredLocked(now)
-	if len(s.data) >= ceremonyMaxEntries {
-		return "", fmt.Errorf("web: too many pending enrollments; try again shortly")
-	}
-	s.data[id] = c
-	return id, nil
-}
-
-// take retrieves and deletes the ceremony stored under id (one-shot: a
-// cookie value is only ever valid for a single finishRegistration call). An
-// entry whose TTL has elapsed is treated as absent (and removed).
-func (s *ceremonyStash) take(id string) (regCeremony, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.data[id]
-	if !ok {
-		return regCeremony{}, false
-	}
-	delete(s.data, id)
-	if !c.expires.After(s.clock()) {
-		return regCeremony{}, false
-	}
-	return c, true
+// TODO(#61) resolved: this replaces the temporary in-memory ceremonyStash
+// (see git history) with the real, file-backed SessionStore — both
+// registration and login ceremonies (beginLogin/finishLogin, below) now
+// stash their SessionData the same way, keyed by a Session.ID set in a
+// short-lived, ceremony-scoped cookie.
+type regCeremonyData struct {
+	User     *User                 `json:"user"`
+	WebAuthn *webauthn.SessionData `json:"webauthn"`
 }
 
 // beginRegistration starts a WebAuthn registration ceremony for u: it asks
 // wa for a fresh challenge/options (creation), stashes the resulting
-// SessionData (see ceremonyStash) alongside u, and sets enrollSessionCookie
-// on w so the browser echoes the same ceremony id back to
-// /enroll/finish. The caller (enrollBeginHandler, routes.go) is responsible
-// for JSON-encoding the returned creation options onto the response body.
-func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, u *User) (*protocol.CredentialCreation, error) {
-	creation, session, err := wa.BeginRegistration(u)
+// SessionData alongside u in a new ceremony Session (sessions, ttl
+// ceremonyTTL — see regCeremonyData's doc), and sets enrollSessionCookie on
+// w so the browser echoes the same ceremony id back to /enroll/finish. The
+// caller (enrollBeginHandler, routes.go) is responsible for JSON-encoding
+// the returned creation options onto the response body.
+func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, u *User, sessions SessionStore) (*protocol.CredentialCreation, error) {
+	creation, sessionData, err := wa.BeginRegistration(u)
 	if err != nil {
 		return nil, fmt.Errorf("web: begin registration: %w", err)
 	}
-	id, err := regCeremonies.put(regCeremony{user: u, session: session})
+	data, err := json.Marshal(regCeremonyData{User: u, WebAuthn: sessionData})
 	if err != nil {
+		return nil, fmt.Errorf("web: encode registration ceremony: %w", err)
+	}
+	sess, err := sessions.New("", ceremonyTTL)
+	if err != nil {
+		return nil, err
+	}
+	sess.Data = data
+	if err := sessions.Put(sess); err != nil {
 		return nil, err
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     enrollSessionCookie,
-		Value:    id,
+		Value:    sess.ID,
 		Path:     "/enroll",
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes: ample time for a passkey prompt, short-lived scaffolding (see ceremonyStash doc).
+		MaxAge:   300, // 5 minutes: ample time for a passkey prompt; matches ceremonyTTL.
 	})
 	return creation, nil
 }
@@ -226,15 +152,16 @@ func beginRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebA
 // via store.Put. A tampered/invalid attestation (wrong origin, wrong
 // challenge, corrupted signature, replayed/reused cookie, ...) returns an
 // error and nothing is persisted.
-func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, store UserStore) error {
+func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, store UserStore, sessions SessionStore) error {
 	cookie, err := r.Cookie(enrollSessionCookie)
 	if err != nil {
 		return fmt.Errorf("web: missing or expired enrollment session: %w", err)
 	}
-	ceremony, ok := regCeremonies.take(cookie.Value)
+	sess, ok := sessions.Get(cookie.Value)
 	if !ok {
 		return fmt.Errorf("web: enrollment session not found (expired or already used)")
 	}
+	_ = sessions.Delete(cookie.Value) // one-shot: a cookie value is only ever valid for a single finishRegistration call.
 	// Clear the cookie regardless of outcome below: it's single-use either way.
 	http.SetCookie(w, &http.Cookie{
 		Name:     enrollSessionCookie,
@@ -244,19 +171,146 @@ func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.Web
 		HttpOnly: true,
 	})
 
-	cred, err := wa.FinishRegistration(ceremony.user, *ceremony.session, r)
+	var data regCeremonyData
+	if err := json.Unmarshal(sess.Data, &data); err != nil {
+		return fmt.Errorf("web: decode enrollment session: %w", err)
+	}
+
+	cred, err := wa.FinishRegistration(data.User, *data.WebAuthn, r)
 	if err != nil {
 		return fmt.Errorf("web: finish registration: %w", err)
 	}
 
-	ceremony.user.Credentials = append(ceremony.user.Credentials, Credential{
+	data.User.Credentials = append(data.User.Credentials, Credential{
 		ID:         cred.ID,
 		PublicKey:  cred.PublicKey,
 		SignCount:  cred.Authenticator.SignCount,
 		Transports: transportsToStrings(cred.Transport),
 	})
-	if err := store.Put(ceremony.user); err != nil {
+	if err := store.Put(data.User); err != nil {
 		return fmt.Errorf("web: persist user: %w", err)
 	}
+	return nil
+}
+
+// beginLogin starts a WebAuthn login (assertion) ceremony using client-side
+// discoverable ("resident key") credentials: unlike beginRegistration, this
+// endpoint doesn't know which account is signing in yet — the mockup's
+// login page (templates/login.html) has no username field, just a single
+// "Continue with passkey" button — so the authenticator itself surfaces
+// whichever of the user's stored discoverable credentials matches this RP,
+// and finishLogin resolves the account afterward from the assertion's
+// userHandle (see DiscoverableUserHandler). The resulting SessionData is
+// stashed the same way beginRegistration stashes its own (a ceremony Session
+// keyed by loginCeremonyCookie, ttl ceremonyTTL).
+func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, sessions SessionStore) (*protocol.CredentialAssertion, error) {
+	assertion, sessionData, err := wa.BeginDiscoverableLogin()
+	if err != nil {
+		return nil, fmt.Errorf("web: begin login: %w", err)
+	}
+	data, err := json.Marshal(sessionData)
+	if err != nil {
+		return nil, fmt.Errorf("web: encode login ceremony: %w", err)
+	}
+	sess, err := sessions.New("", ceremonyTTL)
+	if err != nil {
+		return nil, err
+	}
+	sess.Data = data
+	if err := sessions.Put(sess); err != nil {
+		return nil, err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     loginCeremonyCookie,
+		Value:    sess.ID,
+		Path:     "/login",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300, // 5 minutes: matches ceremonyTTL.
+	})
+	return assertion, nil
+}
+
+// finishLogin completes the ceremony beginLogin started: it reads
+// loginCeremonyCookie off r to find the stashed SessionData, asks wa to
+// verify r's body (the browser's assertion response) — resolving the
+// signing-in account from the assertion's userHandle via users.Get — and,
+// only on success, issues a new signed-in session cookie (ttl) on w.
+//
+// Clone detection (this task's signCount requirement): go-webauthn's
+// Authenticator.UpdateCounter (called internally by FinishDiscoverableLogin)
+// already implements the spec's comparison — it sets CloneWarning when the
+// assertion's counter is <= the credential's last stored SignCount, unless
+// both are zero (some authenticators never implement a counter and always
+// report 0, which is legitimate, not a clone signal). A CloneWarning here
+// means the same signature counter value was presented twice, the textbook
+// sign of a cloned authenticator, so the login is rejected outright and the
+// stored SignCount is left untouched (an attacker's replay must not get to
+// "use up" a counter value the legitimate authenticator hasn't reached yet).
+// Only on a clean (non-regressed) counter is the credential's stored
+// SignCount advanced and persisted.
+func finishLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, users UserStore, sessions SessionStore, ttl time.Duration) error {
+	cookie, err := r.Cookie(loginCeremonyCookie)
+	if err != nil {
+		return fmt.Errorf("web: missing or expired login session: %w", err)
+	}
+	sess, ok := sessions.Get(cookie.Value)
+	if !ok {
+		return fmt.Errorf("web: login session not found (expired or already used)")
+	}
+	_ = sessions.Delete(cookie.Value) // one-shot, same as the registration ceremony.
+	http.SetCookie(w, &http.Cookie{
+		Name:     loginCeremonyCookie,
+		Value:    "",
+		Path:     "/login",
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
+
+	var sessionData webauthn.SessionData
+	if err := json.Unmarshal(sess.Data, &sessionData); err != nil {
+		return fmt.Errorf("web: decode login session: %w", err)
+	}
+
+	var matched *User
+	cred, err := wa.FinishDiscoverableLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
+		u, ok := users.Get(string(userHandle))
+		if !ok {
+			return nil, fmt.Errorf("web: unknown credential user")
+		}
+		matched = u
+		return u, nil
+	}, sessionData, r)
+	if err != nil {
+		return fmt.Errorf("web: finish login: %w", err)
+	}
+	if matched == nil {
+		return fmt.Errorf("web: internal error: no user resolved for login")
+	}
+	if cred.Authenticator.CloneWarning {
+		return fmt.Errorf("web: authenticator signature counter did not advance (possible cloned credential); login rejected")
+	}
+
+	found := false
+	for i := range matched.Credentials {
+		if bytes.Equal(matched.Credentials[i].ID, cred.ID) {
+			matched.Credentials[i].SignCount = cred.Authenticator.SignCount
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("web: credential not found on resolved user")
+	}
+	if err := users.Put(matched); err != nil {
+		return fmt.Errorf("web: persist updated sign count: %w", err)
+	}
+
+	newSess, err := sessions.New(matched.ID, ttl)
+	if err != nil {
+		return fmt.Errorf("web: create session: %w", err)
+	}
+	setSessionCookie(w, r, newSess, ttl)
 	return nil
 }
