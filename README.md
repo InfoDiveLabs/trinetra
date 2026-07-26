@@ -53,6 +53,16 @@ See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full install/verify/man
 guide, **[docs/DESIGN.md](docs/DESIGN.md)** for the architecture, and
 **[docs/ROADMAP.md](docs/ROADMAP.md)** for status and planned work.
 
+### Optional: web UI
+
+A separate `serverwatch-web` binary (`make web`) adds an embedded, passkey-only
+web UI — live dashboard, history graphs, config/channels/users editor, and a
+curated public status page — as an alternative to Telegram. It's opt-in and
+built from a `-tags web` build; the default `serverwatch` binary above stays
+100% stdlib with no extra dependencies. See **[docs/WEB.md](docs/WEB.md)** for
+enabling it, the three serving modes (Cloudflare Tunnel/nginx/Caddy, autocert,
+manual TLS), and passkey enrollment.
+
 ## CLI reference
 
 ```
@@ -507,6 +517,10 @@ make test      # go test ./... — unit tests, run anywhere (incl. macOS)
 make vet       # go vet ./...
 make build     # local-OS binary at dist/serverwatch
 make linux     # cross-compile: dist/serverwatch-linux-amd64 + dist/serverwatch-linux-arm64
+make web       # local-OS binary at dist/serverwatch-web (-tags web, see docs/WEB.md)
+make web-cross # full release matrix: serverwatch + serverwatch-web for
+               # linux amd64/arm64/arm + darwin amd64/arm64
+make release   # web-cross, plus checksums.txt over every dist/ artifact
 make validate  # containerized end-to-end suite (test/docker/scenarios.sh) — Linux/Docker required
 ```
 

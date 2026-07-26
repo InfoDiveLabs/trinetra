@@ -26,6 +26,10 @@ verifying it works. For the architecture and design rationale, see
 | Raspberry Pi 3/4/5 (64-bit OS) | `serverwatch-linux-arm64` |
 | Older 32-bit Pi / ARMv7 | `serverwatch-linux-arm` |
 
+Each of those also has a `serverwatch-web-linux-<arch>` counterpart — the
+same daemon plus an optional embedded passkey web UI (disabled by default).
+Only grab one if you want the web UI; see [docs/WEB.md](WEB.md).
+
 ```bash
 curl -fsSL -o /tmp/serverwatch \
   https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/serverwatch-linux-arm64
@@ -322,7 +326,22 @@ disk,docker`, `exclude_kinds smart`, `critical_overrides_quiet true|false`.
 writes `config.json` and signals the running daemon (`SIGHUP`), same as
 `config set` — no restart needed.
 
-## 8. Real-time "server is down NOW" alert (optional)
+## 8. Web UI (optional)
+
+Install the `serverwatch-web` binary instead of `serverwatch` (same `install`
+step above) to get an embedded, passkey-only web dashboard/history/config UI
+alongside Telegram. It's off by default even in that binary:
+
+```bash
+sudo serverwatch config set web.enabled true
+sudo systemctl restart serverwatch      # web.* needs a restart, not just SIGHUP
+```
+
+See **[docs/WEB.md](WEB.md)** for the `web.*`/`public.*` config keys, the
+three serving modes (Cloudflare Tunnel/nginx/Caddy, autocert, manual TLS),
+and passkey enrollment/roles.
+
+## 9. Real-time "server is down NOW" alert (optional)
 
 The daemon reconstructs downtime from its own heartbeat and reports it on the
 next boot ("back online, was down 02:14→06:47"). For an *instant* alert while the
@@ -334,7 +353,7 @@ Telegram directly:
 sudo serverwatch healthchecks set https://hc-ping.com/<your-uuid>
 ```
 
-## 9. Managing the service
+## 10. Managing the service
 
 ```bash
 systemctl status serverwatch            # is it running?
@@ -344,7 +363,7 @@ sudo serverwatch config get             # effective config
 sudo systemctl restart serverwatch      # after a storage.* config change or a binary upgrade
 ```
 
-## 10. Upgrading
+## 11. Upgrading
 
 Download/build a newer binary and re-run install (it overwrites the binary and
 reloads the unit; your config and time-series history are preserved):
@@ -357,7 +376,7 @@ Upgrading from a pre-storage-epic install (no `ts/` directory yet)? Run
 `serverwatch migrate` once afterward to pull the old JSONL history into the
 new store — see **Storage & retention** in step 5.
 
-## 11. Uninstalling
+## 12. Uninstalling
 
 ```bash
 sudo serverwatch uninstall            # stop + remove the unit (keeps config + history)
