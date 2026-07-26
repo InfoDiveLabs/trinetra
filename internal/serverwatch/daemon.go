@@ -409,6 +409,30 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 	return snap
 }
 
+// mergeSlowFields copies every field collectSlow can populate from slow onto
+// merged, in place. Shared by collectSnapshot's one-shot merge below and the
+// sampler loop's per-slow-tick merge in cmdDaemon so the two copies can never
+// drift apart: a Snapshot field collectSlow starts setting that isn't added
+// here would silently vanish from status.json (and from collectSnapshot's
+// one-shot callers) until this function is updated too. See
+// TestMergeSlowFieldsCopiesEverySlowTierField (status_test.go) for the
+// regression guard. NetRates and Processes are deliberately excluded: they
+// are populated directly by the caller (sampler loop / collectSnapshot) from
+// stateful calculators (NetRateCalc/ProcCPUCalc) that collectSlow itself has
+// no access to, not by collectSlow.
+func mergeSlowFields(merged *Snapshot, slow Snapshot) {
+	merged.Disks = slow.Disks
+	merged.DiskDetail = slow.DiskDetail
+	merged.Online = slow.Online
+	merged.DockerAccess = slow.DockerAccess
+	merged.Containers = slow.Containers
+	merged.FailedUnits = slow.FailedUnits
+	merged.SmartHealth = slow.SmartHealth
+	merged.SmartAttrs = slow.SmartAttrs
+	merged.ContainerStats = slow.ContainerStats
+	merged.Units = slow.Units
+}
+
 // collectSnapshot runs both tiers and merges them into one full Snapshot.
 // It exists for the two one-shot callers that need a complete picture right
 // now rather than a tiered cadence: the boot/recovery report (a single
@@ -419,16 +443,7 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64) Snapshot {
 	snap := collectFast(x, fs, prev)
 	slow := collectSlow(x, fs, da, c, store, nowUnix)
-	snap.Disks = slow.Disks
-	snap.DiskDetail = slow.DiskDetail
-	snap.Online = slow.Online
-	snap.DockerAccess = slow.DockerAccess
-	snap.Containers = slow.Containers
-	snap.FailedUnits = slow.FailedUnits
-	snap.SmartHealth = slow.SmartHealth
-	snap.SmartAttrs = slow.SmartAttrs
-	snap.ContainerStats = slow.ContainerStats
-	snap.Units = slow.Units
+	mergeSlowFields(&snap, slow)
 	return snap
 }
 
@@ -667,16 +682,7 @@ func cmdDaemon(args []string) int {
 		isSlowTick := tick%n == 0
 		if isSlowTick {
 			slow := collectSlow(x, fs, da, c, store, now.Unix())
-			merged.Disks = slow.Disks
-			merged.DiskDetail = slow.DiskDetail
-			merged.Online = slow.Online
-			merged.DockerAccess = slow.DockerAccess
-			merged.Containers = slow.Containers
-			merged.FailedUnits = slow.FailedUnits
-			merged.SmartHealth = slow.SmartHealth
-			merged.SmartAttrs = slow.SmartAttrs
-			merged.ContainerStats = slow.ContainerStats
-			merged.Units = slow.Units
+			mergeSlowFields(&merged, slow)
 
 			// net throughput (opt-in via collect.net_throughput): /proc/net/dev
 			// holds cumulative counters, so netRate.Rates diffs this sample

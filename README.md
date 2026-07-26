@@ -11,8 +11,12 @@ that drives live status and anomaly detection, plus a **slow tier**
 (disk/docker/systemd/SMART/network every `sample_interval`, default 60s) for
 the pricier checks — and a Telegram long-poller (commands answered in ~1s).
 `Restart=always` + `WantedBy=multi-user.target` mean it survives crashes and
-starts at boot. Sample data (fast-tier metrics + per-disk usage) is persisted
-to a compact binary time-series store (see On-server layout below and
+starts at boot. Sample data (the scalar host metrics, plus per-disk usage,
+per-container docker cpu/mem, per-interface network throughput, and
+per-device SMART temperature) is persisted to a compact binary time-series
+store; the fuller live picture — service list, process table, per-container
+network I/O, disk detail, SMART attributes — lives in `status.json` instead
+(see **Data model** below, On-server layout, and
 [docs/DESIGN-storage.md](docs/DESIGN-storage.md)).
 
 ## Quick start
@@ -86,6 +90,11 @@ serverwatch migrate [--force]             one-shot import of legacy JSONL sample
 serverwatch dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]
                                            export one metric's series (e.g. `cpu`, `disk:/`) for
                                            humans or graphing tools
+serverwatch alerts [list] [--since 24h] [--limit 20]
+                                           active alerts + recent alert-log history (see Alert
+                                           history below)
+serverwatch alerts ack <key>              acknowledge an active alert, e.g. `alerts ack disk:/`
+serverwatch alerts unack <key>            clear an acknowledgement
 serverwatch help                          this usage text
 ```
 
@@ -121,6 +130,29 @@ exception: the running time-series store isn't reopened on `SIGHUP`, so a
   samples are kept.
 - `storage.rollup_retention` (duration string, default `720h`/30d) — how
   long 1-minute rollups and downtime events are kept.
+- `collect.container_stats` (bool, default `true`) — slow-tier per-container
+  `docker stats` (cpu%/mem/net). Feeds the `docker:<name>:cpu`/`:mem` series
+  plus `container_stats` (incl. net rx/tx, snapshot-only) in `status.json`.
+- `collect.net_throughput` (bool, default `true`) — slow-tier per-interface
+  `/proc/net/dev` throughput. Feeds the `net:<iface>:rx`/`:tx` series plus
+  `net_rates` in `status.json`.
+- `collect.services` (bool, default `true`) — slow-tier full systemd unit
+  inventory (`units` in `status.json`; snapshot-only, no series — the
+  `systemctl --failed` alerting collection always runs regardless).
+- `collect.processes` (bool, default `true`) — slow-tier process-table
+  overview (`processes` in `status.json`: counts + top-N by CPU/mem;
+  snapshot-only, no series).
+- `collect.smart_attrs` (bool, default `true`) — slow-tier per-device
+  `smartctl -A` attribute reads (`smart_attrs` in `status.json`, feeds the
+  `smart:<dev>:temp` series; the cheaper `--scan`/`-H` health check always
+  runs regardless).
+
+  All five `collect.*` keys are opt-**out**: unset/absent means enabled.
+  Turn one off with, e.g., `serverwatch config set collect.processes false`
+  — useful on a small device, or a host with hundreds of short-lived
+  processes/containers, where the default collection is more than you need.
+  `serverwatch doctor` prints the current on/off state of all five plus the
+  resulting series count and disk usage.
 
 ### Sampling tiers
 
@@ -130,15 +162,22 @@ The sampler loop ticks at `fast_interval`; every Nth tick (N =
 - **Fast tier** — cheap, no subprocess: `/proc` reads for CPU/mem/swap/load
   plus the thermal-zone temperature. Drives `status.json`, the rolling
   baseline, and the cpu/mem/swap/temp anomaly checks. Each fast tick appends
-  a raw sample per metric (`cpu`, `mem`, `swap`, `load1`, `temp`) to the
-  time-series store.
-- **Slow tier** — the pricier checks: `df` for disk usage, `docker ps`,
-  `systemctl --failed`, `smartctl`, and the internet-connectivity dial.
-  Drives the disk/docker/service/smart anomaly checks and their recovery
-  sweeps, and pings `healthchecks.url` if set. Each slow tick also appends
-  `disk:<mount>` samples to the store; docker/service/smart are alert states
-  only — not yet stored as time-series (see the extended-collection work in
-  [docs/ROADMAP.md](docs/ROADMAP.md)).
+  a raw sample per metric (`cpu`, `mem`, `swap`, `load1`, `load5`, `load15`,
+  `temp`) to the time-series store.
+- **Slow tier** — the pricier checks: `df` for disk usage (plus device/
+  fstype/inode detail), `docker ps` (plus the opt-in `docker stats`),
+  `systemctl --failed` (plus the opt-in full unit inventory), `smartctl`
+  (plus the opt-in `-A` attribute read), the opt-in `/proc/net/dev`
+  throughput read, the opt-in process-table snapshot, and the
+  internet-connectivity dial. Drives the disk/docker/service/smart anomaly
+  checks and their recovery sweeps, and pings `healthchecks.url` if set.
+  Each slow tick also appends `disk:<mount>` samples, and — for whichever of
+  the opt-in collectors above are enabled — `docker:<name>:cpu`/`:mem`,
+  `net:<iface>:rx`/`:tx`, and `smart:<dev>:temp` samples too. Docker
+  container up/down state and systemd/SMART health stay alert-only; the
+  full unit list, process table, and per-container network I/O are
+  snapshot-only (`status.json`, never a series) — see **Data model** below
+  for the complete breakdown.
 - **Heartbeat** — on its own `heartbeat_interval` cadence, independent of
   both tiers: rewrites `heartbeat` so a future boot can measure how long the
   process was down (see Downtime tracking below).
@@ -150,6 +189,89 @@ The sampler loop ticks at `fast_interval`; every Nth tick (N =
 `smart:<device>`. The scalar checks that actually fire alerts — `cpu`, `mem`,
 `swap`, `temp`, and each `disk:<mount>` — support both global thresholds
 (`thresholds.*`) and per-target overrides via `monitor threshold`.
+
+## Data model
+
+serverwatch's on-disk/live state comes in three distinct shapes. Knowing
+which one a datapoint lives in tells you whether it's queryable history
+(`dump`), a live read of "right now" (`status.json`), or a discrete
+thing-that-happened record:
+
+### 1. Time-series (`ts/`, the tsfile store)
+
+Numeric metrics on a fixed cadence, downsampled + pruned per
+`storage.raw_retention`/`rollup_retention`, queried via `serverwatch dump
+--metric <id>`. The complete list of series ids:
+
+- `cpu`, `mem`, `swap`, `load1`, `load5`, `load15`, `temp` — fast tier,
+  every `fast_interval`.
+- `disk:<mount>` — slow tier, one per discovered filesystem.
+- `docker:<name>:cpu`, `docker:<name>:mem` — slow tier, one pair per running
+  container (opt-in, `collect.container_stats`, default on).
+- `net:<iface>:rx`, `net:<iface>:tx` — slow tier, bytes/sec per interface
+  (opt-in, `collect.net_throughput`, default on; empty until the second
+  slow tick, since a rate needs a prior sample to diff against).
+- `smart:<dev>:temp` — slow tier, one per SMART device that reports a
+  temperature attribute (opt-in, `collect.smart_attrs`, default on).
+
+That's all of them. Per-container network I/O, the service list, and the
+process table are deliberately **not** series (see #2 below) — unbounded
+per-container/per-unit/per-process cardinality is exactly what this design
+avoids; only bounded, low-cardinality numeric metrics get a series.
+
+### 2. Live snapshot (`status.json`)
+
+One JSON document — the full in-memory `Snapshot`
+(`internal/serverwatch/status.go`) — rewritten every `fast_interval` tick.
+`serverwatch status` and `cat /var/lib/serverwatch/status.json` both just
+read this file. Alongside the current value of every series above, it
+carries fields that are refreshed each slow tick but never persisted as
+history:
+
+- **Services** — `units`: the full systemd unit inventory (name/load/
+  active/sub/description for every unit; opt-in, `collect.services`,
+  default on). `failed_units` — the alerting-only list of units currently
+  in `failed` state — is separate and always collected regardless.
+- **Processes** — `processes`: total/running/sleeping/zombie counts plus a
+  bounded top-N (by CPU, falling back to mem on the very first tick) of
+  pid/name/state/cpu%/mem/threads (opt-in, `collect.processes`, default
+  on).
+- **Container state + stats** — `containers` (name → state, always
+  collected once docker is reachable) and `container_stats` (opt-in,
+  `collect.container_stats`): per-container cpu%/mem **and** net rx/tx MB.
+  The net figures are snapshot-only — not fed into a series, unlike cpu/mem
+  above.
+- **Network rates** — `net_rates`: the same per-interface rx/tx bytes/sec
+  that also feeds the `net:<iface>:rx`/`:tx` series.
+- **Disk detail** — `disk_detail` (always collected, no toggle): per-mount
+  device path, filesystem type, inode-usage%, free/total bytes, and — once
+  enough `disk:<mount>` history exists — a linear fill-rate projection
+  (days until full).
+- **SMART health + attributes** — `smart_health` (device → PASSED/FAILED/
+  UNKNOWN, always collected) and `smart_attrs` (opt-in,
+  `collect.smart_attrs`): per-device temperature/wear%/reallocated-sectors.
+
+The nested per-entity types (container stats, interface rates, disk detail,
+SMART attributes, unit info, the process snapshot) don't carry explicit
+`json` struct tags, so their keys in the raw `status.json` are the Go field
+names verbatim (e.g. a container's cpu% is `container_stats.<name>.CPUPct`,
+not `cpu_pct`) — see `internal/serverwatch/status.go`, `docker.go`, `net.go`,
+`proc.go`, and `discover.go` if you're consuming the file directly rather
+than through the CLI or Telegram.
+
+### 3. Event log (append-only, JSONL)
+
+Discrete records of things that happened, not sampled values:
+
+- **`alertlog.jsonl`** — every alert notification the daemon has dispatched
+  (fire and recover), with the per-channel delivery outcome, written by
+  every anomaly transition, the boot report, and the daily/weekly digests.
+  Pruned to ~30 days on each slow tick. Read via `serverwatch alerts` (see
+  Alert history below) rather than parsed directly.
+- **`ts/events.tsd`** — downtime events (`power_down`, `net_down`; see
+  Downtime tracking below). Also event-shaped, but lives inside the tsfile
+  store rather than a separate JSONL file since it shares that store's
+  retention/downsample machinery.
 
 ## On-server layout (FHS)
 
@@ -165,6 +287,8 @@ The sampler loop ticks at `fast_interval`; every Nth tick (N =
   ts/events.tsd          downtime events (power_down / net_down), same rollup_retention window
   baseline.json          rolling per-metric mean/stddev
   alerts.json            active-alert state (fire-once + recovery dedup)
+  alertlog.jsonl         alert notification history (fire/recover + per-channel
+                         delivery outcome), pruned to ~30d
 ```
 
 `<metric>` is the metric id (`cpu`, `mem`, `swap`, `load1`, `temp`,
@@ -209,8 +333,24 @@ checks on `cpu`, `mem`, `swap`, `temp`, and each discovered `disk:<mount>`
 (`service:<unit>`, from `systemctl --failed`, recovers once the unit is no
 longer listed), and SMART health (`smart:<device>`, `FAILED`=bad). All of
 these carry the same fire/recover + hysteresis behavior as the scalar checks.
-Interface targets (`iface:<name>`) are discovered and listed in `monitor list`
-but throughput doesn't yet drive alert firing — that's future work.
+Interface targets (`iface:<name>`) are discovered and listed in `monitor list`;
+throughput is collected into the `net:<iface>:rx`/`:tx` series and
+`status.json`'s `net_rates` (see Data model above) but doesn't yet drive
+alert firing — that's future work.
+
+### Alert history (`alerts`)
+
+`serverwatch alerts` (bare, or `alerts list`) prints two sections: currently
+**ACTIVE ALERTS** (key, time since it fired, reason, and `[acked ... ago]` if
+acknowledged) and recent **HISTORY** from `alertlog.jsonl` — timestamp,
+kind (`fire`/`recover`), key, severity, title, and a per-channel delivery
+line (`ok` or `FAILED: <err>`) underneath each. `--since <dur>` (default
+`24h`) and `--limit <n>` (default `20`, most-recent-first) bound the history
+shown. `serverwatch alerts ack <key>` / `alerts unack <key>` acknowledge or
+clear an acknowledgement on an active alert (e.g. `alerts ack disk:/`) —
+acknowledging doesn't silence a future re-fire, it just annotates the
+current active one — and best-effort SIGHUPs the running daemon so it picks
+up the change promptly.
 
 ## Downtime tracking
 
@@ -334,8 +474,15 @@ remove <name>` deletes a channel. Every `channel add`/`set`/`remove` writes
 
 Runs the same probes as the daemon and prints what's usable on this host:
 docker access + method, whether `smartctl` responds (directly or via sudo),
-how many thermal zones exist, and how many targets `Discover` finds in total.
-Good first command to run after `install`, or when diagnosing a permission gap.
+how many thermal zones exist, how many targets `Discover` finds in total, the
+on/off state of every opt-in extended collector (`container_stats`/
+`net_throughput`/`services`/`processes`/`smart_attrs` — see `collect.*` in
+Config keys above), and the configured time-series store's current series
+count plus on-disk size (`N series, X.X MB on disk (raw+1m)`, or
+`unavailable` if the store failed to open) — a quick cardinality/disk-cost
+sanity check, especially useful before/after toggling `collect.*` on a small
+device. Good first command to run after `install`, or when diagnosing a
+permission gap.
 
 ## Manage
 

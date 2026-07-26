@@ -88,6 +88,15 @@ unavailable), whether `smartctl` works, thermal-zone count, and the total number
 of discovered targets. Anything it can't reach (no docker, no SMART) is reported
 as unavailable and simply isn't monitored — it never crashes the daemon.
 
+It also reports the on/off state of every opt-in extended collector
+(`container_stats` / `net_throughput` / `services` / `processes` /
+`smart_attrs` — see **Storage & retention** below for what each feeds) and
+the configured time-series store's current series count plus on-disk size,
+e.g. `time-series: 14 series, 2.3 MB on disk (raw+1m)` (or `unavailable` if
+the store failed to open) — a quick cardinality/disk-cost sanity check,
+especially worth re-running after toggling a `collect.*` key on a small
+device.
+
 List every discovered target and its on/off + threshold:
 
 ```bash
@@ -129,11 +138,39 @@ on the next tick via SIGHUP — no restart needed.
 
 ### Storage & retention
 
-Sample data (the fast tier's `cpu`/`mem`/`swap`/`load1`/`temp` and the slow
-tier's `disk:<mount>` usage) is written to a compact binary time-series store
-under `/var/lib/serverwatch/ts/` — see
-[DESIGN-storage.md](DESIGN-storage.md) for the on-disk format and rationale.
-Docker/systemd/SMART are alert states, not yet stored as series.
+serverwatch's on-disk/live state comes in three shapes — knowing which one a
+datapoint lives in tells you whether it's queryable history (`dump`), a live
+read of "right now" (`status.json`), or a discrete event record:
+
+**1. Time-series** (`/var/lib/serverwatch/ts/`, the tsfile store) — numeric
+metrics on a fixed cadence, queryable via `serverwatch dump --metric <id>`
+(see **Exporting/graphing a series** below). The complete series list:
+`cpu`, `mem`, `swap`, `load1`, `load5`, `load15`, `temp` (fast tier);
+`disk:<mount>` (slow tier, one per filesystem); `docker:<name>:cpu`/`:mem`
+(slow tier, opt-in `collect.container_stats`); `net:<iface>:rx`/`:tx` (slow
+tier, opt-in `collect.net_throughput`); `smart:<dev>:temp` (slow tier,
+opt-in `collect.smart_attrs`). See [DESIGN-storage.md](DESIGN-storage.md)
+for the on-disk format and rationale.
+
+**2. Live snapshot** (`status.json`, rewritten every `fast_interval`) — the
+current value of every series above, plus fields that are refreshed each
+slow tick but never persisted as history: the full systemd unit inventory
+(opt-in `collect.services`), a process-table overview of counts + top-N by
+CPU/mem (opt-in `collect.processes`), per-container cpu/mem/net stats
+(opt-in `collect.container_stats` — note per-container **net** is
+snapshot-only, unlike cpu/mem which also feed the series above), live
+network rates, per-mount disk detail (device/fstype/inode%/fill-rate
+projection, always collected), and SMART health + attributes (attributes
+opt-in via `collect.smart_attrs`). Container up/down state, systemd/SMART
+health state, the unit list, and the process table are never stored as
+series — only `status.json` carries them. See **Data model** in
+[README.md](../README.md) for the full field-by-field breakdown.
+
+**3. Event log** — `alertlog.jsonl` (every alert fire/recover + per-channel
+delivery outcome, read via `serverwatch alerts`, pruned to ~30d) and
+`ts/events.tsd` (downtime events — `power_down`/`net_down`, see **Downtime
+tracking** below — event-shaped but stored in the tsfile store since it
+shares its retention/downsample machinery).
 
 Config keys:
 
@@ -149,6 +186,25 @@ sudo serverwatch config set storage.rollup_retention 1440h  # default 720h (30d)
   being pruned (all raw metrics, fast- and slow-tier alike).
 - `storage.rollup_retention` — how long 1-minute rollups and downtime events
   are kept.
+
+The extended slow-tier collectors above are each independently toggleable
+and default to **on** (opt-out, not opt-in):
+
+```bash
+sudo serverwatch config set collect.container_stats false  # skip `docker stats` (cpu/mem/net)
+sudo serverwatch config set collect.net_throughput false   # skip /proc/net/dev rx/tx rates
+sudo serverwatch config set collect.services false         # skip the full systemd unit inventory
+sudo serverwatch config set collect.processes false        # skip the process-table overview
+sudo serverwatch config set collect.smart_attrs false      # skip `smartctl -A` (temp/wear/realloc)
+```
+
+Turning one off is useful on a small device, or a host with hundreds of
+short-lived processes/containers, where the default collection is more than
+you need. The cheaper always-on checks each opt-in collector sits next to
+(container list, `systemctl --failed`, SMART `--scan`/`-H` health) keep
+running regardless — only the heavier per-entity detail is gated. Run
+`serverwatch doctor` (step 4) after changing any of these to confirm the new
+state and see its effect on series count/disk usage.
 
 **Upgrading from a pre-storage-epic install:** older installs wrote
 `samples/YYYY-MM-DD.jsonl` + `downtime.jsonl` instead of `ts/`. Run once,
@@ -174,7 +230,30 @@ serverwatch dump --metric disk:/ --since 30d --res 1m --format json
 output shape. Useful for feeding an external plotting tool without standing
 up a full metrics stack.
 
-## 6. Notification channels (optional)
+## 6. Alert history & acknowledgement
+
+Every alert notification (fire and recover) is recorded to `alertlog.jsonl`
+with its per-channel delivery outcome (see **Event log** in **Storage &
+retention** above). Review it with:
+
+```bash
+serverwatch alerts                              # same as `alerts list`
+serverwatch alerts list --since 12h --limit 50   # narrower window, more history
+serverwatch alerts ack disk:/                    # acknowledge an active alert
+serverwatch alerts unack disk:/                  # clear the acknowledgement
+```
+
+`alerts`/`alerts list` prints two sections: **ACTIVE ALERTS** (key, time
+since it fired, reason, and `[acked ... ago]` once acknowledged) and
+**HISTORY** — up to `--limit` (default `20`) most-recent-first entries from
+the last `--since` (default `24h`), each showing timestamp/kind
+(`fire`/`recover`)/key/severity/title plus a per-channel delivery line (`ok`
+or `FAILED: <err>`). Acknowledging an active alert doesn't silence a future
+re-fire, it just annotates the currently-active one; `ack`/`unack` also
+best-effort SIGHUPs the running daemon so the change is picked up
+immediately.
+
+## 7. Notification channels (optional)
 
 Telegram (step 3) is the original always-on channel. On top of it, serverwatch
 can fan every threshold/baseline alert, the boot/recovery report, and the
@@ -236,7 +315,7 @@ disk,docker`, `exclude_kinds smart`, `critical_overrides_quiet true|false`.
 writes `config.json` and signals the running daemon (`SIGHUP`), same as
 `config set` — no restart needed.
 
-## 7. Real-time "server is down NOW" alert (optional)
+## 8. Real-time "server is down NOW" alert (optional)
 
 The daemon reconstructs downtime from its own heartbeat and reports it on the
 next boot ("back online, was down 02:14→06:47"). For an *instant* alert while the
@@ -248,7 +327,7 @@ Telegram directly:
 sudo serverwatch healthchecks set https://hc-ping.com/<your-uuid>
 ```
 
-## 8. Managing the service
+## 9. Managing the service
 
 ```bash
 systemctl status serverwatch            # is it running?
@@ -258,7 +337,7 @@ sudo serverwatch config get             # effective config
 sudo systemctl restart serverwatch      # after a storage.* config change or a binary upgrade
 ```
 
-## 9. Upgrading
+## 10. Upgrading
 
 Download/build a newer binary and re-run install (it overwrites the binary and
 reloads the unit; your config and time-series history are preserved):
@@ -271,7 +350,7 @@ Upgrading from a pre-storage-epic install (no `ts/` directory yet)? Run
 `serverwatch migrate` once afterward to pull the old JSONL history into the
 new store — see **Storage & retention** in step 5.
 
-## 10. Uninstalling
+## 11. Uninstalling
 
 ```bash
 sudo serverwatch uninstall            # stop + remove the unit (keeps config + history)
@@ -292,6 +371,8 @@ sudo serverwatch uninstall --purge    # also delete /etc/serverwatch and /var/li
   ts/events.tsd          power_down + net_down events (rollup_retention window)
   baseline.json          rolling per-metric mean/variance
   alerts.json            active-alert state (dedup + recovery)
+  alertlog.jsonl         alert notification history (fire/recover + per-channel
+                         delivery outcome), pruned to ~30d — see `serverwatch alerts`
 ```
 
 Pre-upgrade installs instead have `samples/*.jsonl` + `downtime.jsonl`; run
