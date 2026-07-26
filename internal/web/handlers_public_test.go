@@ -172,6 +172,28 @@ func TestPublicPageOmitsUnavailableMetric(t *testing.T) {
 	}
 }
 
+// TestPublicPageSetsNoStoreCacheControl pins the anti-staleness header
+// (issue #67 follow-up): a caching proxy/CDN sitting in front of this daemon
+// must never keep serving a rendered /public page after an admin disables
+// the route or narrows cfg.Public.Panels, so every response carries
+// Cache-Control: no-store.
+func TestPublicPageSetsNoStoreCacheControl(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	(*cfg).Public.Enabled = true
+	(*cfg).Public.Panels = []string{"cpu"}
+	d.Snapshot = func() DashboardView { return publicTestSnapshot() }
+	h := newHandler(d)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/public", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("GET /public Cache-Control = %q, want %q", got, "no-store")
+	}
+}
+
 // TestPublicSettingsPageRendersPickerForAdmin pins GET /settings/public: it
 // lists the panel catalog with checkboxes reflecting the current
 // public.panels selection.

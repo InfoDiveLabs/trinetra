@@ -163,6 +163,12 @@ func renderPublicPage(w http.ResponseWriter, data PublicPageData) error {
 //     button for the page to leak even by accident.
 func publicPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Cache-Control: no-store on every response this handler produces
+		// (enabled or not) so a caching proxy/CDN in front of this daemon
+		// can never keep serving a stale rendered page — with tiles, or the
+		// mere existence of the route — after an admin disables /public or
+		// narrows cfg.Public.Panels (issue #67 follow-up).
+		w.Header().Set("Cache-Control", "no-store")
 		cfg := d.Cfg()
 		if !cfg.Public.Enabled {
 			http.NotFound(w, r)
