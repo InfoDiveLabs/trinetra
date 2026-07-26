@@ -80,16 +80,19 @@ func Start(d Deps) (stop func(), err error) {
 		return nil, err
 	}
 
-	// Both the authenticated-session store and the separate ceremony-
-	// placeholder store (session.go) need a periodic GC sweep independent of
-	// any particular request — see sessionGCInterval's doc — so both are
-	// started once here, alongside the listener, rather than per-request like
-	// newHandler's other per-call newSessionStore/newCeremonyStore uses.
+	// The authenticated-session store, the separate ceremony-placeholder
+	// store, and the enrollment-token store (session.go/enroll_tokens.go)
+	// all need a periodic GC sweep independent of any particular request —
+	// see sessionGCInterval's doc — so all three are started once here,
+	// alongside the listener, rather than per-request like newHandler's
+	// other per-call newSessionStore/newCeremonyStore/newTokenStore uses.
 	sessionGCStop := newSessionStore(d.StateDir).startGC(sessionGCInterval)
 	ceremonyGCStop := newCeremonyStore(d.StateDir).startGC(sessionGCInterval)
+	tokenGCStop := newTokenStore(d.StateDir).startGC(sessionGCInterval)
 	gcStop := func() {
 		sessionGCStop()
 		ceremonyGCStop()
+		tokenGCStop()
 	}
 
 	// listenerStop (NOT the named return "stop") is deliberate: the returned

@@ -20,7 +20,7 @@ type sessionCtxKey struct{}
 // a live session (SessionStore.Get), stashes it in the request context.
 // It always calls next regardless of whether a session was found —
 // requiring one is a per-route concern (requireCSRF for CSRF-protected
-// mutations; a later RBAC task, #62, for auth-required pages), not this
+// mutations; requireRole, below, for auth-required pages), not this
 // middleware's job.
 func sessionMiddleware(store SessionStore, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

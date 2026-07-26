@@ -138,6 +138,13 @@ func adminPlaceholderHandler(d Deps, title, sub string) http.HandlerFunc {
 // dashboard/app-shell pages, there's no signed-in session yet to fill a
 // sidebar/topbar with. assets/app.js wires the page's form to
 // /enroll/begin and /enroll/finish via navigator.credentials.create.
+//
+// Any ?token=... on this GET is threaded through to BarePageData.EnrollToken
+// (templates.go) so enroll.html can stash it in a hidden field and app.js
+// can echo it back as /enroll/begin's "token" field — this handler itself
+// does not consume/validate the token (that's enrollBeginHandler's job, via
+// resolveEnrollRole/tokenStore.Redeem); a page load must stay side-effect
+// free (a token is single-use and shouldn't burn on a mere GET or refresh).
 func enrollPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := newBarePageData(r, "Set up passkey")
@@ -148,9 +155,12 @@ func enrollPageHandler(d Deps) http.HandlerFunc {
 }
 
 // enrollBeginRequest is POST /enroll/begin's JSON body: the account name
-// typed into the enroll page's #enrollName input.
+// typed into the enroll page's #enrollName input, plus an optional
+// enrollment token (enroll.html's hidden #enrollToken field, populated from
+// this page's own ?token= query parameter — see enrollPageHandler).
 type enrollBeginRequest struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Token string `json:"token"`
 }
 
 // enrollBeginHandler starts a WebAuthn registration ceremony (beginRegistration,
@@ -164,15 +174,17 @@ type enrollBeginRequest struct {
 // a cross-account credential-injection / account-takeover bug (an anonymous
 // caller could POST name="admin" and bind their own passkey to the admin
 // account). So a name that already exists is rejected with 409 here.
-// TODO(#62): adding a second passkey to an EXISTING account (multi-device)
-// must instead go through an authenticated session (the account's own owner)
-// or an admin-issued invite token — never this anonymous path.
+// Adding a second passkey to an EXISTING account (multi-device) must
+// instead go through an authenticated session (the account's own owner) or
+// a future admin-managed flow — never this anonymous path.
 //
-// Role assignment is deliberately a stub: every new account here defaults
-// to RoleViewer. First-run bootstrap (the first-ever registered passkey
-// becomes admin) and admin-issued invite tokens gating who may enroll at
-// all are Task 6/#62's job per the design doc's Auth section — out of
-// scope for this task, which only wires the attestation ceremony itself.
+// Role assignment (issue #62, resolved): resolveEnrollRole
+// (enroll_tokens.go) decides the new account's Role — an admin-issued
+// enrollment token's Role if one was posted (tokenStore.Redeem also
+// enforces the token being unknown/expired/already-used), otherwise
+// RoleAdmin for the very first account ever (first-run bootstrap) or a
+// flat refusal once any account already exists: unauthenticated open
+// enrollment is only ever valid for that first account.
 func enrollBeginHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req enrollBeginRequest
@@ -195,16 +207,25 @@ func enrollBeginHandler(d Deps) http.HandlerFunc {
 		store := newUserStore(d.StateDir)
 		if _, exists := store.ByName(name); exists {
 			// Never attach to an existing account from this unauthenticated
-			// endpoint — see the SECURITY note above.
+			// endpoint — see the SECURITY note above. Checked BEFORE any
+			// token is redeemed, so a name collision never burns an
+			// otherwise-valid invite token.
 			http.Error(w, "an account with that name already exists; adding a passkey to an existing account will require an admin invite", http.StatusConflict)
 			return
 		}
+
+		role, err := resolveEnrollRole(newTokenStore(d.StateDir), store, strings.TrimSpace(req.Token))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+
 		id, err := newUserID()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		u := &User{ID: id, Name: name, Role: RoleViewer, Created: time.Now().Unix()}
+		u := &User{ID: id, Name: name, Role: role, Created: time.Now().Unix()}
 
 		ceremonies := newCeremonyStore(d.StateDir)
 		creation, err := beginRegistration(w, r, wa, u, ceremonies)

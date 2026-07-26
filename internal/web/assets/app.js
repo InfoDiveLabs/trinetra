@@ -126,10 +126,12 @@
   if(enrollBtn){
     enrollBtn.addEventListener('click',function(){
       var nameEl=document.getElementById('enrollName'), statusEl=document.getElementById('enrollStatus');
+      var tokenEl=document.getElementById('enrollToken');
       var name=(nameEl&&nameEl.value||'').trim();
+      var token=(tokenEl&&tokenEl.value||'').trim();
       if(!name){ if(statusEl) statusEl.textContent='Enter a name first.'; return; }
       if(statusEl) statusEl.textContent='Waiting for your device…';
-      fetch('/enroll/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
+      fetch('/enroll/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,token:token})})
         .then(function(r){ if(!r.ok) throw new Error('could not start enrollment'); return r.json(); })
         .then(function(opts){
           var pk=opts.publicKey;

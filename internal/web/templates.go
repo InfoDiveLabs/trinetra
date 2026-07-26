@@ -205,11 +205,22 @@ type BarePageData struct {
 	// Nonce is this request's CSP nonce (see security.go), threaded onto
 	// base_bare.html's boot script tag exactly like PageData.Nonce.
 	Nonce string
+	// EnrollToken is this request's ?token= query parameter, if any,
+	// threaded onto enroll.html's hidden #enrollToken field so app.js can
+	// echo it back as /enroll/begin's "token" field (resolveEnrollRole,
+	// enroll_tokens.go, is what actually validates/consumes it — this is
+	// just carrying the value from the GET's URL to the POST's body).
+	// login.html doesn't reference this field; harmless there either way.
+	EnrollToken string
 }
 
 // newBarePageData builds the BarePageData a bare-layout page handler needs.
 func newBarePageData(r *http.Request, title string) BarePageData {
-	return BarePageData{Title: title, Nonce: nonceFromContext(r)}
+	return BarePageData{
+		Title:       title,
+		Nonce:       nonceFromContext(r),
+		EnrollToken: r.URL.Query().Get("token"),
+	}
 }
 
 // renderBarePage is renderPage's counterpart for the bare/centered layout:

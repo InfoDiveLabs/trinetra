@@ -13,9 +13,10 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-// Role is a web UI account's access level. RBAC enforcement (route-level
-// gating on this field) lands in a later task (#62); for now it's just
-// stored alongside each User.
+// Role is a web UI account's access level. requireRole (middleware.go)
+// enforces it at the route level; resolveEnrollRole (enroll_tokens.go)
+// decides what a newly-enrolled account's Role is (first-run bootstrap or
+// an admin-issued enrollment token).
 type Role string
 
 const (
@@ -59,9 +60,9 @@ type User struct {
 	// are the same value here; the mockup/design doc doesn't distinguish
 	// them for this app).
 	Name string `json:"name"`
-	// Role is this account's access level (RoleAdmin/RoleViewer). Assignment
-	// (first-run bootstrap, invite-token role) is a Task 6/#62 concern; this
-	// task only carries the field through the store.
+	// Role is this account's access level (RoleAdmin/RoleViewer), assigned by
+	// resolveEnrollRole (enroll_tokens.go) at enrollment time: first-run
+	// bootstrap or an admin-issued enrollment token's Role.
 	Role Role `json:"role"`
 	// Created is the Unix seconds timestamp the account was first enrolled.
 	Created int64 `json:"created"`
