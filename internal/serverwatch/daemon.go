@@ -660,6 +660,14 @@ func cmdDaemon(args []string) int {
 		applyConfig(newCfg)
 		return nil
 	}
+	// testChannel is the closure WebDeps.TestChannel exposes to a future web
+	// channels page's "Send test" button (issue #66): it reads the LIVE
+	// config (getCfg, race-safe against a concurrent SIGHUP/Reload) so a
+	// test-send always reflects whatever channel settings are currently
+	// applied, not whatever was configured when the daemon started.
+	testChannel := func(name string) error {
+		return sendTestNotification(getCfg(), name, "web")
+	}
 	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
 	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
 	// the in-use struct: getCfg readers read fields after releasing the RLock.
@@ -721,6 +729,7 @@ func cmdDaemon(args []string) int {
 		StateDir:       stateDir,
 		AlertLogPath:   st.AlertLogPath(),
 		AlertStatePath: st.AlertStatePath(),
+		TestChannel:    testChannel,
 		Enabled:        cfgAtStart.Web.Enabled,
 		Listen:         cfgAtStart.Web.Listen,
 	})

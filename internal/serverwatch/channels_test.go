@@ -1,10 +1,36 @@
 package serverwatch
 
 import (
+	"strings"
 	"testing"
 
 	"serverwatch/internal/config"
 )
+
+// TestSendTestNotificationUnknownChannel pins sendTestNotification's
+// "unknown channel" error path (issue #66's WebDeps.TestChannel/daemon.go's
+// testChannel closure, and cmdChannelTest, both route through this).
+func TestSendTestNotificationUnknownChannel(t *testing.T) {
+	c := config.Default()
+	if err := sendTestNotification(c, "does-not-exist", "web"); err == nil {
+		t.Fatal("expected an error for an unknown channel, got nil")
+	}
+}
+
+// TestSendTestNotificationSurfacesBuildNotifierError pins that an
+// incomplete channel config (buildNotifier itself fails) surfaces as
+// sendTestNotification's error rather than a panic or silent success.
+func TestSendTestNotificationSurfacesBuildNotifierError(t *testing.T) {
+	c := config.Default()
+	c.AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"}) // no token, no chat_id
+	err := sendTestNotification(c, "tg", "web")
+	if err == nil {
+		t.Fatal("expected an error for an incomplete telegram channel, got nil")
+	}
+	if !strings.Contains(err.Error(), "token") {
+		t.Errorf("error = %q, want it to mention the missing token", err.Error())
+	}
+}
 
 func TestBuildNotifierNotImplementedForEveryType(t *testing.T) {
 	c := config.Default()

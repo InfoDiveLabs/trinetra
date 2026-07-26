@@ -85,6 +85,15 @@ type WebDeps struct {
 	// AlertStatePath is the path to alerts.json (ack state), for a future
 	// alerts page's ack round-trip.
 	AlertStatePath string
+	// TestChannel sends a one-off test notification through the named
+	// channel (config.Config.Channels), mirroring `serverwatch channel test
+	// <name>` (channel.go's cmdChannelTest/sendTestNotification) — for the
+	// web channels page's "Send test" button (issue #66). Built from
+	// sendTestNotification directly in cmdDaemon (daemon.go), not adapted in
+	// daemon_web.go: buildNotifier/sendTestNotification are untagged
+	// (channel.go carries no `web` build tag), so this closure needs nothing
+	// from internal/web to construct, unlike Snapshot/Store above.
+	TestChannel func(name string) error
 	// Enabled mirrors cfg.Web.Enabled (the web.enabled config key), read
 	// once at daemon startup in cmdDaemon — see daemon.go.
 	Enabled bool

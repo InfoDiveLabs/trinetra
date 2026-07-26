@@ -1,0 +1,119 @@
+{{define "content"}}
+<div id="channels-page">
+  {{if .TestResult}}<p class="note" style="margin-top:0">{{.TestResult}}</p>{{end}}
+  <div class="toolbar"><span class="note">{{len .Channels}} channel{{if ne (len .Channels) 1}}s{{end}} · alerts fan out to every enabled channel that matches the alert's severity &amp; target.</span><span class="spacer"></span><button class="btn primary" type="button" data-modal="chanModal-new">+ Add channel</button></div>
+
+  <div class="panel pad0"><table>
+    <thead><tr><th>Channel</th><th>Type</th><th>Severity</th><th>Routes</th><th style="text-align:right">Enabled</th><th></th></tr></thead>
+    <tbody>
+      {{range $c := .Channels}}
+      <tr>
+        <td><b>{{$c.Name}}</b></td>
+        <td class="mono note">{{$c.Type}}</td>
+        <td><span class="badge {{if eq $c.MinSeverity "critical"}}crit{{else if eq $c.MinSeverity "warning"}}warn{{end}}">{{$c.MinSeverity}}</span></td>
+        <td class="note">{{$c.Routes}}</td>
+        <td style="text-align:right">
+          <form method="post" action="/channels/{{$c.Param}}/update" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="type" value="{{$c.Type}}">
+            <input type="hidden" name="min_severity" value="{{$c.MinSeverity}}">
+            <input type="hidden" name="enabled" value="{{if $c.Enabled}}false{{else}}true{{end}}">
+            <button class="switch {{if $c.Enabled}}on{{end}}" type="submit" title="Toggle enabled" style="padding:0"></button>
+          </form>
+        </td>
+        <td style="text-align:right">
+          {{/* data-chan-type deliberately omitted: app.js's prefillChannel would
+               dispatch a "change" event on the type <select> that toggles ALL
+               [data-cond] divs on the PAGE (querySelectorAll isn't scoped to
+               this modal), corrupting any other channel's already-correct
+               per-type section when channels of different types coexist.
+               data-chan-name alone is enough to route through prefillChannel
+               (not resetChannel, which would otherwise clobber this modal's
+               "Edit channel" title back to "Add channel") without that
+               cross-modal side effect — every field here is already
+               server-rendered correctly, so no prefill is actually needed. */}}
+          <button class="btn ghost" type="button" data-modal="chanModal-{{$c.Param}}" data-chan-name="{{$c.Name}}">Edit</button>
+          <form method="post" action="/channels/{{$c.Param}}/remove" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="btn danger" type="submit">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" class="note">No channels configured yet.</td></tr>
+      {{end}}
+    </tbody></table></div>
+
+  <p class="note" style="margin-top:14px">Also active, separately: a <b>dead-man switch</b> URL, pinged on every heartbeat. Configured under <a href="/config">Configuration</a>.</p>
+</div>
+
+{{template "chanModalBody" .NewModal}}
+{{range .EditModals}}{{template "chanModalBody" .}}{{end}}
+{{end}}
+
+{{define "chanModalBody"}}
+<div class="modal" id="{{.ID}}"><div class="box">
+  <form method="post" action="{{.Action}}">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="mh"><h3>{{.Title}}</h3><button type="button" class="close" data-close>✕</button></div>
+    <div class="mb">
+      <label class="field"><span class="lb">Name</span><input type="text" name="name" value="{{.Name}}" placeholder="e.g. Phone push" {{if .IsEdit}}readonly{{end}}></label>
+      <label class="field"><span class="lb">Type</span>
+        <select name="type" data-cond-src>
+          <option value="telegram" {{if eq .Type "telegram"}}selected{{end}}>Telegram</option>
+          <option value="email" {{if eq .Type "email"}}selected{{end}}>Email (SMTP)</option>
+          <option value="ntfy" {{if eq .Type "ntfy"}}selected{{end}}>ntfy / Gotify</option>
+          <option value="slack" {{if eq .Type "slack"}}selected{{end}}>Slack / Discord</option>
+          <option value="webhook" {{if eq .Type "webhook"}}selected{{end}}>Generic webhook</option>
+        </select></label>
+
+      <div data-cond="telegram" class="cond{{if eq .Type "telegram"}} on{{end}}">
+        <label class="field"><span class="lb">Bot token</span><input type="text" name="settings.token" value="{{index .Settings "token"}}" placeholder="from @BotFather (or leave blank to use telegram.token)"></label>
+        <label class="field"><span class="lb">Chat ID</span><input type="text" name="settings.chat_id" value="{{index .Settings "chat_id"}}" placeholder="auto-captured on first message"></label>
+      </div>
+      <div data-cond="email" class="cond{{if eq .Type "email"}} on{{end}}">
+        <div class="grid g-2" style="gap:0 12px">
+          <label class="field"><span class="lb">SMTP host</span><input type="text" name="settings.host" value="{{index .Settings "host"}}"></label>
+          <label class="field"><span class="lb">Port</span><input type="number" name="settings.port" value="{{index .Settings "port"}}" placeholder="587"></label>
+          <label class="field"><span class="lb">Username</span><input type="text" name="settings.username" value="{{index .Settings "username"}}"></label>
+          <label class="field"><span class="lb">Password</span><input type="text" name="settings.password" value="{{index .Settings "password"}}" placeholder="app password"></label>
+          <label class="field"><span class="lb">From</span><input type="text" name="settings.from" value="{{index .Settings "from"}}"></label>
+          <label class="field"><span class="lb">To</span><input type="text" name="settings.to" value="{{index .Settings "to"}}"></label>
+        </div>
+      </div>
+      <div data-cond="ntfy" class="cond{{if eq .Type "ntfy"}} on{{end}}">
+        <label class="field"><span class="lb">Server</span><input type="text" name="settings.server" value="{{index .Settings "server"}}" placeholder="https://ntfy.sh"></label>
+        <label class="field"><span class="lb">Topic</span><input type="text" name="settings.topic" value="{{index .Settings "topic"}}"></label>
+      </div>
+      <div data-cond="slack" class="cond{{if eq .Type "slack"}} on{{end}}">
+        <label class="field"><span class="lb">Webhook URL</span><input type="text" name="settings.url" value="{{if eq .Type "slack"}}{{index .Settings "url"}}{{end}}" placeholder="https://hooks.slack.com/services/…"></label>
+      </div>
+      <div data-cond="webhook" class="cond{{if eq .Type "webhook"}} on{{end}}">
+        <label class="field"><span class="lb">URL</span><input type="text" name="settings.url" value="{{if eq .Type "webhook"}}{{index .Settings "url"}}{{end}}" placeholder="https://…"></label>
+        <label class="field"><span class="lb">Method</span>
+          <select name="settings.method">
+            <option value="POST" {{if ne (index .Settings "method") "PUT"}}selected{{end}}>POST</option>
+            <option value="PUT" {{if eq (index .Settings "method") "PUT"}}selected{{end}}>PUT</option>
+          </select></label>
+        <label class="field"><span class="lb">Body template (JSON)</span><textarea name="settings.template">{{index .Settings "template"}}</textarea><span class="hint">Vars: .Title .Body .Severity .Key .Source .Time</span></label>
+      </div>
+
+      <div class="section-label"><span class="eyebrow">Routing</span></div>
+      <label class="field"><span class="lb">Minimum severity</span>
+        <select name="min_severity">
+          <option value="info" {{if eq .MinSeverity "info"}}selected{{end}}>info</option>
+          <option value="warning" {{if eq .MinSeverity "warning"}}selected{{end}}>warning</option>
+          <option value="critical" {{if eq .MinSeverity "critical"}}selected{{end}}>critical</option>
+        </select></label>
+      <label class="field"><span class="lb">Include kinds (optional)</span><input type="text" name="include_kinds" value="{{.IncludeKinds}}" placeholder="disk:*, docker:*  · blank = all"></label>
+      <label class="field"><span class="lb">Exclude kinds (optional)</span><input type="text" name="exclude_kinds" value="{{.ExcludeKinds}}"></label>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:4px"><input type="checkbox" class="switch" name="critical_overrides_quiet" value="1" {{if .CriticalOverridesQuiet}}checked{{end}}><span class="note">Critical alerts bypass quiet hours on this channel</span></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px"><input type="checkbox" class="switch" name="enabled" value="1" {{if or (not .IsEdit) .Enabled}}checked{{end}}><span class="note">Enabled</span></div>
+    </div>
+    <div class="mf">
+      {{if .IsEdit}}<button class="btn ghost" type="submit" formaction="/channels/{{.Param}}/test" formnovalidate>Send test</button>{{end}}
+      <span class="spacer"></span><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save channel</button>
+    </div>
+  </form>
+</div></div>
+{{end}}

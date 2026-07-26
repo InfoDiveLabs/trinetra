@@ -153,10 +153,32 @@ func cmdChannelTest(c *config.Config, args []string) int {
 		return 2
 	}
 	name := args[0]
+	if err := sendTestNotification(c, name, "cli"); err != nil {
+		fmt.Fprintf(stderr, "channel %q: %v\n", name, err)
+		return 1
+	}
+	cc, _ := c.GetChannel(name)
+	fmt.Fprintf(stdout, "sent test notification via %q (%s)\n", name, cc.Type)
+	return 0
+}
+
+// sendTestNotification builds the named channel's Notifier (buildNotifier)
+// and sends it a fixed test Alert, reporting any failure along the way
+// (unknown channel, an incomplete/invalid channel config, or the send
+// itself failing) as a single error. source is threaded onto the test
+// Alert's Source field so a channel that surfaces it (e.g. a webhook
+// template referencing .Source) can tell a CLI-issued test apart from a
+// web-issued one (issue #66's "send test" button, handlers_channels.go via
+// WebDeps.TestChannel/daemon.go).
+//
+// Shared by cmdChannelTest (`serverwatch channel test <name>`) and the web
+// channels page's "Send test" action so both paths exercise the exact same
+// notifier-construction and delivery logic — no channel type can behave
+// differently for one caller than the other.
+func sendTestNotification(c *config.Config, name, source string) error {
 	cc, ok := c.GetChannel(name)
 	if !ok {
-		fmt.Fprintf(stderr, "unknown channel %q\n", name)
-		return 1
+		return fmt.Errorf("unknown channel %q", name)
 	}
 	n, err := buildNotifier(*cc, c)
 	if err != nil {
@@ -164,8 +186,7 @@ func cmdChannelTest(c *config.Config, args []string) int {
 		// webhook, slack, discord, ntfy, gotify) is implemented; an error
 		// here means this channel's own settings are incomplete or invalid
 		// (e.g. a missing token/url), not that the type is unsupported.
-		fmt.Fprintf(stderr, "channel %q: %v\n", name, err)
-		return 1
+		return err
 	}
 	a := Alert{
 		Key:      "test",
@@ -173,17 +194,15 @@ func cmdChannelTest(c *config.Config, args []string) int {
 		Body:     "This is a test notification from serverwatch.",
 		Severity: SevInfo,
 		Kind:     "fire",
-		Source:   "cli",
+		Source:   source,
 		Time:     time.Now().Unix(),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := n.Send(ctx, a); err != nil {
-		fmt.Fprintf(stderr, "channel %q: send failed: %v\n", name, err)
-		return 1
+		return fmt.Errorf("send failed: %w", err)
 	}
-	fmt.Fprintf(stdout, "sent test notification via %q (%s)\n", name, cc.Type)
-	return 0
+	return nil
 }
 
 func printChannelList(c *config.Config) {

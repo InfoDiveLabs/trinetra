@@ -70,7 +70,15 @@ func newHandler(d Deps) http.Handler {
 	// config-wide mutation exactly like the /users/* mutations below.
 	mux.HandleFunc("GET /config", requireRole(RoleAdmin, configPageHandler(d)))
 	mux.HandleFunc("POST /config", configMutation(configSaveHandler(d)))
-	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Channels", "Notification channel management")))
+	// /channels (Task 10/#66): CRUD over config.Channels, ported from
+	// ui-mockup/channels.html's table + add/edit modal. GET is
+	// requireRole(RoleAdmin, ...) like /config; every mutation additionally
+	// needs requireCSRF (channelsMutation, handlers_channels.go).
+	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, channelsPageHandler(d)))
+	mux.HandleFunc("POST /channels", channelsMutation(channelsAddHandler(d)))
+	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(channelsUpdateHandler(d)))
+	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(channelsRemoveHandler(d)))
+	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(channelsTestHandler(d)))
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, adminPlaceholderHandler(d, "Public view", "Curated public dashboard settings")))
 
 	// /users (Task 7/#63): the real user-management page — list accounts,

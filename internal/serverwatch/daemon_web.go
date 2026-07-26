@@ -34,6 +34,7 @@ func maybeStartWeb(d WebDeps) func() {
 		StateDir:       d.StateDir,
 		AlertLogPath:   d.AlertLogPath,
 		AlertStatePath: d.AlertStatePath,
+		TestChannel:    d.TestChannel,
 		Enabled:        d.Enabled,
 		Listen:         d.Listen,
 	}

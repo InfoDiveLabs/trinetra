@@ -61,6 +61,13 @@ type Deps struct {
 	AlertLogPath string
 	// AlertStatePath is the path to the alert ack-state file.
 	AlertStatePath string
+	// TestChannel sends a one-off test notification through the named
+	// channel (internal/serverwatch/daemon.go's testChannel closure, built
+	// from sendTestNotification/buildNotifier — the same logic `serverwatch
+	// channel test <name>` uses), for the channels page's "Send test"
+	// button (issue #66). May be nil in tests that don't exercise it; every
+	// caller (handlers_channels.go) must check before calling.
+	TestChannel func(name string) error
 	// Enabled mirrors cfg.Web.Enabled (the web.enabled config key, issue
 	// #58), read once at daemon startup — see daemon.go's cmdDaemon.
 	Enabled bool
