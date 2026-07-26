@@ -21,6 +21,19 @@ var funcMap = template.FuncMap{
 	// statusText mirrors the mockup app.js's stTxt map (the topbar's status
 	// pill), keyed by the same ok/warn/crit status strings.
 	"statusText": statusText,
+	// ledClass/humanBytes/humanRate/diskTrendText/diskTrendClass/
+	// loadLedClass/diskWarnPct/diskCriticalPct/subInt (handlers_dashboard.go)
+	// are templates/dashboard.html's formatting helpers for the live
+	// DashboardView.
+	"ledClass":        ledClass,
+	"humanBytes":      humanBytes,
+	"humanRate":       humanRate,
+	"diskTrendText":   diskTrendText,
+	"diskTrendClass":  diskTrendClass,
+	"loadLedClass":    loadLedClass,
+	"diskWarnPct":     func() float64 { return DiskWarnPct },
+	"diskCriticalPct": func() float64 { return DiskCriticalPct },
+	"subInt":          subInt,
 }
 
 // statusText maps a topbar status ("ok"/"warn"/"crit") to its display text.

@@ -1,8 +1,111 @@
 {{define "content"}}
-<div class="panel">
-  <div class="head"><span class="eyebrow">Dashboard</span></div>
-  <p class="note">The live dashboard (summary counts, resource tiles, alerts, filesystems)
-  lands in a later task. This placeholder confirms the base layout — nav, topbar, and
-  content block — renders correctly.</p>
+{{$v := .View}}
+<div id="dashboard-live">
+
+  <!-- summary counts -->
+  <div class="grid g-4">
+    <div class="count {{if lt $v.ContainersRunning $v.ContainersTotal}}bad{{else}}good{{end}}">
+      <div class="n">{{$v.ContainersRunning}}<span class="of">/{{$v.ContainersTotal}}</span></div>
+      <div class="lb">Containers running · {{subInt $v.ContainersTotal $v.ContainersRunning}} down</div>
+    </div>
+    <div class="count {{if gt $v.UnitsFailed 0}}bad{{else}}good{{end}}">
+      <div class="n">{{$v.UnitsFailed}}<span class="of">/ {{$v.UnitsTotal}}</span></div>
+      <div class="lb">systemd units failed · of {{$v.UnitsTotal}}</div>
+    </div>
+    <div class="count {{if gt $v.DisksCritical 0}}bad{{else}}good{{end}}">
+      <div class="n">{{$v.DisksCritical}}</div>
+      <div class="lb">Filesystem critical · of {{len $v.Disks}}</div>
+    </div>
+    <div class="count {{if $v.Online}}good{{else}}bad{{end}}">
+      <div class="n" style="font-size:30px">{{if $v.Online}}Online{{else}}Offline{{end}}</div>
+      <div class="lb">Internet reachability</div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px" id="hbstrip" class="panel"></div>
+
+  <div class="section-label"><span class="eyebrow">Resources · live</span></div>
+  <div class="grid g-tiles">
+    <div class="tile"><div class="k"><span class="eyebrow">CPU</span><span id="led-cpu" class="led {{ledClass $v.CPU 70 90}}"></span></div>
+      <div class="val" id="val-cpu">{{printf "%.0f" $v.CPU}}<span class="u">%</span></div>
+      <div class="sub" id="sub-cpu">{{$v.Cores}} cores</div>
+      <div id="chart-cpu" class="u-chart" style="height:28px"></div></div>
+    <div class="tile"><div class="k"><span class="eyebrow">Memory</span><span id="led-mem" class="led {{ledClass $v.MemPct 75 90}}"></span></div>
+      <div class="val" id="val-mem">{{printf "%.0f" $v.MemPct}}<span class="u">%</span></div>
+      <div class="sub" id="sub-mem">of total RAM</div></div>
+    <div class="tile"><div class="k"><span class="eyebrow">Swap</span><span id="led-swap" class="led {{ledClass $v.SwapPct 40 80}}"></span></div>
+      <div class="val" id="val-swap">{{printf "%.0f" $v.SwapPct}}<span class="u">%</span></div>
+      <div class="sub" id="sub-swap">&nbsp;</div></div>
+    <div class="tile"><div class="k"><span class="eyebrow">Load 1m</span><span id="led-load" class="led {{loadLedClass $v.Load1 $v.Cores}}"></span></div>
+      <div class="val" id="val-load1">{{printf "%.2f" $v.Load1}}</div>
+      <div class="sub" id="sub-load">5m {{printf "%.2f" $v.Load5}} · 15m {{printf "%.2f" $v.Load15}}</div></div>
+    <div class="tile"><div class="k"><span class="eyebrow">Temp</span><span id="led-temp" class="led {{ledClass $v.TempC 70 85}}"></span></div>
+      <div class="val" id="val-temp">{{if gt $v.TempC 0.0}}{{printf "%.0f" $v.TempC}}<span class="u">°C</span>{{else}}—{{end}}</div>
+      <div class="sub" id="sub-temp">&nbsp;</div></div>
+    <div class="tile"><div class="k"><span class="eyebrow">Network</span><span id="led-net" class="led ok"></span></div>
+      <div class="val" id="val-net" style="font-size:19px">{{humanRate $v.NetRxBps}}<span class="u">↓</span></div>
+      <div class="sub" id="sub-net">↑{{humanRate $v.NetTxBps}}{{if $v.NetIfaces}} {{(index $v.NetIfaces 0).Name}}{{end}}</div></div>
+    <div class="tile"><div class="k"><span class="eyebrow">Processes</span><span class="led ok"></span></div>
+      <div class="val" id="val-proc">{{$v.Processes.Total}}</div>
+      <div class="sub" id="sub-proc">{{$v.Processes.Running}} run · {{$v.Processes.Zombie}} zombie</div></div>
+  </div>
+
+  <div class="grid g-hero" style="margin-top:16px">
+    <div class="panel"><div class="head"><span class="eyebrow">CPU &amp; load · live</span><div class="legend"><span><i style="background:var(--info)"></i>cpu %</span><span><i style="background:var(--signal)"></i>load</span></div></div>
+      <div id="chart-hero" class="u-chart" style="height:260px"></div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Active alerts</span>
+      <span class="badge {{if .Alerts}}crit{{else}}ok{{end}}">{{len .Alerts}} firing</span></div>
+      <div class="rows">
+        {{if .Alerts}}
+        {{range .Alerts}}
+        <div class="row"><span class="led {{if .Acked}}warn{{else}}crit{{end}}"></span><div class="name"><b>{{.Key}}</b><div class="note">{{.Reason}}</div></div></div>
+        {{end}}
+        {{else}}
+        <div class="row"><span class="led ok"></span><div class="name"><b>No active alerts</b><div class="note">everything is within threshold</div></div></div>
+        {{end}}
+      </div></div>
+  </div>
+
+  <div class="grid g-2" style="margin-top:14px">
+    <div class="panel"><div class="head"><span class="eyebrow">Top containers · CPU</span><a href="/monitoring" class="note mono">all →</a></div>
+      <div class="hbars">
+        {{if .TopCPUBars}}
+        {{range .TopCPUBars}}
+        <div class="hbar"><span class="lbl">{{.Name}}</span><span class="track"><i style="width:{{printf "%.0f" .WidthPct}}%"></i></span><span class="v">{{.ValueText}}</span></div>
+        {{end}}
+        {{else}}<div class="note">no container stats available</div>{{end}}
+      </div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Top containers · Memory</span><a href="/monitoring" class="note mono">all →</a></div>
+      <div class="hbars">
+        {{if .TopMemBars}}
+        {{range .TopMemBars}}
+        <div class="hbar mem"><span class="lbl">{{.Name}}</span><span class="track"><i style="width:{{printf "%.0f" .WidthPct}}%"></i></span><span class="v">{{.ValueText}}</span></div>
+        {{end}}
+        {{else}}<div class="note">no container stats available</div>{{end}}
+      </div></div>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Filesystems</span><a href="/monitoring" class="note mono">details →</a></div>
+  <div class="panel pad0"><table>
+    <thead><tr><th>Mount</th><th>Device</th><th style="width:220px">Usage</th><th>Free</th><th>Trend</th></tr></thead>
+    <tbody>
+      {{range $v.Disks}}
+      <tr><td class="mono">{{.Mount}}</td><td class="mono note">{{.Device}}</td>
+        <td><div class="meter"><div class="bar {{ledClass .UsagePct (diskWarnPct) (diskCriticalPct)}}"><i style="width:{{printf "%.0f" .UsagePct}}%"></i></div><span class="pct">{{printf "%.0f" .UsagePct}}%</span></div></td>
+        <td class="mono">{{humanBytes .FreeBytes}}</td>
+        <td class="trend {{diskTrendClass .DaysToFull .DaysToFullKnown}}">{{diskTrendText .DaysToFull .DaysToFullKnown}}</td></tr>
+      {{else}}
+      <tr><td colspan="5" class="note">no filesystems discovered</td></tr>
+      {{end}}
+    </tbody></table></div>
+
+  <div class="grid g-2" style="margin-top:14px">
+    <div class="panel"><div class="head"><span class="eyebrow">Memory · live</span><span class="mono note" id="sub-mem-chart">{{printf "%.0f" $v.MemPct}}%</span></div>
+      <div id="chart-mem" class="u-chart" style="height:180px"></div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Network{{if $v.NetIfaces}} · {{(index $v.NetIfaces 0).Name}}{{end}}</span><span class="mono note" id="sub-net-chart">↓{{humanRate $v.NetRxBps}} ↑{{humanRate $v.NetTxBps}}</span></div>
+      <div id="chart-net" class="u-chart" style="height:180px"></div>
+      <div class="legend" style="margin-top:6px"><span><i style="background:var(--cyan)"></i>download</span><span><i style="background:var(--signal)"></i>upload</span></div></div>
+  </div>
+
 </div>
 {{end}}

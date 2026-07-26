@@ -31,6 +31,11 @@ func newHandler(d Deps) http.Handler {
 	// (/history, /alerts, /monitoring) are gated the same way by the tasks
 	// that register them.
 	mux.HandleFunc("GET /{$}", requireRole(RoleViewer, dashboardHandler(d)))
+	// /events (Task 8/#64): the SSE stream dashboard.html's live tiles/charts
+	// subscribe to (assets/app.js's swBootSSE, sse.go). Viewer-gated exactly
+	// like the dashboard itself — it carries the same live metrics, just
+	// pushed instead of polled.
+	mux.HandleFunc("GET /events", requireRole(RoleViewer, eventsHandler(d)))
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
 	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
@@ -120,19 +125,6 @@ func contentTypeByExt(name string) string {
 		return "application/javascript; charset=utf-8"
 	}
 	return ""
-}
-
-// dashboardHandler renders the dashboard placeholder inside the base
-// layout. A later task (dashboard/SSE) replaces the placeholder content
-// with the live summary counts/tiles/alerts the mockup's dashboard.html
-// shows; this task only needs the shell + routing to work.
-func dashboardHandler(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		data := newPageData(r, "Dashboard", "Overview", "ok")
-		if err := renderPage(w, "dashboard.html", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
 }
 
 // adminPlaceholderHandler renders a bare "coming later" panel (templates/
