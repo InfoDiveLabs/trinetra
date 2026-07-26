@@ -4,11 +4,13 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -320,6 +322,100 @@ func TestUsersRevokeCredentialRemovesOnlyThatOne(t *testing.T) {
 	}
 	if string(got.Credentials[0].ID) != string(keep.ID) {
 		t.Errorf("surviving credential ID = %v, want %v (the one NOT revoked)", got.Credentials[0].ID, keep.ID)
+	}
+}
+
+// TestRemoveUnlessLastAdminConcurrent is the TOCTOU regression pin for the
+// remove path. Two goroutines each try to remove one of the two (and only
+// two) admins, each through its OWN newUserStore instance pointed at the
+// same file — exactly how concurrent HTTP requests hit the store in
+// production (every handler calls newUserStore per request, so a per-INSTANCE
+// mutex would not serialize them). The last-admin guard must be atomic
+// (check-then-delete under a single, process-wide-per-path lock) so exactly
+// one succeeds and one is rejected with errLastAdmin, leaving exactly one
+// admin. Before the fix, both could observe two admins and both delete,
+// yielding zero admins — a permanent, unrecoverable lockout.
+func TestRemoveUnlessLastAdminConcurrent(t *testing.T) {
+	dir := t.TempDir()
+	seed := newUserStore(dir)
+	ids := []string{"a1", "a2"}
+	for _, id := range ids {
+		if err := seed.Put(&User{ID: id, Name: id, Role: RoleAdmin, Created: 1}); err != nil {
+			t.Fatalf("seed Put(%s): %v", id, err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, len(ids))
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			<-start
+			errs[i] = newUserStore(dir).RemoveUnlessLastAdmin(id)
+		}(i, id)
+	}
+	close(start)
+	wg.Wait()
+
+	rejected := 0
+	for _, err := range errs {
+		if errors.Is(err, errLastAdmin) {
+			rejected++
+		} else if err != nil {
+			t.Fatalf("unexpected error from RemoveUnlessLastAdmin: %v", err)
+		}
+	}
+	if rejected != 1 {
+		t.Errorf("rejected count = %d, want exactly 1 (the other must succeed)", rejected)
+	}
+	if got := countAdmins(newUserStore(dir).List()); got != 1 {
+		t.Errorf("admins remaining after concurrent removes = %d, want exactly 1 (0 = permanent lockout)", got)
+	}
+}
+
+// TestSetRoleUnlessLastAdminConcurrent is the same TOCTOU regression pin for
+// the role-change path: two goroutines demoting the two remaining admins to
+// viewer, each via its own newUserStore instance on the same file. Exactly
+// one demotion must be rejected so at least one admin survives.
+func TestSetRoleUnlessLastAdminConcurrent(t *testing.T) {
+	dir := t.TempDir()
+	seed := newUserStore(dir)
+	ids := []string{"a1", "a2"}
+	for _, id := range ids {
+		if err := seed.Put(&User{ID: id, Name: id, Role: RoleAdmin, Created: 1}); err != nil {
+			t.Fatalf("seed Put(%s): %v", id, err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, len(ids))
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			<-start
+			errs[i] = newUserStore(dir).SetRoleUnlessLastAdmin(id, RoleViewer)
+		}(i, id)
+	}
+	close(start)
+	wg.Wait()
+
+	rejected := 0
+	for _, err := range errs {
+		if errors.Is(err, errLastAdmin) {
+			rejected++
+		} else if err != nil {
+			t.Fatalf("unexpected error from SetRoleUnlessLastAdmin: %v", err)
+		}
+	}
+	if rejected != 1 {
+		t.Errorf("rejected count = %d, want exactly 1 (the other must succeed)", rejected)
+	}
+	if got := countAdmins(newUserStore(dir).List()); got != 1 {
+		t.Errorf("admins remaining after concurrent demotes = %d, want exactly 1 (0 = permanent lockout)", got)
 	}
 }
 

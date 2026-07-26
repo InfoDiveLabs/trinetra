@@ -4,6 +4,7 @@ package web
 
 import (
 	"encoding/base64"
+	"errors"
 	"html/template"
 	"net/http"
 	"time"
@@ -228,17 +229,6 @@ func usersInviteHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// countAdmins returns how many of users currently hold RoleAdmin.
-func countAdmins(users []*User) int {
-	n := 0
-	for _, u := range users {
-		if u.Role == RoleAdmin {
-			n++
-		}
-	}
-	return n
-}
-
 // usersRoleHandler changes {id}'s role to the posted "role" value
 // (admin|viewer). Refuses (409) to demote the sole remaining admin to
 // viewer — the same lockout usersRemoveHandler's guard closes for removal:
@@ -260,17 +250,14 @@ func usersRoleHandler(d Deps) http.HandlerFunc {
 		}
 
 		store := newUserStore(d.StateDir)
-		u, ok := store.Get(id)
-		if !ok {
+		switch err := store.SetRoleUnlessLastAdmin(id, newRole); {
+		case errors.Is(err, errUserNotFound):
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
-		}
-		if u.Role == RoleAdmin && newRole != RoleAdmin && countAdmins(store.List()) <= 1 {
+		case errors.Is(err, errLastAdmin):
 			http.Error(w, "refusing to demote the last remaining admin", http.StatusConflict)
 			return
-		}
-		u.Role = newRole
-		if err := store.Put(u); err != nil {
+		case err != nil:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -289,16 +276,14 @@ func usersRemoveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		store := newUserStore(d.StateDir)
-		u, ok := store.Get(id)
-		if !ok {
+		switch err := store.RemoveUnlessLastAdmin(id); {
+		case errors.Is(err, errUserNotFound):
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
-		}
-		if u.Role == RoleAdmin && countAdmins(store.List()) <= 1 {
+		case errors.Is(err, errLastAdmin):
 			http.Error(w, "refusing to remove the last remaining admin", http.StatusConflict)
 			return
-		}
-		if err := store.Delete(id); err != nil {
+		case err != nil:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

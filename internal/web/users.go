@@ -4,6 +4,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -157,6 +158,38 @@ type UserStore interface {
 	// forced to RoleAdmin) IFF the store is still empty, else fails — the
 	// first-run bootstrap decision made under the same lock as the write.
 	CreateFirstAdmin(u *User) error
+	// SetRoleUnlessLastAdmin sets user id's role, but refuses (errLastAdmin)
+	// to demote the sole remaining admin — the load, the last-admin check,
+	// and the write all happen under ONE critical section so two concurrent
+	// demotions can't both pass the check and both commit (the zero-admin
+	// lockout TOCTOU). Returns errUserNotFound if id is unknown.
+	SetRoleUnlessLastAdmin(id string, role Role) error
+	// RemoveUnlessLastAdmin deletes user id, but refuses (errLastAdmin) to
+	// remove the sole remaining admin — same single-critical-section
+	// atomicity guarantee as SetRoleUnlessLastAdmin. Returns errUserNotFound
+	// if id is unknown.
+	RemoveUnlessLastAdmin(id string) error
+}
+
+// errLastAdmin/errUserNotFound are the sentinel errors the atomic guard
+// methods (SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin) return so callers
+// (handlers_users.go) can map them to the right HTTP status (409/404) via
+// errors.Is without string-matching.
+var (
+	errLastAdmin    = errors.New("web: refusing to leave the store with no admin")
+	errUserNotFound = errors.New("web: user not found")
+)
+
+// countAdmins reports how many of users hold RoleAdmin — the last-admin
+// guard's input, evaluated on the in-lock snapshot the atomic methods hold.
+func countAdmins(users []*User) int {
+	n := 0
+	for _, u := range users {
+		if u.Role == RoleAdmin {
+			n++
+		}
+	}
+	return n
 }
 
 // jsonUserStore is UserStore backed by a single JSON file
@@ -168,8 +201,46 @@ type UserStore interface {
 // else in this daemon does that). Given the low request volume of an
 // enrollment/login ceremony, the extra disk I/O per call is not a concern.
 type jsonUserStore struct {
-	mu   sync.Mutex
+	// mu is SHARED across every jsonUserStore instance pointing at the same
+	// file (see userStoreMutex): the handlers construct a fresh jsonUserStore
+	// per request (newUserStore), so a per-INSTANCE mutex would serialize
+	// nothing across concurrent requests and the read-modify-write guarantee
+	// this store's doc promises — including the last-admin guard's atomic
+	// check-then-write (SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin) — would
+	// be a fiction. Keying the lock on the absolute path makes it truly
+	// process-wide per file.
+	mu   *sync.Mutex
 	path string
+}
+
+// userStoreMutexes holds one *sync.Mutex per absolute users.json path, so all
+// jsonUserStore instances for the same file share a single lock. Guarded by
+// userStoreMutexesMu (a plain lock over the map itself, held only briefly to
+// fetch/create the per-path mutex — never while doing store I/O).
+var (
+	userStoreMutexes   = map[string]*sync.Mutex{}
+	userStoreMutexesMu sync.Mutex
+)
+
+// userStoreMutex returns the process-wide mutex for path (creating it on
+// first use), so every jsonUserStore over the same file serializes against
+// one another. filepath.Abs canonicalizes the key so two spellings of the
+// same path share the lock; on the (essentially impossible) Abs error it
+// falls back to the raw path, which still shares a lock among identical
+// spellings.
+func userStoreMutex(path string) *sync.Mutex {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	userStoreMutexesMu.Lock()
+	defer userStoreMutexesMu.Unlock()
+	mu, ok := userStoreMutexes[abs]
+	if !ok {
+		mu = &sync.Mutex{}
+		userStoreMutexes[abs] = mu
+	}
+	return mu
 }
 
 // newUserStore returns a UserStore rooted at <stateDir>/users.json. This
@@ -178,7 +249,8 @@ type jsonUserStore struct {
 // when stateDir doesn't exist yet or is "" (e.g. a test/handler that never
 // reaches an auth route).
 func newUserStore(stateDir string) *jsonUserStore {
-	return &jsonUserStore{path: filepath.Join(stateDir, "users.json")}
+	path := filepath.Join(stateDir, "users.json")
+	return &jsonUserStore{mu: userStoreMutex(path), path: path}
 }
 
 // loadLocked reads and parses the store file, returning (nil, nil) if it
@@ -345,6 +417,65 @@ func (s *jsonUserStore) Delete(id string) error {
 		}
 	}
 	return fmt.Errorf("web: user %q not found", id)
+}
+
+// SetRoleUnlessLastAdmin sets user id's Role to role, all under a SINGLE
+// s.mu critical section: it loads the current users, and only if demoting id
+// (admin -> non-admin) would NOT leave the store admin-less does it write.
+// Two concurrent demotions of the two remaining admins therefore serialize —
+// whichever acquires the lock first commits, the second reloads a store with
+// one admin left, sees itself as the last one, and is rejected with
+// errLastAdmin. Promotions and no-op same-role writes are never blocked.
+func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	var target *User
+	for _, u := range users {
+		if u.ID == id {
+			target = u
+			break
+		}
+	}
+	if target == nil {
+		return errUserNotFound
+	}
+	if target.Role == RoleAdmin && role != RoleAdmin && countAdmins(users) <= 1 {
+		return errLastAdmin
+	}
+	target.Role = role
+	return s.saveLocked(users)
+}
+
+// RemoveUnlessLastAdmin deletes user id under a SINGLE s.mu critical section,
+// refusing (errLastAdmin) to delete the sole remaining admin — the removal
+// counterpart of SetRoleUnlessLastAdmin, with the identical atomicity
+// guarantee against a concurrent second remover.
+func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i, u := range users {
+		if u.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return errUserNotFound
+	}
+	if users[idx].Role == RoleAdmin && countAdmins(users) <= 1 {
+		return errLastAdmin
+	}
+	users = append(users[:idx], users[idx+1:]...)
+	return s.saveLocked(users)
 }
 
 // var _ UserStore = (*jsonUserStore)(nil) pins the interface implementation
