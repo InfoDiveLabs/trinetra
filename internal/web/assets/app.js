@@ -179,9 +179,81 @@
   var liveRoot=document.getElementById('dashboard-live');
   if(liveRoot) window.swBootSSE();
 
-  // Task 9 wires uPlot (already embedded, see assets/uPlot.iife.min.js +
-  // uPlot.min.css) against SampleStore history queries for the history page.
-  window.swBootHistoryCharts=function(){};
+  // ---- history graphs (Task 9: /api/series + uPlot) ----
+  // templates/history.html wraps its charts in <div id="history-page"
+  // data-history data-range="24h"> (present only on that page, so this is a
+  // no-op everywhere else); each chart is a plain <div data-metric="...">
+  // hook uPlot mounts into, and the time-range chips (#historyRange,
+  // data-range="1h|6h|24h|7d|30d") pick the [from,to] window every chart
+  // queries. No inline handlers/scripts anywhere here — same strict CSP as
+  // the rest of this file (security.go, script-src 'self' 'nonce-...').
+  //
+  // swBootHistoryCharts fetches GET /api/series?metric=&from=&to= (viewer-
+  // gated exactly like /history itself, see routes.go) per chart and feeds
+  // uPlot's own [ts[], avg[], min[], max[]] response shape straight into
+  // setData — no reshaping needed, since handlers_history.go's seriesResponse
+  // already matches uPlot's parallel-array format.
+  window.swBootHistoryCharts=function(){
+    var root=document.querySelector('[data-history]');
+    if(!root) return;
+
+    var RANGE_SECONDS={'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000};
+    var charts={};
+
+    function ensureChart(el){
+      if(charts[el.id]) return charts[el.id];
+      if(!window.uPlot) return null;
+      var opts={
+        width:el.clientWidth||600,
+        height:el.clientHeight||240,
+        series:[{},{label:'avg',stroke:'var(--info)',width:1.5}],
+        cursor:{show:true},
+        legend:{show:false},
+        axes:[{},{}]
+      };
+      var u=new uPlot(opts,[[],[]],el);
+      charts[el.id]=u;
+      return u;
+    }
+
+    function currentRange(){
+      var span=RANGE_SECONDS[root.dataset.range]||RANGE_SECONDS['24h'];
+      var to=Math.floor(Date.now()/1000);
+      return {from:to-span, to:to};
+    }
+
+    function loadChart(el){
+      var metric=el.dataset.metric;
+      if(!metric) return;
+      var range=currentRange();
+      var url='/api/series?metric='+encodeURIComponent(metric)+'&from='+range.from+'&to='+range.to;
+      fetch(url,{credentials:'same-origin'})
+        .then(function(r){ if(!r.ok) throw new Error('series fetch failed'); return r.json(); })
+        .then(function(data){
+          var u=ensureChart(el);
+          if(!u || !data || !data.series || data.series.length<2) return;
+          u.setData([data.series[0],data.series[1]]);
+        })
+        .catch(function(){ /* leave the last-good chart state in place */ });
+    }
+
+    var chartEls=root.querySelectorAll('[data-metric]');
+    function loadAll(){ chartEls.forEach(loadChart); }
+
+    var rangeBar=document.getElementById('historyRange');
+    if(rangeBar){
+      rangeBar.addEventListener('click',function(e){
+        var btn=e.target.closest('[data-range]');
+        if(!btn||!rangeBar.contains(btn)) return;
+        root.dataset.range=btn.dataset.range;
+        loadAll();
+      });
+    }
+
+    loadAll();
+  };
+  var historyRoot=document.querySelector('[data-history]');
+  if(historyRoot) window.swBootHistoryCharts();
 
   // ---- passkey enrollment (templates/enroll.html) ----
   // navigator.credentials.create()'s PublicKeyCredentialCreationOptions (and
