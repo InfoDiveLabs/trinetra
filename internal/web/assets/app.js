@@ -300,6 +300,81 @@
   var liveRoot=document.getElementById('dashboard-live');
   if(liveRoot) window.swBootSSE();
 
+  // ---- live public page (public-rework task: anonymous /public/events) ----
+  // templates/public.html wraps its content in <div id="public-live">
+  // (present only on that page). This is a SEPARATE, minimal boot function
+  // from swBootSSE above — it opens an EventSource against /public/events
+  // (anonymous, allowlist-filtered server-side — see sse.go's
+  // publicEventsHandler/buildPublicSSEFrame) rather than /events, and its
+  // "snapshot" frame is a small {panels:[{id,label,value,sub}],
+  // availability?:{...}} object (publicSSEFrame, sse.go), not a full
+  // DashboardView: there is nothing here to selectively render, because
+  // there is nothing on the wire beyond what the server already decided to
+  // expose. Both the tile grid and the availability strip are rebuilt from
+  // scratch on every frame (rather than patched element-by-element like
+  // swBootSSE's tiles) so a mid-connection admin edit to public.panels
+  // (fewer/more panels, "availability" toggled off) is reflected exactly,
+  // with no stale leftover element from a panel that's no longer allowed.
+  window.swBootPublicSSE=function(){
+    if(!window.EventSource) return;
+
+    function renderPanels(list){
+      var box=document.getElementById('pub-panels');
+      if(!box) return;
+      box.innerHTML='';
+      if(!list||!list.length){
+        var note=document.createElement('div');
+        note.className='note';
+        note.textContent='Nothing is published yet.';
+        box.appendChild(note);
+        return;
+      }
+      list.forEach(function(p){
+        var tile=document.createElement('div');
+        tile.className='tile';
+        tile.setAttribute('data-panel',p.id);
+        var k=document.createElement('div'); k.className='k';
+        var eyebrow=document.createElement('span'); eyebrow.className='eyebrow'; eyebrow.textContent=p.label;
+        k.appendChild(eyebrow); tile.appendChild(k);
+        var val=document.createElement('div'); val.className='val'; val.setAttribute('data-field','value'); val.textContent=p.value;
+        tile.appendChild(val);
+        if(p.sub){
+          var sub=document.createElement('div'); sub.className='sub'; sub.setAttribute('data-field','sub'); sub.textContent=p.sub;
+          tile.appendChild(sub);
+        }
+        box.appendChild(tile);
+      });
+    }
+
+    function renderAvailability(av){
+      var panel=document.getElementById('pub-avail');
+      if(!panel) return;
+      if(!av){ panel.remove(); return; } // admin turned "availability" off mid-connection
+      var summary=document.getElementById('pub-avail-summary');
+      if(summary) summary.innerHTML='<span style="color:var(--ok)">'+av.uptime_pct.toFixed(2)+'% up</span> · '+av.incidents_label+' · '+av.downtime_str;
+      var blocks=document.getElementById('pub-avail-blocks');
+      if(blocks){
+        blocks.innerHTML='';
+        (av.blocks||[]).forEach(function(b){
+          var seg=document.createElement('div');
+          seg.className='seg'+(b.down?' down':'');
+          seg.title=b.label+' · '+(b.down?'down':'up');
+          blocks.appendChild(seg);
+        });
+      }
+    }
+
+    var es=new EventSource('/public/events');
+    es.addEventListener('snapshot',function(ev){
+      var s;
+      try{ s=JSON.parse(ev.data); }catch(e){ return; }
+      renderPanels(s.panels);
+      renderAvailability(s.availability);
+    });
+  };
+  var publicLiveRoot=document.getElementById('public-live');
+  if(publicLiveRoot) window.swBootPublicSSE();
+
   // ---- history graphs (Task 9: /api/series + /api/downtime + uPlot) ----
   // templates/history.html wraps its charts in <div id="history-page"
   // data-history data-range="24h"> (present only on that page, so this is a

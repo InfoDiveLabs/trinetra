@@ -1,11 +1,24 @@
-{{define "head_extra"}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
 {{define "content"}}
-<div style="max-width:900px;margin:0 auto;padding:40px 24px">
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px"><span class="lamp"></span><h2 style="margin:0">Status</h2></div>
+<div style="max-width:960px;margin:0 auto;padding:40px 24px" id="public-live">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px">
+    <div style="display:flex;align-items:center;gap:12px"><span class="lamp"></span><h2 style="margin:0">Status</h2></div>
+    <a href="/login" class="btn">Login</a>
+  </div>
   <p class="note" style="margin:0 0 22px">Public read-only view</p>
 
-  <div class="grid g-3">
-    {{range .Panels}}<div class="tile"><div class="k"><span class="eyebrow">{{.Label}}</span></div><div class="val">{{.Value}}</div>{{if .Sub}}<div class="sub">{{.Sub}}</div>{{end}}</div>
+  {{if .ShowAvailability}}
+  {{$av := .Availability}}
+  <div class="panel" id="pub-avail" style="margin-bottom:16px">
+    <div class="head" style="margin-bottom:10px"><span class="eyebrow">Availability · 24h · 15-min blocks</span><span class="mono small" id="pub-avail-summary"><span style="color:var(--ok)">{{printf "%.2f" $av.UptimePct}}% up</span> · {{$av.IncidentsLabel}} · {{$av.DowntimeStr}}</span></div>
+    <div class="avail" id="pub-avail-blocks">{{range $av.Blocks}}<div class="seg{{if .Down}} down{{end}}" title="{{.Label}} · {{if .Down}}down{{else}}up{{end}}"></div>{{end}}</div>
+    <div class="note mono" style="display:flex;justify-content:space-between;margin-top:8px"><span>24h ago</span><span>18h</span><span>12h</span><span>6h</span><span>now</span></div>
+    <div class="legend" style="margin-top:10px"><span><i style="background:var(--ok)"></i>up</span><span><i style="background:var(--crit)"></i>down</span><span class="note">hover a block for the time</span></div>
+  </div>
+  {{end}}
+
+  <div class="section-label"><span class="eyebrow">Resources · live</span></div>
+  <div class="grid g-tiles" id="pub-panels">
+    {{range .Panels}}<div class="tile" data-panel="{{.ID}}"><div class="k"><span class="eyebrow">{{.Label}}</span></div><div class="val" data-field="value">{{.Value}}</div>{{if .Sub}}<div class="sub" data-field="sub">{{.Sub}}</div>{{end}}</div>
     {{else}}<p class="note">Nothing is published yet.</p>
     {{end}}
   </div>

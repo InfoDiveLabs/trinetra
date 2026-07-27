@@ -24,13 +24,16 @@ func newHandler(d Deps) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", assetHandler(assetsSub)))
-	// The dashboard is viewer+ per the design doc's route table (only
-	// /public is anonymous), so it's gated behind requireRole(RoleViewer,
-	// ...): any signed-in account (viewer or admin) may see it; an anonymous
-	// visitor is redirected to /login. The other viewer+ routes
-	// (/history, /alerts, /monitoring) are gated the same way by the tasks
-	// that register them.
-	mux.HandleFunc("GET /{$}", requireRole(RoleViewer, d, dashboardHandler(d)))
+	// / is the true landing route (public-rework task): an authenticated
+	// visitor (viewer or admin) sees the dashboard, exactly like the old
+	// requireRole(RoleViewer, ...) wiring; an anonymous one sees the curated
+	// public status page when cfg.Public.Enabled, else is redirected to
+	// /login — see rootHandler's doc (handlers_public.go) for the full
+	// branch and its SECURITY note (an anonymous request must never reach
+	// the dashboard). The other viewer+ routes (/history, /alerts,
+	// /monitoring) stay gated by requireRole(RoleViewer, ...) as before —
+	// only / itself has a third, anonymous-but-not-login-redirected outcome.
+	mux.HandleFunc("GET /{$}", rootHandler(d))
 	// /events (Task 8/#64): the SSE stream dashboard.html's live tiles/charts
 	// subscribe to (assets/app.js's swBootSSE, sse.go). Viewer-gated exactly
 	// like the dashboard itself — it carries the same live metrics, just
@@ -86,17 +89,25 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(d, channelsUpdateHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(d, channelsRemoveHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(d, channelsTestHandler(d)))
-	// /settings/public + /public (Task 11/#67): the admin-curated exposure
-	// picker (GET/POST /settings/public, admin-only + CSRF on the mutation —
-	// publicSettingsMutation, handlers_public.go) plus the curated
-	// anonymous status page itself (GET /public — deliberately NOT gated by
-	// requireRole/requireCSRF: it's the one route the design doc's route
-	// table marks anon, and publicPageHandler enforces its own "enabled
-	// -> 404" + server-side panel allowlist instead — see that handler's
-	// SECURITY doc).
+	// /settings/public + /public + /public/events (Task 11/#67, extended by
+	// the public-rework task): the admin-curated exposure picker (GET/POST
+	// /settings/public, admin-only + CSRF on the mutation —
+	// publicSettingsMutation, handlers_public.go); GET /public itself is now
+	// just a redirect to / (publicRouteRedirectHandler,
+	// handlers_public.go — the anonymous page moved to / itself, see
+	// rootHandler); and GET /public/events is the anonymous page's live SSE
+	// counterpart (publicEventsHandler, sse.go) — deliberately NOT gated by
+	// requireRole/requireCSRF, same as / itself: it enforces its own
+	// "disabled -> 404" + server-side panel allowlist instead (see that
+	// handler's SECURITY doc). Never reuses /events (the viewer-gated
+	// stream) — a shared endpoint would mean either leaking the full
+	// DashboardView anonymously or threading an allowlist filter through a
+	// handler that also serves authenticated viewers, both worse than a
+	// second, narrowly-scoped handler.
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, d, publicSettingsPageHandler(d)))
 	mux.HandleFunc("POST /settings/public", publicSettingsMutation(d, publicSettingsSaveHandler(d)))
-	mux.HandleFunc("GET /public", publicPageHandler(d))
+	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
+	mux.HandleFunc("GET /public/events", publicEventsHandler(d))
 
 	// /alerts (Task 10/#66): alert history (Deps.AlertLogPath) + active
 	// alerts (Deps.AlertStatePath), viewer+ per the design doc — this

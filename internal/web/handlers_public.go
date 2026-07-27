@@ -11,15 +11,6 @@ import (
 	"strings"
 )
 
-// publicRefreshSeconds is how often the anonymous /public page meta-refreshes
-// itself. There is no SSE/JS polling on this page (see the design note atop
-// publicPageHandler): a signed-out visitor's browser only ever gets a fresh
-// render by reloading, and a plain <meta http-equiv="refresh"> is the
-// simplest way to do that without adding any new anonymous-reachable data
-// endpoint (an endpoint is extra attack surface this task's security
-// checklist doesn't need to accept).
-const publicRefreshSeconds = 30
-
 // publicSettingsMutation composes requireRole(RoleAdmin, ...) with
 // requireCSRF, mirroring configMutation/channelsMutation: only an admin
 // session may POST /settings/public, and only with a valid CSRF token.
@@ -95,18 +86,32 @@ func publicPanelValue(id string, snap DashboardView) (label, value, sub string, 
 	return "", "", "", false
 }
 
-// publicPanelView is one rendered tile on /public.
+// publicPanelView is one rendered tile on /public — also the exact shape
+// marshaled onto the wire by GET /public/events (sse.go's
+// buildPublicSSEFrame): the json tags below are that stream's contract, not
+// just cosmetic.
 type publicPanelView struct {
-	ID, Label, Value, Sub string
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Value string `json:"value"`
+	Sub   string `json:"sub,omitempty"`
 }
 
-// buildPublicPanels is the ONLY place /public's handler turns config +
-// snapshot into rendered tiles: it walks allowlist (cfg.Public.Panels) IN
-// ORDER and, for each id, resolves it via publicPanelValue, skipping
-// whatever isn't currently available. It never looks at snap directly for
-// anything not named in allowlist — see publicPanelValue's doc for why that
-// direction of iteration is the actual security property this task exists
-// to pin.
+// buildPublicPanels is the ONLY place /public's handler (and its SSE
+// counterpart, publicEventsHandler in sse.go) turns config + snapshot into
+// rendered tiles: it walks allowlist (cfg.Public.Panels) IN ORDER and, for
+// each id, resolves it via publicPanelValue, skipping whatever isn't
+// currently available. It never looks at snap directly for anything not
+// named in allowlist — see publicPanelValue's doc for why that direction of
+// iteration is the actual security property this task exists to pin.
+//
+// "availability" is deliberately absent from publicPanelValue's switch (it
+// has no single label/value/sub — it's a whole strip, not a scalar tile), so
+// it's silently skipped here; publicPageHandler/publicEventsHandler each
+// check publicPanelsContain(allowlist, "availability") separately and pull
+// snap.Availability directly when it's present. That's still the SAME
+// allowlist doing the gating, just via a second, equally-narrow chokepoint
+// for the one panel that isn't a flat string.
 func buildPublicPanels(allowlist []string, snap DashboardView) []publicPanelView {
 	out := make([]publicPanelView, 0, len(allowlist))
 	for _, id := range allowlist {
@@ -119,14 +124,26 @@ func buildPublicPanels(allowlist []string, snap DashboardView) []publicPanelView
 	return out
 }
 
+// publicPanelsContain reports whether id is named in allowlist — used for
+// "availability", the one panel buildPublicPanels can't render as a flat
+// tile (see its doc).
+func publicPanelsContain(allowlist []string, id string) bool {
+	return publicPanelSet(allowlist)[id]
+}
+
 // PublicPageData is what templates/public.html renders against. It
 // deliberately does NOT embed PageData or carry a CSRF token/Role/Nav: this
 // page renders for anonymous visitors (see publicPageHandler), so there is
 // nothing signed-in to reflect and no mutation for a CSRF token to protect.
 type PublicPageData struct {
 	BarePageData
-	Panels  []publicPanelView
-	Refresh int
+	Panels []publicPanelView
+	// ShowAvailability/Availability are populated (and the 24h strip
+	// rendered) only when "availability" is in cfg.Public.Panels — see
+	// buildPublicPanels' doc for why this is a second, narrow use of the same
+	// allowlist rather than a bypass of it.
+	ShowAvailability bool
+	Availability     Availability
 }
 
 // renderPublicPage renders templates/public.html through the bare/centered
@@ -144,23 +161,32 @@ func renderPublicPage(w http.ResponseWriter, data PublicPageData) error {
 	return tmpl.ExecuteTemplate(w, "base_bare.html", data)
 }
 
-// publicPageHandler renders GET /public — the ONLY unauthenticated route
-// (besides /assets/*, /login, /enroll) this package serves.
+// publicPageHandler renders the anonymous status page — reached only via
+// rootHandler's (routes.go) branch for an anonymous request when
+// cfg.Public.Enabled is true; GET /public itself is now just a redirect to
+// / (see newHandler's route wiring).
 //
-// SECURITY (issue #67 — this route is the entire point of the task):
-//   - public.enabled=false 404s rather than rendering a "disabled" page or
-//     redirecting: an anonymous prober must not even learn the route exists.
+// SECURITY (issue #67 / the public-rework task):
+//   - public.enabled=false 404s rather than rendering a "disabled" page.
+//     rootHandler already only calls this when cfg.Public.Enabled, so this
+//     is a defense-in-depth check for any other caller, not the primary
+//     gate — the primary "anon + disabled" behavior (redirect to /login) is
+//     rootHandler's job, since / itself must always resolve to something
+//     for an authenticated visitor.
 //   - The rendered tiles come ONLY from buildPublicPanels(cfg.Public.Panels,
-//     snapshot) — every request input (query string, headers, cookies) is
-//     ignored when deciding what to show; there is no way for a caller to
-//     ask for a panel outside the admin-curated list (see
+//     snapshot) plus, for "availability", snap.Availability gated by
+//     publicPanelsContain — every request input (query string, headers,
+//     cookies) is ignored when deciding what to show; there is no way for a
+//     caller to ask for a panel outside the admin-curated list (see
 //     TestPublicPageIgnoresQueryStringPanelOverride).
 //   - No session is read or required, and this handler never sets a cookie —
-//     an already-signed-in admin hitting /public sees exactly the same
-//     anonymous page as everyone else, never their session's sidebar/topbar.
+//     an already-signed-in admin is routed to the dashboard by rootHandler
+//     before this handler ever runs, so there is no "admin view" of this
+//     page at all.
 //   - renderPublicPage uses base_bare.html/PublicPageData, which carries no
-//     CSRF token, role, or nav — so there is no admin/login link, form, or
-//     button for the page to leak even by accident.
+//     CSRF token or nav — the only affordance is a plain Login link to
+//     /login (templates/public.html), never a form/button that could act on
+//     anything.
 func publicPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Cache-Control: no-store on every response this handler produces
@@ -179,9 +205,10 @@ func publicPageHandler(d Deps) http.HandlerFunc {
 			snap = d.Snapshot()
 		}
 		data := PublicPageData{
-			BarePageData: newBarePageData(r, "Status"),
-			Panels:       buildPublicPanels(cfg.Public.Panels, snap),
-			Refresh:      publicRefreshSeconds,
+			BarePageData:     newBarePageData(r, "Status"),
+			Panels:           buildPublicPanels(cfg.Public.Panels, snap),
+			ShowAvailability: publicPanelsContain(cfg.Public.Panels, "availability"),
+			Availability:     snap.Availability,
 		}
 		if err := renderPublicPage(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -192,6 +219,7 @@ func publicPageHandler(d Deps) http.HandlerFunc {
 // publicCatalogEntry is one row of the FIXED (non-disk) panel catalog
 // /settings/public offers, in the admin picker's display order.
 var publicCatalogEntry = []struct{ ID, Label, Desc string }{
+	{"availability", "Availability", "24h uptime strip"},
 	{"uptime", "Status", "online/offline"},
 	{"cpu", "CPU", "live %"},
 	{"mem", "Memory", "live %"},
@@ -350,4 +378,56 @@ func publicSettingsSaveHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// rootHandler serves GET /{$} (routes.go): the landing route, branching on
+// whether the request carries a resolved session (userFromContext) —
+// exactly the signal requireRole itself gates on, just consulted here
+// directly instead of via that middleware, since "/" now has a THIRD
+// possible outcome (the anonymous public page) that requireRole has no
+// concept of.
+//
+//   - Authenticated (userFromContext resolves — any account, viewer or
+//     admin) -> dashboardHandler, unconditionally. This mirrors the
+//     previous requireRole(RoleViewer, ...) wiring's admission rule exactly:
+//     RoleViewer admits any signed-in account, so there is no role check
+//     left to perform once a user IS resolved.
+//   - Anonymous + cfg.Public.Enabled -> publicPageHandler (Part 2): the
+//     curated, allowlist-filtered status page, no login required.
+//   - Anonymous + public disabled -> 302 /login, same destination an
+//     anonymous request to any other viewer+ route gets from requireRole.
+//
+// SECURITY: an anonymous request must NEVER reach dashboardHandler — the
+// order of the checks below (session first) combined with dashboardHandler
+// only ever being invoked inside the `ok` branch is what pins that; there is
+// no code path here that calls it without userFromContext having first
+// returned true.
+func rootHandler(d Deps) http.HandlerFunc {
+	dashboard := dashboardHandler(d)
+	public := publicPageHandler(d)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := userFromContext(r); ok {
+			dashboard(w, r)
+			return
+		}
+		if d.Cfg().Public.Enabled {
+			public(w, r)
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusFound)
+	}
+}
+
+// publicRouteRedirectHandler serves the now-canonicalized GET /public: old
+// links/bookmarks into the anonymous status page still work, they just
+// land on / (rootHandler above), which renders the identical anonymous page
+// for an anonymous visitor — or, for an already-signed-in visitor, their
+// dashboard (a deliberate behavior change from the old /public, which used
+// to show the anonymous page even to a signed-in admin; now that / itself
+// is the one true landing route, there is no reason for a bookmarked
+// /public to behave differently from a bookmarked /). A permanent redirect
+// (301) since this is a genuine canonical-URL move, not a conditional one —
+// it does not depend on cfg.Public.Enabled at all.
+func publicRouteRedirectHandler(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/", http.StatusMovedPermanently)
 }
