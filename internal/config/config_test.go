@@ -1249,7 +1249,7 @@ func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {
 	if got, _ := c.Get("public.panels"); got != "" {
 		t.Fatalf("public.panels after rejected sets = %q, want unchanged empty", got)
 	}
-	for _, v := range []string{"cpu", "mem", "swap", "load", "temp", "uptime", "services", "containers", "net", "disk:/", "disk:/data"} {
+	for _, v := range []string{"availability", "cpu", "mem", "swap", "load", "temp", "uptime", "services", "containers", "net", "disk:/", "disk:/data"} {
 		if err := c.Set("public.panels", v); err != nil {
 			t.Errorf("public.panels set to %q: want nil error, got %v", v, err)
 		}

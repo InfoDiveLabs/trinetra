@@ -315,8 +315,13 @@ func validateSessionTTL(s string) error {
 // may name (internal/web's public-view allowlist, issue #67).
 // "disk:<mount>" is validated separately in validatePublicPanel since the
 // mount suffix is dynamic (one entry per filesystem the daemon reports).
+// "availability" (the public-rework task) surfaces the real 24h up/down
+// strip (internal/web/availability.go's ComputeAvailability) rather than a
+// scalar metric — it's still just one more allowlist id from this package's
+// point of view; internal/web decides what to render for it.
 var validPublicPanels = map[string]bool{
-	"cpu": true, "mem": true, "swap": true, "load": true, "temp": true,
+	"availability": true,
+	"cpu":          true, "mem": true, "swap": true, "load": true, "temp": true,
 	"uptime": true, "services": true, "containers": true, "net": true,
 }
 
@@ -335,7 +340,7 @@ func validatePublicPanel(s string) error {
 	if strings.HasPrefix(s, "disk:") && s != "disk:" {
 		return nil
 	}
-	return fmt.Errorf("public panel %q invalid: want one of cpu|mem|swap|load|temp|uptime|services|containers|net or disk:<mount>", s)
+	return fmt.Errorf("public panel %q invalid: want one of availability|cpu|mem|swap|load|temp|uptime|services|containers|net or disk:<mount>", s)
 }
 
 // parsePublicPanels parses a comma-separated public.panels value into a
