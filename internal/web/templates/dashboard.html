@@ -22,7 +22,13 @@
     </div>
   </div>
 
-  <div style="margin-top:14px" id="hbstrip" class="panel"></div>
+  {{$av := $v.Availability}}
+  <div style="margin-top:14px" id="hbstrip" class="panel">
+    <div class="head" style="margin-bottom:10px"><span class="eyebrow">Availability · 24h · 15-min blocks</span><span class="mono small"><span style="color:var(--ok)">{{printf "%.2f" $av.UptimePct}}% up</span> · {{$av.IncidentsLabel}} · {{$av.DowntimeStr}}</span></div>
+    <div class="avail">{{range $av.Blocks}}<div class="seg{{if .Down}} down{{end}}" title="{{.Label}} · {{if .Down}}down{{else}}up{{end}}"></div>{{end}}</div>
+    <div class="note mono" style="display:flex;justify-content:space-between;margin-top:8px"><span>24h ago</span><span>18h</span><span>12h</span><span>6h</span><span>now</span></div>
+    <div class="legend" style="margin-top:10px"><span><i style="background:var(--ok)"></i>up</span><span><i style="background:var(--crit)"></i>down</span><span class="note">hover a block for the time</span></div>
+  </div>
 
   <div class="section-label"><span class="eyebrow">Resources · live</span></div>
   <div class="grid g-tiles">

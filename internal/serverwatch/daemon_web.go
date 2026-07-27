@@ -25,12 +25,28 @@ import (
 // the daemon on shutdown; instead, log the failure to stderr and hand back
 // a safe no-op so the daemon keeps running without the web UI.
 func maybeStartWeb(d WebDeps) func() {
+	// events is captured once and reused by both Deps.Events (the /api/
+	// downtime and 30d-uptime-tile seam, Task 9) and the Snapshot closure's
+	// Availability computation below, rather than calling eventsStoreFor
+	// twice -- both just want the same read-only wrapper over d.Store.
+	events := eventsStoreFor(d.Store)
 	wd := web.Deps{
-		Cfg:            d.Cfg,
-		Reload:         d.Reload,
-		Store:          seriesStoreFor(d.Store, d.Cfg),
-		Events:         eventsStoreFor(d.Store),
-		Snapshot:       func() web.DashboardView { return buildDashboardView(d.Snapshot()) },
+		Cfg:    d.Cfg,
+		Reload: d.Reload,
+		Store:  seriesStoreFor(d.Store, d.Cfg),
+		Events: events,
+		Snapshot: func() web.DashboardView {
+			v := buildDashboardView(d.Snapshot())
+			// Availability is computed fresh on every Snapshot() call (real
+			// "now", real events overlapping the trailing 24h) rather than
+			// baked into buildDashboardView, since that function's existing
+			// unit tests (daemon_web_dashboard_test.go) exercise it against
+			// a bare Snapshot with no events store in scope -- see
+			// ComputeAvailability's doc (internal/web/availability.go) for
+			// why a nil/erroring store just degrades to "no events".
+			v.Availability = web.ComputeAvailability(events, time.Now().Unix())
+			return v
+		},
 		Monitoring:     func() web.MonitoringView { return buildMonitoringView(d.Snapshot(), d.Cfg()) },
 		StateDir:       d.StateDir,
 		AlertLogPath:   d.AlertLogPath,

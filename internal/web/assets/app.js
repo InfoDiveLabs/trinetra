@@ -6,10 +6,13 @@
  * server-side (see internal/web/templates/base.html, the "nav" block) with
  * the real role coming from the session (stubbed to "admin" until Task
  * 5/6's auth lands), so all of that is stripped here. Kept: theme toggle,
- * the SVG gradient defs, the heartbeat/availability-strip/sparkline
- * helpers, and the drawer/modal/tabs/filter/switch interaction handlers —
- * later tasks (dashboard/monitoring/history/channels pages) reuse these
- * once they render real markup into the same hooks.
+ * the SVG gradient defs, the heartbeat/sparkline helpers, and the drawer/
+ * modal/tabs/filter/switch interaction handlers — later tasks (dashboard/
+ * monitoring/history/channels pages) reuse these once they render real
+ * markup into the same hooks. The mockup's #hbstrip (availability strip)
+ * demo builder was removed once the real 24h up/down data was computed
+ * server-side (internal/web/availability.go's ComputeAvailability,
+ * dashboard.html's #hbstrip markup) instead of faked here.
  */
 (function(){
   // ---- chart colors ----
@@ -45,19 +48,6 @@
   // ---- heartbeat mini ----
   function ekg(mid,sp,count,W,H,gF,gT){var d='M0,'+mid,i,x;for(i=0;i<count;i++){x=10+i*sp;if(x>=gF&&x<=gT){d+=' L'+x+','+mid;continue;}d+=' L'+(x-6)+','+mid+' L'+(x-3)+','+(mid-4)+' L'+x+','+(mid-H*0.55)+' L'+(x+3)+','+(mid+6)+' L'+(x+6)+','+mid;}d+=' L'+W+','+mid;return d;}
   document.querySelectorAll('.hb-gen').forEach(function(el){el.innerHTML='<svg width="120" height="24" viewBox="0 0 120 24" aria-hidden="true"><path class="lead" stroke-width="1.6" d="'+ekg(13,26,4,120,24,999,999)+'"/><circle class="dot live" cx="115" cy="13" r="2.6"/></svg>';});
-
-  // ---- availability strip ----
-  var strip=document.getElementById('hbstrip');
-  if(strip){
-    var N=96,mins=15,dF=68,dT=70,wA=41,now=new Date(),segs='',up=0,i;
-    for(i=0;i<N;i++){var ago=(N-1-i)*mins,tt=new Date(now.getTime()-ago*60000),hh=('0'+tt.getHours()).slice(-2)+':'+('0'+tt.getMinutes()).slice(-2),cls='seg',st='up';
-      if(i>=dF&&i<=dT){cls+=' down';st='DOWN';}else if(i===wA){cls+=' warn';st='degraded';}else up++;
-      segs+='<div class="'+cls+'" title="'+hh+' · '+st+'"></div>';}
-    strip.innerHTML='<div class="head" style="margin-bottom:10px"><span class="eyebrow">Availability · 24h · '+mins+'-min blocks</span><span class="mono small"><span style="color:var(--ok)">'+(up/N*100).toFixed(2)+'% up</span> · 1 incident · 45m</span></div>'+
-      '<div class="avail">'+segs+'</div>'+
-      '<div class="note mono" style="display:flex;justify-content:space-between;margin-top:8px"><span>24h ago</span><span>18h</span><span>12h</span><span>6h</span><span>now</span></div>'+
-      '<div class="legend" style="margin-top:10px"><span><i style="background:var(--ok)"></i>up</span><span><i style="background:var(--warn)"></i>degraded</span><span><i style="background:var(--crit)"></i>down</span><span class="note">hover a block for the time</span></div>';
-  }
 
   // ---- uptime bars (public) ----
   var upb=document.getElementById('upbars');

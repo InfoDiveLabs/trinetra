@@ -77,6 +77,14 @@ type DashboardView struct {
 	NetIfaces []NetIfaceView `json:"net_ifaces,omitempty"`
 	NetRxBps  float64        `json:"net_rx_bps"`
 	NetTxBps  float64        `json:"net_tx_bps"`
+
+	// Availability is the dashboard's real 24h up/down strip data
+	// (availability.go's ComputeAvailability), replacing the old hardcoded
+	// #hbstrip demo in app.js. Zero-valued (no blocks) whenever the caller
+	// building this view doesn't have a downtime EventsStore to compute it
+	// from (e.g. a bare `DashboardView{}` in a test that doesn't care about
+	// the strip).
+	Availability Availability `json:"availability"`
 }
 
 // ProcessCounts mirrors serverwatch.ProcSnapshot's aggregate counts (Top is

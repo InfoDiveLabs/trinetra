@@ -65,7 +65,8 @@ var dashboardMockupDemoNumbers = []string{
 	"220<span class=\"of\">", // systemd units demo count
 	"12d 04h",                // uptime demo
 	"nextcloud</span><span class=\"track\"><i style=\"width:62%\"", // top-cpu demo hbar
-	"512M", // top-mem demo value
+	"512M",             // top-mem demo value
+	"1 incident · 45m", // availability-strip demo incident/downtime text
 }
 
 func dashboardTestDeps(t *testing.T) Deps {
@@ -117,6 +118,48 @@ func TestDashboardRendersRealSnapshotValues(t *testing.T) {
 		if strings.Contains(body, demo) {
 			t.Errorf("dashboard body still contains mockup demo markup %q", demo)
 		}
+	}
+}
+
+// TestDashboardRendersRealAvailabilityStrip pins Part 2 of the field-feedback
+// fix: the #hbstrip availability panel must render the real per-request
+// Availability data (ComputeAvailability's output, threaded through
+// DashboardView) rather than the app.js mockup's hardcoded #hbstrip demo
+// (N=96/dF=68/dT=70/wA=41, "1 incident · 45m").
+func TestDashboardRendersRealAvailabilityStrip(t *testing.T) {
+	view := dashboardTestView()
+	view.Availability = Availability{
+		Blocks:         []AvailabilityBlock{{Down: false, Label: "00:00"}, {Down: true, Label: "00:15"}},
+		UptimePct:      97.57,
+		Incidents:      2,
+		IncidentsLabel: "2 incidents",
+		DowntimeStr:    "35m",
+	}
+	d := enrollTestDeps(t)
+	d.Snapshot = func() DashboardView { return view }
+
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		"97.57% up",
+		"2 incidents",
+		"35m",
+		`class="seg down" title="00:15 · down"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard body missing real availability value %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "1 incident · 45m") {
+		t.Error("dashboard body still contains the app.js mockup's hardcoded availability demo text")
 	}
 }
 
