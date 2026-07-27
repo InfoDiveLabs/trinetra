@@ -13,17 +13,17 @@ func TestAnomalyThresholdFireOnceThenRecover(t *testing.T) {
 		return []Check{{Key: "disk:/", Value: v, Threshold: 90, HasThreshold: true}}
 	}
 	// First breach -> one fire.
-	ev := s.Evaluate(chk(95), b, 3, 0, 100)
+	ev := s.Evaluate(chk(95), b, 3, 0, true, 100)
 	if len(ev) != 1 || ev[0].Kind != "fire" {
 		t.Fatalf("want 1 fire, got %+v", ev)
 	}
 	// Sustained breach -> no repeat.
-	ev = s.Evaluate(chk(96), b, 3, 0, 160)
+	ev = s.Evaluate(chk(96), b, 3, 0, true, 160)
 	if len(ev) != 0 {
 		t.Fatalf("sustained should be silent, got %+v", ev)
 	}
 	// Clears -> recover.
-	ev = s.Evaluate(chk(80), b, 3, 0, 220)
+	ev = s.Evaluate(chk(80), b, 3, 0, true, 220)
 	if len(ev) != 1 || ev[0].Kind != "recover" {
 		t.Fatalf("want recover, got %+v", ev)
 	}
@@ -36,12 +36,12 @@ func TestAnomalyThresholdFireOnceThenRecover(t *testing.T) {
 // for the existing numeric checks).
 func TestBreachUsesFireMsgWhenSet(t *testing.T) {
 	withMsg := Check{Key: "docker:web", Value: 1, Threshold: 1, HasThreshold: true, FireMsg: "container web is down (exited)"}
-	if breach, reason := withMsg.breach(NewBaseline(), 3, 0); !breach || reason != "container web is down (exited)" {
+	if breach, reason := withMsg.breach(NewBaseline(), 3, 0, true); !breach || reason != "container web is down (exited)" {
 		t.Fatalf("breach with FireMsg = (%v, %q), want (true, %q)", breach, reason, "container web is down (exited)")
 	}
 
 	noMsg := Check{Key: "disk:/", Value: 95, Threshold: 90, HasThreshold: true}
-	if breach, reason := noMsg.breach(NewBaseline(), 3, 0); !breach || reason != "disk:/ = 95.0 ≥ threshold 90.0" {
+	if breach, reason := noMsg.breach(NewBaseline(), 3, 0, true); !breach || reason != "disk:/ = 95.0 ≥ threshold 90.0" {
 		t.Fatalf("breach without FireMsg = (%v, %q), want numeric fallback", breach, reason)
 	}
 }
@@ -53,10 +53,10 @@ func TestEvaluateRecoverUsesRecoverMsgWhenSet(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
 	fire := Check{Key: "docker:web", Value: 1, Threshold: 1, HasThreshold: true, RecoverMsg: "container web recovered"}
-	s.Evaluate([]Check{fire}, b, 3, 0, 100)
+	s.Evaluate([]Check{fire}, b, 3, 0, true, 100)
 
 	recover := Check{Key: "docker:web", Value: 0, Threshold: 1, HasThreshold: true, RecoverMsg: "container web recovered"}
-	ev := s.Evaluate([]Check{recover}, b, 3, 0, 160)
+	ev := s.Evaluate([]Check{recover}, b, 3, 0, true, 160)
 	if len(ev) != 1 || ev[0].Kind != "recover" || ev[0].Text != "container web recovered" {
 		t.Fatalf("recover with RecoverMsg = %+v, want text %q", ev, "container web recovered")
 	}
@@ -64,8 +64,8 @@ func TestEvaluateRecoverUsesRecoverMsgWhenSet(t *testing.T) {
 	// No RecoverMsg -> default wording.
 	s2 := NewAlertState()
 	b2 := NewBaseline()
-	s2.Evaluate([]Check{{Key: "cpu", Value: 95, Threshold: 90, HasThreshold: true}}, b2, 3, 0, 100)
-	ev2 := s2.Evaluate([]Check{{Key: "cpu", Value: 10, Threshold: 90, HasThreshold: true}}, b2, 3, 0, 160)
+	s2.Evaluate([]Check{{Key: "cpu", Value: 95, Threshold: 90, HasThreshold: true}}, b2, 3, 0, true, 100)
+	ev2 := s2.Evaluate([]Check{{Key: "cpu", Value: 10, Threshold: 90, HasThreshold: true}}, b2, 3, 0, true, 160)
 	if len(ev2) != 1 || ev2[0].Text != "cpu back to normal" {
 		t.Fatalf("recover without RecoverMsg = %+v, want default wording", ev2)
 	}
@@ -77,10 +77,71 @@ func TestAnomalyBaselineDeviation(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		b.Observe("cpu", 10, 5)
 	}
-	// No static threshold, but z spike must fire.
-	ev := s.Evaluate([]Check{{Key: "cpu", Value: 70, Interval: 5}}, b, 3, 0, 100)
+	// No static threshold, but z spike must fire (baseline alerts enabled).
+	ev := s.Evaluate([]Check{{Key: "cpu", Value: 70, Interval: 5}}, b, 3, 0, true, 100)
 	if len(ev) != 1 || ev[0].Kind != "fire" {
 		t.Fatalf("want baseline fire, got %+v", ev)
+	}
+}
+
+// TestBaselineAlertsOffSuppressesDeviationButNotThreshold replays the field
+// complaint (Part 1 of the baseline/strip/status fix): cpu/mem/temp have a
+// low, unstable mean and were flapping fire/recover every minute on
+// sigma-deviation alone. With baseline_alerts=false the z-score branch must
+// be skipped entirely -- a huge-sigma deviation produces NO baseline Event --
+// while a genuine threshold breach on the very same check still fires,
+// confirming threshold alerting is unaffected by the toggle.
+func TestBaselineAlertsOffSuppressesDeviationButNotThreshold(t *testing.T) {
+	s := NewAlertState()
+	b := NewBaseline()
+	for i := 0; i < 200; i++ {
+		b.Observe("cpu", 10, 5)
+	}
+	// Sanity: this same spike would fire with baseline alerts enabled.
+	z, ready := b.Z("cpu", 70)
+	if !ready || math.Abs(z) < 3 {
+		t.Fatalf("setup invariant broken: z=%v ready=%v, want a large ready z", z, ready)
+	}
+
+	// baseline_alerts=false: no threshold configured -> no event at all,
+	// despite the huge sigma deviation.
+	ev := s.Evaluate([]Check{{Key: "cpu", Value: 70, Interval: 5}}, b, 3, 0, false, 100)
+	if len(ev) != 0 {
+		t.Fatalf("baseline_alerts=false should suppress the deviation fire entirely, got %+v", ev)
+	}
+
+	// Threshold breach on the same key, same toggle off -> still fires.
+	ev = s.Evaluate([]Check{{Key: "cpu", Value: 96, Threshold: 90, HasThreshold: true, Interval: 5}}, b, 3, 0, false, 160)
+	if len(ev) != 1 || ev[0].Kind != "fire" {
+		t.Fatalf("threshold breach must fire regardless of baseline_alerts, got %+v", ev)
+	}
+}
+
+// TestBaselineAlertsOnFiresSubjectToSigmaAndMinPct confirms baseline_alerts=
+// true reproduces the pre-existing sigma+minPct-gated behavior exactly (a
+// materially-far outlier fires, a near-mean-but-many-sigma wobble does not).
+func TestBaselineAlertsOnFiresSubjectToSigmaAndMinPct(t *testing.T) {
+	s := NewAlertState()
+	b := NewBaseline()
+	for i := 0; i < 400; i++ {
+		v := 43.0
+		if i%2 == 0 {
+			v = 43.2
+		} else {
+			v = 42.8
+		}
+		b.Observe("temp", v, 5)
+	}
+
+	// Big z, but relative deviation ~4.6% < minPct 15% -> no breach.
+	ev := s.Evaluate([]Check{{Key: "temp", Value: 45, Interval: 5}}, b, 3, 0.15, true, 100)
+	if len(ev) != 0 {
+		t.Fatalf("want no breach (below minPct gate) even with baseline_alerts=true, got %+v", ev)
+	}
+	// Far outlier clears both gates -> fires.
+	ev = s.Evaluate([]Check{{Key: "temp", Value: 60, Interval: 5}}, b, 3, 0.15, true, 160)
+	if len(ev) != 1 || ev[0].Kind != "fire" {
+		t.Fatalf("want 1 fire (far outlier clears both gates), got %+v", ev)
 	}
 }
 
@@ -91,8 +152,8 @@ func TestAnomalyBaselineDeviation(t *testing.T) {
 func TestAnomalyEvaluatePassesIntervalToObserve(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
-	s.Evaluate([]Check{{Key: "cpu", Value: 10, Interval: 5}}, b, 3, 0, 100)
-	s.Evaluate([]Check{{Key: "disk:/", Value: 10, Interval: 60}}, b, 3, 0, 100)
+	s.Evaluate([]Check{{Key: "cpu", Value: 10, Interval: 5}}, b, 3, 0, true, 100)
+	s.Evaluate([]Check{{Key: "disk:/", Value: 10, Interval: 60}}, b, 3, 0, true, 100)
 	if got, want := b.Stats["cpu"].Alpha, alphaFor(5); got != want {
 		t.Fatalf("cpu alpha = %v, want %v (from Check.Interval=5)", got, want)
 	}
@@ -138,13 +199,13 @@ func TestBaselineMinPctGateSuppressesNoisyStableMetric(t *testing.T) {
 	}
 
 	// (a) value 45 (mean ~43): big z, but relative deviation ~4.6%% < 15% -> no breach.
-	ev := s.Evaluate([]Check{{Key: "temp", Value: 45, Interval: 5}}, b, 3, 0.15, 100)
+	ev := s.Evaluate([]Check{{Key: "temp", Value: 45, Interval: 5}}, b, 3, 0.15, true, 100)
 	if len(ev) != 0 {
 		t.Fatalf("want no breach (relative deviation below minPct gate), got %+v", ev)
 	}
 
 	// (b) value 60 (mean ~43): both |z|>=sigma AND relative deviation (~39%%) >= 15% -> breach.
-	ev = s.Evaluate([]Check{{Key: "temp", Value: 60, Interval: 5}}, b, 3, 0.15, 160)
+	ev = s.Evaluate([]Check{{Key: "temp", Value: 60, Interval: 5}}, b, 3, 0.15, true, 160)
 	if len(ev) != 1 || ev[0].Kind != "fire" {
 		t.Fatalf("want 1 fire (far outlier clears both gates), got %+v", ev)
 	}
@@ -160,7 +221,7 @@ func TestBaselineMinPctZeroPreservesPureSigmaBehavior(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		b.Observe("cpu", 10, 5)
 	}
-	ev := s.Evaluate([]Check{{Key: "cpu", Value: 70, Interval: 5}}, b, 3, 0, 100)
+	ev := s.Evaluate([]Check{{Key: "cpu", Value: 70, Interval: 5}}, b, 3, 0, true, 100)
 	if len(ev) != 1 || ev[0].Kind != "fire" {
 		t.Fatalf("minPct=0 should preserve pure-sigma fire, got %+v", ev)
 	}
@@ -177,7 +238,7 @@ func TestBreachMinPctGateNearZeroMeanDoesNotPanic(t *testing.T) {
 		b.Observe("counter", 0, 5)
 	}
 	chk := Check{Key: "counter", Value: 0.05, Interval: 5}
-	breach, _ := chk.breach(b, 3, 0.15)
+	breach, _ := chk.breach(b, 3, 0.15, true)
 	if breach {
 		t.Fatalf("tiny absolute deviation from a near-zero mean should not breach with meanFloor guarding the relative gate")
 	}

@@ -66,6 +66,33 @@ func TestBaselineMinPctRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBaselineAlertsDefaultOffRoundTrip pins Part 1 of the field-feedback
+// fix: baseline-deviation alerting is opt-in, default OFF (spiky cpu/mem/temp
+// metrics were flapping constantly on sigma-deviation in the field; threshold
+// alerting is unaffected and always on). Mirrors
+// TestBaselineMinPctRoundTrip's set/get/unset shape.
+func TestBaselineAlertsDefaultOffRoundTrip(t *testing.T) {
+	c := Default()
+	if got, ok := c.Get("baseline_alerts"); !ok || got != "false" {
+		t.Fatalf("baseline_alerts default = (%q, %v), want (false, true)", got, ok)
+	}
+	if err := c.Set("baseline_alerts", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("baseline_alerts"); got != "true" {
+		t.Fatalf("after set true = %q, want true", got)
+	}
+	if err := c.Set("baseline_alerts", "not-a-bool"); err == nil {
+		t.Fatal("expected error for non-bool baseline_alerts value")
+	}
+	if err := c.Unset("baseline_alerts"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("baseline_alerts"); got != "false" {
+		t.Fatalf("after unset = %q, want default false", got)
+	}
+}
+
 func TestSaveLoad(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sub", "config.json")

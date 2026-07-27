@@ -128,6 +128,14 @@ exception: the running time-series store isn't reopened on `SIGHUP`, so a
   `sample_interval` first).
 - `heartbeat_interval` (seconds, min 1, default 30) — liveness heartbeat
   cadence, independent of both tiers.
+- `baseline_alerts` (bool, default **false**) — opt-in for baseline (z-score)
+  deviation alerting on cpu/mem/swap/temp/disk; threshold alerting on those
+  same metrics is always on regardless of this setting. Defaults off because
+  a metric with a low, unstable mean (e.g. an idling cpu%) can read many
+  standard deviations from its own baseline on a completely normal wobble,
+  firing/recovering every tick even with `baseline_sigma`/`baseline_min_pct`'s
+  gates below — enable it only if you specifically want deviation-based
+  alerts on top of the threshold ones.
 - `baseline_sigma` (default 3), `quiet_hours` (`"HH-HH"` or empty),
   `telegram.token`, `telegram.chat_id`, `healthchecks.url`, `schedule.daily`,
   `schedule.weekly`, `thresholds.disk_pct` (90), `thresholds.temp_c` (80),
@@ -340,9 +348,11 @@ Anything requiring elevation that isn't available (no root, no sudo, no
 `smartctl`) is simply omitted or marked unavailable — discovery never crashes
 the daemon for a missing tool.
 
-**What actually alerts today:** the sampler evaluates threshold + baseline
-checks on `cpu`, `mem`, `swap`, `temp`, and each discovered `disk:<mount>`
-(see thresholds above), plus three binary checks: Docker container up/down
+**What actually alerts today:** the sampler always evaluates threshold checks
+on `cpu`, `mem`, `swap`, `temp`, and each discovered `disk:<mount>` (see
+thresholds above); baseline (z-score) deviation checks on those same metrics
+are opt-in via `baseline_alerts` (default off — see Config keys above), plus
+three binary checks: Docker container up/down
 (`docker:<name>`, running=ok/anything else=bad), failed systemd units
 (`service:<unit>`, from `systemctl --failed`, recovers once the unit is no
 longer listed), and SMART health (`smart:<device>`, `FAILED`=bad). All of

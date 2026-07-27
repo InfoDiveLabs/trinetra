@@ -41,10 +41,14 @@ type Event struct {
 	Critical bool
 }
 
-func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma, minPct float64, nowUnix int64) []Event {
+// Evaluate checks each of checks for a breach and fires/recovers its active
+// state accordingly. baselineAlerts gates the baseline (z-score) deviation
+// branch of each Check's breach() (see that method's doc) -- threshold-based
+// breaches are unaffected and always evaluated regardless of its value.
+func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma, minPct float64, baselineAlerts bool, nowUnix int64) []Event {
 	var events []Event
 	for _, c := range checks {
-		breach, reason := c.breach(b, sigma, minPct)
+		breach, reason := c.breach(b, sigma, minPct, baselineAlerts)
 		_, active := s.Active[c.Key]
 		switch {
 		case breach && !active:
@@ -117,12 +121,22 @@ func (s *AlertState) Unack(key string) error {
 // "relative" gate trivially for any nonzero value, defeating its purpose.
 const meanFloor = 1.0
 
-func (c Check) breach(b *Baseline, sigma, minPct float64) (bool, string) {
+// breach reports whether c currently breaches, and its human reason text.
+// Threshold breaches (c.HasThreshold) are always evaluated. The baseline
+// (z-score) deviation branch below only runs when baselineAlerts is true --
+// field feedback showed cpu/mem/temp's low, unstable mean firing/recovering
+// on sigma-deviation alone every minute even with the sigma+minPct gates
+// below, so baseline alerting is opt-in (internal/config's baseline_alerts,
+// default false) and threshold alerting stays always on regardless.
+func (c Check) breach(b *Baseline, sigma, minPct float64, baselineAlerts bool) (bool, string) {
 	if c.HasThreshold && c.Value >= c.Threshold {
 		if c.FireMsg != "" {
 			return true, c.FireMsg
 		}
 		return true, fmt.Sprintf("%s = %.1f ≥ threshold %.1f", c.Key, c.Value, c.Threshold)
+	}
+	if !baselineAlerts {
+		return false, ""
 	}
 	if z, ready := b.Z(c.Key, c.Value); ready && math.Abs(z) >= sigma {
 		// A metric can be many sigma from its mean while barely moving in

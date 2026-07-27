@@ -32,7 +32,21 @@ type Config struct {
 	// in relative terms suppresses that flapping. Threshold-based alerts
 	// (disk/docker/etc.) are unaffected.
 	BaselineMinPct float64 `json:"baseline_min_pct,omitempty"`
-	QuietHours     string  `json:"quiet_hours,omitempty"` // "23-8" or ""
+	// BaselineAlerts gates the baseline (z-score) deviation branch of
+	// anomaly evaluation (internal/serverwatch/anomaly.go breach/Evaluate):
+	// threshold-based alerting (disk/docker/service/smart + cpu/mem/swap/
+	// temp over their configured thresholds) is unaffected and always on.
+	// Defaults to false -- field feedback showed spiky host metrics
+	// (cpu/mem/temp) with a low, unstable mean firing/recovering baseline
+	// alerts every minute even with BaselineSigma/BaselineMinPct's existing
+	// gates, so baseline alerting is now opt-in. A plain bool (not a
+	// *bool like Collect's toggles) is fine here because the desired
+	// zero-value default (false) IS Go's bool zero value, so omitempty
+	// dropping an unset/false value from the JSON is exactly correct --
+	// unlike Collect's toggles, which default to true and so need the
+	// nil-means-unset pointer trick.
+	BaselineAlerts bool   `json:"baseline_alerts,omitempty"`
+	QuietHours     string `json:"quiet_hours,omitempty"` // "23-8" or ""
 	Telegram       struct {
 		Token  string `json:"token,omitempty"`
 		ChatID string `json:"chat_id,omitempty"`
@@ -566,6 +580,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return trimFloat(c.BaselineSigma), true
 	case "baseline_min_pct":
 		return trimFloat(c.BaselineMinPct), true
+	case "baseline_alerts":
+		return strconv.FormatBool(c.BaselineAlerts), true
 	case "quiet_hours":
 		return c.QuietHours, true
 	case "telegram.token":
@@ -677,6 +693,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("baseline_min_pct must be >= 0")
 		}
 		c.BaselineMinPct = v
+	case "baseline_alerts":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("baseline_alerts: %w", err)
+		}
+		c.BaselineAlerts = b
 	case "quiet_hours":
 		if err := validateQuietHours(val); err != nil {
 			return err
