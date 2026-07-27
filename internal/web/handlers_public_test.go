@@ -9,8 +9,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"serverwatch/internal/config"
 )
 
 // publicTestSnapshot is a DashboardView with a distinct, individually
@@ -425,6 +428,91 @@ func TestPublicEventsIncludesAvailabilityOnlyWhenAllowlisted(t *testing.T) {
 	line, _ := readFirstPublicSSEDataLine(t, srv)
 	if !strings.Contains(line, `"availability":{`) || !strings.Contains(line, `"uptime_pct":93.25`) {
 		t.Errorf("SSE frame missing availability despite being allowlisted:\n%s", line)
+	}
+}
+
+// TestPublicEventsStreamStopsOnDisableMidStream pins the security-relevant
+// half of publicEventsHandler's per-tick re-check (sse.go): an admin
+// disabling public.enabled WHILE an anonymous subscriber is connected must
+// stop the stream promptly on the next tick, not keep pushing frames to a
+// visitor the admin just turned off. The config behind Deps.Cfg is swapped
+// atomically (a real config reload race-swaps the daemon's config pointer
+// the same way — see internal/serverwatch/web_deps.go), so flipping it here
+// while the handler goroutine reads it on every tick is race-safe under -race.
+// FastInterval is set to 1s so the test doesn't need to wait long for the
+// next tick to notice the flip.
+func TestPublicEventsStreamStopsOnDisableMidStream(t *testing.T) {
+	d := enrollTestDeps(t)
+	d.Snapshot = func() DashboardView { return publicTestSnapshot() }
+
+	enabled := config.Default()
+	enabled.FastInterval = 1
+	enabled.Public.Enabled = true
+	enabled.Public.Panels = []string{"cpu"}
+	var cfgPtr atomic.Pointer[config.Config]
+	cfgPtr.Store(enabled)
+	d.Cfg = func() *config.Config { return cfgPtr.Load() }
+
+	srv := httptest.NewServer(newHandler(d))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/public/events", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /public/events: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /public/events status = %d, want 200", resp.StatusCode)
+	}
+
+	// One reader goroutine: signal firstFrame once the initial "data: " frame
+	// (proof the stream is live) arrives, then signal ended when the stream
+	// closes (ReadString returns an error — io.EOF once the handler returns
+	// and the server finishes the response).
+	firstFrame := make(chan struct{}, 1)
+	ended := make(chan struct{}, 1)
+	go func() {
+		r := bufio.NewReader(resp.Body)
+		sawFirst := false
+		for {
+			line, err := r.ReadString('\n')
+			if !sawFirst && strings.HasPrefix(line, "data: ") {
+				sawFirst = true
+				firstFrame <- struct{}{}
+			}
+			if err != nil {
+				ended <- struct{}{}
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-firstFrame:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the first SSE frame before flipping the config")
+	}
+
+	// Flip to disabled by atomically swapping in a fresh config (never
+	// mutating the one the handler goroutine may be reading).
+	disabled := config.Default()
+	disabled.FastInterval = 1
+	disabled.Public.Enabled = false
+	disabled.Public.Panels = []string{"cpu"}
+	cfgPtr.Store(disabled)
+
+	select {
+	case <-ended:
+		// Handler noticed public.enabled=false on the next tick and returned,
+		// closing the stream — exactly the required behavior.
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream did not terminate within 5s of public.enabled flipping to false — publicEventsHandler kept streaming to a disabled public view")
 	}
 }
 
