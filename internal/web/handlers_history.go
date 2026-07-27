@@ -197,7 +197,7 @@ func historyPageHandler(d Deps) http.HandlerFunc {
 			metrics[i] = "disk:" + m
 		}
 		data := HistoryPageData{
-			PageData:    newPageData(r, d, "History", "Metrics & downtime", "ok"),
+			PageData:    newPageData(r, d, "History", "Metrics & downtime"),
 			DiskMounts:  mounts,
 			DiskMetrics: strings.Join(metrics, ","),
 			DiskLabels:  strings.Join(mounts, ","),

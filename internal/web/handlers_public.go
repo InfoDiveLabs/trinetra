@@ -268,7 +268,7 @@ func buildPublicSettingsPageData(r *http.Request, d Deps) PublicSettingsPageData
 		snap = d.Snapshot()
 	}
 	return PublicSettingsPageData{
-		PageData: newPageData(r, d, "Public view", "Choose what the world sees", "ok"),
+		PageData: newPageData(r, d, "Public view", "Choose what the world sees"),
 		Enabled:  cfg.Public.Enabled,
 		Panels:   buildPublicSettingsRows(cfg.Public.Panels, snap),
 	}

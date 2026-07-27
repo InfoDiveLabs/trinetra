@@ -25,15 +25,22 @@ type activeAlertView struct {
 	Reason string
 	Since  int64
 	Acked  bool
+	// Critical mirrors serverwatch.ActiveAlert.Critical -- the severity of
+	// whatever condition raised this alert, recorded at fire time -- so
+	// callers (topbarStatus) can tell a critical alert from a mere warning
+	// among currently active alerts without re-deriving it from Reason
+	// text.
+	Critical bool
 }
 
 // alertStateFile mirrors serverwatch.AlertState's JSON encoding just enough
 // to decode it (see activeAlertView's doc).
 type alertStateFile struct {
 	Active map[string]struct {
-		Since  int64  `json:"since"`
-		Reason string `json:"reason"`
-		Acked  bool   `json:"acked,omitempty"`
+		Since    int64  `json:"since"`
+		Reason   string `json:"reason"`
+		Acked    bool   `json:"acked,omitempty"`
+		Critical bool   `json:"critical,omitempty"`
 	} `json:"active"`
 }
 
@@ -59,7 +66,7 @@ func loadActiveAlerts(path string) []activeAlertView {
 	}
 	out := make([]activeAlertView, 0, len(f.Active))
 	for key, a := range f.Active {
-		out = append(out, activeAlertView{Key: key, Reason: a.Reason, Since: a.Since, Acked: a.Acked})
+		out = append(out, activeAlertView{Key: key, Reason: a.Reason, Since: a.Since, Acked: a.Acked, Critical: a.Critical})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Since != out[j].Since {
@@ -121,41 +128,22 @@ type DashboardPageData struct {
 	TopMemBars []containerBar
 }
 
-// dashboardStatus derives the topbar status pill ("ok"/"warn"/"crit") from
-// the live view: any un-acked active alert makes it "crit" (matching the
-// mockup's red topbar during an active incident); short of that, a
-// disk at/above DiskWarnPct or any failed systemd unit is "warn"; otherwise
-// "ok".
-func dashboardStatus(view DashboardView, alerts []activeAlertView) string {
-	for _, a := range alerts {
-		if !a.Acked {
-			return "crit"
-		}
-	}
-	if view.UnitsFailed > 0 {
-		return "warn"
-	}
-	for _, d := range view.Disks {
-		if d.UsagePct >= DiskWarnPct {
-			return "warn"
-		}
-	}
-	return "ok"
-}
-
 // buildDashboardPageData assembles DashboardPageData from Deps: the live
 // snapshot (Deps.Snapshot, already projected by
 // internal/serverwatch/daemon_web.go's adapter into a DashboardView) plus
-// the current active-alerts list (Deps.AlertStatePath).
+// the current active-alerts list (Deps.AlertStatePath). The topbar's status
+// pill (PageData.Status/StatusText) is computed by newPageData itself from
+// that same AlertStatePath (topbarStatus, templates.go) -- see PageData's
+// doc for why every page shares one computation rather than this page
+// deriving its own from disk/unit state.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
 	if d.Snapshot != nil {
 		view = d.Snapshot()
 	}
 	alerts := loadActiveAlerts(d.AlertStatePath)
-	status := dashboardStatus(view, alerts)
 	return DashboardPageData{
-		PageData: newPageData(r, d, "Dashboard", "Overview · live", status),
+		PageData: newPageData(r, d, "Dashboard", "Overview · live"),
 		View:     view,
 		Alerts:   alerts,
 		TopCPUBars: containerBars(view.TopCPUContainers,

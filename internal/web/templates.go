@@ -52,9 +52,6 @@ var templatesFS embed.FS
 
 // funcMap holds the template helpers base.html and page templates call.
 var funcMap = template.FuncMap{
-	// statusText mirrors the mockup app.js's stTxt map (the topbar's status
-	// pill), keyed by the same ok/warn/crit status strings.
-	"statusText": statusText,
 	// ledClass/humanBytes/humanRate/diskTrendText/diskTrendClass/
 	// loadLedClass/diskWarnPct/diskCriticalPct/subInt (handlers_dashboard.go)
 	// are templates/dashboard.html's formatting helpers for the live
@@ -74,20 +71,6 @@ var funcMap = template.FuncMap{
 	// asset appends the build's content-hash to an asset path for cache-busting
 	// (see assetVersion); templates reference assets via {{asset "/assets/x"}}.
 	"asset": assetURL,
-}
-
-// statusText maps a topbar status ("ok"/"warn"/"crit") to its display text.
-// Anything else (including "") falls back to the "ok" text rather than
-// rendering blank.
-func statusText(status string) string {
-	switch status {
-	case "warn":
-		return "1 warning"
-	case "crit":
-		return "2 alerts firing"
-	default:
-		return "All systems normal"
-	}
 }
 
 // NavItem is one entry in the sidebar nav — either a section heading (just
@@ -181,9 +164,19 @@ func currentRole(r *http.Request) string {
 // PageData is what every page template renders against: base.html's shell
 // (nav/topbar) plus whatever the page itself needs.
 type PageData struct {
-	// Title/Sub/Status drive the topbar (<h1>/<p>/status pill), mirroring
-	// the mockup's data-title/data-sub/data-status attributes.
-	Title, Sub, Status string
+	// Title/Sub drive the topbar's <h1>/<p>, mirroring the mockup's
+	// data-title/data-sub attributes.
+	Title, Sub string
+	// Status/StatusText drive the topbar's status pill (led color class +
+	// display text) and are ALWAYS computed by newPageData from the real
+	// active-alert set (topbarStatus, AlertStatePath) -- see that function's
+	// doc. They are not caller-supplied: every page's topbar reflects the
+	// same real severity/counts rather than each page guessing its own
+	// (the old bug this replaces: most page handlers passed the literal
+	// "ok" into newPageData regardless of what was actually firing, and the
+	// old statusText helper mapped "crit"/"warn" to hardcoded text like "2
+	// alerts firing" no matter the real count).
+	Status, StatusText string
 	// Role is the current user's role ("admin" or "viewer"), from
 	// currentRole. Drives both nav filtering and the read-only pill/footer.
 	Role string
@@ -207,24 +200,29 @@ type PageData struct {
 }
 
 // newPageData builds the PageData every page handler needs, deriving Role
-// from the request and Active from its path. d is used only to compute the
-// nav's live badge counts (navCountsFor) — every other field is unchanged
-// from the request/session.
-func newPageData(r *http.Request, d Deps, title, sub, status string) PageData {
+// from the request and Active from its path, and Status/StatusText from the
+// real active-alert set (topbarStatus(loadActiveAlerts(d.AlertStatePath))) --
+// see PageData's doc for why every page shares this one computation rather
+// than each supplying its own. d is also used to compute the nav's live
+// badge counts (navCountsFor); every other field is unchanged from the
+// request/session.
+func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	role := currentRole(r)
 	csrf := ""
 	if sess, ok := sessionFromContext(r); ok {
 		csrf = sess.CSRF
 	}
+	status, statusText := topbarStatus(loadActiveAlerts(d.AlertStatePath))
 	return PageData{
-		Title:  title,
-		Sub:    sub,
-		Status: status,
-		Role:   role,
-		Active: r.URL.Path,
-		Nav:    navForRole(role, navCountsFor(d)),
-		Nonce:  nonceFromContext(r),
-		CSRF:   csrf,
+		Title:      title,
+		Sub:        sub,
+		Status:     status,
+		StatusText: statusText,
+		Role:       role,
+		Active:     r.URL.Path,
+		Nav:        navForRole(role, navCountsFor(d)),
+		Nonce:      nonceFromContext(r),
+		CSRF:       csrf,
 	}
 }
 
@@ -263,7 +261,7 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 // nav (the visitor IS signed in, so the shell should look like it does
 // everywhere else), just with the content block replaced.
 func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
-	data := newPageData(r, d, "Admin only", "Access denied", "ok")
+	data := newPageData(r, d, "Admin only", "Access denied")
 	if err := renderPageStatus(w, "denied.html", data, http.StatusForbidden); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

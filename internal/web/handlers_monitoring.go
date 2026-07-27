@@ -27,22 +27,6 @@ type MonitoringPageData struct {
 	DisksWarnCrit int
 }
 
-// monitoringStatus derives the topbar status pill the same way
-// dashboardStatus (handlers_dashboard.go) does for the dashboard: any failed
-// unit or any container down or any disk at/above warn is "warn"/"crit" as
-// appropriate, otherwise "ok". Unlike the dashboard, this page has no active
-// alerts of its own to weigh in — the alerts panel lives on /alerts.
-func monitoringStatus(view MonitoringView, containersDown int) string {
-	switch {
-	case len(view.FailedUnits) > 0 || containersDown > 0:
-		return "crit"
-	case view.DisksWarnCritCount() > 0:
-		return "warn"
-	default:
-		return "ok"
-	}
-}
-
 // monitoringMemBarNormalMiB is the MemMiB value templates/monitoring.html's
 // container/process memory meters treat as a "full" (100%) bar — purely a
 // display normalization (there's no fixed per-host memory ceiling to divide
@@ -97,7 +81,7 @@ func buildMonitoringPageData(r *http.Request, d Deps) MonitoringPageData {
 	warnCrit := view.DisksWarnCritCount()
 
 	return MonitoringPageData{
-		PageData:        newPageData(r, d, "Monitoring", "Containers · services · filesystems · processes", monitoringStatus(view, total-up)),
+		PageData:        newPageData(r, d, "Monitoring", "Containers · services · filesystems · processes"),
 		View:            view,
 		ContainersUp:    up,
 		ContainersTotal: total,

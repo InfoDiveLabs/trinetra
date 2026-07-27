@@ -188,7 +188,7 @@ func contentTypeByExt(name string) string {
 // time this runs, so it does no authorization of its own.
 func adminPlaceholderHandler(d Deps, title, sub string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		data := newPageData(r, d, title, sub, "ok")
+		data := newPageData(r, d, title, sub)
 		if err := renderPage(w, "admin_placeholder.html", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

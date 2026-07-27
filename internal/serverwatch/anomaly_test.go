@@ -244,6 +244,29 @@ func TestBreachMinPctGateNearZeroMeanDoesNotPanic(t *testing.T) {
 	}
 }
 
+// TestEvaluateFireRecordsCriticalOnActiveAlert pins Part 3 of the
+// baseline/strip/status fix: the topbar's status pill needs to distinguish
+// critical from warning severity among CURRENTLY ACTIVE alerts, but
+// ActiveAlert previously carried no severity at all (only Since/Reason/
+// Acked/AckedAt) -- once a Check fired, its Critical flag was lost. Evaluate
+// must now carry each firing Check's Critical flag onto the ActiveAlert it
+// records, for both critical and non-critical (warning) checks.
+func TestEvaluateFireRecordsCriticalOnActiveAlert(t *testing.T) {
+	s := NewAlertState()
+	b := NewBaseline()
+	critChk := Check{Key: "disk:/", Value: 95, Threshold: 90, HasThreshold: true, Critical: true}
+	warnChk := Check{Key: "cpu", Value: 96, Threshold: 90, HasThreshold: true, Critical: false}
+
+	s.Evaluate([]Check{critChk, warnChk}, b, 3, 0, false, 100)
+
+	if got := s.Active["disk:/"]; !got.Critical {
+		t.Fatalf("disk:/ ActiveAlert.Critical = false, want true (fired from a Critical Check)")
+	}
+	if got := s.Active["cpu"]; got.Critical {
+		t.Fatalf("cpu ActiveAlert.Critical = true, want false (fired from a non-critical Check)")
+	}
+}
+
 func TestAckSetsAckedAndAckedAt(t *testing.T) {
 	s := NewAlertState()
 	s.Active["disk:/"] = ActiveAlert{Since: 100, Reason: "disk:/ = 95.0 ≥ threshold 90.0"}

@@ -234,17 +234,10 @@ func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
 			firing++
 		}
 	}
-	status := "ok"
-	switch {
-	case firing > 0:
-		status = "crit"
-	case acked > 0:
-		status = "warn"
-	}
 	uptime, hasUptime := uptimePct30d(d)
 
 	return AlertsPageData{
-		PageData:     newPageData(r, d, "Alerts & incidents", "Firing now + history", status),
+		PageData:     newPageData(r, d, "Alerts & incidents", "Firing now + history"),
 		ActiveAlerts: activeAlertRows(active),
 		History:      alertHistoryRows(events),
 		FiringCount:  firing,

@@ -194,7 +194,7 @@ func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 		hours[i] = i
 	}
 	return ConfigPageData{
-		PageData:      newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours", "ok"),
+		PageData:      newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours"),
 		DiskPct:       trimFloatText(cfg.Thresholds.DiskPct),
 		TempC:         trimFloatText(cfg.Thresholds.TempC),
 		MemPct:        trimFloatText(cfg.Thresholds.MemPct),

@@ -131,7 +131,7 @@ func buildUsersPageData(r *http.Request, d Deps, store UserStore, issued *Issued
 		})
 	}
 	return UsersPageData{
-		PageData: newPageData(r, d, "Users", "Accounts, roles, and enrollment tokens", "ok"),
+		PageData: newPageData(r, d, "Users", "Accounts, roles, and enrollment tokens"),
 		Users:    rows,
 		Issued:   issued,
 	}

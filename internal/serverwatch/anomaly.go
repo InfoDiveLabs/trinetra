@@ -15,6 +15,15 @@ type ActiveAlert struct {
 	// AckedAt=0), and so a not-yet-acked alert doesn't grow the JSON.
 	Acked   bool  `json:"acked,omitempty"`
 	AckedAt int64 `json:"acked_at,omitempty"`
+	// Critical mirrors the firing Check's own Critical field (the severity
+	// of whatever condition raised this alert), recorded at fire time so
+	// consumers of alerts.json -- notably internal/web's topbar status pill
+	// (which needs to tell a critical alert from a mere warning among
+	// CURRENTLY ACTIVE alerts) -- don't have to re-derive it. omitempty so
+	// an alerts.json written before this field existed still unmarshals
+	// cleanly (Critical simply zero-values to false), mirroring
+	// Acked/AckedAt's own back-compat doc above.
+	Critical bool `json:"critical,omitempty"`
 }
 
 type AlertState struct {
@@ -52,7 +61,7 @@ func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma, minPct float64
 		_, active := s.Active[c.Key]
 		switch {
 		case breach && !active:
-			s.Active[c.Key] = ActiveAlert{Since: nowUnix, Reason: reason}
+			s.Active[c.Key] = ActiveAlert{Since: nowUnix, Reason: reason, Critical: c.Critical}
 			events = append(events, Event{Key: c.Key, Kind: "fire", Text: reason, Critical: c.Critical})
 		case !breach && active:
 			delete(s.Active, c.Key)
