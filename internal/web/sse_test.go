@@ -111,6 +111,64 @@ func TestEventsStreamEmitsSnapshotFrame(t *testing.T) {
 	}
 }
 
+// TestEventsStreamIncludesTopContainers pins that /events' SSE frame carries
+// the current top-containers CPU/mem data (DashboardView.TopCPUContainers/
+// TopMemContainers), not just the resource tiles' scalars — app.js's
+// swBootSSE needs this on the wire to keep the "Top containers · CPU"/
+// "· Memory" hbar panels live between full page loads, matching the
+// server-rendered ones dashboardHandler builds via containerBars
+// (handlers_dashboard.go).
+func TestEventsStreamIncludesTopContainers(t *testing.T) {
+	d := eventsTestDeps(t, 60)
+	d.Snapshot = func() DashboardView {
+		return DashboardView{
+			CPU:              42.5,
+			TopCPUContainers: []ContainerView{{Name: "web", State: "running", CPUPct: 37, MemMiB: 128}},
+			TopMemContainers: []ContainerView{{Name: "db", State: "running", CPUPct: 4, MemMiB: 512}},
+		}
+	}
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	cookie := viewerCookie(t, users, sessions)
+
+	srv := httptest.NewServer(newHandler(d))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.AddCookie(cookie)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	r := bufio.NewReader(resp.Body)
+	var dataLine string
+	for {
+		line, err := r.ReadString('\n')
+		if strings.HasPrefix(line, "data: ") {
+			dataLine = line
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading SSE stream: %v", err)
+		}
+	}
+
+	if !strings.Contains(dataLine, `"top_cpu_containers":[{"name":"web"`) {
+		t.Errorf("SSE frame missing top_cpu_containers: %s", dataLine)
+	}
+	if !strings.Contains(dataLine, `"top_mem_containers":[{"name":"db"`) {
+		t.Errorf("SSE frame missing top_mem_containers: %s", dataLine)
+	}
+}
+
 // TestEventsStreamStopsPromptlyOnClientDisconnect pins that eventsHandler
 // notices r.Context().Done() (a client disconnect) immediately rather than
 // only discovering it the next time its ticker fires and a write fails.

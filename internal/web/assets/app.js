@@ -138,11 +138,13 @@
   //
   // swBootSSE opens an EventSource against /events (viewer-gated exactly
   // like GET /, see routes.go) and, for each "snapshot" frame (JSON-encoded
-  // web.DashboardView, sse.go), updates the tiles' text/led-class in place
-  // and appends the point to a small client-side rolling buffer that feeds
-  // the three live uPlot charts. There is no history backfill here — full
-  // time-range charts (querying the SampleStore) are Task 9; these charts
-  // only ever show what's arrived over this SSE connection so far.
+  // web.DashboardView, sse.go), updates the tiles' text/led-class in place,
+  // rebuilds the two "Top containers" hbar panels (renderContainerBars) from
+  // the frame's top_cpu_containers/top_mem_containers, and appends the point
+  // to a small client-side rolling buffer that feeds the three live uPlot
+  // charts. There is no history backfill here — full time-range charts
+  // (querying the SampleStore) are Task 9; these charts only ever show
+  // what's arrived over this SSE connection so far.
   window.swBootSSE=function(){
     if(!window.EventSource) return;
     var MAXPTS=120; // ~ a few minutes at a 5s fast tick
@@ -158,6 +160,53 @@
       if(bps>=1024) return Math.round(bps/1024)+' KB/s';
       return Math.round(bps)+' B/s';
     }
+
+    // renderContainerBars fills one of the "Top containers" hbar panels
+    // (#top-cpu-bars/#top-mem-bars, dashboard.html) from an SSE frame's
+    // top_cpu_containers/top_mem_containers list, mirroring handlers_
+    // dashboard.go's containerBars: each row's bar width is normalized
+    // against the list's OWN max value (not a fixed 0-100 scale — MemMiB is
+    // an absolute megabyte figure), and the whole panel is rebuilt from
+    // scratch every frame rather than patched in place, so a container
+    // list that grows/shrinks/reorders between frames doesn't leave stale
+    // rows behind. list may be undefined/empty (collect.container_stats
+    // disabled, or just not producing data yet) -- that renders the same
+    // "no container stats available" placeholder the server-rendered page
+    // shows, never a JS error. Built with createElement/textContent rather
+    // than an innerHTML template string since a container name comes from
+    // whatever docker reports (not sanitized like most of this file's other
+    // innerHTML uses, e.g. renderDowntime's fixed enum/numeric fields).
+    function renderContainerBars(id,list,rowClass,valueFn,formatFn){
+      var box=document.getElementById(id);
+      if(!box) return;
+      box.innerHTML='';
+      if(!list||!list.length){
+        var note=document.createElement('div');
+        note.className='note';
+        note.textContent='no container stats available';
+        box.appendChild(note);
+        return;
+      }
+      var max=0;
+      list.forEach(function(c){ var v=valueFn(c); if(v>max) max=v; });
+      list.forEach(function(c){
+        var v=valueFn(c);
+        var width=max>0?(v/max*100):0;
+        var row=document.createElement('div');
+        row.className=rowClass?('hbar '+rowClass):'hbar';
+        var lbl=document.createElement('span'); lbl.className='lbl'; lbl.textContent=c.name;
+        var track=document.createElement('span'); track.className='track';
+        var bar=document.createElement('i'); bar.style.width=width.toFixed(0)+'%';
+        track.appendChild(bar);
+        var val=document.createElement('span'); val.className='v'; val.textContent=formatFn(v);
+        row.appendChild(lbl); row.appendChild(track); row.appendChild(val);
+        box.appendChild(row);
+      });
+    }
+    function containerCPUPct(c){ return c.cpu_pct; }
+    function containerMemMiB(c){ return c.mem_mib; }
+    function fmtContainerPct(v){ return Math.round(v)+'%'; }
+    function fmtContainerMiB(v){ return Math.round(v)+'M'; }
 
     function ensureChart(id,series,colors){
       if(charts[id]) return charts[id];
@@ -216,6 +265,8 @@
         setText('val-proc',String(s.processes.total));
         setText('sub-proc',s.processes.running+' run · '+s.processes.zombie+' zombie');
       }
+      renderContainerBars('top-cpu-bars',s.top_cpu_containers,'',containerCPUPct,fmtContainerPct);
+      renderContainerBars('top-mem-bars',s.top_mem_containers,'mem',containerMemMiB,fmtContainerMiB);
 
       pushPoint(buf.t,s.ts); pushPoint(buf.cpu,s.cpu); pushPoint(buf.load,s.load1);
       pushPoint(buf.mem,s.mem_pct); pushPoint(buf.rx,s.net_rx_bps); pushPoint(buf.tx,s.net_tx_bps);

@@ -74,7 +74,7 @@
 
   <div class="grid g-2" style="margin-top:14px">
     <div class="panel"><div class="head"><span class="eyebrow">Top containers · CPU</span><a href="/monitoring" class="note mono">all →</a></div>
-      <div class="hbars">
+      <div class="hbars" id="top-cpu-bars">
         {{if .TopCPUBars}}
         {{range .TopCPUBars}}
         <div class="hbar"><span class="lbl">{{.Name}}</span><span class="track"><i style="width:{{printf "%.0f" .WidthPct}}%"></i></span><span class="v">{{.ValueText}}</span></div>
@@ -82,7 +82,7 @@
         {{else}}<div class="note">no container stats available</div>{{end}}
       </div></div>
     <div class="panel"><div class="head"><span class="eyebrow">Top containers · Memory</span><a href="/monitoring" class="note mono">all →</a></div>
-      <div class="hbars">
+      <div class="hbars" id="top-mem-bars">
         {{if .TopMemBars}}
         {{range .TopMemBars}}
         <div class="hbar mem"><span class="lbl">{{.Name}}</span><span class="track"><i style="width:{{printf "%.0f" .WidthPct}}%"></i></span><span class="v">{{.ValueText}}</span></div>
