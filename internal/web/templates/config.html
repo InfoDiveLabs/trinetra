@@ -3,14 +3,37 @@
   <form method="post" action="/config">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
 
+    <div class="section-label"><span class="eyebrow">Access &amp; domain</span></div>
+    <p class="note" style="margin:-4px 0 14px">How people reach the web UI, and the address passkeys are bound to — read-only here: managed via the CLI (<span class="mono">serverwatch config set web.*</span>). Editing the origin/RP&nbsp;ID from the web could lock you out of passkey login, so there's no form control for it on this page.</p>
+    <div class="grid g-2">
+      <div class="panel"><div class="head"><span class="eyebrow">How it's served</span></div>
+        <label class="field"><span class="lb">Web UI enabled</span><span class="mono">{{if .WebEnabled}}yes{{else}}no{{end}}</span></label>
+        <label class="field"><span class="lb">Serving mode</span><span class="mono">{{.WebMode}}</span></label>
+        <label class="field"><span class="lb">Public hostname (RP ID)</span><span class="mono">{{.WebRPID}}</span></label>
+        <label class="field"><span class="lb">Full site origin</span><span class="mono">{{.WebOrigin}}</span></label></div>
+      <div class="panel"><div class="head"><span class="eyebrow">Sign-in</span></div>
+        <label class="field"><span class="lb">Bind address</span><span class="mono">{{.WebListen}}</span></label>
+        <label class="field"><span class="lb">Stay signed in for</span><span class="mono">{{.WebSessionTTL}}</span></label>
+        <p class="note" style="margin-top:4px">Public status page exposure stays on <a href="/settings/public">Public view →</a>.</p></div>
+    </div>
+
     <div class="section-label"><span class="eyebrow">When to alert</span></div>
     <p class="note" style="margin:-4px 0 14px">A metric triggers an alert if it crosses a fixed limit <em>or</em> deviates sharply from its own recent normal.</p>
     <div class="panel"><div class="head"><span class="eyebrow">Thresholds</span></div>
       <div class="grid g-4" style="gap:0 14px">
         <label class="field"><span class="lb">Disk full at (%)</span><input type="number" step="any" name="disk_pct" value="{{.DiskPct}}"><span class="hint">Alert when any filesystem is this full.</span></label>
         <label class="field"><span class="lb">Memory high at (%)</span><input type="number" step="any" name="mem_pct" value="{{.MemPct}}"></label>
+        <label class="field"><span class="lb">CPU high at (%)</span><input type="number" step="any" name="cpu_pct" value="{{.CPUPct}}"></label>
+        <label class="field"><span class="lb">Swap high at (%)</span><input type="number" step="any" name="swap_pct" value="{{.SwapPct}}"></label>
         <label class="field"><span class="lb">Temperature high at (°C)</span><input type="number" step="any" name="temp_c" value="{{.TempC}}"></label>
-        <label class="field"><span class="lb">Anomaly sensitivity</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}"><span class="hint">Also flag a reading this many standard deviations from its 7-day norm. Lower = more sensitive (more alerts); 3 is a good default.</span></label>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Anomaly detection</span><input type="checkbox" class="switch" name="baseline_alerts" value="1" {{if .BaselineAlerts}}checked{{end}}></div>
+      <p class="note" style="margin:-4px 0 14px">Off by default — flags readings that deviate from the 7-day norm. Can be noisy on spiky metrics.</p>
+      <div class="grid g-2" style="gap:0 14px">
+        <label class="field"><span class="lb">Anomaly sensitivity (σ)</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}"><span class="hint">Flag a reading this many standard deviations from its 7-day norm. Lower = more sensitive (more alerts); 3 is a good default.</span></label>
+        <label class="field"><span class="lb">Minimum deviation (fraction)</span><input type="number" step="any" name="baseline_min_pct" value="{{.BaselineMinPct}}"><span class="hint">A reading must ALSO be at least this far from the mean, as a fraction — e.g. 0.15 = 15% — before it counts as anomalous. Raw fraction, not a percent.</span></label>
       </div>
     </div>
 
@@ -30,6 +53,31 @@
       </div>
       <div id="qhBar" class="qh-bar" style="margin-top:16px"></div>
       <div class="note mono" style="display:flex;justify-content:space-between;margin-top:6px"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+      <label class="field" style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;max-width:340px"><span class="lb" style="margin:0">Critical alerts bypass quiet hours</span><input type="checkbox" class="switch" name="critical_overrides_quiet" value="1" {{if .CriticalOverridesQuiet}}checked{{end}}></label>
+    </div>
+
+    <div class="section-label"><span class="eyebrow">How often it measures &amp; how long it keeps data</span></div>
+    <p class="note" style="margin:-4px 0 14px">Cheap resource metrics are sampled fast; expensive checks (disk, docker, SMART) run less often. Raw fast samples are kept briefly, then summarized to 1-minute points for long-term history.</p>
+    <div class="grid g-2">
+      <div class="panel"><div class="head"><span class="eyebrow">Sampling</span></div>
+        <label class="field"><span class="lb">Resource sampling (seconds)</span><input type="number" step="1" name="fast_interval" value="{{.FastInterval}}"><span class="hint">CPU, memory, load, swap — measured this often. Drives the live dashboard and fast spike detection.</span></label>
+        <label class="field"><span class="lb">Heavy checks (seconds)</span><input type="number" step="1" name="sample_interval" value="{{.SampleInterval}}"><span class="hint">Disk usage, docker, systemd, SMART, connectivity. Must be a multiple of the resource sampling interval.</span></label>
+        <label class="field"><span class="lb">Heartbeat (seconds)</span><input type="number" step="1" name="heartbeat_interval" value="{{.HeartbeatInterval}}"><span class="hint">How often "I'm alive" is written. Determines how precisely downtime is measured after an outage.</span></label></div>
+      <div class="panel"><div class="head"><span class="eyebrow">Data retention</span></div>
+        <label class="field"><span class="lb">Keep detailed (raw) data for</span><input type="text" name="raw_retention" value="{{.RawRetention}}" placeholder="48h"><span class="hint">Duration like "48h". Full-resolution samples for recent, zoomed-in graphs. Older than this is summarized, not deleted.</span></label>
+        <label class="field"><span class="lb">Keep 1-minute history for</span><input type="text" name="rollup_retention" value="{{.RollupRetention}}" placeholder="720h"><span class="hint">Duration like "720h". Averaged min/avg/max points used for long-range charts, digests, and downtime history.</span></label></div>
+    </div>
+
+    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Extended data collection</span></div>
+      <p class="note" style="margin:-4px 0 14px">Opt-in extra collectors feeding the dashboard/history. All default on; turn any off to reduce load on constrained hosts.</p>
+      <div class="grid g-2" style="gap:2px 14px">
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Docker container stats</span><input type="checkbox" class="switch" name="collect_container_stats" value="1" {{if .CollectContainerStats}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Network throughput</span><input type="checkbox" class="switch" name="collect_net_throughput" value="1" {{if .CollectNetThroughput}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Systemd services inventory</span><input type="checkbox" class="switch" name="collect_services" value="1" {{if .CollectServices}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Process table overview</span><input type="checkbox" class="switch" name="collect_processes" value="1" {{if .CollectProcesses}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">SMART attribute reads</span><input type="checkbox" class="switch" name="collect_smart_attrs" value="1" {{if .CollectSmartAttrs}}checked{{end}}></label>
+      </div>
+      <label class="field" style="margin-top:10px;max-width:260px"><span class="lb">SMART scan interval (seconds)</span><input type="number" step="1" name="smart_interval" value="{{.SmartInterval}}"><span class="hint">Minimum seconds between SMART scans (smartctl -A), the heaviest per-device call. Default 1800 (30 min).</span></label>
     </div>
 
     <div class="section-label"><span class="eyebrow">What to monitor</span></div>

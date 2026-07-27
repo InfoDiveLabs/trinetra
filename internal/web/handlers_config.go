@@ -160,22 +160,62 @@ func parseWeekly(s string) (day, hm string, enabled bool) {
 // ConfigPageData is what templates/config.html renders against.
 type ConfigPageData struct {
 	PageData
-	DiskPct       string
-	TempC         string
-	MemPct        string
-	AnomalySigma  string
-	QuietEnabled  bool
-	QuietFrom     int
-	QuietTo       int
-	QuietHours    []int // 0..23, for the From/To <select> options
-	DailyEnabled  bool
-	DailyTime     string
-	WeeklyEnabled bool
-	WeeklyDay     string
-	WeeklyTime    string
-	Weekdays      []string
-	DeadmanURL    string
-	Targets       []configTargetRow
+	DiskPct      string
+	TempC        string
+	MemPct       string
+	CPUPct       string
+	SwapPct      string
+	AnomalySigma string
+	// BaselineAlerts/BaselineMinPct back the "Anomaly detection" panel:
+	// BaselineAlerts is the important on/off switch for the whole
+	// z-score-deviation branch (defaults to false); BaselineMinPct is
+	// rendered/accepted as the raw fraction config.Set expects (e.g. 0.15),
+	// not a percent, per the template's hint text.
+	BaselineAlerts         bool
+	BaselineMinPct         string
+	QuietEnabled           bool
+	QuietFrom              int
+	QuietTo                int
+	QuietHours             []int // 0..23, for the From/To <select> options
+	CriticalOverridesQuiet bool
+	// FastInterval/SampleInterval/HeartbeatInterval are the collection
+	// cadence fields (seconds), rendered as plain number-input values.
+	FastInterval      string
+	SampleInterval    string
+	HeartbeatInterval string
+	// CollectContainerStats..CollectSmartAttrs mirror config.Config's
+	// Collect.* opt-in extended-collector toggles (all default true);
+	// SmartInterval is collect.smart_interval's effective value in seconds.
+	CollectContainerStats bool
+	CollectNetThroughput  bool
+	CollectServices       bool
+	CollectProcesses      bool
+	CollectSmartAttrs     bool
+	SmartInterval         string
+	// RawRetention/RollupRetention are storage.raw_retention/rollup_retention
+	// duration strings (e.g. "48h"), validated by validateRetentionDuration.
+	RawRetention    string
+	RollupRetention string
+	DailyEnabled    bool
+	DailyTime       string
+	WeeklyEnabled   bool
+	WeeklyDay       string
+	WeeklyTime      string
+	Weekdays        []string
+	DeadmanURL      string
+	Targets         []configTargetRow
+	// WebEnabled..WebSessionTTL are the READ-ONLY "Access & domain" panel's
+	// current values (web.enabled/mode/origin/rp_id/listen/session_ttl).
+	// Deliberately not editable here: the page must render no <input> that
+	// config.Set could apply a web.* key from, since a mistaken/forged
+	// origin or rp_id change from the web UI itself could lock an admin out
+	// of passkey login. Managed via `serverwatch config set web.*` instead.
+	WebEnabled    bool
+	WebMode       string
+	WebOrigin     string
+	WebRPID       string
+	WebListen     string
+	WebSessionTTL string
 }
 
 // buildConfigPageData assembles ConfigPageData from the current config
@@ -194,23 +234,45 @@ func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 		hours[i] = i
 	}
 	return ConfigPageData{
-		PageData:      newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours"),
-		DiskPct:       trimFloatText(cfg.Thresholds.DiskPct),
-		TempC:         trimFloatText(cfg.Thresholds.TempC),
-		MemPct:        trimFloatText(cfg.Thresholds.MemPct),
-		AnomalySigma:  trimFloatText(cfg.BaselineSigma),
-		QuietEnabled:  qOn,
-		QuietFrom:     qFrom,
-		QuietTo:       qTo,
-		QuietHours:    hours,
-		DailyEnabled:  cfg.Schedule.Daily != "",
-		DailyTime:     firstNonEmpty(cfg.Schedule.Daily, "09:00"),
-		WeeklyEnabled: wOn,
-		WeeklyDay:     wDay,
-		WeeklyTime:    wTime,
-		Weekdays:      weekdays,
-		DeadmanURL:    cfg.Healthchecks.URL,
-		Targets:       configTargetRows(cfg, snap),
+		PageData:               newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours"),
+		DiskPct:                trimFloatText(cfg.Thresholds.DiskPct),
+		TempC:                  trimFloatText(cfg.Thresholds.TempC),
+		MemPct:                 trimFloatText(cfg.Thresholds.MemPct),
+		CPUPct:                 trimFloatText(cfg.Thresholds.CPUPct),
+		SwapPct:                trimFloatText(cfg.Thresholds.SwapPct),
+		AnomalySigma:           trimFloatText(cfg.BaselineSigma),
+		BaselineAlerts:         cfg.BaselineAlerts,
+		BaselineMinPct:         trimFloatText(cfg.BaselineMinPct),
+		QuietEnabled:           qOn,
+		QuietFrom:              qFrom,
+		QuietTo:                qTo,
+		QuietHours:             hours,
+		CriticalOverridesQuiet: cfg.CriticalOverridesQuiet,
+		FastInterval:           strconv.Itoa(cfg.FastInterval),
+		SampleInterval:         strconv.Itoa(cfg.SampleInterval),
+		HeartbeatInterval:      strconv.Itoa(cfg.HeartbeatInterval),
+		CollectContainerStats:  cfg.ContainerStatsEnabled(),
+		CollectNetThroughput:   cfg.NetThroughputEnabled(),
+		CollectServices:        cfg.ServicesEnabled(),
+		CollectProcesses:       cfg.ProcessesEnabled(),
+		CollectSmartAttrs:      cfg.SmartAttrsEnabled(),
+		SmartInterval:          strconv.Itoa(cfg.SmartIntervalSec()),
+		RawRetention:           cfg.Storage.RawRetention,
+		RollupRetention:        cfg.Storage.RollupRetention,
+		DailyEnabled:           cfg.Schedule.Daily != "",
+		DailyTime:              firstNonEmpty(cfg.Schedule.Daily, "09:00"),
+		WeeklyEnabled:          wOn,
+		WeeklyDay:              wDay,
+		WeeklyTime:             wTime,
+		Weekdays:               weekdays,
+		DeadmanURL:             cfg.Healthchecks.URL,
+		Targets:                configTargetRows(cfg, snap),
+		WebEnabled:             cfg.Web.Enabled,
+		WebMode:                cfg.Web.Mode,
+		WebOrigin:              cfg.Web.Origin,
+		WebRPID:                cfg.Web.RPID,
+		WebListen:              cfg.Web.Listen,
+		WebSessionTTL:          cfg.Web.SessionTTL,
 	}
 }
 
@@ -277,6 +339,19 @@ func weeklyFormValue(r *http.Request) string {
 	return r.FormValue("weekly_day") + "@" + r.FormValue("weekly_time")
 }
 
+// checkboxFormValue returns the "true"/"false" string config.Config.Set
+// expects for a bool key, from the named checkbox's presence in the posted
+// form. A browser never submits an unchecked checkbox at all (no empty
+// value, no field), so absence must be read as an explicit "false" rather
+// than "leave unchanged" -- this is what lets every collect.*/baseline_
+// alerts/critical_overrides_quiet toggle below round-trip off correctly.
+func checkboxFormValue(r *http.Request, name string) string {
+	if r.FormValue(name) == "" {
+		return "false"
+	}
+	return "true"
+}
+
 // applyTargetEdits applies the posted monitors-table rows (target_name[],
 // target_enabled[] — only checked boxes are present, matched by value since
 // unchecked checkboxes never submit — and target_threshold[], positionally
@@ -338,8 +413,28 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			{"thresholds.disk_pct", r.FormValue("disk_pct")},
 			{"thresholds.temp_c", r.FormValue("temp_c")},
 			{"thresholds.mem_pct", r.FormValue("mem_pct")},
+			{"thresholds.cpu_pct", r.FormValue("cpu_pct")},
+			{"thresholds.swap_pct", r.FormValue("swap_pct")},
 			{"baseline_sigma", r.FormValue("anomaly_sigma")},
+			{"baseline_min_pct", r.FormValue("baseline_min_pct")},
+			{"baseline_alerts", checkboxFormValue(r, "baseline_alerts")},
 			{"quiet_hours", quietHoursFormValue(r)},
+			{"critical_overrides_quiet", checkboxFormValue(r, "critical_overrides_quiet")},
+			// fast_interval must be applied before sample_interval: config.Set's
+			// sample_interval validator checks against whatever FastInterval is
+			// already on the (cloned) config at the time it runs, so submitting
+			// both together needs the new fast_interval in place first.
+			{"fast_interval", r.FormValue("fast_interval")},
+			{"sample_interval", r.FormValue("sample_interval")},
+			{"heartbeat_interval", r.FormValue("heartbeat_interval")},
+			{"collect.container_stats", checkboxFormValue(r, "collect_container_stats")},
+			{"collect.net_throughput", checkboxFormValue(r, "collect_net_throughput")},
+			{"collect.services", checkboxFormValue(r, "collect_services")},
+			{"collect.processes", checkboxFormValue(r, "collect_processes")},
+			{"collect.smart_attrs", checkboxFormValue(r, "collect_smart_attrs")},
+			{"collect.smart_interval", r.FormValue("smart_interval")},
+			{"storage.raw_retention", r.FormValue("raw_retention")},
+			{"storage.rollup_retention", r.FormValue("rollup_retention")},
 			{"schedule.daily", dailyFormValue(r)},
 			{"schedule.weekly", weeklyFormValue(r)},
 			{"healthchecks.url", r.FormValue("deadman_url")},
