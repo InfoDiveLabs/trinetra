@@ -126,7 +126,31 @@
   document.addEventListener('click',function(e){var b=e.target.closest('.tabs button');if(!b)return;var w=b.closest('[data-tabs]');w.querySelectorAll('.tabs button').forEach(function(x){x.classList.toggle('on',x===b)});w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===b.dataset.tab)});});
   document.querySelectorAll('[data-filter]').forEach(function(inp){inp.addEventListener('input',function(){var q=inp.value.toLowerCase();document.querySelectorAll(inp.dataset.filter).forEach(function(tbl){tbl.querySelectorAll('tbody tr').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>-1?'':'none';});});});});
   document.addEventListener('click',function(e){var c=e.target.closest('.chip');if(c&&c.parentElement&&c.parentElement.classList.contains('chips')){c.parentElement.querySelectorAll('.chip').forEach(function(x){x.classList.remove('on')});c.classList.add('on');}});
-  document.addEventListener('click',function(e){var s=e.target.closest('.switch');if(s)s.classList.toggle('on');});
+  // A real `<input type="checkbox" class="switch">` (every server-rendered
+  // switch in config.html/public_settings.html/channels.html's modal forms,
+  // plus /settings/public's "enabled" + "panel" checkboxes) is driven purely
+  // by CSS `:checked` (style.css's input.switch:checked rule) — the browser
+  // already toggles its checked state, and the visual, on click, with no JS
+  // needed at all. Toggling a `.on` class on it too (the mockup's original
+  // behavior, ported unmodified) went out of sync with that: an input that
+  // starts checked (class list ["switch"], no "on") whose FIRST click
+  // unchecks it natively (checked -> false) would ALSO gain the "on" class
+  // (absent -> present), and .switch.on's background rule has no ":checked"
+  // guard, so it kept painting the switch as on despite the real control now
+  // being unchecked — exactly the reported "toggle doesn't visually update
+  // until Save" bug (a full-page reload re-renders from the server's actual
+  // value and "fixes" it, which is what made it look like only Save could
+  // ever update it). Scoping this handler off real inputs entirely fixes
+  // that: `:checked` alone drives every real switch's look, correctly and
+  // immediately, on every click. What's left for this handler is the one
+  // genuinely decorative `.switch` this app still has — channels.html's
+  // per-row enable toggle, a `<button type="submit">` (not an input) whose
+  // class carries its OWN state via a server-rendered `{{if $c.Enabled}}on{{
+  // end}}`; giving it the same instant-feedback toggle before its form's
+  // full-page submit completes is harmless there (the submit always lands on
+  // the same on/off state the click implies) and was the original intent of
+  // this handler for the pre-checkbox mockup.
+  document.addEventListener('click',function(e){var s=e.target.closest('.switch');if(s&&s.tagName!=='INPUT')s.classList.toggle('on');});
 
   // ---- live dashboard (Task 8: SSE + uPlot) ----
   // dashboard.html wraps its live content in <div id="dashboard-live">
