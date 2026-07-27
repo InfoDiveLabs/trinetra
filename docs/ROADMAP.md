@@ -3,8 +3,8 @@
 Tracking board: **[Home Server project](https://github.com/users/Suraj-Tiwari/projects/1)**
 (cards grouped by *Area*; open follow-ups are linked issues).
 
-**Current release:** [v0.3.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.0) — embedded HTMX web UI with passkey auth, multi-user RBAC, web config, live dashboard + history, and a curated public view (`serverwatch-web` build; default binary stays stdlib-only).
-**Previous:** [v0.2.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.2.0) — multi-channel alerting, tiered sampling + time-series storage, extended data collection · [v0.1.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0) — single home server.
+**Current release:** [v0.3.2](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.2) — web-UI polish from real-deployment feedback: detailed live public page + `/` landing routing, `/monitoring` detail view, full web config editor, real nav/status/availability data, quieter alerts (baseline σ-detection opt-in), docker-overlay disk filtering, cache-busted assets. Deployed to a live host behind Cloudflare/nginx.
+**Previous:** [v0.3.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.0)/[v0.3.1](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.1) — embedded HTMX web UI (passkey auth, RBAC, live dashboard/history) · [v0.2.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.2.0) — alerting, tiered storage, extended collection · [v0.1.0](https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0) — single home server.
 
 ## Delivered (v0.3.0)
 
