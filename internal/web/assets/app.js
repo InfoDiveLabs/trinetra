@@ -29,12 +29,41 @@
   // -- resolves them).
   var CHART_COLORS={signal:'#f5a623',info:'#4aa3ff',cyan:'#34d399',violet:'#a78bfa',warn:'#ffb454',crit:'#ff5c5c'};
 
+  // ---- axis colors (theme-aware) ----
+  // Unlike a series' own stroke/fill (CHART_COLORS above), uPlot's axis
+  // label/tick/grid options are plain style reads, not canvas fills, so
+  // var(--…) custom properties DO resolve here via getComputedStyle --
+  // uPlot's own default (an empty axes:[{},{}]) is a fixed dark-mode color
+  // that's near-invisible against this app's dark background, so resolve
+  // the muted-text/hairline-border tokens style.css actually defines
+  // (--muted, --border) instead of leaving it at that default.
+  function swAxisColors(){
+    var cs=getComputedStyle(document.documentElement);
+    var muted=(cs.getPropertyValue('--muted')||'#8a97a9').trim();
+    var border=(cs.getPropertyValue('--border')||'rgba(255,255,255,.08)').trim();
+    return {stroke:muted,grid:border};
+  }
+  // swAxesOpt returns a fresh uPlot `axes` array (one entry per x/y axis,
+  // both charts here only ever have the two) colored from the CURRENTLY
+  // active theme -- call it at chart-build time, not once at load, so a
+  // rebuild after a theme toggle (see the 'sw-theme' listeners below) picks
+  // up the new theme's colors.
+  function swAxesOpt(){
+    var c=swAxisColors();
+    var ax={stroke:c.stroke,ticks:{stroke:c.grid},grid:{stroke:c.grid}};
+    return [ax,ax];
+  }
+
   // ---- gradient defs ----
   document.body.insertAdjacentHTML('afterbegin','<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'+
     ['gInfo','gViolet','gOk','gCrit','gCyan','gSig'].map(function(id){return '<linearGradient id="'+id+'" x1="0" y1="0" x2="0" y2="1"><stop class="a" offset="0"/><stop class="b" offset="1"/></linearGradient>';}).join('')+'</defs></svg>');
 
   // ---- theme ----
-  function setTheme(t){document.documentElement.dataset.theme=t; try{localStorage.sw_theme=t}catch(e){}}
+  // setTheme dispatches a 'sw-theme' DOM event after applying the new
+  // data-theme so any already-built uPlot charts can re-init with the new
+  // theme's axis colors (swAxesOpt) -- see swBootSSE/swBootHistoryCharts'
+  // 'sw-theme' listeners below, which destroy+rebuild their charts on it.
+  function setTheme(t){document.documentElement.dataset.theme=t; try{localStorage.sw_theme=t}catch(e){} document.dispatchEvent(new Event('sw-theme'));}
   try{ if(localStorage.sw_theme) setTheme(localStorage.sw_theme); else if(matchMedia('(prefers-color-scheme:light)').matches) setTheme('light'); else setTheme('dark'); }catch(e){setTheme('dark');}
   window.swToggleTheme=function(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');};
   document.addEventListener('keydown',function(e){ if((e.key==='t'||e.key==='T') && !/input|textarea|select/i.test(document.activeElement.tagName)) window.swToggleTheme(); });
@@ -136,11 +165,22 @@
       if(!el||!window.uPlot) return null;
       var uSeries=[{}];
       series.forEach(function(lbl,i){uSeries.push({label:lbl,stroke:colors[i],width:1.8,fill:colors[i]+'22'});});
-      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:[{},{}]};
+      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:swAxesOpt()};
       var data=[[]]; series.forEach(function(){data.push([]);});
       var u=new uPlot(opts,data,el);
       charts[id]=u;
       return u;
+    }
+
+    // rebuildCharts destroys every currently-mounted chart and immediately
+    // re-renders (renderCharts, defined below) so ensureChart re-creates
+    // each one with swAxesOpt()'s THEN-current theme colors -- the
+    // 'sw-theme' listener below calls this after a theme toggle, since
+    // uPlot has no public API to recolor an axis on an already-built
+    // instance in place.
+    function rebuildCharts(){
+      Object.keys(charts).forEach(function(id){ charts[id].destroy(); delete charts[id]; });
+      renderCharts();
     }
 
     function pushPoint(arr,v){arr.push(v); if(arr.length>MAXPTS) arr.shift();}
@@ -153,6 +193,8 @@
       var net=ensureChart('chart-net',['rx','tx'],[CHART_COLORS.cyan,CHART_COLORS.signal]);
       if(net) net.setData([buf.t,buf.rx,buf.tx]);
     }
+
+    document.addEventListener('sw-theme',rebuildCharts);
 
     var es=new EventSource('/events');
     es.addEventListener('snapshot',function(ev){
@@ -210,6 +252,12 @@
   // duration_sec}]}) — a proportional timeline SVG + one row per event,
   // matching the mockup's markup.
   var HISTORY_COLORS=[CHART_COLORS.signal,CHART_COLORS.info,CHART_COLORS.cyan,CHART_COLORS.violet,CHART_COLORS.warn,CHART_COLORS.crit];
+  // HISTORY_METRIC_COLORS gives the single-series charts (cpu/mem/temp) a
+  // color matching the mockup's palette instead of every one of them
+  // defaulting to HISTORY_COLORS[0] (signal/amber) -- CPU=info(blue),
+  // Memory=violet, Temperature=crit(red). Metrics absent here (multi-series
+  // charts don't consult this map) keep the existing HISTORY_COLORS cycling.
+  var HISTORY_METRIC_COLORS={cpu:CHART_COLORS.info,mem:CHART_COLORS.violet,temp:CHART_COLORS.crit};
   var HISTORY_RANGE_SECONDS={'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000};
 
   function historyFmtDur(sec){
@@ -233,12 +281,15 @@
     var charts={};
 
     // ensureChart mounts (once) a uPlot with one line per label in labels,
-    // colored from HISTORY_COLORS; subsequent calls reuse the instance.
-    function ensureChart(el,labels){
+    // colored from the optional colors array (falling back to HISTORY_COLORS
+    // cycling per-index for any label without one -- the multi-series
+    // charts, e.g. load1/5/15 or per-mount disk usage, don't pass colors at
+    // all); subsequent calls reuse the instance.
+    function ensureChart(el,labels,colors){
       if(charts[el.id]) return charts[el.id];
       if(!window.uPlot) return null;
       var series=[{}];
-      labels.forEach(function(lbl,i){var c=HISTORY_COLORS[i%HISTORY_COLORS.length]; series.push({label:lbl,stroke:c,width:1.8,fill:c+'22'});});
+      labels.forEach(function(lbl,i){var c=(colors&&colors[i])||HISTORY_COLORS[i%HISTORY_COLORS.length]; series.push({label:lbl,stroke:c,width:1.8,fill:c+'22'});});
       var data=[[]]; labels.forEach(function(){data.push([]);});
       var opts={
         width:el.clientWidth||600,
@@ -246,11 +297,19 @@
         series:series,
         cursor:{show:true},
         legend:{show:false},
-        axes:[{},{}]
+        axes:swAxesOpt()
       };
       var u=new uPlot(opts,data,el);
       charts[el.id]=u;
       return u;
+    }
+
+    // rebuildCharts mirrors swBootSSE's helper of the same name: destroy
+    // every mounted chart and reload so ensureChart re-creates each with
+    // swAxesOpt()'s then-current theme colors after a theme toggle.
+    function rebuildCharts(){
+      Object.keys(charts).forEach(function(id){ charts[id].destroy(); delete charts[id]; });
+      loadAll();
     }
 
     function currentRange(){
@@ -303,7 +362,7 @@
         if(!metric) return;
         fetchSeries(metric,range)
           .then(function(series){
-            var u=ensureChart(el,['avg']);
+            var u=ensureChart(el,['avg'],[HISTORY_METRIC_COLORS[metric]]);
             if(u) u.setData([series[0],series[1]]);
           })
           .catch(function(){});
@@ -382,6 +441,8 @@
         loadAll();
       });
     }
+
+    document.addEventListener('sw-theme',rebuildCharts);
 
     loadAll();
     renderDowntime();
