@@ -389,6 +389,39 @@ func applyTargetEdits(newCfg *config.Config, r *http.Request) error {
 	return nil
 }
 
+// applyIntervalEdits sets fast_interval and sample_interval together on
+// newCfg, validating the FINAL (fast, sample) pair as a whole rather than
+// via two sequential config.Config.Set calls. config.Set validates each key
+// against the OTHER field's value as it stands on newCfg at the moment that
+// Set runs -- so applying fast_interval then sample_interval (or the
+// reverse) checks the new value of one against the OLD, not-yet-applied
+// value of the other. That wrongly rejects some genuinely valid final
+// combinations: from defaults (fast=5, sample=60), posting fast=7/sample=126
+// (a valid pair: 126%7==0) fails no matter the order, since 60%7!=0 and
+// 126%5!=0 are both checked in isolation. Mirrors config.Set's own bounds
+// (fast_interval >= 1, sample_interval >= 5, sample must be an integer
+// multiple of fast) but checks them against each other's POSTED values, and,
+// like every other field in configSaveHandler, only mutates newCfg (a
+// clone) once both parse and the pair validates together, so a rejected
+// pair leaves the clone -- and therefore the live config, per cloneConfig's
+// doc -- untouched.
+func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error {
+	fast, err := strconv.Atoi(fastVal)
+	if err != nil || fast < 1 {
+		return fmt.Errorf("fast_interval must be an integer >= 1")
+	}
+	sample, err := strconv.Atoi(sampleVal)
+	if err != nil || sample < 5 {
+		return fmt.Errorf("sample_interval must be an integer >= 5")
+	}
+	if sample%fast != 0 {
+		return fmt.Errorf("sample_interval %d must be an integer multiple of fast_interval %d", sample, fast)
+	}
+	newCfg.FastInterval = fast
+	newCfg.SampleInterval = sample
+	return nil
+}
+
 // configSaveHandler handles POST /config: validates every posted field
 // against a clone of the current config via config.Config.Set (its
 // existing, already-tested validators — a bad value rejects with 400 and
@@ -420,12 +453,10 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			{"baseline_alerts", checkboxFormValue(r, "baseline_alerts")},
 			{"quiet_hours", quietHoursFormValue(r)},
 			{"critical_overrides_quiet", checkboxFormValue(r, "critical_overrides_quiet")},
-			// fast_interval must be applied before sample_interval: config.Set's
-			// sample_interval validator checks against whatever FastInterval is
-			// already on the (cloned) config at the time it runs, so submitting
-			// both together needs the new fast_interval in place first.
-			{"fast_interval", r.FormValue("fast_interval")},
-			{"sample_interval", r.FormValue("sample_interval")},
+			// fast_interval/sample_interval are deliberately NOT validated here
+			// via newCfg.Set -- see applyIntervalEdits below, called separately
+			// so the two are validated as a single final pair instead of each
+			// against the other's stale value.
 			{"heartbeat_interval", r.FormValue("heartbeat_interval")},
 			{"collect.container_stats", checkboxFormValue(r, "collect_container_stats")},
 			{"collect.net_throughput", checkboxFormValue(r, "collect_net_throughput")},
@@ -445,6 +476,16 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 				return
 			}
 		}
+		if err := applyIntervalEdits(newCfg, r.FormValue("fast_interval"), r.FormValue("sample_interval")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Folded into edits (after the fact, not through newCfg.Set -- see
+		// applyIntervalEdits) so the audit-diff loop below still covers them.
+		edits = append(edits,
+			scalarEdit{"fast_interval", r.FormValue("fast_interval")},
+			scalarEdit{"sample_interval", r.FormValue("sample_interval")},
+		)
 		if err := applyTargetEdits(newCfg, r); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

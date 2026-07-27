@@ -301,6 +301,74 @@ func TestConfigSaveIntervalsRoundTripAndRejectsBadCombo(t *testing.T) {
 	}
 }
 
+// TestConfigSaveAcceptsValidFinalIntervalCombo pins the fix for the
+// interval-validation-order bug: configSaveHandler must validate the FINAL
+// (fast_interval, sample_interval) pair as a whole, not each field against
+// the other's stale value. From defaults (fast=5, sample=60), POSTing
+// fast=7/sample=126 is a valid final combo (126%7==0) even though it fails
+// against either field's OLD value in isolation (60%7!=0, 126%5!=0) --
+// previously this was wrongly rejected with 400 no matter which field's
+// config.Set ran first.
+func TestConfigSaveAcceptsValidFinalIntervalCombo(t *testing.T) {
+	d, cfg, reloadCalled := configTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	if (*cfg).FastInterval != 5 || (*cfg).SampleInterval != 60 {
+		t.Fatalf("preconditions: fast/sample = %d/%d, want defaults 5/60", (*cfg).FastInterval, (*cfg).SampleInterval)
+	}
+
+	form := baseConfigForm()
+	form.Set("fast_interval", "7")
+	form.Set("sample_interval", "126")
+	rr := postForm(h, "/config", form, cookie, csrf)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if !*reloadCalled {
+		t.Fatal("Reload was not called")
+	}
+	if (*cfg).FastInterval != 7 || (*cfg).SampleInterval != 126 {
+		t.Errorf("intervals = %d/%d, want 7/126", (*cfg).FastInterval, (*cfg).SampleInterval)
+	}
+	if !strings.Contains(rr.Body.String(), `name="fast_interval" value="7"`) {
+		t.Error("re-rendered page doesn't show fast_interval=7")
+	}
+	if !strings.Contains(rr.Body.String(), `name="sample_interval" value="126"`) {
+		t.Error("re-rendered page doesn't show sample_interval=126")
+	}
+}
+
+// TestConfigSaveRejectsInvalidFinalIntervalCombo is the flip side: a final
+// pair that's genuinely invalid (100%7!=0) still 400s with nothing written,
+// even though the fix now validates the pair together instead of
+// field-by-field.
+func TestConfigSaveRejectsInvalidFinalIntervalCombo(t *testing.T) {
+	d, cfg, reloadCalled := configTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	before := *(*cfg)
+	form := baseConfigForm()
+	form.Set("fast_interval", "7")
+	form.Set("sample_interval", "100")
+	rr := postForm(h, "/config", form, cookie, csrf)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", rr.Code, rr.Body.String())
+	}
+	if *reloadCalled {
+		t.Error("Reload was called despite an invalid final interval combo")
+	}
+	if (*cfg).FastInterval != before.FastInterval || (*cfg).SampleInterval != before.SampleInterval {
+		t.Errorf("intervals changed despite bad combo: got %d/%d, want unchanged %d/%d",
+			(*cfg).FastInterval, (*cfg).SampleInterval, before.FastInterval, before.SampleInterval)
+	}
+}
+
 // TestConfigSaveFloatFieldsRoundTrip pins two float fields from different
 // panels: thresholds.cpu_pct (Thresholds) and baseline_min_pct (Anomaly
 // detection).
