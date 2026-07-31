@@ -77,6 +77,14 @@ type Deps struct {
 	// button (issue #66). May be nil in tests that don't exercise it; every
 	// caller (handlers_channels.go) must check before calling.
 	TestChannel func(name string) error
+	// ValidateChannel reports whether a channel config could actually build a
+	// working notifier (daemon_web.go wires it to serverwatch.buildNotifier,
+	// the same check `channel test` and delivery use, minus the network send).
+	// The channels handlers call it before persisting an ENABLED channel so
+	// the web editor never silently creates a channel that would be dropped at
+	// delivery time (#79 — e.g. a telegram channel with no chat id). May be
+	// nil in tests that don't exercise it; callers must check before calling.
+	ValidateChannel func(config.ChannelConfig, *config.Config) error
 	// Enabled mirrors cfg.Web.Enabled (the web.enabled config key, issue
 	// #58), read once at daemon startup — see daemon.go's cmdDaemon.
 	Enabled bool
