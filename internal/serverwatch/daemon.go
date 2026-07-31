@@ -1039,20 +1039,44 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			time.Sleep(3 * time.Second)
 			continue
 		}
-		for _, u := range ups {
-			offset = u.UpdateID + 1
-			// auto-capture chat id on first message (race-safe pointer swap)
-			if c.Telegram.ChatID == "" && u.ChatID != "" {
-				setChatID(u.ChatID)
-				c = getCfg()
-				tg = telegram.New(c.Telegram.Token, c.Telegram.ChatID)
-			}
+		// reply collects a snapshot and answers a single authorized command.
+		// It is only invoked by processUpdates for authorized senders, so an
+		// unknown chat neither triggers host collection nor receives a reply.
+		reply := func(cc *config.Config, u telegram.Update) {
 			nowUnix := time.Now().Unix()
-			snap := collectSnapshot(x, fs, &prevCPU, da, c, store, nowUnix)
+			snap := collectSnapshot(x, fs, &prevCPU, da, cc, store, nowUnix)
 			snap.TS = nowUnix
-			if err := tg.SendMessage(handleCommand(u.Text, store, snap, c)); err != nil {
+			client := telegram.New(cc.Telegram.Token, cc.Telegram.ChatID)
+			if err := client.SendMessage(handleCommand(u.Text, store, snap, cc)); err != nil {
 				fmt.Fprintln(stderr, "telegram send:", err)
 			}
 		}
+		offset, c = processUpdates(ups, offset, c, getCfg, setChatID, reply)
 	}
+}
+
+// processUpdates handles one batch of inbound Telegram updates. It advances
+// the offset, auto-captures the chat id from the first inbound message (the
+// zero-config setup path), and invokes reply for each command. It returns the
+// new offset and the (possibly reloaded) config so the caller can carry both
+// into the next GetUpdates cycle.
+func processUpdates(ups []telegram.Update, offset int, c *config.Config, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
+	for _, u := range ups {
+		offset = u.UpdateID + 1
+		// auto-capture chat id on first message (race-safe pointer swap)
+		if c.Telegram.ChatID == "" && u.ChatID != "" {
+			setChatID(u.ChatID)
+			c = getCfg()
+		}
+		// Sender authorization (#78): only ever act on the owner chat. Any
+		// other sender is dropped BEFORE collectSnapshot/SendMessage, so an
+		// unknown chat can neither trigger host-side collection nor be
+		// answered. An update with no identifiable chat id (and no owner yet)
+		// is likewise ignored.
+		if c.Telegram.ChatID == "" || u.ChatID != c.Telegram.ChatID {
+			continue
+		}
+		reply(c, u)
+	}
+	return offset, c
 }
