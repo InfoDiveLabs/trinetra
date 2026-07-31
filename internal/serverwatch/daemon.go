@@ -1,8 +1,10 @@
 package serverwatch
 
 import (
+	"crypto/rand"
 	"fmt"
 	"html"
+	"math/big"
 	"net/http"
 	"os"
 	"os/signal"
@@ -1025,13 +1027,23 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 	// The poller owns its CPUStat; it is never shared with the sampler goroutine.
 	offset := 0
 	var prevCPU CPUStat
+	// One-time enrollment PIN for the zero-config setup path (#78): an
+	// unclaimed bot is claimed only by "/start <pin>", not by whoever messages
+	// first. The PIN lives in memory (never persisted) and is printed to the
+	// log once while the bot is unclaimed.
+	pin := newEnrollPIN()
+	announced := false
 	for {
 		c := getCfg()
-		// GetUpdates needs only a token; gate on token so we can learn the chat
-		// id from the first inbound message (zero-config Telegram setup).
+		// GetUpdates needs only a token; gate on token so we can still learn
+		// the owner chat id via enrollment once a token is configured.
 		if c.Telegram.Token == "" {
 			time.Sleep(5 * time.Second)
 			continue
+		}
+		if c.Telegram.ChatID == "" && !announced {
+			fmt.Fprintf(stderr, "telegram: bot not yet enrolled. From your Telegram account, message the bot: /start %s\n", pin)
+			announced = true
 		}
 		tg := telegram.New(c.Telegram.Token, c.Telegram.ChatID)
 		ups, err := tg.GetUpdates(offset, 50)
@@ -1051,32 +1063,60 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 				fmt.Fprintln(stderr, "telegram send:", err)
 			}
 		}
-		offset, c = processUpdates(ups, offset, c, getCfg, setChatID, reply)
+		offset, c = processUpdates(ups, offset, c, pin, getCfg, setChatID, reply)
 	}
 }
 
 // processUpdates handles one batch of inbound Telegram updates. It advances
-// the offset, auto-captures the chat id from the first inbound message (the
-// zero-config setup path), and invokes reply for each command. It returns the
-// new offset and the (possibly reloaded) config so the caller can carry both
-// into the next GetUpdates cycle.
-func processUpdates(ups []telegram.Update, offset int, c *config.Config, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
+// the offset, enrolls the owner from a correct "/start <pin>" while the bot is
+// unclaimed, drops any update whose sender is not the owner chat, and invokes
+// reply for authorized commands. It returns the new offset and the (possibly
+// reloaded) config so the caller can carry both into the next GetUpdates
+// cycle.
+func processUpdates(ups []telegram.Update, offset int, c *config.Config, pin string, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
 	for _, u := range ups {
 		offset = u.UpdateID + 1
-		// auto-capture chat id on first message (race-safe pointer swap)
-		if c.Telegram.ChatID == "" && u.ChatID != "" {
-			setChatID(u.ChatID)
-			c = getCfg()
+		if c.Telegram.ChatID == "" {
+			// Unclaimed: ownership is granted ONLY by a correct "/start <pin>"
+			// (#78 Scenario A). Everything else is ignored, so an attacker who
+			// merely messages the bot first cannot hijack it.
+			if u.ChatID != "" && enrollMatch(u.Text, pin) {
+				setChatID(u.ChatID)
+				c = getCfg()
+				reply(c, u)
+			}
+			continue
 		}
-		// Sender authorization (#78): only ever act on the owner chat. Any
-		// other sender is dropped BEFORE collectSnapshot/SendMessage, so an
-		// unknown chat can neither trigger host-side collection nor be
-		// answered. An update with no identifiable chat id (and no owner yet)
-		// is likewise ignored.
-		if c.Telegram.ChatID == "" || u.ChatID != c.Telegram.ChatID {
+		// Claimed: only ever act on the owner chat. Any other sender is dropped
+		// BEFORE collectSnapshot/SendMessage, so an unknown chat can neither
+		// trigger host-side collection nor be answered (#78 Scenario B).
+		if u.ChatID != c.Telegram.ChatID {
 			continue
 		}
 		reply(c, u)
 	}
 	return offset, c
+}
+
+// enrollMatch reports whether text is exactly "/start <pin>" for a non-empty
+// pin. An empty pin never matches, so a bot can never be claimed by an empty
+// or missing PIN.
+func enrollMatch(text, pin string) bool {
+	if pin == "" {
+		return false
+	}
+	f := strings.Fields(text)
+	return len(f) == 2 && f[0] == "/start" && f[1] == pin
+}
+
+// newEnrollPIN returns a fresh 6-digit enrollment PIN from crypto/rand. On the
+// (practically impossible) event of a rand failure it returns "", which
+// enrollMatch treats as never-matching, so the bot fails closed rather than
+// becoming claimable without a secret.
+func newEnrollPIN() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }

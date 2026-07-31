@@ -69,8 +69,17 @@ running and will start on every boot.
 sudo serverwatch telegram set-token <token-from-BotFather>
 ```
 
-Then **send your bot any message** (e.g. `hi`). The daemon captures your chat id
-from that first message automatically — no need to set it by hand. Confirm:
+The daemon logs a one-time **enrollment PIN** on startup while it is unclaimed.
+Read it from the journal, then **from your Telegram account send the bot
+`/start <pin>`** to claim it as the owner chat. Only that chat is answered
+afterwards, so a stranger who messages the bot cannot claim it or read your
+data. Get the PIN with:
+
+```bash
+sudo journalctl -u serverwatch | grep "/start"
+```
+
+Then, in Telegram, confirm:
 
 ```bash
 # in Telegram:
