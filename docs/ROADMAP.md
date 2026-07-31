@@ -78,6 +78,17 @@ Verified by the full unit suite + `go test -race` + a dockerized end-to-end harn
 
 Everything below is tracked on the board as issues nested under epics.
 
+### Post-v0.3.2 (real-deployment feedback)
+Validated bug/UX reports from running the live host, filed as standalone issues (not yet grouped under an epic). Each was checked against the code before filing.
+- [#78 Telegram bot accepts commands from any sender; zero-config chat-id is hijackable](https://github.com/Suraj-Tiwari/server-monitor/issues/78) (security, high): no inbound sender authz + trust-on-first-message capture.
+- [#79 Telegram configured via web UI never delivers](https://github.com/Suraj-Tiwari/server-monitor/issues/79): chat-id auto-capture is wired only to the CLI-set global token, so a web-only setup is silently dropped.
+- [#80 Web UI sidebar shows a hardcoded name, not the signed-in passkey user](https://github.com/Suraj-Tiwari/server-monitor/issues/80): name/avatar are role-keyed literals ("Suraj"/"Aditi"), never read from the real user.
+- [#81 Mobile: fix clipped tables + dedicated mobile UI for data-dense sections](https://github.com/Suraj-Tiwari/server-monitor/issues/81): 5 tables clip for lack of `.tablewrap`; plus purpose-built mobile views for public/dashboard/monitoring/history.
+- [#82 `sudo serverwatch` fails on RHEL/CentOS](https://github.com/Suraj-Tiwari/server-monitor/issues/82): `/usr/local/bin` is off sudo's `secure_path` on some distros; fix via a `/usr/bin` symlink at install.
+- [#83 Interactive `serverwatch setup` wizard + up-front channel validation](https://github.com/Suraj-Tiwari/server-monitor/issues/83): no interactive setup exists; multi-channel config is flag-heavy and fails late.
+
+Investigated but not filed: CPU alert on a single core at 100%. The `cpu` metric is already the aggregate of all cores normalized to 0-100 (reads only the summary `cpu ` line of `/proc/stat`), so a single saturated core cannot trip the threshold. Not a bug.
+
 ### Post-release hardening (follow-ups)
 - [#1 Deploy to the home server and verify](https://github.com/Suraj-Tiwari/server-monitor/issues/1) — pending (manual, on-server)
 - ~~#2 systemd watchdog~~ · ~~#3 `//go:build unix`~~ · ~~#4 Throttle SMART~~ · ~~#5 binary-state alert wording~~ — shipped in v0.2.0
