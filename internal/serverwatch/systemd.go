@@ -11,6 +11,11 @@ import (
 
 const unitPath = "/etc/systemd/system/serverwatch.service"
 
+// secondaryBinPath is a symlink install adds alongside the real
+// /usr/local/bin/serverwatch so that `sudo serverwatch ...` resolves on
+// distros whose sudo secure_path omits /usr/local/bin (see cmdInstall).
+const secondaryBinPath = "/usr/bin/serverwatch"
+
 // renderUnit renders the systemd unit file installed by cmdInstall.
 // WatchdogSec=90 pairs with the sdNotify("WATCHDOG=1") ping the sampler
 // loop sends every fast tick (default 5s), far inside this 90s window; if
@@ -57,6 +62,15 @@ func cmdInstall(args []string) int {
 		fmt.Fprintf(stderr, "copy binary: %v\n", err)
 		return 1
 	}
+	// Also expose the binary on /usr/bin, which is on sudo's secure_path on
+	// every common distro (unlike /usr/local/bin, absent on RHEL/CentOS 7 and
+	// some minimal images). Without this, `sudo serverwatch ...` fails with
+	// "command not found" there even though the service itself runs fine off
+	// the absolute ExecStart. Non-fatal: the binary and unit are already in
+	// place, so a link failure only affects the `sudo serverwatch` shortcut.
+	if err := linkOnPath(dst, secondaryBinPath); err != nil {
+		fmt.Fprintf(stderr, "warning: could not link %s -> %s: %v\n", secondaryBinPath, dst, err)
+	}
 	if err := os.WriteFile(unitPath, []byte(renderUnit(dst)), 0o644); err != nil {
 		fmt.Fprintf(stderr, "write unit: %v\n", err)
 		return 1
@@ -81,10 +95,43 @@ func cmdInstall(args []string) int {
 	return 0
 }
 
+// linkOnPath ensures link is a symlink to target, so `sudo <name>` resolves
+// on distros whose secure_path omits target's directory. It never clobbers an
+// existing path: if anything already lives at link (a distro-provided real
+// binary, or any symlink), it is left untouched. Creating the symlink only
+// when link is absent keeps install idempotent and safe. A nil return means
+// link now resolves the command (freshly created, or already present).
+func linkOnPath(target, link string) error {
+	if target == link {
+		return nil
+	}
+	if _, err := os.Lstat(link); err == nil {
+		// Something already exists at link; do not clobber it.
+		return nil
+	}
+	return os.Symlink(target, link)
+}
+
+// unlinkOnPath removes link only when it is still OUR symlink pointing at
+// target, so uninstall never deletes a distro-provided real binary or a
+// symlink someone else created.
+func unlinkOnPath(target, link string) {
+	fi, err := os.Lstat(link)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return
+	}
+	if dest, _ := os.Readlink(link); dest == target {
+		_ = os.Remove(link)
+	}
+}
+
 func cmdUninstall(args []string) int {
 	x := osExec{}
 	_, _ = x.Run("systemctl", "disable", "--now", "serverwatch")
 	_ = os.Remove(unitPath)
+	// Remove the /usr/bin shortcut, but only if it is still OUR symlink into
+	// /usr/local/bin (never a distro-provided real binary).
+	unlinkOnPath("/usr/local/bin/serverwatch", secondaryBinPath)
 	_, _ = x.Run("systemctl", "daemon-reload")
 	purge := len(args) > 0 && args[0] == "--purge"
 	if purge {
