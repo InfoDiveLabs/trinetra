@@ -9,18 +9,18 @@
   </div>
 
   <div class="section-label"><span class="eyebrow">Firing</span></div>
-  <div class="panel pad0"><div class="tablewrap"><table>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
     <thead><tr><th>Severity</th><th>Alert</th><th>Since</th>{{if eq .Role "admin"}}<th></th>{{end}}</tr></thead>
     <tbody>
       {{range $a := .ActiveAlerts}}
       <tr>
-        <td>
+        <td data-label="Severity">
           {{if $a.Acked}}<span class="badge">acknowledged</span>{{else}}<span class="badge crit"><span class="led crit"></span>active</span>{{end}}
         </td>
-        <td><b>{{$a.Key}}</b><div class="note">{{$a.Reason}}</div></td>
-        <td class="mono note">{{$a.Since}}</td>
+        <td class="card-title"><b>{{$a.Key}}</b><div class="note">{{$a.Reason}}</div></td>
+        <td class="mono note" data-label="Since">{{$a.Since}}</td>
         {{if eq $.Role "admin"}}
-        <td style="text-align:right">
+        <td class="card-actions" style="text-align:right">
           {{if not $a.Acked}}
           <form method="post" action="/alerts/{{$a.Param}}/ack" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -36,16 +36,16 @@
     </tbody></table></div></div>
 
   <div class="section-label"><span class="eyebrow">Recent history</span><span class="note mono">last {{len .History}} events</span></div>
-  <div class="panel pad0"><div class="tablewrap"><table>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
     <thead><tr><th>Severity</th><th>Alert</th><th>Source</th><th>When</th><th>Notified</th></tr></thead>
     <tbody>
       {{range .History}}
       <tr>
-        <td><span class="badge {{if eq .Severity "critical"}}crit{{else if eq .Severity "warning"}}warn{{end}}">{{.Severity}}</span></td>
-        <td>{{.Title}}<div class="note">{{if eq .Kind "recover"}}recovered{{else}}fired{{end}}</div></td>
-        <td class="mono">{{.Source}}</td>
-        <td class="mono note">{{.When}}</td>
-        <td class="mono note">{{.Delivered}}</td>
+        <td data-label="Severity"><span class="badge {{if eq .Severity "critical"}}crit{{else if eq .Severity "warning"}}warn{{end}}">{{.Severity}}</span></td>
+        <td class="card-title">{{.Title}}<div class="note">{{if eq .Kind "recover"}}recovered{{else}}fired{{end}}</div></td>
+        <td class="mono" data-label="Source">{{.Source}}</td>
+        <td class="mono note" data-label="When">{{.When}}</td>
+        <td class="mono note" data-label="Notified">{{.Delivered}}</td>
       </tr>
       {{else}}
       <tr><td colspan="5" class="note">No alert history yet.</td></tr>

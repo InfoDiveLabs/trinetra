@@ -92,18 +92,18 @@
   </div>
 
   <div class="section-label"><span class="eyebrow">Filesystems</span><a href="/monitoring" class="note mono">details →</a></div>
-  <div class="panel pad0"><table>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
     <thead><tr><th>Mount</th><th>Device</th><th style="width:220px">Usage</th><th>Free</th><th>Trend</th></tr></thead>
     <tbody>
       {{range $v.Disks}}
-      <tr><td class="mono">{{.Mount}}</td><td class="mono note">{{.Device}}</td>
-        <td><div class="meter"><div class="bar {{ledClass .UsagePct (diskWarnPct) (diskCriticalPct)}}"><i style="width:{{printf "%.0f" .UsagePct}}%"></i></div><span class="pct">{{printf "%.0f" .UsagePct}}%</span></div></td>
-        <td class="mono">{{humanBytes .FreeBytes}}</td>
-        <td class="trend {{diskTrendClass .DaysToFull .DaysToFullKnown}}">{{diskTrendText .DaysToFull .DaysToFullKnown}}</td></tr>
+      <tr><td class="mono card-title">{{.Mount}}</td><td class="mono note" data-label="Device">{{.Device}}</td>
+        <td data-label="Usage"><div class="meter"><div class="bar {{ledClass .UsagePct (diskWarnPct) (diskCriticalPct)}}"><i style="width:{{printf "%.0f" .UsagePct}}%"></i></div><span class="pct">{{printf "%.0f" .UsagePct}}%</span></div></td>
+        <td class="mono" data-label="Free">{{humanBytes .FreeBytes}}</td>
+        <td class="trend {{diskTrendClass .DaysToFull .DaysToFullKnown}}" data-label="Trend">{{diskTrendText .DaysToFull .DaysToFullKnown}}</td></tr>
       {{else}}
       <tr><td colspan="5" class="note">no filesystems discovered</td></tr>
       {{end}}
-    </tbody></table></div>
+    </tbody></table></div></div>
 
   <div class="grid g-2" style="margin-top:14px">
     <div class="panel"><div class="head"><span class="eyebrow">Memory · live</span><span class="mono note" id="sub-mem-chart">{{printf "%.0f" $v.MemPct}}%</span></div>
