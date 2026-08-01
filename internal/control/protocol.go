@@ -28,6 +28,14 @@ type response struct {
 	Error  string          `json:"error"`
 }
 
+// streamID is the reserved response.ID for every event frame a connection
+// in Subscribe streaming mode sends (server.go's streamSubscribe):
+// response{ID: streamID, OK: true, Result: <core.Event JSON>}. Client.call's
+// own request ids (Client.nextID) start at 1 and only increase, so a normal
+// one-shot call never sees a response carrying streamID; only the client's
+// dedicated stream reader (client.go's Subscribe) looks for it.
+const streamID = -1
+
 // hello is the first frame exchanged in each direction after a connection
 // is established, used to agree on ProtocolVersion before any request or
 // response frame is sent. The client's hello also carries Token, the

@@ -31,6 +31,14 @@ type Client struct {
 	conn net.Conn
 	r    *bufio.Reader
 
+	// path and token are remembered from Dial so Subscribe (below) can open
+	// its own dedicated connection: the primary conn above is
+	// mutex-serialized for one-shot request/response calls, but a stream
+	// sits in a long-lived read loop that would otherwise starve every
+	// other caller sharing this Client.
+	path  string
+	token string
+
 	mu     sync.Mutex
 	nextID int
 }
@@ -51,7 +59,7 @@ func Dial(path, token string) (*Client, error) {
 		return nil, err
 	}
 
-	c := &Client{conn: conn, r: bufio.NewReader(conn)}
+	c := &Client{conn: conn, r: bufio.NewReader(conn), path: path, token: token}
 
 	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion, Token: token}); err != nil {
 		conn.Close()
@@ -221,14 +229,85 @@ func (c *Client) ValidateChannel(cc config.ChannelConfig) error {
 	return c.call("ValidateChannel", params, nil)
 }
 
-// Subscribe always returns an error: streaming over the control socket is
-// not implemented until S5. It calls through to the server so a mock/fake
-// exercising the wire protocol observes the same behavior a real server
-// would produce.
+// Subscribe implements core.API by opening its own DEDICATED connection --
+// a second Dial to the same path/token remembered from c's own Dial -- so
+// the long-lived stream it reads from never blocks (or is blocked by) the
+// mutex-serialized primary conn other calls on c share. It sends one
+// Subscribe request on that connection, reads the server's ack, then hands
+// back a channel fed by a background goroutine that decodes each stream
+// frame (server.go's streamSubscribe: response{ID: streamID, ...}) into a
+// core.Event. Cancelling ctx, or the server ending the stream (a read
+// error, e.g. because the daemon shut down), closes the dedicated
+// connection and the returned channel; a second goroutine exists solely to
+// force that closure on ctx.Done without leaking once the stream ends for
+// some other reason.
 func (c *Client) Subscribe(ctx context.Context) (<-chan core.Event, error) {
-	err := c.call("Subscribe", struct{}{}, nil)
-	if err == nil {
-		err = errors.New("control: streaming not supported over the control socket yet")
+	dc, err := Dial(c.path, c.token)
+	if err != nil {
+		return nil, err
 	}
-	return nil, err
+
+	dc.nextID++
+	id := dc.nextID
+	req := request{ID: id, Method: "Subscribe", Params: json.RawMessage("{}")}
+	if err := writeFrame(dc.conn, req); err != nil {
+		dc.Close()
+		return nil, err
+	}
+
+	var ack response
+	if err := readFrame(dc.r, &ack); err != nil {
+		dc.Close()
+		return nil, err
+	}
+	if ack.ID != id {
+		dc.Close()
+		return nil, fmt.Errorf("control: subscribe ack id %d does not match request id %d", ack.ID, id)
+	}
+	if !ack.OK {
+		dc.Close()
+		return nil, errors.New(ack.Error)
+	}
+
+	out := make(chan core.Event)
+	stopped := make(chan struct{})
+
+	// This goroutine's only purpose is forcing dc closed the moment ctx is
+	// done, unblocking the reader goroutine's in-flight (or next) read; it
+	// exits without doing that once the reader goroutine finishes on its
+	// own (stream/connection ended for some other reason), so it never
+	// outlives the subscription it belongs to.
+	go func() {
+		select {
+		case <-ctx.Done():
+			dc.Close()
+		case <-stopped:
+		}
+	}()
+
+	go func() {
+		defer close(out)
+		defer dc.Close()
+		defer close(stopped)
+		for {
+			var resp response
+			if err := readFrame(dc.r, &resp); err != nil {
+				return
+			}
+			if resp.ID != streamID || !resp.OK {
+				continue
+			}
+			var ev core.Event
+			if err := json.Unmarshal(resp.Result, &ev); err != nil {
+				return
+			}
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return out, nil
 }

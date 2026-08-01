@@ -8,6 +8,7 @@ import (
 	"net"
 	"reflect"
 	"testing"
+	"time"
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
@@ -41,6 +42,17 @@ type fakeAPI struct {
 	// error-propagation proof as ackAlertErr, for the write method whose
 	// only other observable effect is the recorded validatedChannel arg.
 	validateChannelErr error
+
+	// subscribeCh, when non-nil, makes Subscribe return it (with a nil
+	// error) instead of the default "not implemented" error, standing in
+	// for a real daemon's live event bus. subscribeCancelled, when also
+	// non-nil, is closed by a goroutine the moment the ctx passed to
+	// Subscribe is done -- mirroring inprocAPI.Subscribe's own ctx.Done ->
+	// cancel goroutine (coreapi_inproc.go) -- so a streaming test can prove
+	// server.go derives that ctx from the connection's lifetime and cancels
+	// it on client disconnect.
+	subscribeCh        chan core.Event
+	subscribeCancelled chan struct{}
 }
 
 func (f *fakeAPI) Snapshot() (core.DashboardView, error)    { return f.snapshot, nil }
@@ -89,7 +101,18 @@ func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
 }
 
 func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
-	return nil, errors.New("fakeAPI: Subscribe not implemented")
+	if f.subscribeCh == nil {
+		return nil, errors.New("fakeAPI: Subscribe not implemented")
+	}
+	go func() {
+		<-ctx.Done()
+		close(f.subscribeCancelled)
+		// Mirror eventBus.cancel (eventbus.go): unsubscribing closes the
+		// subscriber's channel, which is what lets streamSubscribe's
+		// `for ev := range ch` loop end instead of blocking forever.
+		close(f.subscribeCh)
+	}()
+	return f.subscribeCh, nil
 }
 
 var _ core.API = (*fakeAPI)(nil)
@@ -229,6 +252,99 @@ func TestHandleConnSubscribeReturnsError(t *testing.T) {
 	}
 
 	client.Close()
+	<-done
+}
+
+// TestStreamSubscribeSendsEventsInOrderAfterAck proves handleConn's
+// streaming path for the Subscribe method: after the ack, every event
+// fakeAPI's Subscribe channel receives arrives on the wire as a stream
+// frame (response{ID: streamID, OK: true, Result: <core.Event JSON>}), in
+// the order it was published.
+func TestStreamSubscribeSendsEventsInOrderAfterAck(t *testing.T) {
+	fake := &fakeAPI{subscribeCh: make(chan core.Event, 4), subscribeCancelled: make(chan struct{})}
+	client, r, done := dialTestConn(t, fake)
+	defer client.Close()
+
+	raw, err := json.Marshal(struct{}{})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if err := writeFrame(client, request{ID: 9, Method: "Subscribe", Params: raw}); err != nil {
+		t.Fatalf("writeFrame(subscribe request): %v", err)
+	}
+
+	var ack response
+	if err := readFrame(r, &ack); err != nil {
+		t.Fatalf("readFrame(ack): %v", err)
+	}
+	if !ack.OK || ack.ID != 9 {
+		t.Fatalf("ack = %+v, want {ID:9 OK:true}", ack)
+	}
+
+	want := []core.Event{
+		{Kind: "alert_fire", Source: "cpu", Severity: "warn", Title: "cpu high", Time: 1},
+		{Kind: "snapshot", Time: 2},
+		{Kind: "alert_recover", Source: "cpu", Severity: "warn", Title: "cpu high", Time: 3},
+	}
+	for _, ev := range want {
+		fake.subscribeCh <- ev
+	}
+
+	for i, w := range want {
+		var frame response
+		if err := readFrame(r, &frame); err != nil {
+			t.Fatalf("readFrame(event %d): %v", i, err)
+		}
+		if frame.ID != streamID || !frame.OK {
+			t.Fatalf("frame %d = %+v, want {ID:%d OK:true}", i, frame, streamID)
+		}
+		var got core.Event
+		if err := json.Unmarshal(frame.Result, &got); err != nil {
+			t.Fatalf("unmarshal event %d: %v", i, err)
+		}
+		if got != w {
+			t.Errorf("event %d = %+v, want %+v", i, got, w)
+		}
+	}
+
+	client.Close()
+	<-done
+}
+
+// TestStreamSubscribeDisconnectCancelsContext proves the CRITICAL
+// correctness property flagged in the A2 plan's review of task 1: the ctx
+// server.go passes to api.Subscribe must be derived from the streaming
+// connection's own lifetime, so that closing the client end (a read on the
+// server's side returning EOF) cancels it -- letting api.Subscribe's own
+// unsubscribe run instead of leaking a subscriber and a goroutine on the
+// daemon side forever.
+func TestStreamSubscribeDisconnectCancelsContext(t *testing.T) {
+	fake := &fakeAPI{subscribeCh: make(chan core.Event), subscribeCancelled: make(chan struct{})}
+	client, r, done := dialTestConn(t, fake)
+
+	raw, err := json.Marshal(struct{}{})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if err := writeFrame(client, request{ID: 1, Method: "Subscribe", Params: raw}); err != nil {
+		t.Fatalf("writeFrame(subscribe request): %v", err)
+	}
+	var ack response
+	if err := readFrame(r, &ack); err != nil {
+		t.Fatalf("readFrame(ack): %v", err)
+	}
+	if !ack.OK {
+		t.Fatalf("ack.OK = false, want true (error: %s)", ack.Error)
+	}
+
+	client.Close()
+
+	select {
+	case <-fake.subscribeCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("api.Subscribe's ctx was never cancelled after the client disconnected")
+	}
+
 	<-done
 }
 
