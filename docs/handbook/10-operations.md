@@ -209,6 +209,19 @@ unit sets `RuntimeDirectory=serverwatch`, which makes systemd create
 stops. If the socket is missing, the daemon is not running; check
 `systemctl status serverwatch`.
 
+**`serverwatch cli` / `serverwatch web` refuses to run, warning about
+tampering.** Both are front-doors that exec the companion plugin binaries as
+root, so before handing off control the core verifies the plugin's owner,
+permissions, and SHA-256 against the install-time manifest at
+`/var/lib/serverwatch/plugins.json` (see [Architecture](02-architecture.md)
+and [Command reference](11-command-reference.md)). A refusal means one of
+those checks failed. If you just rebuilt or hand-copied `serverwatch-ctl` or
+`serverwatch-web` into place yourself, this is expected: run `sudo serverwatch
+install` to record its checksum, then try again. If you did not touch the
+plugin binary, do not just re-run install to make the warning go away;
+investigate first, since it means something replaced or modified the file
+since the last install.
+
 **The web UI would not start.** (See [The web UI](08-web-ui.md).) If you are running the `serverwatch-web` binary
 with `web.enabled true` and the web server fails to come up (a bad TLS config, a
 port already in use), that failure is logged to the journal but never stops
