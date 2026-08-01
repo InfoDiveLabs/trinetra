@@ -301,6 +301,23 @@ func (v MonitoringView) DisksWarnCritCount() int {
 	return n
 }
 
+// TargetView is one monitorable target as core.API.MonitorTargets reports
+// it: a mirror of serverwatch.Target's exported fields (ID/Kind/Display/
+// Available), kept as its own DTO here (rather than reusing
+// serverwatch.Target directly) so internal/core -- which imports nothing
+// but stdlib + internal/config, see internal/core/doc.go -- never has to
+// import internal/serverwatch. ID is the namespaced identifier
+// (serverwatch.Discover's doc: "docker:web", "disk:/", "iface:eth0",
+// "temp", "smart:/dev/sda") the SAME config.Config.SetTarget/
+// SetTargetThreshold/TargetEnabled/TargetThreshold calls key on, so a
+// caller can round-trip a TargetView straight into those setters.
+type TargetView struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Display   string `json:"display"`
+	Available bool   `json:"available"`
+}
+
 // AlertRecord is one alert as rendered to a consumer, covering both a
 // currently-active alert (serverwatch.ActiveAlert, keyed by Key) and a
 // historical fire/recover entry (serverwatch.AlertEvent): Key identifies

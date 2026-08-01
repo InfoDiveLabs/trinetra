@@ -34,6 +34,11 @@ type fakeAPI struct {
 	// error-propagation proof as ackAlertErr/validateChannelErr.
 	enrollErr error
 
+	monitorTargets []core.TargetView
+	// monitorTargetsErr, when set, is returned by MonitorTargets -- same
+	// error-propagation proof as enrollErr.
+	monitorTargetsErr error
+
 	appliedConfig    *config.Config
 	ackedKey         string
 	unackedKey       string
@@ -71,6 +76,10 @@ func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
 
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 	return f.enrollPIN, f.enrollEnrolled, f.enrollErr
+}
+
+func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return f.monitorTargets, f.monitorTargetsErr
 }
 
 func (f *fakeAPI) ApplyConfig(c *config.Config) error {
@@ -265,6 +274,53 @@ func TestHandleConnEnrollmentPINPropagatesError(t *testing.T) {
 	}
 	if resp.Error != "serverwatch: enrollment pin requires a running daemon" {
 		t.Errorf("resp.Error = %q, want the fake's enrollErr text", resp.Error)
+	}
+
+	client.Close()
+	<-done
+}
+
+// TestHandleConnMonitorTargetsRoundTrip pins dispatch's MonitorTargets case:
+// the target list the fake api reports must come back over the wire
+// unmodified.
+func TestHandleConnMonitorTargetsRoundTrip(t *testing.T) {
+	fake := &fakeAPI{monitorTargets: []core.TargetView{
+		{ID: "disk:/", Kind: "disk", Display: "/", Available: true},
+	}}
+	client, r, done := dialTestConn(t, fake)
+	defer client.Close()
+
+	resp := sendRequest(t, client, r, 7, "MonitorTargets", struct{}{})
+
+	if !resp.OK {
+		t.Fatalf("resp.OK = false, want true (error: %s)", resp.Error)
+	}
+	var got []core.TargetView
+	if err := json.Unmarshal(resp.Result, &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if len(got) != 1 || got[0] != fake.monitorTargets[0] {
+		t.Errorf("got %+v, want %+v", got, fake.monitorTargets)
+	}
+
+	client.Close()
+	<-done
+}
+
+// TestHandleConnMonitorTargetsPropagatesError mirrors
+// TestHandleConnEnrollmentPINPropagatesError for MonitorTargets.
+func TestHandleConnMonitorTargetsPropagatesError(t *testing.T) {
+	fake := &fakeAPI{monitorTargetsErr: errors.New("discovery failed")}
+	client, r, done := dialTestConn(t, fake)
+	defer client.Close()
+
+	resp := sendRequest(t, client, r, 8, "MonitorTargets", struct{}{})
+
+	if resp.OK {
+		t.Fatalf("resp.OK = true, want false (error propagation)")
+	}
+	if resp.Error != "discovery failed" {
+		t.Errorf("resp.Error = %q, want the fake's monitorTargetsErr text", resp.Error)
 	}
 
 	client.Close()

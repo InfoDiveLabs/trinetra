@@ -4,11 +4,11 @@ import (
 	"testing"
 
 	"serverwatch/internal/config"
-	sw "serverwatch/internal/serverwatch"
+	"serverwatch/internal/core"
 )
 
 func TestBuildMonitorRowsDefaultsEnabledNoThreshold(t *testing.T) {
-	targets := []sw.Target{
+	targets := []core.TargetView{
 		{ID: "disk:/", Kind: "disk", Display: "/", Available: true},
 	}
 	rows := buildMonitorRows(targets, &config.Config{})
@@ -31,7 +31,7 @@ func TestBuildMonitorRowsMergesOverrides(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.SetTarget("disk:/", false)
 	cfg.SetTargetThreshold("disk:/", 92.5)
-	targets := []sw.Target{
+	targets := []core.TargetView{
 		{ID: "disk:/", Kind: "disk", Display: "/", Available: true},
 	}
 	rows := buildMonitorRows(targets, cfg)
@@ -45,7 +45,7 @@ func TestBuildMonitorRowsMergesOverrides(t *testing.T) {
 }
 
 func TestBuildMonitorRowsSortedByID(t *testing.T) {
-	targets := []sw.Target{
+	targets := []core.TargetView{
 		{ID: "temp", Kind: "temp", Display: "cpu-thermal", Available: true},
 		{ID: "disk:/", Kind: "disk", Display: "/", Available: true},
 		{ID: "docker:web", Kind: "docker", Display: "web", Available: true},

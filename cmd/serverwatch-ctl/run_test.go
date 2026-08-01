@@ -22,10 +22,17 @@ type fakeAPI struct {
 	doctor   core.DoctorReport
 	active   []core.AlertRecord
 
-	cfg      *config.Config
-	applyErr error
-	applied  *config.Config
-	applyN   int
+	cfg       *config.Config
+	configErr error
+	applyErr  error
+	applied   *config.Config
+	applyN    int
+
+	// monitorTargets/monitorTargetsErr back MonitorTargets, so the monitor-
+	// thresholds screen's tests (manage_ui_test.go) can drive it without a
+	// real socket or real docker/df/smartctl discovery.
+	monitorTargets    []core.TargetView
+	monitorTargetsErr error
 }
 
 func (f *fakeAPI) Snapshot() (core.DashboardView, error) { return f.snapshot, nil }
@@ -41,6 +48,9 @@ func (f *fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, erro
 	return nil, nil
 }
 func (f *fakeAPI) Config() (*config.Config, error) {
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
 	if f.cfg != nil {
 		return f.cfg, nil
 	}
@@ -48,6 +58,9 @@ func (f *fakeAPI) Config() (*config.Config, error) {
 }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error)                      { return f.doctor, nil }
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
+func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return f.monitorTargets, f.monitorTargetsErr
+}
 func (f *fakeAPI) ApplyConfig(c *config.Config) error {
 	f.applyN++
 	f.applied = c

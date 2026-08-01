@@ -205,6 +205,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mgr.screen = manageResult
 		return m, nil
 
+	case scheduleConfigMsg:
+		m.mgr.configLoading = false
+		m.mgr.configErr = msg.err
+		if msg.err == nil && msg.cfg != nil {
+			m.mgr.schedAns.Daily = msg.cfg.Schedule.Daily
+			m.mgr.schedAns.Weekly = msg.cfg.Schedule.Weekly
+			switch {
+			case msg.cfg.Schedule.Daily != "":
+				m.mgr.schedModeCursor = 1 // "daily" in scheduleModeChoices
+			case msg.cfg.Schedule.Weekly != "":
+				m.mgr.schedModeCursor = 2 // "weekly" in scheduleModeChoices
+			default:
+				m.mgr.schedModeCursor = 0 // "off"
+			}
+		}
+		return m, nil
+
+	case quietHoursConfigMsg:
+		m.mgr.configLoading = false
+		m.mgr.configErr = msg.err
+		m.mgr.valueIn = newManageValueInput("22-6 or off")
+		if msg.err == nil {
+			val := "off"
+			if msg.cfg != nil && msg.cfg.QuietHours != "" {
+				val = msg.cfg.QuietHours
+			}
+			m.mgr.valueIn.SetValue(val)
+			m.mgr.valueIn.CursorEnd()
+		}
+		return m, m.mgr.valueIn.Focus()
+
+	case healthchecksConfigMsg:
+		m.mgr.configLoading = false
+		m.mgr.configErr = msg.err
+		m.mgr.valueIn = newManageValueInput("https://hc-ping.com/... or off")
+		if msg.err == nil {
+			val := "off"
+			if msg.cfg != nil && msg.cfg.Healthchecks.URL != "" {
+				val = msg.cfg.Healthchecks.URL
+			}
+			m.mgr.valueIn.SetValue(val)
+			m.mgr.valueIn.CursorEnd()
+		}
+		return m, m.mgr.valueIn.Focus()
+
 	case monitorTargetsMsg:
 		m.mgr.monLoading = false
 		m.mgr.monErr = msg.err

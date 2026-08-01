@@ -228,6 +228,18 @@ func (a *fileAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 	return "", false, errEnrollNeedsDaemon
 }
 
+// MonitorTargets implements core.API: unlike EnrollmentPIN above, target
+// discovery needs no live daemon state -- it is the same osExec{}/osFS{}
+// probes DiscoverLocal runs from the daemon, run here from the CLI
+// process' own environment instead (`serverwatch monitor list`,
+// systemd.go's cmdMonitor, already does exactly this). A real deployment's
+// ctl always talks to the daemon over the control socket (inprocAPI.MonitorTargets),
+// so this path mainly keeps fileAPI a complete core.API implementation for
+// any caller that ends up on it directly.
+func (a *fileAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return targetViewsFromTargets(DiscoverLocal()), nil
+}
+
 // ApplyConfig implements core.API: it persists c to cfgPath (saveCfg, the
 // same package-level helper every `channel`/`target`/... CLI setter already
 // uses) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks

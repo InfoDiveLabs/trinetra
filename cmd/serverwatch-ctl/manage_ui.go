@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,7 +18,6 @@ import (
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
-	sw "serverwatch/internal/serverwatch"
 )
 
 // manageScreen is the management menu's own sub-step, mirroring
@@ -64,13 +64,24 @@ type manageModel struct {
 	valueIn textinput.Model
 
 	// monitor thresholds
-	monTargets          []sw.Target
+	monTargets          []core.TargetView
 	monRows             []monitorTargetRow
 	monCursor           int
 	monThreshIn         textinput.Model
 	monEditingThreshold bool
 	monLoading          bool
 	monErr              error
+
+	// configLoading/configErr cover the schedule/quiet-hours/healthchecks
+	// screens' pre-fill fetch (fetchScheduleConfigCmd/fetchQuietConfigCmd/
+	// fetchHealthConfigCmd): true/set from the moment the menu opens one of
+	// them until its *ConfigMsg lands, so a screen never shows (or lets the
+	// user blindly commit) a blank/default value while the CURRENT one is
+	// still in flight -- see the doc on updateScheduleModeKey/
+	// updateManageValueKey's configLoading guard for why this matters (a
+	// stray Enter must never wipe an existing setting).
+	configLoading bool
+	configErr     error
 
 	applying bool
 	applyErr error
@@ -97,11 +108,36 @@ type manageAppliedMsg struct {
 	err error
 }
 
-// monitorTargetsMsg carries sw.DiscoverLocal()'s result plus a freshly
+// scheduleConfigMsg carries a freshly fetched Config back into Update for
+// the Schedule screen's pre-fill (#review-fix-1): the CURRENT
+// schedule.daily/schedule.weekly values, so opening the screen defaults the
+// mode cursor to whatever is actually active and pre-fills its value,
+// instead of always defaulting to "off" with a blank value (which made a
+// stray Enter silently wipe an existing schedule).
+type scheduleConfigMsg struct {
+	cfg *config.Config
+	err error
+}
+
+// quietHoursConfigMsg is scheduleConfigMsg's counterpart for the Quiet
+// hours screen's pre-fill.
+type quietHoursConfigMsg struct {
+	cfg *config.Config
+	err error
+}
+
+// healthchecksConfigMsg is scheduleConfigMsg's counterpart for the
+// Healthchecks screen's pre-fill.
+type healthchecksConfigMsg struct {
+	cfg *config.Config
+	err error
+}
+
+// monitorTargetsMsg carries api.MonitorTargets()'s result plus a freshly
 // fetched Config back into Update, so the Monitor thresholds screen can
 // merge them into display rows (buildMonitorRows, manage_monitor.go).
 type monitorTargetsMsg struct {
-	targets []sw.Target
+	targets []core.TargetView
 	cfg     *config.Config
 	err     error
 }
@@ -117,6 +153,34 @@ type monitorAppliedMsg struct {
 }
 
 // --- commands ---
+
+// fetchScheduleConfigCmd fetches Config fresh so the Schedule screen can
+// pre-fill its mode/value from whatever is currently active (see
+// scheduleConfigMsg's doc).
+func fetchScheduleConfigCmd(api core.API) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		return scheduleConfigMsg{cfg: cfg, err: err}
+	}
+}
+
+// fetchQuietConfigCmd is fetchScheduleConfigCmd's counterpart for the Quiet
+// hours screen.
+func fetchQuietConfigCmd(api core.API) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		return quietHoursConfigMsg{cfg: cfg, err: err}
+	}
+}
+
+// fetchHealthConfigCmd is fetchScheduleConfigCmd's counterpart for the
+// Healthchecks screen.
+func fetchHealthConfigCmd(api core.API) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		return healthchecksConfigMsg{cfg: cfg, err: err}
+	}
+}
 
 // applyScheduleCmd fetches Config fresh, applies ans via applySchedule
 // (manage_schedule.go), and posts the result with ApplyConfig -- the same
@@ -174,14 +238,18 @@ func applyHealthchecksCmd(api core.API, raw string) tea.Cmd {
 	}
 }
 
-// discoverMonitorCmd runs sw.DiscoverLocal() (this host's live target
-// discovery -- safe because serverwatch-ctl always shares a host with the
-// daemon it manages, see DiscoverLocal's doc) alongside a fresh Config
-// fetch, so the Monitor thresholds screen can merge them via
-// buildMonitorRows.
+// discoverMonitorCmd calls api.MonitorTargets over the control socket --
+// the daemon runs its own live target discovery (docker/df/smartctl probes,
+// serverwatch.DiscoverLocal) and reports back a []core.TargetView, so ctl
+// never has to import internal/serverwatch or run those probes itself --
+// alongside a fresh Config fetch, so the Monitor thresholds screen can merge
+// them via buildMonitorRows.
 func discoverMonitorCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
-		targets := sw.DiscoverLocal()
+		targets, err := api.MonitorTargets(context.Background())
+		if err != nil {
+			return monitorTargetsMsg{err: err}
+		}
 		cfg, err := api.Config()
 		return monitorTargetsMsg{targets: targets, cfg: cfg, err: err}
 	}
@@ -263,21 +331,24 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		m.mgr.applyErr = nil
+		m.mgr.configLoading = true
+		m.mgr.configErr = nil
 		switch m.mgr.cursor {
 		case 0:
 			m.mgr.screen = manageScheduleMode
 			m.mgr.schedModeCursor = 0
 			m.mgr.schedAns = scheduleAnswers{}
-			return m, nil
+			return m, fetchScheduleConfigCmd(m.api)
 		case 1:
 			m.mgr.screen = manageQuietValue
 			m.mgr.valueIn = newManageValueInput("22-6 or off")
-			return m, m.mgr.valueIn.Focus()
+			return m, fetchQuietConfigCmd(m.api)
 		case 2:
 			m.mgr.screen = manageHealthValue
 			m.mgr.valueIn = newManageValueInput("https://hc-ping.com/... or off")
-			return m, m.mgr.valueIn.Focus()
+			return m, fetchHealthConfigCmd(m.api)
 		case 3:
+			m.mgr.configLoading = false
 			m.mgr.screen = manageMonitorList
 			m.mgr.monLoading = true
 			m.mgr.monErr = nil
@@ -292,8 +363,20 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateScheduleModeKey handles the Schedule screen's mode-selection row:
 // off applies immediately (no further input needed); daily/weekly move on
-// to the value step for that mode's HH:MM/dow@HH:MM input.
+// to the value step for that mode's HH:MM/dow@HH:MM input, pre-filled from
+// m.mgr.schedAns.Daily/Weekly (populated by scheduleConfigMsg from the
+// CURRENT config, see that message's doc) so accepting the already-selected
+// mode re-applies the existing value rather than an empty one. Ignores
+// every key but esc while m.mgr.configLoading is still true (the pre-fill
+// fetch hasn't landed yet) so a stray Enter can't act on a not-yet-loaded
+// screen -- see manageModel.configLoading's doc.
 func (m model) updateScheduleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mgr.configLoading {
+		if msg.String() == "esc" {
+			m.mgr.screen = manageMenuList
+		}
+		return m, nil
+	}
 	switch msg.String() {
 	case "up", "k":
 		if m.mgr.schedModeCursor > 0 {
@@ -313,11 +396,19 @@ func (m model) updateScheduleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mgr.schedAns.Mode = scheduleDaily
 			m.mgr.screen = manageScheduleValue
 			m.mgr.valueIn = newManageValueInput("HH:MM")
+			if m.mgr.schedAns.Daily != "" {
+				m.mgr.valueIn.SetValue(m.mgr.schedAns.Daily)
+				m.mgr.valueIn.CursorEnd()
+			}
 			return m, m.mgr.valueIn.Focus()
 		case "weekly":
 			m.mgr.schedAns.Mode = scheduleWeekly
 			m.mgr.screen = manageScheduleValue
 			m.mgr.valueIn = newManageValueInput("dow@HH:MM e.g. mon@09:00")
+			if m.mgr.schedAns.Weekly != "" {
+				m.mgr.valueIn.SetValue(m.mgr.schedAns.Weekly)
+				m.mgr.valueIn.CursorEnd()
+			}
 			return m, m.mgr.valueIn.Focus()
 		}
 	case "esc":
@@ -332,8 +423,17 @@ func (m model) updateScheduleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // for the schedule value step, or straight to the menu for quiet-hours/
 // healthchecks, which have no intermediate mode step). Mirrors tui.go's
 // updateTextKey (see that function's doc for why mutation and return stay
-// on the same receiver copy throughout).
+// on the same receiver copy throughout). Ignores every key but esc while
+// m.mgr.configLoading is still true (quiet-hours/healthchecks fetch their
+// pre-fill directly into this screen, unlike schedule's intermediate mode
+// step) -- see manageModel.configLoading's doc.
 func (m model) updateManageValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mgr.configLoading {
+		if msg.String() == "esc" {
+			m.mgr.screen = manageMenuList
+		}
+		return m, nil
+	}
 	switch msg.String() {
 	case "enter":
 		val := m.mgr.valueIn.Value()
@@ -447,15 +547,22 @@ func (m model) manageView() string {
 		}
 		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to open, esc to go home") + "\n")
 	case manageScheduleMode:
-		b.WriteString("schedule:\n\n")
-		for i, choice := range scheduleModeChoices {
-			cursor := "  "
-			if i == m.mgr.schedModeCursor {
-				cursor = "> "
+		if m.mgr.configLoading {
+			b.WriteString("loading current schedule...\n")
+		} else {
+			b.WriteString("schedule:\n\n")
+			for i, choice := range scheduleModeChoices {
+				cursor := "  "
+				if i == m.mgr.schedModeCursor {
+					cursor = "> "
+				}
+				fmt.Fprintf(&b, "%s%s\n", cursor, choice)
 			}
-			fmt.Fprintf(&b, "%s%s\n", cursor, choice)
+			if m.mgr.configErr != nil {
+				b.WriteString("\n" + errStyle.Render(fmt.Sprintf("could not load the current schedule: %v", m.mgr.configErr)) + "\n")
+			}
+			b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to select, esc to cancel") + "\n")
 		}
-		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to select, esc to cancel") + "\n")
 	case manageScheduleValue:
 		label := "daily time (HH:MM):"
 		if m.mgr.schedAns.Mode == scheduleWeekly {
@@ -464,11 +571,25 @@ func (m model) manageView() string {
 		fmt.Fprintf(&b, "%s\n\n%s\n", label, m.mgr.valueIn.View())
 		b.WriteString(manageApplyingOrHint(m.mgr.applying))
 	case manageQuietValue:
-		fmt.Fprintf(&b, "quiet hours (HH-HH, or \"off\"):\n\n%s\n", m.mgr.valueIn.View())
-		b.WriteString(manageApplyingOrHint(m.mgr.applying))
+		if m.mgr.configLoading {
+			b.WriteString("loading current quiet hours...\n")
+		} else {
+			fmt.Fprintf(&b, "quiet hours (HH-HH, or \"off\"):\n\n%s\n", m.mgr.valueIn.View())
+			if m.mgr.configErr != nil {
+				b.WriteString("\n" + errStyle.Render(fmt.Sprintf("could not load the current value: %v", m.mgr.configErr)) + "\n")
+			}
+			b.WriteString(manageApplyingOrHint(m.mgr.applying))
+		}
 	case manageHealthValue:
-		fmt.Fprintf(&b, "healthchecks ping URL (or \"off\"):\n\n%s\n", m.mgr.valueIn.View())
-		b.WriteString(manageApplyingOrHint(m.mgr.applying))
+		if m.mgr.configLoading {
+			b.WriteString("loading current healthchecks setting...\n")
+		} else {
+			fmt.Fprintf(&b, "healthchecks ping URL (or \"off\"):\n\n%s\n", m.mgr.valueIn.View())
+			if m.mgr.configErr != nil {
+				b.WriteString("\n" + errStyle.Render(fmt.Sprintf("could not load the current value: %v", m.mgr.configErr)) + "\n")
+			}
+			b.WriteString(manageApplyingOrHint(m.mgr.applying))
+		}
 	case manageMonitorList:
 		b.WriteString(m.monitorListView())
 	case manageMonitorThreshold:

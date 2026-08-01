@@ -191,6 +191,15 @@ func (c *Client) EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, 
 	return result.PIN, result.Enrolled, err
 }
 
+// MonitorTargets implements core.API: it sends the request and unmarshals
+// the server's []core.TargetView result directly (no wrapper struct, same
+// as Monitoring/ActiveAlerts).
+func (c *Client) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	var result []core.TargetView
+	err := c.call("MonitorTargets", struct{}{}, &result)
+	return result, err
+}
+
 func (c *Client) ApplyConfig(cfg *config.Config) error {
 	params := struct {
 		Config config.Config `json:"config"`

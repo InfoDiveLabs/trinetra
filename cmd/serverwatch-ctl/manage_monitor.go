@@ -6,14 +6,14 @@ import (
 	"strconv"
 
 	"serverwatch/internal/config"
-	sw "serverwatch/internal/serverwatch"
+	"serverwatch/internal/core"
 )
 
 // monitorTargetRow is one Monitor thresholds screen row: a discovered
-// target (sw.Target, from sw.DiscoverLocal) merged with its current config
-// overrides -- the same enable/threshold state `serverwatch monitor list`
-// reports (systemd.go's cmdMonitor) via config.Config.TargetEnabled/
-// TargetThreshold.
+// target (core.TargetView, from api.MonitorTargets over the control
+// socket) merged with its current config overrides -- the same enable/
+// threshold state `serverwatch monitor list` reports (systemd.go's
+// cmdMonitor) via config.Config.TargetEnabled/TargetThreshold.
 type monitorTargetRow struct {
 	ID           string
 	Kind         string
@@ -24,12 +24,11 @@ type monitorTargetRow struct {
 	ThresholdSet bool
 }
 
-// buildMonitorRows merges targets (as sw.DiscoverLocal returns them) with
+// buildMonitorRows merges targets (as api.MonitorTargets returns them) with
 // cfg's per-target overrides into display/edit rows, sorted by ID for a
-// stable on-screen order (sw.Discover's own order is grouped by kind but
-// not alphabetical, and map iteration inside it is not guaranteed stable
-// across kinds).
-func buildMonitorRows(targets []sw.Target, cfg *config.Config) []monitorTargetRow {
+// stable on-screen order (the daemon's own discovery order is grouped by
+// kind but not alphabetical).
+func buildMonitorRows(targets []core.TargetView, cfg *config.Config) []monitorTargetRow {
 	rows := make([]monitorTargetRow, 0, len(targets))
 	for _, t := range targets {
 		row := monitorTargetRow{
