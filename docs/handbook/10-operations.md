@@ -23,8 +23,9 @@ Check that it is up, see when it last restarted, and read its exit code:
 systemctl status serverwatch
 ```
 
-Restart it (you will only need this after a `storage.*` config change or a
-binary upgrade, since every other setting hot-reloads over SIGHUP):
+Restart it (you will only need this after a `storage.*` config change, see
+[Configuration](04-configuration.md), or a binary upgrade, since every other
+setting hot-reloads over SIGHUP):
 
 ```bash
 sudo systemctl restart serverwatch
@@ -201,14 +202,14 @@ runs fine off its absolute `ExecStart`). Re-running `sudo /usr/local/bin/serverw
 recreates the link.
 
 **The control socket.** The daemon serves its control API over a Unix socket at
-`/run/serverwatch/control.sock`. It is mode `0600` and owned by root, so only
+`/run/serverwatch/control.sock` (see [Architecture](02-architecture.md)). It is mode `0600` and owned by root, so only
 root can talk to it, and it is created for you by systemd, not the daemon: the
 unit sets `RuntimeDirectory=serverwatch`, which makes systemd create
 `/run/serverwatch` before the service starts and clean it up when the service
 stops. If the socket is missing, the daemon is not running; check
 `systemctl status serverwatch`.
 
-**The web UI would not start.** If you are running the `serverwatch-web` binary
+**The web UI would not start.** (See [The web UI](08-web-ui.md).) If you are running the `serverwatch-web` binary
 with `web.enabled true` and the web server fails to come up (a bad TLS config, a
 port already in use), that failure is logged to the journal but never stops
 monitoring. The daemon keeps sampling and alerting over Telegram regardless.
@@ -224,3 +225,7 @@ automatically.
 **SMART shows nothing.** Install `smartmontools` (`apt install smartmontools`
 or your distro's equivalent). Some disks and USB-to-SATA bridges do not expose
 SMART at all; those devices are simply skipped.
+
+---
+
+[Previous: Storage and the data model](09-storage-and-data-model.md) | [Handbook index](README.md) | [Next: Command reference](11-command-reference.md)

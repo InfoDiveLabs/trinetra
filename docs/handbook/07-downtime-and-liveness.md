@@ -98,6 +98,18 @@ previous one left. Nothing external is required. It works from local state
 alone, which is what makes it reliable precisely when everything else has
 failed.
 
+The reconstruction path on boot, from the heartbeat gap, is short:
+
+```mermaid
+flowchart LR
+  boot([Daemon boots]) --> read[Read previous heartbeat timestamp]
+  read --> gap{now minus lastBeat<br/>greater than 2 x heartbeat_interval?}
+  gap -->|No| normal[Clean restart, no event]
+  gap -->|Yes| ev[Reconstruct power_down event]
+  ev --> storeev[Append to ts/events.tsd]
+  ev --> report[Send boot and recovery report over Telegram]
+```
+
 ## The live net_down tracker
 
 Internet outages are the opposite situation and get the opposite treatment.
@@ -139,6 +151,14 @@ tick that reports the link back up closes the interval, emits a completed
 `net_down` event spanning the whole outage, and resets the tracker so it is
 ready for the next one.
 
+```mermaid
+stateDiagram-v2
+  [*] --> Online
+  Online --> Offline: slow tick reports link down,<br/>record downSince
+  Offline --> Offline: still down, stay quiet
+  Offline --> Online: link back up,<br/>emit net_down event and reset
+```
+
 So a `net_down` event is only written when connectivity returns. That is
 deliberate. The event describes a finished outage with a real duration, not a
 guess about one still unfolding. It also means the reachability check is fed
@@ -159,8 +179,9 @@ type DownEvent struct {
 }
 ```
 
-They are stored as events in the time-series store, in a file called
-`ts/events.tsd` alongside the raw samples and the one-minute rollups. This is
+They are stored as events in the time-series store (see [Storage and the data
+model](09-storage-and-data-model.md)), in a file called `ts/events.tsd`
+alongside the raw samples and the one-minute rollups. This is
 worth being precise about, because an older design note described a standalone
 `downtime.jsonl` file and that is not where these events live. There is no
 `downtime.jsonl`. Downtime events go into `ts/events.tsd`, written through the
@@ -270,7 +291,7 @@ doing nothing useful. A plain `Restart=always` will not save you there, because
 nothing has actually crashed.
 
 The systemd watchdog closes that gap. The unit that `serverwatch install`
-writes sets a watchdog deadline:
+writes (see [Architecture](02-architecture.md)) sets a watchdog deadline:
 
 ```
 [Service]
@@ -362,3 +383,7 @@ No single one of these covers every case. Together they mean that whether the
 daemon hangs, the link drops, or the whole host goes down, the outage is either
 caught as it happens or reconstructed the moment serverwatch can run again, and
 you hear about it.
+
+---
+
+[Previous: Alerting and notification channels](06-alerting-and-channels.md) | [Handbook index](README.md) | [Next: The web UI](08-web-ui.md)

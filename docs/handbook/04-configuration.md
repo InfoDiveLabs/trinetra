@@ -96,9 +96,9 @@ Go's `strconv.ParseBool` accepts). Durations are strings in Go's
 
 ### Intervals
 
-The sampler runs two tiers plus an independent heartbeat. The slow tier fires
-every Nth fast tick, so `sample_interval` must be an exact multiple of
-`fast_interval`.
+The sampler runs two tiers plus an independent heartbeat (see [Monitoring: what
+gets collected](05-monitoring.md)). The slow tier fires every Nth fast tick, so
+`sample_interval` must be an exact multiple of `fast_interval`.
 
 | Key | Default | Validation |
 |-----|---------|------------|
@@ -161,8 +161,9 @@ serverwatch quiet-hours off           # clears it
 
 ### Telegram
 
-The original always-on notification channel. A token is the one required setting
-for a fresh install.
+The original always-on notification channel (see [Alerting and notification
+channels](06-alerting-and-channels.md)). A token is the one required setting for
+a fresh install.
 
 | Key | Default | Validation |
 |-----|---------|------------|
@@ -205,9 +206,10 @@ serverwatch schedule daily off
 
 ### Storage
 
-The time-series backend and its retention windows. These keys take effect only
-after `systemctl restart serverwatch`; a `SIGHUP` reload does not reopen the
-running store.
+The time-series backend and its retention windows (detailed in [Storage and the
+data model](09-storage-and-data-model.md)). These keys take effect only after
+`systemctl restart serverwatch`; a `SIGHUP` reload does not reopen the running
+store.
 
 | Key | Default | Validation |
 |-----|---------|------------|
@@ -246,8 +248,8 @@ serverwatch config set collect.smart_interval 3600
 
 Settings for the embedded web UI (present in the `serverwatch-web` binary; the
 default binary never reads them, but the keys are still manageable so config is
-portable across binaries). These are covered in detail in the Web UI chapter;
-the reference is repeated here for completeness.
+portable across binaries). These are covered in detail in the [Web UI
+chapter](08-web-ui.md); the reference is repeated here for completeness.
 
 | Key | Default | Validation |
 |-----|---------|------------|
@@ -282,3 +284,7 @@ The `public.panels` list is the server-side-enforced source of truth for what
 the anonymous page can render. A metric absent from this list can never appear
 on `/public` even though it exists elsewhere, so curating this list is the whole
 of the public page's exposure surface.
+
+---
+
+[Previous: Installation and first run](03-installation.md) | [Handbook index](README.md) | [Next: Monitoring: what gets collected](05-monitoring.md)

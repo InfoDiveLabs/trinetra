@@ -36,6 +36,30 @@ In the web-enabled build there is a third:
 |-----------|--------------|---------|
 | Embedded web server | Serves the passkey-only dashboard, history graphs, and config editor over HTTP | Request-driven |
 
+The shape of the process, and the plugin binaries that dial in from outside it,
+looks like this:
+
+```mermaid
+graph TD
+  sd[systemd unit] -->|ExecStart| proc
+
+  subgraph proc[serverwatch daemon process]
+    sampler[Sampler loop goroutine]
+    poller[Telegram long-poller goroutine]
+    webgo[Embedded web server, web build only]
+    api[core.API in-process]
+    sock[Control socket: control.sock]
+  end
+
+  sampler --> api
+  poller --> api
+  webgo --> api
+  api --> sock
+
+  ctl[serverwatch-ctl plugin] -->|dials with token| sock
+  webplug[serverwatch-web plugin] -->|dials with token| sock
+```
+
 The sampler loop is the heart of the daemon and lives in `cmdDaemon`
 (`internal/serverwatch/daemon.go`). It is the sole owner of most of the
 daemon's stateful pieces: the previous CPU sample it diffs against, the network
@@ -47,8 +71,9 @@ The Telegram poller runs in its own goroutine (`pollLoop`) and deliberately
 keeps its own copy of the state it needs (its own CPU sample, for instance), so
 no pointer is shared across the goroutine boundary. When an authorized command
 comes in, it collects a fresh full snapshot on the spot and replies. Ownership
-is claimed once, through a one-time enrollment PIN printed to the log, and only
-the owner chat is ever answered.
+is claimed once, through a one-time enrollment PIN printed to the log (see
+[Installation and first run](03-installation.md)), and only the owner chat is
+ever answered.
 
 Config is shared between goroutines through one `sync.RWMutex` and a
 pointer-swap discipline: the live `*config.Config` is never mutated in place.
@@ -96,7 +121,8 @@ percent, the three load averages, and a temperature. This is `collectFast`.
 Because it is cheap, the fast tier runs on every tick and drives the things
 that need to be current:
 
-- The live status view (`status.json` is rewritten every fast tick).
+- The live status view (`status.json`, see [Storage and the data
+  model](09-storage-and-data-model.md), is rewritten every fast tick).
 - The rolling baseline that anomaly detection compares against.
 - The threshold and baseline checks for `cpu`, `mem`, `swap`, and `temp`.
 - A raw sample per fast-tier metric appended to the time-series store
@@ -156,7 +182,8 @@ All three intervals reload live. The sampler loop reads the current config at
 the top of every tick; if `fast_interval` or `sample_interval` changed, it
 resets the ticker in place and recomputes N from that point, so a new cadence
 takes effect on the very next tick with no restart. The one exception across
-the whole config surface is `storage.*`: the time-series store is opened once
+the whole config surface is `storage.*` (see [Configuration](04-configuration.md)):
+the time-series store is opened once
 at startup and is not reopened on `SIGHUP`, so a storage backend or retention
 change needs a `systemctl restart`.
 
@@ -313,6 +340,21 @@ client -> server   {"hello":"serverwatch-control","version":1,"token":"<32 hex>"
 server -> client   {"hello":"serverwatch-control","version":1}     (on success)
 ```
 
+```mermaid
+sequenceDiagram
+  participant C as Plugin client
+  participant S as Daemon control socket
+  C->>S: hello {magic, version:1, token}
+  Note over S: check magic and version,<br/>constant-time compare token
+  alt magic, version, or token invalid
+    S-->>C: error response, then close
+  else all valid
+    S-->>C: hello {version:1, empty token}
+    C->>S: request {id, method, params}
+    S-->>C: response {id, ok, result}
+  end
+```
+
 The current `ProtocolVersion` is 1. A version mismatch is rejected outright; the
 handshake exists precisely so the two ends agree before any real frame flows.
 
@@ -455,3 +497,7 @@ token-authenticated local socket so that separate, dependency-carrying plugin
 processes can drive it while the default binary stays pure standard library.
 The systemd unit ties the resilience and the socket lifetime together in a
 dozen lines. That is the architecture the rest of this handbook builds on.
+
+---
+
+[Previous: Introduction](01-introduction.md) | [Handbook index](README.md) | [Next: Installation and first run](03-installation.md)

@@ -106,7 +106,8 @@ serverwatch alerts unack cpu:high
 The following two binaries are separate from the shipped `serverwatch` daemon.
 Both are preview-quality: they are built and wired up by hand, and neither is
 supervised by the daemon yet. They connect to a running daemon over its control
-socket rather than reading state in-process.
+socket (see [Architecture](02-architecture.md)) rather than reading state
+in-process.
 
 ### 2.1 `serverwatch-ctl` (BETA)
 
@@ -116,7 +117,8 @@ non-interactive read that mirrors the daemon-side output. Run it with no
 subcommand to launch the interactive Bubble Tea TUI. The TUI is early: it shows
 live status and a guided "set up the web UI" flow that applies over the socket
 via `ApplyConfig` (no hand-typed config keys). More management screens (channels,
-schedules, thresholds) are coming; see the roadmap chapter.
+schedules, thresholds) are coming; see the [roadmap
+chapter](12-roadmap-and-status.md).
 
 ```
 serverwatch-ctl [--socket PATH] [--token PATH] <command>
@@ -141,8 +143,8 @@ when it could not generate one). Any other token read error is fatal.
 
 ### 2.2 `serverwatch-web` (BETA)
 
-`serverwatch-web` is the out-of-process web plugin. See the Web UI chapter for
-what it serves. It dials the control socket and runs the dashboard as a separate
+`serverwatch-web` is the out-of-process web plugin. See the [Web UI
+chapter](08-web-ui.md) for what it serves. It dials the control socket and runs the dashboard as a separate
 process. It is built only with `-tags web`, is not built by the Makefile, and
 has no supervisor yet.
 
@@ -163,3 +165,7 @@ serverwatch-web [-socket PATH] [-token TOKEN] [-token-file PATH] \
 The socket and token resolution order matches `serverwatch-ctl`: flag, then
 environment, then the systemd/by-hand default. As with the daemon, a missing
 token file means no-auth when no token was supplied directly.
+
+---
+
+[Previous: Operations](10-operations.md) | [Handbook index](README.md) | [Next: Roadmap and status](12-roadmap-and-status.md)

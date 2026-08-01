@@ -13,21 +13,23 @@ want something that works today. It is a single daemon, the stdlib-only
 
 - **Tiered storage.** A fast tier samples CPU, load, memory, and swap on a
   short interval to drive detection and the live picture, while slower
-  collectors and one-minute aggregates feed the on-disk time-series store. The
-  `tsfile` backend keeps history compact, per-series, corruption-tolerant, and
+  collectors and one-minute aggregates feed the on-disk time-series store (see
+  [Storage and the data model](09-storage-and-data-model.md)). The `tsfile`
+  backend keeps history compact, per-series, corruption-tolerant, and
   crash-durable.
 - **Multi-channel alerting.** Alerts, boot and recovery reports, the daily
   digest, and the weekly rollup route through a channel-agnostic dispatcher
-  with severity and target filtering. Seven channels ship: Telegram, email over
-  SMTP, a generic webhook, Slack, Discord, ntfy, and Gotify.
+  with severity and target filtering (see [Alerting and notification
+  channels](06-alerting-and-channels.md)). Seven channels ship: Telegram, email
+  over SMTP, a generic webhook, Slack, Discord, ntfy, and Gotify.
 - **Extended collection.** Beyond the core metrics, the daemon can gather
   per-container CPU, memory, and network series, network throughput, a systemd
   unit inventory, process snapshots, and richer disk facts such as inodes,
   filesystem type, fill projection, and SMART attributes. These are opt-in
   through `collect.*` toggles, with a `doctor` guardrail to keep cardinality and
   disk use in check.
-- **The embedded web UI.** Built with `-tags web`, the web interface runs
-  in-process as a goroutine inside the daemon, sharing the live snapshot, the
+- **The embedded web UI** (see [The web UI](08-web-ui.md)). Built with `-tags
+  web`, the web interface runs in-process as a goroutine inside the daemon, sharing the live snapshot, the
   sample store, and the config. It offers passkey-only WebAuthn auth, RBAC, a
   live dashboard over SSE, history graphs, a web config editor, an alerts page,
   and an admin-curated public status view. The default binary stays free of the
@@ -123,3 +125,7 @@ integration and delivery is intentionally deferred. Multi-host aggregation and
 external metrics export, such as Prometheus or remote-write, are the kind of
 thing the `SampleStore` interface was designed to allow later, but they are not
 being built now.
+
+---
+
+[Previous: Command reference](11-command-reference.md) | [Handbook index](README.md)

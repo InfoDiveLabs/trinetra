@@ -7,7 +7,8 @@ This chapter is about the collection half of that job. It walks the two
 sampling tiers and what each one reads, the self-discovery that means you never
 hand-list a disk or a container, and the target namespaces you use to turn
 individual things on and off. How a reading becomes an alert, thresholds,
-baselines, and hysteresis, lives in the Alerting chapter; here we stay with the
+baselines, and hysteresis, lives in the [Alerting
+chapter](06-alerting-and-channels.md); here we stay with the
 question of what serverwatch looks at and how often.
 
 ## Two tiers, one loop
@@ -23,6 +24,18 @@ cost of the expensive ones twelve times a minute.
 |------|---------|---------|------|-------|
 | Fast | `fast_interval` | 5s | Cheap, no subprocess | `/proc` and sysfs |
 | Slow | `sample_interval` | 60s | Pricier, spawns subprocesses | `df`, `docker`, `systemctl`, `smartctl`, and more |
+
+```mermaid
+flowchart TD
+  start([Timer ticks at fast_interval]) --> fast[Run fast tier: collectFast]
+  fast --> f2[Rewrite status.json, update baseline,<br/>run cpu/mem/swap/temp checks, append fast series]
+  f2 --> nth{Every Nth tick?<br/>N = sample_interval / fast_interval}
+  nth -->|No| wait[Wait for next fast tick]
+  nth -->|Yes| slow[Run slow tier: collectSlow]
+  slow --> s2[Append slow series, downsample and prune,<br/>run disk/docker/systemd/SMART checks]
+  s2 --> wait
+  wait --> start
+```
 
 A third cadence, the heartbeat, runs on its own `heartbeat_interval` and is
 independent of both tiers. It only rewrites the heartbeat marker so a future
@@ -56,7 +69,8 @@ waiting on I/O between the two ticks. Memory and swap are simple ratios out of
 the temperature is read from the first thermal zone under sysfs.
 
 Each of those seven readings does three jobs at once. It is appended as a raw
-sample to the time-series store, so you can query its history later with
+sample to the time-series store (see [Storage and the data
+model](09-storage-and-data-model.md)), so you can query its history later with
 `serverwatch dump`. It updates the live picture in `status.json`, which is what
 the dashboard and the Telegram status reply read. And it feeds the rolling
 baseline and the anomaly engine, so the cpu, mem, swap, and temp checks always
@@ -70,8 +84,8 @@ after the fact.
 The slow tier runs once every `sample_interval` and handles everything that is
 too expensive to do on the fast cadence, mostly because it means spawning a
 subprocess or walking a lot of state. Some of it is always on; a good deal of it
-is opt-in, controlled by the `collect.*` toggles described in the Configuration
-chapter. The opt-in collectors are opt-out by default, meaning absent or unset
+is opt-in, controlled by the `collect.*` toggles described in the
+[Configuration chapter](04-configuration.md). The opt-in collectors are opt-out by default, meaning absent or unset
 counts as enabled, so a stock install already gathers them; you turn one off on
 a small or busy host where the extra work is not worth it.
 
@@ -145,7 +159,7 @@ Separately, if you have set `healthchecks.url`, the slow tier pings that URL on
 each tick so an external healthchecks.io check can notice if serverwatch itself
 stops reporting. The dial is about the server's connectivity; the ping is about
 proving the daemon is alive to a third party. Both are covered further in the
-Downtime and liveness chapter.
+[Downtime and liveness chapter](07-downtime-and-liveness.md).
 
 ### What the slow tier stores
 
@@ -240,3 +254,7 @@ to reload, so a change takes effect without a restart.
 What a threshold means, when the baseline deviation checks fire, and how firing
 and recovery are debounced, are all the alerting engine's concern. The next
 chapter picks the story up there.
+
+---
+
+[Previous: Configuration](04-configuration.md) | [Handbook index](README.md) | [Next: Alerting and notification channels](06-alerting-and-channels.md)

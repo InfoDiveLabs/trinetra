@@ -8,6 +8,9 @@ dip into by chapter.
 New here? Read the [Introduction](01-introduction.md), then
 [Installation and first run](03-installation.md).
 
+Every chapter ends with previous/next links, so you can read the handbook
+straight through and return here from any page.
+
 ## Contents
 
 1. [Introduction](01-introduction.md) - what serverwatch is and the ideas behind it.

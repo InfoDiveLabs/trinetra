@@ -24,7 +24,22 @@ The three shapes are:
    in-memory view of "now", including fields that are refreshed constantly but
    never kept as history.
 3. **The event log**: `alertlog.jsonl` for alert notifications, and
-   `ts/events.tsd` for downtime events.
+   `ts/events.tsd` for downtime events (see [Downtime and
+   liveness](07-downtime-and-liveness.md)).
+
+Each shape has one command that reads it:
+
+```mermaid
+graph TD
+  subgraph shapes[Three data shapes]
+    ts[Time-series<br/>ts/ tsfile store]
+    snap[Live snapshot<br/>status.json]
+    ev[Event log<br/>alertlog.jsonl and ts/events.tsd]
+  end
+  dump[serverwatch dump] --> ts
+  status[serverwatch status] --> snap
+  alerts[serverwatch alerts] --> ev
+```
 
 The rest of this chapter takes them one at a time, then closes with the full
 on-disk layout so you can see how the pieces sit together.
@@ -81,7 +96,8 @@ belong to shape #2.
 
 Every series is addressed by a stable string id: `cpu`, `mem`, `disk:/`,
 `docker:web:cpu`, and so on. That id maps one-to-one to a file on disk, and it
-is the same key the anomaly engine uses internally. This is why a newly
+is the same key the anomaly engine (see [Alerting and notification
+channels](06-alerting-and-channels.md)) uses internally. This is why a newly
 discovered disk or a newly started container gets its own series automatically
 with no code change: a new metric is simply a new id, which is simply a new
 file.
@@ -151,7 +167,8 @@ up quickly. There are two resolutions in play:
   point sets them equal.
 
 On the slow tick a downsampler rolls recent raw points up into the `1m` series.
-Retention is then applied per resolution, governed by two config keys:
+Retention is then applied per resolution, governed by two config keys (see
+[Configuration](04-configuration.md)):
 
 | Key | Default | Governs |
 | --- | --- | --- |
@@ -317,3 +334,7 @@ the other through `alerts`. The small mutable state files (`baseline.json`,
 `alerts.json`) stay as plain JSON on purpose: they are tiny, read and written
 whole, and there is no reason to binary-encode something you want to be able to
 inspect by eye.
+
+---
+
+[Previous: The web UI](08-web-ui.md) | [Handbook index](README.md) | [Next: Operations](10-operations.md)

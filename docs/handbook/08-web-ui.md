@@ -9,7 +9,8 @@ and serve a dashboard at the same time, and neither depends on the other.
 What the web UI gives you is a small, self-contained console for one server:
 
 - A live dashboard that updates in place as new samples land, no page reload.
-- History graphs that plot the time-series the daemon already keeps.
+- History graphs that plot the time-series the daemon already keeps (see
+  [Storage and the data model](09-storage-and-data-model.md)).
 - A web-based editor for your configuration, notification channels, and user
   accounts, so you can change settings without touching the CLI.
 - An alerts page listing recent alerts, with acknowledgement for admins.
@@ -79,9 +80,9 @@ sudo serverwatch config set web.enabled true
 sudo systemctl restart serverwatch
 ```
 
-Toggling `web.enabled` takes effect on the next restart. The `web.*` keys are
-not reloaded on SIGHUP, so a `systemctl restart serverwatch` is what actually
-starts or stops the listener. Installing the web-capable binary and setting
+Toggling `web.enabled` takes effect on the next restart. The `web.*` keys (see
+[Configuration](04-configuration.md)) are not reloaded on SIGHUP, so a
+`systemctl restart serverwatch` is what actually starts or stops the listener. Installing the web-capable binary and setting
 `web.enabled true` is the entire path to a web-serving service; there is no
 separate "web" unit.
 
@@ -97,7 +98,8 @@ The second `serverwatch-web` lives in `./cmd/serverwatch-web`. It is a distinct
 program that does not embed the daemon. Instead it dials the daemon's control
 socket, borrows the socket client as its data source, and serves the exact same
 UI as its own process alongside the daemon. It is the first step of the
-plugin-over-socket direction described in the Architecture chapter.
+plugin-over-socket direction described in the [Architecture
+chapter](02-architecture.md).
 
 It is a preview, and you should treat it as one:
 
@@ -301,3 +303,7 @@ than a single number, and it must be listed in `public.panels` by name for that
 strip to appear. Older copies of the reference documentation omit it from the
 allowlist; the panel is real and allowlistable, and the table above is the
 authoritative list.
+
+---
+
+[Previous: Downtime and liveness](07-downtime-and-liveness.md) | [Handbook index](README.md) | [Next: Storage and the data model](09-storage-and-data-model.md)

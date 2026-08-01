@@ -16,14 +16,32 @@ clear. The engine only emits an event on a transition, so you get one message
 when a condition starts and one when it ends, never a stream of repeats while
 it stays true.
 
+The path from a reading to your phone looks like this:
+
+```mermaid
+flowchart TD
+  reading[Metric reading] --> check{Threshold check<br/>or baseline deviation check}
+  check -->|within limits| clear[State: clear, send nothing]
+  check -->|breached| edge{State transition on this tick?}
+  edge -->|already firing| dedup[Stay active, send nothing]
+  edge -->|newly true| fire[Fire event]
+  edge -->|was active, now false| recover[Recover event]
+  fire --> disp[Dispatcher]
+  recover --> disp
+  disp --> route{Per channel: enabled?<br/>min_severity? kinds? quiet hours?}
+  route -->|matched| deliver[Deliver to that channel]
+  route -->|filtered out| skip[Skip that channel]
+```
+
 ### Static thresholds, always on
 
 Threshold checks run for `cpu`, `mem`, `swap`, `temp`, and every discovered
 `disk:<mount>`. Each has a number it compares against, and it fires the moment
 the reading meets or exceeds that number. These checks are always active. You
 cannot turn threshold alerting off globally, though you can retune the numbers
-or disable a specific target. The defaults come from your config, and you
-adjust them per family or per target:
+or disable a specific target. The defaults come from your config (see
+[Configuration](04-configuration.md)), and you adjust them per family or per
+target:
 
 ```bash
 sudo serverwatch config set thresholds.disk_pct 85   # any filesystem at or above 85%
@@ -79,8 +97,9 @@ hysteresis is the same idea across a tick boundary: the state only changes on
 an edge, so a metric hovering right at its threshold does not rattle off a fire
 and a recover on alternating samples.
 
-That active-alert state is persisted to `alerts.json` in the data directory, so
-a daemon restart does not re-fire everything that was already known to be down.
+That active-alert state is persisted to `alerts.json` in the data directory (see
+[Storage and the data model](09-storage-and-data-model.md)), so a daemon restart
+does not re-fire everything that was already known to be down.
 Each stored entry carries when it fired, its reason text, whether it was
 acknowledged, and whether it was critical.
 
@@ -104,8 +123,9 @@ instead of formulas.
 
 ### A note on network interfaces
 
-Every non-loopback interface is discovered as an `iface:<name>` target and its
-throughput is collected into the `net:<iface>:rx` and `net:<iface>:tx` series,
+Every non-loopback interface is discovered as an `iface:<name>` target (see
+[Monitoring: what gets collected](05-monitoring.md)) and its throughput is
+collected into the `net:<iface>:rx` and `net:<iface>:tx` series,
 visible in `status.json`'s network rates and in `monitor list`. It does not
 yet raise any alerts. Per-interface throughput alerting is future work; today
 the data is gathered and graphable but nothing fires on it.
@@ -254,3 +274,7 @@ create a second Telegram channel if one already exists under any name, and the
 legacy `telegram.token` and `telegram.chat_id` keys keep working as a fallback
 regardless, including as the source of the bot token for the migrated channel
 and for the interactive command-reply interface.
+
+---
+
+[Previous: Monitoring: what gets collected](05-monitoring.md) | [Handbook index](README.md) | [Next: Downtime and liveness](07-downtime-and-liveness.md)

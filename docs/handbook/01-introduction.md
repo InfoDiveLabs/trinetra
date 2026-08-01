@@ -8,7 +8,7 @@ pushes alerts, boot and recovery reports, a daily digest, and a weekly rollup
 to the chat you claim as owner. If you would rather look at graphs than read
 messages, there is an optional web UI (a live dashboard, history charts, a
 config editor, and a curated public status page); it is covered in its own
-chapter.
+chapter (see [The web UI](08-web-ui.md)).
 
 ## The ethos
 
@@ -28,8 +28,8 @@ miss. Both are ordinary arithmetic. You can read the rule, and you can predict
 when it will fire.
 
 Configuration follows the same principle. Everything you can change is set
-through the `serverwatch` CLI, and there is no config file you are meant to
-hand-edit. You set the one required value, the Telegram bot token, the same way
+through the `serverwatch` CLI (see [Configuration](04-configuration.md)), and
+there is no config file you are meant to hand-edit. You set the one required value, the Telegram bot token, the same way
 you set anything else:
 
 ```bash
@@ -46,8 +46,9 @@ serverwatch is organized as a lean core daemon plus optional plugin binaries
 layered on top. The core is the stdlib-only `serverwatch` process: it runs the
 tiered sampler loop, keeps the live picture and the time-series history, and
 answers Telegram. Crucially, it exposes its state and its controls over a local
-control socket, a small newline-delimited JSON protocol on a unix socket under
-the machine's runtime directory. Any separate process on the same host can dial
+control socket (see [Architecture](02-architecture.md)), a small
+newline-delimited JSON protocol on a unix socket under the machine's runtime
+directory. Any separate process on the same host can dial
 that socket and call the same internal API the daemon uses itself, with no
 extra dependencies pulled into the core.
 
@@ -75,3 +76,7 @@ optional browser interface and its serving modes. **Storage and data model**
 explains the time-series store, `status.json`, and retention. **Operations**
 collects the day-to-day running and troubleshooting. **Command reference**
 lists every CLI subcommand, and **Roadmap** closes with status and planned work.
+
+---
+
+[Handbook index](README.md) | [Next: Architecture](02-architecture.md)

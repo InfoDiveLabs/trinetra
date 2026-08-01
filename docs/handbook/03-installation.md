@@ -37,7 +37,8 @@ The rest are optional and are auto-discovered when present:
   equivalent for your distro) to unlock SMART disk-health reporting. Without
   it, SMART is simply skipped.
 - **A healthchecks.io check URL.** This drives the real-time dead-man switch
-  described in a later chapter, the one mechanism that can alert you while the
+  described in a [later chapter](07-downtime-and-liveness.md), the one mechanism
+  that can alert you while the
   box itself is offline. Optional, and set later with a single command.
 
 Anything in that optional list that is missing is reported as unavailable and
@@ -159,7 +160,8 @@ monitored service."
    ever wedges and the pings stop, systemd restarts the unit for you.
    `RuntimeDirectory=serverwatch` tells systemd to create `/run/serverwatch`
    before the service starts and remove it when the service stops; that is
-   where the daemon puts its control socket, so the directory is always present
+   where the daemon puts its control socket (see
+   [Architecture](02-architecture.md)), so the directory is always present
    with the right lifetime. Together with `Restart=always` and
    `WantedBy=multi-user.target`, the service survives crashes and comes back on
    every boot.
@@ -242,6 +244,17 @@ daemon prints a one-time **6-digit enrollment PIN** to its log. You read that
 PIN from the journal, then send it to the bot from your own Telegram account as
 part of a `/start` command.
 
+```mermaid
+flowchart TD
+  a[Admin runs: serverwatch telegram set-token] --> b[Daemon talks to Telegram, bot unclaimed]
+  b --> c[Daemon logs a one-time 6-digit PIN to the journal]
+  c --> d[Admin reads the PIN from journalctl -u serverwatch]
+  d --> e[Admin sends /start PIN to the bot from their Telegram account]
+  e --> f{PIN matches?}
+  f -->|Yes| g[Chat claimed as owner, only that chat is answered]
+  f -->|No| b
+```
+
 1. **Read the PIN from the log.** On the server:
 
    ```bash
@@ -279,4 +292,9 @@ ignored, and they cannot claim it because the PIN was single-use.
 If `/stats` comes back with live numbers, you are done. The service is
 installed, enabled at boot, discovering the host, and reporting to you over
 Telegram. From here everything else, thresholds, schedules, quiet hours,
-extra notification channels, is optional tuning; the defaults already work.
+extra notification channels, is optional tuning (see
+[Configuration](04-configuration.md)); the defaults already work.
+
+---
+
+[Previous: Architecture](02-architecture.md) | [Handbook index](README.md) | [Next: Configuration](04-configuration.md)
