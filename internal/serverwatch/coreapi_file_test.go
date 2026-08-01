@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -340,5 +341,49 @@ func TestFileAPIEventsStoreOpenFailureWrapsErrorText(t *testing.T) {
 	}
 	if !strings.HasPrefix(err.Error(), "open sample store: ") {
 		t.Fatalf("Events() err = %q, want it prefixed with %q", err.Error(), "open sample store: ")
+	}
+}
+
+// TestFileAPISeriesQueryFailureWrapsErrorText is a regression guard added
+// after a second coordinator-flagged review finding, sibling to the
+// store-open wrap tests above: the pre-routing dumpSeries (dump.go) wrapped
+// a store.Query failure as fmt.Errorf("query %s: %w", metric, err); once
+// Series took over the store.Query call, that wrap needed to move with it
+// or cmdDump's stderr on a query failure (a corrupt tsfile, a permission
+// error) would silently lose the "query <metric>: " prefix. This forces a
+// real store.Query failure -- not a store-open failure -- by opening a real
+// tsfile store once (to create its on-disk layout), then overwriting the
+// "cpu" metric's raw .tsd file with garbage so a subsequent Query fails at
+// the file's header check, and asserts the wrap is present.
+func TestFileAPISeriesQueryFailureWrapsErrorText(t *testing.T) {
+	dir := t.TempDir()
+	prevStateDir := stateDir
+	stateDir = dir // openConfiguredStore (called inside Series) reads this
+	t.Cleanup(func() { stateDir = prevStateDir })
+
+	cfg := config.Default() // Storage.Backend defaults to "tsfile"
+
+	store, err := OpenStore("tsfile", dir, StoreOptions{})
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// tsFileStore lays out <dir>/ts/raw/<safeMetric>.tsd; "cpu" needs no
+	// percent-encoding (safeMetric passes [A-Za-z0-9._-] through literally).
+	badPath := filepath.Join(dir, "ts", "raw", "cpu.tsd")
+	if err := os.WriteFile(badPath, []byte("not a valid tsfile header"), 0o644); err != nil {
+		t.Fatalf("write corrupt tsd file: %v", err)
+	}
+
+	api := newFileAPI(dir, cfg)
+	_, err = api.Series("cpu", 0, 1000, core.ResRaw)
+	if err == nil {
+		t.Fatal("expected an error querying a corrupt tsfile")
+	}
+	if !strings.HasPrefix(err.Error(), "query cpu: ") {
+		t.Fatalf("Series() err = %q, want it prefixed with %q", err.Error(), "query cpu: ")
 	}
 }

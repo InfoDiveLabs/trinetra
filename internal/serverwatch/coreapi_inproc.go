@@ -414,81 +414,23 @@ func (a *inprocAPI) Events(from, to int64) ([]core.DownEventView, error) {
 	return out, nil
 }
 
-// severityString renders an ActiveAlert.Critical bool as the same
-// "critical"/"warning" strings Severity.String() (notifier.go) produces, so
-// core.AlertRecord.Severity uses one consistent vocabulary across active
-// alerts and alert-log history (AlertHistory below, whose AlertEvent.
-// Severity already comes pre-rendered the same way from the dispatcher).
-func severityString(critical bool) string {
-	if critical {
-		return SevCritical.String()
-	}
-	return SevWarning.String()
-}
-
 // ActiveAlerts implements core.API: it loads alerts.json (LoadAlertState)
-// and maps each ActiveAlert into a core.AlertRecord. Kind is left "" (an
-// active alert has no fire/recover distinction of its own -- see
-// core.AlertRecord's doc), and Source carries the human Reason text (the
-// closest ActiveAlert field to "what raised it"). Keys are sorted for a
-// deterministic result (map iteration order is not). A missing/corrupt
+// and maps it via the shared activeAlertRecords helper (coreapi_alerts.go),
+// the same one fileAPI.ActiveAlerts (coreapi_file.go) calls -- see that
+// helper's doc for the field-mapping rationale. A missing/corrupt
 // alerts.json is not an error -- LoadAlertState already degrades that to an
 // empty AlertState, mirroring every other read here.
 func (a *inprocAPI) ActiveAlerts() ([]core.AlertRecord, error) {
 	state := LoadAlertState(a.alertStatePath(), osFS{})
-
-	keys := make([]string, 0, len(state.Active))
-	for k := range state.Active {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	out := make([]core.AlertRecord, 0, len(keys))
-	for _, k := range keys {
-		aa := state.Active[k]
-		out = append(out, core.AlertRecord{
-			Key:      k,
-			Severity: severityString(aa.Critical),
-			Kind:     "",
-			Source:   aa.Reason,
-			Time:     aa.Since,
-			Acked:    aa.Acked,
-		})
-	}
-	return out, nil
+	return activeAlertRecords(state), nil
 }
 
-// AlertHistory implements core.API: it loads alertlog.jsonl (NewAlertLog +
-// AlertEventsSince(since)) and maps each AlertEvent into a core.AlertRecord
-// (a direct field-for-field mapping -- AlertEvent already carries Key/
-// Severity/Kind/Source/Time). Acked is always false: the alert log is a
-// history of past fire/recover dispatches, not the current ack state (that's
-// ActiveAlerts' job). Results are newest-first and capped to limit (limit<=0
-// means unbounded), mirroring the web alerts page's "Recent history" table
-// (internal/web/handlers_alerts.go's alertHistoryRows).
+// AlertHistory implements core.API: it delegates to the shared
+// alertHistoryRecords helper (coreapi_alerts.go), the same one
+// fileAPI.AlertHistory (coreapi_file.go) calls -- see that helper's doc for
+// the field-mapping rationale (newest-first, limit cap, Acked always false).
 func (a *inprocAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
-	log := NewAlertLog(a.alertLogPath())
-	evs, err := log.AlertEventsSince(since)
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(evs, func(i, j int) bool { return evs[i].Time > evs[j].Time })
-	if limit > 0 && len(evs) > limit {
-		evs = evs[:limit]
-	}
-
-	out := make([]core.AlertRecord, 0, len(evs))
-	for _, ev := range evs {
-		out = append(out, core.AlertRecord{
-			Key:      ev.Key,
-			Severity: ev.Severity,
-			Kind:     ev.Kind,
-			Source:   ev.Source,
-			Time:     ev.Time,
-			Acked:    false,
-		})
-	}
-	return out, nil
+	return alertHistoryRecords(NewAlertLog(a.alertLogPath()), since, limit)
 }
 
 // Config implements core.API: it just calls through to getCfg, the same

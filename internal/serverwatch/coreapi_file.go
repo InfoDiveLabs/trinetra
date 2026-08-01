@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"serverwatch/internal/config"
@@ -126,7 +125,11 @@ func (a *fileAPI) Series(metric string, from, to int64, res core.Resolution) ([]
 
 	pts, err := store.Query(metric, from, to, swRes)
 	if err != nil {
-		return nil, err
+		// Same "query <metric>: " wrap the pre-routing dumpSeries (dump.go)
+		// applied around this exact store.Query call, preserved here now
+		// that the call lives inside Series instead -- see the store-open
+		// wrap above for the identical reasoning.
+		return nil, fmt.Errorf("query %s: %w", metric, err)
 	}
 	out := make([]core.SeriesPoint, len(pts))
 	for i, p := range pts {
@@ -148,6 +151,11 @@ func (a *fileAPI) Events(from, to int64) ([]core.DownEventView, error) {
 
 	evs, err := store.Events(from, to)
 	if err != nil {
+		// Unlike Series' store.Query call above, this is deliberately left
+		// unwrapped: store.Events had no CLI caller before this task (dump.go
+		// only ever called Query), so there is no pre-existing "original
+		// path" wording to preserve here -- and inprocAPI.Events (the parity
+		// reference for this method) doesn't wrap it either.
 		return nil, err
 	}
 	out := make([]core.DownEventView, len(evs))
@@ -157,64 +165,22 @@ func (a *fileAPI) Events(from, to int64) ([]core.DownEventView, error) {
 	return out, nil
 }
 
-// ActiveAlerts implements core.API: same LoadAlertState + mapping as
-// inprocAPI.ActiveAlerts (coreapi_inproc.go) -- see that method's doc for
-// the field-mapping rationale (Kind always "", Source from Reason, sorted by
-// key). Duplicated here rather than shared as a standalone function only
-// because it's a two-line body; the field mapping itself lives in the
-// shared severityString helper, so both implementations render Severity
-// identically.
+// ActiveAlerts implements core.API: it loads alerts.json (LoadAlertState)
+// and maps it via the shared activeAlertRecords helper (coreapi_alerts.go),
+// the same one inprocAPI.ActiveAlerts (coreapi_inproc.go) calls -- see that
+// helper's doc for the field-mapping rationale.
 func (a *fileAPI) ActiveAlerts() ([]core.AlertRecord, error) {
 	state := LoadAlertState(a.alertStatePath(), osFS{})
-
-	keys := make([]string, 0, len(state.Active))
-	for k := range state.Active {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	out := make([]core.AlertRecord, 0, len(keys))
-	for _, k := range keys {
-		aa := state.Active[k]
-		out = append(out, core.AlertRecord{
-			Key:      k,
-			Severity: severityString(aa.Critical),
-			Kind:     "",
-			Source:   aa.Reason,
-			Time:     aa.Since,
-			Acked:    aa.Acked,
-		})
-	}
-	return out, nil
+	return activeAlertRecords(state), nil
 }
 
-// AlertHistory implements core.API: same NewAlertLog + AlertEventsSince +
-// mapping as inprocAPI.AlertHistory (coreapi_inproc.go) -- see that method's
-// doc for the field-mapping rationale (newest-first, limit cap, Acked always
+// AlertHistory implements core.API: it delegates to the shared
+// alertHistoryRecords helper (coreapi_alerts.go), the same one
+// inprocAPI.AlertHistory (coreapi_inproc.go) calls -- see that helper's doc
+// for the field-mapping rationale (newest-first, limit cap, Acked always
 // false).
 func (a *fileAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
-	log := NewAlertLog(a.alertLogPath())
-	evs, err := log.AlertEventsSince(since)
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(evs, func(i, j int) bool { return evs[i].Time > evs[j].Time })
-	if limit > 0 && len(evs) > limit {
-		evs = evs[:limit]
-	}
-
-	out := make([]core.AlertRecord, 0, len(evs))
-	for _, ev := range evs {
-		out = append(out, core.AlertRecord{
-			Key:      ev.Key,
-			Severity: ev.Severity,
-			Kind:     ev.Kind,
-			Source:   ev.Source,
-			Time:     ev.Time,
-			Acked:    false,
-		})
-	}
-	return out, nil
+	return alertHistoryRecords(NewAlertLog(a.alertLogPath()), since, limit)
 }
 
 // Config implements core.API: it just returns the cfg this fileAPI was
