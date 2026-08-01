@@ -426,9 +426,12 @@ func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error 
 // against a clone of the current config via config.Config.Set (its
 // existing, already-tested validators — a bad value rejects with 400 and
 // writes nothing), and only once every field has passed persists +
-// in-process applies via Deps.Reload, then appends one audit record per
-// scalar field that actually changed plus one summarizing any monitors
-// table changes.
+// in-process applies via Deps.API.ApplyConfig (task 8; previously
+// Deps.Reload directly -- ApplyConfig's in-process/file-backed
+// implementations perform the exact same save-then-apply/save-then-SIGHUP
+// sequence Reload always did), then appends one audit record per scalar
+// field that actually changed plus one summarizing any monitors table
+// changes.
 func configSaveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -491,7 +494,7 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := d.Reload(newCfg); err != nil {
+		if err := d.API.ApplyConfig(newCfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

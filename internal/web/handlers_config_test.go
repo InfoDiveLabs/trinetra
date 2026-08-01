@@ -12,13 +12,16 @@ import (
 	"serverwatch/internal/config"
 )
 
-// configTestDeps builds a Deps whose Cfg/Reload behave like the real
-// daemon's (see internal/serverwatch/daemon.go's reload closure): Cfg()
-// returns whatever was last successfully Reload()ed, so a test can POST
-// /config and then assert against Cfg() the same way the real web server
-// would after a live SIGHUP-free reload. reloadErr, if set, makes Reload
-// fail without mutating the stored config — for the "Reload itself fails"
-// path.
+// configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like
+// the real daemon's (see internal/serverwatch/daemon.go's reload closure):
+// Cfg() returns whatever was last successfully applied, so a test can POST
+// /config or /channels and then assert against Cfg() the same way the real
+// web server would after a live SIGHUP-free reload. Both Deps.Reload (still
+// read directly by the /public settings save, handlers_public.go) and
+// Deps.API.ApplyConfig (task 8: what configSaveHandler/the channels handlers
+// now call instead) are wired to the SAME closure, so every existing test
+// asserting against the returned cfg/reloadCalled keeps working no matter
+// which of the two a given handler happens to call.
 func configTestDeps(t *testing.T) (d Deps, cfg **config.Config, reloadCalled *bool) {
 	t.Helper()
 	d = enrollTestDeps(t)
@@ -26,11 +29,13 @@ func configTestDeps(t *testing.T) (d Deps, cfg **config.Config, reloadCalled *bo
 	cfgPtr := &c
 	called := false
 	d.Cfg = func() *config.Config { return *cfgPtr }
-	d.Reload = func(nc *config.Config) error {
+	apply := func(nc *config.Config) error {
 		called = true
 		*cfgPtr = nc
 		return nil
 	}
+	d.Reload = apply
+	d.API = fakeAPI{applyConfig: apply}
 	return d, cfgPtr, &called
 }
 

@@ -367,7 +367,7 @@ func channelsAddHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := d.Reload(newCfg); err != nil {
+		if err := d.API.ApplyConfig(newCfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -424,7 +424,7 @@ func channelsUpdateHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := d.Reload(newCfg); err != nil {
+		if err := d.API.ApplyConfig(newCfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -456,7 +456,7 @@ func channelsRemoveHandler(d Deps) http.HandlerFunc {
 			http.Error(w, "unknown channel", http.StatusNotFound)
 			return
 		}
-		if err := d.Reload(newCfg); err != nil {
+		if err := d.API.ApplyConfig(newCfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -470,11 +470,12 @@ func channelsRemoveHandler(d Deps) http.HandlerFunc {
 }
 
 // channelsTestHandler handles POST /channels/{name}/test: sends a one-off
-// test notification via Deps.TestChannel (wired to
-// internal/serverwatch/daemon.go's testChannel closure in a real `-tags
-// web` binary — see server.go's Deps.TestChannel doc). A nil TestChannel
-// (some minimal test Deps, or a hypothetical future non-serverwatch host of
-// this package) renders a clear "not wired" result rather than panicking.
+// test notification via Deps.API.TestChannel (task 8; previously
+// Deps.TestChannel directly -- both backends' TestChannel call the exact
+// same sendTestNotification internal/serverwatch always has, see
+// coreapi_inproc.go/coreapi_file.go). A nil Deps.API (some minimal test
+// Deps, or a hypothetical future non-serverwatch host of this package)
+// renders a clear "not wired" result rather than panicking.
 func channelsTestHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name, err := channelNameFromParam(r.PathValue("name"))
@@ -483,9 +484,9 @@ func channelsTestHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		result := fmt.Sprintf("sent test notification via %q", name)
-		if d.TestChannel == nil {
+		if d.API == nil {
 			result = "channel testing is not wired up in this build"
-		} else if err := d.TestChannel(name); err != nil {
+		} else if err := d.API.TestChannel(name); err != nil {
 			result = fmt.Sprintf("test failed: %v", err)
 		}
 

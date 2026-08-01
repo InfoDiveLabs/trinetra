@@ -16,7 +16,7 @@ import (
 // for the web build.
 func TestInprocSnapshotProjectsScalars(t *testing.T) {
 	snap := Snapshot{TS: 42, CPU: 12.5, MemPct: 30, Online: true}
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return config.Default() }, nil, t.TempDir())
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
 	v, err := api.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestInprocSnapshotMatchesBuildDashboardView(t *testing.T) {
 	want := buildDashboardView(snap)
 	want.Availability = core.Availability{}
 
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir())
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil)
 	got, err := api.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestInprocMonitoringMatchesBuildMonitoringView(t *testing.T) {
 
 	want := buildMonitoringView(snap, cfg)
 
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir())
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil)
 	got, err := api.Monitoring()
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestSeriesResolutionMapping(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Storage.RawRetention = "1h" // must match the store's RawRetention above for PickResolution to agree
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, dir)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, dir, nil)
 
 	// Explicit core.ResRaw over a window spanning all three appended points:
 	// the raw file has all three, untouched by Downsample.
@@ -217,7 +217,7 @@ func TestSeriesResolutionMapping(t *testing.T) {
 // startup) must still answer Series calls with an empty result, never a nil
 // pointer panic.
 func TestSeriesNilStoreReturnsEmptyNoPanic(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir())
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
 	got, err := api.Series("cpu", 0, 1000, core.ResAuto)
 	if err != nil {
 		t.Fatalf("Series with nil store returned an error: %v", err)
@@ -230,7 +230,7 @@ func TestSeriesNilStoreReturnsEmptyNoPanic(t *testing.T) {
 // TestEventsNilStoreReturnsEmptyNoPanic is Events' counterpart to
 // TestSeriesNilStoreReturnsEmptyNoPanic.
 func TestEventsNilStoreReturnsEmptyNoPanic(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir())
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
 	got, err := api.Events(0, 1000)
 	if err != nil {
 		t.Fatalf("Events with nil store returned an error: %v", err)
@@ -254,7 +254,7 @@ func TestEventsMapsStoreEvents(t *testing.T) {
 		t.Fatalf("AppendEvent: %v", err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, store, t.TempDir())
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, store, t.TempDir(), nil)
 	got, err := api.Events(0, 200)
 	if err != nil {
 		t.Fatalf("Events: %v", err)
@@ -281,7 +281,7 @@ func TestActiveAlertsMapsFields(t *testing.T) {
 		t.Fatalf("state.Save: %v", err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil)
 	got, err := api.ActiveAlerts()
 	if err != nil {
 		t.Fatalf("ActiveAlerts: %v", err)
@@ -317,7 +317,7 @@ func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 		}
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil)
 
 	// Unbounded (limit<=0): all 3, newest (Time) first.
 	got, err := api.AlertHistory(0, 0)

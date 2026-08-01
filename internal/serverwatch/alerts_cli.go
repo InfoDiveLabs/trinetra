@@ -37,6 +37,13 @@ func alertStateAndLogPaths() (statePath, logPath string) {
 	return s.AlertStatePath(), s.AlertLogPath()
 }
 
+// cmdAlertsAck implements both `alerts ack <key>` and `alerts unack <key>`
+// (ack distinguishes them) by routing through the file-backed core.API
+// (newFileAPI, coreapi_file.go): AckAlert/UnackAlert do the exact
+// LoadAlertState -> Ack/Unack -> Save -> reloadDaemon sequence this command
+// ran inline before task 8 routed it through core.API -- cfg is passed as
+// nil since neither method touches it (only Series/Events/Doctor/TestChannel
+// need a real *config.Config).
 func cmdAlertsAck(args []string, ack bool) int {
 	verb := "ack"
 	if !ack {
@@ -47,24 +54,18 @@ func cmdAlertsAck(args []string, ack bool) int {
 		return 2
 	}
 	key := args[0]
-	statePath, _ := alertStateAndLogPaths()
-	state := LoadAlertState(statePath, osFS{})
+	api := newFileAPI(stateDir, nil)
 
 	var err error
 	if ack {
-		err = state.Ack(key, time.Now().Unix())
+		err = api.AckAlert(key)
 	} else {
-		err = state.Unack(key)
+		err = api.UnackAlert(key)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := state.Save(statePath); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	reloadDaemon() // best-effort SIGHUP so a running daemon re-reads the ack promptly
 	if ack {
 		fmt.Fprintf(stdout, "%s acknowledged\n", key)
 	} else {

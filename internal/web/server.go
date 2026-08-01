@@ -47,12 +47,21 @@ type Deps struct {
 	// (exactly like every other Deps field) and treat a nil API the same as
 	// "no data" rather than panicking.
 	//
-	// The write methods (ApplyConfig/AckAlert/UnackAlert/TestChannel) and
-	// Doctor/Subscribe are NOT yet used by this package: internal/serverwatch's
-	// in-process implementation still returns a sentinel for those (later
-	// tasks fill them in), so the config-save/test-channel/alert-ack paths
-	// keep using Deps.Reload/Deps.TestChannel/the direct alerts.json
-	// read-modify-write below instead.
+	// As of task 8, the write methods are wired too: configSaveHandler/
+	// channelsAddHandler/channelsUpdateHandler/channelsRemoveHandler
+	// (handlers_config.go/handlers_channels.go) persist through
+	// API.ApplyConfig instead of Deps.Reload, and channelsTestHandler sends
+	// through API.TestChannel instead of Deps.TestChannel -- both fields
+	// remain on Deps (Deps.Reload still backs the /public settings save,
+	// handlers_public.go) but are no longer read by the config/channels
+	// paths. AckAlert/UnackAlert are implemented on both core.API backends
+	// too, but the alerts page's ack handler (handlers_alerts.go)
+	// deliberately keeps its own direct alerts.json read-modify-write: its
+	// on-disk shape (ackAlertState) omits ActiveAlert.Critical, which
+	// AlertState.Save (the shape AckAlert/UnackAlert round-trip) would
+	// preserve -- routing it through API.AckAlert would silently change what
+	// gets written, so that page stays on its pre-task-8 path until that
+	// divergence is resolved on its own terms.
 	API core.API
 	// Events is the daemon's downtime event log (EventsStore,
 	// events_store.go), backing the alerts page's "Uptime · 30d" tile
@@ -81,9 +90,11 @@ type Deps struct {
 	// TestChannel sends a one-off test notification through the named
 	// channel (internal/serverwatch/daemon.go's testChannel closure, built
 	// from sendTestNotification/buildNotifier — the same logic `serverwatch
-	// channel test <name>` uses), for the channels page's "Send test"
-	// button (issue #66). May be nil in tests that don't exercise it; every
-	// caller (handlers_channels.go) must check before calling.
+	// channel test <name>` uses). As of task 8, channelsTestHandler
+	// (handlers_channels.go) reads through Deps.API.TestChannel instead --
+	// this field is kept on Deps (still assigned by daemon_web.go) but no
+	// longer read by this package; it stays only in case a future
+	// non-core.API consumer needs it directly.
 	TestChannel func(name string) error
 	// ValidateChannel reports whether a channel config could actually build a
 	// working notifier (daemon_web.go wires it to serverwatch.buildNotifier,

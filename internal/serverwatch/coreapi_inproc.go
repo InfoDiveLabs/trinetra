@@ -295,10 +295,11 @@ func netIfaceViews(rates map[string]IfaceRate) []core.NetIfaceView {
 	return out
 }
 
-// errCoreNotImplemented is the shared sentinel every inprocAPI method not
-// yet wired up (the write methods, Doctor, Subscribe) returns, so *inprocAPI
-// satisfies core.API today while those methods wait on later tasks (7-8) to
-// fill them in for real.
+// errCoreNotImplemented is the shared sentinel Subscribe returns on both
+// core.API implementations (inprocAPI here, fileAPI in coreapi_file.go) --
+// the one method still deferred, to S5 (the alerting event-bus inversion).
+// Every other method (reads: tasks 4/6; writes/Doctor: tasks 7/8) is
+// implemented for real.
 var errCoreNotImplemented = errors.New("serverwatch: core.API method not implemented yet")
 
 // inprocAPI is the in-process core.API implementation: it reads the running
@@ -316,17 +317,25 @@ type inprocAPI struct {
 	getCfg   func() *config.Config
 	store    SampleStore
 	stateDir string
+	// reload is the daemon's own reload closure (cmdDaemon's `reload` in
+	// daemon.go: saveCfg then the applyConfig pointer-swap) -- ApplyConfig
+	// below just calls through to it, so a config posted through core.API
+	// takes effect exactly the way WebDeps.Reload always has: persisted to
+	// disk, then applied in-process without a SIGHUP round-trip.
+	reload func(*config.Config) error
 }
 
 // newInprocAPI builds a core.API backed directly by the running daemon's
 // state: getSnap/getCfg are the same race-safe closures WebDeps already
 // hands the `-tags web` build (Snapshot/Cfg), store is the daemon's
 // SampleStore (nil in store-writes-disabled mode -- every read method below
-// degrades to "no data" rather than panicking), and stateDir is the
-// directory alerts.json/alertlog.jsonl live in (mirroring Store's own
-// AlertStatePath/AlertLogPath, store.go).
-func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string) core.API {
-	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir}
+// degrades to "no data" rather than panicking), stateDir is the directory
+// alerts.json/alertlog.jsonl live in (mirroring Store's own
+// AlertStatePath/AlertLogPath, store.go), and reload is the daemon's
+// save-then-apply closure (WebDeps.Reload/cmdDaemon's own `reload`) that
+// ApplyConfig delegates to.
+func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error) core.API {
+	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload}
 }
 
 // alertStatePath/alertLogPath mirror Store.AlertStatePath/Store.AlertLogPath
@@ -451,18 +460,52 @@ func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.getCfg(), a.store), nil
 }
 
-// ApplyConfig, AckAlert, UnackAlert, TestChannel, and Subscribe are deferred
-// to a later task: each returns errCoreNotImplemented for now so *inprocAPI
-// satisfies core.API today.
+// ApplyConfig implements core.API: it delegates straight to a.reload, the
+// daemon's own save-then-apply closure (see the field's doc) -- the exact
+// same behavior WebDeps.Reload has always exposed, now reachable through
+// core.API too.
+func (a *inprocAPI) ApplyConfig(c *config.Config) error { return a.reload(c) }
 
-func (a *inprocAPI) ApplyConfig(*config.Config) error { return errCoreNotImplemented }
+// AckAlert implements core.API: it loads alerts.json (LoadAlertState, same
+// helper ActiveAlerts/AlertHistory above use), acks key via AlertState.Ack
+// (anomaly.go), and saves it back -- the in-process counterpart of
+// cmdAlertsAck (alerts_cli.go)/fileAPI.AckAlert (coreapi_file.go). Unlike
+// those CLI-process paths, this does NOT SIGHUP: this IS the daemon process,
+// so there is nothing to signal -- the next fire/recover transition simply
+// reads the freshly-saved ack straight off the same in-memory AlertState via
+// MergeAckFromDisk (anomaly.go), no round-trip needed.
+func (a *inprocAPI) AckAlert(key string) error {
+	statePath := a.alertStatePath()
+	state := LoadAlertState(statePath, osFS{})
+	if err := state.Ack(key, time.Now().Unix()); err != nil {
+		return err
+	}
+	return state.Save(statePath)
+}
 
-func (a *inprocAPI) AckAlert(key string) error { return errCoreNotImplemented }
+// UnackAlert implements core.API: AckAlert's mirror image, via
+// AlertState.Unack.
+func (a *inprocAPI) UnackAlert(key string) error {
+	statePath := a.alertStatePath()
+	state := LoadAlertState(statePath, osFS{})
+	if err := state.Unack(key); err != nil {
+		return err
+	}
+	return state.Save(statePath)
+}
 
-func (a *inprocAPI) UnackAlert(key string) error { return errCoreNotImplemented }
+// TestChannel implements core.API: it calls sendTestNotification
+// (channel.go) against the LIVE config (a.getCfg(), race-safe against a
+// concurrent SIGHUP/Reload -- same reasoning as cmdDaemon's own testChannel
+// closure, daemon.go) with source "web", identical to what WebDeps.
+// TestChannel has always done.
+func (a *inprocAPI) TestChannel(name string) error {
+	return sendTestNotification(a.getCfg(), name, "web")
+}
 
-func (a *inprocAPI) TestChannel(name string) error { return errCoreNotImplemented }
-
+// Subscribe is deferred to a later stage (S5, the alerting event-bus
+// inversion -- see the epic's design doc): it returns errCoreNotImplemented
+// for now so *inprocAPI satisfies core.API today.
 func (a *inprocAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, errCoreNotImplemented
 }

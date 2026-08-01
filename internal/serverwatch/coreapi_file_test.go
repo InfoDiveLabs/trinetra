@@ -279,24 +279,14 @@ func TestFileAPIConfigReturnsPassedCfg(t *testing.T) {
 	}
 }
 
-// TestFileAPIUnimplementedMethodsReturnSentinel pins that the write/
-// Subscribe methods all return errCoreNotImplemented, same as inprocAPI.
-// Doctor is implemented as of task 7 (doctor_test.go covers it) so it is no
-// longer part of this list.
-func TestFileAPIUnimplementedMethodsReturnSentinel(t *testing.T) {
+// TestFileAPISubscribeReturnsSentinel pins that Subscribe -- the one method
+// still deferred to S5 (the alerting event-bus inversion) -- returns
+// errCoreNotImplemented, same as inprocAPI. Every other method (including
+// Doctor, task 7, and ApplyConfig/AckAlert/UnackAlert/TestChannel, task 8)
+// is implemented for real now and covered by its own test elsewhere in this
+// file/coreapi_write_test.go.
+func TestFileAPISubscribeReturnsSentinel(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
-	if err := api.ApplyConfig(config.Default()); err != errCoreNotImplemented {
-		t.Errorf("ApplyConfig() err = %v, want errCoreNotImplemented", err)
-	}
-	if err := api.AckAlert("cpu"); err != errCoreNotImplemented {
-		t.Errorf("AckAlert() err = %v, want errCoreNotImplemented", err)
-	}
-	if err := api.UnackAlert("cpu"); err != errCoreNotImplemented {
-		t.Errorf("UnackAlert() err = %v, want errCoreNotImplemented", err)
-	}
-	if err := api.TestChannel("telegram"); err != errCoreNotImplemented {
-		t.Errorf("TestChannel() err = %v, want errCoreNotImplemented", err)
-	}
 	if _, err := api.Subscribe(nil); err != errCoreNotImplemented { //nolint:staticcheck // nil context: exercising the stub only
 		t.Errorf("Subscribe() err = %v, want errCoreNotImplemented", err)
 	}

@@ -40,8 +40,9 @@ func maybeStartWeb(d WebDeps) func() {
 		// this task (see web.Deps.API's doc). getSnap/getCfg are the exact
 		// same closures WebDeps already hands this build (d.Snapshot/d.Cfg);
 		// only the constructor differs from the default (`!web`) build's use
-		// of the same newInprocAPI (coreapi_inproc.go).
-		API:    newInprocAPI(d.Snapshot, d.Cfg, d.Store, d.StateDir),
+		// of the same newInprocAPI (coreapi_inproc.go). d.Reload is passed
+		// through unchanged as ApplyConfig's backing closure (task 8).
+		API:    newInprocAPI(d.Snapshot, d.Cfg, d.Store, d.StateDir, d.Reload),
 		Events: events,
 		Snapshot: func() web.DashboardView {
 			v := buildDashboardView(d.Snapshot())

@@ -14,11 +14,15 @@ import (
 )
 
 // fakeAPI is a minimal core.API test double for this package's handler
-// tests: each field backs exactly one read method's return value (the zero
-// value/nil error when unset), and every write/Doctor/Subscribe method is a
-// harmless no-op stub, since this task only routes the web UI's READ paths
-// through core.API (see the task brief), so no test here needs a working
-// write half.
+// tests: each read field backs exactly one read method's return value (the
+// zero value/nil error when unset). The write methods (task 8) delegate to
+// an optional func field each -- applyConfig/testChannel/ackAlert/
+// unackAlert -- so a test that cares (configTestDeps wiring applyConfig to
+// the same cfg-mutating closure Reload uses, or
+// TestChannelsTestHandlerCallsTestChannel wiring testChannel to capture its
+// argument) can observe the call, while every other test gets a harmless
+// no-op (nil error) by leaving the field unset. Doctor/Subscribe stay plain
+// no-op stubs -- no handler in this package calls them yet.
 type fakeAPI struct {
 	snap       core.DashboardView
 	snapErr    error
@@ -33,6 +37,11 @@ type fakeAPI struct {
 	eventsErr error
 	active    []core.AlertRecord
 	history   []core.AlertRecord
+
+	applyConfig func(*config.Config) error
+	testChannel func(name string) error
+	ackAlert    func(key string) error
+	unackAlert  func(key string) error
 }
 
 func (f fakeAPI) Snapshot() (core.DashboardView, error)    { return f.snap, f.snapErr }
@@ -58,10 +67,34 @@ func (f fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error
 func (f fakeAPI) Config() (*config.Config, error)    { return nil, nil }
 func (f fakeAPI) Doctor() (core.DoctorReport, error) { return core.DoctorReport{}, nil }
 
-func (f fakeAPI) ApplyConfig(*config.Config) error                         { return nil }
-func (f fakeAPI) AckAlert(key string) error                                { return nil }
-func (f fakeAPI) UnackAlert(key string) error                              { return nil }
-func (f fakeAPI) TestChannel(name string) error                            { return nil }
+func (f fakeAPI) ApplyConfig(c *config.Config) error {
+	if f.applyConfig != nil {
+		return f.applyConfig(c)
+	}
+	return nil
+}
+
+func (f fakeAPI) AckAlert(key string) error {
+	if f.ackAlert != nil {
+		return f.ackAlert(key)
+	}
+	return nil
+}
+
+func (f fakeAPI) UnackAlert(key string) error {
+	if f.unackAlert != nil {
+		return f.unackAlert(key)
+	}
+	return nil
+}
+
+func (f fakeAPI) TestChannel(name string) error {
+	if f.testChannel != nil {
+		return f.testChannel(name)
+	}
+	return nil
+}
+
 func (f fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) { return nil, nil }
 
 // TestDashboardReadsFromAPI pins the core TDD obligation for this task: once

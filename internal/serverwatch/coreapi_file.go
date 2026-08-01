@@ -210,19 +210,63 @@ func (a *fileAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.cfg, store), nil
 }
 
-// ApplyConfig, AckAlert, UnackAlert, TestChannel, and Subscribe are deferred
-// to a later task: each returns errCoreNotImplemented for now so *fileAPI
-// satisfies core.API today, mirroring inprocAPI's identical deferral
-// (coreapi_inproc.go).
+// ApplyConfig implements core.API: it persists c to cfgPath (saveCfg, the
+// same package-level helper every `channel`/`target`/... CLI setter already
+// uses) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks
+// the change up immediately -- the exact save-then-signal sequence every
+// existing CLI config-mutating command follows (see channel.go's
+// cmdChannelAdd/Remove/Set for the pattern this generalizes).
+func (a *fileAPI) ApplyConfig(c *config.Config) error {
+	if err := saveCfg(c); err != nil {
+		return err
+	}
+	reloadDaemon()
+	return nil
+}
 
-func (a *fileAPI) ApplyConfig(*config.Config) error { return errCoreNotImplemented }
+// AckAlert implements core.API: LoadAlertState + AlertState.Ack + Save, then
+// a best-effort SIGHUP (reloadDaemon) so a running daemon re-reads the ack
+// promptly -- identical to cmdAlertsAck's ack path (alerts_cli.go), which
+// now delegates to this method.
+func (a *fileAPI) AckAlert(key string) error {
+	statePath := a.alertStatePath()
+	state := LoadAlertState(statePath, osFS{})
+	if err := state.Ack(key, time.Now().Unix()); err != nil {
+		return err
+	}
+	if err := state.Save(statePath); err != nil {
+		return err
+	}
+	reloadDaemon()
+	return nil
+}
 
-func (a *fileAPI) AckAlert(key string) error { return errCoreNotImplemented }
+// UnackAlert implements core.API: AckAlert's mirror image, via
+// AlertState.Unack -- identical to cmdAlertsAck's unack path.
+func (a *fileAPI) UnackAlert(key string) error {
+	statePath := a.alertStatePath()
+	state := LoadAlertState(statePath, osFS{})
+	if err := state.Unack(key); err != nil {
+		return err
+	}
+	if err := state.Save(statePath); err != nil {
+		return err
+	}
+	reloadDaemon()
+	return nil
+}
 
-func (a *fileAPI) UnackAlert(key string) error { return errCoreNotImplemented }
+// TestChannel implements core.API: it calls sendTestNotification
+// (channel.go) against this fileAPI's cfg with source "cli", identical to
+// cmdChannelTest (channel.go).
+func (a *fileAPI) TestChannel(name string) error {
+	return sendTestNotification(a.cfg, name, "cli")
+}
 
-func (a *fileAPI) TestChannel(name string) error { return errCoreNotImplemented }
-
+// Subscribe is deferred to a later stage (S5, the alerting event-bus
+// inversion -- see the epic's design doc): it returns errCoreNotImplemented
+// for now so *fileAPI satisfies core.API today, mirroring inprocAPI's
+// identical deferral (coreapi_inproc.go).
 func (a *fileAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, errCoreNotImplemented
 }

@@ -324,15 +324,16 @@ func TestChannelsRemoveRoundTrips(t *testing.T) {
 }
 
 // TestChannelsTestHandlerCallsTestChannel pins the "send test" wiring: it
-// calls Deps.TestChannel with the decoded name and renders its result.
+// calls Deps.API.TestChannel (task 8; previously Deps.TestChannel directly)
+// with the decoded name and renders its result.
 func TestChannelsTestHandlerCallsTestChannel(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"})
 	var gotName string
-	d.TestChannel = func(name string) error {
+	d.API = fakeAPI{testChannel: func(name string) error {
 		gotName = name
 		return nil
-	}
+	}}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -351,12 +352,14 @@ func TestChannelsTestHandlerCallsTestChannel(t *testing.T) {
 }
 
 // TestChannelsTestHandlerNilTestChannelDoesNotPanic pins the "not yet
-// wired" fallback: a nil Deps.TestChannel renders a clear message instead
-// of panicking.
+// wired" fallback: a nil Deps.API renders a clear message instead of
+// panicking (task 8: the guard moved from checking Deps.TestChannel to
+// checking Deps.API, since that's what channelsTestHandler now calls
+// through).
 func TestChannelsTestHandlerNilTestChannelDoesNotPanic(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"})
-	d.TestChannel = nil
+	d.API = nil
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -376,7 +379,7 @@ func TestChannelsTestHandlerNilTestChannelDoesNotPanic(t *testing.T) {
 func TestChannelsTestHandlerSurfacesError(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"})
-	d.TestChannel = func(name string) error { return errBoom }
+	d.API = fakeAPI{testChannel: func(name string) error { return errBoom }}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
