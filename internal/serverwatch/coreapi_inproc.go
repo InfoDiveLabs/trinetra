@@ -107,6 +107,22 @@ func buildDashboardView(snap Snapshot) core.DashboardView {
 // collector toggles then default to "disabled" -- the safer read when the
 // actual setting is unknown, rather than assuming the collector ran and
 // showing an empty table as if it deliberately reported zero units/processes.
+// targetViewsFromTargets maps Discover/DiscoverLocal's []Target to
+// []core.TargetView field for field, shared by inprocAPI.MonitorTargets and
+// fileAPI.MonitorTargets so both core.API implementations report identical
+// target lists from one mapping. It intentionally does NOT merge in
+// config.Config.TargetEnabled/TargetThreshold overrides: MonitorTargets is
+// the discovery half only (what does this host have), the same split
+// Config()/ApplyConfig() already draw for the enable/threshold half (see
+// core.API.MonitorTargets's doc).
+func targetViewsFromTargets(targets []Target) []core.TargetView {
+	out := make([]core.TargetView, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, core.TargetView{ID: t.ID, Kind: t.Kind, Display: t.Display, Available: t.Available})
+	}
+	return out
+}
+
 func buildMonitoringView(snap Snapshot, cfg *config.Config) core.MonitoringView {
 	var v core.MonitoringView
 
@@ -343,6 +359,11 @@ type inprocAPI struct {
 	// reports errStreamRequiresDaemon in that case rather than a nil-pointer
 	// panic.
 	bus *eventBus
+	// enroll is the shared Telegram enrollment-pin holder cmdDaemon also
+	// hands to pollLoop (daemon.go, enroll.go) -- EnrollmentPIN below just
+	// reads through it, so a socket caller sees the exact pin the poll loop
+	// is matching /start <pin> against, not a separately generated one.
+	enroll *enrollState
 }
 
 // newInprocAPI builds a core.API backed directly by the running daemon's
@@ -352,12 +373,14 @@ type inprocAPI struct {
 // degrades to "no data" rather than panicking), stateDir is the directory
 // alerts.json/alertlog.jsonl live in (mirroring Store's own
 // AlertStatePath/AlertLogPath, store.go), reload is cmdDaemon's own
-// save-then-apply closure that ApplyConfig delegates to, and bus is
-// cmdDaemon's live eventBus that Subscribe below hands each caller a
-// subscription onto (nil when there's no live daemon bus to subscribe to,
-// e.g. most existing tests -- see the bus field's doc).
-func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error, bus *eventBus) core.API {
-	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload, bus: bus}
+// save-then-apply closure that ApplyConfig delegates to, bus is cmdDaemon's
+// live eventBus that Subscribe below hands each caller a subscription onto
+// (nil when there's no live daemon bus, e.g. most existing tests -- see the
+// bus field's doc), and enroll is the same enrollState instance cmdDaemon
+// hands to pollLoop (so EnrollmentPIN returns the exact pin the poll loop
+// matches against).
+func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error, bus *eventBus, enroll *enrollState) core.API {
+	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload, bus: bus, enroll: enroll}
 }
 
 // alertStatePath/alertLogPath mirror Store.AlertStatePath/Store.AlertLogPath
@@ -476,6 +499,27 @@ func (a *inprocAPI) Config() (*config.Config, error) {
 // fileAPI's CLI-process Doctor below.
 func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.getCfg(), a.store), nil
+}
+
+// EnrollmentPIN implements core.API: it reads through a.enroll (enroll.go)
+// against the daemon's current live config, the exact same call pollLoop
+// (daemon.go) makes each iteration -- so a socket caller (`telegram
+// set-token`, ctl) always sees the pin the daemon will actually accept in
+// "/start <pin>", never a separately generated one.
+func (a *inprocAPI) EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error) {
+	pin, enrolled = a.enroll.PIN(a.getCfg())
+	return pin, enrolled, nil
+}
+
+// MonitorTargets implements core.API: it runs DiscoverLocal() (the daemon's
+// own osExec{}/osFS{}-backed probes -- docker ps / df -PT / smartctl --scan
+// / the thermal-zone glob) in the daemon's own process, so a socket caller
+// (ctl's monitor-thresholds screen) sees exactly what this host's daemon can
+// see, including anything gated behind the daemon's own root/sudo access
+// that a separate, less-privileged CLI process (fileAPI.MonitorTargets,
+// coreapi_file.go) might not.
+func (a *inprocAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return targetViewsFromTargets(DiscoverLocal()), nil
 }
 
 // ApplyConfig implements core.API: it delegates straight to a.reload, the

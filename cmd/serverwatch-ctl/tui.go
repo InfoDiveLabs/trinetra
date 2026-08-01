@@ -35,6 +35,8 @@ type step int
 const (
 	stepHome step = iota
 	stepSetupWeb
+	stepManage
+	stepOnboard
 )
 
 // refreshInterval is how often the home screen re-fetches Snapshot() while
@@ -72,6 +74,14 @@ type model struct {
 	originIn   textinput.Model
 	applying   bool
 	applyErr   error
+
+	// management menu (schedule/quiet-hours/healthchecks/monitor thresholds/
+	// channels)
+	mgr manageModel
+
+	// first-run onboarding (capture the Telegram bot token, then show the
+	// enrollment pin and poll until enrolled -- see onboard_ui.go)
+	onboard onboardModel
 
 	quitting bool
 }
@@ -157,7 +167,7 @@ func applyWebSetupCmd(api core.API, ans webSetupAnswers) tea.Cmd {
 // --- tea.Model ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchSnapshotCmd(m.api), tickCmd())
+	return tea.Batch(fetchSnapshotCmd(m.api), tickCmd(), fetchOnboardCheckCmd(m.api))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -172,6 +182,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateHomeKey(msg)
 		case stepSetupWeb:
 			return m.updateSetupKey(msg)
+		case stepManage:
+			return m.updateManageKey(msg)
+		case stepOnboard:
+			return m.updateOnboardKey(msg)
 		}
 		return m, nil
 
@@ -192,12 +206,163 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyErr = msg.err
 		m.wiz = webSetupResult
 		return m, nil
+
+	case manageAppliedMsg:
+		m.mgr.applying = false
+		m.mgr.applyErr = msg.err
+		m.mgr.screen = manageResult
+		return m, nil
+
+	case scheduleConfigMsg:
+		m.mgr.configLoading = false
+		m.mgr.configErr = msg.err
+		if msg.err == nil && msg.cfg != nil {
+			m.mgr.schedAns.Daily = msg.cfg.Schedule.Daily
+			m.mgr.schedAns.Weekly = msg.cfg.Schedule.Weekly
+			switch {
+			case msg.cfg.Schedule.Daily != "":
+				m.mgr.schedModeCursor = 1 // "daily" in scheduleModeChoices
+			case msg.cfg.Schedule.Weekly != "":
+				m.mgr.schedModeCursor = 2 // "weekly" in scheduleModeChoices
+			default:
+				m.mgr.schedModeCursor = 0 // "off"
+			}
+		}
+		return m, nil
+
+	case quietHoursConfigMsg:
+		m.mgr.configLoading = false
+		m.mgr.configErr = msg.err
+		m.mgr.valueIn = newManageValueInput("22-6 or off")
+		if msg.err == nil {
+			val := "off"
+			if msg.cfg != nil && msg.cfg.QuietHours != "" {
+				val = msg.cfg.QuietHours
+			}
+			m.mgr.valueIn.SetValue(val)
+			m.mgr.valueIn.CursorEnd()
+		}
+		return m, m.mgr.valueIn.Focus()
+
+	case healthchecksConfigMsg:
+		m.mgr.configLoading = false
+		m.mgr.configErr = msg.err
+		m.mgr.valueIn = newManageValueInput("https://hc-ping.com/... or off")
+		if msg.err == nil {
+			val := "off"
+			if msg.cfg != nil && msg.cfg.Healthchecks.URL != "" {
+				val = msg.cfg.Healthchecks.URL
+			}
+			m.mgr.valueIn.SetValue(val)
+			m.mgr.valueIn.CursorEnd()
+		}
+		return m, m.mgr.valueIn.Focus()
+
+	case monitorTargetsMsg:
+		m.mgr.monLoading = false
+		m.mgr.monErr = msg.err
+		if msg.err == nil {
+			m.mgr.monTargets = msg.targets
+			m.mgr.monRows = buildMonitorRows(msg.targets, msg.cfg)
+			if m.mgr.monCursor >= len(m.mgr.monRows) {
+				m.mgr.monCursor = 0
+			}
+		}
+		return m, nil
+
+	case monitorAppliedMsg:
+		m.mgr.monErr = msg.err
+		if msg.err == nil && msg.cfg != nil {
+			m.mgr.monRows = buildMonitorRows(m.mgr.monTargets, msg.cfg)
+		}
+		return m, nil
+
+	case channelsConfigMsg:
+		m.mgr.configLoading = false
+		m.mgr.configErr = msg.err
+		if msg.err == nil && msg.cfg != nil {
+			m.mgr.chanList = sortedChannels(msg.cfg)
+			if m.mgr.chanCursor >= len(m.mgr.chanList) {
+				m.mgr.chanCursor = 0
+			}
+		}
+		return m, nil
+
+	case channelActionMsg:
+		m.mgr.chanErr = msg.err
+		if msg.isTest {
+			m.mgr.chanTestMsg = ""
+			if msg.err == nil {
+				m.mgr.chanTestMsg = fmt.Sprintf("test notification sent via %q", msg.name)
+			}
+			return m, nil
+		}
+		// remove
+		if msg.err == nil && msg.cfg != nil {
+			m.mgr.chanList = sortedChannels(msg.cfg)
+			if m.mgr.chanCursor >= len(m.mgr.chanList) {
+				m.mgr.chanCursor = len(m.mgr.chanList) - 1
+			}
+			if m.mgr.chanCursor < 0 {
+				m.mgr.chanCursor = 0
+			}
+		}
+		return m, nil
+
+	case channelSavedMsg:
+		m.mgr.chanSaving = false
+		m.mgr.applyErr = msg.err
+		m.mgr.screen = manageResult
+		return m, nil
+
+	case onboardCheckMsg:
+		// Only auto-enter onboarding if the user is still sitting on Home:
+		// by the time this lands (it's fetched alongside the snapshot/tick
+		// in Init, so it can arrive after other keys), they may already have
+		// navigated into the web wizard or the management menu, and forcing
+		// them out into onboarding would be more annoying than helpful.
+		if m.step == stepHome && needsOnboarding(msg.cfg) {
+			m.step = stepOnboard
+			m.onboard = onboardModel{tokenIn: newManageValueInput("bot token from @BotFather")}
+			return m, m.onboard.tokenIn.Focus()
+		}
+		return m, nil
+
+	case onboardTokenAppliedMsg:
+		m.onboard.applying = false
+		m.onboard.applyErr = msg.err
+		if msg.err == nil {
+			m.onboard.screen = onboardPINStep
+			m.onboard.pinLoading = true
+			return m, fetchOnboardPINCmd(m.api)
+		}
+		return m, nil
+
+	case onboardPINMsg:
+		m.onboard.pinLoading = false
+		m.onboard.pinErr = msg.err
+		if msg.err == nil {
+			m.onboard.pin = msg.pin
+			m.onboard.enrolled = msg.enrolled
+		}
+		if m.onboard.enrolled || msg.err != nil {
+			return m, nil
+		}
+		return m, onboardPollTickCmd()
+
+	case onboardPollTickMsg:
+		if m.step == stepOnboard && m.onboard.screen == onboardPINStep && !m.onboard.enrolled {
+			return m, fetchOnboardPINCmd(m.api)
+		}
+		return m, nil
 	}
 	return m, nil
 }
 
 // updateHomeKey handles a keypress on the Home screen: 's' launches the web
-// setup wizard, 'r' forces an immediate Snapshot refresh, 'q' quits.
+// setup wizard, 'm' opens the management menu (schedule/quiet-hours/
+// healthchecks/monitor thresholds), 'r' forces an immediate Snapshot
+// refresh, 'q' quits.
 func (m model) updateHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
@@ -209,6 +374,10 @@ func (m model) updateHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modeCursor = 0
 		m.ans = webSetupAnswers{}
 		m.applyErr = nil
+		return m, nil
+	case "m":
+		m.step = stepManage
+		m.mgr = manageModel{}
 		return m, nil
 	case "r":
 		m.loading = true
@@ -365,6 +534,10 @@ func (m model) View() string {
 	switch m.step {
 	case stepSetupWeb:
 		return m.setupView()
+	case stepManage:
+		return m.manageView()
+	case stepOnboard:
+		return m.onboardView()
 	default:
 		return m.homeView()
 	}
@@ -389,7 +562,7 @@ func (m model) homeView() string {
 		fmt.Fprintf(&b, "load:     %.2f %.2f %.2f\n", m.snap.Load1, m.snap.Load5, m.snap.Load15)
 		fmt.Fprintf(&b, "units:    %d failed / %d total\n", m.snap.UnitsFailed, m.snap.UnitsTotal)
 	}
-	b.WriteString("\n" + hintStyle.Render("s: set up the web UI   r: refresh   q: quit") + "\n")
+	b.WriteString("\n" + hintStyle.Render("s: set up the web UI   m: manage   r: refresh   q: quit") + "\n")
 	return b.String()
 }
 

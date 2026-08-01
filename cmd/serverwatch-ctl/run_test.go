@@ -22,10 +22,39 @@ type fakeAPI struct {
 	doctor   core.DoctorReport
 	active   []core.AlertRecord
 
-	cfg      *config.Config
-	applyErr error
-	applied  *config.Config
-	applyN   int
+	cfg       *config.Config
+	configErr error
+	applyErr  error
+	applied   *config.Config
+	applyN    int
+
+	// monitorTargets/monitorTargetsErr back MonitorTargets, so the monitor-
+	// thresholds screen's tests (manage_ui_test.go) can drive it without a
+	// real socket or real docker/df/smartctl discovery.
+	monitorTargets    []core.TargetView
+	monitorTargetsErr error
+
+	// validateErr/validateCalls back ValidateChannel for the Channels
+	// screen's #79-safe validate-before-save gate tests (channels_test.go,
+	// manage_channels_test.go): validateErr controls whether the gate
+	// passes or fails, validateCalls records every cc it was asked to check
+	// so a test can assert the gate was (or wasn't) actually consulted.
+	validateErr   error
+	validateCalls []config.ChannelConfig
+
+	// testChannelErr/testChannelCalls back TestChannel for the Channels
+	// screen's "test" action (manage_channels_test.go).
+	testChannelErr   error
+	testChannelCalls []string
+
+	// enrollPIN/enrollEnrolled/enrollErr back EnrollmentPIN for the
+	// first-run onboarding flow's tests (onboarding_test.go,
+	// onboard_ui_test.go): enrollCalls records how many times it was
+	// polled, so a test can assert the poll loop actually re-fetches.
+	enrollPIN      string
+	enrollEnrolled bool
+	enrollErr      error
+	enrollCalls    int
 }
 
 func (f *fakeAPI) Snapshot() (core.DashboardView, error) { return f.snapshot, nil }
@@ -41,26 +70,53 @@ func (f *fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, erro
 	return nil, nil
 }
 func (f *fakeAPI) Config() (*config.Config, error) {
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
 	if f.cfg != nil {
 		return f.cfg, nil
 	}
 	return &config.Config{}, nil
 }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+
+// EnrollmentPIN returns the canned enrollPIN/enrollEnrolled/enrollErr a test
+// set up, recording every call in enrollCalls so onboarding's poll-until-
+// enrolled loop (onboard_ui.go) can be asserted to actually re-fetch rather
+// than just checking the first result forever.
+func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
+	f.enrollCalls++
+	if f.enrollErr != nil {
+		return "", false, f.enrollErr
+	}
+	return f.enrollPIN, f.enrollEnrolled, nil
+}
+func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return f.monitorTargets, f.monitorTargetsErr
+}
 func (f *fakeAPI) ApplyConfig(c *config.Config) error {
 	f.applyN++
 	f.applied = c
 	return f.applyErr
 }
-func (f *fakeAPI) AckAlert(key string) error     { return nil }
-func (f *fakeAPI) UnackAlert(key string) error   { return nil }
-func (f *fakeAPI) TestChannel(name string) error { return nil }
+func (f *fakeAPI) AckAlert(key string) error   { return nil }
+func (f *fakeAPI) UnackAlert(key string) error { return nil }
 
-// ValidateChannel is a stub for core.API's ValidateChannel method (landing
-// in parallel from the beta-2 A1 task alongside this one -- see the
-// coordination note in the beta-2 B1 task spec): returning nil is enough to
-// satisfy core.API without ctl having any actual channel-validation UI yet.
-func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error { return nil }
+// TestChannel records name in testChannelCalls and returns testChannelErr,
+// so the Channels screen's "test" action (manage_channels.go) can be
+// asserted against without a real notifier send.
+func (f *fakeAPI) TestChannel(name string) error {
+	f.testChannelCalls = append(f.testChannelCalls, name)
+	return f.testChannelErr
+}
+
+// ValidateChannel records cc in validateCalls and returns validateErr, so
+// the Channels screen's #79-safe validate-before-save gate (saveChannel,
+// channels.go) can be asserted to have (or not have) actually consulted it.
+func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
+	f.validateCalls = append(f.validateCalls, cc)
+	return f.validateErr
+}
 
 func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, nil

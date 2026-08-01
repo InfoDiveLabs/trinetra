@@ -263,7 +263,8 @@ sudo serverwatch telegram set-token <token>
 
 This writes the token into the config and signals the running daemon to reload,
 so there is no restart to do. The daemon starts talking to Telegram
-immediately.
+immediately, and `telegram set-token` prints the next step straight to your
+terminal.
 
 At this point the bot is running but **unclaimed**. It will not answer just
 anyone. To stop a stranger who stumbles onto your bot from reading your data,
@@ -272,28 +273,44 @@ Telegram chat: yours.
 
 Here is how enrollment works, and it is important to get this right because the
 old "just message the bot" behavior is gone. While the bot is unclaimed, the
-daemon prints a one-time **6-digit enrollment PIN** to its log. You read that
-PIN from the journal, then send it to the bot from your own Telegram account as
-part of a `/start` command.
+daemon holds a one-time **6-digit enrollment PIN**. `telegram set-token`
+dials the daemon over the control socket right after saving the token and
+prints that PIN along with the `/start` instruction, so in the normal case
+you never have to leave the terminal you ran it in. The `serverwatch-ctl`
+first-run onboarding screen (see the [Command
+reference](11-command-reference.md#21-serverwatch-ctl-beta)) shows the exact
+same PIN the same way, if you set the token through the guided TUI instead.
+If the daemon cannot be reached, for example it is not installed yet or is
+still starting, `telegram set-token` falls back to pointing you at the
+journal, where the daemon also logs the PIN.
 
 ```mermaid
 flowchart TD
-  a[Admin runs: serverwatch telegram set-token] --> b[Daemon talks to Telegram, bot unclaimed]
-  b --> c[Daemon logs a one-time 6-digit PIN to the journal]
-  c --> d[Admin reads the PIN from journalctl -u serverwatch]
-  d --> e[Admin sends /start PIN to the bot from their Telegram account]
-  e --> f{PIN matches?}
-  f -->|Yes| g[Chat claimed as owner, only that chat is answered]
-  f -->|No| b
+  a[Admin runs serverwatch telegram set-token, or completes the token step in ctl onboarding] --> b[Token saved, daemon reloads, bot unclaimed]
+  b --> c[Daemon holds a one-time 6-digit enrollment PIN]
+  c --> d{Control socket reachable right now?}
+  d -->|Yes| e[set-token or ctl onboarding prints the PIN and the /start instruction]
+  d -->|No| f[Fallback: read the PIN from journalctl -u serverwatch]
+  e --> g[Admin sends /start PIN to the bot from their Telegram account]
+  f --> g
+  g --> h{PIN matches?}
+  h -->|Yes| i[Chat claimed as owner, only that chat is answered]
+  h -->|No| c
 ```
 
-1. **Read the PIN from the log.** On the server:
+1. **Get the PIN.** `telegram set-token` prints it directly:
+
+   ```
+   Telegram token saved. To finish enrollment, from your Telegram account message the bot:
+     /start 123456
+   ```
+
+   If it could not reach the daemon, it prints a fallback instead, and you
+   read the PIN from the journal:
 
    ```bash
    sudo journalctl -u serverwatch | grep "/start"
    ```
-
-   This surfaces the log line carrying the current 6-digit PIN.
 
 2. **Claim the bot from your Telegram account.** Open Telegram, find your bot,
    and send it the `/start` command with the PIN, like so:

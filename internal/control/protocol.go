@@ -48,6 +48,14 @@ type hello struct {
 	Token   string `json:"token,omitempty"`
 }
 
+// enrollmentPINResult is the Result payload for the EnrollmentPIN method,
+// shared by dispatch (server.go, which marshals it) and Client.EnrollmentPIN
+// (client.go, which unmarshals it) so the two sides agree on field names.
+type enrollmentPINResult struct {
+	PIN      string `json:"pin"`
+	Enrolled bool   `json:"enrolled"`
+}
+
 // writeFrame marshals v to JSON and writes it to w as a single line,
 // terminated with a newline so the peer can delimit frames with a
 // bufio.Reader or bufio.Scanner.

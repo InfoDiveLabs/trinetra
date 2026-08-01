@@ -18,6 +18,7 @@ package serverwatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,14 @@ import (
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
 )
+
+// errEnrollNeedsDaemon is returned by fileAPI.EnrollmentPIN: the enrollment
+// pin lives only in the running daemon's in-memory enrollState (enroll.go)
+// -- a separate CLI process reading config/state off disk has no live pin
+// to report, unlike every other fileAPI read here, which can reconstruct
+// its answer from status.json/alerts.json/the sample store. Dial the
+// control socket instead (control.Client also implements core.API).
+var errEnrollNeedsDaemon = errors.New("serverwatch: enrollment pin requires a running daemon; dial the control socket instead")
 
 // fileAPI is the file-backed core.API implementation: every method opens
 // whatever it needs off disk on each call (there is no long-lived daemon
@@ -208,6 +217,27 @@ func (a *fileAPI) Doctor() (core.DoctorReport, error) {
 		defer store.Close()
 	}
 	return buildDoctorReport(osExec{}, osFS{}, a.cfg, store), nil
+}
+
+// EnrollmentPIN implements core.API: this CLI process has no live daemon
+// state (unlike inprocAPI, which reads through its own enrollState), so it
+// always returns errEnrollNeedsDaemon rather than a stale or fabricated
+// pin. Callers that want the real pin (`telegram set-token`) dial the
+// control socket instead.
+func (a *fileAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
+	return "", false, errEnrollNeedsDaemon
+}
+
+// MonitorTargets implements core.API: unlike EnrollmentPIN above, target
+// discovery needs no live daemon state -- it is the same osExec{}/osFS{}
+// probes DiscoverLocal runs from the daemon, run here from the CLI
+// process' own environment instead (`serverwatch monitor list`,
+// systemd.go's cmdMonitor, already does exactly this). A real deployment's
+// ctl always talks to the daemon over the control socket (inprocAPI.MonitorTargets),
+// so this path mainly keeps fileAPI a complete core.API implementation for
+// any caller that ends up on it directly.
+func (a *fileAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return targetViewsFromTargets(DiscoverLocal()), nil
 }
 
 // ApplyConfig implements core.API: it persists c to cfgPath (saveCfg, the

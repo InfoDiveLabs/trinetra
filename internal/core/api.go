@@ -20,6 +20,25 @@ type API interface {
 	AlertHistory(since int64, limit int) ([]AlertRecord, error)
 	Config() (*config.Config, error)
 	Doctor() (DoctorReport, error)
+	// EnrollmentPIN returns the Telegram bot's current enrollment pin -- the
+	// same pin the daemon's poll loop accepts via "/start <pin>" (#90) -- and
+	// whether the bot is already enrolled (chat id known). pin is "" when
+	// enrolled is true, or when telegram isn't configured at all.
+	// Implementations without a live daemon process to ask (the file-backed
+	// CLI path) return an error instead of a meaningless pin.
+	EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error)
+	// MonitorTargets lists every monitorable target the host currently
+	// exposes (docker containers, disk mounts, network interfaces, the
+	// thermal zone, smart devices -- serverwatch.Discover), independent of
+	// any config.Config.Targets override: enable/disable and threshold
+	// state live in Config()/ApplyConfig(), not here (mirroring how
+	// MonitorTargets and TargetEnabled/TargetThreshold are already split in
+	// internal/config). Unlike Monitoring(), which internal/web's
+	// Monitoring page polls on every page load, this runs live discovery
+	// (docker ps / df / smartctl --scan) via serverwatch.DiscoverLocal, so
+	// implementations only call it when a caller (ctl's monitor-thresholds
+	// screen) deliberately asks, never as part of another read's hot path.
+	MonitorTargets(ctx context.Context) ([]TargetView, error)
 
 	// writes
 	ApplyConfig(*config.Config) error

@@ -185,7 +185,7 @@ func TestDoctorInprocAPI(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, t.TempDir(), nil, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, t.TempDir(), nil, nil, &enrollState{})
 
 	rep, err := api.Doctor()
 	if err != nil {

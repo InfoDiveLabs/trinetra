@@ -78,6 +78,23 @@ func parseFailedUnits(s string) []string {
 	return out
 }
 
+// DiscoverLocal enumerates monitorable targets on THIS host using the real
+// OS-backed Exec/FileSource (os/exec, os.ReadFile, filepath.Glob) -- the
+// same probes cmdMonitor (systemd.go) runs for `serverwatch monitor list`.
+// Exported so a caller guaranteed to run on the same host as the daemon it
+// is managing -- serverwatch-ctl, whose control socket is always a local
+// unix socket (internal/control), never a network one -- can list targets
+// for its monitor-thresholds screen without duplicating Discover's exec/fs
+// plumbing or routing target discovery through core.API (which would mean
+// running these same df/docker/smartctl probes on every core.API.Monitoring()
+// call, including the web dashboard's Monitoring page poll -- see the
+// beta-2 B2 task 2 report for why that path was rejected). See Discover for
+// the general, dependency-injected form cmdMonitor and this package's own
+// tests use.
+func DiscoverLocal() []Target {
+	return Discover(osExec{}, osFS{})
+}
+
 // Discover enumerates all monitorable targets on the host.
 func Discover(x Exec, fs FileSource) []Target {
 	var ts []Target

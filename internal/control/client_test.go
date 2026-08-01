@@ -68,6 +68,9 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 	fake.cfg = &config.Config{SampleInterval: 30, FastInterval: 5}
 	fake.cfg.Collect.ContainerStats = falsePtr()
 	// NetThroughput left nil deliberately.
+	fake.enrollPIN = "424242"
+	fake.enrollEnrolled = false
+	fake.monitorTargets = []core.TargetView{{ID: "disk:/", Kind: "disk", Display: "/", Available: true}}
 
 	path := startTestServer(t, fake, "")
 
@@ -105,6 +108,14 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 
 	if got, err := client.Doctor(); err != nil || !reflect.DeepEqual(got, fake.doctor) {
 		t.Errorf("Doctor() = %+v, %v; want %+v, nil", got, err, fake.doctor)
+	}
+
+	if pin, enrolled, err := client.EnrollmentPIN(context.Background()); err != nil || pin != fake.enrollPIN || enrolled != fake.enrollEnrolled {
+		t.Errorf("EnrollmentPIN() = %q, %v, %v; want %q, %v, nil", pin, enrolled, err, fake.enrollPIN, fake.enrollEnrolled)
+	}
+
+	if got, err := client.MonitorTargets(context.Background()); err != nil || !reflect.DeepEqual(got, fake.monitorTargets) {
+		t.Errorf("MonitorTargets() = %+v, %v; want %+v, nil", got, err, fake.monitorTargets)
 	}
 
 	// Config round trip: must preserve the *bool omitempty semantics --
@@ -210,6 +221,53 @@ func TestClientSurfacesMethodError(t *testing.T) {
 	}
 	if fake.ackedKey != "cpu" {
 		t.Errorf("fake.ackedKey = %q, want %q (dispatch should still call through)", fake.ackedKey, "cpu")
+	}
+}
+
+// TestClientEnrollmentPINSurfacesError is the #90 counterpart to
+// TestClientValidateChannelSurfacesError: fileAPI's errEnrollNeedsDaemon (or
+// any other EnrollmentPIN error) must round-trip to the client unchanged,
+// not get swallowed into a zero-value success.
+func TestClientEnrollmentPINSurfacesError(t *testing.T) {
+	wantErr := "serverwatch: enrollment pin requires a running daemon; dial the control socket instead"
+	fake := &fakeAPI{enrollErr: errors.New(wantErr)}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	pin, enrolled, err := client.EnrollmentPIN(context.Background())
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("EnrollmentPIN() error = %v, want %q", err, wantErr)
+	}
+	if pin != "" || enrolled {
+		t.Errorf("EnrollmentPIN() = %q, %v on error, want zero values", pin, enrolled)
+	}
+}
+
+// TestClientMonitorTargetsSurfacesError mirrors
+// TestClientEnrollmentPINSurfacesError for MonitorTargets: a discovery
+// error must round-trip to the client unchanged.
+func TestClientMonitorTargetsSurfacesError(t *testing.T) {
+	wantErr := "discovery failed"
+	fake := &fakeAPI{monitorTargetsErr: errors.New(wantErr)}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	got, err := client.MonitorTargets(context.Background())
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("MonitorTargets() error = %v, want %q", err, wantErr)
+	}
+	if len(got) != 0 {
+		t.Errorf("MonitorTargets() = %+v on error, want empty", got)
 	}
 }
 

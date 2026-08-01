@@ -289,6 +289,20 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 		}
 		return json.Marshal(v)
 
+	case "EnrollmentPIN":
+		pin, enrolled, err := api.EnrollmentPIN(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(enrollmentPINResult{PIN: pin, Enrolled: enrolled})
+
+	case "MonitorTargets":
+		v, err := api.MonitorTargets(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
 	case "ApplyConfig":
 		var p struct {
 			Config config.Config `json:"config"`
