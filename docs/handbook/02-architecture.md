@@ -261,6 +261,64 @@ supervisor managing plugin processes. What exists today is the contract, the
 transport, and a working client library for it. Treat the plugin picture as the
 direction of travel, not a finished feature.
 
+### The front-door safe-exec trust model
+
+The core does not expect you to know where the plugin binaries live or invoke
+them directly. Two subcommands on the core binary itself act as front-doors:
+`serverwatch cli` execs `serverwatch-ctl`, and `serverwatch web` execs
+`serverwatch-web` (see [Command reference](11-command-reference.md) for the
+full command details). Both are typically run as root, via `sudo serverwatch
+cli` or `sudo serverwatch web`, because that is how the daemon itself runs.
+That single fact is what makes this front-door security-sensitive rather than
+a convenience shim: launching a plugin as root and exec'ing whatever happens to
+be at that path would let an attacker who can plant or modify a file escalate
+to root the moment someone runs the command. So before it ever execs, the core
+proves the plugin is the genuine, unmodified binary it installed.
+
+Three checks all have to pass, in order, or the core refuses and prints why:
+
+1. **Absolute path from the core's own directory.** The plugin path is
+   `serverwatch-<name>` in the same directory as the running `serverwatch`
+   binary (`filepath.Dir(os.Executable())`), symlink-resolved. It is never
+   looked up via `$PATH`; a `$PATH` lookup would let an attacker with a
+   writable `PATH` entry (or a loosened `sudo secure_path`) plant a malicious
+   binary the core would then exec as root.
+2. **Owner and permissions.** The plugin file, and its parent directory, must
+   be owned by uid 0 (root) or by whichever user owns the core binary, and
+   neither may be group- or world-writable. Either check failing is a refusal.
+3. **Checksum against the install manifest.** `serverwatch install` records
+   the SHA-256 of each companion binary it finds into a root-only manifest,
+   `<stateDir>/plugins.json` (mode `0600`; see [Installation and first
+   run](03-installation.md)). Before exec, the core recomputes the plugin's
+   SHA-256 and requires it to match the manifest entry for that name. A
+   missing manifest, a missing entry, or a mismatch is a refusal, never a
+   silent pass; `serverwatch uninstall` removes the manifest.
+
+```mermaid
+flowchart TD
+  start[serverwatch cli or serverwatch web] --> resolve[Resolve serverwatch-name next to the core binary's own directory, symlinks resolved, never PATH]
+  resolve -->|file does not exist| notinstalled[Not installed: print install/build instructions, exit, nothing exec'd]
+  resolve -->|file exists| owner[Check file and parent dir: owned by uid 0 or the core binary's owner, not group or world writable]
+  owner -->|check fails| refuse[Refuse: print tampering warning, exit, nothing exec'd]
+  owner -->|check passes| checksum[Compute SHA-256 and compare against stateDir/plugins.json]
+  checksum -->|manifest missing or checksum mismatch| refuse
+  checksum -->|checksum matches| exec[syscall.Exec replaces the process image; control socket path and per-launch token passed via env]
+```
+
+On a successful launch, the core passes the control socket path and a
+per-launch token to the plugin via the `SERVERWATCH_CONTROL_SOCKET` and
+`SERVERWATCH_CONTROL_TOKEN` environment variables, the same way the plugin
+would discover them by hand (see the control socket section below). For the
+interactive `cli` front-door specifically, the core uses `syscall.Exec` to
+replace its own process image rather than forking a child, so the terminal is
+handed over to `serverwatch-ctl` cleanly with no wrapper process in between.
+
+Anyone who places `serverwatch-ctl` or `serverwatch-web` next to the daemon
+binary by hand, whether that is a fresh build or a manual copy, must
+(re-)run `serverwatch install` afterward. Until the manifest has a checksum
+entry for that exact file, the front-door has nothing to verify it against and
+refuses to run it.
+
 ## The control socket
 
 The control socket is how a separate process reaches the daemon's live

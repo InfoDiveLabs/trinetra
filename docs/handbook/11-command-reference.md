@@ -37,6 +37,8 @@ column.
 | `install` | Write the systemd unit and enable/start the service. | persists (see Notes) |
 | `uninstall [--purge]` | Remove the systemd unit; `--purge` also removes config and state. | persists (see Notes) |
 | `daemon` | Run the sampler/notifier loop in the foreground. | long-running |
+| `cli` | Front-door: verify and exec `serverwatch-ctl`, the management TUI. | see Notes |
+| `web` | Front-door: verify and exec `serverwatch-web`, the web UI. | see Notes |
 | `telegram set-token <token>` | Store the Telegram bot token. | persists + SIGHUP |
 | `monitor list` | List discovered monitor targets and their on/off state. | read-only |
 | `monitor enable\|disable <target>` | Turn a monitor target on or off. | persists + SIGHUP |
@@ -70,6 +72,7 @@ column.
 | `channel test` | Sends a live test notification through the channel; it does not write config, so it is read-only with respect to config. |
 | `migrate` | Writes into the time-series store, not the config file; no SIGHUP is sent. `--force` proceeds past guards. |
 | `alerts ack` / `alerts unack` | Writes the alert ack-state file and then sends a best-effort SIGHUP so a running daemon re-reads it. |
+| `cli` / `web` | Neither writes config nor sends a SIGHUP. Each resolves and verifies the matching plugin binary next to the core binary, then hands off to it; see the front-door detail below. |
 
 ### `dump` flags
 
@@ -101,13 +104,49 @@ serverwatch alerts ack cpu:high
 serverwatch alerts unack cpu:high
 ```
 
+### `cli` and `web` front-doors
+
+```
+serverwatch cli
+serverwatch web
+```
+
+`cli` and `web` are front-doors: the one-command way to launch the two plugin
+binaries documented in section 2, without needing to know their binary names
+or where they live. `cli` execs `serverwatch-ctl`; `web` execs
+`serverwatch-web`. Both are typically run with `sudo`, because that is how the
+daemon itself runs, and launching a plugin as root means the core must first
+prove it is about to exec the genuine binary it installed, not something an
+attacker planted or modified. See [Architecture](02-architecture.md) for the
+full trust model (absolute path resolved from the core binary's own
+directory, owner and permission checks, and a SHA-256 checksum against the
+manifest `serverwatch install` writes).
+
+There are three outcomes:
+
+| Outcome | What you see |
+| --- | --- |
+| Verified | The plugin runs; the front-door hands off control to it. |
+| Not installed | serverwatch prints an install/build instruction, e.g. `go build -o /usr/local/bin/serverwatch-ctl ./cmd/serverwatch-ctl` (the web plugin needs `-tags web`: `go build -tags web -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`), followed by a reminder to run `serverwatch install` to record its checksum. Nothing is exec'd. |
+| Present but unsafe | The binary exists but fails a check (wrong owner, group/world-writable, or a checksum that does not match the manifest). serverwatch refuses with a warning that this may indicate tampering. Nothing is exec'd. |
+
+If you build or hand-copy `serverwatch-ctl` / `serverwatch-web` into place
+yourself, you must (re-)run `serverwatch install` afterward so its checksum
+is recorded (see [Installation and first run](03-installation.md)); until
+then the front-door has nothing to verify the unrecorded binary against and
+refuses to run it.
+
 ## 2. Plugin binaries (BETA / preview)
 
 The following two binaries are separate from the shipped `serverwatch` daemon.
 Both are preview-quality: they are built and wired up by hand, and neither is
 supervised by the daemon yet. They connect to a running daemon over its control
 socket (see [Architecture](02-architecture.md)) rather than reading state
-in-process.
+in-process. In normal use you do not invoke either binary directly; run
+`serverwatch cli` / `serverwatch web` instead (section 1 above), which safely
+locates and execs them. The direct invocations below still apply once
+launched, and remain useful when scripting or working from a non-standard
+install location.
 
 ### 2.1 `serverwatch-ctl` (BETA)
 

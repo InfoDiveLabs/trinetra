@@ -62,6 +62,20 @@ process, and it is where a richer interactive terminal experience will land.
 The point of the split is that the core stays small and boring, and everything
 richer plugs in around it without weighing it down.
 
+You do not need to know either plugin binary's name to use it. The core
+exposes two front-door subcommands that launch them for you:
+
+```bash
+sudo serverwatch cli   # launches serverwatch-ctl, the management TUI
+sudo serverwatch web   # launches serverwatch-web, the web UI
+```
+
+Because these commands are typically run as root, the core does not exec the
+plugin blindly: it first proves the binary next to it is the exact one it
+installed, then hands off. See [Architecture](02-architecture.md) for the
+trust model and [Command reference](11-command-reference.md) for the full
+command details.
+
 ## How this handbook is organized
 
 The chapters that follow go deeper, one concern at a time. **Architecture**
