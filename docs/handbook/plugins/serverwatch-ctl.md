@@ -70,6 +70,18 @@ If Telegram is not yet configured, or is configured but not yet enrolled,
 Home opens straight into first-run onboarding instead (below), rather than
 showing a dashboard with nothing to alert you.
 
+**The web setup wizard (`s`).** Walks mode -> listen -> domain -> rp_id ->
+origin -> confirm, and is a complete, functional flow for all three serving
+modes: `proxy` and `autocert` need nothing further after origin, and
+`manual` continues on to two more steps collecting the TLS certificate and
+private key file paths (`web.tls_cert`/`web.tls_key`), since
+`internal/web`'s manual mode cannot start without both. Those two steps
+reject a blank path in place with an inline message rather than letting you
+reach confirm with an incomplete manual-mode config; the confirm screen's
+review always shows the cert/key paths for manual mode. Applying goes
+through the same fetch/`config.Set`/`ApplyConfig` path every other screen
+uses, so every field gets its real validation.
+
 **The management menu.** Pressing `m` from Home opens a menu of config-backed
 flows: **schedule**, **quiet hours**, **healthchecks**, **monitor
 thresholds**, **channels**, and **all settings**. Move with the up/down

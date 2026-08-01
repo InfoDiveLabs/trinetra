@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -309,5 +310,195 @@ func TestSnapshotMsgUpdatesHome(t *testing.T) {
 	}
 	if gm.snap.CPU != 12.5 {
 		t.Errorf("snap.CPU = %v, want 12.5", gm.snap.CPU)
+	}
+}
+
+// TestWizardManualModeCollectsCertAndKey drives the full manual-mode path
+// (mode -> listen -> domain -> rp_id -> origin -> cert -> key -> confirm)
+// and asserts the two new steps appear in the right place and their typed
+// values land on ans.TLSCert/TLSKey, then confirms and checks ApplyConfig
+// received a config with web.tls_cert/web.tls_key set -- the actual bug
+// this task closes (manual mode used to apply with no cert/key at all).
+func TestWizardManualModeCollectsCertAndKey(t *testing.T) {
+	api := &fakeAPI{cfg: &config.Config{}}
+	var mm tea.Model = newModel(api)
+
+	mm, _ = mm.Update(keyRunes('s'))        // enter wizard, cursor on "proxy"
+	mm, _ = mm.Update(keyType(tea.KeyDown)) // -> autocert
+	mm, _ = mm.Update(keyType(tea.KeyDown)) // -> manual
+	mm, _ = mm.Update(keyType(tea.KeyEnter))
+	if mm.(model).ans.Mode != "manual" {
+		t.Fatalf("ans.Mode = %q, want manual", mm.(model).ans.Mode)
+	}
+
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept default listen -> domain
+	mm = typeString(t, mm, "example.com")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit domain -> rp_id
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept derived rp_id -> origin
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept derived origin
+
+	got := mm.(model)
+	if got.wiz != webSetupCert {
+		t.Fatalf("wiz after origin = %v, want webSetupCert (manual mode)", got.wiz)
+	}
+
+	mm = typeString(t, mm, "/etc/serverwatch/tls/cert.pem")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit cert -> key
+	got = mm.(model)
+	if got.wiz != webSetupKey {
+		t.Fatalf("wiz after cert = %v, want webSetupKey", got.wiz)
+	}
+	if got.ans.TLSCert != "/etc/serverwatch/tls/cert.pem" {
+		t.Errorf("ans.TLSCert = %q, want /etc/serverwatch/tls/cert.pem", got.ans.TLSCert)
+	}
+
+	mm = typeString(t, mm, "/etc/serverwatch/tls/key.pem")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit key -> confirm
+	got = mm.(model)
+	if got.wiz != webSetupConfirm {
+		t.Fatalf("wiz after key = %v, want webSetupConfirm", got.wiz)
+	}
+	if got.ans.TLSKey != "/etc/serverwatch/tls/key.pem" {
+		t.Errorf("ans.TLSKey = %q, want /etc/serverwatch/tls/key.pem", got.ans.TLSKey)
+	}
+	if !strings.Contains(got.setupView(), "/etc/serverwatch/tls/cert.pem") {
+		t.Error("confirm screen should show the cert path")
+	}
+
+	mm, cmd := mm.Update(keyType(tea.KeyEnter)) // confirm apply
+	if cmd == nil {
+		t.Fatal("expected applyWebSetupCmd, got nil")
+	}
+	msg := runCmd(t, cmd)
+	applied, ok := msg.(webSetupAppliedMsg)
+	if !ok {
+		t.Fatalf("cmd produced %T, want webSetupAppliedMsg", msg)
+	}
+	if applied.err != nil {
+		t.Fatalf("apply err = %v, want nil", applied.err)
+	}
+	if api.applied.Web.TLSCert != "/etc/serverwatch/tls/cert.pem" {
+		t.Errorf("applied Web.TLSCert = %q, want /etc/serverwatch/tls/cert.pem", api.applied.Web.TLSCert)
+	}
+	if api.applied.Web.TLSKey != "/etc/serverwatch/tls/key.pem" {
+		t.Errorf("applied Web.TLSKey = %q, want /etc/serverwatch/tls/key.pem", api.applied.Web.TLSKey)
+	}
+}
+
+// TestWizardAutocertModeSkipsCertAndKey asserts autocert mode (which gets
+// its certificate from Let's Encrypt) goes straight from origin to confirm,
+// never visiting the manual-only cert/key steps.
+func TestWizardAutocertModeSkipsCertAndKey(t *testing.T) {
+	var mm tea.Model = newModel(&fakeAPI{cfg: &config.Config{}})
+	mm, _ = mm.Update(keyRunes('s'))
+	mm, _ = mm.Update(keyType(tea.KeyDown)) // -> autocert
+	mm, _ = mm.Update(keyType(tea.KeyEnter))
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> domain
+	mm = typeString(t, mm, "example.com")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit domain -> rp_id
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept rp_id -> origin
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept origin
+
+	if got := mm.(model).wiz; got != webSetupConfirm {
+		t.Fatalf("wiz = %v, want webSetupConfirm (autocert skips cert/key)", got)
+	}
+}
+
+// TestWizardManualModeRejectsEmptyCert asserts pressing enter on the cert
+// step with a blank value does not advance to the key step, and shows an
+// inline message explaining why, so the wizard cannot be walked through to
+// confirm/apply with a cert path that was never actually typed.
+func TestWizardManualModeRejectsEmptyCert(t *testing.T) {
+	var mm tea.Model = newModel(&fakeAPI{cfg: &config.Config{}})
+	mm, _ = mm.Update(keyRunes('s'))
+	mm, _ = mm.Update(keyType(tea.KeyDown)) // -> autocert
+	mm, _ = mm.Update(keyType(tea.KeyDown)) // -> manual
+	mm, _ = mm.Update(keyType(tea.KeyEnter))
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> domain
+	mm = typeString(t, mm, "example.com")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit domain -> rp_id
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept rp_id -> origin
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept origin -> cert
+
+	if got := mm.(model).wiz; got != webSetupCert {
+		t.Fatalf("precondition: wiz = %v, want webSetupCert", got)
+	}
+
+	mm, cmd := mm.Update(keyType(tea.KeyEnter)) // enter with a blank cert path
+	if cmd != nil {
+		t.Error("rejecting a blank cert path should not issue a command")
+	}
+	got := mm.(model)
+	if got.wiz != webSetupCert {
+		t.Fatalf("wiz after blank cert = %v, want still webSetupCert (rejected)", got.wiz)
+	}
+	if got.wizFieldErr == nil {
+		t.Fatal("wizFieldErr = nil, want a validation error explaining the blank cert path")
+	}
+	if !strings.Contains(got.setupView(), "required") {
+		t.Errorf("cert step view should show an inline required-field message:\n%s", got.setupView())
+	}
+
+	// Typing a value and retrying must succeed.
+	mm = typeString(t, mm, "/etc/serverwatch/tls/cert.pem")
+	mm, _ = mm.Update(keyType(tea.KeyEnter))
+	if got := mm.(model).wiz; got != webSetupKey {
+		t.Fatalf("wiz after a valid retry = %v, want webSetupKey", got)
+	}
+}
+
+// TestWizardManualModeRejectsEmptyKey mirrors
+// TestWizardManualModeRejectsEmptyCert for the key step, and additionally
+// asserts ApplyConfig is never reachable without ever confirming, so an
+// incomplete manual-mode config can never be applied through the wizard.
+func TestWizardManualModeRejectsEmptyKey(t *testing.T) {
+	api := &fakeAPI{cfg: &config.Config{}}
+	var mm tea.Model = newModel(api)
+	mm, _ = mm.Update(keyRunes('s'))
+	mm, _ = mm.Update(keyType(tea.KeyDown))
+	mm, _ = mm.Update(keyType(tea.KeyDown)) // -> manual
+	mm, _ = mm.Update(keyType(tea.KeyEnter))
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> domain
+	mm = typeString(t, mm, "example.com")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> rp_id
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> origin
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> cert
+	mm = typeString(t, mm, "/etc/serverwatch/tls/cert.pem")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit cert -> key
+
+	if got := mm.(model).wiz; got != webSetupKey {
+		t.Fatalf("precondition: wiz = %v, want webSetupKey", got)
+	}
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // enter with a blank key path
+	got := mm.(model)
+	if got.wiz != webSetupKey {
+		t.Fatalf("wiz after blank key = %v, want still webSetupKey (rejected)", got.wiz)
+	}
+	if got.wizFieldErr == nil {
+		t.Fatal("wizFieldErr = nil, want a validation error")
+	}
+	if api.applyN != 0 {
+		t.Errorf("ApplyConfig called %d times, want 0 (never reached confirm)", api.applyN)
+	}
+}
+
+// TestWizardCertStepEscReturnsToMode asserts esc on the cert step follows
+// the same rule every other text step does (updateTextKey): back to mode
+// selection, not a partial step back.
+func TestWizardCertStepEscReturnsToMode(t *testing.T) {
+	var mm tea.Model = newModel(&fakeAPI{cfg: &config.Config{}})
+	mm, _ = mm.Update(keyRunes('s'))
+	mm, _ = mm.Update(keyType(tea.KeyDown))
+	mm, _ = mm.Update(keyType(tea.KeyDown)) // -> manual
+	mm, _ = mm.Update(keyType(tea.KeyEnter))
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> domain
+	mm = typeString(t, mm, "example.com")
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> rp_id
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> origin
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> cert
+
+	mm, _ = mm.Update(keyType(tea.KeyEsc))
+	if got := mm.(model).wiz; got != webSetupMode {
+		t.Errorf("wiz after esc on cert step = %v, want webSetupMode", got)
 	}
 }

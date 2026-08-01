@@ -72,8 +72,17 @@ type model struct {
 	domainIn   textinput.Model
 	rpidIn     textinput.Model
 	originIn   textinput.Model
+	certIn     textinput.Model // manual mode only (webSetupCert)
+	keyIn      textinput.Model // manual mode only (webSetupKey)
 	applying   bool
 	applyErr   error
+	// wizFieldErr is the cert/key steps' own must-not-be-empty guard
+	// message (validateManualPath): set when "enter" is pressed on a blank
+	// value, cleared once that step is passed. It is deliberately scoped to
+	// these two steps only -- no other wizard text step rejects a blank
+	// value locally (their fields are optional, or validated later by
+	// applyWebSetup's config.Set calls instead).
+	wizFieldErr error
 
 	// management menu (schedule/quiet-hours/healthchecks/monitor thresholds/
 	// channels)
@@ -105,6 +114,8 @@ func newModel(api core.API) model {
 		domainIn: mk("example.com"),
 		rpidIn:   mk("example.com"),
 		originIn: mk("https://example.com"),
+		certIn:   mk("/etc/serverwatch/tls/cert.pem"),
+		keyIn:    mk("/etc/serverwatch/tls/key.pem"),
 	}
 }
 
@@ -389,6 +400,7 @@ func (m model) updateHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modeCursor = 0
 		m.ans = webSetupAnswers{}
 		m.applyErr = nil
+		m.wizFieldErr = nil
 		return m, nil
 	case "m":
 		m.step = stepManage
@@ -406,7 +418,7 @@ func (m model) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.wiz {
 	case webSetupMode:
 		return m.updateModeKey(msg)
-	case webSetupListen, webSetupDomain, webSetupRPID, webSetupOrigin:
+	case webSetupListen, webSetupDomain, webSetupRPID, webSetupOrigin, webSetupCert, webSetupKey:
 		return m.updateTextKey(msg)
 	case webSetupConfirm:
 		return m.updateConfirmKey(msg)
@@ -467,10 +479,15 @@ func (m model) updateTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.onRPIDDone()
 		case webSetupOrigin:
 			return m.onOriginDone()
+		case webSetupCert:
+			return m.onCertDone()
+		case webSetupKey:
+			return m.onKeyDone()
 		}
 		return m, nil
 	case "esc":
 		m.wiz = webSetupMode
+		m.wizFieldErr = nil
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -483,6 +500,10 @@ func (m model) updateTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.rpidIn, cmd = m.rpidIn.Update(msg)
 	case webSetupOrigin:
 		m.originIn, cmd = m.originIn.Update(msg)
+	case webSetupCert:
+		m.certIn, cmd = m.certIn.Update(msg)
+	case webSetupKey:
+		m.keyIn, cmd = m.keyIn.Update(msg)
 	}
 	return m, cmd
 }
@@ -520,8 +541,46 @@ func (m model) onRPIDDone() (tea.Model, tea.Cmd) {
 	return m, m.originIn.Focus()
 }
 
+// onOriginDone commits the origin step. manual mode still needs its TLS
+// cert/key file paths (internal/web's manual serving mode refuses to start
+// without both), so it continues on to the cert step; proxy/autocert go
+// straight to confirm as before.
 func (m model) onOriginDone() (tea.Model, tea.Cmd) {
 	m.ans.Origin = m.originIn.Value()
+	if m.ans.Mode == "manual" {
+		m.wiz = webSetupCert
+		return m, m.certIn.Focus()
+	}
+	m.wiz = webSetupConfirm
+	return m, nil
+}
+
+// onCertDone commits the cert-path step. A blank path is rejected in place
+// (validateManualPath) rather than letting the wizard reach confirm/apply
+// with manual mode set but no certificate configured -- the exact bug this
+// screen exists to close.
+func (m model) onCertDone() (tea.Model, tea.Cmd) {
+	val := m.certIn.Value()
+	if err := validateManualPath("cert path", val); err != nil {
+		m.wizFieldErr = err
+		return m, nil
+	}
+	m.ans.TLSCert = val
+	m.wizFieldErr = nil
+	m.wiz = webSetupKey
+	return m, m.keyIn.Focus()
+}
+
+// onKeyDone is onCertDone's counterpart for the key-path step, the last
+// step before confirm in manual mode.
+func (m model) onKeyDone() (tea.Model, tea.Cmd) {
+	val := m.keyIn.Value()
+	if err := validateManualPath("key path", val); err != nil {
+		m.wizFieldErr = err
+		return m, nil
+	}
+	m.ans.TLSKey = val
+	m.wizFieldErr = nil
 	m.wiz = webSetupConfirm
 	return m, nil
 }
@@ -606,6 +665,18 @@ func (m model) setupView() string {
 		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
 	case webSetupOrigin:
 		fmt.Fprintf(&b, "public origin (scheme + host[:port]):\n\n%s\n", m.originIn.View())
+		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
+	case webSetupCert:
+		fmt.Fprintf(&b, "TLS certificate file path (PEM):\n\n%s\n", m.certIn.View())
+		if m.wizFieldErr != nil {
+			b.WriteString("\n" + errStyle.Render(m.wizFieldErr.Error()) + "\n")
+		}
+		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
+	case webSetupKey:
+		fmt.Fprintf(&b, "TLS private key file path (PEM):\n\n%s\n", m.keyIn.View())
+		if m.wizFieldErr != nil {
+			b.WriteString("\n" + errStyle.Render(m.wizFieldErr.Error()) + "\n")
+		}
 		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
 	case webSetupConfirm:
 		b.WriteString("review:\n\n")
