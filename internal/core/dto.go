@@ -308,6 +308,16 @@ func (v MonitoringView) DisksWarnCritCount() int {
 // own), Source identifies what raised it, Time is the Unix-seconds
 // timestamp it fired (or, for an active alert, went active), and Acked
 // mirrors a manual `serverwatch alerts ack <key>`.
+//
+// AckedAt/Title/Delivered are populated only where the underlying record
+// actually carries that data (see internal/serverwatch/coreapi_alerts.go's
+// activeAlertRecords/alertHistoryRecords): an active alert has an ack
+// timestamp but no title or delivery outcome of its own (those live on the
+// alert-log dispatch record instead), while a history entry has a title and
+// delivery outcome but no ack timestamp (the log is a record of past
+// fire/recover dispatches, not the current ack state). A field with no
+// source for a given record kind is left at its zero value rather than
+// invented from another field.
 type AlertRecord struct {
 	Key      string `json:"key"`
 	Severity string `json:"severity"`
@@ -315,6 +325,19 @@ type AlertRecord struct {
 	Source   string `json:"source"`
 	Time     int64  `json:"time"`
 	Acked    bool   `json:"acked"`
+	// AckedAt is the Unix-seconds timestamp a manual `serverwatch alerts ack
+	// <key>` was recorded (an active alert's ActiveAlert.AckedAt); 0 for a
+	// history entry, which carries no ack timestamp.
+	AckedAt int64 `json:"acked_at,omitempty"`
+	// Title is the human-readable alert title (an alert-log AlertEvent's
+	// Title); empty for an active alert, which has no title field of its
+	// own (only Source/Reason).
+	Title string `json:"title,omitempty"`
+	// Delivered is true when a history entry's alert-log dispatch actually
+	// reached at least one channel (one of its Delivery records has OK
+	// true); false when every attempt failed, none was recorded, or this is
+	// an active alert (which carries no delivery outcome of its own).
+	Delivered bool `json:"delivered,omitempty"`
 }
 
 // DoctorReport is core's projection of `serverwatch doctor`'s diagnostic

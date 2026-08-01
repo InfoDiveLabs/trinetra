@@ -35,8 +35,12 @@ func severityString(critical bool) string {
 // activeAlertRecords maps state.Active into []core.AlertRecord: Kind is
 // left "" (an active alert has no fire/recover distinction of its own --
 // see core.AlertRecord's doc), Source carries the human Reason text (the
-// closest ActiveAlert field to "what raised it"), and results are sorted by
-// key for a deterministic result (map iteration order is not). Shared by
+// closest ActiveAlert field to "what raised it"), AckedAt carries
+// ActiveAlert.AckedAt, and results are sorted by key for a deterministic
+// result (map iteration order is not). Title and Delivered are left at
+// their zero value: ActiveAlert has no title or delivery-outcome field of
+// its own to source them from (that data only exists on the alert-log's
+// AlertEvent, see alertHistoryRecords below). Shared by
 // inprocAPI.ActiveAlerts and fileAPI.ActiveAlerts -- both just call
 // LoadAlertState against their own alertStatePath() and hand the result
 // here.
@@ -57,21 +61,36 @@ func activeAlertRecords(state *AlertState) []core.AlertRecord {
 			Source:   aa.Reason,
 			Time:     aa.Since,
 			Acked:    aa.Acked,
+			AckedAt:  aa.AckedAt,
 		})
 	}
 	return out
 }
 
+// anyDelivered reports whether at least one of an AlertEvent's Delivery
+// records actually reached its channel (OK true); false when every attempt
+// failed or none was recorded (ds empty/nil).
+func anyDelivered(ds []Delivery) bool {
+	for _, d := range ds {
+		if d.OK {
+			return true
+		}
+	}
+	return false
+}
+
 // alertHistoryRecords loads log's events since sinceUnix and maps each into
 // a core.AlertRecord (a direct field-for-field mapping -- AlertEvent already
-// carries Key/Severity/Kind/Source/Time). Acked is always false: the alert
-// log is a history of past fire/recover dispatches, not the current ack
-// state (that's ActiveAlerts' job). Results are newest-first and capped to
-// limit (limit<=0 means unbounded), mirroring the web alerts page's "Recent
-// history" table (internal/web/handlers_alerts.go's alertHistoryRows).
-// Shared by inprocAPI.AlertHistory and fileAPI.AlertHistory -- both just
-// call NewAlertLog against their own alertLogPath() and hand the result
-// here.
+// carries Key/Severity/Kind/Source/Time/Title). Acked and AckedAt are always
+// false/0: the alert log is a history of past fire/recover dispatches, not
+// the current ack state (that's ActiveAlerts' job) -- AlertEvent carries no
+// ack timestamp of its own. Delivered is derived via anyDelivered: true when
+// at least one of the event's Delivery records actually reached its
+// channel. Results are newest-first and capped to limit (limit<=0 means
+// unbounded), mirroring the web alerts page's "Recent history" table
+// (internal/web/handlers_alerts.go's alertHistoryRows). Shared by
+// inprocAPI.AlertHistory and fileAPI.AlertHistory -- both just call
+// NewAlertLog against their own alertLogPath() and hand the result here.
 func alertHistoryRecords(log *AlertLog, sinceUnix int64, limit int) ([]core.AlertRecord, error) {
 	evs, err := log.AlertEventsSince(sinceUnix)
 	if err != nil {
@@ -85,12 +104,14 @@ func alertHistoryRecords(log *AlertLog, sinceUnix int64, limit int) ([]core.Aler
 	out := make([]core.AlertRecord, 0, len(evs))
 	for _, ev := range evs {
 		out = append(out, core.AlertRecord{
-			Key:      ev.Key,
-			Severity: ev.Severity,
-			Kind:     ev.Kind,
-			Source:   ev.Source,
-			Time:     ev.Time,
-			Acked:    false,
+			Key:       ev.Key,
+			Severity:  ev.Severity,
+			Kind:      ev.Kind,
+			Source:    ev.Source,
+			Time:      ev.Time,
+			Acked:     false,
+			Title:     ev.Title,
+			Delivered: anyDelivered(ev.Delivered),
 		})
 	}
 	return out, nil

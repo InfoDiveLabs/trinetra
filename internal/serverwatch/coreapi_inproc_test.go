@@ -289,7 +289,7 @@ func TestActiveAlertsMapsFields(t *testing.T) {
 
 	want := []core.AlertRecord{
 		{Key: "cpu", Severity: "critical", Kind: "", Source: "cpu = 95.0 >= threshold 90.0", Time: 1000, Acked: false},
-		{Key: "mem", Severity: "warning", Kind: "", Source: "mem = 80.0 >= threshold 75.0", Time: 2000, Acked: true},
+		{Key: "mem", Severity: "warning", Kind: "", Source: "mem = 80.0 >= threshold 75.0", Time: 2000, Acked: true, AckedAt: 2500},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ActiveAlerts() = %+v, want %+v (sorted by key)", got, want)
@@ -325,9 +325,9 @@ func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 		t.Fatalf("AlertHistory(0, 0): %v", err)
 	}
 	wantAll := []core.AlertRecord{
-		{Key: "mem", Severity: "warning", Kind: "fire", Source: "threshold", Time: 300, Acked: false},
-		{Key: "cpu", Severity: "critical", Kind: "recover", Source: "threshold", Time: 200, Acked: false},
-		{Key: "cpu", Severity: "critical", Kind: "fire", Source: "threshold", Time: 100, Acked: false},
+		{Key: "mem", Severity: "warning", Kind: "fire", Source: "threshold", Time: 300, Acked: false, Title: "Mem high"},
+		{Key: "cpu", Severity: "critical", Kind: "recover", Source: "threshold", Time: 200, Acked: false, Title: "CPU normal"},
+		{Key: "cpu", Severity: "critical", Kind: "fire", Source: "threshold", Time: 100, Acked: false, Title: "CPU high"},
 	}
 	if !reflect.DeepEqual(got, wantAll) {
 		t.Fatalf("AlertHistory(0, 0) = %+v, want %+v (newest first)", got, wantAll)
