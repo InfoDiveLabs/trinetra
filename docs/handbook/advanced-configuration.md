@@ -10,12 +10,7 @@ it when you are automating a change, scripting from cron or a
 configuration-management tool, or administering a headless box without
 `serverwatch-ctl`. Day to day, the ctl screens set all of this for you.
 
-## Advanced: direct configuration
-
-This section is the low-level reference behind the `serverwatch-ctl` screens:
-the config file, the scriptable CLI verbs, and every config key. You need it for
-automation or a headless box; day to day, the ctl screens (see
-[Configuration](04-configuration.md)) set all of this for you.
+## The config file and CLI verbs
 
 Every setting in serverwatch lives in a single JSON file at
 `/etc/serverwatch/config.json`, but you never open that file in an editor. Both
@@ -29,9 +24,9 @@ under the tool's control.
 The general-purpose entry points are three verbs on `config`:
 
 ```bash
-serverwatch config get [key]        # print every effective key, or just one
-serverwatch config set <key> <val>  # set a key, e.g. config set sample_interval 30
-serverwatch config unset <key>      # revert a key to its baked-in default
+sudo serverwatch config get [key]        # print every effective key, or just one
+sudo serverwatch config set <key> <val>  # set a key, e.g. config set sample_interval 30
+sudo serverwatch config unset <key>      # revert a key to its baked-in default
 ```
 
 `config get` with no key prints the full effective configuration: the baked-in
@@ -44,13 +39,13 @@ On top of those generic verbs, a handful of dedicated subcommands wrap the keys
 you touch most often, with friendlier syntax and their own validation:
 
 ```bash
-serverwatch telegram set-token <token>          # writes telegram.token
-serverwatch monitor enable|disable|threshold    # per-target overrides (see below)
-serverwatch schedule daily HH:MM | off          # writes schedule.daily
-serverwatch schedule weekly dow@HH:MM | off      # writes schedule.weekly
-serverwatch quiet-hours HH-HH | off             # writes quiet_hours
-serverwatch healthchecks set <url> | off        # writes healthchecks.url
-serverwatch channel add|list|remove|set|test    # notification channels
+sudo serverwatch telegram set-token <token>          # writes telegram.token
+sudo serverwatch monitor enable|disable|threshold    # per-target overrides (see below)
+sudo serverwatch schedule daily HH:MM | off          # writes schedule.daily
+sudo serverwatch schedule weekly dow@HH:MM | off      # writes schedule.weekly
+sudo serverwatch quiet-hours HH-HH | off             # writes quiet_hours
+sudo serverwatch healthchecks set <url> | off        # writes healthchecks.url
+sudo serverwatch channel add|list|remove|set|test    # notification channels
 ```
 
 These are equivalent to the matching `config set` calls, just with a verb-shaped
@@ -96,10 +91,10 @@ not `config set`, and are stored under `targets.<id>` in the config file rather
 than as a flat key:
 
 ```bash
-serverwatch monitor list                       # discovered targets + on/off + effective threshold
-serverwatch monitor disable docker:jellyfin    # stop alerting on one target
-serverwatch monitor enable docker:jellyfin     # re-enable it
-serverwatch monitor threshold disk:/ 95        # per-target threshold override
+sudo serverwatch monitor list                       # discovered targets + on/off + effective threshold
+sudo serverwatch monitor disable docker:jellyfin    # stop alerting on one target
+sudo serverwatch monitor enable docker:jellyfin     # re-enable it
+sudo serverwatch monitor threshold disk:/ 95        # per-target threshold override
 ```
 
 A target id is namespaced by kind, for example `docker:<container>`,
@@ -131,8 +126,8 @@ gets collected](05-monitoring.md)). The slow tier fires every Nth fast tick, so
 | `heartbeat_interval` | `30` | Integer seconds, minimum 1. Independent of both tiers. |
 
 ```bash
-serverwatch config set fast_interval 5
-serverwatch config set sample_interval 60
+sudo serverwatch config set fast_interval 5
+sudo serverwatch config set sample_interval 60
 ```
 
 ### Baseline and anomaly
@@ -147,8 +142,8 @@ alerting is off by default; only threshold alerting runs unless you opt in.
 | `baseline_alerts` | `false` | Boolean. Opt-in gate for baseline (z-score) deviation alerting on cpu/mem/swap/temp/disk. Threshold alerting on those same metrics is always on regardless of this setting. Off by default because a metric with a low, unstable mean can read many sigma from its own baseline on a normal wobble and fire every tick. |
 
 ```bash
-serverwatch config set baseline_alerts true    # opt in to deviation alerts
-serverwatch config set baseline_min_pct 0.2
+sudo serverwatch config set baseline_alerts true    # opt in to deviation alerts
+sudo serverwatch config set baseline_min_pct 0.2
 ```
 
 ### Thresholds
@@ -166,7 +161,7 @@ supports a per-target override via `serverwatch monitor threshold`.
 | `thresholds.swap_pct` | `50` | Float percent. |
 
 ```bash
-serverwatch config set thresholds.disk_pct 85
+sudo serverwatch config set thresholds.disk_pct 85
 ```
 
 ### Quiet hours
@@ -179,8 +174,8 @@ Suppress non-critical pings during a window that may wrap midnight.
 | `critical_overrides_quiet` | `true` | Boolean. When true, alerts flagged critical (currently any `disk:<mount>` threshold breach) still get through during quiet hours. |
 
 ```bash
-serverwatch quiet-hours 23-8          # or: serverwatch config set quiet_hours 23-8
-serverwatch quiet-hours off           # clears it
+sudo serverwatch quiet-hours 23-8          # or: serverwatch config set quiet_hours 23-8
+sudo serverwatch quiet-hours off           # clears it
 ```
 
 In `serverwatch-ctl`, this is the **Quiet hours** screen in the management
@@ -199,7 +194,7 @@ a fresh install.
 | `telegram.chat_id` | empty | None. Normally set by enrolling the owner chat via `/start <pin>`. |
 
 ```bash
-serverwatch telegram set-token 123456:ABC-DEF   # or: config set telegram.token ...
+sudo serverwatch telegram set-token 123456:ABC-DEF   # or: config set telegram.token ...
 ```
 
 `telegram set-token` saves the token, reloads the daemon, and then prints the
@@ -223,8 +218,8 @@ you directly.
 | `healthchecks.url` | empty | None (free-form string). |
 
 ```bash
-serverwatch healthchecks set https://hc-ping.com/your-uuid   # config set healthchecks.url ...
-serverwatch healthchecks off
+sudo serverwatch healthchecks set https://hc-ping.com/your-uuid   # config set healthchecks.url ...
+sudo serverwatch healthchecks off
 ```
 
 In `serverwatch-ctl`, this is the **Healthchecks** screen in the management
@@ -240,9 +235,9 @@ Digest delivery times, in 24-hour local time.
 | `schedule.weekly` | empty | `"dow@HH:MM"` where `dow` is one of `sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, or empty to disable. For example `mon@09:00`. |
 
 ```bash
-serverwatch schedule daily 08:00       # config set schedule.daily 08:00
-serverwatch schedule weekly mon@09:00
-serverwatch schedule daily off
+sudo serverwatch schedule daily 08:00       # config set schedule.daily 08:00
+sudo serverwatch schedule weekly mon@09:00
+sudo serverwatch schedule daily off
 ```
 
 In `serverwatch-ctl`, this is the **Schedule** screen in the management
@@ -263,7 +258,7 @@ store.
 | `storage.rollup_retention` | `720h` | Duration string, must be positive. How long 1-minute rollups and downtime events are kept (720h is 30 days). |
 
 ```bash
-serverwatch config set storage.raw_retention 72h
+sudo serverwatch config set storage.raw_retention 72h
 sudo systemctl restart serverwatch     # required for storage.* changes
 ```
 
@@ -285,8 +280,8 @@ resulting series count and disk usage.
 | `collect.smart_interval` | `1800` | Integer seconds, minimum 1. Throttles the SMART scan (30 minutes by default). Set as low as `sample_interval` to scan every slow tick. |
 
 ```bash
-serverwatch config set collect.processes false     # stop collecting the process table
-serverwatch config set collect.smart_interval 3600
+sudo serverwatch config set collect.processes false     # stop collecting the process table
+sudo serverwatch config set collect.smart_interval 3600
 ```
 
 ### Web
@@ -323,8 +318,8 @@ revealing that a public page exists.
 | `public.panels` | empty | Comma-separated allowlist. Each entry must be one of `availability`, `cpu`, `mem`, `swap`, `load`, `temp`, `uptime`, `services`, `containers`, `net`, or `disk:<mount>` (with a non-empty mount suffix). Any other value is rejected and the whole list is refused. |
 
 ```bash
-serverwatch config set public.enabled true
-serverwatch config set public.panels availability,cpu,mem,uptime,disk:/
+sudo serverwatch config set public.enabled true
+sudo serverwatch config set public.panels availability,cpu,mem,uptime,disk:/
 ```
 
 The `public.panels` list is the server-side-enforced source of truth for what

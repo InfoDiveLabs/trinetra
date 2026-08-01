@@ -83,11 +83,12 @@ after the fact.
 
 The slow tier runs once every `sample_interval` and handles everything that is
 too expensive to do on the fast cadence, mostly because it means spawning a
-subprocess or walking a lot of state. Some of it is always on; a good deal of it
-is opt-in, controlled by the `collect.*` toggles described in the
-[Configuration chapter](04-configuration.md). The opt-in collectors are opt-out by default, meaning absent or unset
-counts as enabled, so a stock install already gathers them; you turn one off on
-a small or busy host where the extra work is not worth it.
+subprocess or walking a lot of state. Some of it is always on; a good deal of
+it is opt-in, gated by the `collect.*` toggles described in the
+[Configuration chapter](04-configuration.md). Here opt-in means toggle-gated,
+not off by default: every one of those toggles defaults to enabled, so a
+stock install already gathers all of it, and you turn one off on a small or
+busy host where the extra work is not worth it.
 
 ### Filesystem usage
 
@@ -103,12 +104,14 @@ up/down state is evaluated as a binary health check (running is good, anything
 else is bad) and is alert-only: it drives alerting but is not written as a
 time-series.
 
-If you opt in to `docker stats`, serverwatch additionally collects per-container
-CPU, memory, and network figures. The CPU and memory readings become
+serverwatch also runs `docker stats` to collect per-container CPU, memory, and
+network figures, gated by `collect.container_stats` (default on, so a stock
+install already gathers it). The CPU and memory readings become
 `docker:<name>:cpu` and `docker:<name>:mem` series; the per-container network
 I/O is snapshot-only, meaning it lands in `status.json` for the live view but is
 never persisted as a series. Per-container collection is the heavier of the two
-docker calls, which is why it is separately opt-in rather than always on.
+docker calls, which is why it has its own toggle instead of being tied to the
+always-on `docker ps` check.
 
 ### systemd units
 
@@ -116,11 +119,11 @@ Every slow tick runs `systemctl --failed` and treats each failed unit as a
 binary check that recovers on its own once the unit is no longer listed. This is
 alert-only and always on; it is how serverwatch tells you a service died.
 
-If you opt in, it also runs a full `systemctl list-units` inventory of every
-service and its load/active/sub state. That full list is snapshot-only: it
-populates the live services view but is never stored as a series, because the
-cardinality of every unit name on every host makes a poor fit for time-series
-storage.
+It also runs a full `systemctl list-units` inventory of every service and its
+load/active/sub state, gated by `collect.services` (default on). That full
+list is snapshot-only: it populates the live services view but is never
+stored as a series, because the cardinality of every unit name on every host
+makes a poor fit for time-series storage.
 
 ### SMART disk health
 
@@ -129,27 +132,30 @@ Disk health uses `smartctl`. A `smartctl --scan` enumerates devices, and a
 evaluated as a binary check (a `FAILED` verdict is bad). Both of these are
 always on and cheap relative to the attribute read below.
 
-The opt-in extra is the `-A` attribute read, which pulls the detailed SMART
-attributes including device temperature. This is the heaviest per-device call
-serverwatch makes, so it is throttled independently by `collect.smart_interval`
+The extra, gated by `collect.smart_attrs` (default on, like the rest), is the
+`-A` attribute read, which pulls the detailed SMART attributes including
+device temperature. This is the heaviest per-device call serverwatch makes,
+so it is throttled independently by `collect.smart_interval`
 (default 1800 seconds, that is 30 minutes). Even when the slow tier runs every
 minute, the attribute read only happens at most once per `smart_interval`. When
 it does run, device temperature is recorded as a `smart:<device>:temp` series.
 
-### Network throughput (opt-in)
+### Network throughput (default on)
 
-If enabled, the slow tier reads `/proc/net/dev` and computes per-interface
-receive and transmit throughput, stored as `net:<iface>:rx` and `net:<iface>:tx`
-series and surfaced in `status.json` as `net_rates`. Interfaces are discovered
-and appear in `monitor list`, but throughput does not yet drive alert firing;
-today it is collected for history and the live view only.
+Gated by `collect.net_throughput`, the slow tier reads `/proc/net/dev` and
+computes per-interface receive and transmit throughput, stored as
+`net:<iface>:rx` and `net:<iface>:tx` series and surfaced in `status.json` as
+`net_rates`. Interfaces are discovered and appear in `monitor list`, but
+throughput does not yet drive alert firing; today it is collected for history
+and the live view only.
 
-### Process table (opt-in)
+### Process table (default on)
 
-If enabled, the slow tier snapshots the process table: total process counts plus
-a top-N by resource use. This is snapshot-only. It feeds the live view so you
-can see what is running heavy right now, and it is the collector most worth
-turning off on a host that churns through hundreds of short-lived processes.
+Gated by `collect.processes`, the slow tier snapshots the process table:
+total process counts plus a top-N by resource use. This is snapshot-only. It
+feeds the live view so you can see what is running heavy right now, and it is
+the collector most worth turning off (`collect.processes false`) on a host
+that churns through hundreds of short-lived processes.
 
 ### Reachability and healthchecks.io
 
@@ -170,14 +176,14 @@ collector produces history and which only produces a live reading:
 |-----------|--------|----------|-------|
 | Filesystem `df` | `disk:<mount>` | yes | yes |
 | Docker `ps` state | no | yes | yes |
-| Docker `stats` cpu/mem (opt-in) | `docker:<name>:cpu`/`:mem` | yes | no |
-| Docker `stats` network (opt-in) | no | yes | no |
+| Docker `stats` cpu/mem (default on) | `docker:<name>:cpu`/`:mem` | yes | no |
+| Docker `stats` network (default on) | no | yes | no |
 | systemd `--failed` | no | yes | yes |
-| systemd full inventory (opt-in) | no | yes | no |
+| systemd full inventory (default on) | no | yes | no |
 | SMART `-H` health | no | yes | yes |
-| SMART `-A` attrs (opt-in, throttled) | `smart:<device>:temp` | yes | no |
-| Network throughput (opt-in) | `net:<iface>:rx`/`:tx` | yes | not yet |
-| Process table (opt-in) | no | yes | no |
+| SMART `-A` attrs (default on, throttled) | `smart:<device>:temp` | yes | no |
+| Network throughput (default on) | `net:<iface>:rx`/`:tx` | yes | not yet |
+| Process table (default on) | no | yes | no |
 | Reachability dial | no | yes | yes |
 
 ## Self-discovery
@@ -253,14 +259,14 @@ installed, the same three operations are available as scriptable
 
 ```bash
 # List every discovered target with its state and any threshold
-serverwatch monitor list
+sudo serverwatch monitor list
 
 # Turn a specific target on or off
-serverwatch monitor enable docker:web
-serverwatch monitor disable iface:eth0
+sudo serverwatch monitor enable docker:web
+sudo serverwatch monitor disable iface:eth0
 
 # Set a per-target threshold override
-serverwatch monitor threshold disk:/ 85
+sudo serverwatch monitor threshold disk:/ 85
 ```
 
 `monitor list` prints one line per target: the namespaced id and its state.

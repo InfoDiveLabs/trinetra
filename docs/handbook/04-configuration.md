@@ -29,7 +29,7 @@ socket:
 | Healthchecks ping URL | Healthchecks |
 | Per-target enable/disable and thresholds | Monitor thresholds |
 | Notification channels (add / edit / remove / test) | Channels |
-| Web UI setup (mode, listen, domain, origin) | the `s` guided web-setup wizard from Home |
+| Web UI setup (mode, listen, domain, `rp_id`, origin, and manual-mode certs) | the `s` guided web-setup wizard from Home |
 | Telegram bot token and enrollment | first-run onboarding |
 | Sampling intervals, baseline/anomaly tuning, global thresholds, `critical_overrides_quiet`, storage backend/retention, collection toggles, the remaining `web.*` keys, and `public.*` | All settings |
 

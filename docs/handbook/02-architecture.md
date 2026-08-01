@@ -23,7 +23,7 @@ its lifecycle. Inside that one process, work is split across a small number of
 goroutines, each with a clear owner and no shared mutable state beyond a couple
 of carefully guarded values.
 
-There are two goroutines that matter in every build:
+Two goroutines always run:
 
 | Goroutine | What it does | Cadence |
 |-----------|--------------|---------|
@@ -195,9 +195,8 @@ Everything that reads daemon state or changes daemon config goes through one
 Go interface, `core.API`, defined in `internal/core/api.go`. It is deliberately
 the only boundary:
 
-> `API` is the single boundary through which every consumer (the web UI
-> plugin, the CLI, and later a socket client) reads daemon state and applies
-> changes.
+> `API` is the single boundary through which every consumer (the web UI, the
+> CLI, and the control-socket client) reads daemon state and applies changes.
 
 The interface splits cleanly into reads and writes:
 
@@ -212,6 +211,8 @@ type API interface {
     AlertHistory(since int64, limit int) ([]AlertRecord, error)
     Config() (*config.Config, error)
     Doctor() (DoctorReport, error)
+    EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error)
+    MonitorTargets(ctx context.Context) ([]TargetView, error)
 
     // writes
     ApplyConfig(*config.Config) error
@@ -222,6 +223,12 @@ type API interface {
     Subscribe(ctx context.Context) (<-chan Event, error)
 }
 ```
+
+The two context-taking reads, `EnrollmentPIN` (the Telegram `/start <pin>`
+enrollment pin, see [Command reference](11-command-reference.md#90-telegram-set-token-now-prints-the-enrollment-pin))
+and `MonitorTargets` (live host discovery for the monitor-thresholds screen),
+need a live daemon to answer; the file-backed implementation below returns an
+error for them rather than a meaningless value.
 
 There are a couple of implementations of this interface. Inside the running
 daemon there is an in-process one (`newInprocAPI`) that reads the live snapshot
@@ -498,7 +505,7 @@ or an error.
 
 | Kind | Methods |
 |------|---------|
-| Reads | `Snapshot`, `Monitoring`, `Series`, `Events`, `ActiveAlerts`, `AlertHistory`, `Config`, `Doctor` |
+| Reads | `Snapshot`, `Monitoring`, `Series`, `Events`, `ActiveAlerts`, `AlertHistory`, `Config`, `Doctor`, `EnrollmentPIN`, `MonitorTargets` |
 | Writes | `ApplyConfig`, `AckAlert`, `UnackAlert`, `TestChannel`, `ValidateChannel` |
 | Streaming | `Subscribe` (live event push, see [The live event stream](#the-live-event-stream) below) |
 
@@ -608,7 +615,7 @@ of the opt-in `collect.*` toggles survive the round trip intact.
 
 ### Failure handling
 
-Serving the socket is non-fatal, in both build variants. `cmdDaemon` starts it
+Serving the socket is non-fatal. `cmdDaemon` starts it
 and, if binding fails (for example, a permission problem on `/run`), logs the
 failure and leaves the daemon running without it. This mirrors how the web
 server is treated: the control socket is an enhancement, never a reason to take

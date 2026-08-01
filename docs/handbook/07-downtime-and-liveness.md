@@ -37,7 +37,7 @@ turn.
 
 The breadcrumb is a file called `heartbeat`, and it holds a single number: a
 Unix timestamp. The sampler loop rewrites it on its own cadence, governed by
-`heartbeat_interval` (default 60 seconds), independent of the fast and slow
+`heartbeat_interval` (default 30 seconds), independent of the fast and slow
 sampling tiers:
 
 ```go

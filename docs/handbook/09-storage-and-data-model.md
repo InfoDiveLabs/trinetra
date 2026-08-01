@@ -187,13 +187,14 @@ You read history with `serverwatch dump`:
 ```bash
 serverwatch dump --metric cpu
 serverwatch dump --metric disk:/ --since 24h
-serverwatch dump --metric mem --since 7d --res 1m --format csv
+serverwatch dump --metric mem --since 168h --res 1m --format csv
 ```
 
 The flags are:
 
 - `--metric <id>` the series to export, using the ids from the table above.
-- `--since <dur>` how far back to scan (for example `24h`, `7d`).
+- `--since <dur>` how far back to scan, a Go duration (for example `24h`,
+  `168h`); day and week units like `7d` are not accepted.
 - `--res raw|1m` which resolution to read; omit it and the store chooses.
 - `--format csv|json` the output shape, for piping into a spreadsheet or a
   graphing tool.

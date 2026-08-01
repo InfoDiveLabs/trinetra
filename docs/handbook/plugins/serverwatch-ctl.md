@@ -18,6 +18,29 @@ safely locates and execs it. The direct invocations below still apply once
 launched, and remain useful when scripting or working from a non-standard
 install location.
 
+## At a glance
+
+Where each feature lives in the TUI: launch with `sudo serverwatch cli`, and
+from the Home screen `m` opens the management menu and `s` opens the web-setup
+wizard. If Telegram is not configured or enrolled yet, launching drops you
+straight into first-run onboarding instead.
+
+```mermaid
+flowchart TD
+    launch["sudo serverwatch cli"] --> chk{"Telegram configured<br/>and enrolled?"}
+    chk -->|no| onboard["First-run onboarding:<br/>bot token, then /start pin, until enrolled"]
+    chk -->|yes| home["Home: live status<br/>(r refresh, q quit)"]
+    onboard --> home
+    home -->|"press s"| web["Web-setup wizard:<br/>mode, listen, domain, rp_id, origin<br/>(plus cert and key in manual mode)"]
+    home -->|"press m"| menu["Management menu"]
+    menu --> sched["Schedule"]
+    menu --> quiet["Quiet hours"]
+    menu --> health["Healthchecks"]
+    menu --> mon["Monitor thresholds"]
+    menu --> chan["Channels:<br/>add, edit, remove, test"]
+    menu --> allset["All settings:<br/>every config key, by group"]
+```
+
 ## Installing
 
 `serverwatch-ctl` installs alongside the daemon. The recommended path is to

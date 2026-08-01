@@ -37,8 +37,13 @@ want something that works today. It is a single daemon, the stdlib-only
   process entirely into a supervised, separate binary with no build tag; see
   the beta section below.
 
-This is the release running on a live host behind Cloudflare and nginx, and it
-is what the rest of this handbook documents as the working system.
+This is the release running on a live host behind Cloudflare and nginx. Its
+monitoring, alerting, and storage stack is the stable foundation the rest of
+this handbook rests on. The core-plus-plugin architecture the earlier chapters
+describe as current (the control socket, the out-of-process `serverwatch-web`
+plugin, `serverwatch-ctl`, and live event streaming) is the v0.4 develop work
+introduced in the next section: read those chapters through the release-level
+caveat that this line is still a `develop`-branch beta preview.
 
 ## The v0.4.0-beta.1 preview: core plus plugins
 

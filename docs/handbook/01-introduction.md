@@ -60,11 +60,15 @@ The plugins are the processes that speak to that socket. The web UI is one
 such plugin: a separate `serverwatch-web` binary, with no build tag, that the
 core supervises. It adds passkey-only auth and the browser dashboard, and the
 core stays free of its heavier dependencies simply because it does not import
-them, not because of a build tag. A management CLI, `serverwatch-ctl`, is in
-progress: it dials the control socket to drive a running daemon from a second
-process, and it is where a richer interactive terminal experience will land.
-The point of the split is that the core stays small and boring, and everything
-richer plugs in around it without weighing it down.
+them, not because of a build tag. `serverwatch-ctl` is the other plugin, and
+it is the primary, complete way to manage a running daemon day to day: it
+dials the same control socket from a second process and gives you guided
+screens for the schedule, quiet hours, healthchecks, monitor thresholds, and
+notification channels, an "All settings" screen that reaches every remaining
+config key, first-run Telegram onboarding, and a guided web-setup wizard, all
+applied over the socket with the same validation the daemon uses. The point of
+the split is that the core stays small and boring, and everything richer
+plugs in around it without weighing it down.
 
 You do not need to know either plugin binary's name to use it. The core
 exposes two front-door subcommands that launch them for you:
