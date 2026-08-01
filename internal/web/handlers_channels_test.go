@@ -3,6 +3,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,136 @@ import (
 
 	"serverwatch/internal/config"
 )
+
+// undeliverableTelegram simulates buildNotifier's rule that a telegram channel
+// with no resolvable chat id cannot deliver. It is what daemon_web.go wires
+// Deps.ValidateChannel to in production (via the real buildNotifier).
+func undeliverableTelegram(cc config.ChannelConfig, _ *config.Config) error {
+	if cc.Type == "telegram" && cc.Settings["chat_id"] == "" {
+		return fmt.Errorf("telegram channel %q: chat_id not configured", cc.Name)
+	}
+	return nil
+}
+
+// TestChannelsAddRejectsUndeliverableEnabledChannel is the #79 guard: the web
+// editor must not silently create an enabled channel that will be dropped at
+// delivery. A telegram channel with a token but no chat id (the trap the old
+// "auto-captured on first message" placeholder invited) is rejected with 400,
+// not persisted, and Reload is never called.
+func TestChannelsAddRejectsUndeliverableEnabledChannel(t *testing.T) {
+	d, cfg, reloadCalled := configTestDeps(t)
+	d.ValidateChannel = undeliverableTelegram
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	form := url.Values{
+		"name":           {"Phone"},
+		"type":           {"telegram"},
+		"enabled":        {"1"},
+		"settings.token": {"123:abc"},
+		// chat_id deliberately omitted
+	}
+	rr := postForm(h, "/channels", form, cookie, csrf)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (undeliverable channel rejected); body: %s", rr.Code, rr.Body.String())
+	}
+	if *reloadCalled {
+		t.Fatal("Reload must not be called when the channel is rejected")
+	}
+	if _, ok := (*cfg).GetChannel("Phone"); ok {
+		t.Fatal("an undeliverable channel must not be persisted")
+	}
+}
+
+// TestChannelsAddAllowsDeliverableTelegramChannel: with a chat id supplied the
+// same channel validates and is created.
+func TestChannelsAddAllowsDeliverableTelegramChannel(t *testing.T) {
+	d, cfg, reloadCalled := configTestDeps(t)
+	d.ValidateChannel = undeliverableTelegram
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	form := url.Values{
+		"name":             {"Phone"},
+		"type":             {"telegram"},
+		"enabled":          {"1"},
+		"settings.token":   {"123:abc"},
+		"settings.chat_id": {"555"},
+	}
+	rr := postForm(h, "/channels", form, cookie, csrf)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	if !*reloadCalled {
+		t.Fatal("Reload should be called for a deliverable channel")
+	}
+	cc, ok := (*cfg).GetChannel("Phone")
+	if !ok || cc.Settings["chat_id"] != "555" {
+		t.Fatalf("channel not persisted correctly: ok=%v cc=%+v", ok, cc)
+	}
+}
+
+// TestChannelsAddDisabledChannelSkipsDeliverabilityCheck: a disabled channel
+// is a draft and need not be deliverable yet, so it saves without validation.
+func TestChannelsAddDisabledChannelSkipsDeliverabilityCheck(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	d.ValidateChannel = func(config.ChannelConfig, *config.Config) error {
+		return fmt.Errorf("validation must not run for a disabled channel")
+	}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	form := url.Values{
+		"name":           {"Draft"},
+		"type":           {"telegram"},
+		"settings.token": {"123:abc"},
+		// enabled omitted => disabled; chat_id omitted
+	}
+	rr := postForm(h, "/channels", form, cookie, csrf)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (disabled draft allowed); body: %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := (*cfg).GetChannel("Draft"); !ok {
+		t.Fatal("disabled draft channel should be saved")
+	}
+}
+
+// TestChannelsUpdateRejectsUndeliverableEnabledChannel: the same guard applies
+// when editing an existing channel into an undeliverable enabled state.
+func TestChannelsUpdateRejectsUndeliverableEnabledChannel(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	d.ValidateChannel = undeliverableTelegram
+	// seed an existing (disabled) telegram channel to edit
+	c := *(*cfg)
+	c.AddChannel(config.ChannelConfig{Name: "Phone", Type: "telegram", Settings: map[string]string{"token": "123:abc"}})
+	*cfg = &c
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	form := url.Values{
+		"name":           {"Phone"},
+		"type":           {"telegram"},
+		"enabled":        {"1"},
+		"settings.token": {"123:abc"},
+		// still no chat id
+	}
+	rr := postForm(h, "/channels/Phone/update", form, cookie, csrf)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 on enabling an undeliverable channel; body: %s", rr.Code, rr.Body.String())
+	}
+}
 
 // TestChannelsAddRoundTripsToConfig pins the core CRUD obligation: POSTing
 // /channels creates a channel that shows up in cfg.Channels with the posted

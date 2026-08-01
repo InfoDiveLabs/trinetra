@@ -52,8 +52,14 @@ func maybeStartWeb(d WebDeps) func() {
 		AlertLogPath:   d.AlertLogPath,
 		AlertStatePath: d.AlertStatePath,
 		TestChannel:    d.TestChannel,
-		Enabled:        d.Enabled,
-		Listen:         d.Listen,
+		ValidateChannel: func(cc config.ChannelConfig, c *config.Config) error {
+			// Same check `channel test` and delivery use, minus the network
+			// send: does this channel build a working notifier? (#79)
+			_, err := buildNotifier(cc, c)
+			return err
+		},
+		Enabled: d.Enabled,
+		Listen:  d.Listen,
 	}
 	stop, err := web.Start(wd)
 	if err != nil {

@@ -297,6 +297,22 @@ func applyChannelForm(newCfg *config.Config, name string, r *http.Request) error
 	return nil
 }
 
+// validateDeliverable rejects an ENABLED channel that could not build a
+// working notifier, so the web editor never silently persists a channel that
+// delivery would drop (#79 — e.g. a telegram channel left without a chat id).
+// Disabled channels are drafts and skip the check; a nil d.ValidateChannel
+// (tests that don't wire it) also skips.
+func validateDeliverable(d Deps, cfg *config.Config, name string) error {
+	if d.ValidateChannel == nil {
+		return nil
+	}
+	cc, ok := cfg.GetChannel(name)
+	if !ok || !cc.Enabled {
+		return nil
+	}
+	return d.ValidateChannel(*cc, cfg)
+}
+
 // boolFormValue renders a posted boolean-ish field as "true"/"false" for
 // config.SetChannelField's strconv.ParseBool-based enabled/
 // critical_overrides_quiet keys. Two calling conventions both work: a real
@@ -344,6 +360,10 @@ func channelsAddHandler(d Deps) http.HandlerFunc {
 		}
 		newCfg.AddChannel(config.ChannelConfig{Name: name})
 		if err := applyChannelForm(newCfg, name, r); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := validateDeliverable(d, newCfg, name); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -397,6 +417,10 @@ func channelsUpdateHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		if err := applyChannelForm(newCfg, name, r); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := validateDeliverable(d, newCfg, name); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

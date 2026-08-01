@@ -69,7 +69,7 @@
 
       <div data-cond="telegram" class="cond{{if eq .Type "telegram"}} on{{end}}">
         <label class="field"><span class="lb">Bot token</span><input type="text" name="settings.token" value="{{index .Settings "token"}}" placeholder="from @BotFather (or leave blank to use telegram.token)"></label>
-        <label class="field"><span class="lb">Chat ID</span><input type="text" name="settings.chat_id" value="{{index .Settings "chat_id"}}" placeholder="auto-captured on first message"></label>
+        <label class="field"><span class="lb">Chat ID</span><input type="text" name="settings.chat_id" value="{{index .Settings "chat_id"}}" placeholder="your numeric chat id (required unless telegram.chat_id is set)"></label>
       </div>
       <div data-cond="email" class="cond{{if eq .Type "email"}} on{{end}}">
         <div class="grid g-2" style="gap:0 12px">
