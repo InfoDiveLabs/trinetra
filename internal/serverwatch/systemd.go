@@ -24,6 +24,14 @@ const secondaryBinPath = "/usr/bin/serverwatch"
 // Type=simple still works here: WATCHDOG=1 from the main PID is accepted
 // regardless of Type, unlike READY=1 which needs Type=notify.
 //
+// RuntimeDirectory=serverwatch tells systemd to create /run/serverwatch
+// (tmpfs, mode 0755, owned by User=root above) before starting the unit and
+// remove it when the unit stops, and to export
+// RUNTIME_DIRECTORY=/run/serverwatch into the service's environment. That is
+// where serveControlSocket (control_socket.go) puts the control socket the
+// daemon's core.API is served over, so the directory always exists with the
+// right lifetime instead of the daemon having to create/clean it up itself.
+//
 // There is no separate "web" unit: cmdInstall (below) always copies
 // os.Executable() — whichever binary is currently running — to
 // /usr/local/bin/serverwatch and writes this exact same unit around it. So
@@ -44,6 +52,7 @@ Restart=always
 RestartSec=5
 WatchdogSec=90
 User=root
+RuntimeDirectory=serverwatch
 StandardOutput=journal
 StandardError=journal
 

@@ -47,6 +47,7 @@ func TestRenderUnit(t *testing.T) {
 		"ExecStart=/usr/local/bin/serverwatch daemon",
 		"Restart=always",
 		"WatchdogSec=",
+		"RuntimeDirectory=serverwatch",
 		"WantedBy=multi-user.target",
 	} {
 		if !strings.Contains(u, want) {

@@ -752,6 +752,24 @@ func cmdDaemon(args []string) int {
 	})
 	defer stopWeb()
 
+	// control socket: serves the daemon's own core.API (newInprocAPI) over a
+	// unix socket under RUNTIME_DIRECTORY (or /run/serverwatch, see
+	// control_socket.go) for future out-of-process consumers (S3's
+	// serverwatch-ctl, S4's serverwatch-web). newInprocAPI is untagged
+	// (coreapi_inproc.go), so this call site -- like maybeStartWeb above --
+	// carries no third-party dependency in the default build. Same
+	// non-fatal-failure handling as maybeStartWeb: the control socket is an
+	// enhancement, never a reason to crash-loop the daemon, so a bind
+	// failure (e.g. permission denied on /run) just logs and leaves the
+	// daemon running without it.
+	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload)
+	stopControl, err := serveControlSocket(controlAPI)
+	if err != nil {
+		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
+	} else {
+		defer stopControl()
+	}
+
 	// boot/recovery report from heartbeat gap
 	c0 := getCfg()
 	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
