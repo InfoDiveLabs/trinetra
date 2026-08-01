@@ -119,6 +119,11 @@ enable it in config and the core supervises the web plugin for you, or run
 `sudo serverwatch web` directly. Full steps are in
 [Installation and first run](docs/handbook/03-installation.md).
 
+After install, `sudo serverwatch cli` opens the interactive
+[serverwatch-ctl](docs/handbook/plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)
+TUI for guided setup and day-to-day management, if you would rather not
+remember individual commands.
+
 ## Documentation
 
 Everything is in the handbook, one concern per chapter.

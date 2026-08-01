@@ -3,7 +3,7 @@
 `serverwatch-ctl`'s management screens are now the guided, validated way to
 change the schedule, quiet hours, healthchecks, monitor thresholds, and
 notification channels day to day; see [Managing with
-serverwatch-ctl](11-command-reference.md#21-serverwatch-ctl-beta). This
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl). This
 chapter documents the config model those screens apply to, and the
 scriptable `serverwatch` CLI verbs that remain the automation and no-ctl
 path, collected for reference in [Daemon-only config
@@ -100,6 +100,10 @@ A target id is namespaced by kind, for example `docker:<container>`,
 Per-target overrides are not settable with `config set <key>` and will not
 appear as flat keys in `config get`; use the `monitor` verb for them.
 
+In `serverwatch-ctl`, this is the **Monitor thresholds** screen: a live list
+of every discovered target where `enter`/`space` toggles a target on or off
+and `t` opens a threshold-edit input for it, each applying immediately.
+
 ## Config key reference
 
 Everything below is a key accepted by `config get`, `config set`, and
@@ -172,6 +176,10 @@ serverwatch quiet-hours 23-8          # or: serverwatch config set quiet_hours 2
 serverwatch quiet-hours off           # clears it
 ```
 
+In `serverwatch-ctl`, this is the **Quiet hours** screen in the management
+menu (`m`): a single `HH-HH` window, or `off` to clear it. The command above
+is the scriptable equivalent for automation.
+
 ### Telegram
 
 The original always-on notification channel (see [Alerting and notification
@@ -189,8 +197,11 @@ serverwatch telegram set-token 123456:ABC-DEF   # or: config set telegram.token 
 
 `telegram set-token` saves the token, reloads the daemon, and then prints the
 `/start <pin>` enrollment instruction straight to the terminal (falling back
-to a `journalctl` pointer if the daemon cannot be reached yet). The guided
-`serverwatch-ctl` onboarding flow shows the same PIN the same way. See
+to a `journalctl` pointer if the daemon cannot be reached yet). In
+`serverwatch-ctl`, the same setup runs as the **first-run onboarding** flow
+(token entry, then the same `/start <pin>` shown and polled for you); once
+onboarding is complete, the token can be changed later from the **Channels**
+screen. See
 [Installation and first run](03-installation.md#5-connect-telegram-and-enroll-as-owner)
 for the full enrollment flow and diagram.
 
@@ -209,6 +220,9 @@ serverwatch healthchecks set https://hc-ping.com/your-uuid   # config set health
 serverwatch healthchecks off
 ```
 
+In `serverwatch-ctl`, this is the **Healthchecks** screen in the management
+menu: a single ping URL, or `off` to clear it.
+
 ### Schedule
 
 Digest delivery times, in 24-hour local time.
@@ -223,6 +237,10 @@ serverwatch schedule daily 08:00       # config set schedule.daily 08:00
 serverwatch schedule weekly mon@09:00
 serverwatch schedule daily off
 ```
+
+In `serverwatch-ctl`, this is the **Schedule** screen in the management
+menu: choose `off`, `daily`, or `weekly`, pre-filled with whatever is
+currently set.
 
 ### Storage
 

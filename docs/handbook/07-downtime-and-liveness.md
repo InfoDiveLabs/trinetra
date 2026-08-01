@@ -359,6 +359,11 @@ and turn it off again with:
 sudo serverwatch healthchecks off
 ```
 
+The same setting is also the Healthchecks screen in `serverwatch-ctl`'s
+management menu (see [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)), if
+you would rather use the guided TUI than type the URL on the command line.
+
 It is optional, and it is the one piece here that depends on an external
 service, which is precisely why it can cover the gap the others cannot.
 

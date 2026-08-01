@@ -28,9 +28,13 @@ miss. Both are ordinary arithmetic. You can read the rule, and you can predict
 when it will fire.
 
 Configuration follows the same principle. Everything you can change is set
-through the `serverwatch` CLI (see [Configuration](04-configuration.md)), and
-there is no config file you are meant to hand-edit. You set the one required value, the Telegram bot token, the same way
-you set anything else:
+through the `serverwatch` CLI (see [Configuration](04-configuration.md)), most
+conveniently through the guided `serverwatch-ctl` TUI (see [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)),
+which drives the same settings; there is no config file you are meant to
+hand-edit. The scriptable core CLI remains the automation path: you set the
+one required value, the Telegram bot token, the same way you set anything
+else:
 
 ```bash
 sudo serverwatch telegram set-token <token>

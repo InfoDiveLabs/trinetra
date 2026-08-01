@@ -26,11 +26,21 @@ straight through and return here from any page.
 11. [Command reference](11-command-reference.md) - every `serverwatch` command, plus the plugin binaries.
 12. [Roadmap and status](12-roadmap-and-status.md) - what is released, what is in preview, and what is still coming.
 
+### Plugins
+
+- [Plugins](plugins/README.md) - the lean core plus optional plugin binaries, and the front-door safe-exec model.
+  - [serverwatch-ctl](plugins/serverwatch-ctl.md) - the interactive management TUI (beta).
+  - [serverwatch-web](plugins/serverwatch-web.md) - the supervised web UI binary.
+
 ## A note on the plugins
 
 The `serverwatch-ctl` and `serverwatch-web` plugin binaries, and the control
 socket they talk to, are part of an in-progress core-plus-plugin architecture.
-`serverwatch-ctl` is available as a preview and is marked as beta throughout
-this handbook. `serverwatch-web` has moved out of preview: it is a supervised,
-separate binary with no build tag, and the daemon runs it whenever
-`web.enabled` is set.
+They each have a dedicated page under [Plugins](plugins/README.md):
+[serverwatch-ctl](plugins/serverwatch-ctl.md) and
+[serverwatch-web](plugins/serverwatch-web.md).
+[serverwatch-ctl](plugins/serverwatch-ctl.md) is now the primary interactive
+tool for managing a running serverwatch, though it is still marked beta
+throughout this handbook. [serverwatch-web](plugins/serverwatch-web.md) has
+moved out of preview: it is a supervised, separate binary with no build tag,
+and the daemon runs it whenever `web.enabled` is set.

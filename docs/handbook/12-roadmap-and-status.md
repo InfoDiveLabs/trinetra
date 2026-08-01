@@ -112,7 +112,7 @@ is done and verified:
   first-run onboarding flow that captures the Telegram bot token and walks
   through enrollment. `serverwatch-ctl` is the primary, recommended way to
   manage a running serverwatch; see [Managing with
-  serverwatch-ctl](11-command-reference.md#21-serverwatch-ctl-beta). The
+  serverwatch-ctl](plugins/serverwatch-ctl.md). The
   thin, scriptable core CLI verbs it wraps are unchanged and still work
   standalone, collected for automation/no-ctl use in [Daemon-only config
   management](11-command-reference.md#3-daemon-only-config-management).

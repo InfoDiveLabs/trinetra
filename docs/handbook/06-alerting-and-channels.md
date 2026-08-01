@@ -206,10 +206,45 @@ A critical alert during that window is only delivered to channels whose
 
 ## Channel types
 
-Telegram is the original always-on channel and the rest are added on top of it.
-Managing any channel is done entirely through the `channel` subcommands, and
-each one that changes config also signals the running daemon so nothing needs a
-restart:
+Telegram is the original always-on channel and the rest are added on top of
+it. Every channel, regardless of type, carries the same routing knobs from
+the previous section (`min_severity`, `include_kinds`/`exclude_kinds`,
+`critical_overrides_quiet`) plus a type-specific set of connection fields.
+
+### Managing channels with serverwatch-ctl (recommended)
+
+The primary, recommended way to add, edit, remove, or test a channel is the
+Channels screen in [`serverwatch-ctl`](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl),
+the interactive TUI. From Home, press `m` to open the management menu, then
+select Channels. From there:
+
+- `a` **adds** a channel. The screen walks you through picking a type
+  (`telegram`, `email`, `webhook`, `slack`, `discord`, `ntfy`, or `gotify`)
+  and then prompts for that type's fields one at a time, so you never have to
+  remember a setting's key by name.
+- `e` **edits** the channel under the cursor, reopening the same guided
+  fields pre-filled with its current values.
+- `d` or `x` **removes** it.
+- `t` sends it a live **test** notification, the same synthetic-alert check
+  described below.
+
+Before an **enabled** channel is saved, whether newly added or edited, the
+screen validates it over the control socket and refuses to persist it if
+validation fails. That means a channel that would silently fail to deliver,
+say a typo'd webhook URL or a bad SMTP host, can never be saved while turned
+on; a disabled channel skips that gate, which is how you stage a channel's
+settings before switching it on. See [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl) for
+the full walk-through of the menu and every other guided screen.
+
+### Managing channels from the command line
+
+For scripting, automation, or a headless box without `serverwatch-ctl`
+installed, every one of those flows has a thin, scriptable equivalent on the
+core `serverwatch` binary: the `channel` subcommands, listed in full in
+[Daemon-only config management](11-command-reference.md#3-daemon-only-config-management).
+Each one that changes config also signals the running daemon so nothing needs
+a restart:
 
 ```bash
 serverwatch channel list            # every channel with its type and routing
@@ -220,15 +255,17 @@ serverwatch channel remove <name>
 serverwatch channel test <name>     # send one synthetic alert now, report success/failure
 ```
 
-`channel test` is the first thing to reach for when a channel is not
-delivering, because it builds the channel and sends a single synthetic alert
-independent of all routing, so a success proves the transport works and points
-you at routing (an `enabled=false`, or a `min_severity` or `include_kinds` that
-is filtering real alerts out) as the remaining cause.
+`channel test` (or `t` on the Channels screen) is the first thing to reach
+for when a channel is not delivering, because it builds the channel and sends
+a single synthetic alert independent of all routing, so a success proves the
+transport works and points you at routing (an `enabled=false`, or a
+`min_severity` or `include_kinds` that is filtering real alerts out) as the
+remaining cause.
 
-The settings below are per-channel key/value pairs. Write them with `channel
-set <name> setting.<key> <value>`, or pass them at add time with
-`--set key=value`.
+The settings below are per-channel key/value pairs. On the command line,
+write them with `channel set <name> setting.<key> <value>`, or pass them at
+add time with `--set key=value`; in `serverwatch-ctl` they are the fields the
+Channels screen's add/edit flow prompts for.
 
 | Type | Required settings | Optional settings |
 |------|-------------------|-------------------|
@@ -247,7 +284,10 @@ and it sends a plain `{"text": "..."}` payload. `slack` and `discord` are
 really the webhook transport with a fixed, service-specific body baked in, so
 you only supply the incoming-webhook URL.
 
-A worked example, an email channel that only pages for criticals:
+A worked example, an email channel that only pages for criticals, scripted
+against the core binary (the equivalent `serverwatch-ctl` path is `m` ->
+Channels -> `a` -> `email`, filling in the same host/from/to fields and
+setting `min_severity` to `critical`):
 
 ```bash
 sudo serverwatch channel add ops-email --type email
@@ -266,14 +306,24 @@ true|false`.
 
 If you set a Telegram token the old way, with `telegram set-token`, that token
 lives in the config's `telegram.token` key rather than in a channel. The first
-time you run any `channel` subcommand, serverwatch back-fills a real
-`telegram`-typed channel from those legacy keys, so an existing Telegram-only
-install needs no manual conversion: the channel simply appears in `channel
-list` and is managed like any other. The migration is idempotent and will not
-create a second Telegram channel if one already exists under any name, and the
-legacy `telegram.token` and `telegram.chat_id` keys keep working as a fallback
-regardless, including as the source of the bot token for the migrated channel
-and for the interactive command-reply interface.
+time you run any `channel` subcommand, or open the Channels screen in
+`serverwatch-ctl`, serverwatch back-fills a real `telegram`-typed channel from
+those legacy keys, so an existing Telegram-only install needs no manual
+conversion: the channel simply appears in `channel list` (or on the Channels
+screen) and is managed like any other. The migration is idempotent and will
+not create a second Telegram channel if one already exists under any name,
+and the legacy `telegram.token` and `telegram.chat_id` keys keep working as a
+fallback regardless, including as the source of the bot token for the
+migrated channel and for the interactive command-reply interface.
+
+On a brand-new install with no token at all, you will most likely never touch
+this migration path directly: `serverwatch-ctl`'s first-run onboarding (see
+[Managing with serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl))
+captures the bot token on first launch and then shows you the daemon's
+`/start <pin>` enrollment PIN right there in the flow. If you set the token
+from the command line instead, `serverwatch telegram set-token` now prints
+that same enrollment PIN in the terminal too (#90), rather than making you go
+dig it out of the journal.
 
 ---
 

@@ -209,7 +209,7 @@ unmonitored. You see it in `monitor list` with an `unavailable` state instead of
 `on` or `off`, and the daemon carries on with everything else. Nothing about the
 configuration changes; the box just has less to watch.
 
-## Target namespaces and the monitor command
+## Target namespaces and managing targets
 
 Every discovered target has a namespaced id, and the namespace prefix tells you
 what kind of thing it is:
@@ -229,7 +229,27 @@ right and you should ignore it. Failed systemd units, network throughput, and
 the load averages are collected and alerted on through other paths, but they are
 not things you enable, disable, or threshold as monitor targets.
 
-You manage targets with `serverwatch monitor`. It has four subcommands:
+Managing a target means one of three things: seeing its namespaced id and
+state, which is `on`, `off`, or `unavailable`; flipping whether it is
+monitored; or setting a per-target threshold override for the checks that
+carry a numeric threshold, so you can hold `disk:/` to a tighter bound than the
+rest of the disks without changing the global `thresholds.*` defaults.
+
+The primary, recommended way to do this is `serverwatch-ctl`'s Monitor
+thresholds screen. From Home, press `m` to open the management menu, then
+choose **Monitor thresholds**. The screen lists every target the daemon has
+discovered, fetched live from the daemon rather than probed locally, so it
+shows the same `on`, `off`, and `unavailable` states described above.
+`enter`/`space` toggles the target under the cursor on or off, and `t` opens a
+threshold-edit input for a per-target override. Each toggle or edit applies
+immediately over the control socket, so there is no separate save step and no
+daemon restart needed. See [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl) for the
+full walkthrough of that screen and the rest of the management menu.
+
+For automation, cron jobs, or a headless box without `serverwatch-ctl`
+installed, the same three operations are available as scriptable
+`serverwatch monitor` subcommands:
 
 ```bash
 # List every discovered target with its state and any threshold
@@ -243,13 +263,14 @@ serverwatch monitor disable iface:eth0
 serverwatch monitor threshold disk:/ 85
 ```
 
-`monitor list` prints one line per target: the namespaced id and its state,
-which is `on`, `off`, or `unavailable`. `enable` and `disable` flip whether a
-target is monitored. `threshold` sets a per-target override for the checks that
-carry a numeric threshold, so you can hold `disk:/` to a tighter bound than the
-rest of the disks without changing the global `thresholds.*` defaults. Each of
-these commands writes the config through the CLI and signals the running daemon
-to reload, so a change takes effect without a restart.
+`monitor list` prints one line per target: the namespaced id and its state.
+`enable` and `disable` flip whether a target is monitored. `threshold` sets
+the per-target override described above. Each of these commands writes the
+config through the CLI and signals the running daemon to reload, so, just
+like a change made in `serverwatch-ctl`, it takes effect without a restart.
+See [Daemon-only config
+management](11-command-reference.md#3-daemon-only-config-management) for the
+full command reference.
 
 What a threshold means, when the baseline deviation checks fire, and how firing
 and recovery are debounced, are all the alerting engine's concern. The next

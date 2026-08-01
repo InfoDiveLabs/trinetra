@@ -102,13 +102,15 @@ sample_interval / fast_interval`, it also runs the slow tier. The heartbeat
 runs on its own clock, checked every tick but written only when its own
 interval has elapsed.
 
-```
-fast tick   fast tick   fast tick   ...   every Nth fast tick
-   |           |           |                    |
- collectFast collectFast collectFast          collectFast + collectSlow
- (cpu/mem/    ...          ...                 (disk/docker/systemd/
-  swap/load/                                    SMART/network)
-  temp)
+```mermaid
+flowchart TD
+    tick(["fast tick, every fast_interval"]) --> fast["collectFast<br/>cpu / mem / swap / load / temp"]
+    fast --> nth{"Nth tick?<br/>N = sample_interval / fast_interval"}
+    nth -->|no| next["wait for the next fast tick"]
+    nth -->|yes| slow["collectSlow<br/>disk / docker / systemd / SMART / network"]
+    slow --> next
+    next --> tick
+    hb["heartbeat, own clock:<br/>checked every tick,<br/>written when its interval has elapsed"] -.->|independent| tick
 ```
 
 ### The fast tier
@@ -252,14 +254,15 @@ contrast, ships inside the daemon itself, because `internal/control` imports
 only the standard library plus `internal/core` and `internal/config`, so
 serving it never drags a third-party dependency into the default build.
 
-A word on status: `serverwatch-web` has moved out of unsupervised preview for
-the beta: it is a plain, separate binary that the daemon verifies, spawns,
-restarts, and stops on its own (see [Web supervisor](#web-supervisor)).
-`serverwatch-ctl` is still in progress and still unsupervised: there is no
-supervisor managing its process, and its interactive CLI is an early slice
-(status, doctor, alerts, and a guided web setup flow). What exists today for
-`serverwatch-ctl` is the contract, the transport, and a working client
-library for it; treat it as the direction of travel, not a finished feature.
+A word on status: `serverwatch-web` is a plain, separate binary that the
+daemon verifies, spawns, restarts, and stops on its own (see [Web
+supervisor](#web-supervisor)). `serverwatch-ctl` is deliberately not
+supervised: it is an interactive client you run by hand when you want it, not
+a background service, so nothing manages its process. It is the primary way to
+manage a running serverwatch day to day, with guided screens for schedule,
+quiet hours, healthchecks, monitor thresholds, and channels, plus a first-run
+Telegram onboarding flow (see [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)).
 
 ### The front-door safe-exec trust model
 

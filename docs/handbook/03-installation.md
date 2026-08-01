@@ -255,7 +255,12 @@ sudo serverwatch monitor list
 
 ## 5. Connect Telegram and enroll as owner
 
-Now give the bot its token. Use the token you copied from @BotFather in step 1:
+Now give the bot its token. You can do this from the command line as shown
+below, or from the guided `serverwatch-ctl` first-run onboarding screen
+(`sudo serverwatch cli`; see [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)); both
+paths surface the same enrollment PIN. This runbook continues with the
+command line: use the token you copied from @BotFather in step 1:
 
 ```bash
 sudo serverwatch telegram set-token <token>
@@ -278,7 +283,7 @@ dials the daemon over the control socket right after saving the token and
 prints that PIN along with the `/start` instruction, so in the normal case
 you never have to leave the terminal you ran it in. The `serverwatch-ctl`
 first-run onboarding screen (see the [Command
-reference](11-command-reference.md#21-serverwatch-ctl-beta)) shows the exact
+reference](plugins/serverwatch-ctl.md)) shows the exact
 same PIN the same way, if you set the token through the guided TUI instead.
 If the daemon cannot be reached, for example it is not installed yet or is
 still starting, `telegram set-token` falls back to pointing you at the
