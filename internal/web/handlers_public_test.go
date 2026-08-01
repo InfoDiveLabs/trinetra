@@ -547,6 +547,53 @@ func TestPublicEventsSetsNoStoreCacheControl(t *testing.T) {
 	}
 }
 
+// TestPublicEventsSubscribeIgnoresAlertEvents pins the security-relevant half
+// of Task 3's live-push wiring for the anonymous stream: publicEventsHandler
+// must never turn an alert-shaped LiveEvent (Kind other than "snapshot") into
+// a frame on /public/events, since core.Event/web.LiveEvent's Title/Source
+// fields can carry sensitive alert detail (see eventsHandler's writeAlertEvent
+// for the authed counterpart that DOES emit them). Feeding an alert event
+// followed by a snapshot event and observing exactly one frame -- the
+// snapshot one, with no trace of the alert's title -- proves the alert event
+// produced no frame of its own.
+func TestPublicEventsSubscribeIgnoresAlertEvents(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	(*cfg).Public.Enabled = true
+	(*cfg).Public.Panels = []string{"cpu"}
+	d.Snapshot = func() DashboardView { return publicTestSnapshot() }
+	sub := make(chan LiveEvent)
+	d.Subscribe = func(ctx context.Context) (<-chan LiveEvent, error) { return sub, nil }
+
+	srv := httptest.NewServer(newHandler(d))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/public/events", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /public/events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	r := bufio.NewReader(resp.Body)
+	readSSEFrame(t, r) // discard the initial connect-time snapshot frame
+
+	sub <- LiveEvent{Kind: "alert_fire", Severity: "critical", Source: "disk", Title: "super-secret-alert-title", Time: 5}
+	sub <- LiveEvent{Kind: "snapshot", Time: 6}
+
+	event, data := readSSEFrame(t, r)
+	if event != "snapshot" {
+		t.Fatalf("event = %q, want snapshot -- an alert event must not produce a public frame of its own", event)
+	}
+	if strings.Contains(data, "super-secret-alert-title") {
+		t.Errorf("public snapshot frame leaked the alert title: %q", data)
+	}
+}
+
 // ---- Part 3: /settings/public picker ----
 
 // TestPublicSettingsPageRendersPickerForAdmin pins GET /settings/public: it

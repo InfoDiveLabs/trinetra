@@ -279,16 +279,17 @@ func TestFileAPIConfigReturnsPassedCfg(t *testing.T) {
 	}
 }
 
-// TestFileAPISubscribeReturnsSentinel pins that Subscribe -- the one method
-// still deferred to S5 (the alerting event-bus inversion) -- returns
-// errCoreNotImplemented, same as inprocAPI. Every other method (including
-// Doctor, task 7, and ApplyConfig/AckAlert/UnackAlert/TestChannel, task 8)
-// is implemented for real now and covered by its own test elsewhere in this
+// TestFileAPISubscribeReturnsSentinel pins that Subscribe -- fileAPI has no
+// live daemon behind it to stream from, so this is a permanent limitation,
+// not a deferred-to-later stub like the rest of core.API once was -- always
+// returns errStreamRequiresDaemon. Every other method (including Doctor,
+// task 7, and ApplyConfig/AckAlert/UnackAlert/TestChannel, task 8) is
+// implemented for real and covered by its own test elsewhere in this
 // file/coreapi_write_test.go.
 func TestFileAPISubscribeReturnsSentinel(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
-	if _, err := api.Subscribe(nil); err != errCoreNotImplemented { //nolint:staticcheck // nil context: exercising the stub only
-		t.Errorf("Subscribe() err = %v, want errCoreNotImplemented", err)
+	if _, err := api.Subscribe(nil); err != errStreamRequiresDaemon { //nolint:staticcheck // nil context: exercising the stub only
+		t.Errorf("Subscribe() err = %v, want errStreamRequiresDaemon", err)
 	}
 }
 

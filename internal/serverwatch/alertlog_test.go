@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"serverwatch/internal/core"
 )
 
 func TestAlertLogAppendAndSinceRoundTrip(t *testing.T) {
@@ -163,7 +165,7 @@ func TestDispatchAndLogRecordsDeliveries(t *testing.T) {
 	disp := NewDispatcher([]Channel{allowAllChannel(okN), allowAllChannel(badN)}, time.Second)
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 12345}
-	dispatchAndLog(disp, alog, a, false)
+	dispatchAndLog(nil, disp, alog, a, false)
 
 	events, err := alog.AlertEventsSince(0)
 	if err != nil {
@@ -186,4 +188,98 @@ func TestDispatchAndLogRecordsDeliveries(t *testing.T) {
 	if d := byChan["email"]; d.OK || d.Err != "smtp down" {
 		t.Fatalf("email delivery = %+v, want failed with err", d)
 	}
+}
+
+// TestDispatchAndLogPublishesAlertFireEvent pins dispatchAndLog's publish
+// side: a dispatched anomaly "fire" Alert (Source "anomaly") must also
+// reach the event bus as a core.Event, with Kind mapped to "alert_fire" (not
+// the bare Alert.Kind "fire") and Severity/Source/Title/Time carried
+// straight across -- the shape inprocAPI.Subscribe's control-socket
+// consumers (and, eventually, the web UI's toast/refresh logic) key off.
+func TestDispatchAndLogPublishesAlertFireEvent(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	disp := NewDispatcher(nil, time.Second)
+	bus := newEventBus()
+	ch, cancel := bus.Subscribe()
+	defer cancel()
+
+	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevCritical, Kind: "fire", Source: "anomaly", Time: 12345}
+	dispatchAndLog(bus, disp, alog, a, false)
+
+	want := core.Event{Kind: "alert_fire", Severity: "critical", Source: "anomaly", Title: "CPU high", Time: 12345}
+	select {
+	case got := <-ch:
+		if got != want {
+			t.Fatalf("published event = %+v, want %+v", got, want)
+		}
+	default:
+		t.Fatal("dispatchAndLog did not publish an event to the bus")
+	}
+}
+
+// TestDispatchAndLogPublishesAlertRecoverEvent is
+// TestDispatchAndLogPublishesAlertFireEvent's mirror image for a "recover"
+// Alert.
+func TestDispatchAndLogPublishesAlertRecoverEvent(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	disp := NewDispatcher(nil, time.Second)
+	bus := newEventBus()
+	ch, cancel := bus.Subscribe()
+	defer cancel()
+
+	a := Alert{Key: "cpu", Title: "CPU back to normal", Severity: SevWarning, Kind: "recover", Source: "anomaly", Time: 200}
+	dispatchAndLog(bus, disp, alog, a, false)
+
+	want := core.Event{Kind: "alert_recover", Severity: "warning", Source: "anomaly", Title: "CPU back to normal", Time: 200}
+	select {
+	case got := <-ch:
+		if got != want {
+			t.Fatalf("published event = %+v, want %+v", got, want)
+		}
+	default:
+		t.Fatal("dispatchAndLog did not publish an event to the bus")
+	}
+}
+
+// TestDispatchAndLogPublishesDigestKindVerbatim pins the "digests keep
+// their kind" carve-out: a digest/boot-report Alert (Source != "anomaly")
+// always carries Kind "fire" as a structural necessity (Alert.Kind has to
+// be something), not because it's semantically a fire/recover anomaly
+// transition -- so, unlike the anomaly case above, its Event.Kind is NOT
+// remapped to "alert_fire"; it passes a.Kind straight through.
+func TestDispatchAndLogPublishesDigestKindVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	disp := NewDispatcher(nil, time.Second)
+	bus := newEventBus()
+	ch, cancel := bus.Subscribe()
+	defer cancel()
+
+	a := Alert{Title: "daily digest", Severity: SevInfo, Kind: "fire", Source: "digest", Time: 300}
+	dispatchAndLog(bus, disp, alog, a, false)
+
+	want := core.Event{Kind: "fire", Severity: "info", Source: "digest", Title: "daily digest", Time: 300}
+	select {
+	case got := <-ch:
+		if got != want {
+			t.Fatalf("published event = %+v, want %+v", got, want)
+		}
+	default:
+		t.Fatal("dispatchAndLog did not publish an event to the bus")
+	}
+}
+
+// TestDispatchAndLogNilBusIsSafe pins that a nil bus (every existing daemon
+// call site that hasn't been threaded a live bus, and every other test in
+// this file) is a safe no-op, not a nil-pointer panic -- dispatchAndLog
+// must keep working exactly as before when there's no bus at all.
+func TestDispatchAndLogNilBusIsSafe(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	disp := NewDispatcher(nil, time.Second)
+
+	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1}
+	dispatchAndLog(nil, disp, alog, a, false)
 }

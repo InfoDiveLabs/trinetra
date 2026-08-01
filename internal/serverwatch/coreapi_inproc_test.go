@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -17,7 +18,7 @@ import (
 // for the web build.
 func TestInprocSnapshotProjectsScalars(t *testing.T) {
 	snap := Snapshot{TS: 42, CPU: 12.5, MemPct: 30, Online: true}
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil)
 	v, err := api.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +79,7 @@ func TestInprocSnapshotMatchesBuildDashboardView(t *testing.T) {
 	want := buildDashboardView(snap)
 	want.Availability = core.Availability{}
 
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil, nil)
 	got, err := api.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +100,7 @@ func TestInprocMonitoringMatchesBuildMonitoringView(t *testing.T) {
 
 	want := buildMonitoringView(snap, cfg)
 
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil, nil)
 	got, err := api.Monitoring()
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +159,7 @@ func TestSeriesResolutionMapping(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Storage.RawRetention = "1h" // must match the store's RawRetention above for PickResolution to agree
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, dir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, dir, nil, nil)
 
 	// Explicit core.ResRaw over a window spanning all three appended points:
 	// the raw file has all three, untouched by Downsample.
@@ -218,7 +219,7 @@ func TestSeriesResolutionMapping(t *testing.T) {
 // startup) must still answer Series calls with an empty result, never a nil
 // pointer panic.
 func TestSeriesNilStoreReturnsEmptyNoPanic(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil)
 	got, err := api.Series("cpu", 0, 1000, core.ResAuto)
 	if err != nil {
 		t.Fatalf("Series with nil store returned an error: %v", err)
@@ -231,7 +232,7 @@ func TestSeriesNilStoreReturnsEmptyNoPanic(t *testing.T) {
 // TestEventsNilStoreReturnsEmptyNoPanic is Events' counterpart to
 // TestSeriesNilStoreReturnsEmptyNoPanic.
 func TestEventsNilStoreReturnsEmptyNoPanic(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil)
 	got, err := api.Events(0, 1000)
 	if err != nil {
 		t.Fatalf("Events with nil store returned an error: %v", err)
@@ -255,7 +256,7 @@ func TestEventsMapsStoreEvents(t *testing.T) {
 		t.Fatalf("AppendEvent: %v", err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, store, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, store, t.TempDir(), nil, nil)
 	got, err := api.Events(0, 200)
 	if err != nil {
 		t.Fatalf("Events: %v", err)
@@ -282,7 +283,7 @@ func TestActiveAlertsMapsFields(t *testing.T) {
 		t.Fatalf("state.Save: %v", err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil, nil)
 	got, err := api.ActiveAlerts()
 	if err != nil {
 		t.Fatalf("ActiveAlerts: %v", err)
@@ -318,7 +319,7 @@ func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 		}
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil, nil)
 
 	// Unbounded (limit<=0): all 3, newest (Time) first.
 	got, err := api.AlertHistory(0, 0)
@@ -567,4 +568,63 @@ func TestBuildDashboardViewNoMapMutationUnderConcurrentPublish(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+}
+
+// TestInprocSubscribeDeliversPublishedEvents pins Subscribe's happy path:
+// the channel it returns must be a live subscription onto the inprocAPI's
+// own bus -- publishing directly on that bus (as dispatchAndLog/the sampler
+// loop, daemon.go, do in production) must deliver the event to the caller.
+func TestInprocSubscribeDeliversPublishedEvents(t *testing.T) {
+	bus := newEventBus()
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, bus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := api.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	want := core.Event{Kind: "alert_fire", Severity: "critical", Source: "anomaly", Title: "cpu high", Time: 42}
+	bus.Publish(want)
+
+	select {
+	case got := <-ch:
+		if got != want {
+			t.Fatalf("received %+v, want %+v", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the published event on Subscribe's channel")
+	}
+}
+
+// TestInprocSubscribeCtxCancelUnsubscribes pins Subscribe's cleanup path:
+// cancelling the ctx passed to Subscribe must unsubscribe from the bus (a
+// later Publish is not delivered) and close the returned channel -- proven
+// by receiving from it after cancellation and observing ok==false, the same
+// closed-channel signal eventBus.Subscribe's own cancel produces
+// (eventbus_test.go). This is a blocking receive on purpose: it waits for
+// the actual close event Subscribe's ctx.Done() goroutine produces rather
+// than assuming any particular timing, guarded by a time.After fallback so
+// a broken implementation fails the test instead of hanging forever.
+func TestInprocSubscribeCtxCancelUnsubscribes(t *testing.T) {
+	bus := newEventBus()
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, bus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := api.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	cancel()
+
+	select {
+	case got, ok := <-ch:
+		if ok {
+			t.Fatalf("channel still open after ctx cancel: received %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Subscribe's channel to close after ctx cancel")
+	}
 }

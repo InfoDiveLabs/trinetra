@@ -497,12 +497,107 @@ or an error.
 |------|---------|
 | Reads | `Snapshot`, `Monitoring`, `Series`, `Events`, `ActiveAlerts`, `AlertHistory`, `Config`, `Doctor` |
 | Writes | `ApplyConfig`, `AckAlert`, `UnackAlert`, `TestChannel`, `ValidateChannel` |
-| Not yet supported | `Subscribe` (live streaming) |
+| Streaming | `Subscribe` (live event push, see [The live event stream](#the-live-event-stream) below) |
 
-`Subscribe`, the live event stream, is not implemented over the socket yet.
-Calling it returns an error saying streaming is not supported over the control
-socket yet, on both the server and the client. When live streaming lands, this
-is the method that will carry it.
+`Subscribe` is the one method that does not fit the request/response shape
+the rest of the table follows. Calling it does not get one response; it
+dedicates the whole connection to a one-way stream of events, described in
+its own section next.
+
+## The live event stream
+
+The dashboard used to be entirely poll driven: the web UI asked the daemon
+for a fresh snapshot on a timer and had no way to hear about anything the
+moment it happened. `core.API.Subscribe` replaces that with a push: the
+daemon now maintains an in-process event bus, and anything with a live
+subscription (in-process or over the control socket) is told about a new
+snapshot or a dispatched alert as soon as it occurs.
+
+### The event bus
+
+The bus lives inside the daemon process (`eventBus` in
+`internal/serverwatch/eventbus.go`) and fans out `core.Event` values to any
+number of subscribers. There are two publish points:
+
+- The sampler loop, right after it stores the merged snapshot
+  (`snapshotHub.Store`), publishes a `core.Event{Kind: "snapshot"}` tick.
+  This event carries no view of its own; it is only a signal that a fresh
+  `DashboardView` is available by calling `Snapshot()`.
+- `dispatchAndLog`, the daemon's single choke point for every dispatched
+  alert (fire, recover, and the daily/weekly digest), publishes one
+  alert-shaped `core.Event` per dispatch, carrying the same
+  `Kind`/`Severity`/`Source`/`Title`/`Time` the alert itself has.
+
+Both publish points share the same non-blocking guarantee: `Publish` sends
+to each subscriber's channel under `select`/`default`, so a subscriber whose
+buffer is full simply misses that event rather than making the publisher
+wait. This matters because the publisher, in both cases, is on the sampler
+loop's own goroutine: a slow, stalled, or entirely absent subscriber can
+never stall a sample tick or a dispatch. Snapshot ticks are coalescable (the
+next one supersedes a dropped one), and alerts are also durably recorded in
+the alert log, so a drop here is never the only record of what happened.
+
+`core.API.Subscribe(ctx context.Context) (<-chan core.Event, error)`
+is the read side of the bus. The in-process implementation
+(`inprocAPI.Subscribe`) registers a new buffered subscriber on the daemon's
+bus and returns its channel; a goroutine watches `ctx.Done()` and
+unsubscribes when the caller is done. The file-backed API used by
+out-of-process tooling with no live daemon to subscribe to still returns an
+error, since there is no bus for it to attach to.
+
+### Streaming over the control socket
+
+The control socket protocol described above is fundamentally
+request/response: one connection, mutex-serialized on the client side, one
+frame in and one frame out per call. A live stream does not fit that shape,
+so `Subscribe` is handled as a special case on both ends.
+
+On the server, `handleConn` recognizes `Subscribe` before it reaches the
+normal per-method dispatch and switches that connection into STREAMING mode
+instead of looping for another request: it writes one ack response, then
+calls `api.Subscribe(ctx)` with a `ctx` derived from the connection's own
+lifetime, and loops writing one frame per event it receives. Every event
+frame reuses the `response` struct with a reserved marker: `const streamID =
+-1`, so the client's normal one-shot `call` (which always looks for its own
+request id) never mistakes a stream frame for its response. A goroutine
+reads from the connection in parallel purely to detect disconnect: any read
+error there means the client went away, so it cancels the derived `ctx`,
+which is what makes `api.Subscribe`'s own unsubscribe run. Deriving the
+subscription's `ctx` from the connection lifetime this way is what keeps a
+client disconnect from ever leaking a subscriber on the bus: the moment the
+connection dies, the context is cancelled, and cancellation is what removes
+the subscriber from the bus's map.
+
+On the client, `Subscribe(ctx)` cannot reuse the primary connection, because
+that connection's `call` method holds a mutex for the whole round trip of
+every request and a stream would hold that mutex forever. Instead it opens
+a second, DEDICATED connection to the same socket path and token (remembered
+from the original `Dial`), sends the `Subscribe` request on it, reads the
+ack, and then hands off to a goroutine that reads stream frames and decodes
+each one into a `core.Event` on an output channel. That dedicated connection
+is owned solely by the subscription: closing it, whether because the caller
+cancelled `ctx` or because the read loop hit an error, tears down only the
+stream, leaving the primary connection and its mutex completely unaffected.
+A normal call like `Snapshot` can run on the primary connection at the same
+time a subscription is live on the dedicated one with no risk of the two
+blocking each other.
+
+```mermaid
+flowchart LR
+  sampler[Sampler loop: snapshotHub.Store] -->|publish snapshot tick| bus[Event bus]
+  dispatch[dispatchAndLog: alert fire, recover, digest] -->|publish alert event| bus
+  bus -->|fan out, non blocking, drop on full| sub[inprocAPI.Subscribe subscriber channel]
+  sub -->|one event per frame, streamID marker| sock[Control socket: dedicated streaming connection]
+  sock -->|client.Subscribe output channel| webproc[serverwatch web process]
+  webproc -->|snapshot tick triggers fetch, alert event pushes alert frame| sse[Dashboard SSE stream]
+  sse --> browser[Browser: live dashboard]
+```
+
+The end result: a subscriber, whether in-process inside the daemon or a
+plugin dialing in over the socket, learns about a new snapshot or a
+dispatched alert within one bus `Publish` call, with no polling interval in
+between, while a subscriber that never shows up or falls behind costs the
+publisher nothing more than a dropped send.
 
 One subtlety in `Config`/`ApplyConfig`: they carry the raw `config.Config`
 value rather than a display-formatted projection, so the `omitempty` semantics

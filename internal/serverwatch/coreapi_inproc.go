@@ -297,12 +297,23 @@ func netIfaceViews(rates map[string]IfaceRate) []core.NetIfaceView {
 	return out
 }
 
-// errCoreNotImplemented is the shared sentinel Subscribe returns on both
-// core.API implementations (inprocAPI here, fileAPI in coreapi_file.go) --
-// the one method still deferred, to S5 (the alerting event-bus inversion).
-// Every other method (reads: tasks 4/6; writes/Doctor: tasks 7/8) is
-// implemented for real.
+// errCoreNotImplemented was the shared sentinel both core.API
+// implementations' Subscribe returned before the A2 live-push work: it is
+// no longer used by Subscribe (inprocAPI's is implemented for real below;
+// fileAPI's -- coreapi_file.go -- returns errStreamRequiresDaemon instead,
+// a clearer message for its specific reason), but is kept as a fallback
+// sentinel other future not-yet-implemented core.API methods could still
+// reach for.
 var errCoreNotImplemented = errors.New("serverwatch: core.API method not implemented yet")
+
+// errStreamRequiresDaemon is returned by Subscribe when there is no live
+// daemon event bus to subscribe to: fileAPI (coreapi_file.go) always hits
+// this, since the file-backed CLI process has no running daemon in memory
+// to stream from; inprocAPI hits it only in the degenerate case of being
+// constructed without a bus (bus is nil), which never happens for the real
+// control-socket-serving inprocAPI cmdDaemon builds (daemon.go always
+// passes its live bus), only in tests that don't exercise Subscribe.
+var errStreamRequiresDaemon = errors.New("serverwatch: live event streaming requires a running daemon")
 
 // inprocAPI is the in-process core.API implementation: it reads the running
 // daemon's own state directly (no socket/HTTP hop) by holding closures onto
@@ -325,6 +336,13 @@ type inprocAPI struct {
 	// takes effect exactly the way cmdDaemon's own reload always has:
 	// persisted to disk, then applied in-process without a SIGHUP round-trip.
 	reload func(*config.Config) error
+	// bus is the daemon's live event bus (eventbus.go): Subscribe below
+	// delegates straight to bus.Subscribe(). nil when this inprocAPI was
+	// built without a live daemon behind it (most existing tests, which
+	// exercise every OTHER method here and never call Subscribe) -- Subscribe
+	// reports errStreamRequiresDaemon in that case rather than a nil-pointer
+	// panic.
+	bus *eventBus
 }
 
 // newInprocAPI builds a core.API backed directly by the running daemon's
@@ -333,10 +351,13 @@ type inprocAPI struct {
 // SampleStore (nil in store-writes-disabled mode -- every read method below
 // degrades to "no data" rather than panicking), stateDir is the directory
 // alerts.json/alertlog.jsonl live in (mirroring Store's own
-// AlertStatePath/AlertLogPath, store.go), and reload is cmdDaemon's own
-// save-then-apply closure that ApplyConfig delegates to.
-func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error) core.API {
-	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload}
+// AlertStatePath/AlertLogPath, store.go), reload is cmdDaemon's own
+// save-then-apply closure that ApplyConfig delegates to, and bus is
+// cmdDaemon's live eventBus that Subscribe below hands each caller a
+// subscription onto (nil when there's no live daemon bus to subscribe to,
+// e.g. most existing tests -- see the bus field's doc).
+func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error, bus *eventBus) core.API {
+	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload, bus: bus}
 }
 
 // alertStatePath/alertLogPath mirror Store.AlertStatePath/Store.AlertLogPath
@@ -514,9 +535,22 @@ func (a *inprocAPI) ValidateChannel(cc config.ChannelConfig) error {
 	return err
 }
 
-// Subscribe is deferred to a later stage (S5, the alerting event-bus
-// inversion -- see the epic's design doc): it returns errCoreNotImplemented
-// for now so *inprocAPI satisfies core.API today.
+// Subscribe implements core.API: it registers a new subscription on a's
+// live daemon bus (a.bus.Subscribe(), eventbus.go) and returns the channel.
+// A nil a.bus (no live daemon behind this inprocAPI -- see the field's doc)
+// reports errStreamRequiresDaemon rather than panicking. Otherwise, a
+// goroutine is spawned that waits for ctx to be done and then calls cancel:
+// this is what ties the subscription's lifetime to the caller's context (the
+// control socket's per-connection ctx, cancelled when that connection
+// closes -- task 2) without Subscribe itself blocking on ctx here.
 func (a *inprocAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
-	return nil, errCoreNotImplemented
+	if a.bus == nil {
+		return nil, errStreamRequiresDaemon
+	}
+	ch, cancel := a.bus.Subscribe()
+	go func() {
+		<-ctx.Done()
+		cancel()
+	}()
+	return ch, nil
 }

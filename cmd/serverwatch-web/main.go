@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -25,6 +26,7 @@ import (
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/control"
+	"serverwatch/internal/core"
 	"serverwatch/internal/web"
 )
 
@@ -133,6 +135,22 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	return cc, nil
 }
 
+// adaptLiveEvent is THE ONLY place core.Event ever turns into a
+// web.LiveEvent (see web.Deps.Subscribe's doc: internal/web never imports
+// internal/core, so this adaptation has to happen here, in
+// cmd/serverwatch-web, rather than inside internal/web itself). It's a
+// trivial field copy -- core.Event and web.LiveEvent share the same
+// Kind/Severity/Source/Title/Time shape by design.
+func adaptLiveEvent(ev core.Event) web.LiveEvent {
+	return web.LiveEvent{
+		Kind:     ev.Kind,
+		Severity: ev.Severity,
+		Source:   ev.Source,
+		Title:    ev.Title,
+		Time:     ev.Time,
+	}
+}
+
 // bytesTrimNewline trims a single trailing newline (and any preceding
 // carriage return) from a token file's contents -- writeTokenFile
 // (internal/serverwatch/control_socket.go) itself writes no trailing
@@ -204,6 +222,33 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 		// doc for that accepted live-config-vs-in-flight-edit limitation).
 		ValidateChannel: func(cc config.ChannelConfig, _ *config.Config) error {
 			return client.ValidateChannel(cc)
+		},
+		// Subscribe wires web.Deps' live-push seam (Task 3) to
+		// client.Subscribe -- internal/control's dedicated-connection
+		// streaming client (Task 2) -- adapting each core.Event it delivers
+		// into a web.LiveEvent (adaptLiveEvent, above) as it goes. The
+		// adapting goroutine exits (closing out) either when client's
+		// channel closes (the daemon connection dropped) or ctx is done
+		// (the SSE handler's request context, i.e. the browser
+		// disconnected) -- whichever happens first -- so it never leaks
+		// past the subscription it belongs to.
+		Subscribe: func(ctx context.Context) (<-chan web.LiveEvent, error) {
+			ch, err := client.Subscribe(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make(chan web.LiveEvent)
+			go func() {
+				defer close(out)
+				for ev := range ch {
+					select {
+					case out <- adaptLiveEvent(ev):
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+			return out, nil
 		},
 	}
 	c := cfg()

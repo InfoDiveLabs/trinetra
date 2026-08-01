@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"time"
 
 	"serverwatch/internal/config"
@@ -115,6 +116,16 @@ type Deps struct {
 	// a "host:port" string net.SplitHostPort-validated by
 	// internal/config.Config.Set.
 	Listen string
+	// Subscribe opens a live event stream: the daemon's core.API.Subscribe
+	// (Task 2's socket streaming), adapted into this package's own LiveEvent
+	// type (see LiveEvent's doc) so internal/web never needs to import
+	// core.Event for this path -- the serverwatch-web binary's buildDeps
+	// wires this to a closure calling client.Subscribe(ctx) and copying each
+	// core.Event's fields into a LiveEvent. nil when unavailable (e.g. a
+	// test that doesn't exercise the SSE handlers): eventsHandler/
+	// publicEventsHandler (sse.go) treat a nil Subscribe exactly like the
+	// pre-Task-3 pure-ticker behavior, never call it, never panic.
+	Subscribe func(context.Context) (<-chan LiveEvent, error)
 }
 
 // Start is the web server's entry point: given Deps, it binds and serves

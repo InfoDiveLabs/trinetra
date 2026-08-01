@@ -367,3 +367,114 @@ func TestDialWithEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
 		t.Fatalf("Dial() error = nil, want an error for a missing token")
 	}
 }
+
+// TestClientSubscribeReceivesPublishedEvents proves Client.Subscribe opens
+// its own dedicated connection (over a real Serve loop / unix socket, not
+// an in-memory pipe) and delivers events published server-side on the
+// returned channel.
+func TestClientSubscribeReceivesPublishedEvents(t *testing.T) {
+	fake := &fakeAPI{subscribeCh: make(chan core.Event, 4), subscribeCancelled: make(chan struct{})}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events, err := client.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	want := core.Event{Kind: "alert_fire", Source: "cpu", Severity: "warn", Title: "cpu high", Time: 42}
+	fake.subscribeCh <- want
+
+	select {
+	case got, ok := <-events:
+		if !ok {
+			t.Fatal("events channel closed before delivering the published event")
+		}
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the published event")
+	}
+}
+
+// TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel proves cancelling
+// the ctx passed to Client.Subscribe makes the server unsubscribe (fakeAPI's
+// subscribeCancelled fires, mirroring inprocAPI's own ctx.Done -> cancel)
+// and closes the client's returned channel -- the disconnect path from the
+// client side, matching TestStreamSubscribeDisconnectCancelsContext's
+// server-side proof of the same property.
+func TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel(t *testing.T) {
+	fake := &fakeAPI{subscribeCh: make(chan core.Event), subscribeCancelled: make(chan struct{})}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events, err := client.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	cancel()
+
+	select {
+	case <-fake.subscribeCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server never cancelled api.Subscribe's ctx after the client's ctx was cancelled")
+	}
+
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("events channel delivered a value instead of closing")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("events channel never closed after ctx cancel")
+	}
+}
+
+// TestClientNormalCallWorksWhileSubscriptionActive proves the dedicated
+// stream connection Subscribe opens does not interfere with the primary
+// connection's mutex-serialized calls: Snapshot must still complete while a
+// subscription is active, with no deadlock between the two.
+func TestClientNormalCallWorksWhileSubscriptionActive(t *testing.T) {
+	fake := &fakeAPI{
+		snapshot:           core.DashboardView{CPU: 7},
+		subscribeCh:        make(chan core.Event, 1),
+		subscribeCancelled: make(chan struct{}),
+	}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := client.Subscribe(ctx); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	got, err := client.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() while a subscription is active: %v", err)
+	}
+	if !reflect.DeepEqual(got, fake.snapshot) {
+		t.Errorf("Snapshot() = %+v, want %+v", got, fake.snapshot)
+	}
+}
