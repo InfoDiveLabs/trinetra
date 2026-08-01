@@ -81,11 +81,15 @@ func writeTokenFile(path, token string) error {
 }
 
 // serveControlSocket starts control.Serve against api on a unix socket
-// (controlSocketPath) and returns a stop func that shuts it down. Like
-// maybeStartWeb, the control socket is an enhancement: cmdDaemon treats any
-// error from this as non-fatal (log to stderr, keep running without it)
-// rather than a reason to crash-loop the daemon -- callers should follow
-// that same pattern rather than propagating a failure upward.
+// (controlSocketPath) and returns a stop func that shuts it down, plus the
+// socket path and the per-launch auth token so the caller can hand them to
+// the web supervisor (startWeb, web_supervisor.go), which passes them to the
+// serverwatch-web child via env. The control socket is an enhancement:
+// cmdDaemon treats any error from this as non-fatal (log to stderr, keep
+// running without it) rather than a reason to crash-loop the daemon --
+// callers should follow that same pattern rather than propagating a failure
+// upward. On bind failure it returns a nil stop and empty path/token
+// (non-fatal, unchanged).
 //
 // Path setup: os.MkdirAll(0o700) is a best-effort attempt to create the
 // runtime directory when it doesn't already exist (the by-hand,
@@ -100,7 +104,7 @@ func writeTokenFile(path, token string) error {
 // the umask, not an explicit mode) so only the daemon's own user can
 // connect; the per-launch token generated below is the actual auth, this is
 // defense-in-depth against other local users on multi-user hosts.
-func serveControlSocket(api core.API) (func(), error) {
+func serveControlSocket(api core.API) (stop func(), socketPath, token string, err error) {
 	path := controlSocketPath()
 	dir := filepath.Dir(path)
 
@@ -110,11 +114,11 @@ func serveControlSocket(api core.API) (func(), error) {
 
 	ln, err := net.Listen("unix", path)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		ln.Close()
-		return nil, err
+		return nil, "", "", err
 	}
 
 	// The token is the actual auth for the socket (the 0600 mode above is
@@ -123,7 +127,7 @@ func serveControlSocket(api core.API) (func(), error) {
 	// func's caller already tolerates (see the doc comment above) -- log
 	// and proceed with no auth rather than crash-looping the daemon over
 	// it.
-	token, err := generateToken()
+	token, err = generateToken()
 	if err != nil {
 		log.Printf("control: generating token: %v (continuing with no token auth)", err)
 		token = ""
@@ -138,10 +142,10 @@ func serveControlSocket(api core.API) (func(), error) {
 
 	go control.Serve(api, ln, token)
 
-	stop := func() {
+	stop = func() {
 		ln.Close()
 		os.Remove(path)
 		os.Remove(tokenPath)
 	}
-	return stop, nil
+	return stop, path, token, nil
 }

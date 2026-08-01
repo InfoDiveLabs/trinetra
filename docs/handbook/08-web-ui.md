@@ -22,105 +22,79 @@ already use: the live snapshot and the sampled time-series. The UI adds no new
 collectors and writes no new on-disk series. It is a second reader of data the
 daemon is already producing.
 
-## Two deployment shapes that share one name
+## How the web UI runs
 
-This is the single most important thing to get straight before you install
-anything. There are two different binaries, and today they are both named
-`serverwatch-web`. They are built from different packages, they run in
-different ways, and only one of them is a finished, shipping feature. When you
-read "serverwatch-web" in a release, a Makefile, or a shell prompt, you have to
-know which of the two is meant.
-
-| | (a) In-process embedded web | (b) Out-of-process web plugin |
-|---|---|---|
-| Status | Shipped, working path | Beta / preview only |
-| Package | `./cmd/serverwatch` with `-tags web` | `./cmd/serverwatch-web` with `-tags web` |
-| Built by the Makefile? | Yes, `make web` | No |
-| How it runs | A goroutine inside the daemon | A separate process next to the daemon |
-| How it reads state | Directly, in-process | Dials the daemon's control socket |
-| Live push (SSE) | Full | Degraded |
-
-Both compilations produce a file literally called `serverwatch-web`, which is
-why the distinction is easy to miss. The rest of this section spells out each
-one.
-
-### (a) In-process embedded web: the shipping path
-
-This is the one you almost certainly want. The web server is compiled into the
-daemon under the `web` build tag and runs as a goroutine inside the same
-process. There is no second binary to run, no socket to bridge, and nothing new
-to keep alive: if the daemon is up, the web UI is up.
-
-Build it with the Makefile:
+There is one `serverwatch-web` binary, and it is a plain, separate program
+with no build tag:
 
 ```bash
-make web
+go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web
 ```
 
-That target runs:
+`internal/web` is an ordinary, untagged package like any other in the
+codebase. What keeps its dependencies (the WebAuthn stack and the rest) out of
+the daemon is not a build tag; it is simply that the daemon package never
+imports `internal/web`. `serverwatch install` builds and ships all three
+binaries (`serverwatch`, `serverwatch-ctl`, `serverwatch-web`) and records
+their checksums in the root-only install manifest (see [Installation and
+first run](03-installation.md)).
 
-```bash
-go build -tags web -o dist/serverwatch-web ./cmd/serverwatch
-```
+`serverwatch-web` does not embed the daemon and does not read its state
+directly. Like `serverwatch-ctl`, it dials the daemon's [control
+socket](02-architecture.md#the-control-socket), borrows the socket client as
+its data source, and serves the UI from its own process. Live push over SSE
+degrades the same way it would for any control-socket consumer: `Subscribe`,
+the streaming method, is not implemented over the socket yet (see the
+[roadmap chapter](12-roadmap-and-status.md)), so the dashboard falls back to
+polling instead of a live push where that matters.
 
-Note what that command is: it builds the ordinary `./cmd/serverwatch` package,
-the whole daemon and CLI, and the `web` tag adds the embedded web server on
-top. The output is named `dist/serverwatch-web` to mark that this is the
-web-capable build, but it is the same daemon in every other respect. It reads
-the same config file, installs the same systemd unit, and answers the same CLI
-commands. The plain `serverwatch` binary (from `make build`) never links the
-web code at all and carries none of its dependencies.
+There are two ways `serverwatch-web` gets started:
 
-Install that binary the same way you install any serverwatch build (the
-`install` command copies whichever binary is currently running to
-`/usr/local/bin/serverwatch` and wires up the unit), then turn the server on:
+- **Supervised, via `web.enabled`.** This is the path for anything you run
+  day to day. Set `web.enabled true` and the daemon itself verifies and
+  spawns `serverwatch-web` as a child process, passing it the control socket
+  path and a per-launch token. If the child exits, the daemon restarts it
+  under a capped backoff; if the daemon shuts down, it stops the child too.
+  You never run or babysit a second process by hand. See [Web
+  supervisor](02-architecture.md#web-supervisor) for the full lifecycle and
+  its diagram.
 
-```bash
-sudo serverwatch config set web.enabled true
-sudo systemctl restart serverwatch
-```
+  ```bash
+  sudo serverwatch config set web.enabled true
+  sudo systemctl restart serverwatch
+  ```
 
-Toggling `web.enabled` takes effect on the next restart. The `web.*` keys (see
-[Configuration](04-configuration.md)) are not reloaded on SIGHUP, so a
-`systemctl restart serverwatch` is what actually starts or stops the listener. Installing the web-capable binary and setting
-`web.enabled true` is the entire path to a web-serving service; there is no
-separate "web" unit.
+  Toggling `web.enabled` takes effect on the next restart: the supervisor
+  decides once, at daemon startup, whether to spawn the child, and the
+  `web.*` keys are not reloaded on SIGHUP, so `systemctl restart serverwatch`
+  is what actually starts or stops it. There is no separate "web" unit;
+  installing `serverwatch-web` and setting `web.enabled true` is the entire
+  path to a web-serving service.
+
+- **Manual, via `serverwatch web`.** This front-door subcommand runs the same
+  trust checks the supervisor uses, then execs `serverwatch-web` directly in
+  the foreground. Reach for this when you want to run the web UI yourself,
+  for example while testing on a box where `web.enabled` is off.
+
+  ```bash
+  sudo serverwatch web
+  ```
+
+Either way, before `serverwatch-web` can run at all, the core has to be able
+to verify it: an absolute path next to the core binary's own directory, root
+ownership with no group/world write bit, and a SHA-256 match against the
+install manifest. If you build or hand-copy `serverwatch-web` into place
+yourself, (re-)run `serverwatch install` afterward so its checksum is
+recorded; until then, both the supervisor and the `serverwatch web`
+front-door refuse to run it and log why. See [The front-door safe-exec trust
+model](02-architecture.md#the-front-door-safe-exec-trust-model) for the full
+checks.
 
 A subtle but useful detail: the `web.*` and `public.*` config keys exist in
-both binaries' config schema, so `serverwatch config set web.enabled true`
-always succeeds even on a plain `serverwatch` install. The plain binary simply
-never reads those keys. Setting them has no effect until the web-capable binary
-is the one running.
-
-### (b) Out-of-process web plugin: beta preview
-
-The second `serverwatch-web` lives in `./cmd/serverwatch-web`. It is a distinct
-program that does not embed the daemon. Instead it dials the daemon's control
-socket, borrows the socket client as its data source, and serves the exact same
-UI as its own process alongside the daemon. It is the first step of the
-plugin-over-socket direction described in the [Architecture
-chapter](02-architecture.md).
-
-It is a preview, and you should treat it as one:
-
-- It is not built by the Makefile. You build it by hand with
-  `go build -tags web ./cmd/serverwatch-web`.
-- There is no supervisor. Nothing in the core daemon spawns it, restarts it, or
-  keeps it alive; you run and babysit it yourself.
-- Live push is degraded. The socket transport does not yet support the
-  streaming Subscribe method, so server-sent events over the plugin cannot push
-  the way the in-process build does.
-
-Because it reads through the control socket, the plugin needs to find the
-socket and its auth token. It resolves those from flags, then the
-`SERVERWATCH_CONTROL_SOCKET` / `SERVERWATCH_CONTROL_TOKEN` environment
-variables, then the default runtime paths (`/run/serverwatch/control.sock` and
-the sibling `token` file). A few local, on-disk paths that the socket cannot
-provide (the state directory for sessions, and the alert log and alert-state
-files) come from its own flags, defaulting under `/var/lib/serverwatch`.
-
-Use the out-of-process plugin for preview and experimentation. For anything you
-rely on, use the in-process embedded build (a).
+`serverwatch`'s config schema regardless of whether `serverwatch-web` is
+installed, so `serverwatch config set web.enabled true` always succeeds even
+before the plugin binary is present. It simply has nothing to supervise until
+`serverwatch-web` exists next to the core binary and passes verification.
 
 ## Authentication and roles
 
@@ -182,8 +156,8 @@ Signed in, the UI is a handful of routes.
 
 ## Serving modes
 
-`web.mode` decides how the embedded server binds and how (or whether) it
-terminates TLS. Pick the mode that matches how you already expose services on
+`web.mode` decides how the `serverwatch-web` server binds and how (or
+whether) it terminates TLS. Pick the mode that matches how you already expose services on
 the host. Whatever you choose, a web failure never takes down monitoring: the
 web configuration is validated at startup, and an invalid or incomplete
 combination makes the web listener refuse to start while the daemon keeps
@@ -248,7 +222,7 @@ sudo systemctl restart serverwatch
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `web.enabled` | `false` | Turns the embedded server on. Opt-in even in the web-capable binary. |
+| `web.enabled` | `false` | Turns on daemon supervision of `serverwatch-web`. Opt-in even when the binary is installed. |
 | `web.listen` | `127.0.0.1:8088` | The `host:port` the server binds. Loopback by default; front it with a proxy for LAN or WAN access. |
 | `web.mode` | `proxy` | One of `proxy`, `autocert`, or `manual`. |
 | `web.rp_id` | `""` | WebAuthn relying-party ID: the public hostname passkeys are scoped to, no scheme or port. Required in autocert and manual; optional (derived) in proxy. |

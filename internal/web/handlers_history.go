@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -232,8 +230,9 @@ func renderHistoryPage(w http.ResponseWriter, data HistoryPageData) error {
 }
 
 // historyDiskMounts returns the current filesystem mounts (DashboardView.
-// Disks, already sorted by mount by the daemon_web.go adapter) for the disk
-// panel's per-mount series, or nil when there's no snapshot/no disks.
+// Disks, already sorted by mount by coreapi_inproc.go's buildDashboardView
+// adapter) for the disk panel's per-mount series, or nil when there's no
+// snapshot/no disks.
 func historyDiskMounts(d Deps) []string {
 	if d.Snapshot == nil {
 		return nil

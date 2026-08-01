@@ -3,8 +3,10 @@
 This chapter lists every command shipped by ServerWatch. Section 1 covers the
 `serverwatch` binary, which is both the daemon and the operator CLI. Section 2
 covers the two out-of-process plugin binaries, `serverwatch-ctl` and
-`serverwatch-web`, both of which are BETA / preview and are not part of the
-shipped daemon.
+`serverwatch-web`, neither of which is part of the shipped daemon binary
+itself. `serverwatch-ctl` is BETA / preview; `serverwatch-web` is a
+supervised, separate binary that the daemon manages (see [Web
+supervisor](02-architecture.md#web-supervisor)).
 
 ## 1. `serverwatch` (daemon + CLI)
 
@@ -127,7 +129,7 @@ There are three outcomes:
 | Outcome | What you see |
 | --- | --- |
 | Verified | The plugin runs; the front-door hands off control to it. |
-| Not installed | serverwatch prints an install/build instruction, e.g. `go build -o /usr/local/bin/serverwatch-ctl ./cmd/serverwatch-ctl` (the web plugin needs `-tags web`: `go build -tags web -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`), followed by a reminder to run `serverwatch install` to record its checksum. Nothing is exec'd. |
+| Not installed | serverwatch prints an install/build instruction, e.g. `go build -o /usr/local/bin/serverwatch-ctl ./cmd/serverwatch-ctl` (the web plugin builds the same way, no tag: `go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`), followed by a reminder to run `serverwatch install` to record its checksum. Nothing is exec'd. |
 | Present but unsafe | The binary exists but fails a check (wrong owner, group/world-writable, or a checksum that does not match the manifest). serverwatch refuses with a warning that this may indicate tampering. Nothing is exec'd. |
 
 If you build or hand-copy `serverwatch-ctl` / `serverwatch-web` into place
@@ -136,17 +138,22 @@ is recorded (see [Installation and first run](03-installation.md)); until
 then the front-door has nothing to verify the unrecorded binary against and
 refuses to run it.
 
-## 2. Plugin binaries (BETA / preview)
+## 2. Plugin binaries
 
 The following two binaries are separate from the shipped `serverwatch` daemon.
-Both are preview-quality: they are built and wired up by hand, and neither is
-supervised by the daemon yet. They connect to a running daemon over its control
-socket (see [Architecture](02-architecture.md)) rather than reading state
-in-process. In normal use you do not invoke either binary directly; run
-`serverwatch cli` / `serverwatch web` instead (section 1 above), which safely
-locates and execs them. The direct invocations below still apply once
-launched, and remain useful when scripting or working from a non-standard
-install location.
+Both connect to a running daemon over its control socket (see
+[Architecture](02-architecture.md)) rather than reading state in-process. In
+normal use you do not invoke either binary directly; run `serverwatch cli` /
+`serverwatch web` instead (section 1 above), which safely locates and execs
+them. The direct invocations below still apply once launched, and remain
+useful when scripting or working from a non-standard install location.
+
+`serverwatch-ctl` is preview-quality: it is built and wired up by hand, and
+nothing supervises its process. `serverwatch-web` is a supervised, separate
+binary with no build tag: the daemon verifies and spawns it as a child
+process when `web.enabled` is set, restarting it with capped backoff if it
+exits and stopping it on daemon shutdown; see [Web
+supervisor](02-architecture.md#web-supervisor).
 
 ### 2.1 `serverwatch-ctl` (BETA)
 
@@ -180,12 +187,15 @@ Socket and token resolution, highest priority first:
 A missing token file is treated as no-auth (the daemon serves without a token
 when it could not generate one). Any other token read error is fatal.
 
-### 2.2 `serverwatch-web` (BETA)
+### 2.2 `serverwatch-web`
 
 `serverwatch-web` is the out-of-process web plugin. See the [Web UI
-chapter](08-web-ui.md) for what it serves. It dials the control socket and runs the dashboard as a separate
-process. It is built only with `-tags web`, is not built by the Makefile, and
-has no supervisor yet.
+chapter](08-web-ui.md) for what it serves. It dials the control socket and
+runs the dashboard as a separate process. It is a plain binary with no build
+tag, built by the Makefile alongside `serverwatch` and `serverwatch-ctl`, and
+the daemon supervises it (verify, spawn, restart with backoff, stop on
+shutdown) whenever `web.enabled` is set; see [Web
+supervisor](02-architecture.md#web-supervisor).
 
 ```
 serverwatch-web [-socket PATH] [-token TOKEN] [-token-file PATH] \

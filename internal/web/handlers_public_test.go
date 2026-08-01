@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -437,7 +435,8 @@ func TestPublicEventsIncludesAvailabilityOnlyWhenAllowlisted(t *testing.T) {
 // stop the stream promptly on the next tick, not keep pushing frames to a
 // visitor the admin just turned off. The config behind Deps.Cfg is swapped
 // atomically (a real config reload race-swaps the daemon's config pointer
-// the same way — see internal/serverwatch/web_deps.go), so flipping it here
+// the same way under a mutex, see internal/serverwatch/daemon.go's
+// getCfg/reload), so flipping it here
 // while the handler goroutine reads it on every tick is race-safe under -race.
 // FastInterval is set to 1s so the test doesn't need to wait long for the
 // next tick to notice the flip.

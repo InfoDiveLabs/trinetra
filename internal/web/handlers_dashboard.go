@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -19,8 +17,8 @@ import (
 // {"active":{"<key>":{"since":...,"reason":...,"acked":...}}} object, and
 // that JSON shape — not the Go type — is the actual contract between the
 // daemon and this page, so decoding it locally here doesn't create the
-// import-cycle risk a serverwatch import would (see the design note atop
-// internal/serverwatch/web_deps.go).
+// import-cycle risk a serverwatch import would (internal/web must never
+// import internal/serverwatch, to keep the module graph one-way).
 type activeAlertView struct {
 	Key    string
 	Reason string

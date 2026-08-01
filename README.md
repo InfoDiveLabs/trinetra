@@ -1,24 +1,103 @@
-# server-watcher (`serverwatch`)
+# serverwatch
 
-A single Go binary that monitors a Linux/systemd home server and reports over
-**Telegram**, with an optional web UI. No AI, no cloud, no external metrics
-database: deterministic static thresholds plus a rolling baseline, standard
-library only. Everything is configured through the `serverwatch` CLI; there is
-no hand-edited config file.
+**A home server monitor that fits in your head.** One small Go daemon watches a
+Linux/systemd box, decides when something is wrong using rules you can actually
+read, and tells you over Telegram. No agent, no cloud, no Prometheus, no
+external metrics database. The core is standard library only.
 
-It runs as one systemd service with a tiered sampler (a fast tier for
-CPU/mem/swap/load/temp that drives detection and live status, and a slow tier
-for disk/docker/systemd/SMART/network), a Telegram bot that answers commands in
-about a second, and a compact binary time-series store for history.
+![status: beta](https://img.shields.io/badge/status-beta-orange)
+![core: stdlib only](https://img.shields.io/badge/core-stdlib%20only-00ADD8)
+![Go 1.22](https://img.shields.io/badge/Go-1.22-00ADD8)
+![platform: Linux + systemd](https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333)
+![license: MIT](https://img.shields.io/badge/license-MIT-green)
 
-## Documentation
+```bash
+sudo serverwatch install                      # one systemd service
+sudo serverwatch telegram set-token <token>   # the only required setting
+# then, from your phone:  /start <pin>  ->  /stats
+```
 
-Everything lives in the handbook:
+---
 
-**[Read the handbook](docs/handbook/README.md)**
+## Why serverwatch
 
-Start with the [Introduction](docs/handbook/01-introduction.md) and
-[Installation and first run](docs/handbook/03-installation.md).
+Most monitoring stacks are built for fleets: a scraper, a time-series database,
+a dashboard service, an alertmanager, and a pile of YAML to wire them together.
+That is a lot of moving parts to babysit for one machine on a shelf.
+serverwatch is the opposite bet.
+
+- **One binary, one service.** Drop it on the box, run `install`, set a token.
+  It runs as a single systemd unit and stores what it needs locally.
+- **No AI in the decision path.** It alerts two ways you can reason about:
+  static thresholds you set, and a rolling per-metric baseline that flags "this
+  is not normal for this box." Both are ordinary arithmetic. You can read the
+  rule and predict when it fires.
+- **The core is stdlib only.** No third-party modules in the default
+  `serverwatch` daemon: no scraping exporter, no cloud account, nothing to keep
+  patched but Go itself. Heavier features live in optional plugin binaries, not
+  in the core.
+- **Configured by command, not by hand.** Every setting goes through the CLI,
+  which writes an atomic, validated, private config store. There is no file you
+  are meant to hand-edit, so the config on disk always came from a command that
+  checked it.
+- **Answers in about a second.** Message the Telegram bot and it replies fast,
+  with live stats, history, and controls.
+
+## What it watches
+
+| Area | What you get |
+|------|--------------|
+| **Live metrics** | CPU, memory, swap, load, temperature on a fast tier that drives detection and live status |
+| **Slow tier** | Disk usage and SMART, docker containers, systemd services, network throughput |
+| **Alerting** | Static thresholds plus a rolling baseline, with boot and recovery reports, a daily digest, and a weekly rollup |
+| **Channels** | Telegram by default, plus email, webhook, Slack, Discord, ntfy, and Gotify |
+| **Downtime** | Heartbeats, power-down reconstruction across reboots, and reachability checks |
+| **History** | A compact binary time-series store with tiered retention, queryable from the CLI and the web UI |
+| **Web UI** | An optional live dashboard, history charts, a config editor, and a curated public status page |
+
+See [Monitoring](docs/handbook/05-monitoring.md),
+[Alerting and channels](docs/handbook/06-alerting-and-channels.md), and
+[Downtime and liveness](docs/handbook/07-downtime-and-liveness.md) for the
+details.
+
+## Architecture at a glance
+
+serverwatch is a lean **core** daemon with optional **plugins** around it. The
+core runs the sampler, keeps the live picture and the history, answers Telegram,
+and exposes its whole internal API over a local control socket (newline-JSON on
+a unix socket, token-authenticated). Plugins are separate processes that dial
+that socket, so the core stays small and their dependencies never touch it.
+
+```mermaid
+flowchart TD
+    subgraph core["serverwatch (core daemon, stdlib only)"]
+        sampler["tiered sampler<br/>fast + slow"]
+        detect["detection<br/>thresholds + baseline"]
+        store["time-series store<br/>+ live status"]
+        tg["Telegram bot"]
+        sock["control socket<br/>(unix, token auth)"]
+    end
+    ctl["serverwatch-ctl<br/>management TUI"] -->|dials| sock
+    web["serverwatch-web<br/>web UI + passkey auth"] -->|dials| sock
+    core -->|supervises + verifies| web
+    user["you"] -->|Telegram| tg
+    user -->|browser| web
+```
+
+Two front-door subcommands launch the plugins for you, so you never need to know
+their binary names:
+
+```bash
+sudo serverwatch cli   # launches serverwatch-ctl, the management TUI
+sudo serverwatch web   # launches serverwatch-web, the web UI
+```
+
+Because those run as root, the core never execs a plugin blindly. It first
+proves the binary next to it is the exact one it installed: an absolute path
+from the core's own directory (never `$PATH`), a root-owner and non-writable
+check on the file and its directory, and a SHA-256 match against a root-only
+manifest recorded at install. Any mismatch is refused, not run. The full trust
+model is in [Architecture](docs/handbook/02-architecture.md).
 
 ## Quick start
 
@@ -27,23 +106,48 @@ Start with the [Introduction](docs/handbook/01-introduction.md) and
 curl -fsSL -o /tmp/serverwatch \
   https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/serverwatch-linux-amd64
 chmod +x /tmp/serverwatch
-sudo /tmp/serverwatch install                 # copies to /usr/local/bin (+/usr/bin symlink), writes and enables the systemd unit
+sudo /tmp/serverwatch install                 # copies to /usr/local/bin, writes and enables the systemd unit
 sudo serverwatch telegram set-token <token>   # token from @BotFather; the only required setting
+
 # The daemon logs a one-time enrollment PIN. Read it, then from YOUR Telegram
-# account message the bot:  /start <pin>       (see: journalctl -u serverwatch | grep /start)
+# account message the bot:  /start <pin>
+journalctl -u serverwatch | grep /start
 ```
 
-From there, `/stats` or `/help` in Telegram, and see the
-[handbook](docs/handbook/README.md) for configuration, the web UI, alerting,
-and operations.
+From there, `/stats` or `/help` in Telegram. To turn on the browser dashboard,
+enable it in config and the core supervises the web plugin for you, or run
+`sudo serverwatch web` directly. Full steps are in
+[Installation and first run](docs/handbook/03-installation.md).
 
-## Beta: the core and plugins
+## Documentation
 
-A core-plus-plugin architecture (a control socket, and separate
-`serverwatch-ctl` and `serverwatch-web` binaries) is in preview on the
-`develop` branch. It is marked beta throughout the handbook; the production
-path today is the single daemon with the optional in-process web UI. See
-[Roadmap and status](docs/handbook/12-roadmap-and-status.md).
+Everything is in the handbook, one concern per chapter.
+
+**[Read the handbook](docs/handbook/README.md)**
+
+| | |
+|---|---|
+| [Introduction](docs/handbook/01-introduction.md) | What it is and the ethos |
+| [Architecture](docs/handbook/02-architecture.md) | Daemon internals, the control socket, core + plugins, the safe-exec trust model |
+| [Installation](docs/handbook/03-installation.md) | Getting it onto the server and enabled |
+| [Configuration](docs/handbook/04-configuration.md) | The CLI-managed settings and per-target overrides |
+| [Monitoring](docs/handbook/05-monitoring.md) | What is collected and how alerting decides |
+| [Alerting and channels](docs/handbook/06-alerting-and-channels.md) | Telegram and the other channels |
+| [Downtime and liveness](docs/handbook/07-downtime-and-liveness.md) | Heartbeats and power-down reconstruction |
+| [Web UI](docs/handbook/08-web-ui.md) | The browser interface and its serving modes |
+| [Storage and data model](docs/handbook/09-storage-and-data-model.md) | The time-series store and retention |
+| [Operations](docs/handbook/10-operations.md) | Day-to-day running and troubleshooting |
+| [Command reference](docs/handbook/11-command-reference.md) | Every CLI subcommand |
+| [Roadmap and status](docs/handbook/12-roadmap-and-status.md) | Where it is and what is planned |
+
+## Status
+
+serverwatch is in **beta** on the `develop` branch, where the core-plus-plugin
+architecture (the control socket, the supervised `serverwatch-web`, and the
+`serverwatch-ctl` management binary) lives. The stable `main` branch carries the
+previous single-daemon release. The handbook marks beta features where they
+appear; see [Roadmap and status](docs/handbook/12-roadmap-and-status.md) for the
+current line.
 
 ## License
 

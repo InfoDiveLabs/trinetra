@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -13,14 +11,15 @@ import (
 
 // sseDefaultInterval is eventsHandler's fallback per-connection ticker
 // period when Deps.Cfg is nil or reports an invalid FastInterval (defensive;
-// every real Deps from internal/serverwatch/daemon_web.go always has a
+// every real Deps built by the serverwatch-web binary's buildDeps
+// (cmd/serverwatch-web) always has a
 // valid one) — config.Default's own FastInterval (5s).
 const sseDefaultInterval = 5 * time.Second
 
 // sseTickerInterval resolves the SSE stream's cadence to the daemon's
 // current fast-tier interval (cfg.FastInterval — the same cadence
 // snapshotHub itself is republished on, see
-// internal/serverwatch/web_deps.go/daemon.go), so a subscriber never polls
+// internal/serverwatch/snapshot_hub.go/daemon.go), so a subscriber never polls
 // faster than the source actually changes.
 func sseTickerInterval(cfg func() *config.Config) time.Duration {
 	if cfg == nil {

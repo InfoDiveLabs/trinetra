@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -168,7 +166,8 @@ func TestStartBindsWhenEnabled(t *testing.T) {
 }
 
 // TestStartReturnsNoopStop pins Start's Enabled=false path (the disabled
-// half of the contract internal/serverwatch/daemon_web.go relies on): no
+// half of the contract the serverwatch-web binary's run func,
+// cmd/serverwatch-web/main.go, relies on): no
 // listener is bound, and stop/err are still safe to use. See
 // TestStartBindsWhenEnabled above for the Enabled=true half.
 func TestStartReturnsNoopStop(t *testing.T) {

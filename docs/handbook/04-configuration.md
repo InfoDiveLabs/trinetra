@@ -246,14 +246,16 @@ serverwatch config set collect.smart_interval 3600
 
 ### Web
 
-Settings for the embedded web UI (present in the `serverwatch-web` binary; the
-default binary never reads them, but the keys are still manageable so config is
-portable across binaries). These are covered in detail in the [Web UI
-chapter](08-web-ui.md); the reference is repeated here for completeness.
+Settings for the web UI, read by the separate `serverwatch-web` binary (no
+build tag) when the daemon supervises it or when it is launched with
+`serverwatch web`. The default `serverwatch` binary never reads them, but the
+keys are still manageable so config is portable across binaries. These are
+covered in detail in the [Web UI chapter](08-web-ui.md); the reference is
+repeated here for completeness.
 
 | Key | Default | Validation |
 |-----|---------|------------|
-| `web.enabled` | `false` | Boolean. The web UI is opt-in even in the web binary. |
+| `web.enabled` | `false` | Boolean. Turns on daemon supervision of `serverwatch-web`. Opt-in even when the binary is installed. |
 | `web.listen` | `127.0.0.1:8088` | `host:port` (parsed with `net.SplitHostPort`). Localhost-only by default; front it with a reverse proxy for LAN/WAN. |
 | `web.mode` | `proxy` | One of `proxy`, `autocert`, or `manual`. |
 | `web.rp_id` | empty | None. WebAuthn relying party ID (public hostname, no scheme/port). Required in autocert/manual modes; derived per-request in proxy mode. |

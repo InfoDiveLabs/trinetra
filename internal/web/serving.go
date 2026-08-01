@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -212,7 +210,8 @@ func serveProxy(d Deps, handler http.Handler) (stop func(), err error) {
 // serveManual binds TLS on d.Listen using an operator-provided cert/key
 // pair. validateOrigin already confirmed both are non-empty; a missing or
 // unreadable file surfaces as ServeTLS's own error, logged the same way
-// serveProxy's net.Listen failures would be by the caller (maybeStartWeb).
+// serveProxy's net.Listen failures would be by the caller (web.Start,
+// invoked by the serverwatch-web binary).
 func serveManual(d Deps, handler http.Handler, certFile, keyFile string) (stop func(), err error) {
 	ln, err := net.Listen("tcp", d.Listen)
 	if err != nil {

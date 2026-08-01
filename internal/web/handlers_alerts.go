@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -331,9 +329,9 @@ func saveAckAlertState(path string, s ackAlertState) error {
 // reconciles back into its own in-memory copy via AlertState.
 // MergeAckFromDisk (anomaly.go) on its next fire/recover transition — this
 // handler never touches the daemon's in-process state directly (there is
-// none to touch from this package; see the design note atop
-// internal/serverwatch/web_deps.go for why internal/web can't import
-// serverwatch to do so even if it wanted to).
+// none to touch from this package; internal/web must never import
+// internal/serverwatch, to keep the module graph one-way, so it couldn't
+// touch it directly even if it wanted to).
 func alertsAckHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key, err := credentialFromParam(r.PathValue("key"))

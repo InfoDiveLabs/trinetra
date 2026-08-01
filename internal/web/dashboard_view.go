@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import "serverwatch/internal/core"
@@ -19,9 +17,9 @@ type NetIfaceView = core.NetIfaceView
 // dashboardTopN bounds TopCPUContainers/TopMemContainers, mirroring the
 // mockup dashboard.html's 4-row "Top containers" hbar panels. Unexported and
 // unused outside this file's own doc comments; internal/serverwatch/
-// daemon_web.go's buildDashboardView adapter mirrors this value as its own
-// dashboardTopContainerCap since it cannot reach an unexported identifier
-// here.
+// coreapi_inproc.go's buildDashboardView adapter mirrors this value as its
+// own dashboardTopContainerCap since it cannot reach an unexported
+// identifier here.
 const dashboardTopN = 4
 
 // DiskCriticalPct is the usage percentage at/above which a mount counts
@@ -29,9 +27,9 @@ const dashboardTopN = 4
 // color -- a display-only threshold for the dashboard's summary tiles,
 // independent of (and not a substitute for) the daemon's own configurable
 // alert thresholds (internal/config), which keep driving real alert
-// delivery. Exported so internal/serverwatch/daemon_web.go's adapter
-// (buildDashboardView) can count DisksCritical using the exact same cutoff
-// this package's template uses to color the same mounts.
+// delivery. Exported so internal/serverwatch/coreapi_inproc.go's
+// buildDashboardView adapter can count DisksCritical using the exact same
+// cutoff this package's template uses to color the same mounts.
 const DiskCriticalPct = core.DiskCriticalPct
 
 // DiskWarnPct is the warn-level counterpart to DiskCriticalPct, same

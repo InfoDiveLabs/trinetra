@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -59,9 +57,8 @@ var channelTypes = []struct{ Value, Label string }{
 
 // describeRoutesWeb mirrors channel.go's describeRoutes (unexported to that
 // package, so duplicated here rather than reached into across the
-// serverwatch/web boundary — see the design note atop
-// internal/serverwatch/web_deps.go for why internal/web can't import
-// serverwatch to share it directly).
+// serverwatch/web boundary, per the rule that internal/web must never
+// import internal/serverwatch, to keep the module graph one-way).
 func describeRoutesWeb(cc config.ChannelConfig) string {
 	var parts []string
 	if len(cc.IncludeKinds) > 0 {

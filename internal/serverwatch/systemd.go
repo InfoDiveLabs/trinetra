@@ -35,11 +35,14 @@ const secondaryBinPath = "/usr/bin/serverwatch"
 // right lifetime instead of the daemon having to create/clean it up itself.
 //
 // There is no separate "web" unit: cmdInstall (below) always copies
-// os.Executable() — whichever binary is currently running — to
+// os.Executable(), whichever binary is currently running, to
 // /usr/local/bin/serverwatch and writes this exact same unit around it. So
-// installing the `serverwatch-web` binary (`go build -tags web`, `make
-// web`/`web-cross`) and then `serverwatch config set web.enabled true` is
-// the entire path to a web-capable service; no unit change is needed. See
+// installing the `serverwatch-web` binary (`go build -o
+// /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`, no build tag) and
+// then `serverwatch config set web.enabled true` is the rest of the path to
+// a web-capable service: the daemon's own supervisor verifies and spawns
+// serverwatch-web as a child once web.enabled is set and the daemon
+// restarts, so still no unit change is needed. See
 // docs/handbook/08-web-ui.md for the web.*/public.* config keys and serving modes.
 func renderUnit(binPath string) string {
 	return fmt.Sprintf(`[Unit]

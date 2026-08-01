@@ -52,11 +52,11 @@ directory. Any separate process on the same host can dial
 that socket and call the same internal API the daemon uses itself, with no
 extra dependencies pulled into the core.
 
-The plugins are the processes that speak to that socket, or that link the same
-internals under a build tag. The web UI is one such plugin: a separate
-`serverwatch-web` binary, built with `-tags web`, that adds passkey-only auth
-and the browser dashboard while keeping the default `serverwatch` binary free
-of its heavier dependencies. A management CLI, `serverwatch-ctl`, is in
+The plugins are the processes that speak to that socket. The web UI is one
+such plugin: a separate `serverwatch-web` binary, with no build tag, that the
+core supervises. It adds passkey-only auth and the browser dashboard, and the
+core stays free of its heavier dependencies simply because it does not import
+them, not because of a build tag. A management CLI, `serverwatch-ctl`, is in
 progress: it dials the control socket to drive a running daemon from a second
 process, and it is where a richer interactive terminal experience will land.
 The point of the split is that the core stays small and boring, and everything

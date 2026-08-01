@@ -30,6 +30,7 @@ straight through and return here from any page.
 
 The `serverwatch-ctl` and `serverwatch-web` plugin binaries, and the control
 socket they talk to, are part of an in-progress core-plus-plugin architecture.
-They are available as a preview and are marked as beta throughout this handbook;
-the shipped, production path today is the single daemon with the optional
-in-process web UI.
+`serverwatch-ctl` is available as a preview and is marked as beta throughout
+this handbook. `serverwatch-web` has moved out of preview: it is a supervised,
+separate binary with no build tag, and the daemon runs it whenever
+`web.enabled` is set.

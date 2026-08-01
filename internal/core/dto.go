@@ -46,17 +46,18 @@ type DownEventView struct {
 // Deps.Snapshot returns this type (aliased in internal/web as
 // web.DashboardView) rather than serverwatch.Snapshot itself because this
 // package must never import internal/serverwatch (see doc.go's import
-// contract). internal/serverwatch/daemon_web.go -- which imports BOTH
-// packages precisely because it is the seam -- builds one of these by
-// copying values out of a serverwatch.Snapshot (buildDashboardView); web
-// only ever consumes the finished value via the alias.
+// contract). internal/serverwatch/coreapi_inproc.go's buildDashboardView
+// builds one of these by copying values out of a serverwatch.Snapshot; the
+// serverwatch-web binary's buildDeps (cmd/serverwatch-web) carries the
+// finished value across the control socket into Deps, so web only ever
+// consumes it via the alias, never importing serverwatch directly.
 //
 // Every field here is a copy (scalars, or a freshly built slice) taken from
 // the Snapshot at adapt time, never a map/slice alias into it: the adapter
 // only reads the Snapshot it's given, exactly as the concurrency contract in
-// internal/serverwatch/web_deps.go's snapshotHub doc requires (readers must
-// never mutate a published Snapshot's map fields -- see that file for why
-// that invariant is what makes the atomic.Pointer safe without a lock).
+// internal/serverwatch/snapshot_hub.go's snapshotHub doc requires (readers
+// must never mutate a published Snapshot's map fields -- see that file for
+// why that invariant is what makes the atomic.Pointer safe without a lock).
 type DashboardView struct {
 	// TS is the Unix-seconds timestamp the daemon's sampler loop stamped
 	// onto this snapshot (Snapshot.TS) -- how stale the view is.
@@ -172,9 +173,9 @@ const dashboardTopN = 4
 // color -- a display-only threshold for the dashboard's summary tiles,
 // independent of (and not a substitute for) the daemon's own configurable
 // alert thresholds (internal/config), which keep driving real alert
-// delivery. Exported so internal/serverwatch/daemon_web.go's adapter
-// (buildDashboardView) can count DisksCritical using the exact same cutoff
-// this package's template uses to color the same mounts.
+// delivery. Exported so internal/serverwatch/coreapi_inproc.go's
+// buildDashboardView adapter can count DisksCritical using the exact same
+// cutoff this package's template uses to color the same mounts.
 const DiskCriticalPct = 90.0
 
 // DiskWarnPct is the warn-level counterpart to DiskCriticalPct, same
@@ -188,7 +189,7 @@ const DiskWarnPct = 70.0
 // the dashboard. See that type's doc for why the projection crosses the
 // core <-> serverwatch boundary this way instead of serverwatch.Snapshot
 // itself, and for the map-safety/copy-only contract
-// internal/serverwatch/daemon_web.go's buildMonitoringView adapter must
+// internal/serverwatch/coreapi_inproc.go's buildMonitoringView adapter must
 // honor when building one of these.
 type MonitoringView struct {
 	// Containers is every container the daemon's plain state listing knows
