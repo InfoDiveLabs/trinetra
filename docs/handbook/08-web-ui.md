@@ -108,9 +108,6 @@ It is a preview, and you should treat it as one:
 - Live push is degraded. The socket transport does not yet support the
   streaming Subscribe method, so server-sent events over the plugin cannot push
   the way the in-process build does.
-- Channel-save validation is not wired. The in-process build dry-runs a channel
-  before saving it; over the socket that validation hook is left unset, so the
-  channels editor cannot pre-validate a channel before writing it.
 
 Because it reads through the control socket, the plugin needs to find the
 socket and its auth token. It resolves those from flags, then the

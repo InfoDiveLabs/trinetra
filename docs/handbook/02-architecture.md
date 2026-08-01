@@ -189,6 +189,7 @@ type API interface {
     AckAlert(key string) error
     UnackAlert(key string) error
     TestChannel(name string) error
+    ValidateChannel(cc config.ChannelConfig) error
     Subscribe(ctx context.Context) (<-chan Event, error)
 }
 ```
@@ -342,7 +343,7 @@ or an error.
 | Kind | Methods |
 |------|---------|
 | Reads | `Snapshot`, `Monitoring`, `Series`, `Events`, `ActiveAlerts`, `AlertHistory`, `Config`, `Doctor` |
-| Writes | `ApplyConfig`, `AckAlert`, `UnackAlert`, `TestChannel` |
+| Writes | `ApplyConfig`, `AckAlert`, `UnackAlert`, `TestChannel`, `ValidateChannel` |
 | Not yet supported | `Subscribe` (live streaming) |
 
 `Subscribe`, the live event stream, is not implemented over the socket yet.
