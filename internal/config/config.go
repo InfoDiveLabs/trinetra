@@ -864,6 +864,94 @@ func (c *Config) Set(key, val string) error {
 	return nil
 }
 
+// KeyInfo describes one flat, settable config key for serverwatch-ctl's
+// generic "all settings" browse/edit screen (issue #91): every string this
+// package's Set/Get accept, annotated with a human display Group, a short
+// value-Kind hint, a one-line Help description, and whether the daemon must
+// be restarted before a change takes effect. This is pure data, no new
+// imports, so it does not touch cmd/serverwatch's stdlib-only dependency
+// graph (internal/serverwatch/buildtag_test.go TestDefaultBuildIsStdlibOnly).
+//
+// Kind is a hint only ("int", "float", "bool", "string", "enum", "csv", or
+// "duration") for how a caller should present a value before handing it to
+// Set, which remains the single validated setter and source of truth for
+// what is actually accepted.
+type KeyInfo struct {
+	Name            string
+	Group           string
+	Kind            string
+	Help            string
+	RestartRequired bool
+}
+
+// Keys returns the full catalog of flat, settable config keys, grouped for
+// display. TestKeyCatalogCoversEverySetKey (config_test.go) parses (*Config)
+// .Set's own switch statement and asserts this list and that switch stay in
+// lockstep, so a key can never be added to one without the other going
+// noticed. A copy is returned so a caller mutating the result can never
+// corrupt the package-level catalog.
+func Keys() []KeyInfo {
+	out := make([]KeyInfo, len(keyCatalog))
+	copy(out, keyCatalog)
+	return out
+}
+
+// keyCatalog is Keys' backing data, grouped in the order the ctl settings
+// screen presents them. RestartRequired is set for storage.* (the
+// SampleStore backend is chosen once at daemon startup) and web.enabled/
+// web.listen (the listener is bound once at startup), matching the
+// restart caveat the guided web-setup wizard already shows for the same
+// reason (setup_web.go, tui.go).
+var keyCatalog = []KeyInfo{
+	{Name: "sample_interval", Group: "Intervals", Kind: "int", Help: "Seconds between full baseline samples (the slow tier)."},
+	{Name: "fast_interval", Group: "Intervals", Kind: "int", Help: "Seconds between lightweight checks (the fast tier)."},
+	{Name: "heartbeat_interval", Group: "Intervals", Kind: "int", Help: "Seconds between liveness heartbeats."},
+
+	{Name: "baseline_sigma", Group: "Baseline", Kind: "float", Help: "Standard deviations from the mean before a baseline anomaly fires."},
+	{Name: "baseline_min_pct", Group: "Baseline", Kind: "float", Help: "Minimum relative deviation from the baseline mean also required to fire."},
+	{Name: "baseline_alerts", Group: "Baseline", Kind: "bool", Help: "Enable baseline (z-score) deviation alerts, on top of threshold alerts."},
+
+	{Name: "thresholds.cpu_pct", Group: "Thresholds", Kind: "float", Help: "Global CPU percent threshold for alerting."},
+	{Name: "thresholds.mem_pct", Group: "Thresholds", Kind: "float", Help: "Global memory percent threshold for alerting."},
+	{Name: "thresholds.swap_pct", Group: "Thresholds", Kind: "float", Help: "Global swap percent threshold for alerting."},
+	{Name: "thresholds.temp_c", Group: "Thresholds", Kind: "float", Help: "Global temperature threshold in Celsius for alerting."},
+	{Name: "thresholds.disk_pct", Group: "Thresholds", Kind: "float", Help: "Global disk usage percent threshold for alerting."},
+
+	{Name: "critical_overrides_quiet", Group: "Alerting", Kind: "bool", Help: "Let disk-full-imminent style critical alerts bypass quiet hours."},
+	{Name: "quiet_hours", Group: "Alerting", Kind: "string", Help: "Quiet hours window as H-H, e.g. 22-6, or empty to disable."},
+
+	{Name: "telegram.token", Group: "Notifications", Kind: "string", Help: "Telegram bot token from @BotFather."},
+	{Name: "telegram.chat_id", Group: "Notifications", Kind: "string", Help: "Telegram chat id enrolled to receive alerts."},
+	{Name: "healthchecks.url", Group: "Notifications", Kind: "string", Help: "healthchecks.io ping URL, or empty to disable."},
+
+	{Name: "schedule.daily", Group: "Schedule", Kind: "string", Help: "Daily digest time as HH:MM, or empty to disable."},
+	{Name: "schedule.weekly", Group: "Schedule", Kind: "string", Help: "Weekly digest time as dow@HH:MM, e.g. mon@09:00, or empty to disable."},
+
+	{Name: "storage.backend", Group: "Storage", Kind: "enum", Help: "Sample store backend: tsfile or memory.", RestartRequired: true},
+	{Name: "storage.raw_retention", Group: "Storage", Kind: "duration", Help: "How long raw samples are kept, e.g. 48h.", RestartRequired: true},
+	{Name: "storage.rollup_retention", Group: "Storage", Kind: "duration", Help: "How long 1m-rollup samples and events are kept, e.g. 720h.", RestartRequired: true},
+
+	{Name: "collect.container_stats", Group: "Collection", Kind: "bool", Help: "Collect per-container docker stats."},
+	{Name: "collect.net_throughput", Group: "Collection", Kind: "bool", Help: "Collect per-interface network throughput."},
+	{Name: "collect.services", Group: "Collection", Kind: "bool", Help: "Collect the full systemd unit inventory."},
+	{Name: "collect.processes", Group: "Collection", Kind: "bool", Help: "Collect the process-table overview."},
+	{Name: "collect.smart_attrs", Group: "Collection", Kind: "bool", Help: "Collect per-device SMART attribute reads."},
+	{Name: "collect.smart_interval", Group: "Collection", Kind: "int", Help: "Minimum seconds between SMART scans."},
+
+	{Name: "web.enabled", Group: "Web", Kind: "bool", Help: "Enable the web UI server.", RestartRequired: true},
+	{Name: "web.listen", Group: "Web", Kind: "string", Help: "Web server bind address as host:port.", RestartRequired: true},
+	{Name: "web.mode", Group: "Web", Kind: "enum", Help: "Web serving mode: proxy, autocert, or manual."},
+	{Name: "web.rp_id", Group: "Web", Kind: "string", Help: "WebAuthn relying party id: the public hostname, no scheme or port."},
+	{Name: "web.origin", Group: "Web", Kind: "string", Help: "Full public origin passkeys validate against, e.g. https://host."},
+	{Name: "web.autocert_domains", Group: "Web", Kind: "csv", Help: "Comma-separated hostnames autocert will request certificates for."},
+	{Name: "web.tls_cert", Group: "Web", Kind: "string", Help: "PEM certificate file path for manual TLS mode."},
+	{Name: "web.tls_key", Group: "Web", Kind: "string", Help: "PEM key file path for manual TLS mode."},
+	{Name: "web.session_ttl", Group: "Web", Kind: "duration", Help: "How long a signed-in web session stays valid, e.g. 24h."},
+
+	{Name: "public.enabled", Group: "Public", Kind: "bool", Help: "Enable the anonymous /public status page."},
+	{Name: "public.panels", Group: "Public", Kind: "csv", Help: "Comma-separated panel ids exposed on the public page."},
+}
+
 // effectiveFastInterval returns c.FastInterval, or the baked-in default (5)
 // if the receiver is a zero-value Config (e.g. constructed directly rather
 // than via Default()/Load()) so sample_interval validation never divides by
