@@ -1,9 +1,11 @@
 package serverwatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"serverwatch/internal/config"
@@ -81,6 +83,17 @@ func cmdInstall(args []string) int {
 	if err := linkOnPath(dst, secondaryBinPath); err != nil {
 		fmt.Fprintf(stderr, "warning: could not link %s -> %s: %v\n", secondaryBinPath, dst, err)
 	}
+	// Record the checksum manifest the safe plugin launcher (plugin_launch.go)
+	// verifies companion binaries against before exec'ing them. Scanning the
+	// SAME directory dst was just copied into (rather than, say, os.Executable
+	// of this process) matters: dst is exactly where pluginPath will look for
+	// serverwatch-ctl/serverwatch-web once this binary is running as
+	// /usr/local/bin/serverwatch. Non-fatal: a manifest hiccup should not
+	// block installing the daemon itself, since the front-door already fails
+	// closed (refuses to exec) when the manifest is missing or incomplete.
+	if err := writePluginManifest(filepath.Dir(dst)); err != nil {
+		fmt.Fprintf(stderr, "warning: could not write plugin manifest: %v\n", err)
+	}
 	if err := os.WriteFile(unitPath, []byte(renderUnit(dst)), 0o644); err != nil {
 		fmt.Fprintf(stderr, "write unit: %v\n", err)
 		return 1
@@ -135,6 +148,62 @@ func unlinkOnPath(target, link string) {
 	}
 }
 
+// pluginManifestNames lists the companion binary name suffixes (matching the
+// "serverwatch-<name>" convention pluginPath/verifyPlugin use in
+// plugin_launch.go) that writePluginManifest looks for next to the daemon
+// binary. Keep this in sync with the launcher's `cli`/`web` front-doors.
+var pluginManifestNames = []string{"ctl", "web"}
+
+// writePluginManifest scans binDir (the directory the daemon binary was just
+// installed into) for companion plugin binaries and writes
+// <stateDir>/plugins.json (mode 0600, so only root -- or whichever uid runs
+// install -- can read or write it: it is the trust anchor loadPluginManifest
+// and verifyPlugin check plugin checksums against) mapping each plugin name
+// found to the hex SHA-256 of its file content.
+//
+// A companion binary that is absent at install time is simply omitted from
+// the manifest, not an error: loadPluginManifest/verifyPlugin then correctly
+// report that plugin as "not installed" (see errPluginNotInstalled) rather
+// than treating its absence as a verification failure. A companion that IS
+// present but somehow not recorded here still fails closed as intended,
+// which is the whole point of the manifest.
+func writePluginManifest(binDir string) error {
+	manifest := make(map[string]string)
+	for _, name := range pluginManifestNames {
+		path := filepath.Join(binDir, "serverwatch-"+name)
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		// Skip anything that is not a plain regular file (e.g. a symlink or
+		// directory left behind by something else): only hash the exact
+		// bytes verifyPlugin will later Lstat and hash itself.
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		sum, err := sha256File(path)
+		if err != nil {
+			return fmt.Errorf("checksum %s: %w", path, err)
+		}
+		manifest[name] = sum
+	}
+
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("create state dir %s: %w", stateDir, err)
+	}
+	b, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal plugin manifest: %w", err)
+	}
+	if err := os.WriteFile(pluginManifestPath(), b, 0o600); err != nil {
+		return fmt.Errorf("write plugin manifest %s: %w", pluginManifestPath(), err)
+	}
+	return nil
+}
+
 func cmdUninstall(args []string) int {
 	x := osExec{}
 	_, _ = x.Run("systemctl", "disable", "--now", "serverwatch")
@@ -142,6 +211,11 @@ func cmdUninstall(args []string) int {
 	// Remove the /usr/bin shortcut, but only if it is still OUR symlink into
 	// /usr/local/bin (never a distro-provided real binary).
 	unlinkOnPath("/usr/local/bin/serverwatch", secondaryBinPath)
+	// Best-effort, like the other uninstall cleanups above: a plugin the
+	// front-door can no longer verify against is safer than a stale manifest
+	// left lying around after uninstall. --purge below already removes the
+	// whole stateDir, so this matters mainly for a non-purge uninstall.
+	_ = os.Remove(pluginManifestPath())
 	_, _ = x.Run("systemctl", "daemon-reload")
 	purge := len(args) > 0 && args[0] == "--purge"
 	if purge {
