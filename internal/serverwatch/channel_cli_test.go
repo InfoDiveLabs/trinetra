@@ -17,8 +17,18 @@ func TestChannelAddListSetRemoveTestViaCLI(t *testing.T) {
 	stdout = &out
 	stderr = &errb
 
-	if code := Main([]string{"channel", "add", "tg", "--type", "telegram", "--set", "chat_id=123"}); code != 0 {
+	// Staged disabled: this channel has a chat_id but no token, which would
+	// fail the #83 up-front validation gate if added enabled. Adding it
+	// disabled skips that gate (it can't misdeliver while off), then `channel
+	// set enabled` below flips it on WITHOUT re-validating (channel set
+	// mutates a single field, same as ctl's generic key edits) -- exactly
+	// what lets this test still exercise `channel test`'s own failure path
+	// below on a channel that is enabled but incomplete.
+	if code := Main([]string{"channel", "add", "tg", "--type", "telegram", "--set", "chat_id=123", "--disabled"}); code != 0 {
 		t.Fatalf("add exit=%d stderr=%s", code, errb.String())
+	}
+	if code := Main([]string{"channel", "set", "tg", "enabled", "true"}); code != 0 {
+		t.Fatalf("set enabled exit=%d stderr=%s", code, errb.String())
 	}
 
 	out.Reset()
@@ -80,6 +90,109 @@ func TestChannelAddRequiresType(t *testing.T) {
 
 	if code := Main([]string{"channel", "add", "tg"}); code == 0 {
 		t.Fatal("expected channel add without --type to fail")
+	}
+}
+
+// TestChannelAddRejectsIncompleteEnabledChannel is the #83 "cheap standalone
+// win": an ENABLED channel added via the flag-based CLI with settings that
+// cannot build a working notifier (buildNotifier would fail) must be
+// rejected up front, with nothing persisted -- matching the ctl Channels
+// screen's validate-before-save gate (manage_ui.go's saveChannel), which
+// this test's daemon-side counterpart mirrors.
+func TestChannelAddRejectsIncompleteEnabledChannel(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath = filepath.Join(dir, "config.json")
+	var out, errb bytes.Buffer
+	stdout = &out
+	stderr = &errb
+
+	// slack requires a webhook url; none given, so buildNotifier must fail
+	// and the channel must never reach AddChannel/saveCfg.
+	if code := Main([]string{"channel", "add", "mychan", "--type", "slack"}); code == 0 {
+		t.Fatalf("expected non-zero exit for undeliverable enabled channel, stderr=%s", errb.String())
+	}
+
+	c, err := config.Load(cfgPath)
+	if err != nil {
+		// No config file was ever written -- also an acceptable way for
+		// "not persisted" to manifest, since saveCfg is never reached.
+		return
+	}
+	if _, ok := c.GetChannel("mychan"); ok {
+		t.Fatalf("channel %q was persisted despite failing validation", "mychan")
+	}
+}
+
+// TestChannelAddAcceptsCompleteChannel is the positive counterpart: an
+// enabled channel whose settings DO build a working notifier is accepted
+// and persisted, same as before this task.
+func TestChannelAddAcceptsCompleteChannel(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath = filepath.Join(dir, "config.json")
+	var out, errb bytes.Buffer
+	stdout = &out
+	stderr = &errb
+
+	if code := Main([]string{"channel", "add", "mychan", "--type", "slack", "--set", "url=https://hooks.slack.example/T000/B000/xxx"}); code != 0 {
+		t.Fatalf("add exit=%d stderr=%s", code, errb.String())
+	}
+
+	c, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.GetChannel("mychan"); !ok {
+		t.Fatal("expected deliverable channel to be persisted")
+	}
+}
+
+// TestChannelAddErrorNamesMissingSetting pins that the rejection error is
+// actionable -- built from buildNotifier's own real failure message (which
+// names the missing setting), not a generic "invalid channel" -- so no
+// required-field list is duplicated here or anywhere else (channels.go's
+// buildNotifier stays the single source of truth).
+func TestChannelAddErrorNamesMissingSetting(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath = filepath.Join(dir, "config.json")
+	var out, errb bytes.Buffer
+	stdout = &out
+	stderr = &errb
+
+	if code := Main([]string{"channel", "add", "mychan", "--type", "slack"}); code == 0 {
+		t.Fatalf("expected non-zero exit, stderr=%s", errb.String())
+	}
+	if !strings.Contains(errb.String(), "url") {
+		t.Fatalf("expected error to name the missing 'url' setting, got %q", errb.String())
+	}
+}
+
+// TestChannelAddAcceptsDisabledIncompleteChannel is the staging case: a
+// DISABLED channel can't misdeliver (it's never wired into the Dispatcher
+// while off, see channelsFromConfig/daemon.go), so it may be added with
+// incomplete settings -- exactly the ctl Channels screen's
+// channelNeedsValidation behavior (channels.go), now mirrored here via the
+// new --disabled flag.
+func TestChannelAddAcceptsDisabledIncompleteChannel(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath = filepath.Join(dir, "config.json")
+	var out, errb bytes.Buffer
+	stdout = &out
+	stderr = &errb
+
+	if code := Main([]string{"channel", "add", "mychan", "--type", "slack", "--disabled"}); code != 0 {
+		t.Fatalf("add exit=%d stderr=%s", code, errb.String())
+	}
+
+	c, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := c.GetChannel("mychan")
+	if !ok {
+		t.Fatal("expected disabled incomplete channel to be persisted (staging)")
+	}
+	if got.Enabled {
+		t.Fatal("expected channel to be saved disabled")
 	}
 }
 
