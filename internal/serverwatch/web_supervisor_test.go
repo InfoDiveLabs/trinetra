@@ -314,6 +314,12 @@ func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 	if h.spawnCount() != 1 {
 		t.Fatalf("spawnCount = %d, want 1 (startWebProc must not be called until resolve succeeds)", h.spawnCount())
 	}
+	// Guard against the failed first attempt's (empty) path sneaking
+	// through as this "only" spawn: it must be the recovered, verified
+	// path, not whatever resolveWebPlugin returned alongside its error.
+	if call := h.lastSpawn(); call.path != "/opt/serverwatch/serverwatch-web" {
+		t.Fatalf("spawn path = %q, want the recovered verified path (an unverified/empty path means a verify error reached startWebProc)", call.path)
+	}
 	if !h.logsContaining("refusing to start serverwatch-web") {
 		t.Fatalf("expected a refusal to be logged, got logs: %v", h.logsSnapshot())
 	}
