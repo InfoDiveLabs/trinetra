@@ -318,6 +318,135 @@ func TestWritePluginManifest_ForcesModeOnReinstall(t *testing.T) {
 	}
 }
 
+// TestCopyPluginsAlongsideCopiesPresentPlugins is the Task 1 (#92) failing
+// test: given a source dir containing both fake companion binaries,
+// copyPluginsAlongside must place identical, mode-0755 copies of both into
+// dstDir, so a subsequent writePluginManifest(dstDir) has something to find.
+func TestCopyPluginsAlongsideCopiesPresentPlugins(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	ctlContent := []byte("fake serverwatch-ctl binary")
+	webContent := []byte("fake serverwatch-web binary")
+	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-ctl"), ctlContent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-web"), webContent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyPluginsAlongside(srcDir, dstDir); err != nil {
+		t.Fatalf("copyPluginsAlongside: %v", err)
+	}
+
+	for name, want := range map[string][]byte{"serverwatch-ctl": ctlContent, "serverwatch-web": webContent} {
+		got, err := os.ReadFile(filepath.Join(dstDir, name))
+		if err != nil {
+			t.Fatalf("read dst %s: %v", name, err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("dst %s content = %q, want %q", name, got, want)
+		}
+		fi, err := os.Stat(filepath.Join(dstDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o755 {
+			t.Errorf("dst %s perm = %v, want 0755", name, fi.Mode().Perm())
+		}
+	}
+}
+
+// TestCopyPluginsAlongsideSkipsAbsentPlugin checks the per-plugin non-fatal
+// requirement: when only serverwatch-ctl exists in srcDir, the call copies
+// ctl, skips web (no error), and a later writePluginManifest(dstDir) records
+// only ctl.
+func TestCopyPluginsAlongsideSkipsAbsentPlugin(t *testing.T) {
+	prevStateDir := stateDir
+	stateDir = t.TempDir()
+	t.Cleanup(func() { stateDir = prevStateDir })
+
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-ctl"), []byte("ctl only"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately no serverwatch-web in srcDir.
+
+	if err := copyPluginsAlongside(srcDir, dstDir); err != nil {
+		t.Fatalf("copyPluginsAlongside: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-ctl")); err != nil {
+		t.Errorf("expected serverwatch-ctl copied to dst: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-web")); !os.IsNotExist(err) {
+		t.Errorf("expected serverwatch-web absent from dst, got err=%v", err)
+	}
+
+	if err := writePluginManifest(dstDir); err != nil {
+		t.Fatalf("writePluginManifest: %v", err)
+	}
+	got, err := loadPluginManifest()
+	if err != nil {
+		t.Fatalf("loadPluginManifest: %v", err)
+	}
+	if _, ok := got["ctl"]; !ok {
+		t.Errorf("manifest missing ctl entry: %v", got)
+	}
+	if _, ok := got["web"]; ok {
+		t.Errorf("manifest has a web entry despite no serverwatch-web ever being copied: %v", got)
+	}
+}
+
+// TestCopyPluginsAlongsideSkipsNonRegular mirrors writePluginManifest's
+// IsRegular guard (systemd.go): a symlink or directory named
+// serverwatch-web in the source must be skipped, not copied.
+func TestCopyPluginsAlongsideSkipsNonRegular(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-ctl"), []byte("ctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// serverwatch-web is a directory, not a regular file.
+	if err := os.Mkdir(filepath.Join(srcDir, "serverwatch-web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyPluginsAlongside(srcDir, dstDir); err != nil {
+		t.Fatalf("copyPluginsAlongside: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-ctl")); err != nil {
+		t.Errorf("expected serverwatch-ctl copied to dst: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-web")); !os.IsNotExist(err) {
+		t.Errorf("expected serverwatch-web (a dir in src) not copied to dst, got err=%v", err)
+	}
+}
+
+// TestUninstallRemovesInstalledPlugins is the Task 1 (#92) failing test for
+// the uninstall side: removeInstalledPlugins must remove both companion
+// binaries from binDir, and be best-effort (no error) when one is already
+// absent -- symmetric with copyPluginsAlongside's per-plugin non-fatal style.
+func TestUninstallRemovesInstalledPlugins(t *testing.T) {
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "serverwatch-ctl"), []byte("ctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately no serverwatch-web in binDir, to exercise "already absent".
+
+	removeInstalledPlugins(binDir)
+
+	if _, err := os.Stat(filepath.Join(binDir, "serverwatch-ctl")); !os.IsNotExist(err) {
+		t.Errorf("expected serverwatch-ctl removed, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(binDir, "serverwatch-web")); !os.IsNotExist(err) {
+		t.Errorf("expected serverwatch-web still absent, got err=%v", err)
+	}
+}
+
 // TestCmdUninstall_RemovesPluginManifest checks the other half of Task 2:
 // cmdUninstall removes <stateDir>/plugins.json (best-effort, like its other
 // cleanups) so a subsequent front-door invocation correctly reports the

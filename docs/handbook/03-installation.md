@@ -83,7 +83,11 @@ differ, do not install it; re-download and try again.
 The release also publishes matching assets for the two plugin binaries,
 `serverwatch-ctl-<arch>` and `serverwatch-web-<arch>`. They are optional;
 grab them the same way if you want the management TUI or the web UI, and
-verify them against the same `checksums.txt`.
+verify them against the same `checksums.txt`. Download all three into the
+same directory (renaming the plugins to `serverwatch-ctl` and
+`serverwatch-web`, dropping the arch suffix), and `serverwatch install` in
+step 3 picks up and installs whichever of them it finds beside the daemon
+binary, in one command, no separate copy step needed.
 
 ### Option B: build from source
 
@@ -114,7 +118,8 @@ GOOS=linux GOARCH=arm64 go build -o dist/serverwatch-web-linux-arm64 ./cmd/serve
 (`make cross` builds this whole matrix, plus `serverwatch`, for every
 supported platform in one pass.) Copy whichever of them you want next to
 `/tmp/serverwatch` on the server; `serverwatch install` picks up whatever it
-finds beside the binary it is installing (see step 3 below).
+finds beside the SOURCE binary it is installing and installs it too (see
+step 3 below).
 
 Either way, you now have an executable at `/tmp/serverwatch` on the host, ready
 to install.
@@ -127,7 +132,7 @@ One command turns that loose binary into a managed, boot-persistent service:
 sudo /tmp/serverwatch install
 ```
 
-That single command does six things. It is worth knowing each one, because
+That single command does seven things. It is worth knowing each one, because
 this is the moment your host goes from "has a binary in /tmp" to "runs a
 monitored service."
 
@@ -146,21 +151,31 @@ monitored service."
    binary, and it is non-fatal: if the link cannot be made, the binary and unit
    are already in place and only the shortcut is affected.
 
-3. **Records the plugin checksum manifest.** `install` scans the directory it
-   just copied the binary into for the companion plugin binaries,
-   `serverwatch-ctl` and `serverwatch-web`, and writes the SHA-256 of any it
-   finds to `/var/lib/serverwatch/plugins.json`, mode `0600`, root-only. This
-   manifest is the trust anchor the safe front-door commands (`serverwatch
-   cli` / `serverwatch web`, see [Architecture](02-architecture.md) and
+3. **Copies any plugin binaries it finds next to the source binary.** This is
+   what makes install a true one-step process: if `serverwatch-ctl` and/or
+   `serverwatch-web` are sitting in the same directory as the `serverwatch`
+   binary you ran install from (step 2), install copies each one it finds into
+   `/usr/local/bin` alongside the daemon, mode `0755`. A plugin that is not
+   present there is simply skipped, not an error, and a copy hiccup on one
+   plugin is non-fatal and does not stop the daemon itself from installing.
+   You never have to copy the plugin binaries into place by hand; just
+   download or build them next to `serverwatch` before running install.
+
+4. **Records the plugin checksum manifest.** `install` scans the directory it
+   just copied the binary (and any plugins) into for the companion plugin
+   binaries, `serverwatch-ctl` and `serverwatch-web`, and writes the SHA-256 of
+   any it finds to `/var/lib/serverwatch/plugins.json`, mode `0600`,
+   root-only. This manifest is the trust anchor the safe front-door commands
+   (`serverwatch cli` / `serverwatch web`, see
+   [Architecture](02-architecture.md) and
    [Command reference](11-command-reference.md)) check before they will exec
-   either plugin. A companion binary that is not present yet is simply
-   skipped, not an error, and a hiccup writing the manifest is non-fatal to
-   the rest of install. If you build or hand-copy `serverwatch-ctl` or
-   `serverwatch-web` into place yourself, either now or later, you must
+   either plugin. A hiccup writing the manifest is non-fatal to the rest of
+   install. If you build or hand-copy `serverwatch-ctl` or `serverwatch-web`
+   directly into `/usr/local/bin` yourself, bypassing step 3 above, you must
    (re-)run `serverwatch install` afterward so its checksum gets recorded; the
    front-door refuses to run a plugin binary that is not in the manifest.
 
-4. **Writes and enables the systemd unit** at
+5. **Writes and enables the systemd unit** at
    `/etc/systemd/system/serverwatch.service`, then runs `systemctl
    daemon-reload` followed by `systemctl enable --now serverwatch`. The unit it
    writes looks like this:
@@ -198,17 +213,18 @@ monitored service."
    `WantedBy=multi-user.target`, the service survives crashes and comes back on
    every boot.
 
-5. **Seeds `/etc/serverwatch/config.json`** if it does not already exist. The
+6. **Seeds `/etc/serverwatch/config.json`** if it does not already exist. The
    file is created with mode `0600`, root-owned, because it holds your bot
    token and other secrets. An existing config is left untouched, so a re-run
    of `install` (for example, to upgrade the binary) never overwrites your
    settings.
 
-6. **Starts the service.** By the time the command returns, the daemon is
+7. **Starts the service.** By the time the command returns, the daemon is
    already running.
 
-You will see a confirmation line ending with a reminder to set a token, which
-is exactly what you do in step 5 below.
+You will see a confirmation line naming which plugins were installed (or
+noting that none were found next to the source binary), followed by a
+reminder to set a token, which is exactly what you do in step 5 below.
 
 ## 4. Verify discovery and permissions
 
