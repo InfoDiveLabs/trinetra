@@ -38,8 +38,8 @@
       <tr data-detail data-kind="container" data-name="{{.Name}}" data-state="{{.State}}"{{if .HasStats}} data-cpu="{{printf "%.0f" .CPUPct}}%" data-mem="{{printf "%.0f" .MemMiB}}M" data-net="↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}} MB/s"{{end}}>
         <td><span class="badge {{if eq .State "running"}}ok{{else if eq .State "restarting"}}warn{{else}}crit{{end}}">{{.State}}</span></td>
         <td class="mono">{{.Name}}</td>
-        <td>{{if .HasStats}}<div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div>{{else}}<span class="note mono">--</span>{{end}}</td>
-        <td>{{if .HasStats}}<div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div>{{else}}<span class="note mono">--</span>{{end}}</td>
+        <td>{{if .HasStats}}<div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div>{{else}}<span class="note mono">-</span>{{end}}</td>
+        <td>{{if .HasStats}}<div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div>{{else}}<span class="note mono">-</span>{{end}}</td>
         <td class="mono note">{{if .HasStats}}↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}}{{else}}--{{end}}</td>
       </tr>
       {{else}}
