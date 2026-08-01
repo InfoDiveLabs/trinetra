@@ -311,9 +311,9 @@ func cmdFrontDoor(label, pluginName string, args []string) int {
 	pluginBin := "serverwatch-" + pluginName
 	if errors.Is(err, errPluginNotInstalled) {
 		fmt.Fprintf(stderr, "%s is not installed next to serverwatch.\n", pluginBin)
-		fmt.Fprintf(stderr, "Install the serverwatch package (it ships %s), or build it:\n", pluginBin)
+		fmt.Fprintf(stderr, "Download %s from the releases page, place it next to the serverwatch binary (usually /usr/local/bin/), then run `serverwatch install` to record its checksum.\n", pluginBin)
+		fmt.Fprintf(stderr, "Or build it from source, then run `serverwatch install`:\n")
 		fmt.Fprintf(stderr, "  %s\n", buildHint(pluginName))
-		fmt.Fprintf(stderr, "Then run `serverwatch install` to record its checksum.\n")
 		return 1
 	}
 	if errors.Is(err, errPluginVerificationFailed) {

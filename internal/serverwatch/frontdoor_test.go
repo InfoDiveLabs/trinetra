@@ -91,7 +91,7 @@ func TestCmdFrontDoor_NotInstalled_Cli(t *testing.T) {
 		t.Fatalf("cmdFrontDoor exit = %d, want 1", code)
 	}
 	got := buf.String()
-	for _, want := range []string{"serverwatch-ctl", "not installed", "serverwatch install"} {
+	for _, want := range []string{"serverwatch-ctl", "not installed", "serverwatch install", "Download", "releases"} {
 		if !containsFold(got, want) {
 			t.Errorf("stderr missing %q; got:\n%s", want, got)
 		}
