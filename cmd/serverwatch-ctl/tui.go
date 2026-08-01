@@ -35,6 +35,7 @@ type step int
 const (
 	stepHome step = iota
 	stepSetupWeb
+	stepManage
 )
 
 // refreshInterval is how often the home screen re-fetches Snapshot() while
@@ -72,6 +73,9 @@ type model struct {
 	originIn   textinput.Model
 	applying   bool
 	applyErr   error
+
+	// management menu (schedule/quiet-hours/healthchecks/monitor thresholds)
+	mgr manageModel
 
 	quitting bool
 }
@@ -172,6 +176,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateHomeKey(msg)
 		case stepSetupWeb:
 			return m.updateSetupKey(msg)
+		case stepManage:
+			return m.updateManageKey(msg)
 		}
 		return m, nil
 
@@ -192,12 +198,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyErr = msg.err
 		m.wiz = webSetupResult
 		return m, nil
+
+	case manageAppliedMsg:
+		m.mgr.applying = false
+		m.mgr.applyErr = msg.err
+		m.mgr.screen = manageResult
+		return m, nil
+
+	case monitorTargetsMsg:
+		m.mgr.monLoading = false
+		m.mgr.monErr = msg.err
+		if msg.err == nil {
+			m.mgr.monTargets = msg.targets
+			m.mgr.monRows = buildMonitorRows(msg.targets, msg.cfg)
+			if m.mgr.monCursor >= len(m.mgr.monRows) {
+				m.mgr.monCursor = 0
+			}
+		}
+		return m, nil
+
+	case monitorAppliedMsg:
+		m.mgr.monErr = msg.err
+		if msg.err == nil && msg.cfg != nil {
+			m.mgr.monRows = buildMonitorRows(m.mgr.monTargets, msg.cfg)
+		}
+		return m, nil
 	}
 	return m, nil
 }
 
 // updateHomeKey handles a keypress on the Home screen: 's' launches the web
-// setup wizard, 'r' forces an immediate Snapshot refresh, 'q' quits.
+// setup wizard, 'm' opens the management menu (schedule/quiet-hours/
+// healthchecks/monitor thresholds), 'r' forces an immediate Snapshot
+// refresh, 'q' quits.
 func (m model) updateHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
@@ -209,6 +242,10 @@ func (m model) updateHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.modeCursor = 0
 		m.ans = webSetupAnswers{}
 		m.applyErr = nil
+		return m, nil
+	case "m":
+		m.step = stepManage
+		m.mgr = manageModel{}
 		return m, nil
 	case "r":
 		m.loading = true
@@ -365,6 +402,8 @@ func (m model) View() string {
 	switch m.step {
 	case stepSetupWeb:
 		return m.setupView()
+	case stepManage:
+		return m.manageView()
 	default:
 		return m.homeView()
 	}
@@ -389,7 +428,7 @@ func (m model) homeView() string {
 		fmt.Fprintf(&b, "load:     %.2f %.2f %.2f\n", m.snap.Load1, m.snap.Load5, m.snap.Load15)
 		fmt.Fprintf(&b, "units:    %d failed / %d total\n", m.snap.UnitsFailed, m.snap.UnitsTotal)
 	}
-	b.WriteString("\n" + hintStyle.Render("s: set up the web UI   r: refresh   q: quit") + "\n")
+	b.WriteString("\n" + hintStyle.Render("s: set up the web UI   m: manage   r: refresh   q: quit") + "\n")
 	return b.String()
 }
 

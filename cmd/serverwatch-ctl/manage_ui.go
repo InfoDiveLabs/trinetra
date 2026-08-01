@@ -1,0 +1,536 @@
+// Bubble Tea glue for the management menu ('m' off Home) and its four
+// config-backed screens (schedule, quiet hours, healthchecks, monitor
+// thresholds). The pure config mutations these screens apply live in
+// manage_schedule.go/manage_quiet.go/manage_health.go/manage_monitor.go
+// (unit-tested there against a fake core.API/plain *config.Config, no
+// terminal involved); this file is deliberately thin, mirroring tui.go's
+// own split for the web-setup wizard (setup_web.go vs. tui.go).
+package main
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"serverwatch/internal/config"
+	"serverwatch/internal/core"
+	sw "serverwatch/internal/serverwatch"
+)
+
+// manageScreen is the management menu's own sub-step, mirroring
+// webSetupStep's role for the web-setup wizard: a sub-state of the top
+// level tui step (stepManage) so navigating within the menu doesn't need a
+// top level step of its own for every screen.
+type manageScreen int
+
+const (
+	manageMenuList manageScreen = iota
+	manageScheduleMode
+	manageScheduleValue
+	manageQuietValue
+	manageHealthValue
+	manageMonitorList
+	manageMonitorThreshold
+	manageResult
+)
+
+// manageItems are the management menu's rows, in the order shown; their
+// index is what updateManageMenuKey's "enter" case switches on.
+var manageItems = []string{"schedule", "quiet hours", "healthchecks", "monitor thresholds"}
+
+// scheduleModeChoices are the Schedule screen's mode-selection rows, index-
+// matched against scheduleMode's off/daily/weekly constants (manage_schedule.go).
+var scheduleModeChoices = []string{"off", "daily", "weekly"}
+
+// manageModel holds every management screen's state. Only one screen is
+// ever shown at a time (mgr.screen), but they all live on the same struct
+// (embedded on model as m.mgr) so switching between them, or back to the
+// menu, never has to reconstruct or re-fetch anything the previous screen
+// already had -- the same reasoning tui.go's model gives for keeping the
+// web-setup wizard's fields alongside the home screen's.
+type manageModel struct {
+	screen manageScreen
+	cursor int // menu cursor
+
+	// schedule
+	schedModeCursor int
+	schedAns        scheduleAnswers
+
+	// shared single-line input for the schedule value / quiet hours /
+	// healthchecks screens (only one of those three is ever active at once)
+	valueIn textinput.Model
+
+	// monitor thresholds
+	monTargets          []sw.Target
+	monRows             []monitorTargetRow
+	monCursor           int
+	monThreshIn         textinput.Model
+	monEditingThreshold bool
+	monLoading          bool
+	monErr              error
+
+	applying bool
+	applyErr error
+}
+
+// newManageValueInput builds a text input the same way newModel's wizard
+// inputs are built (tui.go), just as a free function since manage screens
+// construct one fresh per visit rather than keeping four permanently
+// allocated fields the way the web wizard does.
+func newManageValueInput(placeholder string) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.CharLimit = 256
+	ti.Width = 40
+	return ti
+}
+
+// --- messages ---
+
+// manageAppliedMsg carries the result of applying the schedule/quiet-hours/
+// healthchecks screens' single value (fetch Config, apply the pure mutator,
+// ApplyConfig) back into Update.
+type manageAppliedMsg struct {
+	err error
+}
+
+// monitorTargetsMsg carries sw.DiscoverLocal()'s result plus a freshly
+// fetched Config back into Update, so the Monitor thresholds screen can
+// merge them into display rows (buildMonitorRows, manage_monitor.go).
+type monitorTargetsMsg struct {
+	targets []sw.Target
+	cfg     *config.Config
+	err     error
+}
+
+// monitorAppliedMsg carries the result of a single enable/disable or
+// threshold edit (fetch Config, mutate, ApplyConfig) back into Update; cfg
+// is the just-applied config (nil on error), used to rebuild monRows so the
+// screen reflects what was actually saved rather than an optimistic local
+// guess.
+type monitorAppliedMsg struct {
+	cfg *config.Config
+	err error
+}
+
+// --- commands ---
+
+// applyScheduleCmd fetches Config fresh, applies ans via applySchedule
+// (manage_schedule.go), and posts the result with ApplyConfig -- the same
+// fetch/mutate/apply shape applyWebSetupCmd (tui.go) uses for the web-setup
+// wizard.
+func applyScheduleCmd(api core.API, ans scheduleAnswers) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return manageAppliedMsg{err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		if err := applySchedule(cfg, ans); err != nil {
+			return manageAppliedMsg{err: err}
+		}
+		if err := api.ApplyConfig(cfg); err != nil {
+			return manageAppliedMsg{err: err}
+		}
+		return manageAppliedMsg{}
+	}
+}
+
+// applyQuietHoursCmd is applyScheduleCmd's counterpart for the Quiet hours
+// screen's single raw value (applyQuietHours, manage_quiet.go).
+func applyQuietHoursCmd(api core.API, raw string) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return manageAppliedMsg{err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		if err := applyQuietHours(cfg, raw); err != nil {
+			return manageAppliedMsg{err: err}
+		}
+		if err := api.ApplyConfig(cfg); err != nil {
+			return manageAppliedMsg{err: err}
+		}
+		return manageAppliedMsg{}
+	}
+}
+
+// applyHealthchecksCmd is applyScheduleCmd's counterpart for the
+// Healthchecks screen's single raw value (applyHealthchecks, manage_health.go).
+func applyHealthchecksCmd(api core.API, raw string) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return manageAppliedMsg{err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		if err := applyHealthchecks(cfg, raw); err != nil {
+			return manageAppliedMsg{err: err}
+		}
+		if err := api.ApplyConfig(cfg); err != nil {
+			return manageAppliedMsg{err: err}
+		}
+		return manageAppliedMsg{}
+	}
+}
+
+// discoverMonitorCmd runs sw.DiscoverLocal() (this host's live target
+// discovery -- safe because serverwatch-ctl always shares a host with the
+// daemon it manages, see DiscoverLocal's doc) alongside a fresh Config
+// fetch, so the Monitor thresholds screen can merge them via
+// buildMonitorRows.
+func discoverMonitorCmd(api core.API) tea.Cmd {
+	return func() tea.Msg {
+		targets := sw.DiscoverLocal()
+		cfg, err := api.Config()
+		return monitorTargetsMsg{targets: targets, cfg: cfg, err: err}
+	}
+}
+
+// applyMonitorEnableCmd fetches Config fresh, flips target's enabled state
+// via applyMonitorEnable (manage_monitor.go), and posts it with
+// ApplyConfig -- one atomic apply per toggle, matching `serverwatch
+// monitor enable|disable` doing one save per invocation.
+func applyMonitorEnableCmd(api core.API, target string, enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return monitorAppliedMsg{err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		applyMonitorEnable(cfg, target, enabled)
+		if err := api.ApplyConfig(cfg); err != nil {
+			return monitorAppliedMsg{err: err}
+		}
+		return monitorAppliedMsg{cfg: cfg}
+	}
+}
+
+// applyMonitorThresholdCmd is applyMonitorEnableCmd's counterpart for
+// editing a single target's threshold override (applyMonitorThreshold,
+// manage_monitor.go).
+func applyMonitorThresholdCmd(api core.API, target, valueStr string) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return monitorAppliedMsg{err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		if err := applyMonitorThreshold(cfg, target, valueStr); err != nil {
+			return monitorAppliedMsg{err: err}
+		}
+		if err := api.ApplyConfig(cfg); err != nil {
+			return monitorAppliedMsg{err: err}
+		}
+		return monitorAppliedMsg{cfg: cfg}
+	}
+}
+
+// --- Update ---
+
+// updateManageKey routes a keypress to whichever management screen is
+// active, mirroring updateSetupKey's role for the web-setup wizard.
+func (m model) updateManageKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.mgr.screen {
+	case manageMenuList:
+		return m.updateManageMenuKey(msg)
+	case manageScheduleMode:
+		return m.updateScheduleModeKey(msg)
+	case manageScheduleValue, manageQuietValue, manageHealthValue:
+		return m.updateManageValueKey(msg)
+	case manageMonitorList:
+		return m.updateMonitorListKey(msg)
+	case manageMonitorThreshold:
+		return m.updateMonitorThresholdKey(msg)
+	case manageResult:
+		// Any key returns to the menu; per-screen state resets on next entry.
+		m.mgr.screen = manageMenuList
+		return m, nil
+	}
+	return m, nil
+}
+
+// updateManageMenuKey handles the top level management menu: up/down (or
+// j/k) moves the cursor over manageItems, enter opens the selected screen,
+// esc/q returns to Home.
+func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.mgr.cursor > 0 {
+			m.mgr.cursor--
+		}
+	case "down", "j":
+		if m.mgr.cursor < len(manageItems)-1 {
+			m.mgr.cursor++
+		}
+	case "enter":
+		m.mgr.applyErr = nil
+		switch m.mgr.cursor {
+		case 0:
+			m.mgr.screen = manageScheduleMode
+			m.mgr.schedModeCursor = 0
+			m.mgr.schedAns = scheduleAnswers{}
+			return m, nil
+		case 1:
+			m.mgr.screen = manageQuietValue
+			m.mgr.valueIn = newManageValueInput("22-6 or off")
+			return m, m.mgr.valueIn.Focus()
+		case 2:
+			m.mgr.screen = manageHealthValue
+			m.mgr.valueIn = newManageValueInput("https://hc-ping.com/... or off")
+			return m, m.mgr.valueIn.Focus()
+		case 3:
+			m.mgr.screen = manageMonitorList
+			m.mgr.monLoading = true
+			m.mgr.monErr = nil
+			m.mgr.monCursor = 0
+			return m, discoverMonitorCmd(m.api)
+		}
+	case "esc", "q":
+		m.step = stepHome
+	}
+	return m, nil
+}
+
+// updateScheduleModeKey handles the Schedule screen's mode-selection row:
+// off applies immediately (no further input needed); daily/weekly move on
+// to the value step for that mode's HH:MM/dow@HH:MM input.
+func (m model) updateScheduleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.mgr.schedModeCursor > 0 {
+			m.mgr.schedModeCursor--
+		}
+	case "down", "j":
+		if m.mgr.schedModeCursor < len(scheduleModeChoices)-1 {
+			m.mgr.schedModeCursor++
+		}
+	case "enter":
+		switch scheduleModeChoices[m.mgr.schedModeCursor] {
+		case "off":
+			m.mgr.schedAns = scheduleAnswers{Mode: scheduleOff}
+			m.mgr.applying = true
+			return m, applyScheduleCmd(m.api, m.mgr.schedAns)
+		case "daily":
+			m.mgr.schedAns.Mode = scheduleDaily
+			m.mgr.screen = manageScheduleValue
+			m.mgr.valueIn = newManageValueInput("HH:MM")
+			return m, m.mgr.valueIn.Focus()
+		case "weekly":
+			m.mgr.schedAns.Mode = scheduleWeekly
+			m.mgr.screen = manageScheduleValue
+			m.mgr.valueIn = newManageValueInput("dow@HH:MM e.g. mon@09:00")
+			return m, m.mgr.valueIn.Focus()
+		}
+	case "esc":
+		m.mgr.screen = manageMenuList
+	}
+	return m, nil
+}
+
+// updateManageValueKey feeds msg into the single-line value input shared by
+// the schedule-value/quiet-hours/healthchecks screens: enter commits (via
+// the matching applyXCmd) and esc backs out (to the schedule mode screen
+// for the schedule value step, or straight to the menu for quiet-hours/
+// healthchecks, which have no intermediate mode step). Mirrors tui.go's
+// updateTextKey (see that function's doc for why mutation and return stay
+// on the same receiver copy throughout).
+func (m model) updateManageValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		val := m.mgr.valueIn.Value()
+		switch m.mgr.screen {
+		case manageScheduleValue:
+			if m.mgr.schedAns.Mode == scheduleDaily {
+				m.mgr.schedAns.Daily = val
+			} else {
+				m.mgr.schedAns.Weekly = val
+			}
+			m.mgr.applying = true
+			return m, applyScheduleCmd(m.api, m.mgr.schedAns)
+		case manageQuietValue:
+			m.mgr.applying = true
+			return m, applyQuietHoursCmd(m.api, val)
+		case manageHealthValue:
+			m.mgr.applying = true
+			return m, applyHealthchecksCmd(m.api, val)
+		}
+		return m, nil
+	case "esc":
+		if m.mgr.screen == manageScheduleValue {
+			m.mgr.screen = manageScheduleMode
+		} else {
+			m.mgr.screen = manageMenuList
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.mgr.valueIn, cmd = m.mgr.valueIn.Update(msg)
+	return m, cmd
+}
+
+// updateMonitorListKey handles the Monitor thresholds list: up/down (or
+// j/k) moves the cursor, enter/space toggles the target under the cursor's
+// enabled state (applied immediately, one ApplyConfig per toggle), 't'
+// opens the threshold-edit input for that target, esc/q returns to the menu.
+func (m model) updateMonitorListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.mgr.monCursor > 0 {
+			m.mgr.monCursor--
+		}
+	case "down", "j":
+		if m.mgr.monCursor < len(m.mgr.monRows)-1 {
+			m.mgr.monCursor++
+		}
+	case "enter", " ":
+		if len(m.mgr.monRows) == 0 {
+			return m, nil
+		}
+		row := m.mgr.monRows[m.mgr.monCursor]
+		m.mgr.monErr = nil
+		return m, applyMonitorEnableCmd(m.api, row.ID, !row.Enabled)
+	case "t":
+		if len(m.mgr.monRows) == 0 {
+			return m, nil
+		}
+		row := m.mgr.monRows[m.mgr.monCursor]
+		m.mgr.monThreshIn = newManageValueInput("threshold value")
+		if row.ThresholdSet {
+			m.mgr.monThreshIn.SetValue(strconv.FormatFloat(row.Threshold, 'f', -1, 64))
+			m.mgr.monThreshIn.CursorEnd()
+		}
+		m.mgr.monEditingThreshold = true
+		m.mgr.screen = manageMonitorThreshold
+		return m, m.mgr.monThreshIn.Focus()
+	case "esc", "q":
+		m.mgr.screen = manageMenuList
+	}
+	return m, nil
+}
+
+// updateMonitorThresholdKey feeds msg into the threshold-edit input: enter
+// commits (applyMonitorThresholdCmd) and returns to the list, esc discards.
+func (m model) updateMonitorThresholdKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.mgr.monEditingThreshold = false
+		m.mgr.screen = manageMonitorList
+		if len(m.mgr.monRows) == 0 {
+			return m, nil
+		}
+		row := m.mgr.monRows[m.mgr.monCursor]
+		val := m.mgr.monThreshIn.Value()
+		return m, applyMonitorThresholdCmd(m.api, row.ID, val)
+	case "esc":
+		m.mgr.monEditingThreshold = false
+		m.mgr.screen = manageMonitorList
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.mgr.monThreshIn, cmd = m.mgr.monThreshIn.Update(msg)
+	return m, cmd
+}
+
+// --- View ---
+
+// manageView renders whichever management screen is active.
+func (m model) manageView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("manage serverwatch") + "\n\n")
+	switch m.mgr.screen {
+	case manageMenuList:
+		for i, item := range manageItems {
+			cursor := "  "
+			if i == m.mgr.cursor {
+				cursor = "> "
+			}
+			fmt.Fprintf(&b, "%s%s\n", cursor, item)
+		}
+		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to open, esc to go home") + "\n")
+	case manageScheduleMode:
+		b.WriteString("schedule:\n\n")
+		for i, choice := range scheduleModeChoices {
+			cursor := "  "
+			if i == m.mgr.schedModeCursor {
+				cursor = "> "
+			}
+			fmt.Fprintf(&b, "%s%s\n", cursor, choice)
+		}
+		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to select, esc to cancel") + "\n")
+	case manageScheduleValue:
+		label := "daily time (HH:MM):"
+		if m.mgr.schedAns.Mode == scheduleWeekly {
+			label = "weekly time (dow@HH:MM):"
+		}
+		fmt.Fprintf(&b, "%s\n\n%s\n", label, m.mgr.valueIn.View())
+		b.WriteString(manageApplyingOrHint(m.mgr.applying))
+	case manageQuietValue:
+		fmt.Fprintf(&b, "quiet hours (HH-HH, or \"off\"):\n\n%s\n", m.mgr.valueIn.View())
+		b.WriteString(manageApplyingOrHint(m.mgr.applying))
+	case manageHealthValue:
+		fmt.Fprintf(&b, "healthchecks ping URL (or \"off\"):\n\n%s\n", m.mgr.valueIn.View())
+		b.WriteString(manageApplyingOrHint(m.mgr.applying))
+	case manageMonitorList:
+		b.WriteString(m.monitorListView())
+	case manageMonitorThreshold:
+		row := monitorTargetRow{}
+		if len(m.mgr.monRows) > 0 {
+			row = m.mgr.monRows[m.mgr.monCursor]
+		}
+		fmt.Fprintf(&b, "threshold for %s (%s):\n\n%s\n", row.ID, row.Kind, m.mgr.monThreshIn.View())
+		b.WriteString("\n" + hintStyle.Render("enter to save, esc to cancel") + "\n")
+	case manageResult:
+		if m.mgr.applyErr != nil {
+			b.WriteString(errStyle.Render(fmt.Sprintf("apply failed: %v", m.mgr.applyErr)) + "\n")
+		} else {
+			b.WriteString("applied.\n")
+		}
+		b.WriteString("\n" + hintStyle.Render("press any key to return to the menu") + "\n")
+	}
+	return b.String()
+}
+
+// manageApplyingOrHint is the value screens' trailing line: "applying..."
+// while the ApplyConfig round trip is in flight, otherwise the usual
+// enter/esc hint.
+func manageApplyingOrHint(applying bool) string {
+	if applying {
+		return "\napplying...\n"
+	}
+	return "\n" + hintStyle.Render("enter to apply, esc to cancel") + "\n"
+}
+
+// monitorListView renders the Monitor thresholds screen's target table.
+func (m model) monitorListView() string {
+	var b strings.Builder
+	if m.mgr.monLoading {
+		b.WriteString("discovering targets...\n")
+		return b.String()
+	}
+	if m.mgr.monErr != nil {
+		b.WriteString(errStyle.Render(fmt.Sprintf("error: %v", m.mgr.monErr)) + "\n\n")
+	}
+	if len(m.mgr.monRows) == 0 {
+		b.WriteString("no monitorable targets discovered.\n")
+	} else {
+		for i, row := range m.mgr.monRows {
+			cursor := "  "
+			if i == m.mgr.monCursor {
+				cursor = "> "
+			}
+			state := "on"
+			if !row.Enabled {
+				state = "off"
+			}
+			if !row.Available {
+				state = "unavailable"
+			}
+			threshold := "-"
+			if row.ThresholdSet {
+				threshold = strconv.FormatFloat(row.Threshold, 'f', -1, 64)
+			}
+			fmt.Fprintf(&b, "%s%-28s %-8s %-12s %s\n", cursor, row.ID, row.Kind, state, threshold)
+		}
+	}
+	b.WriteString("\n" + hintStyle.Render("up/down to move, enter/space to toggle, t to edit threshold, esc to go back") + "\n")
+	return b.String()
+}
