@@ -272,6 +272,52 @@ func TestWritePluginManifest_NonFatalStyle(t *testing.T) {
 	}
 }
 
+// TestWritePluginManifest_ForcesModeOnReinstall guards against a gotcha
+// os.WriteFile has: it only applies its mode argument when CREATING the
+// file. On a re-install (`serverwatch install` run again to upgrade), if
+// plugins.json already exists with looser permissions, a plain
+// os.WriteFile(path, b, 0o600) call would truncate and rewrite its content
+// but leave the existing (looser) mode untouched, silently weakening the
+// "root-only trust anchor" guarantee. This pre-creates the manifest at
+// 0o644 and asserts writePluginManifest forces it back down to exactly
+// 0o600, proving the mode is enforced on an EXISTING file, not just on
+// create.
+func TestWritePluginManifest_ForcesModeOnReinstall(t *testing.T) {
+	prevStateDir := stateDir
+	stateDir = t.TempDir()
+	t.Cleanup(func() { stateDir = prevStateDir })
+
+	// Simulate a prior install that (somehow) left plugins.json world/group
+	// readable.
+	if err := os.WriteFile(pluginManifestPath(), []byte(`{"ctl":"stale"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(pluginManifestPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o644 {
+		t.Fatalf("precondition: manifest mode = %o, want 0644", fi.Mode().Perm())
+	}
+
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "serverwatch-ctl"), []byte("ctl v2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writePluginManifest(binDir); err != nil {
+		t.Fatalf("writePluginManifest (re-install): %v", err)
+	}
+
+	fi, err = os.Stat(pluginManifestPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("manifest mode after re-install = %o, want 0600 (mode must be forced on an existing file, not just on create)", fi.Mode().Perm())
+	}
+}
+
 // TestCmdUninstall_RemovesPluginManifest checks the other half of Task 2:
 // cmdUninstall removes <stateDir>/plugins.json (best-effort, like its other
 // cleanups) so a subsequent front-door invocation correctly reports the

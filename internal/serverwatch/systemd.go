@@ -201,6 +201,16 @@ func writePluginManifest(binDir string) error {
 	if err := os.WriteFile(pluginManifestPath(), b, 0o600); err != nil {
 		return fmt.Errorf("write plugin manifest %s: %w", pluginManifestPath(), err)
 	}
+	// os.WriteFile only applies the mode argument when CREATING the file; if
+	// plugins.json already existed (a re-install / upgrade) it is truncated
+	// and rewritten WITHOUT its permissions being touched, so a pre-existing
+	// manifest with looser perms would silently keep them. Force 0600 here,
+	// the same way copyFile (above) force-chmods dst after os.WriteFile for
+	// the identical reason, so the "root-only trust anchor" guarantee holds
+	// on every install, not just the first one.
+	if err := os.Chmod(pluginManifestPath(), 0o600); err != nil {
+		return fmt.Errorf("chmod plugin manifest %s: %w", pluginManifestPath(), err)
+	}
 	return nil
 }
 
