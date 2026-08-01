@@ -50,7 +50,7 @@ serverwatch is the opposite bet.
 | **Live metrics** | CPU, memory, swap, load, temperature on a fast tier that drives detection and live status |
 | **Slow tier** | Disk usage and SMART, docker containers, systemd services, network throughput |
 | **Alerting** | Static thresholds plus a rolling baseline, with boot and recovery reports, a daily digest, and a weekly rollup |
-| **Channels** | Telegram by default, plus email, Gotify, and ntfy |
+| **Channels** | Telegram by default, plus email, webhook, Slack, Discord, ntfy, and Gotify |
 | **Downtime** | Heartbeats, power-down reconstruction across reboots, and reachability checks |
 | **History** | A compact binary time-series store with tiered retention, queryable from the CLI and the web UI |
 | **Web UI** | An optional live dashboard, history charts, a config editor, and a curated public status page |

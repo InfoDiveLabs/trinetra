@@ -112,17 +112,16 @@ type Deps struct {
 }
 
 // Start is the web server's entry point: given Deps, it binds and serves
-// (per cfg.Web.Mode — see serving.go's listenAndServe) when Deps.Enabled and
+// (per cfg.Web.Mode, see serving.go's listenAndServe) when Deps.Enabled and
 // returns a stop func that gracefully shuts it down. If Deps.Enabled is
-// false, Start binds nothing and returns a no-op stop and a nil error — the
-// daemon always calls maybeStartWeb/Start unconditionally (see
-// internal/serverwatch/web_deps.go), so "disabled" has to be a valid,
-// harmless outcome here rather than an error.
+// false, Start binds nothing and returns a no-op stop and a nil error: the
+// serverwatch-web binary calls Start unconditionally (see cmd/serverwatch-web),
+// so "disabled" has to be a valid, harmless outcome here rather than an error.
 //
 // When Enabled is true, Start first calls validateOrigin (issue #59) to
 // fail fast on a passkey-unsafe or incomplete web.* config BEFORE binding
-// anything: a non-nil return here means the caller (maybeStartWeb) must
-// log it and treat the web server as not started, while the daemon itself
+// anything: a non-nil return here means the caller (serverwatch-web) must
+// log it and treat the web server as not started, while it itself
 // keeps running.
 func Start(d Deps) (stop func(), err error) {
 	if !d.Enabled {
