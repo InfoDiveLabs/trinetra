@@ -27,7 +27,7 @@ import (
 //
 // `go test` runs this package's tests with cwd == this directory
 // (internal/serverwatch), but "go list -deps ./cmd/serverwatch" must
-// expand from the MODULE ROOT — so the command's working directory is
+// expand from the MODULE ROOT, so the command's working directory is
 // explicitly set to the module root (two levels up from this file) rather
 // than relying on the test binary's default cwd.
 func TestDefaultBuildIsStdlibOnly(t *testing.T) {

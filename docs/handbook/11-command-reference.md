@@ -111,9 +111,12 @@ socket rather than reading state in-process.
 ### 2.1 `serverwatch-ctl` (BETA)
 
 `serverwatch-ctl` is a separate client binary that dials the daemon's control
-socket and reads state over it. Today it offers only non-interactive passthrough
-commands that mirror their daemon-side output. The interactive management TUI is
-not built yet.
+socket. Run it with a subcommand (`status`, `doctor`, `alerts`) for a one-shot,
+non-interactive read that mirrors the daemon-side output. Run it with no
+subcommand to launch the interactive Bubble Tea TUI. The TUI is early: it shows
+live status and a guided "set up the web UI" flow that applies over the socket
+via `ApplyConfig` (no hand-typed config keys). More management screens (channels,
+schedules, thresholds) are coming; see the roadmap chapter.
 
 ```
 serverwatch-ctl [--socket PATH] [--token PATH] <command>

@@ -96,9 +96,11 @@ behavior is the `/start <pin>` handshake.
 The preview is a foundation, and several pieces that make it a complete
 replacement for the embedded design are still open. Being plain about them:
 
-- **The `serverwatch-ctl` interactive TUI.** The control CLI can already run
-  one-shot commands over the socket, but the interactive Bubble Tea terminal
-  interface is not built.
+- **The `serverwatch-ctl` interactive TUI (in progress).** A first slice has
+  landed: running `serverwatch-ctl` with no subcommand opens a Bubble Tea TUI
+  showing live status and a guided "set up the web UI" flow that applies over
+  the socket. The remaining management screens (channels, schedules, thresholds,
+  first-run onboarding) are still to come.
 - **The core supervisor.** The core does not yet spawn and monitor the
   `serverwatch-web` child process. Running the out-of-process web today means
   launching and watching it yourself; the supervisor that would own its
