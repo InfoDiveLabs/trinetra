@@ -50,19 +50,6 @@ func writeSeries(w io.Writer, pts []Point, format string) error {
 	}
 }
 
-// dumpSeries queries store for metric over [from, to] at resolution res and
-// writes the result to w via writeSeries. Kept as its own entry point (with
-// its own tests, dump_test.go) alongside cmdDump's core.API-routed path
-// below: a plain SampleStore query, no core.API/CLI-state-dir involvement,
-// for callers that already have a store open.
-func dumpSeries(w io.Writer, store SampleStore, metric string, from, to int64, res Resolution, format string) error {
-	pts, err := store.Query(metric, from, to, res)
-	if err != nil {
-		return fmt.Errorf("query %s: %w", metric, err)
-	}
-	return writeSeries(w, pts, format)
-}
-
 // seriesPointsToPoints converts core.API's Series result back into this
 // package's own Point type, so cmdDump's json output keeps rendering
 // capitalized field names (see writeSeries' doc) even though the value now

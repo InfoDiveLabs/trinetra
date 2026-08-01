@@ -26,13 +26,12 @@ const sessionGCInterval = 10 * time.Minute
 
 // Deps is what the web server needs from the running daemon, expressed
 // without importing internal/serverwatch (see the design note atop
-// internal/serverwatch/web_deps.go). Store is this package's own SeriesStore
-// interface (series_store.go) — the Task 9 (#65) resolution of the Task 1
-// placeholder that made this field `any`, mirroring Task 8's DashboardView
-// resolution of Deps.Snapshot: internal/serverwatch/daemon_web.go adapts the
-// daemon's concrete SampleStore into a SeriesStore at the call site, so this
-// package never needs to import serverwatch's SampleStore/Point/Resolution
-// types.
+// internal/serverwatch/web_deps.go). API is this package's single seam onto
+// the daemon's live state (see Deps.API's own doc below): the dashboard,
+// monitoring, history/series, and downtime handlers all read through it,
+// and its write methods (ApplyConfig/TestChannel/AckAlert/UnackAlert) cover
+// config and channel writes too, so this package never needs to import
+// serverwatch's own store/config-reload types directly.
 type Deps struct {
 	// Cfg returns the current config (race-safe against the daemon's reload).
 	Cfg func() *config.Config

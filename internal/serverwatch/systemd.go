@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"strings"
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
@@ -444,28 +443,4 @@ func onOff(enabled bool) string {
 		return "on"
 	}
 	return "off"
-}
-
-// collectorSummary renders the `serverwatch doctor` cardinality/disk
-// guardrail output (docs/ROADMAP.md Epic #69 x7): the on/off state of every
-// opt-in extended collector, plus the configured SampleStore's series count
-// and on-disk footprint. store may be nil (the configured backend failed to
-// open), in which case the series/disk line reads "unavailable" instead of
-// panicking or erroring.
-func collectorSummary(c *config.Config, store SampleStore) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "collectors: container_stats=%s net_throughput=%s services=%s processes=%s smart_attrs=%s\n",
-		onOff(c.ContainerStatsEnabled()), onOff(c.NetThroughputEnabled()), onOff(c.ServicesEnabled()),
-		onOff(c.ProcessesEnabled()), onOff(c.SmartAttrsEnabled()))
-	if store == nil {
-		b.WriteString("time-series: unavailable\n")
-		return b.String()
-	}
-	n, diskBytes, err := store.Stats()
-	if err != nil {
-		b.WriteString("time-series: unavailable\n")
-		return b.String()
-	}
-	fmt.Fprintf(&b, "time-series: %d series, %.1f MB on disk (raw+1m)\n", n, float64(diskBytes)/(1024*1024))
-	return b.String()
 }

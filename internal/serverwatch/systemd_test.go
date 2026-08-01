@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"serverwatch/internal/config"
 )
 
 // TestCopyFileAtomicReplace guards the rename-based copyFile: it must replace
@@ -57,55 +55,12 @@ func TestRenderUnit(t *testing.T) {
 	}
 }
 
-// TestCollectorSummaryListsTogglesAndStoreStats asserts collectorSummary
-// (the testable helper behind `serverwatch doctor`'s cardinality/disk
-// guardrail output, docs/ROADMAP.md Epic #69 x7) reports every collect.*
-// toggle's on/off state plus the SampleStore's series count and disk
-// footprint.
-func TestCollectorSummaryListsTogglesAndStoreStats(t *testing.T) {
-	c := config.Default()
-	if err := c.Set("collect.services", "false"); err != nil {
-		t.Fatal(err)
-	}
-	store, err := OpenStore("memory", t.TempDir(), StoreOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.Append(1, MetricSet{"cpu": 1, "mem": 2}); err != nil {
-		t.Fatal(err)
-	}
-
-	got := collectorSummary(c, store)
-	for _, want := range []string{
-		"container_stats=on", "net_throughput=on", "services=off",
-		"processes=on", "smart_attrs=on",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("collectorSummary missing %q; got:\n%s", want, got)
-		}
-	}
-	if !strings.Contains(got, "2 series") {
-		t.Errorf("collectorSummary missing series count; got:\n%s", got)
-	}
-}
-
-// TestCollectorSummaryNilStoreUnavailable asserts a nil store (the
-// configured backend failed to open) renders "unavailable" rather than
-// panicking.
-func TestCollectorSummaryNilStoreUnavailable(t *testing.T) {
-	c := config.Default()
-	got := collectorSummary(c, nil)
-	if !strings.Contains(got, "unavailable") {
-		t.Errorf("collectorSummary(nil store) = %q, want it to mention unavailable", got)
-	}
-}
-
-// TestCmdDoctorPrintsCollectorSummary is a CLI-level smoke test for the
-// wiring added in cmdDoctor: it loads the configured store (via
-// openConfiguredStore, same helper migrate/dump use) and appends
-// collectorSummary's output. Exercises the real tsfile-backend path end to
-// end (not just the collectorSummary helper in isolation).
+// TestCmdDoctorPrintsCollectorSummary is a CLI-level smoke test for
+// cmdDoctor: it loads the configured store (via openConfiguredStore, same
+// helper migrate/dump use) and renders the collector on/off toggles plus
+// SampleStore stats via buildDoctorReport/renderDoctorReport (systemd.go).
+// Exercises the real tsfile-backend path end to end, not just those helpers
+// in isolation.
 func TestCmdDoctorPrintsCollectorSummary(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")

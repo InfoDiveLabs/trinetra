@@ -88,41 +88,19 @@ func maybeStartWeb(d WebDeps) func() {
 // the /monitoring page reads through core.API (Task 5) rather than a
 // separate Deps.Monitoring closure.
 
-// seriesStoreFor adapts a native serverwatch.SampleStore (possibly nil when
-// store-writes-disabled mode leaves the daemon without one) into the
-// web.SeriesStore interface (internal/web/series_store.go), the Task 9
-// (#65) resolution of the Task 1 placeholder that made WebDeps.Store widen
-// straight into web.Deps.Store as `any`, mirroring buildDashboardView's role
-// for Deps.Snapshot. Since Task 5 (core-contract-s1) routed the history
-// page's /api/series through wd.API (newInprocAPI, which resolves raw-vs-1m
-// against the SampleStore itself) instead of a separate web.Deps.Store
-// field, maybeStartWeb no longer calls this directly. It's kept (and still
-// covered by daemon_web_history_test.go) as the seriesStoreAdapter
-// constructor for any future non-web.Deps consumer that needs a
-// web.SeriesStore specifically.
+// eventsStoreFor adapts d.Store (a native serverwatch.SampleStore, possibly
+// nil) into the web.EventsStore interface (internal/web/events_store.go),
+// backing the history page's "Downtime · 30d" panel and the alerts page's
+// "Uptime · 30d" tile (Deps.Events). It wraps the store in a
+// seriesStoreAdapter, the same adapter type the now-removed seriesStoreFor
+// used to build for the read/Query side (core.API.Series has covered that
+// path directly since Task 5, core-contract-s1). Events is the one method
+// on that adapter still live in production.
 //
-// A nil store returns a true nil web.SeriesStore, NOT a non-nil interface
+// A nil store returns a true nil web.EventsStore, NOT a non-nil interface
 // wrapping a nil *seriesStoreAdapter: assigning a typed nil pointer into an
 // interface value produces a non-nil interface whose method set still
 // panics on first use, so this indirection matters, not just style.
-func seriesStoreFor(store SampleStore, cfg func() *config.Config) web.SeriesStore {
-	if store == nil {
-		return nil
-	}
-	return &seriesStoreAdapter{store: store, cfg: cfg}
-}
-
-// eventsStoreFor adapts d.Store (a native serverwatch.SampleStore, possibly
-// nil) into the web.EventsStore interface (internal/web/events_store.go),
-// backing the history page's "Downtime · 30d" panel — the downtime
-// counterpart of seriesStoreFor. It reuses the SAME seriesStoreAdapter
-// (which satisfies both web.SeriesStore and web.EventsStore), so the daemon
-// hands the web one wrapper for both history feeds. cfg isn't needed for
-// Events (no resolution to pick), so it's left nil here.
-//
-// A nil store returns a true nil web.EventsStore, NOT a non-nil interface
-// wrapping a nil *seriesStoreAdapter — same nil-interface gotcha
-// seriesStoreFor guards against (see its doc).
 func eventsStoreFor(store SampleStore) web.EventsStore {
 	if store == nil {
 		return nil
@@ -130,48 +108,19 @@ func eventsStoreFor(store SampleStore) web.EventsStore {
 	return &seriesStoreAdapter{store: store}
 }
 
-// seriesStoreAdapter is the concrete web.SeriesStore/web.EventsStore
-// seriesStoreFor/eventsStoreFor build: it wraps a native SampleStore and
-// resolves the raw-vs-1m Resolution argument SampleStore.Query needs
-// internally (via PickResolution and the daemon's configured
-// storage.raw_retention), so internal/web — which holds this only as a
-// web.SeriesStore/web.EventsStore — never needs a Resolution type of its own.
+// seriesStoreAdapter is the concrete web.EventsStore eventsStoreFor builds:
+// it wraps a native SampleStore. Its cfg field and the raw-vs-1m Resolution
+// handling it used to support belonged to the adapter's former Query method
+// (the web.SeriesStore side, removed once core.API.Series took over history
+// reads); Events, the method still in production use, needs no resolution
+// picking, so cfg goes unused on that path.
 type seriesStoreAdapter struct {
 	store SampleStore
 	// cfg returns the daemon's current config (race-safe against SIGHUP
-	// reload, same as WebDeps.Cfg) so Query can read the LIVE
-	// storage.raw_retention on every call rather than a value captured once
-	// at daemon startup. May be nil in tests that don't care about a
-	// specific retention window; Query falls back to defaultRawRetention
-	// then, mirroring configuredRawRetention's own nil-safety.
+	// reload, same as WebDeps.Cfg). Unused by Events; kept on the struct
+	// only because tests still construct this adapter with it set. May be
+	// nil.
 	cfg func() *config.Config
-}
-
-// Query implements web.SeriesStore: PickResolution picks raw vs 1m from the
-// requested range, "now", and the configured raw retention, then delegates
-// to the wrapped SampleStore.Query and widens each returned Point into a
-// web.SeriesPoint. A store error is returned as-is (propagated, not
-// swallowed) — internal/web's seriesAPIHandler is what decides an error
-// still renders as an empty 200 response, not this adapter's job.
-func (a *seriesStoreAdapter) Query(metric string, from, to int64) ([]web.SeriesPoint, error) {
-	rawRetention := defaultRawRetention
-	if a.cfg != nil {
-		if cfg := a.cfg(); cfg != nil {
-			rawRetention = configuredRawRetention(cfg)
-		}
-	}
-	now := time.Now().Unix()
-	res := PickResolution(from, to, now, rawRetention)
-
-	pts, err := a.store.Query(metric, from, to, res)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]web.SeriesPoint, len(pts))
-	for i, p := range pts {
-		out[i] = web.SeriesPoint{TS: p.TS, Min: p.Min, Avg: p.Avg, Max: p.Max}
-	}
-	return out, nil
 }
 
 // Events implements web.EventsStore: it delegates to the wrapped
