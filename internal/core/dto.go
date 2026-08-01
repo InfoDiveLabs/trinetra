@@ -7,6 +7,14 @@ type Resolution int
 const (
 	ResRaw Resolution = iota
 	Res1m
+	// ResAuto is a sentinel meaning "let the implementation pick the
+	// resolution". A Series caller that doesn't need to care about raw vs
+	// 1m can pass this; a later task's implementation resolves it via
+	// serverwatch.PickResolution (the age/config-dependent picker, which
+	// stays in internal/serverwatch since it needs the store's actual
+	// raw-retention configuration, out of reach for this stdlib-only
+	// package).
+	ResAuto
 )
 
 // SeriesPoint is one time-series sample: TS is Unix seconds, Min/Avg/Max
