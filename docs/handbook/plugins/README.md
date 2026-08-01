@@ -20,12 +20,20 @@ There are two plugins today:
 
 ## Installing plugins
 
-Plugins install alongside the daemon. `serverwatch install` records the
-SHA-256 of each companion binary it finds next to the core into a root-only
-install manifest, so the core can later verify it is about to run the genuine
-binary it installed. If you build or hand-copy a plugin into place yourself,
-re-run `serverwatch install` afterward so its checksum is recorded; until then
-the front-door has nothing to verify the binary against and refuses to run it.
+Install is a one-step process: download (or build) all three binaries,
+`serverwatch`, `serverwatch-ctl`, and `serverwatch-web`, into the same
+directory, then run `sudo ./serverwatch install` once. `serverwatch install`
+copies any plugin binary it finds next to the source `serverwatch` binary
+into `/usr/local/bin` alongside the daemon, then records the SHA-256 of each
+one it just copied into a root-only install manifest, so the core can later
+verify it is about to run the genuine binary it installed. A plugin that is
+not present next to the source binary is simply skipped, not an error; the
+daemon itself still installs.
+
+If you build or hand-copy a plugin straight into `/usr/local/bin` yourself
+instead, bypassing the copy step above, re-run `serverwatch install`
+afterward so its checksum is recorded; until then the front-door has nothing
+to verify the binary against and refuses to run it.
 
 ## The front-door and safe-exec model
 

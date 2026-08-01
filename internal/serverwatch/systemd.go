@@ -90,6 +90,16 @@ func cmdInstall(args []string) int {
 	if err := linkOnPath(dst, secondaryBinPath); err != nil {
 		fmt.Fprintf(stderr, "warning: could not link %s -> %s: %v\n", secondaryBinPath, dst, err)
 	}
+	// Copy any companion plugin binaries (serverwatch-ctl, serverwatch-web)
+	// sitting next to the SOURCE binary (self) into the same directory dst
+	// was just installed into, so the manifest scan below actually finds
+	// something. Per-plugin non-fatal, like everything else here: a copy
+	// hiccup on one plugin should not block installing the daemon itself,
+	// and a plugin that simply is not present next to self is not an error
+	// (see writePluginManifest's identical "absence is not failure" note).
+	if err := copyPluginsAlongside(filepath.Dir(self), filepath.Dir(dst)); err != nil {
+		fmt.Fprintf(stderr, "warning: could not copy plugin binaries: %v\n", err)
+	}
 	// Record the checksum manifest the safe plugin launcher (plugin_launch.go)
 	// verifies companion binaries against before exec'ing them. Scanning the
 	// SAME directory dst was just copied into (rather than, say, os.Executable
@@ -121,8 +131,79 @@ func cmdInstall(args []string) int {
 			return 1
 		}
 	}
-	fmt.Fprintln(stdout, "installed and started. set a token: serverwatch telegram set-token <token>")
+	fmt.Fprintln(stdout, installedPluginsMessage()+
+		" installed and started. set a token: serverwatch telegram set-token <token>")
 	return 0
+}
+
+// installedPluginsMessage reports which companion plugins ended up recorded
+// in the plugin manifest after copyPluginsAlongside/writePluginManifest ran,
+// so the install success line tells the operator whether the plugins they
+// expect actually made it in (or that none were found next to the source
+// binary and copied). Reads the manifest rather than re-deriving the list
+// from copyPluginsAlongside's own return value so it reflects exactly what
+// verifyPlugin will later check against.
+func installedPluginsMessage() string {
+	manifest, err := loadPluginManifest()
+	if err != nil || len(manifest) == 0 {
+		return "no plugin binaries found alongside the source binary (serverwatch-ctl/serverwatch-web skipped);"
+	}
+	var names []string
+	for _, name := range pluginManifestNames {
+		if _, ok := manifest[name]; ok {
+			names = append(names, "serverwatch-"+name)
+		}
+	}
+	if len(names) == 0 {
+		return "no plugin binaries found alongside the source binary (serverwatch-ctl/serverwatch-web skipped);"
+	}
+	return "installed plugins: " + strings.Join(names, ", ") + ";"
+}
+
+// copyPluginsAlongside copies each companion plugin binary
+// ("serverwatch-<name>" for every name in pluginManifestNames) found in
+// srcDir into dstDir at mode 0755, using the same atomic copyFile as the
+// daemon binary itself. srcDir is the directory of the SOURCE binary
+// (filepath.Dir(self) in cmdInstall) -- the natural place an operator drops
+// the plugin binaries alongside the daemon binary before running install --
+// not dstDir, which is /usr/local/bin, the install destination.
+//
+// A plugin that is absent from srcDir is skipped, not an error: most
+// installs only ship the daemon, or only some of the plugins. A path that
+// exists but is not a regular file (a symlink or directory left behind by
+// something else) is likewise skipped, mirroring writePluginManifest's
+// IsRegular guard immediately below -- only real plugin binaries get
+// installed and only real plugin binaries get hashed into the manifest.
+// A copy failure on one plugin (permissions, disk full, ...) is reported
+// back as a single joined error for the caller to log as a warning; it does
+// not stop the loop from attempting the remaining plugins, so one bad
+// companion never blocks another good one from installing.
+func copyPluginsAlongside(srcDir, dstDir string) error {
+	var errs []string
+	for _, name := range pluginManifestNames {
+		binName := "serverwatch-" + name
+		src := filepath.Join(srcDir, binName)
+		info, err := os.Lstat(src)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			errs = append(errs, fmt.Sprintf("stat %s: %v", src, err))
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		dst := filepath.Join(dstDir, binName)
+		if err := copyFile(src, dst, 0o755); err != nil {
+			errs = append(errs, fmt.Sprintf("copy %s: %v", src, err))
+			continue
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 // linkOnPath ensures link is a symlink to target, so `sudo <name>` resolves
@@ -221,6 +302,18 @@ func writePluginManifest(binDir string) error {
 	return nil
 }
 
+// removeInstalledPlugins removes each companion plugin binary
+// ("serverwatch-<name>" for every name in pluginManifestNames) from binDir.
+// Best-effort and symmetric with the other cmdUninstall cleanups: it never
+// returns an error, so a plugin that is already absent (never installed, or
+// removed by hand) is simply a no-op for that name, not a failure that could
+// abort the rest of uninstall.
+func removeInstalledPlugins(binDir string) {
+	for _, name := range pluginManifestNames {
+		_ = os.Remove(filepath.Join(binDir, "serverwatch-"+name))
+	}
+}
+
 func cmdUninstall(args []string) int {
 	x := osExec{}
 	_, _ = x.Run("systemctl", "disable", "--now", "serverwatch")
@@ -233,6 +326,12 @@ func cmdUninstall(args []string) int {
 	// left lying around after uninstall. --purge below already removes the
 	// whole stateDir, so this matters mainly for a non-purge uninstall.
 	_ = os.Remove(pluginManifestPath())
+	// Symmetric with cmdInstall's copyPluginsAlongside: remove the plugin
+	// binaries install placed next to the daemon, so an uninstall does not
+	// leave orphaned serverwatch-ctl/serverwatch-web binaries -- now
+	// unverifiable anyway since the manifest above was just removed -- sitting
+	// in /usr/local/bin.
+	removeInstalledPlugins("/usr/local/bin")
 	_, _ = x.Run("systemctl", "daemon-reload")
 	purge := len(args) > 0 && args[0] == "--purge"
 	if purge {
