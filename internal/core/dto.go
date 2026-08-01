@@ -299,3 +299,61 @@ func (v MonitoringView) DisksWarnCritCount() int {
 	}
 	return n
 }
+
+// AlertRecord is one alert as rendered to a consumer, covering both a
+// currently-active alert (serverwatch.ActiveAlert, keyed by Key) and a
+// historical fire/recover entry (serverwatch.AlertEvent): Key identifies
+// the check that fired (for example "cpu"), Kind is "fire" or "recover"
+// (empty for an active alert, which has no fire/recover distinction of its
+// own), Source identifies what raised it, Time is the Unix-seconds
+// timestamp it fired (or, for an active alert, went active), and Acked
+// mirrors a manual `serverwatch alerts ack <key>`.
+type AlertRecord struct {
+	Key      string `json:"key"`
+	Severity string `json:"severity"`
+	Kind     string `json:"kind"`
+	Source   string `json:"source"`
+	Time     int64  `json:"time"`
+	Acked    bool   `json:"acked"`
+}
+
+// DoctorReport is core's projection of `serverwatch doctor`'s diagnostic
+// output (internal/serverwatch/systemd.go's cmdDoctor): docker reachability,
+// smartctl availability, discovered thermal zones and monitoring targets,
+// the on/off state of every opt-in extended collector, and a
+// human-readable summary of the configured SampleStore's series count and
+// on-disk footprint (or "unavailable" if the store failed to open).
+type DoctorReport struct {
+	// DockerAccess mirrors cmdDoctor's "docker: available=%v method=%s"
+	// line as a single string.
+	DockerAccess      string `json:"docker_access"`
+	SmartctlAvailable bool   `json:"smartctl_available"`
+	ThermalZones      int    `json:"thermal_zones"`
+	TargetsDiscovered int    `json:"targets_discovered"`
+
+	// ContainerStatsOn/NetThroughputOn/ServicesOn/ProcessesOn/SmartAttrsOn
+	// mirror config.Config's identically-purposed *Enabled() methods, one
+	// per opt-in extended collector (collectorSummary's on/off line).
+	ContainerStatsOn bool `json:"container_stats_on"`
+	NetThroughputOn  bool `json:"net_throughput_on"`
+	ServicesOn       bool `json:"services_on"`
+	ProcessesOn      bool `json:"processes_on"`
+	SmartAttrsOn     bool `json:"smart_attrs_on"`
+
+	// StoreStats mirrors collectorSummary's "time-series: N series, X.X MB
+	// on disk (raw+1m)" line (or "time-series: unavailable" when the
+	// configured store failed to open) as a single string.
+	StoreStats string `json:"store_stats"`
+}
+
+// Event is one live daemon event pushed to a core.API.Subscribe stream:
+// Kind identifies what happened (for example "alert_fire", "alert_recover"),
+// Severity/Source/Title mirror AlertRecord's identically named fields for
+// alert-shaped events, and Time is the Unix-seconds timestamp it occurred.
+type Event struct {
+	Kind     string `json:"kind"`
+	Severity string `json:"severity"`
+	Source   string `json:"source"`
+	Title    string `json:"title"`
+	Time     int64  `json:"time"`
+}
