@@ -15,7 +15,7 @@ import (
 
 // maxSeriesRangeSeconds bounds a single /api/series request's [from, to]
 // span: 400 days, generously beyond the 30-day rollup-retention default
-// (docs/DESIGN-storage.md) so any legitimate history query (even the
+// (docs/handbook/09-storage-and-data-model.md) so any legitimate history query (even the
 // mockup's widest "30d" chip) fits comfortably, while still rejecting the
 // "absurd range" case this task's validation requires (e.g. from=0, a
 // multi-century span) before it ever reaches the store.

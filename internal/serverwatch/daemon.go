@@ -197,7 +197,7 @@ func slowMetricSet(s Snapshot) MetricSet {
 // alongside slowMetricSet on slow ticks. Net rx/tx are surfaced live via
 // Snapshot.ContainerStats/status.json but deliberately NOT persisted as
 // series here: one cpu + one mem series per running container is the
-// cardinality this design accepts (docs/ROADMAP.md #71/#76); adding net
+// cardinality this design accepts (docs/handbook/12-roadmap-and-status.md #71/#76); adding net
 // series per container would double it again for comparatively low value.
 func containerMetricSet(s Snapshot) MetricSet {
 	ms := make(MetricSet, len(s.ContainerStats)*2)

@@ -38,7 +38,7 @@ const secondaryBinPath = "/usr/bin/serverwatch"
 // installing the `serverwatch-web` binary (`go build -tags web`, `make
 // web`/`web-cross`) and then `serverwatch config set web.enabled true` is
 // the entire path to a web-capable service; no unit change is needed. See
-// docs/WEB.md for the web.*/public.* config keys and serving modes.
+// docs/handbook/08-web-ui.md for the web.*/public.* config keys and serving modes.
 func renderUnit(binPath string) string {
 	return fmt.Sprintf(`[Unit]
 Description=server-watcher host monitor
@@ -362,7 +362,7 @@ func cmdDoctor(args []string) int {
 	x := osExec{}
 	fs := osFS{}
 
-	// Cardinality/disk guardrail visibility (docs/ROADMAP.md Epic #69 x7): a
+	// Cardinality/disk guardrail visibility (docs/handbook/12-roadmap-and-status.md Epic #69 x7): a
 	// corrupt config just falls back to defaults here (same as cmdConfig's
 	// set/unset repair path) since doctor is a read-only diagnostic, not
 	// worth failing over.

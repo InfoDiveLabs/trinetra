@@ -1,5 +1,5 @@
 // Package serverwatch: migrate.go implements the `serverwatch migrate`
-// subcommand (s9 in docs/DESIGN-storage.md): a one-shot importer that reads
+// subcommand (s9 in docs/handbook/09-storage-and-data-model.md): a one-shot importer that reads
 // every legacy JSONL sample/downtime record written by the old Store
 // (store.go) and re-appends it into the configured SampleStore, then
 // archives the legacy files.

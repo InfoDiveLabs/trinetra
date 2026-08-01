@@ -74,18 +74,18 @@ type Config struct {
 	Channels []ChannelConfig `json:"channels,omitempty"`
 	Storage  struct {
 		// Backend selects the SampleStore implementation (see
-		// internal/serverwatch/samplestore.go and docs/DESIGN-storage.md).
+		// internal/serverwatch/samplestore.go and docs/handbook/09-storage-and-data-model.md).
 		// One of validStorageBackends; defaults to "tsfile".
 		Backend string `json:"backend,omitempty"`
 		// RawRetention/RollupRetention are duration strings (time.ParseDuration
 		// syntax, e.g. "48h") controlling how long the tsfile backend keeps raw
-		// and 1m-rollup samples respectively (see docs/DESIGN-storage.md). The
+		// and 1m-rollup samples respectively (see docs/handbook/09-storage-and-data-model.md). The
 		// event retention window reuses RollupRetention. Defaults: 48h / 720h.
 		RawRetention    string `json:"raw_retention,omitempty"`
 		RollupRetention string `json:"rollup_retention,omitempty"`
 	} `json:"storage"`
 	// Collect holds opt-in toggles for the expensive extended collectors
-	// (docs/ROADMAP.md Epic #69). A nil pointer means "unset -> use the
+	// (docs/handbook/12-roadmap-and-status.md Epic #69). A nil pointer means "unset -> use the
 	// documented default" so an explicit false survives Save/Load: a plain
 	// bool with `omitempty` would drop a false value from the JSON and Load
 	// would then re-fill it from Default() (true) instead of honoring it.
@@ -126,7 +126,7 @@ type Config struct {
 		SmartInterval int `json:"smart_interval,omitempty"`
 	} `json:"collect"`
 	// Web holds the embedded web UI server's settings (internal/web,
-	// `-tags web` builds only — see docs/ROADMAP.md epic #56). The default
+	// `-tags web` builds only — see docs/handbook/12-roadmap-and-status.md epic #56). The default
 	// !web build never reads these, but the keys live here (untagged) so
 	// they're manageable via `serverwatch config set` regardless of which
 	// binary is installed.
@@ -171,7 +171,7 @@ type Config struct {
 	} `json:"web"`
 	// Public holds the admin-curated exposure settings for the anonymous
 	// /public status page (internal/web, `-tags web` builds only -- see
-	// docs/ROADMAP.md issue #67). Both fields default to "off"/empty:
+	// docs/handbook/12-roadmap-and-status.md issue #67). Both fields default to "off"/empty:
 	// nothing is exposed anonymously until an admin explicitly enables it
 	// AND curates which panels are visible.
 	Public struct {
@@ -257,7 +257,7 @@ type ChannelConfig struct {
 var validSeverities = map[string]bool{"info": true, "warning": true, "critical": true}
 
 // validStorageBackends allowlists storage.backend. "tsfile" is the design's
-// default backend (docs/DESIGN-storage.md, lands in a later task); "memory"
+// default backend (docs/handbook/09-storage-and-data-model.md, lands in a later task); "memory"
 // is the in-memory reference SampleStore (internal/serverwatch/samplestore.go).
 var validStorageBackends = map[string]bool{"tsfile": true, "memory": true}
 

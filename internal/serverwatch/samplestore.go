@@ -1,5 +1,5 @@
 // Package serverwatch: samplestore.go defines the SampleStore abstraction
-// described in docs/DESIGN-storage.md — the swappable seam between the
+// described in docs/handbook/09-storage-and-data-model.md — the swappable seam between the
 // daemon/handlers/digests and the concrete time-series storage engine.
 //
 // The existing JSONL Store (store.go) remains the live backend used by
@@ -41,7 +41,7 @@ const (
 )
 
 // SampleStore is the storage seam every caller (daemon, handlers, digests)
-// depends on instead of a concrete file format. See docs/DESIGN-storage.md.
+// depends on instead of a concrete file format. See docs/handbook/09-storage-and-data-model.md.
 type SampleStore interface {
 	// Append records one timestamped sample of one or more metrics.
 	Append(ts int64, m MetricSet) error
@@ -68,12 +68,12 @@ type SampleStore interface {
 	// memStore: the number of in-memory metric series) and diskBytes is the
 	// total bytes those series occupy on disk (always 0 for memStore, which
 	// is non-persistent). `serverwatch doctor` surfaces this as a
-	// cardinality/disk guardrail (docs/ROADMAP.md Epic #69 x7).
+	// cardinality/disk guardrail (docs/handbook/12-roadmap-and-status.md Epic #69 x7).
 	Stats() (seriesCount int, diskBytes int64, err error)
 }
 
 // StoreOptions configures a SampleStore's per-resolution retention policy
-// (docs/DESIGN-storage.md "Resolutions, downsampling & retention"). Zero
+// (docs/handbook/09-storage-and-data-model.md "Resolutions, downsampling & retention"). Zero
 // values are replaced with sensible defaults (48h/720h/720h) by each
 // backend's constructor, so callers may pass a bare StoreOptions{} to get
 // the documented defaults.
@@ -84,7 +84,7 @@ type StoreOptions struct {
 }
 
 // defaultRawRetention/defaultRollupRetention/defaultEventRetention match the
-// defaults documented in docs/DESIGN-storage.md and config.Default().
+// defaults documented in docs/handbook/09-storage-and-data-model.md and config.Default().
 const (
 	defaultRawRetention    = 48 * time.Hour
 	defaultRollupRetention = 720 * time.Hour // 30d
@@ -109,7 +109,7 @@ func (o StoreOptions) withDefaults() StoreOptions {
 // PickResolution returns the coarsest resolution that still satisfies a
 // query over [from, to]: ResRaw when the range's start falls within the
 // high-resolution window (from >= nowUnix - rawRetention), else Res1m. This
-// mirrors docs/DESIGN-storage.md: "Query picks the coarsest resolution that
+// mirrors docs/handbook/09-storage-and-data-model.md: "Query picks the coarsest resolution that
 // satisfies the requested range (recent = raw, long = 1m)". Pure function;
 // callers combine it with Query.
 func PickResolution(from, to int64, nowUnix int64, rawRetention time.Duration) Resolution {
@@ -123,7 +123,7 @@ func PickResolution(from, to int64, nowUnix int64, rawRetention time.Duration) R
 // OpenStore constructs a SampleStore for the named backend rooted at dir,
 // applying opts (retention policy) to it.
 //
-// This is the extension point called out in docs/DESIGN-storage.md: adding a
+// This is the extension point called out in docs/handbook/09-storage-and-data-model.md: adding a
 // new backend (the "tsfile" default in s7, or a future "sqlite"/"remote")
 // means adding a case here, not touching any caller. "memory" is a reference
 // backend usable today: fully functional but non-persistent, intended for

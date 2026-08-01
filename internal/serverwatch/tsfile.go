@@ -1,5 +1,5 @@
 // Package serverwatch: tsfile.go implements the default "tsfile" SampleStore
-// backend described in docs/DESIGN-storage.md — a compact, append-only,
+// backend described in docs/handbook/09-storage-and-data-model.md — a compact, append-only,
 // per-series binary store.
 //
 // Layout under dir:
