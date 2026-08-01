@@ -18,6 +18,21 @@ safely locates and execs it. The direct invocations below still apply once
 launched, and remain useful when scripting or working from a non-standard
 install location.
 
+## Installing
+
+`serverwatch-ctl` installs alongside the daemon. The recommended path is to
+download the `serverwatch-ctl-<arch>` asset from the [releases
+page](https://github.com/Suraj-Tiwari/server-monitor/releases) into the same
+directory as the `serverwatch` binary (renamed to `serverwatch-ctl`, dropping
+the arch suffix), then run `sudo serverwatch install`: it copies the plugin
+into `/usr/local/bin` next to the daemon and records its checksum in the
+root-only install manifest, so the `serverwatch cli` front-door can verify and
+run it. If you already installed the daemon, just download the plugin next to
+`serverwatch` and re-run `serverwatch install`. Building from source
+(`go build -o serverwatch-ctl ./cmd/serverwatch-ctl`) is the secondary option.
+See [Installation and first run](../03-installation.md) for the full flow and
+[Plugins](README.md) for the shared install and safe-exec model.
+
 ## Running serverwatch-ctl
 
 Run it with a subcommand (`status`, `doctor`, `alerts`) for a one-shot,

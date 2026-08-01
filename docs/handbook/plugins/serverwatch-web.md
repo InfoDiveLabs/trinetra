@@ -9,6 +9,22 @@ dashboard, the serving modes, and the public page -- see the [Web UI
 chapter](../08-web-ui.md). This page covers only how the binary runs and its
 direct invocation.
 
+## Installing
+
+`serverwatch-web` installs alongside the daemon. The recommended path is to
+download the `serverwatch-web-<arch>` asset from the [releases
+page](https://github.com/Suraj-Tiwari/server-monitor/releases) into the same
+directory as the `serverwatch` binary (renamed to `serverwatch-web`, dropping
+the arch suffix), then run `sudo serverwatch install`: it copies the plugin
+into `/usr/local/bin` next to the daemon and records its checksum in the
+root-only install manifest. With the binary in place, the daemon supervises it
+whenever `web.enabled` is set, or you can launch it with `serverwatch web`. If
+you already installed the daemon, download the plugin next to `serverwatch` and
+re-run `serverwatch install`. Building from source
+(`go build -o serverwatch-web ./cmd/serverwatch-web`) is the secondary option.
+See [Installation and first run](../03-installation.md) and
+[Plugins](README.md) for the shared install and safe-exec model.
+
 ## How it runs
 
 `serverwatch-web` is a plain, separate binary that the daemon supervises. When

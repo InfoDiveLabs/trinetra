@@ -102,27 +102,33 @@ model is in [Architecture](docs/handbook/02-architecture.md).
 ## Quick start
 
 ```bash
-# On the server, pick the arch: amd64 / arm64 / arm (older Pis)
-curl -fsSL -o /tmp/serverwatch \
-  https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/serverwatch-linux-amd64
-chmod +x /tmp/serverwatch
-sudo /tmp/serverwatch install                 # copies to /usr/local/bin, writes and enables the systemd unit
-sudo serverwatch telegram set-token <token>   # token from @BotFather; the only required setting
+# On the server, pick your arch: linux-amd64 / linux-arm64 / linux-arm (older Pis)
+cd /tmp && arch=linux-amd64
+for b in serverwatch serverwatch-ctl serverwatch-web; do
+  curl -fsSL -o "$b" "https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/$b-$arch"
+done
+chmod +x serverwatch serverwatch-ctl serverwatch-web
 
-# The daemon logs a one-time enrollment PIN. Read it, then from YOUR Telegram
-# account message the bot:  /start <pin>
-journalctl -u serverwatch | grep /start
+sudo ./serverwatch install     # installs the daemon AND both plugins, enables the systemd service
+sudo serverwatch cli           # guided first-run setup: bot token, enrollment PIN, web UI
 ```
 
-From there, `/stats` or `/help` in Telegram. To turn on the browser dashboard,
-enable it in config and the core supervises the web plugin for you, or run
-`sudo serverwatch web` directly. Full steps are in
-[Installation and first run](docs/handbook/03-installation.md).
-
-After install, `sudo serverwatch cli` opens the interactive
+`serverwatch install` copies all three binaries to `/usr/local/bin` and starts
+the service; `serverwatch cli` opens the interactive
 [serverwatch-ctl](docs/handbook/plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)
-TUI for guided setup and day-to-day management, if you would rather not
-remember individual commands.
+TUI, which walks you through the Telegram bot token, the `/start <pin>`
+enrollment, and (optionally) the web UI. Prefer the command line? The one
+required setting is the bot token, which prints the enrollment PIN right in the
+terminal:
+
+```bash
+sudo serverwatch telegram set-token <token>   # token from @BotFather
+```
+
+From there, `/stats` or `/help` in Telegram, or `sudo serverwatch web` for the
+browser dashboard. The two plugins are optional: drop them from the download
+loop if you only want the Telegram daemon. Full steps are in [Installation and
+first run](docs/handbook/03-installation.md).
 
 ## Documentation
 

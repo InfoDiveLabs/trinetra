@@ -65,34 +65,35 @@ matches your host:
 | Raspberry Pi 3/4/5 on a 64-bit OS | `serverwatch-linux-arm64` |
 | Older 32-bit Pi or ARMv7 | `serverwatch-linux-arm` |
 
-Download the matching asset to `/tmp` and make it executable. The example below
-grabs the arm64 build; swap the filename for your architecture.
+Download the three assets for your architecture into one directory and make
+them executable. The example below grabs the arm64 builds; swap the `arch`
+value (`linux-amd64` / `linux-arm64` / `linux-arm`) for your host. Each file
+drops its arch suffix so `serverwatch install` finds the plugins by name.
 
 ```bash
-curl -fsSL -o /tmp/serverwatch \
-  https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/serverwatch-linux-arm64
-chmod +x /tmp/serverwatch
+cd /tmp && arch=linux-arm64
+for b in serverwatch serverwatch-ctl serverwatch-web; do
+  curl -fsSL -o "$b" "https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/$b-$arch"
+done
+chmod +x serverwatch serverwatch-ctl serverwatch-web
 ```
 
 Verify what you downloaded before trusting it. Each release includes a
-`checksums.txt` file. Compute the SHA-256 of your download and confirm it
-matches the line for your asset:
+`checksums.txt` file; compute the SHA-256 of each binary and confirm it matches
+the line for that asset:
 
 ```bash
-sha256sum /tmp/serverwatch
+sha256sum serverwatch serverwatch-ctl serverwatch-web
 ```
 
-Compare the printed hash against the matching line in `checksums.txt`. If they
-differ, do not install it; re-download and try again.
+Compare each printed hash against the matching line in `checksums.txt`. If any
+differ, do not install; re-download and try again.
 
-The release also publishes matching assets for the two plugin binaries,
-`serverwatch-ctl-<arch>` and `serverwatch-web-<arch>`. They are optional;
-grab them the same way if you want the management TUI or the web UI, and
-verify them against the same `checksums.txt`. Download all three into the
-same directory (renaming the plugins to `serverwatch-ctl` and
-`serverwatch-web`, dropping the arch suffix), and `serverwatch install` in
-step 3 picks up and installs whichever of them it finds beside the daemon
-binary, in one command, no separate copy step needed.
+The two plugins are optional. Drop `serverwatch-ctl` / `serverwatch-web` from
+the loop if you only want the Telegram daemon; `serverwatch install` (step 3)
+installs whichever of the three it finds beside the daemon binary. You can
+always add a plugin later by downloading it next to `serverwatch` and running
+`serverwatch install` again.
 
 ### Option B: build from source
 
