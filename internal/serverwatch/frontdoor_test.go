@@ -111,10 +111,13 @@ func TestCmdFrontDoor_NotInstalled_Web(t *testing.T) {
 		t.Fatalf("cmdFrontDoor exit = %d, want 1", code)
 	}
 	got := buf.String()
-	for _, want := range []string{"serverwatch-web", "not installed", "serverwatch install", "-tags web"} {
+	for _, want := range []string{"serverwatch-web", "not installed", "serverwatch install", "go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web"} {
 		if !containsFold(got, want) {
 			t.Errorf("stderr missing %q; got:\n%s", want, got)
 		}
+	}
+	if containsFold(got, "-tags web") {
+		t.Errorf("stderr should not mention -tags web (the build tag no longer exists); got:\n%s", got)
 	}
 }
 

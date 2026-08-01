@@ -1,5 +1,3 @@
-//go:build web
-
 // Command serverwatch-web serves the internal/web dashboard as a separate
 // process from the serverwatch daemon: instead of reading live state
 // in-process (the daemon's own -tags web build, internal/serverwatch/

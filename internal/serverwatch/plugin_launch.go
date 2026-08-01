@@ -329,12 +329,11 @@ func cmdFrontDoor(label, pluginName string, args []string) int {
 
 // buildHint returns the go build command that produces the plugin binary
 // pluginName ("ctl" or "web"), used in the not-installed message so a user
-// building from source has the exact command to run. The web plugin needs
-// the "web" build tag (see web_deps.go) to pull in its third-party
-// dependencies; ctl does not.
+// building from source has the exact command to run. Both plugins are
+// plain, untagged builds from their own ./cmd directory.
 func buildHint(pluginName string) string {
 	if pluginName == "web" {
-		return "go build -tags web -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web"
+		return "go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web"
 	}
 	return "go build -o /usr/local/bin/serverwatch-" + pluginName + " ./cmd/serverwatch-" + pluginName
 }

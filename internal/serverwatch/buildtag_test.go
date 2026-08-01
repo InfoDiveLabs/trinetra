@@ -7,13 +7,14 @@ import (
 	"testing"
 )
 
-// TestDefaultBuildIsStdlibOnly asserts the DEFAULT (untagged) build of the
-// serverwatch DAEMON BINARY (cmd/serverwatch) imports no third-party
-// packages: the web build tag (see web_deps.go/daemon_web.go/
-// daemon_noweb.go) must keep go-webauthn, x/crypto/autocert, etc. entirely
-// out of the daemon's module graph unless built with `-tags web`. This is
-// the guard that makes the seam's isolation promise checkable rather than
-// aspirational.
+// TestDefaultBuildIsStdlibOnly asserts the DEFAULT build of the serverwatch
+// DAEMON BINARY (cmd/serverwatch) imports no third-party packages: the
+// daemon simply does not import internal/web, so go-webauthn,
+// x/crypto/autocert, etc. never enter its module graph. There is no build
+// tag involved -- internal/web is an untagged package built into its own
+// separate serverwatch-web binary (cmd/serverwatch-web), and cmd/serverwatch
+// never references it. This is the guard that makes that isolation promise
+// checkable rather than aspirational.
 //
 // Scope is deliberately cmd/serverwatch's own dependency graph, not
 // "./..." (the whole module): cmd/serverwatch-ctl is a separate binary that

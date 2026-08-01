@@ -1,5 +1,3 @@
-//go:build web
-
 // Package web implements the optional, embedded HTTP UI for server-monitor:
 // passkey (WebAuthn) auth, RBAC, a live dashboard, history graphs, a web
 // config editor, and an admin-curated public view. It is compiled ONLY into
