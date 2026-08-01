@@ -10,7 +10,7 @@ import (
 // dashboardTestView is a distinctive fake DashboardView: every number is
 // chosen so it can't collide with any of the mockup's hard-coded demo
 // figures (18% cpu, 83% mem, 4% swap, 0.42 load, 54°C temp, 6/7 containers,
-// 220 units, 91% disk, 214 processes, 11%/512M nextcloud, ...) — see
+// 220 units, 91% disk, 214 processes, 11%/512M nextcloud, ...) -- see
 // ui-mockup/dashboard.html. If a rendered page still shows one of those, the
 // template is still using demo markup instead of the real Deps.Snapshot()
 // value.
@@ -55,7 +55,7 @@ func dashboardTestView() DashboardView {
 
 // dashboardMockupDemoNumbers are the mockup's hard-coded demo figures
 // (ui-mockup/dashboard.html) that must NOT survive into the real dashboard
-// template once it's bound to Deps.Snapshot() — each is distinctive enough
+// template once it's bound to Deps.Snapshot() -- each is distinctive enough
 // (in context) not to collide with real formatted output from
 // dashboardTestView above.
 var dashboardMockupDemoNumbers = []string{

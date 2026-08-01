@@ -127,7 +127,7 @@ func TestUserStoreGetMissingIsNotFound(t *testing.T) {
 }
 
 // TestUserImplementsWebauthnUser pins *User's webauthn.User implementation:
-// WebAuthnID must return the raw ID bytes (not the name — go-webauthn's
+// WebAuthnID must return the raw ID bytes (not the name -- go-webauthn's
 // interface doc is explicit that identity must key off the handle, not the
 // display name), and WebAuthnCredentials must adapt this package's
 // flattened Credential slice into go-webauthn's shape without dropping the

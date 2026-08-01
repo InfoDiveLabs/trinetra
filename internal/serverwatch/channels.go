@@ -11,7 +11,7 @@ import (
 // buildNotifier is the extension point that turns a stored ChannelConfig
 // into a live Notifier. It is a factory switch on cc.Type. It takes the full
 // *config.Config (not just cc) because some channel types' secrets live
-// outside per-channel Settings — telegram's bot token, in particular, is
+// outside per-channel Settings -- telegram's bot token, in particular, is
 // kept in Config.Telegram.Token rather than duplicated into every telegram
 // channel's Settings map.
 //
@@ -194,7 +194,7 @@ func routeFromChannelConfig(cc config.ChannelConfig) Route {
 // channelsFromConfig builds the Dispatcher's []Channel from the user's
 // stored channel config. A channel whose Notifier isn't available yet
 // (buildNotifier returns an error) is skipped, with a note logged to
-// stderr, rather than failing the whole set — one type not being
+// stderr, rather than failing the whole set -- one type not being
 // implemented yet must not take down every other configured channel.
 func channelsFromConfig(c *config.Config) []Channel {
 	var out []Channel
@@ -216,7 +216,7 @@ func channelsFromConfig(c *config.Config) []Channel {
 // every CLI invocation and daemon startup. The legacy telegram.token/
 // telegram.chat_id keys keep working regardless (buildNotifier's telegram
 // case and pollLoop in daemon.go still read them directly, as a fallback and
-// for the command-reply interface respectively) — this makes the channel
+// for the command-reply interface respectively) -- this makes the channel
 // exist so it shows up in `channel list` and can be managed like any other
 // channel, and carries the legacy global CriticalOverridesQuiet setting over
 // into the new channel's Route so migrated users see no behavior change.
@@ -224,7 +224,7 @@ func migrateTelegramChannel(c *config.Config) bool {
 	if c.Telegram.Token == "" {
 		return false
 	}
-	// Guard on Name (the unique key used everywhere else — GetChannel/
+	// Guard on Name (the unique key used everywhere else -- GetChannel/
 	// RemoveChannel/SetChannelField/list all key on Name), not just Type: a
 	// config that already has a channel *named* "telegram" of any type (e.g.
 	// hand-edited/restored as a webhook) must not get a second one appended,

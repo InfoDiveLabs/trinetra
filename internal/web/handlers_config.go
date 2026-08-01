@@ -25,7 +25,7 @@ func configMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 // simplest way to get a copy whose map/slice fields (Targets, Channels,
 // Collect.*) don't alias the original, so validating a batch of edits
 // against the clone can never mutate the live config before every field has
-// passed — the "bad value -> 400, no write" requirement (routes.go/
+// passed -- the "bad value -> 400, no write" requirement (routes.go/
 // configSaveHandler) depends on this.
 func cloneConfig(c *config.Config) (*config.Config, error) {
 	b, err := json.Marshal(c)
@@ -40,7 +40,7 @@ func cloneConfig(c *config.Config) (*config.Config, error) {
 }
 
 // trimFloatText formats v the same way config.Config.Get does internally
-// (strconv.FormatFloat(v, 'f', -1, 64)) — used for both rendering a
+// (strconv.FormatFloat(v, 'f', -1, 64)) -- used for both rendering a
 // TargetOverride.Threshold into the monitors table and diffing old/new
 // values for the audit log.
 func trimFloatText(v float64) string {
@@ -66,10 +66,9 @@ type configTargetRow struct {
 // internal/serverwatch, to keep the module graph one-way, and Deps doesn't
 // expose a generic target inventory today -- only Snapshot's disk mounts and
 // whatever overrides already exist in config. Extending Deps with a full
-// target list
-// is future work; scoping to what's actually available here keeps this
-// task's "enable/disable + per-target threshold" contract real and testable
-// without widening the serverwatch/web seam further.
+// target list is future work; scoping to what's actually available here
+// keeps this task's "enable/disable + per-target threshold" contract real
+// and testable without widening the serverwatch/web seam further.
 func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow {
 	seen := map[string]bool{}
 	var out []configTargetRow
@@ -100,7 +99,7 @@ func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow 
 }
 
 // clearTargetThreshold removes a target's threshold override (if any),
-// leaving its Disabled flag untouched — the config package itself only
+// leaving its Disabled flag untouched -- the config package itself only
 // exposes SetTargetThreshold (always sets), not a way to clear one, since
 // the CLI (`serverwatch target threshold ... `, if it existed) has never
 // needed to; the web form does, since leaving the "Alert at" cell blank
@@ -118,9 +117,9 @@ func clearTargetThreshold(c *config.Config, name string) {
 }
 
 // parseQuietHours splits cfg.QuietHours ("H-H"/"HH-HH", validateQuietHours's
-// format — see internal/config/config.go) into from/to hour integers plus
+// format -- see internal/config/config.go) into from/to hour integers plus
 // whether quiet hours are enabled at all (QuietHours != ""). An unparseable
-// stored value (shouldn't happen — Set already validates on write) falls
+// stored value (shouldn't happen -- Set already validates on write) falls
 // back to 23/8, the mockup's own default, rather than failing the page.
 func parseQuietHours(s string) (from, to int, enabled bool) {
 	if s == "" {
@@ -311,7 +310,7 @@ type scalarEdit struct{ key, val string }
 
 // quietHoursFormValue composes the posted quiet-hours enabled flag + from/to
 // hour <select> values into the "H-H" string config.Set("quiet_hours", ...)
-// expects, or "" to clear it — the inverse of parseQuietHours.
+// expects, or "" to clear it -- the inverse of parseQuietHours.
 func quietHoursFormValue(r *http.Request) string {
 	if r.FormValue("quiet_enabled") == "" {
 		return ""
@@ -351,12 +350,12 @@ func checkboxFormValue(r *http.Request, name string) string {
 }
 
 // applyTargetEdits applies the posted monitors-table rows (target_name[],
-// target_enabled[] — only checked boxes are present, matched by value since
-// unchecked checkboxes never submit — and target_threshold[], positionally
+// target_enabled[] -- only checked boxes are present, matched by value since
+// unchecked checkboxes never submit -- and target_threshold[], positionally
 // paired with target_name[] since a text input always submits) onto newCfg.
 // Returns a 400-worthy error on an unparseable threshold; never partially
 // applies past that point's caller responsibility (newCfg is always a
-// clone — see cloneConfig — so an error here still leaves the live config
+// clone -- see cloneConfig -- so an error here still leaves the live config
 // untouched).
 func applyTargetEdits(newCfg *config.Config, r *http.Request) error {
 	names := r.Form["target_name"]
@@ -422,7 +421,7 @@ func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error 
 
 // configSaveHandler handles POST /config: validates every posted field
 // against a clone of the current config via config.Config.Set (its
-// existing, already-tested validators — a bad value rejects with 400 and
+// existing, already-tested validators -- a bad value rejects with 400 and
 // writes nothing), and only once every field has passed persists +
 // in-process applies via Deps.API.ApplyConfig (task 8; previously
 // Deps.Reload directly -- ApplyConfig's in-process/file-backed

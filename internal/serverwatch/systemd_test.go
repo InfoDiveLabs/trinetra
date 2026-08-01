@@ -12,8 +12,8 @@ import (
 
 // TestCopyFileAtomicReplace guards the rename-based copyFile: it must replace
 // an existing dst (the running-binary upgrade path) with the new content and
-// perm, and leave no ".tmp-install" scratch behind. rename(2) — not a
-// truncating write — is what makes this ETXTBSY-safe for a live daemon.
+// perm, and leave no ".tmp-install" scratch behind. rename(2) -- not a
+// truncating write -- is what makes this ETXTBSY-safe for a live daemon.
 func TestCopyFileAtomicReplace(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")

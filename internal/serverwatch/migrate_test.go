@@ -101,7 +101,7 @@ func TestMigrateLegacyImportsSamplesAndEvents(t *testing.T) {
 
 	// The daemon dual-writes, so it can RECREATE the legacy samples/ with data
 	// already in the SampleStore. Simulate that: re-add a sample via the old
-	// Store, then re-run migrate. The marker must make it a no-op — no
+	// Store, then re-run migrate. The marker must make it a no-op -- no
 	// re-import, no duplicate points.
 	if err := old.AppendSample(Sample{TS: now.Add(-30 * time.Minute).Unix(), CPU: 99, Disks: map[string]float64{"/": 60}}); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestMigrateArchiveNeverClobbersExisting(t *testing.T) {
 	}
 
 	// Daemon recreates samples/, then a --force re-run must NOT clobber the
-	// existing samples.migrated/ — it archives to a timestamped name instead.
+	// existing samples.migrated/ -- it archives to a timestamped name instead.
 	if err := old.AppendSample(Sample{TS: now.Add(-20 * time.Minute).Unix(), CPU: 20}); err != nil {
 		t.Fatal(err)
 	}

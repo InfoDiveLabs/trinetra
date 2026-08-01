@@ -29,7 +29,7 @@ func testDeps(t *testing.T) Deps {
 // viewer+ (requireRole(RoleViewer, ...)), so a SIGNED-IN request renders the
 // base layout (brand + nav) around the dashboard placeholder while an
 // anonymous one redirects to /login; and GET /assets/style.css serves the
-// embedded mockup CSS verbatim (anonymously — assets aren't gated) with a
+// embedded mockup CSS verbatim (anonymously -- assets aren't gated) with a
 // text/css content type. httptest.NewRecorder exercises the handler
 // directly, no real port bound.
 func TestServerServesDashboardAndAssets(t *testing.T) {
@@ -79,7 +79,7 @@ func TestServerServesDashboardAndAssets(t *testing.T) {
 // TestDashboardLinksToMonitoringPage pins the reverse of the earlier
 // /monitoring 404 fix (284abbd): now that /monitoring is a real, working
 // page, the dashboard's "Top containers"/"Filesystems" panels must link to
-// it again — a dead link was worse than no link, but a live link that's
+// it again -- a dead link was worse than no link, but a live link that's
 // missing is just as much a regression once the target exists.
 func TestDashboardLinksToMonitoringPage(t *testing.T) {
 	d := enrollTestDeps(t)

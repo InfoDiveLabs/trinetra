@@ -6,10 +6,12 @@ import (
 	"serverwatch/internal/config"
 )
 
-// API is the single boundary through which every consumer (the embedded web
-// UI, the CLI, and later a socket client) reads daemon state and applies
-// changes. Implementations: an in-process one inside the daemon and a
-// file-backed one for the separate CLI process.
+// API is the single boundary through which every consumer (the web UI, the
+// CLI, and the control-socket client) reads daemon state and applies
+// changes. Implementations: an in-process one inside the daemon, a
+// file-backed one for CLI subcommands with no live daemon connection, and
+// control.Client (internal/control), which serverwatch-ctl and
+// serverwatch-web use to reach a running daemon over its control socket.
 type API interface {
 	// reads
 	Snapshot() (DashboardView, error)

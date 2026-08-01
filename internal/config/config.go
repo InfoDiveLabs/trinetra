@@ -101,20 +101,20 @@ type Config struct {
 		NetThroughput *bool `json:"net_throughput,omitempty"`
 		// Services gates the slow-tier full systemd unit inventory collector
 		// (internal/serverwatch/discover.go listUnits/parseUnits, snapshot
-		// -only — never persisted as a SampleStore series). Defaults to
+		// -only -- never persisted as a SampleStore series). Defaults to
 		// true; nil is treated as true everywhere it's read. The existing
 		// `systemctl --failed` alerting collection is separate and always
 		// runs regardless of this setting.
 		Services *bool `json:"services,omitempty"`
 		// Processes gates the slow-tier process-table overview collector
 		// (internal/serverwatch/proc.go collectProcesses: counts + top-N by
-		// CPU/mem, for the Monitoring "processes" tab). Snapshot-only — never
+		// CPU/mem, for the Monitoring "processes" tab). Snapshot-only -- never
 		// persisted as a SampleStore series (per-process cardinality).
 		// Defaults to true; nil is treated as true everywhere it's read.
 		Processes *bool `json:"processes,omitempty"`
 		// SmartAttrs gates the slow-tier per-device `smartctl -A` attribute
 		// reads (internal/serverwatch/daemon.go collectSlow, feeding the
-		// "smart:<dev>:temp" series) — the heaviest optional per-device call.
+		// "smart:<dev>:temp" series) -- the heaviest optional per-device call.
 		// Defaults to true; nil is treated as true everywhere it's read. The
 		// cheaper `smartctl --scan`/`-H` health checks are unaffected and
 		// always run regardless of this setting.
@@ -132,8 +132,9 @@ type Config struct {
 	// they're manageable via `serverwatch config set` regardless of which
 	// binary is installed.
 	Web struct {
-		// Enabled toggles the embedded web server. Defaults to false: the
-		// web UI is opt-in even in the serverwatch-web binary.
+		// Enabled toggles the web server. Defaults to false: the web UI is
+		// opt-in even in the serverwatch-web binary, which the core daemon
+		// only supervises (spawns/restarts) when this is set.
 		Enabled bool `json:"enabled,omitempty"`
 		// Listen is the "host:port" the web server binds, validated with
 		// net.SplitHostPort. Defaults to 127.0.0.1:8088 (localhost-only;
@@ -286,7 +287,7 @@ func validateRetentionDuration(key, s string) error {
 }
 
 // validateListen rejects anything net.SplitHostPort can't parse into a
-// host/port pair — the same "host:port" shape http.Server.Addr expects.
+// host/port pair -- the same "host:port" shape http.Server.Addr expects.
 func validateListen(s string) error {
 	if _, _, err := net.SplitHostPort(s); err != nil {
 		return fmt.Errorf("web.listen %q invalid: %w (want host:port)", s, err)
@@ -319,7 +320,7 @@ func validateSessionTTL(s string) error {
 // mount suffix is dynamic (one entry per filesystem the daemon reports).
 // "availability" (the public-rework task) surfaces the real 24h up/down
 // strip (internal/web/availability.go's ComputeAvailability) rather than a
-// scalar metric — it's still just one more allowlist id from this package's
+// scalar metric -- it's still just one more allowlist id from this package's
 // point of view; internal/web decides what to render for it.
 var validPublicPanels = map[string]bool{
 	"availability": true,
@@ -330,7 +331,7 @@ var validPublicPanels = map[string]bool{
 // validatePublicPanel rejects any panel id public.panels wouldn't
 // recognize: one of validPublicPanels, or "disk:<mount>" with a non-empty
 // mount suffix. This is the single source of truth for what may ever be
-// written to public.panels — internal/web's /settings/public handler
+// written to public.panels -- internal/web's /settings/public handler
 // reuses it (via Set) rather than re-implementing the allowlist, and
 // internal/web's /public handler only ever renders ids that passed this
 // check, so a stray/malicious value can never reach that unauthenticated
@@ -348,7 +349,7 @@ func validatePublicPanel(s string) error {
 // parsePublicPanels parses a comma-separated public.panels value into a
 // slice, trimming whitespace and dropping empty entries (mirroring
 // splitKinds), validating every entry against validatePublicPanel. Returns
-// the first validation error, if any — the caller (Set) must not persist a
+// the first validation error, if any -- the caller (Set) must not persist a
 // partially-valid list.
 func parsePublicPanels(s string) ([]string, error) {
 	if s == "" {

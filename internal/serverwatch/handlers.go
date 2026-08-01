@@ -9,15 +9,15 @@ import (
 )
 
 const helpText = `commands:
-/stats — current readings
-/status — same as /stats
-/disk — filesystem usage
-/net — connectivity
-/history [days] — downtime history (default 7)
-/down — recent downtime events
-/docker — container states
-/services — failed systemd units
-/help — this message`
+/stats -- current readings
+/status -- same as /stats
+/disk -- filesystem usage
+/net -- connectivity
+/history [days] -- downtime history (default 7)
+/down -- recent downtime events
+/docker -- container states
+/services -- failed systemd units
+/help -- this message`
 
 // handleCommand dispatches an inbound Telegram command to its renderer. c is
 // the live config (thresholds for renderStatus's ok/warn/crit markers); it

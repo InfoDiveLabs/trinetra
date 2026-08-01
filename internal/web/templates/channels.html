@@ -30,7 +30,7 @@
                data-chan-name alone is enough to route through prefillChannel
                (not resetChannel, which would otherwise clobber this modal's
                "Edit channel" title back to "Add channel") without that
-               cross-modal side effect — every field here is already
+               cross-modal side effect -- every field here is already
                server-rendered correctly, so no prefill is actually needed. */}}
           <button class="btn ghost" type="button" data-modal="chanModal-{{$c.Param}}" data-chan-name="{{$c.Name}}">Edit</button>
           <form method="post" action="/channels/{{$c.Param}}/remove" style="display:inline">

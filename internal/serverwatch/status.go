@@ -13,7 +13,7 @@ import (
 
 // maxFailureDetailItems bounds every "only failures" detail list rendered
 // by renderStatus (failing disks, down containers, failed units, FAILED
-// SMART devices) to a sane count, with a "+N more" suffix for the rest —
+// SMART devices) to a sane count, with a "+N more" suffix for the rest --
 // the guarantee that no matter how broken a host is, the Telegram reply
 // can never balloon past the 4096-char message limit the way an
 // unfiltered/uncapped disk or container list used to (see
@@ -187,7 +187,7 @@ func plural(n int) string {
 // inode usage, free/total bytes, and (when the SampleStore has enough
 // history) a linear fill-rate projection. Populated by collectSlow from
 // `df -PT -B1` (device/fstype/usage/size/free) merged with `df -Pi`
-// (inode%), keyed by mount — see parseDFTypes/parseDFInodes in collect.go
+// (inode%), keyed by mount -- see parseDFTypes/parseDFInodes in collect.go
 // and projectDaysToFull in projection.go. Additive/live only: the existing
 // Snapshot.Disks map is untouched since alerting (buildSlowChecks) and the
 // SampleStore series (slowMetricSet) both depend on it.
@@ -231,7 +231,7 @@ type Snapshot struct {
 	SmartHealth  map[string]string  `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
 	// DiskDetail is the live per-mount device/fstype/inode%/size detail (see
 	// the DiskDetail type doc comment above), keyed by mount. Additive to
-	// Disks, always collected in collectSlow (no config toggle — matches how
+	// Disks, always collected in collectSlow (no config toggle -- matches how
 	// Disks itself has no toggle).
 	DiskDetail map[string]DiskDetail `json:"disk_detail,omitempty"`
 	// SmartAttrs is the live per-device SMART attribute detail (temperature,
@@ -255,14 +255,14 @@ type Snapshot struct {
 	// Units is the live, full systemd service-unit inventory (opt-in via
 	// collect.services, slow-tier only, see daemon.go collectSlow and
 	// discover.go listUnits/parseUnits), for the Monitoring "services" tab.
-	// Deliberately a snapshot only — NOT fed into the SampleStore as a
-	// series (unit-name cardinality) — unlike FailedUnits above, which
+	// Deliberately a snapshot only -- NOT fed into the SampleStore as a
+	// series (unit-name cardinality) -- unlike FailedUnits above, which
 	// continues to drive service:* alerting unchanged.
 	Units []UnitInfo `json:"units,omitempty"`
 	// Processes is the live process-table overview (counts + top-N by
 	// CPU/mem), computed by collectProcesses (opt-in via collect.processes,
 	// slow-tier only, see daemon.go's sampler loop and proc.go). Deliberately
-	// a snapshot only for the Monitoring "processes" tab — NOT fed into the
+	// a snapshot only for the Monitoring "processes" tab -- NOT fed into the
 	// SampleStore as a series, since per-process cardinality (hundreds of
 	// short-lived pids per host) is exactly the trap this design avoids,
 	// mirroring Units above.
@@ -272,8 +272,8 @@ type Snapshot struct {
 // renderStatus builds the /stats,/status overview: a header giving the
 // overall status at a glance, a compact resource table (CPU/Mem/Swap/Load/
 // Temp with an ok/warn/crit marker), one summary-count line per category
-// (disks/docker/systemd/smart/internet), and — ONLY when something is
-// failing — a bounded "only failures" detail section. This deliberately
+// (disks/docker/systemd/smart/internet), and -- ONLY when something is
+// failing -- a bounded "only failures" detail section. This deliberately
 // does not enumerate every healthy mount/container/unit: on a real docker
 // host that list is what used to blow the message past Telegram's
 // 4096-char limit (see fix-disk-telegram-brief.md). c may be nil (e.g. a
@@ -312,7 +312,7 @@ func renderStatus(s Snapshot, c *config.Config) string {
 		// Load has no configured threshold anywhere else in this codebase
 		// (unlike cpu/mem/swap/temp/disk, which all have a config.Thresholds
 		// field): heuristically compare load1 against this host's own CPU
-		// count (1x = warn, 2x = crit) — a common rule of thumb for "how
+		// count (1x = warn, 2x = crit) -- a common rule of thumb for "how
 		// saturated is this box," display-only and independent of alerting.
 		nc := float64(runtime.NumCPU())
 		if nc < 1 {

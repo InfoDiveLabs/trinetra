@@ -8,7 +8,7 @@
       <div class="lb">Containers up</div>
     </div>
     <div class="count {{if $v.FailedUnits}}bad{{else}}good{{end}}">
-      <div class="n">{{if $v.UnitsEnabled}}{{len $v.Units}}{{else}}—{{end}}</div>
+      <div class="n">{{if $v.UnitsEnabled}}{{len $v.Units}}{{else}}--{{end}}</div>
       <div class="lb">Units {{if $v.UnitsEnabled}}active{{else}}(collector disabled){{end}} · {{len $v.FailedUnits}} failed</div>
     </div>
     <div class="count {{if gt .DisksWarnCrit 0}}warnc{{else}}good{{end}}">
@@ -16,7 +16,7 @@
       <div class="lb">Filesystem warning+crit</div>
     </div>
     <div class="count">
-      <div class="n">{{if $v.ProcessesEnabled}}{{$v.ProcessesTotal}}{{else}}—{{end}}</div>
+      <div class="n">{{if $v.ProcessesEnabled}}{{$v.ProcessesTotal}}{{else}}--{{end}}</div>
       <div class="lb">Processes{{if not $v.ProcessesEnabled}} (collector disabled){{end}}</div>
     </div>
   </div>
@@ -38,9 +38,9 @@
       <tr data-detail data-kind="container" data-name="{{.Name}}" data-state="{{.State}}"{{if .HasStats}} data-cpu="{{printf "%.0f" .CPUPct}}%" data-mem="{{printf "%.0f" .MemMiB}}M" data-net="↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}} MB/s"{{end}}>
         <td><span class="badge {{if eq .State "running"}}ok{{else if eq .State "restarting"}}warn{{else}}crit{{end}}">{{.State}}</span></td>
         <td class="mono">{{.Name}}</td>
-        <td>{{if .HasStats}}<div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div>{{else}}<span class="note mono">—</span>{{end}}</td>
-        <td>{{if .HasStats}}<div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div>{{else}}<span class="note mono">—</span>{{end}}</td>
-        <td class="mono note">{{if .HasStats}}↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}}{{else}}—{{end}}</td>
+        <td>{{if .HasStats}}<div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div>{{else}}<span class="note mono">-</span>{{end}}</td>
+        <td>{{if .HasStats}}<div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div>{{else}}<span class="note mono">-</span>{{end}}</td>
+        <td class="mono note">{{if .HasStats}}↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}}{{else}}--{{end}}</td>
       </tr>
       {{else}}
       <tr><td colspan="5" class="note">no containers discovered</td></tr>
@@ -58,7 +58,7 @@
         <tr><td colspan="4" class="note">no units reported</td></tr>
         {{end}}
       {{else}}
-        <tr><td colspan="4" class="note">collector disabled (collect.services) — enable it to see the full unit inventory</td></tr>
+        <tr><td colspan="4" class="note">collector disabled (collect.services) -- enable it to see the full unit inventory</td></tr>
       {{end}}
     </tbody></table></div></div>
     <p class="note" style="margin-top:10px">
@@ -100,7 +100,7 @@
         <tr><td colspan="6" class="note">no processes reported</td></tr>
         {{end}}
       {{else}}
-        <tr><td colspan="6" class="note">collector disabled (collect.processes) — enable it to see the process table</td></tr>
+        <tr><td colspan="6" class="note">collector disabled (collect.processes) -- enable it to see the process table</td></tr>
       {{end}}
     </tbody></table></div></div>
     {{if $v.ProcessesEnabled}}<p class="note" style="margin-top:10px">Top by CPU · {{$v.ProcessesTotal}} total</p>{{end}}

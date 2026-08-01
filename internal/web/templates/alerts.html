@@ -5,7 +5,7 @@
     <div class="count bad"><div class="n">{{.FiringCount}}</div><div class="lb">Firing now</div></div>
     <div class="count warnc"><div class="n">{{.AckedCount}}</div><div class="lb">Acknowledged</div></div>
     <div class="count"><div class="n">{{.Resolved7d}}</div><div class="lb">Resolved · 7d</div></div>
-    <div class="count good"><div class="n">{{if .HasUptime}}{{printf "%.2f" .UptimePct30d}}<span class="of">%</span>{{else}}—{{end}}</div><div class="lb">Uptime · 30d</div></div>
+    <div class="count good"><div class="n">{{if .HasUptime}}{{printf "%.2f" .UptimePct30d}}<span class="of">%</span>{{else}}--{{end}}</div><div class="lb">Uptime · 30d</div></div>
   </div>
 
   <div class="section-label"><span class="eyebrow">Firing</span></div>

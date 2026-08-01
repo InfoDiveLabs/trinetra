@@ -65,8 +65,8 @@ func (e *emailNotifier) Send(ctx context.Context, a Alert) error {
 //
 // Every value interpolated into a header line is run through
 // sanitizeHeader first. Alert.Title (and, less directly, from/to) are
-// system-derived — systemd unit names, docker container names, SMART
-// device paths, file names — which can legally contain CR/LF on Linux. An
+// system-derived -- systemd unit names, docker container names, SMART
+// device paths, file names -- which can legally contain CR/LF on Linux. An
 // unsanitized "\r\n" in a header value would let an attacker inject extra
 // headers (Bcc:, Content-Type:) or smuggle body content (SMTP header
 // injection), so CR/LF and other control bytes are stripped here.

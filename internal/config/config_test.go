@@ -1197,7 +1197,7 @@ func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
 
 // TestPublicEnabledPanelsDefaultSetUnset pins public.enabled/public.panels
 // (issue #67): both default to "off"/empty, Set/Get round-trip, and Unset
-// restores the defaults — mirroring TestWebEnabledListenDefaultSetUnset.
+// restores the defaults -- mirroring TestWebEnabledListenDefaultSetUnset.
 func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	c := Default()
 	if got, _ := c.Get("public.enabled"); got != "false" {
@@ -1236,7 +1236,7 @@ func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 
 // TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist at the
 // config layer: only the fixed catalog (or "disk:<mount>") may be stored in
-// public.panels — anything else (typos, or someone trying to smuggle a
+// public.panels -- anything else (typos, or someone trying to smuggle a
 // non-metric identifier like "users"/"config" into the curated list) is
 // rejected with no write, exactly like the other validated config keys.
 func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {

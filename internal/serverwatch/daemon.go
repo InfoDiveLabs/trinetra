@@ -215,7 +215,7 @@ func containerMetricSet(s Snapshot) MetricSet {
 // (opt-in via collect.net_throughput). rates is nil/empty on the first slow
 // tick after startup (NetRateCalc has no prior sample to diff against yet)
 // and whenever the collector is disabled, in which case this returns an
-// empty MetricSet — the sampler loop's caller skips the Append entirely in
+// empty MetricSet -- the sampler loop's caller skips the Append entirely in
 // that case, same as containerMetricSet's len()>0 guard.
 func netRateMetricSet(rates map[string]IfaceRate) MetricSet {
 	ms := make(MetricSet, len(rates)*2)
@@ -231,7 +231,7 @@ func netRateMetricSet(rates map[string]IfaceRate) MetricSet {
 // into a MetricSet: one "smart:<dev>:temp" entry per device whose parsed
 // Temperature_Celsius/Airflow_Temperature attribute is known (TempC>0).
 // Devices with TempC==0 (attribute absent, or smartctl -A failed for that
-// device this tick) are omitted rather than appending a misleading zero —
+// device this tick) are omitted rather than appending a misleading zero --
 // this is the write-path counterpart of the SMART-attribute collector,
 // appended to the SampleStore alongside slowMetricSet on slow ticks, mirroring
 // containerMetricSet/netRateMetricSet's len()>0-guarded Append pattern.
@@ -339,9 +339,9 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 	snap.DockerAccess = da.method
 	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed
 	// `df -PT -B1` call (device/fstype/usage/size/free per mount), gated by
-	// isRealMount && isRealFsType. This used to be two separate df calls —
+	// isRealMount && isRealFsType. This used to be two separate df calls --
 	// snap.Disks from untyped `df -PB1` (path-prefix filtering only) and
-	// snap.DiskDetail from the typed call — which meant snap.Disks had no
+	// snap.DiskDetail from the typed call -- which meant snap.Disks had no
 	// fstype to filter on. On a root daemon on a real docker host, `df`
 	// lists one `overlay` mount per container (plus squashfs/tmpfs/nsfs
 	// pseudo-mounts), so snap.Disks silently exploded to 70+ junk entries:
@@ -398,7 +398,7 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			}
 		}
 	}
-	// failed systemd units (alerting collection — always runs, unaffected by
+	// failed systemd units (alerting collection -- always runs, unaffected by
 	// collect.services below)
 	if out, err := runMaybeSudo(x, "systemctl", "--failed", "--plain", "--no-legend"); err == nil {
 		snap.FailedUnits = parseFailedUnits(string(out))
@@ -539,7 +539,7 @@ func slowEvery(fastInterval, sampleInterval int) int {
 // Telegram 400 → the alert (the core alerting path) silently dropped. This
 // escaping is done at the plain-text source rather than in formatAlert,
 // because other dispatched alerts (the boot report, digests) carry
-// INTENTIONAL HTML from renderStatus that must not be escaped — see
+// INTENTIONAL HTML from renderStatus that must not be escaped -- see
 // formatBootReport / the boot/digest Alert{} sites in cmdDaemon.
 func eventToAlert(e Event, nowUnix int64) Alert {
 	sev := SevWarning
@@ -652,7 +652,7 @@ func cmdDaemon(args []string) int {
 	// startup: this is now the SOLE writer of samples/downtime events, and the
 	// sole read path for history/handlers/digests below. The old JSONL Store
 	// (st) above remains only for status.json, the heartbeat file, and the
-	// baseline/alert-state path helpers — none of which are sample data.
+	// baseline/alert-state path helpers -- none of which are sample data.
 	// openConfiguredStore (migrate.go) centralizes the backend/retention
 	// lookup so `migrate`/`dump` open the exact same store this daemon writes
 	// to.
@@ -668,7 +668,7 @@ func cmdDaemon(args []string) int {
 		defer store.Close()
 	}
 	// NOTE: the store is opened once here and is NOT re-opened on a SIGHUP
-	// config reload below — if storage.backend/retention changes on reload,
+	// config reload below -- if storage.backend/retention changes on reload,
 	// the running store keeps its original settings until next restart. Kept
 	// intentionally simple; revisit if that proves surprising in practice.
 	// Back-fill a "telegram" channel from legacy telegram.token/chat_id, if
@@ -909,7 +909,7 @@ func cmdDaemon(args []string) int {
 
 		// SampleStore write path: every fast tick appends the cheap fast-tier
 		// metrics as raw samples. This is the sole write path for sample
-		// data now — the legacy JSONL Store's AppendSample/AppendDown are no
+		// data now -- the legacy JSONL Store's AppendSample/AppendDown are no
 		// longer called (see the dual-write removal note at store opening
 		// above); migrate.go's one-shot importer still reads any
 		// already-on-disk legacy files via Store.SamplesSince/DownSince.
@@ -1012,7 +1012,7 @@ func cmdDaemon(args []string) int {
 }
 
 // configuredRawRetention returns cfg.Storage.RawRetention parsed as a
-// Duration, falling back to defaultRawRetention when unset/unparseable —
+// Duration, falling back to defaultRawRetention when unset/unparseable --
 // mirroring the fallback each SampleStore backend applies internally via
 // StoreOptions.withDefaults. Needed here too since PickResolution takes the
 // raw duration directly rather than going through a backend.

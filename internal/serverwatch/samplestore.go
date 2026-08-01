@@ -1,5 +1,5 @@
 // Package serverwatch: samplestore.go defines the SampleStore abstraction
-// described in docs/handbook/09-storage-and-data-model.md — the swappable seam between the
+// described in docs/handbook/09-storage-and-data-model.md -- the swappable seam between the
 // daemon/handlers/digests and the concrete time-series storage engine.
 //
 // The existing JSONL Store (store.go) remains the live backend used by
@@ -141,7 +141,7 @@ func OpenStore(backend, dir string, opts StoreOptions) (SampleStore, error) {
 
 // memStore is an in-memory reference implementation of SampleStore. It does
 // not downsample: Query returns whatever was Append-ed for the metric,
-// regardless of the requested Resolution, and Downsample is a no-op — a
+// regardless of the requested Resolution, and Downsample is a no-op -- a
 // single series backs every resolution, so nothing needs rolling up. Because
 // Res1m queries are served from the same raw series, Prune bounds it by
 // opts.RollupRetention (the longer of the two windows) rather than
@@ -190,8 +190,8 @@ func (m *memStore) AppendEvent(e DownEvent) error {
 	return nil
 }
 
-// Events returns downtime events overlapping [from, to] — i.e. End>=from &&
-// Start<=to — mirroring the existing Store.DownSince semantics (End>=since).
+// Events returns downtime events overlapping [from, to] -- i.e. End>=from &&
+// Start<=to -- mirroring the existing Store.DownSince semantics (End>=since).
 func (m *memStore) Events(from, to int64) ([]DownEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

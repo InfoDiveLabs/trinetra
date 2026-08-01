@@ -74,7 +74,7 @@ func TestNavBadgeHiddenWhenZero(t *testing.T) {
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
 
-	// seedSignedInRequest seeds exactly one (admin) user for the session —
+	// seedSignedInRequest seeds exactly one (admin) user for the session --
 	// nothing else is added, so the store ends up with exactly 1.
 	req := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/")
 	rr := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestNavBadgeHiddenWhenZero(t *testing.T) {
 			t.Errorf("nav still renders a badge next to %q with a zero count:\n%s", label, body)
 		}
 	}
-	// Users has exactly one seeded account (the signed-in admin) — its
+	// Users has exactly one seeded account (the signed-in admin) -- its
 	// badge must show "1", not be hidden and not show "0".
 	if !strings.Contains(body, `Users<span class="ct">1</span>`) {
 		t.Errorf("nav Users badge should show 1 for the single seeded user:\n%s", body)

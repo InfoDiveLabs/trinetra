@@ -164,7 +164,7 @@ func (g *gotifyNotifier) Name() string { return g.name }
 // Send JSON-encodes a as a gotifyMessage and POSTs it to
 // <server>/message?token=<token>. Title/Message are built with
 // encoding/json (rather than string concatenation) so arbitrary
-// system-derived text — quotes, backslashes, newlines — is automatically
+// system-derived text -- quotes, backslashes, newlines -- is automatically
 // escaped into valid JSON. It honors ctx the same way ntfyNotifier.Send
 // does. The token is never included in any returned error string, since
 // buildNotifier errors and Dispatch results can end up in logs.
