@@ -132,8 +132,9 @@ type Config struct {
 	// they're manageable via `serverwatch config set` regardless of which
 	// binary is installed.
 	Web struct {
-		// Enabled toggles the embedded web server. Defaults to false: the
-		// web UI is opt-in even in the serverwatch-web binary.
+		// Enabled toggles the web server. Defaults to false: the web UI is
+		// opt-in even in the serverwatch-web binary, which the core daemon
+		// only supervises (spawns/restarts) when this is set.
 		Enabled bool `json:"enabled,omitempty"`
 		// Listen is the "host:port" the web server binds, validated with
 		// net.SplitHostPort. Defaults to 127.0.0.1:8088 (localhost-only;

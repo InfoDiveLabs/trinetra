@@ -66,10 +66,9 @@ type configTargetRow struct {
 // internal/serverwatch, to keep the module graph one-way, and Deps doesn't
 // expose a generic target inventory today -- only Snapshot's disk mounts and
 // whatever overrides already exist in config. Extending Deps with a full
-// target list
-// is future work; scoping to what's actually available here keeps this
-// task's "enable/disable + per-target threshold" contract real and testable
-// without widening the serverwatch/web seam further.
+// target list is future work; scoping to what's actually available here
+// keeps this task's "enable/disable + per-target threshold" contract real
+// and testable without widening the serverwatch/web seam further.
 func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow {
 	seen := map[string]bool{}
 	var out []configTargetRow

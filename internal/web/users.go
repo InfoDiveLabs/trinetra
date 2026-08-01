@@ -211,11 +211,12 @@ func countAdmins(users []*User) int {
 // jsonUserStore is UserStore backed by a single JSON file
 // (<StateDir>/users.json). It intentionally does not cache the parsed
 // users in memory between calls: every method reloads from disk under
-// s.mu, so concurrent goroutines within this process always see the latest
-// persisted state and Put/Delete's read-modify-write can't race each other
-// (a second process editing the file concurrently is out of scope -- nothing
-// else in this daemon does that). Given the low request volume of an
-// enrollment/login ceremony, the extra disk I/O per call is not a concern.
+// the store's fileStoreMutex, so concurrent goroutines within this process
+// always see the latest persisted state and Put/Delete's read-modify-write
+// can't race each other (a second process editing the file concurrently is
+// out of scope -- nothing else in this process does that). Given the low
+// request volume of an enrollment/login ceremony, the extra disk I/O per
+// call is not a concern.
 type jsonUserStore struct {
 	path string
 }
@@ -386,7 +387,7 @@ func (s *jsonUserStore) Put(u *User) error {
 // CreateFirstAdmin atomically persists u as the first-ever account, forcing
 // its role to RoleAdmin -- but ONLY if the store is still empty; otherwise it
 // returns an error and writes nothing. Both the emptiness check and the
-// append happen under the SAME s.mu, which is what closes the first-run
+// append happen under the SAME fileStoreMutex lock, which is what closes the first-run
 // bootstrap TOCTOU: an earlier design decided "0 users ⇒ admin" at
 // /enroll/begin (before the WebAuthn round-trip) and only wrote the account
 // at /enroll/finish, so two tokenless enrollments started before either
@@ -443,7 +444,7 @@ func (s *jsonUserStore) Delete(id string) error {
 }
 
 // SetRoleUnlessLastAdmin sets user id's Role to role, all under a SINGLE
-// s.mu critical section: it loads the current users, and only if demoting id
+// fileStoreMutex critical section: it loads the current users, and only if demoting id
 // (admin -> non-admin) would NOT leave the store admin-less does it write.
 // Two concurrent demotions of the two remaining admins therefore serialize --
 // whichever acquires the lock first commits, the second reloads a store with
@@ -474,7 +475,7 @@ func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
 	return s.saveLocked(users)
 }
 
-// RemoveUnlessLastAdmin deletes user id under a SINGLE s.mu critical section,
+// RemoveUnlessLastAdmin deletes user id under a SINGLE fileStoreMutex critical section,
 // refusing (errLastAdmin) to delete the sole remaining admin -- the removal
 // counterpart of SetRoleUnlessLastAdmin, with the identical atomicity
 // guarantee against a concurrent second remover.
@@ -504,7 +505,7 @@ func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
 }
 
 // RevokeCredentialUnlessLastAdmin removes credential credID from user id's
-// Credentials under a SINGLE s.mu critical section -- load, last-admin
+// Credentials under a SINGLE fileStoreMutex critical section -- load, last-admin
 // check, and write all happen while holding the lock, exactly like
 // SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin. It refuses
 // (errLastAdminCredential) only when id is the sole remaining admin (fewer

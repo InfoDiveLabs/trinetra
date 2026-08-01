@@ -201,7 +201,7 @@ func (s *jsonSessionStore) loadLocked() ([]*Session, error) {
 // group/world-readable even transiently. Atomic (write-temp + rename) so a
 // crash mid-write can't leave a truncated/corrupt file behind, mirroring
 // jsonUserStore.saveLocked/internal/config.Config.Save. Callers must hold
-// s.mu.
+// the store's fileStoreMutex.
 func (s *jsonSessionStore) saveLocked(sessions []*Session) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
