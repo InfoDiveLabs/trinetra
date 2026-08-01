@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -276,4 +277,64 @@ func launchPlugin(name string, args []string, socketPath, token string) error {
 		"SERVERWATCH_CONTROL_TOKEN="+token,
 	)
 	return syscall.Exec(path, argv, env)
+}
+
+// launchPluginFn is the seam the front-door dispatch calls, overridable in
+// tests so the dispatch's error-to-message mapping can be exercised without
+// actually exec'ing a binary (syscall.Exec never returns on success).
+var launchPluginFn = launchPlugin
+
+// cmdFrontDoor resolves the control socket + token and safely execs the
+// companion plugin "serverwatch-<pluginName>". label is the user-facing
+// subcommand ("cli"/"web") used in messages; pluginName is the binary
+// suffix ("ctl"/"web"). On success launchPluginFn never returns; on failure
+// it maps the sentinel error to a clear message and returns a non-zero exit
+// code.
+func cmdFrontDoor(label, pluginName string, args []string) int {
+	socketPath := controlSocketPath()
+
+	// Best-effort: an unreadable token file must not fail the front-door.
+	// The plugin itself surfaces the auth failure if the token turns out to
+	// be wrong or missing; this command's only job is to safely exec the
+	// right binary.
+	tokenBytes, _ := os.ReadFile(controlTokenPath())
+	token := strings.TrimSpace(string(tokenBytes))
+
+	err := launchPluginFn(pluginName, args, socketPath, token)
+	if err == nil {
+		// Defensive: syscall.Exec never returns on success, so this branch
+		// is not normally reached, but a nil error should not be treated
+		// as a failure if it somehow is.
+		return 0
+	}
+
+	pluginBin := "serverwatch-" + pluginName
+	if errors.Is(err, errPluginNotInstalled) {
+		fmt.Fprintf(stderr, "%s is not installed next to serverwatch.\n", pluginBin)
+		fmt.Fprintf(stderr, "Install the serverwatch package (it ships %s), or build it:\n", pluginBin)
+		fmt.Fprintf(stderr, "  %s\n", buildHint(pluginName))
+		fmt.Fprintf(stderr, "Then run `serverwatch install` to record its checksum.\n")
+		return 1
+	}
+	if errors.Is(err, errPluginVerificationFailed) {
+		fmt.Fprintf(stderr, "refusing to run %s: it is not the binary this serverwatch installed\n", pluginBin)
+		fmt.Fprintf(stderr, "(owner/permissions/checksum check failed). This may indicate tampering.\n")
+		fmt.Fprintf(stderr, "details: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(stderr, "serverwatch %s: %v\n", label, err)
+	return 1
+}
+
+// buildHint returns the go build command that produces the plugin binary
+// pluginName ("ctl" or "web"), used in the not-installed message so a user
+// building from source has the exact command to run. The web plugin needs
+// the "web" build tag (see web_deps.go) to pull in its third-party
+// dependencies; ctl does not.
+func buildHint(pluginName string) string {
+	if pluginName == "web" {
+		return "go build -tags web -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web"
+	}
+	return "go build -o /usr/local/bin/serverwatch-" + pluginName + " ./cmd/serverwatch-" + pluginName
 }

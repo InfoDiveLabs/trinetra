@@ -63,6 +63,10 @@ func Main(args []string) int {
 		return cmdDump(args[1:])
 	case "alerts":
 		return cmdAlerts(args[1:])
+	case "cli":
+		return cmdFrontDoor("cli", "ctl", args[1:])
+	case "web":
+		return cmdFrontDoor("web", "web", args[1:])
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s\n", args[0], usage)
 		return 2
@@ -89,7 +93,9 @@ usage:
   serverwatch dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]
   serverwatch alerts [list] [--since 24h] [--limit 20]
   serverwatch alerts ack <key>
-  serverwatch alerts unack <key>`
+  serverwatch alerts unack <key>
+  serverwatch cli                       # interactive management (serverwatch-ctl)
+  serverwatch web                       # web UI (serverwatch-web)`
 
 func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
 
