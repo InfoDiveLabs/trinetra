@@ -16,11 +16,12 @@ import (
 // this coarse costs nothing in correctness.
 const sessionGCInterval = 10 * time.Minute
 
-// The `-tags web` build's reach into github.com/go-webauthn/webauthn (what
-// used to be pinned here by a placeholder stub, see git history) is now the
-// real registration ceremony: webAuthnConfig/beginRegistration/
+// This package's reach into github.com/go-webauthn/webauthn (what used to
+// be pinned here by a placeholder stub, see git history) is now the real
+// registration ceremony: webAuthnConfig/beginRegistration/
 // finishRegistration in auth_webauthn.go, and *User's webauthn.User
-// implementation in users.go (issue #60).
+// implementation in users.go (issue #60). This package is compiled into the
+// serverwatch-web binary, no build tag.
 
 // Deps is what the web server needs from the running daemon, expressed
 // without importing internal/serverwatch (see the design note atop

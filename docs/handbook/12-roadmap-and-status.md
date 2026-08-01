@@ -28,12 +28,14 @@ want something that works today. It is a single daemon, the stdlib-only
   filesystem type, fill projection, and SMART attributes. These are opt-in
   through `collect.*` toggles, with a `doctor` guardrail to keep cardinality and
   disk use in check.
-- **The embedded web UI** (see [The web UI](08-web-ui.md)). Built with `-tags
-  web`, the web interface runs in-process as a goroutine inside the daemon, sharing the live snapshot, the
+- **The web UI** (see [The web UI](08-web-ui.md)). This release built it with
+  `-tags web` as a goroutine inside the daemon, sharing the live snapshot, the
   sample store, and the config. It offers passkey-only WebAuthn auth, RBAC, a
   live dashboard over SSE, history graphs, a web config editor, an alerts page,
-  and an admin-curated public status view. The default binary stays free of the
-  web build's dependencies.
+  and an admin-curated public status view. The default binary stayed free of
+  the web build's dependencies. Later development moves the web UI out of
+  process entirely into a supervised, separate binary with no build tag; see
+  the beta section below.
 
 This is the release running on a live host behind Cloudflare and nginx, and it
 is what the rest of this handbook documents as the working system.
@@ -58,11 +60,14 @@ The preview introduces four things:
   the control channel local and gated to processes that can read the token.
 - **A plugin runtime.** The core hosts plugins and manages the socket-side
   machinery that lets a separate process attach and drive the daemon.
-- **Scaffold plugin binaries.** Two plugins ship as scaffolding on top of that
-  foundation. `serverwatch-ctl` dials the socket to run status, doctor, and
-  alerts against a live daemon from a second process. `serverwatch-web` serves
-  the web UI out of process, talking to the core over the socket instead of
-  living inside the daemon as a goroutine.
+- **Plugin binaries.** Two plugins ship on top of that foundation.
+  `serverwatch-ctl` dials the socket to run status, doctor, and alerts against
+  a live daemon from a second process; it remains scaffolding, with no
+  supervisor managing it yet. `serverwatch-web` serves the web UI out of
+  process, talking to the core over the socket instead of living inside the
+  daemon as a goroutine; for the beta it has grown a supervisor of its own
+  that verifies, spawns, restarts, and stops it, covered in the delivered
+  list below.
 
 The intent behind the split is that the core stays small and boring while
 everything richer plugs in around it without pulling weight into the default
@@ -83,6 +88,10 @@ is done and verified:
   config editor, alerts, and the curated public view.
 - **The `core.API` foundation**, the **control socket**, and the **plugin
   runtime**, including the socket hardening and the per-launch token handshake.
+- **The web supervisor**: the web UI now runs fully out of process, as a
+  single `serverwatch-web` binary with no build tag. The core verifies and
+  spawns it as a child process when `web.enabled` is set, restarts it under a
+  capped backoff if it exits, and stops it on daemon shutdown.
 
 ### A note on Telegram enrollment
 
@@ -103,20 +112,17 @@ replacement for the embedded design are still open. Being plain about them:
   showing live status and a guided "set up the web UI" flow that applies over
   the socket. The remaining management screens (channels, schedules, thresholds,
   first-run onboarding) are still to come.
-- **The core supervisor.** The core does not yet spawn and monitor the
-  `serverwatch-web` child process. Running the out-of-process web today means
-  launching and watching it yourself; the supervisor that would own its
-  lifecycle is not done.
-- **Channel-save validation in the out-of-process web.** When the web UI runs
-  out of process, saving a channel does not yet validate it end to end, so it
-  can silently accept a channel that would never deliver. The in-process build
-  is not affected; this gap is specific to the socket path.
+- **Channel-save validation over the control socket.** Saving a channel from
+  the web UI does not yet validate it end to end, so it can silently accept a
+  channel that would never deliver. This gap is specific to the socket path
+  the web UI reads and writes through.
 - **Per-interface throughput alerting.** Throughput is collected as a series,
   but alerting on a specific interface crossing a threshold is not wired up.
-- **Live event streaming over the control socket.** The `Subscribe` method that
-  would push live events from the core to attached clients is not implemented.
-  Until it lands, the out-of-process web cannot get full live push the way the
-  embedded UI does through its in-process SSE feed.
+- **Live event streaming over the control socket.** The `Subscribe` method
+  that would push live events from the core to attached clients is not
+  implemented over the socket yet. Until it lands, the web UI's dashboard
+  cannot get full server-sent-event push the way a direct in-process reader
+  of `core.API` could.
 
 ## Not planned, for now
 

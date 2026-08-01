@@ -110,8 +110,9 @@ func (u *User) WebAuthnCredentials() []webauthn.Credential {
 
 // var _ webauthn.User = (*User)(nil) pins the interface implementation at
 // compile time: if a go-webauthn upgrade adds/changes a User method, the
-// default (!web-tagged-out, but still `-tags web`) build fails loudly here
-// instead of failing obscurely inside BeginRegistration.
+// serverwatch-web build (this package is compiled into that binary, no
+// build tag) fails loudly here instead of failing obscurely inside
+// BeginRegistration.
 var _ webauthn.User = (*User)(nil)
 
 // transportsFromStrings converts the stored string transport hints back

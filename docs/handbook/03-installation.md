@@ -80,6 +80,11 @@ sha256sum /tmp/serverwatch
 Compare the printed hash against the matching line in `checksums.txt`. If they
 differ, do not install it; re-download and try again.
 
+The release also publishes matching assets for the two plugin binaries,
+`serverwatch-ctl-<arch>` and `serverwatch-web-<arch>`. They are optional;
+grab them the same way if you want the management TUI or the web UI, and
+verify them against the same `checksums.txt`.
+
 ### Option B: build from source
 
 If you would rather build it yourself, clone the repository and cross-compile
@@ -97,6 +102,19 @@ make linux
 ```bash
 scp dist/serverwatch-linux-arm64 myserver:/tmp/serverwatch
 ```
+
+The two plugin binaries build the same way, with no build tag, from their own
+`./cmd` package:
+
+```bash
+GOOS=linux GOARCH=arm64 go build -o dist/serverwatch-ctl-linux-arm64 ./cmd/serverwatch-ctl
+GOOS=linux GOARCH=arm64 go build -o dist/serverwatch-web-linux-arm64 ./cmd/serverwatch-web
+```
+
+(`make cross` builds this whole matrix, plus `serverwatch`, for every
+supported platform in one pass.) Copy whichever of them you want next to
+`/tmp/serverwatch` on the server; `serverwatch install` picks up whatever it
+finds beside the binary it is installing (see step 3 below).
 
 Either way, you now have an executable at `/tmp/serverwatch` on the host, ready
 to install.

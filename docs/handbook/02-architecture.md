@@ -30,11 +30,10 @@ There are two goroutines that matter in every build:
 | Sampler loop | Collects host metrics, evaluates anomaly checks, writes `status.json`, appends to the time-series store, feeds the watchdog | Ticks at `fast_interval` |
 | Telegram long-poller | Answers inbound bot commands (`/stats`, `/disk`, and so on) and handles owner enrollment | Blocks on Telegram's long-poll, replies in about a second |
 
-In the web-enabled build there is a third:
-
-| Goroutine | What it does | Cadence |
-|-----------|--------------|---------|
-| Embedded web server | Serves the passkey-only dashboard, history graphs, and config editor over HTTP | Request-driven |
+When `web.enabled` is set and the control socket is up, the daemon also runs
+a third: a web supervisor goroutine that verifies and spawns `serverwatch-web`
+as a separate child process, rather than linking any web code into the
+daemon itself. See [Web supervisor](#web-supervisor) below.
 
 The shape of the process, and the plugin binaries that dial in from outside it,
 looks like this:
@@ -46,18 +45,18 @@ graph TD
   subgraph proc[serverwatch daemon process]
     sampler[Sampler loop goroutine]
     poller[Telegram long-poller goroutine]
-    webgo[Embedded web server, web build only]
+    supervisor[Web supervisor goroutine]
     api[core.API in-process]
     sock[Control socket: control.sock]
   end
 
   sampler --> api
   poller --> api
-  webgo --> api
   api --> sock
 
+  supervisor -->|verify and spawn| webplug
   ctl[serverwatch-ctl plugin] -->|dials with token| sock
-  webplug[serverwatch-web plugin] -->|dials with token| sock
+  webplug[serverwatch-web child process] -->|dials with token| sock
 ```
 
 The sampler loop is the heart of the daemon and lives in `cmdDaemon`
@@ -84,9 +83,10 @@ config struct. This is why almost every setting reloads live with no restart.
 The daemon is written to stay up. If config on disk is corrupt at startup, it
 falls back to defaults rather than crashing (under `Restart=always` a crash
 would become a crash-loop). If the time-series store fails to open, store
-writes are disabled and the daemon keeps running. If the web server or the
-control socket fails to start, that failure is logged and the daemon carries on
-without it. The guiding rule is that enhancements are never a reason to take
+writes are disabled and the daemon keeps running. If the web supervisor fails
+to verify or spawn `serverwatch-web`, or the control socket fails to start,
+that failure is logged and the daemon carries on without it. The guiding rule
+is that enhancements are never a reason to take
 the monitor down.
 
 ## The tiered sampler
@@ -193,8 +193,8 @@ Everything that reads daemon state or changes daemon config goes through one
 Go interface, `core.API`, defined in `internal/core/api.go`. It is deliberately
 the only boundary:
 
-> `API` is the single boundary through which every consumer (the embedded web
-> UI, the CLI, and later a socket client) reads daemon state and applies
+> `API` is the single boundary through which every consumer (the web UI
+> plugin, the CLI, and later a socket client) reads daemon state and applies
 > changes.
 
 The interface splits cleanly into reads and writes:
@@ -241,25 +241,25 @@ never bloats the daemon. Concretely:
 | Binary | Build | Dependencies | Role |
 |--------|-------|--------------|------|
 | `serverwatch` | default | stdlib only | The daemon and the CLI |
-| `serverwatch-web` | `-tags web` | passkey/webauthn stack and more | Web UI, built into the daemon it links |
+| `serverwatch-web` | no build tag | passkey/webauthn stack and more | Web UI, a separate binary the daemon supervises |
 | `serverwatch-ctl` | in progress | its own | A richer out-of-process control client |
 
-The build seam that enforces this is a small one. The file that starts the web
-server (`daemon_web.go`) is the only file in the package allowed to import
-`internal/web`, and it is compiled only under `-tags web`. The default build
-compiles a no-op stub (`daemon_noweb.go`) in its place. The call site in
-`cmdDaemon` is identical in both builds; only the linked half decides whether
-anything starts. The control-socket code, by contrast, is deliberately untagged
-and ships in both variants, because `internal/control` imports only the
-standard library plus `internal/core` and `internal/config`, so serving it
-never drags a third-party dependency into the default build.
+The build seam that enforces this is simple, not tag-based: the daemon
+package never imports `internal/web` at all. `internal/web` is an ordinary,
+untagged package like any other, but only `cmd/serverwatch-web` imports it,
+so none of its dependencies ever reach the daemon. The control-socket code, by
+contrast, ships inside the daemon itself, because `internal/control` imports
+only the standard library plus `internal/core` and `internal/config`, so
+serving it never drags a third-party dependency into the default build.
 
-A word on status: the plugins are beta and in progress. The web UI works and is
-documented separately, but the out-of-process control story is still being
-built out. There is no interactive `serverwatch-ctl` CLI yet, and there is no
-supervisor managing plugin processes. What exists today is the contract, the
-transport, and a working client library for it. Treat the plugin picture as the
-direction of travel, not a finished feature.
+A word on status: `serverwatch-web` has moved out of unsupervised preview for
+the beta: it is a plain, separate binary that the daemon verifies, spawns,
+restarts, and stops on its own (see [Web supervisor](#web-supervisor)).
+`serverwatch-ctl` is still in progress and still unsupervised: there is no
+supervisor managing its process, and its interactive CLI is an early slice
+(status, doctor, alerts, and a guided web setup flow). What exists today for
+`serverwatch-ctl` is the contract, the transport, and a working client
+library for it; treat it as the direction of travel, not a finished feature.
 
 ### The front-door safe-exec trust model
 
@@ -318,6 +318,59 @@ binary by hand, whether that is a fresh build or a manual copy, must
 (re-)run `serverwatch install` afterward. Until the manifest has a checksum
 entry for that exact file, the front-door has nothing to verify it against and
 refuses to run it.
+
+## Web supervisor
+
+`web.enabled` does not start a goroutine inside the daemon: it tells the
+daemon to supervise `serverwatch-web` as a separate child process. The
+supervisor's job is to keep that child alive for as long as the daemon
+considers the web UI wanted, and to stay out of the way otherwise.
+
+At startup, the daemon checks `web.enabled` once. If it is off, the
+supervisor does nothing. If it is on and the control socket came up, the
+supervisor runs the exact same `resolveAndVerifyPlugin` check the [front-door
+trust model](#the-front-door-safe-exec-trust-model) above uses for
+`serverwatch cli` and `serverwatch web`: the plugin path must resolve next to
+the core binary's own directory, be owned and permissioned correctly, and
+match the SHA-256 recorded in the install manifest. A verification failure is
+logged as a refusal, and the supervisor does not spawn the child; a plain
+`serverwatch install` after a rebuild refreshes the manifest and clears the
+refusal on the next daemon start. `web.enabled` is not reloaded on SIGHUP, so
+toggling it takes effect on the next `systemctl restart serverwatch`, the
+same as any other `web.*` key.
+
+Once verified, the supervisor spawns `serverwatch-web` as a child process,
+passing the control socket path and a per-launch token through the same
+`SERVERWATCH_CONTROL_SOCKET` and `SERVERWATCH_CONTROL_TOKEN` environment
+variables the front-door uses. The child dials the control socket like any
+other plugin and never sees daemon internals directly.
+
+If the child exits, the supervisor treats that as a restart trigger rather
+than a fatal event: it waits under a capped backoff (starting at 1 second,
+doubling up to a 30 second cap, reset to the minimum once a child has stayed
+up longer than 60 seconds) and spawns it again, re-running the verification
+check on every respawn so a binary swapped in between restarts is caught the
+same way a swap before the first spawn would be. On daemon shutdown, the
+supervisor stops the child instead of leaving it orphaned.
+
+```mermaid
+flowchart TD
+  enabled{web.enabled?} -->|no| idle[Supervisor stays idle]
+  enabled -->|yes| verify[resolveAndVerifyPlugin serverwatch web]
+  verify -->|fails| refuse[Log refusal, do not spawn]
+  refuse -->|daemon restart| enabled
+  verify -->|passes| spawn[Spawn child with socket path and token in env]
+  spawn --> dial[Child dials the control socket]
+  dial --> running[Child running]
+  running -->|child exits| backoff[Wait with capped backoff]
+  backoff --> verify
+  running -->|daemon shutdown| stop[Stop child]
+```
+
+The same front-door checks, the same environment variables, and the same
+control socket transport are shared between the manual `serverwatch web`
+front-door and this automatic supervisor; the only difference is who decides
+when to launch the child.
 
 ## The control socket
 
@@ -468,10 +521,12 @@ and removes both the socket and the token file.
 
 The unit is written by `serverwatch install`, rendered by `renderUnit` in
 `internal/serverwatch/systemd.go`, and installed to
-`/etc/systemd/system/serverwatch.service`. There is exactly one unit; the same
-unit wraps the default binary and the web-enabled binary, because `install`
-always copies whichever binary is running to `/usr/local/bin/serverwatch` and
-writes this same file around it. Here it is exactly as emitted:
+`/etc/systemd/system/serverwatch.service`. There is exactly one unit, wrapping
+the `serverwatch` daemon binary; `install` always copies whichever binary is
+running to `/usr/local/bin/serverwatch` and writes this same file around it.
+`serverwatch-web`, when installed, runs as a supervised child of this same
+unit rather than getting a unit of its own; see [Web
+supervisor](#web-supervisor). Here it is exactly as emitted:
 
 ```ini
 [Unit]
@@ -545,8 +600,9 @@ the one-time Telegram enrollment PIN.
 ## Putting it together
 
 Step back and the shape is simple. One process, started and kept alive by
-systemd, runs a tiered sampler loop and a Telegram poller (and, in the web
-build, a web server). The sampler sets the rhythm: cheap checks every few
+systemd, runs a tiered sampler loop and a Telegram poller (and, when
+`web.enabled`, a supervisor that keeps a separate `serverwatch-web` child
+process alive). The sampler sets the rhythm: cheap checks every few
 seconds, expensive checks every minute, a heartbeat on its own clock, and a
 watchdog ping every tick that lets systemd restart the process if the loop ever
 wedges. Every consumer, in-process or out, reads and writes daemon state

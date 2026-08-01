@@ -2,18 +2,19 @@
 // adapting the running daemon's live state (Snapshot, SampleStore, config,
 // alert files) directly -- no HTTP/socket round-trip. This is the daemon's
 // own consumer of the core.API contract (internal/core/api.go, task 3): the
-// embedded web UI and, eventually, an in-process CLI path both read through
-// this rather than reaching into serverwatch internals themselves.
+// serverwatch-web binary, over the control socket, and, eventually, an
+// in-process CLI path both read through this contract rather than reaching
+// into serverwatch internals themselves.
 //
-// This file is deliberately UNTAGGED (unlike daemon_web.go, which may import
-// internal/web): core.API and its DTOs live in internal/core, which imports
-// nothing but stdlib + internal/config (see internal/core/doc.go), so
-// building this adapter never pulls internal/web's third-party dependencies
-// into the default build. That's also why buildDashboardView/
-// buildMonitoringView (below) -- previously only reachable from the
-// `-tags web` build (daemon_web.go) -- live here now: both this in-process
-// API and the web build need the exact same Snapshot -> view projection, and
-// only an untagged file can serve both.
+// This file never imports internal/web: core.API and its DTOs live in
+// internal/core, which imports nothing but stdlib + internal/config (see
+// internal/core/doc.go), so building this adapter never pulls internal/web's
+// third-party dependencies into the default build. That's also why
+// buildDashboardView/buildMonitoringView (below) live here rather than in
+// internal/web itself: both this in-process API and the serverwatch-web
+// binary (which gets its data through core.API over the control socket)
+// need the exact same Snapshot -> view projection, and this package never
+// has to import internal/web to provide it.
 package serverwatch
 
 import (
@@ -31,7 +32,8 @@ import (
 // buildDashboardView adapts a serverwatch.Snapshot (native to this package)
 // into a core.DashboardView -- the Task 8 (#64) resolution of the Task 1
 // placeholder that made Deps.Snapshot return `any`, re-homed here (task 4)
-// so the default build can construct one too, not just `-tags web`.
+// so the default build can construct one too, not just the serverwatch-web
+// binary.
 //
 // CONCURRENCY: snap is a value the caller (d.Snapshot(), ultimately
 // latestSnapshot(), or inprocAPI.getSnap) already copied out of snapshotHub

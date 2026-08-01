@@ -125,9 +125,10 @@ type Config struct {
 		// sample_interval. Unset/0 -> default 1800s (30 min).
 		SmartInterval int `json:"smart_interval,omitempty"`
 	} `json:"collect"`
-	// Web holds the embedded web UI server's settings (internal/web,
-	// `-tags web` builds only — see docs/handbook/12-roadmap-and-status.md epic #56). The default
-	// !web build never reads these, but the keys live here (untagged) so
+	// Web holds the web UI server's settings (internal/web, compiled into
+	// the serverwatch-web binary, no build tag -- see
+	// docs/handbook/12-roadmap-and-status.md epic #56). The default
+	// serverwatch binary never reads these, but the keys live here so
 	// they're manageable via `serverwatch config set` regardless of which
 	// binary is installed.
 	Web struct {
@@ -170,8 +171,9 @@ type Config struct {
 		SessionTTL string `json:"session_ttl,omitempty"`
 	} `json:"web"`
 	// Public holds the admin-curated exposure settings for the anonymous
-	// /public status page (internal/web, `-tags web` builds only -- see
-	// docs/handbook/12-roadmap-and-status.md issue #67). Both fields default to "off"/empty:
+	// /public status page (internal/web, compiled into the serverwatch-web
+	// binary, no build tag -- see docs/handbook/12-roadmap-and-status.md
+	// issue #67). Both fields default to "off"/empty:
 	// nothing is exposed anonymously until an admin explicitly enables it
 	// AND curates which panels are visible.
 	Public struct {

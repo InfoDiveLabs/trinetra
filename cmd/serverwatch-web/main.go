@@ -1,18 +1,18 @@
 // Command serverwatch-web serves the internal/web dashboard as a separate
-// process from the serverwatch daemon: instead of reading live state
-// in-process (the daemon's own -tags web build, internal/serverwatch/
-// daemon_web.go), it dials the daemon's control socket (internal/control)
+// process from the serverwatch daemon. It never reads daemon state
+// in-process; instead it dials the daemon's control socket (internal/control)
 // and uses the resulting *control.Client -- a core.API implementation -- as
-// internal/web.Deps.API. This is S4 Task 1 of
-// plans/2026-08-01-s4-web-plugin.md: get the dashboard route serving
-// end to end from a standalone binary; S4 Task 3 adds a supervisor in the
-// core daemon that spawns this binary as a child.
+// internal/web.Deps.API. The core daemon supervises this binary: when
+// web.enabled is set, internal/serverwatch/web_supervisor.go verifies and
+// spawns it as a child process, restarts it with capped backoff if it exits,
+// and stops it on daemon shutdown.
 //
-// Build with -tags web: this binary, unlike cmd/serverwatch, is allowed to
-// pull in internal/web's webauthn/htmx dependencies (see that package's own
-// build tag). The default `serverwatch` binary must stay stdlib-only
-// (TestDefaultBuildIsStdlibOnly in internal/serverwatch) -- nothing in this
-// package may be imported by cmd/serverwatch or any untagged package.
+// No build tag: this is a plain, standalone binary built like any other
+// command under ./cmd, `go build -o /usr/local/bin/serverwatch-web
+// ./cmd/serverwatch-web`. The default `serverwatch` binary stays
+// stdlib-only (TestDefaultBuildIsStdlibOnly in internal/serverwatch) simply
+// because it does not import internal/web or this package, not because of a
+// build tag.
 package main
 
 import (
