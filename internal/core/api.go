@@ -20,6 +20,13 @@ type API interface {
 	AlertHistory(since int64, limit int) ([]AlertRecord, error)
 	Config() (*config.Config, error)
 	Doctor() (DoctorReport, error)
+	// EnrollmentPIN returns the Telegram bot's current enrollment pin -- the
+	// same pin the daemon's poll loop accepts via "/start <pin>" (#90) -- and
+	// whether the bot is already enrolled (chat id known). pin is "" when
+	// enrolled is true, or when telegram isn't configured at all.
+	// Implementations without a live daemon process to ask (the file-backed
+	// CLI path) return an error instead of a meaningless pin.
+	EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error)
 
 	// writes
 	ApplyConfig(*config.Config) error

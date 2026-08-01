@@ -44,10 +44,11 @@ func (f *fakeAPI) Config() (*config.Config, error) { return f.cfg, nil }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) {
 	return core.DoctorReport{}, nil
 }
-func (f *fakeAPI) ApplyConfig(c *config.Config) error { f.cfg = c; return nil }
-func (f *fakeAPI) AckAlert(key string) error          { return nil }
-func (f *fakeAPI) UnackAlert(key string) error        { return nil }
-func (f *fakeAPI) TestChannel(name string) error      { f.testedChannel = name; return nil }
+func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
+func (f *fakeAPI) ApplyConfig(c *config.Config) error                      { f.cfg = c; return nil }
+func (f *fakeAPI) AckAlert(key string) error                               { return nil }
+func (f *fakeAPI) UnackAlert(key string) error                             { return nil }
+func (f *fakeAPI) TestChannel(name string) error                           { f.testedChannel = name; return nil }
 func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
 	return nil
 }

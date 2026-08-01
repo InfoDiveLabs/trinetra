@@ -54,7 +54,7 @@ func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 		got = c
 		return nil
 	}
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload, &enrollState{})
 
 	c := config.Default()
 	c.Thresholds.CPUPct = 77
@@ -72,7 +72,7 @@ func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 func TestInprocApplyConfigPropagatesReloadError(t *testing.T) {
 	wantErr := errNotExist
 	reload := func(*config.Config) error { return wantErr }
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload, &enrollState{})
 
 	if err := api.ApplyConfig(config.Default()); err != wantErr {
 		t.Fatalf("ApplyConfig() err = %v, want %v", err, wantErr)
@@ -133,7 +133,7 @@ func TestInprocAckAlertUnackAlertRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, dir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, dir, nil, &enrollState{})
 	if err := api.AckAlert("mem"); err != nil {
 		t.Fatalf("AckAlert: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestFileAPITestChannelDelegatesToSendTestNotification(t *testing.T) {
 }
 
 func TestInprocTestChannelDelegatesToSendTestNotification(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, &enrollState{})
 	err := api.TestChannel("does-not-exist")
 	if err == nil || !strings.Contains(err.Error(), `unknown channel "does-not-exist"`) {
 		t.Fatalf("TestChannel(unknown) err = %v, want an unknown-channel error", err)
@@ -201,7 +201,7 @@ func TestFileAPIValidateChannelRejectsUndeliverable(t *testing.T) {
 }
 
 func TestInprocValidateChannelRejectsUndeliverable(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, &enrollState{})
 
 	undeliverable := config.ChannelConfig{Name: "phone", Type: "telegram", Settings: map[string]string{"token": "sometoken"}}
 	err := api.ValidateChannel(undeliverable)
@@ -223,7 +223,7 @@ func TestInprocValidateChannelRejectsUndeliverable(t *testing.T) {
 // ONLY inprocAPI method still returning errCoreNotImplemented is Subscribe
 // (deferred to S5) -- every write method now does real work.
 func TestInprocUnimplementedMethodsReturnSentinel(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), func(*config.Config) error { return nil })
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), func(*config.Config) error { return nil }, &enrollState{})
 	if _, err := api.Subscribe(nil); err != errCoreNotImplemented { //nolint:staticcheck // nil context: exercising the stub only
 		t.Errorf("Subscribe() err = %v, want errCoreNotImplemented", err)
 	}

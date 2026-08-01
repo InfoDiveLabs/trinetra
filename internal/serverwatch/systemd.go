@@ -1,14 +1,18 @@
 package serverwatch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/control"
 	"serverwatch/internal/core"
 )
 
@@ -280,10 +284,77 @@ func cmdTelegram(args []string) int {
 			return 1
 		}
 		reloadDaemon()
+		printEnrollmentPIN()
 		return 0
 	}
 	fmt.Fprintln(stderr, "usage: telegram set-token <token>")
 	return 2
+}
+
+// enrollPINFetchAttempts/enrollPINFetchDelay bound how long
+// fetchEnrollmentPIN retries dialing the control socket after set-token's
+// reloadDaemon() SIGHUP: about 1.5s total across a few attempts, enough for
+// a running daemon to finish reloading its config (and so start reporting a
+// pin for the token just saved) without making `set-token` feel slow.
+const (
+	enrollPINFetchAttempts = 5
+	enrollPINFetchDelay    = 300 * time.Millisecond
+)
+
+// fetchEnrollmentPINFn is the seam printEnrollmentPIN calls to learn the
+// daemon's current enrollment pin: the real implementation (below) dials
+// the control socket with a brief retry; tests override this var with a
+// canned result so cmdTelegram's print behavior can be exercised without a
+// real socket/daemon.
+var fetchEnrollmentPINFn = dialEnrollmentPIN
+
+// dialEnrollmentPIN resolves the control socket path/token the same way
+// cmdFrontDoor does (plugin_launch.go) and calls EnrollmentPIN over it,
+// retrying up to enrollPINFetchAttempts times (enrollPINFetchDelay apart) so
+// a daemon that is still applying the SIGHUP reloadDaemon() just sent has
+// time to pick up the new token before this gives up.
+func dialEnrollmentPIN() (pin string, enrolled bool, err error) {
+	socketPath := controlSocketPath()
+	tokenBytes, _ := os.ReadFile(controlTokenPath())
+	token := strings.TrimSpace(string(tokenBytes))
+
+	for attempt := 0; attempt < enrollPINFetchAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(enrollPINFetchDelay)
+		}
+		client, dialErr := control.Dial(socketPath, token)
+		if dialErr != nil {
+			err = dialErr
+			continue
+		}
+		pin, enrolled, err = client.EnrollmentPIN(context.Background())
+		client.Close()
+		if err == nil {
+			return pin, enrolled, nil
+		}
+	}
+	return "", false, err
+}
+
+// printEnrollmentPIN prints the /start <pin> instruction after `telegram
+// set-token` has already saved the token, using fetchEnrollmentPINFn to
+// learn the daemon's current pin. The token is saved and reloadDaemon()
+// already sent by the time this runs, so a fetch failure (daemon not
+// installed/running, or the retries in dialEnrollmentPIN all erroring) is
+// NEVER treated as set-token's own failure -- it only changes which message
+// is printed, never the exit code.
+func printEnrollmentPIN() {
+	pin, enrolled, err := fetchEnrollmentPINFn()
+	switch {
+	case err == nil && pin != "":
+		fmt.Fprintln(stdout, "Telegram token saved. To finish enrollment, from your Telegram account message the bot:")
+		fmt.Fprintf(stdout, "  /start %s\n", pin)
+	case err == nil && enrolled:
+		fmt.Fprintln(stdout, "Telegram token saved. The bot is already enrolled.")
+	default:
+		fmt.Fprintln(stdout, "Telegram token saved. The daemon will log the enrollment PIN on start:")
+		fmt.Fprintln(stdout, "  journalctl -u serverwatch | grep /start")
+	}
 }
 
 func cmdMonitor(args []string) int {

@@ -2,6 +2,7 @@ package control
 
 import (
 	"bufio"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -207,6 +208,13 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 			return nil, err
 		}
 		return json.Marshal(v)
+
+	case "EnrollmentPIN":
+		pin, enrolled, err := api.EnrollmentPIN(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(enrollmentPINResult{PIN: pin, Enrolled: enrolled})
 
 	case "ApplyConfig":
 		var p struct {

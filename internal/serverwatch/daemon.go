@@ -727,7 +727,13 @@ func cmdDaemon(args []string) int {
 	// so this carries no third-party dependency. Non-fatal: a bind failure
 	// just logs and leaves the daemon running without the socket (and thus
 	// without the web UI, which dials it).
-	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload)
+	// enroll is the shared Telegram enrollment-pin holder (#90, enroll.go):
+	// one instance for this daemon launch, handed to both the poll loop
+	// (which generates/announces/matches against it) and the control socket
+	// (so a separate process, e.g. `telegram set-token`, can read back the
+	// exact same pin instead of only ever seeing it in the daemon's log).
+	enroll := &enrollState{}
+	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload, enroll)
 	stopControl, socketPath, token, err := serveControlSocket(controlAPI)
 	if err != nil {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
@@ -762,7 +768,7 @@ func cmdDaemon(args []string) int {
 	}
 
 	// telegram long-poller (owns its own prevCPU internally)
-	go pollLoop(getCfg, setChatID, store, x, fs, da)
+	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll)
 
 	// sampler loop: ticks at fast_interval. Every Nth fast tick (N computed by
 	// slowEvery from fast_interval/sample_interval) ALSO runs collectSlow and
@@ -1013,15 +1019,10 @@ func digestNow(store SampleStore, now time.Time, days int, title string, rawRete
 	return buildDigest(title, window, peakCPU, peakMem, len(countPts), downs)
 }
 
-func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess) {
+func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess, enroll *enrollState) {
 	// The poller owns its CPUStat; it is never shared with the sampler goroutine.
 	offset := 0
 	var prevCPU CPUStat
-	// One-time enrollment PIN for the zero-config setup path (#78): an
-	// unclaimed bot is claimed only by "/start <pin>", not by whoever messages
-	// first. The PIN lives in memory (never persisted) and is printed to the
-	// log once while the bot is unclaimed.
-	pin := newEnrollPIN()
 	announced := false
 	for {
 		c := getCfg()
@@ -1031,6 +1032,15 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		// The enrollment PIN for the zero-config setup path (#78): an
+		// unclaimed bot is claimed only by "/start <pin>", not by whoever
+		// messages first. enroll (enroll.go) generates and caches it on
+		// first call, so this stays stable for as long as the bot remains
+		// unclaimed -- and is the SAME pin `serverwatch telegram set-token`
+		// can now read back over the control socket (core.API.
+		// EnrollmentPIN), instead of only ever reaching the daemon's own
+		// log.
+		pin, _ := enroll.PIN(c)
 		if c.Telegram.ChatID == "" && !announced {
 			fmt.Fprintf(stderr, "telegram: bot not yet enrolled. From your Telegram account, message the bot: /start %s\n", pin)
 			announced = true
@@ -1053,7 +1063,15 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 				fmt.Fprintln(stderr, "telegram send:", err)
 			}
 		}
-		offset, c = processUpdates(ups, offset, c, pin, getCfg, setChatID, reply)
+		// setChatID's reload already tells the daemon it's enrolled; wrap it
+		// to also clear enroll's cached pin on success, so a later
+		// re-enrollment (a new bot via `telegram set-token`) starts from a
+		// fresh pin instead of reusing one that was already consumed.
+		onEnroll := func(id string) {
+			setChatID(id)
+			enroll.Reset()
+		}
+		offset, c = processUpdates(ups, offset, c, pin, getCfg, onEnroll, reply)
 	}
 }
 

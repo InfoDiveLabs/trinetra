@@ -46,7 +46,8 @@ func (f *fakeAPI) Config() (*config.Config, error) {
 	}
 	return &config.Config{}, nil
 }
-func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+func (f *fakeAPI) Doctor() (core.DoctorReport, error)                      { return f.doctor, nil }
+func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f *fakeAPI) ApplyConfig(c *config.Config) error {
 	f.applyN++
 	f.applied = c

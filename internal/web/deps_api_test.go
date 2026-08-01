@@ -62,8 +62,9 @@ func (f fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error
 	return f.history, nil
 }
 
-func (f fakeAPI) Config() (*config.Config, error)    { return nil, nil }
-func (f fakeAPI) Doctor() (core.DoctorReport, error) { return core.DoctorReport{}, nil }
+func (f fakeAPI) Config() (*config.Config, error)                         { return nil, nil }
+func (f fakeAPI) Doctor() (core.DoctorReport, error)                      { return core.DoctorReport{}, nil }
+func (f fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 
 func (f fakeAPI) ApplyConfig(c *config.Config) error {
 	if f.applyConfig != nil {

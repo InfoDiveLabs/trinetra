@@ -325,6 +325,11 @@ type inprocAPI struct {
 	// takes effect exactly the way cmdDaemon's own reload always has:
 	// persisted to disk, then applied in-process without a SIGHUP round-trip.
 	reload func(*config.Config) error
+	// enroll is the shared Telegram enrollment-pin holder cmdDaemon also
+	// hands to pollLoop (daemon.go, enroll.go) -- EnrollmentPIN below just
+	// reads through it, so a socket caller sees the exact pin the poll loop
+	// is matching /start <pin> against, not a separately generated one.
+	enroll *enrollState
 }
 
 // newInprocAPI builds a core.API backed directly by the running daemon's
@@ -333,10 +338,11 @@ type inprocAPI struct {
 // SampleStore (nil in store-writes-disabled mode -- every read method below
 // degrades to "no data" rather than panicking), stateDir is the directory
 // alerts.json/alertlog.jsonl live in (mirroring Store's own
-// AlertStatePath/AlertLogPath, store.go), and reload is cmdDaemon's own
-// save-then-apply closure that ApplyConfig delegates to.
-func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error) core.API {
-	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload}
+// AlertStatePath/AlertLogPath, store.go), reload is cmdDaemon's own
+// save-then-apply closure that ApplyConfig delegates to, and enroll is the
+// same enrollState instance cmdDaemon hands to pollLoop.
+func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error, enroll *enrollState) core.API {
+	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload, enroll: enroll}
 }
 
 // alertStatePath/alertLogPath mirror Store.AlertStatePath/Store.AlertLogPath
@@ -455,6 +461,16 @@ func (a *inprocAPI) Config() (*config.Config, error) {
 // fileAPI's CLI-process Doctor below.
 func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.getCfg(), a.store), nil
+}
+
+// EnrollmentPIN implements core.API: it reads through a.enroll (enroll.go)
+// against the daemon's current live config, the exact same call pollLoop
+// (daemon.go) makes each iteration -- so a socket caller (`telegram
+// set-token`, ctl) always sees the pin the daemon will actually accept in
+// "/start <pin>", never a separately generated one.
+func (a *inprocAPI) EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error) {
+	pin, enrolled = a.enroll.PIN(a.getCfg())
+	return pin, enrolled, nil
 }
 
 // ApplyConfig implements core.API: it delegates straight to a.reload, the
