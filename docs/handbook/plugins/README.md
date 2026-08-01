@@ -13,16 +13,19 @@ There are two plugins today:
   It is the primary, recommended way to manage a running serverwatch day to
   day: guided, validated screens for the schedule, quiet hours, healthchecks,
   monitor thresholds, and notification channels, plus a first-run Telegram
-  onboarding flow. Still marked beta.
+  onboarding flow. It is a complete, supported tool: every config key is
+  reachable through its screens, including a generic all-settings screen.
 - **[serverwatch-web](serverwatch-web.md)** -- the web UI. A plain separate
   binary that the daemon supervises (verify, spawn, restart, stop) whenever
   `web.enabled` is set, or that you launch directly via `serverwatch web`.
 
 ## Installing plugins
 
-Install is a one-step process: download (or build) all three binaries,
-`serverwatch`, `serverwatch-ctl`, and `serverwatch-web`, into the same
-directory, then run `sudo ./serverwatch install` once. `serverwatch install`
+Install is a one-step process. The default path is to download the prebuilt
+`serverwatch`, `serverwatch-ctl`, and `serverwatch-web` binaries from the
+releases page into the same directory (building them from source is the
+secondary option), then run `sudo ./serverwatch install` once. `serverwatch
+install`
 copies any plugin binary it finds next to the source `serverwatch` binary
 into `/usr/local/bin` alongside the daemon, then records the SHA-256 of each
 one it just copied into a root-only install manifest, so the core can later

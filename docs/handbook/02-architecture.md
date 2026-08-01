@@ -244,7 +244,7 @@ never bloats the daemon. Concretely:
 |--------|-------|--------------|------|
 | `serverwatch` | default | stdlib only | The daemon and the CLI |
 | `serverwatch-web` | no build tag | passkey/webauthn stack and more | Web UI, a separate binary the daemon supervises |
-| `serverwatch-ctl` | in progress | its own | A richer out-of-process control client |
+| `serverwatch-ctl` | no build tag | its own | A richer out-of-process control client |
 
 The build seam that enforces this is simple, not tag-based: the daemon
 package never imports `internal/web` at all. `internal/web` is an ordinary,

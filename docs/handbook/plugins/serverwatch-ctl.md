@@ -1,4 +1,4 @@
-# serverwatch-ctl (BETA)
+# serverwatch-ctl
 
 `serverwatch-ctl` is a separate client binary that dials the daemon's control
 socket. It is the primary, recommended way to manage a running serverwatch day
@@ -6,9 +6,11 @@ to day: it wraps the schedule, quiet hours, healthchecks, monitor thresholds,
 and notification channels in guided, validated screens, plus a first-run
 onboarding flow for Telegram, and its generic **all settings** screen reaches
 every remaining flat config key on top of those, so there is no config key
-you have to drop to `serverwatch config set` for. It is still marked beta /
-preview: it is built and wired up by hand, and nothing supervises its process
-(unlike [serverwatch-web](serverwatch-web.md), which the daemon supervises).
+you have to drop to `serverwatch config set` for. It is a complete, supported
+management tool: every config key is reachable through its screens. Nothing
+supervises its process (unlike [serverwatch-web](serverwatch-web.md), which the
+daemon supervises), by design -- it is an interactive client you run by hand
+when you want it, not a background service.
 
 In normal use you do not invoke the binary directly; run `serverwatch cli`
 instead (see [the front-door in the Plugins overview](README.md)), which

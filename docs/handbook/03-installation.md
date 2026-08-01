@@ -44,10 +44,15 @@ The rest are optional and are auto-discovered when present:
 Anything in that optional list that is missing is reported as unavailable and
 left unmonitored. A missing tool never stops the daemon from running.
 
-## 2. Get the binary
+## 2. Get the binaries
 
-You have two ways to obtain the binary: download a prebuilt release asset, or
-build it from source. Pick one.
+The default, recommended path is to download the prebuilt release assets: the
+releases page ships compiled `serverwatch`, `serverwatch-ctl`, and
+`serverwatch-web` binaries, so you do not need a Go toolchain on the host.
+Download the three you want into one directory and `serverwatch install` in
+step 3 picks up and installs all of them in a single command. Building from
+source is a secondary option, covered below, for when you want to compile it
+yourself.
 
 ### Option A: prebuilt release asset
 

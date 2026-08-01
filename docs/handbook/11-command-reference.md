@@ -4,8 +4,8 @@ This chapter lists every command shipped by serverwatch. Section 1 covers the
 `serverwatch` binary, which is both the daemon and the operator CLI. Section 2
 covers the two out-of-process plugin binaries, `serverwatch-ctl` and
 `serverwatch-web`, neither of which is part of the shipped daemon binary
-itself. `serverwatch-ctl` is BETA / preview, and it is now the primary,
-recommended way to manage a running serverwatch day to day: it wraps the
+itself. `serverwatch-ctl` is now the primary, recommended way to manage a
+running serverwatch day to day: it wraps the
 schedule, quiet hours, healthchecks, monitor thresholds, and notification
 channels in guided, validated screens, plus a first-run onboarding flow for
 Telegram. `serverwatch-web` is a supervised, separate binary that the daemon
@@ -126,7 +126,7 @@ There are three outcomes:
 | Outcome | What you see |
 | --- | --- |
 | Verified | The plugin runs; the front-door hands off control to it. |
-| Not installed | serverwatch prints an install/build instruction, e.g. `go build -o /usr/local/bin/serverwatch-ctl ./cmd/serverwatch-ctl` (the web plugin builds the same way, no tag: `go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`), followed by a reminder to run `serverwatch install` to record its checksum. Nothing is exec'd. |
+| Not installed | serverwatch prints an install instruction: download the plugin (`serverwatch-ctl` or `serverwatch-web`) from the releases page next to the daemon binary and run `serverwatch install`, or build it from source (`go build -o /usr/local/bin/serverwatch-ctl ./cmd/serverwatch-ctl`; the web plugin builds the same way, no tag: `go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`) and then run `serverwatch install` to record its checksum. Nothing is exec'd. |
 | Present but unsafe | The binary exists but fails a check (wrong owner, group/world-writable, or a checksum that does not match the manifest). serverwatch refuses with a warning that this may indicate tampering. Nothing is exec'd. |
 
 If you build or hand-copy `serverwatch-ctl` / `serverwatch-web` into place
@@ -145,7 +145,7 @@ the `serverwatch cli` / `serverwatch web` front-doors (section 1 above).
 - **[Plugins overview](plugins/README.md)** -- what the plugins are, how they
   install alongside the daemon, and the front-door safe-exec model.
 - **[serverwatch-ctl](plugins/serverwatch-ctl.md)** -- the interactive
-  management TUI (beta): subcommands, socket/token resolution, and the full
+  management TUI: subcommands, socket/token resolution, and the full
   management screens and first-run onboarding.
 - **[serverwatch-web](plugins/serverwatch-web.md)** -- the supervised web
   binary: how the daemon runs it, and its direct-invocation flags.
@@ -173,10 +173,10 @@ or managing headless.
 
 Every one of these persists to `/etc/serverwatch/config.json` and sends a
 best-effort `SIGHUP` to reload a running daemon (the persists-plus-SIGHUP
-model described in section 1 and in [Configuration](04-configuration.md)).
+model described in section 1 and in [Advanced configuration and
+management](advanced-configuration.md#persistence-and-hot-reload)).
 Full flag syntax, validation, and defaults for each key live in the
-[Configuration chapter's key
-reference](04-configuration.md#config-key-reference).
+[config-key reference](advanced-configuration.md#config-key-reference).
 
 ### #90: `telegram set-token` now prints the enrollment PIN
 

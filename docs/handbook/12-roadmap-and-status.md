@@ -64,11 +64,13 @@ The preview introduces four things:
   `serverwatch-ctl` dials the socket to run status, doctor, and alerts
   against a live daemon from a second process, and is now the primary,
   interactive way to manage one: schedule, quiet hours, healthchecks,
-  monitor thresholds, channels, and first-run onboarding all live there. It
-  remains scaffolding in one sense, no supervisor manages the
-  `serverwatch-ctl` process itself the way the web plugin is supervised, but
-  that is expected for a client you run by hand when you want it, not a
-  background service. `serverwatch-web` serves the web UI out of process,
+  monitor thresholds, channels, an all-settings screen that reaches every
+  remaining config key, and first-run onboarding all live there. It is a
+  complete, supported management tool: every config key is reachable through
+  its screens and its web-setup wizard is functional in every serving mode.
+  No supervisor manages the `serverwatch-ctl` process itself the way the web
+  plugin is supervised, but that is by design for a client you run by hand
+  when you want it, not a background service. `serverwatch-web` serves the web UI out of process,
   talking to the core over the socket instead of living inside the daemon as
   a goroutine; for the beta it has grown a supervisor of its own that
   verifies, spawns, restarts, and stops it, covered in the delivered list
