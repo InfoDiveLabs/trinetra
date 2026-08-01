@@ -54,11 +54,32 @@ func TestServeControlSocketRoundTrip(t *testing.T) {
 		t.Fatalf("socket not created at %s: %v", wantPath, err)
 	}
 
-	client, err := control.Dial(wantPath)
+	wantTokenPath := filepath.Join(runtimeDir, "token")
+	tokenInfo, err := os.Stat(wantTokenPath)
+	if err != nil {
+		t.Fatalf("token file not created at %s: %v", wantTokenPath, err)
+	}
+	if mode := tokenInfo.Mode().Perm(); mode != 0o600 {
+		t.Errorf("token file mode = %o, want 0600", mode)
+	}
+	tokenBytes, err := os.ReadFile(wantTokenPath)
+	if err != nil {
+		t.Fatalf("reading token file: %v", err)
+	}
+	token := string(tokenBytes)
+	if token == "" {
+		t.Fatalf("token file is empty, want a generated token")
+	}
+
+	client, err := control.Dial(wantPath, token)
 	if err != nil {
 		t.Fatalf("control.Dial: %v", err)
 	}
 	defer client.Close()
+
+	if _, err := control.Dial(wantPath, "wrong-token"); err == nil {
+		t.Errorf("control.Dial with a wrong token succeeded, want an error")
+	}
 
 	wantSnap, err := api.Snapshot()
 	if err != nil {
@@ -86,5 +107,48 @@ func TestServeControlSocketRoundTrip(t *testing.T) {
 	}
 	if gotCfg.FastInterval != fakeCfg.FastInterval {
 		t.Errorf("Config mismatch: got FastInterval=%v, want %v", gotCfg.FastInterval, fakeCfg.FastInterval)
+	}
+}
+
+// TestServeControlSocketStopRemovesSocketAndTokenFiles proves the stop func
+// serveControlSocket returns cleans up both files it created, not just the
+// socket: a stale token file left behind after a daemon restart would let an
+// old, still-readable token keep working against a should-be-fresh socket.
+func TestServeControlSocketStopRemovesSocketAndTokenFiles(t *testing.T) {
+	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDir) })
+	t.Setenv("RUNTIME_DIRECTORY", runtimeDir)
+
+	stateDir := t.TempDir()
+	getSnap := func() Snapshot { return Snapshot{} }
+	fakeCfg := config.Default()
+	getCfg := func() *config.Config { return fakeCfg }
+	reload := func(c *config.Config) error { return nil }
+	api := newInprocAPI(getSnap, getCfg, nil, stateDir, reload)
+
+	stop, err := serveControlSocket(api)
+	if err != nil {
+		t.Fatalf("serveControlSocket: %v", err)
+	}
+
+	socketPath := filepath.Join(runtimeDir, "control.sock")
+	tokenPath := filepath.Join(runtimeDir, "token")
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("socket not created: %v", err)
+	}
+	if _, err := os.Stat(tokenPath); err != nil {
+		t.Fatalf("token file not created: %v", err)
+	}
+
+	stop()
+
+	if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
+		t.Errorf("socket file still exists after stop(): err = %v", err)
+	}
+	if _, err := os.Stat(tokenPath); !os.IsNotExist(err) {
+		t.Errorf("token file still exists after stop(): err = %v", err)
 	}
 }

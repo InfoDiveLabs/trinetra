@@ -12,6 +12,9 @@
 package serverwatch
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -42,6 +45,41 @@ func controlSocketPath() string {
 	return filepath.Join(dir, "control.sock")
 }
 
+// controlTokenPath resolves where the per-launch control-socket token is
+// written, mirroring controlSocketPath: same directory, named "token"
+// instead of "control.sock". A future ctl/web plugin running as the same
+// user reads this file (mode 0600, root-owned under systemd) to learn the
+// token it must present in its hello to be allowed to use the socket.
+func controlTokenPath() string {
+	dir := os.Getenv("RUNTIME_DIRECTORY")
+	if dir == "" {
+		dir = defaultRuntimeDir
+	}
+	return filepath.Join(dir, "token")
+}
+
+// generateToken returns a fresh 32-hex-character (16 random byte) token for
+// authenticating clients against this daemon launch's control socket.
+func generateToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// writeTokenFile writes token to path with mode 0600, regardless of the
+// process umask: os.WriteFile alone is umask-affected the same way
+// net.Listen's socket mode is (see serveControlSocket's own comment on the
+// listener), so the mode is set explicitly with os.Chmod afterward rather
+// than trusted to the WriteFile call.
+func writeTokenFile(path, token string) error {
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
 // serveControlSocket starts control.Serve against api on a unix socket
 // (controlSocketPath) and returns a stop func that shuts it down. Like
 // maybeStartWeb, the control socket is an enhancement: cmdDaemon treats any
@@ -60,7 +98,7 @@ func controlSocketPath() string {
 // fails with "address already in use" over a leftover socket file
 // otherwise. The listener is chmod 0600 after creation (net.Listen honors
 // the umask, not an explicit mode) so only the daemon's own user can
-// connect; a forthcoming per-launch token (S3) is the actual auth, this is
+// connect; the per-launch token generated below is the actual auth, this is
 // defense-in-depth against other local users on multi-user hosts.
 func serveControlSocket(api core.API) (func(), error) {
 	path := controlSocketPath()
@@ -79,11 +117,31 @@ func serveControlSocket(api core.API) (func(), error) {
 		return nil, err
 	}
 
-	go control.Serve(api, ln)
+	// The token is the actual auth for the socket (the 0600 mode above is
+	// defense-in-depth against other local users); a token that can't be
+	// generated is treated the same as any other enhancement failure this
+	// func's caller already tolerates (see the doc comment above) -- log
+	// and proceed with no auth rather than crash-looping the daemon over
+	// it.
+	token, err := generateToken()
+	if err != nil {
+		log.Printf("control: generating token: %v (continuing with no token auth)", err)
+		token = ""
+	}
+	tokenPath := controlTokenPath()
+	if token != "" {
+		if err := writeTokenFile(tokenPath, token); err != nil {
+			log.Printf("control: writing token file %s: %v (continuing with no token auth)", tokenPath, err)
+			token = ""
+		}
+	}
+
+	go control.Serve(api, ln, token)
 
 	stop := func() {
 		ln.Close()
 		os.Remove(path)
+		os.Remove(tokenPath)
 	}
 	return stop, nil
 }

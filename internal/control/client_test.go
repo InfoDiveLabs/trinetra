@@ -35,15 +35,16 @@ func shortSocketPath(t *testing.T) string {
 var errWantedByTest = errors.New("no such alert: cpu")
 
 // startTestServer stands up a real Serve loop over a temp unix socket
-// backed by fake, and returns the socket path plus a cleanup func.
-func startTestServer(t *testing.T, fake core.API) string {
+// backed by fake, requiring token (empty means no auth), and returns the
+// socket path plus a cleanup func.
+func startTestServer(t *testing.T, fake core.API, token string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "s.sock")
+	path := shortSocketPath(t)
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
-	go Serve(fake, ln)
+	go Serve(fake, ln, token)
 	t.Cleanup(func() { ln.Close() })
 	return path
 }
@@ -68,9 +69,9 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 	fake.cfg.Collect.ContainerStats = falsePtr()
 	// NetThroughput left nil deliberately.
 
-	path := startTestServer(t, fake)
+	path := startTestServer(t, fake, "")
 
-	client, err := Dial(path)
+	client, err := Dial(path, "")
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -159,9 +160,9 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 
 func TestClientSurfacesMethodError(t *testing.T) {
 	fake := &fakeAPI{ackAlertErr: errWantedByTest}
-	path := startTestServer(t, fake)
+	path := startTestServer(t, fake, "")
 
-	client, err := Dial(path)
+	client, err := Dial(path, "")
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestClientCallTimesOutWhenServerNeverResponds(t *testing.T) {
 		// must fire instead of this call hanging forever.
 	}()
 
-	client, err := Dial(path)
+	client, err := Dial(path, "")
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -276,7 +277,7 @@ func TestClientCallRejectsMismatchedResponseID(t *testing.T) {
 		_ = writeFrame(conn, response{ID: req.ID + 1, OK: true, Result: []byte("{}")})
 	}()
 
-	client, err := Dial(path)
+	client, err := Dial(path, "")
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -285,5 +286,51 @@ func TestClientCallRejectsMismatchedResponseID(t *testing.T) {
 	_, err = client.Snapshot()
 	if err == nil {
 		t.Fatalf("Snapshot() error = nil, want an error for a mismatched response id")
+	}
+}
+
+// TestDialWithMatchingTokenRoundTrips proves a client that dials with the
+// same token the server was started with completes the handshake and can
+// make normal calls.
+func TestDialWithMatchingTokenRoundTrips(t *testing.T) {
+	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 7}}
+	path := startTestServer(t, fake, "secret")
+
+	client, err := Dial(path, "secret")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	got, err := client.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() error: %v", err)
+	}
+	if !reflect.DeepEqual(got, fake.snapshot) {
+		t.Errorf("Snapshot() = %+v, want %+v", got, fake.snapshot)
+	}
+}
+
+// TestDialWithWrongTokenRejected proves a client that dials with a token
+// that does not match the server's configured token does not succeed: Dial
+// itself fails the handshake (the server's rejection frame does not parse
+// as a valid hello), so a caller never gets a usable Client.
+func TestDialWithWrongTokenRejected(t *testing.T) {
+	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 7}}
+	path := startTestServer(t, fake, "secret")
+
+	if _, err := Dial(path, "wrong"); err == nil {
+		t.Fatalf("Dial() error = nil, want an error for a wrong token")
+	}
+}
+
+// TestDialWithEmptyTokenRejectedWhenAuthConfigured proves an empty token
+// does not get treated as "skip the check" once the server requires one.
+func TestDialWithEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
+	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 7}}
+	path := startTestServer(t, fake, "secret")
+
+	if _, err := Dial(path, ""); err == nil {
+		t.Fatalf("Dial() error = nil, want an error for a missing token")
 	}
 }

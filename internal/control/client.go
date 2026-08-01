@@ -38,10 +38,14 @@ type Client struct {
 var _ core.API = (*Client)(nil)
 
 // Dial connects to the control socket at path, exchanges the protocol hello
-// with the server, and returns a ready-to-use Client. It returns an error if
-// the connection can't be established or the server's hello doesn't match
-// ProtocolVersion.
-func Dial(path string) (*Client, error) {
+// with the server (presenting token, the per-launch secret the server was
+// started with; pass "" when the server requires no auth), and returns a
+// ready-to-use Client. It returns an error if the connection can't be
+// established, the server's hello doesn't match ProtocolVersion, or the
+// server rejected token: either failure surfaces the same way, since a
+// wrong token makes the server close the connection after writing an error
+// response instead of echoing a valid hello.
+func Dial(path, token string) (*Client, error) {
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		return nil, err
@@ -49,7 +53,7 @@ func Dial(path string) (*Client, error) {
 
 	c := &Client{conn: conn, r: bufio.NewReader(conn)}
 
-	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion}); err != nil {
+	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion, Token: token}); err != nil {
 		conn.Close()
 		return nil, err
 	}

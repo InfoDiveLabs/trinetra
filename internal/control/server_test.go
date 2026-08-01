@@ -94,7 +94,7 @@ func dialTestConn(t *testing.T, fake core.API) (net.Conn, *bufio.Reader, <-chan 
 
 	done := make(chan struct{})
 	go func() {
-		handleConn(fake, server)
+		handleConn(fake, server, "")
 		close(done)
 	}()
 
@@ -202,7 +202,7 @@ func TestHandleConnWrongVersionHelloRejected(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleConn(fake, server)
+		handleConn(fake, server, "")
 		close(done)
 	}()
 
@@ -227,6 +227,111 @@ func TestHandleConnWrongVersionHelloRejected(t *testing.T) {
 	var again response
 	if err := readFrame(r, &again); err == nil {
 		t.Errorf("expected a read error after hello rejection, got a frame: %+v", again)
+	}
+
+	<-done
+}
+
+// TestHandleConnRightTokenAccepted proves a client hello carrying the exact
+// token handleConn was configured with completes the handshake and can make
+// a normal request, the same as the no-auth (token="") tests above.
+func TestHandleConnRightTokenAccepted(t *testing.T) {
+	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 1}}
+	server, client := net.Pipe()
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		handleConn(fake, server, "secret")
+		close(done)
+	}()
+
+	if err := writeFrame(client, hello{Hello: helloMagic, Version: ProtocolVersion, Token: "secret"}); err != nil {
+		t.Fatalf("writeFrame(hello): %v", err)
+	}
+	r := bufio.NewReader(client)
+	var gotHello hello
+	if err := readFrame(r, &gotHello); err != nil {
+		t.Fatalf("readFrame(server hello): %v", err)
+	}
+	if gotHello.Hello != helloMagic || gotHello.Version != ProtocolVersion {
+		t.Fatalf("server hello = %+v, want valid ack", gotHello)
+	}
+
+	resp := sendRequest(t, client, r, 1, "Snapshot", struct{}{})
+	if !resp.OK {
+		t.Fatalf("resp.OK = false, want true (error: %s)", resp.Error)
+	}
+
+	client.Close()
+	<-done
+}
+
+// TestHandleConnWrongTokenRejected proves a client hello carrying a token
+// that does not match the one handleConn was configured with is rejected at
+// the handshake, with the connection closed afterward, just like a
+// version-mismatched hello.
+func TestHandleConnWrongTokenRejected(t *testing.T) {
+	fake := &fakeAPI{}
+	server, client := net.Pipe()
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		handleConn(fake, server, "secret")
+		close(done)
+	}()
+
+	if err := writeFrame(client, hello{Hello: helloMagic, Version: ProtocolVersion, Token: "wrong"}); err != nil {
+		t.Fatalf("writeFrame(hello): %v", err)
+	}
+
+	r := bufio.NewReader(client)
+	var resp response
+	if err := readFrame(r, &resp); err != nil {
+		t.Fatalf("readFrame(rejection): %v", err)
+	}
+	if resp.OK {
+		t.Fatalf("resp.OK = true, want false for a wrong-token hello")
+	}
+	if resp.Error == "" {
+		t.Errorf("resp.Error is empty, want a token-mismatch message")
+	}
+
+	var again response
+	if err := readFrame(r, &again); err == nil {
+		t.Errorf("expected a read error after token rejection, got a frame: %+v", again)
+	}
+
+	<-done
+}
+
+// TestHandleConnEmptyTokenRejectedWhenAuthConfigured proves an empty client
+// token is treated as any other wrong token once the server has a
+// non-empty configured token -- an unauthenticated client can't just omit
+// the field to skip the check.
+func TestHandleConnEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
+	fake := &fakeAPI{}
+	server, client := net.Pipe()
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		handleConn(fake, server, "secret")
+		close(done)
+	}()
+
+	if err := writeFrame(client, hello{Hello: helloMagic, Version: ProtocolVersion}); err != nil {
+		t.Fatalf("writeFrame(hello): %v", err)
+	}
+
+	r := bufio.NewReader(client)
+	var resp response
+	if err := readFrame(r, &resp); err != nil {
+		t.Fatalf("readFrame(rejection): %v", err)
+	}
+	if resp.OK {
+		t.Fatalf("resp.OK = true, want false for a missing-token hello")
 	}
 
 	<-done

@@ -30,10 +30,14 @@ type response struct {
 
 // hello is the first frame exchanged in each direction after a connection
 // is established, used to agree on ProtocolVersion before any request or
-// response frame is sent.
+// response frame is sent. The client's hello also carries Token, the
+// per-launch secret proving it is allowed to use this control socket; the
+// server's own hello (echoed back once the client's is accepted) leaves
+// Token empty.
 type hello struct {
 	Hello   string `json:"hello"`
 	Version int    `json:"version"`
+	Token   string `json:"token,omitempty"`
 }
 
 // writeFrame marshals v to JSON and writes it to w as a single line,

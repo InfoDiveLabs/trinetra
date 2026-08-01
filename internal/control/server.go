@@ -2,6 +2,7 @@ package control
 
 import (
 	"bufio"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,24 +38,28 @@ const (
 var emptyResult = json.RawMessage("{}")
 
 // Serve accepts connections on ln and handles each one (in its own
-// goroutine) against api. It returns once Accept fails, which happens when
-// ln is closed by the caller.
-func Serve(api core.API, ln net.Listener) error {
+// goroutine) against api. token is the per-launch secret each client's
+// hello must present (constant-time compared in handleConn); an empty
+// token means no auth is required, which keeps the package's own
+// round-trip tests simple -- production always sets one. Serve returns once
+// Accept fails, which happens when ln is closed by the caller.
+func Serve(api core.API, ln net.Listener, token string) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		go handleConn(api, conn)
+		go handleConn(api, conn, token)
 	}
 }
 
 // handleConn owns one client connection end to end: it validates the
-// client's opening hello, echoes its own, then services request frames
-// against api until the peer disconnects or a frame can't be read (either
-// case ends the connection quietly -- a peer going away mid-read is normal
-// shutdown, not a protocol fault worth logging).
-func handleConn(api core.API, conn net.Conn) {
+// client's opening hello (protocol version, then token if one is
+// configured), echoes its own, then services request frames against api
+// until the peer disconnects or a frame can't be read (either case ends
+// the connection quietly -- a peer going away mid-read is normal shutdown,
+// not a protocol fault worth logging).
+func handleConn(api core.API, conn net.Conn, token string) {
 	defer conn.Close()
 
 	r := bufio.NewReader(conn)
@@ -73,6 +78,13 @@ func handleConn(api core.API, conn net.Conn) {
 			OK: false,
 			Error: fmt.Sprintf("control: unsupported hello %+v, want hello=%q version=%d",
 				clientHello, helloMagic, ProtocolVersion),
+		})
+		return
+	}
+	if token != "" && subtle.ConstantTimeCompare([]byte(clientHello.Token), []byte(token)) != 1 {
+		_ = writeFrame(conn, response{
+			OK:    false,
+			Error: "control: invalid token",
 		})
 		return
 	}
