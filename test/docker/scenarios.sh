@@ -114,8 +114,8 @@ sleep 8   # let a sample discover it while it is running
 docker stop "$VICTIM" >/dev/null
 wait_for_message "docker:$VICTIM" 45
 # and it should be visible via the /docker command. /_messages is cumulative,
-# so assert on a string only renderDocker emits ("name (state)") — never the
-# alert text — to actually exercise the command round-trip.
+# so assert on a string only renderDocker emits ("name (state)") -- never the
+# alert text -- to actually exercise the command round-trip.
 inject "/docker"
 wait_for_message "$VICTIM (exited)" 30
 

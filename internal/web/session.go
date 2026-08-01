@@ -16,7 +16,7 @@ import (
 const sessionCookieName = "sw_session"
 
 // defaultSessionTTL is used whenever cfg.Web.SessionTTL is empty or fails to
-// parse — belt-and-suspenders alongside config.Default()/Load(), which
+// parse -- belt-and-suspenders alongside config.Default()/Load(), which
 // already backfill "24h" (internal/config's Config.Default), for any caller
 // that builds a bare *config.Config{} directly (e.g. a test).
 const defaultSessionTTL = 24 * time.Hour
@@ -36,7 +36,7 @@ func sessionTTL(cfg *config.Config) time.Duration {
 }
 
 // Session is a server-side session record: either a real signed-in web UI
-// session, or — reusing the very same store — a short-lived placeholder
+// session, or -- reusing the very same store -- a short-lived placeholder
 // stashing an in-flight WebAuthn ceremony's data between its /begin and
 // /finish requests (see auth_webauthn.go's beginRegistration/beginLogin,
 // which replaced Task 4's temporary in-memory ceremonyStash with this store;
@@ -48,7 +48,7 @@ type Session struct {
 	ID string `json:"id"`
 	// UserID is the signed-in account's WebAuthn user handle (User.ID).
 	// Empty for a login ceremony (the user isn't known until the assertion's
-	// userHandle resolves it — see auth_webauthn.go's finishLogin).
+	// userHandle resolves it -- see auth_webauthn.go's finishLogin).
 	UserID string `json:"userID"`
 	// Created/Expires are Unix seconds timestamps; Expires is when this
 	// record becomes eligible for eviction (Get treats it as absent, GC
@@ -57,7 +57,7 @@ type Session struct {
 	Expires int64 `json:"expires"`
 	// CSRF is this session's anti-CSRF token (requireCSRF, middleware.go),
 	// minted once by New and constant for the record's lifetime. A ceremony
-	// placeholder has one too (harmless — nothing ever checks it) since New
+	// placeholder has one too (harmless -- nothing ever checks it) since New
 	// always mints it.
 	CSRF string `json:"csrf"`
 	// Data is an opaque, caller-defined payload carried alongside a record.
@@ -69,7 +69,7 @@ type Session struct {
 }
 
 // SessionStore is how the web package creates/looks up/invalidates session
-// records — both real signed-in sessions and the short-lived WebAuthn
+// records -- both real signed-in sessions and the short-lived WebAuthn
 // ceremony placeholders described on Session.Data. The only implementation
 // is jsonSessionStore, below.
 type SessionStore interface {
@@ -79,14 +79,14 @@ type SessionStore interface {
 	New(userID string, ttl time.Duration) (*Session, error)
 	// Get returns the session with the given ID, or (nil, false) if none
 	// exists or it has expired (an expired record is treated as absent, not
-	// actively removed here — GC does that).
+	// actively removed here -- GC does that).
 	Get(id string) (*Session, bool)
 	// Put persists a mutated Session (e.g. one whose Data a ceremony
 	// handler just filled in) under its existing ID, replacing any prior
 	// record with that ID or inserting it if absent.
 	Put(s *Session) error
 	// Delete removes the session with the given ID. Deleting an ID that
-	// isn't present is a no-op, not an error — logout and one-shot ceremony
+	// isn't present is a no-op, not an error -- logout and one-shot ceremony
 	// consumption may harmlessly race a GC sweep or a repeat call.
 	Delete(id string) error
 	// GC removes every session whose Expires is <= now (Unix seconds),
@@ -100,20 +100,20 @@ type SessionStore interface {
 // once sits far below it.
 //
 // CRITICAL: unauthenticated WebAuthn ceremony placeholders do NOT count
-// against this cap — they live in a SEPARATE store instance
+// against this cap -- they live in a SEPARATE store instance
 // (newCeremonyStore, bounded by ceremonyMaxEntries) precisely so that a
 // pre-auth flood of /login/begin or /enroll/begin can never fill this store
 // and cause finishLogin's post-assertion sessions.New to refuse a user
 // presenting a valid passkey (an availability bug). The two stores share
-// this type but nothing else — separate files, separate caps.
+// this type but nothing else -- separate files, separate caps.
 const sessionMaxEntries = 4096
 
 // ceremonyMaxEntries hard-caps the SEPARATE ceremony-placeholder store
-// (newCeremonyStore) — the bound Task 4's temporary in-memory ceremonyStash
+// (newCeremonyStore) -- the bound Task 4's temporary in-memory ceremonyStash
 // enforced with its own same-named constant, now applied to the file-backed
 // store that replaced it (issue #61). Because /login/begin and /enroll/begin
 // are unauthenticated, an attacker can flood them; when this store fills,
-// only further ceremony begins are refused — real, authenticated sessions
+// only further ceremony begins are refused -- real, authenticated sessions
 // (a different store, above) are unaffected. A single interactive ceremony
 // is one short-lived (ceremonyTTL) record, so this ceiling sits far above
 // any honest concurrency.
@@ -123,7 +123,7 @@ const ceremonyMaxEntries = 1024
 // (<StateDir>/sessions.json). Like jsonUserStore, it does not cache parsed
 // sessions in memory between calls: every method reloads from disk under the
 // shared per-path lock (fileStoreMutex, users.go), so New/Put/Delete/GC's
-// read-modify-write can't race a concurrent goroutine within this process —
+// read-modify-write can't race a concurrent goroutine within this process --
 // including one holding a DIFFERENT jsonSessionStore instance over the same
 // file, which the handlers create per request (newSessionStore/
 // newCeremonyStore). A second OS process editing the file concurrently is out
@@ -163,7 +163,7 @@ func newSessionStore(stateDir string) *jsonSessionStore {
 // in-flight WebAuthn ceremony placeholders (registration and login),
 // rooted at <stateDir>/ceremonies.json (cap ceremonyMaxEntries). Keeping
 // these out of the authenticated-session store is what stops a pre-auth
-// ceremony flood from starving real logins — see sessionMaxEntries' doc.
+// ceremony flood from starving real logins -- see sessionMaxEntries' doc.
 func newCeremonyStore(stateDir string) *jsonSessionStore {
 	return &jsonSessionStore{path: filepath.Join(stateDir, "ceremonies.json"), maxEntries: ceremonyMaxEntries}
 }
@@ -195,7 +195,7 @@ func (s *jsonSessionStore) loadLocked() ([]*Session, error) {
 }
 
 // saveLocked atomically rewrites the store file with sessions, tightening
-// perms to 0600 — sessions.json holds session IDs, CSRF tokens, and
+// perms to 0600 -- sessions.json holds session IDs, CSRF tokens, and
 // in-flight WebAuthn ceremony data, all of which are bearer-equivalent or
 // otherwise sensitive, so unlike users.json this file must never be
 // group/world-readable even transiently. Atomic (write-temp + rename) so a

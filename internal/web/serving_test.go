@@ -28,7 +28,7 @@ func webCfg(mode, rpID, origin, autocertDomains, tlsCert, tlsKey string) *config
 
 // TestValidateOriginAllowsEmptyInProxyMode pins the proxy-mode exemption: an
 // operator fronting the daemon with a local reverse proxy (Cloudflare
-// Tunnel/nginx/Caddy) need not set rp_id/origin at all — proxy mode derives
+// Tunnel/nginx/Caddy) need not set rp_id/origin at all -- proxy mode derives
 // them per-request instead (see requestOrigin).
 func TestValidateOriginAllowsEmptyInProxyMode(t *testing.T) {
 	cfg := webCfg("proxy", "", "", "", "", "")
@@ -55,7 +55,7 @@ func TestValidateOriginAcceptsConsistentConfig(t *testing.T) {
 
 // TestValidateOriginRejectsMismatchedHost pins the core passkey-security
 // invariant from the design doc: "rp_id/origin must match the public
-// hostname in every mode, validated at startup — refuse to start on
+// hostname in every mode, validated at startup -- refuse to start on
 // mismatch."
 func TestValidateOriginRejectsMismatchedHost(t *testing.T) {
 	cfg := webCfg("manual", "monitor.example.com", "https://other.example.com", "", "/tls.crt", "/tls.key")
@@ -178,7 +178,7 @@ func TestSecurityHeadersSetsCSPNonceContentTypeReferrer(t *testing.T) {
 	if !strings.Contains(csp, "script-src 'self' 'nonce-") {
 		t.Errorf("CSP %q missing script-src 'self' 'nonce-...'", csp)
 	}
-	// script-src must stay STRICT (nonce-based, never unsafe-inline) — that's
+	// script-src must stay STRICT (nonce-based, never unsafe-inline) -- that's
 	// the directive that actually matters for XSS. style-src, by contrast,
 	// deliberately allows 'unsafe-inline' because the ported mockup uses
 	// inline style="…" pervasively (see securityHeaders' comment).
@@ -198,7 +198,7 @@ func TestSecurityHeadersSetsCSPNonceContentTypeReferrer(t *testing.T) {
 }
 
 // cspDirective returns the single CSP directive (e.g. "script-src") from a
-// full policy string, or "" if absent — lets a test assert on one directive
+// full policy string, or "" if absent -- lets a test assert on one directive
 // without a false match from another directive's value.
 func cspDirective(csp, name string) string {
 	for _, d := range strings.Split(csp, ";") {
@@ -250,7 +250,7 @@ func TestAppJSBindsThemeButton(t *testing.T) {
 
 // TestSecurityHeadersHSTSOnlyOverTLS pins that Strict-Transport-Security is
 // only ever sent when the current request actually arrived over TLS
-// (autocert/manual modes, where this process itself terminates TLS) — never
+// (autocert/manual modes, where this process itself terminates TLS) -- never
 // in proxy mode, where our own server always sees plain HTTP even though a
 // front proxy may terminate TLS upstream (sending it there would be an
 // incorrect promise about a connection this process didn't make).

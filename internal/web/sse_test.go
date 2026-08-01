@@ -14,7 +14,7 @@ import (
 
 // eventsTestDeps builds Deps for the SSE tests: a distinctive fake
 // Deps.Snapshot (so a test can assert its value round-trips onto the wire)
-// and a Cfg with a deliberately LARGE FastInterval — see
+// and a Cfg with a deliberately LARGE FastInterval -- see
 // TestEventsStreamStopsPromptlyOnClientDisconnect's doc for why that matters.
 func eventsTestDeps(t *testing.T, fastIntervalSec int) Deps {
 	t.Helper()
@@ -70,7 +70,7 @@ func viewerCookie(t *testing.T, users UserStore, sessions SessionStore) *http.Co
 
 // TestEventsStreamEmitsSnapshotFrame pins /events' core contract: a viewer
 // GET gets a text/event-stream response whose very first frame already
-// carries the current DashboardView (as JSON) — no waiting for the fast-tier
+// carries the current DashboardView (as JSON) -- no waiting for the fast-tier
 // ticker's first tick.
 func TestEventsStreamEmitsSnapshotFrame(t *testing.T) {
 	d := eventsTestDeps(t, 60) // a long tick period the test must not need to wait for
@@ -137,7 +137,7 @@ func TestEventsStreamEmitsSnapshotFrame(t *testing.T) {
 
 // TestEventsStreamIncludesTopContainers pins that /events' SSE frame carries
 // the current top-containers CPU/mem data (DashboardView.TopCPUContainers/
-// TopMemContainers), not just the resource tiles' scalars — app.js's
+// TopMemContainers), not just the resource tiles' scalars -- app.js's
 // swBootSSE needs this on the wire to keep the "Top containers · CPU"/
 // "· Memory" hbar panels live between full page loads, matching the
 // server-rendered ones dashboardHandler builds via containerBars
@@ -197,9 +197,9 @@ func TestEventsStreamIncludesTopContainers(t *testing.T) {
 // notices r.Context().Done() (a client disconnect) immediately rather than
 // only discovering it the next time its ticker fires and a write fails.
 // FastInterval is set to 60s specifically so that if the implementation
-// only relied on the next tick's write erroring out, this test — which
+// only relied on the next tick's write erroring out, this test -- which
 // requires the handler to have returned within a couple of seconds of the
-// client going away — would time out.
+// client going away -- would time out.
 func TestEventsStreamStopsPromptlyOnClientDisconnect(t *testing.T) {
 	d := eventsTestDeps(t, 60)
 	users := newUserStore(d.StateDir)
@@ -235,7 +235,7 @@ func TestEventsStreamStopsPromptlyOnClientDisconnect(t *testing.T) {
 	// handler has returned. If eventsHandler didn't select on
 	// r.Context().Done() and instead only noticed the disconnect via a
 	// failed write on the next tick (60s away), this would hang well past
-	// any reasonable deadline — proving the ctx-cancellation path is what
+	// any reasonable deadline -- proving the ctx-cancellation path is what
 	// actually lets the handler return.
 	done := make(chan struct{})
 	go func() {
@@ -246,7 +246,7 @@ func TestEventsStreamStopsPromptlyOnClientDisconnect(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("srv.Close() did not return within 2s of client disconnect — eventsHandler did not stop promptly on r.Context().Done()")
+		t.Fatal("srv.Close() did not return within 2s of client disconnect -- eventsHandler did not stop promptly on r.Context().Done()")
 	}
 }
 

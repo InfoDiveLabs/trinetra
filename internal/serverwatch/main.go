@@ -73,7 +73,7 @@ func Main(args []string) int {
 	}
 }
 
-const usage = `serverwatch — home server monitor
+const usage = `serverwatch -- home server monitor
 usage:
   serverwatch config get [key]
   serverwatch config set <key> <value>

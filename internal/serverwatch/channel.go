@@ -173,7 +173,7 @@ func cmdChannelTest(c *config.Config, args []string) int {
 //
 // Shared by cmdChannelTest (`serverwatch channel test <name>`) and the web
 // channels page's "Send test" action so both paths exercise the exact same
-// notifier-construction and delivery logic — no channel type can behave
+// notifier-construction and delivery logic -- no channel type can behave
 // differently for one caller than the other.
 func sendTestNotification(c *config.Config, name, source string) error {
 	cc, ok := c.GetChannel(name)

@@ -69,7 +69,7 @@ func TestRootAnonEnabledServesPublicPage(t *testing.T) {
 }
 
 // TestRootAnonDisabledRedirectsToLogin pins the other anonymous branch:
-// public.enabled=false sends an anonymous / request to /login (302) — it
+// public.enabled=false sends an anonymous / request to /login (302) -- it
 // must NOT 404 (that was the old, now-retired /public-only behavior) and
 // must NOT show the dashboard.
 func TestRootAnonDisabledRedirectsToLogin(t *testing.T) {
@@ -89,7 +89,7 @@ func TestRootAnonDisabledRedirectsToLogin(t *testing.T) {
 
 // TestRootAuthedViewerAndAdminSeeDashboardEvenWhenPublicEnabled pins that an
 // authenticated session ALWAYS reaches the dashboard at /, regardless of
-// public.enabled — the public-page branch only ever applies to an anonymous
+// public.enabled -- the public-page branch only ever applies to an anonymous
 // request, and a signed-in visitor must never see the anonymous page.
 func TestRootAuthedViewerAndAdminSeeDashboardEvenWhenPublicEnabled(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
@@ -119,7 +119,7 @@ func TestRootAuthedViewerAndAdminSeeDashboardEvenWhenPublicEnabled(t *testing.T)
 
 // TestPublicRouteRedirectsToRoot pins that the old GET /public link is
 // canonicalized onto / rather than serving content itself, for BOTH an
-// anonymous caller and a signed-in one — the redirect is unconditional; it's
+// anonymous caller and a signed-in one -- the redirect is unconditional; it's
 // / (rootHandler) that decides what an anonymous vs. authenticated visitor
 // sees next.
 func TestPublicRouteRedirectsToRoot(t *testing.T) {
@@ -163,7 +163,7 @@ func TestPublicPageRendersOnlyAllowlistedPanels(t *testing.T) {
 	}
 	// mem (77%), swap (13%), both disk mounts (55%/88%), and the
 	// availability figures are all present in the snapshot but NOT in
-	// public.panels — none of their values may leak onto the anonymous page.
+	// public.panels -- none of their values may leak onto the anonymous page.
 	for _, leaked := range []string{"77%", "13%", "55%", "88%", "93.25", "3 incidents", "1h 12m"} {
 		if strings.Contains(body, leaked) {
 			t.Errorf("public page leaked non-allowlisted value %q:\n%s", leaked, body)
@@ -173,7 +173,7 @@ func TestPublicPageRendersOnlyAllowlistedPanels(t *testing.T) {
 
 // TestPublicPageRendersAvailabilityStripOnlyWhenAllowlisted pins the
 // "availability" panel specifically: it's a whole strip, not a scalar tile,
-// resolved via a second (still allowlist-gated) path — buildPublicPanels
+// resolved via a second (still allowlist-gated) path -- buildPublicPanels
 // alone would silently skip it, so this confirms the handler's separate
 // ShowAvailability/Availability wiring actually renders it when allowed, and
 // confirms it's absent when not.
@@ -207,7 +207,7 @@ func TestPublicPageRendersAvailabilityStripOnlyWhenAllowlisted(t *testing.T) {
 
 // TestPublicPageIgnoresQueryStringPanelOverride pins that an attacker can't
 // smuggle a non-curated metric onto the page via a query parameter (or any
-// other request input) — the handler only ever consults cfg.Public.Panels,
+// other request input) -- the handler only ever consults cfg.Public.Panels,
 // never anything caller-supplied.
 func TestPublicPageIgnoresQueryStringPanelOverride(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
@@ -229,7 +229,7 @@ func TestPublicPageIgnoresQueryStringPanelOverride(t *testing.T) {
 // TestPublicPageNoAuthLeakage pins the broader leakage requirements: no
 // session cookie is ever set on the anonymous GET /, and the body carries no
 // control affordances into authed/admin routes beyond the one intentional
-// Login link — no nav/sidebar, no admin links, no CSRF token, no form.
+// Login link -- no nav/sidebar, no admin links, no CSRF token, no form.
 func TestPublicPageNoAuthLeakage(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).Public.Enabled = true
@@ -246,7 +246,7 @@ func TestPublicPageNoAuthLeakage(t *testing.T) {
 		t.Errorf("anon GET / set cookies: %+v, want none", cookies)
 	}
 	body := rr.Body.String()
-	// The Login link is the one INTENTIONAL affordance (Part 2) — assert its
+	// The Login link is the one INTENTIONAL affordance (Part 2) -- assert its
 	// presence explicitly rather than merely tolerating it.
 	if !strings.Contains(body, `href="/login"`) {
 		t.Errorf("public page missing the required Login link:\n%s", body)
@@ -343,12 +343,12 @@ func TestPublicEventsDisabledReturns404(t *testing.T) {
 }
 
 // readFirstPublicSSEDataLine issues a real HTTP GET (via an httptest.Server,
-// not httptest.NewRecorder — the handler's for/select loop only returns on
+// not httptest.NewRecorder -- the handler's for/select loop only returns on
 // r.Context().Done(), so a real cancelable client request is required,
 // mirroring sse_test.go's eventsHandler tests) against /public/events and
 // returns the first "data: " line plus the response (headers/cookies still
 // readable after Body.Close()). The response body is closed here,
-// synchronously, before returning — NOT deferred to t.Cleanup — so that a
+// synchronously, before returning -- NOT deferred to t.Cleanup -- so that a
 // caller's own `defer srv.Close()` (which blocks until the handler's
 // goroutine notices the client is gone) doesn't stall for however long the
 // SSE ticker takes to next fire; closing eagerly makes the server side
@@ -382,7 +382,7 @@ func readFirstPublicSSEDataLine(t *testing.T, srv *httptest.Server) (string, *ht
 // TestPublicEventsStreamsOnlyAllowlistedMetrics is the mandatory security
 // test for the live stream: it must carry the allowlisted cpu value and MUST
 // NOT carry mem/swap/disk/availability values present in the very same
-// snapshot but absent from public.panels — the same obligation
+// snapshot but absent from public.panels -- the same obligation
 // TestPublicPageRendersOnlyAllowlistedPanels pins for the HTML, now pinned
 // for the SSE wire payload too (buildPublicSSEFrame/publicEventsHandler,
 // sse.go).
@@ -472,7 +472,7 @@ func TestPublicEventsStreamStopsOnDisableMidStream(t *testing.T) {
 
 	// One reader goroutine: signal firstFrame once the initial "data: " frame
 	// (proof the stream is live) arrives, then signal ended when the stream
-	// closes (ReadString returns an error — io.EOF once the handler returns
+	// closes (ReadString returns an error -- io.EOF once the handler returns
 	// and the server finishes the response).
 	firstFrame := make(chan struct{}, 1)
 	ended := make(chan struct{}, 1)
@@ -509,9 +509,9 @@ func TestPublicEventsStreamStopsOnDisableMidStream(t *testing.T) {
 	select {
 	case <-ended:
 		// Handler noticed public.enabled=false on the next tick and returned,
-		// closing the stream — exactly the required behavior.
+		// closing the stream -- exactly the required behavior.
 	case <-time.After(5 * time.Second):
-		t.Fatal("stream did not terminate within 5s of public.enabled flipping to false — publicEventsHandler kept streaming to a disabled public view")
+		t.Fatal("stream did not terminate within 5s of public.enabled flipping to false -- publicEventsHandler kept streaming to a disabled public view")
 	}
 }
 
@@ -664,7 +664,7 @@ func TestPublicSettingsSaveTogglingAvailabilityPersistsAndAppears(t *testing.T) 
 // TestPublicSettingsRoutesAreAdminGated pins RBAC on /settings/public,
 // mirroring TestChannelsRoutesAreAdminGated (rbac_test.go already exercises
 // this route inside TestRequireRoleAppliesAcrossAllAdminRoutes/
-// TestRequireRoleAnonRedirectsAcrossAllAdminRoutes too — this test pins it
+// TestRequireRoleAnonRedirectsAcrossAllAdminRoutes too -- this test pins it
 // directly for this file's own regression coverage).
 func TestPublicSettingsRoutesAreAdminGated(t *testing.T) {
 	d, _, _ := configTestDeps(t)
@@ -738,7 +738,7 @@ func TestPublicSettingsSaveRoundTripsAndAudits(t *testing.T) {
 
 // TestPublicSettingsSaveUncheckingAllPanelsClearsThem pins that omitting
 // every "panel" checkbox (all unchecked) clears public.panels to empty
-// rather than leaving stale entries — an admin explicitly hiding everything
+// rather than leaving stale entries -- an admin explicitly hiding everything
 // must actually hide everything.
 func TestPublicSettingsSaveUncheckingAllPanelsClearsThem(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
@@ -762,7 +762,7 @@ func TestPublicSettingsSaveUncheckingAllPanelsClearsThem(t *testing.T) {
 
 // TestPublicSettingsSaveRejectsUnknownPanelWithNoWrite pins that the
 // config-layer allowlist (validatePublicPanel) is still enforced even if a
-// forged POST includes a "panel" value the rendered form never offers —
+// forged POST includes a "panel" value the rendered form never offers --
 // defense in depth against a tampered request, not just a trusted browser.
 func TestPublicSettingsSaveRejectsUnknownPanelWithNoWrite(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)

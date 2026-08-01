@@ -19,7 +19,7 @@ func rbacTestDeps(t *testing.T) (Deps, UserStore, SessionStore) {
 // seedSignedInRequest creates a user with the given role plus a live
 // session for it, and returns a request carrying the sw_session cookie.
 // RBAC only cares what a resolved session/user look like, which sessions.New
-// + store.Put produce directly — no need for a full WebAuthn ceremony here
+// + store.Put produce directly -- no need for a full WebAuthn ceremony here
 // (that's what auth_webauthn_test.go/auth_login_test.go's virtual
 // authenticator pins instead).
 func seedSignedInRequest(t *testing.T, users UserStore, sessions SessionStore, role Role, method, target string) *http.Request {
@@ -39,7 +39,7 @@ func seedSignedInRequest(t *testing.T, users UserStore, sessions SessionStore, r
 
 // TestRequireRoleAnonRedirectsToLogin pins the anonymous case: no session at
 // all on an admin route must redirect to /login rather than 403 (there's no
-// "your role is wrong" to report — there's no session to have a role).
+// "your role is wrong" to report -- there's no session to have a role).
 func TestRequireRoleAnonRedirectsToLogin(t *testing.T) {
 	d, _, _ := rbacTestDeps(t)
 	h := newHandler(d)

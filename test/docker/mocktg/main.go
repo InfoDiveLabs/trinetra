@@ -4,10 +4,10 @@
 //
 // Endpoints:
 //
-//	POST /bot<tok>/sendMessage  — records the "text" form value
-//	GET  /bot<tok>/getUpdates   — returns (and drains) injected updates
-//	POST /_inject?text=...      — test-only: queue an inbound update (chat 999)
-//	GET  /_messages             — test-only: dump recorded sends as JSON array
+//	POST /bot<tok>/sendMessage  -- records the "text" form value
+//	GET  /bot<tok>/getUpdates   -- returns (and drains) injected updates
+//	POST /_inject?text=...      -- test-only: queue an inbound update (chat 999)
+//	GET  /_messages             -- test-only: dump recorded sends as JSON array
 package main
 
 import (

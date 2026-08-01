@@ -10,7 +10,7 @@ import (
 // shared PageData (nav/topbar/CSRF) embedded, the live MonitoringView, and a
 // handful of summary counts the mockup's top-of-page count tiles need
 // (computed here rather than in the template, since html/template has no
-// arithmetic — mirroring DashboardPageData's TopCPUBars/TopMemBars
+// arithmetic -- mirroring DashboardPageData's TopCPUBars/TopMemBars
 // precomputation, handlers_dashboard.go).
 type MonitoringPageData struct {
 	PageData
@@ -20,14 +20,14 @@ type MonitoringPageData struct {
 	ContainersUp    int
 	ContainersTotal int
 	// DisksWarnCrit is how many of View.Disks are at/above DiskWarnPct, for
-	// the "Filesystem warning+crit" count tile — same cutoff the dashboard's
+	// the "Filesystem warning+crit" count tile -- same cutoff the dashboard's
 	// filesystems table/DisksCritical tile uses (DiskWarnPct,
 	// dashboard_view.go).
 	DisksWarnCrit int
 }
 
 // monitoringMemBarNormalMiB is the MemMiB value templates/monitoring.html's
-// container/process memory meters treat as a "full" (100%) bar — purely a
+// container/process memory meters treat as a "full" (100%) bar -- purely a
 // display normalization (there's no fixed per-host memory ceiling to divide
 // by, unlike a percentage-already metric), clamped at 100% above it.
 const monitoringMemBarNormalMiB = 1024.0
@@ -97,7 +97,7 @@ func renderMonitoringPage(w http.ResponseWriter, data MonitoringPageData) error 
 // monitoringHandler renders GET /monitoring: per-entity tables for
 // containers, systemd units, processes, and filesystems, each row wired to
 // the existing detail drawer (assets/app.js's data-detail/data-kind
-// handler — no new JS needed, it's already generic over any row). Disabled
+// handler -- no new JS needed, it's already generic over any row). Disabled
 // opt-in collectors (services/processes) render a "collector disabled" note
 // in the template rather than an empty table or an error.
 // requireRole(RoleViewer, ...) (routes.go's wiring) has already gated this by

@@ -15,7 +15,7 @@ import (
 // without ever importing internal/serverwatch: the file's shape
 // (serverwatch.AlertState/ActiveAlert, anomaly.go) is a plain
 // {"active":{"<key>":{"since":...,"reason":...,"acked":...}}} object, and
-// that JSON shape — not the Go type — is the actual contract between the
+// that JSON shape -- not the Go type -- is the actual contract between the
 // daemon and this page, so decoding it locally here doesn't create the
 // import-cycle risk a serverwatch import would (internal/web must never
 // import internal/serverwatch, to keep the module graph one-way).
@@ -48,7 +48,7 @@ type alertStateFile struct {
 // dashboard's "Active alerts" panel. A missing file (alerting has never
 // fired yet), an empty path (AlertStatePath not configured, e.g. some
 // tests), or a decode error all just render as "no active alerts" rather
-// than failing the whole page — this panel is display-only, never the
+// than failing the whole page -- this panel is display-only, never the
 // source of truth for alert state (that stays serverwatch's AlertState,
 // alerts.json itself, and the CLI's `serverwatch alerts` commands).
 func loadActiveAlerts(path string) []activeAlertView {
@@ -78,7 +78,7 @@ func loadActiveAlerts(path string) []activeAlertView {
 
 // containerBar is one row of a "Top containers" hbar panel: a container's
 // value (CPU% or MemMiB) rendered as a track width RELATIVE to the largest
-// value in that same top-N list — unlike the CPU/mem/swap resource tiles
+// value in that same top-N list -- unlike the CPU/mem/swap resource tiles
 // (which are already 0-100 percentages, usable as a width directly),
 // MemMiB is an absolute megabyte figure, so it needs normalizing against
 // its list's own max before it means anything as a CSS bar width.
@@ -160,7 +160,7 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 }
 
 // renderDashboardPage renders templates/dashboard.html through the full
-// app-shell layout (base.html) against DashboardPageData — the same
+// app-shell layout (base.html) against DashboardPageData -- the same
 // parse/execute shape renderPage (templates.go) uses for plain PageData
 // pages, mirrored here (like renderUsersPage/handlers_users.go) because this
 // page needs the extra View/Alerts fields alongside the shared ones.
@@ -176,7 +176,7 @@ func renderDashboardPage(w http.ResponseWriter, data DashboardPageData) error {
 
 // dashboardHandler renders GET /: the live summary counts, resource tiles,
 // active alerts, top-containers hbars, and filesystems table, all bound to
-// the current Deps.Snapshot() — see DashboardView's doc for the exact
+// the current Deps.Snapshot() -- see DashboardView's doc for the exact
 // projection. requireRole(RoleViewer, ...) (routes.go's wiring) has already
 // gated this by the time it runs.
 func dashboardHandler(d Deps) http.HandlerFunc {
@@ -247,7 +247,7 @@ func humanRate(bps float64) string {
 
 // diskFullSoonDays is the DaysToFull cutoff at/under which the filesystems
 // table's trend column renders as "filling" (red, mockup's .trend.up) rather
-// than "stable" (green, .trend.dn) — a display-only cutoff, same caveat as
+// than "stable" (green, .trend.dn) -- a display-only cutoff, same caveat as
 // DiskCriticalPct/DiskWarnPct in dashboard_view.go.
 const diskFullSoonDays = 14
 
@@ -263,7 +263,7 @@ func diskTrendText(days float64, known bool) string {
 	return fmt.Sprintf("▼ %.0fd to full", days)
 }
 
-// diskTrendClass is diskTrendText's companion CSS class ("up"/"dn" — the
+// diskTrendClass is diskTrendText's companion CSS class ("up"/"dn" -- the
 // mockup's .trend.up/.trend.dn colors).
 func diskTrendClass(days float64, known bool) string {
 	if known && days <= diskFullSoonDays {
@@ -274,7 +274,7 @@ func diskTrendClass(days float64, known bool) string {
 
 // loadLedClass buckets the load-1m tile's led class relative to core count:
 // a load average is only "high" relative to how many cores can service it,
-// unlike a flat percentage — warn at >=70% of cores busy, crit at >=100%.
+// unlike a flat percentage -- warn at >=70% of cores busy, crit at >=100%.
 func loadLedClass(load1 float64, cores int) string {
 	if cores <= 0 {
 		cores = 1

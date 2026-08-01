@@ -75,7 +75,7 @@ type IfaceRate struct{ RxBps, TxBps float64 }
 // /proc/net/dev into per-interface rates, by diffing against the previous
 // sample. It is meant to be owned by a single goroutine (the sampler loop,
 // mirroring the *CPUStat pattern in collectFast) and called once per slow
-// tick — no locking, since only one goroutine ever touches it.
+// tick -- no locking, since only one goroutine ever touches it.
 type NetRateCalc struct {
 	prev   map[string]IfaceCounters
 	prevTS int64
@@ -85,14 +85,14 @@ type NetRateCalc struct {
 // sample, then updates the stored sample to cur/nowUnix for the next call.
 //
 // The first call ever (no prior sample) has nothing to diff against, so it
-// returns an empty map — this is also what makes the daemon's first slow
+// returns an empty map -- this is also what makes the daemon's first slow
 // tick after startup skip appending net series, since there's no meaningful
 // rate yet.
 //
 // For interfaces present in both prev and cur: elapsed = nowUnix - prevTS;
 // elapsed <= 0 (clock didn't advance, or went backwards) skips that computation
 // entirely (avoids a divide-by-zero/negative-elapsed rate). A counter that
-// went backwards (cur < prev — an interface reset, or the counter wrapped)
+// went backwards (cur < prev -- an interface reset, or the counter wrapped)
 // is also skipped rather than emitting a negative rate. Interfaces present
 // in only one of prev/cur (new interface appeared, or one disappeared) are
 // omitted from the result.

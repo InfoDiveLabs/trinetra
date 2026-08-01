@@ -1,4 +1,4 @@
-// Package serverwatch: alertlog.go implements the alert event log — an
+// Package serverwatch: alertlog.go implements the alert event log -- an
 // append-only JSONL history of every alert notification the daemon has
 // dispatched (fired/recovered, and which channels actually delivered it).
 // This is deliberately separate from AlertState (alerts.json, the current

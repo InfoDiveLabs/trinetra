@@ -48,7 +48,7 @@ const telegramMaxMessageLen = 4096
 // exceeds telegramMaxMessageLen, see chunkMessage), with parse_mode=HTML so
 // renderers' <pre>/<b> tags render instead of showing as literal text.
 // Callers rendering dynamic content (mount names, container names, etc.)
-// into HTML-mode text MUST html-escape it themselves — SendMessage does not
+// into HTML-mode text MUST html-escape it themselves -- SendMessage does not
 // re-escape, since it also carries pre-built <pre>/<b> markup that must NOT
 // be escaped. If any chunk fails to send, SendMessage returns that error
 // immediately (a partial multi-chunk delivery is reported, not swallowed).
@@ -87,14 +87,14 @@ func (c *Client) sendOne(text string) error {
 
 // chunkMessage splits s into parts of at most limit characters, breaking on
 // newline boundaries so a single logical line is never split across two
-// Telegram messages — UNLESS a single line itself exceeds the per-chunk
+// Telegram messages -- UNLESS a single line itself exceeds the per-chunk
 // budget, in which case that line is hard-split (there is no better boundary
 // to use). Returns []string{s} unchanged when s already fits in one chunk
 // (the common case, so callers pay nothing extra for short messages).
 //
 // Because SendMessage sends parse_mode=HTML, a chunk boundary that falls
 // inside a <pre>...</pre> block would leave one chunk with an unclosed
-// <pre> and the next with a stray </pre> — unbalanced HTML that Telegram
+// <pre> and the next with a stray </pre> -- unbalanced HTML that Telegram
 // rejects with a 400. chunkMessage tracks <pre> nesting across the split:
 // a chunk that ends still inside a block gets a synthetic </pre> appended,
 // and the continuation chunk gets a synthetic <pre> prepended, so every

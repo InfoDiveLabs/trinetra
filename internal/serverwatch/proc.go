@@ -21,7 +21,7 @@ type ProcInfo struct {
 // first tick, before ProcCPUCalc has a prior sample to diff against).
 // Deliberately snapshot-only: per-process series would be a cardinality trap
 // (hundreds of short-lived pids per host), so this is never fed into the
-// SampleStore — see collectProcesses/daemon.go's sampler loop.
+// SampleStore -- see collectProcesses/daemon.go's sampler loop.
 type ProcSnapshot struct {
 	Total, Running, Sleeping, Zombie int
 	Top                              []ProcInfo
@@ -44,7 +44,7 @@ const procTopN = 15
 // are consumed above, so in the post-comm remainder (0-indexed) those become
 // state=rest[0], utime=rest[11], stime=rest[12], num_threads=rest[17],
 // rss=rest[21]. Returns ok=false for anything malformed or too short to
-// contain all of these — callers should skip that pid rather than trust
+// contain all of these -- callers should skip that pid rather than trust
 // zero-valued output.
 func parseProcPidStat(content string) (comm, state string, utime, stime uint64, numThreads int, rssPages int64, ok bool) {
 	openIdx := strings.IndexByte(content, '(')
@@ -79,7 +79,7 @@ func parseProcPidStat(content string) (comm, state string, utime, stime uint64, 
 // /proc/<pid>/stat) into a CPU% by diffing against the previous slow-tier
 // sample, mirroring NetRateCalc's stateful prev-delta pattern (net.go). It
 // is meant to be owned by a single goroutine (the sampler loop) and called
-// once per slow tick — no locking, since only one goroutine ever touches it.
+// once per slow tick -- no locking, since only one goroutine ever touches it.
 type ProcCPUCalc struct {
 	prev      map[int]uint64
 	prevTotal uint64
@@ -88,7 +88,7 @@ type ProcCPUCalc struct {
 // Pct computes CPUPct = (procJiffiesDelta / totalCPUDelta) * 100 for each
 // pid in cur (pid -> utime+stime jiffies), against the previous sample.
 // curTotal is the current /proc/stat CPUStat.Total jiffies (all CPUs, all
-// states) — the same system-wide denominator cpuBusyPct uses, just applied
+// states) -- the same system-wide denominator cpuBusyPct uses, just applied
 // per-process here.
 //
 // The very first call ever (no prior sample) has nothing to diff against,
@@ -119,7 +119,7 @@ func (p *ProcCPUCalc) Pct(cur map[int]uint64, curTotal uint64) map[int]float64 {
 
 // collectProcesses gathers the live process-table overview from
 // /proc/<pid>/stat entries: per-state counts and a bounded top-N by CPU%
-// (falling back to top-N by mem when every process reads 0% CPU — i.e. the
+// (falling back to top-N by mem when every process reads 0% CPU -- i.e. the
 // very first slow tick, before cpucalc has a prior sample to diff against).
 // pageSizeKB converts /proc/<pid>/stat's rss (in pages) to MiB.
 //

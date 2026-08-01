@@ -11,7 +11,7 @@ import (
 // AuditRecord is one line of <StateDir>/audit.jsonl: who changed what, and
 // what it was before/after. Task 10 (#66) requires this for every config
 // write, channel CRUD mutation, and alert ack, plus (retrofitted) every
-// Task 7 (#63) user-management mutation — see appendAudit's callers across
+// Task 7 (#63) user-management mutation -- see appendAudit's callers across
 // handlers_config.go/handlers_channels.go/handlers_alerts.go/
 // handlers_users.go.
 type AuditRecord struct {
@@ -28,7 +28,7 @@ type AuditRecord struct {
 	// "user.remove", "user.invite", "user.credential.revoke".
 	Action string `json:"action"`
 	// Key identifies what was changed within Action (a config dotted key, a
-	// channel name, an alert key, a user id) — omitted when Action itself is
+	// channel name, an alert key, a user id) -- omitted when Action itself is
 	// the whole story (e.g. "user.invite" has no single prior "key").
 	Key string `json:"key,omitempty"`
 	// Old/New are the human-readable before/after values, omitted when not
@@ -51,7 +51,7 @@ func auditLogPath(stateDir string) string {
 // under PIPE_BUF), so no additional locking is needed here.
 //
 // stateDir == "" (no state directory configured, e.g. some minimal test
-// Deps) is treated as "nowhere to write" and silently succeeds — the audit
+// Deps) is treated as "nowhere to write" and silently succeeds -- the audit
 // trail is a best-effort record of what happened, not the source of truth
 // for any access-control decision, so its absence must never block or fail
 // the mutation it's describing.
@@ -90,7 +90,7 @@ func auditUser(r *http.Request) string {
 
 // logAudit is the shared call-site helper every mutation handler uses: it
 // fills Time/User from r and best-effort appends under d.StateDir, never
-// surfacing a write failure to the caller (see appendAudit's doc — the audit
+// surfacing a write failure to the caller (see appendAudit's doc -- the audit
 // trail must never block the mutation it's describing).
 func logAudit(d Deps, r *http.Request, action, key, old, new string) {
 	_ = appendAudit(d.StateDir, AuditRecord{

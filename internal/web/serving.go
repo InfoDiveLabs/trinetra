@@ -32,7 +32,7 @@ func effectiveWebMode(cfg *config.Config) string {
 // passkey-unsafe rp_id/origin, or with a serving mode missing the fields it
 // needs to actually terminate TLS. Per the design doc's security checklist:
 // "rp_id/origin must match the public hostname in every mode ... validated
-// at startup — refuse to start on mismatch."
+// at startup -- refuse to start on mismatch."
 func validateOrigin(cfg *config.Config) error {
 	mode := effectiveWebMode(cfg)
 	switch mode {
@@ -96,7 +96,7 @@ func validateOrigin(cfg *config.Config) error {
 }
 
 // isLoopbackAddr reports whether addr (a "host:port" listen address, e.g.
-// Deps.Listen) is bound to loopback — the only case in which trusting
+// Deps.Listen) is bound to loopback -- the only case in which trusting
 // X-Forwarded-Proto/X-Forwarded-Host from an incoming request is safe,
 // because only a same-host process (a local reverse proxy: Cloudflare
 // Tunnel, nginx, Caddy) can dial loopback directly. A wildcard/public bind
@@ -148,7 +148,7 @@ type requestOriginCtxKey struct{}
 
 // withRequestOrigin wraps next so every request's derived origin (see
 // requestOrigin) is available to downstream handlers via
-// requestOriginFromContext — a future task (WebAuthn ceremonies, #60/#61)
+// requestOriginFromContext -- a future task (WebAuthn ceremonies, #60/#61)
 // needs this to validate the browser-reported origin against what the
 // server itself considers authoritative in proxy mode.
 func withRequestOrigin(trustForwarded bool, next http.Handler) http.Handler {
@@ -224,7 +224,7 @@ func serveManual(d Deps, handler http.Handler, certFile, keyFile string) (stop f
 
 // serveAutocert binds TLS on d.Listen using golang.org/x/crypto/acme/
 // autocert to automatically obtain and renew a Let's Encrypt certificate
-// for domainsCSV (a comma-separated allowlist — validateOrigin already
+// for domainsCSV (a comma-separated allowlist -- validateOrigin already
 // confirmed it's non-empty). autocert.Manager's HTTP-01 challenge handler is
 // additionally served on :80, which this mode requires be reachable from
 // the public internet (see the design doc's "Serving modes" section).

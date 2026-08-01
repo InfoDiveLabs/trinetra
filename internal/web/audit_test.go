@@ -79,7 +79,7 @@ func TestAppendAuditAppendsAcrossCalls(t *testing.T) {
 }
 
 // TestAppendAuditEmptyStateDirIsNoop pins that an empty StateDir (some
-// minimal test Deps) is a silent no-op, never an error — the audit trail
+// minimal test Deps) is a silent no-op, never an error -- the audit trail
 // must never fail the mutation it's describing just because no state
 // directory was configured.
 func TestAppendAuditEmptyStateDirIsNoop(t *testing.T) {

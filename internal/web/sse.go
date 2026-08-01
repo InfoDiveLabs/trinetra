@@ -13,11 +13,11 @@ import (
 // period when Deps.Cfg is nil or reports an invalid FastInterval (defensive;
 // every real Deps built by the serverwatch-web binary's buildDeps
 // (cmd/serverwatch-web) always has a
-// valid one) — config.Default's own FastInterval (5s).
+// valid one) -- config.Default's own FastInterval (5s).
 const sseDefaultInterval = 5 * time.Second
 
 // sseTickerInterval resolves the SSE stream's cadence to the daemon's
-// current fast-tier interval (cfg.FastInterval — the same cadence
+// current fast-tier interval (cfg.FastInterval -- the same cadence
 // snapshotHub itself is republished on, see
 // internal/serverwatch/snapshot_hub.go/daemon.go), so a subscriber never polls
 // faster than the source actually changes.
@@ -47,10 +47,10 @@ var sseFallbackInterval = 30 * time.Second
 // snapshot / data: <json>) and flushes it immediately, so the browser's
 // EventSource dispatches it as soon as it's on the wire rather than sitting
 // in a buffer. Returns false when the write itself failed (client
-// disconnected — the io.Writer level signal, complementing eventsHandler's
+// disconnected -- the io.Writer level signal, complementing eventsHandler's
 // r.Context().Done() check for the case a disconnect is noticed between
 // writes rather than during one), telling the caller to stop the stream;
-// a JSON marshal failure (shouldn't happen — DashboardView is all
+// a JSON marshal failure (shouldn't happen -- DashboardView is all
 // plain data) just skips that one frame and keeps the connection open.
 func writeSnapshotEvent(w http.ResponseWriter, f http.Flusher, view DashboardView) bool {
 	b, err := json.Marshal(view)
@@ -194,7 +194,7 @@ func eventsHandler(d Deps) http.HandlerFunc {
 // publicSSEFrame is the ONLY payload GET /public/events ever marshals onto
 // the wire: publicPanelView (Panels) is the exact tile shape /public's HTML
 // renders, and Availability is nil unless "availability" is in
-// cfg.Public.Panels — never a bare DashboardView. See buildPublicSSEFrame.
+// cfg.Public.Panels -- never a bare DashboardView. See buildPublicSSEFrame.
 type publicSSEFrame struct {
 	Panels []publicPanelView `json:"panels"`
 	// Availability is a pointer (omitempty) rather than a zero-valued
@@ -206,7 +206,7 @@ type publicSSEFrame struct {
 
 // buildPublicSSEFrame is GET /public/events' half of the SAME allowlist
 // chokepoint /public's HTML uses (buildPublicPanels/publicPanelsContain,
-// handlers_public.go) — it is the ONLY function that turns a snapshot into
+// handlers_public.go) -- it is the ONLY function that turns a snapshot into
 // this stream's wire payload, and it only ever does so by iterating
 // allowlist, exactly like the page render. A panel id absent from allowlist
 // is never looked at here, so it can never reach an anonymous subscriber
@@ -221,7 +221,7 @@ func buildPublicSSEFrame(allowlist []string, snap DashboardView) publicSSEFrame 
 }
 
 // writePublicSnapshotEvent is writeSnapshotEvent's counterpart for the
-// public stream's narrower payload type — same "snapshot" event name (so
+// public stream's narrower payload type -- same "snapshot" event name (so
 // assets/app.js's swBootPublicSSE can use the same EventSource
 // addEventListener("snapshot", ...) shape as the authed dashboard's
 // swBootSSE), same flush-immediately/false-on-write-failure contract.
@@ -239,19 +239,19 @@ func writePublicSnapshotEvent(w http.ResponseWriter, f http.Flusher, frame publi
 
 // publicEventsHandler serves GET /public/events: the anonymous counterpart
 // to /events (eventsHandler above) that backs /public's live resource
-// tiles/availability strip — see routes.go's wiring for why this is a
+// tiles/availability strip -- see routes.go's wiring for why this is a
 // wholly separate handler rather than a shared one.
 //
 // SECURITY:
 //   - cfg.Public.Enabled=false 404s exactly like publicPageHandler, before
-//     any streaming setup (headers, flusher check) even happens — an
+//     any streaming setup (headers, flusher check) even happens -- an
 //     anonymous prober gets no signal beyond "not found" either way.
 //   - Every frame is built by buildPublicSSEFrame(cfg.Public.Panels, ...),
 //     re-reading BOTH the config and the snapshot on every tick (not just
-//     the first frame) — so an admin narrowing/disabling public.panels
+//     the first frame) -- so an admin narrowing/disabling public.panels
 //     mid-connection takes effect on the very next tick, not just for
 //     brand-new connections; see TestPublicEventsStreamStopsOnDisableMidStream.
-//   - Cache-Control: no-store (not eventsHandler's no-cache) — matching
+//   - Cache-Control: no-store (not eventsHandler's no-cache) -- matching
 //     publicPageHandler's rationale (issue #67 follow-up): a caching
 //     proxy/CDN must never keep serving stream frames after the admin
 //     disables /public or narrows its allowlist.

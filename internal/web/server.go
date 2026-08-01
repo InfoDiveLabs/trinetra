@@ -12,7 +12,7 @@ import (
 // records from <StateDir>/sessions.json (session.go's SessionStore.GC).
 // Session/ceremony expiry itself is enforced immediately and independently
 // by SessionStore.Get treating an expired record as absent (see
-// jsonSessionStore.Get) — this ticker only reclaims disk space/file size
+// jsonSessionStore.Get) -- this ticker only reclaims disk space/file size
 // for records nobody ever looks up again after they expire, so an interval
 // this coarse costs nothing in correctness.
 const sessionGCInterval = 10 * time.Minute
@@ -91,7 +91,7 @@ type Deps struct {
 	AlertStatePath string
 	// TestChannel sends a one-off test notification through the named
 	// channel (internal/serverwatch/daemon.go's testChannel closure, built
-	// from sendTestNotification/buildNotifier — the same logic `serverwatch
+	// from sendTestNotification/buildNotifier -- the same logic `serverwatch
 	// channel test <name>` uses). As of task 8, channelsTestHandler
 	// (handlers_channels.go) reads through Deps.API.TestChannel instead --
 	// this field is kept on Deps (still assigned by the serverwatch-web
@@ -106,11 +106,11 @@ type Deps struct {
 	// delivery use, minus the network send.
 	// The channels handlers call it before persisting an ENABLED channel so
 	// the web editor never silently creates a channel that would be dropped at
-	// delivery time (#79 — e.g. a telegram channel with no chat id). May be
+	// delivery time (#79 -- e.g. a telegram channel with no chat id). May be
 	// nil in tests that don't exercise it; callers must check before calling.
 	ValidateChannel func(config.ChannelConfig, *config.Config) error
 	// Enabled mirrors cfg.Web.Enabled (the web.enabled config key, issue
-	// #58), read once at daemon startup — see daemon.go's cmdDaemon.
+	// #58), read once at daemon startup -- see daemon.go's cmdDaemon.
 	Enabled bool
 	// Listen mirrors cfg.Web.Listen (the web.listen config key, issue #58),
 	// a "host:port" string net.SplitHostPort-validated by
@@ -151,8 +151,8 @@ func Start(d Deps) (stop func(), err error) {
 
 	// The authenticated-session store, the separate ceremony-placeholder
 	// store, and the enrollment-token store (session.go/enroll_tokens.go)
-	// all need a periodic GC sweep independent of any particular request —
-	// see sessionGCInterval's doc — so all three are started once here,
+	// all need a periodic GC sweep independent of any particular request --
+	// see sessionGCInterval's doc -- so all three are started once here,
 	// alongside the listener, rather than per-request like newHandler's
 	// other per-call newSessionStore/newCeremonyStore/newTokenStore uses.
 	sessionGCStop := newSessionStore(d.StateDir).startGC(sessionGCInterval)
@@ -167,7 +167,7 @@ func Start(d Deps) (stop func(), err error) {
 	// listenerStop (NOT the named return "stop") is deliberate: the returned
 	// closure below calls listenerStop, and if it instead captured "stop" by
 	// name, assigning the closure itself to "stop" via `return func(){...}`
-	// would make the closure call itself — infinite recursion.
+	// would make the closure call itself -- infinite recursion.
 	listenerStop, err := listenAndServe(d, newHandler(d))
 	if err != nil {
 		gcStop()

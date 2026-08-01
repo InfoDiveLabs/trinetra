@@ -46,7 +46,7 @@
       <div class="val" id="val-load1">{{printf "%.2f" $v.Load1}}</div>
       <div class="sub" id="sub-load">5m {{printf "%.2f" $v.Load5}} · 15m {{printf "%.2f" $v.Load15}}</div></div>
     <div class="tile"><div class="k"><span class="eyebrow">Temp</span><span id="led-temp" class="led {{ledClass $v.TempC 70 85}}"></span></div>
-      <div class="val" id="val-temp">{{if gt $v.TempC 0.0}}{{printf "%.0f" $v.TempC}}<span class="u">°C</span>{{else}}—{{end}}</div>
+      <div class="val" id="val-temp">{{if gt $v.TempC 0.0}}{{printf "%.0f" $v.TempC}}<span class="u">°C</span>{{else}}--{{end}}</div>
       <div class="sub" id="sub-temp">&nbsp;</div></div>
     <div class="tile"><div class="k"><span class="eyebrow">Network</span><span id="led-net" class="led ok"></span></div>
       <div class="val" id="val-net" style="font-size:19px">{{humanRate $v.NetRxBps}}<span class="u">↓</span></div>

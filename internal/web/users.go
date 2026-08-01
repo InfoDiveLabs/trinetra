@@ -26,7 +26,7 @@ const (
 // Credential is one registered passkey, in the flattened shape the design
 // doc's "Users store" section specifies (users.json: id, name, role,
 // created, credentials[]{id, publicKey, signCount, transports}). It mirrors
-// the fields of *webauthn.Credential this package actually persists —
+// the fields of *webauthn.Credential this package actually persists --
 // AttestationType/Flags/Authenticator.AAGUID aren't needed after the
 // ceremony completes, so they're dropped rather than round-tripped.
 type Credential struct {
@@ -52,7 +52,7 @@ type Credential struct {
 // *webauthn.WebAuthn's registration/login ceremonies.
 type User struct {
 	// ID is this user's WebAuthn user handle: an opaque, random identifier
-	// (see newUserID), never the display Name — go-webauthn's User.WebAuthnID
+	// (see newUserID), never the display Name -- go-webauthn's User.WebAuthnID
 	// doc warns identity decisions must key off this, not Name.
 	ID string `json:"id"`
 	// Name is the human-palatable account name (display name and username
@@ -154,23 +154,23 @@ type UserStore interface {
 	List() []*User
 	Delete(id string) error
 	// CreateFirstAdmin atomically persists u as the very first account (role
-	// forced to RoleAdmin) IFF the store is still empty, else fails — the
+	// forced to RoleAdmin) IFF the store is still empty, else fails -- the
 	// first-run bootstrap decision made under the same lock as the write.
 	CreateFirstAdmin(u *User) error
 	// SetRoleUnlessLastAdmin sets user id's role, but refuses (errLastAdmin)
-	// to demote the sole remaining admin — the load, the last-admin check,
+	// to demote the sole remaining admin -- the load, the last-admin check,
 	// and the write all happen under ONE critical section so two concurrent
 	// demotions can't both pass the check and both commit (the zero-admin
 	// lockout TOCTOU). Returns errUserNotFound if id is unknown.
 	SetRoleUnlessLastAdmin(id string, role Role) error
 	// RemoveUnlessLastAdmin deletes user id, but refuses (errLastAdmin) to
-	// remove the sole remaining admin — same single-critical-section
+	// remove the sole remaining admin -- same single-critical-section
 	// atomicity guarantee as SetRoleUnlessLastAdmin. Returns errUserNotFound
 	// if id is unknown.
 	RemoveUnlessLastAdmin(id string) error
 	// RevokeCredentialUnlessLastAdmin removes credential credID from user
 	// id's Credentials, but refuses (errLastAdminCredential) if id is the
-	// sole remaining admin AND credID is their last credential — closing the
+	// sole remaining admin AND credID is their last credential -- closing the
 	// third zero-admin lockout vector (a sole admin with zero usable
 	// passkeys can never sign in again: re-enrollment needs either an empty
 	// store or an admin-issued token, neither of which is available). Same
@@ -196,7 +196,7 @@ var (
 	errCredentialNotFound  = errors.New("web: credential not found")
 )
 
-// countAdmins reports how many of users hold RoleAdmin — the last-admin
+// countAdmins reports how many of users hold RoleAdmin -- the last-admin
 // guard's input, evaluated on the in-lock snapshot the atomic methods hold.
 func countAdmins(users []*User) int {
 	n := 0
@@ -213,7 +213,7 @@ func countAdmins(users []*User) int {
 // users in memory between calls: every method reloads from disk under
 // s.mu, so concurrent goroutines within this process always see the latest
 // persisted state and Put/Delete's read-modify-write can't race each other
-// (a second process editing the file concurrently is out of scope — nothing
+// (a second process editing the file concurrently is out of scope -- nothing
 // else in this daemon does that). Given the low request volume of an
 // enrollment/login ceremony, the extra disk I/O per call is not a concern.
 type jsonUserStore struct {
@@ -222,17 +222,17 @@ type jsonUserStore struct {
 
 // fileStoreMutexes holds one *sync.Mutex per absolute file path, so every
 // file-backed store instance (jsonUserStore, jsonSessionStore, tokenStore)
-// pointing at the SAME file shares a single lock — fetched via fileStoreMutex
+// pointing at the SAME file shares a single lock -- fetched via fileStoreMutex
 // at lock time rather than held in a struct field, so it works even for the
 // stores constructed as bare struct literals in tests. Guarded by
 // fileStoreMutexesMu (a plain lock over the map itself, held only briefly to
-// fetch/create the per-path mutex — never while doing store I/O).
+// fetch/create the per-path mutex -- never while doing store I/O).
 //
 // This is what makes these stores' long-standing read-modify-write safety
 // (and jsonUserStore's atomic last-admin guard) actually hold: every handler
 // constructs a FRESH store per request (newUserStore/newSessionStore/
 // newCeremonyStore/newTokenStore), so a per-INSTANCE mutex would serialize
-// nothing across concurrent requests — two writers would each load→modify→
+// nothing across concurrent requests -- two writers would each load→modify→
 // save the whole file (last-writer-wins lost updates) and collide on the
 // shared "<path>.tmp" temp file. A path-keyed, process-wide lock closes both.
 var (
@@ -245,7 +245,7 @@ var (
 // path share the lock; on the (essentially impossible) Abs error it falls
 // back to the raw path, which still shares a lock among identical spellings.
 // Distinct paths (e.g. sessions.json vs ceremonies.json) get distinct locks,
-// which is correct — they are independent files.
+// which is correct -- they are independent files.
 func fileStoreMutex(path string) *sync.Mutex {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -384,7 +384,7 @@ func (s *jsonUserStore) Put(u *User) error {
 }
 
 // CreateFirstAdmin atomically persists u as the first-ever account, forcing
-// its role to RoleAdmin — but ONLY if the store is still empty; otherwise it
+// its role to RoleAdmin -- but ONLY if the store is still empty; otherwise it
 // returns an error and writes nothing. Both the emptiness check and the
 // append happen under the SAME s.mu, which is what closes the first-run
 // bootstrap TOCTOU: an earlier design decided "0 users ⇒ admin" at
@@ -445,7 +445,7 @@ func (s *jsonUserStore) Delete(id string) error {
 // SetRoleUnlessLastAdmin sets user id's Role to role, all under a SINGLE
 // s.mu critical section: it loads the current users, and only if demoting id
 // (admin -> non-admin) would NOT leave the store admin-less does it write.
-// Two concurrent demotions of the two remaining admins therefore serialize —
+// Two concurrent demotions of the two remaining admins therefore serialize --
 // whichever acquires the lock first commits, the second reloads a store with
 // one admin left, sees itself as the last one, and is rejected with
 // errLastAdmin. Promotions and no-op same-role writes are never blocked.
@@ -475,7 +475,7 @@ func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
 }
 
 // RemoveUnlessLastAdmin deletes user id under a SINGLE s.mu critical section,
-// refusing (errLastAdmin) to delete the sole remaining admin — the removal
+// refusing (errLastAdmin) to delete the sole remaining admin -- the removal
 // counterpart of SetRoleUnlessLastAdmin, with the identical atomicity
 // guarantee against a concurrent second remover.
 func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
@@ -504,12 +504,12 @@ func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
 }
 
 // RevokeCredentialUnlessLastAdmin removes credential credID from user id's
-// Credentials under a SINGLE s.mu critical section — load, last-admin
+// Credentials under a SINGLE s.mu critical section -- load, last-admin
 // check, and write all happen while holding the lock, exactly like
 // SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin. It refuses
 // (errLastAdminCredential) only when id is the sole remaining admin (fewer
 // than 2 admins in the store) AND credID is the last entry in their
-// Credentials — removing it would leave that admin, and therefore the
+// Credentials -- removing it would leave that admin, and therefore the
 // system, with no admin able to complete a login ceremony, and
 // re-enrollment is closed the moment the store is non-empty. Revoking a
 // non-last credential, or a credential belonging to a non-last admin (one

@@ -4,7 +4,7 @@
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
 
     <div class="section-label"><span class="eyebrow">Access &amp; domain</span></div>
-    <p class="note" style="margin:-4px 0 14px">How people reach the web UI, and the address passkeys are bound to — read-only here: managed via the CLI (<span class="mono">serverwatch config set web.*</span>). Editing the origin/RP&nbsp;ID from the web could lock you out of passkey login, so there's no form control for it on this page.</p>
+    <p class="note" style="margin:-4px 0 14px">How people reach the web UI, and the address passkeys are bound to -- read-only here: managed via the CLI (<span class="mono">serverwatch config set web.*</span>). Editing the origin/RP&nbsp;ID from the web could lock you out of passkey login, so there's no form control for it on this page.</p>
     <div class="grid g-2">
       <div class="panel"><div class="head"><span class="eyebrow">How it's served</span></div>
         <label class="field"><span class="lb">Web UI enabled</span><span class="mono">{{if .WebEnabled}}yes{{else}}no{{end}}</span></label>
@@ -30,10 +30,10 @@
     </div>
 
     <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Anomaly detection</span><input type="checkbox" class="switch" name="baseline_alerts" value="1" {{if .BaselineAlerts}}checked{{end}}></div>
-      <p class="note" style="margin:-4px 0 14px">Off by default — flags readings that deviate from the 7-day norm. Can be noisy on spiky metrics.</p>
+      <p class="note" style="margin:-4px 0 14px">Off by default -- flags readings that deviate from the 7-day norm. Can be noisy on spiky metrics.</p>
       <div class="grid g-2" style="gap:0 14px">
         <label class="field"><span class="lb">Anomaly sensitivity (σ)</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}"><span class="hint">Flag a reading this many standard deviations from its 7-day norm. Lower = more sensitive (more alerts); 3 is a good default.</span></label>
-        <label class="field"><span class="lb">Minimum deviation (fraction)</span><input type="number" step="any" name="baseline_min_pct" value="{{.BaselineMinPct}}"><span class="hint">A reading must ALSO be at least this far from the mean, as a fraction — e.g. 0.15 = 15% — before it counts as anomalous. Raw fraction, not a percent.</span></label>
+        <label class="field"><span class="lb">Minimum deviation (fraction)</span><input type="number" step="any" name="baseline_min_pct" value="{{.BaselineMinPct}}"><span class="hint">A reading must ALSO be at least this far from the mean, as a fraction -- e.g. 0.15 = 15% -- before it counts as anomalous. Raw fraction, not a percent.</span></label>
       </div>
     </div>
 
@@ -60,7 +60,7 @@
     <p class="note" style="margin:-4px 0 14px">Cheap resource metrics are sampled fast; expensive checks (disk, docker, SMART) run less often. Raw fast samples are kept briefly, then summarized to 1-minute points for long-term history.</p>
     <div class="grid g-2">
       <div class="panel"><div class="head"><span class="eyebrow">Sampling</span></div>
-        <label class="field"><span class="lb">Resource sampling (seconds)</span><input type="number" step="1" name="fast_interval" value="{{.FastInterval}}"><span class="hint">CPU, memory, load, swap — measured this often. Drives the live dashboard and fast spike detection.</span></label>
+        <label class="field"><span class="lb">Resource sampling (seconds)</span><input type="number" step="1" name="fast_interval" value="{{.FastInterval}}"><span class="hint">CPU, memory, load, swap -- measured this often. Drives the live dashboard and fast spike detection.</span></label>
         <label class="field"><span class="lb">Heavy checks (seconds)</span><input type="number" step="1" name="sample_interval" value="{{.SampleInterval}}"><span class="hint">Disk usage, docker, systemd, SMART, connectivity. Must be a multiple of the resource sampling interval.</span></label>
         <label class="field"><span class="lb">Heartbeat (seconds)</span><input type="number" step="1" name="heartbeat_interval" value="{{.HeartbeatInterval}}"><span class="hint">How often "I'm alive" is written. Determines how precisely downtime is measured after an outage.</span></label></div>
       <div class="panel"><div class="head"><span class="eyebrow">Data retention</span></div>
@@ -100,7 +100,7 @@
     <div class="section-label"><span class="eyebrow">Alerting</span></div>
     <p class="note" style="margin:-4px 0 14px">Where alerts go, and a way to be told when the whole server is unreachable.</p>
     <div class="panel"><div class="head"><span class="eyebrow">Delivery &amp; offline detection</span><a href="/channels" class="btn ghost">Manage channels →</a></div>
-      <label class="field"><span class="lb">Dead-man switch URL (optional)</span><input type="text" name="deadman_url" value="{{.DeadmanURL}}"><span class="hint">serverwatch pings this URL on every heartbeat. If the server (or its internet) dies, the pings stop and the external service (e.g. healthchecks.io) alerts you — the one case the server can't report itself.</span></label></div>
+      <label class="field"><span class="lb">Dead-man switch URL (optional)</span><input type="text" name="deadman_url" value="{{.DeadmanURL}}"><span class="hint">serverwatch pings this URL on every heartbeat. If the server (or its internet) dies, the pings stop and the external service (e.g. healthchecks.io) alerts you -- the one case the server can't report itself.</span></label></div>
 
     <div class="grid g-2" style="margin-top:14px">
       <div class="panel"><div class="head"><span class="eyebrow">Daily digest</span><input type="checkbox" class="switch" name="daily_enabled" value="1" {{if .DailyEnabled}}checked{{end}}></div>
@@ -115,7 +115,7 @@
           <label class="field" style="margin:0"><span class="lb">Send at</span><input type="time" name="weekly_time" value="{{.WeeklyTime}}" style="width:140px"></label></div></div>
     </div>
 
-    <div style="display:flex;gap:10px;margin-top:24px"><button class="btn primary" type="submit">Save changes</button><span class="spacer"></span><span class="note mono">saving reloads the daemon live — no restart</span></div>
+    <div style="display:flex;gap:10px;margin-top:24px"><button class="btn primary" type="submit">Save changes</button><span class="spacer"></span><span class="note mono">saving reloads the daemon live -- no restart</span></div>
   </form>
 </div>
 {{end}}

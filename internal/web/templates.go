@@ -13,7 +13,7 @@ import (
 // assetVersion is a short content hash over every embedded asset, appended as
 // a ?v= query to asset URLs (see the "asset" template helper). Because the
 // hash changes whenever any asset's bytes change, each build produces fresh
-// asset URLs — defeating stale browser/CDN (Cloudflare) caching of old JS/CSS
+// asset URLs -- defeating stale browser/CDN (Cloudflare) caching of old JS/CSS
 // that would otherwise persist for the CDN's edge-TTL. Computed once at
 // startup; embed.FS reads are in-memory.
 var assetVersion = computeAssetVersion()
@@ -42,7 +42,7 @@ func computeAssetVersion() string {
 func assetURL(path string) string { return path + "?v=" + assetVersion }
 
 // templatesFS embeds internal/web/templates: base.html (the ported mockup
-// shell — nav/topbar/content blocks, see that file's comments) plus one file
+// shell -- nav/topbar/content blocks, see that file's comments) plus one file
 // per page that fills in the "content" block (and, later, overrides other
 // blocks as needed).
 //
@@ -72,7 +72,7 @@ var funcMap = template.FuncMap{
 	"asset": assetURL,
 }
 
-// NavItem is one entry in the sidebar nav — either a section heading (just
+// NavItem is one entry in the sidebar nav -- either a section heading (just
 // Heading set) or a link (Href/Icon/Label, optionally Badge), mirroring the
 // mockup app.js NAV array's {h:...} and {p:,ic:,t:,ct:} shapes.
 type NavItem struct {
@@ -111,7 +111,7 @@ var navItems = []navEntry{
 }
 
 // navForRole returns navItems filtered to what role may see (viewers get
-// everything except AdminOnly entries, admins get everything — the
+// everything except AdminOnly entries, admins get everything -- the
 // server-side equivalent of the mockup app.js NAV.filter(role==='admin' ||
 // !n.admin)) with each entry's Badge filled in from counts via badgeFor.
 func navForRole(role string, counts NavCounts) []NavItem {
@@ -151,7 +151,7 @@ func badgeFor(href string, counts NavCounts) string {
 // "" for an anonymous one. userMiddleware (middleware.go) is what actually
 // resolves the session into a *User this reads back via userFromContext;
 // this is purely the cosmetic input to nav filtering (navForRole) and the
-// topbar/sidebar role badge — access control itself is requireRole's job,
+// topbar/sidebar role badge -- access control itself is requireRole's job,
 // not this function's.
 func currentRole(r *http.Request) string {
 	if u, ok := userFromContext(r); ok {
@@ -247,7 +247,7 @@ func firstInitial(name string) string {
 }
 
 // renderPage parses base.html together with the named page template (whose
-// {{define "content"}} overrides base.html's content block — the standard
+// {{define "content"}} overrides base.html's content block -- the standard
 // html/template nested-layout pattern) and executes "base.html" against
 // data. Parsing per-request keeps each page's template set isolated (two
 // pages both defining "content" in the same set would conflict), which is
@@ -275,7 +275,7 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 
 // renderDenied renders the mockup's "Admin only" denied panel (templates/
 // denied.html, ported from ui-mockup/assets/app.js's `.panel.denied` markup)
-// through the full app-shell layout with a 403 status — requireRole
+// through the full app-shell layout with a 403 status -- requireRole
 // (middleware.go) calls this when a signed-in user's role falls short of a
 // route's required minimum. It still renders through the normal PageData/
 // nav (the visitor IS signed in, so the shell should look like it does
@@ -291,7 +291,7 @@ func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
 // public dashboard in later tasks, per the mockup's login.html/public.html
 // which use the same centered `.card`/`.center` styling rather than the app
 // shell) renders against: just the title and the CSP nonce its boot script
-// needs, none of PageData's nav/topbar/role fields — those pages render
+// needs, none of PageData's nav/topbar/role fields -- those pages render
 // before there's a signed-in session (or, for /public, deliberately without
 // one) so the sidebar/topbar shell has nothing to fill in.
 type BarePageData struct {
@@ -303,7 +303,7 @@ type BarePageData struct {
 	// EnrollToken is this request's ?token= query parameter, if any,
 	// threaded onto enroll.html's hidden #enrollToken field so app.js can
 	// echo it back as /enroll/begin's "token" field (resolveEnrollRole,
-	// enroll_tokens.go, is what actually validates/consumes it — this is
+	// enroll_tokens.go, is what actually validates/consumes it -- this is
 	// just carrying the value from the GET's URL to the POST's body).
 	// login.html doesn't reference this field; harmless there either way.
 	EnrollToken string

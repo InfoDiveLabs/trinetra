@@ -30,7 +30,7 @@ func newNonce() (string, error) {
 // security checklist calls for on every request:
 //
 //   - Content-Security-Policy scoped to 'self' (this server's own embedded
-//     assets — see assets.go/routes.go, no CDN) plus a fresh per-request
+//     assets -- see assets.go/routes.go, no CDN) plus a fresh per-request
 //     nonce that authorizes exactly one script: the htmx boot tag
 //     (templates/base.html), and no unsafe-inline escape hatch.
 //   - X-Content-Type-Options: nosniff, so a browser never MIME-sniffs a
@@ -39,7 +39,7 @@ func newNonce() (string, error) {
 //     an external link from the dashboard) don't leak this host's internal
 //     paths in the Referer header.
 //   - Strict-Transport-Security, but ONLY when the current request actually
-//     arrived over TLS (r.TLS != nil) — true exactly in the autocert/manual
+//     arrived over TLS (r.TLS != nil) -- true exactly in the autocert/manual
 //     modes, where this process itself terminates TLS; in proxy mode this
 //     process only ever sees plain HTTP even when a front proxy terminates
 //     TLS upstream, so sending HSTS here would be a promise about a
@@ -57,7 +57,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 		h := w.Header()
 		// script-src is STRICT: 'self' plus this request's nonce only, no
-		// unsafe-inline — that's where the real XSS risk is, and the single
+		// unsafe-inline -- that's where the real XSS risk is, and the single
 		// inline handler (the theme button) was moved into app.js so nothing
 		// needs it. style-src, however, allows 'unsafe-inline': the ported
 		// mockup (our required visual base) uses inline style="…" attributes

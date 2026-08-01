@@ -22,7 +22,7 @@ type DownEventView = core.DownEventView
 //
 // A nil EventsStore is valid (Deps.Events may be nil, e.g. store-writes-
 // disabled mode): callers (downtimeAPIHandler) must treat a nil Deps.Events
-// as "no events" — an empty list, not a panic.
+// as "no events" -- an empty list, not a panic.
 type EventsStore interface {
 	// Events returns downtime events overlapping [from, to] (Unix seconds).
 	// A range with no events is not an error: it returns an empty (possibly

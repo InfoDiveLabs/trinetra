@@ -11,8 +11,8 @@ import (
 
 // usersMutation composes requireRole(RoleAdmin, ...) with requireCSRF: every
 // /users/* mutation (invite issue, role change, remove, credential revoke)
-// needs BOTH gates — only an admin session may reach it (requireRole), and
-// only with a valid CSRF token (requireCSRF) — unlike POST /logout
+// needs BOTH gates -- only an admin session may reach it (requireRole), and
+// only with a valid CSRF token (requireCSRF) -- unlike POST /logout
 // (routes.go), which only needs the latter, since these mutate someone
 // ELSE's account rather than the caller's own session.
 func usersMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
@@ -23,7 +23,7 @@ func usersMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 
 // CredentialRow is one passkey in a UserRow's Passkeys column. Param is the
 // base64url encoding of the raw Credential.ID (see credentialParam) used in
-// the revoke form's URL — a raw credential ID is arbitrary bytes, not safe
+// the revoke form's URL -- a raw credential ID is arbitrary bytes, not safe
 // to drop straight into a URL path segment. Label is a short, non-secret
 // display hint derived from the same value (there's no per-device nickname
 // in the design doc's users.json shape to show instead).
@@ -57,7 +57,7 @@ type UserRow struct {
 
 // IssuedInvite is the freshly-minted enrollment link usersInviteHandler
 // renders after Issue succeeds, so the admin can copy/share it before it's
-// redeemed. Never persisted — it only exists for the lifetime of the one
+// redeemed. Never persisted -- it only exists for the lifetime of the one
 // HTTP response that just issued it; a page reload (plain GET /users) shows
 // no such panel, which is why usersPageHandler always passes nil for this.
 type IssuedInvite struct {
@@ -71,7 +71,7 @@ type IssuedInvite struct {
 }
 
 // UsersPageData is what templates/users.html renders against: the shared
-// PageData (nav/topbar/CSRF) embedded, plus this page's own state — the
+// PageData (nav/topbar/CSRF) embedded, plus this page's own state -- the
 // current roster and, if an admin just (re-)issued one, the freshly-minted
 // enrollment link.
 type UsersPageData struct {
@@ -91,7 +91,7 @@ var inviteTTLs = []struct{ Value, Label string }{
 // ttlLabel maps an invite TTL <select> value to its human label, falling
 // back to the raw value itself for anything not in inviteTTLs (defensive;
 // the <select> only ever offers these three, but a hand-crafted POST could
-// send something else — see usersInviteHandler's parsing).
+// send something else -- see usersInviteHandler's parsing).
 func ttlLabel(value string) string {
 	for _, t := range inviteTTLs {
 		if t.Value == value {
@@ -136,7 +136,7 @@ func buildUsersPageData(r *http.Request, d Deps, store UserStore, issued *Issued
 }
 
 // renderUsersPage renders templates/users.html through the full app-shell
-// layout (base.html) — the same parse/execute shape as renderPage
+// layout (base.html) -- the same parse/execute shape as renderPage
 // (templates.go), but for UsersPageData rather than the plain PageData every
 // other page uses today, since this is the first admin page needing extra
 // fields (Users, Issued) alongside the shared nav/topbar ones.
@@ -151,7 +151,7 @@ func renderUsersPage(w http.ResponseWriter, data UsersPageData) error {
 }
 
 // renderUsersFragment renders just users.html's "content" block, without the
-// base.html shell around it — what every /users/* mutation responds with, so
+// base.html shell around it -- what every /users/* mutation responds with, so
 // htmx (hx-target="#users-page" hx-swap="outerHTML" on each row/invite form)
 // can swap the roster/invite panel in place instead of a full page
 // navigation.
@@ -185,7 +185,7 @@ const defaultInviteTTL = time.Hour
 // usersInviteHandler issues (or re-issues) a single-use enrollment token for
 // the posted role/ttl (tokenStore.Issue, enroll_tokens.go) and renders the
 // users fragment with the resulting /enroll?token=... link so the admin can
-// copy/share it. Re-issuing is just calling this again — a single-use token
+// copy/share it. Re-issuing is just calling this again -- a single-use token
 // left outstanding after an abandoned ceremony (see enroll_tokens.go's
 // Redeem doc) is never revoked, only ever left to expire or be redeemed;
 // this endpoint has no notion of "the previous token", it only ever mints a
@@ -231,7 +231,7 @@ func usersInviteHandler(d Deps) http.HandlerFunc {
 
 // usersRoleHandler changes {id}'s role to the posted "role" value
 // (admin|viewer). Refuses (409) to demote the sole remaining admin to
-// viewer — the same lockout usersRemoveHandler's guard closes for removal:
+// viewer -- the same lockout usersRemoveHandler's guard closes for removal:
 // with zero admins left, /users (and every other admin route) becomes
 // permanently unreachable, since a fresh first-run bootstrap admin only
 // happens when the user store is fully EMPTY (jsonUserStore.
@@ -275,7 +275,7 @@ func usersRoleHandler(d Deps) http.HandlerFunc {
 }
 
 // usersRemoveHandler deletes {id}, refusing (409) to remove the sole
-// remaining admin — see usersRoleHandler's doc for why that lockout matters
+// remaining admin -- see usersRoleHandler's doc for why that lockout matters
 // (this is the guard the task brief specifically calls out).
 func usersRemoveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -307,8 +307,8 @@ func usersRemoveHandler(d Deps) http.HandlerFunc {
 
 // usersRevokeCredentialHandler removes exactly one credential ({credParam},
 // see credentialFromParam) from {id}'s Credentials, leaving every other
-// credential — this user's or anyone else's — untouched. Refuses (409) to
-// revoke the sole remaining admin's last credential — see
+// credential -- this user's or anyone else's -- untouched. Refuses (409) to
+// revoke the sole remaining admin's last credential -- see
 // UserStore.RevokeCredentialUnlessLastAdmin's doc for why: it's the third
 // zero-admin lockout vector, alongside usersRoleHandler's demote guard and
 // usersRemoveHandler's remove guard, and the atomic store method (rather
