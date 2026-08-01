@@ -52,28 +52,39 @@ the browser.
 There are two ways `serverwatch-web` gets started:
 
 - **Supervised, via `web.enabled`.** This is the path for anything you run
-  day to day. Set `web.enabled true` and the daemon itself verifies and
-  spawns `serverwatch-web` as a child process, passing it the control socket
-  path and a per-launch token. If the child exits, the daemon restarts it
-  under a capped backoff; if the daemon shuts down, it stops the child too.
-  You never run or babysit a second process by hand. See [Web
+  day to day. Once it is enabled, the daemon itself verifies and spawns
+  `serverwatch-web` as a child process, passing it the control socket path and
+  a per-launch token. If the child exits, the daemon restarts it under a
+  capped backoff; if the daemon shuts down, it stops the child too. You never
+  run or babysit a second process by hand. See [Web
   supervisor](02-architecture.md#web-supervisor) for the full lifecycle and
   its diagram.
 
+  The right way to turn it on is the `serverwatch-ctl` web-setup wizard:
+  `sudo serverwatch cli`, then `s` from Home. It walks you through the serving
+  mode, listen address, and the domain, RP ID, and origin that passkey login
+  depends on, validates the combination, enables the web, and applies it over
+  the control socket, so the first time you open the page passkey registration
+  works.
+
+  Do not just flip `web.enabled` on its own. Setting it starts the server, but
+  with no serving mode and no `web.rp_id` / `web.origin` configured, WebAuthn
+  has no relying-party identity to bind a passkey to, and registration and
+  login fail. The wizard exists precisely to set those together. If you are
+  scripting it, set `web.enabled` alongside the `web.mode` / `web.listen` /
+  `web.rp_id` / `web.origin` keys your serving mode needs (see [Serving
+  modes](#serving-modes)), then restart:
+
   ```bash
+  # web.enabled plus the web.* keys your serving mode needs (see Serving modes)
   sudo serverwatch config set web.enabled true
   sudo systemctl restart serverwatch
   ```
 
-  The guided path enables and configures the web UI in one step:
-  `serverwatch-ctl`'s web-setup wizard (`sudo serverwatch cli`, then `s` from
-  Home), covered under [Serving modes](#serving-modes) below. Toggling
-  `web.enabled` takes effect on the next restart: the supervisor
-  decides once, at daemon startup, whether to spawn the child, and the
-  `web.*` keys are not reloaded on SIGHUP, so `systemctl restart serverwatch`
-  is what actually starts or stops it. There is no separate "web" unit;
-  installing `serverwatch-web` and setting `web.enabled true` is the entire
-  path to a web-serving service.
+  Toggling `web.enabled` takes effect on the next restart: the supervisor
+  decides once, at daemon startup, whether to spawn the child, and the `web.*`
+  keys are not reloaded on SIGHUP, so `systemctl restart serverwatch` is what
+  actually starts or stops it. There is no separate "web" unit.
 
 - **Manual, via `serverwatch web`.** This front-door subcommand runs the same
   trust checks the supervisor uses, then execs `serverwatch-web` directly in
