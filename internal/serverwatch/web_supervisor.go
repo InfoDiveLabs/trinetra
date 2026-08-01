@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"serverwatch/internal/config"
 )
 
 // This file implements the web supervisor: the goroutine IN the core
@@ -89,6 +91,12 @@ const (
 	webBackoffMax   = 30 * time.Second
 	webBackoffReset = 60 * time.Second // a child up longer than this is "healthy": reset backoff to min
 )
+
+// shouldStartWeb reports whether cmdDaemon should launch the web supervisor:
+// only when the control socket is up (the child dials it) and web.enabled.
+func shouldStartWeb(cfg *config.Config, socketUp bool) bool {
+	return socketUp && cfg.Web.Enabled
+}
 
 // startWeb launches the web supervisor goroutine and returns a stop func
 // that signals the loop to exit, kills any running child, and blocks until

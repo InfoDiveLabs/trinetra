@@ -668,22 +668,15 @@ func cmdDaemon(args []string) int {
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
 	getDispatcher := func() *Dispatcher { mu.RLock(); defer mu.RUnlock(); return dispatcher }
 	// reload persists newCfg to disk then applies it in-process: the closure
-	// WebDeps.Reload exposes to a future web config editor (issue #66) so
-	// writes take effect immediately, without a SIGHUP round-trip.
+	// newInprocAPI's ApplyConfig exposes to the control socket (and, through
+	// it, the web config editor, issue #66) so writes take effect
+	// immediately, without a SIGHUP round-trip.
 	reload := func(newCfg *config.Config) error {
 		if err := saveCfg(newCfg); err != nil {
 			return err
 		}
 		applyConfig(newCfg)
 		return nil
-	}
-	// testChannel is the closure WebDeps.TestChannel exposes to a future web
-	// channels page's "Send test" button (issue #66): it reads the LIVE
-	// config (getCfg, race-safe against a concurrent SIGHUP/Reload) so a
-	// test-send always reflects whatever channel settings are currently
-	// applied, not whatever was configured when the daemon started.
-	testChannel := func(name string) error {
-		return sendTestNotification(getCfg(), name, "web")
 	}
 	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
 	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
@@ -726,48 +719,27 @@ func cmdDaemon(args []string) int {
 	var smartState smartCache
 	da := probeDocker(x, fs)
 
-	// maybeStartWeb is always called, in both build variants: the default
-	// (no `web` tag) build's maybeStartWeb (daemon_noweb.go) is a no-op that
-	// never references internal/web, so this call site itself carries no
-	// third-party dependency. Only the `-tags web` build (daemon_web.go)
-	// actually starts anything, and only when Enabled (cfg.Web.Enabled) does
-	// it bind a listener. Enabled/Listen are read once at daemon startup
-	// (like c0 below) rather than through getCfg on every access: a SIGHUP
-	// reload that flips web.enabled/web.listen takes effect on the next
-	// daemon restart, not in-process — starting/stopping the listener
-	// live is out of scope for this seam. See web_deps.go for the full
-	// design note.
 	cfgAtStart := getCfg()
-	stopWeb := maybeStartWeb(WebDeps{
-		Cfg:            getCfg,
-		Reload:         reload,
-		Store:          store,
-		Snapshot:       latestSnapshot,
-		StateDir:       stateDir,
-		AlertLogPath:   st.AlertLogPath(),
-		AlertStatePath: st.AlertStatePath(),
-		TestChannel:    testChannel,
-		Enabled:        cfgAtStart.Web.Enabled,
-		Listen:         cfgAtStart.Web.Listen,
-	})
-	defer stopWeb()
 
-	// control socket: serves the daemon's own core.API (newInprocAPI) over a
-	// unix socket under RUNTIME_DIRECTORY (or /run/serverwatch, see
-	// control_socket.go) for future out-of-process consumers (S3's
-	// serverwatch-ctl, S4's serverwatch-web). newInprocAPI is untagged
-	// (coreapi_inproc.go), so this call site -- like maybeStartWeb above --
-	// carries no third-party dependency in the default build. Same
-	// non-fatal-failure handling as maybeStartWeb: the control socket is an
-	// enhancement, never a reason to crash-loop the daemon, so a bind
-	// failure (e.g. permission denied on /run) just logs and leaves the
-	// daemon running without it.
+	// control socket: serves the daemon's own core.API over a unix socket
+	// under RUNTIME_DIRECTORY (or /run/serverwatch) for the out-of-process
+	// plugins (serverwatch-ctl, serverwatch-web). newInprocAPI is untagged,
+	// so this carries no third-party dependency. Non-fatal: a bind failure
+	// just logs and leaves the daemon running without the socket (and thus
+	// without the web UI, which dials it).
 	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload)
-	stopControl, err := serveControlSocket(controlAPI)
+	stopControl, socketPath, token, err := serveControlSocket(controlAPI)
 	if err != nil {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
 	} else {
 		defer stopControl()
+		// web UI: when enabled, supervise the serverwatch-web plugin as a
+		// verified child process (it dials the control socket above). Nothing
+		// is embedded in the daemon anymore -- see web_supervisor.go.
+		if shouldStartWeb(cfgAtStart, true) {
+			stopWeb := startWeb(socketPath, token)
+			defer stopWeb()
+		}
 	}
 
 	// boot/recovery report from heartbeat gap
@@ -856,7 +828,7 @@ func cmdDaemon(args []string) int {
 		}
 		merged.TS = now.Unix()
 		// Publish a COPY of merged into snapshotHub for lock-free readers
-		// (WebDeps.Snapshot, ultimately a future web dashboard/SSE handler):
+		// (latestSnapshot, ultimately the control socket's Snapshot handler):
 		// merged itself stays exclusively owned by this goroutine, so every
 		// other field mutation above is safe without a lock, but the published
 		// pointer must not alias a struct this loop keeps mutating in place.

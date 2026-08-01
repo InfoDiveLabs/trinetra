@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"serverwatch/internal/config"
 )
 
 // fakeProc is a concurrency-safe fake of supervisedProc. Wait blocks until
@@ -370,5 +372,34 @@ func TestStop_DuringBackoffReturnsPromptly(t *testing.T) {
 
 	if h.spawnCount() != 0 {
 		t.Fatalf("spawnCount = %d, want 0 (resolve always failed, so no spawn should ever happen)", h.spawnCount())
+	}
+}
+
+// TestShouldStartWeb is the unit-level guard that cmdDaemon spawns the web
+// supervisor only when both the control socket is up (the child dials it,
+// so starting the supervisor without it would spawn a process with nothing
+// to talk to) and web.enabled is true -- cmdDaemon itself is too
+// process-heavy to unit test directly, so this pins the decision it defers
+// to instead.
+func TestShouldStartWeb(t *testing.T) {
+	cases := []struct {
+		name     string
+		socketUp bool
+		enabled  bool
+		want     bool
+	}{
+		{"socket up, web enabled", true, true, true},
+		{"socket up, web disabled", true, false, false},
+		{"socket down, web enabled", false, true, false},
+		{"socket down, web disabled", false, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Web.Enabled = c.enabled
+			if got := shouldStartWeb(cfg, c.socketUp); got != c.want {
+				t.Errorf("shouldStartWeb(cfg{Web.Enabled:%v}, socketUp:%v) = %v, want %v", c.enabled, c.socketUp, got, c.want)
+			}
+		})
 	}
 }

@@ -320,20 +320,19 @@ type inprocAPI struct {
 	// reload is the daemon's own reload closure (cmdDaemon's `reload` in
 	// daemon.go: saveCfg then the applyConfig pointer-swap) -- ApplyConfig
 	// below just calls through to it, so a config posted through core.API
-	// takes effect exactly the way WebDeps.Reload always has: persisted to
-	// disk, then applied in-process without a SIGHUP round-trip.
+	// takes effect exactly the way cmdDaemon's own reload always has:
+	// persisted to disk, then applied in-process without a SIGHUP round-trip.
 	reload func(*config.Config) error
 }
 
 // newInprocAPI builds a core.API backed directly by the running daemon's
-// state: getSnap/getCfg are the same race-safe closures WebDeps already
-// hands the `-tags web` build (Snapshot/Cfg), store is the daemon's
+// state: getSnap/getCfg are the same race-safe closures cmdDaemon (daemon.go)
+// hands the control socket (latestSnapshot/getCfg), store is the daemon's
 // SampleStore (nil in store-writes-disabled mode -- every read method below
 // degrades to "no data" rather than panicking), stateDir is the directory
 // alerts.json/alertlog.jsonl live in (mirroring Store's own
-// AlertStatePath/AlertLogPath, store.go), and reload is the daemon's
-// save-then-apply closure (WebDeps.Reload/cmdDaemon's own `reload`) that
-// ApplyConfig delegates to.
+// AlertStatePath/AlertLogPath, store.go), and reload is cmdDaemon's own
+// save-then-apply closure that ApplyConfig delegates to.
 func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error) core.API {
 	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload}
 }
@@ -346,12 +345,9 @@ func (a *inprocAPI) alertLogPath() string   { return filepath.Join(a.stateDir, "
 
 // Snapshot implements core.API: it projects the daemon's live Snapshot via
 // buildDashboardView, then computes Availability fresh (real "now", real
-// events overlapping the trailing 24h) on top -- the same two-step
-// buildDashboardView-then-ComputeAvailability sequence maybeStartWeb's
-// Snapshot closure (daemon_web.go) uses, mirrored here so the in-process
-// core.API produces an identical view without needing `-tags web`. a itself
-// satisfies core.EventsSource (its Events method below has the exact
-// signature ComputeAvailability wants), so no separate adapter type is
+// events overlapping the trailing 24h) on top. a itself satisfies
+// core.EventsSource (its Events method below has the exact signature
+// ComputeAvailability wants), so no separate adapter type is
 // needed; a nil a.store just makes a.Events degrade to "no events" the same
 // way a nil store degrades everywhere else in this file.
 func (a *inprocAPI) Snapshot() (core.DashboardView, error) {
@@ -366,8 +362,7 @@ func (a *inprocAPI) Monitoring() (core.MonitoringView, error) {
 }
 
 // Series implements core.API: core.ResAuto resolves to raw-vs-1m via the
-// existing PickResolution (the same age/config-dependent picker
-// seriesStoreAdapter.Query, daemon_web.go, uses for the web build) against
+// existing PickResolution (the same age/config-dependent picker) against
 // the daemon's configured storage.raw_retention; core.ResRaw/core.Res1m map
 // straight onto their serverwatch.Resolution counterparts. A nil store (
 // store-writes-disabled mode) degrades to an empty result rather than a
@@ -461,9 +456,8 @@ func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 }
 
 // ApplyConfig implements core.API: it delegates straight to a.reload, the
-// daemon's own save-then-apply closure (see the field's doc) -- the exact
-// same behavior WebDeps.Reload has always exposed, now reachable through
-// core.API too.
+// daemon's own save-then-apply closure (see the field's doc), now reachable
+// over the control socket.
 func (a *inprocAPI) ApplyConfig(c *config.Config) error { return a.reload(c) }
 
 // AckAlert implements core.API: it loads alerts.json (LoadAlertState, same
@@ -496,9 +490,10 @@ func (a *inprocAPI) UnackAlert(key string) error {
 
 // TestChannel implements core.API: it calls sendTestNotification
 // (channel.go) against the LIVE config (a.getCfg(), race-safe against a
-// concurrent SIGHUP/Reload -- same reasoning as cmdDaemon's own testChannel
-// closure, daemon.go) with source "web", identical to what WebDeps.
-// TestChannel has always done.
+// concurrent SIGHUP/Reload), mirroring `serverwatch channel test <name>`
+// (channel.go's cmdChannelTest) -- for the web channels page's "Send test"
+// button (issue #66), reached over the control socket rather than a
+// daemon-local closure now that the web UI is out-of-process.
 func (a *inprocAPI) TestChannel(name string) error {
 	return sendTestNotification(a.getCfg(), name, "web")
 }

@@ -168,8 +168,8 @@ func cmdChannelTest(c *config.Config, args []string) int {
 // itself failing) as a single error. source is threaded onto the test
 // Alert's Source field so a channel that surfaces it (e.g. a webhook
 // template referencing .Source) can tell a CLI-issued test apart from a
-// web-issued one (issue #66's "send test" button, handlers_channels.go via
-// WebDeps.TestChannel/daemon.go).
+// web-issued one (issue #66's "send test" button, reached over the control
+// socket via inprocAPI.TestChannel, coreapi_inproc.go).
 //
 // Shared by cmdChannelTest (`serverwatch channel test <name>`) and the web
 // channels page's "Send test" action so both paths exercise the exact same

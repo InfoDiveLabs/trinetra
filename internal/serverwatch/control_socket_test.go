@@ -43,7 +43,7 @@ func TestServeControlSocketRoundTrip(t *testing.T) {
 
 	api := newInprocAPI(getSnap, getCfg, nil, stateDir, reload)
 
-	stop, err := serveControlSocket(api)
+	stop, _, _, err := serveControlSocket(api)
 	if err != nil {
 		t.Fatalf("serveControlSocket: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestServeControlSocketStopRemovesSocketAndTokenFiles(t *testing.T) {
 	reload := func(c *config.Config) error { return nil }
 	api := newInprocAPI(getSnap, getCfg, nil, stateDir, reload)
 
-	stop, err := serveControlSocket(api)
+	stop, _, _, err := serveControlSocket(api)
 	if err != nil {
 		t.Fatalf("serveControlSocket: %v", err)
 	}
