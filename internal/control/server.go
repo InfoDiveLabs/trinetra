@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
@@ -14,6 +15,21 @@ import (
 // helloMagic is the fixed Hello value both ends of the control socket must
 // send in their handshake frame, alongside a matching ProtocolVersion.
 const helloMagic = "serverwatch-control"
+
+// helloTimeout and idleTimeout bound the two read deadlines handleConn
+// enforces on each connection: helloTimeout for the opening hello frame,
+// idleTimeout for every request frame after that. Without these, a
+// connection that connects and then never speaks (accidentally or by a
+// misbehaving/hostile peer) would tie up its goroutine forever. Unlike
+// callTimeout (internal/control/client.go), these stay consts: Serve
+// spawns a handleConn goroutine per connection that can outlive the test
+// that started it, so a mutable package var here would be read and
+// written from different goroutines with no synchronization between
+// tests.
+const (
+	helloTimeout = 10 * time.Second
+	idleTimeout  = 5 * time.Minute
+)
 
 // emptyResult is the Result payload for a write method (ApplyConfig,
 // AckAlert, UnackAlert, TestChannel): the call succeeded, there is nothing
@@ -43,10 +59,13 @@ func handleConn(api core.API, conn net.Conn) {
 
 	r := bufio.NewReader(conn)
 
+	if err := conn.SetReadDeadline(time.Now().Add(helloTimeout)); err != nil {
+		return
+	}
 	var clientHello hello
 	if err := readFrame(r, &clientHello); err != nil {
-		// The peer disconnected before completing the handshake; nothing
-		// to reply to.
+		// The peer disconnected, or never completed the handshake before
+		// helloTimeout expired; either way there is nothing to reply to.
 		return
 	}
 	if clientHello.Hello != helloMagic || clientHello.Version != ProtocolVersion {
@@ -62,10 +81,14 @@ func handleConn(api core.API, conn net.Conn) {
 	}
 
 	for {
+		if err := conn.SetReadDeadline(time.Now().Add(idleTimeout)); err != nil {
+			return
+		}
 		var req request
 		if err := readFrame(r, &req); err != nil {
-			// EOF or a partial/unterminated final frame after the peer
-			// closed its write side: end the connection, not an error.
+			// EOF, an idle connection past idleTimeout, or a partial/
+			// unterminated final frame after the peer closed its write
+			// side: end the connection, not an error.
 			return
 		}
 

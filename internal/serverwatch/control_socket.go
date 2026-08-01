@@ -51,19 +51,23 @@ func controlSocketPath() string {
 //
 // Path setup: os.MkdirAll(0o700) is a best-effort attempt to create the
 // runtime directory when it doesn't already exist (the by-hand,
-// no-RUNTIME_DIRECTORY case; under systemd's RuntimeDirectory=serverwatch
-// the directory already exists with the right ownership/mode, so this is a
-// no-op there). Any stale socket left behind by an unclean shutdown is
-// removed before binding -- net.Listen("unix", ...) fails with
-// "address already in use" over a leftover socket file otherwise. The
-// listener is chmod 0600 after creation (net.Listen honors the umask, not
-// an explicit mode) so only the daemon's own user can connect; a
-// forthcoming per-launch token (S3) is the actual auth, this is
+// no-RUNTIME_DIRECTORY case). Under systemd's RuntimeDirectory=serverwatch
+// the directory already exists, but systemd creates it 0755 root -- so it
+// is explicitly chmod'd to 0700 here too (before the socket is bound),
+// closing the window where a non-owner could connect between Listen and
+// the socket's own Chmod below. Any stale socket left behind by an
+// unclean shutdown is removed before binding -- net.Listen("unix", ...)
+// fails with "address already in use" over a leftover socket file
+// otherwise. The listener is chmod 0600 after creation (net.Listen honors
+// the umask, not an explicit mode) so only the daemon's own user can
+// connect; a forthcoming per-launch token (S3) is the actual auth, this is
 // defense-in-depth against other local users on multi-user hosts.
 func serveControlSocket(api core.API) (func(), error) {
 	path := controlSocketPath()
+	dir := filepath.Dir(path)
 
-	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.Chmod(dir, 0o700)
 	_ = os.Remove(path)
 
 	ln, err := net.Listen("unix", path)

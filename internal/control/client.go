@@ -8,10 +8,19 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
 )
+
+// callTimeout bounds how long Client.call waits for a response after
+// writing its request. call holds the client mutex for the whole round
+// trip, so without a deadline a single wedged server method would hang
+// every caller sharing this Client forever. It is a package var rather
+// than a const so a test can shrink it to keep a deadline-expiry test
+// fast.
+var callTimeout = 30 * time.Second
 
 // Client is a core.API implementation backed by a control-socket connection:
 // every method sends one request frame and waits for the matching response
@@ -83,9 +92,19 @@ func (c *Client) call(method string, params any, result any) error {
 		return err
 	}
 
-	var resp response
-	if err := readFrame(c.r, &resp); err != nil {
+	if err := c.conn.SetReadDeadline(time.Now().Add(callTimeout)); err != nil {
 		return err
+	}
+	var resp response
+	readErr := readFrame(c.r, &resp)
+	// Reset the deadline unconditionally so it applies only to this call,
+	// not to whatever the next caller does with the shared connection.
+	c.conn.SetReadDeadline(time.Time{})
+	if readErr != nil {
+		return readErr
+	}
+	if resp.ID != id {
+		return fmt.Errorf("control: response id %d does not match request id %d", resp.ID, id)
 	}
 	if !resp.OK {
 		return errors.New(resp.Error)
