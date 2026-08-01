@@ -28,16 +28,16 @@ func (f *fakeAPI) Series(metric string, from, to int64, res core.Resolution) ([]
 	return nil, nil
 }
 func (f *fakeAPI) Events(from, to int64) ([]core.DownEventView, error) { return nil, nil }
-func (f *fakeAPI) ActiveAlerts() ([]core.AlertRecord, error)          { return f.active, nil }
+func (f *fakeAPI) ActiveAlerts() ([]core.AlertRecord, error)           { return f.active, nil }
 func (f *fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
 	return nil, nil
 }
-func (f *fakeAPI) Config() (*config.Config, error)  { return &config.Config{}, nil }
+func (f *fakeAPI) Config() (*config.Config, error)    { return &config.Config{}, nil }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
-func (f *fakeAPI) ApplyConfig(*config.Config) error  { return nil }
-func (f *fakeAPI) AckAlert(key string) error         { return nil }
-func (f *fakeAPI) UnackAlert(key string) error       { return nil }
-func (f *fakeAPI) TestChannel(name string) error     { return nil }
+func (f *fakeAPI) ApplyConfig(*config.Config) error   { return nil }
+func (f *fakeAPI) AckAlert(key string) error          { return nil }
+func (f *fakeAPI) UnackAlert(key string) error        { return nil }
+func (f *fakeAPI) TestChannel(name string) error      { return nil }
 func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, nil
 }
