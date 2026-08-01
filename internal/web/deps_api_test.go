@@ -95,6 +95,14 @@ func (f fakeAPI) TestChannel(name string) error {
 	return nil
 }
 
+// ValidateChannel is a plain no-op stub: this fakeAPI backs Deps.API (the
+// core.API boundary), which is distinct from Deps.ValidateChannel (the
+// local buildNotifier dry-run func field the #79 channel-editor tests
+// exercise directly, see handlers_channels_test.go's undeliverableTelegram)
+// -- no handler in this package's tests calls core.API.ValidateChannel
+// itself.
+func (f fakeAPI) ValidateChannel(cc config.ChannelConfig) error { return nil }
+
 func (f fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) { return nil, nil }
 
 // TestDashboardReadsFromAPI pins the core TDD obligation for this task: once

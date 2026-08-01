@@ -26,5 +26,13 @@ type API interface {
 	AckAlert(key string) error
 	UnackAlert(key string) error
 	TestChannel(name string) error
+	// ValidateChannel reports whether cc could actually build a working
+	// notifier -- the same check TestChannel/`channel test` deliver against,
+	// minus the network send. It is checked against the daemon's current
+	// live config, not any unsaved in-flight edit a caller may be building
+	// cc as part of: a channel referencing another field of that in-flight
+	// edit (rare in practice) could pass or fail this check against stale
+	// state. That is an accepted limitation, not a bug.
+	ValidateChannel(cc config.ChannelConfig) error
 	Subscribe(ctx context.Context) (<-chan Event, error)
 }

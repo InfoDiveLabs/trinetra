@@ -200,15 +200,16 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 		AlertLogPath:   cc.alertLogPath,
 		AlertStatePath: cc.alertStatePath,
 		TestChannel:    client.TestChannel,
-		// ValidateChannel has no core.API counterpart (it's a local
-		// build-a-notifier dry run, internal/serverwatch's buildNotifier) --
-		// TODO(S4 Task 2/3): either add a core.API method for it or accept
-		// that the socket-served channels editor can't pre-validate before
-		// save. Left nil for now (every caller in internal/web already
-		// treats a nil ValidateChannel as "skip validation", see that
-		// field's doc), rather than block Task 1's dashboard-serving goal
-		// on a write-path page this task doesn't require.
-		ValidateChannel: nil,
+		// ValidateChannel is now a core.API method (core-contract-s1 task
+		// A1, #79): it dry-runs buildNotifier against the daemon's live
+		// config over the socket, the same check TestChannel above already
+		// crosses the socket for. The passed *config.Config is ignored --
+		// client.ValidateChannel validates against the daemon's own current
+		// config, not this process' copy (see core.API.ValidateChannel's
+		// doc for that accepted live-config-vs-in-flight-edit limitation).
+		ValidateChannel: func(cc config.ChannelConfig, _ *config.Config) error {
+			return client.ValidateChannel(cc)
+		},
 	}
 	c := cfg()
 	deps.Enabled = c.Web.Enabled

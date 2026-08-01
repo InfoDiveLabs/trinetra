@@ -211,6 +211,16 @@ func (c *Client) TestChannel(name string) error {
 	return c.call("TestChannel", params, nil)
 }
 
+// ValidateChannel implements core.API: it sends cc to the server and
+// surfaces whatever error api.ValidateChannel returned (buildNotifier's
+// error for an undeliverable channel, or nil).
+func (c *Client) ValidateChannel(cc config.ChannelConfig) error {
+	params := struct {
+		Channel config.ChannelConfig `json:"channel"`
+	}{Channel: cc}
+	return c.call("ValidateChannel", params, nil)
+}
+
 // Subscribe always returns an error: streaming over the control socket is
 // not implemented until S5. It calls through to the server so a mock/fake
 // exercising the wire protocol observes the same behavior a real server

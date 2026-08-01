@@ -38,6 +38,9 @@ func (f *fakeAPI) ApplyConfig(*config.Config) error   { return nil }
 func (f *fakeAPI) AckAlert(key string) error          { return nil }
 func (f *fakeAPI) UnackAlert(key string) error        { return nil }
 func (f *fakeAPI) TestChannel(name string) error      { return nil }
+func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
+	return nil
+}
 func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, nil
 }

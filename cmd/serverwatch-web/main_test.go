@@ -50,6 +50,9 @@ func (f *fakeAPI) ApplyConfig(c *config.Config) error { f.cfg = c; return nil }
 func (f *fakeAPI) AckAlert(key string) error          { return nil }
 func (f *fakeAPI) UnackAlert(key string) error        { return nil }
 func (f *fakeAPI) TestChannel(name string) error      { f.testedChannel = name; return nil }
+func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
+	return nil
+}
 func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, errors.New("not supported in fakeAPI")
 }
@@ -269,6 +272,16 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	}
 	if api.testedChannel != "telegram" {
 		t.Errorf("fakeAPI.testedChannel = %q, want telegram (TestChannel call didn't cross the socket)", api.testedChannel)
+	}
+
+	// #79: the web editor must validate a channel through the daemon
+	// (client.ValidateChannel) at save time, not skip validation entirely
+	// (deps.ValidateChannel == nil) as it did before this task.
+	if deps.ValidateChannel == nil {
+		t.Fatal("deps.ValidateChannel is nil, want it wired to client.ValidateChannel (#79)")
+	}
+	if err := deps.ValidateChannel(config.ChannelConfig{Name: "phone", Type: "telegram"}, nil); err != nil {
+		t.Fatalf("deps.ValidateChannel: %v", err)
 	}
 }
 

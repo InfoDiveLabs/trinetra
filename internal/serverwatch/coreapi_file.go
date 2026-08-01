@@ -263,6 +263,18 @@ func (a *fileAPI) TestChannel(name string) error {
 	return sendTestNotification(a.cfg, name, "cli")
 }
 
+// ValidateChannel implements core.API: it calls buildNotifier (channels.go)
+// against cc and this fileAPI's own cfg (the CLI process' freshly-loaded
+// config, same as every other method here) and reports only whether a
+// Notifier could be built, not sending anything -- inprocAPI.ValidateChannel's
+// (coreapi_inproc.go) counterpart, same accepted "checked against the
+// current saved config, not an unsaved in-flight edit" limitation documented
+// on core.API's ValidateChannel.
+func (a *fileAPI) ValidateChannel(cc config.ChannelConfig) error {
+	_, err := buildNotifier(cc, a.cfg)
+	return err
+}
+
 // Subscribe is deferred to a later stage (S5, the alerting event-bus
 // inversion -- see the epic's design doc): it returns errCoreNotImplemented
 // for now so *fileAPI satisfies core.API today, mirroring inprocAPI's

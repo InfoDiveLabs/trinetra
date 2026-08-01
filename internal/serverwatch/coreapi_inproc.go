@@ -503,6 +503,20 @@ func (a *inprocAPI) TestChannel(name string) error {
 	return sendTestNotification(a.getCfg(), name, "web")
 }
 
+// ValidateChannel implements core.API: it calls buildNotifier (channels.go)
+// against cc and the LIVE config (a.getCfg(), same race-safe accessor
+// TestChannel above uses) and reports only whether a Notifier could be
+// built, not sending anything. This validates cc against the daemon's
+// current saved config -- a caller mid-edit of an unsaved config (e.g. a
+// telegram channel meant to lean on a global token/chat_id being changed in
+// the same in-flight edit) is checked against what's live now, not the
+// edit-in-progress; see the ValidateChannel doc on core.API for that
+// accepted limitation.
+func (a *inprocAPI) ValidateChannel(cc config.ChannelConfig) error {
+	_, err := buildNotifier(cc, a.getCfg())
+	return err
+}
+
 // Subscribe is deferred to a later stage (S5, the alerting event-bus
 // inversion -- see the epic's design doc): it returns errCoreNotImplemented
 // for now so *inprocAPI satisfies core.API today.

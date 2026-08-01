@@ -33,8 +33,8 @@ const (
 )
 
 // emptyResult is the Result payload for a write method (ApplyConfig,
-// AckAlert, UnackAlert, TestChannel): the call succeeded, there is nothing
-// to return beyond ok=true.
+// AckAlert, UnackAlert, TestChannel, ValidateChannel): the call succeeded,
+// there is nothing to return beyond ok=true.
 var emptyResult = json.RawMessage("{}")
 
 // Serve accepts connections on ln and handles each one (in its own
@@ -122,8 +122,8 @@ func handleConn(api core.API, conn net.Conn, token string) {
 
 // dispatch decodes params for method, calls the matching core.API method on
 // api, and marshals its result. Read methods return the method's DTO; write
-// methods (ApplyConfig, AckAlert, UnackAlert, TestChannel) return
-// emptyResult and surface only the error. Config/ApplyConfig carry the raw
+// methods (ApplyConfig, AckAlert, UnackAlert, TestChannel, ValidateChannel)
+// return emptyResult and surface only the error. Config/ApplyConfig carry the raw
 // config.Config value (not a display-formatted projection) so
 // Collect.*bool's omitempty semantics survive the round trip. Subscribe and
 // any unrecognized method name return an error.
@@ -252,6 +252,18 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 			return nil, err
 		}
 		if err := api.TestChannel(p.Name); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "ValidateChannel":
+		var p struct {
+			Channel config.ChannelConfig `json:"channel"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		if err := api.ValidateChannel(p.Channel); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil

@@ -175,6 +175,50 @@ func TestInprocTestChannelDelegatesToSendTestNotification(t *testing.T) {
 	}
 }
 
+// TestFileAPIValidateChannelRejectsUndeliverable and its in-process
+// counterpart below pin that ValidateChannel routes through the shared
+// buildNotifier (channels.go) -- the same check TestChannel/`channel test`
+// use, minus the network send -- against this API's own config: a telegram
+// channel with no chat id and no global fallback is rejected, and a
+// deliverable channel (a webhook with a url) passes.
+func TestFileAPIValidateChannelRejectsUndeliverable(t *testing.T) {
+	api := newFileAPI(t.TempDir(), config.Default())
+
+	undeliverable := config.ChannelConfig{Name: "phone", Type: "telegram", Settings: map[string]string{"token": "sometoken"}}
+	err := api.ValidateChannel(undeliverable)
+	if err == nil || !strings.Contains(err.Error(), "chat_id not configured") {
+		t.Fatalf("ValidateChannel(undeliverable telegram) err = %v, want a chat_id error", err)
+	}
+
+	deliverable := config.ChannelConfig{
+		Name:     "hook",
+		Type:     "webhook",
+		Settings: map[string]string{"url": "https://example.com/hook"},
+	}
+	if err := api.ValidateChannel(deliverable); err != nil {
+		t.Fatalf("ValidateChannel(deliverable webhook) err = %v, want nil", err)
+	}
+}
+
+func TestInprocValidateChannelRejectsUndeliverable(t *testing.T) {
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+
+	undeliverable := config.ChannelConfig{Name: "phone", Type: "telegram", Settings: map[string]string{"token": "sometoken"}}
+	err := api.ValidateChannel(undeliverable)
+	if err == nil || !strings.Contains(err.Error(), "chat_id not configured") {
+		t.Fatalf("ValidateChannel(undeliverable telegram) err = %v, want a chat_id error", err)
+	}
+
+	deliverable := config.ChannelConfig{
+		Name:     "hook",
+		Type:     "webhook",
+		Settings: map[string]string{"url": "https://example.com/hook"},
+	}
+	if err := api.ValidateChannel(deliverable); err != nil {
+		t.Fatalf("ValidateChannel(deliverable webhook) err = %v, want nil", err)
+	}
+}
+
 // TestInprocUnimplementedMethodsReturnSentinel pins that, after task 8, the
 // ONLY inprocAPI method still returning errCoreNotImplemented is Subscribe
 // (deferred to S5) -- every write method now does real work.

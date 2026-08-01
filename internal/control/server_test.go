@@ -28,14 +28,19 @@ type fakeAPI struct {
 	cfg        *config.Config
 	doctor     core.DoctorReport
 
-	appliedConfig *config.Config
-	ackedKey      string
-	unackedKey    string
-	testedChannel string
+	appliedConfig    *config.Config
+	ackedKey         string
+	unackedKey       string
+	testedChannel    string
+	validatedChannel config.ChannelConfig
 
 	// ackAlertErr, when set, is returned by AckAlert -- used to prove a
 	// method error propagates back over the wire as ok=false.
 	ackAlertErr error
+	// validateChannelErr, when set, is returned by ValidateChannel -- same
+	// error-propagation proof as ackAlertErr, for the write method whose
+	// only other observable effect is the recorded validatedChannel arg.
+	validateChannelErr error
 }
 
 func (f *fakeAPI) Snapshot() (core.DashboardView, error)    { return f.snapshot, nil }
@@ -76,6 +81,11 @@ func (f *fakeAPI) UnackAlert(key string) error {
 func (f *fakeAPI) TestChannel(name string) error {
 	f.testedChannel = name
 	return nil
+}
+
+func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
+	f.validatedChannel = cc
+	return f.validateChannelErr
 }
 
 func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
@@ -171,6 +181,33 @@ func TestHandleConnMethodErrorPropagates(t *testing.T) {
 	}
 	if fake.ackedKey != "cpu" {
 		t.Errorf("fake.ackedKey = %q, want %q (dispatch should still call through)", fake.ackedKey, "cpu")
+	}
+
+	client.Close()
+	<-done
+}
+
+// TestHandleConnValidateChannelPropagatesError mirrors
+// TestHandleConnMethodErrorPropagates for the new write method: an error
+// api.ValidateChannel returns (buildNotifier's undeliverable-channel error,
+// in production) must come back over the wire as ok=false, and the channel
+// argument must have reached the API.
+func TestHandleConnValidateChannelPropagatesError(t *testing.T) {
+	fake := &fakeAPI{validateChannelErr: errors.New(`telegram channel "phone": chat_id not configured`)}
+	client, r, done := dialTestConn(t, fake)
+	defer client.Close()
+
+	cc := config.ChannelConfig{Name: "phone", Type: "telegram"}
+	resp := sendRequest(t, client, r, 4, "ValidateChannel", map[string]any{"channel": cc})
+
+	if resp.OK {
+		t.Fatalf("resp.OK = true, want false (error propagation)")
+	}
+	if resp.Error != `telegram channel "phone": chat_id not configured` {
+		t.Errorf("resp.Error = %q, want the buildNotifier-style chat_id error", resp.Error)
+	}
+	if fake.validatedChannel.Name != "phone" {
+		t.Errorf("fake.validatedChannel.Name = %q, want %q (dispatch should still call through)", fake.validatedChannel.Name, "phone")
 	}
 
 	client.Close()

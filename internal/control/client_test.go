@@ -153,8 +153,41 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 		t.Errorf("fake.testedChannel = %q, want %q", fake.testedChannel, "telegram")
 	}
 
+	if err := client.ValidateChannel(config.ChannelConfig{Name: "hook", Type: "webhook"}); err != nil {
+		t.Fatalf("ValidateChannel() error: %v", err)
+	}
+	if fake.validatedChannel.Name != "hook" {
+		t.Errorf("fake.validatedChannel.Name = %q, want %q", fake.validatedChannel.Name, "hook")
+	}
+
 	if _, err := client.Subscribe(context.Background()); err == nil {
 		t.Errorf("Subscribe() error = nil, want a streaming-unsupported error")
+	}
+}
+
+// TestClientValidateChannelSurfacesError is the A1 brief's dedicated
+// round-trip test: client.ValidateChannel, dialed against a real Serve
+// loop (not the in-memory net.Pipe dialTestConn uses), must surface the
+// exact error the server-side api.ValidateChannel returned -- the
+// undeliverable-channel case ValidateChannel exists to catch (#79).
+func TestClientValidateChannelSurfacesError(t *testing.T) {
+	wantErr := `telegram channel "phone": chat_id not configured`
+	fake := &fakeAPI{validateChannelErr: errors.New(wantErr)}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	cc := config.ChannelConfig{Name: "phone", Type: "telegram"}
+	err = client.ValidateChannel(cc)
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("ValidateChannel() error = %v, want %q", err, wantErr)
+	}
+	if fake.validatedChannel.Name != "phone" {
+		t.Errorf("fake.validatedChannel.Name = %q, want %q (request should still reach the server)", fake.validatedChannel.Name, "phone")
 	}
 }
 
