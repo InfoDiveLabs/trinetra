@@ -275,10 +275,11 @@ func (a *fileAPI) ValidateChannel(cc config.ChannelConfig) error {
 	return err
 }
 
-// Subscribe is deferred to a later stage (S5, the alerting event-bus
-// inversion -- see the epic's design doc): it returns errCoreNotImplemented
-// for now so *fileAPI satisfies core.API today, mirroring inprocAPI's
-// identical deferral (coreapi_inproc.go).
+// Subscribe implements core.API: fileAPI has no live daemon behind it (this
+// is the separate CLI process' file-backed reader, coreapi_file.go's own
+// doc), so there is no in-process event bus it could ever subscribe to --
+// it always returns errStreamRequiresDaemon (coreapi_inproc.go), the same
+// sentinel inprocAPI.Subscribe returns in its own no-bus degenerate case.
 func (a *fileAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
-	return nil, errCoreNotImplemented
+	return nil, errStreamRequiresDaemon
 }

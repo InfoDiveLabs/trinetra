@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 	"serverwatch/internal/telegram"
 )
 
@@ -570,8 +571,15 @@ const alertLogRetention = 30 * 24 * time.Hour
 // dispatch in the daemon (anomaly fire/recover, boot report, digests) goes
 // through so the alert log stays a complete history. alog may be nil (kept
 // symmetrical with the store's nil-degrades-gracefully convention elsewhere
-// in this file) in which case logging is simply skipped.
-func dispatchAndLog(disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []DeliveryResult {
+// in this file) in which case logging is simply skipped. It is also the
+// single choke point that publishes a's core.Event onto bus (see
+// alertEventKind) -- every one of the daemon's 5 dispatch call sites (boot
+// report, anomaly fire/recover x2, daily/weekly digest) routes through here,
+// so instrumenting this one function covers all of them at once. bus may
+// also be nil (eventBus.Publish's own nil-degrades-gracefully guard,
+// eventbus.go) -- most existing callers/tests have no live daemon bus to
+// thread through here just to dispatch an alert.
+func dispatchAndLog(bus *eventBus, disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []DeliveryResult {
 	results := disp.Dispatch(a, quiet)
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
@@ -584,7 +592,39 @@ func dispatchAndLog(disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []Del
 			Delivered: deliveriesFrom(results),
 		})
 	}
+	bus.Publish(core.Event{
+		Kind:     alertEventKind(a),
+		Severity: a.Severity.String(),
+		Source:   a.Source,
+		Title:    a.Title,
+		Time:     a.Time,
+	})
 	return results
+}
+
+// alertEventKind maps a dispatched Alert onto the Kind string its
+// core.Event carries on the live event bus. Only anomaly-sourced alerts
+// (Source "anomaly", from eventToAlert above) have a real fire/recover
+// distinction worth naming -- those map "fire"/"recover" to
+// "alert_fire"/"alert_recover" so a stream consumer can tell an anomaly
+// transition from the "snapshot" ticks the sampler loop also publishes.
+// Every other alert source (boot report, daily/weekly digest) hard-codes
+// Alert.Kind to "fire" only because the struct field has to be something,
+// not because it's semantically a fire/recover transition -- those pass
+// a.Kind straight through unmapped ("digests keep their kind", per the A2
+// live-push design doc).
+func alertEventKind(a Alert) string {
+	if a.Source != "anomaly" {
+		return a.Kind
+	}
+	switch a.Kind {
+	case "fire":
+		return "alert_fire"
+	case "recover":
+		return "alert_recover"
+	default:
+		return a.Kind
+	}
 }
 
 func cmdDaemon(args []string) int {
@@ -721,13 +761,20 @@ func cmdDaemon(args []string) int {
 
 	cfgAtStart := getCfg()
 
+	// bus is the daemon's live in-process event fan-out (eventbus.go):
+	// dispatchAndLog publishes every dispatched alert onto it, the sampler
+	// loop below publishes a "snapshot" tick after every snapshotHub.Store,
+	// and inprocAPI.Subscribe (coreapi_inproc.go) hands each control-socket
+	// subscriber its own subscription onto this same bus.
+	bus := newEventBus()
+
 	// control socket: serves the daemon's own core.API over a unix socket
 	// under RUNTIME_DIRECTORY (or /run/serverwatch) for the out-of-process
 	// plugins (serverwatch-ctl, serverwatch-web). newInprocAPI is untagged,
 	// so this carries no third-party dependency. Non-fatal: a bind failure
 	// just logs and leaves the daemon running without the socket (and thus
 	// without the web UI, which dials it).
-	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload)
+	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload, bus)
 	stopControl, socketPath, token, err := serveControlSocket(controlAPI)
 	if err != nil {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
@@ -751,7 +798,7 @@ func cmdDaemon(args []string) int {
 			}
 			now := clock.Now().Unix()
 			snap := collectSnapshot(x, fs, &prevCPU, da, c0, store, now)
-			dispatchAndLog(getDispatcher(), alog, Alert{
+			dispatchAndLog(bus, getDispatcher(), alog, Alert{
 				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap, c0)),
 				Severity: SevInfo,
 				Kind:     "fire",
@@ -834,6 +881,12 @@ func cmdDaemon(args []string) int {
 		// pointer must not alias a struct this loop keeps mutating in place.
 		snap := merged
 		snapshotHub.Store(&snap)
+		// Tell any live control-socket subscribers a fresh Snapshot is ready,
+		// without pushing the Snapshot itself onto the bus: a subscriber (the
+		// web UI's SSE handler, eventually) fetches the actual DashboardView
+		// via Snapshot() only when this tick says to, keeping core.Event
+		// alert-shaped rather than carrying a giant view in every frame.
+		bus.Publish(core.Event{Kind: "snapshot", Time: now.Unix()})
 
 		// heartbeat has its own cadence (HeartbeatInterval), independent of
 		// fast/slow: it exists only so a future boot can measure how long the
@@ -907,24 +960,24 @@ func cmdDaemon(args []string) int {
 		quiet := inQuietHours(c.QuietHours, now)
 		events := alerts.Evaluate(buildFastChecks(merged, c), baseline, c.BaselineSigma, c.BaselineMinPct, c.BaselineAlerts, now.Unix())
 		for _, e := range events {
-			dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
+			dispatchAndLog(bus, disp, alog, eventToAlert(e, now.Unix()), quiet)
 		}
 		stateChanged := len(events) > 0
 		if isSlowTick {
 			slowEvents := alerts.Evaluate(buildSlowChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, c.BaselineMinPct, c.BaselineAlerts, now.Unix())
 			for _, e := range slowEvents {
-				dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
+				dispatchAndLog(bus, disp, alog, eventToAlert(e, now.Unix()), quiet)
 			}
 			stateChanged = stateChanged || len(slowEvents) > 0
 		}
 		// scheduled digests bypass quiet hours, like the boot report.
 		if matchDaily(c.Schedule.Daily, now, lastDaily) {
 			lastDaily = now
-			dispatchAndLog(disp, alog, Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			dispatchAndLog(bus, disp, alog, Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
 			lastWeekly = now
-			dispatchAndLog(disp, alog, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			dispatchAndLog(bus, disp, alog, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		// alerts.json only changes when a fire/recover transition happened;
 		// baseline.json's stats are updated every fast tick in memory but only
