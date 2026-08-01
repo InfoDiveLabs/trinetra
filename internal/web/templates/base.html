@@ -18,9 +18,9 @@
     </nav>
     <div class="foot">
       <div class="who">
-        <span class="avatar">{{if eq .Role "admin"}}S{{else}}V{{end}}</span>
+        <span class="avatar">{{.Initial}}</span>
         <div style="flex:1">
-          <div style="font-size:12.5px">{{if eq .Role "admin"}}Suraj{{else}}Aditi{{end}}</div>
+          <div style="font-size:12.5px">{{.Name}}</div>
           <span class="badge role">{{.Role}}</span>
         </div>
         <button id="logoutBtn" class="mono" style="color:var(--faint);background:none;border:none;padding:0;cursor:pointer;font:inherit" title="Sign out">⏻</button>

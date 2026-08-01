@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 // assetVersion is a short content hash over every embedded asset, appended as
@@ -180,6 +181,12 @@ type PageData struct {
 	// Role is the current user's role ("admin" or "viewer"), from
 	// currentRole. Drives both nav filtering and the read-only pill/footer.
 	Role string
+	// Name/Initial are the signed-in user's display name (User.Name) and its
+	// uppercased first letter, rendered in the sidebar footer's identity block
+	// (#80). Empty for an anonymous request. Previously the footer showed a
+	// hardcoded name keyed only on Role ("Suraj"/"Aditi"), which misidentified
+	// every user; these carry the real value from userFromContext.
+	Name, Initial string
 	// Active is the request path, used to mark the matching nav link
 	// class="active" (mirrors the mockup's here===n.p comparison).
 	Active string
@@ -208,6 +215,10 @@ type PageData struct {
 // request/session.
 func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	role := currentRole(r)
+	name := ""
+	if u, ok := userFromContext(r); ok {
+		name = u.Name
+	}
 	csrf := ""
 	if sess, ok := sessionFromContext(r); ok {
 		csrf = sess.CSRF
@@ -219,11 +230,22 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		Status:     status,
 		StatusText: statusText,
 		Role:       role,
+		Name:       name,
+		Initial:    firstInitial(name),
 		Active:     r.URL.Path,
 		Nav:        navForRole(role, navCountsFor(d)),
 		Nonce:      nonceFromContext(r),
 		CSRF:       csrf,
 	}
+}
+
+// firstInitial returns the uppercased first rune of name (for the sidebar
+// avatar), or "" for an empty name.
+func firstInitial(name string) string {
+	for _, r := range name {
+		return strings.ToUpper(string(r))
+	}
+	return ""
 }
 
 // renderPage parses base.html together with the named page template (whose
