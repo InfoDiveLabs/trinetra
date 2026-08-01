@@ -439,13 +439,21 @@ func (a *inprocAPI) Config() (*config.Config, error) {
 	return a.getCfg(), nil
 }
 
-// Doctor, ApplyConfig, AckAlert, UnackAlert, TestChannel, and Subscribe are
-// deferred to later tasks (7-8): each returns errCoreNotImplemented for now
-// so *inprocAPI satisfies core.API today.
-
+// Doctor implements core.API via the shared buildDoctorReport (systemd.go),
+// the same probe orchestration `serverwatch doctor` (cmdDoctor) runs --
+// x/fs are the real osExec{}/osFS{} (there is no injected Exec/FileSource on
+// inprocAPI, same as cmdDoctor itself), but the SampleStore is this
+// inprocAPI's own live a.store (possibly nil in store-writes-disabled mode,
+// which buildDoctorReport already degrades to a "unavailable" StoreStats)
+// rather than a freshly-opened one -- the daemon already has it open, unlike
+// fileAPI's CLI-process Doctor below.
 func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
-	return core.DoctorReport{}, errCoreNotImplemented
+	return buildDoctorReport(osExec{}, osFS{}, a.getCfg(), a.store), nil
 }
+
+// ApplyConfig, AckAlert, UnackAlert, TestChannel, and Subscribe are deferred
+// to a later task: each returns errCoreNotImplemented for now so *inprocAPI
+// satisfies core.API today.
 
 func (a *inprocAPI) ApplyConfig(*config.Config) error { return errCoreNotImplemented }
 

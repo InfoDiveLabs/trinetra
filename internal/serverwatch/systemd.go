@@ -2,11 +2,13 @@ package serverwatch
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 )
 
 const unitPath = "/etc/systemd/system/serverwatch.service"
@@ -351,16 +353,6 @@ func cmdStatus(args []string) int {
 func cmdDoctor(args []string) int {
 	x := osExec{}
 	fs := osFS{}
-	da := probeDocker(x, fs)
-	fmt.Fprintf(stdout, "docker: available=%v method=%s\n", da.available, da.method)
-	if _, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
-		fmt.Fprintln(stdout, "smartctl: ok")
-	} else {
-		fmt.Fprintln(stdout, "smartctl: unavailable")
-	}
-	zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp")
-	fmt.Fprintf(stdout, "thermal zones: %d\n", len(zones))
-	fmt.Fprintf(stdout, "targets discovered: %d\n", len(Discover(x, fs)))
 
 	// Cardinality/disk guardrail visibility (docs/ROADMAP.md Epic #69 x7): a
 	// corrupt config just falls back to defaults here (same as cmdConfig's
@@ -375,8 +367,75 @@ func cmdDoctor(args []string) int {
 		store = s
 		defer store.Close()
 	}
-	fmt.Fprint(stdout, collectorSummary(c, store))
+
+	renderDoctorReport(stdout, buildDoctorReport(x, fs, c, store))
 	return 0
+}
+
+// buildDoctorReport runs the same probes `serverwatch doctor` has always run
+// inline (docker reachability via probeDocker, smartctl availability via
+// `smartctl --scan`, the thermal-zone glob, target discovery via Discover,
+// and the collector on/off toggles plus SampleStore stats via
+// collectorSummary's underlying logic) and packages the results into a
+// core.DoctorReport, so both cmdDoctor and core.API.Doctor() (coreapi_inproc.go,
+// coreapi_file.go) share one probe implementation instead of two copies that
+// could drift. store may be nil (the configured backend failed to open, or
+// store-writes are disabled), in which case StoreStats reads "unavailable"
+// -- the same degrade collectorSummary has always applied.
+func buildDoctorReport(x Exec, fs FileSource, c *config.Config, store SampleStore) core.DoctorReport {
+	da := probeDocker(x, fs)
+	smartOK := false
+	if _, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
+		smartOK = true
+	}
+	zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp")
+	targets := Discover(x, fs)
+
+	rep := core.DoctorReport{
+		DockerAccess:      fmt.Sprintf("available=%v method=%s", da.available, da.method),
+		SmartctlAvailable: smartOK,
+		ThermalZones:      len(zones),
+		TargetsDiscovered: len(targets),
+		ContainerStatsOn:  c.ContainerStatsEnabled(),
+		NetThroughputOn:   c.NetThroughputEnabled(),
+		ServicesOn:        c.ServicesEnabled(),
+		ProcessesOn:       c.ProcessesEnabled(),
+		SmartAttrsOn:      c.SmartAttrsEnabled(),
+	}
+
+	if store == nil {
+		rep.StoreStats = "unavailable"
+		return rep
+	}
+	n, diskBytes, err := store.Stats()
+	if err != nil {
+		rep.StoreStats = "unavailable"
+		return rep
+	}
+	rep.StoreStats = fmt.Sprintf("%d series, %.1f MB on disk (raw+1m)", n, float64(diskBytes)/(1024*1024))
+	return rep
+}
+
+// renderDoctorReport writes rep to w in the exact line-for-line format
+// cmdDoctor has always printed -- reconstructed from the DoctorReport DTO
+// now that the probe orchestration that fills it in lives in
+// buildDoctorReport. Kept as its own function (rather than inlined back into
+// cmdDoctor) so a golden test can pin the print format against a
+// hand-built core.DoctorReport, independent of whatever a fakeExec/fakeFS
+// probe run produces.
+func renderDoctorReport(w io.Writer, rep core.DoctorReport) {
+	fmt.Fprintf(w, "docker: %s\n", rep.DockerAccess)
+	if rep.SmartctlAvailable {
+		fmt.Fprintln(w, "smartctl: ok")
+	} else {
+		fmt.Fprintln(w, "smartctl: unavailable")
+	}
+	fmt.Fprintf(w, "thermal zones: %d\n", rep.ThermalZones)
+	fmt.Fprintf(w, "targets discovered: %d\n", rep.TargetsDiscovered)
+	fmt.Fprintf(w, "collectors: container_stats=%s net_throughput=%s services=%s processes=%s smart_attrs=%s\n",
+		onOff(rep.ContainerStatsOn), onOff(rep.NetThroughputOn), onOff(rep.ServicesOn),
+		onOff(rep.ProcessesOn), onOff(rep.SmartAttrsOn))
+	fmt.Fprintf(w, "time-series: %s\n", rep.StoreStats)
 }
 
 // onOff renders a bool as "on"/"off" for the doctor collector summary.

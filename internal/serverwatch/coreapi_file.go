@@ -190,14 +190,30 @@ func (a *fileAPI) Config() (*config.Config, error) {
 	return a.cfg, nil
 }
 
-// Doctor, ApplyConfig, AckAlert, UnackAlert, TestChannel, and Subscribe are
-// deferred to later tasks (7-8): each returns errCoreNotImplemented for now
-// so *fileAPI satisfies core.API today, mirroring inprocAPI's identical
-// deferral (coreapi_inproc.go).
-
+// Doctor implements core.API via the shared buildDoctorReport (systemd.go),
+// the same probe orchestration `serverwatch doctor` (cmdDoctor) runs: x/fs
+// are the real osExec{}/osFS{}, same as cmdDoctor itself (there is no
+// injected Exec/FileSource on fileAPI). Unlike inprocAPI.Doctor, this CLI
+// process has no long-lived store to reuse, so it opens the configured
+// SampleStore fresh and closes it before returning -- mirroring cmdDoctor's
+// own openConfiguredStore call. A store-open failure degrades to a nil
+// store (StoreStats reads "unavailable") rather than a returned error, the
+// same read-only-diagnostic-shouldn't-fail-over reasoning cmdDoctor's own
+// corrupt-config fallback already applies, unlike Series/Events above which
+// do surface a wrapped store-open error.
 func (a *fileAPI) Doctor() (core.DoctorReport, error) {
-	return core.DoctorReport{}, errCoreNotImplemented
+	var store SampleStore
+	if s, err := openConfiguredStore(a.cfg); err == nil {
+		store = s
+		defer store.Close()
+	}
+	return buildDoctorReport(osExec{}, osFS{}, a.cfg, store), nil
 }
+
+// ApplyConfig, AckAlert, UnackAlert, TestChannel, and Subscribe are deferred
+// to a later task: each returns errCoreNotImplemented for now so *fileAPI
+// satisfies core.API today, mirroring inprocAPI's identical deferral
+// (coreapi_inproc.go).
 
 func (a *fileAPI) ApplyConfig(*config.Config) error { return errCoreNotImplemented }
 

@@ -279,13 +279,12 @@ func TestFileAPIConfigReturnsPassedCfg(t *testing.T) {
 	}
 }
 
-// TestFileAPIUnimplementedMethodsReturnSentinel pins that the write/Doctor/
+// TestFileAPIUnimplementedMethodsReturnSentinel pins that the write/
 // Subscribe methods all return errCoreNotImplemented, same as inprocAPI.
+// Doctor is implemented as of task 7 (doctor_test.go covers it) so it is no
+// longer part of this list.
 func TestFileAPIUnimplementedMethodsReturnSentinel(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
-	if _, err := api.Doctor(); err != errCoreNotImplemented {
-		t.Errorf("Doctor() err = %v, want errCoreNotImplemented", err)
-	}
 	if err := api.ApplyConfig(config.Default()); err != errCoreNotImplemented {
 		t.Errorf("ApplyConfig() err = %v, want errCoreNotImplemented", err)
 	}
