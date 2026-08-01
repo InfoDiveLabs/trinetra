@@ -3,16 +3,16 @@
   {{if .TestResult}}<p class="note" style="margin-top:0">{{.TestResult}}</p>{{end}}
   <div class="toolbar"><span class="note">{{len .Channels}} channel{{if ne (len .Channels) 1}}s{{end}} · alerts fan out to every enabled channel that matches the alert's severity &amp; target.</span><span class="spacer"></span><button class="btn primary" type="button" data-modal="chanModal-new">+ Add channel</button></div>
 
-  <div class="panel pad0"><table>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
     <thead><tr><th>Channel</th><th>Type</th><th>Severity</th><th>Routes</th><th style="text-align:right">Enabled</th><th></th></tr></thead>
     <tbody>
       {{range $c := .Channels}}
       <tr>
-        <td><b>{{$c.Name}}</b></td>
-        <td class="mono note">{{$c.Type}}</td>
-        <td><span class="badge {{if eq $c.MinSeverity "critical"}}crit{{else if eq $c.MinSeverity "warning"}}warn{{end}}">{{$c.MinSeverity}}</span></td>
-        <td class="note">{{$c.Routes}}</td>
-        <td style="text-align:right">
+        <td class="card-title"><b>{{$c.Name}}</b></td>
+        <td class="mono note" data-label="Type">{{$c.Type}}</td>
+        <td data-label="Severity"><span class="badge {{if eq $c.MinSeverity "critical"}}crit{{else if eq $c.MinSeverity "warning"}}warn{{end}}">{{$c.MinSeverity}}</span></td>
+        <td class="note" data-label="Routes">{{$c.Routes}}</td>
+        <td data-label="Enabled" style="text-align:right">
           <form method="post" action="/channels/{{$c.Param}}/update" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <input type="hidden" name="type" value="{{$c.Type}}">
@@ -21,7 +21,7 @@
             <button class="switch {{if $c.Enabled}}on{{end}}" type="submit" title="Toggle enabled" style="padding:0"></button>
           </form>
         </td>
-        <td style="text-align:right">
+        <td class="card-actions" style="text-align:right">
           {{/* data-chan-type deliberately omitted: app.js's prefillChannel would
                dispatch a "change" event on the type <select> that toggles ALL
                [data-cond] divs on the PAGE (querySelectorAll isn't scoped to
@@ -42,7 +42,7 @@
       {{else}}
       <tr><td colspan="6" class="note">No channels configured yet.</td></tr>
       {{end}}
-    </tbody></table></div>
+    </tbody></table></div></div>
 
   <p class="note" style="margin-top:14px">Also active, separately: a <b>dead-man switch</b> URL, pinged on every heartbeat. Configured under <a href="/config">Configuration</a>.</p>
 </div>

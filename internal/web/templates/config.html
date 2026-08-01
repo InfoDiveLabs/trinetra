@@ -82,20 +82,20 @@
 
     <div class="section-label"><span class="eyebrow">What to monitor</span></div>
     <p class="note" style="margin:-4px 0 14px">Turn any target off, or set a per-target limit that overrides the global threshold above. Leave "Alert at" blank to use the global threshold.</p>
-    <div class="panel pad0"><table>
+    <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
       <thead><tr><th>Target</th><th>Alert at</th><th style="text-align:right">Monitor</th></tr></thead>
       <tbody>
         {{range $t := .Targets}}
         <tr>
-          <td class="mono">{{$t.Name}}</td>
-          <td><input type="hidden" name="target_name" value="{{$t.Name}}">
+          <td class="mono card-title">{{$t.Name}}</td>
+          <td data-label="Alert at"><input type="hidden" name="target_name" value="{{$t.Name}}">
             <input type="text" class="mono" name="target_threshold" value="{{$t.Threshold}}" placeholder="global" style="width:90px"></td>
-          <td style="text-align:right"><input type="checkbox" class="switch" name="target_enabled" value="{{$t.Name}}" {{if $t.Enabled}}checked{{end}}></td>
+          <td data-label="Monitor" style="text-align:right"><input type="checkbox" class="switch" name="target_enabled" value="{{$t.Name}}" {{if $t.Enabled}}checked{{end}}></td>
         </tr>
         {{else}}
         <tr><td colspan="3" class="note">No targets discovered yet.</td></tr>
         {{end}}
-      </tbody></table></div>
+      </tbody></table></div></div>
 
     <div class="section-label"><span class="eyebrow">Alerting</span></div>
     <p class="note" style="margin:-4px 0 14px">Where alerts go, and a way to be told when the whole server is unreachable.</p>

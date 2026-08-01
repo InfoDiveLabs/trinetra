@@ -2,14 +2,14 @@
 <div id="users-page">
   <div class="toolbar"><span class="note">{{len .Users}} user{{if ne (len .Users) 1}}s{{end}} · passkeys only, no passwords.</span></div>
 
-  <div class="panel pad0"><table>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
     <thead><tr><th>User</th><th>Role</th><th>Passkeys</th><th>Created</th><th></th></tr></thead>
     <tbody>
       {{range $u := .Users}}
       <tr>
-        <td><b>{{$u.Name}}</b>{{if $u.IsSelf}} <span class="note">(you)</span>{{end}}</td>
-        <td>{{if eq $u.Role "admin"}}<span class="badge role">admin</span>{{else}}<span class="badge">viewer</span>{{end}}</td>
-        <td class="mono">
+        <td class="card-title"><b>{{$u.Name}}</b>{{if $u.IsSelf}} <span class="note">(you)</span>{{end}}</td>
+        <td data-label="Role">{{if eq $u.Role "admin"}}<span class="badge role">admin</span>{{else}}<span class="badge">viewer</span>{{end}}</td>
+        <td class="mono" data-label="Passkeys">
           {{if $u.Credentials}}{{len $u.Credentials}} ·
             {{range $u.Credentials}}
             <form method="post" action="/users/{{$u.ID}}/credentials/{{.Param}}/revoke" hx-post="/users/{{$u.ID}}/credentials/{{.Param}}/revoke" hx-target="#users-page" hx-swap="outerHTML" style="display:inline">
@@ -19,8 +19,8 @@
             {{end}}
           {{else}}<span class="note">0 · none registered</span>{{end}}
         </td>
-        <td class="mono note">{{$u.Created}}</td>
-        <td style="text-align:right">
+        <td class="mono note" data-label="Created">{{$u.Created}}</td>
+        <td class="card-actions" style="text-align:right">
           <form method="post" action="/users/{{$u.ID}}/role" hx-post="/users/{{$u.ID}}/role" hx-target="#users-page" hx-swap="outerHTML" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             {{if eq $u.Role "admin"}}
@@ -38,7 +38,7 @@
         </td>
       </tr>
       {{end}}
-    </tbody></table></div>
+    </tbody></table></div></div>
 
   <div class="grid g-2" style="margin-top:16px">
     <div class="panel"><div class="head"><span class="eyebrow">Roles</span></div>
