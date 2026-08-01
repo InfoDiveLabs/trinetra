@@ -29,8 +29,9 @@ curl -fsSL -o /tmp/serverwatch \
   https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/serverwatch-linux-amd64
 chmod +x /tmp/serverwatch
 sudo /tmp/serverwatch install                 # copies to /usr/local/bin, writes+enables the systemd unit
-sudo serverwatch telegram set-token <token>   # only required setting; chat id is auto-captured
-                                               # from your first message to the bot
+sudo serverwatch telegram set-token <token>   # only required setting
+# the daemon logs a one-time enrollment PIN; read it and, from YOUR Telegram
+# account, message the bot:  /start <pin>      (see: journalctl -u serverwatch)
 ```
 
 **Option B — build from source** and ship the binary:
@@ -46,8 +47,10 @@ sudo serverwatch telegram set-token <token>
 Get the `<token>` from Telegram's **@BotFather** (`/newbot`, follow the prompts,
 copy the token it gives you) before running `telegram set-token`.
 
-Send the bot any message once so it learns your chat id, then try `/stats` or
-`/help`. From here everything else is optional — defaults already work.
+The daemon prints a one-time enrollment PIN to its log (`journalctl -u
+serverwatch`). From your Telegram account, send the bot `/start <pin>` to claim
+it as the owner chat; only that chat is then answered. Try `/stats` or `/help`.
+From here everything else is optional; defaults already work.
 
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full install/verify/manage
 guide, **[docs/DESIGN.md](docs/DESIGN.md)** for the architecture, and
@@ -76,7 +79,7 @@ serverwatch config get [key]              print effective config (defaults + ove
 serverwatch config set <key> <value>      set a key, e.g. `config set sample_interval 30`
 serverwatch config unset <key>            revert a key to its default
 
-serverwatch telegram set-token <token>    set the bot token (chat id auto-captured on first message)
+serverwatch telegram set-token <token>    set the bot token (then enroll the owner chat via /start <pin>)
 serverwatch monitor list                  discovered targets with on/off state + effective threshold
 serverwatch monitor enable <target>       re-enable a target, e.g. `monitor enable docker:jellyfin`
 serverwatch monitor disable <target>      stop alerting on a target
