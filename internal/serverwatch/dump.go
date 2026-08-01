@@ -9,21 +9,21 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"serverwatch/internal/core"
 )
 
-// dumpSeries queries store for metric over [from, to] at resolution res and
-// writes the result to w in the requested format ("csv" or "json"). csv
+// writeSeries writes pts to w in the requested format ("csv" or "json"). csv
 // writes a header row ("ts,min,avg,max") followed by one row per point, ts
 // as a Unix timestamp (chosen over RFC3339 for simplicity: no timezone
 // ambiguity, sorts as a plain integer). json writes a JSON array of points
-// (Point's exported fields: TS/Min/Avg/Max), "[]" when there are none. A
-// metric with no data in range is not an error in either format: csv prints
-// just the header, json prints "[]".
-func dumpSeries(w io.Writer, store SampleStore, metric string, from, to int64, res Resolution, format string) error {
-	pts, err := store.Query(metric, from, to, res)
-	if err != nil {
-		return fmt.Errorf("query %s: %w", metric, err)
-	}
+// (Point's exported fields: TS/Min/Avg/Max -- Point, not core.SeriesPoint,
+// deliberately: Point has no json tags, so its field names render
+// capitalized exactly as this format always has; core.SeriesPoint carries
+// lowercase json tags for its own callers and would silently change this
+// output if marshaled directly). A metric with no data in range is not an
+// error in either format: csv prints just the header, json prints "[]".
+func writeSeries(w io.Writer, pts []Point, format string) error {
 	switch format {
 	case "json":
 		if pts == nil {
@@ -50,6 +50,34 @@ func dumpSeries(w io.Writer, store SampleStore, metric string, from, to int64, r
 	}
 }
 
+// dumpSeries queries store for metric over [from, to] at resolution res and
+// writes the result to w via writeSeries. Kept as its own entry point (with
+// its own tests, dump_test.go) alongside cmdDump's core.API-routed path
+// below: a plain SampleStore query, no core.API/CLI-state-dir involvement,
+// for callers that already have a store open.
+func dumpSeries(w io.Writer, store SampleStore, metric string, from, to int64, res Resolution, format string) error {
+	pts, err := store.Query(metric, from, to, res)
+	if err != nil {
+		return fmt.Errorf("query %s: %w", metric, err)
+	}
+	return writeSeries(w, pts, format)
+}
+
+// seriesPointsToPoints converts core.API's Series result back into this
+// package's own Point type, so cmdDump's json output keeps rendering
+// capitalized field names (see writeSeries' doc) even though the value now
+// arrives through the core.API boundary rather than a direct store.Query.
+func seriesPointsToPoints(pts []core.SeriesPoint) []Point {
+	if pts == nil {
+		return nil
+	}
+	out := make([]Point, len(pts))
+	for i, p := range pts {
+		out[i] = Point{TS: p.TS, Min: p.Min, Avg: p.Avg, Max: p.Max}
+	}
+	return out
+}
+
 // cmdDump parses `dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]`
 // and prints the result via dumpSeries.
 func cmdDump(args []string) int {
@@ -71,12 +99,16 @@ func cmdDump(args []string) int {
 		fmt.Fprintln(stderr, "invalid --since:", err)
 		return 2
 	}
-	var resolution Resolution
+	// res is the explicit resolution the --res flag chose; core.API.Series
+	// also accepts core.ResAuto (a picker-decides sentinel), but cmdDump
+	// always passes on exactly what the flag said, same as before this was
+	// routed through core.API.
+	var resolution core.Resolution
 	switch *res {
 	case "raw":
-		resolution = ResRaw
+		resolution = core.ResRaw
 	case "1m":
-		resolution = Res1m
+		resolution = core.Res1m
 	default:
 		fmt.Fprintf(stderr, "invalid --res %q (want raw|1m)\n", *res)
 		return 2
@@ -91,16 +123,15 @@ func cmdDump(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	store, err := openConfiguredStore(cfg)
-	if err != nil {
-		fmt.Fprintln(stderr, "open sample store:", err)
-		return 1
-	}
-	defer store.Close()
 
 	now := time.Now().Unix()
 	from := now - int64(sinceDur.Seconds())
-	if err := dumpSeries(stdout, store, *metric, from, now, resolution, *format); err != nil {
+	pts, err := newFileAPI(stateDir, cfg).Series(*metric, from, now, resolution)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := writeSeries(stdout, seriesPointsToPoints(pts), *format); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
