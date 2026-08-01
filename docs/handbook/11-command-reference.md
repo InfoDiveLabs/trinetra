@@ -4,9 +4,15 @@ This chapter lists every command shipped by ServerWatch. Section 1 covers the
 `serverwatch` binary, which is both the daemon and the operator CLI. Section 2
 covers the two out-of-process plugin binaries, `serverwatch-ctl` and
 `serverwatch-web`, neither of which is part of the shipped daemon binary
-itself. `serverwatch-ctl` is BETA / preview; `serverwatch-web` is a
-supervised, separate binary that the daemon manages (see [Web
-supervisor](02-architecture.md#web-supervisor)).
+itself. `serverwatch-ctl` is BETA / preview, and it is now the primary,
+recommended way to manage a running serverwatch day to day: it wraps the
+schedule, quiet hours, healthchecks, monitor thresholds, and notification
+channels in guided, validated screens, plus a first-run onboarding flow for
+Telegram. `serverwatch-web` is a supervised, separate binary that the daemon
+manages (see [Web supervisor](02-architecture.md#web-supervisor)). Section 3
+collects the thin, scriptable verbs from section 1 into a single
+automation-focused reference for anyone managing serverwatch without
+`serverwatch-ctl`.
 
 ## 1. `serverwatch` (daemon + CLI)
 
@@ -160,11 +166,8 @@ supervisor](02-architecture.md#web-supervisor).
 `serverwatch-ctl` is a separate client binary that dials the daemon's control
 socket. Run it with a subcommand (`status`, `doctor`, `alerts`) for a one-shot,
 non-interactive read that mirrors the daemon-side output. Run it with no
-subcommand to launch the interactive Bubble Tea TUI. The TUI is early: it shows
-live status and a guided "set up the web UI" flow that applies over the socket
-via `ApplyConfig` (no hand-typed config keys). More management screens (channels,
-schedules, thresholds) are coming; see the [roadmap
-chapter](12-roadmap-and-status.md).
+subcommand to launch the interactive Bubble Tea TUI, which is now the primary
+way to manage a running serverwatch.
 
 ```
 serverwatch-ctl [--socket PATH] [--token PATH] <command>
@@ -175,6 +178,81 @@ serverwatch-ctl [--socket PATH] [--token PATH] <command>
 | `status` | Print the current dashboard snapshot. |
 | `doctor` | Print the daemon's diagnostic report. |
 | `alerts` | Print the currently active alerts. |
+
+#### Managing with serverwatch-ctl
+
+Every screen the interactive TUI offers follows the same shape: fetch the
+current `Config` over the control socket, mutate it with a validated
+`config.Set` setter, and commit it in one atomic `ApplyConfig` call. Nothing
+is written straight to disk by `serverwatch-ctl` itself, and a screen can
+never leave the daemon with a half-applied change. Where a screen needs to
+know what the host actually looks like, it asks the daemon rather than
+probing locally: the Monitor thresholds screen lists targets from the
+daemon's own `MonitorTargets`, and an enabled channel is checked with
+`ValidateChannel` before it is ever saved.
+
+**The Home screen.** Launching `serverwatch-ctl` with no subcommand opens
+Home, which shows live status. From Home:
+
+| Key | Action |
+| --- | --- |
+| `m` | Open the management menu (below). |
+| `s` | Launch the guided web setup wizard, applying `web.*` over the socket. |
+| `r` | Force an immediate status refresh. |
+| `q` / `esc` | Quit. |
+
+If Telegram is not yet configured, or is configured but not yet enrolled,
+Home opens straight into first-run onboarding instead (below), rather than
+showing a dashboard with nothing to alert you.
+
+**The management menu.** Pressing `m` from Home opens a menu of config-backed
+flows: **schedule**, **quiet hours**, **healthchecks**, **monitor
+thresholds**, and **channels**. Move with the up/down arrows or `j`/`k`, open
+the highlighted row with `enter`, and back out with `esc`.
+
+- **Schedule.** Choose `off`, `daily`, or `weekly`. `daily` prompts for an
+  `HH:MM` time; `weekly` prompts for `dow@HH:MM`, for example `mon@09:00`.
+  The screen pre-fills whatever is currently set, so accepting the current
+  mode re-applies the existing value rather than an empty one.
+- **Quiet hours.** A single `HH-HH` window, or `off` to clear it.
+- **Healthchecks.** A single healthchecks.io ping URL, or `off` to clear it.
+- **Monitor thresholds.** A live list of every target the daemon has
+  discovered (fetched from the daemon, not probed locally). `enter`/`space`
+  toggles the target under the cursor on or off, `t` opens a threshold-edit
+  input for it, and each change applies immediately, one `ApplyConfig` per
+  toggle or edit.
+- **Channels.** A list of every configured notification channel. `a` adds a
+  new one, walking through its type (telegram, email, webhook, slack,
+  discord, ntfy, or gotify) and that type's fields; `e` edits the channel
+  under the cursor; `d`/`x` removes it; `t` sends it a live test notification.
+  Before an **enabled** channel is saved, the screen validates it over the
+  socket and refuses to persist it if validation fails, so a channel that
+  would silently fail to deliver can never be saved while turned on. A
+  disabled channel skips that gate, since there is nothing it can misdeliver
+  while off, which is how you stage a channel's settings before switching it
+  on.
+
+> To manage serverwatch without `serverwatch-ctl`, for scripting, automation,
+> or a headless box, see [Daemon-only config
+> management](#3-daemon-only-config-management) below.
+
+**First-run onboarding.** The first time `serverwatch-ctl` runs against a
+daemon whose Telegram bot has no token, or has a token but is not yet
+enrolled, Home opens into a guided flow instead of the dashboard:
+
+1. **Bot token.** Paste the token from @BotFather. `enter` saves it; `esc`
+   skips onboarding for now, since the token can always be set later from the
+   Channels screen or `serverwatch telegram set-token`.
+2. **Enrollment PIN.** Once the token is saved, the screen fetches the
+   daemon's current enrollment PIN over the socket and shows it with the
+   `/start <pin>` instruction, the exact PIN `serverwatch telegram set-token`
+   itself now prints (see #90 in [Daemon-only config
+   management](#3-daemon-only-config-management)). It then polls every two
+   seconds until the daemon reports the chat enrolled.
+
+See [Installation and first run](03-installation.md#5-connect-telegram-and-enroll-as-owner)
+for the enrollment flow diagram, which covers both this screen and
+`telegram set-token`.
 
 Socket and token resolution, highest priority first:
 
@@ -214,6 +292,72 @@ serverwatch-web [-socket PATH] [-token TOKEN] [-token-file PATH] \
 The socket and token resolution order matches `serverwatch-ctl`: flag, then
 environment, then the systemd/by-hand default. As with the daemon, a missing
 token file means no-auth when no token was supplied directly.
+
+## 3. Daemon-only config management
+
+`serverwatch-ctl` (section 2.1) is the primary way to manage a running
+serverwatch, but every flow it offers has a thin, scriptable equivalent on
+the core `serverwatch` binary itself. Nothing here is new: these are the same
+commands already documented in section 1's table, gathered in one place under
+the lens that matters for automation, cron jobs, configuration-management
+tooling, or a box you administer entirely over SSH without
+`serverwatch-ctl` installed. Prefer `serverwatch-ctl` for day-to-day,
+interactive management; reach for these verbs when you are scripting a
+change or managing headless.
+
+| Command | Purpose |
+| --- | --- |
+| `config get [key]` / `config set <key> <value>` / `config unset <key>` | Read or write any config key directly. `config set` is the scriptable escape hatch for anything a guided screen does not cover. |
+| `monitor list` / `monitor enable\|disable <target>` / `monitor threshold <target> <value>` | Discover targets and set per-target on/off state and threshold overrides. |
+| `schedule daily HH:MM` / `schedule weekly dow@HH:MM` / `schedule off` | Set or clear the digest schedule. |
+| `quiet-hours HH-HH` / `quiet-hours off` | Set or clear the quiet-hours window. |
+| `healthchecks set <url>` / `healthchecks off` | Set or clear the healthchecks.io ping URL. |
+| `channel list\|add\|remove\|set\|test` | List, add, remove, modify, or test-notify a notification channel. |
+| `telegram set-token <token>` | Store the Telegram bot token and print the enrollment PIN (#90, below). |
+
+Every one of these persists to `/etc/serverwatch/config.json` and sends a
+best-effort `SIGHUP` to reload a running daemon, exactly as described in
+section 1's Notes column and in [Configuration](04-configuration.md). Full
+flag syntax, validation, and defaults for each key live in the [Configuration
+chapter's key reference](04-configuration.md#config-key-reference); section 1
+above is the authoritative command-by-command list.
+
+### #90: `telegram set-token` now prints the enrollment PIN
+
+`serverwatch telegram set-token <token>` used to only persist the token; you
+had to go read the daemon's journal to find the one-time enrollment PIN it
+generated. It now dials the control socket after saving the token and prints
+the `/start <pin>` instruction directly:
+
+```
+Telegram token saved. To finish enrollment, from your Telegram account message the bot:
+  /start 123456
+```
+
+If the daemon cannot be reached, for instance because it is not installed or
+is still starting, `telegram set-token` still saves the token and exits
+successfully; it just falls back to pointing you at the journal instead:
+
+```
+Telegram token saved. The daemon will log the enrollment PIN on start:
+  journalctl -u serverwatch | grep /start
+```
+
+A failed PIN fetch is never treated as `telegram set-token` failing; only the
+printed message changes. See the enrollment diagram in [Installation and
+first run](03-installation.md#5-connect-telegram-and-enroll-as-owner) for how
+this fits together with `serverwatch-ctl`'s onboarding screen, which shows
+the same PIN.
+
+### #91: guided setup lives in serverwatch-ctl; `config set` is the escape hatch
+
+The guided, validated walk-through for web UI setup and first-run Telegram
+onboarding lives in `serverwatch-ctl` (section 2.1), not in the core CLI. The
+core CLI deliberately does not grow an interactive wizard of its own:
+`config set` and the dedicated verbs above remain the direct, scriptable way
+to write any of the same keys, so nothing you could do before is gone, and
+configuration-management tooling never has to shell out to an interactive
+program to change a setting.
 
 ---
 

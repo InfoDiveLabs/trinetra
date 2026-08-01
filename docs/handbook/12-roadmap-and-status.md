@@ -61,13 +61,18 @@ The preview introduces four things:
 - **A plugin runtime.** The core hosts plugins and manages the socket-side
   machinery that lets a separate process attach and drive the daemon.
 - **Plugin binaries.** Two plugins ship on top of that foundation.
-  `serverwatch-ctl` dials the socket to run status, doctor, and alerts against
-  a live daemon from a second process; it remains scaffolding, with no
-  supervisor managing it yet. `serverwatch-web` serves the web UI out of
-  process, talking to the core over the socket instead of living inside the
-  daemon as a goroutine; for the beta it has grown a supervisor of its own
-  that verifies, spawns, restarts, and stops it, covered in the delivered
-  list below.
+  `serverwatch-ctl` dials the socket to run status, doctor, and alerts
+  against a live daemon from a second process, and is now the primary,
+  interactive way to manage one: schedule, quiet hours, healthchecks,
+  monitor thresholds, channels, and first-run onboarding all live there. It
+  remains scaffolding in one sense, no supervisor manages the
+  `serverwatch-ctl` process itself the way the web plugin is supervised, but
+  that is expected for a client you run by hand when you want it, not a
+  background service. `serverwatch-web` serves the web UI out of process,
+  talking to the core over the socket instead of living inside the daemon as
+  a goroutine; for the beta it has grown a supervisor of its own that
+  verifies, spawns, restarts, and stops it, covered in the delivered list
+  below.
 
 The intent behind the split is that the core stays small and boring while
 everything richer plugs in around it without pulling weight into the default
@@ -92,6 +97,30 @@ is done and verified:
   single `serverwatch-web` binary with no build tag. The core verifies and
   spawns it as a child process when `web.enabled` is set, restarts it under a
   capped backoff if it exits, and stops it on daemon shutdown.
+- **The `serverwatch-ctl` interactive management screens**: schedule, quiet
+  hours, healthchecks, and monitor thresholds all now have guided screens,
+  alongside a channels screen (list, add, edit, remove, test, with an
+  enabled channel validated over the socket before it can be saved) and a
+  first-run onboarding flow that captures the Telegram bot token and walks
+  through enrollment. `serverwatch-ctl` is the primary, recommended way to
+  manage a running serverwatch; see [Managing with
+  serverwatch-ctl](11-command-reference.md#21-serverwatch-ctl-beta). The
+  thin, scriptable core CLI verbs it wraps are unchanged and still work
+  standalone, collected for automation/no-ctl use in [Daemon-only config
+  management](11-command-reference.md#3-daemon-only-config-management).
+- **The enrollment PIN over the socket (#90)**: `serverwatch telegram
+  set-token` now prints the `/start <pin>` instruction directly to the
+  terminal right after saving the token, instead of requiring a trip to the
+  journal. It falls back to pointing at the journal only when the daemon
+  cannot be reached. `serverwatch-ctl`'s onboarding screen surfaces the same
+  PIN. See [Installation and first
+  run](03-installation.md#5-connect-telegram-and-enroll-as-owner) for the
+  enrollment flow diagram.
+- **Guided setup ownership (#91)**: the guided, validated walk-through for
+  web UI setup and first-run Telegram onboarding lives in `serverwatch-ctl`;
+  the core CLI does not grow an interactive wizard of its own. `config set`
+  and the dedicated verbs remain the scriptable escape hatch for anything a
+  guided screen does not cover.
 
 ### A note on Telegram enrollment
 
@@ -107,15 +136,13 @@ behavior is the `/start <pin>` handshake.
 The preview is a foundation, and several pieces that make it a complete
 replacement for the embedded design are still open. Being plain about them:
 
-- **The `serverwatch-ctl` interactive TUI (in progress).** A first slice has
-  landed: running `serverwatch-ctl` with no subcommand opens a Bubble Tea TUI
-  showing live status and a guided "set up the web UI" flow that applies over
-  the socket. The remaining management screens (channels, schedules, thresholds,
-  first-run onboarding) are still to come.
-- **Channel-save validation over the control socket.** Saving a channel from
-  the web UI does not yet validate it end to end, so it can silently accept a
-  channel that would never deliver. This gap is specific to the socket path
-  the web UI reads and writes through.
+- **Channel-save validation over the control socket, for the web UI.** Saving
+  a channel from the web UI does not yet validate it end to end, so it can
+  silently accept a channel that would never deliver. This gap is specific to
+  the socket path the web UI reads and writes through; `serverwatch-ctl`'s
+  channels screen already validates an enabled channel before saving it (see
+  the delivered list above), and the web UI is the one path left to close
+  this on.
 - **Per-interface throughput alerting.** Throughput is collected as a series,
   but alerting on a specific interface crossing a threshold is not wired up.
 - **Live event streaming over the control socket.** The `Subscribe` method

@@ -1,5 +1,14 @@
 # Configuration
 
+`serverwatch-ctl`'s management screens are now the guided, validated way to
+change the schedule, quiet hours, healthchecks, monitor thresholds, and
+notification channels day to day; see [Managing with
+serverwatch-ctl](11-command-reference.md#21-serverwatch-ctl-beta). This
+chapter documents the config model those screens apply to, and the
+scriptable `serverwatch` CLI verbs that remain the automation and no-ctl
+path, collected for reference in [Daemon-only config
+management](11-command-reference.md#3-daemon-only-config-management).
+
 ## How configuration works
 
 Every setting in serverwatch lives in a single JSON file at
@@ -38,7 +47,11 @@ serverwatch channel add|list|remove|set|test    # notification channels
 ```
 
 These are equivalent to the matching `config set` calls, just with a verb-shaped
-interface. Use whichever reads better for the task.
+interface. Use whichever reads better for the task. Every one of them, plus
+`config get/set/unset` itself, also has a guided, validated screen in
+`serverwatch-ctl`; see [Daemon-only config
+management](11-command-reference.md#3-daemon-only-config-management) for the
+automation-focused view of this same command set.
 
 ### Persistence and hot reload
 
@@ -173,6 +186,13 @@ a fresh install.
 ```bash
 serverwatch telegram set-token 123456:ABC-DEF   # or: config set telegram.token ...
 ```
+
+`telegram set-token` saves the token, reloads the daemon, and then prints the
+`/start <pin>` enrollment instruction straight to the terminal (falling back
+to a `journalctl` pointer if the daemon cannot be reached yet). The guided
+`serverwatch-ctl` onboarding flow shows the same PIN the same way. See
+[Installation and first run](03-installation.md#5-connect-telegram-and-enroll-as-owner)
+for the full enrollment flow and diagram.
 
 ### Healthchecks
 
