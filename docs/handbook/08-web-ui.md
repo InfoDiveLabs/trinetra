@@ -70,21 +70,15 @@ There are two ways `serverwatch-web` gets started:
   Do not just flip `web.enabled` on its own. Setting it starts the server, but
   with no serving mode and no `web.rp_id` / `web.origin` configured, WebAuthn
   has no relying-party identity to bind a passkey to, and registration and
-  login fail. The wizard exists precisely to set those together. If you are
-  scripting it, set `web.enabled` alongside the `web.mode` / `web.listen` /
-  `web.rp_id` / `web.origin` keys your serving mode needs (see [Serving
-  modes](#serving-modes)), then restart:
+  login fail. Run the wizard: it sets those together and leaves you with a
+  working login. (The individual `web.*` keys, for automation or a headless
+  box, are the reference under [Serving modes](#serving-modes) below.)
 
-  ```bash
-  # web.enabled plus the web.* keys your serving mode needs (see Serving modes)
-  sudo serverwatch config set web.enabled true
-  sudo systemctl restart serverwatch
-  ```
-
-  Toggling `web.enabled` takes effect on the next restart: the supervisor
-  decides once, at daemon startup, whether to spawn the child, and the `web.*`
-  keys are not reloaded on SIGHUP, so `systemctl restart serverwatch` is what
-  actually starts or stops it. There is no separate "web" unit.
+  Whichever way the keys get set, they take effect on the next restart: the
+  supervisor decides once, at daemon startup, whether to spawn the child, and
+  the `web.*` keys are not reloaded on SIGHUP. The wizard reminds you to
+  restart after it applies; a scripted change needs `sudo systemctl restart
+  serverwatch`. There is no separate "web" unit.
 
 - **Manual, via `serverwatch web`.** This front-door subcommand runs the same
   trust checks the supervisor uses, then execs `serverwatch-web` directly in
