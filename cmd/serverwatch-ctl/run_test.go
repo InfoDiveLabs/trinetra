@@ -10,14 +10,22 @@ import (
 	"serverwatch/internal/core"
 )
 
-// fakeAPI is a core.API stub returning canned values so run() can be driven
-// without a real control socket. Only the reads the ctl subcommands exercise
-// are populated; the rest satisfy the interface and are never called by the
-// tested paths.
+// fakeAPI is a core.API stub returning canned values so run() (and, in
+// tui_test.go, the TUI model) can be driven without a real control socket.
+// Only the reads the ctl subcommands/wizard exercise are populated by
+// default; the rest satisfy the interface and are never called by most
+// tested paths. cfg/applyErr let a test control what Config() returns and
+// how ApplyConfig fails; applied/applyCalls record what a caller (the web
+// setup wizard) actually posted, for assertions.
 type fakeAPI struct {
 	snapshot core.DashboardView
 	doctor   core.DoctorReport
 	active   []core.AlertRecord
+
+	cfg      *config.Config
+	applyErr error
+	applied  *config.Config
+	applyN   int
 }
 
 func (f *fakeAPI) Snapshot() (core.DashboardView, error) { return f.snapshot, nil }
@@ -32,12 +40,28 @@ func (f *fakeAPI) ActiveAlerts() ([]core.AlertRecord, error)           { return 
 func (f *fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
 	return nil, nil
 }
-func (f *fakeAPI) Config() (*config.Config, error)    { return &config.Config{}, nil }
+func (f *fakeAPI) Config() (*config.Config, error) {
+	if f.cfg != nil {
+		return f.cfg, nil
+	}
+	return &config.Config{}, nil
+}
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
-func (f *fakeAPI) ApplyConfig(*config.Config) error   { return nil }
-func (f *fakeAPI) AckAlert(key string) error          { return nil }
-func (f *fakeAPI) UnackAlert(key string) error        { return nil }
-func (f *fakeAPI) TestChannel(name string) error      { return nil }
+func (f *fakeAPI) ApplyConfig(c *config.Config) error {
+	f.applyN++
+	f.applied = c
+	return f.applyErr
+}
+func (f *fakeAPI) AckAlert(key string) error     { return nil }
+func (f *fakeAPI) UnackAlert(key string) error   { return nil }
+func (f *fakeAPI) TestChannel(name string) error { return nil }
+
+// ValidateChannel is a stub for core.API's ValidateChannel method (landing
+// in parallel from the beta-2 A1 task alongside this one -- see the
+// coordination note in the beta-2 B1 task spec): returning nil is enough to
+// satisfy core.API without ctl having any actual channel-validation UI yet.
+func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error { return nil }
+
 func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, nil
 }
