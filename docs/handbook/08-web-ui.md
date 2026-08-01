@@ -65,7 +65,10 @@ There are two ways `serverwatch-web` gets started:
   sudo systemctl restart serverwatch
   ```
 
-  Toggling `web.enabled` takes effect on the next restart: the supervisor
+  The guided path enables and configures the web UI in one step:
+  `serverwatch-ctl`'s web-setup wizard (`sudo serverwatch cli`, then `s` from
+  Home), covered under [Serving modes](#serving-modes) below. Toggling
+  `web.enabled` takes effect on the next restart: the supervisor
   decides once, at daemon startup, whether to spawn the child, and the
   `web.*` keys are not reloaded on SIGHUP, so `systemctl restart serverwatch`
   is what actually starts or stops it. There is no separate "web" unit;
@@ -201,6 +204,18 @@ web configuration is validated at startup, and an invalid or incomplete
 combination makes the web listener refuse to start while the daemon keeps
 running. Telegram and monitoring are unaffected; the daemon logs the failure,
 skips the listener, and you fix the config and restart.
+
+The guided way to set this up is `serverwatch-ctl`'s web-setup wizard: run
+`sudo serverwatch cli` and press `s` from the Home screen. It walks you
+through the mode, listen address, domain, RP ID, and origin, derives sensible
+defaults, validates the whole combination up front, and enables and applies it
+over the control socket in one step, so you cannot leave the web in a
+half-configured state. See [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl).
+
+The `config set web.*` commands shown under each mode below are the equivalent
+manual form for automation or a headless box, and double as the reference for
+exactly which keys each mode needs.
 
 ### `proxy` (default)
 

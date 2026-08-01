@@ -1,23 +1,60 @@
 # Configuration
 
-`serverwatch-ctl`'s management screens are now the guided, validated way to
-change the schedule, quiet hours, healthchecks, monitor thresholds, and
-notification channels day to day; see [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl). This
-chapter documents the config model those screens apply to, and the
-scriptable `serverwatch` CLI verbs that remain the automation and no-ctl
-path, collected for reference in [Daemon-only config
+The default way to configure serverwatch is the interactive `serverwatch-ctl`
+TUI: guided, validated screens for the schedule, quiet hours, healthchecks,
+monitor thresholds, and notification channels, plus first-run Telegram
+onboarding. Start it with `sudo serverwatch cli`. Everything you configure day
+to day has a screen there, and each change is validated and applied over the
+control socket in one step.
+
+This chapter opens with that default path, then documents the underlying
+configuration model and the full config-key reference under
+[Advanced: direct configuration](#advanced-direct-configuration), for
+automation, cron, or a headless box managed without `serverwatch-ctl`.
+
+## Managing configuration with serverwatch-ctl
+
+Run `sudo serverwatch cli` and press `m` from the Home screen to open the
+management menu. Each entry is a guided screen that fetches the current config,
+lets you edit it with validation, and applies it atomically over the control
+socket:
+
+| Setting | serverwatch-ctl screen |
+| --- | --- |
+| Digest schedule (daily / weekly / off) | Schedule |
+| Quiet-hours window | Quiet hours |
+| Healthchecks ping URL | Healthchecks |
+| Per-target enable/disable and thresholds | Monitor thresholds |
+| Notification channels (add / edit / remove / test) | Channels |
+| Web UI setup (mode, listen, domain, origin) | the `s` guided web-setup wizard from Home |
+| Telegram bot token and enrollment | first-run onboarding |
+
+The Channels screen validates an enabled channel over the socket before it
+saves, so a channel that would fail to deliver can never be persisted while
+turned on. For the full screen-by-screen walkthrough, see [Managing with
+serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl).
+
+For automation, scripting, or a box without `serverwatch-ctl`, every one of
+these settings is also a scriptable `serverwatch` CLI verb, documented in
+[Advanced: direct configuration](#advanced-direct-configuration) below and
+collected in [Daemon-only config
 management](11-command-reference.md#3-daemon-only-config-management).
 
-## How configuration works
+## Advanced: direct configuration
+
+The rest of this chapter is the low-level reference behind those screens: the
+config file, the scriptable CLI verbs, and every config key. You need it for
+automation or a headless box; day to day, the screens above set all of this
+for you.
 
 Every setting in serverwatch lives in a single JSON file at
-`/etc/serverwatch/config.json`, but you never open that file in an editor. All
-configuration flows through the `serverwatch` CLI. There is no environment
-variable layer and no hand-edited file: the config store is the CLI, and the
-JSON on disk is just where the CLI persists what you told it. This keeps
-validation in one place (a bad value is rejected at set time, not discovered at
-runtime) and keeps the file's permissions and format under the tool's control.
+`/etc/serverwatch/config.json`, but you never open that file in an editor. Both
+the `serverwatch-ctl` screens and the CLI verbs below write it for you through
+the same validated path. There is no environment variable layer and no
+hand-edited file: the JSON on disk is just where those tools persist what you
+told them. This keeps validation in one place (a bad value is rejected at set
+time, not discovered at runtime) and keeps the file's permissions and format
+under the tool's control.
 
 The general-purpose entry points are three verbs on `config`:
 
