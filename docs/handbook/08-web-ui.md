@@ -42,11 +42,12 @@ first run](03-installation.md)).
 `serverwatch-web` does not embed the daemon and does not read its state
 directly. Like `serverwatch-ctl`, it dials the daemon's [control
 socket](02-architecture.md#the-control-socket), borrows the socket client as
-its data source, and serves the UI from its own process. Live push over SSE
-degrades the same way it would for any control-socket consumer: `Subscribe`,
-the streaming method, is not implemented over the socket yet (see the
-[roadmap chapter](12-roadmap-and-status.md)), so the dashboard falls back to
-polling instead of a live push where that matters.
+its data source, and serves the UI from its own process. It also opens a
+second, dedicated connection to the same socket to subscribe to the daemon's
+[live event stream](02-architecture.md#the-live-event-stream), so the
+dashboard is pushed fresh data instead of only polling for it; see [Live
+dashboard updates](#live-dashboard-updates) below for how that push reaches
+the browser.
 
 There are two ways `serverwatch-web` gets started:
 
@@ -135,7 +136,9 @@ Signed in, the UI is a handful of routes.
 - **Live dashboard.** The landing page for any signed-in user. It shows the
   current state of the machine and updates in place over server-sent events
   (SSE) as fresh samples arrive, so you do not reload to see new numbers. It
-  includes a 24 hour availability strip built from real per-request data.
+  includes a 24 hour availability strip built from real per-request data. See
+  [Live dashboard updates](#live-dashboard-updates) below for how the push
+  from the daemon reaches this page.
 - **History graphs.** Time-series charts of the metrics the daemon keeps,
   rendered client-side with uPlot. Same series the CLI and Telegram read; the
   page is just another view onto them.
@@ -153,6 +156,41 @@ Signed in, the UI is a handful of routes.
 - **`/public`.** The anonymous status page, described in its own section below.
   It is the only route an unauthenticated visitor can reach, and only when it
   is enabled.
+
+## Live dashboard updates
+
+`serverwatch-web` subscribes to the daemon's [live event
+stream](02-architecture.md#the-live-event-stream) at startup, over the same
+control socket its other data comes from, and uses that subscription to
+drive the `/events` SSE endpoint the live dashboard connects to. Two kinds
+of event arrive on that subscription and each is handled differently:
+
+- A snapshot tick (published on every sampler tick, once per fast interval)
+  triggers a fresh call to `Snapshot()` and pushes the resulting
+  `DashboardView` down the SSE connection as a `snapshot` frame. The tick
+  itself carries no data; it only tells the web process a fresh view is
+  worth fetching.
+- An alert event (published the instant `dispatchAndLog` dispatches a fire,
+  recover, or digest) is pushed straight down the SSE connection as its own
+  `alert` frame, with no snapshot fetch involved, so the browser can react
+  to it (toast it, refresh the alert list) immediately rather than waiting
+  for the next tick.
+
+A coarse fallback ticker (30 seconds) keeps running underneath the
+subscription the whole time as a safety net: if the stream stalls or the
+subscribe channel closes, the connection falls back to that ticker (still
+calling `Snapshot()` on its own cadence) instead of going silent. And if the
+subscription cannot be opened at all, for example a backend wired up
+without a live daemon behind it, the SSE endpoint degrades to its original
+behavior: polling `Snapshot()` on a plain ticker, with no push in the
+picture at all.
+
+The public status page's SSE endpoint follows the same pattern with one
+deliberate restriction: it only ever refreshes on a snapshot tick, rebuilt
+through the same admin-curated panel allowlist as its initial render. It
+never receives an alert frame at all, push or otherwise, because alert
+detail is never meant to reach an anonymous visitor. See [The public status
+page](#the-public-status-page) below for the allowlist itself.
 
 ## Serving modes
 

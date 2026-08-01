@@ -92,6 +92,14 @@ is done and verified:
   single `serverwatch-web` binary with no build tag. The core verifies and
   spawns it as a child process when `web.enabled` is set, restarts it under a
   capped backoff if it exits, and stops it on daemon shutdown.
+- **Live event streaming over the control socket.** `core.API.Subscribe` is
+  implemented end to end: the daemon runs an in-process event bus that the
+  sampler loop and every dispatched alert publish onto, the control socket
+  dedicates a connection to streaming those events to a subscriber, and
+  `serverwatch-web` subscribes over that stream to push dashboard updates
+  instead of only polling for them. See [The live event
+  stream](02-architecture.md#the-live-event-stream) and [Live dashboard
+  updates](08-web-ui.md#live-dashboard-updates) for the details.
 
 ### A note on Telegram enrollment
 
@@ -118,11 +126,6 @@ replacement for the embedded design are still open. Being plain about them:
   the web UI reads and writes through.
 - **Per-interface throughput alerting.** Throughput is collected as a series,
   but alerting on a specific interface crossing a threshold is not wired up.
-- **Live event streaming over the control socket.** The `Subscribe` method
-  that would push live events from the core to attached clients is not
-  implemented over the socket yet. Until it lands, the web UI's dashboard
-  cannot get full server-sent-event push the way a direct in-process reader
-  of `core.API` could.
 
 ## Not planned, for now
 
