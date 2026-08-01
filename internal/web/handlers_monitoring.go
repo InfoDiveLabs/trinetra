@@ -80,7 +80,7 @@ func buildMonitoringPageData(r *http.Request, d Deps) MonitoringPageData {
 }
 
 // renderMonitoringPage renders templates/monitoring.html through the full
-// app-shell layout (base.html), the same parse/execute shape renderPage
+// app-shell layout (base.html), the same parse/execute shape renderPageStatus
 // (templates.go) uses for plain PageData pages, mirrored here (like
 // renderDashboardPage/renderUsersPage) because this page needs the extra
 // View/count fields alongside the shared ones.

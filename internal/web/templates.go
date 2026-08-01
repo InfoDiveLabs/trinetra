@@ -246,22 +246,16 @@ func firstInitial(name string) string {
 	return ""
 }
 
-// renderPage parses base.html together with the named page template (whose
-// {{define "content"}} overrides base.html's content block -- the standard
-// html/template nested-layout pattern) and executes "base.html" against
-// data. Parsing per-request keeps each page's template set isolated (two
-// pages both defining "content" in the same set would conflict), which is
-// cheap enough here: embed.FS reads are in-memory and Task 2's traffic is
-// low; a future task can cache per-page *template.Template if this shows up
-// in profiling.
-func renderPage(w http.ResponseWriter, page string, data PageData) error {
-	return renderPageStatus(w, page, data, http.StatusOK)
-}
-
-// renderPageStatus is renderPage's counterpart for a non-200 response (today
-// only requireRole's 403 denied panel, middleware.go's renderDenied): same
-// base.html + page-template parse/execute, but with the given status code
-// written before the body.
+// renderPageStatus parses base.html together with the named page template
+// (whose {{define "content"}} overrides base.html's content block -- the
+// standard html/template nested-layout pattern) and executes "base.html"
+// against data, writing status before the body. Parsing per-request keeps
+// each page's template set isolated (two pages both defining "content" in the
+// same set would conflict), which is cheap enough here: embed.FS reads are
+// in-memory and traffic is low; a future task can cache per-page
+// *template.Template if this shows up in profiling. Handlers rendering a
+// normal 200 page call it with http.StatusOK; the 403 denied panel
+// (middleware.go's renderDenied) passes http.StatusForbidden.
 func renderPageStatus(w http.ResponseWriter, page string, data PageData, status int) error {
 	tmpl, err := template.New("base.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base.html", "templates/"+page)
@@ -318,10 +312,10 @@ func newBarePageData(r *http.Request, title string) BarePageData {
 	}
 }
 
-// renderBarePage is renderPage's counterpart for the bare/centered layout:
-// it parses base_bare.html together with the named page template instead of
-// base.html. See BarePageData's doc for why a page needs this instead of
-// renderPage.
+// renderBarePage is renderPageStatus's counterpart for the bare/centered
+// layout: it parses base_bare.html together with the named page template
+// instead of base.html. See BarePageData's doc for why a page needs this
+// instead of renderPageStatus.
 func renderBarePage(w http.ResponseWriter, page string, data BarePageData) error {
 	tmpl, err := template.New("base_bare.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base_bare.html", "templates/"+page)

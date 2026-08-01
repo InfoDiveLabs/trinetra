@@ -190,21 +190,6 @@ func contentTypeByExt(name string) string {
 	return ""
 }
 
-// adminPlaceholderHandler renders a bare "coming later" panel (templates/
-// admin_placeholder.html) through the full app-shell layout for one of the
-// admin-only routes (see newHandler's requireRole(RoleAdmin, ...) wiring):
-// title/sub are threaded straight into PageData.Title/Sub the same way
-// dashboardHandler does. Every caller has already passed requireRole by the
-// time this runs, so it does no authorization of its own.
-func adminPlaceholderHandler(d Deps, title, sub string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		data := newPageData(r, d, title, sub)
-		if err := renderPage(w, "admin_placeholder.html", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-}
-
 // enrollPageHandler renders the passkey-registration page (ported from
 // ui-mockup/enroll.html -- see templates/enroll.html) through the bare/
 // centered layout (base_bare.html/BarePageData, templates.go): unlike the

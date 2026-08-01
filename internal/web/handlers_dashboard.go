@@ -161,7 +161,7 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 
 // renderDashboardPage renders templates/dashboard.html through the full
 // app-shell layout (base.html) against DashboardPageData -- the same
-// parse/execute shape renderPage (templates.go) uses for plain PageData
+// parse/execute shape renderPageStatus (templates.go) uses for plain PageData
 // pages, mirrored here (like renderUsersPage/handlers_users.go) because this
 // page needs the extra View/Alerts fields alongside the shared ones.
 func renderDashboardPage(w http.ResponseWriter, data DashboardPageData) error {

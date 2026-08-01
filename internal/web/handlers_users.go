@@ -136,7 +136,7 @@ func buildUsersPageData(r *http.Request, d Deps, store UserStore, issued *Issued
 }
 
 // renderUsersPage renders templates/users.html through the full app-shell
-// layout (base.html) -- the same parse/execute shape as renderPage
+// layout (base.html) -- the same parse/execute shape as renderPageStatus
 // (templates.go), but for UsersPageData rather than the plain PageData every
 // other page uses today, since this is the first admin page needing extra
 // fields (Users, Issued) alongside the shared nav/topbar ones.

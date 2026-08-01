@@ -9,7 +9,7 @@ import (
 )
 
 // nonceCtxKey is the unexported context key securityHeaders stores the
-// per-request CSP nonce under, for renderPage (routes.go/templates.go) to
+// per-request CSP nonce under, for renderPageStatus (templates.go) to
 // read back into PageData.Nonce.
 type nonceCtxKey struct{}
 
