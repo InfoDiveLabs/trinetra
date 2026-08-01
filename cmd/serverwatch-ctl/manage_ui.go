@@ -34,12 +34,17 @@ const (
 	manageHealthValue
 	manageMonitorList
 	manageMonitorThreshold
+	manageChannelsList
+	manageChannelsName
+	manageChannelsType
+	manageChannelsEnabled
+	manageChannelsField
 	manageResult
 )
 
 // manageItems are the management menu's rows, in the order shown; their
 // index is what updateManageMenuKey's "enter" case switches on.
-var manageItems = []string{"schedule", "quiet hours", "healthchecks", "monitor thresholds"}
+var manageItems = []string{"schedule", "quiet hours", "healthchecks", "monitor thresholds", "channels"}
 
 // scheduleModeChoices are the Schedule screen's mode-selection rows, index-
 // matched against scheduleMode's off/daily/weekly constants (manage_schedule.go).
@@ -85,6 +90,22 @@ type manageModel struct {
 
 	applying bool
 	applyErr error
+
+	// channels -- state lives here (not a separate top level model) for the
+	// same reason the schedule/quiet-hours/healthchecks/monitor fields do:
+	// see manageModel's own doc.
+	chanList     []config.ChannelConfig // sorted (sortedChannels), fetched fresh on screen open and after every add/edit/remove
+	chanCursor   int
+	chanErr      error  // surfaced on the list: a failed fetch, remove, or test
+	chanTestMsg  string // last successful test's status line, cleared on the next action
+	chanNameIn   textinput.Model
+	chanTypeCur  int
+	chanFieldIn  textinput.Model
+	chanFieldIdx int
+	chanAns      channelAnswers
+	chanEditName string // "" for add; the existing channel's name for edit
+	chanIsEdit   bool
+	chanSaving   bool
 }
 
 // newManageValueInput builds a text input the same way newModel's wizard
@@ -149,6 +170,34 @@ type monitorTargetsMsg struct {
 // guess.
 type monitorAppliedMsg struct {
 	cfg *config.Config
+	err error
+}
+
+// channelsConfigMsg carries a freshly fetched Config back into Update for
+// the Channels screen's list (fetchChannelsConfigCmd), mirroring
+// scheduleConfigMsg/quietHoursConfigMsg/healthchecksConfigMsg's pre-fill
+// role for their own screens (see manageModel.configLoading's doc for why
+// this fetch-on-open matters).
+type channelsConfigMsg struct {
+	cfg *config.Config
+	err error
+}
+
+// channelActionMsg carries the result of an in-place list action (remove or
+// test, as opposed to the add/edit flow's channelSavedMsg) back into
+// Update. cfg is the freshly re-fetched, already-applied config after a
+// remove (nil for a test, which never changes config); name/isTest
+// identify what happened for the list's transient status line.
+type channelActionMsg struct {
+	cfg    *config.Config
+	name   string
+	isTest bool
+	err    error
+}
+
+// channelSavedMsg carries the result of saveChannel (add or edit: fetch
+// Config, gate + mutate via saveChannel, ApplyConfig) back into Update.
+type channelSavedMsg struct {
 	err error
 }
 
@@ -292,6 +341,70 @@ func applyMonitorThresholdCmd(api core.API, target, valueStr string) tea.Cmd {
 	}
 }
 
+// fetchChannelsConfigCmd fetches Config fresh so the Channels screen's list
+// always reflects the daemon's CURRENT channels, never a stale snapshot
+// (mirrors fetchScheduleConfigCmd's role for its own screen).
+func fetchChannelsConfigCmd(api core.API) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		return channelsConfigMsg{cfg: cfg, err: err}
+	}
+}
+
+// removeChannelCmd fetches Config fresh, removes name via applyChannelRemove
+// (channels.go), and posts it with ApplyConfig -- one atomic apply per
+// removal, matching `serverwatch channel remove` doing one save per
+// invocation. The freshly-applied cfg comes back on channelActionMsg so the
+// list can be rebuilt from what was actually saved.
+func removeChannelCmd(api core.API, name string) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return channelActionMsg{name: name, err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		if err := applyChannelRemove(cfg, name); err != nil {
+			return channelActionMsg{name: name, err: err}
+		}
+		if err := api.ApplyConfig(cfg); err != nil {
+			return channelActionMsg{name: name, err: err}
+		}
+		return channelActionMsg{cfg: cfg, name: name}
+	}
+}
+
+// testChannelCmd calls api.TestChannel(name) -- the same send-a-real-test-
+// notification path `channel test`/the web channels page's "send test"
+// button use (sendTestNotification, internal/serverwatch/channel.go) --
+// against the channel as it is CURRENTLY saved on the daemon; it does not
+// touch config.
+func testChannelCmd(api core.API, name string) tea.Cmd {
+	return func() tea.Msg {
+		err := api.TestChannel(name)
+		return channelActionMsg{name: name, isTest: true, err: err}
+	}
+}
+
+// saveChannelCmd fetches Config fresh, gates + mutates it via saveChannel
+// (channels.go, the #79-safe validate-before-save path), and posts it with
+// ApplyConfig -- the same fetch/mutate/apply shape applyScheduleCmd uses,
+// except the mutate step here can itself fail a live api.ValidateChannel
+// check before anything is written.
+func saveChannelCmd(api core.API, name string, ans channelAnswers, isEdit bool) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return channelSavedMsg{err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		if err := saveChannel(api, cfg, name, ans, isEdit); err != nil {
+			return channelSavedMsg{err: err}
+		}
+		if err := api.ApplyConfig(cfg); err != nil {
+			return channelSavedMsg{err: err}
+		}
+		return channelSavedMsg{}
+	}
+}
+
 // --- Update ---
 
 // updateManageKey routes a keypress to whichever management screen is
@@ -308,6 +421,16 @@ func (m model) updateManageKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateMonitorListKey(msg)
 	case manageMonitorThreshold:
 		return m.updateMonitorThresholdKey(msg)
+	case manageChannelsList:
+		return m.updateChannelsListKey(msg)
+	case manageChannelsName:
+		return m.updateChannelsNameKey(msg)
+	case manageChannelsType:
+		return m.updateChannelsTypeKey(msg)
+	case manageChannelsEnabled:
+		return m.updateChannelsEnabledKey(msg)
+	case manageChannelsField:
+		return m.updateChannelsFieldKey(msg)
 	case manageResult:
 		// Any key returns to the menu; per-screen state resets on next entry.
 		m.mgr.screen = manageMenuList
@@ -354,6 +477,12 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mgr.monErr = nil
 			m.mgr.monCursor = 0
 			return m, discoverMonitorCmd(m.api)
+		case 4:
+			m.mgr.screen = manageChannelsList
+			m.mgr.chanCursor = 0
+			m.mgr.chanErr = nil
+			m.mgr.chanTestMsg = ""
+			return m, fetchChannelsConfigCmd(m.api)
 		}
 	case "esc", "q":
 		m.step = stepHome
@@ -599,6 +728,40 @@ func (m model) manageView() string {
 		}
 		fmt.Fprintf(&b, "threshold for %s (%s):\n\n%s\n", row.ID, row.Kind, m.mgr.monThreshIn.View())
 		b.WriteString("\n" + hintStyle.Render("enter to save, esc to cancel") + "\n")
+	case manageChannelsList:
+		b.WriteString(m.channelsListView())
+	case manageChannelsName:
+		fmt.Fprintf(&b, "channel name:\n\n%s\n", m.mgr.chanNameIn.View())
+		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to cancel") + "\n")
+	case manageChannelsType:
+		b.WriteString("channel type:\n\n")
+		for i, choice := range channelTypeChoices {
+			cursor := "  "
+			if i == m.mgr.chanTypeCur {
+				cursor = "> "
+			}
+			fmt.Fprintf(&b, "%s%s\n", cursor, choice)
+		}
+		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to select, esc to go back") + "\n")
+	case manageChannelsEnabled:
+		state := "disabled"
+		if m.mgr.chanAns.Enabled {
+			state = "enabled"
+		}
+		fmt.Fprintf(&b, "channel state: %s\n", state)
+		b.WriteString("\n" + hintStyle.Render("up/down/space to toggle, enter to continue, esc to go back") + "\n")
+	case manageChannelsField:
+		if m.mgr.chanSaving {
+			b.WriteString("saving...\n")
+		} else {
+			fields := channelTypeFields[m.mgr.chanAns.Type]
+			label := ""
+			if m.mgr.chanFieldIdx < len(fields) {
+				label = fields[m.mgr.chanFieldIdx].Label
+			}
+			fmt.Fprintf(&b, "%s:\n\n%s\n", label, m.mgr.chanFieldIn.View())
+			b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
+		}
 	case manageResult:
 		if m.mgr.applyErr != nil {
 			b.WriteString(errStyle.Render(fmt.Sprintf("apply failed: %v", m.mgr.applyErr)) + "\n")
