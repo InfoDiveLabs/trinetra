@@ -57,7 +57,9 @@ scp dist/serverwatch-linux-arm64 myserver:/tmp/serverwatch
 sudo /tmp/serverwatch install
 ```
 
-This copies the binary to `/usr/local/bin/serverwatch`, writes
+This copies the binary to `/usr/local/bin/serverwatch` (and symlinks it into
+`/usr/bin`, which is on sudo's `secure_path` on every distro, so `sudo
+serverwatch ...` resolves even on RHEL/CentOS-family hosts), writes
 `/etc/systemd/system/serverwatch.service` (`Restart=always`,
 `WantedBy=multi-user.target`), seeds `/etc/serverwatch/config.json` (mode 0600) if
 absent, and runs `systemctl daemon-reload` + `enable --now`. The daemon is now
