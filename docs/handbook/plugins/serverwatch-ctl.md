@@ -4,9 +4,11 @@
 socket. It is the primary, recommended way to manage a running serverwatch day
 to day: it wraps the schedule, quiet hours, healthchecks, monitor thresholds,
 and notification channels in guided, validated screens, plus a first-run
-onboarding flow for Telegram. It is still marked beta / preview: it is built
-and wired up by hand, and nothing supervises its process (unlike
-[serverwatch-web](serverwatch-web.md), which the daemon supervises).
+onboarding flow for Telegram, and its generic **all settings** screen reaches
+every remaining flat config key on top of those, so there is no config key
+you have to drop to `serverwatch config set` for. It is still marked beta /
+preview: it is built and wired up by hand, and nothing supervises its process
+(unlike [serverwatch-web](serverwatch-web.md), which the daemon supervises).
 
 In normal use you do not invoke the binary directly; run `serverwatch cli`
 instead (see [the front-door in the Plugins overview](README.md)), which
@@ -70,8 +72,9 @@ showing a dashboard with nothing to alert you.
 
 **The management menu.** Pressing `m` from Home opens a menu of config-backed
 flows: **schedule**, **quiet hours**, **healthchecks**, **monitor
-thresholds**, and **channels**. Move with the up/down arrows or `j`/`k`, open
-the highlighted row with `enter`, and back out with `esc`.
+thresholds**, **channels**, and **all settings**. Move with the up/down
+arrows or `j`/`k`, open the highlighted row with `enter`, and back out with
+`esc`.
 
 - **Schedule.** Choose `off`, `daily`, or `weekly`. `daily` prompts for an
   `HH:MM` time; `weekly` prompts for `dow@HH:MM`, for example `mon@09:00`.
@@ -94,6 +97,20 @@ the highlighted row with `enter`, and back out with `esc`.
   disabled channel skips that gate, since there is nothing it can misdeliver
   while off, which is how you stage a channel's settings before switching it
   on.
+- **All settings.** A generic browse/edit screen over every flat config key,
+  grouped (Intervals, Baseline, Thresholds, Alerting, Notifications,
+  Schedule, Storage, Collection, Web, Public), so nothing is reachable only
+  through `serverwatch config set`. Pick a group, then a key: each row shows
+  its CURRENT value and a one-line description. `enter` opens a value input
+  that applies through the exact same validated `config.Set` every other
+  screen uses; a rejected value is shown on the result screen and never
+  persisted. Keys that only take effect after a daemon restart (the
+  `storage.*` backend/retention settings, and `web.enabled`/`web.listen`)
+  carry a "restart required" note on both the edit screen and the result
+  screen, the same caveat the guided web-setup wizard shows for its own
+  restart-required keys. This is the catch-all screen: even a key added to a
+  future release without its own dedicated screen is reachable here the
+  moment it is added to the config catalog.
 
 > To manage serverwatch without `serverwatch-ctl`, for scripting, automation,
 > or a headless box, see [Daemon-only config

@@ -315,6 +315,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mgr.screen = manageResult
 		return m, nil
 
+	case settingsConfigMsg:
+		m.mgr.setLoading = false
+		m.mgr.setErr = msg.err
+		if msg.err == nil {
+			m.mgr.setCfg = msg.cfg
+			m.mgr.setGroups = settingsGroups()
+		}
+		return m, nil
+
+	case settingsAppliedMsg:
+		m.mgr.applying = false
+		m.mgr.applyErr = msg.err
+		m.mgr.screen = manageResult
+		return m, nil
+
 	case onboardCheckMsg:
 		// Only auto-enter onboarding if the user is still sitting on Home:
 		// by the time this lands (it's fetched alongside the snapshot/tick

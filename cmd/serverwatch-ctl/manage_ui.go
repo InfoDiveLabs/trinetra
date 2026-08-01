@@ -39,12 +39,21 @@ const (
 	manageChannelsType
 	manageChannelsEnabled
 	manageChannelsField
+	manageSettingsGroups
+	manageSettingsKeys
+	manageSettingsValue
 	manageResult
 )
 
 // manageItems are the management menu's rows, in the order shown; their
-// index is what updateManageMenuKey's "enter" case switches on.
-var manageItems = []string{"schedule", "quiet hours", "healthchecks", "monitor thresholds", "channels"}
+// index is what updateManageMenuKey's "enter" case switches on. "all
+// settings" (issue #91) is the generic browse/edit screen over every flat
+// config key (config.Keys()), the catch-all that makes "no `config set`
+// needed" true even for keys none of the dedicated screens above cover
+// (sampling intervals, baseline/anomaly tuning, global thresholds,
+// critical_overrides_quiet, storage.*, collection toggles, the remaining
+// web.* keys, and public.*).
+var manageItems = []string{"schedule", "quiet hours", "healthchecks", "monitor thresholds", "channels", "all settings"}
 
 // scheduleModeChoices are the Schedule screen's mode-selection rows, index-
 // matched against scheduleMode's off/daily/weekly constants (manage_schedule.go).
@@ -106,6 +115,22 @@ type manageModel struct {
 	chanEditName string // "" for add; the existing channel's name for edit
 	chanIsEdit   bool
 	chanSaving   bool
+
+	// settings -- the generic "all settings" screen (issue #91). Uses its
+	// own loading/error/cfg fields rather than configLoading/valueIn (the
+	// schedule/quiet-hours/healthchecks screens' shared fields) since this
+	// screen has its own group-list -> key-list -> value-input shape and no
+	// state to share with those screens.
+	setLoading  bool
+	setErr      error
+	setCfg      *config.Config // freshly fetched on open, source of each key's CURRENT value
+	setGroups   []string       // settingsGroups(), fetched once per screen visit
+	setGroupCur int
+	setKeys     []config.KeyInfo // settingsGroupKeys(selected group)
+	setKeyCur   int
+	setValueIn  textinput.Model
+	setKey      string // the key mgr.setValueIn/manageResult's caveat refer to
+	setRestart  bool   // setKey's RestartRequired, for the value/result screens' caveat line
 }
 
 // newManageValueInput builds a text input the same way newModel's wizard
@@ -198,6 +223,23 @@ type channelActionMsg struct {
 // channelSavedMsg carries the result of saveChannel (add or edit: fetch
 // Config, gate + mutate via saveChannel, ApplyConfig) back into Update.
 type channelSavedMsg struct {
+	err error
+}
+
+// settingsConfigMsg carries a freshly fetched Config back into Update for
+// the "all settings" screen's group/key lists, mirroring
+// scheduleConfigMsg/channelsConfigMsg's pre-fill role for their own screens.
+type settingsConfigMsg struct {
+	cfg *config.Config
+	err error
+}
+
+// settingsAppliedMsg carries the result of applying a single settings-
+// screen key edit (fetch Config, applyConfigKey, ApplyConfig) back into
+// Update. key is carried through so the result screen can show the
+// restart-required caveat for the key that was just applied.
+type settingsAppliedMsg struct {
+	key string
 	err error
 }
 
@@ -405,6 +447,40 @@ func saveChannelCmd(api core.API, name string, ans channelAnswers, isEdit bool) 
 	}
 }
 
+// fetchSettingsConfigCmd fetches Config fresh so the "all settings" screen's
+// group/key lists always reflect the daemon's CURRENT values (mirrors
+// fetchScheduleConfigCmd/fetchChannelsConfigCmd's role for their screens).
+func fetchSettingsConfigCmd(api core.API) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		return settingsConfigMsg{cfg: cfg, err: err}
+	}
+}
+
+// applyConfigKeyCmd fetches Config fresh, sets exactly key via
+// applyConfigKey (manage_config.go, the same validated config.Set setter
+// every other manage screen ultimately uses), and posts it with
+// ApplyConfig -- the same fetch/mutate/apply shape applyScheduleCmd uses.
+// An error from either applyConfigKey (a rejected value) or ApplyConfig
+// surfaces identically on settingsAppliedMsg.err; ApplyConfig is never
+// called when applyConfigKey itself failed, so an invalid value is never
+// persisted.
+func applyConfigKeyCmd(api core.API, key, raw string) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := api.Config()
+		if err != nil {
+			return settingsAppliedMsg{key: key, err: fmt.Errorf("fetching current config: %w", err)}
+		}
+		if err := applyConfigKey(cfg, key, raw); err != nil {
+			return settingsAppliedMsg{key: key, err: err}
+		}
+		if err := api.ApplyConfig(cfg); err != nil {
+			return settingsAppliedMsg{key: key, err: err}
+		}
+		return settingsAppliedMsg{key: key}
+	}
+}
+
 // --- Update ---
 
 // updateManageKey routes a keypress to whichever management screen is
@@ -431,6 +507,12 @@ func (m model) updateManageKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateChannelsEnabledKey(msg)
 	case manageChannelsField:
 		return m.updateChannelsFieldKey(msg)
+	case manageSettingsGroups:
+		return m.updateSettingsGroupsKey(msg)
+	case manageSettingsKeys:
+		return m.updateSettingsKeysKey(msg)
+	case manageSettingsValue:
+		return m.updateSettingsValueKey(msg)
 	case manageResult:
 		// Any key returns to the menu; per-screen state resets on next entry.
 		m.mgr.screen = manageMenuList
@@ -456,6 +538,14 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mgr.applyErr = nil
 		m.mgr.configLoading = true
 		m.mgr.configErr = nil
+		// Clear any leftover settings-screen context (setKey/setRestart)
+		// from a PREVIOUS visit to "all settings": manageResult is shared
+		// across every screen, and without this a stale setKey from an
+		// earlier settings edit would wrongly show the restart caveat on
+		// an unrelated schedule/quiet-hours/healthchecks/monitor/channels
+		// result.
+		m.mgr.setKey = ""
+		m.mgr.setRestart = false
 		switch m.mgr.cursor {
 		case 0:
 			m.mgr.screen = manageScheduleMode
@@ -483,6 +573,13 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mgr.chanErr = nil
 			m.mgr.chanTestMsg = ""
 			return m, fetchChannelsConfigCmd(m.api)
+		case 5:
+			m.mgr.configLoading = false
+			m.mgr.screen = manageSettingsGroups
+			m.mgr.setLoading = true
+			m.mgr.setErr = nil
+			m.mgr.setGroupCur = 0
+			return m, fetchSettingsConfigCmd(m.api)
 		}
 	case "esc", "q":
 		m.step = stepHome
@@ -659,6 +756,96 @@ func (m model) updateMonitorThresholdKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// updateSettingsGroupsKey handles the "all settings" screen's top level
+// group list: up/down (or j/k) moves the cursor over mgr.setGroups, enter
+// opens the selected group's key list, esc/q returns to the menu. Ignores
+// every key but esc while mgr.setLoading is still true (the pre-fill fetch
+// hasn't landed yet), mirroring updateScheduleModeKey's configLoading guard.
+func (m model) updateSettingsGroupsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mgr.setLoading {
+		if msg.String() == "esc" {
+			m.mgr.screen = manageMenuList
+		}
+		return m, nil
+	}
+	switch msg.String() {
+	case "up", "k":
+		if m.mgr.setGroupCur > 0 {
+			m.mgr.setGroupCur--
+		}
+	case "down", "j":
+		if m.mgr.setGroupCur < len(m.mgr.setGroups)-1 {
+			m.mgr.setGroupCur++
+		}
+	case "enter":
+		if len(m.mgr.setGroups) == 0 {
+			return m, nil
+		}
+		group := m.mgr.setGroups[m.mgr.setGroupCur]
+		m.mgr.setKeys = settingsGroupKeys(group)
+		m.mgr.setKeyCur = 0
+		m.mgr.screen = manageSettingsKeys
+	case "esc", "q":
+		m.mgr.screen = manageMenuList
+	}
+	return m, nil
+}
+
+// updateSettingsKeysKey handles the "all settings" screen's key list for
+// the currently selected group: up/down (or j/k) moves the cursor over
+// mgr.setKeys, enter opens the value input for the key under the cursor
+// (pre-filled with its CURRENT value from mgr.setCfg.Get, fetched when the
+// screen was opened), esc goes back to the group list.
+func (m model) updateSettingsKeysKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.mgr.setKeyCur > 0 {
+			m.mgr.setKeyCur--
+		}
+	case "down", "j":
+		if m.mgr.setKeyCur < len(m.mgr.setKeys)-1 {
+			m.mgr.setKeyCur++
+		}
+	case "enter":
+		if len(m.mgr.setKeys) == 0 {
+			return m, nil
+		}
+		ki := m.mgr.setKeys[m.mgr.setKeyCur]
+		m.mgr.setKey = ki.Name
+		m.mgr.setRestart = ki.RestartRequired
+		m.mgr.setValueIn = newManageValueInput(ki.Help)
+		if m.mgr.setCfg != nil {
+			if val, ok := m.mgr.setCfg.Get(ki.Name); ok {
+				m.mgr.setValueIn.SetValue(val)
+				m.mgr.setValueIn.CursorEnd()
+			}
+		}
+		m.mgr.screen = manageSettingsValue
+		return m, m.mgr.setValueIn.Focus()
+	case "esc":
+		m.mgr.screen = manageSettingsGroups
+	}
+	return m, nil
+}
+
+// updateSettingsValueKey feeds msg into the selected key's value input:
+// enter commits it via applyConfigKeyCmd (config.Set's real validation, so
+// a rejected value never reaches ApplyConfig), esc discards and returns to
+// the key list.
+func (m model) updateSettingsValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.mgr.applying = true
+		return m, applyConfigKeyCmd(m.api, m.mgr.setKey, m.mgr.setValueIn.Value())
+	case "esc":
+		m.mgr.screen = manageSettingsKeys
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.mgr.setValueIn, cmd = m.mgr.setValueIn.Update(msg)
+	return m, cmd
+}
+
 // --- View ---
 
 // manageView renders whichever management screen is active.
@@ -762,15 +949,72 @@ func (m model) manageView() string {
 			fmt.Fprintf(&b, "%s:\n\n%s\n", label, m.mgr.chanFieldIn.View())
 			b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
 		}
+	case manageSettingsGroups:
+		if m.mgr.setLoading {
+			b.WriteString("loading current settings...\n")
+		} else {
+			b.WriteString("all settings, by group:\n\n")
+			for i, group := range m.mgr.setGroups {
+				cursor := "  "
+				if i == m.mgr.setGroupCur {
+					cursor = "> "
+				}
+				fmt.Fprintf(&b, "%s%s\n", cursor, group)
+			}
+			if m.mgr.setErr != nil {
+				b.WriteString("\n" + errStyle.Render(fmt.Sprintf("could not load the current config: %v", m.mgr.setErr)) + "\n")
+			}
+			b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to open, esc to go back") + "\n")
+		}
+	case manageSettingsKeys:
+		if len(m.mgr.setKeys) == 0 {
+			b.WriteString("no keys in this group.\n")
+		} else {
+			for i, ki := range m.mgr.setKeys {
+				cursor := "  "
+				if i == m.mgr.setKeyCur {
+					cursor = "> "
+				}
+				val := ""
+				if m.mgr.setCfg != nil {
+					val, _ = m.mgr.setCfg.Get(ki.Name)
+				}
+				restart := ""
+				if ki.RestartRequired {
+					restart = " (restart required)"
+				}
+				fmt.Fprintf(&b, "%s%-28s %-16s %s%s\n", cursor, ki.Name, val, ki.Help, restart)
+			}
+		}
+		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to edit, esc to go back") + "\n")
+	case manageSettingsValue:
+		fmt.Fprintf(&b, "%s (%s):\n\n%s\n", m.mgr.setKey, currentSettingsKeyHelp(m.mgr.setKeys, m.mgr.setKeyCur), m.mgr.setValueIn.View())
+		if m.mgr.setRestart {
+			b.WriteString("\n" + hintStyle.Render("this setting only takes effect after a daemon restart") + "\n")
+		}
+		b.WriteString(manageApplyingOrHint(m.mgr.applying))
 	case manageResult:
 		if m.mgr.applyErr != nil {
 			b.WriteString(errStyle.Render(fmt.Sprintf("apply failed: %v", m.mgr.applyErr)) + "\n")
 		} else {
 			b.WriteString("applied.\n")
+			if m.mgr.setKey != "" && m.mgr.setRestart {
+				b.WriteString(hintStyle.Render("this setting only takes effect after a daemon restart") + "\n")
+			}
 		}
 		b.WriteString("\n" + hintStyle.Render("press any key to return to the menu") + "\n")
 	}
 	return b.String()
+}
+
+// currentSettingsKeyHelp returns keys[cur].Help, or "" if cur is out of
+// range (defensive: the value screen is only reachable via a valid
+// selection, but View must never index out of bounds).
+func currentSettingsKeyHelp(keys []config.KeyInfo, cur int) string {
+	if cur < 0 || cur >= len(keys) {
+		return ""
+	}
+	return keys[cur].Help
 }
 
 // manageApplyingOrHint is the value screens' trailing line: "applying..."
