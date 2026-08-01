@@ -20,6 +20,8 @@ const (
 	webSetupDomain
 	webSetupRPID
 	webSetupOrigin
+	webSetupCert
+	webSetupKey
 	webSetupConfirm
 	webSetupResult
 )
@@ -42,6 +44,12 @@ type webSetupAnswers struct {
 	Domain string
 	RPID   string
 	Origin string
+	// TLSCert/TLSKey are only collected (and only applied) in manual mode:
+	// internal/web's manual serving mode reads both as PEM file paths at
+	// startup, and refuses to come up without them. proxy/autocert never
+	// touch these two fields.
+	TLSCert string
+	TLSKey  string
 }
 
 // deriveWebDefaults fills in listen/rp_id/origin defaults once the user has
@@ -83,6 +91,21 @@ func needsDomain(mode string) bool {
 	return mode == "autocert" || mode == "manual"
 }
 
+// validateManualPath rejects a blank manual-mode TLS cert/key path. The
+// deep validation (file exists, is readable, parses as a PEM keypair)
+// happens once at web startup as it always has (internal/web/serving.go);
+// this is only the wizard's own must-not-be-empty guard, so a user cannot
+// finish the manual-mode flow having applied web.mode=manual with no
+// cert/key at all, which would leave the web listener refusing to start
+// with nothing on screen explaining why (the gap this task exists to
+// close). label is the field name as shown to the user, e.g. "cert path".
+func validateManualPath(label, val string) error {
+	if strings.TrimSpace(val) == "" {
+		return fmt.Errorf("%s is required for manual mode", label)
+	}
+	return nil
+}
+
 // applyWebSetup applies ans onto cfg via config.Config.Set, the same
 // validated setter `serverwatch-ctl config set`/the web config page use, so
 // the wizard gets exactly the same validation (web.listen host:port shape,
@@ -110,6 +133,14 @@ func applyWebSetup(cfg *config.Config, ans webSetupAnswers) error {
 			return err
 		}
 	}
+	if ans.Mode == "manual" {
+		if err := cfg.Set("web.tls_cert", ans.TLSCert); err != nil {
+			return err
+		}
+		if err := cfg.Set("web.tls_key", ans.TLSKey); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -123,6 +154,10 @@ func webSetupSummary(ans webSetupAnswers) string {
 	}
 	fmt.Fprintf(&b, "rp_id:   %s\n", valueOrDash(ans.RPID))
 	fmt.Fprintf(&b, "origin:  %s\n", valueOrDash(ans.Origin))
+	if ans.Mode == "manual" {
+		fmt.Fprintf(&b, "cert:    %s\n", valueOrDash(ans.TLSCert))
+		fmt.Fprintf(&b, "key:     %s\n", valueOrDash(ans.TLSKey))
+	}
 	return b.String()
 }
 

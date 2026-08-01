@@ -3,9 +3,11 @@
 The default way to configure serverwatch is the interactive `serverwatch-ctl`
 TUI: guided, validated screens for the schedule, quiet hours, healthchecks,
 monitor thresholds, and notification channels, plus first-run Telegram
-onboarding. Start it with `sudo serverwatch cli`. Everything you configure day
-to day has a screen there, and each change is validated and applied over the
-control socket in one step.
+onboarding, and a generic **all settings** screen that reaches every
+remaining flat config key. Start it with `sudo serverwatch cli`. Every
+setting has a screen there, so there is no key you need `serverwatch config
+set` for, and each change is validated and applied over the control socket in
+one step.
 
 This chapter opens with that default path, then documents the underlying
 configuration model and the full config-key reference under
@@ -28,10 +30,16 @@ socket:
 | Notification channels (add / edit / remove / test) | Channels |
 | Web UI setup (mode, listen, domain, origin) | the `s` guided web-setup wizard from Home |
 | Telegram bot token and enrollment | first-run onboarding |
+| Sampling intervals, baseline/anomaly tuning, global thresholds, `critical_overrides_quiet`, storage backend/retention, collection toggles, the remaining `web.*` keys, and `public.*` | All settings |
 
 The Channels screen validates an enabled channel over the socket before it
 saves, so a channel that would fail to deliver can never be persisted while
-turned on. For the full screen-by-screen walkthrough, see [Managing with
+turned on. The All settings screen is the generic catch-all: pick a group,
+then a key, and it shows the CURRENT value alongside a one-line description;
+editing a key applies through the exact same validated setter the dedicated
+screens above use, so a rejected value is never persisted, and keys that only
+take effect after a restart (`storage.*`, `web.enabled`, `web.listen`) carry
+that caveat. For the full screen-by-screen walkthrough, see [Managing with
 serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl).
 
 For automation, scripting, or a box without `serverwatch-ctl`, every one of
