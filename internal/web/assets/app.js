@@ -54,6 +54,32 @@
     return [ax,ax];
   }
 
+  // ---- responsive charts ----
+  // uPlot draws to a fixed-pixel <canvas>, so a chart built at one container
+  // width overflows (or under-fills) after a viewport resize or a phone
+  // rotation -- most visible on mobile, where the single-column layout width
+  // changes a lot. Both chart boots (swBootSSE, swBootHistoryCharts) register
+  // their instances here keyed by mount-element id; a debounced global handler
+  // calls uPlot's setSize() to refit each to its container. Keying by id means
+  // a rebuild (e.g. the theme-toggle destroy+recreate) overwrites the stale
+  // entry rather than leaking it. Guarded by isConnected + try/catch so a
+  // just-destroyed instance can't throw.
+  var swChartReg={};
+  function swRegisterChart(u,el){ if(u&&el&&el.id) swChartReg[el.id]={u:u,el:el}; }
+  function swResizeCharts(){
+    Object.keys(swChartReg).forEach(function(id){
+      var c=swChartReg[id];
+      if(!c||!c.el||!c.el.isConnected){ delete swChartReg[id]; return; }
+      var w=c.el.clientWidth;
+      if(w>0){ try{ c.u.setSize({width:w,height:c.el.clientHeight||c.u.height||160}); }catch(e){ delete swChartReg[id]; } }
+    });
+  }
+  var swResizeTO;
+  function swScheduleResize(){ clearTimeout(swResizeTO); swResizeTO=setTimeout(swResizeCharts,120); }
+  window.addEventListener('resize',swScheduleResize);
+  window.addEventListener('orientationchange',swScheduleResize);
+  window.addEventListener('load',swScheduleResize);
+
   // ---- gradient defs ----
   document.body.insertAdjacentHTML('afterbegin','<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'+
     ['gInfo','gViolet','gOk','gCrit','gCyan','gSig'].map(function(id){return '<linearGradient id="'+id+'" x1="0" y1="0" x2="0" y2="1"><stop class="a" offset="0"/><stop class="b" offset="1"/></linearGradient>';}).join('')+'</defs></svg>');
@@ -242,6 +268,7 @@
       var data=[[]]; series.forEach(function(){data.push([]);});
       var u=new uPlot(opts,data,el);
       charts[id]=u;
+      swRegisterChart(u,el);
       return u;
     }
 
@@ -451,6 +478,7 @@
       };
       var u=new uPlot(opts,data,el);
       charts[el.id]=u;
+      swRegisterChart(u,el);
       return u;
     }
 
@@ -734,15 +762,41 @@
     render();
   })();
 
-  // ---- logout (base.html topbar sign-out button) ----
-  var logoutBtn=document.getElementById('logoutBtn');
-  if(logoutBtn){
-    logoutBtn.addEventListener('click',function(){
-      var meta=document.querySelector('meta[name="csrf-token"]');
-      var csrf=meta?meta.content:'';
-      fetch('/logout',{method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf}})
-        .then(function(){ window.location.assign('/login'); })
-        .catch(function(){ window.location.assign('/login'); });
-    });
+  // ---- logout (base.html: topbar sign-out button + mobile "More" sheet) ----
+  // Both the desktop sidebar footer (#logoutBtn) and the mobile More sheet
+  // (#logoutBtnSheet) carry a sign-out control; wire whichever exist to the
+  // same POST /logout flow.
+  function swLogout(){
+    var meta=document.querySelector('meta[name="csrf-token"]');
+    var csrf=meta?meta.content:'';
+    fetch('/logout',{method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf}})
+      .then(function(){ window.location.assign('/login'); })
+      .catch(function(){ window.location.assign('/login'); });
   }
+  ['logoutBtn','logoutBtnSheet'].forEach(function(id){
+    var b=document.getElementById(id);
+    if(b) b.addEventListener('click',swLogout);
+  });
+
+  // ---- mobile "More" sheet (base.html bottom-nav) ----
+  // The bottom tab bar's "More" button opens a slide-up sheet listing the
+  // secondary nav items + account/sign-out. Dependency-free: toggle an `.on`
+  // class the CSS (@media max-width:640px) animates; prefers-reduced-motion is
+  // honored purely in CSS (transition:none). The sheet/scrim live in the DOM
+  // on every page but are display:none above 640px, so this is inert on desktop.
+  (function(){
+    var moreBtn=document.getElementById('moreBtn'),
+        sheet=document.getElementById('moreSheet'),
+        scrim=document.getElementById('moreScrim');
+    if(!moreBtn||!sheet||!scrim) return;
+    function open(){ sheet.classList.add('on'); scrim.classList.add('on'); moreBtn.setAttribute('aria-expanded','true'); }
+    function close(){ sheet.classList.remove('on'); scrim.classList.remove('on'); moreBtn.setAttribute('aria-expanded','false'); }
+    function toggle(){ (sheet.classList.contains('on')?close:open)(); }
+    moreBtn.addEventListener('click',toggle);
+    scrim.addEventListener('click',close);
+    // a tap on any nav link inside the sheet navigates away -- close first so
+    // it isn't left open behind the next page's paint on a client-cached back.
+    sheet.addEventListener('click',function(e){ if(e.target.closest('a')) close(); });
+    document.addEventListener('keydown',function(e){ if(e.key==='Escape') close(); });
+  })();
 })();
