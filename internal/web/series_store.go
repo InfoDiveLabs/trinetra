@@ -2,18 +2,15 @@
 
 package web
 
-// SeriesPoint is internal/web's own projection of one time-series sample —
-// exactly the fields templates/history.html's uPlot charts (and the
-// /api/series JSON response, handlers_history.go) need, expressed with no
-// serverwatch import. It mirrors serverwatch.Point field-for-field (TS is
-// Unix seconds; Min/Avg/Max are the same value for a raw point, a real
-// rollup for a downsampled one).
-type SeriesPoint struct {
-	TS  int64
-	Min float64
-	Avg float64
-	Max float64
-}
+import "serverwatch/internal/core"
+
+// SeriesPoint moved to internal/core (core.API contract task 1). This is a
+// Go type alias, not a new type, so every existing handler/template
+// reference in this package keeps compiling unchanged. See
+// core.SeriesPoint's doc for the field semantics (TS is Unix seconds; Min/
+// Avg/Max are the same value for a raw point, a real rollup for a
+// downsampled one).
+type SeriesPoint = core.SeriesPoint
 
 // SeriesStore is this package's own minimal seam onto the daemon's history
 // storage: Query returns metric's points over [from, to] (inclusive), Unix

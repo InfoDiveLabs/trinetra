@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 	"serverwatch/internal/web"
 )
 
@@ -42,9 +43,9 @@ func maybeStartWeb(d WebDeps) func() {
 			// baked into buildDashboardView, since that function's existing
 			// unit tests (daemon_web_dashboard_test.go) exercise it against
 			// a bare Snapshot with no events store in scope -- see
-			// ComputeAvailability's doc (internal/web/availability.go) for
+			// ComputeAvailability's doc (internal/core/availability.go) for
 			// why a nil/erroring store just degrades to "no events".
-			v.Availability = web.ComputeAvailability(events, time.Now().Unix())
+			v.Availability = core.ComputeAvailability(events, time.Now().Unix())
 			return v
 		},
 		Monitoring:     func() web.MonitoringView { return buildMonitoringView(d.Snapshot(), d.Cfg()) },

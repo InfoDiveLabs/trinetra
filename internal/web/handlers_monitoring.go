@@ -47,20 +47,6 @@ func memBarPct(memMiB float64) float64 {
 	return pct
 }
 
-// DisksWarnCritCount is how many of v.Disks are at/above DiskWarnPct —
-// exported so monitoringStatus (and, if useful later, the template itself)
-// can share one definition of "warn or worse" with buildMonitoringPageData's
-// DisksWarnCrit field.
-func (v MonitoringView) DisksWarnCritCount() int {
-	n := 0
-	for _, d := range v.Disks {
-		if d.UsagePct >= DiskWarnPct {
-			n++
-		}
-	}
-	return n
-}
-
 // buildMonitoringPageData assembles MonitoringPageData from Deps: the live
 // snapshot (Deps.Monitoring, already projected by
 // internal/serverwatch/daemon_web.go's buildMonitoringView adapter into a

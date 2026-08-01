@@ -2,18 +2,15 @@
 
 package web
 
-// DownEventView is internal/web's own projection of one downtime event —
-// exactly the fields templates/history.html's "Downtime · 30d" timeline/rows
-// (and the /api/downtime JSON response, handlers_history.go) need, expressed
-// with no serverwatch import. It mirrors serverwatch.DownEvent
-// field-for-field (Type is "power_down"/"net_down"; Start/End are Unix
-// seconds; DurationSec is the event's length).
-type DownEventView struct {
-	Type        string `json:"type"`
-	Start       int64  `json:"start"`
-	End         int64  `json:"end"`
-	DurationSec int64  `json:"duration_sec"`
-}
+import "serverwatch/internal/core"
+
+// DownEventView moved to internal/core (core.API contract task 1). This is a
+// Go type alias, not a new type, so every existing handler/template
+// reference in this package keeps compiling unchanged. See
+// core.DownEventView's doc for the field semantics (Type is "power_down"/
+// "net_down"; Start/End are Unix seconds; DurationSec is the event's
+// length).
+type DownEventView = core.DownEventView
 
 // EventsStore is this package's own minimal seam onto the daemon's downtime
 // event log: Events returns the downtime events overlapping [from, to]
