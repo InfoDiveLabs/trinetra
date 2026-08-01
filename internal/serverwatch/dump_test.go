@@ -2,6 +2,7 @@ package serverwatch
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -155,5 +156,40 @@ func TestDumpCLIRequiresMetric(t *testing.T) {
 	stdout = &out
 	if code := Main([]string{"dump"}); code == 0 {
 		t.Fatal("dump without --metric should be a usage error")
+	}
+}
+
+// TestDumpCLIStoreOpenFailurePreservesErrorText is a regression guard added
+// after a coordinator-flagged review finding: before cmdDump was routed
+// through newFileAPI(...).Series(...), a store-open failure printed
+// "open sample store: <err>" (cmdDump wrapped openConfiguredStore's error
+// itself). Routing through Series moved the openConfiguredStore call inside
+// newFileAPI, and the wrap moved with it (coreapi_file.go) -- this test
+// exercises the full CLI path end to end to confirm cmdDump's stderr text
+// is still exactly what it was before that move, not just that Series'
+// returned error happens to carry the right prefix (covered separately by
+// TestFileAPISeriesStoreOpenFailureWrapsErrorText, coreapi_file_test.go).
+//
+// The config file is written directly (bypassing config.Set's
+// validateStorageBackend) with an invalid storage.backend, since
+// config.Load itself performs no such validation -- only Set does -- so
+// this is the way to get an invalid backend through to openConfiguredStore
+// via the normal loadCfg() path a running CLI would take.
+func TestDumpCLIStoreOpenFailurePreservesErrorText(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath = filepath.Join(dir, "config.json")
+	stateDir = filepath.Join(dir, "state")
+	if err := os.WriteFile(cfgPath, []byte(`{"storage":{"backend":"bogus"}}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var out, errb bytes.Buffer
+	stdout = &out
+	stderr = &errb
+	if code := Main([]string{"dump", "--metric", "cpu"}); code == 0 {
+		t.Fatalf("expected non-zero exit for an unopenable store, got stdout=%q", out.String())
+	}
+	if got := errb.String(); !strings.HasPrefix(got, "open sample store: ") {
+		t.Fatalf("stderr = %q, want it to start with %q", got, "open sample store: ")
 	}
 }

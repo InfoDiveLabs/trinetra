@@ -18,6 +18,7 @@ package serverwatch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -97,11 +98,15 @@ func (a *fileAPI) Monitoring() (core.MonitoringView, error) {
 // the same as inprocAPI.Series (see that method's doc); a store open
 // failure, unlike a nil store, IS surfaced as an error here since it
 // reflects a real misconfiguration the CLI caller should see, not a daemon
-// running in a deliberately degraded mode.
+// running in a deliberately degraded mode. The error is wrapped with the
+// same "open sample store: " prefix cmdDump/cmdMigrate have always used
+// (migrate.go) so a caller that just Fprintln's the returned error -- as
+// cmdDump does -- keeps producing that exact wording, whether the store
+// open happens here or, previously, directly at the call site.
 func (a *fileAPI) Series(metric string, from, to int64, res core.Resolution) ([]core.SeriesPoint, error) {
 	store, err := openConfiguredStore(a.cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sample store: %w", err)
 	}
 	defer store.Close()
 
@@ -132,11 +137,12 @@ func (a *fileAPI) Series(metric string, from, to int64, res core.Resolution) ([]
 
 // Events implements core.API the same way Series does: open the configured
 // store fresh, close it before returning. A store open failure is surfaced
-// as an error, same reasoning as Series above.
+// as an error wrapped with the same "open sample store: " prefix, same
+// reasoning as Series above.
 func (a *fileAPI) Events(from, to int64) ([]core.DownEventView, error) {
 	store, err := openConfiguredStore(a.cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sample store: %w", err)
 	}
 	defer store.Close()
 

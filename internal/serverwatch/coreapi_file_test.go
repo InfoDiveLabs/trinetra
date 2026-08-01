@@ -3,6 +3,7 @@ package serverwatch
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,5 +299,46 @@ func TestFileAPIUnimplementedMethodsReturnSentinel(t *testing.T) {
 	}
 	if _, err := api.Subscribe(nil); err != errCoreNotImplemented { //nolint:staticcheck // nil context: exercising the stub only
 		t.Errorf("Subscribe() err = %v, want errCoreNotImplemented", err)
+	}
+}
+
+// TestFileAPISeriesStoreOpenFailureWrapsErrorText is a regression guard
+// added after a coordinator-flagged review finding: routing cmdDump through
+// newFileAPI(...).Series(...) had silently dropped the "open sample store: "
+// prefix cmdDump always printed on a store-open failure (it used to wrap
+// openConfiguredStore's error itself; now that open happens inside Series,
+// nothing re-added the prefix). This pins that Series wraps a store-open
+// failure with that exact prefix, so any caller that just prints the
+// returned error -- as cmdDump does -- reproduces the original wording.
+// An invalid storage backend ("bogus") is used to force openConfiguredStore
+// to fail deterministically, without needing filesystem permission tricks.
+func TestFileAPISeriesStoreOpenFailureWrapsErrorText(t *testing.T) {
+	cfg := config.Default()
+	cfg.Storage.Backend = "bogus"
+
+	api := newFileAPI(t.TempDir(), cfg)
+	_, err := api.Series("cpu", 0, 1000, core.ResRaw)
+	if err == nil {
+		t.Fatal("expected an error opening a store with an invalid backend")
+	}
+	if !strings.HasPrefix(err.Error(), "open sample store: ") {
+		t.Fatalf("Series() err = %q, want it prefixed with %q", err.Error(), "open sample store: ")
+	}
+}
+
+// TestFileAPIEventsStoreOpenFailureWrapsErrorText is Events' counterpart to
+// the Series test above, same reasoning: Events opens the store the same
+// way and must wrap a failure with the same prefix.
+func TestFileAPIEventsStoreOpenFailureWrapsErrorText(t *testing.T) {
+	cfg := config.Default()
+	cfg.Storage.Backend = "bogus"
+
+	api := newFileAPI(t.TempDir(), cfg)
+	_, err := api.Events(0, 1000)
+	if err == nil {
+		t.Fatal("expected an error opening a store with an invalid backend")
+	}
+	if !strings.HasPrefix(err.Error(), "open sample store: ") {
+		t.Fatalf("Events() err = %q, want it prefixed with %q", err.Error(), "open sample store: ")
 	}
 }
