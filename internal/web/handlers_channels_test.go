@@ -12,8 +12,10 @@ import (
 )
 
 // undeliverableTelegram simulates buildNotifier's rule that a telegram channel
-// with no resolvable chat id cannot deliver. It is what daemon_web.go wires
-// Deps.ValidateChannel to in production (via the real buildNotifier).
+// with no resolvable chat id cannot deliver. It is what the serverwatch-web
+// binary's buildDeps wires Deps.ValidateChannel to in production (via
+// client.ValidateChannel, which dry-runs the real buildNotifier on the
+// daemon side).
 func undeliverableTelegram(cc config.ChannelConfig, _ *config.Config) error {
 	if cc.Type == "telegram" && cc.Settings["chat_id"] == "" {
 		return fmt.Errorf("telegram channel %q: chat_id not configured", cc.Name)

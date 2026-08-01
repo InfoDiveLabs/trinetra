@@ -24,9 +24,10 @@ const sessionGCInterval = 10 * time.Minute
 // serverwatch-web binary, no build tag.
 
 // Deps is what the web server needs from the running daemon, expressed
-// without importing internal/serverwatch (see the design note atop
-// internal/serverwatch/web_deps.go). API is this package's single seam onto
-// the daemon's live state (see Deps.API's own doc below): the dashboard,
+// without importing internal/serverwatch (internal/web must never import
+// internal/serverwatch, to keep the module graph one-way). API is this
+// package's single seam onto the daemon's live state (see Deps.API's own
+// doc below): the dashboard,
 // monitoring, history/series, and downtime handlers all read through it,
 // and its write methods (ApplyConfig/TestChannel/AckAlert/UnackAlert) cover
 // config and channel writes too, so this package never needs to import
@@ -70,8 +71,10 @@ type Deps struct {
 	Events EventsStore
 	// Snapshot returns the latest live snapshot, already projected into this
 	// package's own DashboardView (dashboard_view.go) by
-	// internal/serverwatch/daemon_web.go's adapter — see that type's doc for
-	// why the projection (rather than serverwatch.Snapshot itself) is what
+	// internal/serverwatch/coreapi_inproc.go's buildDashboardView, then
+	// carried here over the control socket by the serverwatch-web binary's
+	// buildDeps (cmd/serverwatch-web) -- see that type's doc for why the
+	// projection (rather than serverwatch.Snapshot itself) is what
 	// crosses this boundary. Lock-free/cheap: safe to call from any
 	// goroutine, any number of times. Still used directly by the SSE
 	// handlers (sse.go, on every tick), the sidebar nav counts
@@ -90,13 +93,16 @@ type Deps struct {
 	// from sendTestNotification/buildNotifier — the same logic `serverwatch
 	// channel test <name>` uses). As of task 8, channelsTestHandler
 	// (handlers_channels.go) reads through Deps.API.TestChannel instead --
-	// this field is kept on Deps (still assigned by daemon_web.go) but no
+	// this field is kept on Deps (still assigned by the serverwatch-web
+	// binary's buildDeps, cmd/serverwatch-web) but no
 	// longer read by this package; it stays only in case a future
 	// non-core.API consumer needs it directly.
 	TestChannel func(name string) error
 	// ValidateChannel reports whether a channel config could actually build a
-	// working notifier (daemon_web.go wires it to serverwatch.buildNotifier,
-	// the same check `channel test` and delivery use, minus the network send).
+	// working notifier (the serverwatch-web binary's buildDeps wires it to
+	// client.ValidateChannel, which dry-runs serverwatch.buildNotifier on the
+	// daemon side over the control socket), the same check `channel test` and
+	// delivery use, minus the network send.
 	// The channels handlers call it before persisting an ENABLED channel so
 	// the web editor never silently creates a channel that would be dropped at
 	// delivery time (#79 — e.g. a telegram channel with no chat id). May be

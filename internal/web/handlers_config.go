@@ -63,10 +63,10 @@ type configTargetRow struct {
 // This is NOT the full auto-discovered target list the mockup's config.html
 // shows (disk + docker + smart + temp, sourced from
 // internal/serverwatch/discover.go's Discover): internal/web must not import
-// internal/serverwatch (see the design note atop
-// internal/serverwatch/web_deps.go), and Deps doesn't expose a generic
-// target inventory today — only Snapshot's disk mounts and whatever
-// overrides already exist in config. Extending Deps with a full target list
+// internal/serverwatch, to keep the module graph one-way, and Deps doesn't
+// expose a generic target inventory today -- only Snapshot's disk mounts and
+// whatever overrides already exist in config. Extending Deps with a full
+// target list
 // is future work; scoping to what's actually available here keeps this
 // task's "enable/disable + per-target threshold" contract real and testable
 // without widening the serverwatch/web seam further.

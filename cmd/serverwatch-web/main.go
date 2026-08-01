@@ -163,12 +163,9 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 		if err != nil || c == nil {
 			// A Config() failure must never surface as a nil Cfg(): every
 			// handler in internal/web calls d.Cfg() unconditionally and
-			// dereferences the result (see web.Deps.Cfg's doc), so the same
-			// contract this func's caller relies on for the in-process
-			// build (daemon_web.go's d.Cfg, backed by a live *config.Config
-			// that always exists) must hold here too -- degrade to
-			// defaults rather than let a transient socket error panic every
-			// request.
+			// dereferences the result (see web.Deps.Cfg's doc), so this
+			// must degrade to defaults rather than let a transient socket
+			// error panic every request.
 			return config.Default()
 		}
 		return c
