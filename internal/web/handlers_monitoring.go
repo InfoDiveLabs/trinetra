@@ -4,6 +4,7 @@ package web
 
 import (
 	"html/template"
+	"log"
 	"net/http"
 )
 
@@ -48,13 +49,18 @@ func memBarPct(memMiB float64) float64 {
 }
 
 // buildMonitoringPageData assembles MonitoringPageData from Deps: the live
-// snapshot (Deps.Monitoring, already projected by
-// internal/serverwatch/daemon_web.go's buildMonitoringView adapter into a
-// MonitoringView) plus the summary counts its top-of-page tiles need.
+// snapshot (Deps.API.Monitoring(), core.API's projection of the daemon's live
+// state into a MonitoringView) plus the summary counts its top-of-page tiles
+// need.
 func buildMonitoringPageData(r *http.Request, d Deps) MonitoringPageData {
 	var view MonitoringView
-	if d.Monitoring != nil {
-		view = d.Monitoring()
+	if d.API != nil {
+		v, err := d.API.Monitoring()
+		if err != nil {
+			log.Printf("web: monitoring API.Monitoring: %v", err)
+		} else {
+			view = v
+		}
 	}
 
 	up, total := 0, 0

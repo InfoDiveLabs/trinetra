@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"serverwatch/internal/core"
 )
 
 // maxSeriesRangeSeconds bounds a single /api/series request's [from, to]
@@ -28,8 +30,8 @@ type seriesResponse struct {
 	Series [][]float64 `json:"series"`
 }
 
-// emptySeriesResponse is what an unknown metric, a nil Deps.Store, or a
-// Query error all render as: four empty arrays (ts/avg/min/max) rather than
+// emptySeriesResponse is what an unknown metric, a nil Deps.API, or a
+// Series error all render as: four empty arrays (ts/avg/min/max) rather than
 // omitting Series or erroring — see seriesAPIHandler's doc for why none of
 // those cases is a 500.
 func emptySeriesResponse(metric string) seriesResponse {
@@ -68,19 +70,25 @@ func parseSeriesRange(r *http.Request) (from, to int64, ok bool) {
 // Three distinct "no real data" cases all render as a 200 empty
 // seriesResponse rather than an error status, per this task's validation
 // contract:
-//   - Deps.Store is nil (no sample store configured for this daemon).
-//   - The store returns an error for this metric/range (a query against a
+//   - Deps.API is nil (no core.API wired for this daemon, e.g. some tests).
+//   - The API returns an error for this metric/range (a query against a
 //     metric name that isn't tracked at all behaves this way in both the
 //     memStore and tsfile backends: no matching series, no error) — treated
 //     the same as "no data" rather than surfaced as 500, since a client
 //     picking a metric this daemon's config doesn't collect is an ordinary,
 //     expected outcome (e.g. no "temp" sensor found on this host), not a
 //     server fault.
-//   - The store has no points at all for the metric (a real metric that
+//   - The API has no points at all for the metric (a real metric that
 //     simply hasn't reported yet, or an unrecognized name).
 //
 // Only the from/to range itself is validated as a hard client error (400):
 // unparseable, from>=to, or an absurdly wide span (parseSeriesRange).
+//
+// core.ResAuto is passed for the resolution: this endpoint preserves the
+// pre-core.API behavior of letting the implementation pick raw-vs-1m off the
+// requested range and the daemon's configured storage.raw_retention
+// (serverwatch.PickResolution, wrapped by inprocAPI.Series) rather than this
+// package ever needing a Resolution type of its own.
 func seriesAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		metric := r.URL.Query().Get("metric")
@@ -91,8 +99,8 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 		}
 
 		resp := emptySeriesResponse(metric)
-		if d.Store != nil {
-			pts, err := d.Store.Query(metric, from, to)
+		if d.API != nil {
+			pts, err := d.API.Series(metric, from, to, core.ResAuto)
 			switch {
 			case err != nil:
 				// A genuine storage fault still renders as an empty 200 (the
@@ -135,9 +143,9 @@ type downtimeResponse struct {
 // downtimeAPIHandler serves GET /api/downtime?from=&to=: the downtime-event
 // feed the history page's "Downtime · 30d" panel fetches. Same validation
 // and graceful-degradation contract as seriesAPIHandler — from/to validated
-// as a hard 400 (parseSeriesRange), a nil Deps.Events or an events-store
-// error both render as an empty 200 (the latter logged server-side) rather
-// than a 500. requireRole(RoleViewer, ...) (routes.go) has already gated it.
+// as a hard 400 (parseSeriesRange), a nil Deps.API or an Events error both
+// render as an empty 200 (the latter logged server-side) rather than a 500.
+// requireRole(RoleViewer, ...) (routes.go) has already gated it.
 func downtimeAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		from, to, ok := parseSeriesRange(r)
@@ -147,8 +155,8 @@ func downtimeAPIHandler(d Deps) http.HandlerFunc {
 		}
 
 		resp := downtimeResponse{Events: []DownEventView{}}
-		if d.Events != nil {
-			evs, err := d.Events.Events(from, to)
+		if d.API != nil {
+			evs, err := d.API.Events(from, to)
 			if err != nil {
 				log.Printf("web: /api/downtime query from=%d to=%d: %v", from, to, err)
 			} else if len(evs) > 0 {

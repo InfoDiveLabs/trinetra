@@ -72,7 +72,7 @@ var dashboardMockupDemoNumbers = []string{
 func dashboardTestDeps(t *testing.T) Deps {
 	t.Helper()
 	d := enrollTestDeps(t)
-	d.Snapshot = dashboardTestView
+	d.API = fakeAPI{snap: dashboardTestView()}
 	return d
 }
 
@@ -136,7 +136,7 @@ func TestDashboardRendersRealAvailabilityStrip(t *testing.T) {
 		DowntimeStr:    "35m",
 	}
 	d := enrollTestDeps(t)
-	d.Snapshot = func() DashboardView { return view }
+	d.API = fakeAPI{snap: view}
 
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)

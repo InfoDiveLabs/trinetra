@@ -24,15 +24,24 @@ import (
 // the daemon on shutdown; instead, log the failure to stderr and hand back
 // a safe no-op so the daemon keeps running without the web UI.
 func maybeStartWeb(d WebDeps) func() {
-	// events is captured once and reused by both Deps.Events (the /api/
-	// downtime and 30d-uptime-tile seam, Task 9) and the Snapshot closure's
-	// Availability computation below, rather than calling eventsStoreFor
-	// twice -- both just want the same read-only wrapper over d.Store.
+	// events is captured once and reused by both Deps.Events (the alerts
+	// page's 30d-uptime-tile seam, uptimePct30d -- the one Events consumer
+	// core.API doesn't cover yet) and the Snapshot closure's Availability
+	// computation below, rather than calling eventsStoreFor twice -- both
+	// just want the same read-only wrapper over d.Store.
 	events := eventsStoreFor(d.Store)
 	wd := web.Deps{
 		Cfg:    d.Cfg,
 		Reload: d.Reload,
-		Store:  seriesStoreFor(d.Store, d.Cfg),
+		// API is the in-process core.API implementation (Task 5,
+		// core-contract-s1): the dashboard/monitoring/history/downtime
+		// handlers read live daemon state through this instead of the
+		// individual Store/Monitoring closures those handlers used before
+		// this task (see web.Deps.API's doc). getSnap/getCfg are the exact
+		// same closures WebDeps already hands this build (d.Snapshot/d.Cfg);
+		// only the constructor differs from the default (`!web`) build's use
+		// of the same newInprocAPI (coreapi_inproc.go).
+		API:    newInprocAPI(d.Snapshot, d.Cfg, d.Store, d.StateDir),
 		Events: events,
 		Snapshot: func() web.DashboardView {
 			v := buildDashboardView(d.Snapshot())
@@ -46,7 +55,6 @@ func maybeStartWeb(d WebDeps) func() {
 			v.Availability = core.ComputeAvailability(events, time.Now().Unix())
 			return v
 		},
-		Monitoring:     func() web.MonitoringView { return buildMonitoringView(d.Snapshot(), d.Cfg()) },
 		StateDir:       d.StateDir,
 		AlertLogPath:   d.AlertLogPath,
 		AlertStatePath: d.AlertStatePath,
@@ -72,25 +80,30 @@ func maybeStartWeb(d WebDeps) func() {
 // core.MonitoringView projections) and their helpers moved to the untagged
 // coreapi_inproc.go, so both this `-tags web` build AND the default build
 // (the in-process core.API, newInprocAPI) can build views from a live
-// Snapshot. This file (and web.Deps.Snapshot/Monitoring below) just calls
-// them, widening core.DashboardView/core.MonitoringView into
-// web.DashboardView/web.MonitoringView for free since those are Go type
-// aliases (dashboard_view.go/monitoring_view.go).
+// Snapshot. This file's Snapshot closure above calls buildDashboardView
+// directly (widening core.DashboardView into web.DashboardView for free,
+// since those are Go type aliases -- dashboard_view.go); buildMonitoringView
+// is reached the same way, but only through wd.API (newInprocAPI) now that
+// the /monitoring page reads through core.API (Task 5) rather than a
+// separate Deps.Monitoring closure.
 
-// seriesStoreFor adapts d.Store (a native serverwatch.SampleStore, possibly
-// nil when store-writes-disabled mode leaves the daemon without one) into
-// the web.SeriesStore interface (internal/web/series_store.go) — the Task 9
+// seriesStoreFor adapts a native serverwatch.SampleStore (possibly nil when
+// store-writes-disabled mode leaves the daemon without one) into the
+// web.SeriesStore interface (internal/web/series_store.go), the Task 9
 // (#65) resolution of the Task 1 placeholder that made WebDeps.Store widen
 // straight into web.Deps.Store as `any`, mirroring buildDashboardView's role
-// for Deps.Snapshot.
+// for Deps.Snapshot. Since Task 5 (core-contract-s1) routed the history
+// page's /api/series through wd.API (newInprocAPI, which resolves raw-vs-1m
+// against the SampleStore itself) instead of a separate web.Deps.Store
+// field, maybeStartWeb no longer calls this directly. It's kept (and still
+// covered by daemon_web_history_test.go) as the seriesStoreAdapter
+// constructor for any future non-web.Deps consumer that needs a
+// web.SeriesStore specifically.
 //
 // A nil store returns a true nil web.SeriesStore, NOT a non-nil interface
 // wrapping a nil *seriesStoreAdapter: assigning a typed nil pointer into an
 // interface value produces a non-nil interface whose method set still
-// panics on first use, and internal/web's `d.Store != nil` nil-check
-// (handlers_history.go) exists precisely to treat "no store" as "empty
-// series" without ever calling into one — so this indirection matters, not
-// just style.
+// panics on first use, so this indirection matters, not just style.
 func seriesStoreFor(store SampleStore, cfg func() *config.Config) web.SeriesStore {
 	if store == nil {
 		return nil

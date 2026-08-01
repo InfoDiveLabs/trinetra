@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 )
 
 // sessionGCInterval is how often Start's background sweep removes expired
@@ -37,14 +38,27 @@ type Deps struct {
 	Cfg func() *config.Config
 	// Reload validates, persists, and applies a new config in-process.
 	Reload func(*config.Config) error
-	// Store is the daemon's sample store for history queries (SeriesStore,
-	// series_store.go). May be nil (e.g. store-writes-disabled mode) —
-	// every consumer (seriesAPIHandler, handlers_history.go) must handle
-	// that as "no data" rather than assuming it's always set.
-	Store SeriesStore
+	// API is the daemon's core.API, the single boundary this package reads
+	// live state through (Task 5, core-contract-s1): the dashboard, monitoring,
+	// history/series, and downtime handlers all call API.Snapshot()/
+	// .Monitoring()/.Series()/.Events() instead of the individual closures/
+	// stores those handlers used before this task. May be nil in tests that
+	// don't exercise a routed handler; every caller must check before calling
+	// (exactly like every other Deps field) and treat a nil API the same as
+	// "no data" rather than panicking.
+	//
+	// The write methods (ApplyConfig/AckAlert/UnackAlert/TestChannel) and
+	// Doctor/Subscribe are NOT yet used by this package: internal/serverwatch's
+	// in-process implementation still returns a sentinel for those (later
+	// tasks fill them in), so the config-save/test-channel/alert-ack paths
+	// keep using Deps.Reload/Deps.TestChannel/the direct alerts.json
+	// read-modify-write below instead.
+	API core.API
 	// Events is the daemon's downtime event log (EventsStore,
-	// events_store.go), backing the history page's "Downtime · 30d" panel.
-	// Like Store, may be nil (store-writes-disabled mode) — downtimeAPIHandler
+	// events_store.go), backing the alerts page's "Uptime · 30d" tile
+	// (uptimePct30d, handlers_alerts.go), the one remaining consumer that
+	// isn't routed through API yet (downtimeAPIHandler itself now reads
+	// API.Events instead). May be nil (store-writes-disabled mode); callers
 	// must treat nil as "no events" rather than assuming it's set.
 	Events EventsStore
 	// Snapshot returns the latest live snapshot, already projected into this
@@ -52,18 +66,12 @@ type Deps struct {
 	// internal/serverwatch/daemon_web.go's adapter — see that type's doc for
 	// why the projection (rather than serverwatch.Snapshot itself) is what
 	// crosses this boundary. Lock-free/cheap: safe to call from any
-	// goroutine, any number of times (dashboardHandler on every GET /, the
-	// SSE handler on every tick).
+	// goroutine, any number of times. Still used directly by the SSE
+	// handlers (sse.go, on every tick), the sidebar nav counts
+	// (nav_counts.go), the /public panels (handlers_public.go), and the
+	// history page's disk-mount list (historyDiskMounts); dashboardHandler
+	// itself now reads through API.Snapshot() instead (Task 5).
 	Snapshot func() DashboardView
-	// Monitoring returns the live snapshot projected into this package's own
-	// MonitoringView (monitoring_view.go) by
-	// internal/serverwatch/daemon_web.go's buildMonitoringView adapter — the
-	// /monitoring detail page's counterpart to Snapshot/DashboardView above.
-	// Lock-free/cheap, same contract as Snapshot: safe to call from any
-	// goroutine, any number of times. May be nil in tests that don't exercise
-	// /monitoring; monitoringHandler (handlers_monitoring.go) must check
-	// before calling, exactly like every other Deps func field.
-	Monitoring func() MonitoringView
 	// StateDir is the daemon's state directory.
 	StateDir string
 	// AlertLogPath is the path to the append-only alert log.

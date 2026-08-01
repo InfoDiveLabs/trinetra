@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -129,17 +130,22 @@ type DashboardPageData struct {
 }
 
 // buildDashboardPageData assembles DashboardPageData from Deps: the live
-// snapshot (Deps.Snapshot, already projected by
-// internal/serverwatch/daemon_web.go's adapter into a DashboardView) plus
-// the current active-alerts list (Deps.AlertStatePath). The topbar's status
-// pill (PageData.Status/StatusText) is computed by newPageData itself from
-// that same AlertStatePath (topbarStatus, templates.go) -- see PageData's
-// doc for why every page shares one computation rather than this page
-// deriving its own from disk/unit state.
+// snapshot (Deps.API.Snapshot(), core.API's projection of the daemon's live
+// state -- see core.DashboardView's doc) plus the current active-alerts list
+// (Deps.AlertStatePath). The topbar's status pill (PageData.Status/StatusText)
+// is computed by newPageData itself from that same AlertStatePath
+// (topbarStatus, templates.go) -- see PageData's doc for why every page
+// shares one computation rather than this page deriving its own from
+// disk/unit state.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
-	if d.Snapshot != nil {
-		view = d.Snapshot()
+	if d.API != nil {
+		v, err := d.API.Snapshot()
+		if err != nil {
+			log.Printf("web: dashboard API.Snapshot: %v", err)
+		} else {
+			view = v
+		}
 	}
 	alerts := loadActiveAlerts(d.AlertStatePath)
 	return DashboardPageData{

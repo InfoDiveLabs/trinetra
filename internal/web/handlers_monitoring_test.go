@@ -37,7 +37,7 @@ func monitoringTestView() MonitoringView {
 func monitoringTestDeps(t *testing.T) Deps {
 	t.Helper()
 	d := enrollTestDeps(t)
-	d.Monitoring = monitoringTestView
+	d.API = fakeAPI{monitoring: monitoringTestView()}
 	return d
 }
 
@@ -81,13 +81,11 @@ func TestMonitoringRendersRealValues(t *testing.T) {
 // like "zero units/processes".
 func TestMonitoringDisabledCollectorsShowNote(t *testing.T) {
 	d := enrollTestDeps(t)
-	d.Monitoring = func() MonitoringView {
-		return MonitoringView{
-			FailedUnits:      nil,
-			UnitsEnabled:     false,
-			ProcessesEnabled: false,
-		}
-	}
+	d.API = fakeAPI{monitoring: MonitoringView{
+		FailedUnits:      nil,
+		UnitsEnabled:     false,
+		ProcessesEnabled: false,
+	}}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -129,12 +127,10 @@ func TestMonitoringRouteIsViewerGated(t *testing.T) {
 // inventory table itself shows the "collector disabled" note.
 func TestMonitoringFailedUnitsAlwaysShown(t *testing.T) {
 	d := enrollTestDeps(t)
-	d.Monitoring = func() MonitoringView {
-		return MonitoringView{
-			FailedUnits:  []string{"sw-always-shown.service"},
-			UnitsEnabled: false,
-		}
-	}
+	d.API = fakeAPI{monitoring: MonitoringView{
+		FailedUnits:  []string{"sw-always-shown.service"},
+		UnitsEnabled: false,
+	}}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)

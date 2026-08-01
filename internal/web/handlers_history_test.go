@@ -8,26 +8,16 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"serverwatch/internal/core"
 )
 
-// fakeSeriesStore is a minimal SeriesStore test double: data maps a metric
-// name straight to the points Query should return for it (ignoring
-// from/to/err plumbing unless the test needs otherwise), and err (if set) is
-// returned verbatim from every Query call.
-type fakeSeriesStore struct {
-	data map[string][]SeriesPoint
-	err  error
-}
-
-func (f *fakeSeriesStore) Query(metric string, from, to int64) ([]SeriesPoint, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.data[metric], nil
-}
-
 // fakeEventsStore is a minimal EventsStore test double: events is returned
-// verbatim from Events (ignoring the from/to filter unless err is set).
+// verbatim from Events (ignoring the from/to filter unless err is set). It's
+// no longer used to build Deps.API here (fakeAPI, deps_api_test.go, covers
+// that, since /api/downtime reads through Deps.API now, Task 5) but stays
+// for availability_test.go, which exercises core.ComputeAvailability
+// directly against a core.EventsSource.
 type fakeEventsStore struct {
 	events []DownEventView
 	err    error
@@ -41,11 +31,13 @@ func (f *fakeEventsStore) Events(from, to int64) ([]DownEventView, error) {
 }
 
 // historyTestDeps mirrors dashboardTestDeps/enrollTestDeps: a fresh StateDir
-// plus the given SeriesStore (nil is valid — see Deps.Store's doc).
-func historyTestDeps(t *testing.T, store SeriesStore) Deps {
+// plus the given core.API (nil is valid, since the history/series/downtime
+// handlers all treat a nil Deps.API as "no data", mirroring the pre-Task-5
+// "nil store" contract).
+func historyTestDeps(t *testing.T, api core.API) Deps {
 	t.Helper()
 	d := enrollTestDeps(t)
-	d.Store = store
+	d.API = api
 	return d
 }
 
@@ -53,13 +45,13 @@ func historyTestDeps(t *testing.T, store SeriesStore) Deps {
 // valid metric/range against a populated fake store returns the points as
 // uPlot-shaped JSON (parallel arrays: ts, avg, min, max).
 func TestSeriesAPIReturnsPointsForValidRange(t *testing.T) {
-	store := &fakeSeriesStore{data: map[string][]SeriesPoint{
+	api := fakeAPI{series: map[string][]SeriesPoint{
 		"cpu": {
 			{TS: 1000, Min: 1, Avg: 2, Max: 3},
 			{TS: 2000, Min: 4, Avg: 5, Max: 6},
 		},
 	}}
-	d := historyTestDeps(t, store)
+	d := historyTestDeps(t, api)
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -96,13 +88,13 @@ func TestSeriesAPIReturnsPointsForValidRange(t *testing.T) {
 // like cpu — the whole restore leans on these being ordinary queryable
 // metrics, nothing special-cased.
 func TestSeriesAPIReturnsLoadAndDiskMetrics(t *testing.T) {
-	store := &fakeSeriesStore{data: map[string][]SeriesPoint{
+	api := fakeAPI{series: map[string][]SeriesPoint{
 		"load5":      {{TS: 1000, Avg: 0.5}},
 		"load15":     {{TS: 1000, Avg: 0.25}},
 		"disk:/":     {{TS: 1000, Avg: 91}},
 		"disk:/data": {{TS: 1000, Avg: 22}},
 	}}
-	d := historyTestDeps(t, store)
+	d := historyTestDeps(t, api)
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -133,8 +125,8 @@ func TestSeriesAPIReturnsLoadAndDiskMetrics(t *testing.T) {
 // empty series, 200, NOT 500" requirement: a metric the fake store has no
 // data for must render as an empty series, never an error status.
 func TestSeriesAPIUnknownMetricReturnsEmptyNot500(t *testing.T) {
-	store := &fakeSeriesStore{data: map[string][]SeriesPoint{"cpu": {{TS: 1, Avg: 1}}}}
-	d := historyTestDeps(t, store)
+	api := fakeAPI{series: map[string][]SeriesPoint{"cpu": {{TS: 1, Avg: 1}}}}
+	d := historyTestDeps(t, api)
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -183,8 +175,8 @@ func TestSeriesAPINilStoreReturnsEmpty(t *testing.T) {
 // from>=to, unparseable timestamps, and an absurdly large span all reject
 // with 400 rather than reaching the store at all.
 func TestSeriesAPIInvalidRangeRejected(t *testing.T) {
-	store := &fakeSeriesStore{data: map[string][]SeriesPoint{"cpu": {{TS: 1, Avg: 1}}}}
-	d := historyTestDeps(t, store)
+	api := fakeAPI{series: map[string][]SeriesPoint{"cpu": {{TS: 1, Avg: 1}}}}
+	d := historyTestDeps(t, api)
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -236,11 +228,10 @@ func TestHistoryAndSeriesRoutesAreViewerGated(t *testing.T) {
 // a valid range against a populated fake EventsStore returns the downtime
 // events as JSON for the mockup's "Downtime · 30d" timeline/rows.
 func TestDowntimeAPIReturnsEventsForValidRange(t *testing.T) {
-	d := historyTestDeps(t, nil)
-	d.Events = &fakeEventsStore{events: []DownEventView{
+	d := historyTestDeps(t, fakeAPI{events: []DownEventView{
 		{Type: "power_down", Start: 1000, End: 1600, DurationSec: 600},
 		{Type: "net_down", Start: 2000, End: 2060, DurationSec: 60},
-	}}
+	}})
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -264,10 +255,10 @@ func TestDowntimeAPIReturnsEventsForValidRange(t *testing.T) {
 	}
 }
 
-// TestDowntimeAPINilStoreReturnsEmpty pins the "nil Events store -> empty
-// list, not a panic" requirement (mirrors TestSeriesAPINilStoreReturnsEmpty).
+// TestDowntimeAPINilStoreReturnsEmpty pins the "nil Deps.API -> empty list,
+// not a panic" requirement (mirrors TestSeriesAPINilStoreReturnsEmpty).
 func TestDowntimeAPINilStoreReturnsEmpty(t *testing.T) {
-	d := historyTestDeps(t, nil) // leaves d.Events nil
+	d := historyTestDeps(t, nil) // leaves d.API nil
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -291,8 +282,7 @@ func TestDowntimeAPINilStoreReturnsEmpty(t *testing.T) {
 // TestDowntimeAPIInvalidRangeRejected pins that /api/downtime validates its
 // from/to range exactly like /api/series (parseSeriesRange).
 func TestDowntimeAPIInvalidRangeRejected(t *testing.T) {
-	d := historyTestDeps(t, nil)
-	d.Events = &fakeEventsStore{events: []DownEventView{{Type: "net_down", Start: 1, End: 2}}}
+	d := historyTestDeps(t, fakeAPI{events: []DownEventView{{Type: "net_down", Start: 1, End: 2}}})
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
