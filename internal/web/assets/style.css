@@ -331,7 +331,12 @@ input.switch:checked::after{left:19px;background:#fff}
   input,select,textarea{min-height:44px}
   .icon-btn{width:40px; height:40px}
   .chip{min-height:38px; display:inline-flex; align-items:center}
-  .tabs button{padding:12px 14px; min-height:44px}
+  /* the 4 tabs are wider than a phone: make the strip a swipeable scroll
+     container so it never pushes the page sideways, and keep each tab intact
+     (no truncation) with a comfortable touch target. */
+  .tabs{overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{padding:12px 14px; min-height:44px; white-space:nowrap; flex:0 0 auto}
   /* narrow inline inputs (e.g. config per-target threshold) may stay compact */
   .cards td input[type=text]{min-height:40px}
 
