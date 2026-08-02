@@ -356,6 +356,14 @@ type AlertRecord struct {
 	// true); false when every attempt failed, none was recorded, or this is
 	// an active alert (which carries no delivery outcome of its own).
 	Delivered bool `json:"delivered,omitempty"`
+	// DeliveredTo names the channels that actually accepted a history
+	// entry's dispatch (the Delivery records with OK true), in record order,
+	// so a consumer can show WHICH channels a notification reached, not just
+	// whether any did. Empty when Delivered is false, and always empty for an
+	// active alert (no delivery outcome of its own). This is the per-channel
+	// detail the web alerts page previously read from the alert log on disk;
+	// carrying it here lets that page go through the control socket instead.
+	DeliveredTo []string `json:"delivered_to,omitempty"`
 }
 
 // DoctorReport is core's projection of `serverwatch doctor`'s diagnostic

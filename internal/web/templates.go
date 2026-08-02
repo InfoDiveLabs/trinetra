@@ -168,7 +168,7 @@ type PageData struct {
 	Title, Sub string
 	// Status/StatusText drive the topbar's status pill (led color class +
 	// display text) and are ALWAYS computed by newPageData from the real
-	// active-alert set (topbarStatus, AlertStatePath) -- see that function's
+	// active-alert set (topbarStatus, over the control socket) -- see that function's
 	// doc. They are not caller-supplied: every page's topbar reflects the
 	// same real severity/counts rather than each page guessing its own
 	// (the old bug this replaces: most page handlers passed the literal
@@ -206,7 +206,7 @@ type PageData struct {
 
 // newPageData builds the PageData every page handler needs, deriving Role
 // from the request and Active from its path, and Status/StatusText from the
-// real active-alert set (topbarStatus(loadActiveAlerts(d.AlertStatePath))) --
+// real active-alert set (topbarStatus(activeAlertsViaAPI(d))) --
 // see PageData's doc for why every page shares this one computation rather
 // than each supplying its own. d is also used to compute the nav's live
 // badge counts (navCountsFor); every other field is unchanged from the
@@ -221,7 +221,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	if sess, ok := sessionFromContext(r); ok {
 		csrf = sess.CSRF
 	}
-	status, statusText := topbarStatus(loadActiveAlerts(d.AlertStatePath))
+	status, statusText := topbarStatus(activeAlertsViaAPI(d))
 	return PageData{
 		Title:      title,
 		Sub:        sub,

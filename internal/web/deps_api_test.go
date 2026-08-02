@@ -34,7 +34,9 @@ type fakeAPI struct {
 	events    []core.DownEventView
 	eventsErr error
 	active    []core.AlertRecord
+	activeErr error
 	history   []core.AlertRecord
+	histErr   error
 
 	applyConfig func(*config.Config) error
 	testChannel func(name string) error
@@ -56,10 +58,10 @@ func (f fakeAPI) Events(from, to int64) ([]core.DownEventView, error) {
 	return f.events, f.eventsErr
 }
 
-func (f fakeAPI) ActiveAlerts() ([]core.AlertRecord, error) { return f.active, nil }
+func (f fakeAPI) ActiveAlerts() ([]core.AlertRecord, error) { return f.active, f.activeErr }
 
 func (f fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
-	return f.history, nil
+	return f.history, f.histErr
 }
 
 func (f fakeAPI) Config() (*config.Config, error)                         { return nil, nil }

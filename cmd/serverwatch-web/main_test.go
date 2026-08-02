@@ -122,12 +122,6 @@ func TestResolveConnConfigDefaults(t *testing.T) {
 	if cc.stateDir != defaultStateDir {
 		t.Errorf("stateDir = %q, want %q", cc.stateDir, defaultStateDir)
 	}
-	if want := filepath.Join(defaultStateDir, "alertlog.jsonl"); cc.alertLogPath != want {
-		t.Errorf("alertLogPath = %q, want %q", cc.alertLogPath, want)
-	}
-	if want := filepath.Join(defaultStateDir, "alerts.json"); cc.alertStatePath != want {
-		t.Errorf("alertStatePath = %q, want %q", cc.alertStatePath, want)
-	}
 }
 
 // TestResolveConnConfigReadsTokenFile pins that, absent an explicit token
@@ -231,7 +225,7 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	}
 	defer client.Close()
 
-	deps := buildDeps(client, connConfig{stateDir: dir, alertLogPath: filepath.Join(dir, "alertlog.jsonl"), alertStatePath: filepath.Join(dir, "alerts.json")})
+	deps := buildDeps(client, connConfig{stateDir: dir})
 
 	if deps.API == nil {
 		t.Fatal("deps.API is nil")
@@ -337,11 +331,7 @@ func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 	}
 	defer client.Close()
 
-	deps := buildDeps(client, connConfig{
-		stateDir:       t.TempDir(),
-		alertLogPath:   filepath.Join(dir, "alertlog.jsonl"),
-		alertStatePath: filepath.Join(dir, "alerts.json"),
-	})
+	deps := buildDeps(client, connConfig{stateDir: dir})
 
 	stop, err := web.Start(deps)
 	if err != nil {

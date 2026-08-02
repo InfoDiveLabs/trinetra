@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"serverwatch/internal/core"
 )
 
 // TestTopbarStatusCriticalAlertsFiring pins Part 3 of the field-feedback fix:
@@ -57,15 +59,18 @@ func TestTopbarStatusNoActiveAlertsIsOK(t *testing.T) {
 	}
 }
 
-// TestLoadActiveAlertsDecodesCritical confirms loadActiveAlerts carries the
-// on-disk "critical" flag (serverwatch.ActiveAlert.Critical, set at fire
-// time from the breaching Check's own severity) into activeAlertView, so
-// topbarStatus has real severity to work with.
+// TestLoadActiveAlertsDecodesCritical confirms activeAlertsViaAPI carries the
+// per-record severity (core.AlertRecord.Severity, set at fire time from the
+// breaching Check's own severity) into activeAlertView.Critical, so
+// topbarStatus has real severity to work with: "critical" -> Critical true,
+// anything else -> false.
 func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
-	dir := t.TempDir()
-	path := writeAlertState(t, dir, `{"active":{"disk:/":{"since":1,"reason":"full","critical":true},"cpu":{"since":2,"reason":"hot"}}}`)
+	d := Deps{API: fakeAPI{active: []core.AlertRecord{
+		{Key: "disk:/", Time: 1, Source: "full", Severity: "critical"},
+		{Key: "cpu", Time: 2, Source: "hot", Severity: "warning"},
+	}}}
 
-	alerts := loadActiveAlerts(path)
+	alerts := activeAlertsViaAPI(d)
 	var gotDisk, gotCPU activeAlertView
 	for _, a := range alerts {
 		switch a.Key {
@@ -91,7 +96,7 @@ func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
 // hardcoded-"ok" "All systems normal".
 func TestConfigPageTopbarReflectsRealActiveCriticalAlert(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{"disk:/":{"since":1,"reason":"disk full","critical":true}}}`)
+	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "disk full", Severity: "critical"}}}
 
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)

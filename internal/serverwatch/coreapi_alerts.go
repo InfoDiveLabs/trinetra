@@ -79,6 +79,21 @@ func anyDelivered(ds []Delivery) bool {
 	return false
 }
 
+// deliveredChannels returns the names of the channels that actually accepted
+// delivery (Delivery.OK true), in record order -- the per-channel detail
+// behind anyDelivered's bool, for core.AlertRecord.DeliveredTo. It returns
+// nil (not an empty slice) when none succeeded, so the field omits cleanly
+// under its json:"...,omitempty" tag.
+func deliveredChannels(ds []Delivery) []string {
+	var out []string
+	for _, d := range ds {
+		if d.OK {
+			out = append(out, d.Channel)
+		}
+	}
+	return out
+}
+
 // alertHistoryRecords loads log's events since sinceUnix and maps each into
 // a core.AlertRecord (a direct field-for-field mapping -- AlertEvent already
 // carries Key/Severity/Kind/Source/Time/Title). Acked and AckedAt are always
@@ -104,14 +119,15 @@ func alertHistoryRecords(log *AlertLog, sinceUnix int64, limit int) ([]core.Aler
 	out := make([]core.AlertRecord, 0, len(evs))
 	for _, ev := range evs {
 		out = append(out, core.AlertRecord{
-			Key:       ev.Key,
-			Severity:  ev.Severity,
-			Kind:      ev.Kind,
-			Source:    ev.Source,
-			Time:      ev.Time,
-			Acked:     false,
-			Title:     ev.Title,
-			Delivered: anyDelivered(ev.Delivered),
+			Key:         ev.Key,
+			Severity:    ev.Severity,
+			Kind:        ev.Kind,
+			Source:      ev.Source,
+			Time:        ev.Time,
+			Acked:       false,
+			Title:       ev.Title,
+			Delivered:   anyDelivered(ev.Delivered),
+			DeliveredTo: deliveredChannels(ev.Delivered),
 		})
 	}
 	return out, nil

@@ -1,72 +1,32 @@
 package web
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
-	"os"
-	"sort"
 	"strings"
 	"time"
+
+	"serverwatch/internal/core"
 )
 
-// alertLogEvent mirrors serverwatch.AlertEvent's JSON encoding just enough
-// to decode it (alertlog.go's AlertEvent/Delivery), the same "decode the
-// JSON shape, not the Go type" pattern activeAlertView/alertStateFile
-// (handlers_dashboard.go) already use for AlertState -- see that file's doc
-// for why this doesn't create an import-cycle risk.
-type alertLogEvent struct {
-	Time      int64  `json:"time"`
-	Key       string `json:"key"`
-	Title     string `json:"title"`
-	Severity  string `json:"severity"`
-	Kind      string `json:"kind"` // "fire" | "recover"
-	Source    string `json:"source"`
-	Delivered []struct {
-		Channel string `json:"channel"`
-		OK      bool   `json:"ok"`
-		Err     string `json:"err,omitempty"`
-	} `json:"delivered,omitempty"`
-}
-
-// loadAlertLogEvents reads and decodes every line of path (Deps.AlertLogPath,
-// an append-only JSONL file -- see alertlog.go's AlertLog) into
-// []alertLogEvent, newest first. A missing file, an empty path (not
-// configured, e.g. some tests), or any decode error along the way all
-// degrade to "as many valid events as were found" rather than a 500 --
-// individual malformed lines are skipped (mirroring AlertLog.
-// AlertEventsSince's own tolerance for corrupt lines), and a totally
-// unreadable/garbage file just yields an empty list. This page is
-// display-only history, never a source of truth serverwatch itself depends
-// on, so silently degrading is the right failure mode.
-func loadAlertLogEvents(path string) []alertLogEvent {
-	if path == "" {
+// alertHistoryViaAPI reads the daemon's alert-log history over the control
+// socket (Deps.API.AlertHistory) rather than decoding the alertlog.jsonl file
+// off disk: a plugin must not read daemon-owned state from disk. It requests
+// the whole log (since 0, no limit) newest-first -- alertHistoryRecords
+// (serverwatch) already sorts it that way -- and the callers cap/window it as
+// before (alertHistoryRows to maxAlertHistoryRows, resolvedInWindow to 7d). A
+// nil API or a read error degrades to nil (empty history) rather than failing
+// the page, the same display-only tolerance the old loadAlertLogEvents had.
+func alertHistoryViaAPI(d Deps) []core.AlertRecord {
+	if d.API == nil {
 		return nil
 	}
-	f, err := os.Open(path)
+	recs, err := d.API.AlertHistory(0, 0)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
-
-	var out []alertLogEvent
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var ev alertLogEvent
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue
-		}
-		out = append(out, ev)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Time > out[j].Time })
-	return out
+	return recs
 }
 
 // alertHistoryRow is one row of the /alerts "Recent history" table.
@@ -79,29 +39,24 @@ type alertHistoryRow struct {
 	Delivered string // comma-joined channel names that accepted delivery
 }
 
-// deliveredNames renders an alertLogEvent's Delivered slice as a
-// comma-joined list of channels that actually accepted the notification
-// (OK == true), or "-" if none did (or none were configured).
-func deliveredNames(ev alertLogEvent) string {
-	var names []string
-	for _, d := range ev.Delivered {
-		if d.OK {
-			names = append(names, d.Channel)
-		}
-	}
-	if len(names) == 0 {
+// deliveredNames renders a history record's DeliveredTo (the channels that
+// actually accepted the notification, OK == true, carried over the socket in
+// core.AlertRecord) as a comma-joined list, or "-" if none did (or none were
+// configured).
+func deliveredNames(r core.AlertRecord) string {
+	if len(r.DeliveredTo) == 0 {
 		return "-"
 	}
-	return strings.Join(names, ", ")
+	return strings.Join(r.DeliveredTo, ", ")
 }
 
 // alertHistoryRows caps the log to the most recent maxAlertHistoryRows
-// events (newest first, already loadAlertLogEvents's order) for the
+// records (newest first, already alertHistoryViaAPI's order) for the
 // "Recent history" table -- the mockup shows a bounded recent window, not
 // the entire log.
 const maxAlertHistoryRows = 100
 
-func alertHistoryRows(events []alertLogEvent) []alertHistoryRow {
+func alertHistoryRows(events []core.AlertRecord) []alertHistoryRow {
 	if len(events) > maxAlertHistoryRows {
 		events = events[:maxAlertHistoryRows]
 	}
@@ -177,7 +132,7 @@ type AlertsPageData struct {
 
 // resolvedInWindow counts "recover" events within the last window (relative
 // to now) -- the mockup's "Resolved · 7d" tile.
-func resolvedInWindow(events []alertLogEvent, window time.Duration) int {
+func resolvedInWindow(events []core.AlertRecord, window time.Duration) int {
 	cutoff := time.Now().Add(-window).Unix()
 	n := 0
 	for _, ev := range events {
@@ -221,8 +176,8 @@ func uptimePct30d(d Deps) (float64, bool) {
 }
 
 func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
-	active := loadActiveAlerts(d.AlertStatePath)
-	events := loadAlertLogEvents(d.AlertLogPath)
+	active := activeAlertsViaAPI(d)
+	events := alertHistoryViaAPI(d)
 
 	firing, acked := 0, 0
 	for _, a := range active {
@@ -268,70 +223,15 @@ func alertsPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// ackActiveAlert mirrors one entry of serverwatch.AlertState.Active
-// (anomaly.go's ActiveAlert) closely enough to both read AND write it --
-// unlike handlers_dashboard.go's read-only alertStateFile, this needs
-// AckedAt too (Ack's contract, anomaly.go) since this handler is the one
-// producing the on-disk ack the daemon's own AlertState.MergeAckFromDisk
-// later reconciles back into its in-memory copy.
-type ackActiveAlert struct {
-	Since   int64  `json:"since"`
-	Reason  string `json:"reason"`
-	Acked   bool   `json:"acked,omitempty"`
-	AckedAt int64  `json:"acked_at,omitempty"`
-}
-
-// ackAlertState mirrors serverwatch.AlertState's on-disk JSON shape.
-type ackAlertState struct {
-	Active map[string]ackActiveAlert `json:"active"`
-}
-
-// loadAckAlertState reads path into an ackAlertState, defaulting to an
-// empty (non-nil) Active map on a missing file or any decode error -- same
-// "never fail the page, just show/act on nothing" tolerance as
-// loadActiveAlerts/loadAlertLogEvents.
-func loadAckAlertState(path string) ackAlertState {
-	s := ackAlertState{Active: map[string]ackActiveAlert{}}
-	if path == "" {
-		return s
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return s
-	}
-	_ = json.Unmarshal(b, &s)
-	if s.Active == nil {
-		s.Active = map[string]ackActiveAlert{}
-	}
-	return s
-}
-
-// saveAckAlertState writes s to path atomically (temp file + rename),
-// mirroring serverwatch.AlertState.Save (anomaly.go) exactly (same
-// marshal-then-atomic-rename shape, same 0o644 perm -- alerts.json holds no
-// secrets) so the daemon's own AlertState.Save/Load round-trip the file
-// this handler writes without any format drift.
-func saveAckAlertState(path string, s ackAlertState) error {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
 // alertsAckHandler handles POST /alerts/{key}/ack (admin-only + CSRF -- see
-// routes.go's wiring): it flips the named active alert's Acked/AckedAt in
-// Deps.AlertStatePath's on-disk AlertState JSON, which the running daemon
-// reconciles back into its own in-memory copy via AlertState.
-// MergeAckFromDisk (anomaly.go) on its next fire/recover transition -- this
-// handler never touches the daemon's in-process state directly (there is
-// none to touch from this package; internal/web must never import
-// internal/serverwatch, to keep the module graph one-way, so it couldn't
-// touch it directly even if it wanted to).
+// routes.go's wiring): it acks the named active alert THROUGH the control
+// socket (Deps.API.AckAlert), which runs the ack daemon-side (LoadAlertState
+// + Ack + Save in the daemon process) so the web plugin is not a second
+// writer to the daemon's alerts.json. It first reads the current active set
+// over the socket to preserve the old handler's 404 for an unknown key (a
+// socket read error there is a real 500, not a masked "not found"), then
+// calls AckAlert; the daemon reconciles the ack into its own in-memory
+// AlertState as before.
 func alertsAckHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key, err := credentialFromParam(r.PathValue("key"))
@@ -341,17 +241,29 @@ func alertsAckHandler(d Deps) http.HandlerFunc {
 		}
 		keyStr := string(key)
 
-		state := loadAckAlertState(d.AlertStatePath)
-		a, ok := state.Active[keyStr]
-		if !ok {
+		if d.API == nil {
+			http.Error(w, "alert control unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		recs, err := d.API.ActiveAlerts()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		found := false
+		for _, a := range recs {
+			if a.Key == keyStr {
+				found = true
+				break
+			}
+		}
+		if !found {
 			http.Error(w, fmt.Sprintf("no active alert for key %q", keyStr), http.StatusNotFound)
 			return
 		}
-		a.Acked = true
-		a.AckedAt = time.Now().Unix()
-		state.Active[keyStr] = a
 
-		if err := saveAckAlertState(d.AlertStatePath, state); err != nil {
+		if err := d.API.AckAlert(keyStr); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

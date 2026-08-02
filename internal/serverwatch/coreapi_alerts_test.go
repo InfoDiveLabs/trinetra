@@ -109,3 +109,52 @@ func TestAlertHistoryRecordsMapsTitleAndDelivered(t *testing.T) {
 		t.Errorf("disk Delivered = %v, want false (no delivery recorded)", disk.Delivered)
 	}
 }
+
+// TestAlertHistoryRecordsMapsDeliveredChannels pins the DeliveredTo field:
+// the names of the channels that actually accepted an AlertEvent's delivery
+// (Delivery.OK true), in record order, so the web alerts page can show which
+// channels a notification reached WITHOUT reading the alert log off disk.
+// Channels whose delivery failed are excluded, and an event with no
+// successful (or no recorded) delivery yields a nil slice, matching the bool
+// Delivered's own false in those cases.
+func TestAlertHistoryRecordsMapsDeliveredChannels(t *testing.T) {
+	dir := t.TempDir()
+	log := NewAlertLog(dir + "/alertlog.jsonl")
+
+	events := []AlertEvent{
+		{Time: 100, Key: "cpu", Title: "CPU high", Severity: "critical", Kind: "fire", Source: "threshold",
+			Delivered: []Delivery{{Channel: "telegram", OK: true}, {Channel: "email", OK: false, Err: "smtp timeout"}}},
+		{Time: 200, Key: "mem", Title: "Mem high", Severity: "warning", Kind: "fire", Source: "threshold",
+			Delivered: []Delivery{{Channel: "email", OK: false, Err: "smtp timeout"}}},
+		{Time: 300, Key: "disk", Title: "Disk high", Severity: "warning", Kind: "fire", Source: "threshold"},
+	}
+	for _, ev := range events {
+		if err := log.AppendAlertEvent(ev); err != nil {
+			t.Fatalf("AppendAlertEvent(%+v): %v", ev, err)
+		}
+	}
+
+	got, err := alertHistoryRecords(log, 0, 0)
+	if err != nil {
+		t.Fatalf("alertHistoryRecords: %v", err)
+	}
+	byKey := map[string]int{}
+	for i, r := range got {
+		byKey[r.Key] = i
+	}
+
+	cpu := got[byKey["cpu"]]
+	if len(cpu.DeliveredTo) != 1 || cpu.DeliveredTo[0] != "telegram" {
+		t.Errorf("cpu DeliveredTo = %v, want [telegram] (only the OK channel)", cpu.DeliveredTo)
+	}
+
+	mem := got[byKey["mem"]]
+	if len(mem.DeliveredTo) != 0 {
+		t.Errorf("mem DeliveredTo = %v, want empty (its only delivery attempt failed)", mem.DeliveredTo)
+	}
+
+	disk := got[byKey["disk"]]
+	if len(disk.DeliveredTo) != 0 {
+		t.Errorf("disk DeliveredTo = %v, want empty (no delivery recorded)", disk.DeliveredTo)
+	}
+}

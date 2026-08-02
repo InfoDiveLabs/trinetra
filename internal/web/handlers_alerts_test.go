@@ -3,43 +3,22 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"serverwatch/internal/core"
 )
 
-// writeAlertLog writes lines (already-JSON-encoded, one per line) to
-// <stateDir>/alertlog.jsonl, returning the path for AlertLogPath.
-func writeAlertLog(t *testing.T, dir string, lines ...string) string {
-	t.Helper()
-	path := filepath.Join(dir, "alertlog.jsonl")
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		t.Fatalf("write alert log: %v", err)
-	}
-	return path
-}
-
-// writeAlertState writes raw JSON to <stateDir>/alerts.json, returning the
-// path for AlertStatePath.
-func writeAlertState(t *testing.T, dir, raw string) string {
-	t.Helper()
-	path := filepath.Join(dir, "alerts.json")
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
-		t.Fatalf("write alert state: %v", err)
-	}
-	return path
-}
-
 // TestAlertsPageListsLogEvents pins the core TDD obligation: a populated
-// alert log renders as history rows on GET /alerts.
+// alert log (served through the control socket, Deps.API.AlertHistory)
+// renders as history rows on GET /alerts.
 func TestAlertsPageListsLogEvents(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertLogPath = writeAlertLog(t, d.StateDir,
-		`{"time":1700000000,"key":"disk:/","title":"Filesystem almost full","severity":"critical","kind":"fire","source":"disk:/","delivered":[{"channel":"Telegram","ok":true}]}`,
-		`{"time":1700000100,"key":"disk:/","title":"Filesystem almost full","severity":"critical","kind":"recover","source":"disk:/"}`,
-	)
+	d.API = fakeAPI{history: []core.AlertRecord{
+		{Time: 1700000000, Key: "disk:/", Title: "Filesystem almost full", Severity: "critical", Kind: "fire", Source: "disk:/", Delivered: true, DeliveredTo: []string{"Telegram"}},
+		{Time: 1700000100, Key: "disk:/", Title: "Filesystem almost full", Severity: "critical", Kind: "recover", Source: "disk:/"},
+	}}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -58,11 +37,11 @@ func TestAlertsPageListsLogEvents(t *testing.T) {
 	}
 }
 
-// TestAlertsPageMissingLogRendersEmptyNot500 pins the "missing/garbage file
-// -> empty, never 500" requirement for a log path that doesn't exist.
+// TestAlertsPageMissingLogRendersEmptyNot500 pins the "no history -> empty,
+// never 500" requirement when the control socket reports an empty history.
 func TestAlertsPageMissingLogRendersEmptyNot500(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertLogPath = filepath.Join(d.StateDir, "does-not-exist.jsonl")
+	d.API = fakeAPI{}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -78,11 +57,11 @@ func TestAlertsPageMissingLogRendersEmptyNot500(t *testing.T) {
 	}
 }
 
-// TestAlertsPageGarbageLogRendersEmptyNot500 pins the same contract for a
-// log file that exists but contains garbage.
+// TestAlertsPageGarbageLogRendersEmptyNot500 pins the same contract when the
+// control socket read fails (degrades to nil history), never a 500.
 func TestAlertsPageGarbageLogRendersEmptyNot500(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertLogPath = writeAlertLog(t, d.StateDir, "not json at all {{{")
+	d.API = fakeAPI{histErr: errTestActiveAlerts}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -99,10 +78,11 @@ func TestAlertsPageGarbageLogRendersEmptyNot500(t *testing.T) {
 }
 
 // TestAlertsPageListsActiveAlerts pins the "Firing" panel: an active,
-// unacked alert in AlertStatePath renders with an Ack button for an admin.
+// unacked alert (via the control socket) renders with an Ack button for an
+// admin.
 func TestAlertsPageListsActiveAlerts(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{"disk:/":{"since":1700000000,"reason":"disk:/ = 91.0 >= threshold 90.0"}}}`)
+	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1700000000, Source: "disk:/ = 91.0 >= threshold 90.0"}}}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -125,7 +105,7 @@ func TestAlertsPageListsActiveAlerts(t *testing.T) {
 // but no Ack action (ack is admin-only).
 func TestAlertsPageViewerHasNoAckButton(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{"disk:/":{"since":1700000000,"reason":"x"}}}`)
+	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1700000000, Source: "x"}}}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -142,11 +122,16 @@ func TestAlertsPageViewerHasNoAckButton(t *testing.T) {
 }
 
 // TestAlertsAckRoundTripsToAlertState pins the core ack obligation: POSTing
-// ack flips Acked/AckedAt in the on-disk AlertState and writes an audit
-// record.
+// ack acks the named active alert THROUGH the control socket
+// (Deps.API.AckAlert) and writes an audit record.
 func TestAlertsAckRoundTripsToAlertState(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{"disk:/":{"since":1700000000,"reason":"x"}}}`)
+	var ackedKey string
+	ackCalled := false
+	d.API = fakeAPI{
+		active:   []core.AlertRecord{{Key: "disk:/", Time: 1700000000, Source: "x"}},
+		ackAlert: func(k string) error { ackCalled = true; ackedKey = k; return nil },
+	}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -158,13 +143,11 @@ func TestAlertsAckRoundTripsToAlertState(t *testing.T) {
 		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
 	}
 
-	state := loadAckAlertState(d.AlertStatePath)
-	a, ok := state.Active["disk:/"]
-	if !ok {
-		t.Fatal("disk:/ disappeared from AlertState")
+	if !ackCalled {
+		t.Fatal("AckAlert was never called through the control socket")
 	}
-	if !a.Acked || a.AckedAt == 0 {
-		t.Errorf("active alert = %+v, want Acked=true and AckedAt set", a)
+	if ackedKey != "disk:/" {
+		t.Errorf("AckAlert called with key %q, want %q", ackedKey, "disk:/")
 	}
 
 	recs := readAuditRecords(t, d.StateDir)
@@ -186,7 +169,7 @@ func TestAlertsAckRoundTripsToAlertState(t *testing.T) {
 // alert 404s rather than silently creating one.
 func TestAlertsAckUnknownKeyNotFound(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{}}`)
+	d.API = fakeAPI{}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -198,12 +181,12 @@ func TestAlertsAckUnknownKeyNotFound(t *testing.T) {
 	}
 }
 
-// TestAlertsAckMissingStateFileNotFound pins that a not-yet-existing
-// AlertStatePath (alerting has never fired) degrades to "no active alert"
-// (404), not a 500.
+// TestAlertsAckMissingStateFileNotFound pins that when alerting has never
+// fired (no active alerts over the socket) an ack degrades to "no active
+// alert" (404), not a 500.
 func TestAlertsAckMissingStateFileNotFound(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = filepath.Join(d.StateDir, "does-not-exist.json")
+	d.API = fakeAPI{}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -220,7 +203,7 @@ func TestAlertsAckMissingStateFileNotFound(t *testing.T) {
 // 403).
 func TestAlertsRouteViewerGatedAckAdminOnly(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{"disk:/":{"since":1,"reason":"x"}}}`)
+	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}}}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -264,7 +247,11 @@ func seedViewerWithCSRF(t *testing.T, users UserStore, sessions SessionStore) (*
 // token is rejected, matching every other mutation route.
 func TestAlertsAckRequiresCSRF(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{"disk:/":{"since":1,"reason":"x"}}}`)
+	ackCalled := false
+	d.API = fakeAPI{
+		active:   []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}},
+		ackAlert: func(k string) error { ackCalled = true; return nil },
+	}
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -274,8 +261,7 @@ func TestAlertsAckRequiresCSRF(t *testing.T) {
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403, body: %s", rr.Code, rr.Body.String())
 	}
-	state := loadAckAlertState(d.AlertStatePath)
-	if state.Active["disk:/"].Acked {
+	if ackCalled {
 		t.Error("alert should not have been acked without a valid CSRF token")
 	}
 }

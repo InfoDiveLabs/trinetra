@@ -108,8 +108,9 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
 	mux.HandleFunc("GET /public/events", publicEventsHandler(d))
 
-	// /alerts (Task 10/#66): alert history (Deps.AlertLogPath) + active
-	// alerts (Deps.AlertStatePath), viewer+ per the design doc -- this
+	// /alerts (Task 10/#66): alert history + active alerts, both read over
+	// the control socket (Deps.API.AlertHistory/ActiveAlerts), viewer+ per
+	// the design doc -- this
 	// resolves the earlier placeholder note that /alerts must be
 	// viewer-gated, not admin-only. Ack, however, is admin-only + CSRF: it
 	// mutates shared alert state everyone else's view depends on.
