@@ -264,6 +264,14 @@ input.switch:checked::after{left:19px;background:#fff}
   .topbar{padding:11px 14px; gap:10px}
   .topbar h1{font-size:16px}
   .topbar p{font-size:12px}
+  /* header must never widen past the viewport (it forced horizontal page scroll,
+     clipping the tiles below). Drop the fixed-width decorative heartbeat, let the
+     title flex and truncate, and keep the status pill + toggle on one line. */
+  .topbar .hb-gen{display:none}
+  .topbar .spacer{display:none}
+  .topbar>div:first-child{flex:1 1 auto; min-width:0}
+  .topbar h1,.topbar p{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .topbar .pill{flex:0 0 auto; white-space:nowrap; padding:6px 10px}
 
   /* --- bottom tab bar --- */
   .botnav{display:flex; position:fixed; left:0; right:0; bottom:0; z-index:80;
@@ -306,6 +314,12 @@ input.switch:checked::after{left:19px;background:#fff}
   .g-tiles{grid-template-columns:1fr 1fr}
   .g-4{grid-template-columns:1fr 1fr}
   .g-2,.g-3,.g-hero,.g-32{grid-template-columns:1fr}
+  /* panels are grid children (default min-width:auto): without this a long
+     unbreakable token (e.g. an alert key "docker:...utso8q.1.rrdg...") sets the
+     track's min-content wider than the screen and scrolls the whole page. */
+  .panel{min-width:0}
+  .row .name b{display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .row .name .note{white-space:normal; overflow-wrap:anywhere}
   .count{padding:15px 16px}
   .count .n{font-size:32px}
   .count .n .of{font-size:18px}
