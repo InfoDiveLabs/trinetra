@@ -6,6 +6,45 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
+## [0.4.1-beta.1] - 2026-08-02
+
+A reliability release for the core-plus-plugin line: the web plugin is made
+truly channel-only, and a socket-client defect that could freeze the dashboard
+is fixed.
+
+### Fixed
+
+- **The web dashboard no longer freezes into an all-zero board until a core
+  restart.** The control-socket client held one long-lived connection with no
+  reconnect: on a read timeout or a response-id mismatch it returned the error
+  but kept the connection, which is then permanently frame-misaligned (a late
+  response is read by the next call and mismatches its id, desyncing every call
+  after). Because `serverwatch-web` holds one client for its whole lifetime, a
+  single slow daemon response wedged every `Snapshot` and the dashboard
+  rendered the zero-value view (0 cores, 0%, Offline) while alerts and Telegram
+  kept working. The client now poisons the connection on any transport failure
+  and transparently re-dials on the next call, with a bounded reconnect
+  handshake. (#105)
+
+### Changed
+
+- **The web plugin no longer reads or writes daemon-owned state on disk.**
+  Active alerts, alert history, and alert acks now go through the control
+  socket (`core.API.ActiveAlerts` / `AlertHistory` / `AckAlert`) instead of
+  decoding `alerts.json` / `alertlog.jsonl` directly, and the ack handler no
+  longer writes `alerts.json` itself (it had been a second writer racing the
+  daemon). This also removes the disk shortcut that masked the socket-desync
+  bug above, so the dashboard now fails coherently rather than half-failing
+  into all-zeros. The web keeps ownership of its own auth material (users,
+  sessions, enrollment tokens); the core has nothing to do with auth.
+- `core.AlertRecord` gains a `DeliveredTo` field so the alerts page's Delivered
+  column keeps its per-channel names when read over the socket.
+
+### Internal
+
+- The docker validate harness builds under Go 1.24 (matching `go.mod`) rather
+  than the stale 1.22 base image.
+
 ## [0.4.0] - 2026-08-02
 
 The core-plus-plugin release. serverwatch is reshaped from a single monolithic
