@@ -122,9 +122,16 @@ func cmdInstall(args []string) int {
 		}
 	}
 	x := osExec{}
+	// enable + restart (not `enable --now`): `enable --now` only STARTS a
+	// stopped service, so on an upgrade of an already-running serverwatch the
+	// new binary and unit would sit on disk while the old daemon kept running
+	// until a manual restart. `restart` starts a stopped unit and reloads a
+	// running one, so a fresh install and an in-place upgrade both end on the
+	// just-installed binary with the freshly-written unit.
 	for _, a := range [][]string{
 		{"systemctl", "daemon-reload"},
-		{"systemctl", "enable", "--now", "serverwatch"},
+		{"systemctl", "enable", "serverwatch"},
+		{"systemctl", "restart", "serverwatch"},
 	} {
 		if out, err := x.Run(a[0], a[1:]...); err != nil {
 			fmt.Fprintf(stderr, "%v: %v\n%s\n", a, err, out)
