@@ -851,7 +851,7 @@ func (m model) updateSettingsValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // manageView renders whichever management screen is active.
 func (m model) manageView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("manage serverwatch") + "\n\n")
+	b.WriteString(breadcrumb("Manage") + "\n\n")
 	switch m.mgr.screen {
 	case manageMenuList:
 		for i, item := range manageItems {

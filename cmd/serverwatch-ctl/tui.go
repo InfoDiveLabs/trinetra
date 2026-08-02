@@ -832,7 +832,7 @@ func pctText(pct float64) string {
 
 func (m model) setupView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("set up the web UI") + "\n\n")
+	b.WriteString(breadcrumb("Web setup") + "\n\n")
 	switch m.wiz {
 	case webSetupMode:
 		b.WriteString("serving mode:\n\n")

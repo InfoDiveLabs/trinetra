@@ -165,6 +165,12 @@ func severityGlyph(sev string) string {
 	}
 }
 
+// breadcrumb renders a "serverwatch ▸ <leaf>" heading so a sub-screen always
+// shows where it sits relative to Home.
+func breadcrumb(leaf string) string {
+	return faintStyle.Render("serverwatch") + dimStyle.Render(" ▸ ") + titleStyle.Render(leaf)
+}
+
 // trunc shortens s to at most n runes, appending an ellipsis when it cuts.
 func trunc(s string, n int) string {
 	r := []rune(s)
