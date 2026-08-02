@@ -34,11 +34,29 @@ func TestResolveSocketPathPrecedence(t *testing.T) {
 	}
 }
 
-func TestResolveTokenPathDefaultsToSocketSibling(t *testing.T) {
-	os.Unsetenv("SERVERWATCH_CONTROL_TOKEN")
-	got := resolveTokenPath("", "/some/dir/control.sock")
+func TestResolveTokenFileDefaultsToSocketSibling(t *testing.T) {
+	got := resolveTokenFile("", "/some/dir/control.sock")
 	if want := "/some/dir/token"; got != want {
-		t.Errorf("token path = %q, want %q", got, want)
+		t.Errorf("token file = %q, want %q", got, want)
+	}
+}
+
+// TestResolveTokenEnvIsValueNotPath pins the front-door/supervisor contract:
+// SERVERWATCH_CONTROL_TOKEN carries the token VALUE (the daemon sets it to the
+// per-launch token when it spawns/execs a plugin), so resolveToken must return
+// it verbatim, NOT treat it as a file path to read. Regression for the bug
+// where `serverwatch cli` handed the token via this env var but the plugin
+// os.ReadFile'd the token string as a path, got nothing, and failed the socket
+// handshake. The value used here ("plaintok-not-a-path") is deliberately not a
+// real filesystem path.
+func TestResolveTokenEnvIsValueNotPath(t *testing.T) {
+	t.Setenv("SERVERWATCH_CONTROL_TOKEN", "plaintok-not-a-path")
+	got, err := resolveToken("", "/run/serverwatch/control.sock")
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	if got != "plaintok-not-a-path" {
+		t.Errorf("token = %q, want the env value used verbatim", got)
 	}
 }
 
