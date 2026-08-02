@@ -854,30 +854,27 @@ func (m model) manageView() string {
 	b.WriteString(breadcrumb("Manage") + "\n\n")
 	switch m.mgr.screen {
 	case manageMenuList:
+		b.WriteString(faintStyle.Render("what would you like to manage?") + "\n\n")
 		for i, item := range manageItems {
-			cursor := "  "
-			if i == m.mgr.cursor {
-				cursor = "> "
+			label := item
+			if ic := manageIcons[item]; ic != "" {
+				label = ic + "  " + item
 			}
-			fmt.Fprintf(&b, "%s%s\n", cursor, item)
+			b.WriteString(menuRow(i == m.mgr.cursor, label) + "\n")
 		}
-		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to open, esc to go home") + "\n")
+		b.WriteString("\n" + hintStyle.Render("↑/↓ move   enter open   esc home") + "\n")
 	case manageScheduleMode:
 		if m.mgr.configLoading {
-			b.WriteString("loading current schedule...\n")
+			b.WriteString(faintStyle.Render("loading current schedule...") + "\n")
 		} else {
-			b.WriteString("schedule:\n\n")
+			b.WriteString(panelTitleStyle.Render("SCHEDULE") + "\n\n")
 			for i, choice := range scheduleModeChoices {
-				cursor := "  "
-				if i == m.mgr.schedModeCursor {
-					cursor = "> "
-				}
-				fmt.Fprintf(&b, "%s%s\n", cursor, choice)
+				b.WriteString(menuRow(i == m.mgr.schedModeCursor, choice) + "\n")
 			}
 			if m.mgr.configErr != nil {
 				b.WriteString("\n" + errStyle.Render(fmt.Sprintf("could not load the current schedule: %v", m.mgr.configErr)) + "\n")
 			}
-			b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to select, esc to cancel") + "\n")
+			b.WriteString("\n" + hintStyle.Render("↑/↓ choose   enter select   esc cancel") + "\n")
 		}
 	case manageScheduleValue:
 		label := "daily time (HH:MM):"
@@ -921,22 +918,18 @@ func (m model) manageView() string {
 		fmt.Fprintf(&b, "channel name:\n\n%s\n", m.mgr.chanNameIn.View())
 		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to cancel") + "\n")
 	case manageChannelsType:
-		b.WriteString("channel type:\n\n")
+		b.WriteString(panelTitleStyle.Render("CHANNEL TYPE") + "\n\n")
 		for i, choice := range channelTypeChoices {
-			cursor := "  "
-			if i == m.mgr.chanTypeCur {
-				cursor = "> "
-			}
-			fmt.Fprintf(&b, "%s%s\n", cursor, choice)
+			b.WriteString(menuRow(i == m.mgr.chanTypeCur, choice) + "\n")
 		}
-		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to select, esc to go back") + "\n")
+		b.WriteString("\n" + hintStyle.Render("↑/↓ choose   enter select   esc back") + "\n")
 	case manageChannelsEnabled:
-		state := "disabled"
+		state := faintStyle.Render("○ disabled")
 		if m.mgr.chanAns.Enabled {
-			state = "enabled"
+			state = okStyle.Render("● enabled")
 		}
 		fmt.Fprintf(&b, "channel state: %s\n", state)
-		b.WriteString("\n" + hintStyle.Render("up/down/space to toggle, enter to continue, esc to go back") + "\n")
+		b.WriteString("\n" + hintStyle.Render("↑/↓/space toggle   enter continue   esc back") + "\n")
 	case manageChannelsField:
 		if m.mgr.chanSaving {
 			b.WriteString("saving...\n")
@@ -951,42 +944,37 @@ func (m model) manageView() string {
 		}
 	case manageSettingsGroups:
 		if m.mgr.setLoading {
-			b.WriteString("loading current settings...\n")
+			b.WriteString(faintStyle.Render("loading current settings...") + "\n")
 		} else {
-			b.WriteString("all settings, by group:\n\n")
+			b.WriteString(panelTitleStyle.Render("ALL SETTINGS") + faintStyle.Render("  by group") + "\n\n")
 			for i, group := range m.mgr.setGroups {
-				cursor := "  "
-				if i == m.mgr.setGroupCur {
-					cursor = "> "
-				}
-				fmt.Fprintf(&b, "%s%s\n", cursor, group)
+				b.WriteString(menuRow(i == m.mgr.setGroupCur, group) + "\n")
 			}
 			if m.mgr.setErr != nil {
 				b.WriteString("\n" + errStyle.Render(fmt.Sprintf("could not load the current config: %v", m.mgr.setErr)) + "\n")
 			}
-			b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to open, esc to go back") + "\n")
+			b.WriteString("\n" + hintStyle.Render("↑/↓ choose   enter open   esc back") + "\n")
 		}
 	case manageSettingsKeys:
 		if len(m.mgr.setKeys) == 0 {
-			b.WriteString("no keys in this group.\n")
+			b.WriteString(faintStyle.Render("no keys in this group.") + "\n")
 		} else {
 			for i, ki := range m.mgr.setKeys {
-				cursor := "  "
-				if i == m.mgr.setKeyCur {
-					cursor = "> "
-				}
 				val := ""
 				if m.mgr.setCfg != nil {
 					val, _ = m.mgr.setCfg.Get(ki.Name)
 				}
 				restart := ""
 				if ki.RestartRequired {
-					restart = " (restart required)"
+					restart = warnStyle.Render(" (restart required)")
 				}
-				fmt.Fprintf(&b, "%s%-28s %-16s %s%s\n", cursor, ki.Name, val, ki.Help, restart)
+				// key name + current value, then the help/restart note dimmed.
+				row := fmt.Sprintf("%-28s %s", ki.Name, signalStyle.Render(fmt.Sprintf("%-16s", val)))
+				row += faintStyle.Render(ki.Help) + restart
+				b.WriteString(menuRow(i == m.mgr.setKeyCur, row) + "\n")
 			}
 		}
-		b.WriteString("\n" + hintStyle.Render("up/down to choose, enter to edit, esc to go back") + "\n")
+		b.WriteString("\n" + hintStyle.Render("↑/↓ choose   enter edit   esc back") + "\n")
 	case manageSettingsValue:
 		fmt.Fprintf(&b, "%s (%s):\n\n%s\n", m.mgr.setKey, currentSettingsKeyHelp(m.mgr.setKeys, m.mgr.setKeyCur), m.mgr.setValueIn.View())
 		if m.mgr.setRestart {
@@ -995,11 +983,11 @@ func (m model) manageView() string {
 		b.WriteString(manageApplyingOrHint(m.mgr.applying))
 	case manageResult:
 		if m.mgr.applyErr != nil {
-			b.WriteString(errStyle.Render(fmt.Sprintf("apply failed: %v", m.mgr.applyErr)) + "\n")
+			b.WriteString(critStyle.Render("✗ apply failed: ") + fmt.Sprintf("%v", m.mgr.applyErr) + "\n")
 		} else {
-			b.WriteString("applied.\n")
+			b.WriteString(okStyle.Render("✓ applied") + "\n")
 			if m.mgr.setKey != "" && m.mgr.setRestart {
-				b.WriteString(hintStyle.Render("this setting only takes effect after a daemon restart") + "\n")
+				b.WriteString(warnStyle.Render("this setting only takes effect after a daemon restart") + "\n")
 			}
 		}
 		b.WriteString("\n" + hintStyle.Render("press any key to return to the menu") + "\n")
@@ -1038,27 +1026,19 @@ func (m model) monitorListView() string {
 		b.WriteString(errStyle.Render(fmt.Sprintf("error: %v", m.mgr.monErr)) + "\n\n")
 	}
 	if len(m.mgr.monRows) == 0 {
-		b.WriteString("no monitorable targets discovered.\n")
+		b.WriteString(faintStyle.Render("no monitorable targets discovered.") + "\n")
 	} else {
 		for i, row := range m.mgr.monRows {
-			cursor := "  "
-			if i == m.mgr.monCursor {
-				cursor = "> "
-			}
-			state := "on"
-			if !row.Enabled {
-				state = "off"
-			}
-			if !row.Available {
-				state = "unavailable"
-			}
-			threshold := "-"
+			threshold := faintStyle.Render("thr -")
 			if row.ThresholdSet {
-				threshold = strconv.FormatFloat(row.Threshold, 'f', -1, 64)
+				threshold = faintStyle.Render("thr ") + signalStyle.Render(strconv.FormatFloat(row.Threshold, 'f', -1, 64))
 			}
-			fmt.Fprintf(&b, "%s%-28s %-8s %-12s %s\n", cursor, row.ID, row.Kind, state, threshold)
+			line := fmt.Sprintf("%-28s %s  %s  %s",
+				row.ID, faintStyle.Render(fmt.Sprintf("%-8s", row.Kind)),
+				stateBadge(row.Enabled, row.Available), threshold)
+			b.WriteString(menuRow(i == m.mgr.monCursor, line) + "\n")
 		}
 	}
-	b.WriteString("\n" + hintStyle.Render("up/down to move, enter/space to toggle, t to edit threshold, esc to go back") + "\n")
+	b.WriteString("\n" + hintStyle.Render("↑/↓ move   enter/space toggle   t threshold   esc back") + "\n")
 	return b.String()
 }

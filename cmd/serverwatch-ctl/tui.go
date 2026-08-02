@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -693,6 +694,12 @@ func (m model) homeView() string {
 	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.systemPanel(), "  ", m.alertsPanel())
 	b.WriteString(body + "\n")
+	if d := m.disksPanel(); d != "" {
+		b.WriteString(d + "\n")
+	}
+	if s := m.availabilityStrip(); s != "" {
+		b.WriteString(s + "\n")
+	}
 	b.WriteString(m.inventoryLine() + "\n\n")
 	b.WriteString(m.homeHints() + "\n")
 	return b.String()
@@ -732,7 +739,56 @@ func (m model) systemPanel() string {
 		fmt.Fprintf(&b, "%s %s\n", labelStyle.Render("TEMP"),
 			meterStyle(m.snap.TempC).Render(fmt.Sprintf("%.1f°C", m.snap.TempC)))
 	}
+	fmt.Fprintf(&b, "%s %s\n", labelStyle.Render("NET "),
+		faintStyle.Render("↓"+humanRate(m.snap.NetRxBps)+"  ↑"+humanRate(m.snap.NetTxBps)))
 	return panelStyle.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// disksPanel is the boxed DISKS panel: the top mounts by usage, each with a
+// coloured usage bar. Empty (renders nothing) when disk collection produced
+// no mounts.
+func (m model) disksPanel() string {
+	if len(m.snap.Disks) == 0 {
+		return ""
+	}
+	ds := append([]core.DiskView(nil), m.snap.Disks...)
+	sort.Slice(ds, func(i, j int) bool { return ds[i].UsagePct > ds[j].UsagePct })
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render("DISKS") + "\n")
+	for i, d := range ds {
+		if i >= 5 {
+			fmt.Fprintf(&b, "%s\n", faintStyle.Render(fmt.Sprintf("+%d more mounts", len(ds)-5)))
+			break
+		}
+		mount := d.Mount
+		if mount == "" {
+			mount = d.Device
+		}
+		fmt.Fprintf(&b, "%s %s %s\n", labelStyle.Render(fmt.Sprintf("%-16s", trunc(mount, 16))),
+			meterStyle(d.UsagePct).Render(bar(d.UsagePct, 10)), pctText(d.UsagePct))
+	}
+	return panelStyle.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// availabilityStrip renders the 24h up/down blocks (green up, red down) plus
+// the uptime %, total downtime, and incident count. Empty when the snapshot
+// carries no availability blocks.
+func (m model) availabilityStrip() string {
+	av := m.snap.Availability
+	if len(av.Blocks) == 0 {
+		return ""
+	}
+	var blocks strings.Builder
+	for _, blk := range av.Blocks {
+		if blk.Down {
+			blocks.WriteString(critStyle.Render("▇"))
+		} else {
+			blocks.WriteString(okStyle.Render("▇"))
+		}
+	}
+	meta := faintStyle.Render(fmt.Sprintf("  uptime %.2f%%   %s down   %s",
+		av.UptimePct, av.DowntimeStr, av.IncidentsLabel))
+	return labelStyle.Render("24h ") + blocks.String() + meta
 }
 
 // alertsPanel is the boxed ALERTS panel: a firing count and the top few

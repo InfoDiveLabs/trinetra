@@ -213,23 +213,18 @@ func (m model) channelsListView() string {
 		b.WriteString(errStyle.Render(fmt.Sprintf("error: %v", m.mgr.chanErr)) + "\n\n")
 	}
 	if m.mgr.chanTestMsg != "" {
-		b.WriteString(m.mgr.chanTestMsg + "\n\n")
+		b.WriteString(okStyle.Render("✓ ") + m.mgr.chanTestMsg + "\n\n")
 	}
 	if len(m.mgr.chanList) == 0 {
-		b.WriteString("no channels configured.\n")
+		b.WriteString(faintStyle.Render("no channels configured.") + "\n")
 	} else {
 		for i, cc := range m.mgr.chanList {
-			cursor := "  "
-			if i == m.mgr.chanCursor {
-				cursor = "> "
-			}
-			state := "off"
-			if cc.Enabled {
-				state = "on"
-			}
-			fmt.Fprintf(&b, "%s%-16s %-10s %s\n", cursor, cc.Name, cc.Type, state)
+			line := fmt.Sprintf("%-16s %s  %s",
+				cc.Name, faintStyle.Render(fmt.Sprintf("%-10s", cc.Type)),
+				stateBadge(cc.Enabled, true))
+			b.WriteString(menuRow(i == m.mgr.chanCursor, line) + "\n")
 		}
 	}
-	b.WriteString("\n" + hintStyle.Render("a: add   e: edit   d: remove   t: test   esc: back") + "\n")
+	b.WriteString("\n" + hintStyle.Render("a add   e edit   d remove   t test   esc back") + "\n")
 	return b.String()
 }

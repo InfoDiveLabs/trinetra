@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -165,10 +166,61 @@ func severityGlyph(sev string) string {
 	}
 }
 
+// selectedRowStyle highlights the row under the cursor in menu/list screens.
+var selectedRowStyle = lipgloss.NewStyle().Bold(true).Foreground(colSignal)
+
+// menuRow renders a selectable list row: a caret + text, highlighted (bold,
+// accent colour) when it is the row under the cursor and plainly indented
+// otherwise, so the selection reads at a glance.
+func menuRow(selected bool, text string) string {
+	if selected {
+		return selectedRowStyle.Render("▸ " + text)
+	}
+	return "  " + text
+}
+
+// stateBadge renders an enabled/available state as a coloured dot + word, for
+// the monitor-thresholds and channels tables.
+func stateBadge(enabled, available bool) string {
+	switch {
+	case !available:
+		return critStyle.Render("○ unavailable")
+	case enabled:
+		return okStyle.Render("● on")
+	default:
+		return faintStyle.Render("○ off")
+	}
+}
+
+// manageIcons decorates the top-level management menu rows.
+var manageIcons = map[string]string{
+	"schedule":           "🗓",
+	"quiet hours":        "🌙",
+	"healthchecks":       "❤",
+	"monitor thresholds": "📊",
+	"channels":           "🔔",
+	"all settings":       "⚙",
+}
+
 // breadcrumb renders a "serverwatch ▸ <leaf>" heading so a sub-screen always
 // shows where it sits relative to Home.
 func breadcrumb(leaf string) string {
 	return faintStyle.Render("serverwatch") + dimStyle.Render(" ▸ ") + titleStyle.Render(leaf)
+}
+
+// humanRate renders a bytes-per-second rate compactly (B/s, KB/s, MB/s,
+// GB/s), matching the web UI's humanRate helper.
+func humanRate(bps float64) string {
+	switch {
+	case bps >= 1e9:
+		return fmt.Sprintf("%.1fGB/s", bps/1e9)
+	case bps >= 1e6:
+		return fmt.Sprintf("%.1fMB/s", bps/1e6)
+	case bps >= 1e3:
+		return fmt.Sprintf("%.0fKB/s", bps/1e3)
+	default:
+		return fmt.Sprintf("%.0fB/s", bps)
+	}
 }
 
 // trunc shortens s to at most n runes, appending an ellipsis when it cuts.

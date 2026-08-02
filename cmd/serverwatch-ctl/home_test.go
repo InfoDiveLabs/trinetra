@@ -25,8 +25,18 @@ func homeFixture() model {
 			Processes:         core.ProcessCounts{Total: 3728, Running: 2, Zombie: 1},
 			ContainersRunning: 12, ContainersTotal: 48,
 			UnitsFailed: 0, UnitsTotal: 212,
-			Disks:         []core.DiskView{{}, {}, {}},
+			NetRxBps: 1_500_000, NetTxBps: 300_000,
+			Disks: []core.DiskView{
+				{Mount: "/", UsagePct: 82.5},
+				{Mount: "/data", UsagePct: 40.0},
+			},
 			DisksCritical: 1,
+			Availability: core.Availability{
+				Blocks:         []core.AvailabilityBlock{{Down: false}, {Down: true}, {Down: false}},
+				UptimePct:      99.86,
+				DowntimeStr:    "2m",
+				IncidentsLabel: "1 incident",
+			},
 		},
 		cpuHist: []float64{10, 20, 40, 30, 60, 80, 77.7},
 	}
@@ -43,6 +53,17 @@ func TestHomeViewRendersDashboard(t *testing.T) {
 	for _, want := range []string{"online", "SYSTEM", "ALERTS", "CPU", "77", "docker:web", "12", "212"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("homeView missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// TestHomeViewShowsDetail: the detailed Home surfaces network throughput, a
+// DISKS panel with per-mount usage, and the 24h availability strip.
+func TestHomeViewShowsDetail(t *testing.T) {
+	out := homeFixture().homeView()
+	for _, want := range []string{"NET", "DISKS", "/data", "uptime", "99.8"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("home detail missing %q\n---\n%s", want, out)
 		}
 	}
 }
