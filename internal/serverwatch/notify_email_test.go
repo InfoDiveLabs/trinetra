@@ -123,7 +123,7 @@ func TestEmailHeaderInjection(t *testing.T) {
 	// The injection surface is the header block (everything before the
 	// blank line that separates headers from body). The body legitimately
 	// reflects the Title, so "Bcc:"/evil@ appearing there is harmless text,
-	// not a smuggled header — scope the assertions to the header block.
+	// not a smuggled header -- scope the assertions to the header block.
 	headers, _, ok := strings.Cut(msg, "\r\n\r\n")
 	if !ok {
 		t.Fatalf("message has no header/body separator:\n%s", msg)

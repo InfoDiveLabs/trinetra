@@ -54,7 +54,7 @@ func parseUnits(s string) []UnitInfo {
 // usually root-accessible without sudo, but the sudo fallback is harmless if
 // it isn't) and parses the full unit inventory. Snapshot-only: unlike
 // parseFailedUnits below (used for --failed alerting), this is never fed
-// into the SampleStore as a series — full unit-name cardinality per host
+// into the SampleStore as a series -- full unit-name cardinality per host
 // makes that a bad fit for time-series storage.
 func listUnits(x Exec) ([]UnitInfo, error) {
 	out, err := runMaybeSudo(x, "systemctl", "list-units", "--type=service", "--all", "--plain", "--no-legend")
@@ -78,6 +78,23 @@ func parseFailedUnits(s string) []string {
 	return out
 }
 
+// DiscoverLocal enumerates monitorable targets on THIS host using the real
+// OS-backed Exec/FileSource (os/exec, os.ReadFile, filepath.Glob) -- the
+// same probes cmdMonitor (systemd.go) runs for `serverwatch monitor list`.
+// Exported so a caller guaranteed to run on the same host as the daemon it
+// is managing -- serverwatch-ctl, whose control socket is always a local
+// unix socket (internal/control), never a network one -- can list targets
+// for its monitor-thresholds screen without duplicating Discover's exec/fs
+// plumbing or routing target discovery through core.API (which would mean
+// running these same df/docker/smartctl probes on every core.API.Monitoring()
+// call, including the web dashboard's Monitoring page poll -- see the
+// beta-2 B2 task 2 report for why that path was rejected). See Discover for
+// the general, dependency-injected form cmdMonitor and this package's own
+// tests use.
+func DiscoverLocal() []Target {
+	return Discover(osExec{}, osFS{})
+}
+
 // Discover enumerates all monitorable targets on the host.
 func Discover(x Exec, fs FileSource) []Target {
 	var ts []Target
@@ -99,7 +116,7 @@ func Discover(x Exec, fs FileSource) []Target {
 	// Without the fstype gate, a root daemon on a docker host would surface
 	// one `disk:<overlay>` target per container (plus squashfs/tmpfs/nsfs
 	// pseudo-mounts) in `monitor list`/`monitor threshold`, none of which
-	// ever populate snap.Disks — the two paths must agree on what a real
+	// ever populate snap.Disks -- the two paths must agree on what a real
 	// disk is (see collectSlow and fix-disk-telegram-brief.md).
 	if out, err := x.Run("df", "-PT"); err == nil {
 		typed := parseDFTypes(string(out))
@@ -154,7 +171,7 @@ func isRealMount(m string) bool {
 	// if isRealFsType's fstype denylist somehow doesn't catch them (e.g. a
 	// bind-mount or future overlay driver reporting a real-looking fstype).
 	// A root daemon on a docker host otherwise sees one mount per container
-	// under /var/lib/docker/overlay2/<hash>/merged — this is the field bug
+	// under /var/lib/docker/overlay2/<hash>/merged -- this is the field bug
 	// that motivated this whole filter (see fix-disk-telegram-brief.md).
 	for _, p := range []string{
 		"/var/lib/docker/", "/var/lib/containers/", "/var/lib/kubelet/",

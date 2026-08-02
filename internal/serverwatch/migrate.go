@@ -1,11 +1,11 @@
 // Package serverwatch: migrate.go implements the `serverwatch migrate`
-// subcommand (s9 in docs/DESIGN-storage.md): a one-shot importer that reads
+// subcommand (s9 in docs/handbook/09-storage-and-data-model.md): a one-shot importer that reads
 // every legacy JSONL sample/downtime record written by the old Store
 // (store.go) and re-appends it into the configured SampleStore, then
 // archives the legacy files.
 //
 // Idempotency note: archiving the legacy files alone does NOT make migrate
-// safe to re-run — a second run would re-read whatever legacy data is on disk
+// safe to re-run -- a second run would re-read whatever legacy data is on disk
 // and re-import (duplicate) it. To make migrate a true one-shot we drop a
 // marker file (<oldDir>/.migrated, containing the unix time of the import)
 // after the first successful import and refuse to import again while it
@@ -51,7 +51,7 @@ func readMarker(oldDir string) (time.Time, bool) {
 //
 // It is a guarded one-shot: unless force is set, an existing marker file
 // (see migratedMarker) short-circuits the whole operation to (0, 0, nil)
-// with skipped=true — this is what prevents a double-import of the same
+// with skipped=true -- this is what prevents a double-import of the same
 // legacy files on a second run.
 //
 // When it does import, it: appends every sample/event, calls
@@ -141,7 +141,7 @@ func migrateLegacy(store SampleStore, oldDir string, now int64, force bool) (sam
 // archiveDest returns the rename target for archiving base: "<base>.migrated"
 // normally, or "<base>.migrated.<now>" when the plain target already exists
 // (from an earlier --force run), so an existing archive is never overwritten
-// — preserving the rename-not-delete audit trail.
+// -- preserving the rename-not-delete audit trail.
 func archiveDest(base string, now int64) string {
 	dst := base + ".migrated"
 	if _, err := os.Stat(dst); err == nil {

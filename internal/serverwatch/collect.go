@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type CPUStat struct{ Total, Idle uint64 }
@@ -96,18 +95,6 @@ func parseLoadavg(s string) (l1, l5, l15 float64, err error) {
 	}
 	l15, err = strconv.ParseFloat(f[2], 64)
 	return
-}
-
-func parseUptime(s string) (time.Duration, error) {
-	f := strings.Fields(s)
-	if len(f) < 1 {
-		return 0, fmt.Errorf("bad uptime")
-	}
-	secs, err := strconv.ParseFloat(f[0], 64)
-	if err != nil {
-		return 0, err
-	}
-	return time.Duration(secs * float64(time.Second)), nil
 }
 
 type DiskUsage struct {

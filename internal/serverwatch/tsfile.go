@@ -1,21 +1,21 @@
 // Package serverwatch: tsfile.go implements the default "tsfile" SampleStore
-// backend described in docs/DESIGN-storage.md — a compact, append-only,
+// backend described in docs/handbook/09-storage-and-data-model.md -- a compact, append-only,
 // per-series binary store.
 //
 // Layout under dir:
 //
-//	<dir>/ts/raw/<safeMetric>.tsd  — raw samples, one record per Append
-//	<dir>/ts/1m/<safeMetric>.tsd   — 1-minute rollups, populated by Downsample
+//	<dir>/ts/raw/<safeMetric>.tsd  -- raw samples, one record per Append
+//	<dir>/ts/1m/<safeMetric>.tsd   -- 1-minute rollups, populated by Downsample
 //	                                 (Query on an absent file just returns no
 //	                                 points)
-//	<dir>/ts/events.tsd            — downtime events
+//	<dir>/ts/events.tsd            -- downtime events
 //
 // Every file starts with a fixed 16-byte header (magic, version, record
 // length, resolution) followed by fixed-width records appended in
 // nondecreasing timestamp order. Range queries binary-search the sorted
 // records by offset instead of parsing the whole file. A torn trailing
 // record (a partial write from a crash mid-append) is tolerated by simply
-// excluding it from the record count — see readCount below.
+// excluding it from the record count -- see readCount below.
 //
 // tsfileStore opens files per operation rather than holding descriptors
 // open, so Close is a no-op; there is nothing to flush.
@@ -73,7 +73,7 @@ const tsHexDigits = "0123456789ABCDEF"
 // reversible, injective encoding: bytes in the unreserved set
 // [A-Za-z0-9._-] pass through literally, and every other byte (including
 // '%', '/', ':', space, control bytes) is percent-encoded as %XX with
-// uppercase hex. Distinct ids therefore always produce distinct filenames —
+// uppercase hex. Distinct ids therefore always produce distinct filenames --
 // this prevents unrelated series (e.g. discovery-driven mounts "/mnt/my disk"
 // vs "/mnt/my/disk") from silently colliding into one .tsd file. The result
 // stays human-readable for the common ASCII ids. Empty id maps to "%00" so

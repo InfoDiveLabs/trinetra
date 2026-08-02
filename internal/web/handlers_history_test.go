@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -85,7 +83,7 @@ func TestSeriesAPIReturnsPointsForValidRange(t *testing.T) {
 // per-mount disk:<mount> series (the mockup history.html shows a full
 // 1m/5m/15m load chart and a per-filesystem disk-usage panel, both dropped
 // by the first port) come back through the same /api/series endpoint just
-// like cpu — the whole restore leans on these being ordinary queryable
+// like cpu -- the whole restore leans on these being ordinary queryable
 // metrics, nothing special-cased.
 func TestSeriesAPIReturnsLoadAndDiskMetrics(t *testing.T) {
 	api := fakeAPI{series: map[string][]SeriesPoint{
@@ -355,8 +353,8 @@ func TestHistoryPageRendersDiskAndDowntimeSections(t *testing.T) {
 }
 
 // TestHistoryPageRendersAppShellAndChartHooks pins GET /history: it must
-// render through the full app-shell layout (base.html, nav/topbar) — unlike
-// /login or /enroll's bare layout — with the metric-picker/time-range chips
+// render through the full app-shell layout (base.html, nav/topbar) -- unlike
+// /login or /enroll's bare layout -- with the metric-picker/time-range chips
 // and one chart container per metric app.js's swBootHistoryCharts targets.
 func TestHistoryPageRendersAppShellAndChartHooks(t *testing.T) {
 	d := historyTestDeps(t, nil)

@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -13,7 +11,7 @@ import (
 // content-hash ?v= query used for cache-busting.
 func TestAssetURLIsVersioned(t *testing.T) {
 	if assetVersion == "" {
-		t.Fatal("assetVersion is empty — hash over embedded assets failed")
+		t.Fatal("assetVersion is empty -- hash over embedded assets failed")
 	}
 	got := assetURL("/assets/app.js")
 	if !strings.HasPrefix(got, "/assets/app.js?v=") {

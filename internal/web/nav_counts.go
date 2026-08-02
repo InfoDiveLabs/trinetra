@@ -1,17 +1,15 @@
-//go:build web
-
 package web
 
 import "strconv"
 
 // NavCounts holds the small per-request counts rendered as the sidebar nav's
 // badges (base.html's "nav" block, NavItem.Badge): Alerts/Channels/Users/
-// Monitoring. These replace the mockup's hardcoded demo values (220/2/5/3) —
+// Monitoring. These replace the mockup's hardcoded demo values (220/2/5/3) --
 // see navCountsFor's doc for exactly what each counts and how it degrades.
 type NavCounts struct {
 	// Alerts is the number of entries in the daemon's current active-alert
 	// map (Deps.AlertStatePath), i.e. how many conditions are firing right
-	// now (regardless of ack state — ack only changes notification/status
+	// now (regardless of ack state -- ack only changes notification/status
 	// pill behavior elsewhere, not whether the condition itself is active).
 	Alerts int
 	// Channels is len(Deps.Cfg().Channels): how many notification channels
@@ -21,14 +19,14 @@ type NavCounts struct {
 	// (<StateDir>/users.json).
 	Users int
 	// Monitoring is the live snapshot's container count
-	// (DashboardView.ContainersTotal) — the brief's "stable default" choice
+	// (DashboardView.ContainersTotal) -- the brief's "stable default" choice
 	// for a single meaningful number on the Monitoring nav entry.
 	Monitoring int
 }
 
 // navCountsFor computes NavCounts from Deps: a handful of cheap, per-request
 // reads (one small JSON decode, one config field, one JSON-file user-store
-// list, one already-computed snapshot field) — safe to call on every page
+// list, one already-computed snapshot field) -- safe to call on every page
 // render. Every source is defensive: a nil Cfg/Snapshot func, a missing or
 // garbage AlertState file, or an empty/absent user store all degrade to 0
 // rather than panicking or failing the page, mirroring

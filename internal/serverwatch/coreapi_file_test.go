@@ -216,7 +216,7 @@ func TestFileAPIActiveAlertsMapsFields(t *testing.T) {
 
 	want := []core.AlertRecord{
 		{Key: "cpu", Severity: "critical", Kind: "", Source: "cpu = 95.0 >= threshold 90.0", Time: 1000, Acked: false},
-		{Key: "mem", Severity: "warning", Kind: "", Source: "mem = 80.0 >= threshold 75.0", Time: 2000, Acked: true},
+		{Key: "mem", Severity: "warning", Kind: "", Source: "mem = 80.0 >= threshold 75.0", Time: 2000, Acked: true, AckedAt: 2500},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ActiveAlerts() = %+v, want %+v (sorted by key)", got, want)
@@ -247,9 +247,9 @@ func TestFileAPIAlertHistoryNewestFirstAndLimit(t *testing.T) {
 		t.Fatalf("AlertHistory(0, 0): %v", err)
 	}
 	wantAll := []core.AlertRecord{
-		{Key: "mem", Severity: "warning", Kind: "fire", Source: "threshold", Time: 300, Acked: false},
-		{Key: "cpu", Severity: "critical", Kind: "recover", Source: "threshold", Time: 200, Acked: false},
-		{Key: "cpu", Severity: "critical", Kind: "fire", Source: "threshold", Time: 100, Acked: false},
+		{Key: "mem", Severity: "warning", Kind: "fire", Source: "threshold", Time: 300, Acked: false, Title: "Mem high"},
+		{Key: "cpu", Severity: "critical", Kind: "recover", Source: "threshold", Time: 200, Acked: false, Title: "CPU normal"},
+		{Key: "cpu", Severity: "critical", Kind: "fire", Source: "threshold", Time: 100, Acked: false, Title: "CPU high"},
 	}
 	if !reflect.DeepEqual(got, wantAll) {
 		t.Fatalf("AlertHistory(0, 0) = %+v, want %+v (newest first)", got, wantAll)
@@ -279,16 +279,17 @@ func TestFileAPIConfigReturnsPassedCfg(t *testing.T) {
 	}
 }
 
-// TestFileAPISubscribeReturnsSentinel pins that Subscribe -- the one method
-// still deferred to S5 (the alerting event-bus inversion) -- returns
-// errCoreNotImplemented, same as inprocAPI. Every other method (including
-// Doctor, task 7, and ApplyConfig/AckAlert/UnackAlert/TestChannel, task 8)
-// is implemented for real now and covered by its own test elsewhere in this
+// TestFileAPISubscribeReturnsSentinel pins that Subscribe -- fileAPI has no
+// live daemon behind it to stream from, so this is a permanent limitation,
+// not a deferred-to-later stub like the rest of core.API once was -- always
+// returns errStreamRequiresDaemon. Every other method (including Doctor,
+// task 7, and ApplyConfig/AckAlert/UnackAlert/TestChannel, task 8) is
+// implemented for real and covered by its own test elsewhere in this
 // file/coreapi_write_test.go.
 func TestFileAPISubscribeReturnsSentinel(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
-	if _, err := api.Subscribe(nil); err != errCoreNotImplemented { //nolint:staticcheck // nil context: exercising the stub only
-		t.Errorf("Subscribe() err = %v, want errCoreNotImplemented", err)
+	if _, err := api.Subscribe(nil); err != errStreamRequiresDaemon { //nolint:staticcheck // nil context: exercising the stub only
+		t.Errorf("Subscribe() err = %v, want errStreamRequiresDaemon", err)
 	}
 }
 

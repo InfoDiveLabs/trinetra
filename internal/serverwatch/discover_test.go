@@ -16,6 +16,21 @@ func (f fakeFS) Read(p string) ([]byte, error) {
 }
 func (f fakeFS) Glob(p string) ([]string, error) { return f.globs[p], nil }
 
+// TestDiscoverLocalReturnsSlice is a smoke test for the exported OS-backed
+// wrapper (osExec{}/osFS{} instead of a fake): it just asserts DiscoverLocal
+// runs to completion and returns a (possibly empty, on a CI sandbox with no
+// docker/smartctl) non-nil-or-nil slice without panicking. Discover itself
+// (with fakeExec/fakeFS) is exercised in detail by the rest of this file;
+// this only pins that the real Exec/FileSource wiring compiles and runs.
+func TestDiscoverLocalReturnsSlice(t *testing.T) {
+	got := DiscoverLocal()
+	if got == nil {
+		// nil is a valid "nothing discovered" result on a sandboxed host with
+		// no docker/disks/thermal zones/smartctl; just don't want a panic.
+		return
+	}
+}
+
 func TestParseFailedUnits(t *testing.T) {
 	s := "nginx.service loaded failed failed A high performance web server\n" +
 		"cron.service  loaded failed failed Regular background program\n"

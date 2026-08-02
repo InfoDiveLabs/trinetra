@@ -403,7 +403,7 @@ func TestEventToAlert(t *testing.T) {
 // dispatched via SendMessage (now parse_mode=HTML), and Event.Text embeds
 // live container/unit/device names (via buildSlowChecks' FireMsg/RecoverMsg
 // and breach()). A name containing <, >, or & would produce unbalanced HTML,
-// Telegram would 400, and the alert — the core alerting path — would be
+// Telegram would 400, and the alert -- the core alerting path -- would be
 // silently dropped. eventToAlert must HTML-escape e.Text at the source (it's
 // plain text), leaving the intentional-HTML boot/digest paths untouched (see
 // TestBootReportKeepsIntentionalHTML).
@@ -621,7 +621,7 @@ func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 // squashfs/tmpfs/nsfs pseudo-mounts in `df -PT -B1`. collectSlow must derive
 // BOTH snap.Disks and snap.DiskDetail from the typed df output, gated by
 // isRealMount && isRealFsType, so only the real ext4 mounts survive in
-// either map — not the ~70+ junk entries that used to blow past Telegram's
+// either map -- not the ~70+ junk entries that used to blow past Telegram's
 // 4096-char message limit.
 func TestCollectSlowFiltersDockerOverlayAndPseudoMounts(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
@@ -1274,7 +1274,7 @@ func TestDigestNowNilStore(t *testing.T) {
 
 func TestSamplerMetricSetsWriteThroughToStore(t *testing.T) {
 	// Integration-style: exercise the actual write path a fast/slow tick
-	// takes — fastMetricSet/slowMetricSet feeding SampleStore.Append — against
+	// takes -- fastMetricSet/slowMetricSet feeding SampleStore.Append -- against
 	// a real (memory) backend, then read it back via Query.
 	store, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {

@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -305,7 +303,7 @@ func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 // TestRegistrationRejectsWrongOrigin is this task's requirement-4 pin: an
 // attestation whose clientData.origin doesn't match the WebAuthn instance's
 // configured RPOrigins must be rejected even though the challenge/rpID
-// otherwise line up — this is the check that stops a WebAuthn ceremony
+// otherwise line up -- this is the check that stops a WebAuthn ceremony
 // completed against a spoofed/incorrect origin from ever registering.
 func TestRegistrationRejectsWrongOrigin(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
@@ -384,7 +382,7 @@ func TestWebAuthnConfigDerivesFromRequestOriginInProxyMode(t *testing.T) {
 }
 
 // Ceremony-stash-specific expiry/eviction/capacity tests used to live here
-// (Task 4's temporary in-memory ceremonyStash). That type is gone — both
+// (Task 4's temporary in-memory ceremonyStash). That type is gone -- both
 // registration and login ceremonies now stash their SessionData in the real
 // SessionStore (session.go), whose equivalent expiry/GC/capacity behavior is
 // pinned in session_test.go (TestSessionGetTreatsExpiredAsAbsent,

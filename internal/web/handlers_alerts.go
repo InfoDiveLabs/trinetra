@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -17,7 +15,7 @@ import (
 // alertLogEvent mirrors serverwatch.AlertEvent's JSON encoding just enough
 // to decode it (alertlog.go's AlertEvent/Delivery), the same "decode the
 // JSON shape, not the Go type" pattern activeAlertView/alertStateFile
-// (handlers_dashboard.go) already use for AlertState — see that file's doc
+// (handlers_dashboard.go) already use for AlertState -- see that file's doc
 // for why this doesn't create an import-cycle risk.
 type alertLogEvent struct {
 	Time      int64  `json:"time"`
@@ -34,10 +32,10 @@ type alertLogEvent struct {
 }
 
 // loadAlertLogEvents reads and decodes every line of path (Deps.AlertLogPath,
-// an append-only JSONL file — see alertlog.go's AlertLog) into
+// an append-only JSONL file -- see alertlog.go's AlertLog) into
 // []alertLogEvent, newest first. A missing file, an empty path (not
 // configured, e.g. some tests), or any decode error along the way all
-// degrade to "as many valid events as were found" rather than a 500 —
+// degrade to "as many valid events as were found" rather than a 500 --
 // individual malformed lines are skipped (mirroring AlertLog.
 // AlertEventsSince's own tolerance for corrupt lines), and a totally
 // unreadable/garbage file just yields an empty list. This page is
@@ -83,7 +81,7 @@ type alertHistoryRow struct {
 
 // deliveredNames renders an alertLogEvent's Delivered slice as a
 // comma-joined list of channels that actually accepted the notification
-// (OK == true), or "—" if none did (or none were configured).
+// (OK == true), or "-" if none did (or none were configured).
 func deliveredNames(ev alertLogEvent) string {
 	var names []string
 	for _, d := range ev.Delivered {
@@ -92,14 +90,14 @@ func deliveredNames(ev alertLogEvent) string {
 		}
 	}
 	if len(names) == 0 {
-		return "—"
+		return "-"
 	}
 	return strings.Join(names, ", ")
 }
 
 // alertHistoryRows caps the log to the most recent maxAlertHistoryRows
 // events (newest first, already loadAlertLogEvents's order) for the
-// "Recent history" table — the mockup shows a bounded recent window, not
+// "Recent history" table -- the mockup shows a bounded recent window, not
 // the entire log.
 const maxAlertHistoryRows = 100
 
@@ -160,7 +158,7 @@ func activeAlertRows(active []activeAlertView) []activeAlertRow {
 
 // AlertsPageData is what templates/alerts.html renders against.
 //
-// NOTE: this cannot be named "Active" — PageData already declares an
+// NOTE: this cannot be named "Active" -- PageData already declares an
 // Active string field (the current request path, for base.html's nav
 // highlighting via {{eq .Href $.Active}}), and an explicitly declared field
 // at depth 0 SHADOWS an embedded field of the same name at depth 1, which
@@ -178,7 +176,7 @@ type AlertsPageData struct {
 }
 
 // resolvedInWindow counts "recover" events within the last window (relative
-// to now) — the mockup's "Resolved · 7d" tile.
+// to now) -- the mockup's "Resolved · 7d" tile.
 func resolvedInWindow(events []alertLogEvent, window time.Duration) int {
 	cutoff := time.Now().Add(-window).Unix()
 	n := 0
@@ -195,7 +193,7 @@ func resolvedInWindow(events []alertLogEvent, window time.Duration) int {
 // events_store.go): 100% minus the fraction of the last 30 days spent in a
 // downtime event. Returns (0, false) when d.Events is nil (store-writes-
 // disabled mode, or a test Deps that doesn't wire one) so the caller can
-// render "—" instead of a misleading 100%.
+// render "-" instead of a misleading 100%.
 func uptimePct30d(d Deps) (float64, bool) {
 	if d.Events == nil {
 		return 0, false
@@ -259,7 +257,7 @@ func renderAlertsPage(w http.ResponseWriter, data AlertsPageData) error {
 }
 
 // alertsPageHandler renders GET /alerts: viewer+ per the design doc (see
-// routes.go's wiring) — every signed-in account can see alert history, but
+// routes.go's wiring) -- every signed-in account can see alert history, but
 // only an admin can ack (alertsAckHandler).
 func alertsPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +269,7 @@ func alertsPageHandler(d Deps) http.HandlerFunc {
 }
 
 // ackActiveAlert mirrors one entry of serverwatch.AlertState.Active
-// (anomaly.go's ActiveAlert) closely enough to both read AND write it —
+// (anomaly.go's ActiveAlert) closely enough to both read AND write it --
 // unlike handlers_dashboard.go's read-only alertStateFile, this needs
 // AckedAt too (Ack's contract, anomaly.go) since this handler is the one
 // producing the on-disk ack the daemon's own AlertState.MergeAckFromDisk
@@ -289,7 +287,7 @@ type ackAlertState struct {
 }
 
 // loadAckAlertState reads path into an ackAlertState, defaulting to an
-// empty (non-nil) Active map on a missing file or any decode error — same
+// empty (non-nil) Active map on a missing file or any decode error -- same
 // "never fail the page, just show/act on nothing" tolerance as
 // loadActiveAlerts/loadAlertLogEvents.
 func loadAckAlertState(path string) ackAlertState {
@@ -310,7 +308,7 @@ func loadAckAlertState(path string) ackAlertState {
 
 // saveAckAlertState writes s to path atomically (temp file + rename),
 // mirroring serverwatch.AlertState.Save (anomaly.go) exactly (same
-// marshal-then-atomic-rename shape, same 0o644 perm — alerts.json holds no
+// marshal-then-atomic-rename shape, same 0o644 perm -- alerts.json holds no
 // secrets) so the daemon's own AlertState.Save/Load round-trip the file
 // this handler writes without any format drift.
 func saveAckAlertState(path string, s ackAlertState) error {
@@ -325,15 +323,15 @@ func saveAckAlertState(path string, s ackAlertState) error {
 	return os.Rename(tmp, path)
 }
 
-// alertsAckHandler handles POST /alerts/{key}/ack (admin-only + CSRF — see
+// alertsAckHandler handles POST /alerts/{key}/ack (admin-only + CSRF -- see
 // routes.go's wiring): it flips the named active alert's Acked/AckedAt in
 // Deps.AlertStatePath's on-disk AlertState JSON, which the running daemon
 // reconciles back into its own in-memory copy via AlertState.
-// MergeAckFromDisk (anomaly.go) on its next fire/recover transition — this
+// MergeAckFromDisk (anomaly.go) on its next fire/recover transition -- this
 // handler never touches the daemon's in-process state directly (there is
-// none to touch from this package; see the design note atop
-// internal/serverwatch/web_deps.go for why internal/web can't import
-// serverwatch to do so even if it wanted to).
+// none to touch from this package; internal/web must never import
+// internal/serverwatch, to keep the module graph one-way, so it couldn't
+// touch it directly even if it wanted to).
 func alertsAckHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key, err := credentialFromParam(r.PathValue("key"))

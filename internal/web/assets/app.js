@@ -1,4 +1,4 @@
-/* serverwatch web UI — shared client behavior.
+/* serverwatch web UI -- shared client behavior.
  *
  * Ported from ui-mockup/assets/app.js. The mockup injected the sidebar/topbar
  * shell client-side (from a NAV array + data-shell attributes) and demoed
@@ -7,7 +7,7 @@
  * the real role coming from the session (stubbed to "admin" until Task
  * 5/6's auth lands), so all of that is stripped here. Kept: theme toggle,
  * the SVG gradient defs, the heartbeat/sparkline helpers, and the drawer/
- * modal/tabs/filter/switch interaction handlers — later tasks (dashboard/
+ * modal/tabs/filter/switch interaction handlers -- later tasks (dashboard/
  * monitoring/history/channels pages) reuse these once they render real
  * markup into the same hooks. The mockup's #hbstrip (availability strip)
  * demo builder was removed once the real 24h up/down data was computed
@@ -53,6 +53,32 @@
     var ax={stroke:c.stroke,ticks:{stroke:c.grid},grid:{stroke:c.grid}};
     return [ax,ax];
   }
+
+  // ---- responsive charts ----
+  // uPlot draws to a fixed-pixel <canvas>, so a chart built at one container
+  // width overflows (or under-fills) after a viewport resize or a phone
+  // rotation -- most visible on mobile, where the single-column layout width
+  // changes a lot. Both chart boots (swBootSSE, swBootHistoryCharts) register
+  // their instances here keyed by mount-element id; a debounced global handler
+  // calls uPlot's setSize() to refit each to its container. Keying by id means
+  // a rebuild (e.g. the theme-toggle destroy+recreate) overwrites the stale
+  // entry rather than leaking it. Guarded by isConnected + try/catch so a
+  // just-destroyed instance can't throw.
+  var swChartReg={};
+  function swRegisterChart(u,el){ if(u&&el&&el.id) swChartReg[el.id]={u:u,el:el}; }
+  function swResizeCharts(){
+    Object.keys(swChartReg).forEach(function(id){
+      var c=swChartReg[id];
+      if(!c||!c.el||!c.el.isConnected){ delete swChartReg[id]; return; }
+      var w=c.el.clientWidth;
+      if(w>0){ try{ c.u.setSize({width:w,height:c.el.clientHeight||c.u.height||160}); }catch(e){ delete swChartReg[id]; } }
+    });
+  }
+  var swResizeTO;
+  function swScheduleResize(){ clearTimeout(swResizeTO); swResizeTO=setTimeout(swResizeCharts,120); }
+  window.addEventListener('resize',swScheduleResize);
+  window.addEventListener('orientationchange',swScheduleResize);
+  window.addEventListener('load',swScheduleResize);
 
   // ---- gradient defs ----
   document.body.insertAdjacentHTML('afterbegin','<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'+
@@ -104,7 +130,7 @@
       : '<div class="section-label"><span class="eyebrow">Memory · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Ok',c:'ok'})+'</div>');
     var actions = role==='admin' ? (kind==='container'
       ? '<button class="btn">Restart</button><button class="btn ghost">View logs</button><button class="btn ghost">Pause monitoring</button>'
-      : '<button class="btn ghost">Pause monitoring</button>') : '<span class="note">viewer — read-only</span>';
+      : '<button class="btn ghost">Pause monitoring</button>') : '<span class="note">viewer -- read-only</span>';
     drawer.innerHTML='<div class="dh"><div style="flex:1"><div class="eyebrow">'+kind+'</div><h3 style="margin:2px 0 0;font-size:16px">'+(d.name||'')+'</h3></div>'+stateBadge+'<button class="icon-btn" id="swClose">✕</button></div>'+
       '<div class="db"><dl class="kv">'+info+'</dl>'+charts+
       '<div class="section-label"><span class="eyebrow">Actions</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+actions+'</div></div>';
@@ -129,7 +155,7 @@
   // A real `<input type="checkbox" class="switch">` (every server-rendered
   // switch in config.html/public_settings.html/channels.html's modal forms,
   // plus /settings/public's "enabled" + "panel" checkboxes) is driven purely
-  // by CSS `:checked` (style.css's input.switch:checked rule) — the browser
+  // by CSS `:checked` (style.css's input.switch:checked rule) -- the browser
   // already toggles its checked state, and the visual, on click, with no JS
   // needed at all. Toggling a `.on` class on it too (the mockup's original
   // behavior, ported unmodified) went out of sync with that: an input that
@@ -137,13 +163,13 @@
   // unchecks it natively (checked -> false) would ALSO gain the "on" class
   // (absent -> present), and .switch.on's background rule has no ":checked"
   // guard, so it kept painting the switch as on despite the real control now
-  // being unchecked — exactly the reported "toggle doesn't visually update
+  // being unchecked -- exactly the reported "toggle doesn't visually update
   // until Save" bug (a full-page reload re-renders from the server's actual
   // value and "fixes" it, which is what made it look like only Save could
   // ever update it). Scoping this handler off real inputs entirely fixes
   // that: `:checked` alone drives every real switch's look, correctly and
   // immediately, on every click. What's left for this handler is the one
-  // genuinely decorative `.switch` this app still has — channels.html's
+  // genuinely decorative `.switch` this app still has -- channels.html's
   // per-row enable toggle, a `<button type="submit">` (not an input) whose
   // class carries its OWN state via a server-rendered `{{if $c.Enabled}}on{{
   // end}}`; giving it the same instant-feedback toggle before its form's
@@ -156,7 +182,7 @@
   // dashboard.html wraps its live content in <div id="dashboard-live">
   // (present only on that page, so this is a no-op everywhere else) with
   // fixed element IDs (#val-cpu, #chart-hero, ...) the tile/chart updates
-  // below target. No inline handlers/scripts are used anywhere here — the
+  // below target. No inline handlers/scripts are used anywhere here -- the
   // strict CSP (security.go, script-src 'self' 'nonce-...') only ever
   // authorizes this external file.
   //
@@ -166,7 +192,7 @@
   // rebuilds the two "Top containers" hbar panels (renderContainerBars) from
   // the frame's top_cpu_containers/top_mem_containers, and appends the point
   // to a small client-side rolling buffer that feeds the three live uPlot
-  // charts. There is no history backfill here — full time-range charts
+  // charts. There is no history backfill here -- full time-range charts
   // (querying the SampleStore) are Task 9; these charts only ever show
   // what's arrived over this SSE connection so far.
   window.swBootSSE=function(){
@@ -189,7 +215,7 @@
     // (#top-cpu-bars/#top-mem-bars, dashboard.html) from an SSE frame's
     // top_cpu_containers/top_mem_containers list, mirroring handlers_
     // dashboard.go's containerBars: each row's bar width is normalized
-    // against the list's OWN max value (not a fixed 0-100 scale — MemMiB is
+    // against the list's OWN max value (not a fixed 0-100 scale -- MemMiB is
     // an absolute megabyte figure), and the whole panel is rebuilt from
     // scratch every frame rather than patched in place, so a container
     // list that grows/shrinks/reorders between frames doesn't leave stale
@@ -242,6 +268,7 @@
       var data=[[]]; series.forEach(function(){data.push([]);});
       var u=new uPlot(opts,data,el);
       charts[id]=u;
+      swRegisterChart(u,el);
       return u;
     }
 
@@ -303,8 +330,8 @@
   // ---- live public page (public-rework task: anonymous /public/events) ----
   // templates/public.html wraps its content in <div id="public-live">
   // (present only on that page). This is a SEPARATE, minimal boot function
-  // from swBootSSE above — it opens an EventSource against /public/events
-  // (anonymous, allowlist-filtered server-side — see sse.go's
+  // from swBootSSE above -- it opens an EventSource against /public/events
+  // (anonymous, allowlist-filtered server-side -- see sse.go's
   // publicEventsHandler/buildPublicSSEFrame) rather than /events, and its
   // "snapshot" frame is a small {panels:[{id,label,value,sub}],
   // availability?:{...}} object (publicSSEFrame, sse.go), not a full
@@ -380,7 +407,7 @@
   // data-history data-range="24h"> (present only on that page, so this is a
   // no-op everywhere else); the time-range chips (#historyRange,
   // data-range="1h|6h|24h|7d|30d") pick the [from,to] window the metric
-  // charts query. No inline handlers/scripts anywhere here — same strict CSP
+  // charts query. No inline handlers/scripts anywhere here -- same strict CSP
   // as the rest of this file (security.go, script-src 'self' 'nonce-...').
   //
   // Each chart hook is one of:
@@ -399,7 +426,7 @@
   //
   // The "Downtime · 30d" panel (<div data-downtime>) is filled from
   // GET /api/downtime (downtimeResponse: {events:[{type,start,end,
-  // duration_sec}]}) — a proportional timeline SVG + one row per event,
+  // duration_sec}]}) -- a proportional timeline SVG + one row per event,
   // matching the mockup's markup.
   var HISTORY_COLORS=[CHART_COLORS.signal,CHART_COLORS.info,CHART_COLORS.cyan,CHART_COLORS.violet,CHART_COLORS.warn,CHART_COLORS.crit];
   // HISTORY_METRIC_COLORS gives the single-series charts (cpu/mem/temp) a
@@ -451,6 +478,7 @@
       };
       var u=new uPlot(opts,data,el);
       charts[el.id]=u;
+      swRegisterChart(u,el);
       return u;
     }
 
@@ -648,13 +676,13 @@
             }
           })});
         })
-        .then(function(r){ if(!r.ok) throw new Error('could not finish enrollment'); if(statusEl) statusEl.textContent='Passkey created — you can sign in now.'; })
+        .then(function(r){ if(!r.ok) throw new Error('could not finish enrollment'); if(statusEl) statusEl.textContent='Passkey created -- you can sign in now.'; })
         .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
     });
   }
 
   // ---- passkey login (templates/login.html) ----
-  // No username field — the mockup's login page is a single "Continue with
+  // No username field -- the mockup's login page is a single "Continue with
   // passkey" button, so this uses navigator.credentials.get() against a
   // client-side discoverable ("resident key") credential: the authenticator
   // itself surfaces which stored passkey matches this site, and the server
@@ -686,7 +714,7 @@
             }
           })});
         })
-        .then(function(r){ if(!r.ok) throw new Error('sign-in failed'); if(statusEl) statusEl.textContent='Signed in — redirecting…'; window.location.assign('/'); })
+        .then(function(r){ if(!r.ok) throw new Error('sign-in failed'); if(statusEl) statusEl.textContent='Signed in -- redirecting…'; window.location.assign('/'); })
         .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
     });
   }
@@ -696,10 +724,10 @@
   // quiet-hours control" the task brief calls out to preserve), moved into
   // this external file because the strict CSP (security.go, script-src
   // 'self' 'nonce-...', no unsafe-inline) doesn't authorize inline <script>
-  // blocks — only this file and the one nonce'd boot tag in base.html.
+  // blocks -- only this file and the one nonce'd boot tag in base.html.
   // Adapted from the mockup's <input type=time> (HH:MM) to hour-only
   // <select> elements: config.QuietHours only stores whole hours
-  // ("H-H"/"HH-HH" — see internal/config/config.go's validateQuietHours),
+  // ("H-H"/"HH-HH" -- see internal/config/config.go's validateQuietHours),
   // so minute-granularity in the UI would silently be lossy.
   (function(){
     var panel=document.getElementById('qh');
@@ -721,7 +749,7 @@
       var n=document.createElement('div'); n.className='now';
       var now=new Date(), nm=now.getHours()*60+now.getMinutes();
       n.style.left=(nm/1440*100)+'%'; bar.appendChild(n);
-      if(!enabled){ sum.textContent='off — alerts any time'; sum.className='badge'; }
+      if(!enabled){ sum.textContent='off -- alerts any time'; sum.className='badge'; }
       else {
         var fh=+from.value, th=+to.value, dur=((th-fh+24)%24)||24;
         var wraps=fh>th;
@@ -734,15 +762,41 @@
     render();
   })();
 
-  // ---- logout (base.html topbar sign-out button) ----
-  var logoutBtn=document.getElementById('logoutBtn');
-  if(logoutBtn){
-    logoutBtn.addEventListener('click',function(){
-      var meta=document.querySelector('meta[name="csrf-token"]');
-      var csrf=meta?meta.content:'';
-      fetch('/logout',{method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf}})
-        .then(function(){ window.location.assign('/login'); })
-        .catch(function(){ window.location.assign('/login'); });
-    });
+  // ---- logout (base.html: topbar sign-out button + mobile "More" sheet) ----
+  // Both the desktop sidebar footer (#logoutBtn) and the mobile More sheet
+  // (#logoutBtnSheet) carry a sign-out control; wire whichever exist to the
+  // same POST /logout flow.
+  function swLogout(){
+    var meta=document.querySelector('meta[name="csrf-token"]');
+    var csrf=meta?meta.content:'';
+    fetch('/logout',{method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf}})
+      .then(function(){ window.location.assign('/login'); })
+      .catch(function(){ window.location.assign('/login'); });
   }
+  ['logoutBtn','logoutBtnSheet'].forEach(function(id){
+    var b=document.getElementById(id);
+    if(b) b.addEventListener('click',swLogout);
+  });
+
+  // ---- mobile "More" sheet (base.html bottom-nav) ----
+  // The bottom tab bar's "More" button opens a slide-up sheet listing the
+  // secondary nav items + account/sign-out. Dependency-free: toggle an `.on`
+  // class the CSS (@media max-width:640px) animates; prefers-reduced-motion is
+  // honored purely in CSS (transition:none). The sheet/scrim live in the DOM
+  // on every page but are display:none above 640px, so this is inert on desktop.
+  (function(){
+    var moreBtn=document.getElementById('moreBtn'),
+        sheet=document.getElementById('moreSheet'),
+        scrim=document.getElementById('moreScrim');
+    if(!moreBtn||!sheet||!scrim) return;
+    function open(){ sheet.classList.add('on'); scrim.classList.add('on'); moreBtn.setAttribute('aria-expanded','true'); }
+    function close(){ sheet.classList.remove('on'); scrim.classList.remove('on'); moreBtn.setAttribute('aria-expanded','false'); }
+    function toggle(){ (sheet.classList.contains('on')?close:open)(); }
+    moreBtn.addEventListener('click',toggle);
+    scrim.addEventListener('click',close);
+    // a tap on any nav link inside the sheet navigates away -- close first so
+    // it isn't left open behind the next page's paint on a client-cached back.
+    sheet.addEventListener('click',function(e){ if(e.target.closest('a')) close(); });
+    document.addEventListener('keydown',function(e){ if(e.key==='Escape') close(); });
+  })();
 })();

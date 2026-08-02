@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 	"serverwatch/internal/telegram"
 )
 
@@ -197,7 +198,7 @@ func slowMetricSet(s Snapshot) MetricSet {
 // alongside slowMetricSet on slow ticks. Net rx/tx are surfaced live via
 // Snapshot.ContainerStats/status.json but deliberately NOT persisted as
 // series here: one cpu + one mem series per running container is the
-// cardinality this design accepts (docs/ROADMAP.md #71/#76); adding net
+// cardinality this design accepts (docs/handbook/12-roadmap-and-status.md #71/#76); adding net
 // series per container would double it again for comparatively low value.
 func containerMetricSet(s Snapshot) MetricSet {
 	ms := make(MetricSet, len(s.ContainerStats)*2)
@@ -214,7 +215,7 @@ func containerMetricSet(s Snapshot) MetricSet {
 // (opt-in via collect.net_throughput). rates is nil/empty on the first slow
 // tick after startup (NetRateCalc has no prior sample to diff against yet)
 // and whenever the collector is disabled, in which case this returns an
-// empty MetricSet — the sampler loop's caller skips the Append entirely in
+// empty MetricSet -- the sampler loop's caller skips the Append entirely in
 // that case, same as containerMetricSet's len()>0 guard.
 func netRateMetricSet(rates map[string]IfaceRate) MetricSet {
 	ms := make(MetricSet, len(rates)*2)
@@ -230,7 +231,7 @@ func netRateMetricSet(rates map[string]IfaceRate) MetricSet {
 // into a MetricSet: one "smart:<dev>:temp" entry per device whose parsed
 // Temperature_Celsius/Airflow_Temperature attribute is known (TempC>0).
 // Devices with TempC==0 (attribute absent, or smartctl -A failed for that
-// device this tick) are omitted rather than appending a misleading zero —
+// device this tick) are omitted rather than appending a misleading zero --
 // this is the write-path counterpart of the SMART-attribute collector,
 // appended to the SampleStore alongside slowMetricSet on slow ticks, mirroring
 // containerMetricSet/netRateMetricSet's len()>0-guarded Append pattern.
@@ -338,9 +339,9 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 	snap.DockerAccess = da.method
 	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed
 	// `df -PT -B1` call (device/fstype/usage/size/free per mount), gated by
-	// isRealMount && isRealFsType. This used to be two separate df calls —
+	// isRealMount && isRealFsType. This used to be two separate df calls --
 	// snap.Disks from untyped `df -PB1` (path-prefix filtering only) and
-	// snap.DiskDetail from the typed call — which meant snap.Disks had no
+	// snap.DiskDetail from the typed call -- which meant snap.Disks had no
 	// fstype to filter on. On a root daemon on a real docker host, `df`
 	// lists one `overlay` mount per container (plus squashfs/tmpfs/nsfs
 	// pseudo-mounts), so snap.Disks silently exploded to 70+ junk entries:
@@ -397,7 +398,7 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			}
 		}
 	}
-	// failed systemd units (alerting collection — always runs, unaffected by
+	// failed systemd units (alerting collection -- always runs, unaffected by
 	// collect.services below)
 	if out, err := runMaybeSudo(x, "systemctl", "--failed", "--plain", "--no-legend"); err == nil {
 		snap.FailedUnits = parseFailedUnits(string(out))
@@ -538,7 +539,7 @@ func slowEvery(fastInterval, sampleInterval int) int {
 // Telegram 400 → the alert (the core alerting path) silently dropped. This
 // escaping is done at the plain-text source rather than in formatAlert,
 // because other dispatched alerts (the boot report, digests) carry
-// INTENTIONAL HTML from renderStatus that must not be escaped — see
+// INTENTIONAL HTML from renderStatus that must not be escaped -- see
 // formatBootReport / the boot/digest Alert{} sites in cmdDaemon.
 func eventToAlert(e Event, nowUnix int64) Alert {
 	sev := SevWarning
@@ -570,8 +571,15 @@ const alertLogRetention = 30 * 24 * time.Hour
 // dispatch in the daemon (anomaly fire/recover, boot report, digests) goes
 // through so the alert log stays a complete history. alog may be nil (kept
 // symmetrical with the store's nil-degrades-gracefully convention elsewhere
-// in this file) in which case logging is simply skipped.
-func dispatchAndLog(disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []DeliveryResult {
+// in this file) in which case logging is simply skipped. It is also the
+// single choke point that publishes a's core.Event onto bus (see
+// alertEventKind) -- every one of the daemon's 5 dispatch call sites (boot
+// report, anomaly fire/recover x2, daily/weekly digest) routes through here,
+// so instrumenting this one function covers all of them at once. bus may
+// also be nil (eventBus.Publish's own nil-degrades-gracefully guard,
+// eventbus.go) -- most existing callers/tests have no live daemon bus to
+// thread through here just to dispatch an alert.
+func dispatchAndLog(bus *eventBus, disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []DeliveryResult {
 	results := disp.Dispatch(a, quiet)
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
@@ -584,7 +592,39 @@ func dispatchAndLog(disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []Del
 			Delivered: deliveriesFrom(results),
 		})
 	}
+	bus.Publish(core.Event{
+		Kind:     alertEventKind(a),
+		Severity: a.Severity.String(),
+		Source:   a.Source,
+		Title:    a.Title,
+		Time:     a.Time,
+	})
 	return results
+}
+
+// alertEventKind maps a dispatched Alert onto the Kind string its
+// core.Event carries on the live event bus. Only anomaly-sourced alerts
+// (Source "anomaly", from eventToAlert above) have a real fire/recover
+// distinction worth naming -- those map "fire"/"recover" to
+// "alert_fire"/"alert_recover" so a stream consumer can tell an anomaly
+// transition from the "snapshot" ticks the sampler loop also publishes.
+// Every other alert source (boot report, daily/weekly digest) hard-codes
+// Alert.Kind to "fire" only because the struct field has to be something,
+// not because it's semantically a fire/recover transition -- those pass
+// a.Kind straight through unmapped ("digests keep their kind", per the A2
+// live-push design doc).
+func alertEventKind(a Alert) string {
+	if a.Source != "anomaly" {
+		return a.Kind
+	}
+	switch a.Kind {
+	case "fire":
+		return "alert_fire"
+	case "recover":
+		return "alert_recover"
+	default:
+		return a.Kind
+	}
 }
 
 func cmdDaemon(args []string) int {
@@ -612,7 +652,7 @@ func cmdDaemon(args []string) int {
 	// startup: this is now the SOLE writer of samples/downtime events, and the
 	// sole read path for history/handlers/digests below. The old JSONL Store
 	// (st) above remains only for status.json, the heartbeat file, and the
-	// baseline/alert-state path helpers — none of which are sample data.
+	// baseline/alert-state path helpers -- none of which are sample data.
 	// openConfiguredStore (migrate.go) centralizes the backend/retention
 	// lookup so `migrate`/`dump` open the exact same store this daemon writes
 	// to.
@@ -628,7 +668,7 @@ func cmdDaemon(args []string) int {
 		defer store.Close()
 	}
 	// NOTE: the store is opened once here and is NOT re-opened on a SIGHUP
-	// config reload below — if storage.backend/retention changes on reload,
+	// config reload below -- if storage.backend/retention changes on reload,
 	// the running store keeps its original settings until next restart. Kept
 	// intentionally simple; revisit if that proves surprising in practice.
 	// Back-fill a "telegram" channel from legacy telegram.token/chat_id, if
@@ -668,22 +708,15 @@ func cmdDaemon(args []string) int {
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
 	getDispatcher := func() *Dispatcher { mu.RLock(); defer mu.RUnlock(); return dispatcher }
 	// reload persists newCfg to disk then applies it in-process: the closure
-	// WebDeps.Reload exposes to a future web config editor (issue #66) so
-	// writes take effect immediately, without a SIGHUP round-trip.
+	// newInprocAPI's ApplyConfig exposes to the control socket (and, through
+	// it, the web config editor, issue #66) so writes take effect
+	// immediately, without a SIGHUP round-trip.
 	reload := func(newCfg *config.Config) error {
 		if err := saveCfg(newCfg); err != nil {
 			return err
 		}
 		applyConfig(newCfg)
 		return nil
-	}
-	// testChannel is the closure WebDeps.TestChannel exposes to a future web
-	// channels page's "Send test" button (issue #66): it reads the LIVE
-	// config (getCfg, race-safe against a concurrent SIGHUP/Reload) so a
-	// test-send always reflects whatever channel settings are currently
-	// applied, not whatever was configured when the daemon started.
-	testChannel := func(name string) error {
-		return sendTestNotification(getCfg(), name, "web")
 	}
 	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
 	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
@@ -726,48 +759,40 @@ func cmdDaemon(args []string) int {
 	var smartState smartCache
 	da := probeDocker(x, fs)
 
-	// maybeStartWeb is always called, in both build variants: the default
-	// (no `web` tag) build's maybeStartWeb (daemon_noweb.go) is a no-op that
-	// never references internal/web, so this call site itself carries no
-	// third-party dependency. Only the `-tags web` build (daemon_web.go)
-	// actually starts anything, and only when Enabled (cfg.Web.Enabled) does
-	// it bind a listener. Enabled/Listen are read once at daemon startup
-	// (like c0 below) rather than through getCfg on every access: a SIGHUP
-	// reload that flips web.enabled/web.listen takes effect on the next
-	// daemon restart, not in-process — starting/stopping the listener
-	// live is out of scope for this seam. See web_deps.go for the full
-	// design note.
 	cfgAtStart := getCfg()
-	stopWeb := maybeStartWeb(WebDeps{
-		Cfg:            getCfg,
-		Reload:         reload,
-		Store:          store,
-		Snapshot:       latestSnapshot,
-		StateDir:       stateDir,
-		AlertLogPath:   st.AlertLogPath(),
-		AlertStatePath: st.AlertStatePath(),
-		TestChannel:    testChannel,
-		Enabled:        cfgAtStart.Web.Enabled,
-		Listen:         cfgAtStart.Web.Listen,
-	})
-	defer stopWeb()
 
-	// control socket: serves the daemon's own core.API (newInprocAPI) over a
-	// unix socket under RUNTIME_DIRECTORY (or /run/serverwatch, see
-	// control_socket.go) for future out-of-process consumers (S3's
-	// serverwatch-ctl, S4's serverwatch-web). newInprocAPI is untagged
-	// (coreapi_inproc.go), so this call site -- like maybeStartWeb above --
-	// carries no third-party dependency in the default build. Same
-	// non-fatal-failure handling as maybeStartWeb: the control socket is an
-	// enhancement, never a reason to crash-loop the daemon, so a bind
-	// failure (e.g. permission denied on /run) just logs and leaves the
-	// daemon running without it.
-	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload)
-	stopControl, err := serveControlSocket(controlAPI)
+	// bus is the daemon's live in-process event fan-out (eventbus.go):
+	// dispatchAndLog publishes every dispatched alert onto it, the sampler
+	// loop below publishes a "snapshot" tick after every snapshotHub.Store,
+	// and inprocAPI.Subscribe (coreapi_inproc.go) hands each control-socket
+	// subscriber its own subscription onto this same bus.
+	bus := newEventBus()
+
+	// control socket: serves the daemon's own core.API over a unix socket
+	// under RUNTIME_DIRECTORY (or /run/serverwatch) for the out-of-process
+	// plugins (serverwatch-ctl, serverwatch-web). newInprocAPI is untagged,
+	// so this carries no third-party dependency. Non-fatal: a bind failure
+	// just logs and leaves the daemon running without the socket (and thus
+	// without the web UI, which dials it).
+	// enroll is the shared Telegram enrollment-pin holder (#90, enroll.go):
+	// one instance for this daemon launch, handed to both the poll loop
+	// (which generates/announces/matches against it) and the control socket
+	// (so a separate process, e.g. `telegram set-token`, can read back the
+	// exact same pin instead of only ever seeing it in the daemon's log).
+	enroll := &enrollState{}
+	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload, bus, enroll)
+	stopControl, socketPath, token, err := serveControlSocket(controlAPI)
 	if err != nil {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
 	} else {
 		defer stopControl()
+		// web UI: when enabled, supervise the serverwatch-web plugin as a
+		// verified child process (it dials the control socket above). Nothing
+		// is embedded in the daemon anymore -- see web_supervisor.go.
+		if shouldStartWeb(cfgAtStart, true) {
+			stopWeb := startWeb(socketPath, token)
+			defer stopWeb()
+		}
 	}
 
 	// boot/recovery report from heartbeat gap
@@ -779,7 +804,7 @@ func cmdDaemon(args []string) int {
 			}
 			now := clock.Now().Unix()
 			snap := collectSnapshot(x, fs, &prevCPU, da, c0, store, now)
-			dispatchAndLog(getDispatcher(), alog, Alert{
+			dispatchAndLog(bus, getDispatcher(), alog, Alert{
 				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap, c0)),
 				Severity: SevInfo,
 				Kind:     "fire",
@@ -790,7 +815,7 @@ func cmdDaemon(args []string) int {
 	}
 
 	// telegram long-poller (owns its own prevCPU internally)
-	go pollLoop(getCfg, setChatID, store, x, fs, da)
+	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll)
 
 	// sampler loop: ticks at fast_interval. Every Nth fast tick (N computed by
 	// slowEvery from fast_interval/sample_interval) ALSO runs collectSlow and
@@ -856,12 +881,18 @@ func cmdDaemon(args []string) int {
 		}
 		merged.TS = now.Unix()
 		// Publish a COPY of merged into snapshotHub for lock-free readers
-		// (WebDeps.Snapshot, ultimately a future web dashboard/SSE handler):
+		// (latestSnapshot, ultimately the control socket's Snapshot handler):
 		// merged itself stays exclusively owned by this goroutine, so every
 		// other field mutation above is safe without a lock, but the published
 		// pointer must not alias a struct this loop keeps mutating in place.
 		snap := merged
 		snapshotHub.Store(&snap)
+		// Tell any live control-socket subscribers a fresh Snapshot is ready,
+		// without pushing the Snapshot itself onto the bus: a subscriber (the
+		// web UI's SSE handler, eventually) fetches the actual DashboardView
+		// via Snapshot() only when this tick says to, keeping core.Event
+		// alert-shaped rather than carrying a giant view in every frame.
+		bus.Publish(core.Event{Kind: "snapshot", Time: now.Unix()})
 
 		// heartbeat has its own cadence (HeartbeatInterval), independent of
 		// fast/slow: it exists only so a future boot can measure how long the
@@ -878,7 +909,7 @@ func cmdDaemon(args []string) int {
 
 		// SampleStore write path: every fast tick appends the cheap fast-tier
 		// metrics as raw samples. This is the sole write path for sample
-		// data now — the legacy JSONL Store's AppendSample/AppendDown are no
+		// data now -- the legacy JSONL Store's AppendSample/AppendDown are no
 		// longer called (see the dual-write removal note at store opening
 		// above); migrate.go's one-shot importer still reads any
 		// already-on-disk legacy files via Store.SamplesSince/DownSince.
@@ -935,24 +966,24 @@ func cmdDaemon(args []string) int {
 		quiet := inQuietHours(c.QuietHours, now)
 		events := alerts.Evaluate(buildFastChecks(merged, c), baseline, c.BaselineSigma, c.BaselineMinPct, c.BaselineAlerts, now.Unix())
 		for _, e := range events {
-			dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
+			dispatchAndLog(bus, disp, alog, eventToAlert(e, now.Unix()), quiet)
 		}
 		stateChanged := len(events) > 0
 		if isSlowTick {
 			slowEvents := alerts.Evaluate(buildSlowChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, c.BaselineMinPct, c.BaselineAlerts, now.Unix())
 			for _, e := range slowEvents {
-				dispatchAndLog(disp, alog, eventToAlert(e, now.Unix()), quiet)
+				dispatchAndLog(bus, disp, alog, eventToAlert(e, now.Unix()), quiet)
 			}
 			stateChanged = stateChanged || len(slowEvents) > 0
 		}
 		// scheduled digests bypass quiet hours, like the boot report.
 		if matchDaily(c.Schedule.Daily, now, lastDaily) {
 			lastDaily = now
-			dispatchAndLog(disp, alog, Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			dispatchAndLog(bus, disp, alog, Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
 			lastWeekly = now
-			dispatchAndLog(disp, alog, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			dispatchAndLog(bus, disp, alog, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		// alerts.json only changes when a fire/recover transition happened;
 		// baseline.json's stats are updated every fast tick in memory but only
@@ -981,7 +1012,7 @@ func cmdDaemon(args []string) int {
 }
 
 // configuredRawRetention returns cfg.Storage.RawRetention parsed as a
-// Duration, falling back to defaultRawRetention when unset/unparseable —
+// Duration, falling back to defaultRawRetention when unset/unparseable --
 // mirroring the fallback each SampleStore backend applies internally via
 // StoreOptions.withDefaults. Needed here too since PickResolution takes the
 // raw duration directly rather than going through a backend.
@@ -1041,15 +1072,10 @@ func digestNow(store SampleStore, now time.Time, days int, title string, rawRete
 	return buildDigest(title, window, peakCPU, peakMem, len(countPts), downs)
 }
 
-func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess) {
+func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess, enroll *enrollState) {
 	// The poller owns its CPUStat; it is never shared with the sampler goroutine.
 	offset := 0
 	var prevCPU CPUStat
-	// One-time enrollment PIN for the zero-config setup path (#78): an
-	// unclaimed bot is claimed only by "/start <pin>", not by whoever messages
-	// first. The PIN lives in memory (never persisted) and is printed to the
-	// log once while the bot is unclaimed.
-	pin := newEnrollPIN()
 	announced := false
 	for {
 		c := getCfg()
@@ -1059,6 +1085,15 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		// The enrollment PIN for the zero-config setup path (#78): an
+		// unclaimed bot is claimed only by "/start <pin>", not by whoever
+		// messages first. enroll (enroll.go) generates and caches it on
+		// first call, so this stays stable for as long as the bot remains
+		// unclaimed -- and is the SAME pin `serverwatch telegram set-token`
+		// can now read back over the control socket (core.API.
+		// EnrollmentPIN), instead of only ever reaching the daemon's own
+		// log.
+		pin, _ := enroll.PIN(c)
 		if c.Telegram.ChatID == "" && !announced {
 			fmt.Fprintf(stderr, "telegram: bot not yet enrolled. From your Telegram account, message the bot: /start %s\n", pin)
 			announced = true
@@ -1081,7 +1116,15 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 				fmt.Fprintln(stderr, "telegram send:", err)
 			}
 		}
-		offset, c = processUpdates(ups, offset, c, pin, getCfg, setChatID, reply)
+		// setChatID's reload already tells the daemon it's enrolled; wrap it
+		// to also clear enroll's cached pin on success, so a later
+		// re-enrollment (a new bot via `telegram set-token`) starts from a
+		// fresh pin instead of reusing one that was already consumed.
+		onEnroll := func(id string) {
+			setChatID(id)
+			enroll.Reset()
+		}
+		offset, c = processUpdates(ups, offset, c, pin, getCfg, onEnroll, reply)
 	}
 }
 

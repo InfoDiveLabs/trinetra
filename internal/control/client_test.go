@@ -68,6 +68,9 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 	fake.cfg = &config.Config{SampleInterval: 30, FastInterval: 5}
 	fake.cfg.Collect.ContainerStats = falsePtr()
 	// NetThroughput left nil deliberately.
+	fake.enrollPIN = "424242"
+	fake.enrollEnrolled = false
+	fake.monitorTargets = []core.TargetView{{ID: "disk:/", Kind: "disk", Display: "/", Available: true}}
 
 	path := startTestServer(t, fake, "")
 
@@ -105,6 +108,14 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 
 	if got, err := client.Doctor(); err != nil || !reflect.DeepEqual(got, fake.doctor) {
 		t.Errorf("Doctor() = %+v, %v; want %+v, nil", got, err, fake.doctor)
+	}
+
+	if pin, enrolled, err := client.EnrollmentPIN(context.Background()); err != nil || pin != fake.enrollPIN || enrolled != fake.enrollEnrolled {
+		t.Errorf("EnrollmentPIN() = %q, %v, %v; want %q, %v, nil", pin, enrolled, err, fake.enrollPIN, fake.enrollEnrolled)
+	}
+
+	if got, err := client.MonitorTargets(context.Background()); err != nil || !reflect.DeepEqual(got, fake.monitorTargets) {
+		t.Errorf("MonitorTargets() = %+v, %v; want %+v, nil", got, err, fake.monitorTargets)
 	}
 
 	// Config round trip: must preserve the *bool omitempty semantics --
@@ -153,8 +164,41 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 		t.Errorf("fake.testedChannel = %q, want %q", fake.testedChannel, "telegram")
 	}
 
+	if err := client.ValidateChannel(config.ChannelConfig{Name: "hook", Type: "webhook"}); err != nil {
+		t.Fatalf("ValidateChannel() error: %v", err)
+	}
+	if fake.validatedChannel.Name != "hook" {
+		t.Errorf("fake.validatedChannel.Name = %q, want %q", fake.validatedChannel.Name, "hook")
+	}
+
 	if _, err := client.Subscribe(context.Background()); err == nil {
 		t.Errorf("Subscribe() error = nil, want a streaming-unsupported error")
+	}
+}
+
+// TestClientValidateChannelSurfacesError is the A1 brief's dedicated
+// round-trip test: client.ValidateChannel, dialed against a real Serve
+// loop (not the in-memory net.Pipe dialTestConn uses), must surface the
+// exact error the server-side api.ValidateChannel returned -- the
+// undeliverable-channel case ValidateChannel exists to catch (#79).
+func TestClientValidateChannelSurfacesError(t *testing.T) {
+	wantErr := `telegram channel "phone": chat_id not configured`
+	fake := &fakeAPI{validateChannelErr: errors.New(wantErr)}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	cc := config.ChannelConfig{Name: "phone", Type: "telegram"}
+	err = client.ValidateChannel(cc)
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("ValidateChannel() error = %v, want %q", err, wantErr)
+	}
+	if fake.validatedChannel.Name != "phone" {
+		t.Errorf("fake.validatedChannel.Name = %q, want %q (request should still reach the server)", fake.validatedChannel.Name, "phone")
 	}
 }
 
@@ -177,6 +221,53 @@ func TestClientSurfacesMethodError(t *testing.T) {
 	}
 	if fake.ackedKey != "cpu" {
 		t.Errorf("fake.ackedKey = %q, want %q (dispatch should still call through)", fake.ackedKey, "cpu")
+	}
+}
+
+// TestClientEnrollmentPINSurfacesError is the #90 counterpart to
+// TestClientValidateChannelSurfacesError: fileAPI's errEnrollNeedsDaemon (or
+// any other EnrollmentPIN error) must round-trip to the client unchanged,
+// not get swallowed into a zero-value success.
+func TestClientEnrollmentPINSurfacesError(t *testing.T) {
+	wantErr := "serverwatch: enrollment pin requires a running daemon; dial the control socket instead"
+	fake := &fakeAPI{enrollErr: errors.New(wantErr)}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	pin, enrolled, err := client.EnrollmentPIN(context.Background())
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("EnrollmentPIN() error = %v, want %q", err, wantErr)
+	}
+	if pin != "" || enrolled {
+		t.Errorf("EnrollmentPIN() = %q, %v on error, want zero values", pin, enrolled)
+	}
+}
+
+// TestClientMonitorTargetsSurfacesError mirrors
+// TestClientEnrollmentPINSurfacesError for MonitorTargets: a discovery
+// error must round-trip to the client unchanged.
+func TestClientMonitorTargetsSurfacesError(t *testing.T) {
+	wantErr := "discovery failed"
+	fake := &fakeAPI{monitorTargetsErr: errors.New(wantErr)}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	got, err := client.MonitorTargets(context.Background())
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("MonitorTargets() error = %v, want %q", err, wantErr)
+	}
+	if len(got) != 0 {
+		t.Errorf("MonitorTargets() = %+v on error, want empty", got)
 	}
 }
 
@@ -332,5 +423,116 @@ func TestDialWithEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
 
 	if _, err := Dial(path, ""); err == nil {
 		t.Fatalf("Dial() error = nil, want an error for a missing token")
+	}
+}
+
+// TestClientSubscribeReceivesPublishedEvents proves Client.Subscribe opens
+// its own dedicated connection (over a real Serve loop / unix socket, not
+// an in-memory pipe) and delivers events published server-side on the
+// returned channel.
+func TestClientSubscribeReceivesPublishedEvents(t *testing.T) {
+	fake := &fakeAPI{subscribeCh: make(chan core.Event, 4), subscribeCancelled: make(chan struct{})}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events, err := client.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	want := core.Event{Kind: "alert_fire", Source: "cpu", Severity: "warn", Title: "cpu high", Time: 42}
+	fake.subscribeCh <- want
+
+	select {
+	case got, ok := <-events:
+		if !ok {
+			t.Fatal("events channel closed before delivering the published event")
+		}
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the published event")
+	}
+}
+
+// TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel proves cancelling
+// the ctx passed to Client.Subscribe makes the server unsubscribe (fakeAPI's
+// subscribeCancelled fires, mirroring inprocAPI's own ctx.Done -> cancel)
+// and closes the client's returned channel -- the disconnect path from the
+// client side, matching TestStreamSubscribeDisconnectCancelsContext's
+// server-side proof of the same property.
+func TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel(t *testing.T) {
+	fake := &fakeAPI{subscribeCh: make(chan core.Event), subscribeCancelled: make(chan struct{})}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events, err := client.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	cancel()
+
+	select {
+	case <-fake.subscribeCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server never cancelled api.Subscribe's ctx after the client's ctx was cancelled")
+	}
+
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("events channel delivered a value instead of closing")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("events channel never closed after ctx cancel")
+	}
+}
+
+// TestClientNormalCallWorksWhileSubscriptionActive proves the dedicated
+// stream connection Subscribe opens does not interfere with the primary
+// connection's mutex-serialized calls: Snapshot must still complete while a
+// subscription is active, with no deadlock between the two.
+func TestClientNormalCallWorksWhileSubscriptionActive(t *testing.T) {
+	fake := &fakeAPI{
+		snapshot:           core.DashboardView{CPU: 7},
+		subscribeCh:        make(chan core.Event, 1),
+		subscribeCancelled: make(chan struct{}),
+	}
+	path := startTestServer(t, fake, "")
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := client.Subscribe(ctx); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	got, err := client.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() while a subscription is active: %v", err)
+	}
+	if !reflect.DeepEqual(got, fake.snapshot) {
+		t.Errorf("Snapshot() = %+v, want %+v", got, fake.snapshot)
 	}
 }

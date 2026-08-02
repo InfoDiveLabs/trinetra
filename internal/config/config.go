@@ -74,18 +74,18 @@ type Config struct {
 	Channels []ChannelConfig `json:"channels,omitempty"`
 	Storage  struct {
 		// Backend selects the SampleStore implementation (see
-		// internal/serverwatch/samplestore.go and docs/DESIGN-storage.md).
+		// internal/serverwatch/samplestore.go and docs/handbook/09-storage-and-data-model.md).
 		// One of validStorageBackends; defaults to "tsfile".
 		Backend string `json:"backend,omitempty"`
 		// RawRetention/RollupRetention are duration strings (time.ParseDuration
 		// syntax, e.g. "48h") controlling how long the tsfile backend keeps raw
-		// and 1m-rollup samples respectively (see docs/DESIGN-storage.md). The
+		// and 1m-rollup samples respectively (see docs/handbook/09-storage-and-data-model.md). The
 		// event retention window reuses RollupRetention. Defaults: 48h / 720h.
 		RawRetention    string `json:"raw_retention,omitempty"`
 		RollupRetention string `json:"rollup_retention,omitempty"`
 	} `json:"storage"`
 	// Collect holds opt-in toggles for the expensive extended collectors
-	// (docs/ROADMAP.md Epic #69). A nil pointer means "unset -> use the
+	// (docs/handbook/12-roadmap-and-status.md Epic #69). A nil pointer means "unset -> use the
 	// documented default" so an explicit false survives Save/Load: a plain
 	// bool with `omitempty` would drop a false value from the JSON and Load
 	// would then re-fill it from Default() (true) instead of honoring it.
@@ -101,20 +101,20 @@ type Config struct {
 		NetThroughput *bool `json:"net_throughput,omitempty"`
 		// Services gates the slow-tier full systemd unit inventory collector
 		// (internal/serverwatch/discover.go listUnits/parseUnits, snapshot
-		// -only — never persisted as a SampleStore series). Defaults to
+		// -only -- never persisted as a SampleStore series). Defaults to
 		// true; nil is treated as true everywhere it's read. The existing
 		// `systemctl --failed` alerting collection is separate and always
 		// runs regardless of this setting.
 		Services *bool `json:"services,omitempty"`
 		// Processes gates the slow-tier process-table overview collector
 		// (internal/serverwatch/proc.go collectProcesses: counts + top-N by
-		// CPU/mem, for the Monitoring "processes" tab). Snapshot-only — never
+		// CPU/mem, for the Monitoring "processes" tab). Snapshot-only -- never
 		// persisted as a SampleStore series (per-process cardinality).
 		// Defaults to true; nil is treated as true everywhere it's read.
 		Processes *bool `json:"processes,omitempty"`
 		// SmartAttrs gates the slow-tier per-device `smartctl -A` attribute
 		// reads (internal/serverwatch/daemon.go collectSlow, feeding the
-		// "smart:<dev>:temp" series) — the heaviest optional per-device call.
+		// "smart:<dev>:temp" series) -- the heaviest optional per-device call.
 		// Defaults to true; nil is treated as true everywhere it's read. The
 		// cheaper `smartctl --scan`/`-H` health checks are unaffected and
 		// always run regardless of this setting.
@@ -125,14 +125,16 @@ type Config struct {
 		// sample_interval. Unset/0 -> default 1800s (30 min).
 		SmartInterval int `json:"smart_interval,omitempty"`
 	} `json:"collect"`
-	// Web holds the embedded web UI server's settings (internal/web,
-	// `-tags web` builds only — see docs/ROADMAP.md epic #56). The default
-	// !web build never reads these, but the keys live here (untagged) so
+	// Web holds the web UI server's settings (internal/web, compiled into
+	// the serverwatch-web binary, no build tag -- see
+	// docs/handbook/12-roadmap-and-status.md epic #56). The default
+	// serverwatch binary never reads these, but the keys live here so
 	// they're manageable via `serverwatch config set` regardless of which
 	// binary is installed.
 	Web struct {
-		// Enabled toggles the embedded web server. Defaults to false: the
-		// web UI is opt-in even in the serverwatch-web binary.
+		// Enabled toggles the web server. Defaults to false: the web UI is
+		// opt-in even in the serverwatch-web binary, which the core daemon
+		// only supervises (spawns/restarts) when this is set.
 		Enabled bool `json:"enabled,omitempty"`
 		// Listen is the "host:port" the web server binds, validated with
 		// net.SplitHostPort. Defaults to 127.0.0.1:8088 (localhost-only;
@@ -170,8 +172,9 @@ type Config struct {
 		SessionTTL string `json:"session_ttl,omitempty"`
 	} `json:"web"`
 	// Public holds the admin-curated exposure settings for the anonymous
-	// /public status page (internal/web, `-tags web` builds only -- see
-	// docs/ROADMAP.md issue #67). Both fields default to "off"/empty:
+	// /public status page (internal/web, compiled into the serverwatch-web
+	// binary, no build tag -- see docs/handbook/12-roadmap-and-status.md
+	// issue #67). Both fields default to "off"/empty:
 	// nothing is exposed anonymously until an admin explicitly enables it
 	// AND curates which panels are visible.
 	Public struct {
@@ -257,7 +260,7 @@ type ChannelConfig struct {
 var validSeverities = map[string]bool{"info": true, "warning": true, "critical": true}
 
 // validStorageBackends allowlists storage.backend. "tsfile" is the design's
-// default backend (docs/DESIGN-storage.md, lands in a later task); "memory"
+// default backend (docs/handbook/09-storage-and-data-model.md, lands in a later task); "memory"
 // is the in-memory reference SampleStore (internal/serverwatch/samplestore.go).
 var validStorageBackends = map[string]bool{"tsfile": true, "memory": true}
 
@@ -284,7 +287,7 @@ func validateRetentionDuration(key, s string) error {
 }
 
 // validateListen rejects anything net.SplitHostPort can't parse into a
-// host/port pair — the same "host:port" shape http.Server.Addr expects.
+// host/port pair -- the same "host:port" shape http.Server.Addr expects.
 func validateListen(s string) error {
 	if _, _, err := net.SplitHostPort(s); err != nil {
 		return fmt.Errorf("web.listen %q invalid: %w (want host:port)", s, err)
@@ -317,7 +320,7 @@ func validateSessionTTL(s string) error {
 // mount suffix is dynamic (one entry per filesystem the daemon reports).
 // "availability" (the public-rework task) surfaces the real 24h up/down
 // strip (internal/web/availability.go's ComputeAvailability) rather than a
-// scalar metric — it's still just one more allowlist id from this package's
+// scalar metric -- it's still just one more allowlist id from this package's
 // point of view; internal/web decides what to render for it.
 var validPublicPanels = map[string]bool{
 	"availability": true,
@@ -328,7 +331,7 @@ var validPublicPanels = map[string]bool{
 // validatePublicPanel rejects any panel id public.panels wouldn't
 // recognize: one of validPublicPanels, or "disk:<mount>" with a non-empty
 // mount suffix. This is the single source of truth for what may ever be
-// written to public.panels — internal/web's /settings/public handler
+// written to public.panels -- internal/web's /settings/public handler
 // reuses it (via Set) rather than re-implementing the allowlist, and
 // internal/web's /public handler only ever renders ids that passed this
 // check, so a stray/malicious value can never reach that unauthenticated
@@ -346,7 +349,7 @@ func validatePublicPanel(s string) error {
 // parsePublicPanels parses a comma-separated public.panels value into a
 // slice, trimming whitespace and dropping empty entries (mirroring
 // splitKinds), validating every entry against validatePublicPanel. Returns
-// the first validation error, if any — the caller (Set) must not persist a
+// the first validation error, if any -- the caller (Set) must not persist a
 // partially-valid list.
 func parsePublicPanels(s string) ([]string, error) {
 	if s == "" {
@@ -859,6 +862,94 @@ func (c *Config) Set(key, val string) error {
 		return fmt.Errorf("unknown key %q", key)
 	}
 	return nil
+}
+
+// KeyInfo describes one flat, settable config key for serverwatch-ctl's
+// generic "all settings" browse/edit screen (issue #91): every string this
+// package's Set/Get accept, annotated with a human display Group, a short
+// value-Kind hint, a one-line Help description, and whether the daemon must
+// be restarted before a change takes effect. This is pure data, no new
+// imports, so it does not touch cmd/serverwatch's stdlib-only dependency
+// graph (internal/serverwatch/buildtag_test.go TestDefaultBuildIsStdlibOnly).
+//
+// Kind is a hint only ("int", "float", "bool", "string", "enum", "csv", or
+// "duration") for how a caller should present a value before handing it to
+// Set, which remains the single validated setter and source of truth for
+// what is actually accepted.
+type KeyInfo struct {
+	Name            string
+	Group           string
+	Kind            string
+	Help            string
+	RestartRequired bool
+}
+
+// Keys returns the full catalog of flat, settable config keys, grouped for
+// display. TestKeyCatalogCoversEverySetKey (config_test.go) parses (*Config)
+// .Set's own switch statement and asserts this list and that switch stay in
+// lockstep, so a key can never be added to one without the other going
+// noticed. A copy is returned so a caller mutating the result can never
+// corrupt the package-level catalog.
+func Keys() []KeyInfo {
+	out := make([]KeyInfo, len(keyCatalog))
+	copy(out, keyCatalog)
+	return out
+}
+
+// keyCatalog is Keys' backing data, grouped in the order the ctl settings
+// screen presents them. RestartRequired is set for storage.* (the
+// SampleStore backend is chosen once at daemon startup) and web.enabled/
+// web.listen (the listener is bound once at startup), matching the
+// restart caveat the guided web-setup wizard already shows for the same
+// reason (setup_web.go, tui.go).
+var keyCatalog = []KeyInfo{
+	{Name: "sample_interval", Group: "Intervals", Kind: "int", Help: "Seconds between full baseline samples (the slow tier)."},
+	{Name: "fast_interval", Group: "Intervals", Kind: "int", Help: "Seconds between lightweight checks (the fast tier)."},
+	{Name: "heartbeat_interval", Group: "Intervals", Kind: "int", Help: "Seconds between liveness heartbeats."},
+
+	{Name: "baseline_sigma", Group: "Baseline", Kind: "float", Help: "Standard deviations from the mean before a baseline anomaly fires."},
+	{Name: "baseline_min_pct", Group: "Baseline", Kind: "float", Help: "Minimum relative deviation from the baseline mean also required to fire."},
+	{Name: "baseline_alerts", Group: "Baseline", Kind: "bool", Help: "Enable baseline (z-score) deviation alerts, on top of threshold alerts."},
+
+	{Name: "thresholds.cpu_pct", Group: "Thresholds", Kind: "float", Help: "Global CPU percent threshold for alerting."},
+	{Name: "thresholds.mem_pct", Group: "Thresholds", Kind: "float", Help: "Global memory percent threshold for alerting."},
+	{Name: "thresholds.swap_pct", Group: "Thresholds", Kind: "float", Help: "Global swap percent threshold for alerting."},
+	{Name: "thresholds.temp_c", Group: "Thresholds", Kind: "float", Help: "Global temperature threshold in Celsius for alerting."},
+	{Name: "thresholds.disk_pct", Group: "Thresholds", Kind: "float", Help: "Global disk usage percent threshold for alerting."},
+
+	{Name: "critical_overrides_quiet", Group: "Alerting", Kind: "bool", Help: "Let disk-full-imminent style critical alerts bypass quiet hours."},
+	{Name: "quiet_hours", Group: "Alerting", Kind: "string", Help: "Quiet hours window as H-H, e.g. 22-6, or empty to disable."},
+
+	{Name: "telegram.token", Group: "Notifications", Kind: "string", Help: "Telegram bot token from @BotFather."},
+	{Name: "telegram.chat_id", Group: "Notifications", Kind: "string", Help: "Telegram chat id enrolled to receive alerts."},
+	{Name: "healthchecks.url", Group: "Notifications", Kind: "string", Help: "healthchecks.io ping URL, or empty to disable."},
+
+	{Name: "schedule.daily", Group: "Schedule", Kind: "string", Help: "Daily digest time as HH:MM, or empty to disable."},
+	{Name: "schedule.weekly", Group: "Schedule", Kind: "string", Help: "Weekly digest time as dow@HH:MM, e.g. mon@09:00, or empty to disable."},
+
+	{Name: "storage.backend", Group: "Storage", Kind: "enum", Help: "Sample store backend: tsfile or memory.", RestartRequired: true},
+	{Name: "storage.raw_retention", Group: "Storage", Kind: "duration", Help: "How long raw samples are kept, e.g. 48h.", RestartRequired: true},
+	{Name: "storage.rollup_retention", Group: "Storage", Kind: "duration", Help: "How long 1m-rollup samples and events are kept, e.g. 720h.", RestartRequired: true},
+
+	{Name: "collect.container_stats", Group: "Collection", Kind: "bool", Help: "Collect per-container docker stats."},
+	{Name: "collect.net_throughput", Group: "Collection", Kind: "bool", Help: "Collect per-interface network throughput."},
+	{Name: "collect.services", Group: "Collection", Kind: "bool", Help: "Collect the full systemd unit inventory."},
+	{Name: "collect.processes", Group: "Collection", Kind: "bool", Help: "Collect the process-table overview."},
+	{Name: "collect.smart_attrs", Group: "Collection", Kind: "bool", Help: "Collect per-device SMART attribute reads."},
+	{Name: "collect.smart_interval", Group: "Collection", Kind: "int", Help: "Minimum seconds between SMART scans."},
+
+	{Name: "web.enabled", Group: "Web", Kind: "bool", Help: "Enable the web UI server.", RestartRequired: true},
+	{Name: "web.listen", Group: "Web", Kind: "string", Help: "Web server bind address as host:port.", RestartRequired: true},
+	{Name: "web.mode", Group: "Web", Kind: "enum", Help: "Web serving mode: proxy, autocert, or manual."},
+	{Name: "web.rp_id", Group: "Web", Kind: "string", Help: "WebAuthn relying party id: the public hostname, no scheme or port."},
+	{Name: "web.origin", Group: "Web", Kind: "string", Help: "Full public origin passkeys validate against, e.g. https://host."},
+	{Name: "web.autocert_domains", Group: "Web", Kind: "csv", Help: "Comma-separated hostnames autocert will request certificates for."},
+	{Name: "web.tls_cert", Group: "Web", Kind: "string", Help: "PEM certificate file path for manual TLS mode."},
+	{Name: "web.tls_key", Group: "Web", Kind: "string", Help: "PEM key file path for manual TLS mode."},
+	{Name: "web.session_ttl", Group: "Web", Kind: "duration", Help: "How long a signed-in web session stays valid, e.g. 24h."},
+
+	{Name: "public.enabled", Group: "Public", Kind: "bool", Help: "Enable the anonymous /public status page."},
+	{Name: "public.panels", Group: "Public", Kind: "csv", Help: "Comma-separated panel ids exposed on the public page."},
 }
 
 // effectiveFastInterval returns c.FastInterval, or the baked-in default (5)

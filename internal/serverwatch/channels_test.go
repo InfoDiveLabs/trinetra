@@ -8,8 +8,8 @@ import (
 )
 
 // TestSendTestNotificationUnknownChannel pins sendTestNotification's
-// "unknown channel" error path (issue #66's WebDeps.TestChannel/daemon.go's
-// testChannel closure, and cmdChannelTest, both route through this).
+// "unknown channel" error path (issue #66's inprocAPI.TestChannel and
+// cmdChannelTest both route through this).
 func TestSendTestNotificationUnknownChannel(t *testing.T) {
 	c := config.Default()
 	if err := sendTestNotification(c, "does-not-exist", "web"); err == nil {

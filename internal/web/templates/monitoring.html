@@ -8,7 +8,7 @@
       <div class="lb">Containers up</div>
     </div>
     <div class="count {{if $v.FailedUnits}}bad{{else}}good{{end}}">
-      <div class="n">{{if $v.UnitsEnabled}}{{len $v.Units}}{{else}}—{{end}}</div>
+      <div class="n">{{if $v.UnitsEnabled}}{{len $v.Units}}{{else}}--{{end}}</div>
       <div class="lb">Units {{if $v.UnitsEnabled}}active{{else}}(collector disabled){{end}} · {{len $v.FailedUnits}} failed</div>
     </div>
     <div class="count {{if gt .DisksWarnCrit 0}}warnc{{else}}good{{end}}">
@@ -16,7 +16,7 @@
       <div class="lb">Filesystem warning+crit</div>
     </div>
     <div class="count">
-      <div class="n">{{if $v.ProcessesEnabled}}{{$v.ProcessesTotal}}{{else}}—{{end}}</div>
+      <div class="n">{{if $v.ProcessesEnabled}}{{$v.ProcessesTotal}}{{else}}--{{end}}</div>
       <div class="lb">Processes{{if not $v.ProcessesEnabled}} (collector disabled){{end}}</div>
     </div>
   </div>
@@ -31,16 +31,16 @@
   <p class="note" style="margin:-6px 0 14px">Tip: click a row for details, live charts, and actions.</p>
 
   <!-- CONTAINERS -->
-  <div class="tabpane on" data-pane="containers"><div class="panel pad0"><div class="tablewrap"><table id="tbl-containers">
+  <div class="tabpane on" data-pane="containers"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-containers" class="cards">
     <thead><tr><th>State</th><th>Container</th><th style="width:150px">CPU</th><th style="width:150px">Mem</th><th>Net I/O</th></tr></thead>
     <tbody>
       {{range $v.Containers}}
       <tr data-detail data-kind="container" data-name="{{.Name}}" data-state="{{.State}}"{{if .HasStats}} data-cpu="{{printf "%.0f" .CPUPct}}%" data-mem="{{printf "%.0f" .MemMiB}}M" data-net="↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}} MB/s"{{end}}>
-        <td><span class="badge {{if eq .State "running"}}ok{{else if eq .State "restarting"}}warn{{else}}crit{{end}}">{{.State}}</span></td>
-        <td class="mono">{{.Name}}</td>
-        <td>{{if .HasStats}}<div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div>{{else}}<span class="note mono">—</span>{{end}}</td>
-        <td>{{if .HasStats}}<div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div>{{else}}<span class="note mono">—</span>{{end}}</td>
-        <td class="mono note">{{if .HasStats}}↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}}{{else}}—{{end}}</td>
+        <td data-label="State"><span class="badge {{if eq .State "running"}}ok{{else if eq .State "restarting"}}warn{{else}}crit{{end}}">{{.State}}</span></td>
+        <td class="mono card-title">{{.Name}}</td>
+        <td data-label="CPU">{{if .HasStats}}<div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div>{{else}}<span class="note mono">-</span>{{end}}</td>
+        <td data-label="Mem">{{if .HasStats}}<div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div>{{else}}<span class="note mono">-</span>{{end}}</td>
+        <td class="mono note" data-label="Net I/O">{{if .HasStats}}↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}}{{else}}--{{end}}</td>
       </tr>
       {{else}}
       <tr><td colspan="5" class="note">no containers discovered</td></tr>
@@ -48,17 +48,17 @@
     </tbody></table></div></div></div>
 
   <!-- SERVICES -->
-  <div class="tabpane" data-pane="services"><div class="panel pad0"><div class="tablewrap"><table id="tbl-services">
+  <div class="tabpane" data-pane="services"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-services" class="cards">
     <thead><tr><th>State</th><th>Unit</th><th>Description</th><th>Load</th></tr></thead>
     <tbody>
       {{if $v.UnitsEnabled}}
         {{range $v.Units}}
-        <tr data-detail data-kind="service" data-name="{{.Name}}" data-state="{{.Active}}" data-description="{{.Description}}" data-load="{{.Load}}"><td><span class="badge {{if eq .Active "active"}}ok{{else if eq .Active "failed"}}crit{{else}}warn{{end}}">{{.Active}}</span></td><td class="mono">{{.Name}}</td><td class="note">{{.Description}}</td><td class="mono note">{{.Load}}</td></tr>
+        <tr data-detail data-kind="service" data-name="{{.Name}}" data-state="{{.Active}}" data-description="{{.Description}}" data-load="{{.Load}}"><td data-label="State"><span class="badge {{if eq .Active "active"}}ok{{else if eq .Active "failed"}}crit{{else}}warn{{end}}">{{.Active}}</span></td><td class="mono card-title">{{.Name}}</td><td class="note" data-label="Description">{{.Description}}</td><td class="mono note" data-label="Load">{{.Load}}</td></tr>
         {{else}}
         <tr><td colspan="4" class="note">no units reported</td></tr>
         {{end}}
       {{else}}
-        <tr><td colspan="4" class="note">collector disabled (collect.services) — enable it to see the full unit inventory</td></tr>
+        <tr><td colspan="4" class="note">collector disabled (collect.services) -- enable it to see the full unit inventory</td></tr>
       {{end}}
     </tbody></table></div></div>
     <p class="note" style="margin-top:10px">
@@ -67,40 +67,40 @@
   </div>
 
   <!-- FILESYSTEMS -->
-  <div class="tabpane" data-pane="fs"><div class="panel pad0"><table id="tbl-fs">
+  <div class="tabpane" data-pane="fs"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-fs" class="cards">
     <thead><tr><th>Mount</th><th>Device</th><th>FS</th><th style="width:220px">Usage</th><th>Size</th><th>Free</th><th>Inodes</th><th>Trend</th></tr></thead>
     <tbody>
       {{range $v.Disks}}
       <tr data-detail data-kind="disk" data-name="{{.Mount}}" data-device="{{.Device}}" data-fs="{{.FSType}}" data-size="{{humanBytes .SizeBytes}}" data-free="{{humanBytes .FreeBytes}}" data-inodes="{{printf "%.0f" .InodePct}}%" data-projection="{{diskTrendText .DaysToFull .DaysToFullKnown}}">
-        <td class="mono">{{.Mount}}</td><td class="mono note">{{.Device}}</td><td class="mono note">{{.FSType}}</td>
-        <td><div class="meter"><div class="bar {{ledClass .UsagePct (diskWarnPct) (diskCriticalPct)}}"><i style="width:{{printf "%.0f" .UsagePct}}%"></i></div><span class="pct">{{printf "%.0f" .UsagePct}}%</span></div></td>
-        <td class="mono">{{humanBytes .SizeBytes}}</td>
-        <td class="mono">{{humanBytes .FreeBytes}}</td>
-        <td class="mono note">{{printf "%.0f" .InodePct}}%</td>
-        <td class="trend {{diskTrendClass .DaysToFull .DaysToFullKnown}}">{{diskTrendText .DaysToFull .DaysToFullKnown}}</td>
+        <td class="mono card-title">{{.Mount}}</td><td class="mono note" data-label="Device">{{.Device}}</td><td class="mono note" data-label="FS">{{.FSType}}</td>
+        <td data-label="Usage"><div class="meter"><div class="bar {{ledClass .UsagePct (diskWarnPct) (diskCriticalPct)}}"><i style="width:{{printf "%.0f" .UsagePct}}%"></i></div><span class="pct">{{printf "%.0f" .UsagePct}}%</span></div></td>
+        <td class="mono" data-label="Size">{{humanBytes .SizeBytes}}</td>
+        <td class="mono" data-label="Free">{{humanBytes .FreeBytes}}</td>
+        <td class="mono note" data-label="Inodes">{{printf "%.0f" .InodePct}}%</td>
+        <td class="trend {{diskTrendClass .DaysToFull .DaysToFullKnown}}" data-label="Trend">{{diskTrendText .DaysToFull .DaysToFullKnown}}</td>
       </tr>
       {{else}}
       <tr><td colspan="8" class="note">no filesystems discovered</td></tr>
       {{end}}
-    </tbody></table></div></div>
+    </tbody></table></div></div></div>
 
   <!-- PROCESSES -->
-  <div class="tabpane" data-pane="proc"><div class="panel pad0"><div class="tablewrap"><table id="tbl-proc">
+  <div class="tabpane" data-pane="proc"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-proc" class="cards">
     <thead><tr><th>PID</th><th>Process</th><th>State</th><th style="width:150px">CPU</th><th style="width:150px">Mem</th><th>Threads</th></tr></thead>
     <tbody>
       {{if $v.ProcessesEnabled}}
         {{range $v.Processes}}
         <tr data-detail data-kind="process" data-name="{{.Name}}" data-pid="{{.PID}}" data-state="{{.State}}" data-cpu="{{printf "%.0f" .CPUPct}}%" data-mem="{{printf "%.0f" .MemMiB}}M" data-threads="{{.Threads}}">
-          <td class="mono">{{.PID}}</td><td class="mono">{{.Name}}</td><td class="mono note">{{.State}}</td>
-          <td><div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div></td>
-          <td><div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div></td>
-          <td class="mono">{{.Threads}}</td>
+          <td class="mono note" data-label="PID">{{.PID}}</td><td class="mono card-title">{{.Name}}</td><td class="mono note" data-label="State">{{.State}}</td>
+          <td data-label="CPU"><div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div></td>
+          <td data-label="Mem"><div class="meter"><div class="bar violet"><i style="width:{{printf "%.0f" (memBarPct .MemMiB)}}%"></i></div><span class="pct">{{printf "%.0f" .MemMiB}}M</span></div></td>
+          <td class="mono" data-label="Threads">{{.Threads}}</td>
         </tr>
         {{else}}
         <tr><td colspan="6" class="note">no processes reported</td></tr>
         {{end}}
       {{else}}
-        <tr><td colspan="6" class="note">collector disabled (collect.processes) — enable it to see the process table</td></tr>
+        <tr><td colspan="6" class="note">collector disabled (collect.processes) -- enable it to see the process table</td></tr>
       {{end}}
     </tbody></table></div></div>
     {{if $v.ProcessesEnabled}}<p class="note" style="margin-top:10px">Top by CPU · {{$v.ProcessesTotal}} total</p>{{end}}

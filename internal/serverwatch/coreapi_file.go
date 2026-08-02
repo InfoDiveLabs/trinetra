@@ -18,6 +18,7 @@ package serverwatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,14 @@ import (
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
 )
+
+// errEnrollNeedsDaemon is returned by fileAPI.EnrollmentPIN: the enrollment
+// pin lives only in the running daemon's in-memory enrollState (enroll.go)
+// -- a separate CLI process reading config/state off disk has no live pin
+// to report, unlike every other fileAPI read here, which can reconstruct
+// its answer from status.json/alerts.json/the sample store. Dial the
+// control socket instead (control.Client also implements core.API).
+var errEnrollNeedsDaemon = errors.New("serverwatch: enrollment pin requires a running daemon; dial the control socket instead")
 
 // fileAPI is the file-backed core.API implementation: every method opens
 // whatever it needs off disk on each call (there is no long-lived daemon
@@ -210,6 +219,27 @@ func (a *fileAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.cfg, store), nil
 }
 
+// EnrollmentPIN implements core.API: this CLI process has no live daemon
+// state (unlike inprocAPI, which reads through its own enrollState), so it
+// always returns errEnrollNeedsDaemon rather than a stale or fabricated
+// pin. Callers that want the real pin (`telegram set-token`) dial the
+// control socket instead.
+func (a *fileAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
+	return "", false, errEnrollNeedsDaemon
+}
+
+// MonitorTargets implements core.API: unlike EnrollmentPIN above, target
+// discovery needs no live daemon state -- it is the same osExec{}/osFS{}
+// probes DiscoverLocal runs from the daemon, run here from the CLI
+// process' own environment instead (`serverwatch monitor list`,
+// systemd.go's cmdMonitor, already does exactly this). A real deployment's
+// ctl always talks to the daemon over the control socket (inprocAPI.MonitorTargets),
+// so this path mainly keeps fileAPI a complete core.API implementation for
+// any caller that ends up on it directly.
+func (a *fileAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return targetViewsFromTargets(DiscoverLocal()), nil
+}
+
 // ApplyConfig implements core.API: it persists c to cfgPath (saveCfg, the
 // same package-level helper every `channel`/`target`/... CLI setter already
 // uses) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks
@@ -263,10 +293,23 @@ func (a *fileAPI) TestChannel(name string) error {
 	return sendTestNotification(a.cfg, name, "cli")
 }
 
-// Subscribe is deferred to a later stage (S5, the alerting event-bus
-// inversion -- see the epic's design doc): it returns errCoreNotImplemented
-// for now so *fileAPI satisfies core.API today, mirroring inprocAPI's
-// identical deferral (coreapi_inproc.go).
+// ValidateChannel implements core.API: it calls buildNotifier (channels.go)
+// against cc and this fileAPI's own cfg (the CLI process' freshly-loaded
+// config, same as every other method here) and reports only whether a
+// Notifier could be built, not sending anything -- inprocAPI.ValidateChannel's
+// (coreapi_inproc.go) counterpart, same accepted "checked against the
+// current saved config, not an unsaved in-flight edit" limitation documented
+// on core.API's ValidateChannel.
+func (a *fileAPI) ValidateChannel(cc config.ChannelConfig) error {
+	_, err := buildNotifier(cc, a.cfg)
+	return err
+}
+
+// Subscribe implements core.API: fileAPI has no live daemon behind it (this
+// is the separate CLI process' file-backed reader, coreapi_file.go's own
+// doc), so there is no in-process event bus it could ever subscribe to --
+// it always returns errStreamRequiresDaemon (coreapi_inproc.go), the same
+// sentinel inprocAPI.Subscribe returns in its own no-bus degenerate case.
 func (a *fileAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
-	return nil, errCoreNotImplemented
+	return nil, errStreamRequiresDaemon
 }

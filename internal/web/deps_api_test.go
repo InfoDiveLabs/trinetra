@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -64,8 +62,12 @@ func (f fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error
 	return f.history, nil
 }
 
-func (f fakeAPI) Config() (*config.Config, error)    { return nil, nil }
-func (f fakeAPI) Doctor() (core.DoctorReport, error) { return core.DoctorReport{}, nil }
+func (f fakeAPI) Config() (*config.Config, error)                         { return nil, nil }
+func (f fakeAPI) Doctor() (core.DoctorReport, error)                      { return core.DoctorReport{}, nil }
+func (f fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
+func (f fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return nil, nil
+}
 
 func (f fakeAPI) ApplyConfig(c *config.Config) error {
 	if f.applyConfig != nil {
@@ -94,6 +96,14 @@ func (f fakeAPI) TestChannel(name string) error {
 	}
 	return nil
 }
+
+// ValidateChannel is a plain no-op stub: this fakeAPI backs Deps.API (the
+// core.API boundary), which is distinct from Deps.ValidateChannel (the
+// local buildNotifier dry-run func field the #79 channel-editor tests
+// exercise directly, see handlers_channels_test.go's undeliverableTelegram)
+// -- no handler in this package's tests calls core.API.ValidateChannel
+// itself.
+func (f fakeAPI) ValidateChannel(cc config.ChannelConfig) error { return nil }
 
 func (f fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) { return nil, nil }
 

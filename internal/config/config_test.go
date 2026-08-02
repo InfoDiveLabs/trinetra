@@ -1,9 +1,14 @@
 package config
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestDefaultsAndGet(t *testing.T) {
@@ -1197,7 +1202,7 @@ func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
 
 // TestPublicEnabledPanelsDefaultSetUnset pins public.enabled/public.panels
 // (issue #67): both default to "off"/empty, Set/Get round-trip, and Unset
-// restores the defaults — mirroring TestWebEnabledListenDefaultSetUnset.
+// restores the defaults -- mirroring TestWebEnabledListenDefaultSetUnset.
 func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	c := Default()
 	if got, _ := c.Get("public.enabled"); got != "false" {
@@ -1236,7 +1241,7 @@ func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 
 // TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist at the
 // config layer: only the fixed catalog (or "disk:<mount>") may be stored in
-// public.panels — anything else (typos, or someone trying to smuggle a
+// public.panels -- anything else (typos, or someone trying to smuggle a
 // non-metric identifier like "users"/"config" into the curated list) is
 // rejected with no write, exactly like the other validated config keys.
 func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {
@@ -1299,5 +1304,132 @@ func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	}
 	if got, _ := c.Get("storage.rollup_retention"); got != "720h" {
 		t.Fatalf("backfilled storage.rollup_retention = %q, want 720h", got)
+	}
+}
+
+// --- Task 2 (#91): config key catalog (KeyInfo/Keys) ---
+//
+// The catalog exists so serverwatch-ctl's generic "all settings" screen
+// (cmd/serverwatch-ctl) can browse and edit every flat key without a
+// dedicated screen per key. These tests are the drift guard: they fail if
+// the catalog and the Set/Get switch (config.go) ever fall out of lockstep,
+// in either direction.
+
+// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real
+// Set/Get key (a round trip of Set(key, Get(key)) on a fresh Default()
+// config must succeed) and that its Kind hint is self-consistent with the
+// value Get actually returns.
+func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
+	for _, ki := range Keys() {
+		c := Default()
+		val, ok := c.Get(ki.Name)
+		if !ok {
+			t.Errorf("Keys() entry %q: c.Get did not recognize it as a key", ki.Name)
+			continue
+		}
+		if err := c.Set(ki.Name, val); err != nil {
+			t.Errorf("Keys() entry %q: Set(Get()) round trip on Default() failed: %v", ki.Name, err)
+		}
+		if ki.Group == "" {
+			t.Errorf("Keys() entry %q: missing Group", ki.Name)
+		}
+		if ki.Help == "" {
+			t.Errorf("Keys() entry %q: missing Help", ki.Name)
+		}
+		switch ki.Kind {
+		case "int":
+			if _, err := strconv.Atoi(val); err != nil {
+				t.Errorf("Keys() entry %q: Kind=int but Get() value %q does not parse as int: %v", ki.Name, val, err)
+			}
+		case "float":
+			if _, err := strconv.ParseFloat(val, 64); err != nil {
+				t.Errorf("Keys() entry %q: Kind=float but Get() value %q does not parse as float: %v", ki.Name, val, err)
+			}
+		case "bool":
+			if _, err := strconv.ParseBool(val); err != nil {
+				t.Errorf("Keys() entry %q: Kind=bool but Get() value %q does not parse as bool: %v", ki.Name, val, err)
+			}
+		case "duration":
+			if val != "" {
+				if _, err := time.ParseDuration(val); err != nil {
+					t.Errorf("Keys() entry %q: Kind=duration but Get() value %q does not parse: %v", ki.Name, val, err)
+				}
+			}
+		case "string", "enum", "csv":
+			// No format constraint beyond the Set/Get round trip above.
+		default:
+			t.Errorf("Keys() entry %q: unknown Kind %q", ki.Name, ki.Kind)
+		}
+	}
+}
+
+// setSwitchKeys parses config.go's own source and extracts every string
+// case label in (*Config).Set's switch statement, so
+// TestKeyCatalogCoversEverySetKey checks the catalog against the actual
+// Set implementation rather than a second hand-maintained list that could
+// drift right alongside it.
+func setSwitchKeys(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "config.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parsing config.go: %v", err)
+	}
+	var keys []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "Set" || fn.Recv == nil || fn.Body == nil {
+			return true
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			cc, ok := n.(*ast.CaseClause)
+			if !ok {
+				return true
+			}
+			for _, e := range cc.List {
+				lit, ok := e.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				if s, err := strconv.Unquote(lit.Value); err == nil {
+					keys = append(keys, s)
+				}
+			}
+			return true
+		})
+		return false // don't descend into other funcs
+	})
+	return keys
+}
+
+// TestKeyCatalogCoversEverySetKey asserts the catalog's key names are
+// EXACTLY the set of keys (*Config).Set accepts: no key Set handles is
+// missing from the catalog, no catalog entry names a key Set doesn't
+// handle (a typo or a stale entry), and no key is listed twice.
+func TestKeyCatalogCoversEverySetKey(t *testing.T) {
+	setKeys := setSwitchKeys(t)
+	if len(setKeys) == 0 {
+		t.Fatal("setSwitchKeys found no case labels -- test helper is broken")
+	}
+
+	catalog := map[string]bool{}
+	for _, ki := range Keys() {
+		if catalog[ki.Name] {
+			t.Errorf("Keys() lists %q more than once", ki.Name)
+		}
+		catalog[ki.Name] = true
+	}
+
+	seen := map[string]bool{}
+	for _, k := range setKeys {
+		seen[k] = true
+		if !catalog[k] {
+			t.Errorf("Set accepts %q but Keys() does not list it (catalog is missing a key)", k)
+		}
+	}
+	for name := range catalog {
+		if !seen[name] {
+			t.Errorf("Keys() lists %q but Set has no case for it (stale catalog entry)", name)
+		}
 	}
 }

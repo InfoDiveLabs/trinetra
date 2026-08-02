@@ -54,7 +54,7 @@ func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 		got = c
 		return nil
 	}
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload, nil, &enrollState{})
 
 	c := config.Default()
 	c.Thresholds.CPUPct = 77
@@ -72,7 +72,7 @@ func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 func TestInprocApplyConfigPropagatesReloadError(t *testing.T) {
 	wantErr := errNotExist
 	reload := func(*config.Config) error { return wantErr }
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), reload, nil, &enrollState{})
 
 	if err := api.ApplyConfig(config.Default()); err != wantErr {
 		t.Fatalf("ApplyConfig() err = %v, want %v", err, wantErr)
@@ -133,7 +133,7 @@ func TestInprocAckAlertUnackAlertRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, dir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, dir, nil, nil, &enrollState{})
 	if err := api.AckAlert("mem"); err != nil {
 		t.Fatalf("AckAlert: %v", err)
 	}
@@ -168,19 +168,67 @@ func TestFileAPITestChannelDelegatesToSendTestNotification(t *testing.T) {
 }
 
 func TestInprocTestChannelDelegatesToSendTestNotification(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})
 	err := api.TestChannel("does-not-exist")
 	if err == nil || !strings.Contains(err.Error(), `unknown channel "does-not-exist"`) {
 		t.Fatalf("TestChannel(unknown) err = %v, want an unknown-channel error", err)
 	}
 }
 
-// TestInprocUnimplementedMethodsReturnSentinel pins that, after task 8, the
-// ONLY inprocAPI method still returning errCoreNotImplemented is Subscribe
-// (deferred to S5) -- every write method now does real work.
-func TestInprocUnimplementedMethodsReturnSentinel(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), func(*config.Config) error { return nil })
-	if _, err := api.Subscribe(nil); err != errCoreNotImplemented { //nolint:staticcheck // nil context: exercising the stub only
-		t.Errorf("Subscribe() err = %v, want errCoreNotImplemented", err)
+// TestFileAPIValidateChannelRejectsUndeliverable and its in-process
+// counterpart below pin that ValidateChannel routes through the shared
+// buildNotifier (channels.go) -- the same check TestChannel/`channel test`
+// use, minus the network send -- against this API's own config: a telegram
+// channel with no chat id and no global fallback is rejected, and a
+// deliverable channel (a webhook with a url) passes.
+func TestFileAPIValidateChannelRejectsUndeliverable(t *testing.T) {
+	api := newFileAPI(t.TempDir(), config.Default())
+
+	undeliverable := config.ChannelConfig{Name: "phone", Type: "telegram", Settings: map[string]string{"token": "sometoken"}}
+	err := api.ValidateChannel(undeliverable)
+	if err == nil || !strings.Contains(err.Error(), "chat_id not configured") {
+		t.Fatalf("ValidateChannel(undeliverable telegram) err = %v, want a chat_id error", err)
+	}
+
+	deliverable := config.ChannelConfig{
+		Name:     "hook",
+		Type:     "webhook",
+		Settings: map[string]string{"url": "https://example.com/hook"},
+	}
+	if err := api.ValidateChannel(deliverable); err != nil {
+		t.Fatalf("ValidateChannel(deliverable webhook) err = %v, want nil", err)
+	}
+}
+
+func TestInprocValidateChannelRejectsUndeliverable(t *testing.T) {
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})
+
+	undeliverable := config.ChannelConfig{Name: "phone", Type: "telegram", Settings: map[string]string{"token": "sometoken"}}
+	err := api.ValidateChannel(undeliverable)
+	if err == nil || !strings.Contains(err.Error(), "chat_id not configured") {
+		t.Fatalf("ValidateChannel(undeliverable telegram) err = %v, want a chat_id error", err)
+	}
+
+	deliverable := config.ChannelConfig{
+		Name:     "hook",
+		Type:     "webhook",
+		Settings: map[string]string{"url": "https://example.com/hook"},
+	}
+	if err := api.ValidateChannel(deliverable); err != nil {
+		t.Fatalf("ValidateChannel(deliverable webhook) err = %v, want nil", err)
+	}
+}
+
+// TestInprocSubscribeNoBusReturnsSentinel pins inprocAPI.Subscribe's
+// degenerate case: an inprocAPI built with no live daemon bus (bus is nil --
+// every newInprocAPI call in this file/package that isn't specifically
+// testing Subscribe's real streaming behavior, which lives in
+// coreapi_inproc_test.go) returns errStreamRequiresDaemon rather than
+// panicking. Passing a nil ctx is safe here specifically because the nil-bus
+// check short-circuits before Subscribe ever touches ctx.
+func TestInprocSubscribeNoBusReturnsSentinel(t *testing.T) {
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), func(*config.Config) error { return nil }, nil, &enrollState{})
+	if _, err := api.Subscribe(nil); err != errStreamRequiresDaemon { //nolint:staticcheck // nil context: safe, Subscribe returns before touching ctx when bus is nil
+		t.Errorf("Subscribe() err = %v, want errStreamRequiresDaemon", err)
 	}
 }

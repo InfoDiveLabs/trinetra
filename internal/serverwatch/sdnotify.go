@@ -7,8 +7,8 @@ import (
 
 // sdNotify sends a service-manager notification (sd_notify(3)) over the
 // unixgram socket named by $NOTIFY_SOCKET. It is a no-op returning nil when
-// NOTIFY_SOCKET is unset — i.e. not running under systemd, or the unit does
-// not enable notifications — so callers may invoke it unconditionally.
+// NOTIFY_SOCKET is unset -- i.e. not running under systemd, or the unit does
+// not enable notifications -- so callers may invoke it unconditionally.
 // Stdlib-only; state is a newline-free datagram like "WATCHDOG=1" or "READY=1".
 func sdNotify(state string) error {
 	addr := os.Getenv("NOTIFY_SOCKET")

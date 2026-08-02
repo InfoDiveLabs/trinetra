@@ -40,6 +40,34 @@
       {{block "content" .}}{{end}}
     </div>
   </div>
+
+  <!-- mobile bottom tab bar (<=640px only; display:none above) -- primary sections -->
+  <nav class="botnav" aria-label="Primary">
+    <a href="/"{{if eq "/" .Active}} class="active"{{end}}><span class="ic">◉</span><span class="lb">Dashboard</span></a>
+    <a href="/monitoring"{{if eq "/monitoring" .Active}} class="active"{{end}}><span class="ic">▤</span><span class="lb">Monitoring</span></a>
+    <a href="/history"{{if eq "/history" .Active}} class="active"{{end}}><span class="ic">◔</span><span class="lb">History</span></a>
+    <a href="/alerts"{{if eq "/alerts" .Active}} class="active"{{end}}><span class="ic">!</span><span class="lb">Alerts</span>{{range .Nav}}{{if eq .Href "/alerts"}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}{{end}}{{end}}</a>
+    <button type="button" class="botmore" id="moreBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="moreSheet"><span class="ic">⋯</span><span class="lb">More</span></button>
+  </nav>
+
+  <!-- "More" sheet: remaining nav items + account/sign-out (mobile only) -->
+  <div class="sheet-scrim" id="moreScrim"></div>
+  <aside class="sheet" id="moreSheet" role="dialog" aria-modal="true" aria-label="More navigation">
+    <div class="sheet-grip"></div>
+    <nav class="sheet-nav">
+      {{range .Nav}}{{if not .Heading}}{{if and (ne .Href "/") (ne .Href "/monitoring") (ne .Href "/history") (ne .Href "/alerts")}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}{{end}}{{end}}
+    </nav>
+    <div class="sheet-foot">
+      <div class="who">
+        <span class="avatar">{{.Initial}}</span>
+        <div style="flex:1">
+          <div style="font-size:13px">{{.Name}}</div>
+          <span class="badge role">{{.Role}}</span>
+        </div>
+        <button id="logoutBtnSheet" class="btn ghost" type="button">Sign out ⏻</button>
+      </div>
+    </div>
+  </aside>
 </div>
 <script src="{{asset "/assets/htmx.min.js"}}" nonce="{{.Nonce}}"></script>
 <script src="{{asset "/assets/uPlot.iife.min.js"}}"></script>

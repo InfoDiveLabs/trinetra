@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -17,7 +15,7 @@ import (
 // TestTokenStoreConcurrentIssueNoLostUpdate is the shared-per-path-lock
 // regression pin for enrollment tokens: like sessions, each handler builds a
 // fresh tokenStore per request (newTokenStore), so concurrent Issue calls
-// through separate instances on the same file must all persist — a
+// through separate instances on the same file must all persist -- a
 // per-instance mutex would let two Issues load→append→save the whole file,
 // last-writer-wins, silently dropping a token (and colliding on the shared
 // .tmp path). With fileStoreMutex they serialize and every token redeems.
@@ -45,14 +43,14 @@ func TestTokenStoreConcurrentIssueNoLostUpdate(t *testing.T) {
 			t.Fatalf("Issue[%d] returned an empty token", i)
 		}
 		if _, err := redeemer.Redeem(tok); err != nil {
-			t.Errorf("token %d was lost or corrupted — Redeem: %v", i, err)
+			t.Errorf("token %d was lost or corrupted -- Redeem: %v", i, err)
 		}
 	}
 }
 
 // TestTokenStoreConcurrentRedeemSingleUse pins single-use enforcement under
 // concurrency: many goroutines racing to redeem the SAME token (each via its
-// own tokenStore instance) must yield exactly one success — the shared
+// own tokenStore instance) must yield exactly one success -- the shared
 // per-path lock serializes the load→mark-used→save so no two callers can both
 // observe it unused and both consume it.
 func TestTokenStoreConcurrentRedeemSingleUse(t *testing.T) {
@@ -201,7 +199,7 @@ func TestTokenStoreGCRemovesExpiredRecords(t *testing.T) {
 // TestResolveEnrollRoleBootstrapsFirstUserAsAdmin pins the first-run
 // bootstrap rule directly against resolveEnrollRole: an empty store with no
 // token supplied resolves to a bootstrap attempt (role deferred to finish,
-// not decided here — see the TOCTOU fix), not a rejection.
+// not decided here -- see the TOCTOU fix), not a rejection.
 func TestResolveEnrollRoleBootstrapsFirstUserAsAdmin(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
@@ -315,7 +313,7 @@ func TestEnrollBootstrapFirstUserBecomesAdmin(t *testing.T) {
 
 // TestEnrollWithoutTokenClosedAfterBootstrap pins the flip side: once a
 // first user exists, a second tokenless /enroll/begin must be refused
-// outright — no ceremony cookie set, no account created.
+// outright -- no ceremony cookie set, no account created.
 func TestEnrollWithoutTokenClosedAfterBootstrap(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)
@@ -478,15 +476,15 @@ func enrollFinishRR(t *testing.T, h http.Handler, challenge string, cookie *http
 // zero users, each is a bootstrap attempt) must not both become admin. The
 // admin-or-refuse decision is made atomically at finish time
 // (jsonUserStore.CreateFirstAdmin, under the write lock), so whichever finish
-// commits first becomes the sole admin and the second — now seeing a
-// non-empty store — is rejected. This reproduces the reviewer's live repro
+// commits first becomes the sole admin and the second -- now seeing a
+// non-empty store -- is rejected. This reproduces the reviewer's live repro
 // (two /enroll/begin, then two /enroll/finish) and asserts exactly one
 // account exists afterward and it is admin.
 func TestBootstrapRaceYieldsExactlyOneAdmin(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
 
-	// Both begins run FIRST, against the still-empty store — this is the
+	// Both begins run FIRST, against the still-empty store -- this is the
 	// window where the old (begin-time) decision made both admin.
 	ch1, cookie1 := enrollBeginRR(t, h, "racer-1")
 	ch2, cookie2 := enrollBeginRR(t, h, "racer-2")
@@ -499,7 +497,7 @@ func TestBootstrapRaceYieldsExactlyOneAdmin(t *testing.T) {
 		t.Fatalf("first bootstrap finish status = %d, want 204", code1)
 	}
 	if code2 == http.StatusNoContent {
-		t.Fatal("second bootstrap finish succeeded (204); want rejection — a second silent admin is exactly the TOCTOU bug")
+		t.Fatal("second bootstrap finish succeeded (204); want rejection -- a second silent admin is exactly the TOCTOU bug")
 	}
 
 	store := newUserStore(d.StateDir)

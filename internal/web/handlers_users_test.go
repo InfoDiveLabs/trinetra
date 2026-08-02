@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -16,7 +14,7 @@ import (
 )
 
 // seedAdmin puts a RoleAdmin *User in store and mints a live session for it,
-// returning the session cookie plus that session's CSRF token — everything a
+// returning the session cookie plus that session's CSRF token -- everything a
 // test needs to act as that admin against a CSRF-protected /users/* mutation.
 func seedAdmin(t *testing.T, name string, users UserStore, sessions SessionStore) (*User, *http.Cookie, string) {
 	t.Helper()
@@ -32,7 +30,7 @@ func seedAdmin(t *testing.T, name string, users UserStore, sessions SessionStore
 }
 
 // postForm issues a form-encoded POST against h, optionally attaching a
-// session cookie and/or an X-CSRF-Token header — the shape every /users/*
+// session cookie and/or an X-CSRF-Token header -- the shape every /users/*
 // mutation test needs (some deliberately omit the CSRF header to pin the
 // requireCSRF gate).
 func postForm(h http.Handler, target string, form url.Values, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
@@ -88,7 +86,7 @@ func TestUsersPageListsUsers(t *testing.T) {
 
 // TestUsersPageForbiddenForViewerAndAnon pins the RBAC gate at this specific
 // route: a signed-in viewer gets the 403 "Admin only" panel, an anonymous
-// visitor is redirected to /login — the same matrix rbac_test.go already
+// visitor is redirected to /login -- the same matrix rbac_test.go already
 // pins generically across every admin route, verified again here directly
 // against the real (non-placeholder) /users handler per the task brief.
 func TestUsersPageForbiddenForViewerAndAnon(t *testing.T) {
@@ -236,7 +234,7 @@ func TestUsersChangeRoleRoundTrip(t *testing.T) {
 
 // TestUsersDemoteRefusesLastAdmin pins the lockout guard on the ROLE-CHANGE
 // path: demoting the sole remaining admin to viewer must be refused, the
-// same as removing them would be — otherwise the admin-only /users route
+// same as removing them would be -- otherwise the admin-only /users route
 // (and every other admin route) becomes permanently unreachable, since a
 // fresh bootstrap admin only happens against a fully EMPTY user store.
 func TestUsersDemoteRefusesLastAdmin(t *testing.T) {
@@ -328,7 +326,7 @@ func TestUsersRevokeCredentialRemovesOnlyThatOne(t *testing.T) {
 // TestUsersRevokeCredentialRefusesLastAdminsLastCredential pins the third
 // zero-admin lockout vector (issue #63 follow-up): revoking the sole
 // remaining admin's ONLY credential must be refused with a 409, leaving the
-// credential (and the admin role) untouched — otherwise the admin has zero
+// credential (and the admin role) untouched -- otherwise the admin has zero
 // usable passkeys and, with the store non-empty, no bootstrap or
 // admin-issued-invite path back in.
 func TestUsersRevokeCredentialRefusesLastAdminsLastCredential(t *testing.T) {
@@ -399,13 +397,13 @@ func TestUsersRevokeCredentialWorksWhenAdminHasAnother(t *testing.T) {
 // path-keyed fileStoreMutex can serialize the individual store calls.
 //
 // This asserts the TRUE, interleaving-independent invariant: the sole
-// admin (u1) is NEVER locked out — the store never ends credential-less,
+// admin (u1) is NEVER locked out -- the store never ends credential-less,
 // and the credential the revoke was never asked to touch (credB) always
 // survives. It deliberately does NOT assert which of the two racing
 // read-modify-writes "wins" (whether credA ends up resurrected, or credB's
 // signCount bump persists): the store's Get/Put API is two separate locked
 // critical sections, not an atomic compare-and-swap, so a lost update
-// across the goroutine's own Get-then-Put is a legitimate outcome — pinning
+// across the goroutine's own Get-then-Put is a legitimate outcome -- pinning
 // the exact winning order made this test flaky under -race with no
 // underlying data race or safety violation.
 func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
@@ -459,9 +457,9 @@ func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
 	}
 	// Safety invariant #1: the admin is never left credential-less (locked out).
 	if len(final.Credentials) == 0 {
-		t.Fatal("admin left with zero credentials — permanent lockout")
+		t.Fatal("admin left with zero credentials -- permanent lockout")
 	}
-	// Safety invariant #2: credB — which the revoke was never asked to touch —
+	// Safety invariant #2: credB -- which the revoke was never asked to touch --
 	// always survives, so the admin always retains a usable credential. (credA's
 	// fate and credB's signCount depend on which racing write lands last and are
 	// intentionally not asserted; see the doc comment.)
@@ -472,20 +470,20 @@ func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
 		}
 	}
 	if !haveB {
-		t.Fatalf("credB missing after concurrent revoke+Put = %+v — admin's untouched credential was dropped", final.Credentials)
+		t.Fatalf("credB missing after concurrent revoke+Put = %+v -- admin's untouched credential was dropped", final.Credentials)
 	}
 }
 
 // TestRemoveUnlessLastAdminConcurrent is the TOCTOU regression pin for the
 // remove path. Two goroutines each try to remove one of the two (and only
 // two) admins, each through its OWN newUserStore instance pointed at the
-// same file — exactly how concurrent HTTP requests hit the store in
+// same file -- exactly how concurrent HTTP requests hit the store in
 // production (every handler calls newUserStore per request, so a per-INSTANCE
 // mutex would not serialize them). The last-admin guard must be atomic
 // (check-then-delete under a single, process-wide-per-path lock) so exactly
 // one succeeds and one is rejected with errLastAdmin, leaving exactly one
 // admin. Before the fix, both could observe two admins and both delete,
-// yielding zero admins — a permanent, unrecoverable lockout.
+// yielding zero admins -- a permanent, unrecoverable lockout.
 func TestRemoveUnlessLastAdminConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	seed := newUserStore(dir)
@@ -571,7 +569,7 @@ func TestSetRoleUnlessLastAdminConcurrent(t *testing.T) {
 }
 
 // TestUsersMutationsRequireAdminRole pins that the /users/* mutation routes
-// are gated by requireRole(RoleAdmin, ...) exactly like GET /users itself —
+// are gated by requireRole(RoleAdmin, ...) exactly like GET /users itself --
 // a signed-in viewer with an otherwise-valid CSRF token still gets 403.
 func TestUsersMutationsRequireAdminRole(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)

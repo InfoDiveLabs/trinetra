@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -28,7 +26,7 @@ type EnrollToken struct {
 	Expires int64 `json:"expires"`
 	// Used marks a token permanently spent: Redeem sets this on its first
 	// (successful) call and refuses every call thereafter, regardless of
-	// Expires — a token is single-use even within its TTL.
+	// Expires -- a token is single-use even within its TTL.
 	Used bool `json:"used"`
 }
 
@@ -36,7 +34,7 @@ type EnrollToken struct {
 // token store, structured the same way as jsonUserStore/jsonSessionStore: no
 // in-memory cache, every method reloads from disk under the shared per-path
 // lock (fileStoreMutex, users.go) so Issue/Redeem's read-modify-write can't
-// race a concurrent goroutine within this process — including one holding a
+// race a concurrent goroutine within this process -- including one holding a
 // DIFFERENT tokenStore instance over the same file, which the handlers create
 // per request (a second OS process editing the file concurrently is out of
 // scope, same caveat as the other two stores).
@@ -83,7 +81,7 @@ func (s *tokenStore) loadLocked() ([]*EnrollToken, error) {
 }
 
 // saveLocked atomically rewrites the store file with toks, tightening perms
-// to 0600 — an enrollment token is bearer-equivalent (whoever holds the
+// to 0600 -- an enrollment token is bearer-equivalent (whoever holds the
 // string can mint an account at the role it carries), so this file must
 // never be group/world-readable, the same reasoning as sessions.json.
 // Atomic (write-temp + rename) so a crash mid-write can never leave a
@@ -120,7 +118,7 @@ func (s *tokenStore) saveLocked(toks []*EnrollToken) error {
 // ttl, and persists it, returning the token string. The design doc's
 // interface fixes this signature to return just the string (no error): a
 // (rare, e.g. disk-full/permissions) persistence failure is swallowed and
-// Issue returns "" instead — Redeem("") always fails with "unknown
+// Issue returns "" instead -- Redeem("") always fails with "unknown
 // enrollment token" like any other bogus value, so a caller that somehow
 // hits this can't mint a usable token, but nothing unsafe results either.
 func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
@@ -146,8 +144,8 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 }
 
 // Redeem looks up tok and, if it exists, is unexpired, and hasn't already
-// been used, marks it Used and returns its Role. Every other case — unknown
-// token, expired, or already used — returns an error and leaves the store
+// been used, marks it Used and returns its Role. Every other case -- unknown
+// token, expired, or already used -- returns an error and leaves the store
 // untouched.
 func (s *tokenStore) Redeem(tok string) (Role, error) {
 	mu := fileStoreMutex(s.path)
@@ -178,7 +176,7 @@ func (s *tokenStore) Redeem(tok string) (Role, error) {
 }
 
 // GC removes every token whose Expires is <= now, whether or not it was ever
-// used — the same eager disk-space-reclaim role as SessionStore.GC,
+// used -- the same eager disk-space-reclaim role as SessionStore.GC,
 // decoupled from Redeem's own immediate (lazy) expiry/used check.
 func (s *tokenStore) GC(now int64) {
 	mu := fileStoreMutex(s.path)
@@ -226,7 +224,7 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 //     enforces unknown/expired/used rejection, and burns the single-use
 //     token now); bootstrap is false. The role is final.
 //   - no token, and the user store has no accounts yet: this is a first-run
-//     bootstrap ATTEMPT — bootstrap is true and role is left empty. The
+//     bootstrap ATTEMPT -- bootstrap is true and role is left empty. The
 //     account's admin role is NOT decided here: two concurrent tokenless
 //     begins would both see an empty store, so the authoritative "0 users ⇒
 //     admin, else refuse" decision is deferred to finish time

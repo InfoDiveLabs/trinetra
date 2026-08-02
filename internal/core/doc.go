@@ -1,5 +1,5 @@
-// Package core defines the data types and (in later tasks) the core.API
-// interface that both the embedded web UI and the CLI consume as their one
+// Package core defines the data types and the core.API interface that the
+// web UI, the CLI, and the control-socket client all consume as their one
 // boundary onto daemon state.
 //
 // Import contract (enforced by internal/serverwatch/buildtag_test.go's

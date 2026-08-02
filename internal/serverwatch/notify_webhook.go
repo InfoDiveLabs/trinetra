@@ -28,13 +28,13 @@ const webhookRequestTimeout = 10 * time.Second
 // backslashes, or newlines. text/template does no JSON-escaping on its own,
 // so interpolating them directly between literal quote characters could
 // produce invalid (or, worse, structurally-altered) JSON. Instead, the
-// whole rendered message (severity + title, plus " — " + body when Body is
+// whole rendered message (severity + title, plus " -- " + body when Body is
 // non-empty) is built with the "printf" builtin and piped through the
 // "json" func (registered in webhookFuncMap below), which JSON-marshals the
 // resulting string and emits it, quotes and all. That keeps the entire
 // "text" value one properly-escaped JSON string no matter what Title/Body
 // contain.
-const defaultWebhookTemplate = `{"text":{{if .Body}}{{printf "%s %s — %s" .Severity .Title .Body | json}}{{else}}{{printf "%s %s" .Severity .Title | json}}{{end}}}`
+const defaultWebhookTemplate = `{"text":{{if .Body}}{{printf "%s %s -- %s" .Severity .Title .Body | json}}{{else}}{{printf "%s %s" .Severity .Title | json}}{{end}}}`
 
 // webhookView is the data made available to a webhook body template.
 type webhookView struct {

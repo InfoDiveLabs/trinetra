@@ -163,7 +163,7 @@ func NewDispatcher(channels []Channel, timeout time.Duration) *Dispatcher {
 // goroutine and Dispatch races that goroutine's result against a local
 // timer rather than blocking on it, so a Send that ignores ctx and hangs
 // forever cannot delay Dispatch's return (though its goroutine will leak
-// until the misbehaving call eventually completes — cooperative
+// until the misbehaving call eventually completes -- cooperative
 // cancellation via ctx remains the well-behaved path).
 func (d *Dispatcher) Dispatch(a Alert, quiet bool) []DeliveryResult {
 	var matched []Channel

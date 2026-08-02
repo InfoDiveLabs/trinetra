@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -22,8 +20,8 @@ func enrollTestDeps(t *testing.T) Deps {
 }
 
 // TestEnrollPageRendersBareLayout pins GET /enroll: it must render through
-// the bare/centered layout (base_bare.html), not the app shell — no
-// sidebar/topbar nav, since there's no signed-in session yet — while still
+// the bare/centered layout (base_bare.html), not the app shell -- no
+// sidebar/topbar nav, since there's no signed-in session yet -- while still
 // carrying the ported mockup markup and a CSP nonce on its boot script.
 func TestEnrollPageRendersBareLayout(t *testing.T) {
 	h := newHandler(enrollTestDeps(t))
@@ -135,7 +133,7 @@ func TestEnrollHandlersEndToEndPersistCredential(t *testing.T) {
 
 	// enrollTestDeps/testDeps leave Web.RPID/Origin empty (proxy-mode
 	// default, config.Default()), so webAuthnConfig derives both from the
-	// request's own Host — httptest.NewRequest defaults that to
+	// request's own Host -- httptest.NewRequest defaults that to
 	// "example.com" for a path-only target URL, giving "http://example.com".
 	finishBody, _ := creationResponseBody(t, beginResp.PublicKey.Challenge, "http://example.com", "example.com")
 	finishReq := httptest.NewRequest(http.MethodPost, "/enroll/finish", bytes.NewReader(finishBody))
@@ -191,7 +189,7 @@ func TestEnrollBeginHandlerRejectsExistingName(t *testing.T) {
 
 // TestEnrollDuplicateNameDoesNotTakeOverAccount is the end-to-end proof of
 // the same fix: a duplicate-name enrollment attempt must leave the existing
-// account completely untouched — same role, zero injected credentials.
+// account completely untouched -- same role, zero injected credentials.
 func TestEnrollDuplicateNameDoesNotTakeOverAccount(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)
@@ -210,7 +208,7 @@ func TestEnrollDuplicateNameDoesNotTakeOverAccount(t *testing.T) {
 	}
 
 	// The seeded account must be exactly as it was: still admin, still zero
-	// credentials — no anonymous passkey injected.
+	// credentials -- no anonymous passkey injected.
 	got, ok := store.Get(existing.ID)
 	if !ok {
 		t.Fatal("existing account disappeared")

@@ -1,4 +1,4 @@
-/* serverwatch UI mockup — shared styles */
+/* serverwatch UI mockup -- shared styles */
 :root{
   --font-sans: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-mono: ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
@@ -237,10 +237,168 @@ tr[data-detail]{cursor:pointer}
 
 /* Task 10 (#66): real <input type="checkbox"> "switches" for the config/
    channels pages' forms (monitors table, quiet-hours/digest toggles, channel
-   enabled column) — additive only, mirroring the preserved .switch/.switch.on
+   enabled column) -- additive only, mirroring the preserved .switch/.switch.on
    span rules above but keyed off :checked so the element is a genuinely
    submittable form control instead of a JS-only visual toggle. */
 input.switch{-webkit-appearance:none;appearance:none;margin:0;position:relative;display:inline-block;width:40px;height:23px;border-radius:999px;background:var(--elev);border:1px solid var(--border);cursor:pointer;flex:none;vertical-align:middle}
 input.switch::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:var(--muted);transition:.15s}
 input.switch:checked{background:color-mix(in oklab,var(--ok) 60%,var(--surface));border-color:transparent}
 input.switch:checked::after{left:19px;background:#fff}
+
+/* ============================================================
+   Mobile UI (#81) -- purpose-built phone layout at <=640px.
+   Everything phone-specific lives in the @media block below;
+   desktop/tablet (>640px) is untouched. The bottom tab bar and
+   the "More" sheet are display:none above the breakpoint (here),
+   and all colors come from the same var(--...) tokens so both the
+   dark and light themes match.
+   ============================================================ */
+.botnav,.sheet,.sheet-scrim{display:none}
+
+@media (max-width:640px){
+  /* --- shell: single column, hide desktop sidebar --- */
+  .app{grid-template-columns:1fr}
+  .side{display:none}
+  /* leave room for the fixed bottom bar (+ notch inset) so it never overlaps */
+  .wrap{padding:16px 14px calc(74px + env(safe-area-inset-bottom))}
+  .topbar{padding:11px 14px; gap:10px}
+  .topbar h1{font-size:16px}
+  .topbar p{font-size:12px}
+  /* header must never widen past the viewport (it forced horizontal page scroll,
+     clipping the tiles below). Drop the fixed-width decorative heartbeat, let the
+     title flex and truncate, and keep the status pill + toggle on one line. */
+  .topbar .hb-gen{display:none}
+  .topbar .spacer{display:none}
+  .topbar>div:first-child{flex:1 1 auto; min-width:0}
+  .topbar h1,.topbar p{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .topbar .pill{flex:0 0 auto; white-space:nowrap; padding:6px 10px}
+
+  /* --- bottom tab bar --- */
+  .botnav{display:flex; position:fixed; left:0; right:0; bottom:0; z-index:80;
+    background:var(--surface); border-top:1px solid var(--border);
+    padding-bottom:env(safe-area-inset-bottom);
+    box-shadow:0 -6px 20px -14px #00000070}
+  .botnav a,.botnav button{flex:1 1 0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:3px; min-height:56px; padding:6px 2px; position:relative;
+    background:none; border:0; color:var(--muted); font:inherit; cursor:pointer; text-decoration:none}
+  .botnav .ic{font-size:18px; line-height:1; opacity:.85}
+  .botnav .lb{font-size:10.5px; letter-spacing:.01em}
+  .botnav a.active,.botnav button.active{color:var(--signal)}
+  .botnav a.active .ic{opacity:1}
+  .botnav .ct{position:absolute; top:7px; left:calc(50% + 8px); min-width:15px; height:15px; padding:0 4px;
+    display:inline-flex; align-items:center; justify-content:center; border-radius:999px;
+    background:var(--crit); color:#fff; font-family:var(--font-mono); font-size:9.5px; line-height:1}
+
+  /* --- "More" sheet (slide up from bottom) --- */
+  .sheet-scrim{display:block; position:fixed; inset:0; background:var(--scrim); z-index:98;
+    opacity:0; pointer-events:none; transition:opacity .2s ease}
+  .sheet-scrim.on{opacity:1; pointer-events:auto}
+  .sheet{display:block; position:fixed; left:0; right:0; bottom:0; z-index:99;
+    background:var(--surface); border-top:1px solid var(--border);
+    border-radius:var(--r-lg) var(--r-lg) 0 0; box-shadow:var(--shadow);
+    padding:6px 14px calc(18px + env(safe-area-inset-bottom));
+    transform:translateY(100%); transition:transform .22s ease; max-height:82vh; overflow:auto}
+  .sheet.on{transform:none}
+  .sheet-grip{width:38px; height:4px; border-radius:999px; background:var(--border); margin:8px auto 10px}
+  .sheet-nav{display:flex; flex-direction:column; gap:2px}
+  .sheet-nav a{display:flex; align-items:center; gap:12px; min-height:48px; padding:12px 10px;
+    border-radius:var(--r-sm); color:var(--text); font-size:15px; font-weight:500}
+  .sheet-nav a .ic{width:18px; text-align:center; color:var(--muted); opacity:.9}
+  .sheet-nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
+  .sheet-nav a.active{background:color-mix(in oklab,var(--signal) 14%,transparent)}
+  .sheet-nav a.active .ic{color:var(--signal); opacity:1}
+  .sheet-foot{border-top:1px solid var(--border-soft); margin-top:8px; padding:12px 6px 2px}
+  .sheet-foot #logoutBtnSheet{min-height:40px}
+
+  /* --- grids stack; big numbers stay legible --- */
+  .g-tiles{grid-template-columns:1fr 1fr}
+  .g-4{grid-template-columns:1fr 1fr}
+  .g-2,.g-3,.g-hero,.g-32{grid-template-columns:1fr}
+  /* panels are grid children (default min-width:auto): without this a long
+     unbreakable token (e.g. an alert key "docker:...utso8q.1.rrdg...") sets the
+     track's min-content wider than the screen and scrolls the whole page. */
+  .panel{min-width:0}
+  .row .name b{display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .row .name .note{white-space:normal; overflow-wrap:anywhere}
+  .count{padding:15px 16px}
+  .count .n{font-size:32px}
+  .count .n .of{font-size:18px}
+  .tile .val{font-size:24px}
+  .section-label{margin:20px 0 10px}
+
+  /* --- touch targets (>=44px) --- */
+  .btn{min-height:44px}
+  input,select,textarea{min-height:44px}
+  .icon-btn{width:40px; height:40px}
+  .chip{min-height:38px; display:inline-flex; align-items:center}
+  /* the 4 tabs are wider than a phone: make the strip a swipeable scroll
+     container so it never pushes the page sideways, and keep each tab intact
+     (no truncation) with a comfortable touch target. */
+  .tabs{overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{padding:12px 14px; min-height:44px; white-space:nowrap; flex:0 0 auto}
+  /* narrow inline inputs (e.g. config per-target threshold) may stay compact */
+  .cards td input[type=text]{min-height:40px}
+
+  /* perf-o-meter bars fit the narrow viewport */
+  .meter{min-width:0}
+
+  /* charts never overflow the viewport */
+  .u-chart,.uplot{max-width:100%}
+  .uplot canvas{max-width:100%}
+
+  /* --- data-dense tables -> card lists ---
+     panels holding a card table shed their own frame so each row IS the card */
+  .cardpanel{background:transparent; border:0; border-radius:0; overflow:visible; padding:0}
+  .cardpanel .tablewrap{overflow:visible; max-height:none}
+  table.cards,table.cards tbody,table.cards td{display:block; width:auto}
+  table.cards thead{position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+    overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0} /* visually hide headers */
+  /* row is a flex column so the identifier cell can hoist to the top (order:-1)
+     without reordering the DOM -- keeps desktop column order matching <thead> */
+  table.cards tr{display:flex; flex-direction:column; background:var(--surface);
+    border:1px solid var(--border); border-radius:var(--r); padding:12px 14px; margin:0 0 10px}
+  table.cards tbody tr:hover,table.cards tr:hover{background:var(--surface)}
+  table.cards td{border:0; padding:6px 0; min-height:32px; text-align:right;
+    display:flex; align-items:baseline; justify-content:space-between; gap:14px}
+  table.cards td::before{content:attr(data-label); flex:none; text-align:left;
+    font-family:var(--font-mono); font-size:10px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--muted)}
+  /* cells with no data-label carry no leading label */
+  table.cards td:not([data-label])::before{content:""; display:none}
+  /* the primary identifier: a bold card title, hoisted to the top of the card */
+  table.cards td.card-title{order:-1; display:block; text-align:left; font-size:15px; font-weight:650;
+    padding:2px 0 9px; margin-bottom:6px; border-bottom:1px solid var(--border-soft)}
+  table.cards td.card-title::before{display:none}
+  table.cards td.card-title b{font-weight:650}
+  /* a meter/bar cell goes full width with its label above it */
+  table.cards td:has(.meter){display:block; text-align:left}
+  table.cards td:has(.meter)::before{display:block; margin-bottom:6px}
+  table.cards td:has(.meter) .meter{width:100%; min-width:0}
+  /* action buttons row */
+  table.cards td.card-actions{display:flex; flex-wrap:wrap; justify-content:flex-start;
+    gap:8px; text-align:left; padding-top:10px}
+  table.cards td.card-actions::before{display:none}
+  table.cards td.card-actions .btn{flex:1 1 auto; min-width:44px; justify-content:center}
+  table.cards td.card-actions form{display:inline-flex; flex:1 1 auto}
+  table.cards td.card-actions form .btn{width:100%}
+  /* the empty-state single cell ("no X ...") reads as one plain card */
+  table.cards td[colspan]{display:block; text-align:center; justify-content:center}
+  table.cards td[colspan]::before{display:none}
+
+  /* --- modals & drawer read as native bottom sheets --- */
+  .modal{padding:0; place-items:end stretch}
+  .modal .box{width:100%; max-width:none; max-height:92vh; border-radius:var(--r-lg) var(--r-lg) 0 0}
+  .drawer{width:100%; max-width:100%; left:0; right:0; top:auto; bottom:0; height:auto;
+    max-height:90vh; border-left:0; border-top:1px solid var(--border);
+    border-radius:var(--r-lg) var(--r-lg) 0 0; transform:translateY(100%)}
+  .drawer.on{transform:none}
+
+  /* bare pages (login/enroll) stay comfortable, never clipped */
+  .card{padding:28px 22px}
+}
+
+/* honor reduced-motion for the new slide transitions too */
+@media (prefers-reduced-motion:reduce){
+  .sheet,.sheet-scrim,.drawer{transition:none}
+}

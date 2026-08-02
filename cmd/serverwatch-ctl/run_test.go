@@ -1,0 +1,210 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"strings"
+	"testing"
+
+	"serverwatch/internal/config"
+	"serverwatch/internal/core"
+)
+
+// fakeAPI is a core.API stub returning canned values so run() (and, in
+// tui_test.go, the TUI model) can be driven without a real control socket.
+// Only the reads the ctl subcommands/wizard exercise are populated by
+// default; the rest satisfy the interface and are never called by most
+// tested paths. cfg/applyErr let a test control what Config() returns and
+// how ApplyConfig fails; applied/applyCalls record what a caller (the web
+// setup wizard) actually posted, for assertions.
+type fakeAPI struct {
+	snapshot core.DashboardView
+	doctor   core.DoctorReport
+	active   []core.AlertRecord
+
+	cfg       *config.Config
+	configErr error
+	applyErr  error
+	applied   *config.Config
+	applyN    int
+
+	// monitorTargets/monitorTargetsErr back MonitorTargets, so the monitor-
+	// thresholds screen's tests (manage_ui_test.go) can drive it without a
+	// real socket or real docker/df/smartctl discovery.
+	monitorTargets    []core.TargetView
+	monitorTargetsErr error
+
+	// validateErr/validateCalls back ValidateChannel for the Channels
+	// screen's #79-safe validate-before-save gate tests (channels_test.go,
+	// manage_channels_test.go): validateErr controls whether the gate
+	// passes or fails, validateCalls records every cc it was asked to check
+	// so a test can assert the gate was (or wasn't) actually consulted.
+	validateErr   error
+	validateCalls []config.ChannelConfig
+
+	// testChannelErr/testChannelCalls back TestChannel for the Channels
+	// screen's "test" action (manage_channels_test.go).
+	testChannelErr   error
+	testChannelCalls []string
+
+	// enrollPIN/enrollEnrolled/enrollErr back EnrollmentPIN for the
+	// first-run onboarding flow's tests (onboarding_test.go,
+	// onboard_ui_test.go): enrollCalls records how many times it was
+	// polled, so a test can assert the poll loop actually re-fetches.
+	enrollPIN      string
+	enrollEnrolled bool
+	enrollErr      error
+	enrollCalls    int
+}
+
+func (f *fakeAPI) Snapshot() (core.DashboardView, error) { return f.snapshot, nil }
+func (f *fakeAPI) Monitoring() (core.MonitoringView, error) {
+	return core.MonitoringView{}, nil
+}
+func (f *fakeAPI) Series(metric string, from, to int64, res core.Resolution) ([]core.SeriesPoint, error) {
+	return nil, nil
+}
+func (f *fakeAPI) Events(from, to int64) ([]core.DownEventView, error) { return nil, nil }
+func (f *fakeAPI) ActiveAlerts() ([]core.AlertRecord, error)           { return f.active, nil }
+func (f *fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
+	return nil, nil
+}
+func (f *fakeAPI) Config() (*config.Config, error) {
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
+	if f.cfg != nil {
+		return f.cfg, nil
+	}
+	return &config.Config{}, nil
+}
+func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+
+// EnrollmentPIN returns the canned enrollPIN/enrollEnrolled/enrollErr a test
+// set up, recording every call in enrollCalls so onboarding's poll-until-
+// enrolled loop (onboard_ui.go) can be asserted to actually re-fetch rather
+// than just checking the first result forever.
+func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
+	f.enrollCalls++
+	if f.enrollErr != nil {
+		return "", false, f.enrollErr
+	}
+	return f.enrollPIN, f.enrollEnrolled, nil
+}
+func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return f.monitorTargets, f.monitorTargetsErr
+}
+func (f *fakeAPI) ApplyConfig(c *config.Config) error {
+	f.applyN++
+	f.applied = c
+	return f.applyErr
+}
+func (f *fakeAPI) AckAlert(key string) error   { return nil }
+func (f *fakeAPI) UnackAlert(key string) error { return nil }
+
+// TestChannel records name in testChannelCalls and returns testChannelErr,
+// so the Channels screen's "test" action (manage_channels.go) can be
+// asserted against without a real notifier send.
+func (f *fakeAPI) TestChannel(name string) error {
+	f.testChannelCalls = append(f.testChannelCalls, name)
+	return f.testChannelErr
+}
+
+// ValidateChannel records cc in validateCalls and returns validateErr, so
+// the Channels screen's #79-safe validate-before-save gate (saveChannel,
+// channels.go) can be asserted to have (or not have) actually consulted it.
+func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
+	f.validateCalls = append(f.validateCalls, cc)
+	return f.validateErr
+}
+
+func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
+	return nil, nil
+}
+
+func TestRunStatus(t *testing.T) {
+	api := &fakeAPI{snapshot: core.DashboardView{
+		TS:              1700000000,
+		Online:          true,
+		CPU:             42.5,
+		MemPct:          63.25,
+		Cores:           8,
+		ContainersTotal: 3,
+		UnitsFailed:     1,
+	}}
+	var buf bytes.Buffer
+	if code := run(api, []string{"status"}, &buf); code != 0 {
+		t.Fatalf("run status exit = %d, want 0", code)
+	}
+	out := buf.String()
+	for _, want := range []string{"42.5", "63.2", "online", "8", "cores"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRunDoctor(t *testing.T) {
+	api := &fakeAPI{doctor: core.DoctorReport{
+		DockerAccess:      "available=true method=socket",
+		SmartctlAvailable: true,
+		ThermalZones:      2,
+		TargetsDiscovered: 5,
+		ServicesOn:        true,
+		StoreStats:        "42 series, 1.2 MB on disk (raw+1m)",
+	}}
+	var buf bytes.Buffer
+	if code := run(api, []string{"doctor"}, &buf); code != 0 {
+		t.Fatalf("run doctor exit = %d, want 0", code)
+	}
+	out := buf.String()
+	for _, want := range []string{"available=true method=socket", "42 series", "5"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor output missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRunAlerts(t *testing.T) {
+	api := &fakeAPI{active: []core.AlertRecord{
+		{Key: "cpu", Severity: "crit", Source: "cpu>90", Time: 1700000000, Acked: true},
+		{Key: "disk-root", Severity: "warn", Source: "disk /", Time: 1700000100},
+	}}
+	var buf bytes.Buffer
+	if code := run(api, []string{"alerts"}, &buf); code != 0 {
+		t.Fatalf("run alerts exit = %d, want 0", code)
+	}
+	out := buf.String()
+	for _, want := range []string{"cpu", "crit", "disk-root", "warn"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("alerts output missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRunAlertsEmpty(t *testing.T) {
+	api := &fakeAPI{}
+	var buf bytes.Buffer
+	if code := run(api, []string{"alerts"}, &buf); code != 0 {
+		t.Fatalf("run alerts exit = %d, want 0", code)
+	}
+	if !strings.Contains(buf.String(), "no active alerts") {
+		t.Errorf("empty alerts output = %q", buf.String())
+	}
+}
+
+func TestRunUnknownSubcommand(t *testing.T) {
+	api := &fakeAPI{}
+	var buf bytes.Buffer
+	if code := run(api, []string{"bogus"}, &buf); code == 0 {
+		t.Fatalf("run bogus exit = 0, want non-zero")
+	}
+}
+
+func TestRunNoSubcommand(t *testing.T) {
+	api := &fakeAPI{}
+	var buf bytes.Buffer
+	if code := run(api, nil, &buf); code == 0 {
+		t.Fatalf("run with no args exit = 0, want non-zero")
+	}
+}

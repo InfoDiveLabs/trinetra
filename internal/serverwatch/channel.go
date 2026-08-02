@@ -12,7 +12,7 @@ import (
 
 const usageChannel = `usage:
   serverwatch channel list
-  serverwatch channel add <name> --type <type> [--set key=value ...]
+  serverwatch channel add <name> --type <type> [--set key=value ...] [--disabled]
   serverwatch channel remove <name>
   serverwatch channel set <name> <key> <value>
   serverwatch channel test <name>`
@@ -95,6 +95,8 @@ func cmdChannelAdd(c *config.Config, args []string) int {
 				cc.Settings = map[string]string{}
 			}
 			cc.Settings[kv[0]] = kv[1]
+		case "--disabled":
+			cc.Enabled = false
 		default:
 			fmt.Fprintf(stderr, "unknown flag %q\n\n%s\n", rest[i], usageChannel)
 			return 2
@@ -103,6 +105,21 @@ func cmdChannelAdd(c *config.Config, args []string) int {
 	if cc.Type == "" {
 		fmt.Fprintln(stderr, "channel add requires --type <type>")
 		return 2
+	}
+	// #83: validate up front, same as the ctl Channels screen's
+	// validate-before-save gate (saveChannel/channelNeedsValidation in
+	// cmd/serverwatch-ctl/channels.go). Only ENABLED channels are gated -- a
+	// disabled channel can't misdeliver (it's never wired into the
+	// Dispatcher while off), so it may still be staged with incomplete
+	// settings via --disabled. buildNotifier is the same call
+	// core.API.ValidateChannel wraps (coreapi_file.go/coreapi_inproc.go), so
+	// this single-sources the required-field set instead of duplicating it
+	// here.
+	if cc.Enabled {
+		if _, err := buildNotifier(cc, c); err != nil {
+			fmt.Fprintf(stderr, "channel %q: not saved, validation failed: %v\n", cc.Name, err)
+			return 1
+		}
 	}
 	c.AddChannel(cc)
 	if err := saveCfg(c); err != nil {
@@ -168,12 +185,12 @@ func cmdChannelTest(c *config.Config, args []string) int {
 // itself failing) as a single error. source is threaded onto the test
 // Alert's Source field so a channel that surfaces it (e.g. a webhook
 // template referencing .Source) can tell a CLI-issued test apart from a
-// web-issued one (issue #66's "send test" button, handlers_channels.go via
-// WebDeps.TestChannel/daemon.go).
+// web-issued one (issue #66's "send test" button, reached over the control
+// socket via inprocAPI.TestChannel, coreapi_inproc.go).
 //
 // Shared by cmdChannelTest (`serverwatch channel test <name>`) and the web
 // channels page's "Send test" action so both paths exercise the exact same
-// notifier-construction and delivery logic — no channel type can behave
+// notifier-construction and delivery logic -- no channel type can behave
 // differently for one caller than the other.
 func sendTestNotification(c *config.Config, name, source string) error {
 	cc, ok := c.GetChannel(name)

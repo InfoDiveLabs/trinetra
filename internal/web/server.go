@@ -1,8 +1,7 @@
-//go:build web
-
 package web
 
 import (
+	"context"
 	"time"
 
 	"serverwatch/internal/config"
@@ -13,21 +12,23 @@ import (
 // records from <StateDir>/sessions.json (session.go's SessionStore.GC).
 // Session/ceremony expiry itself is enforced immediately and independently
 // by SessionStore.Get treating an expired record as absent (see
-// jsonSessionStore.Get) — this ticker only reclaims disk space/file size
+// jsonSessionStore.Get) -- this ticker only reclaims disk space/file size
 // for records nobody ever looks up again after they expire, so an interval
 // this coarse costs nothing in correctness.
 const sessionGCInterval = 10 * time.Minute
 
-// The `-tags web` build's reach into github.com/go-webauthn/webauthn (what
-// used to be pinned here by a placeholder stub, see git history) is now the
-// real registration ceremony: webAuthnConfig/beginRegistration/
+// This package's reach into github.com/go-webauthn/webauthn (what used to
+// be pinned here by a placeholder stub, see git history) is now the real
+// registration ceremony: webAuthnConfig/beginRegistration/
 // finishRegistration in auth_webauthn.go, and *User's webauthn.User
-// implementation in users.go (issue #60).
+// implementation in users.go (issue #60). This package is compiled into the
+// serverwatch-web binary, no build tag.
 
 // Deps is what the web server needs from the running daemon, expressed
-// without importing internal/serverwatch (see the design note atop
-// internal/serverwatch/web_deps.go). API is this package's single seam onto
-// the daemon's live state (see Deps.API's own doc below): the dashboard,
+// without importing internal/serverwatch (internal/web must never import
+// internal/serverwatch, to keep the module graph one-way). API is this
+// package's single seam onto the daemon's live state (see Deps.API's own
+// doc below): the dashboard,
 // monitoring, history/series, and downtime handlers all read through it,
 // and its write methods (ApplyConfig/TestChannel/AckAlert/UnackAlert) cover
 // config and channel writes too, so this package never needs to import
@@ -71,8 +72,10 @@ type Deps struct {
 	Events EventsStore
 	// Snapshot returns the latest live snapshot, already projected into this
 	// package's own DashboardView (dashboard_view.go) by
-	// internal/serverwatch/daemon_web.go's adapter — see that type's doc for
-	// why the projection (rather than serverwatch.Snapshot itself) is what
+	// internal/serverwatch/coreapi_inproc.go's buildDashboardView, then
+	// carried here over the control socket by the serverwatch-web binary's
+	// buildDeps (cmd/serverwatch-web) -- see that type's doc for why the
+	// projection (rather than serverwatch.Snapshot itself) is what
 	// crosses this boundary. Lock-free/cheap: safe to call from any
 	// goroutine, any number of times. Still used directly by the SSE
 	// handlers (sse.go, on every tick), the sidebar nav counts
@@ -88,42 +91,54 @@ type Deps struct {
 	AlertStatePath string
 	// TestChannel sends a one-off test notification through the named
 	// channel (internal/serverwatch/daemon.go's testChannel closure, built
-	// from sendTestNotification/buildNotifier — the same logic `serverwatch
+	// from sendTestNotification/buildNotifier -- the same logic `serverwatch
 	// channel test <name>` uses). As of task 8, channelsTestHandler
 	// (handlers_channels.go) reads through Deps.API.TestChannel instead --
-	// this field is kept on Deps (still assigned by daemon_web.go) but no
+	// this field is kept on Deps (still assigned by the serverwatch-web
+	// binary's buildDeps, cmd/serverwatch-web) but no
 	// longer read by this package; it stays only in case a future
 	// non-core.API consumer needs it directly.
 	TestChannel func(name string) error
 	// ValidateChannel reports whether a channel config could actually build a
-	// working notifier (daemon_web.go wires it to serverwatch.buildNotifier,
-	// the same check `channel test` and delivery use, minus the network send).
+	// working notifier (the serverwatch-web binary's buildDeps wires it to
+	// client.ValidateChannel, which dry-runs serverwatch.buildNotifier on the
+	// daemon side over the control socket), the same check `channel test` and
+	// delivery use, minus the network send.
 	// The channels handlers call it before persisting an ENABLED channel so
 	// the web editor never silently creates a channel that would be dropped at
-	// delivery time (#79 — e.g. a telegram channel with no chat id). May be
+	// delivery time (#79 -- e.g. a telegram channel with no chat id). May be
 	// nil in tests that don't exercise it; callers must check before calling.
 	ValidateChannel func(config.ChannelConfig, *config.Config) error
 	// Enabled mirrors cfg.Web.Enabled (the web.enabled config key, issue
-	// #58), read once at daemon startup — see daemon.go's cmdDaemon.
+	// #58), read once at daemon startup -- see daemon.go's cmdDaemon.
 	Enabled bool
 	// Listen mirrors cfg.Web.Listen (the web.listen config key, issue #58),
 	// a "host:port" string net.SplitHostPort-validated by
 	// internal/config.Config.Set.
 	Listen string
+	// Subscribe opens a live event stream: the daemon's core.API.Subscribe
+	// (Task 2's socket streaming), adapted into this package's own LiveEvent
+	// type (see LiveEvent's doc) so internal/web never needs to import
+	// core.Event for this path -- the serverwatch-web binary's buildDeps
+	// wires this to a closure calling client.Subscribe(ctx) and copying each
+	// core.Event's fields into a LiveEvent. nil when unavailable (e.g. a
+	// test that doesn't exercise the SSE handlers): eventsHandler/
+	// publicEventsHandler (sse.go) treat a nil Subscribe exactly like the
+	// pre-Task-3 pure-ticker behavior, never call it, never panic.
+	Subscribe func(context.Context) (<-chan LiveEvent, error)
 }
 
 // Start is the web server's entry point: given Deps, it binds and serves
-// (per cfg.Web.Mode — see serving.go's listenAndServe) when Deps.Enabled and
+// (per cfg.Web.Mode, see serving.go's listenAndServe) when Deps.Enabled and
 // returns a stop func that gracefully shuts it down. If Deps.Enabled is
-// false, Start binds nothing and returns a no-op stop and a nil error — the
-// daemon always calls maybeStartWeb/Start unconditionally (see
-// internal/serverwatch/web_deps.go), so "disabled" has to be a valid,
-// harmless outcome here rather than an error.
+// false, Start binds nothing and returns a no-op stop and a nil error: the
+// serverwatch-web binary calls Start unconditionally (see cmd/serverwatch-web),
+// so "disabled" has to be a valid, harmless outcome here rather than an error.
 //
 // When Enabled is true, Start first calls validateOrigin (issue #59) to
 // fail fast on a passkey-unsafe or incomplete web.* config BEFORE binding
-// anything: a non-nil return here means the caller (maybeStartWeb) must
-// log it and treat the web server as not started, while the daemon itself
+// anything: a non-nil return here means the caller (serverwatch-web) must
+// log it and treat the web server as not started, while it itself
 // keeps running.
 func Start(d Deps) (stop func(), err error) {
 	if !d.Enabled {
@@ -136,8 +151,8 @@ func Start(d Deps) (stop func(), err error) {
 
 	// The authenticated-session store, the separate ceremony-placeholder
 	// store, and the enrollment-token store (session.go/enroll_tokens.go)
-	// all need a periodic GC sweep independent of any particular request —
-	// see sessionGCInterval's doc — so all three are started once here,
+	// all need a periodic GC sweep independent of any particular request --
+	// see sessionGCInterval's doc -- so all three are started once here,
 	// alongside the listener, rather than per-request like newHandler's
 	// other per-call newSessionStore/newCeremonyStore/newTokenStore uses.
 	sessionGCStop := newSessionStore(d.StateDir).startGC(sessionGCInterval)
@@ -152,7 +167,7 @@ func Start(d Deps) (stop func(), err error) {
 	// listenerStop (NOT the named return "stop") is deliberate: the returned
 	// closure below calls listenerStop, and if it instead captured "stop" by
 	// name, assigning the closure itself to "stop" via `return func(){...}`
-	// would make the closure call itself — infinite recursion.
+	// would make the closure call itself -- infinite recursion.
 	listenerStop, err := listenAndServe(d, newHandler(d))
 	if err != nil {
 		gcStop()

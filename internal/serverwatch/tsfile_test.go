@@ -550,7 +550,7 @@ func TestTSFilePerResolutionRetention(t *testing.T) {
 	}
 
 	// 1m: one bucket older than RollupRetention (24h), one within it but
-	// outside RawRetention (2h) — both produced via Downsample so the
+	// outside RawRetention (2h) -- both produced via Downsample so the
 	// on-disk encoding matches what Downsample itself writes.
 	oldBucket := ((now - 30*hour) / 60) * 60
 	recentBucket := ((now - 10*hour) / 60) * 60
@@ -606,7 +606,7 @@ func TestSafeMetricDeterministicAndDistinct(t *testing.T) {
 // TestTSFileStoreStats asserts tsFileStore.Stats counts the .tsd files
 // written under ts/raw (+ ts/1m once Downsample has run, + events.tsd once
 // an event is appended) and sums their on-disk sizes, giving `serverwatch
-// doctor` its cardinality/disk guardrail numbers (docs/ROADMAP.md Epic #69
+// doctor` its cardinality/disk guardrail numbers (docs/handbook/12-roadmap-and-status.md Epic #69
 // x7).
 func TestTSFileStoreStats(t *testing.T) {
 	dir := t.TempDir()
@@ -648,7 +648,7 @@ func TestTSFileStoreStats(t *testing.T) {
 }
 
 // TestTSFileStoreStatsEmptyDir asserts Stats on a freshly-opened store (no
-// Append yet) reports zero series and zero bytes rather than erroring — the
+// Append yet) reports zero series and zero bytes rather than erroring -- the
 // ts/raw and ts/1m directories exist (created by newTSFileStore) but are
 // empty, and events.tsd doesn't exist yet.
 func TestTSFileStoreStatsEmptyDir(t *testing.T) {

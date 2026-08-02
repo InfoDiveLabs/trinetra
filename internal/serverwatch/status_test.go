@@ -111,7 +111,7 @@ func TestSnapshotJSONRoundTripsExtendedFields(t *testing.T) {
 //     collectSlow never sets them (collectFast does).
 //   - NetRates, Processes: populated by the caller directly from stateful
 //     calculators (NetRateCalc/ProcCPUCalc) that collectSlow has no access
-//     to, not by collectSlow itself — see mergeSlowFields's doc comment.
+//     to, not by collectSlow itself -- see mergeSlowFields's doc comment.
 var slowMergeExcludedFields = map[string]bool{
 	"TS": true, "CPU": true, "MemPct": true, "SwapPct": true,
 	"Load1": true, "Load5": true, "Load15": true, "TempC": true,
@@ -145,7 +145,7 @@ func TestMergeSlowFieldsCopiesEverySlowTierField(t *testing.T) {
 		got := mergedV.Field(i).Interface()
 		want := slowV.Field(i).Interface()
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("mergeSlowFields did not copy Snapshot.%s: merged = %+v, want %+v (from slow snapshot) — "+
+			t.Errorf("mergeSlowFields did not copy Snapshot.%s: merged = %+v, want %+v (from slow snapshot) -- "+
 				"if this field is genuinely not collectSlow's to set, add it to slowMergeExcludedFields instead",
 				name, got, want)
 		}

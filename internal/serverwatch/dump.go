@@ -1,5 +1,5 @@
 // Package serverwatch: dump.go implements the `serverwatch dump` subcommand
-// (s9 in docs/DESIGN-storage.md): export one metric's series from the
+// (s9 in docs/handbook/09-storage-and-data-model.md): export one metric's series from the
 // configured SampleStore for humans or graphing tools.
 package serverwatch
 

@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -266,7 +264,7 @@ func TestConfigSaveBaselineAlertsToggleRoundTrips(t *testing.T) {
 
 // TestConfigSaveIntervalsRoundTripAndRejectsBadCombo pins the int fields
 // (fast/sample/heartbeat interval): a valid, consistent combo round-trips,
-// and an inconsistent one (sample_interval not a multiple of fast_interval —
+// and an inconsistent one (sample_interval not a multiple of fast_interval --
 // config.Config.Set's existing validator) rejects with 400 and writes
 // nothing, exactly like every other bad-value case.
 func TestConfigSaveIntervalsRoundTripAndRejectsBadCombo(t *testing.T) {
@@ -535,7 +533,7 @@ func TestConfigPageRendersFormAndCurrentValues(t *testing.T) {
 // TestConfigPageWebPanelReadOnlyAndForgedFieldIgnored pins the "Access &
 // domain" panel's read-only contract: GET renders the current web.* values,
 // but no <input name="..."> in the page can ever Set a web.* key (a forged
-// POST field targeting one must be silently ignored) — the whole point being
+// POST field targeting one must be silently ignored) -- the whole point being
 // that editing origin/rp_id from the web UI risks locking an admin out of
 // passkey login, so it's CLI-only.
 func TestConfigPageWebPanelReadOnlyAndForgedFieldIgnored(t *testing.T) {

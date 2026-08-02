@@ -2,18 +2,19 @@
 // adapting the running daemon's live state (Snapshot, SampleStore, config,
 // alert files) directly -- no HTTP/socket round-trip. This is the daemon's
 // own consumer of the core.API contract (internal/core/api.go, task 3): the
-// embedded web UI and, eventually, an in-process CLI path both read through
-// this rather than reaching into serverwatch internals themselves.
+// serverwatch-web binary, over the control socket, and, eventually, an
+// in-process CLI path both read through this contract rather than reaching
+// into serverwatch internals themselves.
 //
-// This file is deliberately UNTAGGED (unlike daemon_web.go, which may import
-// internal/web): core.API and its DTOs live in internal/core, which imports
-// nothing but stdlib + internal/config (see internal/core/doc.go), so
-// building this adapter never pulls internal/web's third-party dependencies
-// into the default build. That's also why buildDashboardView/
-// buildMonitoringView (below) -- previously only reachable from the
-// `-tags web` build (daemon_web.go) -- live here now: both this in-process
-// API and the web build need the exact same Snapshot -> view projection, and
-// only an untagged file can serve both.
+// This file never imports internal/web: core.API and its DTOs live in
+// internal/core, which imports nothing but stdlib + internal/config (see
+// internal/core/doc.go), so building this adapter never pulls internal/web's
+// third-party dependencies into the default build. That's also why
+// buildDashboardView/buildMonitoringView (below) live here rather than in
+// internal/web itself: both this in-process API and the serverwatch-web
+// binary (which gets its data through core.API over the control socket)
+// need the exact same Snapshot -> view projection, and this package never
+// has to import internal/web to provide it.
 package serverwatch
 
 import (
@@ -31,7 +32,8 @@ import (
 // buildDashboardView adapts a serverwatch.Snapshot (native to this package)
 // into a core.DashboardView -- the Task 8 (#64) resolution of the Task 1
 // placeholder that made Deps.Snapshot return `any`, re-homed here (task 4)
-// so the default build can construct one too, not just `-tags web`.
+// so the default build can construct one too, not just the serverwatch-web
+// binary.
 //
 // CONCURRENCY: snap is a value the caller (d.Snapshot(), ultimately
 // latestSnapshot(), or inprocAPI.getSnap) already copied out of snapshotHub
@@ -105,6 +107,22 @@ func buildDashboardView(snap Snapshot) core.DashboardView {
 // collector toggles then default to "disabled" -- the safer read when the
 // actual setting is unknown, rather than assuming the collector ran and
 // showing an empty table as if it deliberately reported zero units/processes.
+// targetViewsFromTargets maps Discover/DiscoverLocal's []Target to
+// []core.TargetView field for field, shared by inprocAPI.MonitorTargets and
+// fileAPI.MonitorTargets so both core.API implementations report identical
+// target lists from one mapping. It intentionally does NOT merge in
+// config.Config.TargetEnabled/TargetThreshold overrides: MonitorTargets is
+// the discovery half only (what does this host have), the same split
+// Config()/ApplyConfig() already draw for the enable/threshold half (see
+// core.API.MonitorTargets's doc).
+func targetViewsFromTargets(targets []Target) []core.TargetView {
+	out := make([]core.TargetView, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, core.TargetView{ID: t.ID, Kind: t.Kind, Display: t.Display, Available: t.Available})
+	}
+	return out
+}
+
 func buildMonitoringView(snap Snapshot, cfg *config.Config) core.MonitoringView {
 	var v core.MonitoringView
 
@@ -295,12 +313,23 @@ func netIfaceViews(rates map[string]IfaceRate) []core.NetIfaceView {
 	return out
 }
 
-// errCoreNotImplemented is the shared sentinel Subscribe returns on both
-// core.API implementations (inprocAPI here, fileAPI in coreapi_file.go) --
-// the one method still deferred, to S5 (the alerting event-bus inversion).
-// Every other method (reads: tasks 4/6; writes/Doctor: tasks 7/8) is
-// implemented for real.
+// errCoreNotImplemented was the shared sentinel both core.API
+// implementations' Subscribe returned before the A2 live-push work: it is
+// no longer used by Subscribe (inprocAPI's is implemented for real below;
+// fileAPI's -- coreapi_file.go -- returns errStreamRequiresDaemon instead,
+// a clearer message for its specific reason), but is kept as a fallback
+// sentinel other future not-yet-implemented core.API methods could still
+// reach for.
 var errCoreNotImplemented = errors.New("serverwatch: core.API method not implemented yet")
+
+// errStreamRequiresDaemon is returned by Subscribe when there is no live
+// daemon event bus to subscribe to: fileAPI (coreapi_file.go) always hits
+// this, since the file-backed CLI process has no running daemon in memory
+// to stream from; inprocAPI hits it only in the degenerate case of being
+// constructed without a bus (bus is nil), which never happens for the real
+// control-socket-serving inprocAPI cmdDaemon builds (daemon.go always
+// passes its live bus), only in tests that don't exercise Subscribe.
+var errStreamRequiresDaemon = errors.New("serverwatch: live event streaming requires a running daemon")
 
 // inprocAPI is the in-process core.API implementation: it reads the running
 // daemon's own state directly (no socket/HTTP hop) by holding closures onto
@@ -320,22 +349,38 @@ type inprocAPI struct {
 	// reload is the daemon's own reload closure (cmdDaemon's `reload` in
 	// daemon.go: saveCfg then the applyConfig pointer-swap) -- ApplyConfig
 	// below just calls through to it, so a config posted through core.API
-	// takes effect exactly the way WebDeps.Reload always has: persisted to
-	// disk, then applied in-process without a SIGHUP round-trip.
+	// takes effect exactly the way cmdDaemon's own reload always has:
+	// persisted to disk, then applied in-process without a SIGHUP round-trip.
 	reload func(*config.Config) error
+	// bus is the daemon's live event bus (eventbus.go): Subscribe below
+	// delegates straight to bus.Subscribe(). nil when this inprocAPI was
+	// built without a live daemon behind it (most existing tests, which
+	// exercise every OTHER method here and never call Subscribe) -- Subscribe
+	// reports errStreamRequiresDaemon in that case rather than a nil-pointer
+	// panic.
+	bus *eventBus
+	// enroll is the shared Telegram enrollment-pin holder cmdDaemon also
+	// hands to pollLoop (daemon.go, enroll.go) -- EnrollmentPIN below just
+	// reads through it, so a socket caller sees the exact pin the poll loop
+	// is matching /start <pin> against, not a separately generated one.
+	enroll *enrollState
 }
 
 // newInprocAPI builds a core.API backed directly by the running daemon's
-// state: getSnap/getCfg are the same race-safe closures WebDeps already
-// hands the `-tags web` build (Snapshot/Cfg), store is the daemon's
+// state: getSnap/getCfg are the same race-safe closures cmdDaemon (daemon.go)
+// hands the control socket (latestSnapshot/getCfg), store is the daemon's
 // SampleStore (nil in store-writes-disabled mode -- every read method below
 // degrades to "no data" rather than panicking), stateDir is the directory
 // alerts.json/alertlog.jsonl live in (mirroring Store's own
-// AlertStatePath/AlertLogPath, store.go), and reload is the daemon's
-// save-then-apply closure (WebDeps.Reload/cmdDaemon's own `reload`) that
-// ApplyConfig delegates to.
-func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error) core.API {
-	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload}
+// AlertStatePath/AlertLogPath, store.go), reload is cmdDaemon's own
+// save-then-apply closure that ApplyConfig delegates to, bus is cmdDaemon's
+// live eventBus that Subscribe below hands each caller a subscription onto
+// (nil when there's no live daemon bus, e.g. most existing tests -- see the
+// bus field's doc), and enroll is the same enrollState instance cmdDaemon
+// hands to pollLoop (so EnrollmentPIN returns the exact pin the poll loop
+// matches against).
+func newInprocAPI(getSnap func() Snapshot, getCfg func() *config.Config, store SampleStore, stateDir string, reload func(*config.Config) error, bus *eventBus, enroll *enrollState) core.API {
+	return &inprocAPI{getSnap: getSnap, getCfg: getCfg, store: store, stateDir: stateDir, reload: reload, bus: bus, enroll: enroll}
 }
 
 // alertStatePath/alertLogPath mirror Store.AlertStatePath/Store.AlertLogPath
@@ -346,12 +391,9 @@ func (a *inprocAPI) alertLogPath() string   { return filepath.Join(a.stateDir, "
 
 // Snapshot implements core.API: it projects the daemon's live Snapshot via
 // buildDashboardView, then computes Availability fresh (real "now", real
-// events overlapping the trailing 24h) on top -- the same two-step
-// buildDashboardView-then-ComputeAvailability sequence maybeStartWeb's
-// Snapshot closure (daemon_web.go) uses, mirrored here so the in-process
-// core.API produces an identical view without needing `-tags web`. a itself
-// satisfies core.EventsSource (its Events method below has the exact
-// signature ComputeAvailability wants), so no separate adapter type is
+// events overlapping the trailing 24h) on top. a itself satisfies
+// core.EventsSource (its Events method below has the exact signature
+// ComputeAvailability wants), so no separate adapter type is
 // needed; a nil a.store just makes a.Events degrade to "no events" the same
 // way a nil store degrades everywhere else in this file.
 func (a *inprocAPI) Snapshot() (core.DashboardView, error) {
@@ -366,8 +408,7 @@ func (a *inprocAPI) Monitoring() (core.MonitoringView, error) {
 }
 
 // Series implements core.API: core.ResAuto resolves to raw-vs-1m via the
-// existing PickResolution (the same age/config-dependent picker
-// seriesStoreAdapter.Query, daemon_web.go, uses for the web build) against
+// existing PickResolution (the same age/config-dependent picker) against
 // the daemon's configured storage.raw_retention; core.ResRaw/core.Res1m map
 // straight onto their serverwatch.Resolution counterparts. A nil store (
 // store-writes-disabled mode) degrades to an empty result rather than a
@@ -460,10 +501,30 @@ func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.getCfg(), a.store), nil
 }
 
+// EnrollmentPIN implements core.API: it reads through a.enroll (enroll.go)
+// against the daemon's current live config, the exact same call pollLoop
+// (daemon.go) makes each iteration -- so a socket caller (`telegram
+// set-token`, ctl) always sees the pin the daemon will actually accept in
+// "/start <pin>", never a separately generated one.
+func (a *inprocAPI) EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error) {
+	pin, enrolled = a.enroll.PIN(a.getCfg())
+	return pin, enrolled, nil
+}
+
+// MonitorTargets implements core.API: it runs DiscoverLocal() (the daemon's
+// own osExec{}/osFS{}-backed probes -- docker ps / df -PT / smartctl --scan
+// / the thermal-zone glob) in the daemon's own process, so a socket caller
+// (ctl's monitor-thresholds screen) sees exactly what this host's daemon can
+// see, including anything gated behind the daemon's own root/sudo access
+// that a separate, less-privileged CLI process (fileAPI.MonitorTargets,
+// coreapi_file.go) might not.
+func (a *inprocAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	return targetViewsFromTargets(DiscoverLocal()), nil
+}
+
 // ApplyConfig implements core.API: it delegates straight to a.reload, the
-// daemon's own save-then-apply closure (see the field's doc) -- the exact
-// same behavior WebDeps.Reload has always exposed, now reachable through
-// core.API too.
+// daemon's own save-then-apply closure (see the field's doc), now reachable
+// over the control socket.
 func (a *inprocAPI) ApplyConfig(c *config.Config) error { return a.reload(c) }
 
 // AckAlert implements core.API: it loads alerts.json (LoadAlertState, same
@@ -496,16 +557,44 @@ func (a *inprocAPI) UnackAlert(key string) error {
 
 // TestChannel implements core.API: it calls sendTestNotification
 // (channel.go) against the LIVE config (a.getCfg(), race-safe against a
-// concurrent SIGHUP/Reload -- same reasoning as cmdDaemon's own testChannel
-// closure, daemon.go) with source "web", identical to what WebDeps.
-// TestChannel has always done.
+// concurrent SIGHUP/Reload), mirroring `serverwatch channel test <name>`
+// (channel.go's cmdChannelTest) -- for the web channels page's "Send test"
+// button (issue #66), reached over the control socket rather than a
+// daemon-local closure now that the web UI is out-of-process.
 func (a *inprocAPI) TestChannel(name string) error {
 	return sendTestNotification(a.getCfg(), name, "web")
 }
 
-// Subscribe is deferred to a later stage (S5, the alerting event-bus
-// inversion -- see the epic's design doc): it returns errCoreNotImplemented
-// for now so *inprocAPI satisfies core.API today.
+// ValidateChannel implements core.API: it calls buildNotifier (channels.go)
+// against cc and the LIVE config (a.getCfg(), same race-safe accessor
+// TestChannel above uses) and reports only whether a Notifier could be
+// built, not sending anything. This validates cc against the daemon's
+// current saved config -- a caller mid-edit of an unsaved config (e.g. a
+// telegram channel meant to lean on a global token/chat_id being changed in
+// the same in-flight edit) is checked against what's live now, not the
+// edit-in-progress; see the ValidateChannel doc on core.API for that
+// accepted limitation.
+func (a *inprocAPI) ValidateChannel(cc config.ChannelConfig) error {
+	_, err := buildNotifier(cc, a.getCfg())
+	return err
+}
+
+// Subscribe implements core.API: it registers a new subscription on a's
+// live daemon bus (a.bus.Subscribe(), eventbus.go) and returns the channel.
+// A nil a.bus (no live daemon behind this inprocAPI -- see the field's doc)
+// reports errStreamRequiresDaemon rather than panicking. Otherwise, a
+// goroutine is spawned that waits for ctx to be done and then calls cancel:
+// this is what ties the subscription's lifetime to the caller's context (the
+// control socket's per-connection ctx, cancelled when that connection
+// closes -- task 2) without Subscribe itself blocking on ctx here.
 func (a *inprocAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
-	return nil, errCoreNotImplemented
+	if a.bus == nil {
+		return nil, errStreamRequiresDaemon
+	}
+	ch, cancel := a.bus.Subscribe()
+	go func() {
+		<-ctx.Done()
+		cancel()
+	}()
+	return ch, nil
 }

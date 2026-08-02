@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -15,7 +13,7 @@ import (
 // regression pin for sessions. Each handler builds a FRESH jsonSessionStore
 // per request (newSessionStore), so a per-INSTANCE mutex would serialize
 // nothing across concurrent requests: two New calls would each load the whole
-// file, append their own session, and save it back — last-writer-wins — losing
+// file, append their own session, and save it back -- last-writer-wins -- losing
 // one session and, worse, colliding on the shared "sessions.json.tmp" temp
 // path. In production this is a concurrent login racing another login/logout/GC
 // clobbering a just-created session → intermittent auth failures. With the
@@ -35,7 +33,7 @@ func TestSessionStoreConcurrentNewNoLostUpdate(t *testing.T) {
 			defer wg.Done()
 			<-start
 			// A fresh store per goroutine, mirroring the per-request handler
-			// pattern — the shared lock must be keyed on the file, not the
+			// pattern -- the shared lock must be keyed on the file, not the
 			// instance.
 			sess, err := newSessionStore(dir).New("user", time.Hour)
 			if err != nil {
@@ -53,7 +51,7 @@ func TestSessionStoreConcurrentNewNoLostUpdate(t *testing.T) {
 			t.Fatalf("concurrent New[%d]: %v", i, err)
 		}
 	}
-	// Every created session must still be retrievable — none lost to a
+	// Every created session must still be retrievable -- none lost to a
 	// last-writer-wins clobber.
 	final := newSessionStore(dir)
 	for i, id := range ids {
@@ -61,7 +59,7 @@ func TestSessionStoreConcurrentNewNoLostUpdate(t *testing.T) {
 			t.Fatalf("New[%d] returned an empty session ID", i)
 		}
 		if _, ok := final.Get(id); !ok {
-			t.Errorf("session %d (%s) was lost — clobbered by a concurrent write", i, id)
+			t.Errorf("session %d (%s) was lost -- clobbered by a concurrent write", i, id)
 		}
 	}
 }
@@ -185,7 +183,7 @@ func TestSessionPutUpdatesData(t *testing.T) {
 }
 
 // TestSessionDeleteIsIdempotent pins that Delete on an absent ID is a no-op,
-// not an error — logout and one-shot ceremony consumption both rely on this.
+// not an error -- logout and one-shot ceremony consumption both rely on this.
 func TestSessionDeleteIsIdempotent(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	if err := store.Delete("does-not-exist"); err != nil {

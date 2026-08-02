@@ -1,8 +1,10 @@
 package serverwatch
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,7 +18,7 @@ import (
 // for the web build.
 func TestInprocSnapshotProjectsScalars(t *testing.T) {
 	snap := Snapshot{TS: 42, CPU: 12.5, MemPct: 30, Online: true}
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})
 	v, err := api.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +79,7 @@ func TestInprocSnapshotMatchesBuildDashboardView(t *testing.T) {
 	want := buildDashboardView(snap)
 	want.Availability = core.Availability{}
 
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil, nil, &enrollState{})
 	got, err := api.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +100,7 @@ func TestInprocMonitoringMatchesBuildMonitoringView(t *testing.T) {
 
 	want := buildMonitoringView(snap, cfg)
 
-	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return cfg }, nil, t.TempDir(), nil, nil, &enrollState{})
 	got, err := api.Monitoring()
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +159,7 @@ func TestSeriesResolutionMapping(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Storage.RawRetention = "1h" // must match the store's RawRetention above for PickResolution to agree
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, dir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, store, dir, nil, nil, &enrollState{})
 
 	// Explicit core.ResRaw over a window spanning all three appended points:
 	// the raw file has all three, untouched by Downsample.
@@ -217,7 +219,7 @@ func TestSeriesResolutionMapping(t *testing.T) {
 // startup) must still answer Series calls with an empty result, never a nil
 // pointer panic.
 func TestSeriesNilStoreReturnsEmptyNoPanic(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})
 	got, err := api.Series("cpu", 0, 1000, core.ResAuto)
 	if err != nil {
 		t.Fatalf("Series with nil store returned an error: %v", err)
@@ -230,7 +232,7 @@ func TestSeriesNilStoreReturnsEmptyNoPanic(t *testing.T) {
 // TestEventsNilStoreReturnsEmptyNoPanic is Events' counterpart to
 // TestSeriesNilStoreReturnsEmptyNoPanic.
 func TestEventsNilStoreReturnsEmptyNoPanic(t *testing.T) {
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})
 	got, err := api.Events(0, 1000)
 	if err != nil {
 		t.Fatalf("Events with nil store returned an error: %v", err)
@@ -254,7 +256,7 @@ func TestEventsMapsStoreEvents(t *testing.T) {
 		t.Fatalf("AppendEvent: %v", err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, store, t.TempDir(), nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, store, t.TempDir(), nil, nil, &enrollState{})
 	got, err := api.Events(0, 200)
 	if err != nil {
 		t.Fatalf("Events: %v", err)
@@ -281,7 +283,7 @@ func TestActiveAlertsMapsFields(t *testing.T) {
 		t.Fatalf("state.Save: %v", err)
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil, nil, &enrollState{})
 	got, err := api.ActiveAlerts()
 	if err != nil {
 		t.Fatalf("ActiveAlerts: %v", err)
@@ -289,7 +291,7 @@ func TestActiveAlertsMapsFields(t *testing.T) {
 
 	want := []core.AlertRecord{
 		{Key: "cpu", Severity: "critical", Kind: "", Source: "cpu = 95.0 >= threshold 90.0", Time: 1000, Acked: false},
-		{Key: "mem", Severity: "warning", Kind: "", Source: "mem = 80.0 >= threshold 75.0", Time: 2000, Acked: true},
+		{Key: "mem", Severity: "warning", Kind: "", Source: "mem = 80.0 >= threshold 75.0", Time: 2000, Acked: true, AckedAt: 2500},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ActiveAlerts() = %+v, want %+v (sorted by key)", got, want)
@@ -317,7 +319,7 @@ func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 		}
 	}
 
-	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil)
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, stateDir, nil, nil, &enrollState{})
 
 	// Unbounded (limit<=0): all 3, newest (Time) first.
 	got, err := api.AlertHistory(0, 0)
@@ -325,9 +327,9 @@ func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 		t.Fatalf("AlertHistory(0, 0): %v", err)
 	}
 	wantAll := []core.AlertRecord{
-		{Key: "mem", Severity: "warning", Kind: "fire", Source: "threshold", Time: 300, Acked: false},
-		{Key: "cpu", Severity: "critical", Kind: "recover", Source: "threshold", Time: 200, Acked: false},
-		{Key: "cpu", Severity: "critical", Kind: "fire", Source: "threshold", Time: 100, Acked: false},
+		{Key: "mem", Severity: "warning", Kind: "fire", Source: "threshold", Time: 300, Acked: false, Title: "Mem high"},
+		{Key: "cpu", Severity: "critical", Kind: "recover", Source: "threshold", Time: 200, Acked: false, Title: "CPU normal"},
+		{Key: "cpu", Severity: "critical", Kind: "fire", Source: "threshold", Time: 100, Acked: false, Title: "CPU high"},
 	}
 	if !reflect.DeepEqual(got, wantAll) {
 		t.Fatalf("AlertHistory(0, 0) = %+v, want %+v (newest first)", got, wantAll)
@@ -350,5 +352,279 @@ func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotSince, wantAll[:1]) {
 		t.Fatalf("AlertHistory(250, 0) = %+v, want %+v", gotSince, wantAll[:1])
+	}
+}
+
+// TestBuildDashboardViewCopiesScalarsAndDerivedCounts pins the adapter's
+// field-by-field copy plus the derived summary counts (containers
+// running/total, units failed/total, disks critical) the dashboard's
+// summary tiles need. Moved here (untagged) from the removed
+// daemon_web_dashboard_test.go (`//go:build web`) when the embedded web was
+// retired: buildDashboardView itself survives untagged in coreapi_inproc.go,
+// and these specific derived-value assertions (top-container sort order,
+// DisksCritical count, NetRates summation) are not otherwise covered by the
+// parity tests above, which only check newInprocAPI's Snapshot() against
+// buildDashboardView -- a tautology, since Snapshot() calls buildDashboardView
+// directly.
+func TestBuildDashboardViewCopiesScalarsAndDerivedCounts(t *testing.T) {
+	snap := Snapshot{
+		TS: 1_700_000_000, CPU: 37.5, MemPct: 61, SwapPct: 4, Load1: 0.42, Load5: 0.55, Load15: 0.61, TempC: 54,
+		Online: true,
+		Disks: map[string]float64{
+			"/":     91, // >= web.DiskCriticalPct(90) -> critical
+			"/data": 22,
+		},
+		Containers: map[string]string{
+			"nextcloud": "running",
+			"postgres":  "running",
+			"jellyfin":  "exited",
+		},
+		FailedUnits: []string{"foo.service"},
+		Units:       []UnitInfo{{Name: "foo.service"}, {Name: "bar.service"}},
+		Processes:   ProcSnapshot{Total: 214, Running: 1, Sleeping: 210, Zombie: 3},
+	}
+
+	got := buildDashboardView(snap)
+
+	if got.TS != snap.TS || got.CPU != snap.CPU || got.MemPct != snap.MemPct || got.SwapPct != snap.SwapPct {
+		t.Fatalf("scalar copy mismatch: %+v", got)
+	}
+	if got.Load1 != 0.42 || got.Load5 != 0.55 || got.Load15 != 0.61 || got.TempC != 54 {
+		t.Fatalf("load/temp copy mismatch: %+v", got)
+	}
+	if !got.Online {
+		t.Fatalf("Online = false, want true")
+	}
+	if got.ContainersRunning != 2 || got.ContainersTotal != 3 {
+		t.Fatalf("ContainersRunning/Total = %d/%d, want 2/3", got.ContainersRunning, got.ContainersTotal)
+	}
+	if got.UnitsFailed != 1 || got.UnitsTotal != 2 {
+		t.Fatalf("UnitsFailed/Total = %d/%d, want 1/2", got.UnitsFailed, got.UnitsTotal)
+	}
+	if len(got.Disks) != 2 || got.Disks[0].Mount != "/" || got.Disks[1].Mount != "/data" {
+		t.Fatalf("Disks = %+v, want sorted [/ /data]", got.Disks)
+	}
+	if got.DisksCritical != 1 {
+		t.Fatalf("DisksCritical = %d, want 1", got.DisksCritical)
+	}
+	if got.Processes != (core.ProcessCounts{Total: 214, Running: 1, Sleeping: 210, Zombie: 3}) {
+		t.Fatalf("Processes = %+v, want the Snapshot.Processes counts copied over", got.Processes)
+	}
+	if got.Cores <= 0 {
+		t.Fatalf("Cores = %d, want > 0 (runtime.NumCPU())", got.Cores)
+	}
+}
+
+// TestBuildDashboardViewTopContainersSortedAndCapped pins the "top
+// containers by CPU/memory" derivation: sorted descending, capped to 4 rows
+// (the mockup dashboard.html's hbar panels), and each row's State comes from
+// the separate Containers state map (docker stats and the plain state
+// listing are two different shell-outs). Moved here from the removed
+// daemon_web_dashboard_test.go -- see the doc on
+// TestBuildDashboardViewCopiesScalarsAndDerivedCounts above.
+func TestBuildDashboardViewTopContainersSortedAndCapped(t *testing.T) {
+	stats := map[string]ContainerStat{
+		"a": {Name: "a", CPUPct: 1, MemMiB: 500},
+		"b": {Name: "b", CPUPct: 5, MemMiB: 100},
+		"c": {Name: "c", CPUPct: 3, MemMiB: 900},
+		"d": {Name: "d", CPUPct: 2, MemMiB: 50},
+		"e": {Name: "e", CPUPct: 4, MemMiB: 700},
+	}
+	snap := Snapshot{
+		Containers:     map[string]string{"a": "running", "b": "exited"},
+		ContainerStats: stats,
+	}
+
+	got := buildDashboardView(snap)
+
+	if len(got.TopCPUContainers) != 4 {
+		t.Fatalf("len(TopCPUContainers) = %d, want 4", len(got.TopCPUContainers))
+	}
+	wantCPUOrder := []string{"b", "e", "c", "d"}
+	for i, name := range wantCPUOrder {
+		if got.TopCPUContainers[i].Name != name {
+			t.Fatalf("TopCPUContainers[%d].Name = %q, want %q (full: %+v)", i, got.TopCPUContainers[i].Name, name, got.TopCPUContainers)
+		}
+	}
+	if got.TopCPUContainers[0].State != "exited" {
+		t.Fatalf("TopCPUContainers[0] (%q) State = %q, want exited", got.TopCPUContainers[0].Name, got.TopCPUContainers[0].State)
+	}
+
+	if len(got.TopMemContainers) != 4 {
+		t.Fatalf("len(TopMemContainers) = %d, want 4", len(got.TopMemContainers))
+	}
+	wantMemOrder := []string{"c", "e", "a", "b"}
+	for i, name := range wantMemOrder {
+		if got.TopMemContainers[i].Name != name {
+			t.Fatalf("TopMemContainers[%d].Name = %q, want %q (full: %+v)", i, got.TopMemContainers[i].Name, name, got.TopMemContainers)
+		}
+	}
+	// "a" (index 2 in the mem-sorted order above) has a known state in the
+	// separate Containers map ("running") -- pins that TopMemContainers'
+	// State field is looked up from there, not left zero-valued.
+	if a := got.TopMemContainers[2]; a.Name != "a" || a.State != "running" {
+		t.Fatalf("TopMemContainers[2] = %+v, want {Name:a State:running ...}", a)
+	}
+}
+
+// TestBuildDashboardViewDiskDetailAndNetRates pins DiskDetail merge (device/
+// free/size/fill-projection layered onto the plain Disks usage%) and the
+// NetRates -> NetIfaces/NetRxBps/NetTxBps summation. Moved here from the
+// removed daemon_web_dashboard_test.go -- see the doc on
+// TestBuildDashboardViewCopiesScalarsAndDerivedCounts above.
+func TestBuildDashboardViewDiskDetailAndNetRates(t *testing.T) {
+	snap := Snapshot{
+		Disks: map[string]float64{"/": 91},
+		DiskDetail: map[string]DiskDetail{
+			"/": {Device: "/dev/sda1", UsagePct: 91, FreeBytes: 4_100_000_000, SizeBytes: 100_000_000_000, DaysToFull: 3, DaysToFullKnown: true},
+		},
+		NetRates: map[string]IfaceRate{
+			"eth0":  {RxBps: 1_800_000, TxBps: 240_000},
+			"wlan0": {RxBps: 100, TxBps: 50},
+		},
+	}
+
+	got := buildDashboardView(snap)
+
+	if len(got.Disks) != 1 {
+		t.Fatalf("len(Disks) = %d, want 1", len(got.Disks))
+	}
+	d := got.Disks[0]
+	if d.Device != "/dev/sda1" || d.FreeBytes != 4_100_000_000 || d.SizeBytes != 100_000_000_000 || !d.DaysToFullKnown || d.DaysToFull != 3 {
+		t.Fatalf("Disks[0] = %+v, want the DiskDetail fields merged in", d)
+	}
+
+	if len(got.NetIfaces) != 2 || got.NetIfaces[0].Name != "eth0" || got.NetIfaces[1].Name != "wlan0" {
+		t.Fatalf("NetIfaces = %+v, want sorted [eth0 wlan0]", got.NetIfaces)
+	}
+	if got.NetRxBps != 1_800_100 || got.NetTxBps != 240_050 {
+		t.Fatalf("NetRxBps/NetTxBps = %v/%v, want summed across interfaces", got.NetRxBps, got.NetTxBps)
+	}
+}
+
+// TestBuildDashboardViewNoMapMutationUnderConcurrentPublish is the hard
+// map-safety requirement pinned since the web-dashboard task: buildDashboardView
+// is a concurrent reader of snapshotHub, and the whole atomic.Pointer[Snapshot]
+// design (see snapshot_hub.go's doc) depends on every reader treating a
+// loaded Snapshot's map fields as read-only, since a copy of the Snapshot
+// struct still aliases the same underlying maps the publisher just replaced
+// a field with. This test runs a publisher goroutine that keeps replacing
+// snapshotHub's Snapshot (via a brand-new map each time, mirroring
+// mergeSlowFields' "replace wholesale" contract) concurrently with many
+// readers calling latestSnapshot()+buildDashboardView() -- go test -race is
+// what actually proves no race; the assertions here just guard against the
+// adapter silently corrupting values in a way -race wouldn't catch. Moved
+// here from the removed daemon_web_dashboard_test.go -- see the doc on
+// TestBuildDashboardViewCopiesScalarsAndDerivedCounts above.
+func TestBuildDashboardViewNoMapMutationUnderConcurrentPublish(t *testing.T) {
+	old := snapshotHub.Load()
+	t.Cleanup(func() { snapshotHub.Store(old) })
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		i := 0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			i++
+			snap := Snapshot{
+				TS: int64(i),
+				Disks: map[string]float64{
+					"/": float64(i % 100),
+				},
+				Containers: map[string]string{
+					"svc": "running",
+				},
+				ContainerStats: map[string]ContainerStat{
+					"svc": {Name: "svc", CPUPct: float64(i % 100), MemMiB: 128},
+				},
+				NetRates: map[string]IfaceRate{
+					"eth0": {RxBps: float64(i), TxBps: float64(i)},
+				},
+			}
+			snapshotHub.Store(&snap)
+		}
+	}()
+
+	readers := 8
+	wg.Add(readers)
+	for r := 0; r < readers; r++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 500; j++ {
+				view := buildDashboardView(latestSnapshot())
+				_ = view // buildDashboardView must only read; -race catches any write races
+			}
+		}()
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+}
+
+// TestInprocSubscribeDeliversPublishedEvents pins Subscribe's happy path:
+// the channel it returns must be a live subscription onto the inprocAPI's
+// own bus -- publishing directly on that bus (as dispatchAndLog/the sampler
+// loop, daemon.go, do in production) must deliver the event to the caller.
+func TestInprocSubscribeDeliversPublishedEvents(t *testing.T) {
+	bus := newEventBus()
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := api.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	want := core.Event{Kind: "alert_fire", Severity: "critical", Source: "anomaly", Title: "cpu high", Time: 42}
+	bus.Publish(want)
+
+	select {
+	case got := <-ch:
+		if got != want {
+			t.Fatalf("received %+v, want %+v", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the published event on Subscribe's channel")
+	}
+}
+
+// TestInprocSubscribeCtxCancelUnsubscribes pins Subscribe's cleanup path:
+// cancelling the ctx passed to Subscribe must unsubscribe from the bus (a
+// later Publish is not delivered) and close the returned channel -- proven
+// by receiving from it after cancellation and observing ok==false, the same
+// closed-channel signal eventBus.Subscribe's own cancel produces
+// (eventbus_test.go). This is a blocking receive on purpose: it waits for
+// the actual close event Subscribe's ctx.Done() goroutine produces rather
+// than assuming any particular timing, guarded by a time.After fallback so
+// a broken implementation fails the test instead of hanging forever.
+func TestInprocSubscribeCtxCancelUnsubscribes(t *testing.T) {
+	bus := newEventBus()
+	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := api.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	cancel()
+
+	select {
+	case got, ok := <-ch:
+		if ok {
+			t.Fatalf("channel still open after ctx cancel: received %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Subscribe's channel to close after ctx cancel")
 	}
 }

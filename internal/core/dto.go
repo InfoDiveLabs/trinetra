@@ -46,17 +46,18 @@ type DownEventView struct {
 // Deps.Snapshot returns this type (aliased in internal/web as
 // web.DashboardView) rather than serverwatch.Snapshot itself because this
 // package must never import internal/serverwatch (see doc.go's import
-// contract). internal/serverwatch/daemon_web.go -- which imports BOTH
-// packages precisely because it is the seam -- builds one of these by
-// copying values out of a serverwatch.Snapshot (buildDashboardView); web
-// only ever consumes the finished value via the alias.
+// contract). internal/serverwatch/coreapi_inproc.go's buildDashboardView
+// builds one of these by copying values out of a serverwatch.Snapshot; the
+// serverwatch-web binary's buildDeps (cmd/serverwatch-web) carries the
+// finished value across the control socket into Deps, so web only ever
+// consumes it via the alias, never importing serverwatch directly.
 //
 // Every field here is a copy (scalars, or a freshly built slice) taken from
 // the Snapshot at adapt time, never a map/slice alias into it: the adapter
 // only reads the Snapshot it's given, exactly as the concurrency contract in
-// internal/serverwatch/web_deps.go's snapshotHub doc requires (readers must
-// never mutate a published Snapshot's map fields -- see that file for why
-// that invariant is what makes the atomic.Pointer safe without a lock).
+// internal/serverwatch/snapshot_hub.go's snapshotHub doc requires (readers
+// must never mutate a published Snapshot's map fields -- see that file for
+// why that invariant is what makes the atomic.Pointer safe without a lock).
 type DashboardView struct {
 	// TS is the Unix-seconds timestamp the daemon's sampler loop stamped
 	// onto this snapshot (Snapshot.TS) -- how stale the view is.
@@ -172,9 +173,9 @@ const dashboardTopN = 4
 // color -- a display-only threshold for the dashboard's summary tiles,
 // independent of (and not a substitute for) the daemon's own configurable
 // alert thresholds (internal/config), which keep driving real alert
-// delivery. Exported so internal/serverwatch/daemon_web.go's adapter
-// (buildDashboardView) can count DisksCritical using the exact same cutoff
-// this package's template uses to color the same mounts.
+// delivery. Exported so internal/serverwatch/coreapi_inproc.go's
+// buildDashboardView adapter can count DisksCritical using the exact same
+// cutoff this package's template uses to color the same mounts.
 const DiskCriticalPct = 90.0
 
 // DiskWarnPct is the warn-level counterpart to DiskCriticalPct, same
@@ -188,7 +189,7 @@ const DiskWarnPct = 70.0
 // the dashboard. See that type's doc for why the projection crosses the
 // core <-> serverwatch boundary this way instead of serverwatch.Snapshot
 // itself, and for the map-safety/copy-only contract
-// internal/serverwatch/daemon_web.go's buildMonitoringView adapter must
+// internal/serverwatch/coreapi_inproc.go's buildMonitoringView adapter must
 // honor when building one of these.
 type MonitoringView struct {
 	// Containers is every container the daemon's plain state listing knows
@@ -300,6 +301,23 @@ func (v MonitoringView) DisksWarnCritCount() int {
 	return n
 }
 
+// TargetView is one monitorable target as core.API.MonitorTargets reports
+// it: a mirror of serverwatch.Target's exported fields (ID/Kind/Display/
+// Available), kept as its own DTO here (rather than reusing
+// serverwatch.Target directly) so internal/core -- which imports nothing
+// but stdlib + internal/config, see internal/core/doc.go -- never has to
+// import internal/serverwatch. ID is the namespaced identifier
+// (serverwatch.Discover's doc: "docker:web", "disk:/", "iface:eth0",
+// "temp", "smart:/dev/sda") the SAME config.Config.SetTarget/
+// SetTargetThreshold/TargetEnabled/TargetThreshold calls key on, so a
+// caller can round-trip a TargetView straight into those setters.
+type TargetView struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Display   string `json:"display"`
+	Available bool   `json:"available"`
+}
+
 // AlertRecord is one alert as rendered to a consumer, covering both a
 // currently-active alert (serverwatch.ActiveAlert, keyed by Key) and a
 // historical fire/recover entry (serverwatch.AlertEvent): Key identifies
@@ -308,6 +326,16 @@ func (v MonitoringView) DisksWarnCritCount() int {
 // own), Source identifies what raised it, Time is the Unix-seconds
 // timestamp it fired (or, for an active alert, went active), and Acked
 // mirrors a manual `serverwatch alerts ack <key>`.
+//
+// AckedAt/Title/Delivered are populated only where the underlying record
+// actually carries that data (see internal/serverwatch/coreapi_alerts.go's
+// activeAlertRecords/alertHistoryRecords): an active alert has an ack
+// timestamp but no title or delivery outcome of its own (those live on the
+// alert-log dispatch record instead), while a history entry has a title and
+// delivery outcome but no ack timestamp (the log is a record of past
+// fire/recover dispatches, not the current ack state). A field with no
+// source for a given record kind is left at its zero value rather than
+// invented from another field.
 type AlertRecord struct {
 	Key      string `json:"key"`
 	Severity string `json:"severity"`
@@ -315,6 +343,19 @@ type AlertRecord struct {
 	Source   string `json:"source"`
 	Time     int64  `json:"time"`
 	Acked    bool   `json:"acked"`
+	// AckedAt is the Unix-seconds timestamp a manual `serverwatch alerts ack
+	// <key>` was recorded (an active alert's ActiveAlert.AckedAt); 0 for a
+	// history entry, which carries no ack timestamp.
+	AckedAt int64 `json:"acked_at,omitempty"`
+	// Title is the human-readable alert title (an alert-log AlertEvent's
+	// Title); empty for an active alert, which has no title field of its
+	// own (only Source/Reason).
+	Title string `json:"title,omitempty"`
+	// Delivered is true when a history entry's alert-log dispatch actually
+	// reached at least one channel (one of its Delivery records has OK
+	// true); false when every attempt failed, none was recorded, or this is
+	// an active alert (which carries no delivery outcome of its own).
+	Delivered bool `json:"delivered,omitempty"`
 }
 
 // DoctorReport is core's projection of `serverwatch doctor`'s diagnostic

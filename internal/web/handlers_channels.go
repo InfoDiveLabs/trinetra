@@ -1,5 +1,3 @@
-//go:build web
-
 package web
 
 import (
@@ -23,7 +21,7 @@ func channelsMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 }
 
 // channelNameParam/channelNameFromParam convert a channel's Name (arbitrary
-// text — "Ops email", "#infra" — see config.ChannelConfig.Name) to/from the
+// text -- "Ops email", "#infra" -- see config.ChannelConfig.Name) to/from the
 // URL-safe form the {name} path segment carries, reusing the exact encoding
 // handlers_users.go's credentialParam/credentialFromParam already use for
 // the same reason (a raw name isn't always a safe single path segment).
@@ -59,9 +57,8 @@ var channelTypes = []struct{ Value, Label string }{
 
 // describeRoutesWeb mirrors channel.go's describeRoutes (unexported to that
 // package, so duplicated here rather than reached into across the
-// serverwatch/web boundary — see the design note atop
-// internal/serverwatch/web_deps.go for why internal/web can't import
-// serverwatch to share it directly).
+// serverwatch/web boundary, per the rule that internal/web must never
+// import internal/serverwatch, to keep the module graph one-way).
 func describeRoutesWeb(cc config.ChannelConfig) string {
 	var parts []string
 	if len(cc.IncludeKinds) > 0 {
@@ -105,7 +102,7 @@ func channelRows(cfg *config.Config) []channelRow {
 // channelModalData is one add/edit channel modal's render data: the same
 // shape backs both the single "Add channel" modal (IsEdit false, all fields
 // at their zero value/default) and one per-existing-channel "Edit channel"
-// modal (IsEdit true, pre-filled from that channel's current config) — see
+// modal (IsEdit true, pre-filled from that channel's current config) -- see
 // templates/channels.html's "chanModalBody" block, defined once and
 // executed for each. Rendering N small edit modals server-side (rather than
 // one shared modal the mockup's app.js JS-prefills on open) avoids needing
@@ -117,7 +114,7 @@ type channelModalData struct {
 	Title                  string
 	Action                 string // form action: "/channels" or "/channels/<param>/update"
 	IsEdit                 bool
-	Param                  string // channelNameParam(Name), edit only — for the Send-test button's formaction
+	Param                  string // channelNameParam(Name), edit only -- for the Send-test button's formaction
 	Name                   string
 	Type                   string
 	Enabled                bool
@@ -182,7 +179,7 @@ type ChannelsPageData struct {
 	NewModal     channelModalData
 	EditModals   []channelModalData
 	// TestResult, if non-empty, is rendered as a one-line status after a
-	// "Send test" action — success or the error message — since a test-send
+	// "Send test" action -- success or the error message -- since a test-send
 	// has nothing to persist and nothing else to show for it.
 	TestResult string
 }
@@ -232,7 +229,7 @@ func channelsPageHandler(d Deps) http.HandlerFunc {
 }
 
 // channelSettingKeys lists, per channel type, which posted "settings.<k>"
-// form fields channelSettingsFromForm reads — the fields
+// form fields channelSettingsFromForm reads -- the fields
 // templates/channels.html's per-type <div data-cond="..."> blocks actually
 // render (see that template), so a channel's Settings map only ever picks
 // up keys relevant to its own type.
@@ -245,7 +242,7 @@ var channelSettingKeys = map[string][]string{
 }
 
 // channelSettingsFromForm reads settings.<k> fields for typ from r (already
-// ParseForm'd), skipping any that were left blank — an admin editing one
+// ParseForm'd), skipping any that were left blank -- an admin editing one
 // field (e.g. rotating a token) shouldn't be forced to retype every other
 // setting, and config.SetChannelField only ever overwrites a key it's
 // explicitly given.
@@ -261,7 +258,7 @@ func channelSettingsFromForm(r *http.Request, typ string) map[string]string {
 
 // applyChannelForm applies every posted channel field onto the named
 // channel via config.Config.SetChannelField (reusing its existing
-// validators, e.g. min_severity) — used by both channelsAddHandler (after
+// validators, e.g. min_severity) -- used by both channelsAddHandler (after
 // AddChannel creates the row) and channelsUpdateHandler (channel already
 // exists). Returns the first validation error, if any; the caller is
 // responsible for not persisting when that happens.
@@ -299,7 +296,7 @@ func applyChannelForm(newCfg *config.Config, name string, r *http.Request) error
 
 // validateDeliverable rejects an ENABLED channel that could not build a
 // working notifier, so the web editor never silently persists a channel that
-// delivery would drop (#79 — e.g. a telegram channel left without a chat id).
+// delivery would drop (#79 -- e.g. a telegram channel left without a chat id).
 // Disabled channels are drafts and skip the check; a nil d.ValidateChannel
 // (tests that don't wire it) also skips.
 func validateDeliverable(d Deps, cfg *config.Config, name string) error {
@@ -317,7 +314,7 @@ func validateDeliverable(d Deps, cfg *config.Config, name string) error {
 // config.SetChannelField's strconv.ParseBool-based enabled/
 // critical_overrides_quiet keys. Two calling conventions both work: a real
 // checkbox (present with some truthy value like "1" when checked, entirely
-// ABSENT — not merely empty — when unchecked, per HTML form semantics), or
+// ABSENT -- not merely empty -- when unchecked, per HTML form semantics), or
 // a hidden field carrying an explicit "true"/"false" literal (the channels
 // table's per-row enabled-toggle button, which needs to post the OPPOSITE
 // of the row's current state rather than "checked/unchecked").
