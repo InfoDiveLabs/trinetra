@@ -44,6 +44,11 @@ const (
 // refresh key.
 const refreshInterval = 2 * time.Second
 
+// cpuHistCap bounds the rolling CPU history the home sparkline draws from: at
+// refreshInterval each, this is the last ~80s of samples. Kept small so the
+// slice never grows without bound over a long-lived session.
+const cpuHistCap = 40
+
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true)
 	hintStyle  = lipgloss.NewStyle().Faint(true)
@@ -63,6 +68,17 @@ type model struct {
 	snap    core.DashboardView
 	snapErr error
 	loading bool
+	// alerts holds the latest ActiveAlerts() fetch, refreshed alongside the
+	// snapshot on Home so the ALERTS panel stays live; alertsErr surfaces a
+	// failed fetch without taking down the whole dashboard.
+	alerts    []core.AlertRecord
+	alertsErr error
+	// cpuHist is the rolling CPU% history the home sparkline draws, capped at
+	// cpuHistCap and appended on each snapshotMsg.
+	cpuHist []float64
+	// help toggles the global keymap overlay (opened with '?' from Home,
+	// dismissed by any key).
+	help bool
 
 	// web setup wizard
 	wiz        webSetupStep
@@ -132,6 +148,14 @@ type snapshotMsg struct {
 // tickMsg drives the home screen's periodic refresh.
 type tickMsg time.Time
 
+// alertsMsg carries the result of an api.ActiveAlerts() call back into Update;
+// err is non-nil when the control socket call failed (surfaced on the ALERTS
+// panel rather than crashing the TUI).
+type alertsMsg struct {
+	alerts []core.AlertRecord
+	err    error
+}
+
 // webSetupAppliedMsg carries the result of applying the wizard's answers
 // (fetch Config, set web.* fields, ApplyConfig) back into Update.
 type webSetupAppliedMsg struct {
@@ -149,6 +173,13 @@ func fetchSnapshotCmd(api core.API) tea.Cmd {
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func fetchAlertsCmd(api core.API) tea.Cmd {
+	return func() tea.Msg {
+		a, err := api.ActiveAlerts()
+		return alertsMsg{alerts: a, err: err}
+	}
 }
 
 // applyWebSetupCmd fetches the CURRENT config fresh from the daemon (so the
@@ -178,7 +209,7 @@ func applyWebSetupCmd(api core.API, ans webSetupAnswers) tea.Cmd {
 // --- tea.Model ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchSnapshotCmd(m.api), tickCmd(), fetchOnboardCheckCmd(m.api))
+	return tea.Batch(fetchSnapshotCmd(m.api), fetchAlertsCmd(m.api), tickCmd(), fetchOnboardCheckCmd(m.api))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -187,6 +218,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			m.quitting = true
 			return m, tea.Quit
+		}
+		// The help overlay swallows the next keypress to dismiss itself, so it
+		// never interferes with the screen underneath. '?' opens it from Home
+		// only, where no text field is focused (opening it mid-input would eat
+		// a literal '?' keystroke).
+		if m.help {
+			m.help = false
+			return m, nil
+		}
+		if msg.String() == "?" && m.step == stepHome {
+			m.help = true
+			return m, nil
 		}
 		switch m.step {
 		case stepHome:
@@ -204,11 +247,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.snap = msg.view
 		m.snapErr = msg.err
+		if msg.err == nil {
+			m.cpuHist = append(m.cpuHist, msg.view.CPU)
+			if len(m.cpuHist) > cpuHistCap {
+				m.cpuHist = m.cpuHist[len(m.cpuHist)-cpuHistCap:]
+			}
+		}
+		return m, nil
+
+	case alertsMsg:
+		m.alerts = msg.alerts
+		m.alertsErr = msg.err
 		return m, nil
 
 	case tickMsg:
 		if m.step == stepHome {
-			return m, tea.Batch(fetchSnapshotCmd(m.api), tickCmd())
+			return m, tea.Batch(fetchSnapshotCmd(m.api), fetchAlertsCmd(m.api), tickCmd())
 		}
 		return m, tickCmd()
 
@@ -605,6 +659,9 @@ func (m model) View() string {
 	if m.quitting {
 		return ""
 	}
+	if m.help {
+		return m.helpView()
+	}
 	switch m.step {
 	case stepSetupWeb:
 		return m.setupView()
@@ -617,27 +674,160 @@ func (m model) View() string {
 	}
 }
 
+// homeView renders the live dashboard: a status header, two side-by-side
+// panels (SYSTEM meters + CPU sparkline, and the ALERTS list), an inventory
+// line, and the key hints. The panels/meters are drawn with the pure helpers
+// in style.go and coloured by the palette; lipgloss emits no ANSI when stdout
+// is not a tty, so the literal labels survive for the render tests.
 func (m model) homeView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("serverwatch-ctl") + "\n\n")
+	b.WriteString(m.homeHeader() + "\n\n")
 	if m.loading {
-		b.WriteString("loading...\n")
-	} else if m.snapErr != nil {
-		b.WriteString(errStyle.Render(fmt.Sprintf("snapshot error: %v", m.snapErr)) + "\n")
-	} else {
-		online := "offline"
-		if m.snap.Online {
-			online = "online"
-		}
-		fmt.Fprintf(&b, "as of:    %s\n", formatTime(m.snap.TS))
-		fmt.Fprintf(&b, "internet: %s\n", online)
-		fmt.Fprintf(&b, "cpu:      %.1f%% (%d cores)\n", m.snap.CPU, m.snap.Cores)
-		fmt.Fprintf(&b, "memory:   %.1f%%\n", m.snap.MemPct)
-		fmt.Fprintf(&b, "load:     %.2f %.2f %.2f\n", m.snap.Load1, m.snap.Load5, m.snap.Load15)
-		fmt.Fprintf(&b, "units:    %d failed / %d total\n", m.snap.UnitsFailed, m.snap.UnitsTotal)
+		b.WriteString(faintStyle.Render("loading live status...") + "\n")
+		return b.String()
 	}
-	b.WriteString("\n" + hintStyle.Render("s: set up the web UI   m: manage   r: refresh   q: quit") + "\n")
+	if m.snapErr != nil {
+		b.WriteString(errStyle.Render(fmt.Sprintf("snapshot error: %v", m.snapErr)) + "\n")
+		b.WriteString("\n" + m.homeHints() + "\n")
+		return b.String()
+	}
+	body := lipgloss.JoinHorizontal(lipgloss.Top, m.systemPanel(), "  ", m.alertsPanel())
+	b.WriteString(body + "\n")
+	b.WriteString(m.inventoryLine() + "\n\n")
+	b.WriteString(m.homeHints() + "\n")
 	return b.String()
+}
+
+// homeHeader is the "serverwatch  ● online   updated 3s ago" status line.
+func (m model) homeHeader() string {
+	glyph, text, style := onlineGlyph(m.snap.Online)
+	head := titleStyle.Render("serverwatch") + "  " + style.Render(glyph+" "+text)
+	if !m.loading && m.snap.TS != 0 {
+		head += faintStyle.Render("   updated " + agoString(m.snap.TS))
+	}
+	return head
+}
+
+func (m model) homeHints() string {
+	return faintStyle.Render("s setup   m manage   r refresh   ? help   q quit")
+}
+
+// systemPanel is the boxed SYSTEM panel: coloured CPU/MEM/SWAP meter bars, the
+// live CPU sparkline, load averages, and (when present) temperature.
+func (m model) systemPanel() string {
+	const w = 12
+	meter := func(pct float64) string {
+		return meterStyle(pct).Render(bar(pct, w))
+	}
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render("SYSTEM") + "\n")
+	fmt.Fprintf(&b, "%s %s %s  %s\n", labelStyle.Render("CPU "), meter(m.snap.CPU),
+		pctText(m.snap.CPU), signalStyle.Render(spark(m.cpuHist, 16)))
+	fmt.Fprintf(&b, "%s %s %s  %s\n", labelStyle.Render("MEM "), meter(m.snap.MemPct),
+		pctText(m.snap.MemPct), faintStyle.Render(fmt.Sprintf("%d cores", m.snap.Cores)))
+	fmt.Fprintf(&b, "%s %s %s\n", labelStyle.Render("SWAP"), meter(m.snap.SwapPct), pctText(m.snap.SwapPct))
+	fmt.Fprintf(&b, "%s %.2f %.2f %.2f\n", labelStyle.Render("LOAD"),
+		m.snap.Load1, m.snap.Load5, m.snap.Load15)
+	if m.snap.TempC != 0 {
+		fmt.Fprintf(&b, "%s %s\n", labelStyle.Render("TEMP"),
+			meterStyle(m.snap.TempC).Render(fmt.Sprintf("%.1f°C", m.snap.TempC)))
+	}
+	return panelStyle.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// alertsPanel is the boxed ALERTS panel: a firing count and the top few
+// active alerts (severity dot + truncated key), or a reassuring empty state.
+func (m model) alertsPanel() string {
+	const maxRows = 6
+	var b strings.Builder
+	if m.alertsErr != nil {
+		b.WriteString(panelTitleStyle.Render("ALERTS") + "\n")
+		b.WriteString(critStyle.Render("fetch failed"))
+		return panelStyle.Render(b.String())
+	}
+	if len(m.alerts) == 0 {
+		b.WriteString(panelTitleStyle.Render("ALERTS") + "\n")
+		b.WriteString(okStyle.Render("✓ ") + "no active alerts")
+		return panelStyle.Render(b.String())
+	}
+	b.WriteString(panelTitleStyle.Render("ALERTS") + "  " +
+		critStyle.Render(fmt.Sprintf("%d firing", len(m.alerts))) + "\n")
+	for i, a := range m.alerts {
+		if i >= maxRows {
+			fmt.Fprintf(&b, "%s\n", faintStyle.Render(fmt.Sprintf("+%d more", len(m.alerts)-maxRows)))
+			break
+		}
+		ack := ""
+		if a.Acked {
+			ack = faintStyle.Render(" (acked)")
+		}
+		fmt.Fprintf(&b, "%s %s%s\n", severityGlyph(a.Severity), trunc(a.Key, 26), ack)
+	}
+	return panelStyle.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// inventoryLine summarizes the host inventory in one glyphed row.
+func (m model) inventoryLine() string {
+	cont := fmt.Sprintf("🐳 %d/%d up", m.snap.ContainersRunning, m.snap.ContainersTotal)
+	units := fmt.Sprintf("⚙ %d failed / %d units", m.snap.UnitsFailed, m.snap.UnitsTotal)
+	disks := fmt.Sprintf("💾 %d mounts", len(m.snap.Disks))
+	if m.snap.DisksCritical > 0 {
+		disks += critStyle.Render(fmt.Sprintf(" (%d crit)", m.snap.DisksCritical))
+	}
+	procs := fmt.Sprintf("▤ %d procs", m.snap.Processes.Total)
+	sep := dimStyle.Render("   ")
+	return cont + sep + units + sep + disks + sep + procs
+}
+
+// helpView is the global keymap overlay ('?').
+func (m model) helpView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("serverwatch-ctl · keys") + "\n\n")
+	section := func(title string, rows [][2]string) {
+		b.WriteString(panelTitleStyle.Render(title) + "\n")
+		for _, r := range rows {
+			fmt.Fprintf(&b, "  %s  %s\n", signalStyle.Render(fmt.Sprintf("%-8s", r[0])), r[1])
+		}
+		b.WriteString("\n")
+	}
+	section("Home", [][2]string{
+		{"s", "set up the web UI (guided wizard)"},
+		{"m", "manage config (schedule, channels, thresholds, all settings)"},
+		{"r", "refresh live status now"},
+		{"?", "toggle this help"},
+		{"q", "quit"},
+	})
+	section("Menus", [][2]string{
+		{"↑/↓ j/k", "move"},
+		{"enter", "open / confirm"},
+		{"esc", "back"},
+	})
+	section("Global", [][2]string{
+		{"ctrl-c", "quit from anywhere"},
+	})
+	b.WriteString(faintStyle.Render("press any key to close") + "\n")
+	return b.String()
+}
+
+// agoString renders how long ago a Unix-seconds timestamp was, compactly.
+func agoString(ts int64) string {
+	d := time.Since(time.Unix(ts, 0))
+	switch {
+	case d < 2*time.Second:
+		return "just now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+}
+
+// pctText renders a percentage right-aligned to a stable width so the meter
+// column and the value column both line up regardless of magnitude.
+func pctText(pct float64) string {
+	return fmt.Sprintf("%5.1f%%", pct)
 }
 
 func (m model) setupView() string {
