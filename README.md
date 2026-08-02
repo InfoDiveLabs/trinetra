@@ -5,7 +5,8 @@ Linux/systemd box, decides when something is wrong using rules you can actually
 read, and tells you over Telegram. No agent, no cloud, no Prometheus, no
 external metrics database. The core is standard library only.
 
-![status: beta](https://img.shields.io/badge/status-beta-orange)
+![status: stable](https://img.shields.io/badge/status-stable-brightgreen)
+![version: v0.4.0](https://img.shields.io/badge/version-v0.4.0-blue)
 ![core: stdlib only](https://img.shields.io/badge/core-stdlib%20only-00ADD8)
 ![Go 1.22](https://img.shields.io/badge/Go-1.22-00ADD8)
 ![platform: Linux + systemd](https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333)
@@ -153,12 +154,12 @@ Everything is in the handbook, one concern per chapter.
 
 ## Status
 
-serverwatch is in **beta** on the `develop` branch, where the core-plus-plugin
-architecture (the control socket, the supervised `serverwatch-web`, and the
-`serverwatch-ctl` management binary) lives. The stable `main` branch carries the
-previous single-daemon release. The handbook marks beta features where they
-appear; see [Roadmap and status](docs/handbook/12-roadmap-and-status.md) for the
-current line.
+The current stable release is **v0.4.0**, the core-plus-plugin architecture (the
+control socket, the supervised `serverwatch-web`, and the `serverwatch-ctl`
+management binary), which supersedes the previous single-daemon v0.3.2. The
+handbook marks any feature that is still experimental where it appears; see
+[Roadmap and status](docs/handbook/12-roadmap-and-status.md) for the current
+line.
 
 ## License
 

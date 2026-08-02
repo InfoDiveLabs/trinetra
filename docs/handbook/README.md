@@ -25,7 +25,7 @@ straight through and return here from any page.
 9. [Storage and the data model](09-storage-and-data-model.md) - the time-series store, the live snapshot, and the event log.
 10. [Operations](10-operations.md) - managing, upgrading, uninstalling, migrating, and troubleshooting.
 11. [Command reference](11-command-reference.md) - every `serverwatch` command, plus the plugin binaries.
-12. [Roadmap and status](12-roadmap-and-status.md) - what is released, what is in preview, and what is still coming.
+12. [Roadmap and status](12-roadmap-and-status.md) - what is released, what is in progress, and what is still coming.
 
 ### Plugins
 
@@ -46,6 +46,6 @@ reachable through its screens, including a generic all-settings screen, and its
 web-setup wizard is functional in every serving mode.
 [serverwatch-web](plugins/serverwatch-web.md) is a supervised, separate binary
 with no build tag, and the daemon runs it whenever `web.enabled` is set. The
-overall v0.4 core-plus-plugin release line is still a develop-branch beta
-preview (see [Roadmap and status](12-roadmap-and-status.md)), but both plugins
-are feature-complete for what they do.
+overall v0.4.0 core-plus-plugin release line is the current stable release (see
+[Roadmap and status](12-roadmap-and-status.md)), and both plugins are
+feature-complete for what they do.

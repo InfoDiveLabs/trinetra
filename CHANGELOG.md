@@ -1,0 +1,121 @@
+# Changelog
+
+All notable changes to serverwatch are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
+uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
+YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
+branch; stable releases are tagged on `main`.
+
+## [0.4.0] - 2026-08-02
+
+The core-plus-plugin release. serverwatch is reshaped from a single monolithic
+daemon into a lean, stdlib-only `serverwatch` core with plugin binaries layered
+around it over a local control socket. The core stays small while the web UI
+and management tooling move out of process.
+
+### Added
+
+- **Control socket and `core.API`.** The core exposes one internal `core.API`
+  contract over a unix socket in the runtime directory, newline-delimited JSON,
+  one request or response per line. Each daemon launch mints a fresh token that
+  a client must present in a handshake before the socket answers, keeping the
+  channel local and gated to processes that can read the token.
+- **`serverwatch-web` out of process.** The passkey web UI now runs as its own
+  binary with no build tag, talking to the core over the socket. The core
+  verifies, spawns, restarts (capped backoff), and stops it as a child process
+  when `web.enabled` is set. The default `serverwatch` binary is stdlib-only,
+  enforced by a dependency-graph test.
+- **`serverwatch-ctl`, the primary management client.** A separate interactive
+  binary that dials the socket, with a styled live-status home dashboard
+  (colour-coded CPU/MEM/SWAP meters, a live CPU sparkline, an alerts panel, a
+  disks panel, a 24h availability strip, and a network/inventory line), guided
+  screens for schedule, quiet hours, healthchecks, monitor thresholds, and
+  channels, an all-settings screen over every remaining config key, a guided
+  web-setup wizard functional in every serving mode, first-run Telegram
+  onboarding, a `?` help overlay, and breadcrumbs.
+- **Scriptable `serverwatch-ctl` subcommands.** `status`, `doctor`, and
+  `alerts` gain `--json` output; `config get <key>` / `config set <key>
+  <value>` reach every flat config key through the same validated setter the
+  TUI uses (applied live); `channels test <name>` sends a live test
+  notification.
+- **Live event streaming over the control socket.** `core.API.Subscribe` runs
+  end to end: an in-process event bus that the sampler loop and every dispatched
+  alert publish onto, a dedicated socket connection streaming those events, and
+  `serverwatch-web` subscribing to push live dashboard updates.
+- **Front-door install and safe-exec.** `serverwatch install` records each
+  plugin's checksum in a root-only manifest; the `serverwatch cli` and
+  `serverwatch web` front-doors verify a plugin (owner, permissions, checksum)
+  against that manifest before exec'ing it.
+- **Mobile web UI.** The dashboard is fully responsive: a bottom tab bar with a
+  "More" sheet, card-list tables, and layouts gated to narrow viewports.
+- **Enrollment PIN over the socket (#90).** `serverwatch telegram set-token`
+  prints the `/start <pin>` instruction directly to the terminal after saving
+  the token; `serverwatch-ctl`'s onboarding surfaces the same PIN.
+- **Optimized production release channel.** `make release-prod` builds stripped,
+  trimmed binaries (`-s -w -trimpath`) for the stable line, alongside the
+  unstripped `make release` used for beta/dev builds.
+
+### Changed
+
+- The web UI no longer builds with `-tags web` inside the daemon; it is a
+  separate supervised process. Guided setup (web UI, Telegram onboarding) is
+  owned by `serverwatch-ctl`; the core CLI keeps only thin, scriptable verbs.
+- `serverwatch install` now restarts an already-running service on an in-place
+  upgrade (enable + restart) instead of `enable --now`, which only started a
+  stopped service.
+- Documentation is ctl-first throughout, with download-first install
+  instructions and dedicated plugin pages.
+
+### Fixed
+
+- `serverwatch-ctl` now treats `SERVERWATCH_CONTROL_TOKEN` as the token value
+  (as the front-doors and web supervisor set it), not a file path, fixing an
+  "unexpected server hello" handshake failure for `serverwatch cli`/`web`.
+- Telegram command authorization is enforced against the enrolled owner chat
+  (security hardening).
+- Mobile web UI: the header no longer forces horizontal page scroll (dropped
+  the fixed-width heartbeat, title flexes/truncates); the active-alerts card no
+  longer widens the page on long unbreakable alert keys; the monitoring tab
+  strip scrolls within itself instead of overflowing.
+
+### Security
+
+- Per-launch control-socket token with a constant-time compare, `0600` socket
+  in a `0700` runtime directory, and checksum-manifest verification before any
+  plugin is exec'd. A security review was run over the web UI and control paths,
+  with findings triaged and tracked.
+
+## [0.3.2] - 2026-07-27
+
+- Interval validation, a live container sidebar, a reworked public status page
+  (allowlist-filtered SSE, anonymous-safe), cache-busting asset versioning, and
+  opt-in baseline alerts.
+
+## [0.3.1] - 2026-07-26
+
+- Web UI security hardening (TOCTOU, CSP, account-takeover fixes) and Telegram
+  message-size and markdown fixes.
+
+## [0.3.0] - 2026-07-26
+
+- The passkey web UI: WebAuthn auth, RBAC, a live dashboard over SSE, history
+  graphs, a web config editor, an alerts page, and a curated public status view,
+  built behind `-tags web` so the default binary stayed dependency-free.
+
+## [0.2.0] - 2026-07-26
+
+- Multi-channel alerting (email/SMTP, generic webhook, Slack, Discord, ntfy,
+  Gotify alongside Telegram) and tiered sampling with the `tsfile` time-series
+  store.
+
+## [0.1.0] - 2026-07-25
+
+- Initial release: the stdlib-only `serverwatch` daemon with core metric
+  collection, threshold and anomaly detection, and Telegram alerting.
+
+[0.4.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.4.0
+[0.3.2]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.2
+[0.3.1]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.1
+[0.3.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.0
+[0.2.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.2.0
+[0.1.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0

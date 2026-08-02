@@ -58,13 +58,17 @@ See [Installation and first run](../03-installation.md) for the full flow and
 
 ## Running serverwatch-ctl
 
-Run it with a subcommand (`status`, `doctor`, `alerts`) for a one-shot,
-non-interactive read that mirrors the daemon-side output. Run it with no
-subcommand to launch the interactive Bubble Tea TUI, which is now the primary
-way to manage a running serverwatch.
+Run it with a subcommand for a one-shot, non-interactive read or change that
+mirrors the daemon-side output. Run it with no subcommand to launch the
+interactive Bubble Tea TUI, which is now the primary way to manage a running
+serverwatch. The subcommands are the scriptable counterpart to the TUI: the
+read verbs (`status`, `doctor`, `alerts`) mirror the Home dashboard, and
+`config get`/`config set`/`channels test` drive the same validated setters and
+actions the management screens use, for a headless box or an automation script
+that cannot sit in front of a terminal.
 
 ```
-serverwatch-ctl [--socket PATH] [--token PATH] <command>
+serverwatch-ctl [--socket PATH] [--token PATH] [--json] <command>
 ```
 
 | Command | Purpose |
@@ -72,6 +76,33 @@ serverwatch-ctl [--socket PATH] [--token PATH] <command>
 | `status` | Print the current dashboard snapshot. |
 | `doctor` | Print the daemon's diagnostic report. |
 | `alerts` | Print the currently active alerts. |
+| `config get <key>` | Print one flat config key's current value. |
+| `config set <key> <value>` | Set one config key, validated and applied live. |
+| `channels test <name>` | Send a live test notification through a channel. |
+
+Every subcommand exits `0` on success, `2` on a usage error (an unknown or
+malformed command, a bad argument count, or an unknown config key), and `1`
+when the underlying control-socket call fails, consistent throughout `run.go`.
+
+- **`--json`** makes the three read verbs (`status`, `doctor`, `alerts`) emit
+  JSON instead of the text layout. It may appear before or after the verb, so
+  `serverwatch-ctl status --json` and `serverwatch-ctl --json alerts` are
+  equivalent, and it is inert (silently ignored) for the mutating verbs.
+  `alerts --json` always emits a JSON array, `[]` when nothing is firing, so a
+  consumer never has to special-case the empty state.
+- **`config get <key>`** prints one flat config key's current value, read
+  through the same `config.Get` the TUI's **all settings** screen uses. An
+  unknown key is a usage error (exit `2`), pointing you at the all-settings
+  catalog for the valid key names.
+- **`config set <key> <value>`** sets one key through the exact same validated
+  `config.Set` setter the TUI uses (so a value the CLI rejects is one the TUI
+  would reject too), then commits it live with `ApplyConfig`. The same
+  restart-required caveats the TUI shows apply here: keys like `web.enabled`
+  and the `storage.*` backend/retention settings only take full effect after a
+  daemon restart, even though the value is saved and the rest of the config
+  hot-reloads immediately.
+- **`channels test <name>`** sends a live test notification through the named
+  channel, the same `TestChannel` action the Channels screen's `t` key runs.
 
 Socket and token resolution, highest priority first:
 
@@ -97,14 +128,46 @@ daemon's own `MonitorTargets`, and an enabled channel is checked with
 `ValidateChannel` before it is ever saved.
 
 **The Home screen.** Launching `serverwatch-ctl` with no subcommand opens
-Home, which shows live status. From Home:
+Home, a live dashboard that re-fetches itself every couple of seconds (and on
+`r`) so it stays current without you touching it. It renders, top to bottom:
+
+- A **status header**: `serverwatch  ● online   updated Ns ago`, where the dot
+  is green for online and red for offline, and the "Ns ago" is how stale the
+  last snapshot is.
+- A boxed **SYSTEM** panel: colour-coded CPU/MEM/SWAP meter bars with their
+  percentages (green under 70%, amber to 90%, red at or above), a live CPU
+  sparkline built from a rolling in-session history of the last snapshots, the
+  three load averages, temperature (only when a sensor is present), and network
+  throughput (rx down / tx up).
+- A boxed **ALERTS** panel: an `N firing` count and the top active alerts, each
+  a severity dot plus a truncated key (with `(acked)` on acknowledged ones and
+  a `+N more` tail when the list overflows), or a `✓ no active alerts` empty
+  state.
+- A boxed **DISKS** panel: the top mounts by usage, each with a coloured usage
+  bar. Absent when disk collection found no mounts.
+- A **24h availability strip**: green (up) and red (down) blocks across the last
+  day, with the uptime %, total downtime, and incident count. Absent when the
+  snapshot carries no availability data.
+- An **inventory line**: containers up/total, failed/total units, disk mounts
+  (with a critical count when any are critical), and process count.
+
+Colours mirror the web UI's palette so the terminal and the browser read as the
+same product, and lipgloss emits no ANSI when stdout is not a TTY, so the plain
+labels survive piping and redirection. From Home:
 
 | Key | Action |
 | --- | --- |
 | `m` | Open the management menu (below). |
 | `s` | Launch the guided web setup wizard, applying `web.*` over the socket. |
 | `r` | Force an immediate status refresh. |
+| `?` | Toggle the help overlay (below). |
 | `q` / `esc` | Quit. |
+
+Pressing `?` from Home opens a **help overlay** listing the whole keymap (the
+Home keys, the shared menu navigation, and the global `ctrl-c`); any key
+dismisses it. The sub-screens carry a breadcrumb heading (`serverwatch ▸ Web
+setup`, `serverwatch ▸ Manage`, and so on) so you always see where you sit
+relative to Home.
 
 If Telegram is not yet configured, or is configured but not yet enrolled,
 Home opens straight into first-run onboarding instead (below), rather than
@@ -126,7 +189,10 @@ uses, so every field gets its real validation.
 flows: **schedule**, **quiet hours**, **healthchecks**, **monitor
 thresholds**, **channels**, and **all settings**. Move with the up/down
 arrows or `j`/`k`, open the highlighted row with `enter`, and back out with
-`esc`.
+`esc`. The menu rows carry an icon each and the selected row is highlighted;
+the channels and monitor-thresholds tables show a coloured state badge per row
+(`● on`, `○ off`, or `○ unavailable`), all matching the same web-UI palette
+Home uses.
 
 - **Schedule.** Choose `off`, `daily`, or `weekly`. `daily` prompts for an
   `HH:MM` time; `weekly` prompts for `dow@HH:MM`, for example `mon@09:00`.
