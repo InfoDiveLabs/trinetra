@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -217,4 +218,108 @@ func sendSafely(n Notifier, a Alert, timeout time.Duration) (err error) {
 	}()
 
 	return n.Send(ctx, a)
+}
+
+type queuedAlert struct {
+	a     Alert
+	quiet bool
+}
+
+// NotifierQueue decouples alert delivery from the caller: Enqueue is
+// non-blocking and Run drains to the Dispatcher on its own goroutine. On a
+// slow uplink the queue bounds memory by dropping the OLDEST non-critical
+// alert; critical and recover alerts are never dropped.
+type NotifierQueue struct {
+	mu      sync.Mutex
+	items   []queuedAlert
+	cap     int
+	dropped atomic.Int64
+	wake    chan struct{}
+	disp    atomic.Pointer[Dispatcher]
+}
+
+func NewNotifierQueue(d *Dispatcher, capacity int) *NotifierQueue {
+	if capacity < 1 {
+		capacity = 1
+	}
+	q := &NotifierQueue{cap: capacity, wake: make(chan struct{}, 1)}
+	q.disp.Store(d)
+	return q
+}
+
+func (q *NotifierQueue) SetDispatcher(d *Dispatcher) { q.disp.Store(d) }
+func (q *NotifierQueue) Dropped() int64              { return q.dropped.Load() }
+
+func undroppable(a Alert) bool { return a.Severity >= SevCritical || a.Kind == "recover" }
+
+func (q *NotifierQueue) Enqueue(a Alert, quiet bool) {
+	q.mu.Lock()
+	if len(q.items) >= q.cap {
+		if i := q.indexOfOldestDroppable(); i >= 0 {
+			q.items = append(q.items[:i], q.items[i+1:]...)
+			q.dropped.Add(1)
+		} else if !undroppable(a) {
+			// queue is all-undroppable and full, and the newcomer is droppable:
+			// drop the newcomer rather than an alert we promised to keep.
+			q.mu.Unlock()
+			q.dropped.Add(1)
+			return
+		}
+		// else: newcomer is undroppable and queue is all-undroppable -> allow
+		// growth past cap (bounded by reality: critical bursts are rare).
+	}
+	q.items = append(q.items, queuedAlert{a: a, quiet: quiet})
+	q.mu.Unlock()
+	select {
+	case q.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (q *NotifierQueue) indexOfOldestDroppable() int {
+	for i := range q.items {
+		if !undroppable(q.items[i].a) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (q *NotifierQueue) pop() (queuedAlert, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) == 0 {
+		return queuedAlert{}, false
+	}
+	it := q.items[0]
+	q.items = q.items[1:]
+	return it, true
+}
+
+func (q *NotifierQueue) Run(ctx context.Context) {
+	for {
+		it, ok := q.pop()
+		if !ok {
+			select {
+			case <-ctx.Done():
+				return
+			case <-q.wake:
+				continue
+			}
+		}
+		if d := q.disp.Load(); d != nil {
+			d.Dispatch(it.a, it.quiet)
+		}
+	}
+}
+
+// snapshotKeysForTest exposes the queued keys for tests only.
+func (q *NotifierQueue) snapshotKeysForTest() []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	ks := make([]string, len(q.items))
+	for i := range q.items {
+		ks[i] = q.items[i].a.Key
+	}
+	return ks
 }

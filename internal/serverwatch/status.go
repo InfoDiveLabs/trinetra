@@ -215,20 +215,24 @@ type SmartAttr struct {
 }
 
 type Snapshot struct {
-	TS           int64              `json:"ts"`
-	CPU          float64            `json:"cpu"`
-	MemPct       float64            `json:"mem_pct"`
-	SwapPct      float64            `json:"swap_pct"`
-	Load1        float64            `json:"load1"`
-	Load5        float64            `json:"load5"`
-	Load15       float64            `json:"load15"`
-	TempC        float64            `json:"temp_c"`
-	Disks        map[string]float64 `json:"disks"`
-	Online       bool               `json:"online"`
-	DockerAccess string             `json:"docker_access"`
-	Containers   map[string]string  `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
-	FailedUnits  []string           `json:"failed_units,omitempty"` // systemctl --failed unit names
-	SmartHealth  map[string]string  `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
+	TS      int64              `json:"ts"`
+	CPU     float64            `json:"cpu"`
+	MemPct  float64            `json:"mem_pct"`
+	SwapPct float64            `json:"swap_pct"`
+	Load1   float64            `json:"load1"`
+	Load5   float64            `json:"load5"`
+	Load15  float64            `json:"load15"`
+	TempC   float64            `json:"temp_c"`
+	Disks   map[string]float64 `json:"disks"`
+	Online  bool               `json:"online"`
+	// SlowStale is set when the slow-collector goroutine missed its deadline
+	// and the slow-tier fields on this snapshot are the last-good values, not
+	// freshly collected this cycle.
+	SlowStale    bool              `json:"slow_stale,omitempty"`
+	DockerAccess string            `json:"docker_access"`
+	Containers   map[string]string `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
+	FailedUnits  []string          `json:"failed_units,omitempty"` // systemctl --failed unit names
+	SmartHealth  map[string]string `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
 	// DiskDetail is the live per-mount device/fstype/inode%/size detail (see
 	// the DiskDetail type doc comment above), keyed by mount. Additive to
 	// Disks, always collected in collectSlow (no config toggle -- matches how

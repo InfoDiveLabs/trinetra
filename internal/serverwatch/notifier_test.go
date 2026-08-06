@@ -207,3 +207,153 @@ func TestSeverityParseString(t *testing.T) {
 		t.Error("expected error for junk severity string")
 	}
 }
+
+type recordingNotifier struct {
+	name string
+	sent *[]string
+	mu   *sync.Mutex
+}
+
+func (r recordingNotifier) Name() string { return r.name }
+func (r recordingNotifier) Send(ctx context.Context, a Alert) error {
+	r.mu.Lock()
+	*r.sent = append(*r.sent, a.Key)
+	r.mu.Unlock()
+	return nil
+}
+
+func TestNotifierQueueDropsOldestNonCriticalKeepsCritical(t *testing.T) {
+	q := NewNotifierQueue(nil, 2) // nil dispatcher: not started, just testing the queue policy
+
+	q.Enqueue(Alert{Key: "info1", Severity: SevInfo, Kind: "fire"}, false)
+	q.Enqueue(Alert{Key: "info2", Severity: SevInfo, Kind: "fire"}, false)
+	// queue full (cap 2); a critical must evict the oldest non-critical.
+	q.Enqueue(Alert{Key: "crit", Severity: SevCritical, Kind: "fire"}, false)
+
+	keys := q.snapshotKeysForTest()
+	if !containsString(keys, "crit") {
+		t.Fatalf("critical alert was dropped; queue=%v", keys)
+	}
+	if containsString(keys, "info1") {
+		t.Fatalf("oldest non-critical not evicted; queue=%v", keys)
+	}
+	if q.Dropped() != 1 {
+		t.Fatalf("Dropped()=%d, want 1", q.Dropped())
+	}
+}
+
+func TestNotifierQueueAllUndroppableDropsDroppableNewcomer(t *testing.T) {
+	q := NewNotifierQueue(nil, 2)
+
+	q.Enqueue(Alert{Key: "crit1", Severity: SevCritical, Kind: "fire"}, false)
+	q.Enqueue(Alert{Key: "recover1", Severity: SevInfo, Kind: "recover"}, false)
+	// queue full (cap 2) and every item is undroppable; a droppable newcomer
+	// must be dropped itself rather than evicting a reserved alert.
+	q.Enqueue(Alert{Key: "info1", Severity: SevInfo, Kind: "fire"}, false)
+
+	keys := q.snapshotKeysForTest()
+	if len(keys) != 2 {
+		t.Fatalf("queue length=%d, want 2 (unchanged); queue=%v", len(keys), keys)
+	}
+	if containsString(keys, "info1") {
+		t.Fatalf("droppable newcomer was kept instead of dropped; queue=%v", keys)
+	}
+	if !containsString(keys, "crit1") || !containsString(keys, "recover1") {
+		t.Fatalf("a reserved (undroppable) alert was evicted; queue=%v", keys)
+	}
+	if q.Dropped() != 1 {
+		t.Fatalf("Dropped()=%d, want 1", q.Dropped())
+	}
+}
+
+func TestNotifierQueueAllUndroppableGrowsPastCapForUndroppableNewcomer(t *testing.T) {
+	q := NewNotifierQueue(nil, 2)
+
+	q.Enqueue(Alert{Key: "crit1", Severity: SevCritical, Kind: "fire"}, false)
+	q.Enqueue(Alert{Key: "recover1", Severity: SevInfo, Kind: "recover"}, false)
+	// queue full (cap 2) and every item is undroppable; an undroppable
+	// newcomer must be admitted even though that grows the queue past cap,
+	// since nothing droppable exists to make room and nothing may be dropped.
+	q.Enqueue(Alert{Key: "crit2", Severity: SevCritical, Kind: "fire"}, false)
+
+	keys := q.snapshotKeysForTest()
+	if len(keys) != 3 {
+		t.Fatalf("queue length=%d, want 3 (grown past cap); queue=%v", len(keys), keys)
+	}
+	if !containsString(keys, "crit1") || !containsString(keys, "recover1") || !containsString(keys, "crit2") {
+		t.Fatalf("expected all three undroppable alerts retained; queue=%v", keys)
+	}
+	if q.Dropped() != 0 {
+		t.Fatalf("Dropped()=%d, want 0 (nothing should be dropped)", q.Dropped())
+	}
+}
+
+func TestNotifierQueueRunDelivers(t *testing.T) {
+	var mu sync.Mutex
+	var sent []string
+	disp := NewDispatcher([]Channel{{
+		N: recordingNotifier{name: "rec", sent: &sent, mu: &mu}, Enabled: true,
+		Route: Route{MinSeverity: SevInfo},
+	}}, dispatcherTimeout)
+	q := NewNotifierQueue(disp, 8)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go q.Run(ctx)
+	q.Enqueue(Alert{Key: "a", Severity: SevInfo, Kind: "fire"}, false)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(sent)
+		mu.Unlock()
+		if n == 1 {
+			cancel()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	t.Fatal("alert was not delivered")
+}
+
+// TestNotifierQueueSetDispatcherReroutesDelivery guards the mechanism the
+// daemon's dispatcher rebuilds (applyConfig AND setChatID) depend on: because
+// delivery runs off the queue's OWN dispatcher pointer, a rebuild must call
+// q.SetDispatcher or alerts keep going to the stale dispatcher. This was the
+// setChatID bug -- a chat id auto-captured via /start enrollment rebuilt the
+// shared dispatcher but never told the queue, so every alert after a fresh
+// zero-config enrollment dispatched to the stale channel-less dispatcher and
+// silently didn't deliver. Here the "old" dispatcher stands in for that stale
+// pre-enrollment one and the "new" one for the freshly-enrolled channel: after
+// SetDispatcher, an enqueued alert must reach the NEW notifier and never the
+// old. If SetDispatcher didn't actually swap the active dispatcher, the alert
+// would land on oldN and this test fails.
+func TestNotifierQueueSetDispatcherReroutesDelivery(t *testing.T) {
+	oldN := &fakeNotifier{name: "stale-pre-enrollment"}
+	newN := &fakeNotifier{name: "freshly-enrolled"}
+
+	q := NewNotifierQueue(NewDispatcher([]Channel{allowAllChannel(oldN)}, dispatcherTimeout), 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Run(ctx)
+
+	// The daemon's setChatID/applyConfig rebuild the dispatcher then propagate it
+	// to the queue via SetDispatcher; model exactly that swap.
+	q.SetDispatcher(NewDispatcher([]Channel{allowAllChannel(newN)}, dispatcherTimeout))
+
+	q.Enqueue(Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1}, false)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(newN.received()) == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := len(newN.received()); got != 1 {
+		t.Fatalf("newly-configured dispatcher received %d alerts, want 1: dispatcher swap did not reach the queue", got)
+	}
+	if got := len(oldN.received()); got != 0 {
+		t.Fatalf("stale dispatcher received %d alerts, want 0: delivery still using the pre-swap dispatcher", got)
+	}
+}

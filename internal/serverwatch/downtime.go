@@ -28,6 +28,29 @@ func readHeartbeat(path string, fs FileSource) (time.Time, bool) {
 	return time.Unix(n, 0), true
 }
 
+// shouldReportDowntime suppresses a boot report whose window was already
+// reported on a previous start (ev.End <= lastReportedEnd), so a restart that
+// recomputes the same gap from an unchanged heartbeat does not re-notify.
+func shouldReportDowntime(ev DownEvent, lastReportedEnd int64) bool {
+	return ev.End > lastReportedEnd
+}
+
+func writeCleanStop(path string, now time.Time) error {
+	return writeFileAtomic(path, []byte(strconv.FormatInt(now.Unix(), 10)), 0o644)
+}
+
+func readCleanStop(path string, fs FileSource) (int64, bool) {
+	b, err := fs.Read(path)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(string(trimSpace(b)), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 func reconstructPowerDown(lastBeat, boot time.Time, interval time.Duration) (DownEvent, bool) {
 	if !boot.After(lastBeat) {
 		return DownEvent{}, false // clock skew / no gap

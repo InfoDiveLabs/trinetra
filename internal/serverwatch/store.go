@@ -27,9 +27,13 @@ type Sample struct {
 	Disks   map[string]float64 `json:"disks,omitempty"`
 }
 
-func (s *Store) samplesDir() string     { return filepath.Join(s.dir, "samples") }
-func (s *Store) downPath() string       { return filepath.Join(s.dir, "downtime.jsonl") }
-func (s *Store) HeartbeatPath() string  { return filepath.Join(s.dir, "heartbeat") }
+func (s *Store) samplesDir() string    { return filepath.Join(s.dir, "samples") }
+func (s *Store) downPath() string      { return filepath.Join(s.dir, "downtime.jsonl") }
+func (s *Store) HeartbeatPath() string { return filepath.Join(s.dir, "heartbeat") }
+func (s *Store) CleanStopPath() string { return filepath.Join(s.dir, "clean_stop") }
+func (s *Store) LastReportedDowntimePath() string {
+	return filepath.Join(s.dir, "last_reported_downtime")
+}
 func (s *Store) BaselinePath() string   { return filepath.Join(s.dir, "baseline.json") }
 func (s *Store) AlertStatePath() string { return filepath.Join(s.dir, "alerts.json") }
 func (s *Store) AlertLogPath() string   { return filepath.Join(s.dir, "alertlog.jsonl") }

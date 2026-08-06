@@ -140,7 +140,12 @@ func newHandler(d Deps) http.Handler {
 	// and currentRole (templates.go) both read via userFromContext.
 	sessions := newSessionStore(d.StateDir)
 	users := newUserStore(d.StateDir)
-	return securityHeaders(sessionMiddleware(sessions, userMiddleware(users, mux)))
+	// gzipMiddleware (Task 7, slow-request-resilience) is the outermost
+	// wrap: it compresses large responses (history/series JSON) for
+	// congested uplinks, gated on Accept-Encoding: gzip and a 1KB minimum,
+	// and excludes /events + /public/events (SSE streams -- see its doc in
+	// compress.go for why buffering those would break live push).
+	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, mux))))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type

@@ -16,15 +16,9 @@ type telegramNotifier struct {
 
 func (t *telegramNotifier) Name() string { return t.name }
 
-// Send delivers a as a formatted Telegram message. It honors ctx
-// best-effort: if ctx is already cancelled it returns immediately without
-// hitting the network. telegram.Client.SendMessage itself doesn't take a
-// ctx (it uses a client-level HTTP timeout), so cancellation mid-flight
-// isn't observed here; the Dispatcher's own per-send timeout is the
-// backstop for that case.
+// Send delivers a as a formatted Telegram message, honoring ctx: a
+// cancelled ctx aborts the send (whether before or during the HTTP
+// request) instead of blocking for the client's full timeout.
 func (t *telegramNotifier) Send(ctx context.Context, a Alert) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return t.client.SendMessage(formatAlert(a))
+	return t.client.SendMessageContext(ctx, formatAlert(a))
 }

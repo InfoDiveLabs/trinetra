@@ -321,6 +321,68 @@ func TestTSFilePrune(t *testing.T) {
 	}
 }
 
+// A series whose every sample has aged out past retention must be DELETED by
+// Prune, not rewritten as an empty file -- otherwise dead targets (removed
+// containers/mounts/devices) accumulate .tsd files forever, which is what made
+// Prune fsync thousands of files and starved the daemon. This is the
+// cardinality-bounding guarantee.
+func TestTSFilePruneReapsDeadSeries(t *testing.T) {
+	dir := t.TempDir()
+	s := openTSFile(t, dir, StoreOptions{})
+	defer s.Close()
+
+	const day = int64(86400)
+	now := int64(60 * day)
+
+	// "dead": only data older than raw retention. "live": a recent point.
+	if err := s.Append(now-40*day, MetricSet{"dead": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(now-1*day, MetricSet{"live": 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadPath := filepath.Join(dir, "ts", "raw", "dead.tsd")
+	livePath := filepath.Join(dir, "ts", "raw", "live.tsd")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Fatalf("dead series file should exist before prune: %v", err)
+	}
+
+	if err := s.Prune(now); err != nil {
+		t.Fatal(err)
+	}
+
+	// The dead series file must be gone, not an empty leftover.
+	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+		t.Fatalf("dead series should have been reaped (deleted); stat err = %v", err)
+	}
+	if _, err := os.Stat(livePath); err != nil {
+		t.Fatalf("live series file should remain: %v", err)
+	}
+	pts, err := s.Query("live", 0, now, ResRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 1 || pts[0].TS != now-1*day {
+		t.Fatalf("live points = %+v, want just the recent one", pts)
+	}
+	dpts, err := s.Query("dead", 0, now, ResRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dpts) != 0 {
+		t.Fatalf("dead series should have no points after reap, got %+v", dpts)
+	}
+	// Cardinality now reflects only the live series.
+	sc, _, err := s.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc != 1 {
+		t.Fatalf("seriesCount = %d after reaping the dead series, want 1", sc)
+	}
+}
+
 func TestTSFileSafeMetricDistinctFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := openTSFile(t, dir, StoreOptions{})

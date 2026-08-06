@@ -377,15 +377,19 @@ func (s *tsFileStore) Events(from, to int64) ([]DownEvent, error) {
 	return out, nil
 }
 
-// pruneFileGeneric rewrites path keeping only records for which keep
-// returns true. It is crash-durable: it builds the new contents in a temp
-// file, fsyncs that temp file's data to disk, atomically renames it over
-// path, then fsyncs the parent directory so the rename itself is durable.
-// Without the data fsync a crash could commit the rename while the new
-// file's blocks are still unflushed, leaving a zero-length/truncated live
-// file that Query would then fail to read. A crash mid-prune thus leaves
-// either the untouched original or the fully-written replacement, never a
-// partial file. A missing path is not an error (nothing to prune).
+// pruneFileGeneric rewrites path keeping only records for which keep returns
+// true, with three outcomes: if NO records survive (a dead target whose data
+// has fully aged out past retention) the file is deleted -- this reaps stale
+// series so cardinality stays bounded to live targets instead of growing
+// without bound; if ALL records survive it is left untouched (no needless
+// rewrite+fsync); otherwise it is rewritten with the survivors. The rewrite is
+// crash-durable: contents are built in a temp file, the temp's data is fsynced,
+// then atomically renamed over path. The parent-directory fsync that makes the
+// rename/unlink durable is NOT done here -- the caller batches ONE dir fsync
+// per prune pass, because across many series a per-file dir fsync dominated
+// prune time (and pinned the store lock long enough to starve reads). A crash
+// mid-prune leaves either the untouched original or the fully-written
+// replacement, never a partial file. A missing path is not an error.
 func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -405,6 +409,30 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 		return err
 	}
 
+	// One read pass, collecting survivors, so we can tell "all kept" (skip)
+	// and "none kept" (delete) apart from the partial case (rewrite).
+	survivors := make([]byte, 0, n*int64(tsRecordLen))
+	var buf [tsRecordLen]byte
+	var kept int64
+	for i := int64(0); i < n; i++ {
+		if _, err := f.ReadAt(buf[:], recordOffset(i)); err != nil {
+			return err
+		}
+		if keep(buf[:]) {
+			survivors = append(survivors, buf[:]...)
+			kept++
+		}
+	}
+	if kept == 0 {
+		// Dead series: remove the file. Directory durability for the unlink is
+		// batched once per pass by the caller.
+		f.Close()
+		return os.Remove(path)
+	}
+	if kept == n {
+		return nil // nothing aged out; avoid a needless rewrite + fsync
+	}
+
 	tmp := path + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -414,18 +442,9 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 		out.Close()
 		return err
 	}
-	var buf [32]byte
-	for i := int64(0); i < n; i++ {
-		if _, err := f.ReadAt(buf[:], recordOffset(i)); err != nil {
-			out.Close()
-			return err
-		}
-		if keep(buf[:]) {
-			if _, err := out.Write(buf[:]); err != nil {
-				out.Close()
-				return err
-			}
-		}
+	if _, err := out.Write(survivors); err != nil {
+		out.Close()
+		return err
 	}
 	// Flush the temp file's data to disk before the rename commits it.
 	if err := out.Sync(); err != nil {
@@ -435,11 +454,9 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 	if err := out.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	// Make the rename itself durable by fsyncing the parent directory.
-	return syncDir(filepath.Dir(path))
+	// Directory fsync (rename durability) is batched once per pass by the
+	// caller (pruneDir / Prune), not per file.
+	return os.Rename(tmp, path)
 }
 
 // syncDir fsyncs a directory so a rename into it survives a crash.
@@ -469,6 +486,13 @@ func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 			return err
 		}
 	}
+	// One directory fsync per pass makes every rename/unlink pruneFileGeneric
+	// did above durable, instead of one fsync per series file (which dominated
+	// prune time and held the store lock long enough to starve reads). Missing
+	// dir (nothing was ever written) is not an error.
+	if err := syncDir(dir); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
@@ -490,7 +514,15 @@ func (s *tsFileStore) Prune(now int64) error {
 		end := int64(binary.BigEndian.Uint64(rec[16:24]))
 		return end >= eventCut
 	}
-	return pruneFileGeneric(s.eventsPath(), keepEvent)
+	if err := pruneFileGeneric(s.eventsPath(), keepEvent); err != nil {
+		return err
+	}
+	// pruneFileGeneric no longer fsyncs the dir itself; make its rename/unlink
+	// of the events file durable with one fsync of the events directory.
+	if err := syncDir(filepath.Dir(s.eventsPath())); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // tsRollupBucketSeconds is the 1m resolution's bucket width. A bucket's key

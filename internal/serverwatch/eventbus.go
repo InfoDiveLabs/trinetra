@@ -1,6 +1,6 @@
 // Package serverwatch: eventbus.go implements the daemon's in-process live
 // event fan-out (issue-tracked as the A2 "live push" epic): the sampler
-// loop and dispatchAndLog (daemon.go) both PUBLISH core.Event values on
+// loop and enqueueAndLog (daemon.go) both PUBLISH core.Event values on
 // every snapshot tick / dispatched alert, and inprocAPI.Subscribe
 // (coreapi_inproc.go) hands each control-socket subscriber its own
 // SUBSCRIPTION onto the same stream. This file only ever touches sync +
@@ -22,7 +22,7 @@ import (
 // buffered rather than growing without bound or blocking the publisher --
 // see Publish's doc. Snapshot ticks are coalescable (the next one supersedes
 // a dropped one) and alerts are also durably recorded in the alert log
-// (dispatchAndLog, daemon.go), so a drop here is never the only record of
+// (enqueueAndLog, daemon.go), so a drop here is never the only record of
 // what happened.
 const eventBusBuffer = 64
 
@@ -44,10 +44,10 @@ func newEventBus() *eventBus {
 // Publish delivers ev to every subscriber currently registered, never
 // blocking: each subscriber's channel is sent to under select/default, so a
 // full buffer just drops ev for that one subscriber rather than stalling
-// this call (and, transitively, the sampler loop / dispatchAndLog caller
+// this call (and, transitively, the sampler loop / enqueueAndLog caller
 // that invoked it) waiting for a reader. A nil bus is a safe no-op, mirroring
 // this package's other nil-degrades-gracefully dependencies (e.g. alog in
-// dispatchAndLog) -- callers that construct an inprocAPI without a live
+// enqueueAndLog) -- callers that construct an inprocAPI without a live
 // daemon bus (most existing tests) never need to thread one through here
 // just to call code paths that happen to publish.
 func (b *eventBus) Publish(ev core.Event) {

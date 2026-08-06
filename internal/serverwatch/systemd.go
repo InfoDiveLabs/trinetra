@@ -24,9 +24,14 @@ const unitPath = "/etc/systemd/system/serverwatch.service"
 const secondaryBinPath = "/usr/bin/serverwatch"
 
 // renderUnit renders the systemd unit file installed by cmdInstall.
-// WatchdogSec=90 pairs with the sdNotify("WATCHDOG=1") ping the sampler
-// loop sends every fast tick (default 5s), far inside this 90s window; if
-// the sampler loop wedges, no ping is sent and systemd restarts the unit.
+// WatchdogSec=90 pairs with the sdNotify("WATCHDOG=1") ping now sent by a
+// dedicated, liveness-gated watchdog goroutine (runWatchdog, watchdog.go) --
+// NOT inline on the sampler loop anymore. That goroutine pings at a third of
+// this window only while both the sampler loop and the slow collector have
+// made recent progress (livenessGate), so a merely-slow slow collection can
+// no longer starve the ping and trip a spurious restart, while a genuinely
+// wedged loop or a permanently stuck collector still stops the pings and lets
+// systemd restart the unit.
 // Type=simple still works here: WATCHDOG=1 from the main PID is accepted
 // regardless of Type, unlike READY=1 which needs Type=notify.
 //

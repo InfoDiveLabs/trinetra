@@ -97,6 +97,43 @@ func TestReadHeartbeatCorrupt(t *testing.T) {
 	}
 }
 
+func TestShouldReportDowntimeDedupe(t *testing.T) {
+	ev := DownEvent{Type: "power_down", Start: 100, End: 200, DurationSec: 100}
+	if !shouldReportDowntime(ev, 0) {
+		t.Fatal("first report should be allowed")
+	}
+	if shouldReportDowntime(ev, 200) {
+		t.Fatal("already-reported window must not re-report")
+	}
+	if !shouldReportDowntime(DownEvent{End: 260}, 200) {
+		t.Fatal("a newer window should report")
+	}
+}
+
+func TestCleanStopRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "clean-stop")
+	now := time.Unix(1721900000, 0)
+	if err := writeCleanStop(p, now); err != nil {
+		t.Fatalf("writeCleanStop: %v", err)
+	}
+	got, ok := readCleanStop(p, osFS{})
+	if !ok {
+		t.Fatal("readCleanStop ok=false, want true")
+	}
+	if got != now.Unix() {
+		t.Fatalf("got %d want %d", got, now.Unix())
+	}
+}
+
+func TestReadCleanStopMissing(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "does-not-exist")
+	if _, ok := readCleanStop(p, osFS{}); ok {
+		t.Fatal("readCleanStop on missing file should return ok=false")
+	}
+}
+
 func TestNetTrackerOpenClose(t *testing.T) {
 	var n NetTracker
 	if _, closed := n.Update(false, 100); closed {
