@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,21 +53,37 @@ const telegramMaxMessageLen = 4096
 // re-escape, since it also carries pre-built <pre>/<b> markup that must NOT
 // be escaped. If any chunk fails to send, SendMessage returns that error
 // immediately (a partial multi-chunk delivery is reported, not swallowed).
+//
+// SendMessage delegates to SendMessageContext with a background context, so
+// callers that don't need cancellation get identical behavior.
 func (c *Client) SendMessage(text string) error {
+	return c.SendMessageContext(context.Background(), text)
+}
+
+// SendMessageContext is SendMessage's ctx-aware variant: same chunking,
+// request shape, and status/error handling, but the HTTP request is built
+// with http.NewRequestWithContext so a cancelled ctx aborts an in-flight
+// send instead of blocking for the full client timeout (up to 65s).
+func (c *Client) SendMessageContext(ctx context.Context, text string) error {
 	for _, chunk := range chunkMessage(text, telegramMaxMessageLen) {
-		if err := c.sendOne(chunk); err != nil {
+		if err := c.sendOneContext(ctx, chunk); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *Client) sendOne(text string) error {
+func (c *Client) sendOneContext(ctx context.Context, text string) error {
 	form := url.Values{}
 	form.Set("chat_id", c.ChatID)
 	form.Set("text", text)
 	form.Set("parse_mode", "HTML")
-	resp, err := c.HTTP.PostForm(c.BaseURL+"/sendMessage", form)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/sendMessage", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
 	}

@@ -21,8 +21,14 @@ type Config struct {
 	// FastInterval is the fast tier: seconds between lightweight checks.
 	FastInterval int `json:"fast_interval,omitempty"`
 	// HeartbeatInterval is the seconds between liveness heartbeats.
-	HeartbeatInterval int     `json:"heartbeat_interval,omitempty"`
-	BaselineSigma     float64 `json:"baseline_sigma,omitempty"`
+	HeartbeatInterval int `json:"heartbeat_interval,omitempty"`
+	// ExecTimeout is the per-command hang-breaker for external collectors
+	// (df/docker/systemctl/smartctl), in seconds. Deliberately generous: it
+	// exists to recover from a genuinely wedged command, NOT to cap slow-but-
+	// working ones, so a large/busy host does not lose collection data. Takes
+	// effect on daemon (re)start.
+	ExecTimeout   int     `json:"exec_timeout,omitempty"`
+	BaselineSigma float64 `json:"baseline_sigma,omitempty"`
 	// BaselineMinPct is the minimum relative deviation (fraction of the
 	// baseline mean, e.g. 0.15 = 15%) a value must ALSO clear -- alongside
 	// BaselineSigma -- before a baseline (non-threshold) anomaly fires. It
@@ -479,6 +485,7 @@ func Default() *Config {
 		SampleInterval:    60,
 		FastInterval:      5,
 		HeartbeatInterval: 30,
+		ExecTimeout:       60,
 		BaselineSigma:     3,
 		BaselineMinPct:    0.15,
 	}
@@ -518,6 +525,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.HeartbeatInterval == 0 {
 		c.HeartbeatInterval = 30
+	}
+	if c.ExecTimeout == 0 {
+		c.ExecTimeout = 60
 	}
 	if c.BaselineSigma == 0 {
 		c.BaselineSigma = 3
@@ -584,6 +594,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.Itoa(c.FastInterval), true
 	case "heartbeat_interval":
 		return strconv.Itoa(c.HeartbeatInterval), true
+	case "exec_timeout":
+		return strconv.Itoa(c.ExecTimeout), true
 	case "baseline_sigma":
 		return trimFloat(c.BaselineSigma), true
 	case "baseline_min_pct":
@@ -686,6 +698,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("heartbeat_interval must be an integer >= 1")
 		}
 		c.HeartbeatInterval = n
+	case "exec_timeout":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("exec_timeout must be an integer >= 1")
+		}
+		c.ExecTimeout = n
 	case "baseline_sigma":
 		v, err := f()
 		if err != nil {
@@ -906,6 +924,7 @@ var keyCatalog = []KeyInfo{
 	{Name: "sample_interval", Group: "Intervals", Kind: "int", Help: "Seconds between full baseline samples (the slow tier)."},
 	{Name: "fast_interval", Group: "Intervals", Kind: "int", Help: "Seconds between lightweight checks (the fast tier)."},
 	{Name: "heartbeat_interval", Group: "Intervals", Kind: "int", Help: "Seconds between liveness heartbeats."},
+	{Name: "exec_timeout", Group: "Intervals", Kind: "int", Help: "Per-command hang-breaker for external collectors (df/docker/systemctl/smartctl), in seconds. Generous by design -- only a wedged command should hit it. Takes effect on restart."},
 
 	{Name: "baseline_sigma", Group: "Baseline", Kind: "float", Help: "Standard deviations from the mean before a baseline anomaly fires."},
 	{Name: "baseline_min_pct", Group: "Baseline", Kind: "float", Help: "Minimum relative deviation from the baseline mean also required to fire."},

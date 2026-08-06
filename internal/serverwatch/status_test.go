@@ -112,10 +112,12 @@ func TestSnapshotJSONRoundTripsExtendedFields(t *testing.T) {
 //   - NetRates, Processes: populated by the caller directly from stateful
 //     calculators (NetRateCalc/ProcCPUCalc) that collectSlow has no access
 //     to, not by collectSlow itself -- see mergeSlowFields's doc comment.
+//   - SlowStale: a sampler-loop freshness flag (set from the slow-hub version),
+//     not a collected field at all -- collectSlow never touches it.
 var slowMergeExcludedFields = map[string]bool{
 	"TS": true, "CPU": true, "MemPct": true, "SwapPct": true,
 	"Load1": true, "Load5": true, "Load15": true, "TempC": true,
-	"NetRates": true, "Processes": true,
+	"NetRates": true, "Processes": true, "SlowStale": true,
 }
 
 // TestMergeSlowFieldsCopiesEverySlowTierField guards the exact bug class

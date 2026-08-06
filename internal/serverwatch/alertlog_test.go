@@ -1,7 +1,6 @@
 package serverwatch
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -152,20 +151,18 @@ func TestPruneAlertLogMissingFileIsNoOp(t *testing.T) {
 	}
 }
 
-// TestDispatchAndLogRecordsDeliveries exercises the daemon glue: dispatching
-// an Alert through a Dispatcher (one OK channel, one erroring) must append an
-// AlertEvent carrying the alert fields and a Delivered[] entry per channel
-// reflecting each one's OK/Err.
-func TestDispatchAndLogRecordsDeliveries(t *testing.T) {
+// TestEnqueueAndLogRecordsAlertEvent exercises the daemon glue: enqueueAndLog
+// must append an AlertEvent carrying the alert fields. Delivery is off-thread
+// now (the NotifierQueue worker owns it), so the log entry no longer carries a
+// per-channel Delivered[] -- that field stays nil, and this test pins that
+// contract change.
+func TestEnqueueAndLogRecordsAlertEvent(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
-
-	okN := &fakeNotifier{name: "tg"}
-	badN := &fakeNotifier{name: "email", err: errors.New("smtp down")}
-	disp := NewDispatcher([]Channel{allowAllChannel(okN), allowAllChannel(badN)}, time.Second)
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 12345}
-	dispatchAndLog(nil, disp, alog, a, false)
+	enqueueAndLog(alog, nil, q, a, false)
 
 	events, err := alog.AlertEventsSince(0)
 	if err != nil {
@@ -178,34 +175,27 @@ func TestDispatchAndLogRecordsDeliveries(t *testing.T) {
 	if e.Key != "cpu" || e.Kind != "fire" || e.Severity != "warning" || e.Source != "anomaly" {
 		t.Fatalf("logged event fields = %+v", e)
 	}
-	byChan := map[string]Delivery{}
-	for _, d := range e.Delivered {
-		byChan[d.Channel] = d
-	}
-	if d := byChan["tg"]; !d.OK || d.Err != "" {
-		t.Fatalf("tg delivery = %+v, want OK", d)
-	}
-	if d := byChan["email"]; d.OK || d.Err != "smtp down" {
-		t.Fatalf("email delivery = %+v, want failed with err", d)
+	if len(e.Delivered) != 0 {
+		t.Fatalf("delivery is off-thread now; Delivered must be nil, got %+v", e.Delivered)
 	}
 }
 
-// TestDispatchAndLogPublishesAlertFireEvent pins dispatchAndLog's publish
-// side: a dispatched anomaly "fire" Alert (Source "anomaly") must also
-// reach the event bus as a core.Event, with Kind mapped to "alert_fire" (not
-// the bare Alert.Kind "fire") and Severity/Source/Title/Time carried
-// straight across -- the shape inprocAPI.Subscribe's control-socket
-// consumers (and, eventually, the web UI's toast/refresh logic) key off.
-func TestDispatchAndLogPublishesAlertFireEvent(t *testing.T) {
+// TestEnqueueAndLogPublishesAlertFireEvent pins enqueueAndLog's publish
+// side: an anomaly "fire" Alert (Source "anomaly") must also reach the event
+// bus as a core.Event, with Kind mapped to "alert_fire" (not the bare
+// Alert.Kind "fire") and Severity/Source/Title/Time carried straight across --
+// the shape inprocAPI.Subscribe's control-socket consumers (and, eventually,
+// the web UI's toast/refresh logic) key off.
+func TestEnqueueAndLogPublishesAlertFireEvent(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
-	disp := NewDispatcher(nil, time.Second)
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 	bus := newEventBus()
 	ch, cancel := bus.Subscribe()
 	defer cancel()
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevCritical, Kind: "fire", Source: "anomaly", Time: 12345}
-	dispatchAndLog(bus, disp, alog, a, false)
+	enqueueAndLog(alog, bus, q, a, false)
 
 	want := core.Event{Kind: "alert_fire", Severity: "critical", Source: "anomaly", Title: "CPU high", Time: 12345}
 	select {
@@ -214,23 +204,23 @@ func TestDispatchAndLogPublishesAlertFireEvent(t *testing.T) {
 			t.Fatalf("published event = %+v, want %+v", got, want)
 		}
 	default:
-		t.Fatal("dispatchAndLog did not publish an event to the bus")
+		t.Fatal("enqueueAndLog did not publish an event to the bus")
 	}
 }
 
-// TestDispatchAndLogPublishesAlertRecoverEvent is
-// TestDispatchAndLogPublishesAlertFireEvent's mirror image for a "recover"
+// TestEnqueueAndLogPublishesAlertRecoverEvent is
+// TestEnqueueAndLogPublishesAlertFireEvent's mirror image for a "recover"
 // Alert.
-func TestDispatchAndLogPublishesAlertRecoverEvent(t *testing.T) {
+func TestEnqueueAndLogPublishesAlertRecoverEvent(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
-	disp := NewDispatcher(nil, time.Second)
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 	bus := newEventBus()
 	ch, cancel := bus.Subscribe()
 	defer cancel()
 
 	a := Alert{Key: "cpu", Title: "CPU back to normal", Severity: SevWarning, Kind: "recover", Source: "anomaly", Time: 200}
-	dispatchAndLog(bus, disp, alog, a, false)
+	enqueueAndLog(alog, bus, q, a, false)
 
 	want := core.Event{Kind: "alert_recover", Severity: "warning", Source: "anomaly", Title: "CPU back to normal", Time: 200}
 	select {
@@ -239,26 +229,26 @@ func TestDispatchAndLogPublishesAlertRecoverEvent(t *testing.T) {
 			t.Fatalf("published event = %+v, want %+v", got, want)
 		}
 	default:
-		t.Fatal("dispatchAndLog did not publish an event to the bus")
+		t.Fatal("enqueueAndLog did not publish an event to the bus")
 	}
 }
 
-// TestDispatchAndLogPublishesDigestKindVerbatim pins the "digests keep
+// TestEnqueueAndLogPublishesDigestKindVerbatim pins the "digests keep
 // their kind" carve-out: a digest/boot-report Alert (Source != "anomaly")
 // always carries Kind "fire" as a structural necessity (Alert.Kind has to
 // be something), not because it's semantically a fire/recover anomaly
 // transition -- so, unlike the anomaly case above, its Event.Kind is NOT
 // remapped to "alert_fire"; it passes a.Kind straight through.
-func TestDispatchAndLogPublishesDigestKindVerbatim(t *testing.T) {
+func TestEnqueueAndLogPublishesDigestKindVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
-	disp := NewDispatcher(nil, time.Second)
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 	bus := newEventBus()
 	ch, cancel := bus.Subscribe()
 	defer cancel()
 
 	a := Alert{Title: "daily digest", Severity: SevInfo, Kind: "fire", Source: "digest", Time: 300}
-	dispatchAndLog(bus, disp, alog, a, false)
+	enqueueAndLog(alog, bus, q, a, false)
 
 	want := core.Event{Kind: "fire", Severity: "info", Source: "digest", Title: "daily digest", Time: 300}
 	select {
@@ -267,19 +257,18 @@ func TestDispatchAndLogPublishesDigestKindVerbatim(t *testing.T) {
 			t.Fatalf("published event = %+v, want %+v", got, want)
 		}
 	default:
-		t.Fatal("dispatchAndLog did not publish an event to the bus")
+		t.Fatal("enqueueAndLog did not publish an event to the bus")
 	}
 }
 
-// TestDispatchAndLogNilBusIsSafe pins that a nil bus (every existing daemon
-// call site that hasn't been threaded a live bus, and every other test in
-// this file) is a safe no-op, not a nil-pointer panic -- dispatchAndLog
-// must keep working exactly as before when there's no bus at all.
-func TestDispatchAndLogNilBusIsSafe(t *testing.T) {
+// TestEnqueueAndLogNilBusIsSafe pins that a nil bus is a safe no-op, not a
+// nil-pointer panic -- enqueueAndLog must keep working when there's no bus at
+// all (mirroring eventBus.Publish's own nil-guard).
+func TestEnqueueAndLogNilBusIsSafe(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
-	disp := NewDispatcher(nil, time.Second)
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1}
-	dispatchAndLog(nil, disp, alog, a, false)
+	enqueueAndLog(alog, nil, q, a, false)
 }

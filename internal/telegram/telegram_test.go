@@ -1,12 +1,14 @@
 package telegram
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSendMessage(t *testing.T) {
@@ -212,6 +214,32 @@ func TestSendMessageChunkKeepsPreBalanced(t *testing.T) {
 		if o, cl := strings.Count(part, "<pre>"), strings.Count(part, "</pre>"); o != cl {
 			t.Fatalf("chunk %d has unbalanced <pre> (%d open, %d close)", i, o, cl)
 		}
+	}
+}
+
+// TestSendMessageContextCancels asserts SendMessageContext aborts an
+// in-flight request as soon as its ctx is cancelled, rather than blocking
+// for the full HTTP client timeout (up to 65s) -- the leak this task
+// exists to close.
+func TestSendMessageContextCancels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second) // slow server
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{Token: "x", ChatID: "1", BaseURL: srv.URL, HTTP: srv.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := c.SendMessageContext(ctx, "hi")
+	if err == nil {
+		t.Fatal("expected ctx cancellation error")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("SendMessageContext did not honor ctx; took %s", time.Since(start))
 	}
 }
 
