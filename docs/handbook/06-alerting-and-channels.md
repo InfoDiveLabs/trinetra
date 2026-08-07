@@ -284,6 +284,16 @@ and it sends a plain `{"text": "..."}` payload. `slack` and `discord` are
 really the webhook transport with a fixed, service-specific body baked in, so
 you only supply the incoming-webhook URL.
 
+Because the daemon runs as root and dials these URLs itself, a channel URL is
+effectively trusted: treat setting one as a privileged action. If you want a
+guardrail against a channel (or the healthchecks ping) reaching an internal
+address, set `notify.block_private_targets true`. With it on, the daemon
+refuses to dial loopback, link-local (including the `169.254.169.254` cloud
+metadata endpoint), and private (RFC1918 / ULA) targets, checked against the
+resolved IP so a hostname that points inward is blocked too. It defaults to
+`false`, since posting to an intentionally-internal endpoint (a webhook on the
+same box) is a legitimate setup.
+
 A worked example, an email channel that only pages for criticals, scripted
 against the core binary (the equivalent `serverwatch-ctl` path is `m` ->
 Channels -> `a` -> `email`, filling in the same host/from/to fields and

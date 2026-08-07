@@ -98,6 +98,31 @@ func TestBaselineAlertsDefaultOffRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBlockPrivateTargetsRoundTrip(t *testing.T) {
+	c := Default()
+	if got, ok := c.Get("notify.block_private_targets"); !ok || got != "false" {
+		t.Fatalf("notify.block_private_targets default = (%q, %v), want (false, true)", got, ok)
+	}
+	if err := c.Set("notify.block_private_targets", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Notify.BlockPrivateTargets {
+		t.Error("BlockPrivateTargets not set after Set true")
+	}
+	if got, _ := c.Get("notify.block_private_targets"); got != "true" {
+		t.Errorf("after set = %q, want true", got)
+	}
+	if err := c.Set("notify.block_private_targets", "not-a-bool"); err == nil {
+		t.Error("expected error for non-bool value")
+	}
+	if err := c.Unset("notify.block_private_targets"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("notify.block_private_targets"); got != "false" {
+		t.Errorf("after unset = %q, want default false", got)
+	}
+}
+
 func TestSaveLoad(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sub", "config.json")

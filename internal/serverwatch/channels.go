@@ -108,6 +108,7 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			method:      method,
 			contentType: contentType,
 			tmpl:        tmpl,
+			client:      newGuardedHTTPClient(webhookRequestTimeout, c.Notify.BlockPrivateTargets),
 		}, nil
 	case "slack":
 		url := cc.Settings["url"]
@@ -120,6 +121,7 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			method:      "POST",
 			contentType: "application/json",
 			tmpl:        slackTmpl,
+			client:      newGuardedHTTPClient(webhookRequestTimeout, c.Notify.BlockPrivateTargets),
 		}, nil
 	case "discord":
 		url := cc.Settings["url"]
@@ -132,6 +134,7 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			method:      "POST",
 			contentType: "application/json",
 			tmpl:        discordTmpl,
+			client:      newGuardedHTTPClient(webhookRequestTimeout, c.Notify.BlockPrivateTargets),
 		}, nil
 	case "ntfy":
 		topic := cc.Settings["topic"]
@@ -147,6 +150,7 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			server: strings.TrimRight(server, "/"),
 			topic:  topic,
 			token:  cc.Settings["token"],
+			client: newGuardedHTTPClient(pushRequestTimeout, c.Notify.BlockPrivateTargets),
 		}, nil
 	case "gotify":
 		server := cc.Settings["server"]
@@ -161,6 +165,7 @@ func buildNotifier(cc config.ChannelConfig, c *config.Config) (Notifier, error) 
 			name:   cc.Name,
 			server: strings.TrimRight(server, "/"),
 			token:  token,
+			client: newGuardedHTTPClient(pushRequestTimeout, c.Notify.BlockPrivateTargets),
 		}, nil
 	default:
 		return nil, fmt.Errorf("channel type %q not implemented yet", cc.Type)
