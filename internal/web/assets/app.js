@@ -114,7 +114,6 @@
   function closeDrawer(){drawer.classList.remove('on');dScrim.classList.remove('on');}
   dScrim.addEventListener('click',closeDrawer);
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDrawer();});
-  function spark(color){return '<svg width="100%" height="60" viewBox="0 0 300 60" preserveAspectRatio="none"><path fill="url(#g'+color.g+')" class="ln" stroke="var(--'+color.c+')" stroke-width="1.6" d="M0,44 40,38 80,46 120,24 160,40 200,16 240,34 280,26 300,30 L300,60 0,60Z"/></svg>';}
   // el builds a node with a class and, when txt is given, sets it via
   // textContent so untrusted data-* values are never parsed as HTML.
   function mkEl(tag,cls,txt){var n=document.createElement(tag); if(cls)n.className=cls; if(txt!=null)n.textContent=txt; return n;}
@@ -148,17 +147,20 @@
     Object.keys(d).forEach(function(k){ if(['detail','name','kind','state'].indexOf(k)>-1)return; dl.appendChild(mkEl('dt',null,k)); dl.appendChild(mkEl('dd',null,d[k])); });
     body.appendChild(dl);
 
-    var charts = (kind==='container'||kind==='process') ?
-      '<div class="section-label"><span class="eyebrow">CPU · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Info',c:'info'})+'</div>'+
-      '<div class="section-label"><span class="eyebrow">Memory · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Violet',c:'violet'})+'</div>'
-      : (kind==='disk' ?
-      '<div class="section-label"><span class="eyebrow">Usage · 30d + projection</span></div><div class="panel" style="padding:10px">'+spark({g:'Crit',c:'crit'})+'</div>'
-      : '<div class="section-label"><span class="eyebrow">Memory · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Ok',c:'ok'})+'</div>');
-    staticInto(body,charts);
+    // No per-metric charts here yet: the old drawer rendered decorative
+    // spark() sparklines with NO real data, which read as graphs but never
+    // loaded the entity's history (#114). Show an honest placeholder until the
+    // panels are wired to the real /api/series history (#115) rather than
+    // faking a chart.
+    staticInto(body,'<div class="section-label"><span class="eyebrow">Charts</span></div><div class="note" style="padding:6px 0">Per-metric history is not available in this drawer yet.</div>');
 
+    // Actions: the Restart button is gone (a monitor is not a container control
+    // plane, and for Swarm services Swarm owns task lifecycle, #114). The
+    // remaining actions are the intended ones but are not wired yet (#115), so
+    // they render disabled rather than as dead buttons that silently do nothing.
     var actions = role==='admin' ? (kind==='container'
-      ? '<button class="btn">Restart</button><button class="btn ghost">View logs</button><button class="btn ghost">Pause monitoring</button>'
-      : '<button class="btn ghost">Pause monitoring</button>') : '<span class="note">viewer -- read-only</span>';
+      ? '<button class="btn ghost" disabled title="Not available yet">View logs</button><button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>'
+      : '<button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>') : '<span class="note">viewer -- read-only</span>';
     staticInto(body,'<div class="section-label"><span class="eyebrow">Actions</span></div>');
     var actionRow=mkEl('div'); actionRow.style.display='flex'; actionRow.style.gap='8px'; actionRow.style.flexWrap='wrap';
     staticInto(actionRow,actions);
