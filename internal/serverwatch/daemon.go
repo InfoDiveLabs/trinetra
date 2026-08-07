@@ -1302,7 +1302,7 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			setChatID(id)
 			enroll.Reset()
 		}
-		offset, c = processUpdates(ups, offset, c, pin, getCfg, onEnroll, reply)
+		offset, c = processUpdates(ups, offset, c, enroll, time.Now, getCfg, onEnroll, reply)
 	}
 }
 
@@ -1312,14 +1312,16 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 // reply for authorized commands. It returns the new offset and the (possibly
 // reloaded) config so the caller can carry both into the next GetUpdates
 // cycle.
-func processUpdates(ups []telegram.Update, offset int, c *config.Config, pin string, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
+func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll *enrollState, now func() time.Time, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
 	for _, u := range ups {
 		offset = u.UpdateID + 1
 		if c.Telegram.ChatID == "" {
 			// Unclaimed: ownership is granted ONLY by a correct "/start <pin>"
 			// (#78 Scenario A). Everything else is ignored, so an attacker who
-			// merely messages the bot first cannot hijack it.
-			if u.ChatID != "" && enrollMatch(u.Text, pin) {
+			// merely messages the bot first cannot hijack it. enroll.Attempt
+			// also rate-limits and rotates the pin under repeated wrong
+			// guesses so the pin can't be brute-forced (#93).
+			if u.ChatID != "" && enroll.Attempt(c, u.Text, now()) {
 				setChatID(u.ChatID)
 				c = getCfg()
 				reply(c, u)

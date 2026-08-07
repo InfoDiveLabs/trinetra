@@ -960,6 +960,55 @@ func TestSmartIntervalSetRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestEnrollBoundDefaults(t *testing.T) {
+	c := Default()
+	if got := c.EnrollMaxAttempts(); got != 5 {
+		t.Errorf("EnrollMaxAttempts() default = %d, want 5", got)
+	}
+	if got := c.EnrollCooldownSec(); got != 60 {
+		t.Errorf("EnrollCooldownSec() default = %d, want 60", got)
+	}
+	if got, _ := c.Get("telegram.enroll_max_attempts"); got != "5" {
+		t.Errorf("telegram.enroll_max_attempts default = %q, want 5", got)
+	}
+	if got, _ := c.Get("telegram.enroll_cooldown"); got != "60" {
+		t.Errorf("telegram.enroll_cooldown default = %q, want 60", got)
+	}
+}
+
+func TestEnrollBoundSetGetUnsetRoundTrip(t *testing.T) {
+	c := Default()
+	if err := c.Set("telegram.enroll_max_attempts", "3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("telegram.enroll_cooldown", "120"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.EnrollMaxAttempts(); got != 3 {
+		t.Errorf("EnrollMaxAttempts() after set = %d, want 3", got)
+	}
+	if got := c.EnrollCooldownSec(); got != 120 {
+		t.Errorf("EnrollCooldownSec() after set = %d, want 120", got)
+	}
+	if err := c.Unset("telegram.enroll_max_attempts"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("telegram.enroll_max_attempts"); got != "5" {
+		t.Errorf("telegram.enroll_max_attempts after unset = %q, want default 5", got)
+	}
+}
+
+func TestEnrollBoundRejectsInvalid(t *testing.T) {
+	c := Default()
+	for _, key := range []string{"telegram.enroll_max_attempts", "telegram.enroll_cooldown"} {
+		for _, v := range []string{"0", "-1", "bogus", ""} {
+			if err := c.Set(key, v); err == nil {
+				t.Errorf("%s set to %q: want error, got nil", key, v)
+			}
+		}
+	}
+}
+
 func TestSmartIntervalPersistsAcrossSaveLoad(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")

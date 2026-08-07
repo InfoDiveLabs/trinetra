@@ -56,6 +56,15 @@ type Config struct {
 	Telegram       struct {
 		Token  string `json:"token,omitempty"`
 		ChatID string `json:"chat_id,omitempty"`
+		// MaxEnrollAttempts is how many consecutive wrong "/start <pin>" guesses
+		// an unclaimed bot tolerates before the enrollment PIN cools down and
+		// rotates (brute-force bound, #93). Unset/<=0 -> default 5. Read via
+		// EnrollMaxAttempts().
+		MaxEnrollAttempts int `json:"enroll_max_attempts,omitempty"`
+		// EnrollCooldown is the seconds "/start" attempts are ignored after the
+		// attempt threshold is hit, during which the PIN is also rotated (#93).
+		// Unset/<=0 -> default 60. Read via EnrollCooldownSec().
+		EnrollCooldown int `json:"enroll_cooldown,omitempty"`
 	} `json:"telegram"`
 	Healthchecks struct {
 		URL string `json:"url,omitempty"`
@@ -234,6 +243,26 @@ func (c *Config) SmartIntervalSec() int {
 		return 1800
 	}
 	return c.Collect.SmartInterval
+}
+
+// EnrollMaxAttempts is the effective number of consecutive wrong "/start <pin>"
+// guesses an unclaimed bot tolerates before the enrollment PIN cools down and
+// rotates; unset/<=0 defaults to 5 (#93).
+func (c *Config) EnrollMaxAttempts() int {
+	if c.Telegram.MaxEnrollAttempts <= 0 {
+		return 5
+	}
+	return c.Telegram.MaxEnrollAttempts
+}
+
+// EnrollCooldownSec is the effective number of seconds "/start" attempts are
+// ignored after the attempt threshold is hit (the PIN is rotated at the same
+// moment); unset/<=0 defaults to 60 (#93).
+func (c *Config) EnrollCooldownSec() int {
+	if c.Telegram.EnrollCooldown <= 0 {
+		return 60
+	}
+	return c.Telegram.EnrollCooldown
 }
 
 type TargetOverride struct {
@@ -608,6 +637,10 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.Telegram.Token, true
 	case "telegram.chat_id":
 		return c.Telegram.ChatID, true
+	case "telegram.enroll_max_attempts":
+		return strconv.Itoa(c.EnrollMaxAttempts()), true
+	case "telegram.enroll_cooldown":
+		return strconv.Itoa(c.EnrollCooldownSec()), true
 	case "healthchecks.url":
 		return c.Healthchecks.URL, true
 	case "schedule.daily":
@@ -734,6 +767,18 @@ func (c *Config) Set(key, val string) error {
 		c.Telegram.Token = val
 	case "telegram.chat_id":
 		c.Telegram.ChatID = val
+	case "telegram.enroll_max_attempts":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("telegram.enroll_max_attempts must be an integer >= 1")
+		}
+		c.Telegram.MaxEnrollAttempts = n
+	case "telegram.enroll_cooldown":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("telegram.enroll_cooldown must be an integer >= 1 (seconds)")
+		}
+		c.Telegram.EnrollCooldown = n
 	case "healthchecks.url":
 		c.Healthchecks.URL = val
 	case "schedule.daily":
@@ -941,6 +986,8 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "telegram.token", Group: "Notifications", Kind: "string", Help: "Telegram bot token from @BotFather."},
 	{Name: "telegram.chat_id", Group: "Notifications", Kind: "string", Help: "Telegram chat id enrolled to receive alerts."},
+	{Name: "telegram.enroll_max_attempts", Group: "Notifications", Kind: "int", Help: "Wrong /start <pin> guesses tolerated before the enrollment PIN cools down and rotates (brute-force bound). Default 5."},
+	{Name: "telegram.enroll_cooldown", Group: "Notifications", Kind: "int", Help: "Seconds /start attempts are ignored after the attempt limit is hit (the PIN also rotates then). Default 60."},
 	{Name: "healthchecks.url", Group: "Notifications", Kind: "string", Help: "healthchecks.io ping URL, or empty to disable."},
 
 	{Name: "schedule.daily", Group: "Schedule", Kind: "string", Help: "Daily digest time as HH:MM, or empty to disable."},
