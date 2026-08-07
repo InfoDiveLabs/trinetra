@@ -2,8 +2,40 @@ package core
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
+
+// coalesceDownEvents merges overlapping or touching events of the SAME type
+// into single windows, so a run of adjacent/overlapping outages reads as one
+// incident and contributes its UNION (not a double-counted sum) to the
+// downtime total and uptime % (#116). Input need not be sorted; the result is
+// sorted by Start.
+func coalesceDownEvents(evs []DownEventView) []DownEventView {
+	if len(evs) < 2 {
+		return evs
+	}
+	sorted := make([]DownEventView, len(evs))
+	copy(sorted, evs)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Start != sorted[j].Start {
+			return sorted[i].Start < sorted[j].Start
+		}
+		return sorted[i].Type < sorted[j].Type
+	})
+	out := make([]DownEventView, 0, len(sorted))
+	for _, e := range sorted {
+		if n := len(out); n > 0 && out[n-1].Type == e.Type && e.Start <= out[n-1].End {
+			if e.End > out[n-1].End {
+				out[n-1].End = e.End
+				out[n-1].DurationSec = out[n-1].End - out[n-1].Start
+			}
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
 
 // availabilityWindow/availabilityBlockDur define the dashboard's Availability
 // strip: the last 24h split into 15-min blocks (96 of them), mirroring the
@@ -81,7 +113,7 @@ func ComputeAvailability(events EventsSource, now int64) Availability {
 	var evs []DownEventView
 	if events != nil {
 		if e, err := events.Events(from, to); err == nil {
-			evs = e
+			evs = coalesceDownEvents(e)
 		}
 	}
 

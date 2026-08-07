@@ -91,12 +91,36 @@ absence worth recording. The guard on the very first line quietly drops the
 case where the clock has gone backwards, which would otherwise produce a
 nonsensical negative gap.
 
+A long gap on its own is not enough, though: the daemon restarting (a crash
+loop, a deploy, `systemctl restart`) also leaves a stale heartbeat, and that is
+NOT host downtime, the box was up the whole time. So the reconstruction also
+reads the host boot time from `/proc/stat` (`btime`) and only records a
+`power_down` when the host actually rebooted during the gap (its boot time falls
+after the last heartbeat). If the host stayed up and only the monitor restarted,
+nothing is recorded, so a restart storm can no longer fabricate hours of
+downtime and tank the uptime percentage. When the host boot time cannot be read
+(a non-Linux box, an unreadable `/proc`), it falls back to the old behavior of
+recording any long gap, since over-reporting beats silently dropping a real
+outage.
+
 The payoff is that an unclean power loss, the exact case where the daemon never
 got a chance to log anything, still ends up recorded. The daemon that comes back
 after the outage reconstructs the outage retroactively from the breadcrumb the
 previous one left. Nothing external is required. It works from local state
 alone, which is what makes it reliable precisely when everything else has
 failed.
+
+If an older build (before this classification existed) already wrote bogus
+`power_down` events during a crash loop, clear them with the purge command,
+which removes short `power_down` events (the restart-storm shape) while leaving
+genuine multi-minute outages alone:
+
+```bash
+serverwatch downtime purge --type power_down --max-seconds 300
+```
+
+`--max-seconds 0` removes every event of the given type; the default 300 targets
+only the short artifacts.
 
 The reconstruction path on boot, from the heartbeat gap, is short:
 
