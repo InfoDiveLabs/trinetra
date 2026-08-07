@@ -59,19 +59,25 @@ previous incarnation of itself left behind, and compares that timestamp to the
 current time:
 
 ```go
-func reconstructPowerDown(lastBeat, boot time.Time, interval time.Duration) (DownEvent, bool) {
-	if !boot.After(lastBeat) {
+func reconstructPowerDown(lastBeat, daemonStart, hostBoot time.Time, hostBootOK bool, interval time.Duration) (DownEvent, bool) {
+	if !daemonStart.After(lastBeat) {
 		return DownEvent{}, false // clock skew / no gap
 	}
-	gap := boot.Sub(lastBeat)
-	if gap <= 2*interval {
+	if daemonStart.Sub(lastBeat) <= 2*interval {
 		return DownEvent{}, false
+	}
+	if hostBootOK && !hostBoot.After(lastBeat) {
+		return DownEvent{}, false // host stayed up: a monitor restart, not host downtime
+	}
+	end := daemonStart
+	if hostBootOK && hostBoot.After(lastBeat) && hostBoot.Before(daemonStart) {
+		end = hostBoot // a real reboot: the window ends when the host came back
 	}
 	return DownEvent{
 		Type:        "power_down",
 		Start:       lastBeat.Unix(),
-		End:         boot.Unix(),
-		DurationSec: int64(gap / time.Second),
+		End:         end.Unix(),
+		DurationSec: int64(end.Sub(lastBeat) / time.Second),
 	}, true
 }
 ```
@@ -129,7 +135,9 @@ flowchart LR
   boot([Daemon boots]) --> read[Read previous heartbeat timestamp]
   read --> gap{now minus lastBeat<br/>greater than 2 x heartbeat_interval?}
   gap -->|No| normal[Clean restart, no event]
-  gap -->|Yes| ev[Reconstruct power_down event]
+  gap -->|Yes| hostup{Host booted during the gap?<br/>proc stat btime after lastBeat}
+  hostup -->|No| monitor[Monitor restart only, no event]
+  hostup -->|Yes, or boot time unknown| ev[Reconstruct power_down event]
   ev --> storeev[Append to ts/events.tsd]
   ev --> report[Send boot and recovery report over Telegram]
 ```
