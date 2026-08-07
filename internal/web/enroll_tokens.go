@@ -233,6 +233,12 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 //   - no token, and at least one account already exists: an error. Open,
 //     tokenless enrollment is only ever valid for the very first account;
 //     every subsequent one needs an admin-issued invite.
+//   - no token, and the user store cannot be READ (corrupt/unavailable
+//     users.json, not merely absent): an error -- fail CLOSED (#105). An
+//     unreadable store must never be mistaken for a genuinely empty one, or
+//     an attacker could tokenlessly bootstrap an admin during the window the
+//     store is unreadable. IsEmpty (not List) is used so this read error is
+//     surfaced rather than masked into an empty slice.
 //
 // A true bootstrap result is threaded through the ceremony (regCeremonyData.
 // Bootstrap) so finishRegistration knows to route through CreateFirstAdmin
@@ -242,7 +248,15 @@ func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role 
 		r, err := tokens.Redeem(token)
 		return r, false, err
 	}
-	if len(users.List()) == 0 {
+	// Fail CLOSED on an unreadable store (#105 secondary hardening): IsEmpty
+	// surfaces the read error that List() would have hidden as an empty slice,
+	// so a corrupt/unavailable users.json can never be mistaken for a genuine
+	// empty first-run store and open a tokenless-admin bootstrap window.
+	empty, err := users.IsEmpty()
+	if err != nil {
+		return "", false, fmt.Errorf("web: cannot verify user store is empty; refusing tokenless enrollment: %w", err)
+	}
+	if empty {
 		return "", true, nil
 	}
 	return "", false, fmt.Errorf("web: enrollment is closed; an admin-issued invite token is required")
