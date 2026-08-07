@@ -14,7 +14,7 @@ package serverwatch
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -68,6 +68,12 @@ func generateToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// generateTokenFn is the seam serveControlSocket calls to mint the per-launch
+// token; it is a package var (not a direct generateToken call) purely so a
+// test can force a generation failure and assert the socket fails CLOSED
+// (#96). Production always uses generateToken.
+var generateTokenFn = generateToken
+
 // writeTokenFile writes token to path with mode 0600, regardless of the
 // process umask: os.WriteFile alone is umask-affected the same way
 // net.Listen's socket mode is (see serveControlSocket's own comment on the
@@ -88,8 +94,10 @@ func writeTokenFile(path, token string) error {
 // cmdDaemon treats any error from this as non-fatal (log to stderr, keep
 // running without it) rather than a reason to crash-loop the daemon --
 // callers should follow that same pattern rather than propagating a failure
-// upward. On bind failure it returns a nil stop and empty path/token
-// (non-fatal, unchanged).
+// upward. On bind failure -- and, since #96, on token generation or
+// token-file write failure -- it returns a nil stop and empty path/token
+// with the error, having torn down anything it already bound; it never
+// serves the socket with an empty (no-auth) token.
 //
 // Path setup: os.MkdirAll(0o700) is a best-effort attempt to create the
 // runtime directory when it doesn't already exist (the by-hand,
@@ -122,22 +130,24 @@ func serveControlSocket(api core.API) (stop func(), socketPath, token string, er
 	}
 
 	// The token is the actual auth for the socket (the 0600 mode above is
-	// defense-in-depth against other local users); a token that can't be
-	// generated is treated the same as any other enhancement failure this
-	// func's caller already tolerates (see the doc comment above) -- log
-	// and proceed with no auth rather than crash-looping the daemon over
-	// it.
-	token, err = generateToken()
-	if err != nil {
-		log.Printf("control: generating token: %v (continuing with no token auth)", err)
-		token = ""
-	}
+	// defense-in-depth against other local users). If it can't be generated
+	// or persisted we fail CLOSED (#96): tear the just-bound listener back
+	// down and return the same non-fatal (nil stop, empty path/token, err)
+	// shape as a bind failure, so the caller runs WITHOUT the socket rather
+	// than serving it with no auth. control.Serve treats an empty token as
+	// "no auth required", so serving on a generation failure would expose an
+	// unauthenticated socket -- exactly what fail-open must not do.
 	tokenPath := controlTokenPath()
-	if token != "" {
-		if err := writeTokenFile(tokenPath, token); err != nil {
-			log.Printf("control: writing token file %s: %v (continuing with no token auth)", tokenPath, err)
-			token = ""
-		}
+	token, err = generateTokenFn()
+	if err != nil {
+		ln.Close()
+		os.Remove(path)
+		return nil, "", "", fmt.Errorf("control: generating token (not serving socket): %w", err)
+	}
+	if err := writeTokenFile(tokenPath, token); err != nil {
+		ln.Close()
+		os.Remove(path)
+		return nil, "", "", fmt.Errorf("control: writing token file %s (not serving socket): %w", tokenPath, err)
 	}
 
 	go control.Serve(api, ln, token)
