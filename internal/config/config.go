@@ -1006,7 +1006,6 @@ func Keys() []KeyInfo {
 // restart caveat the guided web-setup wizard already shows for the same
 // reason (setup_web.go, tui.go).
 var keyCatalog = []KeyInfo{
-	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
 	{Name: "sample_interval", Group: "Intervals", Kind: "int", Help: "Seconds between full baseline samples (the slow tier)."},
 	{Name: "fast_interval", Group: "Intervals", Kind: "int", Help: "Seconds between lightweight checks (the fast tier)."},
 	{Name: "heartbeat_interval", Group: "Intervals", Kind: "int", Help: "Seconds between liveness heartbeats."},
@@ -1058,6 +1057,8 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "public.enabled", Group: "Public", Kind: "bool", Help: "Enable the anonymous /public status page."},
 	{Name: "public.panels", Group: "Public", Kind: "csv", Help: "Comma-separated panel ids exposed on the public page."},
+
+	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
 }
 
 // effectiveFastInterval returns c.FastInterval, or the baked-in default (5)

@@ -42,6 +42,21 @@ func homeFixture() model {
 	}
 }
 
+// TestHomeHeaderShowsServerName pins #101 parity in ctl: the Home header shows
+// the host's display name (matching the web sidebar brand), and renders no
+// stray separator when the name is empty.
+func TestHomeHeaderShowsServerName(t *testing.T) {
+	m := homeFixture()
+	m.serverName = "attic-pi"
+	if got := m.homeHeader(); !strings.Contains(got, "attic-pi") {
+		t.Errorf("homeHeader missing server name %q:\n%s", "attic-pi", got)
+	}
+	m.serverName = ""
+	if got := m.homeHeader(); strings.Contains(got, " · ") {
+		t.Errorf("empty server name should not render a ' · ' separator:\n%s", got)
+	}
+}
+
 // TestHomeViewRendersDashboard: the redesigned Home shows the online state,
 // the SYSTEM and ALERTS panels, the CPU value, and the inventory counts.
 func TestHomeViewRendersDashboard(t *testing.T) {
