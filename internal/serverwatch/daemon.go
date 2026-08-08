@@ -946,7 +946,8 @@ func cmdDaemon(args []string) int {
 	bootReportCh := make(chan Alert, 1)
 	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
 		if _, stopped := readCleanStop(cleanStopPath, fs); !stopped {
-			if ev, ok := reconstructPowerDown(last, clock.Now(), time.Duration(c0.HeartbeatInterval)*time.Second); ok {
+			hostBoot, hostBootOK := hostBootTime(fs)
+			if ev, ok := reconstructPowerDown(last, clock.Now(), hostBoot, hostBootOK, time.Duration(c0.HeartbeatInterval)*time.Second); ok {
 				lastRep, _ := readCleanStop(st.LastReportedDowntimePath(), fs) // reuse int-file helpers
 				if shouldReportDowntime(ev, lastRep) {
 					if store != nil {

@@ -52,6 +52,11 @@ type SampleStore interface {
 	AppendEvent(e DownEvent) error
 	// Events returns downtime events overlapping [from, to].
 	Events(from, to int64) ([]DownEvent, error)
+	// PurgeEvents rewrites the downtime-event log keeping only events for which
+	// keep returns true, reporting how many were removed. The `downtime purge`
+	// CLI uses it to clear bogus events, e.g. a crash loop's fabricated short
+	// power_downs (#116).
+	PurgeEvents(keep func(DownEvent) bool) (int, error)
 	// Prune applies the backend's retention policy relative to nowUnix.
 	Prune(nowUnix int64) error
 	// Downsample rolls completed raw buckets into the 1m resolution, relative
@@ -188,6 +193,22 @@ func (m *memStore) AppendEvent(e DownEvent) error {
 	defer m.mu.Unlock()
 	m.events = append(m.events, e)
 	return nil
+}
+
+func (m *memStore) PurgeEvents(keep func(DownEvent) bool) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.events[:0]
+	removed := 0
+	for _, e := range m.events {
+		if keep(e) {
+			kept = append(kept, e)
+		} else {
+			removed++
+		}
+	}
+	m.events = kept
+	return removed, nil
 }
 
 // Events returns downtime events overlapping [from, to] -- i.e. End>=from &&

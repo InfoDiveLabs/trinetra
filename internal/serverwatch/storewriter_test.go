@@ -18,6 +18,7 @@ type blockingStore struct {
 
 func (b *blockingStore) Append(ts int64, m MetricSet) error { b.appends.Add(1); return nil }
 func (b *blockingStore) AppendEvent(e DownEvent) error      { return nil }
+func (b *blockingStore) PurgeEvents(keep func(DownEvent) bool) (int, error) { return 0, nil }
 func (b *blockingStore) Query(metric string, from, to int64, res Resolution) ([]Point, error) {
 	return nil, nil
 }

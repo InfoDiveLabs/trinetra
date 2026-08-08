@@ -259,6 +259,52 @@ func TestTSFileEventsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTSFilePurgeEvents pins the #116 purge tool: it removes only the events
+// the predicate rejects (short power_downs), leaving longer power_downs and
+// other types intact, and reports the correct removed count.
+func TestTSFilePurgeEvents(t *testing.T) {
+	dir := t.TempDir()
+	s := openTSFile(t, dir, StoreOptions{})
+	defer s.Close()
+
+	events := []DownEvent{
+		{Type: "power_down", Start: 100, End: 220, DurationSec: 120}, // short restart artifact
+		{Type: "power_down", Start: 400, End: 460, DurationSec: 60},  // short restart artifact
+		{Type: "power_down", Start: 1000, End: 1000 + 3600, DurationSec: 3600}, // real outage
+		{Type: "net_down", Start: 5000, End: 5100, DurationSec: 100}, // different type
+	}
+	for _, e := range events {
+		if err := s.AppendEvent(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Purge power_downs shorter than 300s.
+	keep := func(e DownEvent) bool {
+		return !(e.Type == "power_down" && e.DurationSec < 300)
+	}
+	removed, err := s.PurgeEvents(keep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2 short power_downs", removed)
+	}
+
+	evs, err := s.Events(0, 1_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("after purge = %+v, want 2 survivors (the long power_down + net_down)", evs)
+	}
+	for _, e := range evs {
+		if e.Type == "power_down" && e.DurationSec < 300 {
+			t.Errorf("a short power_down survived the purge: %+v", e)
+		}
+	}
+}
+
 func TestTSFilePrune(t *testing.T) {
 	dir := t.TempDir()
 	s := openTSFile(t, dir, StoreOptions{})

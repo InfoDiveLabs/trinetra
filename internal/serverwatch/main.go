@@ -61,6 +61,8 @@ func Main(args []string) int {
 		return cmdMigrate(args[1:])
 	case "dump":
 		return cmdDump(args[1:])
+	case "downtime":
+		return cmdDowntime(args[1:])
 	case "alerts":
 		return cmdAlerts(args[1:])
 	case "cli":
@@ -91,6 +93,7 @@ usage:
   serverwatch doctor
   serverwatch migrate [--force]
   serverwatch dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]
+  serverwatch downtime purge [--type power_down] [--max-seconds 300]
   serverwatch alerts [list] [--since 24h] [--limit 20]
   serverwatch alerts ack <key>
   serverwatch alerts unack <key>

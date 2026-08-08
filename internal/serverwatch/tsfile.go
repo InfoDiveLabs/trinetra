@@ -351,6 +351,30 @@ func (s *tsFileStore) AppendEvent(e DownEvent) error {
 	return appendRecord(s.eventsPath(), tsResolutionRaw, rec)
 }
 
+// PurgeEvents rewrites events.tsd keeping only events for which keep returns
+// true, reusing the same crash-durable rewrite machinery as Prune
+// (pruneFileGeneric: temp+rename, then one dir fsync), and reports how many
+// records were dropped.
+func (s *tsFileStore) PurgeEvents(keep func(DownEvent) bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	recKeep := func(rec []byte) bool {
+		if keep(decodeEventRecord(rec)) {
+			return true
+		}
+		removed++
+		return false
+	}
+	if err := pruneFileGeneric(s.eventsPath(), recKeep); err != nil {
+		return 0, err
+	}
+	if err := syncDir(filepath.Dir(s.eventsPath())); err != nil && !os.IsNotExist(err) {
+		return removed, err
+	}
+	return removed, nil
+}
+
 // Events returns downtime events overlapping [from, to] (End>=from &&
 // Start<=to), mirroring memStore's semantics.
 func (s *tsFileStore) Events(from, to int64) ([]DownEvent, error) {
