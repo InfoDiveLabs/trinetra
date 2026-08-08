@@ -22,6 +22,10 @@ type API interface {
 	AlertHistory(since int64, limit int) ([]AlertRecord, error)
 	Config() (*config.Config, error)
 	Doctor() (DoctorReport, error)
+	// HostInfo returns the static host hardware/OS inventory (#100): RAM, CPU,
+	// kernel/OS, per-disk hardware, plus boot time and derived uptime. Static
+	// for a boot, so callers fetch it once rather than per tick.
+	HostInfo() (HostInfoView, error)
 	// EnrollmentPIN returns the Telegram bot's current enrollment pin -- the
 	// same pin the daemon's poll loop accepts via "/start <pin>" (#90) -- and
 	// whether the bot is already enrolled (chat id known). pin is "" when

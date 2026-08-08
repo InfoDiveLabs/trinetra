@@ -101,6 +101,7 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Monitor"}},
 	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
 	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring"}},
+	{NavItem: NavItem{Href: "/host", Icon: "▢", Label: "Host"}},
 	{NavItem: NavItem{Href: "/alerts", Icon: "!", Label: "Alerts"}},
 	{NavItem: NavItem{Href: "/history", Icon: "◔", Label: "History"}},
 	{NavItem: NavItem{Heading: "Admin"}, AdminOnly: true},

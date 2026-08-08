@@ -28,6 +28,7 @@ type fakeAPI struct {
 	history    []core.AlertRecord
 	cfg        *config.Config
 	doctor     core.DoctorReport
+	hostInfo   core.HostInfoView
 
 	enrollPIN      string
 	enrollEnrolled bool
@@ -85,6 +86,7 @@ func (f *fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, erro
 
 func (f *fakeAPI) Config() (*config.Config, error)    { return f.cfg, nil }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil }
 
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 	return f.enrollPIN, f.enrollEnrolled, f.enrollErr

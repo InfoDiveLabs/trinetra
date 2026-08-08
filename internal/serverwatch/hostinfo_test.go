@@ -1,0 +1,156 @@
+package serverwatch
+
+import "testing"
+
+func TestParseCPUInfoIntelHyperthreaded(t *testing.T) {
+	// Two logical processors sharing one physical socket with 1 core each is
+	// unrealistic; use a realistic 1 socket / 2 cores / 4 threads layout.
+	s := `processor	: 0
+model name	: Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz
+physical id	: 0
+cpu cores	: 2
+cpu MHz		: 1600.000
+processor	: 1
+model name	: Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz
+physical id	: 0
+cpu cores	: 2
+processor	: 2
+physical id	: 0
+cpu cores	: 2
+processor	: 3
+physical id	: 0
+cpu cores	: 2
+`
+	model, cores, threads, mhz := parseCPUInfo(s)
+	if model != "Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz" {
+		t.Errorf("model = %q", model)
+	}
+	if cores != 2 {
+		t.Errorf("cores = %d, want 2", cores)
+	}
+	if threads != 4 {
+		t.Errorf("threads = %d, want 4", threads)
+	}
+	if mhz != 1600.0 {
+		t.Errorf("baseMHz = %v, want 1600", mhz)
+	}
+}
+
+func TestParseCPUInfoARMFallback(t *testing.T) {
+	// Raspberry Pi style: no "model name"/"cpu cores"; cores fall back to the
+	// logical count, model to the "Model" line.
+	s := `processor	: 0
+processor	: 1
+processor	: 2
+processor	: 3
+Hardware	: BCM2835
+Model		: Raspberry Pi 4 Model B Rev 1.4
+`
+	model, cores, threads, _ := parseCPUInfo(s)
+	if model != "Raspberry Pi 4 Model B Rev 1.4" {
+		t.Errorf("model = %q, want the Pi Model line", model)
+	}
+	if threads != 4 || cores != 4 {
+		t.Errorf("cores=%d threads=%d, want 4/4 (fallback)", cores, threads)
+	}
+}
+
+func TestParseOSRelease(t *testing.T) {
+	s := "NAME=\"Debian GNU/Linux\"\nPRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nID=debian\n"
+	if got := parseOSRelease(s); got != "Debian GNU/Linux 12 (bookworm)" {
+		t.Errorf("parseOSRelease = %q", got)
+	}
+	if got := parseOSRelease("ID=whatever\n"); got != "" {
+		t.Errorf("no PRETTY_NAME should yield empty, got %q", got)
+	}
+}
+
+func TestBaseBlockDevice(t *testing.T) {
+	cases := []struct {
+		dev  string
+		want string
+		ok   bool
+	}{
+		{"/dev/sda1", "sda", true},
+		{"/dev/sda", "sda", true},
+		{"/dev/nvme0n1p2", "nvme0n1", true},
+		{"/dev/nvme0n1", "nvme0n1", true},
+		{"/dev/mmcblk0p1", "mmcblk0", true},
+		{"/dev/dm-0", "", false},
+		{"/dev/mapper/vg-root", "", false},
+		{"overlay", "", false},
+		{"tmpfs", "", false},
+	}
+	for _, c := range cases {
+		got, ok := baseBlockDevice(c.dev)
+		if got != c.want || ok != c.ok {
+			t.Errorf("baseBlockDevice(%q) = (%q,%v), want (%q,%v)", c.dev, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestCollectHostInfo(t *testing.T) {
+	fs := fakeFS{files: map[string]string{
+		"/proc/sys/kernel/osrelease":        "6.1.0-13-amd64\n",
+		"/etc/os-release":                   "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\n",
+		"/proc/cpuinfo":                     "processor\t: 0\nmodel name\t: Test CPU\nphysical id\t: 0\ncpu cores\t: 4\ncpu MHz\t: 2400.0\nprocessor\t: 1\nphysical id\t: 0\ncpu cores\t: 4\n",
+		"/proc/meminfo":                     "MemTotal:        8192000 kB\nMemAvailable:    4096000 kB\n",
+		"/proc/stat":                        "cpu 1 2 3\nbtime 1700000000\n",
+		"/sys/block/sda/device/model":       "Samsung SSD 860\n",
+		"/sys/block/sda/queue/rotational":   "0\n",
+	}}
+	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
+		// df -PT -B1 with one real disk and one tmpfs.
+		return []byte("Filesystem     Type  1B-blocks       Used   Available Use% Mounted on\n" +
+			"/dev/sda1      ext4  512000000000  1000000     511000000000   1% /\n" +
+			"tmpfs          tmpfs   8192000000        0       8192000000   0% /run\n"), nil
+	}}
+
+	h := collectHostInfo(x, fs)
+	if h.Kernel != "6.1.0-13-amd64" {
+		t.Errorf("kernel = %q", h.Kernel)
+	}
+	if h.OS != "Debian GNU/Linux 12 (bookworm)" {
+		t.Errorf("os = %q", h.OS)
+	}
+	if h.CPUModel != "Test CPU" || h.CPUCores != 4 || h.CPUThreads != 2 {
+		t.Errorf("cpu = %q cores=%d threads=%d", h.CPUModel, h.CPUCores, h.CPUThreads)
+	}
+	if h.MemTotalBytes != 8192000*1024 {
+		t.Errorf("mem = %d, want %d", h.MemTotalBytes, 8192000*1024)
+	}
+	if h.BootTime != 1700000000 {
+		t.Errorf("bootTime = %d, want 1700000000", h.BootTime)
+	}
+	// Find the sda disk and assert model/rotational; tmpfs contributes a row too.
+	var sda *HostDisk
+	for i := range h.Disks {
+		if h.Disks[i].Device == "sda" {
+			sda = &h.Disks[i]
+		}
+	}
+	if sda == nil {
+		t.Fatalf("sda disk not collected: %+v", h.Disks)
+	}
+	if sda.Model != "Samsung SSD 860" || sda.Rotational {
+		t.Errorf("sda = %q rotational=%v, want SSD non-rotational", sda.Model, sda.Rotational)
+	}
+	if sda.FSType != "ext4" || sda.Mount != "/" {
+		t.Errorf("sda fstype=%q mount=%q", sda.FSType, sda.Mount)
+	}
+}
+
+func TestBuildHostInfoViewUptime(t *testing.T) {
+	h := HostInfo{BootTime: 1000, CPUCores: 2, Disks: []HostDisk{{Device: "sda"}}}
+	v := buildHostInfoView(h, 1000+3600)
+	if v.UptimeSec != 3600 {
+		t.Errorf("UptimeSec = %d, want 3600", v.UptimeSec)
+	}
+	if len(v.Disks) != 1 || v.Disks[0].Device != "sda" {
+		t.Errorf("disks not mapped: %+v", v.Disks)
+	}
+	// Unknown boot time -> uptime 0, no underflow.
+	if got := buildHostInfoView(HostInfo{}, 5000).UptimeSec; got != 0 {
+		t.Errorf("uptime with zero boot time = %d, want 0", got)
+	}
+}

@@ -64,6 +64,7 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 		active:      []core.AlertRecord{{Key: "cpu", Severity: "warn", Kind: "threshold", Source: "cpu", Time: 5}},
 		history:     []core.AlertRecord{{Key: "mem", Severity: "crit", Kind: "threshold", Source: "mem", Time: 6, Acked: true}},
 		doctor:      core.DoctorReport{DockerAccess: "available=true method=socket", ThermalZones: 2},
+		hostInfo:    core.HostInfoView{Hostname: "attic-pi", Kernel: "6.1.0", OS: "Debian 12", CPUModel: "Test CPU", CPUCores: 4, CPUThreads: 8, MemTotalBytes: 8 << 30, BootTime: 1000, UptimeSec: 3600, Disks: []core.HostDiskView{{Device: "sda", Model: "SSD", SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}}},
 		ackAlertErr: nil,
 	}
 	fake.cfg = &config.Config{SampleInterval: 30, FastInterval: 5}
@@ -109,6 +110,10 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 
 	if got, err := client.Doctor(); err != nil || !reflect.DeepEqual(got, fake.doctor) {
 		t.Errorf("Doctor() = %+v, %v; want %+v, nil", got, err, fake.doctor)
+	}
+
+	if got, err := client.HostInfo(); err != nil || !reflect.DeepEqual(got, fake.hostInfo) {
+		t.Errorf("HostInfo() = %+v, %v; want %+v, nil", got, err, fake.hostInfo)
 	}
 
 	if pin, enrolled, err := client.EnrollmentPIN(context.Background()); err != nil || pin != fake.enrollPIN || enrolled != fake.enrollEnrolled {
