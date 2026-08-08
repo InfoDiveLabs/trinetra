@@ -6,6 +6,48 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
+## [0.4.1-beta.3] - 2026-08-08
+
+Five tracker issues, all with core / web / ctl parity: versions in the panel,
+setup UX fixes, and three reliability fixes for how the daemon collects and
+keys data.
+
+### Added
+
+- **Versions in the panel (#107).** Each binary is now stamped with a build-time
+  version (git-derived, with a `dev` fallback for plain `go build`). The web
+  sidebar shows the core daemon's version (over the control socket) and the web
+  plugin's own version, with a "version mismatch" marker when they differ after
+  a partial upgrade. `serverwatch-ctl version` prints both from the terminal.
+- **Monitoring-failure alerts (#110).** A slow-tier collector (docker, disk,
+  services, smart) that fails or times out for three consecutive cycles now
+  raises a `collector:<name>` alert and recovers on the next success.
+
+### Fixed
+
+- **Collection is fail-visible, not silent (#110).** A failed or timed-out
+  collection command no longer publishes missing data or flips a healthy target
+  to gone: the daemon carries the last-known values forward (marked stale) and
+  records the failure. Per-collector health (consecutive failures, last success,
+  last error) is in `status.json`, shown as a warning banner on the web
+  dashboard, and printed by `serverwatch-ctl status`.
+- **Docker Swarm services are keyed by service, not task (#118).** On a Swarm
+  node, containers are keyed by their stable service name instead of the
+  ephemeral `<service>.<slot>.<taskid>` task name (tasks summed). A rolling
+  deploy no longer creates new per-task series or fires false down/recover
+  churn, and per-service history stays continuous across redeploys. Plain-docker
+  hosts are unchanged.
+- **Series-cardinality guardrail (#112).** `serverwatch doctor` now warns when
+  the time-series count is abnormally high (a healthy host is in the low
+  hundreds), catching an accumulation before it degrades the daemon. Stale
+  series already age out past retention.
+- **Setup UX (#106).** The proxy-mode web wizard now offers an optional domain
+  step (deriving rp_id/origin, or leaving them to forwarded headers and
+  documenting that on the confirm screen), so an operator whose reverse proxy
+  does not forward `X-Forwarded-*` headers can set them without dropping to
+  `config set`. `serverwatch install` no longer nudges you to set a Telegram
+  token when one is already configured.
+
 ## [0.4.1-beta.2] - 2026-08-08
 
 This preview folds together everything since `0.4.1-beta.1`: a security-hardening
