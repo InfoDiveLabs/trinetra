@@ -51,7 +51,12 @@ sudo serverwatch monitor disable docker:some-noisy-container
 ```
 
 When a threshold check fires, its reason reads like `disk:/ = 91.0 ≥ threshold
-85.0`, and when it clears it reports `disk:/ back to normal`.
+85.0`, and when it clears it reports `disk:/ back to normal`. For CPU and memory
+the fire message also names the culprit, the top process and container consuming
+that resource, so a `cpu` alert reads like `cpu = 96.0 ≥ threshold 95.0 (top:
+ffmpeg 82%, container web 30%)`. This is drawn from the process and container
+data already collected, so it appears when `collect.processes` is on and there
+is something to name, and is simply omitted otherwise.
 
 ### Rolling-baseline deviation, opt-in
 
