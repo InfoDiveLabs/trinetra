@@ -167,6 +167,19 @@ monitored service."
    You never have to copy the plugin binaries into place by hand; just
    download or build them next to `serverwatch` before running install.
 
+   > **Trust the directory you install from.** Because install adopts whatever
+   > `serverwatch-ctl` / `serverwatch-web` sit beside the `serverwatch` binary
+   > and records *their* checksums as the trust anchor (step 4), it trusts the
+   > contents of that directory. Only run `sudo serverwatch install` from a
+   > directory you control and whose binaries you verified (for example the
+   > release assets you checksummed against `checksums.txt` in step 2). Do not
+   > run it from a world-writable or shared location like `/tmp` where another
+   > user could have dropped a look-alike `serverwatch-ctl`/`serverwatch-web`
+   > beside your binary. This is operator responsibility: install runs as root
+   > and executes with root's trust in that directory. (Once installed, the
+   > front-door still verifies each plugin against the recorded manifest on
+   > every run, so this window is only at install time.)
+
 4. **Records the plugin checksum manifest.** `install` scans the directory it
    just copied the binary (and any plugins) into for the companion plugin
    binaries, `serverwatch-ctl` and `serverwatch-web`, and writes the SHA-256 of
