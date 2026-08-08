@@ -28,6 +28,7 @@ import (
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
+	"serverwatch/internal/version"
 )
 
 // buildDashboardView adapts a serverwatch.Snapshot (native to this package)
@@ -93,7 +94,26 @@ func buildDashboardView(snap Snapshot) core.DashboardView {
 		v.NetTxBps += n.TxBps
 	}
 
+	v.DegradedCollectors = degradedCollectorViews(snap.CollectorHealth)
+
 	return v
+}
+
+// degradedCollectorViews projects the currently-failing slow-tier collectors
+// (Fails > 0) into DTO views for the dashboard/ctl (#110), in a stable order so
+// the banner does not reshuffle between polls. A healthy host yields nil.
+func degradedCollectorViews(health map[string]CollectorStat) []core.CollectorHealthView {
+	var out []core.CollectorHealthView
+	for _, name := range slowCollectorKeys {
+		st, ok := health[name]
+		if !ok || st.Fails == 0 {
+			continue
+		}
+		out = append(out, core.CollectorHealthView{
+			Name: name, Fails: st.Fails, LastError: st.LastError, LastSuccessUnix: st.LastSuccessUnix,
+		})
+	}
+	return out
 }
 
 // buildMonitoringView adapts a serverwatch.Snapshot plus the daemon's
@@ -509,6 +529,9 @@ func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
 	return buildHostInfoView(collectHostInfoFor(a.getCfg()), time.Now().Unix()), nil
 }
+
+// Version implements core.API: the daemon's own build-stamped version (#107).
+func (a *inprocAPI) Version() (string, error) { return version.String(), nil }
 
 // ContainerLogs implements core.API: it snapshots the last `lines` log lines of
 // a live docker container. Like HostInfo/Doctor it runs on demand against the

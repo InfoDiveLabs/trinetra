@@ -280,6 +280,14 @@ func (c *Client) HostInfo() (core.HostInfoView, error) {
 	return result, err
 }
 
+// Version implements core.API: fetches the core daemon's build-stamped version
+// (#107) over the socket.
+func (c *Client) Version() (string, error) {
+	var result string
+	err := c.call("Version", struct{}{}, &result)
+	return result, err
+}
+
 // ContainerLogs implements core.API: fetches a `docker logs --tail` snapshot
 // for the named container over the socket.
 func (c *Client) ContainerLogs(name string, lines int) (string, error) {

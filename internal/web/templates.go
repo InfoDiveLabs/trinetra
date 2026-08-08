@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"serverwatch/internal/version"
 )
 
 // assetVersion is a short content hash over every embedded asset, appended as
@@ -208,6 +210,14 @@ type PageData struct {
 	// fetch()/htmx request (e.g. the topbar's sign-out button). Empty when
 	// there's no signed-in session in the request context.
 	CSRF string
+	// CoreVersion is the running core daemon's version (fetched over the
+	// control socket), WebVersion is this web plugin's own compiled-in version,
+	// and VersionMismatch is true when they differ -- so a partial upgrade
+	// (plugin older than core, or vice versa) is legible in the sidebar footer
+	// rather than silent (#107).
+	CoreVersion     string
+	WebVersion      string
+	VersionMismatch bool
 }
 
 // newPageData builds the PageData every page handler needs, deriving Role
@@ -228,20 +238,39 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		csrf = sess.CSRF
 	}
 	status, statusText := topbarStatus(activeAlertsViaAPI(d))
+	webVer := version.String()
+	coreVer := coreVersionViaAPI(d)
 	return PageData{
-		Title:      title,
-		Sub:        sub,
-		ServerName: d.Cfg().ServerName(),
-		Status:     status,
-		StatusText: statusText,
-		Role:       role,
-		Name:       name,
-		Initial:    firstInitial(name),
-		Active:     r.URL.Path,
-		Nav:        navForRole(role, navCountsFor(d)),
-		Nonce:      nonceFromContext(r),
-		CSRF:       csrf,
+		Title:           title,
+		Sub:             sub,
+		ServerName:      d.Cfg().ServerName(),
+		Status:          status,
+		StatusText:      statusText,
+		Role:            role,
+		Name:            name,
+		Initial:         firstInitial(name),
+		Active:          r.URL.Path,
+		Nav:             navForRole(role, navCountsFor(d)),
+		Nonce:           nonceFromContext(r),
+		CSRF:            csrf,
+		CoreVersion:     coreVer,
+		WebVersion:      webVer,
+		VersionMismatch: coreVer != "" && coreVer != "unknown" && coreVer != webVer,
 	}
+}
+
+// coreVersionViaAPI fetches the running core daemon's version over the control
+// socket (#107), degrading to "unknown" when the API is unset or errors so a
+// version hiccup never breaks page rendering.
+func coreVersionViaAPI(d Deps) string {
+	if d.API == nil {
+		return "unknown"
+	}
+	v, err := d.API.Version()
+	if err != nil || v == "" {
+		return "unknown"
+	}
+	return v
 }
 
 // firstInitial returns the uppercased first rune of name (for the sidebar

@@ -90,6 +90,7 @@ func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil
 func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
 	return "logs of " + name, nil
 }
+func (f *fakeAPI) Version() (string, error) { return "v-test", nil }
 
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 	return f.enrollPIN, f.enrollEnrolled, f.enrollErr

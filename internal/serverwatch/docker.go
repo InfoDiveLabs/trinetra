@@ -9,6 +9,7 @@ type dockerAccess struct {
 	method    string // "socket" | "group" | "sudo"
 	sudo      bool
 	available bool
+	swarm     bool // this node is an active Swarm member (#118)
 }
 
 const dockerPSFormat = "{{.Names}}\t{{.State}}\t{{.Status}}"
@@ -20,13 +21,36 @@ func probeDocker(x Exec, fs FileSource) dockerAccess {
 		if _, e := fs.Read("/var/run/docker.sock"); e != nil {
 			method = "group"
 		}
-		return dockerAccess{method: method, available: true}
+		da := dockerAccess{method: method, available: true}
+		da.swarm = probeSwarm(x, false)
+		return da
 	}
 	// Fall back to sudo.
 	if _, err := x.Run("sudo", "docker", "ps", "-a", "--format", dockerPSFormat); err == nil {
-		return dockerAccess{method: "sudo", sudo: true, available: true}
+		da := dockerAccess{method: "sudo", sudo: true, available: true}
+		da.swarm = probeSwarm(x, true)
+		return da
 	}
 	return dockerAccess{available: false}
+}
+
+// probeSwarm reports whether this node is an ACTIVE Swarm member (#118), via
+// `docker info --format {{.Swarm.LocalNodeState}}` == "active". Gates the
+// task->service collapse so a plain-docker host is unaffected. Any error (old
+// docker, format unsupported) is treated as not-swarm.
+func probeSwarm(x Exec, sudo bool) bool {
+	args := []string{"info", "--format", "{{.Swarm.LocalNodeState}}"}
+	var out []byte
+	var err error
+	if sudo {
+		out, err = x.Run("sudo", append([]string{"docker"}, args...)...)
+	} else {
+		out, err = x.Run("docker", args...)
+	}
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "active"
 }
 
 func (a dockerAccess) list(x Exec) ([]Container, error) {

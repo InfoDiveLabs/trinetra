@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -73,6 +74,34 @@ func TestBuildDoctorReportStoreStats(t *testing.T) {
 
 	if !strings.Contains(rep.StoreStats, "2 series") {
 		t.Errorf("StoreStats = %q, want it to mention 2 series", rep.StoreStats)
+	}
+}
+
+// TestBuildDoctorReportWarnsOnHighCardinality pins #112: a store whose series
+// count is at/above the guardrail threshold produces a StoreWarning, and a
+// healthy store does not.
+func TestBuildDoctorReportWarnsOnHighCardinality(t *testing.T) {
+	noExec := fakeExec{fn: func(string, ...string) ([]byte, error) { return nil, errNotExist }}
+
+	// Healthy: a couple of series, no warning.
+	small, _ := OpenStore("memory", t.TempDir(), StoreOptions{})
+	defer small.Close()
+	_ = small.Append(1, MetricSet{"cpu": 1, "mem": 2})
+	if rep := buildDoctorReport(noExec, fakeFS{}, config.Default(), small); rep.StoreWarning != "" {
+		t.Errorf("healthy store warned: %q", rep.StoreWarning)
+	}
+
+	// Abnormal: at/above the threshold -> warning.
+	big, _ := OpenStore("memory", t.TempDir(), StoreOptions{})
+	defer big.Close()
+	ms := MetricSet{}
+	for i := 0; i < seriesCountWarnThreshold; i++ {
+		ms["series:"+strconv.Itoa(i)] = float64(i)
+	}
+	_ = big.Append(1, ms)
+	rep := buildDoctorReport(noExec, fakeFS{}, config.Default(), big)
+	if rep.StoreWarning == "" || !strings.Contains(rep.StoreWarning, "high series cardinality") {
+		t.Errorf("high-cardinality store did not warn: StoreWarning=%q StoreStats=%q", rep.StoreWarning, rep.StoreStats)
 	}
 }
 

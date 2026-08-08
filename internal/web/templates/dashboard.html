@@ -2,6 +2,14 @@
 {{$v := .View}}
 <div id="dashboard-live">
 
+  {{if $v.DegradedCollectors}}
+  <div class="collector-warn" role="alert">
+    <strong>Monitoring degraded:</strong>
+    {{range $v.DegradedCollectors}}<span class="cw-item">{{.Name}} ({{.Fails}} failed{{if .LastError}}: {{.LastError}}{{end}})</span>{{end}}
+    <span class="note">showing last-known values for these collectors</span>
+  </div>
+  {{end}}
+
   {{if .Host.Available}}
   <!-- host strip (desktop): compact hardware/OS digest, full detail on /host -->
   <div class="hoststrip">

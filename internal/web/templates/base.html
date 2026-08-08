@@ -25,6 +25,11 @@
         </div>
         <button id="logoutBtn" class="mono" style="color:var(--faint);background:none;border:none;padding:0;cursor:pointer;font:inherit" title="Sign out">⏻</button>
       </div>
+      <div class="ver mono" title="core daemon / web plugin versions">
+        <span>core {{.CoreVersion}}</span>
+        <span>web {{.WebVersion}}</span>
+        {{if .VersionMismatch}}<span class="ver-warn" title="the web plugin and core daemon are on different versions">version mismatch</span>{{end}}
+      </div>
     </div>
   {{end}}</aside>
   <div class="main">

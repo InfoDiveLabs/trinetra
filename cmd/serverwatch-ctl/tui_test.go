@@ -75,37 +75,59 @@ func TestHomeKeyQQuits(t *testing.T) {
 	}
 }
 
-// TestWizardProxyModeSkipsDomain drives: press 's' (enter wizard), select
-// "proxy" (already the cursor default, so just enter), type a listen
-// address, enter -- and asserts the wizard lands directly on the confirm
-// screen without visiting the domain/rp_id/origin steps, per needsDomain's
-// contract for proxy mode.
-func TestWizardProxyModeSkipsDomain(t *testing.T) {
+// TestWizardProxyModeDomainOptional pins #106: proxy mode now visits the domain
+// step (rather than skipping it), and a BLANK domain preserves the old default
+// -- straight to confirm with rp_id/origin unset (derived from forwarded
+// headers), and the confirm summary documents that assumption.
+func TestWizardProxyModeDomainOptional(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{})
 	mm, _ = mm.Update(keyRunes('s'))
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept "proxy" (cursor index 0)
 
 	got := mm.(model)
-	if got.ans.Mode != "proxy" {
-		t.Fatalf("ans.Mode = %q, want proxy", got.ans.Mode)
-	}
-	if got.wiz != webSetupListen {
-		t.Fatalf("wiz = %v, want webSetupListen", got.wiz)
-	}
-	if got.listenIn.Value() != "127.0.0.1:8088" {
-		t.Errorf("default listen = %q, want 127.0.0.1:8088", got.listenIn.Value())
+	if got.ans.Mode != "proxy" || got.wiz != webSetupListen {
+		t.Fatalf("mode=%q wiz=%v, want proxy/webSetupListen", got.ans.Mode, got.wiz)
 	}
 
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // accept the default listen address
 	got = mm.(model)
-	if got.wiz != webSetupConfirm {
-		t.Fatalf("wiz = %v, want webSetupConfirm (proxy mode skips domain/rp_id/origin)", got.wiz)
+	if got.wiz != webSetupDomain {
+		t.Fatalf("wiz = %v, want webSetupDomain (proxy now offers the domain step)", got.wiz)
 	}
-	if got.ans.Listen != "127.0.0.1:8088" {
-		t.Errorf("ans.Listen = %q, want 127.0.0.1:8088", got.ans.Listen)
+
+	// Leave the domain blank: enter -> confirm, rp_id/origin still unset.
+	mm, _ = mm.Update(keyType(tea.KeyEnter))
+	got = mm.(model)
+	if got.wiz != webSetupConfirm {
+		t.Fatalf("wiz = %v, want webSetupConfirm (blank proxy domain skips rp_id/origin)", got.wiz)
 	}
 	if got.ans.RPID != "" || got.ans.Origin != "" {
-		t.Errorf("proxy mode should leave rp_id/origin blank, got rp_id=%q origin=%q", got.ans.RPID, got.ans.Origin)
+		t.Errorf("blank-domain proxy should leave rp_id/origin blank, got rp_id=%q origin=%q", got.ans.RPID, got.ans.Origin)
+	}
+	if s := webSetupSummary(got.ans); !strings.Contains(s, "X-Forwarded") || !strings.Contains(s, "web.rp_id") {
+		t.Errorf("confirm summary should document the forwarded-header assumption:\n%s", s)
+	}
+}
+
+// TestWizardProxyModeWithDomainDerivesRPIDOrigin pins the other half of #106:
+// an operator whose proxy does not forward headers can type a domain in proxy
+// mode and get rp_id/origin derived from it (no drop to `config set`).
+func TestWizardProxyModeWithDomainDerivesRPIDOrigin(t *testing.T) {
+	var mm tea.Model = newModel(&fakeAPI{})
+	mm, _ = mm.Update(keyRunes('s'))
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // proxy
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> domain step
+
+	for _, r := range "mon.example.com" {
+		mm, _ = mm.Update(keyRunes(r))
+	}
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit domain
+	got := mm.(model)
+	if got.wiz != webSetupRPID {
+		t.Fatalf("wiz = %v, want webSetupRPID (a typed proxy domain continues to rp_id)", got.wiz)
+	}
+	if got.ans.RPID != "mon.example.com" || got.ans.Origin != "https://mon.example.com" {
+		t.Errorf("derived rp_id=%q origin=%q, want mon.example.com / https://mon.example.com", got.ans.RPID, got.ans.Origin)
 	}
 }
 
@@ -236,7 +258,8 @@ func TestWizardConfirmCancelReturnsHome(t *testing.T) {
 	var mm tea.Model = newModel(api)
 	mm, _ = mm.Update(keyRunes('s'))
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // proxy
-	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> confirm (proxy skips domain)
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> domain
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // blank domain -> confirm
 
 	if mm.(model).wiz != webSetupConfirm {
 		t.Fatalf("precondition failed: wiz = %v, want webSetupConfirm", mm.(model).wiz)
@@ -263,7 +286,8 @@ func TestWizardApplyErrorSurfaces(t *testing.T) {
 	var mm tea.Model = newModel(api)
 	mm, _ = mm.Update(keyRunes('s'))
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // proxy
-	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> confirm
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // default listen -> domain
+	mm, _ = mm.Update(keyType(tea.KeyEnter)) // blank domain -> confirm
 
 	mm, cmd := mm.Update(keyType(tea.KeyEnter)) // confirm apply
 	msg := runCmd(t, cmd)

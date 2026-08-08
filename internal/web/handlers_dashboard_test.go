@@ -147,6 +147,26 @@ func TestDashboardShowsHostStrip(t *testing.T) {
 	}
 }
 
+// TestSidebarShowsCoreAndPluginVersions pins #107: the sidebar footer shows the
+// core daemon's version (over the socket) and the web plugin's own version, and
+// flags a mismatch when they differ. The web plugin's own version is "dev" in a
+// test binary, so a distinct core version must render as a mismatch.
+func TestSidebarShowsCoreAndPluginVersions(t *testing.T) {
+	d := dashboardTestDeps(t)
+	d.API = fakeAPI{snap: dashboardTestView(), version: "v9.9.9"}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/"))
+	body := rr.Body.String()
+	for _, want := range []string{"core v9.9.9", "web dev", "version mismatch"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sidebar version block missing %q", want)
+		}
+	}
+}
+
 // TestDashboardRendersRealAvailabilityStrip pins Part 2 of the field-feedback
 // fix: the #hbstrip availability panel must render the real per-request
 // Availability data (ComputeAvailability's output, threaded through

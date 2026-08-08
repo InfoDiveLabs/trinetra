@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"serverwatch/internal/core"
+	"serverwatch/internal/version"
 )
 
 // run dispatches a single non-interactive ctl subcommand against api and
@@ -41,6 +42,8 @@ func run(api core.API, args []string, out io.Writer) int {
 		return runStatus(api, out, jsonOut)
 	case "doctor":
 		return runDoctor(api, out, jsonOut)
+	case "version":
+		return runVersion(api, out)
 	case "host":
 		return runHost(api, out, jsonOut)
 	case "logs":
@@ -81,6 +84,7 @@ func printUsage(out io.Writer) {
 		"commands:\n"+
 		"  status                  print the current dashboard snapshot\n"+
 		"  doctor                  print the daemon's diagnostic report\n"+
+		"  version                 print the ctl and core daemon versions\n"+
 		"  host                    print the host hardware/OS inventory\n"+
 		"  logs <container> [--tail N]  print a docker container's recent logs\n"+
 		"  alerts                  print the currently active alerts\n"+
@@ -120,6 +124,15 @@ func runStatus(api core.API, out io.Writer, jsonOut bool) int {
 	fmt.Fprintf(out, "units:      %d failed / %d total\n", snap.UnitsFailed, snap.UnitsTotal)
 	fmt.Fprintf(out, "disks:      %d mounts, %d critical\n", len(snap.Disks), snap.DisksCritical)
 	fmt.Fprintf(out, "network:    rx %.0f bps / tx %.0f bps\n", snap.NetRxBps, snap.NetTxBps)
+	if len(snap.DegradedCollectors) > 0 {
+		for _, dc := range snap.DegradedCollectors {
+			line := fmt.Sprintf("%s (%d failed)", dc.Name, dc.Fails)
+			if dc.LastError != "" {
+				line += ": " + dc.LastError
+			}
+			fmt.Fprintf(out, "COLLECTOR DEGRADED: %s\n", line)
+		}
+	}
 	return 0
 }
 
@@ -145,6 +158,9 @@ func runDoctor(api core.API, out io.Writer, jsonOut bool) int {
 	fmt.Fprintf(out, "  processes:       %s\n", onOff(rep.ProcessesOn))
 	fmt.Fprintf(out, "  smart_attrs:     %s\n", onOff(rep.SmartAttrsOn))
 	fmt.Fprintf(out, "time-series: %s\n", rep.StoreStats)
+	if rep.StoreWarning != "" {
+		fmt.Fprintf(out, "WARNING: %s\n", rep.StoreWarning)
+	}
 	return 0
 }
 
@@ -196,6 +212,22 @@ func runHost(api core.API, out io.Writer, jsonOut bool) int {
 			fmt.Fprintf(out, "  %-10s %-20s %-4s %10s  %-6s %s\n",
 				orDash(d.Device), orDash(d.Model), kind, hostBytes(d.SizeBytes), orDash(d.FSType), d.Mount)
 		}
+	}
+	return 0
+}
+
+// runVersion prints this ctl plugin's own build-stamped version and the running
+// core daemon's version over the socket (#107 parity), flagging a mismatch.
+func runVersion(api core.API, out io.Writer) int {
+	ctlVer := version.String()
+	coreVer, err := api.Version()
+	if err != nil {
+		fmt.Fprintf(out, "ctl:  %s\ncore: (unavailable: %v)\n", ctlVer, err)
+		return 1
+	}
+	fmt.Fprintf(out, "ctl:  %s\ncore: %s\n", ctlVer, coreVer)
+	if coreVer != "" && coreVer != ctlVer {
+		fmt.Fprintf(out, "warning: ctl and core are on different versions\n")
 	}
 	return 0
 }

@@ -340,6 +340,16 @@ from the command line instead, `serverwatch telegram set-token` now prints
 that same enrollment PIN in the terminal too (#90), rather than making you go
 dig it out of the journal.
 
+## Monitoring-failure alerts (`collector:<name>`, #110)
+
+Besides alerting on what it monitors, the daemon alerts when monitoring itself
+is failing. If a slow-tier collector (`docker`, `disk`, `services`, `smart`)
+fails or times out for three consecutive cycles, a critical `collector:<name>`
+alert fires, e.g. `collector docker failing: 3 consecutive collection failures
+(last error: Cannot connect to the Docker daemon)`. One or two transient blips
+carry the last-known values forward silently; only a sustained failure alerts.
+The alert recovers automatically on the first successful collection.
+
 ---
 
 [Previous: Monitoring: what gets collected](05-monitoring.md) | [Handbook index](README.md) | [Next: Downtime and liveness](07-downtime-and-liveness.md)

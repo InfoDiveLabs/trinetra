@@ -75,6 +75,9 @@ serverwatch-ctl [--socket PATH] [--token PATH] [--json] <command>
 | --- | --- |
 | `status` | Print the current dashboard snapshot. |
 | `doctor` | Print the daemon's diagnostic report. |
+| `version` | Print the ctl and core daemon versions (flags a mismatch). |
+| `host` | Print the host hardware/OS inventory (add `--json` for raw). |
+| `logs <container> [--tail N]` | Print a docker container's recent logs. |
 | `alerts` | Print the currently active alerts. |
 | `config get <key>` | Print one flat config key's current value. |
 | `config set <key> <value>` | Set one config key, validated and applied live. |

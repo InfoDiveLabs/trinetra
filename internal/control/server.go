@@ -296,6 +296,13 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 		}
 		return json.Marshal(v)
 
+	case "Version":
+		v, err := api.Version()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
 	case "ContainerLogs":
 		var p struct {
 			Name  string `json:"name"`

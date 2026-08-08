@@ -40,6 +40,7 @@ type fakeAPI struct {
 	hostInfo      core.HostInfoView
 	containerLogs string
 	logErr        error
+	version       string
 
 	applyConfig func(*config.Config) error
 	testChannel func(name string) error
@@ -71,6 +72,7 @@ func (f fakeAPI) Config() (*config.Config, error)                         { retu
 func (f fakeAPI) Doctor() (core.DoctorReport, error)                      { return core.DoctorReport{}, nil }
 func (f fakeAPI) HostInfo() (core.HostInfoView, error)                    { return f.hostInfo, nil }
 func (f fakeAPI) ContainerLogs(name string, lines int) (string, error)    { return f.containerLogs, f.logErr }
+func (f fakeAPI) Version() (string, error)                                { return f.version, nil }
 func (f fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil

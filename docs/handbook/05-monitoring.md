@@ -303,6 +303,44 @@ What a threshold means, when the baseline deviation checks fire, and how firing
 and recovery are debounced, are all the alerting engine's concern. The next
 chapter picks the story up there.
 
+## Docker Swarm services (#118)
+
+On a host that is an active Swarm node (detected once via `docker info`), the
+daemon keys containers by their **service** rather than the ephemeral task
+container name. A Swarm task is named `<service>.<slot>.<taskid>`, and the
+`taskid` changes on every redeploy, so keying on the raw name would create two
+new permanent series (`docker:<task>:cpu`/`:mem`) per redeploy and fire false
+"container down" churn as old task names disappear. Instead:
+
+- **Series and UI** key on the service name, so per-service CPU/Mem history is
+  continuous across redeploys and cardinality tracks the service count, not the
+  lifetime task count. A service's tasks are summed, so the chart is the
+  service's total footprint.
+- **Up/down alerting** is by service: as long as one task is running (a rolling
+  deploy), the service is up, so a normal deploy no longer flaps down/recover.
+
+Plain (non-Swarm) docker hosts are entirely unaffected.
+
+## Collector health: fail-visible collection (#110)
+
+A monitoring daemon must never silently degrade. When a slow-tier collection
+command (`docker`, `df`, `systemctl`, `smartctl`) fails or times out, the daemon
+does **not** publish missing data or flip a healthy target to gone: it carries
+the last-known values forward (marking the snapshot stale) and tracks the
+failure. A collector that fails for three consecutive cycles raises a
+`collector:<name>` alert (see the next chapter), which recovers on the first
+success. The current per-collector health (consecutive failures, last success,
+last error) is in `status.json`, shown as a warning banner on the web dashboard,
+and printed by `serverwatch-ctl status`.
+
+## Series cardinality guardrail (#112)
+
+Stale series (a container removed, a mount that disappeared) are reaped once
+their newest point ages past retention, so `seriesCount` tracks live targets.
+`serverwatch doctor` warns when the count is abnormally high (a healthy host is
+in the low hundreds), which usually points at ephemeral targets churning, e.g. a
+Swarm host from before the service-keying fix above.
+
 ---
 
 [Previous: Configuration](04-configuration.md) | [Handbook index](README.md) | [Next: Alerting and notification channels](06-alerting-and-channels.md)

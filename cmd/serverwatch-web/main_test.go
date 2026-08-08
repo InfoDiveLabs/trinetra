@@ -48,6 +48,7 @@ func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return core.HostInfoVi
 func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
 	return "", nil
 }
+func (f *fakeAPI) Version() (string, error) { return "v-test", nil }
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil

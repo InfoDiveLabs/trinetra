@@ -271,6 +271,25 @@ type Snapshot struct {
 	// short-lived pids per host) is exactly the trap this design avoids,
 	// mirroring Units above.
 	Processes ProcSnapshot `json:"processes,omitempty"`
+	// CollectorErrors is the set of slow-tier collectors that were ATTEMPTED
+	// this cycle but failed (key -> error text), e.g. "docker"/"disk"/
+	// "services"/"smart" (#110). A collector that was disabled or not attempted
+	// has no entry, so this distinguishes "command errored/timed out" from
+	// "ran and returned a legitimately empty result". Transient: used to carry
+	// last-known values forward and to update CollectorHealth; not persisted.
+	CollectorErrors map[string]string `json:"collector_errors,omitempty"`
+	// CollectorHealth is the rolling per-collector health (#110): consecutive
+	// failure count, last-success time, and last error. A collector failing for
+	// collectorAlertThreshold consecutive cycles drives a `collector:<name>`
+	// alert; it recovers on the first success. Surfaced in status.json/web so a
+	// degraded collector is observable, not just inferred from missing data.
+	CollectorHealth map[string]CollectorStat `json:"collector_health,omitempty"`
+	// collectorsAttempted is the set of slow-tier collectors collectSlow
+	// actually ran this cycle (#110), used by the slow-collector goroutine to
+	// distinguish "attempted and succeeded" from "not attempted" when updating
+	// CollectorHealth. Unexported: an internal collectSlow->goroutine handoff,
+	// never serialized or part of the public snapshot.
+	collectorsAttempted map[string]bool
 }
 
 // renderStatus builds the /stats,/status overview: a header giving the

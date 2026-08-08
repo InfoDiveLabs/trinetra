@@ -573,24 +573,30 @@ func (m model) updateTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onListenDone commits the listen-address step. proxy mode needs no public
-// hostname (see needsDomain), so it skips straight to the confirm screen;
-// autocert/manual continue on to the domain step.
+// onListenDone commits the listen-address step and advances to the domain
+// step. Every mode now visits it (#106): autocert/manual require a public
+// hostname, and proxy mode offers it optionally so an operator whose reverse
+// proxy does not forward X-Forwarded-* headers can still set rp_id/origin
+// explicitly instead of dropping to `config set`.
 func (m model) onListenDone() (tea.Model, tea.Cmd) {
 	m.ans.Listen = m.listenIn.Value()
-	if needsDomain(m.ans.Mode) {
-		m.wiz = webSetupDomain
-		return m, m.domainIn.Focus()
-	}
-	m.wiz = webSetupConfirm
-	return m, nil
+	m.wiz = webSetupDomain
+	return m, m.domainIn.Focus()
 }
 
-// onDomainDone commits the domain step and seeds rp_id/origin's defaults
-// from it (deriveRPIDOrigin) before moving on so the following two screens
-// open pre-filled rather than blank.
+// onDomainDone commits the domain step and seeds rp_id/origin's defaults from
+// it (deriveRPIDOrigin) before moving on so the following two screens open
+// pre-filled. In proxy mode a BLANK domain is allowed: it leaves rp_id/origin
+// unset (derived per-request from the reverse proxy's forwarded headers) and
+// skips straight to confirm, preserving the old proxy default for operators
+// whose proxy does forward the headers.
 func (m model) onDomainDone() (tea.Model, tea.Cmd) {
-	m.ans.Domain = m.domainIn.Value()
+	m.ans.Domain = strings.TrimSpace(m.domainIn.Value())
+	if m.ans.Mode == "proxy" && m.ans.Domain == "" {
+		m.ans.RPID, m.ans.Origin = "", ""
+		m.wiz = webSetupConfirm
+		return m, nil
+	}
 	rpid, origin := deriveRPIDOrigin(m.ans.Domain)
 	m.ans.RPID, m.ans.Origin = rpid, origin
 	m.rpidIn.SetValue(rpid)
@@ -919,6 +925,9 @@ func (m model) setupView() string {
 		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
 	case webSetupDomain:
 		fmt.Fprintf(&b, "public domain (used to derive rp_id/origin):\n\n%s\n", m.domainIn.View())
+		if m.ans.Mode == "proxy" {
+			b.WriteString("\n" + hintStyle.Render("optional in proxy mode: leave blank to derive rp_id/origin from your reverse proxy's forwarded headers") + "\n")
+		}
 		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
 	case webSetupRPID:
 		fmt.Fprintf(&b, "webauthn rp_id (relying party id):\n\n%s\n", m.rpidIn.View())

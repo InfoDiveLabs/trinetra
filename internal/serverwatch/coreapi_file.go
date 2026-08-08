@@ -26,6 +26,7 @@ import (
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
+	"serverwatch/internal/version"
 )
 
 // errEnrollNeedsDaemon is returned by fileAPI.EnrollmentPIN: the enrollment
@@ -232,6 +233,9 @@ func (a *fileAPI) HostInfo() (core.HostInfoView, error) {
 func (a *fileAPI) ContainerLogs(name string, lines int) (string, error) {
 	return collectContainerLogs(osExec{}, osFS{}, name, lines)
 }
+
+// Version implements core.API: this process's own build-stamped version (#107).
+func (a *fileAPI) Version() (string, error) { return version.String(), nil }
 
 // EnrollmentPIN implements core.API: this CLI process has no live daemon
 // state (unlike inprocAPI, which reads through its own enrollState), so it

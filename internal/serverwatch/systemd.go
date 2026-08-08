@@ -143,9 +143,29 @@ func cmdInstall(args []string) int {
 			return 1
 		}
 	}
-	fmt.Fprintln(stdout, installedPluginsMessage()+
-		" installed and started. set a token: serverwatch telegram set-token <token>")
+	// Only nudge the operator to set a Telegram token on a genuinely
+	// unconfigured host. On an upgrade/reinstall where Telegram is already
+	// configured (and possibly enrolled), re-printing the set-token line
+	// wrongly implies setup is needed again (#106), so report the existing
+	// state instead.
+	fmt.Fprint(stdout, installedPluginsMessage()+" installed and started. ")
+	fmt.Fprintln(stdout, telegramInstallHint())
 	return 0
+}
+
+// telegramInstallHint returns the install success line's Telegram clause: a
+// set-token nudge on an unconfigured host, or a "already configured" note when
+// a token (and optionally an enrolled chat) is already present. Reads the live
+// config; a load failure falls back to the nudge (the safe default).
+func telegramInstallHint() string {
+	c, err := loadCfg()
+	if err != nil || c == nil || c.Telegram.Token == "" {
+		return "set a Telegram token: serverwatch telegram set-token <token>"
+	}
+	if c.Telegram.ChatID != "" {
+		return "Telegram already configured and enrolled."
+	}
+	return "Telegram token already set; enroll the chat by messaging the bot /start <pin>."
 }
 
 // installedPluginsMessage reports which companion plugins ended up recorded
@@ -690,8 +710,20 @@ func buildDoctorReport(x Exec, fs FileSource, c *config.Config, store SampleStor
 		return rep
 	}
 	rep.StoreStats = fmt.Sprintf("%d series, %.1f MB on disk (raw+1m)", n, float64(diskBytes)/(1024*1024))
+	if n >= seriesCountWarnThreshold {
+		rep.StoreWarning = fmt.Sprintf(
+			"high series cardinality: %d series (healthy is low hundreds). "+
+				"Dead series are reaped after retention; a persistently high count usually means "+
+				"ephemeral targets churning (e.g. Swarm task-keyed containers, see #118).", n)
+	}
 	return rep
 }
+
+// seriesCountWarnThreshold is the doctor guardrail line for tsfile cardinality
+// (#112): a healthy host tracks its live targets (low hundreds of series), so a
+// count at/above this signals series accumulating faster than retention reaps
+// them (the 3035-file explosion that caused #109). Warn, don't fail.
+const seriesCountWarnThreshold = 1000
 
 // renderDoctorReport writes rep to w in the exact line-for-line format
 // cmdDoctor has always printed -- reconstructed from the DoctorReport DTO
@@ -713,6 +745,9 @@ func renderDoctorReport(w io.Writer, rep core.DoctorReport) {
 		onOff(rep.ContainerStatsOn), onOff(rep.NetThroughputOn), onOff(rep.ServicesOn),
 		onOff(rep.ProcessesOn), onOff(rep.SmartAttrsOn))
 	fmt.Fprintf(w, "time-series: %s\n", rep.StoreStats)
+	if rep.StoreWarning != "" {
+		fmt.Fprintf(w, "WARNING: %s\n", rep.StoreWarning)
+	}
 }
 
 // onOff renders a bool as "on"/"off" for the doctor collector summary.

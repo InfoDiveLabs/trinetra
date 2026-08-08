@@ -121,6 +121,22 @@ type DashboardView struct {
 	// from (e.g. a bare `DashboardView{}` in a test that doesn't care about
 	// the strip).
 	Availability Availability `json:"availability"`
+
+	// DegradedCollectors lists slow-tier collectors that are currently failing
+	// (#110): each carries its consecutive-failure count and last error so an
+	// operator sees that MONITORING ITSELF is degraded, not just missing data.
+	// Empty when every collector is healthy. Shown as a warning banner in the
+	// web dashboard and a status line in serverwatch-ctl.
+	DegradedCollectors []CollectorHealthView `json:"degraded_collectors,omitempty"`
+}
+
+// CollectorHealthView is one degraded slow-tier collector's health (#110), the
+// core-DTO projection of serverwatch.CollectorStat.
+type CollectorHealthView struct {
+	Name            string `json:"name"`             // "docker" | "disk" | "services" | "smart"
+	Fails           int    `json:"fails"`            // consecutive failed cycles
+	LastError       string `json:"last_error"`       // most recent error text
+	LastSuccessUnix int64  `json:"last_success_unix"` // 0 if never succeeded
 }
 
 // ProcessCounts mirrors serverwatch.ProcSnapshot's aggregate counts (Top is
@@ -393,6 +409,10 @@ type DoctorReport struct {
 	// on disk (raw+1m)" line (or "time-series: unavailable" when the
 	// configured store failed to open) as a single string.
 	StoreStats string `json:"store_stats"`
+	// StoreWarning is a non-empty guardrail message when the series count is
+	// abnormally high (#112), e.g. dead Swarm-task series accumulating faster
+	// than retention reaps them. Empty when cardinality is healthy.
+	StoreWarning string `json:"store_warning,omitempty"`
 }
 
 // Event is one live daemon event pushed to a core.API.Subscribe stream:

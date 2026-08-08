@@ -152,6 +152,9 @@ func buildSlowChecks(snap Snapshot, c *config.Config, active map[string]ActiveAl
 			}
 		}
 	}
+	// collector:<name> health checks (#110): a slow-tier collector failing for
+	// collectorAlertThreshold consecutive cycles fires; recovers on success.
+	checks = append(checks, buildCollectorChecks(snap, slowInterval)...)
 	return checks
 }
 
@@ -348,9 +351,24 @@ type smartCache struct {
 // case every mount's projection is simply left unknown. sc/smartIntervalSec
 // throttle the SMART scan (see the SMART block below): sc may be nil for
 // one-shot callers that always want a fresh scan.
+// smartScanAttempt marks the SMART collector as attempted this cycle (#110) and
+// runs `smartctl --scan`. Split out so the scan can be the init statement of
+// collectSlow's smart if/else chain while still recording the attempt.
+func smartScanAttempt(x Exec, snap *Snapshot) ([]byte, error) {
+	snap.collectorsAttempted["smart"] = true
+	return runMaybeSudo(x, "smartctl", "--scan")
+}
+
 func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64, sc *smartCache, smartIntervalSec int) Snapshot {
 	var snap Snapshot
 	snap.DockerAccess = da.method
+	// Per-collector attempt/error tracking (#110): disk and the failed-units
+	// check always run; docker/smart are marked attempted only where they
+	// actually shell out below. recordCollectorErr notes a command
+	// error/timeout so the slow-collector goroutine can carry last-known values
+	// forward and drive a collector:<name> alert instead of publishing a
+	// healthy target flipped to gone.
+	snap.collectorsAttempted = map[string]bool{"disk": true, "services": true}
 	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed
 	// `df -PT -B1` call (device/fstype/usage/size/free per mount), gated by
 	// isRealMount && isRealFsType. This used to be two separate df calls --
@@ -388,16 +406,21 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			}
 			snap.DiskDetail[mount] = d
 		}
+	} else {
+		recordCollectorErr(&snap, "disk", err)
 	}
 	snap.Online = checkOnline(defaultConnHosts, connDial)
 
 	// docker containers (ps -a lists all, so state is always known -> recovery works)
 	if da.available {
+		snap.collectorsAttempted["docker"] = true
 		if cs, err := da.list(x); err == nil {
 			snap.Containers = map[string]string{}
 			for _, ct := range cs {
 				snap.Containers[ct.Name] = ct.State
 			}
+		} else {
+			recordCollectorErr(&snap, "docker", err)
 		}
 	}
 	// per-container cpu/mem/net (opt-in, docker-availability-gated): a stats
@@ -412,10 +435,20 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			}
 		}
 	}
+	// Swarm task -> service collapse (#118): key containers and their stats by
+	// stable service name instead of ephemeral task name, so a rolling deploy
+	// neither creates new per-task series (bounding cardinality, #112) nor flaps
+	// down/recover on disappearing task names. Only runs on an active Swarm
+	// node; plain-docker hosts are untouched.
+	if da.swarm {
+		snap.Containers, snap.ContainerStats = collapseSwarmTasks(snap.Containers, snap.ContainerStats)
+	}
 	// failed systemd units (alerting collection -- always runs, unaffected by
 	// collect.services below)
 	if out, err := runMaybeSudo(x, "systemctl", "--failed", "--plain", "--no-legend"); err == nil {
 		snap.FailedUnits = parseFailedUnits(string(out))
+	} else {
+		recordCollectorErr(&snap, "services", err)
 	}
 	// full systemd unit inventory (opt-in via collect.services, snapshot-only:
 	// see UnitInfo/listUnits in discover.go for why this is never persisted
@@ -439,7 +472,9 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 		if c != nil && c.SmartAttrsEnabled() {
 			snap.SmartAttrs = sc.attrs
 		}
-	} else if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
+	} else if out, err := smartScanAttempt(x, &snap); err != nil {
+		recordCollectorErr(&snap, "smart", err)
+	} else {
 		snap.SmartHealth = map[string]string{}
 		// SMART attribute detail (temp/wear/realloc, opt-in via
 		// collect.smart_attrs) is the heaviest optional per-device call: one
@@ -506,6 +541,7 @@ func mergeSlowFields(merged *Snapshot, slow Snapshot) {
 	merged.SmartAttrs = slow.SmartAttrs
 	merged.ContainerStats = slow.ContainerStats
 	merged.Units = slow.Units
+	merged.CollectorHealth = slow.CollectorHealth
 }
 
 // collectSnapshot runs both tiers and merges them into one full Snapshot.
@@ -820,6 +856,14 @@ func cmdDaemon(args []string) int {
 	// can throttle smartctl calls to c.SmartIntervalSec() instead of scanning
 	// every cycle.
 	var smartState smartCache
+	// collHealth/prevSlow make slow collection fail-visible (#110): collHealth
+	// tracks per-collector consecutive failures across cycles (owned by the
+	// slow-collector goroutine, like the calcs above), and prevSlow holds the
+	// last published slow snapshot so a collector that errors this cycle carries
+	// its last-known values forward instead of publishing a healthy target
+	// flipped to gone.
+	collHealth := newCollectorHealth()
+	var prevSlow Snapshot
 	da := probeDocker(x, fs)
 
 	cfgAtStart := getCfg()
@@ -904,6 +948,15 @@ func cmdDaemon(args []string) int {
 			if c.ProcessesEnabled() {
 				s.Processes = collectProcesses(fs, &procCPU, os.Getpagesize()/1024)
 			}
+			// Fail-visible collection (#110): update per-collector health from
+			// this cycle's outcome, carry last-known values forward for any
+			// collector that errored (so a failed docker/df/smartctl does not
+			// blank a healthy target), and publish the health on the snapshot so
+			// it drives collector:<name> alerts and shows in status.json.
+			collHealth.observe(s.collectorsAttempted, s.CollectorErrors, n)
+			carryForwardFailedCollectors(&prevSlow, &s)
+			s.CollectorHealth = collHealth.snapshot()
+			prevSlow = s
 			return s
 		},
 	}
