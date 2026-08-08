@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -107,6 +108,93 @@ func TestServeControlSocketRoundTrip(t *testing.T) {
 	}
 	if gotCfg.FastInterval != fakeCfg.FastInterval {
 		t.Errorf("Config mismatch: got FastInterval=%v, want %v", gotCfg.FastInterval, fakeCfg.FastInterval)
+	}
+}
+
+// newSocketTestAPI builds a minimal newInprocAPI suitable for the
+// fail-closed tests below (no snapshot/store behavior is exercised).
+func newSocketTestAPI(t *testing.T) core.API {
+	t.Helper()
+	getSnap := func() Snapshot { return Snapshot{} }
+	fakeCfg := config.Default()
+	getCfg := func() *config.Config { return fakeCfg }
+	reload := func(c *config.Config) error { return nil }
+	return newInprocAPI(getSnap, getCfg, nil, t.TempDir(), reload, nil, &enrollState{})
+}
+
+// assertSocketFailedClosed asserts serveControlSocket refused to serve: it
+// returned an error and a nil stop, and left NO socket or token file behind
+// for an unauthenticated client to connect to (#96).
+func assertSocketFailedClosed(t *testing.T, runtimeDir string, stop func(), err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("serveControlSocket returned nil error, want fail-closed error")
+	}
+	if stop != nil {
+		t.Error("serveControlSocket returned a non-nil stop on failure, want nil")
+	}
+	socketPath := filepath.Join(runtimeDir, "control.sock")
+	if _, statErr := os.Stat(socketPath); !os.IsNotExist(statErr) {
+		t.Errorf("socket left behind after token failure (stat err = %v); daemon is serving unauthenticated", statErr)
+	}
+	tokenPath := filepath.Join(runtimeDir, "token")
+	if _, statErr := os.Stat(tokenPath); !os.IsNotExist(statErr) {
+		t.Errorf("token file left behind after token failure (stat err = %v)", statErr)
+	}
+}
+
+// TestServeControlSocketFailsClosedOnTokenGenError proves that when the
+// per-launch token cannot be GENERATED, the control socket is not served at
+// all (fail closed) rather than served with no auth (#96). The daemon
+// already tolerates a nil-stop error return by running without the socket.
+func TestServeControlSocketFailsClosedOnTokenGenError(t *testing.T) {
+	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDir) })
+	t.Setenv("RUNTIME_DIRECTORY", runtimeDir)
+
+	orig := generateTokenFn
+	generateTokenFn = func() (string, error) { return "", errors.New("boom: no entropy") }
+	t.Cleanup(func() { generateTokenFn = orig })
+
+	stop, _, token, err := serveControlSocket(newSocketTestAPI(t))
+	if token != "" {
+		t.Errorf("returned token = %q on generation failure, want empty", token)
+	}
+	assertSocketFailedClosed(t, runtimeDir, stop, err)
+}
+
+// TestServeControlSocketFailsClosedOnTokenWriteError proves that when the
+// token WRITE fails, the socket is likewise not served unauthenticated (#96).
+// The write is forced to fail by pre-creating the token path as a directory.
+func TestServeControlSocketFailsClosedOnTokenWriteError(t *testing.T) {
+	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDir) })
+	t.Setenv("RUNTIME_DIRECTORY", runtimeDir)
+
+	// Make writeTokenFile fail: os.WriteFile to a path that is a directory errors.
+	if err := os.Mkdir(filepath.Join(runtimeDir, "token"), 0o700); err != nil {
+		t.Fatalf("pre-creating token dir: %v", err)
+	}
+
+	stop, _, token, err := serveControlSocket(newSocketTestAPI(t))
+	if token != "" {
+		t.Errorf("returned token = %q on write failure, want empty", token)
+	}
+	if err == nil {
+		t.Fatal("serveControlSocket returned nil error on token-write failure, want fail-closed error")
+	}
+	if stop != nil {
+		t.Error("serveControlSocket returned a non-nil stop on write failure, want nil")
+	}
+	socketPath := filepath.Join(runtimeDir, "control.sock")
+	if _, statErr := os.Stat(socketPath); !os.IsNotExist(statErr) {
+		t.Errorf("socket left behind after token-write failure (stat err = %v); daemon is serving unauthenticated", statErr)
 	}
 }
 
