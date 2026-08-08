@@ -115,25 +115,57 @@
   dScrim.addEventListener('click',closeDrawer);
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDrawer();});
   function spark(color){return '<svg width="100%" height="60" viewBox="0 0 300 60" preserveAspectRatio="none"><path fill="url(#g'+color.g+')" class="ln" stroke="var(--'+color.c+')" stroke-width="1.6" d="M0,44 40,38 80,46 120,24 160,40 200,16 240,34 280,26 300,30 L300,60 0,60Z"/></svg>';}
+  // el builds a node with a class and, when txt is given, sets it via
+  // textContent so untrusted data-* values are never parsed as HTML.
+  function mkEl(tag,cls,txt){var n=document.createElement(tag); if(cls)n.className=cls; if(txt!=null)n.textContent=txt; return n;}
+  // staticInto appends parsed STATIC markup (no user data) into parent. Used
+  // only for the fixed chart/action templates below, never for data-* values.
+  function staticInto(parent,html){var t=document.createElement('div'); t.innerHTML=html; while(t.firstChild)parent.appendChild(t.firstChild);}
   document.addEventListener('click',function(e){
     var row=e.target.closest('[data-detail]'); if(!row) return;
     var d=row.dataset, kind=d.kind||'item';
     var role=document.body.dataset.role||'admin';
-    var stateBadge=d.state?'<span class="badge '+(d.state==='running'||d.state==='active'||d.state==='PASS'?'ok':(d.state==='restarting'?'warn':'crit'))+'">'+d.state+'</span>':'';
-    var info='';
-    Object.keys(d).forEach(function(k){ if(['detail','name','kind','state'].indexOf(k)>-1)return; info+='<dt>'+k+'</dt><dd>'+d[k]+'</dd>'; });
+
+    // Build the drawer with createElement/textContent so untrusted data-*
+    // values (name, state, and the k/v detail pairs) are never assigned to
+    // innerHTML (#94). Only the fixed chart/action templates, which carry no
+    // user data, are still parsed as HTML (via staticInto).
+    var head=mkEl('div','dh');
+    var title=mkEl('div'); title.style.flex='1';
+    title.appendChild(mkEl('div','eyebrow',kind));
+    var h3=mkEl('h3',null,d.name||''); h3.style.margin='2px 0 0'; h3.style.fontSize='16px';
+    title.appendChild(h3);
+    head.appendChild(title);
+    if(d.state){
+      var sc=(d.state==='running'||d.state==='active'||d.state==='PASS')?'ok':(d.state==='restarting'?'warn':'crit');
+      head.appendChild(mkEl('span','badge '+sc,d.state));
+    }
+    var closeBtn=mkEl('button','icon-btn','✕'); closeBtn.id='swClose';
+    head.appendChild(closeBtn);
+
+    var body=mkEl('div','db');
+    var dl=mkEl('dl','kv');
+    Object.keys(d).forEach(function(k){ if(['detail','name','kind','state'].indexOf(k)>-1)return; dl.appendChild(mkEl('dt',null,k)); dl.appendChild(mkEl('dd',null,d[k])); });
+    body.appendChild(dl);
+
     var charts = (kind==='container'||kind==='process') ?
       '<div class="section-label"><span class="eyebrow">CPU · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Info',c:'info'})+'</div>'+
       '<div class="section-label"><span class="eyebrow">Memory · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Violet',c:'violet'})+'</div>'
       : (kind==='disk' ?
       '<div class="section-label"><span class="eyebrow">Usage · 30d + projection</span></div><div class="panel" style="padding:10px">'+spark({g:'Crit',c:'crit'})+'</div>'
       : '<div class="section-label"><span class="eyebrow">Memory · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Ok',c:'ok'})+'</div>');
+    staticInto(body,charts);
+
     var actions = role==='admin' ? (kind==='container'
       ? '<button class="btn">Restart</button><button class="btn ghost">View logs</button><button class="btn ghost">Pause monitoring</button>'
       : '<button class="btn ghost">Pause monitoring</button>') : '<span class="note">viewer -- read-only</span>';
-    drawer.innerHTML='<div class="dh"><div style="flex:1"><div class="eyebrow">'+kind+'</div><h3 style="margin:2px 0 0;font-size:16px">'+(d.name||'')+'</h3></div>'+stateBadge+'<button class="icon-btn" id="swClose">✕</button></div>'+
-      '<div class="db"><dl class="kv">'+info+'</dl>'+charts+
-      '<div class="section-label"><span class="eyebrow">Actions</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+actions+'</div></div>';
+    staticInto(body,'<div class="section-label"><span class="eyebrow">Actions</span></div>');
+    var actionRow=mkEl('div'); actionRow.style.display='flex'; actionRow.style.gap='8px'; actionRow.style.flexWrap='wrap';
+    staticInto(actionRow,actions);
+    body.appendChild(actionRow);
+
+    drawer.innerHTML='';
+    drawer.appendChild(head); drawer.appendChild(body);
     document.getElementById('swClose').addEventListener('click',closeDrawer);
     drawer.classList.add('on'); dScrim.classList.add('on');
   });
