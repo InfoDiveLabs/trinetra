@@ -26,20 +26,27 @@ import (
 func buildFastChecks(snap Snapshot, c *config.Config) []Check {
 	var checks []Check
 	fastInterval := c.FastInterval
-	add := func(key string, val, thr float64, hasThr, crit bool) {
+	add := func(key string, val, thr float64, hasThr, crit bool, culprit string) {
 		if !c.TargetEnabled(key) {
 			return
 		}
 		if o, ok := c.TargetThreshold(key); ok {
 			thr, hasThr = o, true
 		}
-		checks = append(checks, Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: fastInterval})
+		ch := Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: fastInterval}
+		// Name the resource culprit in the fire message (#103) when there is
+		// one to name; breach() uses FireMsg verbatim over the numeric format,
+		// so it must include the same "key = val >= threshold thr" prefix.
+		if culprit != "" && hasThr {
+			ch.FireMsg = fmt.Sprintf("%s = %.1f ≥ threshold %.1f%s", key, val, thr, culprit)
+		}
+		checks = append(checks, ch)
 	}
-	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false)
-	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false)
-	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false)
+	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false, cpuCulprit(snap))
+	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false, memCulprit(snap))
+	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false, "")
 	if snap.TempC > 0 {
-		add("temp", snap.TempC, c.Thresholds.TempC, true, false)
+		add("temp", snap.TempC, c.Thresholds.TempC, true, false, "")
 	}
 	return checks
 }
