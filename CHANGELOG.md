@@ -6,6 +6,66 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
+## [0.5.0-beta.1] - 2026-08-08
+
+A security-hardening and correctness release. It works through the Fable 5
+security review (fail-closed auth paths, an XSS sink, brute-force and lock
+amplification bounds, opt-in SSRF blocking), fixes downtime accounting so a
+daemon restart is no longer mistaken for a host outage, and stops a maintenance
+pass from stalling web history reads.
+
+### Added
+
+- **Opt-in outbound SSRF guard for channel and healthchecks URLs.** The new
+  `notify.block_private_targets` config key (default false) makes the daemon
+  refuse to dial loopback, link-local (including the `169.254.169.254` cloud
+  metadata endpoint), and private (RFC1918 / ULA) targets when set. The check
+  runs against the resolved IP, so a hostname that points inward is blocked too.
+  (#97)
+- **Tunable Telegram enrollment brute-force bound.** `telegram.enroll_max_attempts`
+  (default 5) and `telegram.enroll_cooldown` (default 60s) control when the
+  enrollment PIN cools down and rotates. (#93)
+- **`serverwatch downtime purge`** clears bogus downtime events, e.g. the short
+  fabricated `power_down` events an old crash loop wrote. (#116)
+
+### Fixed
+
+- **A daemon restart is no longer recorded as a host `power_down`.** The
+  reconstruction now reads the host boot time from `/proc/stat` and records
+  downtime only when the host actually rebooted during the gap; a monitor
+  restart (crash loop, deploy, `systemctl restart`) records nothing, so a
+  restart storm can no longer fabricate hours of downtime and tank the uptime
+  percentage. Overlapping and adjacent outages are coalesced into one incident
+  and their union, not a double-counted sum. (#116)
+- **A storage maintenance pass no longer stalls web history reads.** `Prune` and
+  `Downsample` take the store lock per file instead of holding it for the whole
+  multi-second pass, so `Query` reads interleave between files. (#113)
+- **Removed dead mockup UI from the container drawer:** the non-functional
+  `Restart` action and the placeholder sparkline "charts" that never loaded real
+  data are gone, replaced by honest not-yet-available states. (#114)
+
+### Security
+
+- **The control socket fails closed** when its per-launch auth token cannot be
+  generated or written: it now runs without the socket rather than serving it
+  with no authentication. (#96)
+- **The web UI fails closed on an unreadable user store.** An unreadable
+  `users.json` was treated as an empty first-run store, which could open a
+  tokenless-admin bootstrap window; enrollment now refuses when the store cannot
+  be read. (#105)
+- **The Telegram enrollment PIN is bounded against brute force:** after a run of
+  wrong `/start` guesses it cools down and rotates to a fresh value, so the
+  six-digit space cannot be walked. (#93)
+- **The detail drawer is built with `textContent`, not `innerHTML` string
+  concatenation,** removing a CSP-mitigated DOM XSS sink where `data-*` values
+  were concatenated into live markup. (#94)
+- **Unauthenticated ceremony begins are rate-limited** (`/enroll/begin` and
+  `/login/begin`, 15 per 10s per client) so an anonymous caller cannot hammer
+  the shared ceremony-store lock. (#95)
+- **Documented the install-time plugin-copy trust assumption:** only run
+  `serverwatch install` from a directory you control, since it adopts the plugin
+  binaries beside it. (#98)
+
 ## [0.4.1-beta.1] - 2026-08-02
 
 A reliability release for the core-plus-plugin line: the web plugin is made
