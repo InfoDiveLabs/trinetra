@@ -117,6 +117,37 @@
   // el builds a node with a class and, when txt is given, sets it via
   // textContent so untrusted data-* values are never parsed as HTML.
   function mkEl(tag,cls,txt){var n=document.createElement(tag); if(cls)n.className=cls; if(txt!=null)n.textContent=txt; return n;}
+  // drawSpark renders an /api/series response ([ts[],avg[],min[],max[]]) into a
+  // canvas: a faint min/max band with the avg line over it. Pure Canvas 2D (no
+  // uPlot) so it works in the drawer without a layout pass. Reads the accent and
+  // border colors from CSS custom properties so it tracks the active theme.
+  function drawSpark(cv,s){
+    var ctx=cv.getContext('2d'); if(!ctx) return;
+    var W=cv.width, H=cv.height, pad=6;
+    ctx.clearRect(0,0,W,H);
+    var avg=s[1]||[], mn=s[2]||avg, mx=s[3]||avg, n=avg.length; if(!n) return;
+    var lo=Infinity, hi=-Infinity, i;
+    for(i=0;i<n;i++){ if(mn[i]<lo)lo=mn[i]; if(mx[i]>hi)hi=mx[i]; }
+    if(!isFinite(lo)||!isFinite(hi)){ return; }
+    if(hi-lo<1e-9){ hi=lo+1; } // flat series: give the band a little height
+    var cs=getComputedStyle(document.body);
+    var accent=(cs.getPropertyValue('--signal')||'#F0B429').trim();
+    var border=(cs.getPropertyValue('--border')||'rgba(128,128,128,.3)').trim();
+    function X(i){ return pad+(W-2*pad)*(n===1?0.5:i/(n-1)); }
+    function Y(v){ return H-pad-(H-2*pad)*((v-lo)/(hi-lo)); }
+    // min/max band
+    ctx.beginPath(); ctx.moveTo(X(0),Y(mx[0]));
+    for(i=1;i<n;i++)ctx.lineTo(X(i),Y(mx[i]));
+    for(i=n-1;i>=0;i--)ctx.lineTo(X(i),Y(mn[i]));
+    ctx.closePath(); ctx.fillStyle=accent+'22'; ctx.fill();
+    // avg line
+    ctx.beginPath(); ctx.moveTo(X(0),Y(avg[0]));
+    for(i=1;i<n;i++)ctx.lineTo(X(i),Y(avg[i]));
+    ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.stroke();
+    // baseline
+    ctx.strokeStyle=border; ctx.lineWidth=1; ctx.beginPath();
+    ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
+  }
   // staticInto appends parsed STATIC markup (no user data) into parent. Used
   // only for the fixed chart/action templates below, never for data-* values.
   function staticInto(parent,html){var t=document.createElement('div'); t.innerHTML=html; while(t.firstChild)parent.appendChild(t.firstChild);}
@@ -144,27 +175,61 @@
 
     var body=mkEl('div','db');
     var dl=mkEl('dl','kv');
-    Object.keys(d).forEach(function(k){ if(['detail','name','kind','state'].indexOf(k)>-1)return; dl.appendChild(mkEl('dt',null,k)); dl.appendChild(mkEl('dd',null,d[k])); });
+    Object.keys(d).forEach(function(k){ if(['detail','name','kind','state','metric'].indexOf(k)>-1)return; dl.appendChild(mkEl('dt',null,k)); dl.appendChild(mkEl('dd',null,d[k])); });
     body.appendChild(dl);
 
-    // No per-metric charts here yet: the old drawer rendered decorative
-    // spark() sparklines with NO real data, which read as graphs but never
-    // loaded the entity's history (#114). Show an honest placeholder until the
-    // panels are wired to the real /api/series history (#115) rather than
-    // faking a chart.
-    staticInto(body,'<div class="section-label"><span class="eyebrow">Charts</span></div><div class="note" style="padding:6px 0">Per-metric history is not available in this drawer yet.</div>');
+    // Per-metric history (#115): when the row names a stored series (data-metric,
+    // e.g. "cpu", "mem", "disk:/data"), draw a real sparkline from /api/series
+    // over the last 6h. Rows without a stored series (containers, services,
+    // processes) show no chart section -- their live values are in the kv list
+    // above -- rather than a decorative chart with no data (#114).
+    if(d.metric){
+      staticInto(body,'<div class="section-label"><span class="eyebrow">History · 6h</span></div>');
+      var cv=mkEl('canvas','spark'); cv.width=520; cv.height=90; cv.style.width='100%'; cv.style.height='90px';
+      body.appendChild(cv);
+      var note=mkEl('div','note'); note.style.padding='4px 0'; note.textContent='Loading history...'; body.appendChild(note);
+      var to=Math.floor(Date.now()/1000), from=to-6*3600;
+      fetch('/api/series?metric='+encodeURIComponent(d.metric)+'&from='+from+'&to='+to,{credentials:'same-origin'})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(j){
+          var s=j&&j.series; if(!s||!s.length||!s[0]||!s[0].length){ note.textContent='No history recorded yet.'; cv.style.display='none'; return; }
+          drawSpark(cv,s); note.style.display='none';
+        })
+        .catch(function(err){ note.textContent='Could not load history: '+err.message; cv.style.display='none'; });
+    }
 
     // Actions: the Restart button is gone (a monitor is not a container control
-    // plane, and for Swarm services Swarm owns task lifecycle, #114). The
-    // remaining actions are the intended ones but are not wired yet (#115), so
-    // they render disabled rather than as dead buttons that silently do nothing.
-    var actions = role==='admin' ? (kind==='container'
-      ? '<button class="btn ghost" disabled title="Not available yet">View logs</button><button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>'
-      : '<button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>') : '<span class="note">viewer -- read-only</span>';
+    // plane, and for Swarm services Swarm owns task lifecycle, #114). "View
+    // logs" is now wired to /api/container/logs (#115); "Pause monitoring" is
+    // still parked and renders disabled rather than as a dead button.
     staticInto(body,'<div class="section-label"><span class="eyebrow">Actions</span></div>');
     var actionRow=mkEl('div'); actionRow.style.display='flex'; actionRow.style.gap='8px'; actionRow.style.flexWrap='wrap';
-    staticInto(actionRow,actions);
+    var logBtn=null;
+    if(role==='admin'){
+      if(kind==='container'){
+        logBtn=mkEl('button','btn ghost','View logs'); actionRow.appendChild(logBtn);
+      }
+      staticInto(actionRow,'<button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>');
+    } else {
+      staticInto(actionRow,'<span class="note">viewer -- read-only</span>');
+    }
     body.appendChild(actionRow);
+    // Log output area, filled on demand when "View logs" is clicked. Built with
+    // textContent so container output (untrusted) is never parsed as HTML.
+    var logBox=null;
+    if(logBtn){
+      logBox=mkEl('pre','logbox'); logBox.style.display='none';
+      body.appendChild(logBox);
+      logBtn.addEventListener('click',function(){
+        logBtn.disabled=true; var orig=logBtn.textContent; logBtn.textContent='Loading...';
+        logBox.style.display='block'; logBox.textContent='';
+        fetch('/api/container/logs?tail=200&name='+encodeURIComponent(d.name||''),{credentials:'same-origin'})
+          .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+          .then(function(t){ logBox.textContent=t||'(no output)'; logBox.scrollTop=logBox.scrollHeight; })
+          .catch(function(err){ logBox.textContent='Could not load logs: '+err.message; })
+          .finally(function(){ logBtn.disabled=false; logBtn.textContent=orig; });
+      });
+    }
 
     drawer.innerHTML='';
     drawer.appendChild(head); drawer.appendChild(body);
@@ -626,13 +691,29 @@
               rows.innerHTML='<div class="row"><span class="led ok"></span><div class="name"><b>No downtime recorded</b><div class="note">100% uptime over the last 30 days</div></div></div>';
               return;
             }
-            rows.innerHTML=events.slice().sort(function(a,b){return b.start-a.start;}).map(function(e){
+            // Paginate: the list can run to dozens of incidents (e.g. after a
+            // crash loop), so show the most recent CAP and reveal the rest on
+            // demand rather than dumping an unbounded wall of rows.
+            var CAP=8;
+            var sorted=events.slice().sort(function(a,b){return b.start-a.start;});
+            function rowHTML(e){
               var led=e.type==='power_down'?'crit':'warn';
               var dur=historyFmtDur(e.duration_sec||Math.max(0,(e.end-e.start)));
               return '<div class="row"><span class="led '+led+'"></span>'+
                 '<div class="name">'+e.type+' · '+historyFmtTs(e.start)+' → '+historyFmtTs(e.end)+'</div>'+
                 '<span class="mono note">'+dur+'</span></div>';
-            }).join('');
+            }
+            function paint(showAll){
+              var shown=showAll?sorted:sorted.slice(0,CAP);
+              var html=shown.map(rowHTML).join('');
+              if(!showAll && sorted.length>CAP){
+                html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show all '+sorted.length+' incidents</button>';
+              }
+              rows.innerHTML=html;
+              var more=document.getElementById('dtMore');
+              if(more) more.addEventListener('click',function(){paint(true);});
+            }
+            paint(false);
           }
         })
         .catch(function(){

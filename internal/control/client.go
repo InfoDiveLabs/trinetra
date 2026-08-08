@@ -280,6 +280,18 @@ func (c *Client) HostInfo() (core.HostInfoView, error) {
 	return result, err
 }
 
+// ContainerLogs implements core.API: fetches a `docker logs --tail` snapshot
+// for the named container over the socket.
+func (c *Client) ContainerLogs(name string, lines int) (string, error) {
+	params := struct {
+		Name  string `json:"name"`
+		Lines int    `json:"lines"`
+	}{Name: name, Lines: lines}
+	var result string
+	err := c.call("ContainerLogs", params, &result)
+	return result, err
+}
+
 // EnrollmentPIN implements core.API: it sends the request and unmarshals the
 // server's enrollmentPINResult (protocol.go) into pin/enrolled.
 func (c *Client) EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error) {

@@ -26,6 +26,13 @@ type API interface {
 	// kernel/OS, per-disk hardware, plus boot time and derived uptime. Static
 	// for a boot, so callers fetch it once rather than per tick.
 	HostInfo() (HostInfoView, error)
+	// ContainerLogs returns the last `lines` log lines of the named docker
+	// container (a `docker logs --tail N` snapshot, newest at the bottom).
+	// name must match a container the daemon currently sees; an unknown or
+	// malformed name is refused rather than shelled out, so a caller cannot use
+	// this to run arbitrary docker arguments. Implementations without docker
+	// access return an error.
+	ContainerLogs(name string, lines int) (string, error)
 	// EnrollmentPIN returns the Telegram bot's current enrollment pin -- the
 	// same pin the daemon's poll loop accepts via "/start <pin>" (#90) -- and
 	// whether the bot is already enrolled (chat id known). pin is "" when

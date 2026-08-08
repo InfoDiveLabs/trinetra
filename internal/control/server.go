@@ -296,6 +296,20 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 		}
 		return json.Marshal(v)
 
+	case "ContainerLogs":
+		var p struct {
+			Name  string `json:"name"`
+			Lines int    `json:"lines"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		v, err := api.ContainerLogs(p.Name, p.Lines)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
 	case "EnrollmentPIN":
 		pin, enrolled, err := api.EnrollmentPIN(context.Background())
 		if err != nil {

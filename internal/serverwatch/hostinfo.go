@@ -24,7 +24,8 @@ type HostInfo struct {
 	Kernel        string // /proc/sys/kernel/osrelease
 	OS            string // /etc/os-release PRETTY_NAME
 	CPUModel      string
-	CPUCores      int     // physical cores
+	CPUSockets    int     // distinct physical CPU packages (2 on a dual-socket box)
+	CPUCores      int     // physical cores (summed across sockets)
 	CPUThreads    int     // logical processors
 	CPUBaseMHz    float64 // approximate, from /proc/cpuinfo "cpu MHz"
 	MemTotalBytes uint64
@@ -117,11 +118,14 @@ type HostDisk struct {
 // count, and an approximate base MHz from /proc/cpuinfo. It tolerates the ARM
 // layout (Raspberry Pi and friends), which has no "model name"/"cpu cores"
 // lines: model falls back to the "Model" line and cores to the logical count.
-func parseCPUInfo(s string) (model string, cores, threads int, baseMHz float64) {
+func parseCPUInfo(s string) (model string, sockets, cores, threads int, baseMHz float64) {
 	var armModel string
 	// physical id -> cpu cores, so a multi-socket box counts each socket's
-	// cores once rather than summing per logical thread.
+	// cores once rather than summing per logical thread. physIDs is the set of
+	// distinct sockets seen, so a dual-socket box reports Sockets=2 even when
+	// the two sockets are identical.
 	coresByPhys := map[string]int{}
+	physIDs := map[string]bool{}
 	curPhys := ""
 	for _, line := range strings.Split(s, "\n") {
 		key, val, ok := splitCPUInfoLine(line)
@@ -139,6 +143,7 @@ func parseCPUInfo(s string) (model string, cores, threads int, baseMHz float64) 
 			armModel = val
 		case "physical id":
 			curPhys = val
+			physIDs[val] = true
 		case "cpu cores":
 			if n, err := strconv.Atoi(val); err == nil {
 				coresByPhys[curPhys] = n
@@ -160,7 +165,11 @@ func parseCPUInfo(s string) (model string, cores, threads int, baseMHz float64) 
 	if cores == 0 {
 		cores = threads // no "cpu cores" line (ARM, containers): assume 1 thread/core
 	}
-	return model, cores, threads, baseMHz
+	sockets = len(physIDs)
+	if sockets == 0 && threads > 0 {
+		sockets = 1 // no "physical id" line (ARM, containers): a single package
+	}
+	return model, sockets, cores, threads, baseMHz
 }
 
 // splitCPUInfoLine splits a "key : value" /proc/cpuinfo line, trimming both
@@ -251,7 +260,7 @@ func collectHostInfo(x Exec, fs FileSource) HostInfo {
 		h.OS = parseOSRelease(string(b))
 	}
 	if b, err := fs.Read("/proc/cpuinfo"); err == nil {
-		h.CPUModel, h.CPUCores, h.CPUThreads, h.CPUBaseMHz = parseCPUInfo(string(b))
+		h.CPUModel, h.CPUSockets, h.CPUCores, h.CPUThreads, h.CPUBaseMHz = parseCPUInfo(string(b))
 	}
 	if b, err := fs.Read("/proc/meminfo"); err == nil {
 		if m, err := parseMeminfo(string(b)); err == nil {
@@ -266,11 +275,53 @@ func collectHostInfo(x Exec, fs FileSource) HostInfo {
 	return h
 }
 
+// pseudoFSTypes are the kernel/virtual/container filesystems that back no real
+// storage and would otherwise clutter the disk list: docker's overlay layers,
+// RAM-backed mounts, snap's squashfs loops, and the /proc-family pseudo mounts.
+// They are dropped from the host disk inventory.
+var pseudoFSTypes = map[string]bool{
+	"overlay": true, "tmpfs": true, "devtmpfs": true, "squashfs": true,
+	"ramfs": true, "aufs": true, "proc": true, "sysfs": true, "cgroup": true,
+	"cgroup2": true, "mqueue": true, "debugfs": true, "tracefs": true,
+	"fusectl": true, "configfs": true, "pstore": true, "bpf": true, "nsfs": true,
+	"binfmt_misc": true, "autofs": true, "efivarfs": true, "hugetlbfs": true,
+	"devpts": true, "securityfs": true, "fuse.lxcfs": true, "none": true,
+}
+
+// networkFSTypes are remote filesystems that ARE real storage even though they
+// are not local block devices; they are kept (per the "also keep network
+// mounts" choice).
+var networkFSTypes = map[string]bool{
+	"nfs": true, "nfs4": true, "cifs": true, "smbfs": true, "smb3": true,
+	"ceph": true, "glusterfs": true, "9p": true, "fuse.sshfs": true,
+	"fuse.rclone": true, "beegfs": true, "lustre": true,
+}
+
+// keepDisk decides whether a df row is a real disk worth showing: a network
+// filesystem (kept regardless of device), or a genuine local block device
+// (a /dev/ path that is not a snap/loop mount). Everything else -- overlay,
+// tmpfs, squashfs, and the other pseudo filesystems -- is dropped.
+func keepDisk(device, fstype string) bool {
+	if networkFSTypes[fstype] {
+		return true
+	}
+	if pseudoFSTypes[fstype] {
+		return false
+	}
+	base, ok := baseBlockDevice(device)
+	if !ok {
+		// device-mapper / LVM report base "" but are real storage; keep any
+		// remaining /dev/-backed mount that is not a loop device.
+		return strings.HasPrefix(device, "/dev/") && !strings.HasPrefix(device, "/dev/loop")
+	}
+	return !strings.HasPrefix(base, "loop")
+}
+
 // collectHostDisks runs df -PT -B1 once and enriches each mount with its base
-// block device's model and rotational flag from /sys/block. Non-/dev mounts
-// (overlay, tmpfs, mapper) contribute a disk row with size/fstype but no
-// model/rotational. Deduplicated per base device so several partitions of one
-// disk report once.
+// block device's model and rotational flag from /sys/block. Only real disks are
+// kept (see keepDisk): local block devices and network mounts, not docker
+// overlay / tmpfs / snap squashfs. Deduplicated per base device so several
+// partitions of one disk report once.
 func collectHostDisks(x Exec, fs FileSource) []HostDisk {
 	out, err := x.Run("df", "-PT", "-B1")
 	if err != nil {
@@ -280,10 +331,13 @@ func collectHostDisks(x Exec, fs FileSource) []HostDisk {
 	seen := map[string]bool{}
 	var disks []HostDisk
 	for mount, d := range details {
+		if !keepDisk(d.Device, d.FsType) {
+			continue
+		}
 		base, ok := baseBlockDevice(d.Device)
 		key := base
 		if !ok {
-			key = "mount:" + mount // no base device; keep per-mount so overlay/tmpfs still show
+			key = "mount:" + mount // network / mapper mount: keep per-mount
 		}
 		if seen[key] {
 			continue

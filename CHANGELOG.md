@@ -6,15 +6,42 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
-## [0.5.0-beta.2] - 2026-08-08
+## [0.4.1-beta.2] - 2026-08-08
 
-The server-identity epic (#99). Every server now names itself instead of wearing
-a hardcoded brand, exposes a full host inventory (hardware, OS, disks, IPs)
-across all three surfaces, and points CPU/RAM alerts at the process or container
-actually responsible. Each capability lands in core, web, and `serverwatch-ctl`
+This preview folds together everything since `0.4.1-beta.1`: a security-hardening
+pass, the server-identity epic (#99), and the round of fixes from testing beta.1
+on the live host. Every capability lands in core, web, and `serverwatch-ctl`
 together.
 
-### Added
+### Fixed (from beta testing)
+
+- **Multi-socket CPUs now report their socket count.** `parseCPUInfo` summed
+  cores across sockets but never counted the sockets, so a dual-socket box read
+  as one CPU. The host view now shows `2× <model> (2 sockets / 32 cores / 64
+  threads)`.
+- **The disk inventory shows only real disks.** Docker `overlay` layers,
+  `tmpfs`, snap `squashfs`/loop mounts, and the other pseudo filesystems are
+  filtered out; local block devices, LVM volumes, and network mounts
+  (NFS/CIFS) are kept.
+- **Container logs are viewable.** The dashboard drawer's "View logs" action is
+  wired to a new `core.API.ContainerLogs` (a validated `docker logs --tail`
+  snapshot over the control socket), also exposed as `serverwatch-ctl logs
+  <container> [--tail N]`. The container name is validated against the live
+  container list before shelling out.
+- **Per-metric history is drawn in the drawer.** Rows backed by a stored series
+  (disk mounts) now render a real 6h sparkline from `/api/series` instead of the
+  "not available yet" placeholder; rows with no stored series omit the chart
+  rather than faking one.
+- **Host info on the dashboard.** A compact host strip (name, OS, CPU, RAM,
+  uptime, local IP) sits at the top of the dashboard on desktop, linking through
+  to the full Host page.
+- **Identity setup in the web UI.** The admin `/config` page now has an Identity
+  panel to set `server.name` and toggle the `collect.public_ip` opt-in.
+- **The downtime list on the history page is paginated.** It shows the most
+  recent 8 incidents with a "Show all" expander instead of an unbounded wall of
+  rows.
+
+### Server identity (#99)
 
 - **Configurable `server.name`.** A new `server.name` config key names the
   server; it resolves through the configured name, then the OS hostname, then
@@ -37,15 +64,14 @@ together.
   `cpu = 96.0 >= threshold 95.0 (top: ffmpeg 82%, container web 30%)` instead of
   a bare number. It degrades to no suffix when that data is absent. (#103)
 
-## [0.5.0-beta.1] - 2026-08-08
+### Security hardening & correctness
 
-A security-hardening and correctness release. It works through the Fable 5
-security review (fail-closed auth paths, an XSS sink, brute-force and lock
-amplification bounds, opt-in SSRF blocking), fixes downtime accounting so a
-daemon restart is no longer mistaken for a host outage, and stops a maintenance
-pass from stalling web history reads.
+Working through the Fable 5 security review (fail-closed auth paths, an XSS
+sink, brute-force and lock amplification bounds, opt-in SSRF blocking), fixing
+downtime accounting so a daemon restart is no longer mistaken for a host outage,
+and stopping a maintenance pass from stalling web history reads.
 
-### Added
+#### Added
 
 - **Opt-in outbound SSRF guard for channel and healthchecks URLs.** The new
   `notify.block_private_targets` config key (default false) makes the daemon
@@ -59,7 +85,7 @@ pass from stalling web history reads.
 - **`serverwatch downtime purge`** clears bogus downtime events, e.g. the short
   fabricated `power_down` events an old crash loop wrote. (#116)
 
-### Fixed
+#### Fixed
 
 - **A daemon restart is no longer recorded as a host `power_down`.** The
   reconstruction now reads the host boot time from `/proc/stat` and records
@@ -75,7 +101,7 @@ pass from stalling web history reads.
   `Restart` action and the placeholder sparkline "charts" that never loaded real
   data are gone, replaced by honest not-yet-available states. (#114)
 
-### Security
+#### Security
 
 - **The control socket fails closed** when its per-launch auth token cannot be
   generated or written: it now runs without the socket rather than serving it

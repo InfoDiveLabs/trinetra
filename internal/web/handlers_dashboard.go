@@ -117,6 +117,7 @@ func containerBars(list []ContainerView, value func(ContainerView) float64, form
 type DashboardPageData struct {
 	PageData
 	View       DashboardView
+	Host       HostSummary
 	Alerts     []activeAlertView
 	TopCPUBars []containerBar
 	TopMemBars []containerBar
@@ -145,6 +146,7 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	return DashboardPageData{
 		PageData: newPageData(r, d, "Dashboard", "Overview · live"),
 		View:     view,
+		Host:     buildHostSummary(d),
 		Alerts:   alerts,
 		TopCPUBars: containerBars(view.TopCPUContainers,
 			func(c ContainerView) float64 { return c.CPUPct },

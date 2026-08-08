@@ -56,6 +56,9 @@ func newHandler(d Deps) http.Handler {
 	// control socket via Deps.API.HostInfo. Viewer-gated like the other Monitor
 	// pages.
 	mux.HandleFunc("GET /host", requireRole(RoleViewer, d, hostPageHandler(d)))
+	// /api/container/logs (#115): a docker-logs snapshot for the dashboard
+	// drawer's "View logs" action. Admin-gated -- logs can carry secrets.
+	mux.HandleFunc("GET /api/container/logs", requireRole(RoleAdmin, d, containerLogsHandler(d)))
 	// beginLimiter caps the unauthenticated ceremony-begin rate per client so an
 	// anonymous caller can't hammer the shared ceremonies.json lock (#95). Both
 	// begins share ONE limiter since they contend the same lock. finish is not

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 
 	"serverwatch/internal/core"
@@ -41,6 +43,8 @@ func run(api core.API, args []string, out io.Writer) int {
 		return runDoctor(api, out, jsonOut)
 	case "host":
 		return runHost(api, out, jsonOut)
+	case "logs":
+		return runLogs(api, args[1:], out)
 	case "alerts":
 		return runAlerts(api, out, jsonOut)
 	case "config":
@@ -78,6 +82,7 @@ func printUsage(out io.Writer) {
 		"  status                  print the current dashboard snapshot\n"+
 		"  doctor                  print the daemon's diagnostic report\n"+
 		"  host                    print the host hardware/OS inventory\n"+
+		"  logs <container> [--tail N]  print a docker container's recent logs\n"+
 		"  alerts                  print the currently active alerts\n"+
 		"  config get <key>        print one config key's current value\n"+
 		"  config set <key> <val>  set one config key (validated, applied live)\n"+
@@ -158,8 +163,15 @@ func runHost(api core.API, out io.Writer, jsonOut bool) int {
 	fmt.Fprintf(out, "os:       %s\n", orDash(h.OS))
 	fmt.Fprintf(out, "kernel:   %s\n", orDash(h.Kernel))
 	cpu := orDash(h.CPUModel)
+	if h.CPUSockets > 1 && h.CPUModel != "" {
+		cpu = fmt.Sprintf("%d× %s", h.CPUSockets, h.CPUModel)
+	}
 	if h.CPUThreads > 0 {
-		cpu += fmt.Sprintf("  (%d cores / %d threads", h.CPUCores, h.CPUThreads)
+		if h.CPUSockets > 1 {
+			cpu += fmt.Sprintf("  (%d sockets / %d cores / %d threads", h.CPUSockets, h.CPUCores, h.CPUThreads)
+		} else {
+			cpu += fmt.Sprintf("  (%d cores / %d threads", h.CPUCores, h.CPUThreads)
+		}
 		if h.CPUBaseMHz > 0 {
 			cpu += fmt.Sprintf(" @ %.0f MHz", h.CPUBaseMHz)
 		}
@@ -184,6 +196,47 @@ func runHost(api core.API, out io.Writer, jsonOut bool) int {
 			fmt.Fprintf(out, "  %-10s %-20s %-4s %10s  %-6s %s\n",
 				orDash(d.Device), orDash(d.Model), kind, hostBytes(d.SizeBytes), orDash(d.FSType), d.Mount)
 		}
+	}
+	return 0
+}
+
+// runLogs prints a docker container's recent logs (#115 parity):
+// `serverwatch-ctl logs <container> [--tail N]`.
+func runLogs(api core.API, args []string, out io.Writer) int {
+	name := ""
+	tail := 200
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tail", "-n":
+			if i+1 >= len(args) {
+				fmt.Fprintln(out, "logs: --tail needs a number")
+				return 2
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n <= 0 {
+				fmt.Fprintf(out, "logs: invalid --tail %q\n", args[i+1])
+				return 2
+			}
+			tail = n
+			i++
+		default:
+			if name == "" {
+				name = args[i]
+			}
+		}
+	}
+	if name == "" {
+		fmt.Fprintln(out, "usage: serverwatch-ctl logs <container> [--tail N]")
+		return 2
+	}
+	logs, err := api.ContainerLogs(name, tail)
+	if err != nil {
+		fmt.Fprintf(out, "logs: %v\n", err)
+		return 1
+	}
+	fmt.Fprint(out, logs)
+	if logs != "" && !strings.HasSuffix(logs, "\n") {
+		fmt.Fprintln(out)
 	}
 	return 0
 }

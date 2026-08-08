@@ -30,6 +30,59 @@ type hostDiskRow struct {
 	Device, Model, Kind, Size, FSType, Mount string
 }
 
+// HostSummary is the compact host strip shown on the dashboard (#100 followup):
+// a one-line-per-field digest of the same inventory the /host page renders in
+// full. Available is false when host info could not be fetched, in which case
+// the dashboard simply omits the strip.
+type HostSummary struct {
+	Available bool
+	Name      string
+	OS        string
+	CPU       string // short form: "2x Xeon ... (64t)"
+	Memory    string
+	Uptime    string
+	LocalIP   string
+}
+
+// buildHostSummary fetches host info via the API and renders the compact
+// dashboard strip. Best-effort: any failure yields an unavailable summary the
+// dashboard omits, never an error that breaks the page.
+func buildHostSummary(d Deps) HostSummary {
+	if d.API == nil {
+		return HostSummary{}
+	}
+	h, err := d.API.HostInfo()
+	if err != nil {
+		return HostSummary{}
+	}
+	return HostSummary{
+		Available: true,
+		Name:      h.Hostname,
+		OS:        h.OS,
+		CPU:       shortCPU(h),
+		Memory:    humanBytesIEC(h.MemTotalBytes),
+		Uptime:    humanUptime(h.UptimeSec),
+		LocalIP:   h.LocalIP,
+	}
+}
+
+// shortCPU is formatCPU's compact cousin for the dashboard strip: the model
+// (socket-prefixed when multi-socket) plus a "(Nt)" thread count, e.g.
+// "2x Intel Xeon Platinum 8153 (64t)".
+func shortCPU(h core.HostInfoView) string {
+	s := h.CPUModel
+	if s == "" {
+		return ""
+	}
+	if h.CPUSockets > 1 {
+		s = fmt.Sprintf("%d× %s", h.CPUSockets, s)
+	}
+	if h.CPUThreads > 0 {
+		s += fmt.Sprintf(" (%dt)", h.CPUThreads)
+	}
+	return s
+}
+
 func buildHostPageData(r *http.Request, d Deps) HostPageData {
 	data := HostPageData{PageData: newPageData(r, d, "Host", "Hardware and OS inventory")}
 	if d.API == nil {
@@ -63,8 +116,15 @@ func buildHostPageData(r *http.Request, d Deps) HostPageData {
 
 func formatCPU(h core.HostInfoView) string {
 	s := h.CPUModel
+	if h.CPUSockets > 1 {
+		s = fmt.Sprintf("%d× %s", h.CPUSockets, s) // "2x Intel Xeon ..."
+	}
 	if h.CPUThreads > 0 {
-		s += fmt.Sprintf("  (%d cores / %d threads", h.CPUCores, h.CPUThreads)
+		if h.CPUSockets > 1 {
+			s += fmt.Sprintf("  (%d sockets / %d cores / %d threads", h.CPUSockets, h.CPUCores, h.CPUThreads)
+		} else {
+			s += fmt.Sprintf("  (%d cores / %d threads", h.CPUCores, h.CPUThreads)
+		}
 		if h.CPUBaseMHz > 0 {
 			s += fmt.Sprintf(" @ %.0f MHz", h.CPUBaseMHz)
 		}

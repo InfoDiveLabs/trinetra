@@ -20,7 +20,9 @@ import (
 type fakeAPI struct {
 	snapshot core.DashboardView
 	doctor   core.DoctorReport
-	hostInfo core.HostInfoView
+	hostInfo      core.HostInfoView
+	containerLogs string
+	logErr        error
 	active   []core.AlertRecord
 
 	cfg       *config.Config
@@ -81,6 +83,9 @@ func (f *fakeAPI) Config() (*config.Config, error) {
 }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
 func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil }
+func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
+	return f.containerLogs, f.logErr
+}
 
 // EnrollmentPIN returns the canned enrollPIN/enrollEnrolled/enrollErr a test
 // set up, recording every call in enrollCalls so onboarding's poll-until-
@@ -184,6 +189,22 @@ func TestRunHost(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("host output missing %q\n%s", want, out)
 		}
+	}
+}
+
+func TestRunLogs(t *testing.T) {
+	api := &fakeAPI{containerLogs: "hello from web\nsecond line\n"}
+	var buf bytes.Buffer
+	if code := run(api, []string{"logs", "web", "--tail", "50"}, &buf); code != 0 {
+		t.Fatalf("run logs exit = %d, want 0", code)
+	}
+	if got := buf.String(); !strings.Contains(got, "hello from web") || !strings.Contains(got, "second line") {
+		t.Errorf("logs output = %q", got)
+	}
+	// Missing container name is a usage error (exit 2), not a crash.
+	buf.Reset()
+	if code := run(api, []string{"logs"}, &buf); code != 2 {
+		t.Errorf("run logs (no container) exit = %d, want 2", code)
 	}
 }
 

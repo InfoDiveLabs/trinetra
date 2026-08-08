@@ -146,6 +146,43 @@ func TestConfigSavePersistsReloadsAndAudits(t *testing.T) {
 	}
 }
 
+// TestConfigIdentityPanelRendersAndSaves pins the identity setup UI (#101/#102):
+// the config page renders the server-name field + public-IP toggle, and a POST
+// applies both onto the live config.
+func TestConfigIdentityPanelRendersAndSaves(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	// GET renders the identity inputs.
+	getReq := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/config")
+	getRR := httptest.NewRecorder()
+	h.ServeHTTP(getRR, getReq)
+	body := getRR.Body.String()
+	for _, want := range []string{`name="server_name"`, `name="collect_public_ip"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("config page missing identity field %q", want)
+		}
+	}
+
+	// POST sets a server name and enables the public-IP lookup.
+	form := baseConfigForm()
+	form.Set("server_name", "attic-pi")
+	form.Set("collect_public_ip", "1")
+	rr := postForm(h, "/config", form, cookie, csrf)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if (*cfg).Name != "attic-pi" {
+		t.Errorf("cfg.Name = %q, want attic-pi", (*cfg).Name)
+	}
+	if !(*cfg).PublicIPEnabled() {
+		t.Error("collect.public_ip not enabled after POST")
+	}
+}
+
 // TestConfigSaveUnchangedFieldsWriteNoAudit pins that re-submitting the same
 // values (no actual change) does not spam the audit log.
 func TestConfigSaveUnchangedFieldsWriteNoAudit(t *testing.T) {

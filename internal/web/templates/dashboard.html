@@ -2,6 +2,19 @@
 {{$v := .View}}
 <div id="dashboard-live">
 
+  {{if .Host.Available}}
+  <!-- host strip (desktop): compact hardware/OS digest, full detail on /host -->
+  <div class="hoststrip">
+    <span class="hs-item"><span class="hs-k">Host</span> <span class="hs-v mono">{{.ServerName}}</span></span>
+    {{if .Host.OS}}<span class="hs-item"><span class="hs-k">OS</span> <span class="hs-v">{{.Host.OS}}</span></span>{{end}}
+    {{if .Host.CPU}}<span class="hs-item"><span class="hs-k">CPU</span> <span class="hs-v">{{.Host.CPU}}</span></span>{{end}}
+    {{if .Host.Memory}}<span class="hs-item"><span class="hs-k">RAM</span> <span class="hs-v mono">{{.Host.Memory}}</span></span>{{end}}
+    {{if .Host.Uptime}}<span class="hs-item"><span class="hs-k">Up</span> <span class="hs-v mono">{{.Host.Uptime}}</span></span>{{end}}
+    {{if .Host.LocalIP}}<span class="hs-item"><span class="hs-k">IP</span> <span class="hs-v mono">{{.Host.LocalIP}}</span></span>{{end}}
+    <a href="/host" class="hs-more">Host →</a>
+  </div>
+  {{end}}
+
   <!-- summary counts -->
   <div class="grid g-4">
     <div class="count {{if lt $v.ContainersRunning $v.ContainersTotal}}bad{{else}}good{{end}}">

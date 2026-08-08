@@ -416,8 +416,9 @@ type HostInfoView struct {
 	Kernel        string         `json:"kernel"`
 	OS            string         `json:"os"`
 	CPUModel      string         `json:"cpu_model"`
-	CPUCores      int            `json:"cpu_cores"`   // physical
-	CPUThreads    int            `json:"cpu_threads"` // logical
+	CPUSockets    int            `json:"cpu_sockets,omitempty"` // physical packages
+	CPUCores      int            `json:"cpu_cores"`             // physical
+	CPUThreads    int            `json:"cpu_threads"`           // logical
 	CPUBaseMHz    float64        `json:"cpu_base_mhz,omitempty"`
 	MemTotalBytes uint64         `json:"mem_total_bytes"`
 	BootTime      int64          `json:"boot_time"`

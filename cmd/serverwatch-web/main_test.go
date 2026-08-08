@@ -45,6 +45,9 @@ func (f *fakeAPI) Doctor() (core.DoctorReport, error) {
 	return core.DoctorReport{}, nil
 }
 func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return core.HostInfoView{}, nil }
+func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
+	return "", nil
+}
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil

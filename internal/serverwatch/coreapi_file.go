@@ -227,6 +227,12 @@ func (a *fileAPI) HostInfo() (core.HostInfoView, error) {
 	return buildHostInfoView(collectHostInfoFor(a.cfg), time.Now().Unix()), nil
 }
 
+// ContainerLogs implements core.API: like HostInfo it shells out to the real
+// host on demand (osExec{}/osFS{}).
+func (a *fileAPI) ContainerLogs(name string, lines int) (string, error) {
+	return collectContainerLogs(osExec{}, osFS{}, name, lines)
+}
+
 // EnrollmentPIN implements core.API: this CLI process has no live daemon
 // state (unlike inprocAPI, which reads through its own enrollState), so it
 // always returns errEnrollNeedsDaemon rather than a stale or fabricated

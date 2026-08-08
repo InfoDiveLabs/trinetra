@@ -1,6 +1,8 @@
 package serverwatch
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"serverwatch/internal/config"
@@ -50,9 +52,12 @@ processor	: 3
 physical id	: 0
 cpu cores	: 2
 `
-	model, cores, threads, mhz := parseCPUInfo(s)
+	model, sockets, cores, threads, mhz := parseCPUInfo(s)
 	if model != "Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz" {
 		t.Errorf("model = %q", model)
+	}
+	if sockets != 1 {
+		t.Errorf("sockets = %d, want 1", sockets)
 	}
 	if cores != 2 {
 		t.Errorf("cores = %d, want 2", cores)
@@ -62,6 +67,56 @@ cpu cores	: 2
 	}
 	if mhz != 1600.0 {
 		t.Errorf("baseMHz = %v, want 1600", mhz)
+	}
+}
+
+func TestParseCPUInfoDualSocket(t *testing.T) {
+	// Two physical Xeon sockets, 2 cores / 4 threads each (trimmed): the box has
+	// 2 sockets, 4 cores total, 8 threads total. Mirrors the infodivelabs host
+	// where a dual-socket machine was reporting only its aggregate core count.
+	var b strings.Builder
+	for proc := 0; proc < 8; proc++ {
+		phys := 0
+		if proc >= 4 {
+			phys = 1
+		}
+		b.WriteString("processor\t: ")
+		b.WriteString(strconv.Itoa(proc))
+		b.WriteString("\nmodel name\t: Intel(R) Xeon(R) Platinum 8153 CPU @ 2.00GHz\nphysical id\t: ")
+		b.WriteString(strconv.Itoa(phys))
+		b.WriteString("\ncpu cores\t: 2\n\n")
+	}
+	_, sockets, cores, threads, _ := parseCPUInfo(b.String())
+	if sockets != 2 {
+		t.Errorf("sockets = %d, want 2 (dual-socket box)", sockets)
+	}
+	if cores != 4 {
+		t.Errorf("cores = %d, want 4 (2 per socket x 2 sockets)", cores)
+	}
+	if threads != 8 {
+		t.Errorf("threads = %d, want 8", threads)
+	}
+}
+
+func TestKeepDisk(t *testing.T) {
+	cases := []struct {
+		device, fstype string
+		keep           bool
+	}{
+		{"/dev/sda1", "ext4", true},        // local block device
+		{"/dev/nvme0n1p2", "ext4", true},   // nvme partition
+		{"/dev/mapper/vg-root", "ext4", true}, // LVM volume
+		{"nas:/vol/media", "nfs4", true},   // network mount kept
+		{"//smb/share", "cifs", true},      // cifs kept
+		{"overlay", "overlay", false},      // docker layer dropped
+		{"tmpfs", "tmpfs", false},          // ram-backed dropped
+		{"/dev/loop3", "squashfs", false},  // snap dropped
+		{"udev", "devtmpfs", false},        // pseudo dropped
+	}
+	for _, c := range cases {
+		if got := keepDisk(c.device, c.fstype); got != c.keep {
+			t.Errorf("keepDisk(%q,%q) = %v, want %v", c.device, c.fstype, got, c.keep)
+		}
 	}
 }
 
@@ -75,12 +130,15 @@ processor	: 3
 Hardware	: BCM2835
 Model		: Raspberry Pi 4 Model B Rev 1.4
 `
-	model, cores, threads, _ := parseCPUInfo(s)
+	model, sockets, cores, threads, _ := parseCPUInfo(s)
 	if model != "Raspberry Pi 4 Model B Rev 1.4" {
 		t.Errorf("model = %q, want the Pi Model line", model)
 	}
 	if threads != 4 || cores != 4 {
 		t.Errorf("cores=%d threads=%d, want 4/4 (fallback)", cores, threads)
+	}
+	if sockets != 1 {
+		t.Errorf("sockets = %d, want 1 (no physical id -> single package)", sockets)
 	}
 }
 
@@ -129,10 +187,12 @@ func TestCollectHostInfo(t *testing.T) {
 		"/sys/block/sda/queue/rotational":   "0\n",
 	}}
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
-		// df -PT -B1 with one real disk and one tmpfs.
+		// df -PT -B1 with one real disk, one tmpfs, and one docker overlay: only
+		// the real disk should survive the keepDisk filter.
 		return []byte("Filesystem     Type  1B-blocks       Used   Available Use% Mounted on\n" +
 			"/dev/sda1      ext4  512000000000  1000000     511000000000   1% /\n" +
-			"tmpfs          tmpfs   8192000000        0       8192000000   0% /run\n"), nil
+			"tmpfs          tmpfs   8192000000        0       8192000000   0% /run\n" +
+			"overlay        overlay 512000000000 1000000    511000000000   1% /var/lib/docker/overlay2/abc/merged\n"), nil
 	}}
 
 	h := collectHostInfo(x, fs)
@@ -166,6 +226,10 @@ func TestCollectHostInfo(t *testing.T) {
 	}
 	if sda.FSType != "ext4" || sda.Mount != "/" {
 		t.Errorf("sda fstype=%q mount=%q", sda.FSType, sda.Mount)
+	}
+	// The tmpfs and docker overlay rows must have been filtered out.
+	if len(h.Disks) != 1 {
+		t.Errorf("want only the real disk kept, got %d rows: %+v", len(h.Disks), h.Disks)
 	}
 }
 

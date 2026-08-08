@@ -108,6 +108,17 @@ a{color:var(--info); text-decoration:none}
 .tile .spark{position:absolute; right:0; bottom:0; left:0}
 .tile.alarm{border-color:color-mix(in oklab,var(--crit) 55%,var(--border))}
 .tile.warnb{border-color:color-mix(in oklab,var(--warn) 50%,var(--border))}
+/* dashboard host strip (#100): compact hardware/OS digest, desktop only */
+.hoststrip{display:flex; flex-wrap:wrap; align-items:center; gap:6px 20px; padding:10px 16px; margin-bottom:14px; border:1px solid var(--border); border-radius:var(--r); background:linear-gradient(180deg,var(--surface),var(--bg)); font-size:12.5px}
+.hoststrip .hs-item{display:inline-flex; align-items:baseline; gap:7px; min-width:0}
+.hoststrip .hs-k{color:var(--faint); text-transform:uppercase; letter-spacing:.06em; font-size:10.5px}
+.hoststrip .hs-v{color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:38ch}
+.hoststrip .hs-more{margin-left:auto; color:var(--signal); text-decoration:none; font-size:12px; white-space:nowrap}
+.hoststrip .hs-more:hover{text-decoration:underline}
+@media (max-width:860px){.hoststrip{display:none}}
+/* drawer per-metric sparkline (#115) and container log viewer */
+.db canvas.spark{display:block; margin:6px 0; border:1px solid var(--border-soft); border-radius:var(--r-sm); background:var(--surface2)}
+.logbox{margin:8px 0 0; max-height:340px; overflow:auto; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm); font-family:var(--font-mono); font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; color:var(--text)}
 
 /* LED / badges */
 .led{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--faint)}

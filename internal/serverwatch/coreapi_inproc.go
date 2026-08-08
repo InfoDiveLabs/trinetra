@@ -20,6 +20,7 @@ package serverwatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -509,6 +510,13 @@ func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
 	return buildHostInfoView(collectHostInfoFor(a.getCfg()), time.Now().Unix()), nil
 }
 
+// ContainerLogs implements core.API: it snapshots the last `lines` log lines of
+// a live docker container. Like HostInfo/Doctor it runs on demand against the
+// real host (osExec{}/osFS{}).
+func (a *inprocAPI) ContainerLogs(name string, lines int) (string, error) {
+	return collectContainerLogs(osExec{}, osFS{}, name, lines)
+}
+
 // buildHostInfoView adapts the serverwatch HostInfo into the core DTO, deriving
 // UptimeSec from BootTime and nowUnix (a cached BootTime therefore yields a
 // correct uptime on every read). A zero/unknown BootTime yields uptime 0.
@@ -533,6 +541,7 @@ func buildHostInfoView(h HostInfo, nowUnix int64) core.HostInfoView {
 		Kernel:        h.Kernel,
 		OS:            h.OS,
 		CPUModel:      h.CPUModel,
+		CPUSockets:    h.CPUSockets,
 		CPUCores:      h.CPUCores,
 		CPUThreads:    h.CPUThreads,
 		CPUBaseMHz:    h.CPUBaseMHz,
@@ -543,6 +552,37 @@ func buildHostInfoView(h HostInfo, nowUnix int64) core.HostInfoView {
 		PublicIP:      h.PublicIP,
 		Disks:         disks,
 	}
+}
+
+// collectContainerLogs validates name and returns a `docker logs --tail lines`
+// snapshot for it. Shared by the inproc and file APIs. It refuses a name that
+// is malformed (validContainerName) or that is not among the containers docker
+// currently reports, so the only argument ever passed to `docker logs` is a
+// real, live container name -- never caller-controlled flags or arbitrary
+// strings. Errors when docker is unavailable or the container is unknown.
+func collectContainerLogs(x Exec, fs FileSource, name string, lines int) (string, error) {
+	if !validContainerName(name) {
+		return "", fmt.Errorf("invalid container name %q", name)
+	}
+	da := probeDocker(x, fs)
+	if !da.available {
+		return "", errors.New("docker is not available on this host")
+	}
+	list, err := da.list(x)
+	if err != nil {
+		return "", err
+	}
+	known := false
+	for _, c := range list {
+		if c.Name == name {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return "", fmt.Errorf("no such container %q", name)
+	}
+	return da.logs(x, name, lines)
 }
 
 // collectHostInfoFor collects the host inventory and, when cfg opts into the

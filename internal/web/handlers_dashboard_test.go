@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"serverwatch/internal/core"
 )
 
 // dashboardTestView is a distinctive fake DashboardView: every number is
@@ -115,6 +117,32 @@ func TestDashboardRendersRealSnapshotValues(t *testing.T) {
 	for _, demo := range dashboardMockupDemoNumbers {
 		if strings.Contains(body, demo) {
 			t.Errorf("dashboard body still contains mockup demo markup %q", demo)
+		}
+	}
+}
+
+// TestDashboardShowsHostStrip pins the compact host strip (#100): when host
+// info is available, the dashboard renders the OS, a socket-aware CPU digest,
+// memory, uptime, and local IP, with a link through to the full /host page.
+func TestDashboardShowsHostStrip(t *testing.T) {
+	d := dashboardTestDeps(t)
+	d.API = fakeAPI{snap: dashboardTestView(), hostInfo: core.HostInfoView{
+		Hostname: "infodivelabs", OS: "Ubuntu 24.04.3 LTS",
+		CPUModel: "Intel(R) Xeon(R) Platinum 8153", CPUSockets: 2, CPUCores: 32, CPUThreads: 64,
+		MemTotalBytes: 67 << 30, UptimeSec: 90061, LocalIP: "192.168.1.101",
+	}}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"hoststrip", "Ubuntu 24.04.3 LTS", "2× Intel(R) Xeon(R) Platinum 8153", "(64t)", "192.168.1.101", `href="/host"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard host strip missing %q:\n%s", want, body)
 		}
 	}
 }
