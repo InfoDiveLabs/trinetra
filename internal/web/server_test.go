@@ -25,6 +25,32 @@ func testDeps(t *testing.T) Deps {
 	}
 }
 
+// TestBrandShowsServerName pins #101: the sidebar brand subtitle renders the
+// configured server.name (from Cfg().ServerName()) instead of the old
+// hardcoded MONITOR.HOME.LAN.
+func TestBrandShowsServerName(t *testing.T) {
+	d := enrollTestDeps(t)
+	cfg := config.Default()
+	cfg.Name = "attic-pi"
+	d.Cfg = func() *config.Config { return cfg }
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / (signed in) = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "attic-pi") {
+		t.Errorf("brand does not render server.name (missing 'attic-pi')")
+	}
+	if strings.Contains(body, "MONITOR.HOME.LAN") {
+		t.Errorf("old hardcoded brand MONITOR.HOME.LAN still present")
+	}
+}
+
 // TestServerServesDashboardAndAssets pins newHandler's routes: GET / is
 // viewer+ (requireRole(RoleViewer, ...)), so a SIGNED-IN request renders the
 // base layout (brand + nav) around the dashboard placeholder while an

@@ -166,6 +166,11 @@ type PageData struct {
 	// Title/Sub drive the topbar's <h1>/<p>, mirroring the mockup's
 	// data-title/data-sub attributes.
 	Title, Sub string
+	// ServerName is this host's display name (config server.name, or the
+	// hostname when unset), shown as the sidebar brand subtitle so a multi-host
+	// operator can tell which host's panel they are looking at (#101). Replaces
+	// the old hardcoded MONITOR.HOME.LAN.
+	ServerName string
 	// Status/StatusText drive the topbar's status pill (led color class +
 	// display text) and are ALWAYS computed by newPageData from the real
 	// active-alert set (topbarStatus, over the control socket) -- see that function's
@@ -225,6 +230,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	return PageData{
 		Title:      title,
 		Sub:        sub,
+		ServerName: d.Cfg().ServerName(),
 		Status:     status,
 		StatusText: statusText,
 		Role:       role,

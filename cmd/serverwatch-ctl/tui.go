@@ -80,6 +80,11 @@ type model struct {
 	// help toggles the global keymap overlay (opened with '?' from Home,
 	// dismissed by any key).
 	help bool
+	// serverName is the host's display name (config server.name, or the
+	// hostname when unset), captured from the Config() fetch Init already
+	// issues and shown in the Home header so a multi-host operator can tell
+	// which host this ctl is pointed at (#101), matching the web sidebar brand.
+	serverName string
 
 	// web setup wizard
 	wiz        webSetupStep
@@ -397,6 +402,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case onboardCheckMsg:
+		// The onboarding check's Config() fetch (Init) is also where we learn
+		// the host's display name for the Home header (#101).
+		if msg.cfg != nil {
+			m.serverName = msg.cfg.ServerName()
+		}
 		// Only auto-enter onboarding if the user is still sitting on Home:
 		// by the time this lands (it's fetched alongside the snapshot/tick
 		// in Init, so it can arrive after other keys), they may already have
@@ -708,7 +718,11 @@ func (m model) homeView() string {
 // homeHeader is the "serverwatch  ● online   updated 3s ago" status line.
 func (m model) homeHeader() string {
 	glyph, text, style := onlineGlyph(m.snap.Online)
-	head := titleStyle.Render("serverwatch") + "  " + style.Render(glyph+" "+text)
+	head := titleStyle.Render("serverwatch")
+	if m.serverName != "" {
+		head += faintStyle.Render(" · " + m.serverName)
+	}
+	head += "  " + style.Render(glyph+" "+text)
 	if !m.loading && m.snap.TS != 0 {
 		head += faintStyle.Render("   updated " + agoString(m.snap.TS))
 	}

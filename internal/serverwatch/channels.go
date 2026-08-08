@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -203,15 +204,44 @@ func routeFromChannelConfig(cc config.ChannelConfig) Route {
 // implemented yet must not take down every other configured channel.
 func channelsFromConfig(c *config.Config) []Channel {
 	var out []Channel
+	name := c.ServerName()
 	for _, cc := range c.Channels {
 		n, err := buildNotifier(cc, c)
 		if err != nil {
 			fmt.Fprintf(stderr, "channel %q: %v; skipping\n", cc.Name, err)
 			continue
 		}
-		out = append(out, Channel{N: n, Route: routeFromChannelConfig(cc), Enabled: cc.Enabled})
+		// Prefix the host name onto every delivered alert title so a multi-host
+		// setup shows which host fired (#101). Wrapping at delivery (Send takes
+		// the Alert by value) keeps the on-disk alert log and the web alerts
+		// view host-neutral -- the web UI already knows which host it is.
+		out = append(out, Channel{N: hostPrefixNotifier{inner: n, serverName: name}, Route: routeFromChannelConfig(cc), Enabled: cc.Enabled})
 	}
 	return out
+}
+
+// hostPrefixNotifier decorates a Notifier to prepend "[<server.name>] " to the
+// alert title at send time. serverName is the resolved config.ServerName(); an
+// empty serverName passes the title through unchanged.
+type hostPrefixNotifier struct {
+	inner      Notifier
+	serverName string
+}
+
+func (h hostPrefixNotifier) Name() string { return h.inner.Name() }
+
+func (h hostPrefixNotifier) Send(ctx context.Context, a Alert) error {
+	a.Title = titleWithHost(h.serverName, a.Title) // a is a value copy; the stored alert is untouched
+	return h.inner.Send(ctx, a)
+}
+
+// titleWithHost prefixes serverName onto title as "[serverName] title", or
+// returns title unchanged when serverName is empty.
+func titleWithHost(serverName, title string) string {
+	if serverName == "" {
+		return title
+	}
+	return "[" + serverName + "] " + title
 }
 
 // migrateTelegramChannel back-fills a "telegram" ChannelConfig from the

@@ -16,6 +16,10 @@ import (
 // Config is persisted as JSON. Zero values mean "use default"; Get resolves
 // the effective value by falling back to Default() for unset scalar keys.
 type Config struct {
+	// Name is this host's display name/id (dotted key server.name). Stored
+	// empty by default so the effective name (ServerName()) tracks the live
+	// system hostname; set it to disambiguate alerts from multiple hosts.
+	Name string `json:"name,omitempty"`
 	// SampleInterval is the slow tier: seconds between full baseline samples.
 	SampleInterval int `json:"sample_interval,omitempty"`
 	// FastInterval is the fast tier: seconds between lightweight checks.
@@ -518,6 +522,21 @@ func (c *Config) SetChannelField(name, key, value string) error {
 }
 
 // Default returns the baked-in defaults. A fresh install works with only a token.
+// ServerName returns the effective display name for this host: the configured
+// server.name when set, else the system hostname, else "serverwatch" if the
+// hostname lookup fails. Resolved lazily (not baked into Default()) so the name
+// tracks a renamed host instead of freezing at first run, and so Default() does
+// no I/O.
+func (c *Config) ServerName() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "serverwatch"
+}
+
 func Default() *Config {
 	c := &Config{
 		SampleInterval:    60,
@@ -626,6 +645,8 @@ func (c *Config) Save(path string) error {
 // Get returns the effective string value for a dotted key.
 func (c *Config) Get(key string) (string, bool) {
 	switch key {
+	case "server.name":
+		return c.ServerName(), true
 	case "sample_interval":
 		return strconv.Itoa(c.SampleInterval), true
 	case "fast_interval":
@@ -717,6 +738,8 @@ func (c *Config) Get(key string) (string, bool) {
 func (c *Config) Set(key, val string) error {
 	f := func() (float64, error) { return strconv.ParseFloat(val, 64) }
 	switch key {
+	case "server.name":
+		c.Name = val // empty clears back to the system hostname (see ServerName)
 	case "sample_interval":
 		n, err := strconv.Atoi(val)
 		if err != nil || n < 5 {
@@ -1034,6 +1057,8 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "public.enabled", Group: "Public", Kind: "bool", Help: "Enable the anonymous /public status page."},
 	{Name: "public.panels", Group: "Public", Kind: "csv", Help: "Comma-separated panel ids exposed on the public page."},
+
+	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
 }
 
 // effectiveFastInterval returns c.FastInterval, or the baked-in default (5)

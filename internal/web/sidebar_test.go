@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"serverwatch/internal/config"
 )
 
 // TestSidebarShowsSignedInUserNotHardcodedName is the #80 guard: the sidebar
@@ -12,6 +14,12 @@ import (
 // seedSignedInRequest), never the hardcoded "Suraj"/"Aditi" placeholders.
 func TestSidebarShowsSignedInUserNotHardcodedName(t *testing.T) {
 	d, _, _ := configTestDeps(t)
+	// Pin a fixed server.name so the brand subtitle (#101) is deterministic and
+	// doesn't render the dev machine's hostname, which could itself contain a
+	// name this test checks for absence of.
+	cfg := config.Default()
+	cfg.Name = "test-host"
+	d.Cfg = func() *config.Config { return cfg }
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
