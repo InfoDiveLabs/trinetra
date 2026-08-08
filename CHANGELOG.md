@@ -6,6 +6,37 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
+## [0.5.0-beta.2] - 2026-08-08
+
+The server-identity epic (#99). Every server now names itself instead of wearing
+a hardcoded brand, exposes a full host inventory (hardware, OS, disks, IPs)
+across all three surfaces, and points CPU/RAM alerts at the process or container
+actually responsible. Each capability lands in core, web, and `serverwatch-ctl`
+together.
+
+### Added
+
+- **Configurable `server.name`.** A new `server.name` config key names the
+  server; it resolves through the configured name, then the OS hostname, then
+  `serverwatch`. The web UI brand shows it in place of the old hardcoded
+  `MONITOR.HOME.LAN`, `serverwatch-ctl` shows it in the Home header and config
+  editor, and every alert title is prefixed `[name]` so a multi-server inbox is
+  legible. (#101)
+- **Host inventory.** A stdlib-only collector reports CPU model / cores /
+  threads, total RAM, kernel, OS release, uptime, and per-disk model / type /
+  size / filesystem. It is served over a dedicated `core.API.HostInfo()` method
+  (control socket included), rendered on a new web **Host** page (viewer-gated),
+  and available as `serverwatch-ctl host` (with `--json`). (#100)
+- **Host IP addresses.** The inventory reports the local IP always and the
+  public IP only when the opt-in `collect.public_ip` key is set (default false,
+  since resolving it makes an outbound request). Both are shown on the web Host
+  page and the ctl subcommand. (#102)
+- **CPU and memory alerts name the culprit.** A `cpu`/`mem` breach message now
+  carries a ` (top: <proc> N%, container <name> N%)` suffix built from the
+  process and container data already on the snapshot, so an alert reads
+  `cpu = 96.0 >= threshold 95.0 (top: ffmpeg 82%, container web 30%)` instead of
+  a bare number. It degrades to no suffix when that data is absent. (#103)
+
 ## [0.5.0-beta.1] - 2026-08-08
 
 A security-hardening and correctness release. It works through the Fable 5
