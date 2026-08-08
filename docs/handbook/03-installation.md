@@ -351,6 +351,15 @@ flowchart TD
    `/start` with no PIN, will not claim it; the PIN is what proves the chat is
    yours.
 
+> **Brute-force protection.** The PIN is bounded against guessing. After a run
+> of wrong `/start <pin>` attempts (default 5) the daemon ignores further
+> `/start` messages for a short cooldown (default 60 seconds) and rotates the
+> PIN to a fresh value, so a partial guessing run is never able to converge on
+> the six-digit space. If you fat-finger the PIN enough times to trip this, just
+> re-read the new PIN from the journal (`sudo journalctl -u serverwatch | grep
+> "/start"`) and send that one. The threshold and cooldown are tunable via
+> `telegram.enroll_max_attempts` and `telegram.enroll_cooldown` (seconds).
+
 Once you send the correct PIN, that chat is registered as the owner chat. From
 then on, only that chat is answered. Anyone else who messages the bot is
 ignored, and they cannot claim it because the PIN was single-use.

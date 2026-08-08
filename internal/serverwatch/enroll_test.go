@@ -6,7 +6,20 @@ package serverwatch
 import (
 	"sync"
 	"testing"
+	"time"
+
+	"serverwatch/internal/config"
 )
+
+// newEnrollCfg builds an unclaimed-bot config (token set, no chat id) with the
+// given brute-force bound so the Attempt tests run at a small, deterministic
+// threshold instead of the default 5.
+func newEnrollCfg(maxAttempts, cooldownSec int) *config.Config {
+	c := newTgConfig("tok", "")
+	c.Telegram.MaxEnrollAttempts = maxAttempts
+	c.Telegram.EnrollCooldown = cooldownSec
+	return c
+}
 
 // TestEnrollStatePINConfiguredNotEnrolled: telegram token set, chat id
 // empty -> a stable non-empty pin, the same value across repeated calls
@@ -116,5 +129,124 @@ func TestEnrollStatePINConcurrentCallsAgree(t *testing.T) {
 		if p != want {
 			t.Fatalf("pins[%d] = %q, want %q (all concurrent callers must agree)", i, p, want)
 		}
+	}
+}
+
+var enrollBase = time.Unix(1_000_000, 0)
+
+// TestEnrollAttemptCorrectPINSucceeds: a correct "/start <pin>" enrolls (true)
+// and leaves no failure state behind.
+func TestEnrollAttemptCorrectPINSucceeds(t *testing.T) {
+	e := &enrollState{pin: "424242"}
+	cfg := newEnrollCfg(3, 60)
+
+	if !e.Attempt(cfg, "/start 424242", enrollBase) {
+		t.Fatal("Attempt(correct pin) = false, want true")
+	}
+	if e.failures != 0 {
+		t.Errorf("failures = %d after success, want 0", e.failures)
+	}
+	if !e.cooldownUntil.IsZero() {
+		t.Errorf("cooldownUntil set after a success, want zero")
+	}
+}
+
+// TestEnrollAttemptNonStartNeverCounts: messages that are not a well-formed
+// "/start <arg>" are ignored WITHOUT advancing the failure counter, so
+// ordinary chatter can never rotate the pin or trip the cooldown.
+func TestEnrollAttemptNonStartNeverCounts(t *testing.T) {
+	e := &enrollState{pin: "424242"}
+	cfg := newEnrollCfg(3, 60)
+
+	for _, text := range []string{"/stats", "hello", "/start", "/start 1 2", "start 424242"} {
+		if e.Attempt(cfg, text, enrollBase) {
+			t.Errorf("Attempt(%q) = true, want false", text)
+		}
+	}
+	if e.failures != 0 {
+		t.Errorf("failures = %d, want 0 (non-/start messages must not count)", e.failures)
+	}
+	if e.pin != "424242" {
+		t.Errorf("pin rotated to %q by non-attempt messages, want unchanged 424242", e.pin)
+	}
+}
+
+// TestEnrollAttemptWrongGuessThenCorrectResets: wrong guesses below the
+// threshold accumulate but don't rotate; a subsequent correct guess still
+// enrolls and clears the counter.
+func TestEnrollAttemptWrongGuessThenCorrectResets(t *testing.T) {
+	e := &enrollState{pin: "424242"}
+	cfg := newEnrollCfg(5, 60) // threshold 5, so 2 wrong guesses don't rotate
+
+	for i := 0; i < 2; i++ {
+		if e.Attempt(cfg, "/start 000000", enrollBase) {
+			t.Fatalf("wrong guess %d = true, want false", i)
+		}
+	}
+	if e.failures != 2 {
+		t.Fatalf("failures = %d after 2 wrong guesses, want 2", e.failures)
+	}
+	if e.pin != "424242" {
+		t.Fatalf("pin rotated to %q below threshold, want unchanged 424242", e.pin)
+	}
+	if !e.Attempt(cfg, "/start 424242", enrollBase) {
+		t.Fatal("Attempt(correct pin) after wrong guesses = false, want true")
+	}
+	if e.failures != 0 {
+		t.Errorf("failures = %d after a correct guess, want 0 (counter must reset)", e.failures)
+	}
+}
+
+// TestEnrollAttemptRotatesAndCoolsDownAtThreshold is the core #93 property:
+// once wrong guesses reach the threshold the pin ROTATES and a cooldown opens
+// during which every /start is ignored; after the cooldown the freshly rotated
+// pin is what enrolls, so an attacker's earlier progress against the old pin is
+// worthless.
+func TestEnrollAttemptRotatesAndCoolsDownAtThreshold(t *testing.T) {
+	e := &enrollState{pin: "424242"}
+	cfg := newEnrollCfg(3, 60)
+
+	// Three wrong guesses: the third crosses the threshold and rotates.
+	for i := 0; i < 3; i++ {
+		if e.Attempt(cfg, "/start 000000", enrollBase) {
+			t.Fatalf("wrong guess %d = true, want false", i)
+		}
+	}
+	if e.pin == "424242" {
+		t.Fatal("pin was not rotated after reaching the attempt threshold")
+	}
+	if e.failures != 0 {
+		t.Errorf("failures = %d after rotation, want 0 (reset)", e.failures)
+	}
+	wantCooldown := enrollBase.Add(60 * time.Second)
+	if !e.cooldownUntil.Equal(wantCooldown) {
+		t.Errorf("cooldownUntil = %v, want %v", e.cooldownUntil, wantCooldown)
+	}
+	rotated := e.pin
+
+	// During the cooldown even the correct (rotated) pin is ignored.
+	if e.Attempt(cfg, "/start "+rotated, enrollBase.Add(30*time.Second)) {
+		t.Error("Attempt during cooldown = true, want false (rate-limited)")
+	}
+
+	// After the cooldown, the rotated pin enrolls.
+	if !e.Attempt(cfg, "/start "+rotated, enrollBase.Add(61*time.Second)) {
+		t.Error("Attempt(rotated pin) after cooldown = false, want true")
+	}
+}
+
+// TestEnrollAttemptGatedWhenNotEnrollable: with no token (nothing to enroll)
+// or once a chat id is set (already enrolled), Attempt never enrolls, matching
+// PIN()'s gate.
+func TestEnrollAttemptGatedWhenNotEnrollable(t *testing.T) {
+	notConfigured := &config.Config{} // no token
+	if (&enrollState{}).Attempt(notConfigured, "/start 424242", enrollBase) {
+		t.Error("Attempt with no telegram token = true, want false")
+	}
+
+	claimed := newEnrollCfg(3, 60)
+	claimed.Telegram.ChatID = "111" // already enrolled
+	if (&enrollState{pin: "424242"}).Attempt(claimed, "/start 424242", enrollBase) {
+		t.Error("Attempt on an already-enrolled bot = true, want false")
 	}
 }

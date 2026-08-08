@@ -2,6 +2,7 @@ package serverwatch
 
 import (
 	"testing"
+	"time"
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/telegram"
@@ -27,7 +28,7 @@ func TestProcessUpdatesIgnoresUnauthorizedSender(t *testing.T) {
 	reply := func(c *config.Config, u telegram.Update) { replied = append(replied, u) }
 
 	ups := []telegram.Update{{UpdateID: 7, Text: "/stats", ChatID: "999"}}
-	off, _ := processUpdates(ups, 0, cfg, "424242", getCfg, setChatID, reply)
+	off, _ := processUpdates(ups, 0, cfg, &enrollState{pin: "424242"}, time.Now, getCfg, setChatID, reply)
 
 	if len(replied) != 0 {
 		t.Fatalf("unauthorized sender 999 must not be answered; got %d replies", len(replied))
@@ -50,7 +51,7 @@ func TestProcessUpdatesRepliesToAuthorizedSender(t *testing.T) {
 	reply := func(c *config.Config, u telegram.Update) { replied = append(replied, u) }
 
 	ups := []telegram.Update{{UpdateID: 3, Text: "/stats", ChatID: "111"}}
-	processUpdates(ups, 0, cfg, "424242", getCfg, setChatID, reply)
+	processUpdates(ups, 0, cfg, &enrollState{pin: "424242"}, time.Now, getCfg, setChatID, reply)
 
 	if len(replied) != 1 || replied[0].ChatID != "111" {
 		t.Fatalf("authorized sender must get exactly one reply; got %+v", replied)
@@ -72,7 +73,7 @@ func TestProcessUpdatesEnrollsOnCorrectPINThenReplies(t *testing.T) {
 	reply := func(c *config.Config, u telegram.Update) { replied = append(replied, u) }
 
 	ups := []telegram.Update{{UpdateID: 1, Text: "/start 424242", ChatID: "555"}}
-	_, c := processUpdates(ups, 0, cur, "424242", getCfg, setChatID, reply)
+	_, c := processUpdates(ups, 0, cur, &enrollState{pin: "424242"}, time.Now, getCfg, setChatID, reply)
 
 	if c.Telegram.ChatID != "555" {
 		t.Fatalf("a correct /start <pin> must enroll the sender; got chat id %q", c.Telegram.ChatID)
@@ -93,7 +94,7 @@ func TestProcessUpdatesRejectsWrongPIN(t *testing.T) {
 	reply := func(c *config.Config, u telegram.Update) { replied = append(replied, u) }
 
 	ups := []telegram.Update{{UpdateID: 1, Text: "/start 000000", ChatID: "555"}}
-	processUpdates(ups, 0, cur, "424242", getCfg, setChatID, reply)
+	processUpdates(ups, 0, cur, &enrollState{pin: "424242"}, time.Now, getCfg, setChatID, reply)
 
 	if len(captured) != 0 {
 		t.Fatalf("a wrong PIN must not enroll anyone; captured %v", captured)
@@ -114,7 +115,7 @@ func TestProcessUpdatesIgnoresNonEnrollWhileUnclaimed(t *testing.T) {
 	reply := func(c *config.Config, u telegram.Update) { replied = append(replied, u) }
 
 	ups := []telegram.Update{{UpdateID: 2, Text: "/stats", ChatID: "555"}}
-	processUpdates(ups, 0, cur, "424242", getCfg, setChatID, reply)
+	processUpdates(ups, 0, cur, &enrollState{pin: "424242"}, time.Now, getCfg, setChatID, reply)
 
 	if len(captured) != 0 || len(replied) != 0 {
 		t.Fatalf("a non-enroll message to an unclaimed bot must be ignored; captured %v, replies %d", captured, len(replied))
