@@ -172,6 +172,7 @@ func TestRunHost(t *testing.T) {
 		Hostname: "attic-pi", OS: "Debian GNU/Linux 12", Kernel: "6.1.0-13-arm64",
 		CPUModel: "Cortex-A72", CPUCores: 4, CPUThreads: 4, MemTotalBytes: 8 << 30,
 		UptimeSec: 90061, // 1d 1h 1m
+		LocalIP: "192.168.1.50", PublicIP: "203.0.113.7",
 		Disks:     []core.HostDiskView{{Device: "nvme0n1", Model: "WD SN570", Rotational: false, SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}},
 	}}
 	var buf bytes.Buffer
@@ -179,7 +180,7 @@ func TestRunHost(t *testing.T) {
 		t.Fatalf("run host exit = %d, want 0", code)
 	}
 	out := buf.String()
-	for _, want := range []string{"attic-pi", "Debian GNU/Linux 12", "Cortex-A72", "4 cores", "8.0 GiB", "1d 1h 1m", "nvme0n1", "WD SN570", "SSD"} {
+	for _, want := range []string{"attic-pi", "Debian GNU/Linux 12", "Cortex-A72", "4 cores", "8.0 GiB", "1d 1h 1m", "nvme0n1", "WD SN570", "SSD", "192.168.1.50", "203.0.113.7"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("host output missing %q\n%s", want, out)
 		}

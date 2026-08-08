@@ -168,6 +168,12 @@ func runHost(api core.API, out io.Writer, jsonOut bool) int {
 	fmt.Fprintf(out, "cpu:      %s\n", cpu)
 	fmt.Fprintf(out, "memory:   %s\n", hostBytes(h.MemTotalBytes))
 	fmt.Fprintf(out, "uptime:   %s\n", hostUptime(h.UptimeSec))
+	if h.LocalIP != "" {
+		fmt.Fprintf(out, "local ip: %s\n", h.LocalIP)
+	}
+	if h.PublicIP != "" {
+		fmt.Fprintf(out, "public ip: %s\n", h.PublicIP)
+	}
 	if len(h.Disks) > 0 {
 		fmt.Fprintf(out, "disks:\n")
 		for _, d := range h.Disks {

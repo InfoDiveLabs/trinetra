@@ -152,6 +152,11 @@ type Config struct {
 		// heaviest slow-tier call, so it is throttled independently of
 		// sample_interval. Unset/0 -> default 1800s (30 min).
 		SmartInterval int `json:"smart_interval,omitempty"`
+		// PublicIP gates the host's public-IP lookup (#102), an OUTBOUND call
+		// to a third-party echo service. Unlike the other collect toggles it
+		// defaults to FALSE (opt-in), because it is the only one that reaches
+		// off-box. nil is treated as false.
+		PublicIP *bool `json:"public_ip,omitempty"`
 	} `json:"collect"`
 	// Web holds the web UI server's settings (internal/web, compiled into
 	// the serverwatch-web binary, no build tag -- see
@@ -223,6 +228,13 @@ type Config struct {
 // (collect.container_stats) is enabled: unset (nil) defaults to true.
 func (c *Config) ContainerStatsEnabled() bool {
 	return c.Collect.ContainerStats == nil || *c.Collect.ContainerStats
+}
+
+// PublicIPEnabled reports whether the opt-in public-IP lookup (collect.public_ip)
+// is enabled. Unlike the other collect toggles it defaults to FALSE (nil ->
+// false) because it makes an outbound call.
+func (c *Config) PublicIPEnabled() bool {
+	return c.Collect.PublicIP != nil && *c.Collect.PublicIP
 }
 
 // NetThroughputEnabled reports whether the per-interface network throughput
@@ -699,6 +711,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.Storage.RollupRetention, true
 	case "collect.container_stats":
 		return strconv.FormatBool(c.ContainerStatsEnabled()), true
+	case "collect.public_ip":
+		return strconv.FormatBool(c.PublicIPEnabled()), true
 	case "collect.net_throughput":
 		return strconv.FormatBool(c.NetThroughputEnabled()), true
 	case "collect.services":
@@ -888,6 +902,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.container_stats: %w", err)
 		}
 		c.Collect.ContainerStats = &b
+	case "collect.public_ip":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("collect.public_ip: %w", err)
+		}
+		c.Collect.PublicIP = &b
 	case "collect.net_throughput":
 		b, err := strconv.ParseBool(val)
 		if err != nil {
@@ -1039,6 +1059,7 @@ var keyCatalog = []KeyInfo{
 	{Name: "storage.rollup_retention", Group: "Storage", Kind: "duration", Help: "How long 1m-rollup samples and events are kept, e.g. 720h.", RestartRequired: true},
 
 	{Name: "collect.container_stats", Group: "Collection", Kind: "bool", Help: "Collect per-container docker stats."},
+	{Name: "collect.public_ip", Group: "Collection", Kind: "bool", Help: "Look up the host's public IP via an outbound call (opt-in, default false)."},
 	{Name: "collect.net_throughput", Group: "Collection", Kind: "bool", Help: "Collect per-interface network throughput."},
 	{Name: "collect.services", Group: "Collection", Kind: "bool", Help: "Collect the full systemd unit inventory."},
 	{Name: "collect.processes", Group: "Collection", Kind: "bool", Help: "Collect the process-table overview."},

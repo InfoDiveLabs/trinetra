@@ -224,6 +224,11 @@ core and logical thread counts, total RAM, uptime, and each disk's model, type
 (`/proc`, `/sys/block`, `df`) and does not change while the box is up, so it is
 fetched on demand rather than sampled.
 
+It also reports the host's own **local IP** (the primary non-loopback address).
+The **public IP** is off by default because looking it up means an outbound call
+to a third-party service; turn it on with `serverwatch config set
+collect.public_ip true` if you want the internet-facing address shown too.
+
 See it in the web panel's **Host** page, or from a terminal with:
 
 ```bash

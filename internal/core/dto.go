@@ -422,6 +422,8 @@ type HostInfoView struct {
 	MemTotalBytes uint64         `json:"mem_total_bytes"`
 	BootTime      int64          `json:"boot_time"`
 	UptimeSec     int64          `json:"uptime_sec"`
+	LocalIP       string         `json:"local_ip,omitempty"`
+	PublicIP      string         `json:"public_ip,omitempty"`
 	Disks         []HostDiskView `json:"disks,omitempty"`
 }
 
