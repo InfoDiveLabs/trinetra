@@ -49,6 +49,21 @@ these settings is also a scriptable `serverwatch` CLI verb, documented in
 collected in [Daemon-only config
 management](11-command-reference.md#3-daemon-only-config-management).
 
+## Naming this host
+
+By default serverwatch identifies the host by its system hostname: the name
+shows in the web panel's sidebar brand and is prefixed onto every outbound alert
+(for example `[attic-pi] disk:/ = 91.0`) so a setup with several monitored hosts
+tells you at a glance which one fired. Override it with `server.name`:
+
+```bash
+sudo serverwatch config set server.name attic-pi
+sudo serverwatch config unset server.name   # back to the system hostname
+```
+
+Setting it to an empty value is the same as unsetting it: the effective name
+falls back to the hostname, so you never have to hardcode one.
+
 ## Where to go next
 
 Everything below the serverwatch-ctl screens -- the config file model, `config

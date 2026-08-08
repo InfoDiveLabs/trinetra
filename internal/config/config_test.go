@@ -123,6 +123,35 @@ func TestBlockPrivateTargetsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestServerNameRoundTripAndFallback(t *testing.T) {
+	c := Default()
+	// Unset: Get returns the resolved value, which falls back to the hostname.
+	got, ok := c.Get("server.name")
+	if !ok || got == "" {
+		t.Fatalf("server.name default = (%q,%v), want a non-empty resolved name", got, ok)
+	}
+	if h, err := os.Hostname(); err == nil && h != "" && got != h {
+		t.Errorf("server.name default = %q, want hostname %q", got, h)
+	}
+	// Set a custom name and read it back.
+	if err := c.Set("server.name", "attic-pi"); err != nil {
+		t.Fatal(err)
+	}
+	if c.ServerName() != "attic-pi" {
+		t.Errorf("ServerName() = %q, want attic-pi", c.ServerName())
+	}
+	if got, _ := c.Get("server.name"); got != "attic-pi" {
+		t.Errorf("Get after set = %q, want attic-pi", got)
+	}
+	// Empty clears the stored name back to the hostname fallback.
+	if err := c.Set("server.name", ""); err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != "" {
+		t.Errorf("Name after set empty = %q, want empty (falls back to hostname)", c.Name)
+	}
+}
+
 func TestSaveLoad(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sub", "config.json")

@@ -11,7 +11,7 @@
 <body data-role="{{.Role}}">
 <div class="app">
   <aside class="side">{{block "nav" .}}
-    <div class="brand"><span class="lamp"></span><div><b>serverwatch</b><small>MONITOR.HOME.LAN</small></div></div>
+    <div class="brand"><span class="lamp"></span><div><b>serverwatch</b><small>{{.ServerName}}</small></div></div>
     <nav class="nav">
       {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
       {{end}}
