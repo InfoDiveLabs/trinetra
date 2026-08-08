@@ -48,11 +48,23 @@ const (
 // use: a single RWMutex serializes writers (Append/AppendEvent/Prune/
 // Downsample) against each other and against readers (Query/Events), which
 // also keeps a Query from ever observing a file mid-append.
+//
+// Prune and Downsample take that write lock PER FILE, not once for the whole
+// pass, so a maintenance pass over many series files does not pin the lock for
+// its full (multi-second) duration and starve reads (#113). Each individual
+// file is still rewritten atomically under the lock, and a reader only ever
+// touches one series file, so the finer granularity is transparent to Query.
 type tsFileStore struct {
 	mu   sync.RWMutex
 	dir  string // <configured dir>/ts
 	opts StoreOptions
 }
+
+// pruneBetweenFilesHook, when non-nil, is invoked by pruneDir/Downsample
+// BETWEEN per-file operations, i.e. at a point where the store lock is NOT
+// held. Test-only (nil in production): a test uses it to prove the lock is
+// released between files so reads can interleave (#113).
+var pruneBetweenFilesHook func()
 
 // newTSFileStore creates the tsfile directory layout under dir and returns a
 // ready-to-use store. opts configures per-resolution retention (see
@@ -469,6 +481,14 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
+// pruneDir prunes every .tsd series file in dir, taking the store write lock
+// PER FILE (#113) rather than once for the whole pass. A directory with many
+// series would otherwise pin s.mu for the entire multi-second pass and block
+// every Query (RLock) until it finished; locking per file caps the longest a
+// reader can wait to a single file's rewrite+fsync and lets reads interleave
+// between files. The caller (Prune) therefore must NOT hold s.mu. The
+// directory listing and the one batched dir fsync touch no store state, so
+// they run without the lock.
 func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -482,8 +502,14 @@ func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsd") {
 			continue
 		}
-		if err := pruneFileGeneric(filepath.Join(dir, ent.Name()), keep); err != nil {
+		s.mu.Lock()
+		err := pruneFileGeneric(filepath.Join(dir, ent.Name()), keep)
+		s.mu.Unlock()
+		if err != nil {
 			return err
+		}
+		if pruneBetweenFilesHook != nil {
+			pruneBetweenFilesHook()
 		}
 	}
 	// One directory fsync per pass makes every rename/unlink pruneFileGeneric
@@ -500,9 +526,11 @@ func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 // retention windows (s.opts), relative to now: raw at RawRetention, 1m
 // rollups and events at RollupRetention/EventRetention respectively.
 func (s *tsFileStore) Prune(now int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// pruneDir takes the write lock PER FILE (see its doc), so Prune itself
+	// does NOT hold s.mu across the whole pass -- that is the #113 fix. Prune
+	// and Downsample are only ever driven by the single storewriter maintenance
+	// goroutine (storewriter.go), so there is no concurrent Prune to interleave
+	// with; the finer locking only lets Query reads slip in between files.
 	if err := s.pruneDir(filepath.Join(s.dir, "raw"), now-int64(s.opts.RawRetention.Seconds())); err != nil {
 		return err
 	}
@@ -514,7 +542,10 @@ func (s *tsFileStore) Prune(now int64) error {
 		end := int64(binary.BigEndian.Uint64(rec[16:24]))
 		return end >= eventCut
 	}
-	if err := pruneFileGeneric(s.eventsPath(), keepEvent); err != nil {
+	s.mu.Lock()
+	err := pruneFileGeneric(s.eventsPath(), keepEvent)
+	s.mu.Unlock()
+	if err != nil {
 		return err
 	}
 	// pruneFileGeneric no longer fsyncs the dir itself; make its rename/unlink
@@ -648,9 +679,6 @@ func downsampleFile(rawPath, oneMPath string, now int64) error {
 // Append/AppendEvent/Prune, so it never races a concurrent Query observing a
 // 1m file mid-append.
 func (s *tsFileStore) Downsample(now int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rawDir := filepath.Join(s.dir, "raw")
 	entries, err := os.ReadDir(rawDir)
 	if err != nil {
@@ -659,14 +687,24 @@ func (s *tsFileStore) Downsample(now int64) error {
 		}
 		return err
 	}
+	// Per-file locking, same rationale as pruneDir (#113): don't pin s.mu for
+	// the whole downsample pass and starve Query reads. Each raw file is
+	// downsampled to its 1m rollup atomically under the lock; only the single
+	// maintenance goroutine calls this, so files never interleave.
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsd") {
 			continue
 		}
 		rawPath := filepath.Join(rawDir, ent.Name())
 		oneMPath := filepath.Join(s.dir, "1m", ent.Name())
-		if err := downsampleFile(rawPath, oneMPath, now); err != nil {
+		s.mu.Lock()
+		err := downsampleFile(rawPath, oneMPath, now)
+		s.mu.Unlock()
+		if err != nil {
 			return err
+		}
+		if pruneBetweenFilesHook != nil {
+			pruneBetweenFilesHook()
 		}
 	}
 	return nil

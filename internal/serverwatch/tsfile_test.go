@@ -321,6 +321,56 @@ func TestTSFilePrune(t *testing.T) {
 	}
 }
 
+// TestTSFilePruneReleasesLockBetweenFiles pins the #113 fix: Prune must take
+// the store write lock PER FILE, not once for the whole pass, so that Query
+// reads can interleave between files instead of blocking for the entire
+// (potentially multi-second) maintenance pass. It drives the between-files hook
+// and asserts the store lock is free at that point; under the old whole-pass
+// lock it would have been held and the TryLock would fail.
+func TestTSFilePruneReleasesLockBetweenFiles(t *testing.T) {
+	dir := t.TempDir()
+	// Concrete *tsFileStore (not the SampleStore interface) so the test can
+	// probe s.mu directly.
+	s, err := newTSFileStore(dir, StoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	const day = int64(86400)
+	now := int64(60 * day)
+	// Several distinct series so pruneDir iterates multiple raw files.
+	if err := s.Append(now-40*day, MetricSet{"cpu": 1, "mem": 1, "disk": 1, "temp": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(now-1*day, MetricSet{"cpu": 2, "mem": 2, "disk": 2, "temp": 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls, acquired int
+	pruneBetweenFilesHook = func() {
+		calls++
+		// This runs BETWEEN per-file prunes; the store lock must be free here.
+		// (Single-threaded test, so a successful TryLock means Prune released
+		// the lock rather than holding it across the whole pass.)
+		if s.mu.TryLock() {
+			acquired++
+			s.mu.Unlock()
+		}
+	}
+	defer func() { pruneBetweenFilesHook = nil }()
+
+	if err := s.Prune(now); err != nil {
+		t.Fatal(err)
+	}
+	if calls == 0 {
+		t.Fatal("between-files hook never fired; expected several raw series to iterate")
+	}
+	if acquired != calls {
+		t.Fatalf("store lock was held on %d of %d between-file checks: Prune still pins the lock across the pass (#113)", calls-acquired, calls)
+	}
+}
+
 // A series whose every sample has aged out past retention must be DELETED by
 // Prune, not rewritten as an empty file -- otherwise dead targets (removed
 // containers/mounts/devices) accumulate .tsd files forever, which is what made
