@@ -52,11 +52,17 @@ func newHandler(d Deps) http.Handler {
 	// internal/serverwatch/coreapi_inproc.go's buildMonitoringView adapter for
 	// where its data comes from.
 	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, d, monitoringHandler(d)))
+	// beginLimiter caps the unauthenticated ceremony-begin rate per client so an
+	// anonymous caller can't hammer the shared ceremonies.json lock (#95). Both
+	// begins share ONE limiter since they contend the same lock. finish is not
+	// limited: it needs a valid in-flight ceremony (cookie + challenge) a begin
+	// already gated.
+	beginLimiter := newRateLimiter(beginRateMax, beginRateWindow)
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
-	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
+	mux.HandleFunc("POST /enroll/begin", rateLimitBegin(beginLimiter, enrollBeginHandler(d)))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
 	mux.HandleFunc("GET /login", loginPageHandler(d))
-	mux.HandleFunc("POST /login/begin", loginBeginHandler(d))
+	mux.HandleFunc("POST /login/begin", rateLimitBegin(beginLimiter, loginBeginHandler(d)))
 	mux.HandleFunc("POST /login/finish", loginFinishHandler(d))
 	// /logout is a signed-in session's own mutation (not a pre-auth
 	// ceremony endpoint like /enroll or /login), so it's CSRF-protected --
