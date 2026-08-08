@@ -37,6 +37,7 @@ type fakeAPI struct {
 	activeErr error
 	history   []core.AlertRecord
 	histErr   error
+	hostInfo  core.HostInfoView
 
 	applyConfig func(*config.Config) error
 	testChannel func(name string) error
@@ -66,6 +67,7 @@ func (f fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error
 
 func (f fakeAPI) Config() (*config.Config, error)                         { return nil, nil }
 func (f fakeAPI) Doctor() (core.DoctorReport, error)                      { return core.DoctorReport{}, nil }
+func (f fakeAPI) HostInfo() (core.HostInfoView, error)                    { return f.hostInfo, nil }
 func (f fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil

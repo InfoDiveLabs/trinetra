@@ -20,6 +20,7 @@ import (
 type fakeAPI struct {
 	snapshot core.DashboardView
 	doctor   core.DoctorReport
+	hostInfo core.HostInfoView
 	active   []core.AlertRecord
 
 	cfg       *config.Config
@@ -79,6 +80,7 @@ func (f *fakeAPI) Config() (*config.Config, error) {
 	return &config.Config{}, nil
 }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil }
 
 // EnrollmentPIN returns the canned enrollPIN/enrollEnrolled/enrollErr a test
 // set up, recording every call in enrollCalls so onboarding's poll-until-
@@ -161,6 +163,25 @@ func TestRunDoctor(t *testing.T) {
 	for _, want := range []string{"available=true method=socket", "42 series", "5"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRunHost(t *testing.T) {
+	api := &fakeAPI{hostInfo: core.HostInfoView{
+		Hostname: "attic-pi", OS: "Debian GNU/Linux 12", Kernel: "6.1.0-13-arm64",
+		CPUModel: "Cortex-A72", CPUCores: 4, CPUThreads: 4, MemTotalBytes: 8 << 30,
+		UptimeSec: 90061, // 1d 1h 1m
+		Disks:     []core.HostDiskView{{Device: "nvme0n1", Model: "WD SN570", Rotational: false, SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}},
+	}}
+	var buf bytes.Buffer
+	if code := run(api, []string{"host"}, &buf); code != 0 {
+		t.Fatalf("run host exit = %d, want 0", code)
+	}
+	out := buf.String()
+	for _, want := range []string{"attic-pi", "Debian GNU/Linux 12", "Cortex-A72", "4 cores", "8.0 GiB", "1d 1h 1m", "nvme0n1", "WD SN570", "SSD"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("host output missing %q\n%s", want, out)
 		}
 	}
 }

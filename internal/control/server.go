@@ -289,6 +289,13 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 		}
 		return json.Marshal(v)
 
+	case "HostInfo":
+		v, err := api.HostInfo()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
 	case "EnrollmentPIN":
 		pin, enrolled, err := api.EnrollmentPIN(context.Background())
 		if err != nil {

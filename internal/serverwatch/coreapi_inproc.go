@@ -501,6 +501,48 @@ func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.getCfg(), a.store), nil
 }
 
+// HostInfo implements core.API (#100). Host-info is static host-local data, so
+// it is collected on demand from the real host (osExec{}/osFS{}), exactly like
+// Doctor above, rather than threaded through the constructor; uptime is derived
+// live from the boot time.
+func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
+	return buildHostInfoView(collectHostInfo(osExec{}, osFS{}), time.Now().Unix()), nil
+}
+
+// buildHostInfoView adapts the serverwatch HostInfo into the core DTO, deriving
+// UptimeSec from BootTime and nowUnix (a cached BootTime therefore yields a
+// correct uptime on every read). A zero/unknown BootTime yields uptime 0.
+func buildHostInfoView(h HostInfo, nowUnix int64) core.HostInfoView {
+	var uptime int64
+	if h.BootTime > 0 && nowUnix > h.BootTime {
+		uptime = nowUnix - h.BootTime
+	}
+	disks := make([]core.HostDiskView, 0, len(h.Disks))
+	for _, d := range h.Disks {
+		disks = append(disks, core.HostDiskView{
+			Device:     d.Device,
+			Model:      d.Model,
+			Rotational: d.Rotational,
+			SizeBytes:  d.SizeBytes,
+			FSType:     d.FSType,
+			Mount:      d.Mount,
+		})
+	}
+	return core.HostInfoView{
+		Hostname:      h.Hostname,
+		Kernel:        h.Kernel,
+		OS:            h.OS,
+		CPUModel:      h.CPUModel,
+		CPUCores:      h.CPUCores,
+		CPUThreads:    h.CPUThreads,
+		CPUBaseMHz:    h.CPUBaseMHz,
+		MemTotalBytes: h.MemTotalBytes,
+		BootTime:      h.BootTime,
+		UptimeSec:     uptime,
+		Disks:         disks,
+	}
+}
+
 // EnrollmentPIN implements core.API: it reads through a.enroll (enroll.go)
 // against the daemon's current live config, the exact same call pollLoop
 // (daemon.go) makes each iteration -- so a socket caller (`telegram

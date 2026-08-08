@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 )
 
 // testDeps builds a minimal Deps for handler/Start tests: enabled, bound to
@@ -48,6 +49,32 @@ func TestBrandShowsServerName(t *testing.T) {
 	}
 	if strings.Contains(body, "MONITOR.HOME.LAN") {
 		t.Errorf("old hardcoded brand MONITOR.HOME.LAN still present")
+	}
+}
+
+// TestHostPageRendersInventory pins #100's web surface: GET /host renders the
+// host hardware/OS inventory fetched over the API.
+func TestHostPageRendersInventory(t *testing.T) {
+	d := enrollTestDeps(t)
+	d.API = fakeAPI{hostInfo: core.HostInfoView{
+		Hostname: "attic-pi", OS: "Debian GNU/Linux 12", Kernel: "6.1.0-arm64",
+		CPUModel: "Cortex-A72", CPUCores: 4, CPUThreads: 4, MemTotalBytes: 8 << 30, UptimeSec: 90061,
+		Disks: []core.HostDiskView{{Device: "nvme0n1", Model: "WD SN570", SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}},
+	}}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/host"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /host = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"attic-pi", "Debian GNU/Linux 12", "Cortex-A72", "4 cores", "8.0 GiB", "1d 1h 1m", "nvme0n1", "WD SN570", "SSD"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("host page missing %q", want)
+		}
 	}
 }
 

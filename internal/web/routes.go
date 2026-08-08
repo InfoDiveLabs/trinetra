@@ -52,6 +52,10 @@ func newHandler(d Deps) http.Handler {
 	// internal/serverwatch/coreapi_inproc.go's buildMonitoringView adapter for
 	// where its data comes from.
 	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, d, monitoringHandler(d)))
+	// /host (#100): the static host hardware/OS inventory, read over the
+	// control socket via Deps.API.HostInfo. Viewer-gated like the other Monitor
+	// pages.
+	mux.HandleFunc("GET /host", requireRole(RoleViewer, d, hostPageHandler(d)))
 	// beginLimiter caps the unauthenticated ceremony-begin rate per client so an
 	// anonymous caller can't hammer the shared ceremonies.json lock (#95). Both
 	// begins share ONE limiter since they contend the same lock. finish is not

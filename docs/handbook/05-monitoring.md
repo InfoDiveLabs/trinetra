@@ -215,6 +215,22 @@ unmonitored. You see it in `monitor list` with an `unavailable` state instead of
 `on` or `off`, and the daemon carries on with everything else. Nothing about the
 configuration changes; the box just has less to watch.
 
+## Host inventory
+
+Separate from the live metrics, serverwatch also reports the static facts about
+the machine it runs on: hostname, OS and kernel, CPU model with its physical
+core and logical thread counts, total RAM, uptime, and each disk's model, type
+(SSD or HDD), size, and filesystem. This is read straight from the host
+(`/proc`, `/sys/block`, `df`) and does not change while the box is up, so it is
+fetched on demand rather than sampled.
+
+See it in the web panel's **Host** page, or from a terminal with:
+
+```bash
+serverwatch-ctl host          # formatted
+serverwatch-ctl --json host   # machine-readable
+```
+
 ## Target namespaces and managing targets
 
 Every discovered target has a namespaced id, and the namespace prefix tells you

@@ -406,3 +406,31 @@ type Event struct {
 	Title    string `json:"title"`
 	Time     int64  `json:"time"`
 }
+
+// HostInfoView is the static host hardware/OS inventory (#100): RAM, CPU model
+// and core/thread split, kernel and OS, per-disk hardware, plus the boot time
+// and the derived uptime. Served by API.HostInfo; it is static for a boot, so
+// it is a dedicated method rather than part of the per-tick DashboardView.
+type HostInfoView struct {
+	Hostname      string         `json:"hostname"`
+	Kernel        string         `json:"kernel"`
+	OS            string         `json:"os"`
+	CPUModel      string         `json:"cpu_model"`
+	CPUCores      int            `json:"cpu_cores"`   // physical
+	CPUThreads    int            `json:"cpu_threads"` // logical
+	CPUBaseMHz    float64        `json:"cpu_base_mhz,omitempty"`
+	MemTotalBytes uint64         `json:"mem_total_bytes"`
+	BootTime      int64          `json:"boot_time"`
+	UptimeSec     int64          `json:"uptime_sec"`
+	Disks         []HostDiskView `json:"disks,omitempty"`
+}
+
+// HostDiskView is one physical/block disk backing a mounted filesystem.
+type HostDiskView struct {
+	Device     string `json:"device"`
+	Model      string `json:"model,omitempty"`
+	Rotational bool   `json:"rotational"`
+	SizeBytes  uint64 `json:"size_bytes"`
+	FSType     string `json:"fstype,omitempty"`
+	Mount      string `json:"mount"`
+}

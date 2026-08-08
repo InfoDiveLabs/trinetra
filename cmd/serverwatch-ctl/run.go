@@ -39,6 +39,8 @@ func run(api core.API, args []string, out io.Writer) int {
 		return runStatus(api, out, jsonOut)
 	case "doctor":
 		return runDoctor(api, out, jsonOut)
+	case "host":
+		return runHost(api, out, jsonOut)
 	case "alerts":
 		return runAlerts(api, out, jsonOut)
 	case "config":
@@ -75,6 +77,7 @@ func printUsage(out io.Writer) {
 		"commands:\n"+
 		"  status                  print the current dashboard snapshot\n"+
 		"  doctor                  print the daemon's diagnostic report\n"+
+		"  host                    print the host hardware/OS inventory\n"+
 		"  alerts                  print the currently active alerts\n"+
 		"  config get <key>        print one config key's current value\n"+
 		"  config set <key> <val>  set one config key (validated, applied live)\n"+
@@ -138,6 +141,87 @@ func runDoctor(api core.API, out io.Writer, jsonOut bool) int {
 	fmt.Fprintf(out, "  smart_attrs:     %s\n", onOff(rep.SmartAttrsOn))
 	fmt.Fprintf(out, "time-series: %s\n", rep.StoreStats)
 	return 0
+}
+
+// runHost prints the static host hardware/OS inventory (#100), the same view
+// the web "Host" panel shows, so a terminal-only operator has parity.
+func runHost(api core.API, out io.Writer, jsonOut bool) int {
+	h, err := api.HostInfo()
+	if err != nil {
+		fmt.Fprintf(out, "host: %v\n", err)
+		return 1
+	}
+	if jsonOut {
+		return emitJSON(out, h)
+	}
+	fmt.Fprintf(out, "host:     %s\n", orDash(h.Hostname))
+	fmt.Fprintf(out, "os:       %s\n", orDash(h.OS))
+	fmt.Fprintf(out, "kernel:   %s\n", orDash(h.Kernel))
+	cpu := orDash(h.CPUModel)
+	if h.CPUThreads > 0 {
+		cpu += fmt.Sprintf("  (%d cores / %d threads", h.CPUCores, h.CPUThreads)
+		if h.CPUBaseMHz > 0 {
+			cpu += fmt.Sprintf(" @ %.0f MHz", h.CPUBaseMHz)
+		}
+		cpu += ")"
+	}
+	fmt.Fprintf(out, "cpu:      %s\n", cpu)
+	fmt.Fprintf(out, "memory:   %s\n", hostBytes(h.MemTotalBytes))
+	fmt.Fprintf(out, "uptime:   %s\n", hostUptime(h.UptimeSec))
+	if len(h.Disks) > 0 {
+		fmt.Fprintf(out, "disks:\n")
+		for _, d := range h.Disks {
+			kind := "SSD"
+			if d.Rotational {
+				kind = "HDD"
+			}
+			fmt.Fprintf(out, "  %-10s %-20s %-4s %10s  %-6s %s\n",
+				orDash(d.Device), orDash(d.Model), kind, hostBytes(d.SizeBytes), orDash(d.FSType), d.Mount)
+		}
+	}
+	return 0
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// hostBytes renders a byte count in binary units (KiB/MiB/GiB/TiB).
+func hostBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// hostUptime renders a duration in seconds as "Nd Nh Nm" (or "Ns" under a
+// minute), dropping leading zero units.
+func hostUptime(sec int64) string {
+	if sec <= 0 {
+		return "-"
+	}
+	d := sec / 86400
+	hh := (sec % 86400) / 3600
+	mm := (sec % 3600) / 60
+	switch {
+	case d > 0:
+		return fmt.Sprintf("%dd %dh %dm", d, hh, mm)
+	case hh > 0:
+		return fmt.Sprintf("%dh %dm", hh, mm)
+	case mm > 0:
+		return fmt.Sprintf("%dm", mm)
+	default:
+		return fmt.Sprintf("%ds", sec)
+	}
 }
 
 // runAlerts lists the currently active alerts, or a note when there are none;

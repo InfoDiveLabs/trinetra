@@ -219,6 +219,14 @@ func (a *fileAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.cfg, store), nil
 }
 
+// HostInfo implements core.API (#100). Host-info is cheap host-local data with
+// no daemon dependency, so the CLI path collects it directly (mirroring
+// Doctor/MonitorTargets), which lets `serverwatch-ctl host` work without a
+// running daemon.
+func (a *fileAPI) HostInfo() (core.HostInfoView, error) {
+	return buildHostInfoView(collectHostInfo(osExec{}, osFS{}), time.Now().Unix()), nil
+}
+
 // EnrollmentPIN implements core.API: this CLI process has no live daemon
 // state (unlike inprocAPI, which reads through its own enrollState), so it
 // always returns errEnrollNeedsDaemon rather than a stale or fabricated
