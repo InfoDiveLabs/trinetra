@@ -11,6 +11,8 @@
         <dt>CPU</dt><dd>{{.CPU}}</dd>
         <dt>Memory</dt><dd class="mono">{{.Memory}}</dd>
         <dt>Uptime</dt><dd class="mono">{{.Uptime}}</dd>
+        {{if .LocalIP}}<dt>Local IP</dt><dd class="mono">{{.LocalIP}}</dd>{{end}}
+        {{if .PublicIP}}<dt>Public IP</dt><dd class="mono">{{.PublicIP}}</dd>{{end}}
       </dl>
     </div>
     <div class="panel">

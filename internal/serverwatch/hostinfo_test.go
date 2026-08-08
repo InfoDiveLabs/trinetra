@@ -1,6 +1,35 @@
 package serverwatch
 
-import "testing"
+import (
+	"testing"
+
+	"serverwatch/internal/config"
+)
+
+// TestPublicIPGatedByConfig pins #102: the local IP is always collected, and the
+// outbound public-IP lookup runs only when collect.public_ip is enabled.
+func TestPublicIPGatedByConfig(t *testing.T) {
+	origL, origP := lookupLocalIP, lookupPublicIP
+	lookupLocalIP = func() string { return "192.168.1.50" }
+	lookupPublicIP = func() string { return "203.0.113.7" }
+	defer func() { lookupLocalIP, lookupPublicIP = origL, origP }()
+
+	off := config.Default() // public_ip defaults off
+	h := collectHostInfoFor(off)
+	if h.LocalIP != "192.168.1.50" {
+		t.Errorf("LocalIP = %q, want it always collected", h.LocalIP)
+	}
+	if h.PublicIP != "" {
+		t.Errorf("PublicIP = %q, want empty when collect.public_ip is off", h.PublicIP)
+	}
+
+	on := config.Default()
+	tru := true
+	on.Collect.PublicIP = &tru
+	if got := collectHostInfoFor(on).PublicIP; got != "203.0.113.7" {
+		t.Errorf("PublicIP = %q, want the looked-up IP when enabled", got)
+	}
+}
 
 func TestParseCPUInfoIntelHyperthreaded(t *testing.T) {
 	// Two logical processors sharing one physical socket with 1 core each is

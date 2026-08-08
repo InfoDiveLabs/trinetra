@@ -506,7 +506,7 @@ func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 // Doctor above, rather than threaded through the constructor; uptime is derived
 // live from the boot time.
 func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
-	return buildHostInfoView(collectHostInfo(osExec{}, osFS{}), time.Now().Unix()), nil
+	return buildHostInfoView(collectHostInfoFor(a.getCfg()), time.Now().Unix()), nil
 }
 
 // buildHostInfoView adapts the serverwatch HostInfo into the core DTO, deriving
@@ -539,8 +539,21 @@ func buildHostInfoView(h HostInfo, nowUnix int64) core.HostInfoView {
 		MemTotalBytes: h.MemTotalBytes,
 		BootTime:      h.BootTime,
 		UptimeSec:     uptime,
+		LocalIP:       h.LocalIP,
+		PublicIP:      h.PublicIP,
 		Disks:         disks,
 	}
+}
+
+// collectHostInfoFor collects the host inventory and, when cfg opts into the
+// public-IP lookup (collect.public_ip, #102), performs that one outbound call;
+// otherwise PublicIP stays empty. Shared by the inproc and file APIs.
+func collectHostInfoFor(cfg *config.Config) HostInfo {
+	h := collectHostInfo(osExec{}, osFS{})
+	if cfg != nil && cfg.PublicIPEnabled() {
+		h.PublicIP = lookupPublicIP()
+	}
+	return h
 }
 
 // EnrollmentPIN implements core.API: it reads through a.enroll (enroll.go)

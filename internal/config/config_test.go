@@ -123,6 +123,31 @@ func TestBlockPrivateTargetsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPublicIPToggleRoundTrip(t *testing.T) {
+	c := Default()
+	if c.PublicIPEnabled() {
+		t.Error("collect.public_ip must default to false (opt-in)")
+	}
+	if got, _ := c.Get("collect.public_ip"); got != "false" {
+		t.Errorf("default get = %q, want false", got)
+	}
+	if err := c.Set("collect.public_ip", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.PublicIPEnabled() {
+		t.Error("should be enabled after set true")
+	}
+	if err := c.Set("collect.public_ip", "not-a-bool"); err == nil {
+		t.Error("want error for non-bool value")
+	}
+	if err := c.Unset("collect.public_ip"); err != nil {
+		t.Fatal(err)
+	}
+	if c.PublicIPEnabled() {
+		t.Error("should be back to disabled after unset")
+	}
+}
+
 func TestServerNameRoundTripAndFallback(t *testing.T) {
 	c := Default()
 	// Unset: Get returns the resolved value, which falls back to the hostname.

@@ -7,9 +7,13 @@
 package serverwatch
 
 import (
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HostInfo is the static (per-boot) host inventory. It is collected once at
@@ -26,6 +30,77 @@ type HostInfo struct {
 	MemTotalBytes uint64
 	BootTime      int64 // unix seconds; uptime = now - BootTime
 	Disks         []HostDisk
+	// LocalIP is the host's primary non-loopback IPv4 (#102), always collected.
+	LocalIP string
+	// PublicIP is the host's internet-facing IP (#102), populated only when
+	// collect.public_ip is enabled and the outbound lookup succeeded.
+	PublicIP string
+}
+
+// lookupLocalIP/lookupPublicIP are seams so tests inject IPs without touching
+// the network. Production uses the defaults below.
+var (
+	lookupLocalIP  = defaultLocalIP
+	lookupPublicIP = defaultPublicIP
+)
+
+// defaultLocalIP returns the host's primary local IPv4: the first global-unicast
+// IPv4 on an up, non-loopback interface, or "" if none.
+func defaultLocalIP() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip4 := ip.To4(); ip4 != nil && ip4.IsGlobalUnicast() && !ip4.IsLinkLocalUnicast() {
+				return ip4.String()
+			}
+		}
+	}
+	return ""
+}
+
+// publicIPEndpoint is the third-party echo service the opt-in public-IP lookup
+// dials. It returns the caller's IP as plain text.
+const publicIPEndpoint = "https://api.ipify.org"
+
+// defaultPublicIP fetches the host's internet-facing IP from publicIPEndpoint,
+// bounded by a short timeout and a tiny response cap. Any failure (offline,
+// timeout, non-2xx, unparseable) yields "".
+func defaultPublicIP() string {
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get(publicIPEndpoint)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return ""
+	}
+	ip := strings.TrimSpace(string(b))
+	if net.ParseIP(ip) == nil {
+		return ""
+	}
+	return ip
 }
 
 // HostDisk is one physical/block disk backing a mounted filesystem.
@@ -186,6 +261,7 @@ func collectHostInfo(x Exec, fs FileSource) HostInfo {
 	if bt, ok := hostBootTime(fs); ok {
 		h.BootTime = bt.Unix()
 	}
+	h.LocalIP = lookupLocalIP()
 	h.Disks = collectHostDisks(x, fs)
 	return h
 }

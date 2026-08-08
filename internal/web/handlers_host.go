@@ -21,6 +21,8 @@ type HostPageData struct {
 	CPU        string // "model (N cores / M threads @ F MHz)"
 	Memory     string // humanized bytes
 	Uptime     string // "Nd Nh Nm"
+	LocalIP    string
+	PublicIP   string
 	Disks      []hostDiskRow
 }
 
@@ -44,6 +46,8 @@ func buildHostPageData(r *http.Request, d Deps) HostPageData {
 	data.CPU = formatCPU(h)
 	data.Memory = humanBytesIEC(h.MemTotalBytes)
 	data.Uptime = humanUptime(h.UptimeSec)
+	data.LocalIP = h.LocalIP
+	data.PublicIP = h.PublicIP
 	for _, disk := range h.Disks {
 		kind := "SSD"
 		if disk.Rotational {

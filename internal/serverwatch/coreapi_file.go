@@ -224,7 +224,7 @@ func (a *fileAPI) Doctor() (core.DoctorReport, error) {
 // Doctor/MonitorTargets), which lets `serverwatch-ctl host` work without a
 // running daemon.
 func (a *fileAPI) HostInfo() (core.HostInfoView, error) {
-	return buildHostInfoView(collectHostInfo(osExec{}, osFS{}), time.Now().Unix()), nil
+	return buildHostInfoView(collectHostInfoFor(a.cfg), time.Now().Unix()), nil
 }
 
 // EnrollmentPIN implements core.API: this CLI process has no live daemon
