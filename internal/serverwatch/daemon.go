@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html"
 	"math/big"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -268,10 +267,15 @@ func pingHealthchecks(url string, httpGet func(string) error) {
 	_ = httpGet(url)
 }
 
-func httpPing(url string) error {
+func httpPing(url string) error { return httpPingGuarded(url, false) }
+
+// httpPingGuarded is httpPing with the opt-in SSRF guard (#97): when block is
+// true it refuses to ping a loopback/link-local/private healthchecks URL, the
+// same guard the channel notifiers use (outbound_guard.go).
+func httpPingGuarded(url string, block bool) error {
 	// A bare http.Get has no timeout: a hung healthchecks endpoint would block
 	// the sampler loop indefinitely. Bound it.
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newGuardedHTTPClient(10*time.Second, block)
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
@@ -916,7 +920,8 @@ func cmdDaemon(args []string) int {
 			if interval <= 0 {
 				interval = 60
 			}
-			pingHealthchecks(c.Healthchecks.URL, httpPing)
+			block := c.Notify.BlockPrivateTargets
+			pingHealthchecks(c.Healthchecks.URL, func(u string) error { return httpPingGuarded(u, block) })
 			time.Sleep(time.Duration(interval) * time.Second)
 		}
 	}()

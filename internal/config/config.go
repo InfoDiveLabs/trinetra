@@ -69,6 +69,15 @@ type Config struct {
 	Healthchecks struct {
 		URL string `json:"url,omitempty"`
 	} `json:"healthchecks"`
+	Notify struct {
+		// BlockPrivateTargets, when true, refuses to dial loopback/link-local
+		// (incl. 169.254.169.254 metadata)/private targets for the URLs the
+		// daemon calls on the operator's behalf (webhook/Slack/Discord/ntfy/
+		// gotify channels and the healthchecks ping). Default false, preserving
+		// the ability to post to intentionally-internal endpoints; turn it on
+		// to harden against SSRF via a channel URL (#97).
+		BlockPrivateTargets bool `json:"block_private_targets,omitempty"`
+	} `json:"notify"`
 	Schedule struct {
 		Daily  string `json:"daily,omitempty"`  // "09:00" or ""
 		Weekly string `json:"weekly,omitempty"` // "mon@09:00" or ""
@@ -643,6 +652,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.Itoa(c.EnrollCooldownSec()), true
 	case "healthchecks.url":
 		return c.Healthchecks.URL, true
+	case "notify.block_private_targets":
+		return strconv.FormatBool(c.Notify.BlockPrivateTargets), true
 	case "schedule.daily":
 		return c.Schedule.Daily, true
 	case "schedule.weekly":
@@ -781,6 +792,12 @@ func (c *Config) Set(key, val string) error {
 		c.Telegram.EnrollCooldown = n
 	case "healthchecks.url":
 		c.Healthchecks.URL = val
+	case "notify.block_private_targets":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("notify.block_private_targets: %w", err)
+		}
+		c.Notify.BlockPrivateTargets = b
 	case "schedule.daily":
 		if err := validateDaily(val); err != nil {
 			return err
@@ -988,6 +1005,7 @@ var keyCatalog = []KeyInfo{
 	{Name: "telegram.chat_id", Group: "Notifications", Kind: "string", Help: "Telegram chat id enrolled to receive alerts."},
 	{Name: "telegram.enroll_max_attempts", Group: "Notifications", Kind: "int", Help: "Wrong /start <pin> guesses tolerated before the enrollment PIN cools down and rotates (brute-force bound). Default 5."},
 	{Name: "telegram.enroll_cooldown", Group: "Notifications", Kind: "int", Help: "Seconds /start attempts are ignored after the attempt limit is hit (the PIN also rotates then). Default 60."},
+	{Name: "notify.block_private_targets", Group: "Notifications", Kind: "bool", Help: "Refuse to dial loopback/link-local(incl. 169.254.169.254)/private targets for channel + healthchecks URLs (SSRF hardening). Default false."},
 	{Name: "healthchecks.url", Group: "Notifications", Kind: "string", Help: "healthchecks.io ping URL, or empty to disable."},
 
 	{Name: "schedule.daily", Group: "Schedule", Kind: "string", Help: "Daily digest time as HH:MM, or empty to disable."},
