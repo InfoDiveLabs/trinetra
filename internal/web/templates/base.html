@@ -11,7 +11,7 @@
 <body data-role="{{.Role}}">
 <div class="app">
   <aside class="side">{{block "nav" .}}
-    <div class="brand"><span class="lamp"></span><div><b>serverwatch</b><small>MONITOR.HOME.LAN</small></div></div>
+    <div class="brand"><span class="lamp"></span><div><b>serverwatch</b><small>{{.ServerName}}</small></div></div>
     <nav class="nav">
       {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
       {{end}}
@@ -24,6 +24,11 @@
           <span class="badge role">{{.Role}}</span>
         </div>
         <button id="logoutBtn" class="mono" style="color:var(--faint);background:none;border:none;padding:0;cursor:pointer;font:inherit" title="Sign out">⏻</button>
+      </div>
+      <div class="ver mono" title="core daemon / web plugin versions">
+        <span>core {{.CoreVersion}}</span>
+        <span>web {{.WebVersion}}</span>
+        {{if .VersionMismatch}}<span class="ver-warn" title="the web plugin and core daemon are on different versions">version mismatch</span>{{end}}
       </div>
     </div>
   {{end}}</aside>

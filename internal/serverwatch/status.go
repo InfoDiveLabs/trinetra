@@ -215,20 +215,24 @@ type SmartAttr struct {
 }
 
 type Snapshot struct {
-	TS           int64              `json:"ts"`
-	CPU          float64            `json:"cpu"`
-	MemPct       float64            `json:"mem_pct"`
-	SwapPct      float64            `json:"swap_pct"`
-	Load1        float64            `json:"load1"`
-	Load5        float64            `json:"load5"`
-	Load15       float64            `json:"load15"`
-	TempC        float64            `json:"temp_c"`
-	Disks        map[string]float64 `json:"disks"`
-	Online       bool               `json:"online"`
-	DockerAccess string             `json:"docker_access"`
-	Containers   map[string]string  `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
-	FailedUnits  []string           `json:"failed_units,omitempty"` // systemctl --failed unit names
-	SmartHealth  map[string]string  `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
+	TS      int64              `json:"ts"`
+	CPU     float64            `json:"cpu"`
+	MemPct  float64            `json:"mem_pct"`
+	SwapPct float64            `json:"swap_pct"`
+	Load1   float64            `json:"load1"`
+	Load5   float64            `json:"load5"`
+	Load15  float64            `json:"load15"`
+	TempC   float64            `json:"temp_c"`
+	Disks   map[string]float64 `json:"disks"`
+	Online  bool               `json:"online"`
+	// SlowStale is set when the slow-collector goroutine missed its deadline
+	// and the slow-tier fields on this snapshot are the last-good values, not
+	// freshly collected this cycle.
+	SlowStale    bool              `json:"slow_stale,omitempty"`
+	DockerAccess string            `json:"docker_access"`
+	Containers   map[string]string `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
+	FailedUnits  []string          `json:"failed_units,omitempty"` // systemctl --failed unit names
+	SmartHealth  map[string]string `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
 	// DiskDetail is the live per-mount device/fstype/inode%/size detail (see
 	// the DiskDetail type doc comment above), keyed by mount. Additive to
 	// Disks, always collected in collectSlow (no config toggle -- matches how
@@ -267,6 +271,25 @@ type Snapshot struct {
 	// short-lived pids per host) is exactly the trap this design avoids,
 	// mirroring Units above.
 	Processes ProcSnapshot `json:"processes,omitempty"`
+	// CollectorErrors is the set of slow-tier collectors that were ATTEMPTED
+	// this cycle but failed (key -> error text), e.g. "docker"/"disk"/
+	// "services"/"smart" (#110). A collector that was disabled or not attempted
+	// has no entry, so this distinguishes "command errored/timed out" from
+	// "ran and returned a legitimately empty result". Transient: used to carry
+	// last-known values forward and to update CollectorHealth; not persisted.
+	CollectorErrors map[string]string `json:"collector_errors,omitempty"`
+	// CollectorHealth is the rolling per-collector health (#110): consecutive
+	// failure count, last-success time, and last error. A collector failing for
+	// collectorAlertThreshold consecutive cycles drives a `collector:<name>`
+	// alert; it recovers on the first success. Surfaced in status.json/web so a
+	// degraded collector is observable, not just inferred from missing data.
+	CollectorHealth map[string]CollectorStat `json:"collector_health,omitempty"`
+	// collectorsAttempted is the set of slow-tier collectors collectSlow
+	// actually ran this cycle (#110), used by the slow-collector goroutine to
+	// distinguish "attempted and succeeded" from "not attempted" when updating
+	// CollectorHealth. Unexported: an internal collectSlow->goroutine handoff,
+	// never serialized or part of the public snapshot.
+	collectorsAttempted map[string]bool
 }
 
 // renderStatus builds the /stats,/status overview: a header giving the

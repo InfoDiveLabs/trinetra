@@ -439,24 +439,6 @@ func TestBootReportKeepsIntentionalHTML(t *testing.T) {
 	}
 }
 
-func TestSlowEvery(t *testing.T) {
-	cases := []struct {
-		fast, slow, want int
-	}{
-		{5, 60, 12}, // default config: 12 fast ticks per slow tick
-		{60, 60, 1}, // equal intervals: slow tier every tick
-		{10, 65, 6}, // non-multiple: floor division, still exact-ish
-		{60, 30, 1}, // slow < fast: guard to minimum of 1
-		{0, 60, 1},  // guard against fast<=0 (would divide by zero)
-		{-5, 60, 1}, // guard against negative fast
-	}
-	for _, c := range cases {
-		if got := slowEvery(c.fast, c.slow); got != c.want {
-			t.Errorf("slowEvery(%d, %d) = %d, want %d", c.fast, c.slow, got, c.want)
-		}
-	}
-}
-
 func TestCollectFastPopulatesCheapFields(t *testing.T) {
 	fs := fakeFS{
 		files: map[string]string{
@@ -1312,5 +1294,22 @@ func TestSamplerMetricSetsWriteThroughToStore(t *testing.T) {
 	}
 	if len(diskPts) != 1 || diskPts[0].Avg != 70 {
 		t.Fatalf("disk:/ query = %+v, want one point avg 70", diskPts)
+	}
+}
+
+func TestSlowHubVersioning(t *testing.T) {
+	h := &slowHub{}
+	if _, _, ok := h.latest(); ok {
+		t.Fatal("empty hub should report no snapshot")
+	}
+	h.publish(Snapshot{Online: true})
+	s, v1, ok := h.latest()
+	if !ok || !s.Online {
+		t.Fatal("expected published snapshot")
+	}
+	h.publish(Snapshot{Online: false})
+	_, v2, _ := h.latest()
+	if v2 <= v1 {
+		t.Fatalf("version did not advance: %d -> %d", v1, v2)
 	}
 }

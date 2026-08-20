@@ -34,7 +34,13 @@ type fakeAPI struct {
 	events    []core.DownEventView
 	eventsErr error
 	active    []core.AlertRecord
+	activeErr error
 	history   []core.AlertRecord
+	histErr   error
+	hostInfo      core.HostInfoView
+	containerLogs string
+	logErr        error
+	version       string
 
 	applyConfig func(*config.Config) error
 	testChannel func(name string) error
@@ -56,14 +62,17 @@ func (f fakeAPI) Events(from, to int64) ([]core.DownEventView, error) {
 	return f.events, f.eventsErr
 }
 
-func (f fakeAPI) ActiveAlerts() ([]core.AlertRecord, error) { return f.active, nil }
+func (f fakeAPI) ActiveAlerts() ([]core.AlertRecord, error) { return f.active, f.activeErr }
 
 func (f fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
-	return f.history, nil
+	return f.history, f.histErr
 }
 
 func (f fakeAPI) Config() (*config.Config, error)                         { return nil, nil }
 func (f fakeAPI) Doctor() (core.DoctorReport, error)                      { return core.DoctorReport{}, nil }
+func (f fakeAPI) HostInfo() (core.HostInfoView, error)                    { return f.hostInfo, nil }
+func (f fakeAPI) ContainerLogs(name string, lines int) (string, error)    { return f.containerLogs, f.logErr }
+func (f fakeAPI) Version() (string, error)                                { return f.version, nil }
 func (f fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil

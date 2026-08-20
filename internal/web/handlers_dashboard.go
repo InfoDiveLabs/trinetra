@@ -1,24 +1,18 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 )
 
 // activeAlertView is one row of the dashboard's "Active alerts" panel,
-// decoded straight out of <StateDir>/alerts.json (Deps.AlertStatePath)
-// without ever importing internal/serverwatch: the file's shape
-// (serverwatch.AlertState/ActiveAlert, anomaly.go) is a plain
-// {"active":{"<key>":{"since":...,"reason":...,"acked":...}}} object, and
-// that JSON shape -- not the Go type -- is the actual contract between the
-// daemon and this page, so decoding it locally here doesn't create the
-// import-cycle risk a serverwatch import would (internal/web must never
-// import internal/serverwatch, to keep the module graph one-way).
+// projected from core.AlertRecord (the daemon's ActiveAlerts, read over the
+// control socket -- see activeAlertsViaAPI). It carries only what the panel
+// and the topbar status pill render, so those pages never read the daemon's
+// alerts.json off disk.
 type activeAlertView struct {
 	Key    string
 	Reason string
@@ -32,40 +26,41 @@ type activeAlertView struct {
 	Critical bool
 }
 
-// alertStateFile mirrors serverwatch.AlertState's JSON encoding just enough
-// to decode it (see activeAlertView's doc).
-type alertStateFile struct {
-	Active map[string]struct {
-		Since    int64  `json:"since"`
-		Reason   string `json:"reason"`
-		Acked    bool   `json:"acked,omitempty"`
-		Critical bool   `json:"critical,omitempty"`
-	} `json:"active"`
-}
-
-// loadActiveAlerts reads and decodes path (Deps.AlertStatePath) into a
-// stable-ordered (most-recent-first) list of active alerts for the
-// dashboard's "Active alerts" panel. A missing file (alerting has never
-// fired yet), an empty path (AlertStatePath not configured, e.g. some
-// tests), or a decode error all just render as "no active alerts" rather
-// than failing the whole page -- this panel is display-only, never the
-// source of truth for alert state (that stays serverwatch's AlertState,
-// alerts.json itself, and the CLI's `serverwatch alerts` commands).
-func loadActiveAlerts(path string) []activeAlertView {
-	if path == "" {
+// activeAlertsViaAPI reads the daemon's current active alerts over the
+// control socket (Deps.API.ActiveAlerts) and projects each core.AlertRecord
+// into an activeAlertView for the dashboard panel, the sidebar badge, the
+// topbar status pill, and the alerts page. It is the channel-only replacement
+// for the old loadActiveAlerts, which decoded the daemon's alerts.json
+// directly off disk: a plugin must not read daemon-owned state from disk, so
+// all four callers now go through core.API.
+//
+// The AlertRecord shape comes from serverwatch's activeAlertRecords mapping:
+// the human reason text is carried in Source, and Critical is encoded as
+// Severity == "critical" (Severity.String is "info"/"warning"/"critical").
+// Results are ordered most-recent-first (Since desc, then Key asc), the same
+// order loadActiveAlerts produced, so the rendered panels are unchanged.
+//
+// A nil API or a read error (a transient socket failure) degrades to nil --
+// "no active alerts" -- rather than failing the whole page: these panels are
+// display-only, never the source of truth for alert state (that stays the
+// daemon's AlertState and the `serverwatch alerts` CLI).
+func activeAlertsViaAPI(d Deps) []activeAlertView {
+	if d.API == nil {
 		return nil
 	}
-	b, err := os.ReadFile(path)
+	recs, err := d.API.ActiveAlerts()
 	if err != nil {
 		return nil
 	}
-	var f alertStateFile
-	if err := json.Unmarshal(b, &f); err != nil {
-		return nil
-	}
-	out := make([]activeAlertView, 0, len(f.Active))
-	for key, a := range f.Active {
-		out = append(out, activeAlertView{Key: key, Reason: a.Reason, Since: a.Since, Acked: a.Acked, Critical: a.Critical})
+	out := make([]activeAlertView, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, activeAlertView{
+			Key:      r.Key,
+			Reason:   r.Source,
+			Since:    r.Time,
+			Acked:    r.Acked,
+			Critical: r.Severity == "critical",
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Since != out[j].Since {
@@ -122,6 +117,7 @@ func containerBars(list []ContainerView, value func(ContainerView) float64, form
 type DashboardPageData struct {
 	PageData
 	View       DashboardView
+	Host       HostSummary
 	Alerts     []activeAlertView
 	TopCPUBars []containerBar
 	TopMemBars []containerBar
@@ -130,9 +126,10 @@ type DashboardPageData struct {
 // buildDashboardPageData assembles DashboardPageData from Deps: the live
 // snapshot (Deps.API.Snapshot(), core.API's projection of the daemon's live
 // state -- see core.DashboardView's doc) plus the current active-alerts list
-// (Deps.AlertStatePath). The topbar's status pill (PageData.Status/StatusText)
-// is computed by newPageData itself from that same AlertStatePath
-// (topbarStatus, templates.go) -- see PageData's doc for why every page
+// (activeAlertsViaAPI, over the control socket). The topbar's status pill
+// (PageData.Status/StatusText) is computed by newPageData itself from that
+// same active-alert set (topbarStatus, templates.go) -- see PageData's doc
+// for why every page
 // shares one computation rather than this page deriving its own from
 // disk/unit state.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
@@ -145,10 +142,11 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 			view = v
 		}
 	}
-	alerts := loadActiveAlerts(d.AlertStatePath)
+	alerts := activeAlertsViaAPI(d)
 	return DashboardPageData{
 		PageData: newPageData(r, d, "Dashboard", "Overview · live"),
 		View:     view,
+		Host:     buildHostSummary(d),
 		Alerts:   alerts,
 		TopCPUBars: containerBars(view.TopCPUContainers,
 			func(c ContainerView) float64 { return c.CPUPct },

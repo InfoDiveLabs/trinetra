@@ -26,6 +26,7 @@ import (
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
+	"serverwatch/internal/version"
 )
 
 // errEnrollNeedsDaemon is returned by fileAPI.EnrollmentPIN: the enrollment
@@ -218,6 +219,23 @@ func (a *fileAPI) Doctor() (core.DoctorReport, error) {
 	}
 	return buildDoctorReport(osExec{}, osFS{}, a.cfg, store), nil
 }
+
+// HostInfo implements core.API (#100). Host-info is cheap host-local data with
+// no daemon dependency, so the CLI path collects it directly (mirroring
+// Doctor/MonitorTargets), which lets `serverwatch-ctl host` work without a
+// running daemon.
+func (a *fileAPI) HostInfo() (core.HostInfoView, error) {
+	return buildHostInfoView(collectHostInfoFor(a.cfg), time.Now().Unix()), nil
+}
+
+// ContainerLogs implements core.API: like HostInfo it shells out to the real
+// host on demand (osExec{}/osFS{}).
+func (a *fileAPI) ContainerLogs(name string, lines int) (string, error) {
+	return collectContainerLogs(osExec{}, osFS{}, name, lines)
+}
+
+// Version implements core.API: this process's own build-stamped version (#107).
+func (a *fileAPI) Version() (string, error) { return version.String(), nil }
 
 // EnrollmentPIN implements core.API: this CLI process has no live daemon
 // state (unlike inprocAPI, which reads through its own enrollState), so it

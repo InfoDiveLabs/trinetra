@@ -157,7 +157,12 @@ func parseWeekly(s string) (day, hm string, enabled bool) {
 // ConfigPageData is what templates/config.html renders against.
 type ConfigPageData struct {
 	PageData
-	DiskPct      string
+	// ServerNameRaw is the configured server.name verbatim (may be empty, in
+	// which case ServerName() falls back to the hostname); CollectPublicIP is
+	// the collect.public_ip opt-in. Both back the "Identity" panel (#101/#102).
+	ServerNameRaw   string
+	CollectPublicIP bool
+	DiskPct         string
 	TempC        string
 	MemPct       string
 	CPUPct       string
@@ -232,6 +237,8 @@ func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 	}
 	return ConfigPageData{
 		PageData:               newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours"),
+		ServerNameRaw:          cfg.Name,
+		CollectPublicIP:        cfg.PublicIPEnabled(),
 		DiskPct:                trimFloatText(cfg.Thresholds.DiskPct),
 		TempC:                  trimFloatText(cfg.Thresholds.TempC),
 		MemPct:                 trimFloatText(cfg.Thresholds.MemPct),
@@ -443,6 +450,8 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 		}
 
 		edits := []scalarEdit{
+			{"server.name", strings.TrimSpace(r.FormValue("server_name"))},
+			{"collect.public_ip", checkboxFormValue(r, "collect_public_ip")},
 			{"thresholds.disk_pct", r.FormValue("disk_pct")},
 			{"thresholds.temp_c", r.FormValue("temp_c")},
 			{"thresholds.mem_pct", r.FormValue("mem_pct")},

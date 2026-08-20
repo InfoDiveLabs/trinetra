@@ -235,6 +235,37 @@ func TestResolveEnrollRoleClosedAfterBootstrap(t *testing.T) {
 	}
 }
 
+// TestResolveEnrollRoleFailsClosedOnUnreadableStore pins the #105 secondary
+// hardening: an UNREADABLE user store (corrupt/partially-written users.json,
+// I/O error) must NOT be treated as a genuine empty first-run store. If it
+// were, an attacker could tokenlessly bootstrap an admin during any window
+// the store is unreadable. resolveEnrollRole must fail closed -- return an
+// error, never bootstrap=true -- rather than trust List() swallowing the read
+// error into an empty slice.
+func TestResolveEnrollRoleFailsClosedOnUnreadableStore(t *testing.T) {
+	dir := t.TempDir()
+	tokens := newTokenStore(dir)
+	users := newUserStore(dir)
+
+	// Corrupt the users store so it exists but cannot be read as valid JSON.
+	// (An absent file is the genuine first-run case and must still bootstrap;
+	// a present-but-unreadable file is the takeover window we close here.)
+	if err := os.WriteFile(filepath.Join(dir, "users.json"), []byte("{ this is not json"), 0o600); err != nil {
+		t.Fatalf("seed corrupt store: %v", err)
+	}
+
+	role, bootstrap, err := resolveEnrollRole(tokens, users, "")
+	if err == nil {
+		t.Fatal("resolveEnrollRole(unreadable store, no token) = nil error, want fail-closed rejection")
+	}
+	if bootstrap {
+		t.Error("resolveEnrollRole(unreadable store) bootstrap = true, want false (no tokenless bootstrap on unreadable store)")
+	}
+	if role != "" {
+		t.Errorf("role = %q, want \"\" on fail-closed", role)
+	}
+}
+
 // TestResolveEnrollRoleHonorsValidToken pins that a valid token's role wins
 // even when the store already has users (the normal post-bootstrap path),
 // and that it is NOT a bootstrap attempt.

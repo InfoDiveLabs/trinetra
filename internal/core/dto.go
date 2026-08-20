@@ -121,6 +121,22 @@ type DashboardView struct {
 	// from (e.g. a bare `DashboardView{}` in a test that doesn't care about
 	// the strip).
 	Availability Availability `json:"availability"`
+
+	// DegradedCollectors lists slow-tier collectors that are currently failing
+	// (#110): each carries its consecutive-failure count and last error so an
+	// operator sees that MONITORING ITSELF is degraded, not just missing data.
+	// Empty when every collector is healthy. Shown as a warning banner in the
+	// web dashboard and a status line in serverwatch-ctl.
+	DegradedCollectors []CollectorHealthView `json:"degraded_collectors,omitempty"`
+}
+
+// CollectorHealthView is one degraded slow-tier collector's health (#110), the
+// core-DTO projection of serverwatch.CollectorStat.
+type CollectorHealthView struct {
+	Name            string `json:"name"`             // "docker" | "disk" | "services" | "smart"
+	Fails           int    `json:"fails"`            // consecutive failed cycles
+	LastError       string `json:"last_error"`       // most recent error text
+	LastSuccessUnix int64  `json:"last_success_unix"` // 0 if never succeeded
 }
 
 // ProcessCounts mirrors serverwatch.ProcSnapshot's aggregate counts (Top is
@@ -356,6 +372,14 @@ type AlertRecord struct {
 	// true); false when every attempt failed, none was recorded, or this is
 	// an active alert (which carries no delivery outcome of its own).
 	Delivered bool `json:"delivered,omitempty"`
+	// DeliveredTo names the channels that actually accepted a history
+	// entry's dispatch (the Delivery records with OK true), in record order,
+	// so a consumer can show WHICH channels a notification reached, not just
+	// whether any did. Empty when Delivered is false, and always empty for an
+	// active alert (no delivery outcome of its own). This is the per-channel
+	// detail the web alerts page previously read from the alert log on disk;
+	// carrying it here lets that page go through the control socket instead.
+	DeliveredTo []string `json:"delivered_to,omitempty"`
 }
 
 // DoctorReport is core's projection of `serverwatch doctor`'s diagnostic
@@ -385,6 +409,10 @@ type DoctorReport struct {
 	// on disk (raw+1m)" line (or "time-series: unavailable" when the
 	// configured store failed to open) as a single string.
 	StoreStats string `json:"store_stats"`
+	// StoreWarning is a non-empty guardrail message when the series count is
+	// abnormally high (#112), e.g. dead Swarm-task series accumulating faster
+	// than retention reaps them. Empty when cardinality is healthy.
+	StoreWarning string `json:"store_warning,omitempty"`
 }
 
 // Event is one live daemon event pushed to a core.API.Subscribe stream:
@@ -397,4 +425,35 @@ type Event struct {
 	Source   string `json:"source"`
 	Title    string `json:"title"`
 	Time     int64  `json:"time"`
+}
+
+// HostInfoView is the static host hardware/OS inventory (#100): RAM, CPU model
+// and core/thread split, kernel and OS, per-disk hardware, plus the boot time
+// and the derived uptime. Served by API.HostInfo; it is static for a boot, so
+// it is a dedicated method rather than part of the per-tick DashboardView.
+type HostInfoView struct {
+	Hostname      string         `json:"hostname"`
+	Kernel        string         `json:"kernel"`
+	OS            string         `json:"os"`
+	CPUModel      string         `json:"cpu_model"`
+	CPUSockets    int            `json:"cpu_sockets,omitempty"` // physical packages
+	CPUCores      int            `json:"cpu_cores"`             // physical
+	CPUThreads    int            `json:"cpu_threads"`           // logical
+	CPUBaseMHz    float64        `json:"cpu_base_mhz,omitempty"`
+	MemTotalBytes uint64         `json:"mem_total_bytes"`
+	BootTime      int64          `json:"boot_time"`
+	UptimeSec     int64          `json:"uptime_sec"`
+	LocalIP       string         `json:"local_ip,omitempty"`
+	PublicIP      string         `json:"public_ip,omitempty"`
+	Disks         []HostDiskView `json:"disks,omitempty"`
+}
+
+// HostDiskView is one physical/block disk backing a mounted filesystem.
+type HostDiskView struct {
+	Device     string `json:"device"`
+	Model      string `json:"model,omitempty"`
+	Rotational bool   `json:"rotational"`
+	SizeBytes  uint64 `json:"size_bytes"`
+	FSType     string `json:"fstype,omitempty"`
+	Mount      string `json:"mount"`
 }

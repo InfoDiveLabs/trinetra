@@ -57,17 +57,14 @@ type connConfig struct {
 	// controlTokenPath: the sibling "token" file next to the socket,
 	// written 0600 by the daemon that created the socket.
 	tokenFile string
-	// stateDir/alertLogPath/alertStatePath back web.Deps' identically named
-	// fields (session/ceremony/enrollment-token storage, the alert log, and
-	// the alert ack-state file respectively). These are local, on-disk
-	// paths this process reads/writes directly -- they are not part of
-	// core.API, so they can't be sourced from the socket client and must be
-	// resolved locally instead (flags, or defaulted from stateDir the same
-	// way internal/serverwatch/store.go's Store.AlertLogPath/AlertStatePath
-	// do: <stateDir>/alertlog.jsonl and <stateDir>/alerts.json).
-	stateDir       string
-	alertLogPath   string
-	alertStatePath string
+	// stateDir backs web.Deps.StateDir: the web plugin's OWN local storage
+	// (its user store, sessions, enrollment tokens). It is not part of
+	// core.API (it is this plugin's private auth material, not daemon state),
+	// so it is resolved locally rather than over the socket. Alert data
+	// (active alerts, history, acks) is NOT sourced from disk anymore: it all
+	// goes through the socket client (core.API), so there are no alert-file
+	// paths to resolve here.
+	stateDir string
 }
 
 // resolveConnConfig parses args against a fresh FlagSet and layers in
@@ -83,8 +80,6 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	token := fs.String("token", "", "control socket auth token (default: $SERVERWATCH_CONTROL_TOKEN, else read from -token-file)")
 	tokenFile := fs.String("token-file", "", "path to a file containing the control socket auth token (default: sibling \"token\" file next to the socket)")
 	stateDir := fs.String("state-dir", "", "web UI state directory, e.g. sessions.json (default: /var/lib/serverwatch)")
-	alertLogPath := fs.String("alert-log", "", "path to the alert log (default: <state-dir>/alertlog.jsonl)")
-	alertStatePath := fs.String("alert-state", "", "path to the alert ack-state file (default: <state-dir>/alerts.json)")
 	if err := fs.Parse(args); err != nil {
 		return connConfig{}, err
 	}
@@ -123,14 +118,6 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	}
 	if cc.stateDir == "" {
 		cc.stateDir = defaultStateDir
-	}
-	cc.alertLogPath = *alertLogPath
-	if cc.alertLogPath == "" {
-		cc.alertLogPath = filepath.Join(cc.stateDir, "alertlog.jsonl")
-	}
-	cc.alertStatePath = *alertStatePath
-	if cc.alertStatePath == "" {
-		cc.alertStatePath = filepath.Join(cc.stateDir, "alerts.json")
 	}
 	return cc, nil
 }
@@ -209,10 +196,8 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 			}
 			return v
 		},
-		StateDir:       cc.stateDir,
-		AlertLogPath:   cc.alertLogPath,
-		AlertStatePath: cc.alertStatePath,
-		TestChannel:    client.TestChannel,
+		StateDir:    cc.stateDir,
+		TestChannel: client.TestChannel,
 		// ValidateChannel is now a core.API method (core-contract-s1 task
 		// A1, #79): it dry-runs buildNotifier against the daemon's live
 		// config over the socket, the same check TestChannel above already

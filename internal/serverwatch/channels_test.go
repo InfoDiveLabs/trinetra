@@ -1,11 +1,43 @@
 package serverwatch
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"serverwatch/internal/config"
 )
+
+// TestHostPrefixNotifierPrefixesTitle pins #101's multi-host disambiguation:
+// the decorator prepends "[server.name]" to the title the inner notifier sees,
+// while leaving the caller's Alert untouched (so the on-disk log stays
+// host-neutral). An empty name passes the title straight through.
+func TestHostPrefixNotifierPrefixesTitle(t *testing.T) {
+	inner := &fakeNotifier{name: "inner"}
+	orig := Alert{Title: "disk:/ = 91.0"}
+
+	h := hostPrefixNotifier{inner: inner, serverName: "attic-pi"}
+	if err := h.Send(context.Background(), orig); err != nil {
+		t.Fatal(err)
+	}
+	got := inner.received()
+	if len(got) != 1 || got[0].Title != "[attic-pi] disk:/ = 91.0" {
+		t.Fatalf("inner saw %+v, want title prefixed with [attic-pi]", got)
+	}
+	if orig.Title != "disk:/ = 91.0" {
+		t.Errorf("caller's Alert.Title mutated to %q; must stay host-neutral", orig.Title)
+	}
+	if h.Name() != "inner" {
+		t.Errorf("Name() = %q, want the inner notifier's name", h.Name())
+	}
+
+	// Empty server name: no prefix.
+	bare := &fakeNotifier{name: "b"}
+	_ = hostPrefixNotifier{inner: bare, serverName: ""}.Send(context.Background(), Alert{Title: "x"})
+	if g := bare.received(); len(g) != 1 || g[0].Title != "x" {
+		t.Errorf("empty name should not prefix; got %+v", g)
+	}
+}
 
 // TestSendTestNotificationUnknownChannel pins sendTestNotification's
 // "unknown channel" error path (issue #66's inprocAPI.TestChannel and

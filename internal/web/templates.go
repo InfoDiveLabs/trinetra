@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"serverwatch/internal/version"
 )
 
 // assetVersion is a short content hash over every embedded asset, appended as
@@ -101,6 +103,7 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Monitor"}},
 	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
 	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring"}},
+	{NavItem: NavItem{Href: "/host", Icon: "▢", Label: "Host"}},
 	{NavItem: NavItem{Href: "/alerts", Icon: "!", Label: "Alerts"}},
 	{NavItem: NavItem{Href: "/history", Icon: "◔", Label: "History"}},
 	{NavItem: NavItem{Heading: "Admin"}, AdminOnly: true},
@@ -166,9 +169,14 @@ type PageData struct {
 	// Title/Sub drive the topbar's <h1>/<p>, mirroring the mockup's
 	// data-title/data-sub attributes.
 	Title, Sub string
+	// ServerName is this host's display name (config server.name, or the
+	// hostname when unset), shown as the sidebar brand subtitle so a multi-host
+	// operator can tell which host's panel they are looking at (#101). Replaces
+	// the old hardcoded MONITOR.HOME.LAN.
+	ServerName string
 	// Status/StatusText drive the topbar's status pill (led color class +
 	// display text) and are ALWAYS computed by newPageData from the real
-	// active-alert set (topbarStatus, AlertStatePath) -- see that function's
+	// active-alert set (topbarStatus, over the control socket) -- see that function's
 	// doc. They are not caller-supplied: every page's topbar reflects the
 	// same real severity/counts rather than each page guessing its own
 	// (the old bug this replaces: most page handlers passed the literal
@@ -202,11 +210,19 @@ type PageData struct {
 	// fetch()/htmx request (e.g. the topbar's sign-out button). Empty when
 	// there's no signed-in session in the request context.
 	CSRF string
+	// CoreVersion is the running core daemon's version (fetched over the
+	// control socket), WebVersion is this web plugin's own compiled-in version,
+	// and VersionMismatch is true when they differ -- so a partial upgrade
+	// (plugin older than core, or vice versa) is legible in the sidebar footer
+	// rather than silent (#107).
+	CoreVersion     string
+	WebVersion      string
+	VersionMismatch bool
 }
 
 // newPageData builds the PageData every page handler needs, deriving Role
 // from the request and Active from its path, and Status/StatusText from the
-// real active-alert set (topbarStatus(loadActiveAlerts(d.AlertStatePath))) --
+// real active-alert set (topbarStatus(activeAlertsViaAPI(d))) --
 // see PageData's doc for why every page shares this one computation rather
 // than each supplying its own. d is also used to compute the nav's live
 // badge counts (navCountsFor); every other field is unchanged from the
@@ -221,20 +237,40 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	if sess, ok := sessionFromContext(r); ok {
 		csrf = sess.CSRF
 	}
-	status, statusText := topbarStatus(loadActiveAlerts(d.AlertStatePath))
+	status, statusText := topbarStatus(activeAlertsViaAPI(d))
+	webVer := version.String()
+	coreVer := coreVersionViaAPI(d)
 	return PageData{
-		Title:      title,
-		Sub:        sub,
-		Status:     status,
-		StatusText: statusText,
-		Role:       role,
-		Name:       name,
-		Initial:    firstInitial(name),
-		Active:     r.URL.Path,
-		Nav:        navForRole(role, navCountsFor(d)),
-		Nonce:      nonceFromContext(r),
-		CSRF:       csrf,
+		Title:           title,
+		Sub:             sub,
+		ServerName:      d.Cfg().ServerName(),
+		Status:          status,
+		StatusText:      statusText,
+		Role:            role,
+		Name:            name,
+		Initial:         firstInitial(name),
+		Active:          r.URL.Path,
+		Nav:             navForRole(role, navCountsFor(d)),
+		Nonce:           nonceFromContext(r),
+		CSRF:            csrf,
+		CoreVersion:     coreVer,
+		WebVersion:      webVer,
+		VersionMismatch: coreVer != "" && coreVer != "unknown" && coreVer != webVer,
 	}
+}
+
+// coreVersionViaAPI fetches the running core daemon's version over the control
+// socket (#107), degrading to "unknown" when the API is unset or errors so a
+// version hiccup never breaks page rendering.
+func coreVersionViaAPI(d Deps) string {
+	if d.API == nil {
+		return "unknown"
+	}
+	v, err := d.API.Version()
+	if err != nil || v == "" {
+		return "unknown"
+	}
+	return v
 }
 
 // firstInitial returns the uppercased first rune of name (for the sidebar

@@ -83,12 +83,12 @@ type Deps struct {
 	// history page's disk-mount list (historyDiskMounts); dashboardHandler
 	// itself now reads through API.Snapshot() instead (Task 5).
 	Snapshot func() DashboardView
-	// StateDir is the daemon's state directory.
+	// StateDir is the web plugin's own state directory (its user store,
+	// sessions, and enrollment tokens live here). Alert data no longer comes
+	// from disk paths under it: active alerts, alert history, and acks all go
+	// through API (ActiveAlerts/AlertHistory/AckAlert) over the control
+	// socket, so the plugin reads no daemon-owned state off disk.
 	StateDir string
-	// AlertLogPath is the path to the append-only alert log.
-	AlertLogPath string
-	// AlertStatePath is the path to the alert ack-state file.
-	AlertStatePath string
 	// TestChannel sends a one-off test notification through the named
 	// channel (internal/serverwatch/daemon.go's testChannel closure, built
 	// from sendTestNotification/buildNotifier -- the same logic `serverwatch

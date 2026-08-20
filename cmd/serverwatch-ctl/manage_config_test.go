@@ -44,7 +44,7 @@ func TestSettingsGroupsFromCatalog(t *testing.T) {
 // exactly the catalog entries for the requested group, in catalog order.
 func TestSettingsGroupKeysFiltersByGroup(t *testing.T) {
 	keys := settingsGroupKeys("Intervals")
-	want := []string{"sample_interval", "fast_interval", "heartbeat_interval"}
+	want := []string{"sample_interval", "fast_interval", "heartbeat_interval", "exec_timeout"}
 	if len(keys) != len(want) {
 		t.Fatalf("settingsGroupKeys(Intervals) = %d keys, want %d", len(keys), len(want))
 	}
@@ -159,8 +159,8 @@ func TestManageSettingsGroupSelectOpensKeyListWithCurrentValues(t *testing.T) {
 	if got.mgr.screen != manageSettingsKeys {
 		t.Fatalf("mgr.screen = %v, want manageSettingsKeys", got.mgr.screen)
 	}
-	if len(got.mgr.setKeys) != 3 {
-		t.Fatalf("mgr.setKeys = %d entries, want 3 (Intervals group)", len(got.mgr.setKeys))
+	if len(got.mgr.setKeys) != 4 {
+		t.Fatalf("mgr.setKeys = %d entries, want 4 (Intervals group)", len(got.mgr.setKeys))
 	}
 	if got.mgr.setKeys[1].Name != "fast_interval" {
 		t.Fatalf("mgr.setKeys[1].Name = %q, want fast_interval", got.mgr.setKeys[1].Name)

@@ -6,7 +6,7 @@ read, and tells you over Telegram. No agent, no cloud, no Prometheus, no
 external metrics database. The core is standard library only.
 
 ![status: stable](https://img.shields.io/badge/status-stable-brightgreen)
-![version: v0.4.0](https://img.shields.io/badge/version-v0.4.0-blue)
+![version: v0.4.1](https://img.shields.io/badge/version-v0.4.1-blue)
 ![core: stdlib only](https://img.shields.io/badge/core-stdlib%20only-00ADD8)
 ![Go 1.22](https://img.shields.io/badge/Go-1.22-00ADD8)
 ![platform: Linux + systemd](https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333)
@@ -154,9 +154,9 @@ Everything is in the handbook, one concern per chapter.
 
 ## Status
 
-The current stable release is **v0.4.0**, the core-plus-plugin architecture (the
-control socket, the supervised `serverwatch-web`, and the `serverwatch-ctl`
-management binary), which supersedes the previous single-daemon v0.3.2. The
+The current stable release is **v0.4.1**, which hardens the core-plus-plugin
+architecture introduced in v0.4.0 with the server-identity feature set, a
+security-hardening pass, and a round of live-host reliability fixes. The
 handbook marks any feature that is still experimental where it appears; see
 [Roadmap and status](docs/handbook/12-roadmap-and-status.md) for the current
 line.

@@ -16,13 +16,23 @@ import (
 // Config is persisted as JSON. Zero values mean "use default"; Get resolves
 // the effective value by falling back to Default() for unset scalar keys.
 type Config struct {
+	// Name is this host's display name/id (dotted key server.name). Stored
+	// empty by default so the effective name (ServerName()) tracks the live
+	// system hostname; set it to disambiguate alerts from multiple hosts.
+	Name string `json:"name,omitempty"`
 	// SampleInterval is the slow tier: seconds between full baseline samples.
 	SampleInterval int `json:"sample_interval,omitempty"`
 	// FastInterval is the fast tier: seconds between lightweight checks.
 	FastInterval int `json:"fast_interval,omitempty"`
 	// HeartbeatInterval is the seconds between liveness heartbeats.
-	HeartbeatInterval int     `json:"heartbeat_interval,omitempty"`
-	BaselineSigma     float64 `json:"baseline_sigma,omitempty"`
+	HeartbeatInterval int `json:"heartbeat_interval,omitempty"`
+	// ExecTimeout is the per-command hang-breaker for external collectors
+	// (df/docker/systemctl/smartctl), in seconds. Deliberately generous: it
+	// exists to recover from a genuinely wedged command, NOT to cap slow-but-
+	// working ones, so a large/busy host does not lose collection data. Takes
+	// effect on daemon (re)start.
+	ExecTimeout   int     `json:"exec_timeout,omitempty"`
+	BaselineSigma float64 `json:"baseline_sigma,omitempty"`
 	// BaselineMinPct is the minimum relative deviation (fraction of the
 	// baseline mean, e.g. 0.15 = 15%) a value must ALSO clear -- alongside
 	// BaselineSigma -- before a baseline (non-threshold) anomaly fires. It
@@ -50,10 +60,28 @@ type Config struct {
 	Telegram       struct {
 		Token  string `json:"token,omitempty"`
 		ChatID string `json:"chat_id,omitempty"`
+		// MaxEnrollAttempts is how many consecutive wrong "/start <pin>" guesses
+		// an unclaimed bot tolerates before the enrollment PIN cools down and
+		// rotates (brute-force bound, #93). Unset/<=0 -> default 5. Read via
+		// EnrollMaxAttempts().
+		MaxEnrollAttempts int `json:"enroll_max_attempts,omitempty"`
+		// EnrollCooldown is the seconds "/start" attempts are ignored after the
+		// attempt threshold is hit, during which the PIN is also rotated (#93).
+		// Unset/<=0 -> default 60. Read via EnrollCooldownSec().
+		EnrollCooldown int `json:"enroll_cooldown,omitempty"`
 	} `json:"telegram"`
 	Healthchecks struct {
 		URL string `json:"url,omitempty"`
 	} `json:"healthchecks"`
+	Notify struct {
+		// BlockPrivateTargets, when true, refuses to dial loopback/link-local
+		// (incl. 169.254.169.254 metadata)/private targets for the URLs the
+		// daemon calls on the operator's behalf (webhook/Slack/Discord/ntfy/
+		// gotify channels and the healthchecks ping). Default false, preserving
+		// the ability to post to intentionally-internal endpoints; turn it on
+		// to harden against SSRF via a channel URL (#97).
+		BlockPrivateTargets bool `json:"block_private_targets,omitempty"`
+	} `json:"notify"`
 	Schedule struct {
 		Daily  string `json:"daily,omitempty"`  // "09:00" or ""
 		Weekly string `json:"weekly,omitempty"` // "mon@09:00" or ""
@@ -124,6 +152,11 @@ type Config struct {
 		// heaviest slow-tier call, so it is throttled independently of
 		// sample_interval. Unset/0 -> default 1800s (30 min).
 		SmartInterval int `json:"smart_interval,omitempty"`
+		// PublicIP gates the host's public-IP lookup (#102), an OUTBOUND call
+		// to a third-party echo service. Unlike the other collect toggles it
+		// defaults to FALSE (opt-in), because it is the only one that reaches
+		// off-box. nil is treated as false.
+		PublicIP *bool `json:"public_ip,omitempty"`
 	} `json:"collect"`
 	// Web holds the web UI server's settings (internal/web, compiled into
 	// the serverwatch-web binary, no build tag -- see
@@ -197,6 +230,13 @@ func (c *Config) ContainerStatsEnabled() bool {
 	return c.Collect.ContainerStats == nil || *c.Collect.ContainerStats
 }
 
+// PublicIPEnabled reports whether the opt-in public-IP lookup (collect.public_ip)
+// is enabled. Unlike the other collect toggles it defaults to FALSE (nil ->
+// false) because it makes an outbound call.
+func (c *Config) PublicIPEnabled() bool {
+	return c.Collect.PublicIP != nil && *c.Collect.PublicIP
+}
+
 // NetThroughputEnabled reports whether the per-interface network throughput
 // collector (collect.net_throughput) is enabled: unset (nil) defaults to true.
 func (c *Config) NetThroughputEnabled() bool {
@@ -228,6 +268,26 @@ func (c *Config) SmartIntervalSec() int {
 		return 1800
 	}
 	return c.Collect.SmartInterval
+}
+
+// EnrollMaxAttempts is the effective number of consecutive wrong "/start <pin>"
+// guesses an unclaimed bot tolerates before the enrollment PIN cools down and
+// rotates; unset/<=0 defaults to 5 (#93).
+func (c *Config) EnrollMaxAttempts() int {
+	if c.Telegram.MaxEnrollAttempts <= 0 {
+		return 5
+	}
+	return c.Telegram.MaxEnrollAttempts
+}
+
+// EnrollCooldownSec is the effective number of seconds "/start" attempts are
+// ignored after the attempt threshold is hit (the PIN is rotated at the same
+// moment); unset/<=0 defaults to 60 (#93).
+func (c *Config) EnrollCooldownSec() int {
+	if c.Telegram.EnrollCooldown <= 0 {
+		return 60
+	}
+	return c.Telegram.EnrollCooldown
 }
 
 type TargetOverride struct {
@@ -474,11 +534,27 @@ func (c *Config) SetChannelField(name, key, value string) error {
 }
 
 // Default returns the baked-in defaults. A fresh install works with only a token.
+// ServerName returns the effective display name for this host: the configured
+// server.name when set, else the system hostname, else "serverwatch" if the
+// hostname lookup fails. Resolved lazily (not baked into Default()) so the name
+// tracks a renamed host instead of freezing at first run, and so Default() does
+// no I/O.
+func (c *Config) ServerName() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "serverwatch"
+}
+
 func Default() *Config {
 	c := &Config{
 		SampleInterval:    60,
 		FastInterval:      5,
 		HeartbeatInterval: 30,
+		ExecTimeout:       60,
 		BaselineSigma:     3,
 		BaselineMinPct:    0.15,
 	}
@@ -518,6 +594,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.HeartbeatInterval == 0 {
 		c.HeartbeatInterval = 30
+	}
+	if c.ExecTimeout == 0 {
+		c.ExecTimeout = 60
 	}
 	if c.BaselineSigma == 0 {
 		c.BaselineSigma = 3
@@ -578,12 +657,16 @@ func (c *Config) Save(path string) error {
 // Get returns the effective string value for a dotted key.
 func (c *Config) Get(key string) (string, bool) {
 	switch key {
+	case "server.name":
+		return c.ServerName(), true
 	case "sample_interval":
 		return strconv.Itoa(c.SampleInterval), true
 	case "fast_interval":
 		return strconv.Itoa(c.FastInterval), true
 	case "heartbeat_interval":
 		return strconv.Itoa(c.HeartbeatInterval), true
+	case "exec_timeout":
+		return strconv.Itoa(c.ExecTimeout), true
 	case "baseline_sigma":
 		return trimFloat(c.BaselineSigma), true
 	case "baseline_min_pct":
@@ -596,8 +679,14 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.Telegram.Token, true
 	case "telegram.chat_id":
 		return c.Telegram.ChatID, true
+	case "telegram.enroll_max_attempts":
+		return strconv.Itoa(c.EnrollMaxAttempts()), true
+	case "telegram.enroll_cooldown":
+		return strconv.Itoa(c.EnrollCooldownSec()), true
 	case "healthchecks.url":
 		return c.Healthchecks.URL, true
+	case "notify.block_private_targets":
+		return strconv.FormatBool(c.Notify.BlockPrivateTargets), true
 	case "schedule.daily":
 		return c.Schedule.Daily, true
 	case "schedule.weekly":
@@ -622,6 +711,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.Storage.RollupRetention, true
 	case "collect.container_stats":
 		return strconv.FormatBool(c.ContainerStatsEnabled()), true
+	case "collect.public_ip":
+		return strconv.FormatBool(c.PublicIPEnabled()), true
 	case "collect.net_throughput":
 		return strconv.FormatBool(c.NetThroughputEnabled()), true
 	case "collect.services":
@@ -661,6 +752,8 @@ func (c *Config) Get(key string) (string, bool) {
 func (c *Config) Set(key, val string) error {
 	f := func() (float64, error) { return strconv.ParseFloat(val, 64) }
 	switch key {
+	case "server.name":
+		c.Name = val // empty clears back to the system hostname (see ServerName)
 	case "sample_interval":
 		n, err := strconv.Atoi(val)
 		if err != nil || n < 5 {
@@ -686,6 +779,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("heartbeat_interval must be an integer >= 1")
 		}
 		c.HeartbeatInterval = n
+	case "exec_timeout":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("exec_timeout must be an integer >= 1")
+		}
+		c.ExecTimeout = n
 	case "baseline_sigma":
 		v, err := f()
 		if err != nil {
@@ -716,8 +815,26 @@ func (c *Config) Set(key, val string) error {
 		c.Telegram.Token = val
 	case "telegram.chat_id":
 		c.Telegram.ChatID = val
+	case "telegram.enroll_max_attempts":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("telegram.enroll_max_attempts must be an integer >= 1")
+		}
+		c.Telegram.MaxEnrollAttempts = n
+	case "telegram.enroll_cooldown":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 1 {
+			return fmt.Errorf("telegram.enroll_cooldown must be an integer >= 1 (seconds)")
+		}
+		c.Telegram.EnrollCooldown = n
 	case "healthchecks.url":
 		c.Healthchecks.URL = val
+	case "notify.block_private_targets":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("notify.block_private_targets: %w", err)
+		}
+		c.Notify.BlockPrivateTargets = b
 	case "schedule.daily":
 		if err := validateDaily(val); err != nil {
 			return err
@@ -785,6 +902,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.container_stats: %w", err)
 		}
 		c.Collect.ContainerStats = &b
+	case "collect.public_ip":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("collect.public_ip: %w", err)
+		}
+		c.Collect.PublicIP = &b
 	case "collect.net_throughput":
 		b, err := strconv.ParseBool(val)
 		if err != nil {
@@ -906,6 +1029,7 @@ var keyCatalog = []KeyInfo{
 	{Name: "sample_interval", Group: "Intervals", Kind: "int", Help: "Seconds between full baseline samples (the slow tier)."},
 	{Name: "fast_interval", Group: "Intervals", Kind: "int", Help: "Seconds between lightweight checks (the fast tier)."},
 	{Name: "heartbeat_interval", Group: "Intervals", Kind: "int", Help: "Seconds between liveness heartbeats."},
+	{Name: "exec_timeout", Group: "Intervals", Kind: "int", Help: "Per-command hang-breaker for external collectors (df/docker/systemctl/smartctl), in seconds. Generous by design -- only a wedged command should hit it. Takes effect on restart."},
 
 	{Name: "baseline_sigma", Group: "Baseline", Kind: "float", Help: "Standard deviations from the mean before a baseline anomaly fires."},
 	{Name: "baseline_min_pct", Group: "Baseline", Kind: "float", Help: "Minimum relative deviation from the baseline mean also required to fire."},
@@ -922,6 +1046,9 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "telegram.token", Group: "Notifications", Kind: "string", Help: "Telegram bot token from @BotFather."},
 	{Name: "telegram.chat_id", Group: "Notifications", Kind: "string", Help: "Telegram chat id enrolled to receive alerts."},
+	{Name: "telegram.enroll_max_attempts", Group: "Notifications", Kind: "int", Help: "Wrong /start <pin> guesses tolerated before the enrollment PIN cools down and rotates (brute-force bound). Default 5."},
+	{Name: "telegram.enroll_cooldown", Group: "Notifications", Kind: "int", Help: "Seconds /start attempts are ignored after the attempt limit is hit (the PIN also rotates then). Default 60."},
+	{Name: "notify.block_private_targets", Group: "Notifications", Kind: "bool", Help: "Refuse to dial loopback/link-local(incl. 169.254.169.254)/private targets for channel + healthchecks URLs (SSRF hardening). Default false."},
 	{Name: "healthchecks.url", Group: "Notifications", Kind: "string", Help: "healthchecks.io ping URL, or empty to disable."},
 
 	{Name: "schedule.daily", Group: "Schedule", Kind: "string", Help: "Daily digest time as HH:MM, or empty to disable."},
@@ -932,6 +1059,7 @@ var keyCatalog = []KeyInfo{
 	{Name: "storage.rollup_retention", Group: "Storage", Kind: "duration", Help: "How long 1m-rollup samples and events are kept, e.g. 720h.", RestartRequired: true},
 
 	{Name: "collect.container_stats", Group: "Collection", Kind: "bool", Help: "Collect per-container docker stats."},
+	{Name: "collect.public_ip", Group: "Collection", Kind: "bool", Help: "Look up the host's public IP via an outbound call (opt-in, default false)."},
 	{Name: "collect.net_throughput", Group: "Collection", Kind: "bool", Help: "Collect per-interface network throughput."},
 	{Name: "collect.services", Group: "Collection", Kind: "bool", Help: "Collect the full systemd unit inventory."},
 	{Name: "collect.processes", Group: "Collection", Kind: "bool", Help: "Collect the process-table overview."},
@@ -950,6 +1078,8 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "public.enabled", Group: "Public", Kind: "bool", Help: "Enable the anonymous /public status page."},
 	{Name: "public.panels", Group: "Public", Kind: "csv", Help: "Comma-separated panel ids exposed on the public page."},
+
+	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
 }
 
 // effectiveFastInterval returns c.FastInterval, or the baked-in default (5)

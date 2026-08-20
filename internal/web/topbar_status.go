@@ -3,8 +3,8 @@ package web
 import "fmt"
 
 // topbarStatus derives the shared topbar status pill (color class + display
-// text) from the real active-alert set (Deps.AlertStatePath, the same read
-// navCountsFor uses for the sidebar's Alerts badge -- see loadActiveAlerts).
+// text) from the real active-alert set (Deps.API.ActiveAlerts, the same read
+// navCountsFor uses for the sidebar's Alerts badge -- see activeAlertsViaAPI).
 // It replaces the old hardcoded statusText mapping, which said "2 alerts
 // firing" whenever the caller-supplied status was "crit" and "1 warning"
 // whenever it was "warn", no matter how many alerts were actually active.

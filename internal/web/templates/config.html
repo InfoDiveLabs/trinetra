@@ -3,6 +3,12 @@
   <form method="post" action="/config">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
 
+    <div class="section-label"><span class="eyebrow">Identity</span></div>
+    <div class="panel"><div class="head"><span class="eyebrow">This server</span></div>
+      <label class="field"><span class="lb">Server name</span><input type="text" name="server_name" value="{{.ServerNameRaw}}" placeholder="{{.ServerName}}" maxlength="128"><span class="hint">Shown in the brand, alert titles, and <span class="mono">host</span> view. Leave blank to use the system hostname.</span></label>
+      <label class="field"><span class="lb">Look up public IP</span><input type="checkbox" class="switch" name="collect_public_ip" value="1" {{if .CollectPublicIP}}checked{{end}}><span class="hint">Opt-in: resolves this host's internet-facing IP via one outbound request. Off by default.</span></label>
+    </div>
+
     <div class="section-label"><span class="eyebrow">Access &amp; domain</span></div>
     <p class="note" style="margin:-4px 0 14px">How people reach the web UI, and the address passkeys are bound to -- read-only here: managed via the CLI (<span class="mono">serverwatch config set web.*</span>). Editing the origin/RP&nbsp;ID from the web could lock you out of passkey login, so there's no form control for it on this page.</p>
     <div class="grid g-2">

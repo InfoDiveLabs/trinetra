@@ -6,6 +6,228 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
+## [0.4.1] - 2026-08-20
+
+The stable cut of the `0.4.1-beta.1`…`beta.3` line, tested on the live host
+since 2026-08-02. Everything below is the beta content promoted unchanged;
+see the beta entries for full detail. Highlights:
+
+- **Server identity (#99).** Configurable `server.name` shown across web, ctl,
+  and alert titles; host inventory (CPU/RAM/disks/OS/uptime) on a new web Host
+  page, `serverwatch-ctl host`, and `core.API.HostInfo`; local + opt-in public
+  IP; CPU/mem alerts name the top process and container. (#100, #101, #102, #103)
+- **Security hardening.** Fail-closed control socket (#96) and web user store
+  (#105), bounded Telegram enrollment PIN brute force (#93), DOM XSS sink
+  removed (#94), rate-limited ceremony begins (#95), opt-in outbound SSRF guard
+  (#97), documented plugin-copy trust assumption (#98).
+- **Reliability.** Web dashboard no longer freezes on a desynced socket client
+  (#105); daemon restarts are no longer recorded as host downtime (#116);
+  collection is fail-visible with per-collector health and alerts (#110); Swarm
+  services keyed by service, not task (#118); storage maintenance no longer
+  stalls history reads (#113).
+- **Operability.** Build-time version stamps with mismatch detection in the
+  panel and `serverwatch-ctl version` (#107); series-cardinality guardrail in
+  `doctor` (#112); setup UX fixes (#106); container logs in the drawer;
+  paginated downtime list.
+
+## [0.4.1-beta.3] - 2026-08-08
+
+Five tracker issues, all with core / web / ctl parity: versions in the panel,
+setup UX fixes, and three reliability fixes for how the daemon collects and
+keys data.
+
+### Added
+
+- **Versions in the panel (#107).** Each binary is now stamped with a build-time
+  version (git-derived, with a `dev` fallback for plain `go build`). The web
+  sidebar shows the core daemon's version (over the control socket) and the web
+  plugin's own version, with a "version mismatch" marker when they differ after
+  a partial upgrade. `serverwatch-ctl version` prints both from the terminal.
+- **Monitoring-failure alerts (#110).** A slow-tier collector (docker, disk,
+  services, smart) that fails or times out for three consecutive cycles now
+  raises a `collector:<name>` alert and recovers on the next success.
+
+### Fixed
+
+- **Collection is fail-visible, not silent (#110).** A failed or timed-out
+  collection command no longer publishes missing data or flips a healthy target
+  to gone: the daemon carries the last-known values forward (marked stale) and
+  records the failure. Per-collector health (consecutive failures, last success,
+  last error) is in `status.json`, shown as a warning banner on the web
+  dashboard, and printed by `serverwatch-ctl status`.
+- **Docker Swarm services are keyed by service, not task (#118).** On a Swarm
+  node, containers are keyed by their stable service name instead of the
+  ephemeral `<service>.<slot>.<taskid>` task name (tasks summed). A rolling
+  deploy no longer creates new per-task series or fires false down/recover
+  churn, and per-service history stays continuous across redeploys. Plain-docker
+  hosts are unchanged.
+- **Series-cardinality guardrail (#112).** `serverwatch doctor` now warns when
+  the time-series count is abnormally high (a healthy host is in the low
+  hundreds), catching an accumulation before it degrades the daemon. Stale
+  series already age out past retention.
+- **Setup UX (#106).** The proxy-mode web wizard now offers an optional domain
+  step (deriving rp_id/origin, or leaving them to forwarded headers and
+  documenting that on the confirm screen), so an operator whose reverse proxy
+  does not forward `X-Forwarded-*` headers can set them without dropping to
+  `config set`. `serverwatch install` no longer nudges you to set a Telegram
+  token when one is already configured.
+
+## [0.4.1-beta.2] - 2026-08-08
+
+This preview folds together everything since `0.4.1-beta.1`: a security-hardening
+pass, the server-identity epic (#99), and the round of fixes from testing beta.1
+on the live host. Every capability lands in core, web, and `serverwatch-ctl`
+together.
+
+### Fixed (from beta testing)
+
+- **Multi-socket CPUs now report their socket count.** `parseCPUInfo` summed
+  cores across sockets but never counted the sockets, so a dual-socket box read
+  as one CPU. The host view now shows `2× <model> (2 sockets / 32 cores / 64
+  threads)`.
+- **The disk inventory shows only real disks.** Docker `overlay` layers,
+  `tmpfs`, snap `squashfs`/loop mounts, and the other pseudo filesystems are
+  filtered out; local block devices, LVM volumes, and network mounts
+  (NFS/CIFS) are kept.
+- **Container logs are viewable.** The dashboard drawer's "View logs" action is
+  wired to a new `core.API.ContainerLogs` (a validated `docker logs --tail`
+  snapshot over the control socket), also exposed as `serverwatch-ctl logs
+  <container> [--tail N]`. The container name is validated against the live
+  container list before shelling out.
+- **Per-metric history is drawn in the drawer.** Rows backed by a stored series
+  (disk mounts) now render a real 6h sparkline from `/api/series` instead of the
+  "not available yet" placeholder; rows with no stored series omit the chart
+  rather than faking one.
+- **Host info on the dashboard.** A compact host strip (name, OS, CPU, RAM,
+  uptime, local IP) sits at the top of the dashboard on desktop, linking through
+  to the full Host page.
+- **Identity setup in the web UI.** The admin `/config` page now has an Identity
+  panel to set `server.name` and toggle the `collect.public_ip` opt-in.
+- **The downtime list on the history page is paginated.** It shows the most
+  recent 8 incidents with a "Show all" expander instead of an unbounded wall of
+  rows.
+
+### Server identity (#99)
+
+- **Configurable `server.name`.** A new `server.name` config key names the
+  server; it resolves through the configured name, then the OS hostname, then
+  `serverwatch`. The web UI brand shows it in place of the old hardcoded
+  `MONITOR.HOME.LAN`, `serverwatch-ctl` shows it in the Home header and config
+  editor, and every alert title is prefixed `[name]` so a multi-server inbox is
+  legible. (#101)
+- **Host inventory.** A stdlib-only collector reports CPU model / cores /
+  threads, total RAM, kernel, OS release, uptime, and per-disk model / type /
+  size / filesystem. It is served over a dedicated `core.API.HostInfo()` method
+  (control socket included), rendered on a new web **Host** page (viewer-gated),
+  and available as `serverwatch-ctl host` (with `--json`). (#100)
+- **Host IP addresses.** The inventory reports the local IP always and the
+  public IP only when the opt-in `collect.public_ip` key is set (default false,
+  since resolving it makes an outbound request). Both are shown on the web Host
+  page and the ctl subcommand. (#102)
+- **CPU and memory alerts name the culprit.** A `cpu`/`mem` breach message now
+  carries a ` (top: <proc> N%, container <name> N%)` suffix built from the
+  process and container data already on the snapshot, so an alert reads
+  `cpu = 96.0 >= threshold 95.0 (top: ffmpeg 82%, container web 30%)` instead of
+  a bare number. It degrades to no suffix when that data is absent. (#103)
+
+### Security hardening & correctness
+
+Working through the Fable 5 security review (fail-closed auth paths, an XSS
+sink, brute-force and lock amplification bounds, opt-in SSRF blocking), fixing
+downtime accounting so a daemon restart is no longer mistaken for a host outage,
+and stopping a maintenance pass from stalling web history reads.
+
+#### Added
+
+- **Opt-in outbound SSRF guard for channel and healthchecks URLs.** The new
+  `notify.block_private_targets` config key (default false) makes the daemon
+  refuse to dial loopback, link-local (including the `169.254.169.254` cloud
+  metadata endpoint), and private (RFC1918 / ULA) targets when set. The check
+  runs against the resolved IP, so a hostname that points inward is blocked too.
+  (#97)
+- **Tunable Telegram enrollment brute-force bound.** `telegram.enroll_max_attempts`
+  (default 5) and `telegram.enroll_cooldown` (default 60s) control when the
+  enrollment PIN cools down and rotates. (#93)
+- **`serverwatch downtime purge`** clears bogus downtime events, e.g. the short
+  fabricated `power_down` events an old crash loop wrote. (#116)
+
+#### Fixed
+
+- **A daemon restart is no longer recorded as a host `power_down`.** The
+  reconstruction now reads the host boot time from `/proc/stat` and records
+  downtime only when the host actually rebooted during the gap; a monitor
+  restart (crash loop, deploy, `systemctl restart`) records nothing, so a
+  restart storm can no longer fabricate hours of downtime and tank the uptime
+  percentage. Overlapping and adjacent outages are coalesced into one incident
+  and their union, not a double-counted sum. (#116)
+- **A storage maintenance pass no longer stalls web history reads.** `Prune` and
+  `Downsample` take the store lock per file instead of holding it for the whole
+  multi-second pass, so `Query` reads interleave between files. (#113)
+- **Removed dead mockup UI from the container drawer:** the non-functional
+  `Restart` action and the placeholder sparkline "charts" that never loaded real
+  data are gone, replaced by honest not-yet-available states. (#114)
+
+#### Security
+
+- **The control socket fails closed** when its per-launch auth token cannot be
+  generated or written: it now runs without the socket rather than serving it
+  with no authentication. (#96)
+- **The web UI fails closed on an unreadable user store.** An unreadable
+  `users.json` was treated as an empty first-run store, which could open a
+  tokenless-admin bootstrap window; enrollment now refuses when the store cannot
+  be read. (#105)
+- **The Telegram enrollment PIN is bounded against brute force:** after a run of
+  wrong `/start` guesses it cools down and rotates to a fresh value, so the
+  six-digit space cannot be walked. (#93)
+- **The detail drawer is built with `textContent`, not `innerHTML` string
+  concatenation,** removing a CSP-mitigated DOM XSS sink where `data-*` values
+  were concatenated into live markup. (#94)
+- **Unauthenticated ceremony begins are rate-limited** (`/enroll/begin` and
+  `/login/begin`, 15 per 10s per client) so an anonymous caller cannot hammer
+  the shared ceremony-store lock. (#95)
+- **Documented the install-time plugin-copy trust assumption:** only run
+  `serverwatch install` from a directory you control, since it adopts the plugin
+  binaries beside it. (#98)
+
+## [0.4.1-beta.1] - 2026-08-02
+
+A reliability release for the core-plus-plugin line: the web plugin is made
+truly channel-only, and a socket-client defect that could freeze the dashboard
+is fixed.
+
+### Fixed
+
+- **The web dashboard no longer freezes into an all-zero board until a core
+  restart.** The control-socket client held one long-lived connection with no
+  reconnect: on a read timeout or a response-id mismatch it returned the error
+  but kept the connection, which is then permanently frame-misaligned (a late
+  response is read by the next call and mismatches its id, desyncing every call
+  after). Because `serverwatch-web` holds one client for its whole lifetime, a
+  single slow daemon response wedged every `Snapshot` and the dashboard
+  rendered the zero-value view (0 cores, 0%, Offline) while alerts and Telegram
+  kept working. The client now poisons the connection on any transport failure
+  and transparently re-dials on the next call, with a bounded reconnect
+  handshake. (#105)
+
+### Changed
+
+- **The web plugin no longer reads or writes daemon-owned state on disk.**
+  Active alerts, alert history, and alert acks now go through the control
+  socket (`core.API.ActiveAlerts` / `AlertHistory` / `AckAlert`) instead of
+  decoding `alerts.json` / `alertlog.jsonl` directly, and the ack handler no
+  longer writes `alerts.json` itself (it had been a second writer racing the
+  daemon). This also removes the disk shortcut that masked the socket-desync
+  bug above, so the dashboard now fails coherently rather than half-failing
+  into all-zeros. The web keeps ownership of its own auth material (users,
+  sessions, enrollment tokens); the core has nothing to do with auth.
+- `core.AlertRecord` gains a `DeliveredTo` field so the alerts page's Delivered
+  column keeps its per-channel names when read over the socket.
+
+### Internal
+
+- The docker validate harness builds under Go 1.24 (matching `go.mod`) rather
+  than the stale 1.22 base image.
+
 ## [0.4.0] - 2026-08-02
 
 The core-plus-plugin release. serverwatch is reshaped from a single monolithic

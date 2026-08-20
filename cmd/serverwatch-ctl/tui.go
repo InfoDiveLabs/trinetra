@@ -80,6 +80,11 @@ type model struct {
 	// help toggles the global keymap overlay (opened with '?' from Home,
 	// dismissed by any key).
 	help bool
+	// serverName is the host's display name (config server.name, or the
+	// hostname when unset), captured from the Config() fetch Init already
+	// issues and shown in the Home header so a multi-host operator can tell
+	// which host this ctl is pointed at (#101), matching the web sidebar brand.
+	serverName string
 
 	// web setup wizard
 	wiz        webSetupStep
@@ -397,6 +402,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case onboardCheckMsg:
+		// The onboarding check's Config() fetch (Init) is also where we learn
+		// the host's display name for the Home header (#101).
+		if msg.cfg != nil {
+			m.serverName = msg.cfg.ServerName()
+		}
 		// Only auto-enter onboarding if the user is still sitting on Home:
 		// by the time this lands (it's fetched alongside the snapshot/tick
 		// in Init, so it can arrive after other keys), they may already have
@@ -563,24 +573,30 @@ func (m model) updateTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onListenDone commits the listen-address step. proxy mode needs no public
-// hostname (see needsDomain), so it skips straight to the confirm screen;
-// autocert/manual continue on to the domain step.
+// onListenDone commits the listen-address step and advances to the domain
+// step. Every mode now visits it (#106): autocert/manual require a public
+// hostname, and proxy mode offers it optionally so an operator whose reverse
+// proxy does not forward X-Forwarded-* headers can still set rp_id/origin
+// explicitly instead of dropping to `config set`.
 func (m model) onListenDone() (tea.Model, tea.Cmd) {
 	m.ans.Listen = m.listenIn.Value()
-	if needsDomain(m.ans.Mode) {
-		m.wiz = webSetupDomain
-		return m, m.domainIn.Focus()
-	}
-	m.wiz = webSetupConfirm
-	return m, nil
+	m.wiz = webSetupDomain
+	return m, m.domainIn.Focus()
 }
 
-// onDomainDone commits the domain step and seeds rp_id/origin's defaults
-// from it (deriveRPIDOrigin) before moving on so the following two screens
-// open pre-filled rather than blank.
+// onDomainDone commits the domain step and seeds rp_id/origin's defaults from
+// it (deriveRPIDOrigin) before moving on so the following two screens open
+// pre-filled. In proxy mode a BLANK domain is allowed: it leaves rp_id/origin
+// unset (derived per-request from the reverse proxy's forwarded headers) and
+// skips straight to confirm, preserving the old proxy default for operators
+// whose proxy does forward the headers.
 func (m model) onDomainDone() (tea.Model, tea.Cmd) {
-	m.ans.Domain = m.domainIn.Value()
+	m.ans.Domain = strings.TrimSpace(m.domainIn.Value())
+	if m.ans.Mode == "proxy" && m.ans.Domain == "" {
+		m.ans.RPID, m.ans.Origin = "", ""
+		m.wiz = webSetupConfirm
+		return m, nil
+	}
 	rpid, origin := deriveRPIDOrigin(m.ans.Domain)
 	m.ans.RPID, m.ans.Origin = rpid, origin
 	m.rpidIn.SetValue(rpid)
@@ -708,7 +724,11 @@ func (m model) homeView() string {
 // homeHeader is the "serverwatch  ● online   updated 3s ago" status line.
 func (m model) homeHeader() string {
 	glyph, text, style := onlineGlyph(m.snap.Online)
-	head := titleStyle.Render("serverwatch") + "  " + style.Render(glyph+" "+text)
+	head := titleStyle.Render("serverwatch")
+	if m.serverName != "" {
+		head += faintStyle.Render(" · " + m.serverName)
+	}
+	head += "  " + style.Render(glyph+" "+text)
 	if !m.loading && m.snap.TS != 0 {
 		head += faintStyle.Render("   updated " + agoString(m.snap.TS))
 	}
@@ -905,6 +925,9 @@ func (m model) setupView() string {
 		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
 	case webSetupDomain:
 		fmt.Fprintf(&b, "public domain (used to derive rp_id/origin):\n\n%s\n", m.domainIn.View())
+		if m.ans.Mode == "proxy" {
+			b.WriteString("\n" + hintStyle.Render("optional in proxy mode: leave blank to derive rp_id/origin from your reverse proxy's forwarded headers") + "\n")
+		}
 		b.WriteString("\n" + hintStyle.Render("enter to continue, esc to go back") + "\n")
 	case webSetupRPID:
 		fmt.Fprintf(&b, "webauthn rp_id (relying party id):\n\n%s\n", m.rpidIn.View())

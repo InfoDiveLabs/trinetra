@@ -55,6 +55,10 @@ func newFullSnapshot() Snapshot {
 				{PID: 1234, Name: "nginx", State: "S", CPUPct: 5.5, MemMiB: 32, Threads: 4},
 			},
 		},
+		CollectorErrors: map[string]string{"docker": "timeout"},
+		CollectorHealth: map[string]CollectorStat{
+			"docker": {Fails: 2, LastSuccessUnix: 1699999900, LastError: "timeout"},
+		},
 	}
 }
 
@@ -112,10 +116,16 @@ func TestSnapshotJSONRoundTripsExtendedFields(t *testing.T) {
 //   - NetRates, Processes: populated by the caller directly from stateful
 //     calculators (NetRateCalc/ProcCPUCalc) that collectSlow has no access
 //     to, not by collectSlow itself -- see mergeSlowFields's doc comment.
+//   - SlowStale: a sampler-loop freshness flag (set from the slow-hub version),
+//     not a collected field at all -- collectSlow never touches it.
+//   - CollectorErrors: a transient per-cycle signal consumed by the
+//     slow-collector goroutine (carry-forward + health update), not merged into
+//     the published snapshot; CollectorHealth carries the durable state instead.
 var slowMergeExcludedFields = map[string]bool{
 	"TS": true, "CPU": true, "MemPct": true, "SwapPct": true,
 	"Load1": true, "Load5": true, "Load15": true, "TempC": true,
-	"NetRates": true, "Processes": true,
+	"NetRates": true, "Processes": true, "SlowStale": true,
+	"CollectorErrors": true,
 }
 
 // TestMergeSlowFieldsCopiesEverySlowTierField guards the exact bug class
@@ -139,6 +149,9 @@ func TestMergeSlowFieldsCopiesEverySlowTierField(t *testing.T) {
 	typ := mergedV.Type()
 	for i := 0; i < typ.NumField(); i++ {
 		name := typ.Field(i).Name
+		if typ.Field(i).PkgPath != "" {
+			continue // unexported (e.g. collectorsAttempted): not reflectable, internal handoff only
+		}
 		if slowMergeExcludedFields[name] {
 			continue
 		}

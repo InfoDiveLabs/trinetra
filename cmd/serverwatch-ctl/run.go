@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 
 	"serverwatch/internal/core"
+	"serverwatch/internal/version"
 )
 
 // run dispatches a single non-interactive ctl subcommand against api and
@@ -39,6 +42,12 @@ func run(api core.API, args []string, out io.Writer) int {
 		return runStatus(api, out, jsonOut)
 	case "doctor":
 		return runDoctor(api, out, jsonOut)
+	case "version":
+		return runVersion(api, out)
+	case "host":
+		return runHost(api, out, jsonOut)
+	case "logs":
+		return runLogs(api, args[1:], out)
 	case "alerts":
 		return runAlerts(api, out, jsonOut)
 	case "config":
@@ -75,6 +84,9 @@ func printUsage(out io.Writer) {
 		"commands:\n"+
 		"  status                  print the current dashboard snapshot\n"+
 		"  doctor                  print the daemon's diagnostic report\n"+
+		"  version                 print the ctl and core daemon versions\n"+
+		"  host                    print the host hardware/OS inventory\n"+
+		"  logs <container> [--tail N]  print a docker container's recent logs\n"+
 		"  alerts                  print the currently active alerts\n"+
 		"  config get <key>        print one config key's current value\n"+
 		"  config set <key> <val>  set one config key (validated, applied live)\n"+
@@ -112,6 +124,15 @@ func runStatus(api core.API, out io.Writer, jsonOut bool) int {
 	fmt.Fprintf(out, "units:      %d failed / %d total\n", snap.UnitsFailed, snap.UnitsTotal)
 	fmt.Fprintf(out, "disks:      %d mounts, %d critical\n", len(snap.Disks), snap.DisksCritical)
 	fmt.Fprintf(out, "network:    rx %.0f bps / tx %.0f bps\n", snap.NetRxBps, snap.NetTxBps)
+	if len(snap.DegradedCollectors) > 0 {
+		for _, dc := range snap.DegradedCollectors {
+			line := fmt.Sprintf("%s (%d failed)", dc.Name, dc.Fails)
+			if dc.LastError != "" {
+				line += ": " + dc.LastError
+			}
+			fmt.Fprintf(out, "COLLECTOR DEGRADED: %s\n", line)
+		}
+	}
 	return 0
 }
 
@@ -137,7 +158,161 @@ func runDoctor(api core.API, out io.Writer, jsonOut bool) int {
 	fmt.Fprintf(out, "  processes:       %s\n", onOff(rep.ProcessesOn))
 	fmt.Fprintf(out, "  smart_attrs:     %s\n", onOff(rep.SmartAttrsOn))
 	fmt.Fprintf(out, "time-series: %s\n", rep.StoreStats)
+	if rep.StoreWarning != "" {
+		fmt.Fprintf(out, "WARNING: %s\n", rep.StoreWarning)
+	}
 	return 0
+}
+
+// runHost prints the static host hardware/OS inventory (#100), the same view
+// the web "Host" panel shows, so a terminal-only operator has parity.
+func runHost(api core.API, out io.Writer, jsonOut bool) int {
+	h, err := api.HostInfo()
+	if err != nil {
+		fmt.Fprintf(out, "host: %v\n", err)
+		return 1
+	}
+	if jsonOut {
+		return emitJSON(out, h)
+	}
+	fmt.Fprintf(out, "host:     %s\n", orDash(h.Hostname))
+	fmt.Fprintf(out, "os:       %s\n", orDash(h.OS))
+	fmt.Fprintf(out, "kernel:   %s\n", orDash(h.Kernel))
+	cpu := orDash(h.CPUModel)
+	if h.CPUSockets > 1 && h.CPUModel != "" {
+		cpu = fmt.Sprintf("%d× %s", h.CPUSockets, h.CPUModel)
+	}
+	if h.CPUThreads > 0 {
+		if h.CPUSockets > 1 {
+			cpu += fmt.Sprintf("  (%d sockets / %d cores / %d threads", h.CPUSockets, h.CPUCores, h.CPUThreads)
+		} else {
+			cpu += fmt.Sprintf("  (%d cores / %d threads", h.CPUCores, h.CPUThreads)
+		}
+		if h.CPUBaseMHz > 0 {
+			cpu += fmt.Sprintf(" @ %.0f MHz", h.CPUBaseMHz)
+		}
+		cpu += ")"
+	}
+	fmt.Fprintf(out, "cpu:      %s\n", cpu)
+	fmt.Fprintf(out, "memory:   %s\n", hostBytes(h.MemTotalBytes))
+	fmt.Fprintf(out, "uptime:   %s\n", hostUptime(h.UptimeSec))
+	if h.LocalIP != "" {
+		fmt.Fprintf(out, "local ip: %s\n", h.LocalIP)
+	}
+	if h.PublicIP != "" {
+		fmt.Fprintf(out, "public ip: %s\n", h.PublicIP)
+	}
+	if len(h.Disks) > 0 {
+		fmt.Fprintf(out, "disks:\n")
+		for _, d := range h.Disks {
+			kind := "SSD"
+			if d.Rotational {
+				kind = "HDD"
+			}
+			fmt.Fprintf(out, "  %-10s %-20s %-4s %10s  %-6s %s\n",
+				orDash(d.Device), orDash(d.Model), kind, hostBytes(d.SizeBytes), orDash(d.FSType), d.Mount)
+		}
+	}
+	return 0
+}
+
+// runVersion prints this ctl plugin's own build-stamped version and the running
+// core daemon's version over the socket (#107 parity), flagging a mismatch.
+func runVersion(api core.API, out io.Writer) int {
+	ctlVer := version.String()
+	coreVer, err := api.Version()
+	if err != nil {
+		fmt.Fprintf(out, "ctl:  %s\ncore: (unavailable: %v)\n", ctlVer, err)
+		return 1
+	}
+	fmt.Fprintf(out, "ctl:  %s\ncore: %s\n", ctlVer, coreVer)
+	if coreVer != "" && coreVer != ctlVer {
+		fmt.Fprintf(out, "warning: ctl and core are on different versions\n")
+	}
+	return 0
+}
+
+// runLogs prints a docker container's recent logs (#115 parity):
+// `serverwatch-ctl logs <container> [--tail N]`.
+func runLogs(api core.API, args []string, out io.Writer) int {
+	name := ""
+	tail := 200
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tail", "-n":
+			if i+1 >= len(args) {
+				fmt.Fprintln(out, "logs: --tail needs a number")
+				return 2
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n <= 0 {
+				fmt.Fprintf(out, "logs: invalid --tail %q\n", args[i+1])
+				return 2
+			}
+			tail = n
+			i++
+		default:
+			if name == "" {
+				name = args[i]
+			}
+		}
+	}
+	if name == "" {
+		fmt.Fprintln(out, "usage: serverwatch-ctl logs <container> [--tail N]")
+		return 2
+	}
+	logs, err := api.ContainerLogs(name, tail)
+	if err != nil {
+		fmt.Fprintf(out, "logs: %v\n", err)
+		return 1
+	}
+	fmt.Fprint(out, logs)
+	if logs != "" && !strings.HasSuffix(logs, "\n") {
+		fmt.Fprintln(out)
+	}
+	return 0
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// hostBytes renders a byte count in binary units (KiB/MiB/GiB/TiB).
+func hostBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// hostUptime renders a duration in seconds as "Nd Nh Nm" (or "Ns" under a
+// minute), dropping leading zero units.
+func hostUptime(sec int64) string {
+	if sec <= 0 {
+		return "-"
+	}
+	d := sec / 86400
+	hh := (sec % 86400) / 3600
+	mm := (sec % 3600) / 60
+	switch {
+	case d > 0:
+		return fmt.Sprintf("%dd %dh %dm", d, hh, mm)
+	case hh > 0:
+		return fmt.Sprintf("%dh %dm", hh, mm)
+	case mm > 0:
+		return fmt.Sprintf("%dm", mm)
+	default:
+		return fmt.Sprintf("%ds", sec)
+	}
 }
 
 // runAlerts lists the currently active alerts, or a note when there are none;

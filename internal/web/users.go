@@ -152,6 +152,14 @@ type UserStore interface {
 	ByName(name string) (*User, bool)
 	Put(u *User) error
 	List() []*User
+	// IsEmpty reports whether the store holds zero accounts, distinguishing a
+	// genuinely empty store (absent file -> true, nil) from one that exists
+	// but cannot be read (corrupt/permission/IO -> false, err). List() cannot
+	// make this distinction (it collapses an unreadable store to nil), so the
+	// first-run bootstrap gate (resolveEnrollRole) uses this instead and fails
+	// CLOSED on error rather than treating an unreadable store as empty and
+	// opening a tokenless-admin window (#105 secondary hardening).
+	IsEmpty() (bool, error)
 	Delete(id string) error
 	// CreateFirstAdmin atomically persists u as the very first account (role
 	// forced to RoleAdmin) IFF the store is still empty, else fails -- the
@@ -422,6 +430,23 @@ func (s *jsonUserStore) List() []*User {
 		return nil
 	}
 	return users
+}
+
+// IsEmpty reports whether the store holds zero accounts. Unlike List (which
+// hides a read failure as nil), it surfaces the loadLocked error so callers
+// can fail closed: an absent file is a genuine empty first-run store (true,
+// nil), but an existing-but-unreadable one returns (false, err) so the
+// bootstrap gate refuses tokenless enrollment rather than trusting a
+// masked-empty read (#105).
+func (s *jsonUserStore) IsEmpty() (bool, error) {
+	mu := fileStoreMutex(s.path)
+	mu.Lock()
+	defer mu.Unlock()
+	users, err := s.loadLocked()
+	if err != nil {
+		return false, err
+	}
+	return len(users) == 0, nil
 }
 
 // Delete removes the user with the given ID, reporting an error if no such

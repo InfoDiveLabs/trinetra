@@ -8,7 +8,8 @@ import "strconv"
 // see navCountsFor's doc for exactly what each counts and how it degrades.
 type NavCounts struct {
 	// Alerts is the number of entries in the daemon's current active-alert
-	// map (Deps.AlertStatePath), i.e. how many conditions are firing right
+	// set (Deps.API.ActiveAlerts, over the control socket), i.e. how many
+	// conditions are firing right
 	// now (regardless of ack state -- ack only changes notification/status
 	// pill behavior elsewhere, not whether the condition itself is active).
 	Alerts int
@@ -28,14 +29,14 @@ type NavCounts struct {
 // reads (one small JSON decode, one config field, one JSON-file user-store
 // list, one already-computed snapshot field) -- safe to call on every page
 // render. Every source is defensive: a nil Cfg/Snapshot func, a missing or
-// garbage AlertState file, or an empty/absent user store all degrade to 0
+// socket read error, or an empty/absent user store all degrade to 0
 // rather than panicking or failing the page, mirroring
-// loadActiveAlerts/buildDashboardPageData's existing tolerance for the same
+// activeAlertsViaAPI/buildDashboardPageData's existing tolerance for the same
 // inputs.
 func navCountsFor(d Deps) NavCounts {
 	var c NavCounts
 
-	c.Alerts = len(loadActiveAlerts(d.AlertStatePath))
+	c.Alerts = len(activeAlertsViaAPI(d))
 
 	if d.Cfg != nil {
 		if cfg := d.Cfg(); cfg != nil {

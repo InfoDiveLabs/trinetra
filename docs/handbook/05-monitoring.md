@@ -215,6 +215,27 @@ unmonitored. You see it in `monitor list` with an `unavailable` state instead of
 `on` or `off`, and the daemon carries on with everything else. Nothing about the
 configuration changes; the box just has less to watch.
 
+## Host inventory
+
+Separate from the live metrics, serverwatch also reports the static facts about
+the machine it runs on: hostname, OS and kernel, CPU model with its physical
+core and logical thread counts, total RAM, uptime, and each disk's model, type
+(SSD or HDD), size, and filesystem. This is read straight from the host
+(`/proc`, `/sys/block`, `df`) and does not change while the box is up, so it is
+fetched on demand rather than sampled.
+
+It also reports the host's own **local IP** (the primary non-loopback address).
+The **public IP** is off by default because looking it up means an outbound call
+to a third-party service; turn it on with `serverwatch config set
+collect.public_ip true` if you want the internet-facing address shown too.
+
+See it in the web panel's **Host** page, or from a terminal with:
+
+```bash
+serverwatch-ctl host          # formatted
+serverwatch-ctl --json host   # machine-readable
+```
+
 ## Target namespaces and managing targets
 
 Every discovered target has a namespaced id, and the namespace prefix tells you
@@ -281,6 +302,44 @@ full command reference.
 What a threshold means, when the baseline deviation checks fire, and how firing
 and recovery are debounced, are all the alerting engine's concern. The next
 chapter picks the story up there.
+
+## Docker Swarm services (#118)
+
+On a host that is an active Swarm node (detected once via `docker info`), the
+daemon keys containers by their **service** rather than the ephemeral task
+container name. A Swarm task is named `<service>.<slot>.<taskid>`, and the
+`taskid` changes on every redeploy, so keying on the raw name would create two
+new permanent series (`docker:<task>:cpu`/`:mem`) per redeploy and fire false
+"container down" churn as old task names disappear. Instead:
+
+- **Series and UI** key on the service name, so per-service CPU/Mem history is
+  continuous across redeploys and cardinality tracks the service count, not the
+  lifetime task count. A service's tasks are summed, so the chart is the
+  service's total footprint.
+- **Up/down alerting** is by service: as long as one task is running (a rolling
+  deploy), the service is up, so a normal deploy no longer flaps down/recover.
+
+Plain (non-Swarm) docker hosts are entirely unaffected.
+
+## Collector health: fail-visible collection (#110)
+
+A monitoring daemon must never silently degrade. When a slow-tier collection
+command (`docker`, `df`, `systemctl`, `smartctl`) fails or times out, the daemon
+does **not** publish missing data or flip a healthy target to gone: it carries
+the last-known values forward (marking the snapshot stale) and tracks the
+failure. A collector that fails for three consecutive cycles raises a
+`collector:<name>` alert (see the next chapter), which recovers on the first
+success. The current per-collector health (consecutive failures, last success,
+last error) is in `status.json`, shown as a warning banner on the web dashboard,
+and printed by `serverwatch-ctl status`.
+
+## Series cardinality guardrail (#112)
+
+Stale series (a container removed, a mount that disappeared) are reaped once
+their newest point ages past retention, so `seriesCount` tracks live targets.
+`serverwatch doctor` warns when the count is abnormally high (a healthy host is
+in the low hundreds), which usually points at ephemeral targets churning, e.g. a
+Swarm host from before the service-keying fix above.
 
 ---
 

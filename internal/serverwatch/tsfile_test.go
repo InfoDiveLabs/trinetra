@@ -259,6 +259,52 @@ func TestTSFileEventsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTSFilePurgeEvents pins the #116 purge tool: it removes only the events
+// the predicate rejects (short power_downs), leaving longer power_downs and
+// other types intact, and reports the correct removed count.
+func TestTSFilePurgeEvents(t *testing.T) {
+	dir := t.TempDir()
+	s := openTSFile(t, dir, StoreOptions{})
+	defer s.Close()
+
+	events := []DownEvent{
+		{Type: "power_down", Start: 100, End: 220, DurationSec: 120}, // short restart artifact
+		{Type: "power_down", Start: 400, End: 460, DurationSec: 60},  // short restart artifact
+		{Type: "power_down", Start: 1000, End: 1000 + 3600, DurationSec: 3600}, // real outage
+		{Type: "net_down", Start: 5000, End: 5100, DurationSec: 100}, // different type
+	}
+	for _, e := range events {
+		if err := s.AppendEvent(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Purge power_downs shorter than 300s.
+	keep := func(e DownEvent) bool {
+		return !(e.Type == "power_down" && e.DurationSec < 300)
+	}
+	removed, err := s.PurgeEvents(keep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2 short power_downs", removed)
+	}
+
+	evs, err := s.Events(0, 1_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("after purge = %+v, want 2 survivors (the long power_down + net_down)", evs)
+	}
+	for _, e := range evs {
+		if e.Type == "power_down" && e.DurationSec < 300 {
+			t.Errorf("a short power_down survived the purge: %+v", e)
+		}
+	}
+}
+
 func TestTSFilePrune(t *testing.T) {
 	dir := t.TempDir()
 	s := openTSFile(t, dir, StoreOptions{})
@@ -318,6 +364,118 @@ func TestTSFilePrune(t *testing.T) {
 	// temp+rename swap didn't corrupt it.
 	if err := s.Append(now, MetricSet{"cpu": 3}); err != nil {
 		t.Fatalf("append after prune failed, file likely corrupted: %v", err)
+	}
+}
+
+// TestTSFilePruneReleasesLockBetweenFiles pins the #113 fix: Prune must take
+// the store write lock PER FILE, not once for the whole pass, so that Query
+// reads can interleave between files instead of blocking for the entire
+// (potentially multi-second) maintenance pass. It drives the between-files hook
+// and asserts the store lock is free at that point; under the old whole-pass
+// lock it would have been held and the TryLock would fail.
+func TestTSFilePruneReleasesLockBetweenFiles(t *testing.T) {
+	dir := t.TempDir()
+	// Concrete *tsFileStore (not the SampleStore interface) so the test can
+	// probe s.mu directly.
+	s, err := newTSFileStore(dir, StoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	const day = int64(86400)
+	now := int64(60 * day)
+	// Several distinct series so pruneDir iterates multiple raw files.
+	if err := s.Append(now-40*day, MetricSet{"cpu": 1, "mem": 1, "disk": 1, "temp": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(now-1*day, MetricSet{"cpu": 2, "mem": 2, "disk": 2, "temp": 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls, acquired int
+	pruneBetweenFilesHook = func() {
+		calls++
+		// This runs BETWEEN per-file prunes; the store lock must be free here.
+		// (Single-threaded test, so a successful TryLock means Prune released
+		// the lock rather than holding it across the whole pass.)
+		if s.mu.TryLock() {
+			acquired++
+			s.mu.Unlock()
+		}
+	}
+	defer func() { pruneBetweenFilesHook = nil }()
+
+	if err := s.Prune(now); err != nil {
+		t.Fatal(err)
+	}
+	if calls == 0 {
+		t.Fatal("between-files hook never fired; expected several raw series to iterate")
+	}
+	if acquired != calls {
+		t.Fatalf("store lock was held on %d of %d between-file checks: Prune still pins the lock across the pass (#113)", calls-acquired, calls)
+	}
+}
+
+// A series whose every sample has aged out past retention must be DELETED by
+// Prune, not rewritten as an empty file -- otherwise dead targets (removed
+// containers/mounts/devices) accumulate .tsd files forever, which is what made
+// Prune fsync thousands of files and starved the daemon. This is the
+// cardinality-bounding guarantee.
+func TestTSFilePruneReapsDeadSeries(t *testing.T) {
+	dir := t.TempDir()
+	s := openTSFile(t, dir, StoreOptions{})
+	defer s.Close()
+
+	const day = int64(86400)
+	now := int64(60 * day)
+
+	// "dead": only data older than raw retention. "live": a recent point.
+	if err := s.Append(now-40*day, MetricSet{"dead": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(now-1*day, MetricSet{"live": 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadPath := filepath.Join(dir, "ts", "raw", "dead.tsd")
+	livePath := filepath.Join(dir, "ts", "raw", "live.tsd")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Fatalf("dead series file should exist before prune: %v", err)
+	}
+
+	if err := s.Prune(now); err != nil {
+		t.Fatal(err)
+	}
+
+	// The dead series file must be gone, not an empty leftover.
+	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+		t.Fatalf("dead series should have been reaped (deleted); stat err = %v", err)
+	}
+	if _, err := os.Stat(livePath); err != nil {
+		t.Fatalf("live series file should remain: %v", err)
+	}
+	pts, err := s.Query("live", 0, now, ResRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 1 || pts[0].TS != now-1*day {
+		t.Fatalf("live points = %+v, want just the recent one", pts)
+	}
+	dpts, err := s.Query("dead", 0, now, ResRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dpts) != 0 {
+		t.Fatalf("dead series should have no points after reap, got %+v", dpts)
+	}
+	// Cardinality now reflects only the live series.
+	sc, _, err := s.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc != 1 {
+		t.Fatalf("seriesCount = %d after reaping the dead series, want 1", sc)
 	}
 }
 

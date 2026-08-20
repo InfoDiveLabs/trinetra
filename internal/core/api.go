@@ -22,6 +22,22 @@ type API interface {
 	AlertHistory(since int64, limit int) ([]AlertRecord, error)
 	Config() (*config.Config, error)
 	Doctor() (DoctorReport, error)
+	// HostInfo returns the static host hardware/OS inventory (#100): RAM, CPU,
+	// kernel/OS, per-disk hardware, plus boot time and derived uptime. Static
+	// for a boot, so callers fetch it once rather than per tick.
+	HostInfo() (HostInfoView, error)
+	// Version returns the core daemon's build-stamped product version (#107),
+	// e.g. "v0.4.1-beta.3" or "dev". A plugin dials this over the socket to
+	// show the running core version and to detect a core/plugin version drift
+	// against its own compiled-in version.
+	Version() (string, error)
+	// ContainerLogs returns the last `lines` log lines of the named docker
+	// container (a `docker logs --tail N` snapshot, newest at the bottom).
+	// name must match a container the daemon currently sees; an unknown or
+	// malformed name is refused rather than shelled out, so a caller cannot use
+	// this to run arbitrary docker arguments. Implementations without docker
+	// access return an error.
+	ContainerLogs(name string, lines int) (string, error)
 	// EnrollmentPIN returns the Telegram bot's current enrollment pin -- the
 	// same pin the daemon's poll loop accepts via "/start <pin>" (#90) -- and
 	// whether the bot is already enrolled (chat id known). pin is "" when

@@ -20,6 +20,10 @@ import (
 type fakeAPI struct {
 	snapshot core.DashboardView
 	doctor   core.DoctorReport
+	hostInfo      core.HostInfoView
+	containerLogs string
+	logErr        error
+	version       string
 	active   []core.AlertRecord
 
 	cfg       *config.Config
@@ -79,6 +83,11 @@ func (f *fakeAPI) Config() (*config.Config, error) {
 	return &config.Config{}, nil
 }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil }
+func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
+	return f.containerLogs, f.logErr
+}
+func (f *fakeAPI) Version() (string, error) { return f.version, nil }
 
 // EnrollmentPIN returns the canned enrollPIN/enrollEnrolled/enrollErr a test
 // set up, recording every call in enrollCalls so onboarding's poll-until-
@@ -162,6 +171,74 @@ func TestRunDoctor(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q\n%s", want, out)
 		}
+	}
+}
+
+func TestRunHost(t *testing.T) {
+	api := &fakeAPI{hostInfo: core.HostInfoView{
+		Hostname: "attic-pi", OS: "Debian GNU/Linux 12", Kernel: "6.1.0-13-arm64",
+		CPUModel: "Cortex-A72", CPUCores: 4, CPUThreads: 4, MemTotalBytes: 8 << 30,
+		UptimeSec: 90061, // 1d 1h 1m
+		LocalIP: "192.168.1.50", PublicIP: "203.0.113.7",
+		Disks:     []core.HostDiskView{{Device: "nvme0n1", Model: "WD SN570", Rotational: false, SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}},
+	}}
+	var buf bytes.Buffer
+	if code := run(api, []string{"host"}, &buf); code != 0 {
+		t.Fatalf("run host exit = %d, want 0", code)
+	}
+	out := buf.String()
+	for _, want := range []string{"attic-pi", "Debian GNU/Linux 12", "Cortex-A72", "4 cores", "8.0 GiB", "1d 1h 1m", "nvme0n1", "WD SN570", "SSD", "192.168.1.50", "203.0.113.7"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("host output missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRunStatusShowsDegradedCollectors(t *testing.T) {
+	api := &fakeAPI{snapshot: core.DashboardView{
+		DegradedCollectors: []core.CollectorHealthView{
+			{Name: "docker", Fails: 4, LastError: "Cannot connect to the Docker daemon"},
+		},
+	}}
+	var buf bytes.Buffer
+	if code := run(api, []string{"status"}, &buf); code != 0 {
+		t.Fatalf("run status exit = %d, want 0", code)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "COLLECTOR DEGRADED") || !strings.Contains(out, "docker") || !strings.Contains(out, "Docker daemon") {
+		t.Errorf("status did not surface the degraded collector:\n%s", out)
+	}
+}
+
+func TestRunVersion(t *testing.T) {
+	// ctl's own version is "dev" in a test binary (no -ldflags stamp); the core
+	// version comes over the (fake) socket. Different values must flag a mismatch.
+	api := &fakeAPI{version: "v9.9.9"}
+	var buf bytes.Buffer
+	if code := run(api, []string{"version"}, &buf); code != 0 {
+		t.Fatalf("run version exit = %d, want 0", code)
+	}
+	out := buf.String()
+	for _, want := range []string{"v9.9.9", "ctl:", "core:", "different versions"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("version output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunLogs(t *testing.T) {
+	api := &fakeAPI{containerLogs: "hello from web\nsecond line\n"}
+	var buf bytes.Buffer
+	if code := run(api, []string{"logs", "web", "--tail", "50"}, &buf); code != 0 {
+		t.Fatalf("run logs exit = %d, want 0", code)
+	}
+	if got := buf.String(); !strings.Contains(got, "hello from web") || !strings.Contains(got, "second line") {
+		t.Errorf("logs output = %q", got)
+	}
+	// Missing container name is a usage error (exit 2), not a crash.
+	buf.Reset()
+	if code := run(api, []string{"logs"}, &buf); code != 2 {
+		t.Errorf("run logs (no container) exit = %d, want 2", code)
 	}
 }
 

@@ -114,26 +114,125 @@
   function closeDrawer(){drawer.classList.remove('on');dScrim.classList.remove('on');}
   dScrim.addEventListener('click',closeDrawer);
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDrawer();});
-  function spark(color){return '<svg width="100%" height="60" viewBox="0 0 300 60" preserveAspectRatio="none"><path fill="url(#g'+color.g+')" class="ln" stroke="var(--'+color.c+')" stroke-width="1.6" d="M0,44 40,38 80,46 120,24 160,40 200,16 240,34 280,26 300,30 L300,60 0,60Z"/></svg>';}
+  // el builds a node with a class and, when txt is given, sets it via
+  // textContent so untrusted data-* values are never parsed as HTML.
+  function mkEl(tag,cls,txt){var n=document.createElement(tag); if(cls)n.className=cls; if(txt!=null)n.textContent=txt; return n;}
+  // drawSpark renders an /api/series response ([ts[],avg[],min[],max[]]) into a
+  // canvas: a faint min/max band with the avg line over it. Pure Canvas 2D (no
+  // uPlot) so it works in the drawer without a layout pass. Reads the accent and
+  // border colors from CSS custom properties so it tracks the active theme.
+  function drawSpark(cv,s){
+    var ctx=cv.getContext('2d'); if(!ctx) return;
+    var W=cv.width, H=cv.height, pad=6;
+    ctx.clearRect(0,0,W,H);
+    var avg=s[1]||[], mn=s[2]||avg, mx=s[3]||avg, n=avg.length; if(!n) return;
+    var lo=Infinity, hi=-Infinity, i;
+    for(i=0;i<n;i++){ if(mn[i]<lo)lo=mn[i]; if(mx[i]>hi)hi=mx[i]; }
+    if(!isFinite(lo)||!isFinite(hi)){ return; }
+    if(hi-lo<1e-9){ hi=lo+1; } // flat series: give the band a little height
+    var cs=getComputedStyle(document.body);
+    var accent=(cs.getPropertyValue('--signal')||'#F0B429').trim();
+    var border=(cs.getPropertyValue('--border')||'rgba(128,128,128,.3)').trim();
+    function X(i){ return pad+(W-2*pad)*(n===1?0.5:i/(n-1)); }
+    function Y(v){ return H-pad-(H-2*pad)*((v-lo)/(hi-lo)); }
+    // min/max band
+    ctx.beginPath(); ctx.moveTo(X(0),Y(mx[0]));
+    for(i=1;i<n;i++)ctx.lineTo(X(i),Y(mx[i]));
+    for(i=n-1;i>=0;i--)ctx.lineTo(X(i),Y(mn[i]));
+    ctx.closePath(); ctx.fillStyle=accent+'22'; ctx.fill();
+    // avg line
+    ctx.beginPath(); ctx.moveTo(X(0),Y(avg[0]));
+    for(i=1;i<n;i++)ctx.lineTo(X(i),Y(avg[i]));
+    ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.stroke();
+    // baseline
+    ctx.strokeStyle=border; ctx.lineWidth=1; ctx.beginPath();
+    ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
+  }
+  // staticInto appends parsed STATIC markup (no user data) into parent. Used
+  // only for the fixed chart/action templates below, never for data-* values.
+  function staticInto(parent,html){var t=document.createElement('div'); t.innerHTML=html; while(t.firstChild)parent.appendChild(t.firstChild);}
   document.addEventListener('click',function(e){
     var row=e.target.closest('[data-detail]'); if(!row) return;
     var d=row.dataset, kind=d.kind||'item';
     var role=document.body.dataset.role||'admin';
-    var stateBadge=d.state?'<span class="badge '+(d.state==='running'||d.state==='active'||d.state==='PASS'?'ok':(d.state==='restarting'?'warn':'crit'))+'">'+d.state+'</span>':'';
-    var info='';
-    Object.keys(d).forEach(function(k){ if(['detail','name','kind','state'].indexOf(k)>-1)return; info+='<dt>'+k+'</dt><dd>'+d[k]+'</dd>'; });
-    var charts = (kind==='container'||kind==='process') ?
-      '<div class="section-label"><span class="eyebrow">CPU · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Info',c:'info'})+'</div>'+
-      '<div class="section-label"><span class="eyebrow">Memory · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Violet',c:'violet'})+'</div>'
-      : (kind==='disk' ?
-      '<div class="section-label"><span class="eyebrow">Usage · 30d + projection</span></div><div class="panel" style="padding:10px">'+spark({g:'Crit',c:'crit'})+'</div>'
-      : '<div class="section-label"><span class="eyebrow">Memory · 1h</span></div><div class="panel" style="padding:10px">'+spark({g:'Ok',c:'ok'})+'</div>');
-    var actions = role==='admin' ? (kind==='container'
-      ? '<button class="btn">Restart</button><button class="btn ghost">View logs</button><button class="btn ghost">Pause monitoring</button>'
-      : '<button class="btn ghost">Pause monitoring</button>') : '<span class="note">viewer -- read-only</span>';
-    drawer.innerHTML='<div class="dh"><div style="flex:1"><div class="eyebrow">'+kind+'</div><h3 style="margin:2px 0 0;font-size:16px">'+(d.name||'')+'</h3></div>'+stateBadge+'<button class="icon-btn" id="swClose">✕</button></div>'+
-      '<div class="db"><dl class="kv">'+info+'</dl>'+charts+
-      '<div class="section-label"><span class="eyebrow">Actions</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+actions+'</div></div>';
+
+    // Build the drawer with createElement/textContent so untrusted data-*
+    // values (name, state, and the k/v detail pairs) are never assigned to
+    // innerHTML (#94). Only the fixed chart/action templates, which carry no
+    // user data, are still parsed as HTML (via staticInto).
+    var head=mkEl('div','dh');
+    var title=mkEl('div'); title.style.flex='1';
+    title.appendChild(mkEl('div','eyebrow',kind));
+    var h3=mkEl('h3',null,d.name||''); h3.style.margin='2px 0 0'; h3.style.fontSize='16px';
+    title.appendChild(h3);
+    head.appendChild(title);
+    if(d.state){
+      var sc=(d.state==='running'||d.state==='active'||d.state==='PASS')?'ok':(d.state==='restarting'?'warn':'crit');
+      head.appendChild(mkEl('span','badge '+sc,d.state));
+    }
+    var closeBtn=mkEl('button','icon-btn','✕'); closeBtn.id='swClose';
+    head.appendChild(closeBtn);
+
+    var body=mkEl('div','db');
+    var dl=mkEl('dl','kv');
+    Object.keys(d).forEach(function(k){ if(['detail','name','kind','state','metric'].indexOf(k)>-1)return; dl.appendChild(mkEl('dt',null,k)); dl.appendChild(mkEl('dd',null,d[k])); });
+    body.appendChild(dl);
+
+    // Per-metric history (#115): when the row names a stored series (data-metric,
+    // e.g. "cpu", "mem", "disk:/data"), draw a real sparkline from /api/series
+    // over the last 6h. Rows without a stored series (containers, services,
+    // processes) show no chart section -- their live values are in the kv list
+    // above -- rather than a decorative chart with no data (#114).
+    if(d.metric){
+      staticInto(body,'<div class="section-label"><span class="eyebrow">History · 6h</span></div>');
+      var cv=mkEl('canvas','spark'); cv.width=520; cv.height=90; cv.style.width='100%'; cv.style.height='90px';
+      body.appendChild(cv);
+      var note=mkEl('div','note'); note.style.padding='4px 0'; note.textContent='Loading history...'; body.appendChild(note);
+      var to=Math.floor(Date.now()/1000), from=to-6*3600;
+      fetch('/api/series?metric='+encodeURIComponent(d.metric)+'&from='+from+'&to='+to,{credentials:'same-origin'})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(j){
+          var s=j&&j.series; if(!s||!s.length||!s[0]||!s[0].length){ note.textContent='No history recorded yet.'; cv.style.display='none'; return; }
+          drawSpark(cv,s); note.style.display='none';
+        })
+        .catch(function(err){ note.textContent='Could not load history: '+err.message; cv.style.display='none'; });
+    }
+
+    // Actions: the Restart button is gone (a monitor is not a container control
+    // plane, and for Swarm services Swarm owns task lifecycle, #114). "View
+    // logs" is now wired to /api/container/logs (#115); "Pause monitoring" is
+    // still parked and renders disabled rather than as a dead button.
+    staticInto(body,'<div class="section-label"><span class="eyebrow">Actions</span></div>');
+    var actionRow=mkEl('div'); actionRow.style.display='flex'; actionRow.style.gap='8px'; actionRow.style.flexWrap='wrap';
+    var logBtn=null;
+    if(role==='admin'){
+      if(kind==='container'){
+        logBtn=mkEl('button','btn ghost','View logs'); actionRow.appendChild(logBtn);
+      }
+      staticInto(actionRow,'<button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>');
+    } else {
+      staticInto(actionRow,'<span class="note">viewer -- read-only</span>');
+    }
+    body.appendChild(actionRow);
+    // Log output area, filled on demand when "View logs" is clicked. Built with
+    // textContent so container output (untrusted) is never parsed as HTML.
+    var logBox=null;
+    if(logBtn){
+      logBox=mkEl('pre','logbox'); logBox.style.display='none';
+      body.appendChild(logBox);
+      logBtn.addEventListener('click',function(){
+        logBtn.disabled=true; var orig=logBtn.textContent; logBtn.textContent='Loading...';
+        logBox.style.display='block'; logBox.textContent='';
+        fetch('/api/container/logs?tail=200&name='+encodeURIComponent(d.name||''),{credentials:'same-origin'})
+          .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+          .then(function(t){ logBox.textContent=t||'(no output)'; logBox.scrollTop=logBox.scrollHeight; })
+          .catch(function(err){ logBox.textContent='Could not load logs: '+err.message; })
+          .finally(function(){ logBtn.disabled=false; logBtn.textContent=orig; });
+      });
+    }
+
+    drawer.innerHTML='';
+    drawer.appendChild(head); drawer.appendChild(body);
     document.getElementById('swClose').addEventListener('click',closeDrawer);
     drawer.classList.add('on'); dScrim.classList.add('on');
   });
@@ -592,13 +691,29 @@
               rows.innerHTML='<div class="row"><span class="led ok"></span><div class="name"><b>No downtime recorded</b><div class="note">100% uptime over the last 30 days</div></div></div>';
               return;
             }
-            rows.innerHTML=events.slice().sort(function(a,b){return b.start-a.start;}).map(function(e){
+            // Paginate: the list can run to dozens of incidents (e.g. after a
+            // crash loop), so show the most recent CAP and reveal the rest on
+            // demand rather than dumping an unbounded wall of rows.
+            var CAP=8;
+            var sorted=events.slice().sort(function(a,b){return b.start-a.start;});
+            function rowHTML(e){
               var led=e.type==='power_down'?'crit':'warn';
               var dur=historyFmtDur(e.duration_sec||Math.max(0,(e.end-e.start)));
               return '<div class="row"><span class="led '+led+'"></span>'+
                 '<div class="name">'+e.type+' · '+historyFmtTs(e.start)+' → '+historyFmtTs(e.end)+'</div>'+
                 '<span class="mono note">'+dur+'</span></div>';
-            }).join('');
+            }
+            function paint(showAll){
+              var shown=showAll?sorted:sorted.slice(0,CAP);
+              var html=shown.map(rowHTML).join('');
+              if(!showAll && sorted.length>CAP){
+                html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show all '+sorted.length+' incidents</button>';
+              }
+              rows.innerHTML=html;
+              var more=document.getElementById('dtMore');
+              if(more) more.addEventListener('click',function(){paint(true);});
+            }
+            paint(false);
           }
         })
         .catch(function(){

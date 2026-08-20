@@ -27,12 +27,23 @@ var callTimeout = 30 * time.Second
 // frame. A single Client is safe for concurrent use; call serializes access
 // to the underlying connection so request/response pairs and monotonic ids
 // never interleave across goroutines.
+//
+// The connection is self-healing. Any transport failure -- a write error, a
+// read error/timeout, or a response whose id does not match the request --
+// leaves the shared connection frame-misaligned (a late response, for
+// instance, would be read by the NEXT call and mismatch its id, desyncing
+// every call thereafter). call therefore closes and discards the connection
+// on any such failure (poison), and the next call re-dials transparently.
+// Without this a single slow daemon response would wedge a long-lived Client
+// forever, since callers here (notably serverwatch-web) hold one Client for
+// the whole process lifetime with no reconnect of their own.
 type Client struct {
 	conn net.Conn
 	r    *bufio.Reader
 
 	// path and token are remembered from Dial so Subscribe (below) can open
-	// its own dedicated connection: the primary conn above is
+	// its own dedicated connection, and so call can re-dial after a
+	// poisoned connection is discarded. The primary conn above is
 	// mutex-serialized for one-shot request/response calls, but a stream
 	// sits in a long-lived read loop that would otherwise starve every
 	// other caller sharing this Client.
@@ -54,33 +65,78 @@ var _ core.API = (*Client)(nil)
 // wrong token makes the server close the connection after writing an error
 // response instead of echoing a valid hello.
 func Dial(path, token string) (*Client, error) {
-	conn, err := net.Dial("unix", path)
-	if err != nil {
+	c := &Client{path: path, token: token}
+	if err := c.connect(); err != nil {
 		return nil, err
 	}
+	return c, nil
+}
 
-	c := &Client{conn: conn, r: bufio.NewReader(conn), path: path, token: token}
+// connect dials the control socket and completes the hello handshake,
+// setting c.conn/c.r on success and leaving them nil on failure. It is used
+// both by Dial (constructing a fresh Client, no concurrent access yet) and
+// by call to re-establish a poisoned connection (callers there hold c.mu),
+// so the two paths handshake identically by construction.
+//
+// The handshake read is bounded by callTimeout: a reconnect against a daemon
+// that is reachable at the socket layer but not answering (it never runs
+// Accept, or is wedged before writing its hello) must fail fast rather than
+// block every caller sharing this Client forever -- the same reasoning the
+// per-call read deadline in call rests on. The original Dial had no such
+// deadline because a brand-new process could afford to block on startup;
+// a mid-life reconnect cannot.
+func (c *Client) connect() error {
+	conn, err := net.Dial("unix", c.path)
+	if err != nil {
+		return err
+	}
+	r := bufio.NewReader(conn)
 
-	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion, Token: token}); err != nil {
+	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion, Token: c.token}); err != nil {
 		conn.Close()
-		return nil, err
+		return err
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(callTimeout)); err != nil {
+		conn.Close()
+		return err
 	}
 	var serverHello hello
-	if err := readFrame(c.r, &serverHello); err != nil {
+	readErr := readFrame(r, &serverHello)
+	conn.SetReadDeadline(time.Time{})
+	if readErr != nil {
 		conn.Close()
-		return nil, err
+		return readErr
 	}
 	if serverHello.Hello != helloMagic || serverHello.Version != ProtocolVersion {
 		conn.Close()
-		return nil, fmt.Errorf("control: unexpected server hello %+v, want hello=%q version=%d",
+		return fmt.Errorf("control: unexpected server hello %+v, want hello=%q version=%d",
 			serverHello, helloMagic, ProtocolVersion)
 	}
 
-	return c, nil
+	c.conn = conn
+	c.r = r
+	return nil
+}
+
+// poison closes and discards the current connection so the next call
+// re-dials. Callers hold c.mu. It is idempotent (a nil conn is a no-op) and
+// is invoked on every transport failure in call, where the connection can no
+// longer be trusted to be frame-aligned.
+func (c *Client) poison() {
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+		c.r = nil
+	}
 }
 
 // Close closes the underlying connection.
 func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil {
+		return nil
+	}
 	return c.conn.Close()
 }
 
@@ -88,23 +144,46 @@ func (c *Client) Close() error {
 // matching response, and unmarshals its result into result (skipped if
 // result is nil). It holds mu for the duration of the round trip so ids and
 // frames from concurrent callers never interleave on the single connection.
+//
+// If the connection was poisoned by a prior transport failure (c.conn is
+// nil), call re-dials first; a dial/handshake failure surfaces to the caller
+// and leaves the connection poisoned for the next attempt. Any transport
+// failure DURING the round trip -- a write error, a read error/timeout, or a
+// response id that does not match the request just sent -- poisons the
+// connection before returning, since after any of these the stream can no
+// longer be trusted to be frame-aligned (a late or dropped response would
+// desync every subsequent call on the same connection). A method-level error
+// (the server answered, with ok=false) is NOT a transport failure: the
+// stream is still aligned, so the connection is kept and the error surfaces
+// unchanged. Likewise a result that fails to unmarshal: exactly one response
+// frame was consumed, so the stream stays aligned and only the caller's
+// decode fails.
 func (c *Client) call(method string, params any, result any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	c.nextID++
-	id := c.nextID
 
 	rawParams, err := json.Marshal(params)
 	if err != nil {
 		return err
 	}
+
+	if c.conn == nil {
+		if err := c.connect(); err != nil {
+			return err
+		}
+	}
+
+	c.nextID++
+	id := c.nextID
+
 	req := request{ID: id, Method: method, Params: rawParams}
 	if err := writeFrame(c.conn, req); err != nil {
+		c.poison()
 		return err
 	}
 
 	if err := c.conn.SetReadDeadline(time.Now().Add(callTimeout)); err != nil {
+		c.poison()
 		return err
 	}
 	var resp response
@@ -113,9 +192,11 @@ func (c *Client) call(method string, params any, result any) error {
 	// not to whatever the next caller does with the shared connection.
 	c.conn.SetReadDeadline(time.Time{})
 	if readErr != nil {
+		c.poison()
 		return readErr
 	}
 	if resp.ID != id {
+		c.poison()
 		return fmt.Errorf("control: response id %d does not match request id %d", resp.ID, id)
 	}
 	if !resp.OK {
@@ -188,6 +269,34 @@ func (c *Client) Config() (*config.Config, error) {
 func (c *Client) Doctor() (core.DoctorReport, error) {
 	var result core.DoctorReport
 	err := c.call("Doctor", struct{}{}, &result)
+	return result, err
+}
+
+// HostInfo implements core.API: fetches the static host inventory (#100) over
+// the socket.
+func (c *Client) HostInfo() (core.HostInfoView, error) {
+	var result core.HostInfoView
+	err := c.call("HostInfo", struct{}{}, &result)
+	return result, err
+}
+
+// Version implements core.API: fetches the core daemon's build-stamped version
+// (#107) over the socket.
+func (c *Client) Version() (string, error) {
+	var result string
+	err := c.call("Version", struct{}{}, &result)
+	return result, err
+}
+
+// ContainerLogs implements core.API: fetches a `docker logs --tail` snapshot
+// for the named container over the socket.
+func (c *Client) ContainerLogs(name string, lines int) (string, error) {
+	params := struct {
+		Name  string `json:"name"`
+		Lines int    `json:"lines"`
+	}{Name: name, Lines: lines}
+	var result string
+	err := c.call("ContainerLogs", params, &result)
 	return result, err
 }
 

@@ -98,6 +98,85 @@ func TestBaselineAlertsDefaultOffRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBlockPrivateTargetsRoundTrip(t *testing.T) {
+	c := Default()
+	if got, ok := c.Get("notify.block_private_targets"); !ok || got != "false" {
+		t.Fatalf("notify.block_private_targets default = (%q, %v), want (false, true)", got, ok)
+	}
+	if err := c.Set("notify.block_private_targets", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Notify.BlockPrivateTargets {
+		t.Error("BlockPrivateTargets not set after Set true")
+	}
+	if got, _ := c.Get("notify.block_private_targets"); got != "true" {
+		t.Errorf("after set = %q, want true", got)
+	}
+	if err := c.Set("notify.block_private_targets", "not-a-bool"); err == nil {
+		t.Error("expected error for non-bool value")
+	}
+	if err := c.Unset("notify.block_private_targets"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("notify.block_private_targets"); got != "false" {
+		t.Errorf("after unset = %q, want default false", got)
+	}
+}
+
+func TestPublicIPToggleRoundTrip(t *testing.T) {
+	c := Default()
+	if c.PublicIPEnabled() {
+		t.Error("collect.public_ip must default to false (opt-in)")
+	}
+	if got, _ := c.Get("collect.public_ip"); got != "false" {
+		t.Errorf("default get = %q, want false", got)
+	}
+	if err := c.Set("collect.public_ip", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.PublicIPEnabled() {
+		t.Error("should be enabled after set true")
+	}
+	if err := c.Set("collect.public_ip", "not-a-bool"); err == nil {
+		t.Error("want error for non-bool value")
+	}
+	if err := c.Unset("collect.public_ip"); err != nil {
+		t.Fatal(err)
+	}
+	if c.PublicIPEnabled() {
+		t.Error("should be back to disabled after unset")
+	}
+}
+
+func TestServerNameRoundTripAndFallback(t *testing.T) {
+	c := Default()
+	// Unset: Get returns the resolved value, which falls back to the hostname.
+	got, ok := c.Get("server.name")
+	if !ok || got == "" {
+		t.Fatalf("server.name default = (%q,%v), want a non-empty resolved name", got, ok)
+	}
+	if h, err := os.Hostname(); err == nil && h != "" && got != h {
+		t.Errorf("server.name default = %q, want hostname %q", got, h)
+	}
+	// Set a custom name and read it back.
+	if err := c.Set("server.name", "attic-pi"); err != nil {
+		t.Fatal(err)
+	}
+	if c.ServerName() != "attic-pi" {
+		t.Errorf("ServerName() = %q, want attic-pi", c.ServerName())
+	}
+	if got, _ := c.Get("server.name"); got != "attic-pi" {
+		t.Errorf("Get after set = %q, want attic-pi", got)
+	}
+	// Empty clears the stored name back to the hostname fallback.
+	if err := c.Set("server.name", ""); err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != "" {
+		t.Errorf("Name after set empty = %q, want empty (falls back to hostname)", c.Name)
+	}
+}
+
 func TestSaveLoad(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sub", "config.json")
@@ -956,6 +1035,55 @@ func TestSmartIntervalSetRejectsInvalid(t *testing.T) {
 	for _, v := range []string{"0", "-5", "bogus"} {
 		if err := c.Set("collect.smart_interval", v); err == nil {
 			t.Errorf("collect.smart_interval set to %q: want error, got nil", v)
+		}
+	}
+}
+
+func TestEnrollBoundDefaults(t *testing.T) {
+	c := Default()
+	if got := c.EnrollMaxAttempts(); got != 5 {
+		t.Errorf("EnrollMaxAttempts() default = %d, want 5", got)
+	}
+	if got := c.EnrollCooldownSec(); got != 60 {
+		t.Errorf("EnrollCooldownSec() default = %d, want 60", got)
+	}
+	if got, _ := c.Get("telegram.enroll_max_attempts"); got != "5" {
+		t.Errorf("telegram.enroll_max_attempts default = %q, want 5", got)
+	}
+	if got, _ := c.Get("telegram.enroll_cooldown"); got != "60" {
+		t.Errorf("telegram.enroll_cooldown default = %q, want 60", got)
+	}
+}
+
+func TestEnrollBoundSetGetUnsetRoundTrip(t *testing.T) {
+	c := Default()
+	if err := c.Set("telegram.enroll_max_attempts", "3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("telegram.enroll_cooldown", "120"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.EnrollMaxAttempts(); got != 3 {
+		t.Errorf("EnrollMaxAttempts() after set = %d, want 3", got)
+	}
+	if got := c.EnrollCooldownSec(); got != 120 {
+		t.Errorf("EnrollCooldownSec() after set = %d, want 120", got)
+	}
+	if err := c.Unset("telegram.enroll_max_attempts"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Get("telegram.enroll_max_attempts"); got != "5" {
+		t.Errorf("telegram.enroll_max_attempts after unset = %q, want default 5", got)
+	}
+}
+
+func TestEnrollBoundRejectsInvalid(t *testing.T) {
+	c := Default()
+	for _, key := range []string{"telegram.enroll_max_attempts", "telegram.enroll_cooldown"} {
+		for _, v := range []string{"0", "-1", "bogus", ""} {
+			if err := c.Set(key, v); err == nil {
+				t.Errorf("%s set to %q: want error, got nil", key, v)
+			}
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 )
 
 // testDeps builds a minimal Deps for handler/Start tests: enabled, bound to
@@ -22,6 +23,58 @@ func testDeps(t *testing.T) Deps {
 		Snapshot: func() DashboardView { return DashboardView{} },
 		Enabled:  true,
 		Listen:   "127.0.0.1:0",
+	}
+}
+
+// TestBrandShowsServerName pins #101: the sidebar brand subtitle renders the
+// configured server.name (from Cfg().ServerName()) instead of the old
+// hardcoded MONITOR.HOME.LAN.
+func TestBrandShowsServerName(t *testing.T) {
+	d := enrollTestDeps(t)
+	cfg := config.Default()
+	cfg.Name = "attic-pi"
+	d.Cfg = func() *config.Config { return cfg }
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / (signed in) = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "attic-pi") {
+		t.Errorf("brand does not render server.name (missing 'attic-pi')")
+	}
+	if strings.Contains(body, "MONITOR.HOME.LAN") {
+		t.Errorf("old hardcoded brand MONITOR.HOME.LAN still present")
+	}
+}
+
+// TestHostPageRendersInventory pins #100's web surface: GET /host renders the
+// host hardware/OS inventory fetched over the API.
+func TestHostPageRendersInventory(t *testing.T) {
+	d := enrollTestDeps(t)
+	d.API = fakeAPI{hostInfo: core.HostInfoView{
+		Hostname: "attic-pi", OS: "Debian GNU/Linux 12", Kernel: "6.1.0-arm64",
+		CPUModel: "Cortex-A72", CPUCores: 4, CPUThreads: 4, MemTotalBytes: 8 << 30, UptimeSec: 90061, LocalIP: "192.168.1.50", PublicIP: "203.0.113.7",
+		Disks: []core.HostDiskView{{Device: "nvme0n1", Model: "WD SN570", SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}},
+	}}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/host"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /host = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"attic-pi", "Debian GNU/Linux 12", "Cortex-A72", "4 cores", "8.0 GiB", "1d 1h 1m", "nvme0n1", "WD SN570", "SSD", "192.168.1.50", "203.0.113.7"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("host page missing %q", want)
+		}
 	}
 }
 

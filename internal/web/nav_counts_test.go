@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"serverwatch/internal/config"
+	"serverwatch/internal/core"
 )
 
 // TestNavBadgesRenderRealCounts pins Part 2's core obligation: the sidebar
@@ -16,7 +17,7 @@ import (
 // mockup's hardcoded demo values (220/2/5/3).
 func TestNavBadgesRenderRealCounts(t *testing.T) {
 	d := enrollTestDeps(t)
-	d.AlertStatePath = writeAlertState(t, d.StateDir, `{"active":{"disk:/":{"since":1,"reason":"x"},"cpu":{"since":2,"reason":"y"}}}`)
+	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}, {Key: "cpu", Time: 2, Source: "y"}}}
 	d.Cfg = func() *config.Config {
 		cfg := config.Default()
 		cfg.Channels = []config.ChannelConfig{
@@ -66,7 +67,7 @@ func TestNavBadgesRenderRealCounts(t *testing.T) {
 // unknown/missing) count must render NO badge at all, not a literal "0".
 func TestNavBadgeHiddenWhenZero(t *testing.T) {
 	d := enrollTestDeps(t)
-	// No AlertStatePath set (zero value "") -> 0 active alerts.
+	// No API set (nil) -> 0 active alerts.
 	// Default config -> zero channels.
 	// No users seeded -> zero users.
 	// Zero-value Snapshot -> zero containers.
@@ -97,11 +98,12 @@ func TestNavBadgeHiddenWhenZero(t *testing.T) {
 }
 
 // TestNavCountsAlertStateMissingFileIsZeroNoPanic pins the defensive-decode
-// requirement: an AlertStatePath naming a file that doesn't exist (or holds
-// garbage) must count as 0 active alerts, never panic the page.
+// requirement: a nil API (the daemon reporting no active alerts, or a
+// transient socket read failure) must count as 0 active alerts, never panic
+// the page.
 func TestNavCountsAlertStateMissingFileIsZeroNoPanic(t *testing.T) {
 	d := enrollTestDeps(t)
-	d.AlertStatePath = d.StateDir + "/does-not-exist.json"
+	d.API = fakeAPI{activeErr: errTestActiveAlerts}
 
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)

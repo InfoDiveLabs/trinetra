@@ -51,7 +51,12 @@ sudo serverwatch monitor disable docker:some-noisy-container
 ```
 
 When a threshold check fires, its reason reads like `disk:/ = 91.0 ≥ threshold
-85.0`, and when it clears it reports `disk:/ back to normal`.
+85.0`, and when it clears it reports `disk:/ back to normal`. For CPU and memory
+the fire message also names the culprit, the top process and container consuming
+that resource, so a `cpu` alert reads like `cpu = 96.0 ≥ threshold 95.0 (top:
+ffmpeg 82%, container web 30%)`. This is drawn from the process and container
+data already collected, so it appears when `collect.processes` is on and there
+is something to name, and is simply omitted otherwise.
 
 ### Rolling-baseline deviation, opt-in
 
@@ -284,6 +289,16 @@ and it sends a plain `{"text": "..."}` payload. `slack` and `discord` are
 really the webhook transport with a fixed, service-specific body baked in, so
 you only supply the incoming-webhook URL.
 
+Because the daemon runs as root and dials these URLs itself, a channel URL is
+effectively trusted: treat setting one as a privileged action. If you want a
+guardrail against a channel (or the healthchecks ping) reaching an internal
+address, set `notify.block_private_targets true`. With it on, the daemon
+refuses to dial loopback, link-local (including the `169.254.169.254` cloud
+metadata endpoint), and private (RFC1918 / ULA) targets, checked against the
+resolved IP so a hostname that points inward is blocked too. It defaults to
+`false`, since posting to an intentionally-internal endpoint (a webhook on the
+same box) is a legitimate setup.
+
 A worked example, an email channel that only pages for criticals, scripted
 against the core binary (the equivalent `serverwatch-ctl` path is `m` ->
 Channels -> `a` -> `email`, filling in the same host/from/to fields and
@@ -324,6 +339,16 @@ captures the bot token on first launch and then shows you the daemon's
 from the command line instead, `serverwatch telegram set-token` now prints
 that same enrollment PIN in the terminal too (#90), rather than making you go
 dig it out of the journal.
+
+## Monitoring-failure alerts (`collector:<name>`, #110)
+
+Besides alerting on what it monitors, the daemon alerts when monitoring itself
+is failing. If a slow-tier collector (`docker`, `disk`, `services`, `smart`)
+fails or times out for three consecutive cycles, a critical `collector:<name>`
+alert fires, e.g. `collector docker failing: 3 consecutive collection failures
+(last error: Cannot connect to the Docker daemon)`. One or two transient blips
+carry the last-known values forward silently; only a sustained failure alerts.
+The alert recovers automatically on the first successful collection.
 
 ---
 

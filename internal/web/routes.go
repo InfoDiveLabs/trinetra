@@ -52,11 +52,24 @@ func newHandler(d Deps) http.Handler {
 	// internal/serverwatch/coreapi_inproc.go's buildMonitoringView adapter for
 	// where its data comes from.
 	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, d, monitoringHandler(d)))
+	// /host (#100): the static host hardware/OS inventory, read over the
+	// control socket via Deps.API.HostInfo. Viewer-gated like the other Monitor
+	// pages.
+	mux.HandleFunc("GET /host", requireRole(RoleViewer, d, hostPageHandler(d)))
+	// /api/container/logs (#115): a docker-logs snapshot for the dashboard
+	// drawer's "View logs" action. Admin-gated -- logs can carry secrets.
+	mux.HandleFunc("GET /api/container/logs", requireRole(RoleAdmin, d, containerLogsHandler(d)))
+	// beginLimiter caps the unauthenticated ceremony-begin rate per client so an
+	// anonymous caller can't hammer the shared ceremonies.json lock (#95). Both
+	// begins share ONE limiter since they contend the same lock. finish is not
+	// limited: it needs a valid in-flight ceremony (cookie + challenge) a begin
+	// already gated.
+	beginLimiter := newRateLimiter(beginRateMax, beginRateWindow)
 	mux.HandleFunc("GET /enroll", enrollPageHandler(d))
-	mux.HandleFunc("POST /enroll/begin", enrollBeginHandler(d))
+	mux.HandleFunc("POST /enroll/begin", rateLimitBegin(beginLimiter, enrollBeginHandler(d)))
 	mux.HandleFunc("POST /enroll/finish", enrollFinishHandler(d))
 	mux.HandleFunc("GET /login", loginPageHandler(d))
-	mux.HandleFunc("POST /login/begin", loginBeginHandler(d))
+	mux.HandleFunc("POST /login/begin", rateLimitBegin(beginLimiter, loginBeginHandler(d)))
 	mux.HandleFunc("POST /login/finish", loginFinishHandler(d))
 	// /logout is a signed-in session's own mutation (not a pre-auth
 	// ceremony endpoint like /enroll or /login), so it's CSRF-protected --
@@ -108,8 +121,9 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
 	mux.HandleFunc("GET /public/events", publicEventsHandler(d))
 
-	// /alerts (Task 10/#66): alert history (Deps.AlertLogPath) + active
-	// alerts (Deps.AlertStatePath), viewer+ per the design doc -- this
+	// /alerts (Task 10/#66): alert history + active alerts, both read over
+	// the control socket (Deps.API.AlertHistory/ActiveAlerts), viewer+ per
+	// the design doc -- this
 	// resolves the earlier placeholder note that /alerts must be
 	// viewer-gated, not admin-only. Ack, however, is admin-only + CSRF: it
 	// mutates shared alert state everyone else's view depends on.
@@ -139,7 +153,12 @@ func newHandler(d Deps) http.Handler {
 	// and currentRole (templates.go) both read via userFromContext.
 	sessions := newSessionStore(d.StateDir)
 	users := newUserStore(d.StateDir)
-	return securityHeaders(sessionMiddleware(sessions, userMiddleware(users, mux)))
+	// gzipMiddleware (Task 7, slow-request-resilience) is the outermost
+	// wrap: it compresses large responses (history/series JSON) for
+	// congested uplinks, gated on Accept-Encoding: gzip and a 1KB minimum,
+	// and excludes /events + /public/events (SSE streams -- see its doc in
+	// compress.go for why buffering those would break live push).
+	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, mux))))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type

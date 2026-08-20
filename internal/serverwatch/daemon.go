@@ -1,16 +1,18 @@
 package serverwatch
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"html"
 	"math/big"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"serverwatch/internal/config"
@@ -24,20 +26,27 @@ import (
 func buildFastChecks(snap Snapshot, c *config.Config) []Check {
 	var checks []Check
 	fastInterval := c.FastInterval
-	add := func(key string, val, thr float64, hasThr, crit bool) {
+	add := func(key string, val, thr float64, hasThr, crit bool, culprit string) {
 		if !c.TargetEnabled(key) {
 			return
 		}
 		if o, ok := c.TargetThreshold(key); ok {
 			thr, hasThr = o, true
 		}
-		checks = append(checks, Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: fastInterval})
+		ch := Check{Key: key, Value: val, Threshold: thr, HasThreshold: hasThr, Critical: crit, Interval: fastInterval}
+		// Name the resource culprit in the fire message (#103) when there is
+		// one to name; breach() uses FireMsg verbatim over the numeric format,
+		// so it must include the same "key = val >= threshold thr" prefix.
+		if culprit != "" && hasThr {
+			ch.FireMsg = fmt.Sprintf("%s = %.1f ≥ threshold %.1f%s", key, val, thr, culprit)
+		}
+		checks = append(checks, ch)
 	}
-	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false)
-	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false)
-	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false)
+	add("cpu", snap.CPU, c.Thresholds.CPUPct, true, false, cpuCulprit(snap))
+	add("mem", snap.MemPct, c.Thresholds.MemPct, true, false, memCulprit(snap))
+	add("swap", snap.SwapPct, c.Thresholds.SwapPct, true, false, "")
 	if snap.TempC > 0 {
-		add("temp", snap.TempC, c.Thresholds.TempC, true, false)
+		add("temp", snap.TempC, c.Thresholds.TempC, true, false, "")
 	}
 	return checks
 }
@@ -143,6 +152,9 @@ func buildSlowChecks(snap Snapshot, c *config.Config, active map[string]ActiveAl
 			}
 		}
 	}
+	// collector:<name> health checks (#110): a slow-tier collector failing for
+	// collectorAlertThreshold consecutive cycles fires; recovers on success.
+	checks = append(checks, buildCollectorChecks(snap, slowInterval)...)
 	return checks
 }
 
@@ -265,10 +277,15 @@ func pingHealthchecks(url string, httpGet func(string) error) {
 	_ = httpGet(url)
 }
 
-func httpPing(url string) error {
+func httpPing(url string) error { return httpPingGuarded(url, false) }
+
+// httpPingGuarded is httpPing with the opt-in SSRF guard (#97): when block is
+// true it refuses to ping a loopback/link-local/private healthchecks URL, the
+// same guard the channel notifiers use (outbound_guard.go).
+func httpPingGuarded(url string, block bool) error {
 	// A bare http.Get has no timeout: a hung healthchecks endpoint would block
 	// the sampler loop indefinitely. Bound it.
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newGuardedHTTPClient(10*time.Second, block)
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
@@ -334,9 +351,24 @@ type smartCache struct {
 // case every mount's projection is simply left unknown. sc/smartIntervalSec
 // throttle the SMART scan (see the SMART block below): sc may be nil for
 // one-shot callers that always want a fresh scan.
+// smartScanAttempt marks the SMART collector as attempted this cycle (#110) and
+// runs `smartctl --scan`. Split out so the scan can be the init statement of
+// collectSlow's smart if/else chain while still recording the attempt.
+func smartScanAttempt(x Exec, snap *Snapshot) ([]byte, error) {
+	snap.collectorsAttempted["smart"] = true
+	return runMaybeSudo(x, "smartctl", "--scan")
+}
+
 func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store SampleStore, nowUnix int64, sc *smartCache, smartIntervalSec int) Snapshot {
 	var snap Snapshot
 	snap.DockerAccess = da.method
+	// Per-collector attempt/error tracking (#110): disk and the failed-units
+	// check always run; docker/smart are marked attempted only where they
+	// actually shell out below. recordCollectorErr notes a command
+	// error/timeout so the slow-collector goroutine can carry last-known values
+	// forward and drive a collector:<name> alert instead of publishing a
+	// healthy target flipped to gone.
+	snap.collectorsAttempted = map[string]bool{"disk": true, "services": true}
 	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed
 	// `df -PT -B1` call (device/fstype/usage/size/free per mount), gated by
 	// isRealMount && isRealFsType. This used to be two separate df calls --
@@ -374,16 +406,21 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			}
 			snap.DiskDetail[mount] = d
 		}
+	} else {
+		recordCollectorErr(&snap, "disk", err)
 	}
 	snap.Online = checkOnline(defaultConnHosts, connDial)
 
 	// docker containers (ps -a lists all, so state is always known -> recovery works)
 	if da.available {
+		snap.collectorsAttempted["docker"] = true
 		if cs, err := da.list(x); err == nil {
 			snap.Containers = map[string]string{}
 			for _, ct := range cs {
 				snap.Containers[ct.Name] = ct.State
 			}
+		} else {
+			recordCollectorErr(&snap, "docker", err)
 		}
 	}
 	// per-container cpu/mem/net (opt-in, docker-availability-gated): a stats
@@ -398,10 +435,20 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			}
 		}
 	}
+	// Swarm task -> service collapse (#118): key containers and their stats by
+	// stable service name instead of ephemeral task name, so a rolling deploy
+	// neither creates new per-task series (bounding cardinality, #112) nor flaps
+	// down/recover on disappearing task names. Only runs on an active Swarm
+	// node; plain-docker hosts are untouched.
+	if da.swarm {
+		snap.Containers, snap.ContainerStats = collapseSwarmTasks(snap.Containers, snap.ContainerStats)
+	}
 	// failed systemd units (alerting collection -- always runs, unaffected by
 	// collect.services below)
 	if out, err := runMaybeSudo(x, "systemctl", "--failed", "--plain", "--no-legend"); err == nil {
 		snap.FailedUnits = parseFailedUnits(string(out))
+	} else {
+		recordCollectorErr(&snap, "services", err)
 	}
 	// full systemd unit inventory (opt-in via collect.services, snapshot-only:
 	// see UnitInfo/listUnits in discover.go for why this is never persisted
@@ -425,7 +472,9 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 		if c != nil && c.SmartAttrsEnabled() {
 			snap.SmartAttrs = sc.attrs
 		}
-	} else if out, err := runMaybeSudo(x, "smartctl", "--scan"); err == nil {
+	} else if out, err := smartScanAttempt(x, &snap); err != nil {
+		recordCollectorErr(&snap, "smart", err)
+	} else {
 		snap.SmartHealth = map[string]string{}
 		// SMART attribute detail (temp/wear/realloc, opt-in via
 		// collect.smart_attrs) is the heaviest optional per-device call: one
@@ -492,6 +541,7 @@ func mergeSlowFields(merged *Snapshot, slow Snapshot) {
 	merged.SmartAttrs = slow.SmartAttrs
 	merged.ContainerStats = slow.ContainerStats
 	merged.Units = slow.Units
+	merged.CollectorHealth = slow.CollectorHealth
 }
 
 // collectSnapshot runs both tiers and merges them into one full Snapshot.
@@ -508,23 +558,6 @@ func collectSnapshot(x Exec, fs FileSource, prev *CPUStat, da dockerAccess, c *c
 	slow := collectSlow(x, fs, da, c, store, nowUnix, nil, 0)
 	mergeSlowFields(&snap, slow)
 	return snap
-}
-
-// slowEvery returns N, the number of fast_interval ticks between slow-tier
-// (collectSlow) collections: the sampler loop runs collectSlow on every Nth
-// fast tick, computed from the configured cadence. Always returns >= 1 so
-// the slow tier still runs (worst case, every fast tick) rather than the
-// loop dividing by zero or never collecting slow data at all when the
-// config is missing, zero, or an inverted/non-multiple ratio.
-func slowEvery(fastInterval, sampleInterval int) int {
-	if fastInterval <= 0 {
-		return 1
-	}
-	n := sampleInterval / fastInterval
-	if n < 1 {
-		return 1
-	}
-	return n
 }
 
 // eventToAlert converts an anomaly Event (the internal alert-state
@@ -566,30 +599,37 @@ const dispatcherTimeout = 15 * time.Second
 // similar append-only histories.
 const alertLogRetention = 30 * 24 * time.Hour
 
-// dispatchAndLog calls disp.Dispatch and, best-effort, records the outcome
-// as an AlertEvent in alog: this is the single choke point every alert
-// dispatch in the daemon (anomaly fire/recover, boot report, digests) goes
-// through so the alert log stays a complete history. alog may be nil (kept
-// symmetrical with the store's nil-degrades-gracefully convention elsewhere
-// in this file) in which case logging is simply skipped. It is also the
-// single choke point that publishes a's core.Event onto bus (see
-// alertEventKind) -- every one of the daemon's 5 dispatch call sites (boot
-// report, anomaly fire/recover x2, daily/weekly digest) routes through here,
-// so instrumenting this one function covers all of them at once. bus may
-// also be nil (eventBus.Publish's own nil-degrades-gracefully guard,
-// eventbus.go) -- most existing callers/tests have no live daemon bus to
-// thread through here just to dispatch an alert.
-func dispatchAndLog(bus *eventBus, disp *Dispatcher, alog *AlertLog, a Alert, quiet bool) []DeliveryResult {
-	results := disp.Dispatch(a, quiet)
+// storeMaintenanceInterval throttles the fsync-heavy store maintenance
+// (Downsample + Prune). It runs on this cadence rather than every slow tick:
+// Prune rewrites+fsyncs every series file, so on a store with many series a
+// single pass can take much longer than a slow tick, and running it every tick
+// pins the store lock continuously (starving history/Series reads for the web
+// UI). Retention/downsampling only need to be approximately current, so a
+// coarse cadence is fine and keeps the store lock free for reads the rest of
+// the time.
+const storeMaintenanceInterval = 15 * time.Minute
+
+// enqueueAndLog records the alert to the AlertLog and the live event bus, then
+// hands delivery to the async notifier queue. This is the single choke point
+// every alert in the daemon (anomaly fire/recover, boot report, digests) goes
+// through so the alert log and the live bus stay a complete history, while the
+// actual delivery happens off the sampler goroutine on the NotifierQueue
+// worker. Delivery result is no longer recorded synchronously (delivery is
+// off-thread now); the AlertLog entry marks it as queued (Delivered nil).
+// alog may be nil (kept symmetrical with the store's nil-degrades-gracefully
+// convention elsewhere in this file), in which case logging is skipped; bus
+// may also be nil (eventBus.Publish's own nil-guard). alertEventKind maps the
+// bus event Kind exactly as before, so control-socket subscribers see the
+// same alert_fire/alert_recover/digest shapes.
+func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool) {
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
-			Time:      a.Time,
-			Key:       a.Key,
-			Title:     a.Title,
-			Severity:  a.Severity.String(),
-			Kind:      a.Kind,
-			Source:    a.Source,
-			Delivered: deliveriesFrom(results),
+			Time:     a.Time,
+			Key:      a.Key,
+			Title:    a.Title,
+			Severity: a.Severity.String(),
+			Kind:     a.Kind,
+			Source:   a.Source,
 		})
 	}
 	bus.Publish(core.Event{
@@ -599,7 +639,7 @@ func dispatchAndLog(bus *eventBus, disp *Dispatcher, alog *AlertLog, a Alert, qu
 		Title:    a.Title,
 		Time:     a.Time,
 	})
-	return results
+	q.Enqueue(a, quiet)
 }
 
 // alertEventKind maps a dispatched Alert onto the Kind string its
@@ -637,6 +677,12 @@ func cmdDaemon(args []string) int {
 	clock := realClock{}
 	st := NewStore(stateDir, clock)
 
+	// daemonCtx bounds the lifetime of the daemon's background goroutines (the
+	// notifier worker and the watchdog); the SIGTERM/SIGINT handler below
+	// cancels it (after writing the clean-stop marker) on the way out.
+	daemonCtx, daemonCancel := context.WithCancel(context.Background())
+	defer daemonCancel()
+
 	// config with hot reload
 	var mu sync.RWMutex
 	// config.Load returns (nil, err) on unreadable/corrupt JSON. Discarding the
@@ -647,6 +693,13 @@ func cmdDaemon(args []string) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "config load failed, using defaults:", err)
 		cfg = config.Default()
+	}
+	// Apply the operator-tuned per-command hang-breaker before ANY external
+	// collector runs (probeDocker below and the slow-collector goroutine). Set
+	// once here, before goroutines spawn, so concurrent osExec.Run reads need no
+	// lock. Takes effect on restart, not SIGHUP reload (documented on the field).
+	if cfg.ExecTimeout > 0 {
+		execTimeout = time.Duration(cfg.ExecTimeout) * time.Second
 	}
 	// SampleStore (raw appends + downsample + prune), opened once here at
 	// startup: this is now the SOLE writer of samples/downtime events, and the
@@ -667,6 +720,18 @@ func cmdDaemon(args []string) int {
 	if store != nil {
 		defer store.Close()
 	}
+	// storeWriter funnels EVERY SampleStore write through one goroutine, off the
+	// sampler loop: the tsFileStore's Prune/Downsample fsync each rewritten
+	// series file while holding the store lock, so an inline store.Append/Prune
+	// on the sampler can block for far longer than the systemd watchdog window
+	// on a slow disk or a large post-downtime prune backlog, freezing liveness.
+	// The sampler submit()s non-blockingly; a stuck fsync now only delays sample
+	// persistence, never the sampler. nil when store writes are disabled.
+	var sw *storeWriter
+	if store != nil {
+		sw = newStoreWriter(store, 8)
+		go sw.run(daemonCtx)
+	}
 	// NOTE: the store is opened once here and is NOT re-opened on a SIGHUP
 	// config reload below -- if storage.backend/retention changes on reload,
 	// the running store keeps its original settings until next restart. Kept
@@ -684,16 +749,30 @@ func cmdDaemon(args []string) int {
 	// whenever the channel set could have changed, mirroring the cfg
 	// pointer-swap pattern below.
 	dispatcher := NewDispatcher(channelsFromConfig(cfg), dispatcherTimeout)
+	// q is the async notifier queue: Enqueue is non-blocking, delivery happens
+	// on its own worker goroutine, so a slow/hung Telegram uplink can never
+	// stall the sampler loop. Constructed HERE -- before applyConfig and any
+	// signal/control-socket handler that could trigger a reload -- so the plain
+	// `q` var is only ever written once (before any goroutine reads it) and
+	// applyConfig can propagate dispatcher rebuilds into it without a nil-guard.
+	q := NewNotifierQueue(dispatcher, 64)
+	go q.Run(daemonCtx)
 	// applyConfig swaps the shared cfg pointer and rebuilds the dispatcher
 	// under mu (mirroring setChatID's pointer-swap pattern below). It does
 	// NOT persist: callers that already have c on disk (the SIGHUP handler,
 	// which just re-read cfgPath) call this directly; reload (below) persists
 	// first, then applies.
 	applyConfig := func(c *config.Config) {
+		nd := NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
 		mu.Lock()
 		cfg = c
-		dispatcher = NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
+		dispatcher = nd
 		mu.Unlock()
+		// Propagate the rebuilt dispatcher to the async notifier worker so a
+		// channel-set change on reload takes effect for queued/future alerts.
+		// Use the local nd, not the shared `dispatcher` field, which a
+		// concurrent applyConfig may already be rewriting under mu.
+		q.SetDispatcher(nd)
 	}
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, sighup)
@@ -705,8 +784,18 @@ func cmdDaemon(args []string) int {
 			}
 		}
 	}()
+	// SIGTERM/SIGINT: write the clean-stop marker (so the NEXT boot's downtime
+	// reconstruction knows this stop was intentional, not a crash/power loss),
+	// cancel the daemon context to unwind the background goroutines, and exit.
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-term
+		_ = writeCleanStop(st.CleanStopPath(), clock.Now())
+		daemonCancel()
+		os.Exit(0)
+	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
-	getDispatcher := func() *Dispatcher { mu.RLock(); defer mu.RUnlock(); return dispatcher }
 	// reload persists newCfg to disk then applies it in-process: the closure
 	// newInprocAPI's ApplyConfig exposes to the control socket (and, through
 	// it, the web config editor, issue #66) so writes take effect
@@ -726,12 +815,20 @@ func cmdDaemon(args []string) int {
 	// chat id and keep failing silently until the next SIGHUP.
 	setChatID := func(id string) {
 		mu.Lock()
-		defer mu.Unlock()
 		nc := *cfg // shallow struct copy
 		nc.Telegram.ChatID = id
 		cfg = &nc // swap pointer; existing readers keep old struct
-		dispatcher = NewDispatcher(channelsFromConfig(cfg), dispatcherTimeout)
+		nd := NewDispatcher(channelsFromConfig(cfg), dispatcherTimeout)
+		dispatcher = nd
 		_ = saveCfg(cfg)
+		mu.Unlock()
+		// Propagate the rebuilt dispatcher to the async notifier worker, mirroring
+		// applyConfig: delivery runs off the queue's own dispatcher pointer, so a
+		// chat id auto-captured via /start enrollment would otherwise never reach
+		// the queue until an unrelated reload/restart -- every alert after a fresh
+		// zero-config enrollment would dispatch to the stale channel-less
+		// dispatcher and silently not deliver. Called after Unlock, never under mu.
+		q.SetDispatcher(nd)
 	}
 
 	// state
@@ -742,27 +839,37 @@ func cmdDaemon(args []string) int {
 	var net NetTracker
 	// prevCPU belongs solely to the sampler goroutine (this function). The
 	// poller keeps its OWN CPUStat so no *CPUStat is shared across goroutines.
+	// It is a FAST-tier calc (collectFast every tick), so unlike the slow-tier
+	// calcs below it stays with the sampler loop.
 	var prevCPU CPUStat
-	// netRate belongs solely to the sampler goroutine too (same pattern as
-	// prevCPU): it accumulates the previous /proc/net/dev sample across slow
-	// ticks so it can diff cumulative counters into bytes/sec rates.
+	// netRate/procCPU/smartState belong solely to the SLOW-COLLECTOR goroutine
+	// (started below), which is the only goroutine that runs collectSlow +
+	// NetRates + Processes now. They are declared here only so that goroutine's
+	// closure can capture them; nothing else touches them, so no locking is
+	// needed. netRate accumulates the previous /proc/net/dev sample across slow
+	// cycles to diff cumulative counters into bytes/sec rates.
 	var netRate NetRateCalc
-	// procCPU is the sampler goroutine's single ProcCPUCalc instance (same
-	// single-owner pattern as prevCPU/netRate): it accumulates the previous
-	// per-pid jiffies sample across slow ticks so collectProcesses can diff
-	// cumulative CPU jiffies into a per-process CPU%.
+	// procCPU accumulates the previous per-pid jiffies sample across slow cycles
+	// so collectProcesses can diff cumulative CPU jiffies into a per-process CPU%.
 	var procCPU ProcCPUCalc
-	// smartState is the sampler goroutine's single smartCache instance (same
-	// single-owner pattern as netRate/procCPU): it persists the last SMART
-	// scan across slow ticks so collectSlow can throttle smartctl calls to
-	// c.SmartIntervalSec() instead of scanning every slow tick.
+	// smartState persists the last SMART scan across slow cycles so collectSlow
+	// can throttle smartctl calls to c.SmartIntervalSec() instead of scanning
+	// every cycle.
 	var smartState smartCache
+	// collHealth/prevSlow make slow collection fail-visible (#110): collHealth
+	// tracks per-collector consecutive failures across cycles (owned by the
+	// slow-collector goroutine, like the calcs above), and prevSlow holds the
+	// last published slow snapshot so a collector that errors this cycle carries
+	// its last-known values forward instead of publishing a healthy target
+	// flipped to gone.
+	collHealth := newCollectorHealth()
+	var prevSlow Snapshot
 	da := probeDocker(x, fs)
 
 	cfgAtStart := getCfg()
 
 	// bus is the daemon's live in-process event fan-out (eventbus.go):
-	// dispatchAndLog publishes every dispatched alert onto it, the sampler
+	// enqueueAndLog publishes every alert onto it, the sampler
 	// loop below publishes a "snapshot" tick after every snapshotHub.Store,
 	// and inprocAPI.Subscribe (coreapi_inproc.go) hands each control-socket
 	// subscriber its own subscription onto this same bus.
@@ -795,51 +902,187 @@ func cmdDaemon(args []string) int {
 		}
 	}
 
-	// boot/recovery report from heartbeat gap
-	c0 := getCfg()
-	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
-		if ev, ok := reconstructPowerDown(last, clock.Now(), time.Duration(c0.HeartbeatInterval)*time.Second); ok {
-			if store != nil {
-				_ = store.AppendEvent(ev)
+	// Liveness handoff shared with the slow-collector and watchdog goroutines.
+	// hub carries the last-good slow Snapshot (atomic, versioned); lastTick and
+	// lastSlowSuccess are the two liveness clocks the watchdog gates its systemd
+	// ping on. Both are seeded to now so a slow first cycle can't trip the
+	// watchdog before the collector has had a chance to run once.
+	hub := &slowHub{}
+	var lastTick, lastSlowSuccess atomic.Int64
+	now0 := clock.Now().Unix()
+	lastTick.Store(now0)
+	lastSlowSuccess.Store(now0) // grace: don't trip the watchdog before the first slow cycle
+
+	// slow-collector: runs collectSlow + NetRates + Processes off the sampler
+	// loop, bounded by an overall deadline, publishing each result to hub for the
+	// sampler to merge. slowCollector.runOnce serializes collection so only one
+	// is ever in flight -- collect is the sole owner of netRate/procCPU/
+	// smartState (declared above) and two overlapping collections would
+	// data-race on their maps. Ticks immediately, then every SampleInterval.
+	collector := &slowCollector{
+		hub:             hub,
+		lastSlowSuccess: &lastSlowSuccess,
+		now:             func() int64 { return clock.Now().Unix() },
+		deadlineSec: func() int64 {
+			d := getCfg().SampleInterval
+			if d > 60 || d <= 0 {
+				d = 60
 			}
-			now := clock.Now().Unix()
-			snap := collectSnapshot(x, fs, &prevCPU, da, c0, store, now)
-			dispatchAndLog(bus, getDispatcher(), alog, Alert{
-				Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap, c0)),
-				Severity: SevInfo,
-				Kind:     "fire",
-				Source:   "boot",
-				Time:     now,
-			}, false) // reports bypass quiet hours
+			return int64(d)
+		},
+		collect: func() Snapshot {
+			c := getCfg()
+			n := clock.Now().Unix()
+			s := collectSlow(x, fs, da, c, store, n, &smartState, c.SmartIntervalSec())
+			// net throughput + processes: stateful, owned here, and excluded
+			// from mergeSlowFields, so they are populated directly onto the
+			// published snapshot (the sampler copies them across alongside the
+			// mergeSlowFields call).
+			s.NetRates = nil
+			if c.NetThroughputEnabled() {
+				if b, err := fs.Read("/proc/net/dev"); err == nil {
+					s.NetRates = netRate.Rates(parseNetDev(string(b)), n)
+				}
+			}
+			s.Processes = ProcSnapshot{}
+			if c.ProcessesEnabled() {
+				s.Processes = collectProcesses(fs, &procCPU, os.Getpagesize()/1024)
+			}
+			// Fail-visible collection (#110): update per-collector health from
+			// this cycle's outcome, carry last-known values forward for any
+			// collector that errored (so a failed docker/df/smartctl does not
+			// blank a healthy target), and publish the health on the snapshot so
+			// it drives collector:<name> alerts and shows in status.json.
+			collHealth.observe(s.collectorsAttempted, s.CollectorErrors, n)
+			carryForwardFailedCollectors(&prevSlow, &s)
+			s.CollectorHealth = collHealth.snapshot()
+			prevSlow = s
+			return s
+		},
+	}
+	go func() {
+		collector.runOnce()
+		ticker := time.NewTicker(time.Duration(getCfg().SampleInterval) * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			collector.runOnce()
+		}
+	}()
+
+	// healthchecks-pinger goroutine: the external healthchecks.io dead-man ping
+	// stays on the slow cadence but off the sampler loop -- httpPing is bounded
+	// at 10s, and a hung endpoint must not stall fast ticks. An empty URL is a
+	// no-op inside pingHealthchecks.
+	go func() {
+		for {
+			c := getCfg()
+			interval := c.SampleInterval
+			if interval <= 0 {
+				interval = 60
+			}
+			block := c.Notify.BlockPrivateTargets
+			pingHealthchecks(c.Healthchecks.URL, func(u string) error { return httpPingGuarded(u, block) })
+			time.Sleep(time.Duration(interval) * time.Second)
+		}
+	}()
+
+	// watchdog goroutine: the SOLE sender of the systemd WATCHDOG=1 ping now
+	// (removed from the sampler loop). It pings only while BOTH the sampler loop
+	// (lastTick) and the slow collector (lastSlowSuccess) have made recent
+	// progress, so a merely-slow slow cycle no longer starves the ping while a
+	// genuinely wedged loop/collector still lets systemd restart the unit.
+	go runWatchdog(daemonCtx,
+		livenessGate{lastTick: &lastTick, lastSlowSuccess: &lastSlowSuccess, samplerStaleSec: 30, collectorStaleSec: 300},
+		watchdogPeriodSec(), func() int64 { return clock.Now().Unix() },
+		func() error { return sdNotify("WATCHDOG=1") })
+
+	// boot/recovery report from heartbeat gap, deduped against a previous start
+	// (Task 5): the same gap, recomputed from an unchanged heartbeat on a
+	// restart, reports only once. A clean-stop marker written by the SIGTERM
+	// handler suppresses the report entirely (the stop was intentional).
+	c0 := getCfg()
+	cleanStopPath := st.CleanStopPath()
+	// bootReportCh carries the boot/recovery report from its background collector
+	// goroutine (below) to the sampler loop, which delivers it. The sampler loop
+	// is the single writer of the AlertLog (AppendAlertEvent is not
+	// concurrency-safe), so the collector goroutine must not call enqueueAndLog
+	// itself. Cap 1: at most one boot report is ever produced per process start,
+	// so the send never blocks even if the loop is slow to drain it.
+	bootReportCh := make(chan Alert, 1)
+	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
+		if _, stopped := readCleanStop(cleanStopPath, fs); !stopped {
+			hostBoot, hostBootOK := hostBootTime(fs)
+			if ev, ok := reconstructPowerDown(last, clock.Now(), hostBoot, hostBootOK, time.Duration(c0.HeartbeatInterval)*time.Second); ok {
+				lastRep, _ := readCleanStop(st.LastReportedDowntimePath(), fs) // reuse int-file helpers
+				if shouldReportDowntime(ev, lastRep) {
+					if store != nil {
+						_ = store.AppendEvent(ev)
+					}
+					_ = writeCleanStop(st.LastReportedDowntimePath(), time.Unix(ev.End, 0))
+					// Collect the report's status snapshot on a goroutine and hand
+					// the finished Alert back to the sampler loop. collectSnapshot
+					// does an uncached full SMART scan (sc==nil) whose duration
+					// grows with the host's disk count; running it inline here
+					// would block the main goroutine from reaching the sampler loop
+					// below, so lastTick would never advance, the watchdog gate
+					// would go stale after samplerStaleSec, and systemd would kill
+					// us mid-startup on any sufficiently large/slow host -- the
+					// exact crash loop this change set exists to end. Its own
+					// CPUStat (not the sampler's prevCPU) keeps it from racing the
+					// sampler loop.
+					go func() {
+						var bootCPU CPUStat
+						now := clock.Now().Unix()
+						snap := collectSnapshot(x, fs, &bootCPU, da, c0, store, now)
+						bootReportCh <- Alert{
+							Title:    formatBootReport([]DownEvent{ev}, renderStatus(snap, c0)),
+							Severity: SevInfo,
+							Kind:     "fire",
+							Source:   "boot",
+							Time:     now,
+						}
+					}()
+				}
+			}
 		}
 	}
+	// clear any stale clean-stop marker now that we've started, so an unclean
+	// stop after this point IS reported on the next boot.
+	_ = os.Remove(cleanStopPath)
 
 	// telegram long-poller (owns its own prevCPU internally)
 	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll)
 
-	// sampler loop: ticks at fast_interval. Every Nth fast tick (N computed by
-	// slowEvery from fast_interval/sample_interval) ALSO runs collectSlow and
-	// refreshes the slow-tier fields on merged; between slow ticks, merged
-	// keeps the last-collected slow values (status.json/anomaly eval always
-	// see a full, if not maximally fresh, Snapshot). merged is local to this
-	// single goroutine, same as prevCPU, so no locking is needed for it.
+	// sampler loop: ticks at fast_interval and does NO blocking subprocess or
+	// network I/O -- that all lives on the slow-collector / healthchecks /
+	// notifier goroutines now. Each tick it does the cheap fast collection,
+	// reads the last-good slow snapshot from hub (published by the slow
+	// collector), evaluates fast checks every tick and slow checks only when a
+	// NEW slow snapshot has arrived (version-gated), stamps lastTick for the
+	// watchdog, and enqueues any alerts. merged is local to this single
+	// goroutine, same as prevCPU, so no locking is needed for it.
 	var lastDaily, lastWeekly time.Time
+	var lastStoreMaint time.Time // throttles the fsync-heavy Downsample+Prune
 	fastTicker := time.NewTicker(time.Duration(getCfg().FastInterval) * time.Second)
 	defer fastTicker.Stop()
 	lastFast := getCfg().FastInterval
-	lastSlow := getCfg().SampleInterval
-	n := slowEvery(lastFast, lastSlow)
-	tick := 0
 	var merged Snapshot
 	var lastHeartbeat int64 // unix seconds; 0 sentinel forces an immediate first heartbeat
+	var lastSlowVer uint64  // slow-hub version whose slow checks were last evaluated
 	for {
+		// Deliver the boot/recovery report once its background collector has
+		// finished (see bootReportCh above). Done here, on the sampler
+		// goroutine, so the single-writer AlertLog is never touched from two
+		// goroutines. Non-blocking: no report pending is the common case.
+		select {
+		case a := <-bootReportCh:
+			enqueueAndLog(alog, bus, q, a, false) // reports bypass quiet hours
+		default:
+		}
 		c := getCfg()
-		if c.FastInterval != lastFast || c.SampleInterval != lastSlow {
+		if c.FastInterval != lastFast {
 			fastTicker.Reset(time.Duration(c.FastInterval) * time.Second)
 			lastFast = c.FastInterval
-			lastSlow = c.SampleInterval
-			n = slowEvery(lastFast, lastSlow)
-			tick = 0 // realign: the new N is measured from this reload point
 		}
 		now := clock.Now()
 
@@ -847,38 +1090,30 @@ func cmdDaemon(args []string) int {
 		merged.CPU, merged.MemPct, merged.SwapPct, merged.Load1, merged.Load5, merged.Load15, merged.TempC =
 			fast.CPU, fast.MemPct, fast.SwapPct, fast.Load1, fast.Load5, fast.Load15, fast.TempC
 
-		// tick==0 also runs the slow tier so the very first status.json/
-		// anomaly eval after startup or a reload is already fully populated,
-		// rather than waiting up to N-1 fast ticks for disks/docker/etc.
-		isSlowTick := tick%n == 0
-		if isSlowTick {
-			slow := collectSlow(x, fs, da, c, store, now.Unix(), &smartState, c.SmartIntervalSec())
-			mergeSlowFields(&merged, slow)
-
-			// net throughput (opt-in via collect.net_throughput): /proc/net/dev
-			// holds cumulative counters, so netRate.Rates diffs this sample
-			// against the one from the previous slow tick to get bytes/sec.
-			// Disabled or a read/parse failure just clears NetRates for this
-			// tick rather than failing the rest of the slow collection.
-			merged.NetRates = nil
-			if c.NetThroughputEnabled() {
-				if b, err := fs.Read("/proc/net/dev"); err == nil {
-					merged.NetRates = netRate.Rates(parseNetDev(string(b)), now.Unix())
-				}
-			}
-
-			// process-table overview (opt-in via collect.processes): like net
-			// throughput above, this is stateful across slow ticks (procCPU
-			// diffs cumulative per-pid jiffies into CPU%), so it's called
-			// directly here rather than folded into collectSlow, which has no
-			// persistent-calc parameter. Disabled just leaves merged.Processes
-			// at its zero value for this tick; collectProcesses itself already
-			// guards against vanished/malformed /proc entries.
-			merged.Processes = ProcSnapshot{}
-			if c.ProcessesEnabled() {
-				merged.Processes = collectProcesses(fs, &procCPU, os.Getpagesize()/1024)
-			}
+		// Read the last-good slow snapshot from the collector goroutine and merge
+		// it onto merged every tick, so status.json/anomaly eval always see a
+		// full (if not maximally fresh) Snapshot. NetRates/Processes are excluded
+		// from mergeSlowFields (they're caller-populated), so copy them across
+		// from the published snapshot explicitly. newSlow is true only on the
+		// exact tick a fresh slow cycle first shows up here; it gates the slow
+		// follow-up work below (slow-check eval, slow-series appends, net_down
+		// tracking, baseline/prune) so that runs once per slow cycle rather than
+		// every fast tick. SlowStale marks a snapshot whose slow tier wasn't
+		// freshly collected this cycle (the common case between slow cycles, and
+		// the signal that the collector has stalled).
+		s, ver, haveSlow := hub.latest()
+		newSlow := false
+		if haveSlow {
+			mergeSlowFields(&merged, s)
+			merged.NetRates = s.NetRates
+			merged.Processes = s.Processes
+			newSlow = ver != lastSlowVer
+			merged.SlowStale = !newSlow
+			lastSlowVer = ver
+		} else {
+			merged.SlowStale = true // no slow snapshot yet
 		}
+
 		merged.TS = now.Unix()
 		// Publish a COPY of merged into snapshotHub for lock-free readers
 		// (latestSnapshot, ultimately the control socket's Snapshot handler):
@@ -894,6 +1129,13 @@ func cmdDaemon(args []string) int {
 		// alert-shaped rather than carrying a giant view in every frame.
 		bus.Publish(core.Event{Kind: "snapshot", Time: now.Unix()})
 
+		// Liveness: stamp this sampler tick for the watchdog goroutine, which is
+		// now the SOLE sender of the systemd WATCHDOG=1 ping. A wedged sampler
+		// loop stops advancing lastTick -> the watchdog stops pinging ->
+		// systemd restarts us; a merely-slow slow collection no longer starves
+		// the ping the way the old inline sdNotify here could.
+		lastTick.Store(now.Unix())
+
 		// heartbeat has its own cadence (HeartbeatInterval), independent of
 		// fast/slow: it exists only so a future boot can measure how long the
 		// process was gone, so writing it more often than that buys nothing.
@@ -903,54 +1145,56 @@ func cmdDaemon(args []string) int {
 		}
 		_ = st.WriteStatus(merged) // every fast tick: status.json is the live view
 
-		// feed the systemd watchdog (WatchdogSec in the unit). No-op when not run
-		// under systemd. A wedged sampler loop stops pinging -> systemd restarts us.
-		_ = sdNotify("WATCHDOG=1")
-
 		// SampleStore write path: every fast tick appends the cheap fast-tier
 		// metrics as raw samples. This is the sole write path for sample
 		// data now -- the legacy JSONL Store's AppendSample/AppendDown are no
 		// longer called (see the dual-write removal note at store opening
 		// above); migrate.go's one-shot importer still reads any
 		// already-on-disk legacy files via Store.SamplesSince/DownSince.
-		if store != nil {
-			_ = store.Append(merged.TS, fastMetricSet(merged))
+		// net_down interval tracking stays on the sampler: net.Update owns the
+		// NetTracker state and must advance every slow cycle regardless of the
+		// store. Its closed event (if any) rides along in the batch below.
+		var netEvents []DownEvent
+		if newSlow {
+			if ev, closed := net.Update(merged.Online, now.Unix()); closed {
+				netEvents = append(netEvents, ev)
+			}
 		}
 
-		if isSlowTick {
-			// Healthchecks pings stay on the slow cadence: pinging every fast
-			// tick would be 12x today's volume (default fast=5s, slow=60s)
-			// for no added signal.
-			pingHealthchecks(c.Healthchecks.URL, httpPing)
-
-			if store != nil {
-				_ = store.Append(merged.TS, slowMetricSet(merged))
+		// Assemble this cycle's SampleStore batch and hand it to the off-thread
+		// storeWriter (storewriter.go). ALL store writes -- fast-tier samples
+		// every tick, the slow-tier sets and the fsync-heavy Downsample/Prune
+		// maintenance on a slow cycle -- go through submit(), which never
+		// blocks: a slow/stuck disk only delays or drops persistence, it can
+		// never freeze the sampler and trip the watchdog (the crash-loop bug
+		// this replaced inline store.Append/Prune to fix).
+		if sw != nil {
+			sets := []MetricSet{fastMetricSet(merged)}
+			if newSlow {
+				sets = append(sets, slowMetricSet(merged))
 				if cm := containerMetricSet(merged); len(cm) > 0 {
-					_ = store.Append(merged.TS, cm)
+					sets = append(sets, cm)
 				}
-				// nm is empty on the very first slow tick (netRate has no
-				// prior sample yet) and whenever collect.net_throughput is
-				// disabled, so the len()>0 guard skips the Append then too.
+				// nm is empty on the very first slow cycle (netRate has no prior
+				// sample yet) and whenever collect.net_throughput is disabled.
 				if nm := netRateMetricSet(merged.NetRates); len(nm) > 0 {
-					_ = store.Append(merged.TS, nm)
+					sets = append(sets, nm)
 				}
 				// sm is empty whenever no discovered SMART device reported a
-				// parseable temperature attribute this tick (SmartAttrs nil/
-				// empty, or every device's TempC==0), so the len()>0 guard
-				// skips the Append then too, mirroring netRateMetricSet above.
+				// parseable temperature attribute this cycle.
 				if sm := smartMetricSet(merged); len(sm) > 0 {
-					_ = store.Append(merged.TS, sm)
+					sets = append(sets, sm)
 				}
 			}
-
-			// net_down interval tracking: Online is a slow-tier field, only
-			// meaningfully updated on slow ticks, so only feed the tracker
-			// when it was actually just refreshed.
-			if ev, closed := net.Update(merged.Online, now.Unix()); closed {
-				if store != nil {
-					_ = store.AppendEvent(ev)
-				}
+			// Run the fsync-heavy Downsample+Prune only every
+			// storeMaintenanceInterval, not every slow tick: on a store with
+			// many series a prune pass holds the store lock long enough to
+			// starve web history reads, so keep it coarse.
+			doMaint := newSlow && now.Sub(lastStoreMaint) >= storeMaintenanceInterval
+			if doMaint {
+				lastStoreMaint = now
 			}
+			sw.submit(storeWrite{ts: merged.TS, sets: sets, events: netEvents, maintain: doMaint, maintainNow: now.Unix()})
 		}
 
 		// anomalies: each channel's own Route (severity/kind filters,
@@ -958,32 +1202,33 @@ func cmdDaemon(args []string) int {
 		// here beyond computing whether quiet hours are active. Fast checks
 		// (cpu/mem/swap/temp) are evaluated every fast tick since they're
 		// cheap and change every tick; slow checks (disk/docker/service/
-		// smart, plus their recovery sweeps) only change on slow ticks, so
-		// they're evaluated then. Evaluate only touches keys present in the
-		// checks it's given, so the slow keys' active state is left alone
-		// between slow ticks rather than being spuriously re-fired/recovered.
-		disp := getDispatcher()
+		// smart, plus their recovery sweeps) only change when a fresh slow
+		// snapshot arrives, so they're evaluated then. Evaluate only touches
+		// keys present in the checks it's given, so the slow keys' active state
+		// is left alone between slow cycles rather than being spuriously
+		// re-fired/recovered. Delivery is off-thread now: enqueueAndLog records
+		// the alert + publishes to the bus, then hands delivery to q's worker.
 		quiet := inQuietHours(c.QuietHours, now)
 		events := alerts.Evaluate(buildFastChecks(merged, c), baseline, c.BaselineSigma, c.BaselineMinPct, c.BaselineAlerts, now.Unix())
 		for _, e := range events {
-			dispatchAndLog(bus, disp, alog, eventToAlert(e, now.Unix()), quiet)
+			enqueueAndLog(alog, bus, q, eventToAlert(e, now.Unix()), quiet)
 		}
 		stateChanged := len(events) > 0
-		if isSlowTick {
+		if newSlow {
 			slowEvents := alerts.Evaluate(buildSlowChecks(merged, c, alerts.Active), baseline, c.BaselineSigma, c.BaselineMinPct, c.BaselineAlerts, now.Unix())
 			for _, e := range slowEvents {
-				dispatchAndLog(bus, disp, alog, eventToAlert(e, now.Unix()), quiet)
+				enqueueAndLog(alog, bus, q, eventToAlert(e, now.Unix()), quiet)
 			}
 			stateChanged = stateChanged || len(slowEvents) > 0
 		}
 		// scheduled digests bypass quiet hours, like the boot report.
 		if matchDaily(c.Schedule.Daily, now, lastDaily) {
 			lastDaily = now
-			dispatchAndLog(bus, disp, alog, Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			enqueueAndLog(alog, bus, q, Alert{Title: digestNow(store, now, 1, "📊 daily digest", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		if matchWeekly(c.Schedule.Weekly, now, lastWeekly) {
 			lastWeekly = now
-			dispatchAndLog(bus, disp, alog, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
+			enqueueAndLog(alog, bus, q, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
 		// alerts.json only changes when a fire/recover transition happened;
 		// baseline.json's stats are updated every fast tick in memory but only
@@ -997,16 +1242,15 @@ func cmdDaemon(args []string) int {
 			alerts.MergeAckFromDisk(st.AlertStatePath(), fs)
 			_ = alerts.Save(st.AlertStatePath())
 		}
-		if isSlowTick {
+		if newSlow {
+			// baseline.Save and PruneAlertLog do not fsync (page-cache writes),
+			// so they stay on the sampler. The store's fsync-heavy Downsample/
+			// Prune moved to the storeWriter (submitted above via maintain), so
+			// a stuck disk can't block the sampler here.
 			_ = baseline.Save(st.BaselinePath())
 			_ = alog.PruneAlertLog(now.Add(-alertLogRetention).Unix())
-			if store != nil {
-				_ = store.Downsample(now.Unix())
-				_ = store.Prune(now.Unix())
-			}
 		}
 
-		tick++
 		<-fastTicker.C
 	}
 }
@@ -1124,7 +1368,7 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			setChatID(id)
 			enroll.Reset()
 		}
-		offset, c = processUpdates(ups, offset, c, pin, getCfg, onEnroll, reply)
+		offset, c = processUpdates(ups, offset, c, enroll, time.Now, getCfg, onEnroll, reply)
 	}
 }
 
@@ -1134,14 +1378,16 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 // reply for authorized commands. It returns the new offset and the (possibly
 // reloaded) config so the caller can carry both into the next GetUpdates
 // cycle.
-func processUpdates(ups []telegram.Update, offset int, c *config.Config, pin string, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
+func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll *enrollState, now func() time.Time, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
 	for _, u := range ups {
 		offset = u.UpdateID + 1
 		if c.Telegram.ChatID == "" {
 			// Unclaimed: ownership is granted ONLY by a correct "/start <pin>"
 			// (#78 Scenario A). Everything else is ignored, so an attacker who
-			// merely messages the bot first cannot hijack it.
-			if u.ChatID != "" && enrollMatch(u.Text, pin) {
+			// merely messages the bot first cannot hijack it. enroll.Attempt
+			// also rate-limits and rotates the pin under repeated wrong
+			// guesses so the pin can't be brute-forced (#93).
+			if u.ChatID != "" && enroll.Attempt(c, u.Text, now()) {
 				setChatID(u.ChatID)
 				c = getCfg()
 				reply(c, u)

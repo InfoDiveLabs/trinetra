@@ -44,6 +44,11 @@ func (f *fakeAPI) Config() (*config.Config, error) { return f.cfg, nil }
 func (f *fakeAPI) Doctor() (core.DoctorReport, error) {
 	return core.DoctorReport{}, nil
 }
+func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return core.HostInfoView{}, nil }
+func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
+	return "", nil
+}
+func (f *fakeAPI) Version() (string, error) { return "v-test", nil }
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil
@@ -121,12 +126,6 @@ func TestResolveConnConfigDefaults(t *testing.T) {
 	}
 	if cc.stateDir != defaultStateDir {
 		t.Errorf("stateDir = %q, want %q", cc.stateDir, defaultStateDir)
-	}
-	if want := filepath.Join(defaultStateDir, "alertlog.jsonl"); cc.alertLogPath != want {
-		t.Errorf("alertLogPath = %q, want %q", cc.alertLogPath, want)
-	}
-	if want := filepath.Join(defaultStateDir, "alerts.json"); cc.alertStatePath != want {
-		t.Errorf("alertStatePath = %q, want %q", cc.alertStatePath, want)
 	}
 }
 
@@ -231,7 +230,7 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	}
 	defer client.Close()
 
-	deps := buildDeps(client, connConfig{stateDir: dir, alertLogPath: filepath.Join(dir, "alertlog.jsonl"), alertStatePath: filepath.Join(dir, "alerts.json")})
+	deps := buildDeps(client, connConfig{stateDir: dir})
 
 	if deps.API == nil {
 		t.Fatal("deps.API is nil")
@@ -337,11 +336,7 @@ func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 	}
 	defer client.Close()
 
-	deps := buildDeps(client, connConfig{
-		stateDir:       t.TempDir(),
-		alertLogPath:   filepath.Join(dir, "alertlog.jsonl"),
-		alertStatePath: filepath.Join(dir, "alerts.json"),
-	})
+	deps := buildDeps(client, connConfig{stateDir: dir})
 
 	stop, err := web.Start(deps)
 	if err != nil {

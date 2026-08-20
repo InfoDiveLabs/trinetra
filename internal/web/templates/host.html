@@ -1,0 +1,47 @@
+{{define "content"}}
+<div id="host-page">
+  {{if .Available}}
+  <div class="grid g-2">
+    <div class="panel">
+      <div class="head"><span class="eyebrow">System</span></div>
+      <dl class="kv">
+        <dt>Host</dt><dd class="mono">{{.Hostname}}</dd>
+        <dt>OS</dt><dd>{{.OS}}</dd>
+        <dt>Kernel</dt><dd class="mono">{{.Kernel}}</dd>
+        <dt>CPU</dt><dd>{{.CPU}}</dd>
+        <dt>Memory</dt><dd class="mono">{{.Memory}}</dd>
+        <dt>Uptime</dt><dd class="mono">{{.Uptime}}</dd>
+        {{if .LocalIP}}<dt>Local IP</dt><dd class="mono">{{.LocalIP}}</dd>{{end}}
+        {{if .PublicIP}}<dt>Public IP</dt><dd class="mono">{{.PublicIP}}</dd>{{end}}
+      </dl>
+    </div>
+    <div class="panel">
+      <div class="head"><span class="eyebrow">Disks</span></div>
+      {{if .Disks}}
+      <div style="overflow-x:auto">
+        <table class="tbl">
+          <thead><tr><th>Device</th><th>Model</th><th>Type</th><th>Size</th><th>FS</th><th>Mount</th></tr></thead>
+          <tbody>
+            {{range .Disks}}
+            <tr>
+              <td class="mono">{{.Device}}</td>
+              <td>{{.Model}}</td>
+              <td>{{.Kind}}</td>
+              <td class="mono">{{.Size}}</td>
+              <td class="mono">{{.FSType}}</td>
+              <td class="mono">{{.Mount}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div class="note">No disks detected.</div>
+      {{end}}
+    </div>
+  </div>
+  {{else}}
+  <div class="panel"><div class="note">Host information is unavailable (the daemon could not be reached).</div></div>
+  {{end}}
+</div>
+{{end}}

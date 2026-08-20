@@ -48,11 +48,23 @@ const (
 // use: a single RWMutex serializes writers (Append/AppendEvent/Prune/
 // Downsample) against each other and against readers (Query/Events), which
 // also keeps a Query from ever observing a file mid-append.
+//
+// Prune and Downsample take that write lock PER FILE, not once for the whole
+// pass, so a maintenance pass over many series files does not pin the lock for
+// its full (multi-second) duration and starve reads (#113). Each individual
+// file is still rewritten atomically under the lock, and a reader only ever
+// touches one series file, so the finer granularity is transparent to Query.
 type tsFileStore struct {
 	mu   sync.RWMutex
 	dir  string // <configured dir>/ts
 	opts StoreOptions
 }
+
+// pruneBetweenFilesHook, when non-nil, is invoked by pruneDir/Downsample
+// BETWEEN per-file operations, i.e. at a point where the store lock is NOT
+// held. Test-only (nil in production): a test uses it to prove the lock is
+// released between files so reads can interleave (#113).
+var pruneBetweenFilesHook func()
 
 // newTSFileStore creates the tsfile directory layout under dir and returns a
 // ready-to-use store. opts configures per-resolution retention (see
@@ -339,6 +351,30 @@ func (s *tsFileStore) AppendEvent(e DownEvent) error {
 	return appendRecord(s.eventsPath(), tsResolutionRaw, rec)
 }
 
+// PurgeEvents rewrites events.tsd keeping only events for which keep returns
+// true, reusing the same crash-durable rewrite machinery as Prune
+// (pruneFileGeneric: temp+rename, then one dir fsync), and reports how many
+// records were dropped.
+func (s *tsFileStore) PurgeEvents(keep func(DownEvent) bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	recKeep := func(rec []byte) bool {
+		if keep(decodeEventRecord(rec)) {
+			return true
+		}
+		removed++
+		return false
+	}
+	if err := pruneFileGeneric(s.eventsPath(), recKeep); err != nil {
+		return 0, err
+	}
+	if err := syncDir(filepath.Dir(s.eventsPath())); err != nil && !os.IsNotExist(err) {
+		return removed, err
+	}
+	return removed, nil
+}
+
 // Events returns downtime events overlapping [from, to] (End>=from &&
 // Start<=to), mirroring memStore's semantics.
 func (s *tsFileStore) Events(from, to int64) ([]DownEvent, error) {
@@ -377,15 +413,19 @@ func (s *tsFileStore) Events(from, to int64) ([]DownEvent, error) {
 	return out, nil
 }
 
-// pruneFileGeneric rewrites path keeping only records for which keep
-// returns true. It is crash-durable: it builds the new contents in a temp
-// file, fsyncs that temp file's data to disk, atomically renames it over
-// path, then fsyncs the parent directory so the rename itself is durable.
-// Without the data fsync a crash could commit the rename while the new
-// file's blocks are still unflushed, leaving a zero-length/truncated live
-// file that Query would then fail to read. A crash mid-prune thus leaves
-// either the untouched original or the fully-written replacement, never a
-// partial file. A missing path is not an error (nothing to prune).
+// pruneFileGeneric rewrites path keeping only records for which keep returns
+// true, with three outcomes: if NO records survive (a dead target whose data
+// has fully aged out past retention) the file is deleted -- this reaps stale
+// series so cardinality stays bounded to live targets instead of growing
+// without bound; if ALL records survive it is left untouched (no needless
+// rewrite+fsync); otherwise it is rewritten with the survivors. The rewrite is
+// crash-durable: contents are built in a temp file, the temp's data is fsynced,
+// then atomically renamed over path. The parent-directory fsync that makes the
+// rename/unlink durable is NOT done here -- the caller batches ONE dir fsync
+// per prune pass, because across many series a per-file dir fsync dominated
+// prune time (and pinned the store lock long enough to starve reads). A crash
+// mid-prune leaves either the untouched original or the fully-written
+// replacement, never a partial file. A missing path is not an error.
 func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -405,6 +445,30 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 		return err
 	}
 
+	// One read pass, collecting survivors, so we can tell "all kept" (skip)
+	// and "none kept" (delete) apart from the partial case (rewrite).
+	survivors := make([]byte, 0, n*int64(tsRecordLen))
+	var buf [tsRecordLen]byte
+	var kept int64
+	for i := int64(0); i < n; i++ {
+		if _, err := f.ReadAt(buf[:], recordOffset(i)); err != nil {
+			return err
+		}
+		if keep(buf[:]) {
+			survivors = append(survivors, buf[:]...)
+			kept++
+		}
+	}
+	if kept == 0 {
+		// Dead series: remove the file. Directory durability for the unlink is
+		// batched once per pass by the caller.
+		f.Close()
+		return os.Remove(path)
+	}
+	if kept == n {
+		return nil // nothing aged out; avoid a needless rewrite + fsync
+	}
+
 	tmp := path + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -414,18 +478,9 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 		out.Close()
 		return err
 	}
-	var buf [32]byte
-	for i := int64(0); i < n; i++ {
-		if _, err := f.ReadAt(buf[:], recordOffset(i)); err != nil {
-			out.Close()
-			return err
-		}
-		if keep(buf[:]) {
-			if _, err := out.Write(buf[:]); err != nil {
-				out.Close()
-				return err
-			}
-		}
+	if _, err := out.Write(survivors); err != nil {
+		out.Close()
+		return err
 	}
 	// Flush the temp file's data to disk before the rename commits it.
 	if err := out.Sync(); err != nil {
@@ -435,11 +490,9 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 	if err := out.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	// Make the rename itself durable by fsyncing the parent directory.
-	return syncDir(filepath.Dir(path))
+	// Directory fsync (rename durability) is batched once per pass by the
+	// caller (pruneDir / Prune), not per file.
+	return os.Rename(tmp, path)
 }
 
 // syncDir fsyncs a directory so a rename into it survives a crash.
@@ -452,6 +505,14 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
+// pruneDir prunes every .tsd series file in dir, taking the store write lock
+// PER FILE (#113) rather than once for the whole pass. A directory with many
+// series would otherwise pin s.mu for the entire multi-second pass and block
+// every Query (RLock) until it finished; locking per file caps the longest a
+// reader can wait to a single file's rewrite+fsync and lets reads interleave
+// between files. The caller (Prune) therefore must NOT hold s.mu. The
+// directory listing and the one batched dir fsync touch no store state, so
+// they run without the lock.
 func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -465,9 +526,22 @@ func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsd") {
 			continue
 		}
-		if err := pruneFileGeneric(filepath.Join(dir, ent.Name()), keep); err != nil {
+		s.mu.Lock()
+		err := pruneFileGeneric(filepath.Join(dir, ent.Name()), keep)
+		s.mu.Unlock()
+		if err != nil {
 			return err
 		}
+		if pruneBetweenFilesHook != nil {
+			pruneBetweenFilesHook()
+		}
+	}
+	// One directory fsync per pass makes every rename/unlink pruneFileGeneric
+	// did above durable, instead of one fsync per series file (which dominated
+	// prune time and held the store lock long enough to starve reads). Missing
+	// dir (nothing was ever written) is not an error.
+	if err := syncDir(dir); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
@@ -476,9 +550,11 @@ func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 // retention windows (s.opts), relative to now: raw at RawRetention, 1m
 // rollups and events at RollupRetention/EventRetention respectively.
 func (s *tsFileStore) Prune(now int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// pruneDir takes the write lock PER FILE (see its doc), so Prune itself
+	// does NOT hold s.mu across the whole pass -- that is the #113 fix. Prune
+	// and Downsample are only ever driven by the single storewriter maintenance
+	// goroutine (storewriter.go), so there is no concurrent Prune to interleave
+	// with; the finer locking only lets Query reads slip in between files.
 	if err := s.pruneDir(filepath.Join(s.dir, "raw"), now-int64(s.opts.RawRetention.Seconds())); err != nil {
 		return err
 	}
@@ -490,7 +566,18 @@ func (s *tsFileStore) Prune(now int64) error {
 		end := int64(binary.BigEndian.Uint64(rec[16:24]))
 		return end >= eventCut
 	}
-	return pruneFileGeneric(s.eventsPath(), keepEvent)
+	s.mu.Lock()
+	err := pruneFileGeneric(s.eventsPath(), keepEvent)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// pruneFileGeneric no longer fsyncs the dir itself; make its rename/unlink
+	// of the events file durable with one fsync of the events directory.
+	if err := syncDir(filepath.Dir(s.eventsPath())); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // tsRollupBucketSeconds is the 1m resolution's bucket width. A bucket's key
@@ -616,9 +703,6 @@ func downsampleFile(rawPath, oneMPath string, now int64) error {
 // Append/AppendEvent/Prune, so it never races a concurrent Query observing a
 // 1m file mid-append.
 func (s *tsFileStore) Downsample(now int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rawDir := filepath.Join(s.dir, "raw")
 	entries, err := os.ReadDir(rawDir)
 	if err != nil {
@@ -627,14 +711,24 @@ func (s *tsFileStore) Downsample(now int64) error {
 		}
 		return err
 	}
+	// Per-file locking, same rationale as pruneDir (#113): don't pin s.mu for
+	// the whole downsample pass and starve Query reads. Each raw file is
+	// downsampled to its 1m rollup atomically under the lock; only the single
+	// maintenance goroutine calls this, so files never interleave.
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsd") {
 			continue
 		}
 		rawPath := filepath.Join(rawDir, ent.Name())
 		oneMPath := filepath.Join(s.dir, "1m", ent.Name())
-		if err := downsampleFile(rawPath, oneMPath, now); err != nil {
+		s.mu.Lock()
+		err := downsampleFile(rawPath, oneMPath, now)
+		s.mu.Unlock()
+		if err != nil {
 			return err
+		}
+		if pruneBetweenFilesHook != nil {
+			pruneBetweenFilesHook()
 		}
 	}
 	return nil

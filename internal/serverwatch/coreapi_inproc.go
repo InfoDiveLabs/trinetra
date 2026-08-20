@@ -20,6 +20,7 @@ package serverwatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -27,6 +28,7 @@ import (
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
+	"serverwatch/internal/version"
 )
 
 // buildDashboardView adapts a serverwatch.Snapshot (native to this package)
@@ -92,7 +94,26 @@ func buildDashboardView(snap Snapshot) core.DashboardView {
 		v.NetTxBps += n.TxBps
 	}
 
+	v.DegradedCollectors = degradedCollectorViews(snap.CollectorHealth)
+
 	return v
+}
+
+// degradedCollectorViews projects the currently-failing slow-tier collectors
+// (Fails > 0) into DTO views for the dashboard/ctl (#110), in a stable order so
+// the banner does not reshuffle between polls. A healthy host yields nil.
+func degradedCollectorViews(health map[string]CollectorStat) []core.CollectorHealthView {
+	var out []core.CollectorHealthView
+	for _, name := range slowCollectorKeys {
+		st, ok := health[name]
+		if !ok || st.Fails == 0 {
+			continue
+		}
+		out = append(out, core.CollectorHealthView{
+			Name: name, Fails: st.Fails, LastError: st.LastError, LastSuccessUnix: st.LastSuccessUnix,
+		})
+	}
+	return out
 }
 
 // buildMonitoringView adapts a serverwatch.Snapshot plus the daemon's
@@ -499,6 +520,103 @@ func (a *inprocAPI) Config() (*config.Config, error) {
 // fileAPI's CLI-process Doctor below.
 func (a *inprocAPI) Doctor() (core.DoctorReport, error) {
 	return buildDoctorReport(osExec{}, osFS{}, a.getCfg(), a.store), nil
+}
+
+// HostInfo implements core.API (#100). Host-info is static host-local data, so
+// it is collected on demand from the real host (osExec{}/osFS{}), exactly like
+// Doctor above, rather than threaded through the constructor; uptime is derived
+// live from the boot time.
+func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
+	return buildHostInfoView(collectHostInfoFor(a.getCfg()), time.Now().Unix()), nil
+}
+
+// Version implements core.API: the daemon's own build-stamped version (#107).
+func (a *inprocAPI) Version() (string, error) { return version.String(), nil }
+
+// ContainerLogs implements core.API: it snapshots the last `lines` log lines of
+// a live docker container. Like HostInfo/Doctor it runs on demand against the
+// real host (osExec{}/osFS{}).
+func (a *inprocAPI) ContainerLogs(name string, lines int) (string, error) {
+	return collectContainerLogs(osExec{}, osFS{}, name, lines)
+}
+
+// buildHostInfoView adapts the serverwatch HostInfo into the core DTO, deriving
+// UptimeSec from BootTime and nowUnix (a cached BootTime therefore yields a
+// correct uptime on every read). A zero/unknown BootTime yields uptime 0.
+func buildHostInfoView(h HostInfo, nowUnix int64) core.HostInfoView {
+	var uptime int64
+	if h.BootTime > 0 && nowUnix > h.BootTime {
+		uptime = nowUnix - h.BootTime
+	}
+	disks := make([]core.HostDiskView, 0, len(h.Disks))
+	for _, d := range h.Disks {
+		disks = append(disks, core.HostDiskView{
+			Device:     d.Device,
+			Model:      d.Model,
+			Rotational: d.Rotational,
+			SizeBytes:  d.SizeBytes,
+			FSType:     d.FSType,
+			Mount:      d.Mount,
+		})
+	}
+	return core.HostInfoView{
+		Hostname:      h.Hostname,
+		Kernel:        h.Kernel,
+		OS:            h.OS,
+		CPUModel:      h.CPUModel,
+		CPUSockets:    h.CPUSockets,
+		CPUCores:      h.CPUCores,
+		CPUThreads:    h.CPUThreads,
+		CPUBaseMHz:    h.CPUBaseMHz,
+		MemTotalBytes: h.MemTotalBytes,
+		BootTime:      h.BootTime,
+		UptimeSec:     uptime,
+		LocalIP:       h.LocalIP,
+		PublicIP:      h.PublicIP,
+		Disks:         disks,
+	}
+}
+
+// collectContainerLogs validates name and returns a `docker logs --tail lines`
+// snapshot for it. Shared by the inproc and file APIs. It refuses a name that
+// is malformed (validContainerName) or that is not among the containers docker
+// currently reports, so the only argument ever passed to `docker logs` is a
+// real, live container name -- never caller-controlled flags or arbitrary
+// strings. Errors when docker is unavailable or the container is unknown.
+func collectContainerLogs(x Exec, fs FileSource, name string, lines int) (string, error) {
+	if !validContainerName(name) {
+		return "", fmt.Errorf("invalid container name %q", name)
+	}
+	da := probeDocker(x, fs)
+	if !da.available {
+		return "", errors.New("docker is not available on this host")
+	}
+	list, err := da.list(x)
+	if err != nil {
+		return "", err
+	}
+	known := false
+	for _, c := range list {
+		if c.Name == name {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return "", fmt.Errorf("no such container %q", name)
+	}
+	return da.logs(x, name, lines)
+}
+
+// collectHostInfoFor collects the host inventory and, when cfg opts into the
+// public-IP lookup (collect.public_ip, #102), performs that one outbound call;
+// otherwise PublicIP stays empty. Shared by the inproc and file APIs.
+func collectHostInfoFor(cfg *config.Config) HostInfo {
+	h := collectHostInfo(osExec{}, osFS{})
+	if cfg != nil && cfg.PublicIPEnabled() {
+		h.PublicIP = lookupPublicIP()
+	}
+	return h
 }
 
 // EnrollmentPIN implements core.API: it reads through a.enroll (enroll.go)

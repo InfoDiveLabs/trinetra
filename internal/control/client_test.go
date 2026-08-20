@@ -3,6 +3,7 @@ package control
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -63,6 +64,7 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 		active:      []core.AlertRecord{{Key: "cpu", Severity: "warn", Kind: "threshold", Source: "cpu", Time: 5}},
 		history:     []core.AlertRecord{{Key: "mem", Severity: "crit", Kind: "threshold", Source: "mem", Time: 6, Acked: true}},
 		doctor:      core.DoctorReport{DockerAccess: "available=true method=socket", ThermalZones: 2},
+		hostInfo:    core.HostInfoView{Hostname: "attic-pi", Kernel: "6.1.0", OS: "Debian 12", CPUModel: "Test CPU", CPUCores: 4, CPUThreads: 8, MemTotalBytes: 8 << 30, BootTime: 1000, UptimeSec: 3600, Disks: []core.HostDiskView{{Device: "sda", Model: "SSD", SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}}},
 		ackAlertErr: nil,
 	}
 	fake.cfg = &config.Config{SampleInterval: 30, FastInterval: 5}
@@ -108,6 +110,10 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 
 	if got, err := client.Doctor(); err != nil || !reflect.DeepEqual(got, fake.doctor) {
 		t.Errorf("Doctor() = %+v, %v; want %+v, nil", got, err, fake.doctor)
+	}
+
+	if got, err := client.HostInfo(); err != nil || !reflect.DeepEqual(got, fake.hostInfo) {
+		t.Errorf("HostInfo() = %+v, %v; want %+v, nil", got, err, fake.hostInfo)
 	}
 
 	if pin, enrolled, err := client.EnrollmentPIN(context.Background()); err != nil || pin != fake.enrollPIN || enrolled != fake.enrollEnrolled {
@@ -534,5 +540,96 @@ func TestClientNormalCallWorksWhileSubscriptionActive(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, fake.snapshot) {
 		t.Errorf("Snapshot() = %+v, want %+v", got, fake.snapshot)
+	}
+}
+
+// TestClientReconnectsAfterTransportFailure proves the CRITICAL production
+// property the timeout/mismatch tests above do NOT: a transport failure
+// (a read timeout, an EOF, or a desyncing id mismatch) poisons the
+// connection, and the NEXT call transparently reconnects and succeeds --
+// rather than the Client staying wedged on a permanently misaligned
+// connection until the whole process is restarted.
+//
+// This is the root cause of the web dashboard going all-zero after a single
+// slow daemon response and only recovering on a core restart (issue #105):
+// the web plugin holds one long-lived Client, so once a late response
+// desynced the shared connection, every later Snapshot returned an
+// id-mismatch error and the dashboard rendered the zero-value DashboardView.
+//
+// The server hands the FIRST connection a mismatched response id (the exact
+// desync a late response produces on a shared connection) and drops it, then
+// serves every subsequent connection normally. With no reconnect the second
+// call reuses the dead connection and fails; with reconnect it re-dials and
+// succeeds.
+func TestClientReconnectsAfterTransportFailure(t *testing.T) {
+	path := shortSocketPath(t)
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	want := core.DashboardView{CPU: 55, Cores: 8, Online: true}
+
+	go func() {
+		first := true
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			corrupt := first
+			first = false
+			go func(conn net.Conn, corrupt bool) {
+				defer conn.Close()
+				r := bufio.NewReader(conn)
+				var h hello
+				if err := readFrame(r, &h); err != nil {
+					return
+				}
+				if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion}); err != nil {
+					return
+				}
+				for {
+					var req request
+					if err := readFrame(r, &req); err != nil {
+						return
+					}
+					id := req.ID
+					if corrupt {
+						// Desync this connection exactly as a late response
+						// would: answer with the wrong id, then drop it.
+						id = req.ID + 1
+					}
+					b, _ := json.Marshal(want)
+					if err := writeFrame(conn, response{ID: id, OK: true, Result: b}); err != nil {
+						return
+					}
+					if corrupt {
+						return
+					}
+				}
+			}(conn, corrupt)
+		}
+	}()
+
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	// First call lands on the desynced connection: it must fail.
+	if _, err := client.Snapshot(); err == nil {
+		t.Fatal("first Snapshot() error = nil, want a transport error from the desynced connection")
+	}
+
+	// Second call must transparently reconnect and succeed.
+	got, err := client.Snapshot()
+	if err != nil {
+		t.Fatalf("second Snapshot() after reconnect: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Snapshot() after reconnect = %+v, want %+v", got, want)
 	}
 }

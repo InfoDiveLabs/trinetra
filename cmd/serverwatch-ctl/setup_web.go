@@ -82,15 +82,6 @@ func deriveRPIDOrigin(domain string) (rpid, origin string) {
 	return domain, "https://" + domain
 }
 
-// needsDomain reports whether mode requires the domain/rp_id/origin/
-// autocert_domains screens at all: proxy mode's rp_id/origin are optional
-// (see deriveWebDefaults), so the wizard skips straight from the listen
-// address to the confirm screen for it, matching internal/web/serving.go's
-// validateOrigin which only requires rp_id/origin in non-proxy modes.
-func needsDomain(mode string) bool {
-	return mode == "autocert" || mode == "manual"
-}
-
 // validateManualPath rejects a blank manual-mode TLS cert/key path. The
 // deep validation (file exists, is readable, parses as a PEM keypair)
 // happens once at web startup as it always has (internal/web/serving.go);
@@ -144,12 +135,15 @@ func applyWebSetup(cfg *config.Config, ans webSetupAnswers) error {
 	return nil
 }
 
-// webSetupSummary renders ans as the confirm screen's review text.
+// webSetupSummary renders ans as the confirm screen's review text. In proxy
+// mode with rp_id/origin left unset, it documents that the reverse proxy's
+// forwarded headers are what supply them, and how to set them explicitly if the
+// proxy does not forward them (#106).
 func webSetupSummary(ans webSetupAnswers) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mode:    %s\n", ans.Mode)
 	fmt.Fprintf(&b, "listen:  %s\n", ans.Listen)
-	if needsDomain(ans.Mode) {
+	if ans.Domain != "" {
 		fmt.Fprintf(&b, "domain:  %s\n", ans.Domain)
 	}
 	fmt.Fprintf(&b, "rp_id:   %s\n", valueOrDash(ans.RPID))
@@ -157,6 +151,13 @@ func webSetupSummary(ans webSetupAnswers) string {
 	if ans.Mode == "manual" {
 		fmt.Fprintf(&b, "cert:    %s\n", valueOrDash(ans.TLSCert))
 		fmt.Fprintf(&b, "key:     %s\n", valueOrDash(ans.TLSKey))
+	}
+	if ans.Mode == "proxy" && (ans.RPID == "" || ans.Origin == "") {
+		b.WriteString("\nproxy mode derives rp_id/origin from your reverse proxy's\n")
+		b.WriteString("X-Forwarded-Host/Proto headers. If your proxy does not forward\n")
+		b.WriteString("them, set them explicitly after setup:\n")
+		b.WriteString("  serverwatch config set web.rp_id <host>\n")
+		b.WriteString("  serverwatch config set web.origin https://<host>\n")
 	}
 	return b.String()
 }

@@ -15,6 +15,18 @@ WEB_BIN=serverwatch-web
 GO_LDFLAGS ?=
 GO_TRIMPATH ?=
 
+# VERSION is stamped into each binary via -ldflags -X (#107) so the core daemon
+# and each plugin report their own compiled-in version over the control socket /
+# in the UI. Derived from git (the tag on a release cut, else a describe of the
+# nearest tag + commit, "-dirty" when the tree has uncommitted changes); falls
+# back to "dev" outside a git checkout. Plain `go build` (no Makefile) leaves it
+# empty and internal/version.String() falls back to build info -> "dev".
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION_LDFLAGS := -X serverwatch/internal/version.Version=$(VERSION)
+# ALL_LDFLAGS folds the channel flags (empty for beta, -s -w for prod) together
+# with the version stamp, so every build target below carries the version.
+ALL_LDFLAGS = $(GO_LDFLAGS) $(VERSION_LDFLAGS)
+
 test:
 	go test ./...
 
@@ -31,9 +43,9 @@ fmt:
 # because of any tag. This is a dev build (unstripped); use release-prod for
 # the optimized main-channel artifacts.
 build:
-	go build -o dist/$(BIN) ./cmd/serverwatch
-	go build -o dist/$(CTL_BIN) ./cmd/serverwatch-ctl
-	go build -o dist/$(WEB_BIN) ./cmd/serverwatch-web
+	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(BIN) ./cmd/serverwatch
+	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(CTL_BIN) ./cmd/serverwatch-ctl
+	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(WEB_BIN) ./cmd/serverwatch-web
 
 linux:
 	GOOS=linux GOARCH=amd64 go build -o dist/$(BIN)-linux-amd64 ./cmd/serverwatch
@@ -46,21 +58,21 @@ linux:
 # GO_TRIMPATH/GO_LDFLAGS vars are empty by default (beta channel) and set by
 # release-prod for the optimized main channel.
 cross:
-	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(BIN)-linux-amd64 ./cmd/serverwatch
-	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(CTL_BIN)-linux-amd64 ./cmd/serverwatch-ctl
-	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(WEB_BIN)-linux-amd64 ./cmd/serverwatch-web
-	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(BIN)-linux-arm64 ./cmd/serverwatch
-	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm64 ./cmd/serverwatch-ctl
-	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm64 ./cmd/serverwatch-web
-	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(BIN)-linux-arm ./cmd/serverwatch
-	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm ./cmd/serverwatch-ctl
-	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm ./cmd/serverwatch-web
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(BIN)-darwin-amd64 ./cmd/serverwatch
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-amd64 ./cmd/serverwatch-ctl
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-amd64 ./cmd/serverwatch-web
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(BIN)-darwin-arm64 ./cmd/serverwatch
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-arm64 ./cmd/serverwatch-ctl
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(GO_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-arm64 ./cmd/serverwatch-web
+	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-amd64 ./cmd/serverwatch
+	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-amd64 ./cmd/serverwatch-ctl
+	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-amd64 ./cmd/serverwatch-web
+	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-arm64 ./cmd/serverwatch
+	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm64 ./cmd/serverwatch-ctl
+	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm64 ./cmd/serverwatch-web
+	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-arm ./cmd/serverwatch
+	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm ./cmd/serverwatch-ctl
+	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm ./cmd/serverwatch-web
+	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-amd64 ./cmd/serverwatch
+	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-amd64 ./cmd/serverwatch-ctl
+	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-amd64 ./cmd/serverwatch-web
+	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-arm64 ./cmd/serverwatch
+	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-arm64 ./cmd/serverwatch-ctl
+	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-arm64 ./cmd/serverwatch-web
 
 # release is the BETA/preview cut (unstripped, debuggable): cross's whole
 # matrix plus a dist/checksums.txt covering every artifact, so

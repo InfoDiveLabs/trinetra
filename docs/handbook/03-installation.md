@@ -167,6 +167,19 @@ monitored service."
    You never have to copy the plugin binaries into place by hand; just
    download or build them next to `serverwatch` before running install.
 
+   > **Trust the directory you install from.** Because install adopts whatever
+   > `serverwatch-ctl` / `serverwatch-web` sit beside the `serverwatch` binary
+   > and records *their* checksums as the trust anchor (step 4), it trusts the
+   > contents of that directory. Only run `sudo serverwatch install` from a
+   > directory you control and whose binaries you verified (for example the
+   > release assets you checksummed against `checksums.txt` in step 2). Do not
+   > run it from a world-writable or shared location like `/tmp` where another
+   > user could have dropped a look-alike `serverwatch-ctl`/`serverwatch-web`
+   > beside your binary. This is operator responsibility: install runs as root
+   > and executes with root's trust in that directory. (Once installed, the
+   > front-door still verifies each plugin against the recorded manifest on
+   > every run, so this window is only at install time.)
+
 4. **Records the plugin checksum manifest.** `install` scans the directory it
    just copied the binary (and any plugins) into for the companion plugin
    binaries, `serverwatch-ctl` and `serverwatch-web`, and writes the SHA-256 of
@@ -350,6 +363,15 @@ flowchart TD
    is the exact form the daemon expects. Sending the bot a plain message, or
    `/start` with no PIN, will not claim it; the PIN is what proves the chat is
    yours.
+
+> **Brute-force protection.** The PIN is bounded against guessing. After a run
+> of wrong `/start <pin>` attempts (default 5) the daemon ignores further
+> `/start` messages for a short cooldown (default 60 seconds) and rotates the
+> PIN to a fresh value, so a partial guessing run is never able to converge on
+> the six-digit space. If you fat-finger the PIN enough times to trip this, just
+> re-read the new PIN from the journal (`sudo journalctl -u serverwatch | grep
+> "/start"`) and send that one. The threshold and cooldown are tunable via
+> `telegram.enroll_max_attempts` and `telegram.enroll_cooldown` (seconds).
 
 Once you send the correct PIN, that chat is registered as the owner chat. From
 then on, only that chat is answered. Anyone else who messages the bot is

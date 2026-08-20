@@ -9,6 +9,7 @@ type dockerAccess struct {
 	method    string // "socket" | "group" | "sudo"
 	sudo      bool
 	available bool
+	swarm     bool // this node is an active Swarm member (#118)
 }
 
 const dockerPSFormat = "{{.Names}}\t{{.State}}\t{{.Status}}"
@@ -20,13 +21,36 @@ func probeDocker(x Exec, fs FileSource) dockerAccess {
 		if _, e := fs.Read("/var/run/docker.sock"); e != nil {
 			method = "group"
 		}
-		return dockerAccess{method: method, available: true}
+		da := dockerAccess{method: method, available: true}
+		da.swarm = probeSwarm(x, false)
+		return da
 	}
 	// Fall back to sudo.
 	if _, err := x.Run("sudo", "docker", "ps", "-a", "--format", dockerPSFormat); err == nil {
-		return dockerAccess{method: "sudo", sudo: true, available: true}
+		da := dockerAccess{method: "sudo", sudo: true, available: true}
+		da.swarm = probeSwarm(x, true)
+		return da
 	}
 	return dockerAccess{available: false}
+}
+
+// probeSwarm reports whether this node is an ACTIVE Swarm member (#118), via
+// `docker info --format {{.Swarm.LocalNodeState}}` == "active". Gates the
+// task->service collapse so a plain-docker host is unaffected. Any error (old
+// docker, format unsupported) is treated as not-swarm.
+func probeSwarm(x Exec, sudo bool) bool {
+	args := []string{"info", "--format", "{{.Swarm.LocalNodeState}}"}
+	var out []byte
+	var err error
+	if sudo {
+		out, err = x.Run("sudo", append([]string{"docker"}, args...)...)
+	} else {
+		out, err = x.Run("docker", args...)
+	}
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "active"
 }
 
 func (a dockerAccess) list(x Exec) ([]Container, error) {
@@ -93,6 +117,55 @@ func (a dockerAccess) stats(x Exec) ([]ContainerStat, error) {
 		return nil, err
 	}
 	return parseDockerStats(string(out)), nil
+}
+
+// validContainerName reports whether name is a plausible docker container name
+// or id: docker's own charset ([A-Za-z0-9][A-Za-z0-9_.-]*). Everything the
+// logs path shells out is validated against this AND against the live
+// container list (see inprocAPI.ContainerLogs), so a caller cannot smuggle a
+// flag ("--since", "-f") or another argument through the name. Belt and
+// suspenders on top of exec.Command's no-shell argv, which already prevents
+// shell metacharacter injection.
+func validContainerName(name string) bool {
+	if name == "" || len(name) > 128 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '_' || c == '.' || c == '-':
+			if i == 0 { // docker names never start with a separator
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// logs returns the last `lines` log lines of container name via
+// `docker logs --tail N`, dispatching plain/sudo like list and stats. The
+// caller is responsible for having validated name (validContainerName) and
+// confirmed it is a live container; logs merges stdout+stderr because docker
+// writes container output to both.
+func (a dockerAccess) logs(x Exec, name string, lines int) (string, error) {
+	if lines <= 0 {
+		lines = 200
+	}
+	tail := strconv.Itoa(lines)
+	var out []byte
+	var err error
+	if a.sudo {
+		out, err = x.Run("sudo", "docker", "logs", "--tail", tail, name)
+	} else {
+		out, err = x.Run("docker", "logs", "--tail", tail, name)
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // parseDockerStats parses dockerStatsFormat output ("name\tcpu%\tmemUsage\t
