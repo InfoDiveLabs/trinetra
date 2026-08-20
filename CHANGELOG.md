@@ -6,6 +6,30 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
+## [0.4.1] - 2026-08-20
+
+The stable cut of the `0.4.1-beta.1`…`beta.3` line, tested on the live host
+since 2026-08-02. Everything below is the beta content promoted unchanged;
+see the beta entries for full detail. Highlights:
+
+- **Server identity (#99).** Configurable `server.name` shown across web, ctl,
+  and alert titles; host inventory (CPU/RAM/disks/OS/uptime) on a new web Host
+  page, `serverwatch-ctl host`, and `core.API.HostInfo`; local + opt-in public
+  IP; CPU/mem alerts name the top process and container. (#100, #101, #102, #103)
+- **Security hardening.** Fail-closed control socket (#96) and web user store
+  (#105), bounded Telegram enrollment PIN brute force (#93), DOM XSS sink
+  removed (#94), rate-limited ceremony begins (#95), opt-in outbound SSRF guard
+  (#97), documented plugin-copy trust assumption (#98).
+- **Reliability.** Web dashboard no longer freezes on a desynced socket client
+  (#105); daemon restarts are no longer recorded as host downtime (#116);
+  collection is fail-visible with per-collector health and alerts (#110); Swarm
+  services keyed by service, not task (#118); storage maintenance no longer
+  stalls history reads (#113).
+- **Operability.** Build-time version stamps with mismatch detection in the
+  panel and `serverwatch-ctl version` (#107); series-cardinality guardrail in
+  `doctor` (#112); setup UX fixes (#106); container logs in the drawer;
+  paginated downtime list.
+
 ## [0.4.1-beta.3] - 2026-08-08
 
 Five tracker issues, all with core / web / ctl parity: versions in the panel,
