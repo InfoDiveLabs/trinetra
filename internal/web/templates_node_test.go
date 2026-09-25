@@ -814,3 +814,123 @@ func TestNodeSwitcherFleetStatusCallBudgetUnchanged(t *testing.T) {
 		t.Errorf("Fleet().Nodes() called %d time(s) for a self-scoped master page, want exactly 1 (shared fleetMemo)", n)
 	}
 }
+
+// ---- Task 6, round 1 review fixes ---------------------------------------
+
+// TestNodeSwitcherPreservesQueryString pins round-1 review item (a): a page
+// with a query string (e.g. /history?metric=cpu) keeps it when the switcher
+// switches node -- both for the self entry and a remote node's entry.
+func TestNodeSwitcherPreservesQueryString(t *testing.T) {
+	d := switcherTestDeps(t, switcherFixtureNodes())
+	rr := fleetGetAsViewer(t, d, "/n/web1/history?metric=cpu")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`href="/history?metric=cpu"`,        // self
+		`href="/n/web1/history?metric=cpu"`, // current node
+		`href="/n/db1/history?metric=cpu"`,  // down node
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing query-preserving switcher entry %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestNodeSwitcherMasterLocalPageDropsQueryString pins the other half of
+// (a): a master-local page's own query string (e.g. /fleet?state=down) is
+// NOT carried onto a node's dashboard, which has nothing to do with it.
+func TestNodeSwitcherMasterLocalPageDropsQueryString(t *testing.T) {
+	d := switcherTestDeps(t, switcherFixtureNodes())
+	rr := fleetGetAsViewer(t, d, "/fleet?state=down")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`href="/"`, `href="/n/web1/"`, `href="/n/db1/"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected switcher entry %q with no leftover query string:\n%s", want, body)
+		}
+	}
+	// The health strip's own "?state=down" count links are unrelated and
+	// expected to remain -- scope the negative assertion to the switcher's
+	// own entries specifically, not a blanket "state=down" substring check.
+	for _, unwanted := range []string{`href="/?state=down"`, `href="/n/web1/?state=down"`, `href="/n/db1/?state=down"`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("switcher must not carry /fleet's own query string onto a node's dashboard, found %q:\n%s", unwanted, body)
+		}
+	}
+}
+
+// paletteFocusableFunc matches app.js's paletteFocusable() function body --
+// TestNodePaletteFocusTrapIncludesFooterLink is a static (source-scan)
+// check, mirroring this file's existing appJSNodeScopedLiteral-style tests,
+// since this package's tests don't drive a real browser/DOM.
+var paletteFocusableFunc = regexp.MustCompile(`(?s)function paletteFocusable\(\)\{.*?\n    \}`)
+
+// TestNodePaletteFocusTrapIncludesFooterLink pins round-1 review's IMPORTANT
+// fix: the palette's focus trap must include its own footer link
+// ("View all in Fleet ->", #nodePaletteViewAll) as the true last element in
+// the Tab cycle -- every focusable element in an aria-modal dialog must be
+// keyboard-reachable. This is a static assertion (app.js's paletteFocusable
+// function references both the .ns-item results AND #nodePaletteViewAll),
+// not a live DOM/keyboard simulation.
+func TestNodePaletteFocusTrapIncludesFooterLink(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+
+	// #nodePaletteViewAll's id lives in base.html, not app.js -- checked
+	// directly (app.js only ever REFERENCES the id via getElementById,
+	// asserted below).
+	htmlB, err := templatesFS.ReadFile("templates/base.html")
+	if err != nil {
+		t.Fatalf("read base.html: %v", err)
+	}
+	if !strings.Contains(string(htmlB), `id="nodePaletteViewAll"`) {
+		t.Fatal("templates/base.html: the palette's \"View all in Fleet\" link is missing id=\"nodePaletteViewAll\"")
+	}
+
+	m := paletteFocusableFunc.FindString(src)
+	if m == "" {
+		t.Fatal("app.js: missing a paletteFocusable() function to scan -- the focus trap must build its cycle from a single function so this scan (and the trap itself) can't drift apart")
+	}
+	if !strings.Contains(m, `.ns-item`) {
+		t.Errorf("paletteFocusable() must include the rendered .ns-item results:\n%s", m)
+	}
+	if !strings.Contains(m, "viewAllLink") {
+		t.Errorf("paletteFocusable() must include the footer's #nodePaletteViewAll link as the trap's true last element:\n%s", m)
+	}
+
+	// The trap handler itself must call paletteFocusable(), not rebuild its
+	// own (footer-link-less) list inline -- the exact bug round-1 review
+	// found.
+	if !strings.Contains(src, "var focusable=paletteFocusable();") {
+		t.Error("app.js: the Tab-trap keydown handler must build its cycle from paletteFocusable(), not an inline list that leaves the footer link out")
+	}
+}
+
+// TestNodePaletteOpeningClosesSwitcher pins round-1 review item (b): opening
+// the palette (Ctrl/Cmd-K) must close the switcher dropdown first, so the
+// two elements' Escape handlers can never both be live at once.
+func TestNodePaletteOpeningClosesSwitcher(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+	i := strings.Index(src, "function openPalette(){")
+	if i < 0 {
+		t.Fatal("app.js: missing function openPalette(){...}")
+	}
+	// The function body's first statement should be the closeSwitcher()
+	// call (checked within a short window after the opening brace so this
+	// doesn't just match some unrelated later call).
+	window := src[i : i+200]
+	if !strings.Contains(window, "closeSwitcher();") {
+		t.Errorf("app.js: openPalette() must call closeSwitcher() so opening the palette closes the switcher dropdown:\n%s", window)
+	}
+}

@@ -623,6 +623,34 @@ func TestFleetQueryNonAdminStillMatchesTags(t *testing.T) {
 	}
 }
 
+// TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr is round-1
+// review item (c): the /fleet/table htmx fragment applies the SAME
+// non-admin RemoteAddr query-match rule as /fleet and /api/fleet/nodes
+// (TestFleetQueryNonAdminNeverMatchesRemoteAddr/
+// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr above) -- a direct
+// test on /fleet/table itself, not just its sibling endpoints.
+func TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
+	nodes := fleetFiveNodeRoster()
+	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
+	d := fleetMasterDeps(t, nodes)
+
+	rrViewer := fleetGetAsRole(t, d, RoleViewer, "/fleet/table?q=10.0.0.5")
+	if rrViewer.Code != http.StatusOK {
+		t.Fatalf("viewer GET /fleet/table?q=10.0.0.5 status = %d, want 200, body: %s", rrViewer.Code, rrViewer.Body.String())
+	}
+	if strings.Contains(rrViewer.Body.String(), `<a href="/n/web1/">web1</a>`) {
+		t.Errorf("viewer /fleet/table?q=10.0.0.5 matched web1 via RemoteAddr, want no match:\n%s", rrViewer.Body.String())
+	}
+
+	rrAdmin := fleetGetAsRole(t, d, RoleAdmin, "/fleet/table?q=10.0.0.5")
+	if rrAdmin.Code != http.StatusOK {
+		t.Fatalf("admin GET /fleet/table?q=10.0.0.5 status = %d, want 200, body: %s", rrAdmin.Code, rrAdmin.Body.String())
+	}
+	if !strings.Contains(rrAdmin.Body.String(), `<a href="/n/web1/">web1</a>`) {
+		t.Errorf("admin /fleet/table?q=10.0.0.5 should still match web1 via RemoteAddr:\n%s", rrAdmin.Body.String())
+	}
+}
+
 // TestFleetRoutesAnonymousRedirectToLogin is the brief's "minor" ask:
 // /fleet/table and /api/fleet/nodes are viewer-gated exactly like /fleet
 // itself -- an anonymous caller is redirected to /login (302), not 404 or

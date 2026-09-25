@@ -980,6 +980,7 @@
     var scrim=document.getElementById('nodePaletteScrim');
     var input=document.getElementById('nodePaletteInput');
     var results=document.getElementById('nodePaletteResults');
+    var viewAllLink=document.getElementById('nodePaletteViewAll');
     var lastFocused=null;
     var cache=null, cacheAt=0;
     var CACHE_MS=30000; // the ruling: cache the fetched roster for 30s
@@ -1001,7 +1002,11 @@
       var prefix=(document.body && document.body.dataset.nodePrefix)||'';
       var p=window.location.pathname;
       if(prefix && p.indexOf(prefix)===0) p=p.slice(prefix.length)||'/';
-      return isMasterLocal(p)?'/':p;
+      if(isMasterLocal(p)) return '/'; // no query string -- see MASTER_LOCAL's doc
+      // Round-1 review: keep the current query string when switching (e.g.
+      // /history?metric=cpu -> /n/web1/history?metric=cpu), mirroring
+      // templates.go's switcherTargetPath (server-rendered switcher).
+      return p+(window.location.search||'');
     }
     // core.SelfNodeID's wire value is the literal "self" -- every
     // /api/fleet/nodes entry for this daemon's own node carries id:"self".
@@ -1031,6 +1036,12 @@
         .then(function(nodes){ cache=nodes||[]; cacheAt=Date.now(); return cache; })
         .catch(function(){ return cache||[]; });
     }
+    // matchesQuery is a plain case-insensitive SUBSTRING match (round-1
+    // review: task-6-brief.md's wording is "fuzzy match", but this
+    // implements a literal substring match instead -- the same convention
+    // /fleet's own ?q= filter uses server-side, fleetFilterMatch in
+    // handlers_fleet.go -- not fuzzy/ranked matching. Confirmed intentional
+    // by round-1 review ("leave the substring matching as it is").
     function matchesQuery(n,q){
       if(!q) return true;
       // remote_addr is present in the JSON only for an admin session
@@ -1060,12 +1071,27 @@
     }
 
     function openPalette(){
+      closeSwitcher(); // round-1 review: don't leave two Escape handlers both live
       lastFocused=document.activeElement;
       palette.hidden=false;
       input.value='';
       results.innerHTML='';
       loadNodes().then(renderResults);
       input.focus();
+    }
+    // paletteFocusable is the palette's full Tab-trap cycle, in DOM/visual
+    // order: the search input, every currently-rendered result, and --
+    // round-1 review -- the footer's "View all in Fleet" link as the TRUE
+    // last element (previously left out of the trap: Tab from the last
+    // .ns-item wrapped straight back to the input, so the footer link was
+    // never keyboard-reachable at all in an aria-modal dialog, where every
+    // focusable element must be). viewAllLink is always present in the
+    // static markup (base.html), so this array always has >=2 entries.
+    function paletteFocusable(){
+      var items=Array.prototype.slice.call(results.querySelectorAll('.ns-item'));
+      var all=[input].concat(items);
+      if(viewAllLink) all.push(viewAllLink);
+      return all;
     }
     function closePalette(){
       if(palette.hidden) return;
@@ -1089,8 +1115,10 @@
     palette.addEventListener('keydown',function(e){
       if(e.key==='Escape'){ e.preventDefault(); closePalette(); return; }
       if(e.key!=='Tab') return;
-      // Trap focus within the palette while it's open.
-      var focusable=[input].concat(Array.prototype.slice.call(results.querySelectorAll('.ns-item')));
+      // Trap focus within the palette while it's open (paletteFocusable's
+      // doc: the footer link is the true last element in the cycle -- Tab
+      // from it wraps to the input, Shift+Tab from the input wraps to it).
+      var focusable=paletteFocusable();
       var firstEl=focusable[0], lastEl=focusable[focusable.length-1];
       if(e.shiftKey && document.activeElement===firstEl){ e.preventDefault(); lastEl.focus(); }
       else if(!e.shiftKey && document.activeElement===lastEl){ e.preventDefault(); firstEl.focus(); }

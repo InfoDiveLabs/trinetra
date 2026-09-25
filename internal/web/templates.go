@@ -494,18 +494,25 @@ func buildSwitcherNodes(nodes []core.NodeSummary, current nodeScope, targetPath 
 	return out
 }
 
-// switcherTargetPath returns the page-type path every switcher/palette
-// entry links to: p unchanged (already node-prefix-stripped -- see
-// nodeFrom's doc, and newPageData's caller which passes r.URL.Path
-// directly) for an ordinary node-scoped page, or "/" (every node's own
-// dashboard) when p falls under node_scope.go's masterLocalPrefixes --
+// switcherTargetPath returns the page-type path (plus query string) every
+// switcher/palette entry links to: p unchanged (already node-prefix-stripped
+// -- see nodeFrom's doc, and newPageData's caller which passes r.URL.Path
+// directly) with "?"+rawQuery appended when set (round-1 review: switching
+// nodes from e.g. /history?metric=cpu must keep ?metric=cpu, not silently
+// drop it) for an ordinary node-scoped page; or "/" alone, with NO query
+// string, when p falls under node_scope.go's masterLocalPrefixes --
 // config/channels/users/settings/fleet/etc. have no per-node counterpart to
 // switch to at all (task 6's ruling: "master-local pages... switch to the
-// node's dashboard instead").
-func switcherTargetPath(p string) string {
+// node's dashboard instead"), and a filter/sort query tied to a
+// master-local page (e.g. /fleet?state=down) has no meaning on a node's own
+// dashboard.
+func switcherTargetPath(p, rawQuery string) string {
 	p = path.Clean(p)
 	if isMasterLocalPath(p) {
 		return "/"
+	}
+	if rawQuery != "" {
+		return p + "?" + rawQuery
 	}
 	return p
 }
@@ -584,7 +591,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		// round trip only when nothing else in the request already paid for
 		// one.
 		if nodes, err := fleetMemoFrom(r).fleetNodes(d); err == nil {
-			switcher = buildSwitcherNodes(nodes, node, switcherTargetPath(r.URL.Path))
+			switcher = buildSwitcherNodes(nodes, node, switcherTargetPath(r.URL.Path, r.URL.RawQuery))
 		}
 	}
 	return PageData{

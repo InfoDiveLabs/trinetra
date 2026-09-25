@@ -102,7 +102,7 @@
     <div class="node-palette-box" role="document">
       <input type="text" id="nodePaletteInput" class="node-palette-input mono" placeholder="{{if eq .Role "admin"}}Search nodes by name, tag or address…{{else}}Search nodes by name or tag…{{end}}" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="nodePaletteResults" aria-autocomplete="list">
       <div class="node-palette-results" id="nodePaletteResults" role="listbox" aria-label="Nodes"></div>
-      <div class="node-palette-foot"><a href="/fleet">View all in Fleet →</a><span class="note">Esc to close</span></div>
+      <div class="node-palette-foot"><a href="/fleet" id="nodePaletteViewAll">View all in Fleet →</a><span class="note">Esc to close</span></div>
     </div>
   </div>
   {{end}}
