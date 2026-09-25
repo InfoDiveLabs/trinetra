@@ -69,13 +69,14 @@ func withFakeUser(r *http.Request, role Role) *http.Request {
 // nodeAwareTestMux stands in for newHandler's real route table, just enough
 // to exercise withNodeRouter/nodeFrom/apiFor without depending on any real
 // page handler's internals (this task doesn't rewire any of them -- see the
-// brief's file list). GET /monitoring writes back the resolved nodeScope's
-// ID/Prefix/Self as headers, plus a body marker (MonitoringView.FailedUnits'
-// first entry) read through apiFor(r, d), so a test can tell "the master's
-// fake API" apart from "node child1's fake API".
+// brief's file list). GET /monitoring and GET /events (Task 4: /events is
+// node-routable) both write back the resolved nodeScope's ID/Prefix/Self as
+// headers, plus a body marker (MonitoringView.FailedUnits' first entry)
+// read through apiFor(r, d), so a test can tell "the master's fake API"
+// apart from "node child1's fake API".
 func nodeAwareTestMux(d Deps) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /monitoring", func(w http.ResponseWriter, r *http.Request) {
+	scopeMarkerHandler := func(w http.ResponseWriter, r *http.Request) {
 		ns := nodeFrom(r)
 		w.Header().Set("X-Node-Id", ns.ID)
 		w.Header().Set("X-Node-Prefix", ns.Prefix)
@@ -88,7 +89,9 @@ func nodeAwareTestMux(d Deps) *http.ServeMux {
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(marker))
-	})
+	}
+	mux.HandleFunc("GET /monitoring", scopeMarkerHandler)
+	mux.HandleFunc("GET /events", scopeMarkerHandler)
 	return mux
 }
 
@@ -286,18 +289,28 @@ func TestNodeRouterRejectsNonGetMethod(t *testing.T) {
 	}
 }
 
-// TestNodeRouterRejectsEventsStream pins the /events exclusion: even though
-// it's GET, live event streams aren't routed to remote nodes yet. Requires
+// TestNodeRouterRoutesEventsStream pins Task 4's reversal of the earlier
+// /events exclusion: GET /n/child1/events now reaches the mux with
+// nodeFrom(r) resolved to child1, the same as any other GET route --
+// sse.go's eventsHandler is what actually keeps a routed request from ever
+// calling Deps.Subscribe (see sse_test.go's
+// TestEventsStreamRemoteNodePollsChildSnapshot), not this router. Requires
 // a signed-in caller (see TestNodeRouterRoutesToNode's doc).
-func TestNodeRouterRejectsEventsStream(t *testing.T) {
+func TestNodeRouterRoutesEventsStream(t *testing.T) {
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
 
 	rr := httptest.NewRecorder()
 	req := withFakeUser(httptest.NewRequest(http.MethodGet, "/n/child1/events", nil), RoleViewer)
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-Node-Id"); got != "child1" {
+		t.Errorf("X-Node-Id = %q, want child1", got)
+	}
+	if got := rr.Header().Get("X-Node-Self"); got != "false" {
+		t.Errorf("X-Node-Self = %q, want false", got)
 	}
 }
 

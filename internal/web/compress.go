@@ -14,6 +14,24 @@ import (
 // cross it, only the larger history/series payloads this task targets do.
 const gzipMinBytes = 1024
 
+// isEventsStreamPath reports whether p is a live SSE stream path that must
+// never be buffered by gzipMiddleware: the two unprefixed streams
+// (/events, /public/events) or a master's node-scoped counterpart
+// (/n/{id}/events, Task 4/fleet-web-a) -- the exact same request
+// withNodeRouter (node_scope.go) re-dispatches internally as a plain
+// /events once it resolves the node scope. The node-scoped match is
+// intentionally loose (any /n/.../events path, not a validated node id):
+// worst case a malformed /n/.../events path that withNodeRouter itself
+// would 404 just skips gzip too, which is harmless -- never a correctness
+// or security concern, only a missed compression opportunity on a path
+// that was never going to succeed anyway.
+func isEventsStreamPath(p string) bool {
+	if p == "/events" || p == "/public/events" {
+		return true
+	}
+	return strings.HasPrefix(p, "/n/") && strings.HasSuffix(p, "/events")
+}
+
 // gzipMiddleware compresses responses with gzip when the client advertises
 // support (Accept-Encoding: gzip) and the body turns out to exceed
 // gzipMinBytes, so the larger history/series JSON payloads (the whole point
@@ -25,10 +43,15 @@ const gzipMinBytes = 1024
 // gzipResponseWriter's buffer-then-decide strategy below would hold every
 // frame until either the 1KB threshold or the connection closes -- exactly
 // backwards for a live push stream, where the browser needs each frame the
-// moment it's written, not once several KB have accumulated.
+// moment it's written, not once several KB have accumulated. As of Task 4
+// (fleet-web-a), a master's node-scoped SSE stream (/n/{id}/events,
+// node_scope.go's withNodeRouter) is excluded too, via isEventsStreamPath --
+// this middleware runs OUTSIDE withNodeRouter (routes.go), so it always
+// sees the request's ORIGINAL, still-/n/{id}/-prefixed path, never the
+// prefix-stripped /events withNodeRouter re-dispatches internally.
 func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/events" || r.URL.Path == "/public/events" {
+		if isEventsStreamPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -167,8 +190,9 @@ func (g *gzipResponseWriter) Close() {
 // wrapping gzipResponseWriter around such a handler's ResponseWriter would
 // silently break http.Hijacker type assertions the handler might make.
 // (routes.go's SSE handlers don't hit this path since gzipMiddleware
-// excludes /events and /public/events outright, but this keeps the writer
-// correct for any other upgrade-style handler that might be added later.)
+// excludes every events-stream path (isEventsStreamPath) outright, but this
+// keeps the writer correct for any other upgrade-style handler that might
+// be added later.)
 func (g *gzipResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if h, ok := g.ResponseWriter.(http.Hijacker); ok {
 		return h.Hijack()

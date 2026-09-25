@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
@@ -111,6 +112,15 @@ func writeAlertEvent(w http.ResponseWriter, f http.Flusher, ev LiveEvent) bool {
 // daemon), eventsHandler keeps its original pure-ticker behavior unchanged:
 // poll Deps.Snapshot() on sseTickerInterval, nothing else.
 //
+// As of Task 4 (fleet-web-a), a request scoped to a remote fleet node
+// (nodeFrom(r).Self == false -- reachable once withNodeRouter stopped
+// excluding /events from node routing, node_scope.go) never reaches any of
+// the self-scope logic below at all: it is handed off to
+// remoteNodeEventsLoop instead, a poll-only path over apiFor(r,d).Snapshot()
+// that never calls Deps.Subscribe (there is no per-node live push over the
+// control socket -- Subscribe is scoped to THIS daemon's own event bus, not
+// a remote node's).
+//
 // Either way, the stream loops on a select that also watches
 // r.Context().Done(): a client disconnect (navigating away, closing the
 // tab, the browser's own EventSource reconnect logic tearing down the old
@@ -130,6 +140,11 @@ func eventsHandler(d Deps) http.HandlerFunc {
 		h.Set("Cache-Control", "no-cache")
 		h.Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
+
+		if !nodeFrom(r).Self {
+			remoteNodeEventsLoop(w, r, flusher, d)
+			return
+		}
 
 		snapshot := func() DashboardView {
 			if d.Snapshot == nil {
@@ -186,6 +201,69 @@ func eventsHandler(d Deps) http.HandlerFunc {
 				if !writeSnapshotEvent(w, flusher, snapshot()) {
 					return
 				}
+			}
+		}
+	}
+}
+
+// remoteNodeSnapshot reads apiFor(r, d).Snapshot() for
+// remoteNodeEventsLoop's polling path, collapsing a nil API or a read error
+// to the zero DashboardView -- the same degrade-quietly contract
+// buildDashboardPageData's own apiFor(r,d).Snapshot() call uses for a node
+// page's initial render (handlers_dashboard.go), so a transient
+// control-plane hiccup on the remote node shows a stale-but-present frame
+// rather than tearing the stream down.
+func remoteNodeSnapshot(r *http.Request, d Deps) DashboardView {
+	api := apiFor(r, d)
+	if api == nil {
+		return DashboardView{}
+	}
+	v, err := api.Snapshot()
+	if err != nil {
+		return DashboardView{}
+	}
+	return v
+}
+
+// remoteNodeEventsLoop is eventsHandler's path for a request scoped to a
+// remote fleet node (nodeFrom(r).Self == false, Task 4/fleet-web-a): it
+// polls apiFor(r,d).Snapshot() on sseTickerInterval and writes a fresh
+// "snapshot" frame only when the polled view actually changed since the
+// last one written (reflect.DeepEqual -- DashboardView carries slice
+// fields, so a plain == comparison doesn't compile), rather than resending
+// an identical frame on every tick. It never touches Deps.Subscribe: there
+// is no per-node live push over the control socket yet (Subscribe is
+// scoped to THIS daemon's own event bus, not a remote node's), so a remote
+// alert fire/recover is never streamed here -- only snapshot polling, per
+// the brief.
+//
+// The very first frame is always written immediately regardless of
+// "changed", mirroring eventsHandler's own self-scope contract (a
+// subscriber sees current data right away). Like eventsHandler's main
+// loop, it watches r.Context().Done() so a client disconnect is noticed
+// promptly rather than only on the next tick's failed write.
+func remoteNodeEventsLoop(w http.ResponseWriter, r *http.Request, flusher http.Flusher, d Deps) {
+	last := remoteNodeSnapshot(r, d)
+	if !writeSnapshotEvent(w, flusher, last) {
+		return
+	}
+
+	ctx := r.Context()
+	ticker := time.NewTicker(sseTickerInterval(d.Cfg))
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cur := remoteNodeSnapshot(r, d)
+			if reflect.DeepEqual(cur, last) {
+				continue
+			}
+			last = cur
+			if !writeSnapshotEvent(w, flusher, cur) {
+				return
 			}
 		}
 	}

@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="{{asset "/assets/style.css"}}">
 <link rel="stylesheet" href="{{asset "/assets/uPlot.min.css"}}">
 </head>
-<body data-role="{{.Role}}">
+<body data-role="{{.Role}}" data-node-prefix="{{.Node.Prefix}}">
 <div class="app">
   <aside class="side">{{block "nav" .}}
     <div class="brand"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="120" height="32"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="120" height="32"><small>{{.ServerName}}</small></div>
@@ -40,7 +40,7 @@
       <div><h1>{{.Title}}</h1><p>{{.Sub}}</p></div>
       <div class="spacer"></div>
       {{if eq .Role "viewer"}}<span class="pill ro-pill">read-only</span>{{end}}
-      {{if eq .FleetRole "child"}}{{if .Link}}{{if linkUnreachable .Link}}<span class="pill" title="{{.MasterURL}}{{if .Link.LastError}} · {{.Link.LastError}}{{end}}"><span class="led warn"></span> Master unreachable {{nodeDur .Link.LastAck}} · alerting locally</span>{{else}}<span class="pill" title="{{.MasterURL}}"><span class="led ok"></span> Linked to master · ack {{nodeAgo .Link.LastAck}}</span>{{end}}{{end}}{{end}}
+      {{if eq .FleetRole "child"}}{{if .Link}}{{if linkUnreachable .Link}}<span class="pill" title="{{.MasterURL}}{{if .Link.LastError}} · {{.Link.LastError}}{{end}}"><span class="led warn"></span> Master unreachable {{nodeDur .Link.LastAck}} · alerting locally</span>{{else if le .Link.LastAck 0}}<span class="pill" title="{{.MasterURL}}"><span class="led"></span> Connecting to master</span>{{else}}<span class="pill" title="{{.MasterURL}}"><span class="led ok"></span> Linked to master · ack {{nodeAgo .Link.LastAck}}</span>{{end}}{{end}}{{end}}
       <span class="hb hb-gen" title="heartbeat"></span>
       <span class="pill"><span class="led {{.Status}}"></span> {{.StatusText}}</span>
       <button class="icon-btn" id="themeBtn" title="Toggle theme (T)">◑</button>

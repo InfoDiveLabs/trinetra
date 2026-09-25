@@ -219,16 +219,19 @@ func isMasterLocalPath(p string) bool {
 //     not-found page (renderNotFound, which -- like every other page --
 //     calls newPageData, which calls into core.API).
 //   - A bare /n/{id} (no trailing slash) 308-redirects to /n/{id}/.
-//   - Only GET/HEAD are node-routable at all, and GET /events is excluded
-//     even though it's GET (a routed/non-self Subscribe is already refused
-//     server-side, and there is no per-node live push yet) -- every other
-//     method, plus /events, 404s under a node prefix.
+//   - Only GET/HEAD are node-routable at all -- every other method 404s
+//     under a node prefix. GET /events IS node-routable as of Task 4
+//     (fleet-web-a): eventsHandler (sse.go) switches to a poll-only loop
+//     over apiFor(r,d).Snapshot() once it sees a non-self nodeFrom(r),
+//     rather than calling Deps.Subscribe (there is still no per-node live
+//     push over the control socket -- Subscribe stays scoped to this
+//     daemon's own event bus).
 //   - The sub-path is rejected outright (404) if it contains a literal ".."
 //     segment (checked before any cleaning -- see containsDotDotSegment),
-//     then path.Clean'd, before the /events and masterLocalPrefixes checks
-//     run against it: a normalized path is what those checks (and the
-//     final dispatch) see, but a path that tried to smuggle ".." through
-//     them is rejected rather than silently resolved.
+//     then path.Clean'd, before the masterLocalPrefixes check runs against
+//     it: a normalized path is what that check (and the final dispatch)
+//     sees, but a path that tried to smuggle ".." through it is rejected
+//     rather than silently resolved.
 //   - masterLocalPrefixes never get node-scoped (see its own doc).
 //   - id == core.SelfNodeID ("self") redirects (308, preserving the query
 //     string) to the bare unprefixed path: /n/self/x is never a distinct
@@ -289,10 +292,10 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 		}
 		subPath = path.Clean(subPath)
 
-		if subPath == "/events" {
-			renderNotFound(w, r, d, "not found")
-			return
-		}
+		// /events is node-routable as of Task 4 (see this function's doc):
+		// no exclusion here any more, it falls through to the ordinary
+		// masterLocalPrefixes/self-redirect/roster-lookup path below like
+		// every other GET.
 		if isMasterLocalPath(subPath) {
 			renderNotFound(w, r, d, "not found")
 			return

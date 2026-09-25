@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -448,5 +449,136 @@ func TestFleetStatusCalledExactlyOnceOnSelfPage(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("Fleet().Status() called %d time(s) for a self-scoped page, want exactly 1", n)
+	}
+}
+
+// ---- Task 4 carry-overs from the Task 3 review --------------------------
+
+// TestChildTopbarPillConnectingWhenNeverAcked pins the controller ruling: a
+// child link that has never once acked (LastAck<=0) but isn't (yet)
+// "retrying" long enough to count as linkUnreachable must not render the
+// confusing "Linked to master · ack never" -- it renders "Connecting to
+// master" instead.
+func TestChildTopbarPillConnectingWhenNeverAcked(t *testing.T) {
+	body := childPillFor(t, &core.LinkView{State: "linked", LastAck: 0})
+	if !strings.Contains(body, "Connecting to master") {
+		t.Errorf("child pill missing \"Connecting to master\" for a never-acked link:\n%s", body)
+	}
+	if strings.Contains(body, "ack never") {
+		t.Errorf("child pill must not render the old \"ack never\" text:\n%s", body)
+	}
+	if strings.Contains(body, "Master unreachable") {
+		t.Errorf("a never-acked, non-retrying link must not render the unreachable pill:\n%s", body)
+	}
+}
+
+// TestChildBadgeAbsentWhenFleetStatusErrors pins the Task 3 review
+// carry-over: when Fleet().Status() itself errors (a transient
+// control-socket hiccup, or an old daemon that doesn't implement it yet),
+// resolveFleetPageInfo collapses that to "solo" (see its own doc), so no
+// child link pill/badge renders at all -- never one built from a
+// zero-valued/stale FleetStatus.
+func TestChildBadgeAbsentWhenFleetStatusErrors(t *testing.T) {
+	fleet := &fakeFleet{statusErr: errors.New("control socket unavailable")}
+	d := fleetTestDeps(t, fakeAPI{fleet: fleet})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "Linked to master") || strings.Contains(body, "Master unreachable") || strings.Contains(body, "Connecting to master") {
+		t.Errorf("no child badge/pill must render when Fleet().Status() errors:\n%s", body)
+	}
+}
+
+// ---- Task 4: <body data-node-prefix> ------------------------------------
+
+// TestBodyDataNodePrefixOnNodeScopedPage pins the controller ruling: a
+// master's node-scoped page (/n/{id}/...) renders <body data-node-prefix>
+// with that node's URL prefix, so assets/app.js's nodeURL() helper can
+// prepend it to the page's own same-origin data fetches (/api/*, /events)
+// instead of hitting the master's own data.
+func TestBodyDataNodePrefixOnNodeScopedPage(t *testing.T) {
+	d := nodeScopedDeps(t, fakeAPI{}, fakeAPI{})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/n/child1/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `data-node-prefix="/n/child1"`) {
+		t.Errorf("node-scoped page missing data-node-prefix=\"/n/child1\":\n%s", rr.Body.String())
+	}
+}
+
+// TestBodyDataNodePrefixEmptyOnSelfPage pins the other half: every
+// self-scoped page (solo, a master's own view, a child's own view) renders
+// the attribute present but empty, so nodeURL() is a no-op there.
+func TestBodyDataNodePrefixEmptyOnSelfPage(t *testing.T) {
+	d := enrollTestDeps(t)
+	d.API = fakeAPI{}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `data-node-prefix=""`) {
+		t.Errorf("self page missing empty data-node-prefix=\"\":\n%s", rr.Body.String())
+	}
+}
+
+// ---- Task 4: app.js's same-origin data calls go through nodeURL() ------
+
+// appJSNodeScopedLiteral matches a quoted string literal that is one of
+// this app's node-scoped data URLs (/api/* or the bare /events -- never
+// /public/events, /enroll/*, /login/*, /logout, which are master-local and
+// must always target the master regardless of node scope), capturing
+// whether it's immediately preceded by "nodeURL(".
+var appJSNodeScopedLiteral = regexp.MustCompile(`(nodeURL\(\s*)?['"](/api/[^'"]*|/events)['"]`)
+
+// TestAppJSDataFetchesGoThroughNodeURL pins the controller ruling: every
+// fetch()/EventSource() app.js makes against THIS daemon's own data API
+// (/api/series, /api/container/logs, /api/downtime, /events -- whether the
+// literal path sits directly in the call or is first assembled into a
+// `var url=...` the call later references) must be wrapped in nodeURL(...),
+// so a remote node's page (base.html's <body data-node-prefix>) reads that
+// node's own data instead of silently falling back to the master's.
+func TestAppJSDataFetchesGoThroughNodeURL(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+
+	if !strings.Contains(src, "function nodeURL(") {
+		t.Fatal("app.js is missing a nodeURL(path) helper")
+	}
+
+	matches := appJSNodeScopedLiteral.FindAllStringSubmatch(src, -1)
+	if len(matches) == 0 {
+		t.Fatal("app.js: found no /api/* or /events literal to check -- the scan regex may be stale")
+	}
+	unwrapped := 0
+	for _, m := range matches {
+		wrapped, path := m[1], m[2]
+		if wrapped == "" {
+			unwrapped++
+			t.Errorf("app.js: %q is a same-origin /api or /events URL not routed through nodeURL(...)", path)
+		}
+	}
+	if unwrapped > 0 {
+		t.Errorf("%d unwrapped node-scoped data URL(s) in app.js", unwrapped)
 	}
 }

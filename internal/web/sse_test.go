@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // eventsTestDeps builds Deps for the SSE tests: a distinctive fake
@@ -382,5 +384,153 @@ func TestEventsStreamFallsBackToTickerWhenSubscribeChannelCloses(t *testing.T) {
 	}
 	if !strings.Contains(data, `"cpu":42.5`) {
 		t.Errorf("fallback snapshot frame = %q, want it to contain the current cpu value", data)
+	}
+}
+
+// ---- Task 4: /n/{node}/events (remote fleet node, poll-only) -----------
+
+// nodeSnapshotAPI is a core.API test double whose Snapshot() reads a
+// mutable, mutex-guarded DashboardView, so a test can change what a
+// "remote node" reports mid-stream and prove remoteNodeEventsLoop's poll
+// notices -- something the fixed fakeAPI.snap field can't do (it's a
+// constant, not a closure).
+type nodeSnapshotAPI struct {
+	fakeAPI
+	mu   sync.Mutex
+	snap core.DashboardView
+}
+
+func (n *nodeSnapshotAPI) Snapshot() (core.DashboardView, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.snap, nil
+}
+
+func (n *nodeSnapshotAPI) setSnapshot(v core.DashboardView) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.snap = v
+}
+
+// nodeEventsTestDeps builds Deps for the node-scoped SSE tests: a master
+// daemon (masterFleetWithChild's roster, node_scope_test.go) whose child1
+// node resolves to child (read through apiFor once nodeFrom(r) is
+// non-self), with a short FastInterval so remoteNodeEventsLoop's poll
+// ticker fires promptly.
+func nodeEventsTestDeps(t *testing.T, child core.API, fastIntervalSec int) Deps {
+	t.Helper()
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": child}))
+	cfg := config.Default()
+	cfg.FastInterval = fastIntervalSec
+	d.Cfg = func() *config.Config { return cfg }
+	return d
+}
+
+// TestEventsStreamRemoteNodePollsChildSnapshot pins Task 4's core
+// contract: GET /n/child1/events streams an initial "snapshot" frame built
+// from the CHILD node's own core.API.Snapshot() (not the master's), then
+// re-polls on sseTickerInterval and emits a fresh frame once that child
+// snapshot actually changes -- and never calls Deps.Subscribe (there is no
+// per-node live push; remote alert events are never streamed, only
+// snapshot polling).
+func TestEventsStreamRemoteNodePollsChildSnapshot(t *testing.T) {
+	child := &nodeSnapshotAPI{snap: core.DashboardView{CPU: 77}}
+	d := nodeEventsTestDeps(t, child, 1)
+	subscribeCalled := false
+	d.Subscribe = func(ctx context.Context) (<-chan LiveEvent, error) {
+		subscribeCalled = true
+		return nil, nil
+	}
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	cookie := viewerCookie(t, users, sessions)
+
+	srv := httptest.NewServer(newHandler(d))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/n/child1/events", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.AddCookie(cookie)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /n/child1/events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /n/child1/events status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream prefix", ct)
+	}
+
+	r := bufio.NewReader(resp.Body)
+	event, data := readSSEFrame(t, r)
+	if event != "snapshot" {
+		t.Fatalf("first event = %q, want snapshot", event)
+	}
+	if !strings.Contains(data, `"cpu":77`) {
+		t.Errorf("initial frame = %q, want it to contain child1's cpu value (77)", data)
+	}
+
+	child.setSnapshot(core.DashboardView{CPU: 88})
+
+	event, data = readSSEFrame(t, r)
+	if event != "snapshot" {
+		t.Fatalf("second event = %q, want snapshot", event)
+	}
+	if !strings.Contains(data, `"cpu":88`) {
+		t.Errorf("second frame = %q, want it to reflect child1's changed cpu value (88)", data)
+	}
+
+	if subscribeCalled {
+		t.Error("a remote node's /events stream must never call Deps.Subscribe")
+	}
+}
+
+// TestEventsStreamSelfUnaffectedByRemoteNodePolling is a narrow sanity
+// check that the plain, unprefixed /events request still takes the
+// original self-scope path (Deps.Snapshot, not apiFor/NodeAPI) even on a
+// Deps wired with node routing -- Task 4 must not have disturbed the
+// existing self behavior TestEventsStreamEmitsSnapshotFrame et al. already
+// pin.
+func TestEventsStreamSelfUnaffectedByRemoteNodePolling(t *testing.T) {
+	master := masterFakeAPI(masterFleetWithChild(), map[string]core.API{
+		"child1": &nodeSnapshotAPI{snap: core.DashboardView{CPU: 5}},
+	})
+	d := fleetTestDeps(t, master)
+	cfg := config.Default()
+	cfg.FastInterval = 60
+	d.Cfg = func() *config.Config { return cfg }
+	d.Snapshot = func() DashboardView { return DashboardView{CPU: 42.5} }
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	cookie := viewerCookie(t, users, sessions)
+
+	srv := httptest.NewServer(newHandler(d))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.AddCookie(cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	r := bufio.NewReader(resp.Body)
+	_, data := readSSEFrame(t, r)
+	if !strings.Contains(data, `"cpu":42.5`) {
+		t.Errorf("self /events frame = %q, want the master's own Deps.Snapshot value (42.5), not child1's", data)
 	}
 }

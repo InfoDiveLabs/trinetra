@@ -109,6 +109,23 @@
   var upb=document.getElementById('upbars');
   if(upb){var h='',k;for(k=0;k<90;k++){var c='var(--ok)',ht=38;if(k===69){c='var(--crit)'}else if(k===72){c='var(--warn)';ht=30}h+='<div style="flex:1;height:'+ht+'px;background:'+c+';opacity:.85;border-radius:2px"></div>';}upb.innerHTML=h;}
 
+  // ---- node-scoped data URLs (Task 4: fleet dashboard, remote nodes) ----
+  // A master's page can be its OWN view ("self", <body data-node-prefix="">)
+  // or its view of a REMOTE fleet node (<body data-node-prefix="/n/{id}">,
+  // set by templates/base.html from PageData.Node.Prefix). Every same-origin
+  // fetch()/EventSource() this file makes against THIS daemon's own data API
+  // (/api/series, /api/container/logs, /api/downtime, /events) must go
+  // through nodeURL so a remote node's page reads THAT node's data instead
+  // of silently hitting the literal absolute path, which always means "this
+  // server" -- i.e. the master. /public/events, /enroll/*, /login/*,
+  // /logout are deliberately never passed through nodeURL: those are
+  // master-local endpoints (node_scope.go's masterLocalPrefixes) that have
+  // no per-node counterpart to route to in the first place.
+  function nodeURL(path){
+    var prefix=(document.body&&document.body.dataset.nodePrefix)||'';
+    return prefix+path;
+  }
+
   // ---- detail drawer ----
   document.body.insertAdjacentHTML('beforeend','<div class="drawer-scrim" id="swScrim"></div><aside class="drawer" id="swDrawer"></aside>');
   var drawer=document.getElementById('swDrawer'), dScrim=document.getElementById('swScrim');
@@ -190,7 +207,7 @@
       body.appendChild(cv);
       var note=mkEl('div','note'); note.style.padding='4px 0'; note.textContent='Loading history...'; body.appendChild(note);
       var to=Math.floor(Date.now()/1000), from=to-6*3600;
-      fetch('/api/series?metric='+encodeURIComponent(d.metric)+'&from='+from+'&to='+to,{credentials:'same-origin'})
+      fetch(nodeURL('/api/series?metric='+encodeURIComponent(d.metric)+'&from='+from+'&to='+to),{credentials:'same-origin'})
         .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
         .then(function(j){
           var s=j&&j.series; if(!s||!s.length||!s[0]||!s[0].length){ note.textContent='No history recorded yet.'; cv.style.display='none'; return; }
@@ -224,10 +241,22 @@
       logBtn.addEventListener('click',function(){
         logBtn.disabled=true; var orig=logBtn.textContent; logBtn.textContent='Loading...';
         logBox.style.display='block'; logBox.textContent='';
-        fetch('/api/container/logs?tail=200&name='+encodeURIComponent(d.name||''),{credentials:'same-origin'})
-          .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+        fetch(nodeURL('/api/container/logs?tail=200&name='+encodeURIComponent(d.name||'')),{credentials:'same-origin'})
+          .then(function(r){
+            // A remote node (409, containerLogsHandler) carries the exact
+            // reason as JSON {"error": "..."} -- show that reason text
+            // directly rather than a generic "HTTP 409".
+            if(r.status===409){
+              return r.json().catch(function(){ return {}; }).then(function(j){
+                var e=new Error((j&&j.error)||'not available for a remote node yet');
+                e.isReason=true; throw e;
+              });
+            }
+            if(!r.ok) throw new Error('HTTP '+r.status);
+            return r.text();
+          })
           .then(function(t){ logBox.textContent=t||'(no output)'; logBox.scrollTop=logBox.scrollHeight; })
-          .catch(function(err){ logBox.textContent='Could not load logs: '+err.message; })
+          .catch(function(err){ logBox.textContent=err.isReason?err.message:('Could not load logs: '+err.message); })
           .finally(function(){ logBtn.disabled=false; logBtn.textContent=orig; });
       });
     }
@@ -396,7 +425,7 @@
 
     document.addEventListener('sw-theme',rebuildCharts);
 
-    var es=new EventSource('/events');
+    var es=new EventSource(nodeURL('/events'));
     es.addEventListener('snapshot',function(ev){
       var s;
       try{ s=JSON.parse(ev.data); }catch(e){ return; }
@@ -597,7 +626,7 @@
     }
 
     function fetchSeries(metric,range){
-      var url='/api/series?metric='+encodeURIComponent(metric)+'&from='+range.from+'&to='+range.to;
+      var url=nodeURL('/api/series?metric='+encodeURIComponent(metric)+'&from='+range.from+'&to='+range.to);
       return fetch(url,{credentials:'same-origin'})
         .then(function(r){ if(!r.ok) throw new Error('series fetch failed'); return r.json(); })
         .then(function(data){ return (data&&data.series&&data.series.length>=2)?data.series:[[],[]]; });
@@ -663,7 +692,7 @@
       if(!panel) return;
       var span=HISTORY_RANGE_SECONDS['30d'];
       var to=Math.floor(Date.now()/1000), from=to-span;
-      fetch('/api/downtime?from='+from+'&to='+to,{credentials:'same-origin'})
+      fetch(nodeURL('/api/downtime?from='+from+'&to='+to),{credentials:'same-origin'})
         .then(function(r){ if(!r.ok) throw new Error('downtime fetch failed'); return r.json(); })
         .then(function(data){
           var events=(data&&data.events)||[];
