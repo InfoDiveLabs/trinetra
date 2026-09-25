@@ -10,21 +10,22 @@ import (
 )
 
 // This file implements the web supervisor: the goroutine IN the core
-// serverwatch daemon that keeps the companion serverwatch-web binary
+// trinetra daemon that keeps the companion trinetra-web binary
 // running as a verified child process. It reuses the front-door trust
 // check, resolveAndVerifyPlugin("web") (plugin_launch.go), before every
 // (re)spawn, so a binary swapped in between restarts is caught the same
 // way a swap before the first spawn would be.
 //
 // The child reads its control socket path and auth token from the env vars
-// SERVERWATCH_CONTROL_SOCKET and SERVERWATCH_CONTROL_TOKEN and sources ALL
-// of its config over that socket, so this supervisor only ever needs to
-// set those two env vars; it never passes a listen address or any other
-// config.
+// TRINETRA_CONTROL_SOCKET and TRINETRA_CONTROL_TOKEN (falling back to the
+// old SERVERWATCH_CONTROL_SOCKET/TOKEN names, which this supervisor also
+// sets for one release) and sources ALL of its config over that socket, so
+// this supervisor only ever needs to set those env vars; it never passes a
+// listen address or any other config.
 //
 // Stdlib only: this file must not import anything outside the standard
 // library. TestDefaultBuildIsStdlibOnly (buildtag_test.go) enforces that
-// the default (untagged) build of cmd/serverwatch never pulls in
+// the default (untagged) build of cmd/trinetra never pulls in
 // third-party packages, and this file is part of that build.
 
 // supervisedProc is the minimal child-process interface the supervisor
@@ -43,7 +44,7 @@ type execProc struct {
 func (p *execProc) Wait() error { return p.cmd.Wait() }
 
 // Kill sends an immediate kill (SIGKILL via os.Process.Kill) rather than a
-// graceful SIGTERM-then-wait. serverwatch-web holds no state of its own
+// graceful SIGTERM-then-wait. trinetra-web holds no state of its own
 // (it sources everything from the control socket on every connection), so
 // there is nothing for it to flush on shutdown, and a plain Kill keeps this
 // seam simple: { Wait; Kill }, nothing more.
@@ -113,13 +114,18 @@ func startWeb(socketPath, token string) (stop func()) {
 	}
 }
 
-// superviseWeb resolves and spawns serverwatch-web, then restarts it with
+// superviseWeb resolves and spawns trinetra-web, then restarts it with
 // capped backoff whenever it exits on its own, until stopCh closes. Every
 // (re)spawn re-runs resolveWebPlugin so a binary swapped in between
 // restarts is caught the same way a swap before the first spawn would be.
 func superviseWeb(socketPath, token string, stopCh <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
 	env := append(os.Environ(),
+		"TRINETRA_CONTROL_SOCKET="+socketPath,
+		"TRINETRA_CONTROL_TOKEN="+token,
+		// Compat: kept for one release so a pre-rename trinetra-web binary
+		// (which only reads the old names) still works when spawned by a
+		// new core.
 		"SERVERWATCH_CONTROL_SOCKET="+socketPath,
 		"SERVERWATCH_CONTROL_TOKEN="+token,
 	)
@@ -134,7 +140,7 @@ func superviseWeb(socketPath, token string, stopCh <-chan struct{}, done chan<- 
 
 		path, err := resolveWebPlugin()
 		if err != nil {
-			supervisorLog("web: refusing to start serverwatch-web: %v (run `serverwatch install` after a rebuild)", err)
+			supervisorLog("web: refusing to start trinetra-web: %v (run `trinetra install` after a rebuild)", err)
 			if !sleepOrStop(backoff, stopCh) {
 				return
 			}
@@ -161,7 +167,7 @@ func superviseWeb(socketPath, token string, stopCh <-chan struct{}, done chan<- 
 			<-waitCh
 			return
 		case werr := <-waitCh:
-			supervisorLog("web: serverwatch-web exited: %v", werr)
+			supervisorLog("web: trinetra-web exited: %v", werr)
 			if timeNow().Sub(start) >= webBackoffReset {
 				backoff = webBackoffMin
 			}

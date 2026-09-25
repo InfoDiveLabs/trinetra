@@ -205,7 +205,7 @@ func (m model) onboardView() string {
 			b.WriteString("fetching your enrollment pin...\n")
 		case m.onboard.pinErr != nil:
 			b.WriteString(errStyle.Render(fmt.Sprintf("could not fetch the enrollment pin: %v", m.onboard.pinErr)) + "\n")
-			b.WriteString("\n" + hintStyle.Render("the daemon will log it on start: journalctl -u serverwatch | grep /start") + "\n")
+			b.WriteString("\n" + hintStyle.Render("the daemon will log it on start: journalctl -u trinetra | grep /start") + "\n")
 		case m.onboard.enrolled:
 			b.WriteString("enrolled! serverwatch can now message you on Telegram.\n")
 			b.WriteString("\n" + hintStyle.Render("press any key to continue") + "\n")

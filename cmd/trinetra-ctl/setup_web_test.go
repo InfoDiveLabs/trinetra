@@ -23,17 +23,17 @@ func TestApplyWebSetupManualSetsCertAndKey(t *testing.T) {
 		Listen:  "0.0.0.0:8443",
 		RPID:    "example.com",
 		Origin:  "https://example.com",
-		TLSCert: "/etc/serverwatch/tls/cert.pem",
-		TLSKey:  "/etc/serverwatch/tls/key.pem",
+		TLSCert: "/etc/trinetra/tls/cert.pem",
+		TLSKey:  "/etc/trinetra/tls/key.pem",
 	}
 	if err := applyWebSetup(cfg, ans); err != nil {
 		t.Fatalf("applyWebSetup() error = %v, want nil", err)
 	}
-	if cfg.Web.TLSCert != "/etc/serverwatch/tls/cert.pem" {
-		t.Errorf("Web.TLSCert = %q, want /etc/serverwatch/tls/cert.pem", cfg.Web.TLSCert)
+	if cfg.Web.TLSCert != "/etc/trinetra/tls/cert.pem" {
+		t.Errorf("Web.TLSCert = %q, want /etc/trinetra/tls/cert.pem", cfg.Web.TLSCert)
 	}
-	if cfg.Web.TLSKey != "/etc/serverwatch/tls/key.pem" {
-		t.Errorf("Web.TLSKey = %q, want /etc/serverwatch/tls/key.pem", cfg.Web.TLSKey)
+	if cfg.Web.TLSKey != "/etc/trinetra/tls/key.pem" {
+		t.Errorf("Web.TLSKey = %q, want /etc/trinetra/tls/key.pem", cfg.Web.TLSKey)
 	}
 	if cfg.Web.Mode != "manual" {
 		t.Errorf("Web.Mode = %q, want manual", cfg.Web.Mode)
@@ -101,7 +101,7 @@ func TestValidateManualPathRejectsBlank(t *testing.T) {
 // readable (that is internal/web's job at startup, as documented on
 // validateManualPath).
 func TestValidateManualPathAcceptsNonBlank(t *testing.T) {
-	if err := validateManualPath("cert path", "/etc/serverwatch/tls/cert.pem"); err != nil {
+	if err := validateManualPath("cert path", "/etc/trinetra/tls/cert.pem"); err != nil {
 		t.Errorf("validateManualPath() error = %v, want nil", err)
 	}
 }
@@ -115,14 +115,14 @@ func TestWebSetupSummaryShowsCertAndKeyForManualMode(t *testing.T) {
 		Domain:  "example.com",
 		RPID:    "example.com",
 		Origin:  "https://example.com",
-		TLSCert: "/etc/serverwatch/tls/cert.pem",
-		TLSKey:  "/etc/serverwatch/tls/key.pem",
+		TLSCert: "/etc/trinetra/tls/cert.pem",
+		TLSKey:  "/etc/trinetra/tls/key.pem",
 	}
 	summary := webSetupSummary(ans)
-	if !strings.Contains(summary, "/etc/serverwatch/tls/cert.pem") {
+	if !strings.Contains(summary, "/etc/trinetra/tls/cert.pem") {
 		t.Errorf("summary missing cert path:\n%s", summary)
 	}
-	if !strings.Contains(summary, "/etc/serverwatch/tls/key.pem") {
+	if !strings.Contains(summary, "/etc/trinetra/tls/key.pem") {
 		t.Errorf("summary missing key path:\n%s", summary)
 	}
 }

@@ -136,8 +136,8 @@ func newModel(api core.API) model {
 		domainIn: mk("example.com"),
 		rpidIn:   mk("example.com"),
 		originIn: mk("https://example.com"),
-		certIn:   mk("/etc/serverwatch/tls/cert.pem"),
-		keyIn:    mk("/etc/serverwatch/tls/key.pem"),
+		certIn:   mk("/etc/trinetra/tls/cert.pem"),
+		keyIn:    mk("/etc/trinetra/tls/key.pem"),
 	}
 }
 
@@ -975,7 +975,7 @@ func (m model) setupView() string {
 func runInteractive(api core.API, errOut io.Writer) int {
 	p := tea.NewProgram(newModel(api))
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(errOut, "serverwatch-ctl: tui: %v\n", err)
+		fmt.Fprintf(errOut, "trinetra-ctl: tui: %v\n", err)
 		return 1
 	}
 	return 0

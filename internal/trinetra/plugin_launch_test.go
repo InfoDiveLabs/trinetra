@@ -27,7 +27,7 @@ func TestVerifyPlugin_Success(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := newTestPlugin(t, dir, "serverwatch-ctl", []byte("pretend plugin binary"))
+	path := newTestPlugin(t, dir, "trinetra-ctl", []byte("pretend plugin binary"))
 
 	sum, err := sha256File(path)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestVerifyPlugin_GroupWorldWritableFile(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := newTestPlugin(t, dir, "serverwatch-ctl", []byte("x"))
+	path := newTestPlugin(t, dir, "trinetra-ctl", []byte("x"))
 	// Add the world-write bit: violates mode.Perm()&0o022 == 0.
 	if err := os.Chmod(path, 0o757); err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestVerifyPlugin_GroupWritableFile(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := newTestPlugin(t, dir, "serverwatch-ctl", []byte("x"))
+	path := newTestPlugin(t, dir, "trinetra-ctl", []byte("x"))
 	// Add the group-write bit only.
 	if err := os.Chmod(path, 0o775); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestVerifyPlugin_GroupWritableFile(t *testing.T) {
 
 func TestVerifyPlugin_GroupWorldWritableParentDir(t *testing.T) {
 	dir := t.TempDir()
-	path := newTestPlugin(t, dir, "serverwatch-ctl", []byte("x"))
+	path := newTestPlugin(t, dir, "trinetra-ctl", []byte("x"))
 	// Loosen the parent directory instead of the file.
 	if err := os.Chmod(dir, 0o777); err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestVerifyPlugin_ChecksumMismatch(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := newTestPlugin(t, dir, "serverwatch-ctl", []byte("original content"))
+	path := newTestPlugin(t, dir, "trinetra-ctl", []byte("original content"))
 
 	sum, err := sha256File(path)
 	if err != nil {
@@ -136,7 +136,7 @@ func TestVerifyPlugin_MissingManifestEntry(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := newTestPlugin(t, dir, "serverwatch-ctl", []byte("x"))
+	path := newTestPlugin(t, dir, "trinetra-ctl", []byte("x"))
 
 	// Manifest exists but has no entry for "ctl": must fail closed, not
 	// pass because there's simply nothing to compare against.
@@ -153,7 +153,7 @@ func TestVerifyPlugin_WrongOwner(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := newTestPlugin(t, dir, "serverwatch-ctl", []byte("x"))
+	path := newTestPlugin(t, dir, "trinetra-ctl", []byte("x"))
 
 	sum, err := sha256File(path)
 	if err != nil {
@@ -176,7 +176,7 @@ func TestVerifyPlugin_NotRegularFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A directory named like a plugin is not a regular file.
-	subdir := filepath.Join(dir, "serverwatch-ctl")
+	subdir := filepath.Join(dir, "trinetra-ctl")
 	if err := os.Mkdir(subdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +192,8 @@ func TestVerifyPlugin_RejectsSymlink(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	real := newTestPlugin(t, dir, "serverwatch-ctl-real", []byte("x"))
-	link := filepath.Join(dir, "serverwatch-ctl")
+	real := newTestPlugin(t, dir, "trinetra-ctl-real", []byte("x"))
+	link := filepath.Join(dir, "trinetra-ctl")
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestVerifyPlugin_RejectsSymlink(t *testing.T) {
 
 func TestVerifyPlugin_MissingFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "serverwatch-ctl")
+	path := filepath.Join(dir, "trinetra-ctl")
 
 	err := verifyPlugin(path, os.Getuid(), map[string]string{"ctl": "whatever"}, "ctl")
 	if !errors.Is(err, errPluginNotInstalled) {
@@ -232,7 +232,7 @@ func TestVerifyPlugin_MissingFile(t *testing.T) {
 // the PATH-hijack defense from the threat model.
 func TestPluginPath_NeverConsultsPath(t *testing.T) {
 	pathDir := t.TempDir()
-	fake := filepath.Join(pathDir, "serverwatch-pathtrap")
+	fake := filepath.Join(pathDir, "trinetra-pathtrap")
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho pwned\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestPluginPath_ResolvesNextToCoreBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(exe)
-	target := filepath.Join(dir, "serverwatch-synthtest-target")
+	target := filepath.Join(dir, "trinetra-synthtest-target")
 	if err := os.WriteFile(target, []byte("x"), 0o755); err != nil {
 		t.Skipf("cannot write next to test binary at %s (%v); skipping", dir, err)
 	}
@@ -292,13 +292,13 @@ func TestPluginPath_ResolvesSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(exe)
-	real := filepath.Join(dir, "serverwatch-synthtest-real")
+	real := filepath.Join(dir, "trinetra-synthtest-real")
 	if err := os.WriteFile(real, []byte("x"), 0o755); err != nil {
 		t.Skipf("cannot write next to test binary at %s (%v); skipping", dir, err)
 	}
 	t.Cleanup(func() { os.Remove(real) })
 
-	link := filepath.Join(dir, "serverwatch-synthtest-link")
+	link := filepath.Join(dir, "trinetra-synthtest-link")
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("cannot symlink next to test binary at %s (%v); skipping", dir, err)
 	}
@@ -377,8 +377,8 @@ func TestResolveAndVerifyPlugin_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(exe)
-	pluginFile := filepath.Join(dir, "serverwatch-synthtest-rav")
-	content := []byte("pretend serverwatch-rav plugin binary")
+	pluginFile := filepath.Join(dir, "trinetra-synthtest-rav")
+	content := []byte("pretend trinetra-rav plugin binary")
 	if err := os.WriteFile(pluginFile, content, 0o755); err != nil {
 		t.Skipf("cannot write next to test binary at %s (%v); skipping", dir, err)
 	}
@@ -425,7 +425,7 @@ func TestResolveAndVerifyPlugin_TamperedBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(exe)
-	pluginFile := filepath.Join(dir, "serverwatch-synthtest-tamper")
+	pluginFile := filepath.Join(dir, "trinetra-synthtest-tamper")
 	if err := os.WriteFile(pluginFile, []byte("original"), 0o755); err != nil {
 		t.Skipf("cannot write next to test binary at %s (%v); skipping", dir, err)
 	}

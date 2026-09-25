@@ -83,7 +83,7 @@ func shortSocketPath(t *testing.T) string {
 
 // startFakeServer serves api over a fresh, short-pathed unix socket,
 // protected by token, and returns the socket path. Mirrors how
-// internal/serverwatch/control_socket.go wires up control.Serve, minus the
+// internal/trinetra/control_socket.go wires up control.Serve, minus the
 // daemon-only pieces (runtime dir discovery, token file writing) this
 // test drives directly instead.
 func startFakeServer(t *testing.T, api core.API, token string) (socketPath string) {
@@ -105,8 +105,8 @@ func envLookup(m map[string]string) func(string) string {
 }
 
 // TestResolveConnConfigDefaults pins the fully-default resolution path (no
-// flags, no SERVERWATCH_CONTROL_* env set): socket/token mirror
-// internal/serverwatch/control_socket.go's RUNTIME_DIRECTORY-based
+// flags, no TRINETRA_CONTROL_*/SERVERWATCH_CONTROL_* env set): socket/token
+// mirror internal/trinetra/control_socket.go's RUNTIME_DIRECTORY-based
 // resolution, and stateDir/alertLogPath/alertStatePath fall back to
 // defaultStateDir and its two well-known filenames.
 func TestResolveConnConfigDefaults(t *testing.T) {
@@ -147,11 +147,34 @@ func TestResolveConnConfigReadsTokenFile(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigEnvOverrides pins that SERVERWATCH_CONTROL_SOCKET/
-// SERVERWATCH_CONTROL_TOKEN (the form Task 3's core supervisor launches this
+// TestResolveConnConfigEnvOverrides pins that TRINETRA_CONTROL_SOCKET/
+// TRINETRA_CONTROL_TOKEN (the form Task 3's core supervisor launches this
 // binary with) take priority over the mirrored RUNTIME_DIRECTORY-based
 // default, and that a directly-set token skips reading tokenFile entirely.
 func TestResolveConnConfigEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "elsewhere.sock")
+	cc, err := resolveConnConfig(nil, envLookup(map[string]string{
+		"RUNTIME_DIRECTORY":       dir,
+		"TRINETRA_CONTROL_SOCKET": sockPath,
+		"TRINETRA_CONTROL_TOKEN":  "envtoken",
+	}))
+	if err != nil {
+		t.Fatalf("resolveConnConfig: %v", err)
+	}
+	if cc.socketPath != sockPath {
+		t.Errorf("socketPath = %q, want %q", cc.socketPath, sockPath)
+	}
+	if cc.token != "envtoken" {
+		t.Errorf("token = %q, want %q", cc.token, "envtoken")
+	}
+}
+
+// TestResolveConnConfigEnvOverrides_OldNameFallback pins the compat side:
+// with TRINETRA_CONTROL_SOCKET/TOKEN unset, resolveConnConfig still honors
+// the old SERVERWATCH_CONTROL_SOCKET/TOKEN names for one release, so this
+// binary still works when spawned by a pre-rename core.
+func TestResolveConnConfigEnvOverrides_OldNameFallback(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "elsewhere.sock")
 	cc, err := resolveConnConfig(nil, envLookup(map[string]string{
@@ -198,7 +221,7 @@ func TestResolveConnConfigFlagsOverrideEnv(t *testing.T) {
 
 // TestBuildDepsWiresLiveDataThroughSocket is this task's core TDD case: a
 // real control.Serve, over a temp unix socket, backed by a fakeAPI standing
-// in for the daemon -- exactly what Task 3's supervised serverwatch-web
+// in for the daemon -- exactly what Task 3's supervised trinetra-web
 // would dial in production. It proves buildDeps' Deps.API (what
 // dashboardHandler and friends read through, see web.Deps.API's doc) and
 // Deps.Events (used by the alerts page's uptime tile) both reflect data

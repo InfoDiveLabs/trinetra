@@ -1,6 +1,6 @@
-BIN=serverwatch
-CTL_BIN=serverwatch-ctl
-WEB_BIN=serverwatch-web
+BIN=trinetra
+CTL_BIN=trinetra-ctl
+WEB_BIN=trinetra-web
 
 .PHONY: test vet build linux cross release release-prod validate fleet-e2e fmt
 
@@ -36,43 +36,43 @@ vet:
 fmt:
 	gofmt -l .
 
-# build builds all three binaries for the host GOOS/GOARCH: serverwatch (the
-# daemon), serverwatch-ctl (the interactive TUI plugin), and serverwatch-web
+# build builds all three binaries for the host GOOS/GOARCH: trinetra (the
+# daemon), trinetra-ctl (the interactive TUI plugin), and trinetra-web
 # (the web UI plugin). None of them need a build tag. The daemon stays
 # stdlib only because it does not import internal/web or internal/tui, not
 # because of any tag. This is a dev build (unstripped); use release-prod for
 # the optimized main-channel artifacts.
 build:
-	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(BIN) ./cmd/serverwatch
-	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(CTL_BIN) ./cmd/serverwatch-ctl
-	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(WEB_BIN) ./cmd/serverwatch-web
+	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(BIN) ./cmd/trinetra
+	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(CTL_BIN) ./cmd/trinetra-ctl
+	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(WEB_BIN) ./cmd/trinetra-web
 
 linux:
-	GOOS=linux GOARCH=amd64 go build -o dist/$(BIN)-linux-amd64 ./cmd/serverwatch
-	GOOS=linux GOARCH=arm64 go build -o dist/$(BIN)-linux-arm64 ./cmd/serverwatch
+	GOOS=linux GOARCH=amd64 go build -o dist/$(BIN)-linux-amd64 ./cmd/trinetra
+	GOOS=linux GOARCH=arm64 go build -o dist/$(BIN)-linux-arm64 ./cmd/trinetra
 
-# cross builds the full release matrix: all three binaries (serverwatch,
-# serverwatch-ctl, serverwatch-web), each from its own ./cmd directory with
+# cross builds the full release matrix: all three binaries (trinetra,
+# trinetra-ctl, trinetra-web), each from its own ./cmd directory with
 # no build tag, for linux amd64/arm64/arm, plus darwin amd64/arm64
 # (dev/homelab convenience, not part of the linux release set). The
 # GO_TRIMPATH/GO_LDFLAGS vars are empty by default (beta channel) and set by
 # release-prod for the optimized main channel.
 cross:
-	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-amd64 ./cmd/serverwatch
-	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-amd64 ./cmd/serverwatch-ctl
-	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-amd64 ./cmd/serverwatch-web
-	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-arm64 ./cmd/serverwatch
-	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm64 ./cmd/serverwatch-ctl
-	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm64 ./cmd/serverwatch-web
-	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-arm ./cmd/serverwatch
-	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm ./cmd/serverwatch-ctl
-	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm ./cmd/serverwatch-web
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-amd64 ./cmd/serverwatch
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-amd64 ./cmd/serverwatch-ctl
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-amd64 ./cmd/serverwatch-web
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-arm64 ./cmd/serverwatch
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-arm64 ./cmd/serverwatch-ctl
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-arm64 ./cmd/serverwatch-web
+	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-amd64 ./cmd/trinetra
+	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-amd64 ./cmd/trinetra-ctl
+	GOOS=linux GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-amd64 ./cmd/trinetra-web
+	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-arm64 ./cmd/trinetra
+	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm64 ./cmd/trinetra-ctl
+	GOOS=linux GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm64 ./cmd/trinetra-web
+	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-arm ./cmd/trinetra
+	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm ./cmd/trinetra-ctl
+	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm ./cmd/trinetra-web
+	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-amd64 ./cmd/trinetra
+	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-amd64 ./cmd/trinetra-ctl
+	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-amd64 ./cmd/trinetra-web
+	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-arm64 ./cmd/trinetra
+	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-arm64 ./cmd/trinetra-ctl
+	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-arm64 ./cmd/trinetra-web
 
 # release is the BETA/preview cut (unstripped, debuggable): cross's whole
 # matrix plus a dist/checksums.txt covering every artifact, so

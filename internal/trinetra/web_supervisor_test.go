@@ -102,7 +102,7 @@ func setupWebTest(t *testing.T) *webTestHarness {
 		return p, nil
 	}
 	resolveWebPlugin = func() (string, error) {
-		return "/opt/serverwatch/serverwatch-web", nil
+		return "/opt/trinetra/trinetra-web", nil
 	}
 	supervisorSleep = func(d time.Duration) {
 		h.mu.Lock()
@@ -198,25 +198,33 @@ func containsEnv(env []string, kv string) bool {
 // TestStartWeb_SpawnsWithVerifiedPathAndEnv pins case A from the brief: on
 // startWeb, the supervisor resolves the plugin path via resolveWebPlugin and
 // spawns it via startWebProc with the control socket and token passed as the
-// SERVERWATCH_CONTROL_SOCKET / SERVERWATCH_CONTROL_TOKEN env vars. Calling
-// the returned stop func kills the running child and blocks until the
-// supervisor loop has actually exited.
+// TRINETRA_CONTROL_SOCKET / TRINETRA_CONTROL_TOKEN env vars, and ALSO (compat,
+// for one release, so a pre-rename trinetra-web binary still works) the old
+// SERVERWATCH_CONTROL_SOCKET / SERVERWATCH_CONTROL_TOKEN names. Calling the
+// returned stop func kills the running child and blocks until the supervisor
+// loop has actually exited.
 func TestStartWeb_SpawnsWithVerifiedPathAndEnv(t *testing.T) {
 	h := setupWebTest(t)
 
-	stop := startWeb("/run/serverwatch/control.sock", "tok123")
+	stop := startWeb("/run/trinetra/control.sock", "tok123")
 
 	proc := h.nextSpawn(t)
 
 	call := h.lastSpawn()
-	if call.path != "/opt/serverwatch/serverwatch-web" {
-		t.Fatalf("spawn path = %q, want %q", call.path, "/opt/serverwatch/serverwatch-web")
+	if call.path != "/opt/trinetra/trinetra-web" {
+		t.Fatalf("spawn path = %q, want %q", call.path, "/opt/trinetra/trinetra-web")
 	}
-	if !containsEnv(call.env, "SERVERWATCH_CONTROL_SOCKET=/run/serverwatch/control.sock") {
-		t.Fatalf("spawn env missing SERVERWATCH_CONTROL_SOCKET, got %v", call.env)
+	if !containsEnv(call.env, "TRINETRA_CONTROL_SOCKET=/run/trinetra/control.sock") {
+		t.Fatalf("spawn env missing TRINETRA_CONTROL_SOCKET, got %v", call.env)
+	}
+	if !containsEnv(call.env, "TRINETRA_CONTROL_TOKEN=tok123") {
+		t.Fatalf("spawn env missing TRINETRA_CONTROL_TOKEN, got %v", call.env)
+	}
+	if !containsEnv(call.env, "SERVERWATCH_CONTROL_SOCKET=/run/trinetra/control.sock") {
+		t.Fatalf("spawn env missing compat SERVERWATCH_CONTROL_SOCKET, got %v", call.env)
 	}
 	if !containsEnv(call.env, "SERVERWATCH_CONTROL_TOKEN=tok123") {
-		t.Fatalf("spawn env missing SERVERWATCH_CONTROL_TOKEN, got %v", call.env)
+		t.Fatalf("spawn env missing compat SERVERWATCH_CONTROL_TOKEN, got %v", call.env)
 	}
 
 	stop()
@@ -231,7 +239,7 @@ func TestStartWeb_SpawnsWithVerifiedPathAndEnv(t *testing.T) {
 func TestStartWeb_RestartsOnExit(t *testing.T) {
 	h := setupWebTest(t)
 
-	stop := startWeb("/run/serverwatch/control.sock", "tok123")
+	stop := startWeb("/run/trinetra/control.sock", "tok123")
 
 	first := h.nextSpawn(t)
 	first.exit(fmt.Errorf("boom"))
@@ -257,7 +265,7 @@ func TestStartWeb_BackoffGrowsAndCaps(t *testing.T) {
 	fixed := time.Unix(0, 0)
 	timeNow = func() time.Time { return fixed }
 
-	stop := startWeb("/run/serverwatch/control.sock", "tok123")
+	stop := startWeb("/run/trinetra/control.sock", "tok123")
 
 	proc := h.nextSpawn(t)
 	const wantSleeps = 7
@@ -304,10 +312,10 @@ func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 		if calls == 1 {
 			return "", fmt.Errorf("%w: x", errPluginVerificationFailed)
 		}
-		return "/opt/serverwatch/serverwatch-web", nil
+		return "/opt/trinetra/trinetra-web", nil
 	}
 
-	stop := startWeb("/run/serverwatch/control.sock", "tok123")
+	stop := startWeb("/run/trinetra/control.sock", "tok123")
 
 	// The only spawn that will ever arrive is the one after resolve
 	// recovers; if startWebProc had been called during the failed first
@@ -319,10 +327,10 @@ func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 	// Guard against the failed first attempt's (empty) path sneaking
 	// through as this "only" spawn: it must be the recovered, verified
 	// path, not whatever resolveWebPlugin returned alongside its error.
-	if call := h.lastSpawn(); call.path != "/opt/serverwatch/serverwatch-web" {
+	if call := h.lastSpawn(); call.path != "/opt/trinetra/trinetra-web" {
 		t.Fatalf("spawn path = %q, want the recovered verified path (an unverified/empty path means a verify error reached startWebProc)", call.path)
 	}
-	if !h.logsContaining("refusing to start serverwatch-web") {
+	if !h.logsContaining("refusing to start trinetra-web") {
 		t.Fatalf("expected a refusal to be logged, got logs: %v", h.logsSnapshot())
 	}
 
@@ -350,7 +358,7 @@ func TestStop_DuringBackoffReturnsPromptly(t *testing.T) {
 		<-block
 	}
 
-	stop := startWeb("/run/serverwatch/control.sock", "tok123")
+	stop := startWeb("/run/trinetra/control.sock", "tok123")
 
 	select {
 	case <-sleepStarted:

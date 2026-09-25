@@ -366,26 +366,26 @@ func TestWizardManualModeCollectsCertAndKey(t *testing.T) {
 		t.Fatalf("wiz after origin = %v, want webSetupCert (manual mode)", got.wiz)
 	}
 
-	mm = typeString(t, mm, "/etc/serverwatch/tls/cert.pem")
+	mm = typeString(t, mm, "/etc/trinetra/tls/cert.pem")
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit cert -> key
 	got = mm.(model)
 	if got.wiz != webSetupKey {
 		t.Fatalf("wiz after cert = %v, want webSetupKey", got.wiz)
 	}
-	if got.ans.TLSCert != "/etc/serverwatch/tls/cert.pem" {
-		t.Errorf("ans.TLSCert = %q, want /etc/serverwatch/tls/cert.pem", got.ans.TLSCert)
+	if got.ans.TLSCert != "/etc/trinetra/tls/cert.pem" {
+		t.Errorf("ans.TLSCert = %q, want /etc/trinetra/tls/cert.pem", got.ans.TLSCert)
 	}
 
-	mm = typeString(t, mm, "/etc/serverwatch/tls/key.pem")
+	mm = typeString(t, mm, "/etc/trinetra/tls/key.pem")
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit key -> confirm
 	got = mm.(model)
 	if got.wiz != webSetupConfirm {
 		t.Fatalf("wiz after key = %v, want webSetupConfirm", got.wiz)
 	}
-	if got.ans.TLSKey != "/etc/serverwatch/tls/key.pem" {
-		t.Errorf("ans.TLSKey = %q, want /etc/serverwatch/tls/key.pem", got.ans.TLSKey)
+	if got.ans.TLSKey != "/etc/trinetra/tls/key.pem" {
+		t.Errorf("ans.TLSKey = %q, want /etc/trinetra/tls/key.pem", got.ans.TLSKey)
 	}
-	if !strings.Contains(got.setupView(), "/etc/serverwatch/tls/cert.pem") {
+	if !strings.Contains(got.setupView(), "/etc/trinetra/tls/cert.pem") {
 		t.Error("confirm screen should show the cert path")
 	}
 
@@ -401,11 +401,11 @@ func TestWizardManualModeCollectsCertAndKey(t *testing.T) {
 	if applied.err != nil {
 		t.Fatalf("apply err = %v, want nil", applied.err)
 	}
-	if api.applied.Web.TLSCert != "/etc/serverwatch/tls/cert.pem" {
-		t.Errorf("applied Web.TLSCert = %q, want /etc/serverwatch/tls/cert.pem", api.applied.Web.TLSCert)
+	if api.applied.Web.TLSCert != "/etc/trinetra/tls/cert.pem" {
+		t.Errorf("applied Web.TLSCert = %q, want /etc/trinetra/tls/cert.pem", api.applied.Web.TLSCert)
 	}
-	if api.applied.Web.TLSKey != "/etc/serverwatch/tls/key.pem" {
-		t.Errorf("applied Web.TLSKey = %q, want /etc/serverwatch/tls/key.pem", api.applied.Web.TLSKey)
+	if api.applied.Web.TLSKey != "/etc/trinetra/tls/key.pem" {
+		t.Errorf("applied Web.TLSKey = %q, want /etc/trinetra/tls/key.pem", api.applied.Web.TLSKey)
 	}
 }
 
@@ -464,7 +464,7 @@ func TestWizardManualModeRejectsEmptyCert(t *testing.T) {
 	}
 
 	// Typing a value and retrying must succeed.
-	mm = typeString(t, mm, "/etc/serverwatch/tls/cert.pem")
+	mm = typeString(t, mm, "/etc/trinetra/tls/cert.pem")
 	mm, _ = mm.Update(keyType(tea.KeyEnter))
 	if got := mm.(model).wiz; got != webSetupKey {
 		t.Fatalf("wiz after a valid retry = %v, want webSetupKey", got)
@@ -487,7 +487,7 @@ func TestWizardManualModeRejectsEmptyKey(t *testing.T) {
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> rp_id
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> origin
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // -> cert
-	mm = typeString(t, mm, "/etc/serverwatch/tls/cert.pem")
+	mm = typeString(t, mm, "/etc/trinetra/tls/cert.pem")
 	mm, _ = mm.Update(keyType(tea.KeyEnter)) // commit cert -> key
 
 	if got := mm.(model).wiz; got != webSetupKey {

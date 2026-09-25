@@ -79,7 +79,7 @@ func emitJSON(out io.Writer, v any) int {
 
 // printUsage writes the list of supported subcommands.
 func printUsage(out io.Writer) {
-	fmt.Fprint(out, "usage: serverwatch-ctl [--socket PATH] [--token PATH] [--json] <command>\n\n"+
+	fmt.Fprint(out, "usage: trinetra-ctl [--socket PATH] [--token PATH] [--json] <command>\n\n"+
 		"run with no command to open the interactive TUI.\n\n"+
 		"commands:\n"+
 		"  status                  print the current dashboard snapshot\n"+
@@ -258,7 +258,7 @@ func runLogs(api core.API, args []string, out io.Writer) int {
 		}
 	}
 	if name == "" {
-		fmt.Fprintln(out, "usage: serverwatch-ctl logs <container> [--tail N]")
+		fmt.Fprintln(out, "usage: trinetra-ctl logs <container> [--tail N]")
 		return 2
 	}
 	logs, err := api.ContainerLogs(name, tail)
@@ -353,13 +353,13 @@ func runAlerts(api core.API, out io.Writer, jsonOut bool) int {
 // caveats for web.enabled/storage.* the handbook documents).
 func runConfig(api core.API, args []string, out io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(out, "usage: serverwatch-ctl config get <key> | set <key> <value>\n")
+		fmt.Fprint(out, "usage: trinetra-ctl config get <key> | set <key> <value>\n")
 		return 2
 	}
 	switch args[0] {
 	case "get":
 		if len(args) != 2 {
-			fmt.Fprint(out, "usage: serverwatch-ctl config get <key>\n")
+			fmt.Fprint(out, "usage: trinetra-ctl config get <key>\n")
 			return 2
 		}
 		cfg, err := api.Config()
@@ -369,14 +369,14 @@ func runConfig(api core.API, args []string, out io.Writer) int {
 		}
 		val, ok := cfg.Get(args[1])
 		if !ok {
-			fmt.Fprintf(out, "unknown config key %q (see `serverwatch-ctl` -> manage -> all settings for the catalog)\n", args[1])
+			fmt.Fprintf(out, "unknown config key %q (see `trinetra-ctl` -> manage -> all settings for the catalog)\n", args[1])
 			return 2
 		}
 		fmt.Fprintln(out, val)
 		return 0
 	case "set":
 		if len(args) != 3 {
-			fmt.Fprint(out, "usage: serverwatch-ctl config set <key> <value>\n")
+			fmt.Fprint(out, "usage: trinetra-ctl config set <key> <value>\n")
 			return 2
 		}
 		cfg, err := api.Config()
@@ -405,11 +405,11 @@ func runConfig(api core.API, args []string, out io.Writer) int {
 // same TestChannel the TUI's Channels screen 't' action uses.
 func runChannels(api core.API, args []string, out io.Writer) int {
 	if len(args) == 0 || args[0] != "test" {
-		fmt.Fprint(out, "usage: serverwatch-ctl channels test <name>\n")
+		fmt.Fprint(out, "usage: trinetra-ctl channels test <name>\n")
 		return 2
 	}
 	if len(args) != 2 {
-		fmt.Fprint(out, "usage: serverwatch-ctl channels test <name>\n")
+		fmt.Fprint(out, "usage: trinetra-ctl channels test <name>\n")
 		return 2
 	}
 	if err := api.TestChannel(args[1]); err != nil {

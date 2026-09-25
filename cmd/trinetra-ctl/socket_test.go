@@ -13,14 +13,21 @@ import (
 )
 
 func TestResolveSocketPathPrecedence(t *testing.T) {
+	t.Setenv("TRINETRA_CONTROL_SOCKET", "/trinetra-env/control.sock")
 	t.Setenv("SERVERWATCH_CONTROL_SOCKET", "/env/control.sock")
 	t.Setenv("RUNTIME_DIRECTORY", "/rt")
 
 	if got := resolveSocketPath("/flag/control.sock"); got != "/flag/control.sock" {
 		t.Errorf("flag override = %q, want /flag/control.sock", got)
 	}
+	if got := resolveSocketPath(""); got != "/trinetra-env/control.sock" {
+		t.Errorf("TRINETRA_CONTROL_SOCKET override = %q, want /trinetra-env/control.sock", got)
+	}
+
+	// With TRINETRA_CONTROL_SOCKET unset, the old (compat) name still works.
+	os.Unsetenv("TRINETRA_CONTROL_SOCKET")
 	if got := resolveSocketPath(""); got != "/env/control.sock" {
-		t.Errorf("env override = %q, want /env/control.sock", got)
+		t.Errorf("SERVERWATCH_CONTROL_SOCKET fallback = %q, want /env/control.sock", got)
 	}
 
 	os.Unsetenv("SERVERWATCH_CONTROL_SOCKET")
@@ -42,21 +49,38 @@ func TestResolveTokenFileDefaultsToSocketSibling(t *testing.T) {
 }
 
 // TestResolveTokenEnvIsValueNotPath pins the front-door/supervisor contract:
-// SERVERWATCH_CONTROL_TOKEN carries the token VALUE (the daemon sets it to the
-// per-launch token when it spawns/execs a plugin), so resolveToken must return
-// it verbatim, NOT treat it as a file path to read. Regression for the bug
-// where `serverwatch cli` handed the token via this env var but the plugin
-// os.ReadFile'd the token string as a path, got nothing, and failed the socket
-// handshake. The value used here ("plaintok-not-a-path") is deliberately not a
-// real filesystem path.
+// TRINETRA_CONTROL_TOKEN (or, as a compat fallback, SERVERWATCH_CONTROL_TOKEN)
+// carries the token VALUE (the daemon sets it to the per-launch token when it
+// spawns/execs a plugin), so resolveToken must return it verbatim, NOT treat
+// it as a file path to read. Regression for the bug where `trinetra cli`
+// handed the token via this env var but the plugin os.ReadFile'd the token
+// string as a path, got nothing, and failed the socket handshake. The value
+// used here ("plaintok-not-a-path") is deliberately not a real filesystem
+// path.
 func TestResolveTokenEnvIsValueNotPath(t *testing.T) {
-	t.Setenv("SERVERWATCH_CONTROL_TOKEN", "plaintok-not-a-path")
-	got, err := resolveToken("", "/run/serverwatch/control.sock")
+	t.Setenv("TRINETRA_CONTROL_TOKEN", "plaintok-not-a-path")
+	got, err := resolveToken("", "/run/trinetra/control.sock")
 	if err != nil {
 		t.Fatalf("resolveToken: %v", err)
 	}
 	if got != "plaintok-not-a-path" {
 		t.Errorf("token = %q, want the env value used verbatim", got)
+	}
+}
+
+// TestResolveTokenEnvFallsBackToOldName pins the compat side: with
+// TRINETRA_CONTROL_TOKEN unset, resolveToken still honors the old
+// SERVERWATCH_CONTROL_TOKEN name for one release, so a pre-rename core
+// spawning this (rebuilt) plugin still authenticates.
+func TestResolveTokenEnvFallsBackToOldName(t *testing.T) {
+	os.Unsetenv("TRINETRA_CONTROL_TOKEN")
+	t.Setenv("SERVERWATCH_CONTROL_TOKEN", "old-name-tok")
+	got, err := resolveToken("", "/run/trinetra/control.sock")
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	if got != "old-name-tok" {
+		t.Errorf("token = %q, want the compat env value used verbatim", got)
 	}
 }
 
@@ -76,6 +100,7 @@ func TestResolveTokenReadsFile(t *testing.T) {
 }
 
 func TestResolveTokenMissingFileIsEmpty(t *testing.T) {
+	os.Unsetenv("TRINETRA_CONTROL_TOKEN")
 	os.Unsetenv("SERVERWATCH_CONTROL_TOKEN")
 	got, err := resolveToken(filepath.Join(t.TempDir(), "nope"), "")
 	if err != nil {
@@ -125,6 +150,8 @@ func TestEndToEndStatusOverRealSocket(t *testing.T) {
 	go control.Serve(api, ln, token)
 
 	// Make sure defaults do not leak in from a developer's real environment.
+	os.Unsetenv("TRINETRA_CONTROL_SOCKET")
+	os.Unsetenv("TRINETRA_CONTROL_TOKEN")
 	os.Unsetenv("SERVERWATCH_CONTROL_SOCKET")
 	os.Unsetenv("SERVERWATCH_CONTROL_TOKEN")
 

@@ -14,9 +14,9 @@ import (
 )
 
 // This file implements the safe plugin launcher: the front-door mechanism
-// that lets the core `serverwatch` binary exec companion binaries
-// (serverwatch-ctl, serverwatch-web) as subcommands. Because the front-door
-// commonly runs as root (via `sudo serverwatch cli`), exec'ing the wrong
+// that lets the core `trinetra` binary exec companion binaries
+// (trinetra-ctl, trinetra-web) as subcommands. Because the front-door
+// commonly runs as root (via `sudo trinetra cli`), exec'ing the wrong
 // file here is a privilege escalation, not just a bug. See
 // plans/2026-08-01-safe-plugin-frontdoor.md for the threat model this
 // defends against (PATH hijack, binary swap, tampering) and the net rule:
@@ -28,14 +28,14 @@ import (
 // Stdlib only: this file must not import anything outside the standard
 // library (crypto/sha256, encoding/*, errors, fmt, io, os, path/filepath,
 // syscall). TestDefaultBuildIsStdlibOnly (buildtag_test.go) enforces that
-// the default (untagged) build of cmd/serverwatch never pulls in
+// the default (untagged) build of cmd/trinetra never pulls in
 // third-party packages, and this file is part of that build.
 
 // errPluginNotInstalled is returned when the plugin binary simply is not
 // present at its expected location. Callers should print an install
 // instruction (e.g. "download it" / "build it with go build ..."), not a
 // security warning: a missing file is not evidence of tampering.
-var errPluginNotInstalled = errors.New("serverwatch: plugin not installed")
+var errPluginNotInstalled = errors.New("trinetra: plugin not installed")
 
 // errPluginVerificationFailed is returned when the plugin binary exists but
 // fails one of the trust checks (wrong owner, writable by group/other,
@@ -45,10 +45,10 @@ var errPluginNotInstalled = errors.New("serverwatch: plugin not installed")
 // errPluginNotInstalled so callers (and tests) can tell "not installed" and
 // "installed but unsafe" apart with errors.Is and print the right message
 // for each.
-var errPluginVerificationFailed = errors.New("serverwatch: plugin verification failed")
+var errPluginVerificationFailed = errors.New("trinetra: plugin verification failed")
 
 // pluginPath returns the absolute, symlink-resolved path to the companion
-// binary "serverwatch-<name>" that must live next to the core binary
+// binary "trinetra-<name>" that must live next to the core binary
 // itself. It is derived ONLY from the core binary's own location
 // (filepath.Dir(os.Executable())) and NEVER consults $PATH: that is the
 // defense against a PATH hijack (an attacker-writable earlier PATH entry,
@@ -67,7 +67,7 @@ func pluginPath(name string) (string, error) {
 		return "", fmt.Errorf("locate core binary: %w", err)
 	}
 	dir := filepath.Dir(exe)
-	candidate := filepath.Join(dir, "serverwatch-"+name)
+	candidate := filepath.Join(dir, "trinetra-"+name)
 
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
@@ -128,7 +128,7 @@ func verifyPlugin(path string, expectedOwnerUID int, manifest map[string]string,
 
 	want, ok := manifest[name]
 	if !ok || want == "" {
-		return fmt.Errorf("%w: %s has no recorded checksum in the plugin manifest (run `serverwatch install` to record it)", errPluginVerificationFailed, name)
+		return fmt.Errorf("%w: %s has no recorded checksum in the plugin manifest (run `trinetra install` to record it)", errPluginVerificationFailed, name)
 	}
 	got, err := sha256File(path)
 	if err != nil {
@@ -192,7 +192,7 @@ func loadPluginManifest() (map[string]string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: plugin manifest missing at %s (run `serverwatch install` to create it)", errPluginVerificationFailed, path)
+			return nil, fmt.Errorf("%w: plugin manifest missing at %s (run `trinetra install` to create it)", errPluginVerificationFailed, path)
 		}
 		return nil, fmt.Errorf("%w: read plugin manifest %s: %v", errPluginVerificationFailed, path, err)
 	}
@@ -243,14 +243,18 @@ func resolveAndVerifyPlugin(name string) (string, error) {
 }
 
 // launchPlugin resolves, verifies, and execs the companion binary
-// "serverwatch-<name>", replacing the current process image
+// "trinetra-<name>", replacing the current process image
 // (syscall.Exec) so control passes to the plugin cleanly (this matters for
 // the interactive `cli` subcommand, which needs the terminal handed over,
 // not a child process wrapped by the core binary). socketPath and token
-// are passed to the plugin via the SERVERWATCH_CONTROL_SOCKET and
-// SERVERWATCH_CONTROL_TOKEN environment variables (in addition to the
+// are passed to the plugin via the TRINETRA_CONTROL_SOCKET and
+// TRINETRA_CONTROL_TOKEN environment variables (in addition to the
 // inherited environment), which is how the plugin dials the daemon's
-// control socket.
+// control socket. The old SERVERWATCH_CONTROL_SOCKET/TOKEN names are ALSO
+// set, for one release, so a plugin binary built before the rename (which
+// only reads the old names) still works when launched by a new core; see
+// socket.go's readControlSocketEnv equivalent in each plugin, which reads
+// TRINETRA_* first and falls back to SERVERWATCH_*.
 //
 // syscall.Exec does not return on success, so this function only ever
 // returns an error: either from resolveAndVerifyPlugin (not installed, or
@@ -273,6 +277,11 @@ func launchPlugin(name string, args []string, socketPath, token string) error {
 
 	argv := append([]string{path}, args...)
 	env := append(os.Environ(),
+		"TRINETRA_CONTROL_SOCKET="+socketPath,
+		"TRINETRA_CONTROL_TOKEN="+token,
+		// Compat: kept for one release so an old (pre-rename) plugin binary,
+		// which only reads the SERVERWATCH_* names, still works when exec'd
+		// by a new core. Remove once the old plugin name is no longer supported.
 		"SERVERWATCH_CONTROL_SOCKET="+socketPath,
 		"SERVERWATCH_CONTROL_TOKEN="+token,
 	)
@@ -285,7 +294,7 @@ func launchPlugin(name string, args []string, socketPath, token string) error {
 var launchPluginFn = launchPlugin
 
 // cmdFrontDoor resolves the control socket + token and safely execs the
-// companion plugin "serverwatch-<pluginName>". label is the user-facing
+// companion plugin "trinetra-<pluginName>". label is the user-facing
 // subcommand ("cli"/"web") used in messages; pluginName is the binary
 // suffix ("ctl"/"web"). On success launchPluginFn never returns; on failure
 // it maps the sentinel error to a clear message and returns a non-zero exit
@@ -308,22 +317,22 @@ func cmdFrontDoor(label, pluginName string, args []string) int {
 		return 0
 	}
 
-	pluginBin := "serverwatch-" + pluginName
+	pluginBin := "trinetra-" + pluginName
 	if errors.Is(err, errPluginNotInstalled) {
-		fmt.Fprintf(stderr, "%s is not installed next to serverwatch.\n", pluginBin)
-		fmt.Fprintf(stderr, "Download %s from the releases page, place it next to the serverwatch binary (usually /usr/local/bin/), then run `serverwatch install` to record its checksum.\n", pluginBin)
-		fmt.Fprintf(stderr, "Or build it from source, then run `serverwatch install`:\n")
+		fmt.Fprintf(stderr, "%s is not installed next to trinetra.\n", pluginBin)
+		fmt.Fprintf(stderr, "Download %s from the releases page, place it next to the trinetra binary (usually /usr/local/bin/), then run `trinetra install` to record its checksum.\n", pluginBin)
+		fmt.Fprintf(stderr, "Or build it from source, then run `trinetra install`:\n")
 		fmt.Fprintf(stderr, "  %s\n", buildHint(pluginName))
 		return 1
 	}
 	if errors.Is(err, errPluginVerificationFailed) {
-		fmt.Fprintf(stderr, "refusing to run %s: it is not the binary this serverwatch installed\n", pluginBin)
+		fmt.Fprintf(stderr, "refusing to run %s: it is not the binary this trinetra installed\n", pluginBin)
 		fmt.Fprintf(stderr, "(owner/permissions/checksum check failed). This may indicate tampering.\n")
 		fmt.Fprintf(stderr, "details: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintf(stderr, "serverwatch %s: %v\n", label, err)
+	fmt.Fprintf(stderr, "trinetra %s: %v\n", label, err)
 	return 1
 }
 
@@ -333,7 +342,7 @@ func cmdFrontDoor(label, pluginName string, args []string) int {
 // plain, untagged builds from their own ./cmd directory.
 func buildHint(pluginName string) string {
 	if pluginName == "web" {
-		return "go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web"
+		return "go build -o /usr/local/bin/trinetra-web ./cmd/trinetra-web"
 	}
-	return "go build -o /usr/local/bin/serverwatch-" + pluginName + " ./cmd/serverwatch-" + pluginName
+	return "go build -o /usr/local/bin/trinetra-" + pluginName + " ./cmd/trinetra-" + pluginName
 }

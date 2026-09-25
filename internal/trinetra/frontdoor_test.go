@@ -91,7 +91,7 @@ func TestCmdFrontDoor_NotInstalled_Cli(t *testing.T) {
 		t.Fatalf("cmdFrontDoor exit = %d, want 1", code)
 	}
 	got := buf.String()
-	for _, want := range []string{"serverwatch-ctl", "not installed", "serverwatch install", "Download", "releases"} {
+	for _, want := range []string{"trinetra-ctl", "not installed", "trinetra install", "Download", "releases"} {
 		if !containsFold(got, want) {
 			t.Errorf("stderr missing %q; got:\n%s", want, got)
 		}
@@ -111,7 +111,7 @@ func TestCmdFrontDoor_NotInstalled_Web(t *testing.T) {
 		t.Fatalf("cmdFrontDoor exit = %d, want 1", code)
 	}
 	got := buf.String()
-	for _, want := range []string{"serverwatch-web", "not installed", "serverwatch install", "go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web"} {
+	for _, want := range []string{"trinetra-web", "not installed", "trinetra install", "go build -o /usr/local/bin/trinetra-web ./cmd/trinetra-web"} {
 		if !containsFold(got, want) {
 			t.Errorf("stderr missing %q; got:\n%s", want, got)
 		}

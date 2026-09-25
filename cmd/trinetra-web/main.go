@@ -1,16 +1,16 @@
-// Command serverwatch-web serves the internal/web dashboard as a separate
-// process from the serverwatch daemon. It never reads daemon state
+// Command trinetra-web serves the internal/web dashboard as a separate
+// process from the trinetra daemon. It never reads daemon state
 // in-process; instead it dials the daemon's control socket (internal/control)
 // and uses the resulting *control.Client -- a core.API implementation -- as
 // internal/web.Deps.API. The core daemon supervises this binary: when
-// web.enabled is set, internal/serverwatch/web_supervisor.go verifies and
+// web.enabled is set, internal/trinetra/web_supervisor.go verifies and
 // spawns it as a child process, restarts it with capped backoff if it exits,
 // and stops it on daemon shutdown.
 //
 // No build tag: this is a plain, standalone binary built like any other
-// command under ./cmd, `go build -o /usr/local/bin/serverwatch-web
-// ./cmd/serverwatch-web`. The default `serverwatch` binary stays
-// stdlib-only (TestDefaultBuildIsStdlibOnly in internal/serverwatch) simply
+// command under ./cmd, `go build -o /usr/local/bin/trinetra-web
+// ./cmd/trinetra-web`. The default `trinetra` binary stays
+// stdlib-only (TestDefaultBuildIsStdlibOnly in internal/trinetra) simply
 // because it does not import internal/web or this package, not because of a
 // build tag.
 package main
@@ -30,18 +30,18 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
-// defaultRuntimeDir mirrors internal/serverwatch/control_socket.go's
+// defaultRuntimeDir mirrors internal/trinetra/control_socket.go's
 // defaultRuntimeDir: where the control socket + token live when systemd (or
 // a supervisor, see Task 3) hasn't set RUNTIME_DIRECTORY. Duplicated here
 // rather than imported so this binary doesn't need to pull in
-// internal/serverwatch (which is untagged but carries the whole daemon's
+// internal/trinetra (which is untagged but carries the whole daemon's
 // dependency surface) just for two path constants.
-const defaultRuntimeDir = "/run/serverwatch"
+const defaultRuntimeDir = "/run/trinetra"
 
-// defaultStateDir mirrors internal/serverwatch.StateDir (main.go), the
+// defaultStateDir mirrors internal/trinetra.StateDir (main.go), the
 // daemon's default on-disk state directory. Same duplication rationale as
 // defaultRuntimeDir above.
-const defaultStateDir = "/var/lib/serverwatch"
+const defaultStateDir = "/var/lib/trinetra"
 
 // connConfig holds this binary's own settings, resolved from flags and
 // environment (resolveConnConfig) before anything is dialed.
@@ -49,11 +49,11 @@ type connConfig struct {
 	// socketPath is the control socket to dial (control.Dial's path arg).
 	socketPath string
 	// token is the control-socket auth token, either taken directly (flag
-	// or SERVERWATCH_CONTROL_TOKEN env, the form Task 3's supervisor passes
-	// a spawned child) or read from tokenFile.
+	// or TRINETRA_CONTROL_TOKEN/SERVERWATCH_CONTROL_TOKEN env, the form
+	// Task 3's supervisor passes a spawned child) or read from tokenFile.
 	token string
 	// tokenFile is where to read the token from when it wasn't given
-	// directly. Mirrors internal/serverwatch/control_socket.go's
+	// directly. Mirrors internal/trinetra/control_socket.go's
 	// controlTokenPath: the sibling "token" file next to the socket,
 	// written 0600 by the daemon that created the socket.
 	tokenFile string
@@ -69,17 +69,18 @@ type connConfig struct {
 
 // resolveConnConfig parses args against a fresh FlagSet and layers in
 // environment defaults: an explicit flag always wins, then the
-// SERVERWATCH_CONTROL_SOCKET/SERVERWATCH_CONTROL_TOKEN env vars (the form
-// Task 3's core supervisor launches this binary with), then finally the
-// mirrored systemd/by-hand resolution (RUNTIME_DIRECTORY, or
-// defaultRuntimeDir) that internal/serverwatch/control_socket.go uses for
+// TRINETRA_CONTROL_SOCKET/TRINETRA_CONTROL_TOKEN env vars (the form Task 3's
+// core supervisor launches this binary with), then (compat, for one release)
+// the old SERVERWATCH_CONTROL_SOCKET/SERVERWATCH_CONTROL_TOKEN names, then
+// finally the mirrored systemd/by-hand resolution (RUNTIME_DIRECTORY, or
+// defaultRuntimeDir) that internal/trinetra/control_socket.go uses for
 // the daemon side of the same socket.
 func resolveConnConfig(args []string, getenv func(string) string) (connConfig, error) {
-	fs := flag.NewFlagSet("serverwatch-web", flag.ContinueOnError)
-	socket := fs.String("socket", "", "control socket path (default: $SERVERWATCH_CONTROL_SOCKET, else $RUNTIME_DIRECTORY/control.sock, else /run/serverwatch/control.sock)")
-	token := fs.String("token", "", "control socket auth token (default: $SERVERWATCH_CONTROL_TOKEN, else read from -token-file)")
+	fs := flag.NewFlagSet("trinetra-web", flag.ContinueOnError)
+	socket := fs.String("socket", "", "control socket path (default: $TRINETRA_CONTROL_SOCKET, else $SERVERWATCH_CONTROL_SOCKET, else $RUNTIME_DIRECTORY/control.sock, else /run/trinetra/control.sock)")
+	token := fs.String("token", "", "control socket auth token (default: $TRINETRA_CONTROL_TOKEN, else $SERVERWATCH_CONTROL_TOKEN, else read from -token-file)")
 	tokenFile := fs.String("token-file", "", "path to a file containing the control socket auth token (default: sibling \"token\" file next to the socket)")
-	stateDir := fs.String("state-dir", "", "web UI state directory, e.g. sessions.json (default: /var/lib/serverwatch)")
+	stateDir := fs.String("state-dir", "", "web UI state directory, e.g. sessions.json (default: /var/lib/trinetra)")
 	if err := fs.Parse(args); err != nil {
 		return connConfig{}, err
 	}
@@ -96,10 +97,16 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 		stateDir:   *stateDir,
 	}
 	if cc.socketPath == "" {
+		cc.socketPath = getenv("TRINETRA_CONTROL_SOCKET")
+	}
+	if cc.socketPath == "" {
 		cc.socketPath = getenv("SERVERWATCH_CONTROL_SOCKET")
 	}
 	if cc.socketPath == "" {
 		cc.socketPath = filepath.Join(runtimeDir, "control.sock")
+	}
+	if cc.token == "" {
+		cc.token = getenv("TRINETRA_CONTROL_TOKEN")
 	}
 	if cc.token == "" {
 		cc.token = getenv("SERVERWATCH_CONTROL_TOKEN")
@@ -125,7 +132,7 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 // adaptLiveEvent is THE ONLY place core.Event ever turns into a
 // web.LiveEvent (see web.Deps.Subscribe's doc: internal/web never imports
 // internal/core, so this adaptation has to happen here, in
-// cmd/serverwatch-web, rather than inside internal/web itself). It's a
+// cmd/trinetra-web, rather than inside internal/web itself). It's a
 // trivial field copy -- core.Event and web.LiveEvent share the same
 // Kind/Severity/Source/Title/Time shape by design.
 func adaptLiveEvent(ev core.Event) web.LiveEvent {
@@ -140,7 +147,7 @@ func adaptLiveEvent(ev core.Event) web.LiveEvent {
 
 // bytesTrimNewline trims a single trailing newline (and any preceding
 // carriage return) from a token file's contents -- writeTokenFile
-// (internal/serverwatch/control_socket.go) itself writes no trailing
+// (internal/trinetra/control_socket.go) itself writes no trailing
 // newline, but a token typed/echoed into a file by hand often picks one up.
 func bytesTrimNewline(b []byte) []byte {
 	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
@@ -248,13 +255,13 @@ func run(args []string, getenv func(string) string, stderr *os.File) int {
 		if err == flag.ErrHelp {
 			return 0
 		}
-		fmt.Fprintln(stderr, "serverwatch-web:", err)
+		fmt.Fprintln(stderr, "trinetra-web:", err)
 		return 2
 	}
 
 	client, err := control.Dial(cc.socketPath, cc.token)
 	if err != nil {
-		fmt.Fprintf(stderr, "serverwatch-web: dialing control socket %s: %v\n", cc.socketPath, err)
+		fmt.Fprintf(stderr, "trinetra-web: dialing control socket %s: %v\n", cc.socketPath, err)
 		return 1
 	}
 	defer client.Close()
@@ -262,17 +269,17 @@ func run(args []string, getenv func(string) string, stderr *os.File) int {
 	deps := buildDeps(client, cc)
 	stop, err := web.Start(deps)
 	if err != nil {
-		fmt.Fprintln(stderr, "serverwatch-web: starting web server:", err)
+		fmt.Fprintln(stderr, "trinetra-web: starting web server:", err)
 		return 1
 	}
 	defer stop()
 
 	if !deps.Enabled {
-		fmt.Fprintln(stderr, "serverwatch-web: web.enabled is false in the daemon's config; nothing to serve, exiting")
+		fmt.Fprintln(stderr, "trinetra-web: web.enabled is false in the daemon's config; nothing to serve, exiting")
 		return 0
 	}
 
-	fmt.Fprintf(stderr, "serverwatch-web: serving on %s (control socket %s)\n", deps.Listen, cc.socketPath)
+	fmt.Fprintf(stderr, "trinetra-web: serving on %s (control socket %s)\n", deps.Listen, cc.socketPath)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

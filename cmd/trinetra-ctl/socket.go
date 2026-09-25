@@ -6,23 +6,27 @@ import (
 	"strings"
 )
 
-// defaultRuntimeDir mirrors internal/serverwatch's constant of the same name:
+// defaultRuntimeDir mirrors internal/trinetra's constant of the same name:
 // where the control socket and its sibling token file live when systemd has
 // not exported RUNTIME_DIRECTORY (the by-hand case). Duplicated here rather
-// than imported because internal/serverwatch is the daemon's own package
+// than imported because internal/trinetra is the daemon's own package
 // (untagged, but it pulls in the whole daemon) and this client only needs the
 // two path strings.
-const defaultRuntimeDir = "/run/serverwatch"
+const defaultRuntimeDir = "/run/trinetra"
 
 // resolveSocketPath decides which control socket to dial, highest priority
-// first: the --socket flag value (flagVal), then $SERVERWATCH_CONTROL_SOCKET,
-// then $RUNTIME_DIRECTORY/control.sock, then defaultRuntimeDir/control.sock.
-// This mirrors internal/serverwatch/control_socket.go's controlSocketPath so
+// first: the --socket flag value (flagVal), then $TRINETRA_CONTROL_SOCKET,
+// then (compat, for one release) $SERVERWATCH_CONTROL_SOCKET, then
+// $RUNTIME_DIRECTORY/control.sock, then defaultRuntimeDir/control.sock.
+// This mirrors internal/trinetra/control_socket.go's controlSocketPath so
 // the client dials exactly where the daemon serves, with flag/env overrides
 // on top for testing and non-systemd layouts.
 func resolveSocketPath(flagVal string) string {
 	if flagVal != "" {
 		return flagVal
+	}
+	if env := os.Getenv("TRINETRA_CONTROL_SOCKET"); env != "" {
+		return env
 	}
 	if env := os.Getenv("SERVERWATCH_CONTROL_SOCKET"); env != "" {
 		return env
@@ -39,8 +43,9 @@ func resolveSocketPath(flagVal string) string {
 // the resolved socket. Keying the default off the socket's own directory keeps
 // the pair consistent when --socket points somewhere non-default (mirroring
 // the daemon, which writes both into the same runtime directory).
-// $SERVERWATCH_CONTROL_TOKEN is NOT a path -- it carries the token VALUE and is
-// handled directly in resolveToken.
+// $TRINETRA_CONTROL_TOKEN (or, as a compat fallback, $SERVERWATCH_CONTROL_TOKEN)
+// is NOT a path -- it carries the token VALUE and is handled directly in
+// resolveToken.
 func resolveTokenFile(flagVal, socketPath string) string {
 	if flagVal != "" {
 		return flagVal
@@ -49,10 +54,11 @@ func resolveTokenFile(flagVal, socketPath string) string {
 }
 
 // resolveToken resolves the per-launch control token, highest priority first:
-// a --token flag naming a token FILE; then $SERVERWATCH_CONTROL_TOKEN, which
+// a --token flag naming a token FILE; then $TRINETRA_CONTROL_TOKEN, then
+// (compat, for one release) $SERVERWATCH_CONTROL_TOKEN, either of which
 // carries the token VALUE directly (this is how the daemon's web supervisor
-// and the `serverwatch cli`/`web` front-doors hand the per-launch token to a
-// spawned plugin, and how serverwatch-web reads it too) -- it is used verbatim,
+// and the `trinetra cli`/`web` front-doors hand the per-launch token to a
+// spawned plugin, and how trinetra-web reads it too) -- it is used verbatim,
 // never as a file path; then the sibling "token" file next to the resolved
 // socket. A missing token file is treated as "no token" (empty string, no
 // error) rather than fatal: the daemon serves with no auth when it could not
@@ -63,6 +69,9 @@ func resolveTokenFile(flagVal, socketPath string) string {
 // a bare connection-refused-style failure.
 func resolveToken(flagVal, socketPath string) (string, error) {
 	if flagVal == "" {
+		if env := os.Getenv("TRINETRA_CONTROL_TOKEN"); env != "" {
+			return env, nil
+		}
 		if env := os.Getenv("SERVERWATCH_CONTROL_TOKEN"); env != "" {
 			return env, nil
 		}

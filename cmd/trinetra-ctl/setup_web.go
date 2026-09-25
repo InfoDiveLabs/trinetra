@@ -156,8 +156,8 @@ func webSetupSummary(ans webSetupAnswers) string {
 		b.WriteString("\nproxy mode derives rp_id/origin from your reverse proxy's\n")
 		b.WriteString("X-Forwarded-Host/Proto headers. If your proxy does not forward\n")
 		b.WriteString("them, set them explicitly after setup:\n")
-		b.WriteString("  serverwatch config set web.rp_id <host>\n")
-		b.WriteString("  serverwatch config set web.origin https://<host>\n")
+		b.WriteString("  trinetra config set web.rp_id <host>\n")
+		b.WriteString("  trinetra config set web.origin https://<host>\n")
 	}
 	return b.String()
 }

@@ -1,5 +1,5 @@
-// Command serverwatch-ctl is a separate-process client for a running
-// serverwatch daemon: it dials the daemon's control socket (internal/control)
+// Command trinetra-ctl is a separate-process client for a running
+// trinetra daemon: it dials the daemon's control socket (internal/control)
 // to obtain a core.API and drives it. This file wires the transport
 // (resolve socket + token, control.Dial, defer Close) to either run() --
 // which holds the non-interactive subcommand logic (status/doctor/alerts),
@@ -9,10 +9,10 @@
 //
 // This binary is the one place in the module allowed to import third-party
 // terminal UI packages (github.com/charmbracelet/bubbletea/bubbles/
-// lipgloss, see tui.go); nothing cmd/serverwatch reaches imports this
+// lipgloss, see tui.go); nothing cmd/trinetra reaches imports this
 // package, so the default daemon build stays stdlib-only (enforced by
-// internal/serverwatch/buildtag_test.go's TestDefaultBuildIsStdlibOnly,
-// scoped to cmd/serverwatch's own graph for exactly this reason).
+// internal/trinetra/buildtag_test.go's TestDefaultBuildIsStdlibOnly,
+// scoped to cmd/trinetra's own graph for exactly this reason).
 package main
 
 import (
@@ -30,15 +30,15 @@ func main() {
 
 // realMain parses the global flags, resolves and dials the control socket,
 // and hands the resulting core.API to run (for a named subcommand) or
-// runInteractive (for none, i.e. `serverwatch-ctl` on its own -- see
+// runInteractive (for none, i.e. `trinetra-ctl` on its own -- see
 // tui.go). It is split out from main so the os.Exit lives in exactly one
 // place; the socket dialing here is what run's and the TUI model's tests
 // replace with a fake core.API.
 func realMain(args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("serverwatch-ctl", flag.ContinueOnError)
+	fs := flag.NewFlagSet("trinetra-ctl", flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	socketFlag := fs.String("socket", "", "control socket path (overrides $SERVERWATCH_CONTROL_SOCKET and the default)")
-	tokenFlag := fs.String("token", "", "control token file path (overrides $SERVERWATCH_CONTROL_TOKEN and the default)")
+	socketFlag := fs.String("socket", "", "control socket path (overrides $TRINETRA_CONTROL_SOCKET (or $SERVERWATCH_CONTROL_SOCKET) and the default)")
+	tokenFlag := fs.String("token", "", "control token file path (overrides $TRINETRA_CONTROL_TOKEN (or $SERVERWATCH_CONTROL_TOKEN) and the default)")
 	// --json is accepted as a global flag here so it works BEFORE the
 	// subcommand (`--json status`); flag.Parse stops at the first non-flag
 	// arg, so the after-subcommand form (`status --json`) instead reaches run
@@ -52,13 +52,13 @@ func realMain(args []string, out, errOut io.Writer) int {
 	sock := resolveSocketPath(*socketFlag)
 	token, err := resolveToken(*tokenFlag, sock)
 	if err != nil {
-		fmt.Fprintf(errOut, "serverwatch-ctl: reading control token: %v\n", err)
+		fmt.Fprintf(errOut, "trinetra-ctl: reading control token: %v\n", err)
 		return 1
 	}
 
 	client, err := control.Dial(sock, token)
 	if err != nil {
-		fmt.Fprintf(errOut, "serverwatch-ctl: dialing control socket %s: %v\n", sock, err)
+		fmt.Fprintf(errOut, "trinetra-ctl: dialing control socket %s: %v\n", sock, err)
 		return 1
 	}
 	defer client.Close()
