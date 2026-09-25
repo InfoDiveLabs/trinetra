@@ -1,6 +1,9 @@
 package web
 
-import "strconv"
+import (
+	"net/http"
+	"strconv"
+)
 
 // NavCounts holds the small per-request counts rendered as the sidebar nav's
 // badges (base.html's "nav" block, NavItem.Badge): Alerts/Channels/Users/
@@ -33,10 +36,17 @@ type NavCounts struct {
 // rather than panicking or failing the page, mirroring
 // activeAlertsViaAPI/buildDashboardPageData's existing tolerance for the same
 // inputs.
-func navCountsFor(d Deps) NavCounts {
+//
+// Alerts and Monitoring reflect the request's node scope (node_scope.go):
+// they're daemon/core.API concepts, so a /n/{node}/... page's badges show
+// that node's own counts. Channels and Users stay the master's own values
+// regardless of scope -- they're master-local concepts (config channels,
+// this trinetra-web instance's own account store), never node-scoped
+// (global-constraints.md).
+func navCountsFor(r *http.Request, d Deps) NavCounts {
 	var c NavCounts
 
-	c.Alerts = len(activeAlertsViaAPI(d))
+	c.Alerts = len(activeAlertsViaAPI(r, d))
 
 	if d.Cfg != nil {
 		if cfg := d.Cfg(); cfg != nil {
@@ -46,8 +56,14 @@ func navCountsFor(d Deps) NavCounts {
 
 	c.Users = len(newUserStore(d.StateDir).List())
 
-	if d.Snapshot != nil {
-		c.Monitoring = d.Snapshot().ContainersTotal
+	if nodeFrom(r).Self {
+		if d.Snapshot != nil {
+			c.Monitoring = d.Snapshot().ContainersTotal
+		}
+	} else if api := apiFor(r, d); api != nil {
+		if v, err := api.Snapshot(); err == nil {
+			c.Monitoring = v.ContainersTotal
+		}
 	}
 
 	return c

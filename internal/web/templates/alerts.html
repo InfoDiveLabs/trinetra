@@ -22,10 +22,14 @@
         {{if eq $.Role "admin"}}
         <td class="card-actions" style="text-align:right">
           {{if not $a.Acked}}
+          {{if $.NodeRemote}}
+          <button class="btn ghost" type="button" disabled title="not available for a remote node yet">not available for a remote node yet</button>
+          {{else}}
           <form method="post" action="/alerts/{{$a.Param}}/ack" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <button class="btn ghost" type="submit">Ack</button>
           </form>
+          {{end}}
           {{end}}
         </td>
         {{end}}

@@ -44,11 +44,18 @@ type activeAlertView struct {
 // "no active alerts" -- rather than failing the whole page: these panels are
 // display-only, never the source of truth for alert state (that stays the
 // daemon's AlertState and the `trinetra alerts` CLI).
-func activeAlertsViaAPI(d Deps) []activeAlertView {
-	if d.API == nil {
+//
+// Reads through apiFor(r, d) (node_scope.go), so a request scoped to a fleet
+// node (/n/{node}/...) sees that node's own active alerts rather than the
+// master's -- the topbar status pill, the sidebar alert badge, and every
+// page's alert panel all follow the request's node scope through this one
+// call site.
+func activeAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
+	api := apiFor(r, d)
+	if api == nil {
 		return nil
 	}
-	recs, err := d.API.ActiveAlerts()
+	recs, err := api.ActiveAlerts()
 	if err != nil {
 		return nil
 	}
@@ -134,19 +141,19 @@ type DashboardPageData struct {
 // disk/unit state.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
-	if d.API != nil {
-		v, err := d.API.Snapshot()
+	if api := apiFor(r, d); api != nil {
+		v, err := api.Snapshot()
 		if err != nil {
 			log.Printf("web: dashboard API.Snapshot: %v", err)
 		} else {
 			view = v
 		}
 	}
-	alerts := activeAlertsViaAPI(d)
+	alerts := activeAlertsViaAPI(r, d)
 	return DashboardPageData{
 		PageData: newPageData(r, d, "Dashboard", "Overview · live"),
 		View:     view,
-		Host:     buildHostSummary(d),
+		Host:     buildHostSummary(r, d),
 		Alerts:   alerts,
 		TopCPUBars: containerBars(view.TopCPUContainers,
 			func(c ContainerView) float64 { return c.CPUPct },

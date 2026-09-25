@@ -18,11 +18,14 @@ import (
 // before (alertHistoryRows to maxAlertHistoryRows, resolvedInWindow to 7d). A
 // nil API or a read error degrades to nil (empty history) rather than failing
 // the page, the same display-only tolerance the old loadAlertLogEvents had.
-func alertHistoryViaAPI(d Deps) []core.AlertRecord {
-	if d.API == nil {
+// Reads through apiFor(r, d) (node_scope.go), so a request scoped to a fleet
+// node sees that node's own alert history rather than the master's.
+func alertHistoryViaAPI(r *http.Request, d Deps) []core.AlertRecord {
+	api := apiFor(r, d)
+	if api == nil {
 		return nil
 	}
-	recs, err := d.API.AlertHistory(0, 0)
+	recs, err := api.AlertHistory(0, 0)
 	if err != nil {
 		return nil
 	}
@@ -128,6 +131,12 @@ type AlertsPageData struct {
 	Resolved7d   int
 	UptimePct30d float64
 	HasUptime    bool
+	// NodeRemote is true when this page is scoped to a non-self fleet node
+	// (node_scope.go's nodeFrom(r).Self == false): templates/alerts.html
+	// uses it to render every Ack action disabled, with no POST form
+	// action, since alert ack/unack is a per-node write action that isn't
+	// routed to a remote node (global-constraints.md).
+	NodeRemote bool
 }
 
 // resolvedInWindow counts "recover" events within the last window (relative
@@ -143,20 +152,35 @@ func resolvedInWindow(events []core.AlertRecord, window time.Duration) int {
 	return n
 }
 
-// uptimePct30d computes the mockup's "Uptime · 30d" tile from Deps.Events
-// (the same downtime event store the history page's panel uses,
-// events_store.go): 100% minus the fraction of the last 30 days spent in a
-// downtime event. Returns (0, false) when d.Events is nil (store-writes-
-// disabled mode, or a test Deps that doesn't wire one) so the caller can
-// render "-" instead of a misleading 100%.
-func uptimePct30d(d Deps) (float64, bool) {
-	if d.Events == nil {
-		return 0, false
-	}
+// uptimePct30d computes the mockup's "Uptime · 30d" tile: 100% minus the
+// fraction of the last 30 days spent in a downtime event. For the self
+// scope it reads Deps.Events (the same downtime event store the history
+// page's panel uses, events_store.go) -- the cheap, already-wired local
+// path. For a request scoped to a remote fleet node (node_scope.go), that
+// local store only ever holds the master's own downtime, so it instead
+// reads through apiFor(r, d).Events, the node's own event log over the
+// control socket. Returns (0, false) when there's nothing to read (a nil
+// Deps.Events on the self scope, a nil API on a remote scope, or a read
+// error) so the caller can render "-" instead of a misleading 100%.
+func uptimePct30d(r *http.Request, d Deps) (float64, bool) {
 	const window = 30 * 24 * time.Hour
 	to := time.Now().Unix()
 	from := time.Now().Add(-window).Unix()
-	evs, err := d.Events.Events(from, to)
+
+	var evs []core.DownEventView
+	var err error
+	if nodeFrom(r).Self {
+		if d.Events == nil {
+			return 0, false
+		}
+		evs, err = d.Events.Events(from, to)
+	} else {
+		api := apiFor(r, d)
+		if api == nil {
+			return 0, false
+		}
+		evs, err = api.Events(from, to)
+	}
 	if err != nil {
 		return 0, false
 	}
@@ -176,8 +200,8 @@ func uptimePct30d(d Deps) (float64, bool) {
 }
 
 func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
-	active := activeAlertsViaAPI(d)
-	events := alertHistoryViaAPI(d)
+	active := activeAlertsViaAPI(r, d)
+	events := alertHistoryViaAPI(r, d)
 
 	firing, acked := 0, 0
 	for _, a := range active {
@@ -187,7 +211,7 @@ func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
 			firing++
 		}
 	}
-	uptime, hasUptime := uptimePct30d(d)
+	uptime, hasUptime := uptimePct30d(r, d)
 
 	return AlertsPageData{
 		PageData:     newPageData(r, d, "Alerts & incidents", "Firing now + history"),
@@ -198,6 +222,7 @@ func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
 		Resolved7d:   resolvedInWindow(events, 7*24*time.Hour),
 		UptimePct30d: uptime,
 		HasUptime:    hasUptime,
+		NodeRemote:   !nodeFrom(r).Self,
 	}
 }
 
@@ -241,12 +266,13 @@ func alertsAckHandler(d Deps) http.HandlerFunc {
 		}
 		keyStr := string(key)
 
-		if d.API == nil {
+		api := apiFor(r, d)
+		if api == nil {
 			http.Error(w, "alert control unavailable", http.StatusInternalServerError)
 			return
 		}
 
-		recs, err := d.API.ActiveAlerts()
+		recs, err := api.ActiveAlerts()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -263,7 +289,7 @@ func alertsAckHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := d.API.AckAlert(keyStr); err != nil {
+		if err := api.AckAlert(keyStr); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

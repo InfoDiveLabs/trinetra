@@ -70,7 +70,7 @@ func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
 		{Key: "cpu", Time: 2, Source: "hot", Severity: "warning"},
 	}}}
 
-	alerts := activeAlertsViaAPI(d)
+	alerts := activeAlertsViaAPI(selfReq(), d)
 	var gotDisk, gotCPU activeAlertView
 	for _, a := range alerts {
 		switch a.Key {

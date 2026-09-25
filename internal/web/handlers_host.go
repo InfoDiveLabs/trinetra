@@ -46,12 +46,15 @@ type HostSummary struct {
 
 // buildHostSummary fetches host info via the API and renders the compact
 // dashboard strip. Best-effort: any failure yields an unavailable summary the
-// dashboard omits, never an error that breaks the page.
-func buildHostSummary(d Deps) HostSummary {
-	if d.API == nil {
+// dashboard omits, never an error that breaks the page. Reads through
+// apiFor(r, d) so the dashboard's host strip reflects the request's node
+// scope, same as buildHostPageData.
+func buildHostSummary(r *http.Request, d Deps) HostSummary {
+	api := apiFor(r, d)
+	if api == nil {
 		return HostSummary{}
 	}
-	h, err := d.API.HostInfo()
+	h, err := api.HostInfo()
 	if err != nil {
 		return HostSummary{}
 	}
@@ -85,10 +88,11 @@ func shortCPU(h core.HostInfoView) string {
 
 func buildHostPageData(r *http.Request, d Deps) HostPageData {
 	data := HostPageData{PageData: newPageData(r, d, "Host", "Hardware and OS inventory")}
-	if d.API == nil {
+	api := apiFor(r, d)
+	if api == nil {
 		return data
 	}
-	h, err := d.API.HostInfo()
+	h, err := api.HostInfo()
 	if err != nil {
 		return data
 	}

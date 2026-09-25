@@ -237,9 +237,9 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	if sess, ok := sessionFromContext(r); ok {
 		csrf = sess.CSRF
 	}
-	status, statusText := topbarStatus(activeAlertsViaAPI(d))
+	status, statusText := topbarStatus(activeAlertsViaAPI(r, d))
 	webVer := version.String()
-	coreVer := coreVersionViaAPI(d)
+	coreVer := coreVersionViaAPI(r, d)
 	return PageData{
 		Title:           title,
 		Sub:             sub,
@@ -250,7 +250,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		Name:            name,
 		Initial:         firstInitial(name),
 		Active:          r.URL.Path,
-		Nav:             navForRole(role, navCountsFor(d)),
+		Nav:             navForRole(role, navCountsFor(r, d)),
 		Nonce:           nonceFromContext(r),
 		CSRF:            csrf,
 		CoreVersion:     coreVer,
@@ -261,12 +261,15 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 
 // coreVersionViaAPI fetches the running core daemon's version over the control
 // socket (#107), degrading to "unknown" when the API is unset or errors so a
-// version hiccup never breaks page rendering.
-func coreVersionViaAPI(d Deps) string {
-	if d.API == nil {
+// version hiccup never breaks page rendering. Reads through apiFor(r, d)
+// (node_scope.go), so a page scoped to a remote fleet node shows that node's
+// own reported version rather than the master's.
+func coreVersionViaAPI(r *http.Request, d Deps) string {
+	api := apiFor(r, d)
+	if api == nil {
 		return "unknown"
 	}
-	v, err := d.API.Version()
+	v, err := api.Version()
 	if err != nil || v == "" {
 		return "unknown"
 	}

@@ -2,10 +2,21 @@ package web
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
+
+// selfReq is a plain unscoped request (no /n/{node} routing attached), for
+// direct unit tests of functions node-scope.go's apiFor now threads through
+// (activeAlertsViaAPI, coreVersionViaAPI, ...): nodeFrom(selfReq()) is always
+// the implicit self scope, so these calls exercise exactly the same
+// Deps.API path they did before Task 2 (fleet-web-a).
+func selfReq() *http.Request {
+	return httptest.NewRequest(http.MethodGet, "/", nil)
+}
 
 // errTestActiveAlerts is a stand-in transport error for the degrade-to-nil
 // path (a socket read failing), distinct from "no alerts fired yet".
@@ -25,7 +36,7 @@ func TestActiveAlertsViaAPIMapsAndSorts(t *testing.T) {
 		{Key: "disk", Severity: "warning", Source: "disk full", Time: 2000},
 	}}}
 
-	got := activeAlertsViaAPI(d)
+	got := activeAlertsViaAPI(selfReq(), d)
 	if len(got) != 3 {
 		t.Fatalf("activeAlertsViaAPI len = %d, want 3", len(got))
 	}
@@ -64,10 +75,10 @@ func TestActiveAlertsViaAPIMapsAndSorts(t *testing.T) {
 // API (or one whose ActiveAlerts errors) renders as "no active alerts"
 // rather than failing the page, matching loadActiveAlerts's own tolerance.
 func TestActiveAlertsViaAPIDegradesToNil(t *testing.T) {
-	if got := activeAlertsViaAPI(Deps{}); got != nil {
+	if got := activeAlertsViaAPI(selfReq(), Deps{}); got != nil {
 		t.Errorf("activeAlertsViaAPI(nil API) = %v, want nil", got)
 	}
-	if got := activeAlertsViaAPI(Deps{API: fakeAPI{activeErr: errTestActiveAlerts}}); got != nil {
+	if got := activeAlertsViaAPI(selfReq(), Deps{API: fakeAPI{activeErr: errTestActiveAlerts}}); got != nil {
 		t.Errorf("activeAlertsViaAPI(erroring API) = %v, want nil", got)
 	}
 }

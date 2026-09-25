@@ -52,8 +52,8 @@ func memBarPct(memMiB float64) float64 {
 // need.
 func buildMonitoringPageData(r *http.Request, d Deps) MonitoringPageData {
 	var view MonitoringView
-	if d.API != nil {
-		v, err := d.API.Monitoring()
+	if api := apiFor(r, d); api != nil {
+		v, err := api.Monitoring()
 		if err != nil {
 			log.Printf("web: monitoring API.Monitoring: %v", err)
 		} else {

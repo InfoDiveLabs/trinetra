@@ -97,8 +97,8 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 		}
 
 		resp := emptySeriesResponse(metric)
-		if d.API != nil {
-			pts, err := d.API.Series(metric, from, to, core.ResAuto)
+		if api := apiFor(r, d); api != nil {
+			pts, err := api.Series(metric, from, to, core.ResAuto)
 			switch {
 			case err != nil:
 				// A genuine storage fault still renders as an empty 200 (the
@@ -153,8 +153,8 @@ func downtimeAPIHandler(d Deps) http.HandlerFunc {
 		}
 
 		resp := downtimeResponse{Events: []DownEventView{}}
-		if d.API != nil {
-			evs, err := d.API.Events(from, to)
+		if api := apiFor(r, d); api != nil {
+			evs, err := api.Events(from, to)
 			if err != nil {
 				log.Printf("web: /api/downtime query from=%d to=%d: %v", from, to, err)
 			} else if len(evs) > 0 {
@@ -197,7 +197,7 @@ type HistoryPageData struct {
 // since internal/web can't enumerate the store's metric names itself.
 func historyPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		mounts := historyDiskMounts(d)
+		mounts := historyDiskMounts(r, d)
 		metrics := make([]string, len(mounts))
 		for i, m := range mounts {
 			metrics[i] = "disk:" + m
@@ -232,12 +232,29 @@ func renderHistoryPage(w http.ResponseWriter, data HistoryPageData) error {
 // historyDiskMounts returns the current filesystem mounts (DashboardView.
 // Disks, already sorted by mount by coreapi_inproc.go's buildDashboardView
 // adapter) for the disk panel's per-mount series, or nil when there's no
-// snapshot/no disks.
-func historyDiskMounts(d Deps) []string {
-	if d.Snapshot == nil {
-		return nil
+// snapshot/no disks. For the self scope it reads the cheap cached
+// Deps.Snapshot() closure, same as before; for a request scoped to a remote
+// fleet node (node_scope.go) it instead reads apiFor(r, d).Snapshot() --
+// Deps.Snapshot only ever reflects the master's own mounts, so the self-only
+// closure can't answer for a node scope.
+func historyDiskMounts(r *http.Request, d Deps) []string {
+	var view DashboardView
+	if nodeFrom(r).Self {
+		if d.Snapshot == nil {
+			return nil
+		}
+		view = d.Snapshot()
+	} else {
+		api := apiFor(r, d)
+		if api == nil {
+			return nil
+		}
+		v, err := api.Snapshot()
+		if err != nil {
+			return nil
+		}
+		view = v
 	}
-	view := d.Snapshot()
 	if len(view.Disks) == 0 {
 		return nil
 	}
