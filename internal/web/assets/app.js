@@ -83,7 +83,7 @@
 
   // ---- gradient defs ----
   document.body.insertAdjacentHTML('afterbegin','<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'+
-    ['gInfo','gViolet','gOk','gCrit','gCyan','gSig'].map(function(id){return '<linearGradient id="'+id+'" x1="0" y1="0" x2="0" y2="1"><stop class="a" offset="0"/><stop class="b" offset="1"/></linearGradient>';}).join('')+'</defs></svg>');
+    ['gInfo','gViolet','gOk','gCrit','gCyan'].map(function(id){return '<linearGradient id="'+id+'" x1="0" y1="0" x2="0" y2="1"><stop class="a" offset="0"/><stop class="b" offset="1"/></linearGradient>';}).join('')+'</defs></svg>');
 
   // ---- theme ----
   // setTheme dispatches a 'sw-theme' DOM event after applying the new

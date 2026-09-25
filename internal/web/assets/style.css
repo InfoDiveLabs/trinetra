@@ -5,8 +5,16 @@
    needs attention -- an alert, a down state, the primary action. Selection,
    focus and navigation state use neutral tokens instead. The light theme
    darkens --crit/--ok/--warn (same hues) so they stay >= 4.5:1 as small text
-   on ash/white; see brand_test.go's TestStyleCSSContrast. */
-@font-face{font-family:"Outfit"; font-style:normal; font-display:swap; font-weight:100 900; src:url(/assets/fonts/outfit-latin-wght-normal.woff2) format("woff2"); unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+   on ash/white; see brand_test.go's TestStyleCSSContrast.
+   Chrome (links, badges, avatar, switches, nav) uses only the neutral
+   tokens (--text/--muted/--faint/--border/--elev). --info/--violet/--cyan/
+   --pink are a DATA-SERIES palette only -- chart lines and legend swatches,
+   meters, hbars, the quiet-hours mute window and the gInfo/gViolet/gCyan
+   fills -- never text or chrome (TestStyleCSSContrast enforces that).
+   The Outfit file name carries the first 12 hex of its sha256 because
+   /assets/ is served immutable and style.css can't use the ?v= helper;
+   TestOutfitFontNameIsContentHashed pins it. */
+@font-face{font-family:"Outfit"; font-style:normal; font-display:swap; font-weight:100 900; src:url(/assets/fonts/outfit-latin-wght-normal.6c18d579fd87.woff2) format("woff2"); unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 :root{
   --font-sans: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-mono: ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
@@ -18,7 +26,9 @@
   --border:#2E353D; --border-soft:#232930;
   --text:#ECE8E1; --muted:#8A949E; --faint:#737C85;
   --signal:#FF5B1F; --signal-dim:#86361A; --on-signal:#0E1114; --on-crit:#0E1114;
-  --ok:#3FBFA6; --warn:#F2B23A; --crit:#FF5B1F; --info:#5AA9E6; --violet:#9B8CEF; --cyan:#3FC6C0; --pink:#E87BA6;
+  --ok:#3FBFA6; --warn:#F2B23A; --crit:#FF5B1F;
+  /* data-series palette only (see header) */
+  --info:#5AA9E6; --violet:#9B8CEF; --cyan:#3FC6C0; --pink:#E87BA6;
   --track:#252B32;
   --shadow:0 1px 0 #ffffff08, 0 12px 34px -16px #00000090;
   --scrim:#07090bcc;
@@ -28,7 +38,9 @@
   --border:#D6D0C5; --border-soft:#E4DFD6;
   --text:#0E1114; --muted:#5B646D; --faint:#77818A;
   --signal:#FF5B1F; --signal-dim:#FFC4AD; --on-signal:#0E1114; --on-crit:#FFFFFF;
-  --ok:#297164; --warn:#806227; --crit:#AB411B; --info:#2E7FBF; --violet:#7C6BE0; --cyan:#159C97; --pink:#C85E8A;
+  --ok:#297164; --warn:#806227; --crit:#AB411B;
+  /* data-series palette only (see header) */
+  --info:#2E7FBF; --violet:#7C6BE0; --cyan:#159C97; --pink:#C85E8A;
   --track:#E4DFD6;
   --shadow:0 1px 2px #0e111410, 0 14px 30px -20px #0e111433;
   --scrim:#0e111433;
@@ -48,7 +60,9 @@ h1,h2,h3{font-family:var(--font-display); font-weight:500; letter-spacing:0}
 html,body{margin:0}
 body{background:var(--bg); color:var(--text); font-family:var(--font-sans); font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased}
 .mono{font-family:var(--font-mono); font-variant-numeric:tabular-nums}
-a{color:var(--info); text-decoration:none}
+a{color:var(--text); text-decoration:underline; text-decoration-color:var(--faint); text-underline-offset:3px}
+a:hover{text-decoration-color:var(--text)}
+.nav a,.botnav a,.sheet-nav a,a.btn{text-decoration:none}
 :focus-visible{outline:2px solid var(--text); outline-offset:2px; border-radius:4px}
 .eyebrow{font-family:var(--font-mono); font-size:10.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint)}
 .spacer{flex:1}
@@ -68,7 +82,7 @@ a{color:var(--info); text-decoration:none}
 .nav a.active .ic{color:var(--text); opacity:1}
 .nav .grp{margin-top:14px; padding:4px 11px}
 .side .foot{margin-top:auto; padding:10px 8px 2px; border-top:1px solid var(--border-soft)}
-.avatar{width:26px;height:26px;border-radius:50%;background:conic-gradient(from 210deg,var(--info),var(--violet));display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:#0d1117;font-weight:700}
+.avatar{width:26px;height:26px;border-radius:50%;background:var(--elev);border:1px solid var(--border);display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:700}
 .who{display:flex; align-items:center; gap:9px}
 .side .foot .ver{display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:10.5px; color:var(--faint)}
 .side .foot .ver .ver-warn{color:var(--warn)}
@@ -139,7 +153,7 @@ a{color:var(--info); text-decoration:none}
 .hoststrip .hs-item{display:inline-flex; align-items:baseline; gap:7px; min-width:0}
 .hoststrip .hs-k{color:var(--faint); text-transform:uppercase; letter-spacing:.06em; font-size:10.5px}
 .hoststrip .hs-v{color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:38ch}
-.hoststrip .hs-more{margin-left:auto; color:var(--info); text-decoration:none; font-size:12px; white-space:nowrap}
+.hoststrip .hs-more{margin-left:auto; color:var(--muted); text-decoration:none; font-size:12px; white-space:nowrap}
 .hoststrip .hs-more:hover{text-decoration:underline}
 @media (max-width:860px){.hoststrip{display:none}}
 /* drawer per-metric sparkline (#115) and container log viewer */
@@ -155,7 +169,7 @@ a{color:var(--info); text-decoration:none}
 .badge.ok{color:var(--ok);border-color:color-mix(in oklab,var(--ok) 40%,var(--border))}
 .badge.warn{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--border))}
 .badge.crit{color:var(--crit);border-color:color-mix(in oklab,var(--crit) 45%,var(--border))}
-.badge.role{color:var(--violet);border-color:color-mix(in oklab,var(--violet) 40%,var(--border))}
+.badge.role{color:var(--text);border-color:var(--border)}
 
 .rows{display:flex; flex-direction:column}
 .row{display:flex; align-items:center; gap:12px; padding:10px 4px; border-top:1px solid var(--border-soft)}
@@ -199,8 +213,8 @@ label.field .lb{display:block; margin-bottom:6px; font-size:12px; color:var(--mu
 label.field .hint{color:var(--faint); font-size:11px; margin-top:5px; display:block}
 .switch{position:relative; display:inline-block; width:40px; height:23px; border-radius:999px; background:var(--elev); border:1px solid var(--border); cursor:pointer; flex:none; vertical-align:middle}
 .switch::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:var(--muted);transition:.15s}
-.switch.on{background:color-mix(in oklab,var(--ok) 60%,var(--surface)); border-color:transparent}
-.switch.on::after{left:19px;background:#fff}
+.switch.on{background:var(--text); border-color:transparent}
+.switch.on::after{left:19px;background:var(--bg)}
 
 /* tabs */
 .tabs{display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px}
@@ -220,7 +234,6 @@ label.field .hint{color:var(--faint); font-size:11px; margin-top:5px; display:bl
 #gOk .a{stop-color:var(--ok);stop-opacity:.32}#gOk .b{stop-color:var(--ok);stop-opacity:0}
 #gCrit .a{stop-color:var(--crit);stop-opacity:.30}#gCrit .b{stop-color:var(--crit);stop-opacity:0}
 #gCyan .a{stop-color:var(--cyan);stop-opacity:.32}#gCyan .b{stop-color:var(--cyan);stop-opacity:0}
-#gSig .a{stop-color:var(--signal);stop-opacity:.32}#gSig .b{stop-color:var(--signal);stop-opacity:0}
 .donut .track{stroke:var(--track);stroke-width:10;fill:none}
 .donut .val{stroke-width:10;fill:none;stroke-linecap:round;transform:rotate(-90deg);transform-origin:center}
 .donut text{font-family:var(--font-mono);text-anchor:middle}
@@ -267,8 +280,6 @@ tr[data-detail]{cursor:pointer}
   .nav{display:flex;flex-wrap:wrap} .nav .grp{display:none} .g-2,.g-3{grid-template-columns:1fr} .wrap{padding:16px 14px 40px} .topbar{padding:12px 14px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none !important}}
-.mockbar{position:fixed;bottom:0;left:0;right:0;background:var(--elev);border-top:1px solid var(--border);padding:7px 14px;font-family:var(--font-mono);font-size:11px;color:var(--faint);display:flex;gap:12px;align-items:center;z-index:60;flex-wrap:wrap}
-.mockbar b{color:var(--signal)}
 /* app pages already clear the fixed bar via .wrap padding-bottom; bare pages stay exactly 100vh (no scroll) */
 .wrap{padding-bottom:56px}
 
@@ -279,8 +290,8 @@ tr[data-detail]{cursor:pointer}
    submittable form control instead of a JS-only visual toggle. */
 input.switch{-webkit-appearance:none;appearance:none;margin:0;position:relative;display:inline-block;width:40px;height:23px;border-radius:999px;background:var(--elev);border:1px solid var(--border);cursor:pointer;flex:none;vertical-align:middle}
 input.switch::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:var(--muted);transition:.15s}
-input.switch:checked{background:color-mix(in oklab,var(--ok) 60%,var(--surface));border-color:transparent}
-input.switch:checked::after{left:19px;background:#fff}
+input.switch:checked{background:var(--text);border-color:transparent}
+input.switch:checked::after{left:19px;background:var(--bg)}
 
 /* ============================================================
    Mobile UI (#81) -- purpose-built phone layout at <=640px.

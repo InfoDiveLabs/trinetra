@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"math"
 	"net/http"
@@ -28,15 +30,15 @@ const (
 func TestBrandAssetsServed(t *testing.T) {
 	h := newHandler(enrollTestDeps(t))
 	cases := map[string]string{
-		"/assets/brand/favicon.ico":                    "image/x-icon",
-		"/assets/brand/icon-32.png":                    "image/png",
-		"/assets/brand/icon-180.png":                   "image/png",
-		"/assets/brand/icon-192.png":                   "image/png",
-		"/assets/brand/icon-512.png":                   "image/png",
-		"/assets/brand/trinetra-wordmark-ash.png":      "image/png",
-		"/assets/brand/trinetra-wordmark-ink.png":      "image/png",
-		"/assets/fonts/outfit-latin-wght-normal.woff2": "font/woff2",
-		"/assets/fonts/OFL.txt":                        "text/plain; charset=utf-8",
+		"/assets/brand/favicon.ico":                                 "image/x-icon",
+		"/assets/brand/icon-32.png":                                 "image/png",
+		"/assets/brand/icon-180.png":                                "image/png",
+		"/assets/brand/icon-192.png":                                "image/png",
+		"/assets/brand/icon-512.png":                                "image/png",
+		"/assets/brand/trinetra-wordmark-ash.png":                   "image/png",
+		"/assets/brand/trinetra-wordmark-ink.png":                   "image/png",
+		"/assets/fonts/outfit-latin-wght-normal.6c18d579fd87.woff2": "font/woff2",
+		"/assets/fonts/OFL.txt":                                     "text/plain; charset=utf-8",
 	}
 	for path, wantCT := range cases {
 		rec := httptest.NewRecorder()
@@ -113,14 +115,40 @@ func TestPagesCarryWordmarkAndFavicons(t *testing.T) {
 	}
 }
 
-// externalAssetURL matches an absolute http(s) URL used to LOAD something: an
-// HTML src/href attribute, a CSS url(...) or an @import. Plain text such as a
-// form placeholder="https://ntfy.sh" is not an asset reference.
-var externalAssetURL = regexp.MustCompile(`(?i)(\b(src|href|srcset)\s*=\s*["']?\s*https?://|url\(\s*["']?\s*https?://|@import\s+["']?\s*https?://)`)
+// externalAssetURL matches an absolute or protocol-relative URL
+// ("https://x", "http://x", "//x") used to LOAD something: an HTML src/href
+// attribute (or a JS .src= assignment), a CSS url(...), an @import, or a JS
+// fetch()/EventSource()/import(). Plain text such as a form
+// placeholder="https://ntfy.sh" is not an asset reference.
+var externalAssetURL = regexp.MustCompile(`(?i)(\b(src|href)\s*=\s*["'\x60]?\s*(https?:)?//|url\(\s*["']?\s*(https?:)?//|@import\s+(url\()?\s*["']?\s*(https?:)?//|\b(fetch|EventSource|import)\s*\(\s*["'\x60](https?:)?//)`)
+
+// srcsetAttr captures a srcset attribute's value so every candidate -- not
+// just the first -- can be checked.
+var srcsetAttr = regexp.MustCompile(`(?i)\bsrcset\s*=\s*("([^"]*)"|'([^']*)')`)
+
+// externalLoads returns every external load reference in src.
+func externalLoads(src string) []string {
+	out := externalAssetURL.FindAllString(src, -1)
+	for _, m := range srcsetAttr.FindAllStringSubmatch(src, -1) {
+		val := m[2] + m[3]
+		for _, cand := range strings.Split(val, ",") {
+			f := strings.Fields(cand)
+			if len(f) == 0 {
+				continue
+			}
+			u := strings.ToLower(f[0])
+			if strings.HasPrefix(u, "//") || strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+				out = append(out, "srcset candidate "+f[0])
+			}
+		}
+	}
+	return out
+}
 
 // TestNoExternalAssetURLs pins "no runtime external requests": every
-// template and stylesheet must load its fonts, images, scripts and styles
-// from this server's embedded /assets/ tree.
+// template, stylesheet and app.js must load its fonts, images, scripts,
+// styles and data from this server (the embedded /assets/ tree or its own
+// same-origin API).
 func TestNoExternalAssetURLs(t *testing.T) {
 	check := func(fsys fs.FS, root string, exts ...string) int {
 		n := 0
@@ -132,7 +160,7 @@ func TestNoExternalAssetURLs(t *testing.T) {
 			for _, e := range exts {
 				ok = ok || strings.HasSuffix(p, e)
 			}
-			if !ok {
+			if !ok || strings.HasSuffix(p, ".min.js") {
 				return nil
 			}
 			n++
@@ -140,8 +168,8 @@ func TestNoExternalAssetURLs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read %s: %v", p, err)
 			}
-			for _, m := range externalAssetURL.FindAllString(string(b), -1) {
-				t.Errorf("%s loads an external asset: %q", p, m)
+			for _, m := range externalLoads(string(b)) {
+				t.Errorf("%s loads an external resource: %q", p, m)
 			}
 			return nil
 		})
@@ -150,13 +178,40 @@ func TestNoExternalAssetURLs(t *testing.T) {
 	if n := check(templatesFS, "templates", ".html"); n == 0 {
 		t.Fatal("no templates scanned")
 	}
-	if n := check(assetsFS, "assets", ".css"); n == 0 {
-		t.Fatal("no stylesheets scanned")
+	if n := check(assetsFS, "assets", ".css", "app.js"); n < 2 {
+		t.Fatalf("scanned %d stylesheets/app.js, want style.css + uPlot.min.css + app.js", n)
 	}
-	// The matcher itself must catch the shapes it claims to.
-	for _, bad := range []string{`<img src="https://x/y.png">`, `@font-face{src:url(https://fonts.gstatic.com/a.woff2)}`, `@import "http://x/a.css";`, `<link href='https://x/a.css'>`} {
-		if !externalAssetURL.MatchString(bad) {
+	// The matcher itself must catch the shapes it claims to...
+	for _, bad := range []string{
+		`<img src="https://x/y.png">`,
+		`<script src=//cdn.example/x.js></script>`,
+		`@font-face{src:url(https://fonts.gstatic.com/a.woff2)}`,
+		`@font-face{src:url("//fonts.gstatic.com/a.woff2")}`,
+		`@import "http://x/a.css";`,
+		`@import url(//x/a.css);`,
+		`<link href='https://x/a.css'>`,
+		`<img srcset="/a.png 1x, https://x/b.png 2x">`,
+		`<img srcset="/a.png 1x, //x/b.png 2x">`,
+		`img.src='https://x/p.gif'`,
+		`fetch('https://api.example/v1')`,
+		"fetch(`//api.example/v1`)",
+		`new EventSource("https://x/events")`,
+	} {
+		if len(externalLoads(bad)) == 0 {
 			t.Errorf("matcher misses %q", bad)
+		}
+	}
+	// ...and must not flag same-origin loads, comments or placeholders.
+	for _, good := range []string{
+		`<img src="/assets/a.png">`,
+		`<img srcset="/a.png 1x, /b.png 2x">`,
+		`fetch('/api/series?metric=cpu')`,
+		`  // a JS line comment -- not a URL`,
+		`<input placeholder="https://ntfy.sh">`,
+		`url(/assets/fonts/x.woff2)`,
+	} {
+		if got := externalLoads(good); len(got) != 0 {
+			t.Errorf("matcher falsely flags %q: %v", good, got)
 		}
 	}
 }
@@ -271,6 +326,16 @@ func TestStyleCSSContrast(t *testing.T) {
 				}
 			}
 		}
+		// The data-series tokens are allowed only where contrast doesn't
+		// apply (lines, fills, swatches); if one is ever used as text it
+		// must meet 4.5:1 like any other text token.
+		for _, tok := range dataSeriesTextUses(t) {
+			for _, surf := range []string{"--bg", "--surface", "--elev"} {
+				if r := contrast(t, v[tok], v[surf]); r < 4.5 {
+					t.Errorf("%s: data-series token %s %s is used as text but is %.2f:1 on %s", theme, tok, v[tok], r, surf)
+				}
+			}
+		}
 		// The primary button draws its label on --signal; the mobile alert
 		// count badge draws its number on --crit.
 		for _, p := range [][2]string{{"--on-signal", "--signal"}, {"--on-crit", "--crit"}} {
@@ -290,7 +355,7 @@ func TestStyleCSSEmbedsOutfitForHeadings(t *testing.T) {
 	css := readStyleCSS(t)
 	for _, want := range []string{
 		`@font-face{font-family:"Outfit"`,
-		`url(/assets/fonts/outfit-latin-wght-normal.woff2) format("woff2")`,
+		`url(/assets/fonts/outfit-latin-wght-normal.6c18d579fd87.woff2) format("woff2")`,
 		`--font-display:"Outfit",`,
 		`h1,h2,h3{font-family:var(--font-display)`,
 	} {
@@ -300,5 +365,271 @@ func TestStyleCSSEmbedsOutfitForHeadings(t *testing.T) {
 	}
 	if strings.Contains(css, "body{background:var(--bg); color:var(--text); font-family:var(--font-display)") {
 		t.Error("body text must not use the display face")
+	}
+}
+
+// dataSeriesText matches a text-colour use (color:, not background-color: /
+// stop-color: / border-color:) of a data-series token.
+var dataSeriesText = regexp.MustCompile(`(?:^|[^-a-zA-Z])color\s*:\s*var\(\s*(--info|--violet|--cyan|--pink)\s*\)`)
+
+// dataSeriesTextUses returns the data-series tokens (--info/--violet/--cyan/
+// --pink) that style.css, a template or app.js uses as text colour. The
+// palette is documented as data-series only, so today this is empty; it
+// exists so TestStyleCSSContrast would hold any future text use to 4.5:1.
+func dataSeriesTextUses(t *testing.T) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	scan := func(fsys fs.FS, p string) {
+		b, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		for _, m := range dataSeriesText.FindAllStringSubmatch(string(b), -1) {
+			seen[m[1]] = true
+		}
+	}
+	scan(assetsFS, "assets/style.css")
+	scan(assetsFS, "assets/app.js")
+	_ = fs.WalkDir(templatesFS, "templates", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			scan(templatesFS, p)
+		}
+		return err
+	})
+	var out []string
+	for k := range seen {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestChromeUsesNeutralTokens pins the round-1 review: links, the role
+// badge, the avatar and on-switches use neutral brand tokens, not the
+// data-series palette or verdigris (reserved for healthy/online).
+func TestChromeUsesNeutralTokens(t *testing.T) {
+	if got := dataSeriesTextUses(t); len(got) != 0 {
+		t.Errorf("data-series tokens used as text colour: %v", got)
+	}
+	css := readStyleCSS(t)
+	for _, want := range []string{
+		`a{color:var(--text); text-decoration:underline; text-decoration-color:var(--faint)`,
+		`.badge.role{color:var(--text);border-color:var(--border)}`,
+		`.avatar{width:26px;height:26px;border-radius:50%;background:var(--elev);border:1px solid var(--border);`,
+		`.switch.on{background:var(--text);`,
+		`input.switch:checked{background:var(--text);`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("style.css missing %s", want)
+		}
+	}
+	for _, gone := range []string{"conic-gradient(from 210deg,var(--info)", ".mockbar", "#gSig", "var(--ok) 60%"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("style.css still contains %q", gone)
+		}
+	}
+	if b, _ := assetsFS.ReadFile("assets/app.js"); strings.Contains(string(b), "'gSig'") {
+		t.Error("app.js still emits the unused gSig gradient")
+	}
+}
+
+// fontURL captures the font files style.css loads.
+var fontURL = regexp.MustCompile(`url\(/assets/fonts/([^)]+)\)`)
+
+// hashedFontName captures the 12-hex content hash embedded in a font name.
+var hashedFontName = regexp.MustCompile(`\.([0-9a-f]{12})\.woff2$`)
+
+// TestOutfitFontNameIsContentHashed pins cache safety for the font:
+// /assets/ is served immutable and style.css (static) can't use the ?v=
+// helper, so every .woff2 is named with the first 12 hex of its sha256.
+// Replacing the file without renaming it fails here.
+func TestOutfitFontNameIsContentHashed(t *testing.T) {
+	css := readStyleCSS(t)
+	refs := fontURL.FindAllStringSubmatch(css, -1)
+	if len(refs) == 0 {
+		t.Fatal("style.css references no /assets/fonts/ file")
+	}
+	referenced := map[string]bool{}
+	for _, r := range refs {
+		referenced[r[1]] = true
+	}
+	entries, err := fs.ReadDir(assetsFS, "assets/fonts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".woff2") {
+			continue
+		}
+		if !referenced[name] {
+			t.Errorf("fonts/%s is embedded but style.css does not reference it", name)
+		}
+		delete(referenced, name)
+		m := hashedFontName.FindStringSubmatch(name)
+		if m == nil {
+			t.Errorf("fonts/%s has no .<12-hex sha256>.woff2 suffix", name)
+			continue
+		}
+		b, err := assetsFS.ReadFile("assets/fonts/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(b)
+		if got := hex.EncodeToString(sum[:])[:12]; got != m[1] {
+			t.Errorf("fonts/%s content hash is %s; rename the file to match", name, got)
+		}
+	}
+	for name := range referenced {
+		t.Errorf("style.css references fonts/%s which is not embedded", name)
+	}
+}
+
+// cssRule is one style rule, with the @media condition (if any) it sits in.
+type cssRule struct {
+	media, selector, decls string
+	order                  int
+}
+
+// parseCSSRules is a minimal parser, good enough for style.css: top-level
+// rules plus one level of @media nesting (comments stripped).
+func parseCSSRules(css string) []cssRule {
+	css = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(css, "")
+	var out []cssRule
+	var walk func(s, media string)
+	walk = func(s, media string) {
+		for {
+			open := strings.Index(s, "{")
+			if open < 0 {
+				return
+			}
+			head := strings.TrimSpace(s[:open])
+			if strings.HasPrefix(head, "@media") {
+				depth, i := 1, open+1
+				for ; i < len(s) && depth > 0; i++ {
+					switch s[i] {
+					case '{':
+						depth++
+					case '}':
+						depth--
+					}
+				}
+				walk(s[open+1:i-1], strings.TrimSpace(strings.TrimPrefix(head, "@media")))
+				s = s[i:]
+				continue
+			}
+			end := strings.Index(s[open:], "}")
+			if end < 0 {
+				return
+			}
+			for _, sel := range strings.Split(head, ",") {
+				out = append(out, cssRule{media: media, selector: strings.TrimSpace(sel), decls: s[open+1 : open+end], order: len(out)})
+			}
+			s = s[open+end+1:]
+		}
+	}
+	walk(css, "")
+	return out
+}
+
+// TestWordmarkThemeSwap evaluates style.css's wordmark display rules for
+// every theme state -- data-theme unset/dark/light x OS dark/light -- and
+// pins that exactly one wordmark shows: ash when the effective theme is
+// dark, ink when it is light. Any rule the evaluator can't interpret fails
+// the test, so a new selector can't slip past it.
+func TestWordmarkThemeSwap(t *testing.T) {
+	var rules []cssRule
+	for _, r := range parseCSSRules(readStyleCSS(t)) {
+		if strings.Contains(r.selector, "wm-") || strings.Contains(r.selector, ".wordmark") {
+			if strings.Contains(r.decls, "display") {
+				rules = append(rules, r)
+			}
+		}
+	}
+	if len(rules) == 0 {
+		t.Fatal("no wordmark display rules found")
+	}
+	// A rule's prefix (everything before the wordmark class) must be one of
+	// these root conditions; specificity counts :root, [attr] and :not(...).
+	type cond struct {
+		spec  int
+		match func(attr string) bool
+	}
+	prefixes := map[string]cond{
+		"":                          {0, func(string) bool { return true }},
+		`:root[data-theme="dark"]`:  {2, func(a string) bool { return a == "dark" }},
+		`:root[data-theme="light"]`: {2, func(a string) bool { return a == "light" }},
+		`:root:not([data-theme])`:   {2, func(a string) bool { return a == "" }},
+	}
+	medias := map[string]func(os string) bool{
+		"":                              func(string) bool { return true },
+		"(prefers-color-scheme:light)":  func(os string) bool { return os == "light" },
+		"(prefers-color-scheme: light)": func(os string) bool { return os == "light" },
+		"(prefers-color-scheme:dark)":   func(os string) bool { return os == "dark" },
+		"(prefers-color-scheme: dark)":  func(os string) bool { return os == "dark" },
+	}
+	display := regexp.MustCompile(`display\s*:\s*([a-z-]+)`)
+	visible := func(class, attr, os string) bool {
+		best, bestSpec, bestOrder := "inline", -1, -1
+		for _, r := range rules {
+			mf, ok := medias[r.media]
+			if !ok {
+				t.Fatalf("wordmark rule in unhandled @media %q", r.media)
+			}
+			sel := r.selector
+			var target, prefix string
+			switch {
+			case strings.HasSuffix(sel, ".wordmark"):
+				target, prefix = "wordmark", strings.TrimSpace(strings.TrimSuffix(sel, ".wordmark"))
+			case strings.HasSuffix(sel, ".wm-ash"):
+				target, prefix = "wm-ash", strings.TrimSpace(strings.TrimSuffix(sel, ".wm-ash"))
+			case strings.HasSuffix(sel, ".wm-ink"):
+				target, prefix = "wm-ink", strings.TrimSpace(strings.TrimSuffix(sel, ".wm-ink"))
+			default:
+				// e.g. ".brand .wordmark{width:...}" -- only a problem if it
+				// sets display (filtered above), so reject it.
+				if strings.HasSuffix(sel, " .wordmark") || strings.Contains(sel, "wm-") {
+					t.Fatalf("unhandled wordmark selector %q", sel)
+				}
+				continue
+			}
+			if target != "wordmark" && target != class {
+				continue
+			}
+			c, ok := prefixes[prefix]
+			if !ok {
+				if target == "wordmark" {
+					continue // scoped layout rule like ".brand .wordmark"
+				}
+				t.Fatalf("unhandled wordmark selector prefix %q in %q", prefix, sel)
+			}
+			if !mf(os) || !c.match(attr) {
+				continue
+			}
+			m := display.FindStringSubmatch(r.decls)
+			if m == nil {
+				continue
+			}
+			spec := 1 + c.spec
+			if spec > bestSpec || (spec == bestSpec && r.order > bestOrder) {
+				best, bestSpec, bestOrder = m[1], spec, r.order
+			}
+		}
+		return best != "none"
+	}
+	for _, attr := range []string{"", "dark", "light"} {
+		for _, os := range []string{"dark", "light"} {
+			effective := attr
+			if effective == "" {
+				effective = os
+			}
+			ash, ink := visible("wm-ash", attr, os), visible("wm-ink", attr, os)
+			if ash == ink {
+				t.Errorf("data-theme=%q os=%s: ash visible=%v ink visible=%v, want exactly one", attr, os, ash, ink)
+				continue
+			}
+			if ash != (effective == "dark") {
+				t.Errorf("data-theme=%q os=%s: shows %s, want %s wordmark", attr, os, map[bool]string{true: "ash", false: "ink"}[ash], map[bool]string{true: "ash", false: "ink"}[effective == "dark"])
+			}
+		}
 	}
 }
