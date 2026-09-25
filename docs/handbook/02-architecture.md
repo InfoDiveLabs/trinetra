@@ -842,10 +842,24 @@ logged, so one broken range cannot hold back everything newer.
 If a child keeps its identity but loses or rolls back its outbox (a restore
 from backup, or someone deleting `outbox/`), its sequence numbers restart
 below what the master has already applied, and the master would otherwise
-treat every new record as a duplicate. The master's ack reveals this (it acks
-a sequence number the child never issued), so the child logs a warning,
-turns whatever it had not yet had acknowledged into a gap for repair, and
-continues numbering after the master's sequence.
+treat every new record as a duplicate. The child detects the divergence when
+the master's ack is ahead of the child's next sequence number: it logs a
+warning, turns whatever it had not yet had acknowledged into a gap for
+repair, and continues numbering after the master's sequence.
+
+That check can only fire while the child is still numbering below the
+master's applied sequence. If the rolled-back child writes past that sequence
+before it first reaches the master (a young fleet whose applied sequence is
+still small, plus a long outage right after the restore), the ack no longer
+looks ahead, and the master silently skips the new records that reuse
+already-applied numbers. It is rare, but after restoring a child from backup
+the safe course is to leave and re-join: `serverwatch fleet leave --purge` on
+the child (without `--purge` the old identity is kept and a re-join proves
+continuity, so the master would keep the same node and sequence), then
+`serverwatch fleet join` with a new join code. The child comes back as a new
+node with a fresh sequence; revoke or remove the old node on the master
+(`leave` prints the command). The old node's replicated history stays on the
+master under its old id.
 
 ### Liveness and node-down alerts
 
