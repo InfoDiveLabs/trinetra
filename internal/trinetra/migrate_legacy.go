@@ -244,9 +244,12 @@ func planLegacyMigration(p migrationPaths, opts planOptions) (*legacyPlan, error
 			if in.d.name == "state" && opts.stateAtNewPath {
 				continue
 			}
-			return nil, fmt.Errorf("%s is empty while %s still holds data: is its volume mounted? Check /etc/fstab and `systemctl list-units --type=mount`. "+
-				"If you moved the serverwatch state volume to %s yourself, re-run with `sudo trinetra install --state-already-at-new-path`. %s",
-				in.d.old, strings.Join(oldFound, ", "), in.d.new, errMigrationRefusedF)
+			hint := ""
+			if in.d.name == "state" {
+				hint = fmt.Sprintf("If you moved the serverwatch state volume to %s yourself, re-run with `sudo trinetra install --state-already-at-new-path`. ", in.d.new)
+			}
+			return nil, fmt.Errorf("%s is empty while %s still holds data: is its volume mounted? Check /etc/fstab and `systemctl list-units --type=mount`. %s%s",
+				in.d.old, strings.Join(oldFound, ", "), hint, errMigrationRefusedF)
 		}
 	}
 	var conflicts []string
@@ -715,7 +718,11 @@ func describeMigrationState(p migrationPaths) string {
 	}
 	for _, d := range p.pairs() {
 		show(d.old, "")
-		show(d.new+stagingSuffix, "unfinished copy; the source is intact, safe to delete")
+		if stagingSafeToDelete(d) {
+			show(d.new+stagingSuffix, "unfinished copy; the source is intact, safe to delete")
+		} else {
+			show(d.new+stagingSuffix, "unfinished copy; do NOT delete it until the source is confirmed intact")
+		}
 		show(d.new, "")
 	}
 	show(p.OldUnit, "")
@@ -725,8 +732,10 @@ func describeMigrationState(p migrationPaths) string {
 	b.WriteString("To finish: fix the cause above and re-run `sudo trinetra install`; it resumes where it stopped.\n")
 	b.WriteString("To roll back by hand instead (as root):\n")
 	for _, d := range p.pairs() {
-		if lexists(d.new+stagingSuffix) && (!lexists(d.old) || checkNotAliased(d.old, d.new+stagingSuffix) == nil) {
+		if stagingSafeToDelete(d) {
 			fmt.Fprintf(&b, "  rm -rf %s\n", d.new+stagingSuffix)
+		} else if lexists(d.new + stagingSuffix) {
+			fmt.Fprintf(&b, "  # do NOT delete %s: %s is missing or shares its files, so it may hold the only copy\n", d.new+stagingSuffix, d.old)
 		}
 		ns := inspectNewDir(d.new)
 		switch {
@@ -754,6 +763,14 @@ func describeMigrationState(p migrationPaths) string {
 // copyProvablyComplete: newDir is a verified copy made from oldDir's run
 // (tokens match), is a separate tree, and holds everything oldDir holds, so
 // deleting oldDir loses nothing.
+// stagingSafeToDelete reports whether d's staging copy may be deleted by hand:
+// only while the source still exists as a separate directory, since otherwise
+// the staging copy may be the only one left.
+func stagingSafeToDelete(d dirPair) bool {
+	st := d.new + stagingSuffix
+	return lexists(st) && lexists(d.old) && checkNotAliased(d.old, st) == nil
+}
+
 func copyProvablyComplete(oldDir, newDir, newTok string) bool {
 	oldTok, _ := readMarkerToken(filepath.Join(oldDir, migratingMarker))
 	return oldTok != "" && oldTok == newTok &&

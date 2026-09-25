@@ -1320,3 +1320,49 @@ func TestMigrationPrintsVerifyProgress(t *testing.T) {
 		t.Errorf("no verify progress line:\n%s", out.String())
 	}
 }
+
+// A staging dir whose source is gone may hold the only copy: never advise
+// deleting it.
+func TestRollbackAdviceKeepsStagingWhenSourceMissing(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	mustWrite(t, filepath.Join(p.NewStateDir+stagingSuffix, "status.json"), `{"ok":true}`)
+	if err := os.RemoveAll(p.OldStateDir); err != nil {
+		t.Fatal(err)
+	}
+	text := describeMigrationState(p)
+	if strings.Contains(text, "rm -rf "+p.NewStateDir+stagingSuffix) || strings.Contains(text, "safe to delete") {
+		t.Errorf("advice deletes a staging dir whose source is missing:\n%s", text)
+	}
+	if !strings.Contains(text, "do NOT delete "+p.NewStateDir+stagingSuffix) {
+		t.Errorf("missing keep-staging advice:\n%s", text)
+	}
+
+	// With the source present and separate, deleting staging is advised.
+	q := testMigrationPaths(t)
+	makeLegacyInstall(t, q)
+	mustWrite(t, filepath.Join(q.NewStateDir+stagingSuffix, "status.json"), `{"ok":true}`)
+	if text := describeMigrationState(q); !strings.Contains(text, "rm -rf "+q.NewStateDir+stagingSuffix) {
+		t.Errorf("expected staging cleanup advice:\n%s", text)
+	}
+}
+
+// An empty legacy config dir beside a populated state dir is refused, and the
+// refusal does not suggest --state-already-at-new-path (it cannot help).
+func TestEmptyLegacyConfigDirRefusalOmitsStateFlag(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	if err := os.RemoveAll(p.OldConfigDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p.OldConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refuseNothingChanged(t, p, &fakeMigrationOps{paths: p}, "still holds data")
+	for _, flag := range []bool{false, true} {
+		_, err := runMigration(t, &fakeMigrationOps{paths: p, opts: planOptions{stateAtNewPath: flag}})
+		if err == nil || strings.Contains(err.Error(), "re-run with `sudo trinetra install --state-already-at-new-path`") {
+			t.Errorf("flag=%v: want a refusal without the state flag hint, got %v", flag, err)
+		}
+	}
+}
