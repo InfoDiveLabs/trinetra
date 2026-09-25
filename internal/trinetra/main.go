@@ -90,7 +90,7 @@ usage:
   serverwatch config get [key]
   serverwatch config set <key> <value>
   serverwatch config unset <key>
-  serverwatch install
+  serverwatch install [--force]         # --force: migrate even if systemctl cannot confirm the old serverwatch service stopped
   serverwatch uninstall [--purge]
   serverwatch daemon
   serverwatch telegram set-token <token>

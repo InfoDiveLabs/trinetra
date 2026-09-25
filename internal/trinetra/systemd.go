@@ -76,6 +76,18 @@ WantedBy=multi-user.target
 }
 
 func cmdInstall(args []string) int {
+	force := false
+	for _, a := range args {
+		switch a {
+		case "--force":
+			// Only relaxes the serverwatch migration's "is the old service
+			// really stopped?" check when systemctl cannot answer.
+			force = true
+		default:
+			fmt.Fprintf(stderr, "unknown install flag %q\nusage: install [--force]\n", a)
+			return 2
+		}
+	}
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -91,6 +103,7 @@ func cmdInstall(args []string) int {
 	install := func() error { return installBinaryAndUnit(self) }
 	var summary *migrationSummary
 	if plan != nil {
+		plan.force = force
 		fmt.Fprintln(stdout, "found a serverwatch install; migrating it to trinetra")
 		summary, err = applyLegacyMigration(plan, osMigrationOps{}, install)
 	} else {
@@ -379,6 +392,9 @@ func cmdUninstall(args []string) int {
 	// Remove the /usr/bin shortcut, but only if it is still OUR symlink into
 	// /usr/local/bin (never a distro-provided real binary).
 	unlinkOnPath("/usr/local/bin/trinetra", secondaryBinPath)
+	// The serverwatch compat links a migration left (only if still ours).
+	unlinkOnPath(legacyBinFilePath, legacyUsrBinPath)
+	unlinkOnPath("/usr/local/bin/trinetra", legacyBinFilePath)
 	// Best-effort, like the other uninstall cleanups above: a plugin the
 	// front-door can no longer verify against is safer than a stale manifest
 	// left lying around after uninstall. --purge below already removes the

@@ -18,6 +18,7 @@ import (
 type fakeMigrationOps struct {
 	paths     migrationPaths
 	exdev     bool   // primary old->new directory renames fail with EXDEV
+	ebusy     bool   // primary old->new directory renames fail with EBUSY
 	isActive  string // what `systemctl is-active serverwatch` prints
 	failStep  string // checkpoint that fails (simulated crash)
 	calls     [][]string
@@ -43,6 +44,9 @@ func (f *fakeMigrationOps) Systemctl(args ...string) (string, error) {
 func (f *fakeMigrationOps) Rename(oldpath, newpath string) error {
 	if f.exdev && (oldpath == f.paths.OldConfigDir || oldpath == f.paths.OldStateDir) {
 		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+	}
+	if f.ebusy && (oldpath == f.paths.OldConfigDir || oldpath == f.paths.OldStateDir) {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EBUSY}
 	}
 	return os.Rename(oldpath, newpath)
 }
@@ -109,6 +113,9 @@ func makeLegacyInstall(t *testing.T, p migrationPaths) {
 	if err := os.Symlink("samples/cpu.dat", filepath.Join(p.OldStateDir, "current")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink(legacyStateDirPath+"/samples/cpu.dat", filepath.Join(p.OldStateDir, "abs-link")); err != nil {
+		t.Fatal(err)
+	}
 	write(p.OldUnit, "[Service]\nExecStart=/usr/local/bin/serverwatch daemon\n", 0o644)
 	write(p.OldBin, "OLD-SERVERWATCH", 0o755)
 	write(p.OldCtl, "OLD-CTL", 0o755)
@@ -122,7 +129,7 @@ func makeLegacyInstall(t *testing.T, p migrationPaths) {
 }
 
 // snapshot records every entry under dir (relative path -> type/mode/size/
-// content or link target), skipping the in-progress marker.
+// content or link target), markers included.
 func snapshot(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -134,9 +141,6 @@ func snapshot(t *testing.T, dir string) map[string]string {
 			return err
 		}
 		rel, _ := filepath.Rel(dir, path)
-		if filepath.Base(rel) == migratingMarker {
-			return nil
-		}
 		desc := info.Mode().String()
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
@@ -160,6 +164,12 @@ func lexistsT(path string) bool { _, err := os.Lstat(path); return err == nil }
 func testMigrationPaths(t *testing.T) migrationPaths {
 	t.Helper()
 	root := t.TempDir()
+	orig := isOurLegacyBinaryFn
+	isOurLegacyBinaryFn = func(path string) bool {
+		b, err := os.ReadFile(path)
+		return err == nil && string(b) == "OLD-SERVERWATCH"
+	}
+	t.Cleanup(func() { isOurLegacyBinaryFn = orig })
 	return migrationPathsAt(root)
 }
 
@@ -180,7 +190,7 @@ func runMigration(t *testing.T, f *fakeMigrationOps) (*migrationSummary, error) 
 // snapshots of the legacy dirs taken before migrating.
 func assertMigrated(t *testing.T, p migrationPaths, wantCfg, wantState map[string]string) {
 	t.Helper()
-	for _, old := range []string{p.OldConfigDir, p.OldStateDir, p.OldUnit, p.OldCtl, p.OldWeb, p.OldUsrBin,
+	for _, old := range []string{p.OldConfigDir, p.OldStateDir, p.OldUnit, p.OldCtl, p.OldWeb,
 		p.NewConfigDir + stagingSuffix, p.NewStateDir + stagingSuffix} {
 		if lexistsT(old) {
 			t.Errorf("%s still exists after migration", old)
@@ -223,9 +233,14 @@ func assertMigrated(t *testing.T, p migrationPaths, wantCfg, wantState map[strin
 	if b, err := os.ReadFile(filepath.Join(p.NewStateDir, migratedFromServerwatchMarker)); err != nil || len(bytes.TrimSpace(b)) == 0 {
 		t.Errorf("migrated marker missing/empty: %v", err)
 	}
+	if l, err := os.Readlink(p.OldUsrBin); err != nil || l != p.OldBin {
+		t.Errorf("%s -> %q (err %v), want the compat link kept -> %s", p.OldUsrBin, l, err, p.OldBin)
+	}
 	for _, d := range []string{p.NewConfigDir, p.NewStateDir} {
-		if lexistsT(filepath.Join(d, migratingMarker)) {
-			t.Errorf("in-progress marker left in %s", d)
+		for _, m := range []string{migratingMarker, copyVerifiedMarker} {
+			if lexistsT(filepath.Join(d, m)) {
+				t.Errorf("marker %s left in %s", m, d)
+			}
 		}
 	}
 }
@@ -288,6 +303,9 @@ func TestLegacyMigrationMovesEverything(t *testing.T) {
 				if !strings.Contains(sum.String(), "copied") {
 					t.Errorf("summary does not mention the copy:\n%s", sum)
 				}
+			}
+			if !strings.Contains(sum.String(), "abs-link -> /var/lib/serverwatch/samples/cpu.dat") {
+				t.Errorf("summary does not warn about the symlink into the old path:\n%s", sum)
 			}
 			if !strings.Contains(sum.String(), p.NewStateDir) || !strings.Contains(sum.String(), "web.tls_cert") {
 				t.Errorf("summary incomplete:\n%s", sum)
@@ -407,9 +425,17 @@ func TestLegacyMigrationFinishesSourceRemoval(t *testing.T) {
 	if _, err := runMigration(t, f); err == nil {
 		t.Fatal("expected simulated crash")
 	}
-	// Recreate a partly-deleted source: marker plus one leftover file.
-	mustWrite(t, filepath.Join(p.OldStateDir, migratingMarker), "x")
-	mustWrite(t, filepath.Join(p.OldStateDir, "samples", "cpu.dat"), "stale")
+	// Recreate a partly-deleted source: its marker (same run token as the
+	// verified copy) plus one leftover file.
+	tok, err := readMarkerToken(filepath.Join(p.NewStateDir, copyVerifiedMarker))
+	if err != nil || tok == "" {
+		t.Fatalf("verified copy has no token: %v", err)
+	}
+	mustWrite(t, filepath.Join(p.OldStateDir, migratingMarker), tok+"\n")
+	mustWrite(t, filepath.Join(p.OldStateDir, "samples", "cpu.dat"), strings.Repeat("x", 70000))
+	if err := os.Chmod(filepath.Join(p.OldStateDir, "samples", "cpu.dat"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	f.failStep = ""
 	if _, err := runMigration(t, f); err != nil {
@@ -470,7 +496,12 @@ func TestLegacyMigrationCopyFailureKeepsSource(t *testing.T) {
 	if _, err := runMigration(t, f); err == nil {
 		t.Fatal("expected copy failure")
 	}
-	if got := snapshot(t, p.OldStateDir); !equalSnap(got, wantState) {
+	got := snapshot(t, p.OldStateDir)
+	if _, ok := got[migratingMarker]; !ok {
+		t.Error("source lost its in-progress marker")
+	}
+	delete(got, migratingMarker)
+	if !equalSnap(got, wantState) {
 		t.Fatal("source changed after a failed copy")
 	}
 	if lexistsT(p.NewStateDir) || lexistsT(p.NewStateDir+stagingSuffix) {
@@ -491,7 +522,7 @@ func TestCopyTreeVerifiedPreservesModesAndLinks(t *testing.T) {
 	if want := snapshot(t, src); !equalSnap(snapshot(t, dst), want) {
 		t.Fatalf("copy differs\n got %v\nwant %v", snapshot(t, dst), want)
 	}
-	if files != 6 || size != int64(len(`{"ctl":"aa"}`)+len(`{"ok":true}`)+70000+len("KEY")+len("TLSKEY")) {
+	if files != 7 || size != int64(len(`{"ctl":"aa"}`)+len(`{"ok":true}`)+70000+len("KEY")+len("TLSKEY")) {
 		t.Errorf("files=%d size=%d", files, size)
 	}
 	uid, gid := os.Getuid(), os.Getgid()
@@ -707,5 +738,340 @@ func TestCopyTreeVerifiedPreservesForeignOwnershipAsRoot(t *testing.T) {
 	}
 	if fi, _ := os.Stat(filepath.Join(dst, "sub")); fi.Mode()&os.ModeSetgid == 0 || fi.Mode().Perm() != 0o750 {
 		t.Errorf("sub mode = %v, want setgid 0750", fi.Mode())
+	}
+}
+
+// assertLegacyIntact: the legacy state dir still holds all its data (the
+// in-progress marker may have been added).
+func assertLegacyIntact(t *testing.T, p migrationPaths, want map[string]string) {
+	t.Helper()
+	got := snapshot(t, p.OldStateDir)
+	delete(got, migratingMarker)
+	if !equalSnap(got, want) {
+		t.Fatalf("legacy state dir changed\n got %v\nwant %v", got, want)
+	}
+}
+
+// Review repro A: crash at move-state, then the operator starts a manual copy
+// (cp -a) that brings the in-progress marker and one file into the new dir.
+// The re-run must refuse and delete nothing.
+func TestLegacyMigrationRefusesManualPartialCopy(t *testing.T) {
+	for _, exdev := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exdev=%v", exdev), func(t *testing.T) {
+			p := testMigrationPaths(t)
+			makeLegacyInstall(t, p)
+			wantState := snapshot(t, p.OldStateDir)
+			f := &fakeMigrationOps{paths: p, exdev: exdev, failStep: "move-state"}
+			if _, err := runMigration(t, f); err == nil {
+				t.Fatal("expected simulated crash")
+			}
+			b, _ := os.ReadFile(filepath.Join(p.OldStateDir, migratingMarker))
+			mustWrite(t, filepath.Join(p.NewStateDir, migratingMarker), string(b))
+			mustWrite(t, filepath.Join(p.NewStateDir, "status.json"), "{}")
+			root := filepath.Dir(filepath.Dir(p.OldConfigDir))
+			before := snapshot(t, root)
+
+			f.failStep = ""
+			_, err := runMigration(t, f)
+			if err == nil || !strings.Contains(err.Error(), "not a verified copy") {
+				t.Fatalf("expected refusal, got %v", err)
+			}
+			if after := snapshot(t, root); !equalSnap(before, after) {
+				t.Fatal("refused run changed the filesystem")
+			}
+			assertLegacyIntact(t, p, wantState)
+		})
+	}
+}
+
+// A forged or stale copy-verified marker whose token does not match the
+// source's marker never authorises deleting the source.
+func TestLegacyMigrationRefusesMismatchedVerifiedMarker(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	wantState := snapshot(t, p.OldStateDir)
+	f := &fakeMigrationOps{paths: p, exdev: true, failStep: "move-state"}
+	if _, err := runMigration(t, f); err == nil {
+		t.Fatal("expected simulated crash")
+	}
+	mustWrite(t, filepath.Join(p.NewStateDir, copyVerifiedMarker), "not-the-token\n")
+	mustWrite(t, filepath.Join(p.NewStateDir, "status.json"), "{}")
+	f.failStep = ""
+	if _, err := runMigration(t, f); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected token refusal, got %v", err)
+	}
+	assertLegacyIntact(t, p, wantState)
+}
+
+// A matching token is still not enough when the new dir lacks some of the
+// source's data (e.g. the operator copied the marker by hand).
+func TestLegacyMigrationRefusesIncompleteVerifiedCopy(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	wantState := snapshot(t, p.OldStateDir)
+	f := &fakeMigrationOps{paths: p, exdev: true, failStep: "move-state"}
+	if _, err := runMigration(t, f); err == nil {
+		t.Fatal("expected simulated crash")
+	}
+	tok, _ := readMarkerToken(filepath.Join(p.OldStateDir, migratingMarker))
+	mustWrite(t, filepath.Join(p.NewStateDir, copyVerifiedMarker), tok+"\n")
+	mustWrite(t, filepath.Join(p.NewStateDir, "status.json"), `{"ok":true}`)
+	f.failStep = ""
+	if _, err := runMigration(t, f); err == nil || !strings.Contains(err.Error(), "refusing to delete") {
+		t.Fatalf("expected refusal, got %v", err)
+	}
+	assertLegacyIntact(t, p, wantState)
+}
+
+// Review repro C: the new path is a symlink to the old dir, before any run
+// and after a crash. Refuse, delete nothing.
+func TestLegacyMigrationRefusesSymlinkedNewDir(t *testing.T) {
+	for _, crashFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("crashFirst=%v", crashFirst), func(t *testing.T) {
+			p := testMigrationPaths(t)
+			makeLegacyInstall(t, p)
+			wantState := snapshot(t, p.OldStateDir)
+			f := &fakeMigrationOps{paths: p, exdev: true}
+			if crashFirst {
+				f.failStep = "move-state"
+				if _, err := runMigration(t, f); err == nil {
+					t.Fatal("expected simulated crash")
+				}
+				f.failStep = ""
+			}
+			if err := os.MkdirAll(filepath.Dir(p.NewStateDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p.OldStateDir, p.NewStateDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := runMigration(t, f); err == nil {
+				t.Fatal("expected refusal for a symlinked new dir")
+			}
+			assertLegacyIntact(t, p, wantState)
+		})
+	}
+}
+
+func TestCheckNotAliased(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old")
+	mustWrite(t, filepath.Join(old, "sub", "f"), "x")
+	mustWrite(t, filepath.Join(dir, "new", "f"), "x")
+	if err := checkNotAliased(old, filepath.Join(dir, "new")); err != nil {
+		t.Fatalf("separate dirs reported as aliased: %v", err)
+	}
+	if err := os.Symlink(old, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkNotAliased(old, filepath.Join(dir, "link")); err == nil {
+		t.Error("symlink new -> old not detected")
+	}
+	if err := checkNotAliased(old, old); err == nil {
+		t.Error("same dir not detected")
+	}
+	if err := checkNotAliased(old, filepath.Join(old, "sub")); err == nil {
+		t.Error("new inside old not detected")
+	}
+	// A path that reaches old through a symlinked parent.
+	if err := checkNotAliased(old, filepath.Join(dir, "link", "sub")); err == nil {
+		t.Error("new resolving inside old through a symlinked parent not detected")
+	}
+}
+
+// IMPORTANT 2: a legacy dir that is a mount point is refused up front, before
+// the old service is touched, with "unmount it from the old path first".
+func TestLegacyMigrationRefusesMountPointUpFront(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	orig := isMountPointFn
+	isMountPointFn = func(path string) bool { return path == p.OldStateDir }
+	t.Cleanup(func() { isMountPointFn = orig })
+	root := filepath.Dir(filepath.Dir(p.OldConfigDir))
+	before := snapshot(t, root)
+
+	_, err := planLegacyMigration(p)
+	if err == nil {
+		t.Fatal("expected refusal for a mount-point legacy dir")
+	}
+	for _, want := range []string{"mount point", "unmount the volume from " + p.OldStateDir + " first", "Nothing was changed", "Do not mount"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal missing %q:\n%v", want, err)
+		}
+	}
+	if after := snapshot(t, root); !equalSnap(before, after) {
+		t.Fatal("planning changed the filesystem")
+	}
+}
+
+// Following that advice (volume now mounted at the new path, old path left
+// empty) migrates the rest and keeps the volume's data where it is.
+func TestLegacyMigrationAfterVolumeRemountedAtNewPath(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	wantState := snapshot(t, p.OldStateDir)
+	if err := os.MkdirAll(filepath.Dir(p.NewStateDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(p.OldStateDir, p.NewStateDir); err != nil { // "remount"
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p.OldStateDir, 0o755); err != nil { // empty mount point left
+		t.Fatal(err)
+	}
+	f := &fakeMigrationOps{paths: p}
+	sum, err := runMigration(t, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot(t, p.NewStateDir)
+	delete(got, migratedFromServerwatchMarker)
+	if !equalSnap(got, wantState) {
+		t.Errorf("volume data changed\n got %v\nwant %v", got, wantState)
+	}
+	if lexistsT(p.OldStateDir) || lexistsT(p.OldConfigDir) {
+		t.Error("old dirs left behind")
+	}
+	if !strings.Contains(sum.String(), "kept the existing") {
+		t.Errorf("summary lacks the kept-state note:\n%s", sum)
+	}
+}
+
+// An EBUSY rename (mount point not caught up front, e.g. a race) stops with
+// the unmount advice and deletes nothing, on every re-run.
+func TestLegacyMigrationEBUSYRerun(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	wantState := snapshot(t, p.OldStateDir)
+	f := &fakeMigrationOps{paths: p, ebusy: true}
+	for i := 0; i < 2; i++ {
+		_, err := runMigration(t, f)
+		if err == nil || !strings.Contains(err.Error(), "Unmount it from "+p.OldStateDir+" first") ||
+			strings.Contains(err.Error(), "mount it at "+p.NewStateDir+" instead, then") {
+			t.Fatalf("run %d: err = %v", i, err)
+		}
+		assertLegacyIntact(t, p, wantState)
+		if lexistsT(p.NewStateDir) {
+			t.Fatalf("run %d: new state dir created", i)
+		}
+	}
+}
+
+func TestLegacyMigrationNeedsForceWhenSystemctlCannotAnswer(t *testing.T) {
+	for _, out := range []string{"", "garbage"} {
+		p := testMigrationPaths(t)
+		makeLegacyInstall(t, p)
+		wantState := snapshot(t, p.OldStateDir)
+		f := &fakeMigrationOps{paths: p, isActive: out}
+		if out == "" {
+			f.isActive = " " // trimmed to empty
+		}
+		_, err := runMigration(t, f)
+		if err == nil || !strings.Contains(err.Error(), "--force") {
+			t.Fatalf("is-active %q: expected a --force refusal, got %v", out, err)
+		}
+		assertLegacyIntact(t, p, wantState)
+
+		plan, err := planLegacyMigration(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan.force = true
+		sum, err := applyLegacyMigration(plan, f, f.install)
+		if err != nil {
+			t.Fatalf("with force: %v", err)
+		}
+		if !strings.Contains(sum.String(), "--force") {
+			t.Errorf("summary lacks the force note:\n%s", sum)
+		}
+	}
+}
+
+// A failed install leaves the old unit and plugins in place, so the old
+// daemon stays startable (after moving the dirs back).
+func TestLegacyMigrationKeepsOldUnitUntilInstallSucceeds(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	f := &fakeMigrationOps{paths: p, failStep: "install"}
+	if _, err := runMigration(t, f); err == nil {
+		t.Fatal("expected failure")
+	}
+	for _, path := range []string{p.OldUnit, p.OldCtl, p.OldWeb} {
+		if !lexistsT(path) {
+			t.Errorf("%s removed before the new install succeeded", path)
+		}
+	}
+	if b, _ := os.ReadFile(p.OldBin); string(b) != "OLD-SERVERWATCH" {
+		t.Error("old binary replaced before the new install succeeded")
+	}
+}
+
+func TestLegacyMigrationKeepsUnrecognisedCompatTarget(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	mustWrite(t, p.OldBin, "#!/bin/sh\necho operator script\n")
+	f := &fakeMigrationOps{paths: p}
+	sum, err := runMigration(t, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(p.OldBin); !strings.Contains(string(b), "operator script") {
+		t.Error("unrecognised /usr/local/bin/serverwatch was overwritten")
+	}
+	if !strings.Contains(sum.String(), "not a serverwatch binary we recognise") {
+		t.Errorf("summary lacks the kept-binary note:\n%s", sum)
+	}
+}
+
+func TestIsOurLegacyBinary(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isOurLegacyBinary(self) {
+		t.Error("a binary built from this module is not recognised")
+	}
+	txt := filepath.Join(t.TempDir(), "serverwatch")
+	mustWrite(t, txt, "#!/bin/sh\n")
+	if isOurLegacyBinary(txt) {
+		t.Error("a shell script was recognised as ours")
+	}
+}
+
+func TestUnescapeMountinfo(t *testing.T) {
+	if got := unescapeMountinfo(`/mnt/my\040disk\011x`); got != "/mnt/my disk\tx" {
+		t.Errorf("got %q", got)
+	}
+	if got := unescapeMountinfo(`/var/lib/serverwatch`); got != "/var/lib/serverwatch" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestIsMountPointFromMountinfo(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "vol dir")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	abs, _ := filepath.EvalSymlinks(target)
+	mi := filepath.Join(dir, "mountinfo")
+	mustWrite(t, mi, "36 35 98:0 / "+strings.ReplaceAll(abs, " ", `\040`)+" rw,noatime master:1 - ext3 /dev/root rw\n")
+	orig := mountinfoPath
+	mountinfoPath = mi
+	t.Cleanup(func() { mountinfoPath = orig })
+	if !isMountPoint(target) {
+		t.Error("mount point listed in mountinfo not detected")
+	}
+	if isMountPoint(dir) {
+		t.Error("plain dir reported as a mount point")
+	}
+}
+
+func TestInstallRejectsUnknownFlag(t *testing.T) {
+	restoreGlobals(t)
+	var errb bytes.Buffer
+	stderr = &errb
+	if code := cmdInstall([]string{"--bogus"}); code != 2 || !strings.Contains(errb.String(), "--force") {
+		t.Fatalf("code=%d stderr=%q", code, errb.String())
 	}
 }
