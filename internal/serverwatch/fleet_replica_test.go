@@ -2,6 +2,7 @@ package serverwatch
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,5 +165,104 @@ func TestTSFileMetricsDecodeEncodedIDs(t *testing.T) {
 	got := strings.Join(ms, "|")
 	if got != "cpu|disk:/mnt/my disk" {
 		t.Fatalf("metrics = %q", got)
+	}
+}
+
+// TestReplicaApplyEvictsNodeOnWriteFailure proves a write failure partway
+// through a batch (record 2 of 4's raw-sample Append fails; the event and
+// alert records after it are never even attempted) does not poison the
+// in-memory ordering guard for the child's retry: after the failure is
+// cleared, resubmitting the EXACT SAME batch must apply every record
+// exactly once (no loss of what only the retry can write, no duplication of
+// what the first, partial attempt already got onto disk), and AppliedSeq
+// must advance only once the retry actually succeeds.
+func TestReplicaApplyEvictsNodeOnWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	r := newReplicaSink(root, StoreOptions{})
+
+	calls := 0
+	replicaWriteFailHook = func(op string) error {
+		if op == "append" {
+			calls++
+			if calls == 2 {
+				return errors.New("injected append failure")
+			}
+		}
+		return nil
+	}
+	defer func() { replicaWriteFailHook = nil }()
+
+	recs := baseRecs() // samples(100,cpu), samples(105,cpu+mem), event(50), alert(110)
+	if err := r.Apply(testNodeID, recs); err == nil {
+		t.Fatal("expected the injected failure to surface")
+	}
+	if seq, _ := r.AppliedSeq(testNodeID); seq != 0 {
+		t.Fatalf("applied seq after failed apply = %d, want 0 (nothing acked)", seq)
+	}
+
+	// Clear the injected failure and resubmit the identical batch, exactly
+	// as a real child would after an ingest call errors.
+	replicaWriteFailHook = nil
+	if err := r.Apply(testNodeID, recs); err != nil {
+		t.Fatalf("retry after clearing the failure: %v", err)
+	}
+	if seq, _ := r.AppliedSeq(testNodeID); seq != 4 {
+		t.Fatalf("applied seq after successful retry = %d, want 4", seq)
+	}
+
+	n, _ := r.node(testNodeID)
+	cpuPts, _ := n.store.Query("cpu", 0, 1000, ResRaw)
+	if len(cpuPts) != 2 {
+		t.Fatalf("cpu points = %+v, want exactly 2 (first attempt's point kept, no dup)", cpuPts)
+	}
+	memPts, _ := n.store.Query("mem", 0, 1000, ResRaw)
+	if len(memPts) != 1 {
+		t.Fatalf("mem points = %+v, want exactly 1 (only the retry could ever write it)", memPts)
+	}
+	evs, _ := n.store.Events(0, 1000)
+	if len(evs) != 1 {
+		t.Fatalf("events = %+v, want exactly 1", evs)
+	}
+	b, _ := os.ReadFile(filepath.Join(root, testNodeID, "alertlog.jsonl"))
+	if strings.Count(string(b), "\n") != 1 {
+		t.Fatalf("alertlog = %q, want exactly 1 line", b)
+	}
+}
+
+// TestReplicaAlertLogFailureThenRetryWritesOnce covers the alert-log write
+// specifically (a separate append-only file from the tsfile series): a
+// failed alert-log append must not leave behind a poisoned dedup guard that
+// makes the identical retry silently drop the alert as "already seen".
+func TestReplicaAlertLogFailureThenRetryWritesOnce(t *testing.T) {
+	root := t.TempDir()
+	r := newReplicaSink(root, StoreOptions{})
+
+	replicaWriteFailHook = func(op string) error {
+		if op == "alertlog" {
+			return errors.New("injected alertlog failure")
+		}
+		return nil
+	}
+	recs := []fleet.Record{alertRec(1, 110, "cpu")}
+	if err := r.Apply(testNodeID, recs); err == nil {
+		t.Fatal("expected the injected failure to surface")
+	}
+	if seq, _ := r.AppliedSeq(testNodeID); seq != 0 {
+		t.Fatalf("applied seq after failed apply = %d, want 0", seq)
+	}
+
+	replicaWriteFailHook = nil
+	if err := r.Apply(testNodeID, recs); err != nil {
+		t.Fatalf("retry after clearing the failure: %v", err)
+	}
+	if seq, _ := r.AppliedSeq(testNodeID); seq != 1 {
+		t.Fatalf("applied seq after successful retry = %d, want 1", seq)
+	}
+	b, err := os.ReadFile(filepath.Join(root, testNodeID, "alertlog.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(b), "\n") != 1 {
+		t.Fatalf("alertlog = %q, want exactly 1 line (not zero, not duplicated)", b)
 	}
 }

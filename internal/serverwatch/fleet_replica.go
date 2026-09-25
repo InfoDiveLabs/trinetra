@@ -76,6 +76,52 @@ func newReplicaSink(root string, opts StoreOptions) *replicaSink {
 	return &replicaSink{root: root, opts: opts, nodes: map[string]*replicaNode{}}
 }
 
+// evict drops id's cached *replicaNode so the next node() call reopens it
+// from disk, re-seeding every ordering guard (n.last, lastEventStart,
+// lastAlertTS/alertLines, series count) from what is actually durable.
+//
+// Apply/Backfill call this after any error from n.apply: apply may have
+// already written some of the batch's records (an earlier metric/record in
+// the loop can succeed before a later one fails) without ever reaching
+// SyncMetrics/the AppliedSeq write, so the in-memory guard state built up
+// while assuming the whole batch would succeed can be ahead of what's
+// actually on disk. Left alone, that poisoned guard would silently reject
+// the child's identical retry as duplicates and let the caller believe
+// (empty error, unchanged AppliedSeq... except the retry would then wrongly
+// look like a no-op success) records were durably applied when they were
+// never written -- permanent silent data loss. Evicting forces the retry to
+// re-derive every guard from disk via tsFileStore.LastTS/Events/Metrics/the
+// alert log's last line, so it only ever skips what is actually already
+// there.
+//
+// Safe without extra locking: the fleet master (internal/fleet/master.go,
+// Master.nodeLock) serializes Apply/Backfill/Live per node id, so at most
+// one n.apply call for this id is ever in flight; this evict always runs
+// after that call has already returned, never concurrently with it.
+func (r *replicaSink) evict(id string) {
+	r.mu.Lock()
+	delete(r.nodes, id)
+	r.mu.Unlock()
+}
+
+// replicaWriteFailHook, when non-nil, lets a test force one of
+// replicaNode.apply's durable writes to fail as if the real I/O had failed.
+// op identifies which one is about to happen ("append" raw samples,
+// "rollup" 1m AppendRollup, "event" AppendEvent, "alertlog" the alert log
+// append).
+// This is how the ordering-guard-survives-a-failed-batch tests
+// (TestReplicaApplyEvictsNodeOnWriteFailure,
+// TestReplicaAlertLogFailureThenRetryWritesOnce) inject a failure partway
+// through a batch. nil (a no-op) in production.
+var replicaWriteFailHook func(op string) error
+
+func checkReplicaWriteFail(op string) error {
+	if replicaWriteFailHook == nil {
+		return nil
+	}
+	return replicaWriteFailHook(op)
+}
+
 func (r *replicaSink) node(id string) (*replicaNode, error) {
 	if !isNodeID(id) {
 		return nil, fmt.Errorf("fleet: invalid node id %q", id)
@@ -163,38 +209,53 @@ func (r *replicaSink) AppliedSeq(id string) (uint64, error) {
 	return n.st.AppliedSeq, nil
 }
 
-// Apply implements fleet.Sink.
+// Apply implements fleet.Sink. On any error from n.apply, id's cached
+// replicaNode is evicted (see evict's doc) so the child's retry re-seeds
+// every ordering guard from disk instead of risking a poisoned in-memory
+// guard silently dropping records that were never actually written.
 func (r *replicaSink) Apply(id string, recs []fleet.Record) error {
 	n, err := r.node(id)
 	if err != nil {
 		return err
 	}
-	return n.apply(recs, true)
+	if err := n.apply(recs, true); err != nil {
+		r.evict(id)
+		return err
+	}
+	return nil
 }
 
-// Backfill implements fleet.Sink.
+// Backfill implements fleet.Sink. Same evict-on-error contract as Apply.
 func (r *replicaSink) Backfill(id string, recs []fleet.Record) error {
 	n, err := r.node(id)
 	if err != nil {
 		return err
 	}
-	return n.apply(recs, false)
+	if err := n.apply(recs, false); err != nil {
+		r.evict(id)
+		return err
+	}
+	return nil
 }
 
 // admit reports whether a point at ts may be appended to (res, metric),
-// updating the cached last ts when it may.
-func (n *replicaNode) admit(metric string, res Resolution, ts int64) bool {
+// updating the cached last ts when it may. A non-nil error means LastTS
+// itself failed (disk read error) -- the caller must abort apply with that
+// error rather than silently treating the metric as rejected, which would
+// otherwise black-hole it (a transient read error is not the same thing as
+// "already have this point").
+func (n *replicaNode) admit(metric string, res Resolution, ts int64) (bool, error) {
 	key := string(res) + "|" + metric
 	last, ok := n.last[key]
 	if !ok {
 		var err error
 		if last, err = n.store.LastTS(metric, res); err != nil {
-			return false
+			return false, err
 		}
 		if last == math.MinInt64 {
 			if n.series >= maxReplicaSeries {
 				n.st.DroppedCardinality++
-				return false
+				return false, nil
 			}
 			n.series++
 		}
@@ -202,10 +263,10 @@ func (n *replicaNode) admit(metric string, res Resolution, ts int64) bool {
 	if ts <= last {
 		n.last[key] = last
 		n.st.DroppedOld++
-		return false
+		return false, nil
 	}
 	n.last[key] = ts
-	return true
+	return true, nil
 }
 
 func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
@@ -223,8 +284,15 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 			}
 			if d.Res == "1m" {
 				for m, p := range d.Rollups {
-					if !n.admit(m, Res1m, d.TS) {
+					ok, err := n.admit(m, Res1m, d.TS)
+					if err != nil {
+						return err
+					}
+					if !ok {
 						continue
+					}
+					if err := checkReplicaWriteFail("rollup"); err != nil {
+						return err
 					}
 					if err := n.store.AppendRollup(m, Point{TS: d.TS, Min: p.Min, Avg: p.Avg, Max: p.Max}); err != nil {
 						return err
@@ -235,12 +303,19 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 			}
 			ms := MetricSet{}
 			for m, v := range d.Metrics {
-				if n.admit(m, ResRaw, d.TS) {
+				ok, err := n.admit(m, ResRaw, d.TS)
+				if err != nil {
+					return err
+				}
+				if ok {
 					ms[m] = v
 					touched[m] = true
 				}
 			}
 			if len(ms) > 0 {
+				if err := checkReplicaWriteFail("append"); err != nil {
+					return err
+				}
 				if err := n.store.Append(d.TS, ms); err != nil {
 					return err
 				}
@@ -258,6 +333,9 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 				continue
 			}
 			n.lastEventStart = e.Start
+			if err := checkReplicaWriteFail("event"); err != nil {
+				return err
+			}
 			if err := n.store.AppendEvent(DownEvent{Type: e.Type, Start: e.Start, End: e.End, DurationSec: e.DurationSec}); err != nil {
 				return err
 			}
@@ -286,6 +364,9 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 		}
 	}
 	if alerts.Len() > 0 {
+		if err := checkReplicaWriteFail("alertlog"); err != nil {
+			return err
+		}
 		if err := appendSynced(filepath.Join(n.dir, "alertlog.jsonl"), alerts.Bytes()); err != nil {
 			return err
 		}
