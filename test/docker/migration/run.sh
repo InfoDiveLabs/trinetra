@@ -13,14 +13,17 @@
 #      (/start <pin>), fleet master identity, config paths inside
 #      /etc/serverwatch, and a web users.json (a hand-written stand-in: a
 #      passkey cannot be registered from the CLI)
-#   3. the new daemon refuses to start next to the unmigrated install
-#   4. refusals: legacy paths plus trinetra data at a new path -> install
-#      refuses and changes nothing
-#   5. migration: checksums before/after, config rewrite, marker, units,
-#      binaries, compat link + deprecation notice
-#   6. trinetra.service (systemd, the unit install wrote) reads the migrated
+#   3. stop, snapshot, then serverwatch.service is started again on a test
+#      hold drop-in (ExecStart=/bin/sleep infinity): the unit is active and
+#      enabled, as on a live host, while the data stays frozen
+#   4. the new daemon refuses to start next to the unmigrated install
+#   5. refusals: legacy paths plus trinetra data at a new path -> install
+#      refuses and changes nothing (files, units, service state, binaries)
+#   6. migration of the running service: systemctl stop/disable, checksums
+#      before/after, config rewrite, marker, units, binaries, compat links
+#   7. trinetra.service (systemd, the unit install wrote) reads the migrated
 #      state: status, samples, alerts, Telegram enrolment, fleet CA, web users
-#   7. re-running install is a plain reinstall
+#   8. re-running install is a plain reinstall
 #
 # Prints "PASS <step>" / "FAIL <step>: <why>" and exits non-zero on the first
 # failure after dumping evidence. Containers are always removed on exit.
@@ -87,7 +90,9 @@ size_of() { sh_on "stat -c %s $1 2>/dev/null || echo 0" | tr -d '\r'; }
 size_above() { [ "$(size_of "$1")" -gt "$2" ]; }
 mocktg() { compose exec -T mocktg curl -s "http://localhost:8080$1"; }
 msg_count() { mocktg /_messages | jq length; }
-msg_since_has() { mocktg /_messages | jq -e --argjson n "$1" --arg s "$2" '.[$n:] | any(contains($s))' >/dev/null; }
+# stats_reply_since <n>: a message after the first n is a /stats reply (the
+# status table, which starts with the overall verdict, not a boot report).
+stats_reply_since() { mocktg /_messages | jq -e --argjson n "$1" '.[$n:] | any(contains("CPU") and contains("Mem") and (contains("back online") | not))' >/dev/null; }
 config_is() { [ "$(on "$1" config get "$2" 2>/dev/null | tr -d '\r')" = "$3" ]; }
 alert_active() { on "$1" alerts list 2>/dev/null | sed -n '/^ACTIVE/,/^HISTORY/p' | grep -q "^  $2 "; }
 web_up() { [ "$(sh_on 'curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/login')" = 200 ]; }
@@ -96,17 +101,27 @@ enroll_begin() {
   sh_on "curl -s -o /dev/null -w %{http_code} -X POST -H 'X-Forwarded-Proto: https' -H 'X-Forwarded-Host: host.example' -H 'Content-Type: application/json' -d '{\"name\":\"$1\"}' http://127.0.0.1:8088/enroll/begin"
 }
 
-# snapshot <dir> <out>: one line per regular file: sha256, mode, owner, path
-# relative to dir; symlinks by target. Sorted, so two snapshots diff cleanly.
+# snapshot <dir> <out>: one line per entry, path relative to dir: regular
+# files as sha256 + mode + owner, directories as "dir" + mode + owner,
+# symlinks by target. Sorted, so two snapshots diff cleanly.
 snapshot() {
-  sh_on "cd '$1' && find . \\( -type f -o -type l \\) | sort | while read -r f; do
-    if [ -L \"\$f\" ]; then echo \"link \$(readlink \"\$f\") \$f\"; else
-    echo \"\$(sha256sum < \"\$f\" | cut -c1-64) \$(stat -c '%a %U:%G' \"\$f\") \$f\"; fi; done > '$2'"
+  sh_on "cd '$1' && find . | sort | while read -r f; do
+    if [ -L \"\$f\" ]; then echo \"link \$(readlink \"\$f\") \$f\";
+    elif [ -d \"\$f\" ]; then echo \"dir \$(stat -c '%a %U:%G' \"\$f\") \$f\";
+    else echo \"\$(sha256sum < \"\$f\" | cut -c1-64) \$(stat -c '%a %U:%G' \"\$f\") \$f\"; fi; done > '$2'"
 }
+sha_of() { sh_on "sha256sum < $1 | cut -c1-64" | tr -d '\r'; }
+enabled_state() { on systemctl is-enabled "$1" 2>/dev/null | tr -d '\r'; }
 
 # legacy_intact: the legacy install is exactly as the snapshot taken after the
-# daemon stopped, and no trinetra install exists.
+# daemon stopped, serverwatch.service is still active and enabled, the legacy
+# binaries and links are untouched, and no trinetra install exists.
 legacy_intact() {
+  active serverwatch || fail "serverwatch.service no longer active"
+  [ "$(enabled_state serverwatch)" = enabled ] || fail "serverwatch.service no longer enabled: $(enabled_state serverwatch)"
+  sh_on 'test -e /etc/systemd/system/multi-user.target.wants/serverwatch.service' || fail "serverwatch wants link gone"
+  [ "$(sha_of /usr/local/bin/serverwatch)" = "$SW_BIN_SHA" ] || fail "/usr/local/bin/serverwatch changed"
+  [ "$(sh_on 'readlink /usr/bin/serverwatch')" = /usr/local/bin/serverwatch ] || fail "/usr/bin/serverwatch link changed"
   snapshot /var/lib/serverwatch /root/state.check
   snapshot /etc/serverwatch /root/etc.check
   sh_on 'cmp -s /root/state.before /root/state.check' || fail "/var/lib/serverwatch changed: $(sh_on 'diff /root/state.before /root/state.check')"
@@ -165,17 +180,26 @@ wait_until 30 "cpu samples growing" size_above /var/lib/serverwatch/ts/raw/cpu.t
 pass "samples, mem alert, telegram enrolled (pin $PIN), fleet master $FPR, web user alice"
 
 # ---------------------------------------------------------------------------
-step "3 stop legacy + snapshot"
+step "3 stop legacy + snapshot, then run the unit on a hold"
 on systemctl stop serverwatch
 wait_until 30 "serverwatch.service inactive" inactive serverwatch
+SW_BIN_SHA=$(sha_of /usr/local/bin/serverwatch)
+[ "$SW_BIN_SHA" = "$(sha_of /opt/legacy/serverwatch)" ] || fail "/usr/local/bin/serverwatch is not the legacy build"
 sh_on 'cp /etc/serverwatch/config.json /root/config.before.json'
 snapshot /var/lib/serverwatch /root/state.before
 snapshot /etc/serverwatch /root/etc.before
 CPU_BEFORE=$(size_of /var/lib/serverwatch/ts/raw/cpu.tsd)
 ALERTLOG_BEFORE=$(sh_on 'wc -l < /var/lib/serverwatch/alertlog.jsonl' | tr -d '\r ')
 ALERTLOG_SHA=$(sh_on 'sha256sum < /var/lib/serverwatch/alertlog.jsonl' | tr -d '\r')
-N_STATE=$(sh_on 'wc -l < /root/state.before' | tr -d '\r '); N_ETC=$(sh_on 'wc -l < /root/etc.before' | tr -d '\r ')
-pass "$N_STATE state files, $N_ETC config files, cpu.tsd $CPU_BEFORE bytes, $ALERTLOG_BEFORE alert log lines"
+N_STATE=$(sh_on 'grep -vc "^dir " /root/state.before' | tr -d '\r '); N_ETC=$(sh_on 'grep -vc "^dir " /root/etc.before' | tr -d '\r ')
+[ "$N_STATE" -gt 0 ] && [ "$N_ETC" -gt 0 ] || fail "empty snapshot: $N_STATE state files, $N_ETC config files"
+sh_on 'grep -qx "dir 700 root:root ./fleet/pki" /root/state.before' || fail "legacy fleet/pki is not 0700: $(sh_on 'grep pki /root/state.before')"
+# The unit comes back up on a no-op ExecStart: active and enabled like a live
+# install, but nothing writes the data the snapshot just recorded.
+sh_on 'mkdir -p /etc/systemd/system/serverwatch.service.d && printf "[Service]\nExecStart=\nExecStart=/bin/sleep infinity\n" > /etc/systemd/system/serverwatch.service.d/hold.conf && systemctl daemon-reload && systemctl start serverwatch'
+wait_until 30 "serverwatch.service active (hold)" active serverwatch
+[ "$(enabled_state serverwatch)" = enabled ] || fail "serverwatch.service not enabled: $(enabled_state serverwatch)"
+pass "$N_STATE state files, $N_ETC config files, cpu.tsd $CPU_BEFORE bytes, $ALERTLOG_BEFORE alert log lines; serverwatch.service active+enabled on the hold"
 
 # ---------------------------------------------------------------------------
 step "4 new daemon refuses the unmigrated install"
@@ -189,19 +213,25 @@ pass "$OUT"
 # ---------------------------------------------------------------------------
 step "5 refusal: legacy + trinetra data"
 for newp in /var/lib/trinetra/keep.txt /etc/trinetra/config.json; do
-  sh_on "mkdir -p \$(dirname $newp) && echo '{\"server\":{\"name\":\"other\"}}' > $newp"
+  newd=$(dirname "$newp")
+  case "$newd" in /var/lib/trinetra) other=/etc/trinetra ;; *) other=/var/lib/trinetra ;; esac
+  sh_on "mkdir -p $newd && echo '{\"server\":{\"name\":\"other\"}}' > $newp"
   if OUT=$(on /opt/trinetra/trinetra install 2>&1); then fail "install with $newp present succeeded: $OUT"; fi
   grep -qF 'Nothing was changed' <<<"$OUT" || fail "refusal without 'Nothing was changed': $OUT"
   grep -qF 'refusing to merge' <<<"$OUT" || fail "unexpected refusal: $OUT"
   [ "$(sh_on "cat $newp")" = '{"server":{"name":"other"}}' ] || fail "$newp changed"
+  [ "$(sh_on "cd $newd && find . -mindepth 1")" = "./$(basename "$newp")" ] || fail "$newd holds more than the planted file: $(sh_on "ls -la $newd")"
+  sh_on "! test -e $other" || fail "$other was created by the refused install"
   legacy_intact
-  sh_on "rm -rf \$(dirname $newp)"
+  sh_on "rm -rf $newd"
   echo "  $newp: refused, nothing changed"
 done
 pass
 
 # ---------------------------------------------------------------------------
-step "6 trinetra install migrates"
+step "6 trinetra install migrates the running serverwatch.service"
+active serverwatch || fail "serverwatch.service not active before install"
+[ "$(enabled_state serverwatch)" = enabled ] || fail "serverwatch.service not enabled before install"
 # Hold trinetra.service on a no-op ExecStart while the post-migration
 # checksums are taken, so a running daemon cannot touch the files between
 # install and the snapshot. Removed in step 7 before the real start.
@@ -220,7 +250,9 @@ sh_on 'grep -v " ./plugins.json$" /root/state.before > /root/sb; grep -v -e " ./
   || fail "state files differ: $(sh_on 'diff /root/sb /root/sa')"
 sh_on 'grep -v " ./config.json$" /root/etc.before > /root/eb; grep -v " ./config.json$" /root/etc.after > /root/ea; cmp -s /root/eb /root/ea' \
   || fail "config dir files differ: $(sh_on 'diff /root/eb /root/ea')"
-echo "  ok: $(( N_STATE - 1 )) state + $(( N_ETC - 1 )) config files byte-identical (sha256, mode, owner)"
+sh_on 'grep -qx "dir 700 root:root ./fleet/pki" /root/state.after' || fail "fleet/pki is not 0700 after migration"
+N_DIRS=$(sh_on 'cat /root/sa /root/ea | grep -c "^dir "' | tr -d '\r ')
+echo "  ok: $(( N_STATE - 1 )) state + $(( N_ETC - 1 )) config files byte-identical (sha256, mode, owner); $N_DIRS dirs keep mode+owner (fleet/pki 0700)"
 # config rewrite: equal to the old config with the old dir prefixes rewritten
 sh_on 'jq -S "walk(if type == \"string\" then sub(\"^/etc/serverwatch/\"; \"/etc/trinetra/\") | sub(\"^/var/lib/serverwatch/\"; \"/var/lib/trinetra/\") else . end)" /root/config.before.json > /root/cfg.want && jq -S . /etc/trinetra/config.json > /root/cfg.got && cmp -s /root/cfg.want /root/cfg.got' \
   || fail "config not rewritten as expected: $(sh_on 'diff /root/cfg.want /root/cfg.got')"
@@ -235,26 +267,42 @@ echo "  ok: marker $(sh_on 'cat /var/lib/trinetra/migrated-from-serverwatch' | t
 # units
 sh_on '! test -e /etc/systemd/system/serverwatch.service' || fail "old unit still on disk"
 [ -z "$(sh_on 'systemctl list-unit-files --no-legend serverwatch.service')" ] || fail "systemd still knows serverwatch.service"
+inactive serverwatch || fail "serverwatch.service still active after install"
+[ "$(on systemctl show -p LoadState --value serverwatch | tr -d '\r')" = not-found ] || fail "serverwatch.service still loaded: $(on systemctl show -p LoadState -p ActiveState serverwatch)"
+[ "$(enabled_state serverwatch)" != enabled ] || fail "serverwatch.service still enabled"
+sh_on '! test -e /etc/systemd/system/multi-user.target.wants/serverwatch.service' || fail "serverwatch wants link left behind"
+[ "$(sh_on 'readlink /etc/systemd/system/multi-user.target.wants/trinetra.service')" = /etc/systemd/system/trinetra.service ] || fail "trinetra wants link missing"
+# The product leaves an old drop-in dir in place (it may hold local
+# overrides) and tells the operator to carry them over by hand.
+sh_on 'test -f /etc/systemd/system/serverwatch.service.d/hold.conf' || fail "old drop-in dir was not left in place"
+grep -qF '/etc/systemd/system/serverwatch.service.d holds local overrides for the old unit; it was left in place' <<<"$OUT" || fail "no note about the old drop-in dir"
+echo "  ok: running serverwatch.service stopped, disabled (no wants link), unloaded; old drop-in dir left in place with a note"
 sh_on 'grep -qx "ExecStart=/usr/local/bin/trinetra daemon" /etc/systemd/system/trinetra.service && grep -qx "RuntimeDirectory=trinetra" /etc/systemd/system/trinetra.service' \
   || fail "trinetra.service not written as expected: $(on cat /etc/systemd/system/trinetra.service)"
 [ "$(on systemctl is-enabled trinetra | tr -d '\r')" = enabled ] || fail "trinetra.service not enabled"
 active trinetra || fail "trinetra.service not started by install"
-active serverwatch && fail "serverwatch.service still active"
-echo "  ok: serverwatch.service removed from disk and systemd; trinetra.service written, enabled, started"
+echo "  ok: trinetra.service written, enabled and started by install (running the test hold ExecStart until step 7)"
 # binaries + compat link
 sh_on 'test -x /usr/local/bin/trinetra && test -x /usr/local/bin/trinetra-ctl && test -x /usr/local/bin/trinetra-web && ! test -e /usr/local/bin/serverwatch-ctl && ! test -e /usr/local/bin/serverwatch-web' \
   || fail "plugin binaries not swapped"
 [ "$(sh_on 'readlink /usr/local/bin/serverwatch')" = /usr/local/bin/trinetra ] || fail "/usr/local/bin/serverwatch is not a compat link to trinetra"
+[ "$(sh_on 'readlink /usr/bin/serverwatch')" = /usr/local/bin/serverwatch ] || fail "/usr/bin/serverwatch is not a link to /usr/local/bin/serverwatch"
 [ "$(sh_on 'readlink /usr/bin/trinetra')" = /usr/local/bin/trinetra ] || fail "/usr/bin/trinetra link missing"
+DEP2=$(sh_on '/usr/bin/serverwatch config get server.name 2>&1 >/dev/null')
+[ "$DEP2" = "serverwatch is now trinetra; this name will be removed in the next release" ] || fail "no deprecation notice via /usr/bin/serverwatch: $DEP2"
 DEP=$(sh_on 'serverwatch config get server.name 2>&1 >/dev/null')
 [ "$DEP" = "serverwatch is now trinetra; this name will be removed in the next release" ] || fail "no deprecation notice via the compat name: $DEP"
-echo "  ok: /usr/local/bin/serverwatch -> trinetra; invoking it prints: $DEP"
-sh_on 'jq -e "has(\"ctl\") and has(\"web\")" /var/lib/trinetra/plugins.json' >/dev/null || fail "plugins.json lacks ctl/web: $(on cat /var/lib/trinetra/plugins.json)"
+echo "  ok: /usr/bin/serverwatch -> /usr/local/bin/serverwatch -> /usr/local/bin/trinetra; invoking it prints: $DEP"
+for pl in ctl web; do
+  got=$(sh_on "jq -r .$pl /var/lib/trinetra/plugins.json" | sed 's/^sha256://')
+  [ "$got" = "$(sha_of /usr/local/bin/trinetra-$pl)" ] || fail "plugins.json $pl=$got is not trinetra-$pl: $(on cat /var/lib/trinetra/plugins.json)"
+  [ "$got" != "$(sha_of /opt/legacy/serverwatch-$pl)" ] || fail "plugins.json $pl still records serverwatch-$pl"
+done
+echo "  ok: plugins.json records trinetra-ctl and trinetra-web (not serverwatch-*)"
 pass
 
 # ---------------------------------------------------------------------------
 step "7 trinetra daemon reads the migrated state"
-M0=$(msg_count)
 sh_on 'rm -r /etc/systemd/system/trinetra.service.d && systemctl daemon-reload && systemctl restart trinetra'
 wait_until 30 "trinetra.service active" active trinetra
 [ "$(on systemctl show -p ExecStart --value trinetra | sed -n 's/.*argv\[\]=\([^;]*\) ;.*/\1/p' | tr -d '\r' | sed 's/ *$//')" = "/usr/local/bin/trinetra daemon" ] \
@@ -266,9 +314,14 @@ echo "  ok: trinetra status works under systemd (unit's own ExecStart)"
 wait_until 30 "samples continue in the migrated series" size_above /var/lib/trinetra/ts/raw/cpu.tsd "$CPU_BEFORE"
 echo "  ok: cpu.tsd grew $CPU_BEFORE -> $(size_of /var/lib/trinetra/ts/raw/cpu.tsd) bytes (appended to the migrated file)"
 config_is trinetra telegram.chat_id 999 || fail "telegram.chat_id lost"
+# No boot report is expected here: the legacy daemon stopped cleanly in step
+# 3 (clean_stop marker), which suppresses "back online". So the enrolment is
+# proven by a /stats reply: taken after the daemon is up, the reply must be
+# a new message carrying the status table and not a boot report.
+M0=$(msg_count)
 mocktg /_inject?text=/stats >/dev/null
-wait_until 30 "reply to /stats on the enrolled chat" msg_since_has "$M0" CPU
-echo "  ok: enrolment kept (chat_id 999); /stats answered by trinetra"
+wait_until 30 "reply to /stats on the enrolled chat" stats_reply_since "$M0"
+echo "  ok: enrolment kept (chat_id 999); /stats answered by trinetra ($M0 -> $(msg_count) messages)"
 alert_active trinetra mem || fail "mem alert not active after migration: $(on trinetra alerts list)"
 [ "$(sh_on "head -n $ALERTLOG_BEFORE /var/lib/trinetra/alertlog.jsonl | sha256sum" | tr -d '\r')" = "$ALERTLOG_SHA" ] \
   || fail "alert log does not start with the legacy alert log"
@@ -290,6 +343,7 @@ step "8 re-run install is a normal install"
 OUT=$(on /opt/trinetra/trinetra install 2>&1) || fail "second install: $OUT"
 grep -qF 'migrating' <<<"$OUT" && fail "second install tried to migrate again: $OUT"
 wait_until 30 "trinetra.service active" active trinetra
+wait_until 30 "trinetra status after reinstall" on trinetra status
 sh_on '! test -e /etc/serverwatch && ! test -e /var/lib/serverwatch' || fail "old dirs reappeared"
 config_is trinetra telegram.chat_id 999 || fail "second install lost the enrolment"
 pass "$(head -1 <<<"$OUT")"
