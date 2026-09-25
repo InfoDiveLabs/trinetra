@@ -81,11 +81,12 @@ func cmdInstall(args []string) int {
 	for _, a := range args {
 		switch a {
 		case "--force":
-			// Only relaxes the serverwatch migration's "is the old service
-			// really stopped?" check when systemctl cannot answer.
+			// Only relaxes the serverwatch migration's "is the old daemon
+			// really stopped?" checks: systemctl cannot answer, or a
+			// serverwatch daemon runs outside serverwatch.service.
 			force = true
 		case "--state-already-at-new-path":
-			// The operator moved the trinetra state volume to the
+			// The operator moved the serverwatch state volume to the
 			// trinetra state path; adopt it instead of refusing.
 			opts.stateAtNewPath = true
 		default:

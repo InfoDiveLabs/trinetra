@@ -37,6 +37,15 @@ func Main(args []string) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
+	// Commands that write the config or state must not create the trinetra
+	// paths next to an unmigrated serverwatch install (install would then
+	// refuse to merge the two). Read-only commands are not affected.
+	if writesConfigOrState(args) {
+		if err := legacyWriteGuard(defaultMigrationPaths()); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	switch args[0] {
 	case "config":
 		return cmdConfig(args[1:])
@@ -85,13 +94,52 @@ func Main(args []string) int {
 	}
 }
 
+// writesConfigOrState reports whether args is a CLI command that writes the
+// config file or the state dir itself (not through the running daemon).
+func writesConfigOrState(args []string) bool {
+	sub := ""
+	if len(args) > 1 {
+		sub = args[1]
+	}
+	in := func(opts ...string) bool {
+		for _, o := range opts {
+			if sub == o {
+				return true
+			}
+		}
+		return false
+	}
+	switch args[0] {
+	case "config":
+		return in("set", "unset")
+	case "telegram":
+		return in("set-token")
+	case "monitor":
+		return in("enable", "disable", "threshold")
+	case "schedule", "quiet-hours", "healthchecks":
+		return sub != ""
+	case "channel":
+		return in("add", "remove", "set")
+	case "downtime":
+		return in("purge")
+	case "alerts":
+		return in("ack", "unack")
+	case "migrate":
+		return true
+	case "fleet":
+		return in("init", "join", "leave", "disable")
+	}
+	return false
+}
+
 const usage = `trinetra -- home server monitor
 usage:
   trinetra config get [key]
   trinetra config set <key> <value>
   trinetra config unset <key>
   trinetra install [--force] [--state-already-at-new-path]
-                                        # --force: migrate even if systemctl cannot confirm the old serverwatch service stopped
+                                        # --force: migrate even if systemctl cannot confirm the old serverwatch service stopped,
+                                        #          or a serverwatch daemon is running outside it
                                         # --state-already-at-new-path: adopt a serverwatch state volume you remounted at /var/lib/trinetra
   trinetra uninstall [--purge]
   trinetra daemon

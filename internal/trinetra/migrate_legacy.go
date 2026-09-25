@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -79,6 +80,9 @@ const (
 	// stagingSuffix names the sibling of a new dir that an EXDEV copy is
 	// written into before being renamed into place.
 	stagingSuffix = ".migrating"
+	// legacyPIDFileName is the pid file a serverwatch daemon writes into its
+	// state dir (pidFile() in the serverwatch releases).
+	legacyPIDFileName = "serverwatch.pid"
 )
 
 // legacyRoot prefixes every migration path; tests point it at a temp dir.
@@ -137,13 +141,17 @@ func defaultMigrationPaths() migrationPaths { return migrationPathsAt(legacyRoot
 
 // migrationOps is everything the migration does that tests must fake:
 // systemctl, the primary directory rename (to inject EXDEV/EBUSY), chown (not
-// possible to other ids without root) and a checkpoint before each step (to
-// simulate a crash there).
+// possible to other ids without root), a checkpoint before each step (to
+// simulate a crash there) and reading a process's executable (to find a
+// serverwatch daemon running outside its unit).
 type migrationOps interface {
 	Systemctl(args ...string) (string, error)
 	Rename(oldpath, newpath string) error
 	Lchown(path string, uid, gid int) error
 	Checkpoint(step string) error
+	// ProcExe returns the target of /proc/<pid>/exe; an error means no
+	// such (live, user-space) process.
+	ProcExe(pid int) (string, error)
 }
 
 type osMigrationOps struct{}
@@ -155,6 +163,9 @@ func (osMigrationOps) Systemctl(args ...string) (string, error) {
 func (osMigrationOps) Rename(o, n string) error            { return os.Rename(o, n) }
 func (osMigrationOps) Lchown(p string, uid, gid int) error { return os.Lchown(p, uid, gid) }
 func (osMigrationOps) Checkpoint(string) error             { return nil }
+func (osMigrationOps) ProcExe(pid int) (string, error) {
+	return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+}
 
 // migrationSteps, in order. Each is preceded by ops.Checkpoint(step).
 // remove-old-install comes after install so a failed install leaves the old
@@ -186,7 +197,8 @@ func (p migrationPaths) pairs() []dirPair {
 type legacyPlan struct {
 	paths    migrationPaths
 	resuming bool
-	// force proceeds when systemctl cannot confirm the old service stopped.
+	// force proceeds when systemctl cannot confirm the old service stopped,
+	// or a serverwatch daemon is still running outside it.
 	force bool
 	notes []string
 }
@@ -350,6 +362,14 @@ type newDirStatus struct {
 
 func (s newDirStatus) ours() bool { return s.kind == newDirRenamed || s.kind == newDirCopied }
 
+// inspectNewDir classifies a new (trinetra) path. A symlink is newDirSymlink,
+// except when it points at a directory carrying exactly one of our markers:
+// that is a symlinked legacy dir (e.g. /var/lib/serverwatch -> /data/sw)
+// that rename(2) moved as a link, so it is classified by its marker (link
+// set) and an interrupted run resumes. This never makes a symlink safe to
+// delete a source through: a newDirCopied still has to pass checkNotAliased,
+// which refuses symlinks, and a newDirRenamed next to a legacy dir that still
+// holds data is a conflict.
 func inspectNewDir(path string) newDirStatus {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -357,8 +377,26 @@ func inspectNewDir(path string) newDirStatus {
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
 		l, _ := os.Readlink(path)
+		if st, err := os.Stat(path); err == nil && st.IsDir() {
+			if ns := markerStatus(path); ns.ours() {
+				ns.link = l
+				return ns
+			}
+		}
 		return newDirStatus{kind: newDirSymlink, link: l}
 	}
+	if ns := markerStatus(path); ns.ours() {
+		return ns
+	}
+	if isEmptyDir(path) {
+		return newDirStatus{kind: newDirEmpty}
+	}
+	return newDirStatus{kind: newDirForeign}
+}
+
+// markerStatus classifies a directory by our markers alone: newDirCopied or
+// newDirRenamed when exactly one is present, otherwise newDirForeign.
+func markerStatus(path string) newDirStatus {
 	mig := lexists(filepath.Join(path, migratingMarker))
 	ver := lexists(filepath.Join(path, copyVerifiedMarker))
 	switch {
@@ -368,8 +406,6 @@ func inspectNewDir(path string) newDirStatus {
 	case mig && !ver:
 		tok, _ := readMarkerToken(filepath.Join(path, migratingMarker))
 		return newDirStatus{kind: newDirRenamed, token: tok}
-	case !mig && !ver && isEmptyDir(path):
-		return newDirStatus{kind: newDirEmpty}
 	}
 	return newDirStatus{kind: newDirForeign}
 }
@@ -649,6 +685,8 @@ func isOurLegacyBinary(path string) bool {
 type migrationSummary struct {
 	lines []string
 	notes []string
+	// warnings are things the operator must act on (printed prominently).
+	warnings []string
 }
 
 func (s *migrationSummary) add(format string, a ...any) {
@@ -663,6 +701,9 @@ func (s *migrationSummary) String() string {
 	}
 	for _, n := range s.notes {
 		b.WriteString("note: " + n + "\n")
+	}
+	for _, w := range s.warnings {
+		b.WriteString("WARNING: " + w + "\n")
 	}
 	return b.String()
 }
@@ -794,6 +835,23 @@ func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() err
 		}
 		return nil
 	}
+	// A serverwatch daemon running outside serverwatch.service (by hand, in
+	// tmux, in a container without systemd) is invisible to systemctl. If the
+	// unit is not running, that daemon cannot be the unit's, so refuse now,
+	// before anything (the unit included) is touched.
+	if !plan.force {
+		if pid, exe := strayLegacyDaemon(p, ops); pid != 0 {
+			out, _ := ops.Systemctl("is-active", legacyServiceName)
+			switch strings.TrimSpace(out) {
+			case "inactive", "failed", "unknown":
+				return nil, fmt.Errorf("a serverwatch daemon (pid %d, %s) is running outside %s.service; moving its state dir would leave it writing to %s and polling Telegram next to trinetra. "+
+					"Stop it (sudo kill %d) and re-run `sudo trinetra install`, or re-run with `sudo trinetra install --force` if you are sure it is not using %s; %s",
+					pid, exe, legacyServiceName, legacyStateDirPath, pid, legacyStateDirPath, errMigrationRefusedF)
+			}
+			// The unit is (or may be) running: this may be its own daemon.
+			// Stop the unit, then look again (stop-old-service).
+		}
+	}
 	moves := map[string]string{}
 	steps := []struct {
 		name string
@@ -804,7 +862,23 @@ func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() err
 			if note != "" {
 				sum.notes = append(sum.notes, note)
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			// Still alive after the unit stopped: not the unit's daemon.
+			if pid, exe := strayLegacyDaemon(p, ops); pid != 0 {
+				if plan.force {
+					sum.warnings = append(sum.warnings, fmt.Sprintf("a serverwatch daemon (pid %d, %s) was still running outside %s.service; continued because of --force. Stop it now (sudo kill %d): it may recreate %s and poll Telegram next to trinetra",
+						pid, exe, legacyServiceName, pid, legacyStateDirPath))
+					return nil
+				}
+				return fmt.Errorf("a serverwatch daemon (pid %d, %s) is still running after `systemctl stop %s`, outside %s.service. "+
+					"%s.service was stopped and disabled; nothing else was changed and no data was moved. "+
+					"Stop that process (sudo kill %d) and re-run `sudo trinetra install`, or re-run with `sudo trinetra install --force` if you are sure it is not using %s. "+
+					"To go back to serverwatch instead: sudo systemctl enable --now %s",
+					pid, exe, legacyServiceName, legacyServiceName, legacyServiceName, pid, legacyStateDirPath, legacyServiceName)
+			}
+			return nil
 		}},
 		{"mark-in-progress", func() error {
 			for _, d := range p.pairs() {
@@ -848,6 +922,18 @@ func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() err
 		}},
 		{"install", install},
 		{"remove-old-install", func() error {
+			// install copies only the plugins found next to the binary it
+			// ran from; an old plugin with no new counterpart is about to go.
+			for _, pl := range []struct{ old, name, lost string }{
+				{p.OldCtl, "ctl", "`trinetra cli` (the terminal UI) is unavailable"},
+				{p.OldWeb, "web", "the web UI is down"},
+			} {
+				newPlugin := filepath.Join(filepath.Dir(p.NewBin), "trinetra-"+pl.name)
+				if lexists(pl.old) && !lexists(newPlugin) {
+					sum.warnings = append(sum.warnings, fmt.Sprintf("%s was installed but no trinetra-%s was found next to trinetra; %s until you put trinetra-%s in the same directory as the trinetra binary and re-run `sudo trinetra install`",
+						filepath.Base(pl.old), pl.name, pl.lost, pl.name))
+				}
+			}
 			if lexists(p.OldDropIn) {
 				sum.notes = append(sum.notes, fmt.Sprintf("%s holds local overrides for the old unit; it was left in place -- copy what you need to /etc/systemd/system/trinetra.service.d/", p.OldDropIn))
 			}
@@ -1002,6 +1088,32 @@ func stopLegacyService(ops migrationOps, force bool) (string, error) {
 	}
 	return "", fmt.Errorf("could not confirm %s.service is stopped (systemctl is-active printed %q, error %v). "+
 		"Make sure no serverwatch daemon is running, then re-run with `sudo trinetra install --force`", legacyServiceName, state, err)
+}
+
+// strayLegacyDaemon returns the pid and executable of a live serverwatch
+// daemon named by a serverwatch pid file (in the old state dir, or in the new
+// one when an interrupted run already moved it), or 0. A stale pid file (no
+// such process, or a reused pid running something else) is ignored; " (deleted)"
+// covers a daemon whose binary was replaced on disk since it started.
+func strayLegacyDaemon(p migrationPaths, ops migrationOps) (int, string) {
+	for _, dir := range []string{p.OldStateDir, p.NewStateDir} {
+		b, err := os.ReadFile(filepath.Join(dir, legacyPIDFileName))
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil || pid <= 0 || pid == os.Getpid() {
+			continue
+		}
+		exe, err := ops.ProcExe(pid)
+		if err != nil {
+			continue
+		}
+		if filepath.Base(strings.TrimSuffix(exe, " (deleted)")) == legacyServiceName {
+			return pid, exe
+		}
+	}
+	return 0, ""
 }
 
 func moveOne(d dirPair, ops migrationOps, moves map[string]string) error {
@@ -1484,19 +1596,40 @@ func writeFileSync(path string, data []byte, perm fs.FileMode) error {
 
 // legacyInstallGuard stops the daemon from starting empty on a host that
 // still has only the serverwatch paths: the operator must migrate first. A
-// fresh host (neither old nor new paths) is the normal first run and passes.
+// fresh host (neither old nor new paths) is the normal first run and passes,
+// and so does one whose legacy dirs exist but are empty (for example what an
+// old `uninstall --purge` leaves), which the planner also treats as nothing
+// to migrate.
 func legacyInstallGuard(p migrationPaths) error {
+	found := legacyInstallFound(p)
+	if len(found) == 0 {
+		return nil
+	}
+	return fmt.Errorf("found a serverwatch install at %s; run `sudo trinetra install` to migrate", strings.Join(found, " and "))
+}
+
+// legacyWriteGuard is legacyInstallGuard for CLI commands that write the
+// config or state: on a legacy-only host they would create /etc/trinetra or
+// /var/lib/trinetra, which then blocks the migration ("found both").
+func legacyWriteGuard(p migrationPaths) error {
+	found := legacyInstallFound(p)
+	if len(found) == 0 {
+		return nil
+	}
+	return fmt.Errorf("found a serverwatch install at %s; run `sudo trinetra install` first to migrate it, then re-run this command. Nothing was changed", strings.Join(found, " and "))
+}
+
+// legacyInstallFound lists the legacy dirs holding something, but only while
+// no trinetra config or state exists yet.
+func legacyInstallFound(p migrationPaths) []string {
 	if lexists(cfgPath) || lexists(stateDir) {
 		return nil
 	}
 	var found []string
 	for _, d := range []string{p.OldConfigDir, p.OldStateDir} {
-		if lexists(d) {
+		if lexists(d) && !isEmptyDir(d) {
 			found = append(found, d)
 		}
 	}
-	if len(found) == 0 {
-		return nil
-	}
-	return fmt.Errorf("found a serverwatch install at %s; run `sudo trinetra install` to migrate", strings.Join(found, " and "))
+	return found
 }

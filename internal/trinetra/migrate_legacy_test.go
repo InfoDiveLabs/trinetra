@@ -25,12 +25,36 @@ type fakeMigrationOps struct {
 	calls     [][]string
 	chowns    map[string][2]int
 	installed int
+	// procs maps a pid to what /proc/<pid>/exe reads (absent: no process).
+	procs map[int]string
+	// unitPIDs are the processes serverwatch.service runs; `systemctl stop`
+	// ends them.
+	unitPIDs []int
+	// activeUntilStop: `is-active` prints "active" until `stop` was called.
+	activeUntilStop bool
+	stopped         bool
+}
+
+func (f *fakeMigrationOps) ProcExe(pid int) (string, error) {
+	if exe, ok := f.procs[pid]; ok {
+		return exe, nil
+	}
+	return "", os.ErrNotExist
 }
 
 func (f *fakeMigrationOps) Systemctl(args ...string) (string, error) {
 	f.calls = append(f.calls, args)
+	if len(args) > 0 && args[0] == "stop" {
+		f.stopped = true
+		for _, pid := range f.unitPIDs {
+			delete(f.procs, pid)
+		}
+	}
 	if len(args) > 0 && args[0] == "is-active" {
 		out := f.isActive
+		if f.activeUntilStop && !f.stopped {
+			out = "active"
+		}
 		if out == "" {
 			out = "inactive"
 		}
