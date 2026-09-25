@@ -256,6 +256,10 @@ type ShipperConfig struct {
 	LiveEvery time.Duration
 	Now       func() time.Time
 	Logf      func(format string, args ...any)
+	// OnFrame, if set, starts a stream client goroutine in Run that reads
+	// PathStream and hands every non-ping frame to OnFrame. A nil OnFrame
+	// keeps phase-1 behaviour: no stream client at all.
+	OnFrame func(Frame)
 }
 
 // Link states reported in LinkStatus.State.
@@ -324,7 +328,7 @@ func NewShipper(cfg ShipperConfig) *Shipper {
 			Transport: &http.Transport{TLSClientConfig: PinnedClientTLS(cfg.Pin, cfg.Identity.Cert), ForceAttemptHTTP2: true},
 		},
 		st:      LinkStatus{State: LinkConnecting},
-		backoff: backoffDelay,
+		backoff: defaultBackoff,
 	}
 }
 
@@ -406,6 +410,10 @@ func (s *Shipper) Run(ctx context.Context) {
 	wg.Add(2)
 	go func() { defer wg.Done(); s.liveLoop(ctx) }()
 	go func() { defer wg.Done(); s.renewLoop(ctx) }()
+	if s.cfg.OnFrame != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.streamLoop(ctx) }()
+	}
 	s.dataLoop(ctx)
 	cancel()
 	wg.Wait()
@@ -417,6 +425,120 @@ func backoffDelay(attempt int) time.Duration {
 		ceil = 60 * time.Second
 	}
 	return time.Second + time.Duration(rand.Int64N(int64(ceil)))
+}
+
+// defaultBackoff is the jittered exponential backoff every new Shipper
+// starts with (Shipper.backoff, and so streamLoop's reconnect delay too,
+// since it reuses the same field). A package-level var, so tests can shorten
+// it for every Shipper built afterward instead of overriding each instance.
+var defaultBackoff = backoffDelay
+
+// maxBackoffAttempt is the attempt count backoffDelay's cap saturates at;
+// streamLoop uses it to wait "the max backoff" against an old master that
+// has no stream endpoint at all, rather than backing off further and further
+// for a condition that will never change until the master is upgraded.
+const maxBackoffAttempt = 6
+
+// errStreamNotFound means the master has no PathStream route (an old
+// master, from before phase 2).
+var errStreamNotFound = errors.New("fleet: master has no /fleet/v1/stream endpoint (old master)")
+
+// streamLoop reconnects to PathStream, handing every frame to cfg.OnFrame,
+// until ctx is done or the node is revoked. It reuses the shipper's
+// http.Client (pinned TLS, HTTP/2) and the same backoff field the data loop
+// uses, so a test that shortens sh.backoff speeds up both.
+func (s *Shipper) streamLoop(ctx context.Context) {
+	attempt := 0
+	loggedOldMaster := false
+	for ctx.Err() == nil && !s.revoked.Load() {
+		err := s.streamOnce(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			attempt = 0
+			continue
+		}
+		if errors.Is(err, ErrRevoked) {
+			s.revoked.Store(true)
+			s.cfg.Logf("fleet: %v; stream stopped", err)
+			return
+		}
+		if errors.Is(err, errStreamNotFound) {
+			if !loggedOldMaster {
+				s.cfg.Logf("fleet: %v", err)
+				loggedOldMaster = true
+			}
+			if !sleepCtx(ctx, s.backoff(maxBackoffAttempt)) {
+				return
+			}
+			continue
+		}
+		d := s.backoff(attempt)
+		attempt++
+		if !sleepCtx(ctx, d) {
+			return
+		}
+	}
+}
+
+// streamOnce opens PathStream and reads frames until the connection ends
+// (master drop, ctx cancellation, or a revoked frame). A nil return means a
+// clean shutdown (ctx done); any other return means streamLoop should
+// reconnect (or stop, for ErrRevoked/errStreamNotFound).
+func (s *Shipper) streamOnce(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.MasterURL+PathStream, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusForbidden:
+		return ErrRevoked
+	case http.StatusNotFound:
+		return errStreamNotFound
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("fleet: stream status %d: %s", resp.StatusCode, bytes.TrimSpace(body))
+	}
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var f Frame
+		if err := dec.Decode(&f); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		switch f.Type {
+		case "ping":
+			continue
+		case "revoked":
+			return ErrRevoked
+		default:
+			s.cfg.OnFrame(f)
+		}
+	}
+}
+
+// PostRPCResult reports the result of an RPC the master pushed over the
+// stream: id is the rpc frame's id, body is the raw result to record.
+func (s *Shipper) PostRPCResult(ctx context.Context, id string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.MasterURL+PathRPC+id, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	_, err = s.do(req)
+	return err
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

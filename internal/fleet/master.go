@@ -38,11 +38,15 @@ type Sink interface {
 
 // MasterConfig wires a Master.
 type MasterConfig struct {
-	CA        *CA
-	Leaf      tls.Certificate
-	Registry  *Registry
-	Tokens    *TokenStore
-	Sink      Sink
+	CA       *CA
+	Leaf     tls.Certificate
+	Registry *Registry
+	Tokens   *TokenStore
+	Sink     Sink
+	// Hub fans lease/receipt/silence/managed-config/rpc frames out over
+	// GET PathStream and receives RPC results posted to PathRPC. A nil Hub
+	// gets a default built with Logf.
+	Hub       *Hub
 	Now       func() time.Time
 	OnContact func(nodeID string, now time.Time, u *LiveUpdate)
 	// OnSkew receives the child's send time (unix seconds) for every request
@@ -80,6 +84,9 @@ func NewMaster(cfg MasterConfig) *Master {
 	if cfg.OnSkew == nil {
 		cfg.OnSkew = func(string, time.Time, int64) {}
 	}
+	if cfg.Hub == nil {
+		cfg.Hub = NewHub(cfg.Logf)
+	}
 	m := &Master{cfg: cfg, limiter: newIPLimiter(5, time.Minute, defaultIPLimiterCap), locks: map[string]*sync.Mutex{}}
 	m.srv = &http.Server{
 		Handler:           m.Handler(),
@@ -101,6 +108,8 @@ func (m *Master) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathIngest, m.requireNode(m.handleIngest))
 	mux.HandleFunc("POST "+PathBackfill, m.requireNode(m.handleBackfill))
 	mux.HandleFunc("POST "+PathLive, m.requireNode(m.handleLive))
+	mux.HandleFunc("GET "+PathStream, m.requireNode(m.handleStream))
+	mux.HandleFunc("POST "+PathRPC+"{id}", m.requireNode(m.handleRPC))
 	return mux
 }
 

@@ -25,6 +25,8 @@ const (
 	PathIngest   = "/fleet/v1/ingest"
 	PathBackfill = "/fleet/v1/backfill"
 	PathLive     = "/fleet/v1/live"
+	PathStream   = "/fleet/v1/stream" // GET, master-to-child push
+	PathRPC      = "/fleet/v1/rpc/"   // POST /fleet/v1/rpc/{id}
 )
 
 // HeaderSentAt carries the child's send time (unix seconds) for skew tracking.
@@ -37,6 +39,14 @@ const (
 	maxDecodedBatch   = 16 << 20
 	maxDecodedRecords = 2 * MaxBatchRecords
 )
+
+// Frame is one push on the master-to-child stream (PathStream): the response
+// body is application/x-ndjson, one JSON-encoded Frame per line, flushed as
+// soon as it is written.
+type Frame struct {
+	Type string          `json:"type"` // lease|receipt|ack|unack|silences|managed_config|rpc|revoked|ping
+	Data json.RawMessage `json:"data,omitempty"`
+}
 
 // Record is one durable telemetry item. Seq is 0 for unsequenced backfill.
 type Record struct {
