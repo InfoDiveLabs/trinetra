@@ -668,6 +668,13 @@ func alertEventKind(a Alert) string {
 }
 
 func cmdDaemon(args []string) int {
+	// Never start empty next to an unmigrated serverwatch install: that would
+	// silently begin a fresh history (and a fresh Telegram enrollment) while
+	// the real data sits in the old paths. Exit non-zero so systemd shows it.
+	if err := legacyInstallGuard(defaultMigrationPaths()); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	// pidfile for SIGHUP reload
 	_ = os.MkdirAll(stateDir, 0o755)
 	_ = os.WriteFile(pidFile(), []byte(strconv.Itoa(os.Getpid())), 0o644)

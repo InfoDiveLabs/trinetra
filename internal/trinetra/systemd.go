@@ -81,10 +81,45 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// An existing serverwatch install is migrated in place first (see
+	// migrate_legacy.go); planning only looks, so a refusal changes nothing.
+	plan, err := planLegacyMigration(defaultMigrationPaths())
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	install := func() error { return installBinaryAndUnit(self) }
+	var summary *migrationSummary
+	if plan != nil {
+		fmt.Fprintln(stdout, "found a serverwatch install; migrating it to trinetra")
+		summary, err = applyLegacyMigration(plan, osMigrationOps{}, install)
+	} else {
+		err = install()
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	// Only nudge the operator to set a Telegram token on a genuinely
+	// unconfigured host. On an upgrade/reinstall where Telegram is already
+	// configured (and possibly enrolled), re-printing the set-token line
+	// wrongly implies setup is needed again (#106), so report the existing
+	// state instead.
+	fmt.Fprint(stdout, installedPluginsMessage()+" installed and started. ")
+	fmt.Fprintln(stdout, telegramInstallHint())
+	if summary != nil {
+		fmt.Fprint(stdout, summary.String())
+	}
+	return 0
+}
+
+// installBinaryAndUnit is the normal install: copy the running binary (and
+// companion plugins) into /usr/local/bin, record the plugin manifest, write
+// the unit, seed the config and (re)start trinetra.service.
+func installBinaryAndUnit(self string) error {
 	dst := "/usr/local/bin/trinetra"
 	if err := copyFile(self, dst, 0o755); err != nil {
-		fmt.Fprintf(stderr, "copy binary: %v\n", err)
-		return 1
+		return fmt.Errorf("copy binary: %w", err)
 	}
 	// Also expose the binary on /usr/bin, which is on sudo's secure_path on
 	// every common distro (unlike /usr/local/bin, absent on RHEL/CentOS 7 and
@@ -117,8 +152,7 @@ func cmdInstall(args []string) int {
 		fmt.Fprintf(stderr, "warning: could not write plugin manifest: %v\n", err)
 	}
 	if err := os.WriteFile(unitPath, []byte(renderUnit(dst)), 0o644); err != nil {
-		fmt.Fprintf(stderr, "write unit: %v\n", err)
-		return 1
+		return fmt.Errorf("write unit: %w", err)
 	}
 	// seed config if absent
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
@@ -139,18 +173,10 @@ func cmdInstall(args []string) int {
 		{"systemctl", "restart", "trinetra"},
 	} {
 		if out, err := x.Run(a[0], a[1:]...); err != nil {
-			fmt.Fprintf(stderr, "%v: %v\n%s\n", a, err, out)
-			return 1
+			return fmt.Errorf("%v: %v\n%s", a, err, out)
 		}
 	}
-	// Only nudge the operator to set a Telegram token on a genuinely
-	// unconfigured host. On an upgrade/reinstall where Telegram is already
-	// configured (and possibly enrolled), re-printing the set-token line
-	// wrongly implies setup is needed again (#106), so report the existing
-	// state instead.
-	fmt.Fprint(stdout, installedPluginsMessage()+" installed and started. ")
-	fmt.Fprintln(stdout, telegramInstallHint())
-	return 0
+	return nil
 }
 
 // telegramInstallHint returns the install success line's Telegram clause: a

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
@@ -21,10 +22,17 @@ var (
 	stateDir           = StateDir
 	stdout   io.Writer = os.Stdout
 	stderr   io.Writer = os.Stderr
+	// argv0 is the name this binary was invoked as (overridable for tests).
+	argv0 = func() string { return os.Args[0] }
 )
 
 // Main dispatches CLI subcommands and returns an exit code.
 func Main(args []string) int {
+	// Invoked through the compat symlink /usr/local/bin/serverwatch left by
+	// the migration (see migrate_legacy.go): work normally, but say so.
+	if filepath.Base(argv0()) == "serverwatch" {
+		fmt.Fprintln(stderr, "serverwatch is now trinetra; this name will be removed in the next release")
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
 		return 2
