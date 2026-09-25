@@ -85,9 +85,11 @@ func newReplicaSink(root string, opts StoreOptions) *replicaSink {
 	return &replicaSink{root: root, opts: opts, nodes: map[string]*replicaNode{}}
 }
 
-// evict drops id's cached *replicaNode so the next node() call reopens it
-// from disk, re-seeding every ordering guard (n.last, lastEventStart,
-// lastAlertTS/alertLines, series count) from what is actually durable.
+// reseed rebuilds every in-memory ordering guard of n from what is actually
+// durable on disk: the per-series last-ts cache (cleared, so it is re-read
+// from the store on demand), lastEventStart, the alert-log dedupe state, the
+// series count and the ingest counters/AppliedSeq from ingest.state. The
+// clock-skew estimate is kept (it is not an ordering guard).
 //
 // Apply/Backfill call this after any error from n.apply: apply may have
 // already written some of the batch's records (an earlier metric/record in
@@ -95,22 +97,53 @@ func newReplicaSink(root string, opts StoreOptions) *replicaSink {
 // SyncMetrics/the AppliedSeq write, so the in-memory guard state built up
 // while assuming the whole batch would succeed can be ahead of what's
 // actually on disk. Left alone, that poisoned guard would silently reject
-// the child's identical retry as duplicates and let the caller believe
-// (empty error, unchanged AppliedSeq... except the retry would then wrongly
-// look like a no-op success) records were durably applied when they were
-// never written -- permanent silent data loss. Evicting forces the retry to
-// re-derive every guard from disk via tsFileStore.LastTS/Events/Metrics/the
-// alert log's last line, so it only ever skips what is actually already
-// there.
+// the child's identical retry as duplicates -- permanent silent data loss.
 //
-// Safe without extra locking: the fleet master (internal/fleet/master.go,
-// Master.nodeLock) serializes Apply/Backfill/Live per node id, so at most
-// one n.apply call for this id is ever in flight; this evict always runs
-// after that call has already returned, never concurrently with it.
-func (r *replicaSink) evict(id string) {
-	r.mu.Lock()
-	delete(r.nodes, id)
-	r.mu.Unlock()
+// It re-seeds the SAME replicaNode (and its tsFileStore) rather than
+// dropping it from the cache: a fresh node() would open a second
+// tsFileStore on the same directory while a maintenance slice may still be
+// using the first. The fleet master serializes Apply/Backfill/Live per node
+// (Master.nodeLock), and n.mu is held here, so no apply runs concurrently.
+func (n *replicaNode) reseed() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.seedLocked()
+}
+
+// seedLocked loads n's guards and counters from disk (see reseed).
+func (n *replicaNode) seedLocked() {
+	n.last = map[string]int64{}
+	n.lastEventStart = math.MinInt64
+	if evs, err := n.store.Events(0, math.MaxInt64); err == nil {
+		for _, e := range evs {
+			if e.Start > n.lastEventStart {
+				n.lastEventStart = e.Start
+			}
+		}
+	}
+	skew := n.st.SkewSec
+	n.st = ingestState{}
+	if b, err := os.ReadFile(filepath.Join(n.dir, "ingest.state")); err == nil {
+		_ = json.Unmarshal(b, &n.st)
+	}
+	if n.skewInit {
+		n.st.SkewSec = skew
+	} else {
+		n.skewInit = n.st.SkewSec != 0
+	}
+	if ms, err := n.store.Metrics(ResRaw); err == nil {
+		n.series = len(ms)
+	}
+	n.lastAlertTS, n.alertLines = 0, map[string]bool{}
+	if line := lastLine(filepath.Join(n.dir, "alertlog.jsonl")); line != nil {
+		var h struct {
+			Time int64 `json:"time"`
+		}
+		if json.Unmarshal(line, &h) == nil {
+			n.lastAlertTS = h.Time
+			n.alertLines[string(line)] = true
+		}
+	}
 }
 
 // replicaWriteFailHook, when non-nil, lets a test force one of
@@ -148,30 +181,8 @@ func (r *replicaSink) node(id string) (*replicaNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := &replicaNode{dir: dir, store: st, last: map[string]int64{}, alertLines: map[string]bool{}, lastEventStart: math.MinInt64}
-	if evs, err := st.Events(0, math.MaxInt64); err == nil {
-		for _, e := range evs {
-			if e.Start > n.lastEventStart {
-				n.lastEventStart = e.Start
-			}
-		}
-	}
-	if b, err := os.ReadFile(filepath.Join(dir, "ingest.state")); err == nil {
-		_ = json.Unmarshal(b, &n.st)
-		n.skewInit = n.st.SkewSec != 0
-	}
-	if ms, err := st.Metrics(ResRaw); err == nil {
-		n.series = len(ms)
-	}
-	if line := lastLine(filepath.Join(dir, "alertlog.jsonl")); line != nil {
-		var h struct {
-			Time int64 `json:"time"`
-		}
-		if json.Unmarshal(line, &h) == nil {
-			n.lastAlertTS = h.Time
-			n.alertLines[string(line)] = true
-		}
-	}
+	n := &replicaNode{dir: dir, store: st}
+	n.seedLocked()
 	if b, err := os.ReadFile(filepath.Join(dir, "live.json")); err == nil {
 		var u fleet.LiveUpdate
 		if json.Unmarshal(b, &u) == nil {
@@ -219,30 +230,29 @@ func (r *replicaSink) AppliedSeq(id string) (uint64, error) {
 	return n.st.AppliedSeq, nil
 }
 
-// Apply implements fleet.Sink. On any error from n.apply, id's cached
-// replicaNode is evicted (see evict's doc) so the child's retry re-seeds
-// every ordering guard from disk instead of risking a poisoned in-memory
-// guard silently dropping records that were never actually written.
+// Apply implements fleet.Sink. On any error from n.apply the node's
+// ordering guards are re-seeded from disk (see reseed), so the child's retry
+// is judged against what was actually written.
 func (r *replicaSink) Apply(id string, recs []fleet.Record) error {
 	n, err := r.node(id)
 	if err != nil {
 		return err
 	}
 	if err := n.apply(recs, true); err != nil {
-		r.evict(id)
+		n.reseed()
 		return err
 	}
 	return nil
 }
 
-// Backfill implements fleet.Sink. Same evict-on-error contract as Apply.
+// Backfill implements fleet.Sink. Same reseed-on-error contract as Apply.
 func (r *replicaSink) Backfill(id string, recs []fleet.Record) error {
 	n, err := r.node(id)
 	if err != nil {
 		return err
 	}
 	if err := n.apply(recs, false); err != nil {
-		r.evict(id)
+		n.reseed()
 		return err
 	}
 	return nil

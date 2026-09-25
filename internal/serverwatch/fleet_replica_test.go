@@ -382,3 +382,36 @@ func TestReplicaSkewSmoothedAndPersisted(t *testing.T) {
 		t.Fatalf("after restart stats = %+v, want %+v", got, want)
 	}
 }
+
+// A failed apply re-seeds the ordering guards on the SAME replicaNode and
+// store rather than dropping it from the cache: replacing it would put a
+// second tsFileStore on the same directory while maintenance may still hold
+// the first.
+func TestReplicaFailedApplyReseedsSameNode(t *testing.T) {
+	r := newReplicaSink(t.TempDir(), StoreOptions{})
+	before, err := r.node(testNodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaWriteFailHook = func(op string) error {
+		if op == "append" {
+			return errors.New("injected append failure")
+		}
+		return nil
+	}
+	err = r.Apply(testNodeID, baseRecs())
+	replicaWriteFailHook = nil
+	if err == nil {
+		t.Fatal("expected the injected failure")
+	}
+	after, _ := r.node(testNodeID)
+	if after != before || after.store != before.store {
+		t.Fatal("failed apply replaced the cached replica node/store")
+	}
+	if err := r.Apply(testNodeID, baseRecs()); err != nil {
+		t.Fatal(err)
+	}
+	if pts, _ := after.store.Query("cpu", 0, 1000, ResRaw); len(pts) != 2 {
+		t.Fatalf("cpu points after retry = %+v", pts)
+	}
+}
