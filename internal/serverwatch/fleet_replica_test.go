@@ -415,3 +415,22 @@ func TestReplicaFailedApplyReseedsSameNode(t *testing.T) {
 		t.Fatalf("cpu points after retry = %+v", pts)
 	}
 }
+
+// Several alerts can share the newest timestamp. After a master restart the
+// dedupe set must hold all of them, not just the last line, or a re-sent
+// batch (e.g. gap repair) duplicates the others.
+func TestReplicaAlertDedupeSeedsAllLinesAtLastTimestamp(t *testing.T) {
+	root := t.TempDir()
+	recs := []fleet.Record{alertRec(1, 110, "cpu"), alertRec(2, 110, "mem"), alertRec(3, 110, "disk")}
+	if err := newReplicaSink(root, StoreOptions{}).Apply(testNodeID, recs); err != nil {
+		t.Fatal(err)
+	}
+	r2 := newReplicaSink(root, StoreOptions{}) // master restart
+	if err := r2.Backfill(testNodeID, []fleet.Record{alertRec(0, 110, "cpu"), alertRec(0, 110, "mem"), alertRec(0, 110, "disk")}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(root, testNodeID, "alertlog.jsonl"))
+	if n := strings.Count(string(b), "\n"); n != 3 {
+		t.Fatalf("alertlog has %d lines, want 3 (no duplicates):\n%s", n, b)
+	}
+}

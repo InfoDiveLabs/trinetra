@@ -134,15 +134,23 @@ func (n *replicaNode) seedLocked() {
 	if ms, err := n.store.Metrics(ResRaw); err == nil {
 		n.series = len(ms)
 	}
+	// Several alerts can share the newest timestamp; every one of them goes
+	// into the dedupe set, walking back from the end of the log.
 	n.lastAlertTS, n.alertLines = 0, map[string]bool{}
-	if line := lastLine(filepath.Join(n.dir, "alertlog.jsonl")); line != nil {
+	lines := tailLines(filepath.Join(n.dir, "alertlog.jsonl"))
+	for i := len(lines) - 1; i >= 0; i-- {
 		var h struct {
 			Time int64 `json:"time"`
 		}
-		if json.Unmarshal(line, &h) == nil {
-			n.lastAlertTS = h.Time
-			n.alertLines[string(line)] = true
+		if json.Unmarshal(lines[i], &h) != nil {
+			continue
 		}
+		if len(n.alertLines) == 0 {
+			n.lastAlertTS = h.Time
+		} else if h.Time != n.lastAlertTS {
+			break
+		}
+		n.alertLines[string(lines[i])] = true
 	}
 }
 
@@ -193,8 +201,9 @@ func (r *replicaSink) node(id string) (*replicaNode, error) {
 	return n, nil
 }
 
-// lastLine returns the last non-empty line of path (reading at most 64 KiB).
-func lastLine(path string) []byte {
+// tailLines returns the complete non-empty lines in the last 64 KiB of path,
+// oldest first.
+func tailLines(path string) [][]byte {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -212,11 +221,17 @@ func lastLine(path string) []byte {
 	if _, err := f.ReadAt(b, off); err != nil && err != io.EOF {
 		return nil
 	}
-	lines := bytes.Split(bytes.TrimRight(b, "\n"), []byte("\n"))
-	if len(lines) == 0 || len(lines[len(lines)-1]) == 0 {
-		return nil
+	lines := bytes.Split(b, []byte("\n"))
+	if off > 0 && len(lines) > 0 {
+		lines = lines[1:] // starts mid-line
 	}
-	return lines[len(lines)-1]
+	var out [][]byte
+	for _, l := range lines {
+		if len(l) > 0 {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // AppliedSeq implements fleet.Sink.
