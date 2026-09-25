@@ -10,13 +10,15 @@
 #   1. legacy install: /usr/local/bin/serverwatch(+ctl,+web), /etc/serverwatch,
 #      /var/lib/serverwatch, serverwatch.service, all via `serverwatch install`
 #   2. real state: samples, a firing alert, Telegram enrolment through the mock
-#      (/start <pin>), fleet master identity, config paths inside
+#      (/start <pin>), fleet master identity (only when the legacy build has
+#      `fleet`: v0.4.1 predates it; LEGACY_REF=v0.4.1), config paths inside
 #      /etc/serverwatch, and a web users.json (a hand-written stand-in: a
 #      passkey cannot be registered from the CLI)
 #   3. stop, snapshot, then serverwatch.service is started again on a test
 #      hold drop-in (ExecStart=/bin/sleep infinity): the unit is active and
 #      enabled, as on a live host, while the data stays frozen
-#   4. the new daemon refuses to start next to the unmigrated install
+#   4. the new daemon, and a config-writing CLI command, refuse to run next to
+#      the unmigrated install
 #   5. refusals: legacy paths plus trinetra data at a new path -> install
 #      refuses and changes nothing (files, units, service state, binaries)
 #   6. migration of the running service: systemctl stop/disable, checksums
@@ -148,7 +150,11 @@ echo "  $OUT"
 wait_until 30 "serverwatch.service active" active serverwatch
 sh_on 'test -f /etc/serverwatch/config.json && test -d /var/lib/serverwatch && test -f /etc/systemd/system/serverwatch.service && test -x /usr/local/bin/serverwatch && test -x /usr/local/bin/serverwatch-ctl && test -x /usr/local/bin/serverwatch-web && test "$(readlink /usr/bin/serverwatch)" = /usr/local/bin/serverwatch' \
   || fail "legacy install layout incomplete"
-pass "serverwatch ($LEGACY_REF) installed and running under systemd"
+# Fleet mode came after v0.4.1: only exercise it when the legacy build has it.
+HAS_FLEET=0
+LEGACY_HELP=$(on /opt/legacy/serverwatch help 2>&1 || true)
+if grep -q 'serverwatch fleet ' <<<"$LEGACY_HELP"; then HAS_FLEET=1; fi
+pass "serverwatch ($LEGACY_REF) installed and running under systemd (fleet: $([ "$HAS_FLEET" = 1 ] && echo yes || echo 'no, skipping fleet checks'))"
 
 # ---------------------------------------------------------------------------
 step "2 legacy state"
@@ -159,9 +165,12 @@ PIN=$(sed -n 's/^ *\/start \([0-9][0-9]*\).*/\1/p' <<<"$TOKOUT")
 [ -n "$PIN" ] || fail "no enrolment pin in: $TOKOUT"
 mocktg "/_inject?text=/start%20$PIN" >/dev/null
 wait_until 30 "telegram enrolment (chat_id 999)" config_is serverwatch telegram.chat_id 999
-INIT=$(on serverwatch fleet init --address host) || fail "fleet init: $INIT"
-FPR=$(sed -n 's/^ *CA fingerprint: \(sha256:[^ ]*\).*/\1/p' <<<"$INIT")
-[ -n "$FPR" ] || fail "no CA fingerprint in: $INIT"
+FPR=""
+if [ "$HAS_FLEET" = 1 ]; then
+  INIT=$(on serverwatch fleet init --address host) || fail "fleet init: $INIT"
+  FPR=$(sed -n 's/^ *CA fingerprint: \(sha256:[^ ]*\).*/\1/p' <<<"$INIT")
+  [ -n "$FPR" ] || fail "no CA fingerprint in: $INIT"
+fi
 sh_on 'mkdir -p /etc/serverwatch/tls && echo cert > /etc/serverwatch/tls/cert.pem && echo key > /etc/serverwatch/tls/key.pem && chmod 600 /etc/serverwatch/tls/key.pem'
 on serverwatch config set web.tls_cert /etc/serverwatch/tls/cert.pem >/dev/null
 on serverwatch config set web.tls_key /etc/serverwatch/tls/key.pem >/dev/null
@@ -170,14 +179,16 @@ on serverwatch config set web.enabled true >/dev/null
 # writes it); registering a real passkey needs a browser authenticator.
 sh_on 'umask 077; printf "[{\"id\":\"dXNlci1hbGljZQ\",\"name\":\"alice\",\"role\":\"admin\",\"created\":1758000000,\"credentials\":[{\"id\":\"Y3JlZC0x\",\"publicKey\":\"cHVibGljLWtleQ==\",\"signCount\":3,\"transports\":[\"internal\"]}]}]\n" > /var/lib/serverwatch/users.json'
 on systemctl restart serverwatch
-wait_until 30 "serverwatch fleet master" sh_on 'serverwatch fleet status | grep -qx "role: master"'
+if [ "$HAS_FLEET" = 1 ]; then
+  wait_until 30 "serverwatch fleet master" sh_on 'serverwatch fleet status | grep -qx "role: master"'
+fi
 wait_until 30 "serverwatch-web up" web_up
 [ "$(enroll_begin alice)" = 409 ] || fail "legacy web: existing user alice not seen"
 [ "$(enroll_begin bob)" = 403 ] || fail "legacy web: tokenless enrolment not closed"
 wait_until 60 "mem alert active" alert_active serverwatch mem
 S0=$(size_of /var/lib/serverwatch/ts/raw/cpu.tsd)
 wait_until 30 "cpu samples growing" size_above /var/lib/serverwatch/ts/raw/cpu.tsd "$S0"
-pass "samples, mem alert, telegram enrolled (pin $PIN), fleet master $FPR, web user alice"
+pass "samples, mem alert, telegram enrolled (pin $PIN), fleet master ${FPR:-(no fleet in $LEGACY_REF)}, web user alice"
 
 # ---------------------------------------------------------------------------
 step "3 stop legacy + snapshot, then run the unit on a hold"
@@ -193,7 +204,9 @@ ALERTLOG_BEFORE=$(sh_on 'wc -l < /var/lib/serverwatch/alertlog.jsonl' | tr -d '\
 ALERTLOG_SHA=$(sh_on 'sha256sum < /var/lib/serverwatch/alertlog.jsonl' | tr -d '\r')
 N_STATE=$(sh_on 'grep -vc "^dir " /root/state.before' | tr -d '\r '); N_ETC=$(sh_on 'grep -vc "^dir " /root/etc.before' | tr -d '\r ')
 [ "$N_STATE" -gt 0 ] && [ "$N_ETC" -gt 0 ] || fail "empty snapshot: $N_STATE state files, $N_ETC config files"
-sh_on 'grep -qx "dir 700 root:root ./fleet/pki" /root/state.before' || fail "legacy fleet/pki is not 0700: $(sh_on 'grep pki /root/state.before')"
+if [ "$HAS_FLEET" = 1 ]; then
+  sh_on 'grep -qx "dir 700 root:root ./fleet/pki" /root/state.before' || fail "legacy fleet/pki is not 0700: $(sh_on 'grep pki /root/state.before')"
+fi
 # The unit comes back up on a no-op ExecStart: active and enabled like a live
 # install, but nothing writes the data the snapshot just recorded.
 sh_on 'mkdir -p /etc/systemd/system/serverwatch.service.d && printf "[Service]\nExecStart=\nExecStart=/bin/sleep infinity\n" > /etc/systemd/system/serverwatch.service.d/hold.conf && systemctl daemon-reload && systemctl start serverwatch'
@@ -208,7 +221,15 @@ grep -qF 'found a serverwatch install at' <<<"$OUT" || fail "unexpected daemon r
 grep -qF 'sudo trinetra install' <<<"$OUT" || fail "refusal does not point at trinetra install: $OUT"
 sh_on '! test -e /var/lib/trinetra && ! test -e /etc/trinetra' || fail "daemon created trinetra dirs"
 legacy_intact
-pass "$OUT"
+echo "  ok: $OUT"
+# A config-writing CLI command must not create /etc/trinetra either (install
+# would then refuse to merge); it points at install instead.
+if CLI=$(on /opt/trinetra/trinetra config set server.name other 2>&1); then fail "trinetra config set ran next to the serverwatch install: $CLI"; fi
+grep -qF 'run `sudo trinetra install` first' <<<"$CLI" || fail "unexpected config set refusal: $CLI"
+sh_on '! test -e /var/lib/trinetra && ! test -e /etc/trinetra' || fail "config set created trinetra dirs"
+legacy_intact
+echo "  ok: $CLI"
+pass
 
 # ---------------------------------------------------------------------------
 step "5 refusal: legacy + trinetra data"
@@ -250,9 +271,11 @@ sh_on 'grep -v " ./plugins.json$" /root/state.before > /root/sb; grep -v -e " ./
   || fail "state files differ: $(sh_on 'diff /root/sb /root/sa')"
 sh_on 'grep -v " ./config.json$" /root/etc.before > /root/eb; grep -v " ./config.json$" /root/etc.after > /root/ea; cmp -s /root/eb /root/ea' \
   || fail "config dir files differ: $(sh_on 'diff /root/eb /root/ea')"
-sh_on 'grep -qx "dir 700 root:root ./fleet/pki" /root/state.after' || fail "fleet/pki is not 0700 after migration"
+if [ "$HAS_FLEET" = 1 ]; then
+  sh_on 'grep -qx "dir 700 root:root ./fleet/pki" /root/state.after' || fail "fleet/pki is not 0700 after migration"
+fi
 N_DIRS=$(sh_on 'cat /root/sa /root/ea | grep -c "^dir "' | tr -d '\r ')
-echo "  ok: $(( N_STATE - 1 )) state + $(( N_ETC - 1 )) config files byte-identical (sha256, mode, owner); $N_DIRS dirs keep mode+owner (fleet/pki 0700)"
+echo "  ok: $(( N_STATE - 1 )) state + $(( N_ETC - 1 )) config files byte-identical (sha256, mode, owner); $N_DIRS dirs keep mode+owner$([ "$HAS_FLEET" = 1 ] && echo ' (fleet/pki 0700)')"
 # config rewrite: equal to the old config with the old dir prefixes rewritten
 sh_on 'jq -S "walk(if type == \"string\" then sub(\"^/etc/serverwatch/\"; \"/etc/trinetra/\") | sub(\"^/var/lib/serverwatch/\"; \"/var/lib/trinetra/\") else . end)" /root/config.before.json > /root/cfg.want && jq -S . /etc/trinetra/config.json > /root/cfg.got && cmp -s /root/cfg.want /root/cfg.got' \
   || fail "config not rewritten as expected: $(sh_on 'diff /root/cfg.want /root/cfg.got')"
@@ -328,10 +351,14 @@ alert_active trinetra mem || fail "mem alert not active after migration: $(on tr
 HIST=$(on trinetra alerts list --since 24h)
 grep -q 'fire   mem ' <<<"$HIST" || fail "legacy mem fire missing from alert history: $HIST"
 echo "  ok: legacy mem alert still active, its fire event in the history"
-ST=$(on trinetra fleet status)
-grep -qx "role: master" <<<"$ST" || fail "fleet role lost: $ST"
-grep -qx "CA fingerprint: $FPR" <<<"$ST" || fail "fleet CA changed (want $FPR): $ST"
-echo "  ok: fleet master, same CA $FPR"
+if [ "$HAS_FLEET" = 1 ]; then
+  ST=$(on trinetra fleet status)
+  grep -qx "role: master" <<<"$ST" || fail "fleet role lost: $ST"
+  grep -qx "CA fingerprint: $FPR" <<<"$ST" || fail "fleet CA changed (want $FPR): $ST"
+  echo "  ok: fleet master, same CA $FPR"
+else
+  echo "  skip: fleet checks ($LEGACY_REF has no fleet mode)"
+fi
 wait_until 30 "trinetra-web up" web_up
 [ "$(enroll_begin alice)" = 409 ] || fail "trinetra-web does not see migrated user alice"
 [ "$(enroll_begin bob)" = 403 ] || fail "trinetra-web opened tokenless enrolment (users.json not read)"
