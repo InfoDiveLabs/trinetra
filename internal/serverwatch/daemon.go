@@ -787,12 +787,20 @@ func cmdDaemon(args []string) int {
 	// SIGTERM/SIGINT: write the clean-stop marker (so the NEXT boot's downtime
 	// reconstruction knows this stop was intentional, not a crash/power loss),
 	// cancel the daemon context to unwind the background goroutines, and exit.
+	// fleetStop holds the fleet runtime's stop (set once startFleet has run
+	// below). os.Exit skips deferred calls, so the term handler runs it
+	// explicitly: registry flush / shipper drain, bounded to a few seconds.
+	// For solo it is a no-op.
+	var fleetStop atomic.Pointer[func()]
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		<-term
 		_ = writeCleanStop(st.CleanStopPath(), clock.Now())
 		daemonCancel()
+		if stop := fleetStop.Load(); stop != nil {
+			(*stop)()
+		}
 		os.Exit(0)
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
@@ -900,6 +908,7 @@ func cmdDaemon(args []string) int {
 		},
 		logf: func(format string, args ...any) { fmt.Fprintf(stderr, format+"\n", args...) },
 	})
+	fleetStop.Store(&fleetRT.stop)
 	defer fleetRT.stop()
 	if fleetRT.tee != nil {
 		if sw != nil {

@@ -8,11 +8,14 @@ package serverwatch
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"serverwatch/internal/config"
@@ -52,13 +55,32 @@ func fleetInitPKI(stateDir string, hosts []string, caName string, now time.Time)
 		return err
 	}
 	caCrt, caKey := filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key")
-	ca, err := fleet.LoadCA(caCrt, caKey)
+	crtMissing, err := fileMissing(caCrt)
 	if err != nil {
+		return err
+	}
+	keyMissing, err := fileMissing(caKey)
+	if err != nil {
+		return err
+	}
+	var ca *fleet.CA
+	switch {
+	case crtMissing && keyMissing:
+		// First init: the only case a new CA (and so a new pin) is minted.
 		if ca, err = fleet.NewCA(caName, now); err != nil {
 			return err
 		}
 		if err := ca.Save(caCrt, caKey); err != nil {
 			return err
+		}
+	case crtMissing || keyMissing:
+		return fmt.Errorf("fleet CA at %s is unreadable or incomplete; refusing to replace it — fix or remove both files", dir)
+	default:
+		// Replacing an existing CA would silently rotate the pin and orphan
+		// every enrolled child, so a load failure is an error, never a
+		// reason to mint a new one.
+		if ca, err = fleet.LoadCA(caCrt, caKey); err != nil {
+			return fmt.Errorf("fleet CA at %s is unreadable or incomplete; refusing to replace it — fix or remove both files: %w", dir, err)
 		}
 	}
 	leaf, key, err := ca.IssueServer(hosts, now)
@@ -72,10 +94,26 @@ func fleetInitPKI(stateDir string, hosts []string, caName string, now time.Time)
 	return os.WriteFile(filepath.Join(dir, "server.crt"), chain, 0o644)
 }
 
+// fileMissing reports whether path does not exist; any other stat error is
+// returned.
+func fileMissing(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return false, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return true, nil
+	}
+	return false, err
+}
+
 // fleetJoinURL is the URL children dial: the first fleet.address with the
-// listener's port.
+// listener's port. It is "" when fleet.address is empty (no dialable host).
 func fleetJoinURL(cfg *config.Config) string {
 	host := strings.TrimSpace(strings.Split(cfg.Fleet.Address, ",")[0])
+	if host == "" {
+		return ""
+	}
 	_, port, err := net.SplitHostPort(cfg.FleetListen())
 	if err != nil || port == "" || port == "0" {
 		port = "9443"
@@ -98,8 +136,95 @@ func startFleet(ctx context.Context, cfg *config.Config, d fleetDeps) *fleetRunt
 			d.logf("fleet: child link failed to start, running as solo: %v", err)
 		}
 	}
+	// stop is called both by the daemon's SIGTERM handler and its deferred
+	// cleanup; only the first call does anything.
+	var once sync.Once
+	stop := rt.stop
+	rt.stop = func() { once.Do(stop) }
 	return rt
 }
+
+// waitBounded waits for done until deadline; it reports whether done closed.
+func waitBounded(done <-chan struct{}, deadline time.Time) bool {
+	t := time.NewTimer(time.Until(deadline))
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// masterLoop is the master's periodic work: pick up nodes the tracker does
+// not know yet, evaluate liveness and raise alerts, flush the registry and
+// run replica maintenance. tick is called from one goroutine only.
+type masterLoop struct {
+	reg         *fleet.Registry
+	tracker     *fleet.Tracker
+	sink        *replicaSink
+	alerter     *fleet.NodeAlerter
+	alert       func(Alert)
+	getCfg      func() *config.Config
+	logf        func(string, ...any)
+	lastFlush   time.Time
+	lastMaint   time.Time
+	maintaining chan struct{} // holds a token while a Maintain pass runs
+}
+
+func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, d fleetDeps, now time.Time) *masterLoop {
+	return &masterLoop{reg: reg, tracker: tracker, sink: sink, alerter: fleet.NewNodeAlerter(), alert: d.alert,
+		getCfg: d.getCfg, logf: d.logf, lastFlush: now, lastMaint: now, maintaining: make(chan struct{}, 1)}
+}
+
+// trackUnseen registers every registry node the tracker has never heard of
+// (joined after the master started and never made contact) as last seen at
+// its join time, so a node that enrolls and then goes silent still alerts.
+func trackUnseen(reg *fleet.Registry, tracker *fleet.Tracker, now int64) {
+	for _, n := range reg.List() {
+		if tracker.State(n.ID) != "" {
+			continue
+		}
+		seen := n.Joined
+		if seen <= 0 {
+			seen = now
+		}
+		tracker.Seen(n.ID, seen, -1)
+		if n.Revoked {
+			tracker.SetRevoked(n.ID, true)
+		}
+	}
+}
+
+func (l *masterLoop) tick(now time.Time) {
+	trackUnseen(l.reg, l.tracker, now.Unix())
+	name := func(id string) string {
+		if n, ok := l.reg.Get(id); ok {
+			return n.Name
+		}
+		return id
+	}
+	for _, in := range l.alerter.Plan(l.tracker.Evaluate(now.Unix()), now.Unix(), name) {
+		l.alert(fleetAlert(in, now.Unix()))
+	}
+	if now.Sub(l.lastFlush) >= 30*time.Second {
+		l.lastFlush = now
+		if err := l.reg.FlushIfDirty(); err != nil {
+			l.logf("fleet: registry flush: %v", err)
+		}
+	}
+	if now.Sub(l.lastMaint) >= time.Duration(l.getCfg().SampleInterval)*time.Second {
+		l.lastMaint = now
+		select {
+		case l.maintaining <- struct{}{}:
+			go func() { defer func() { <-l.maintaining }(); l.sink.Maintain(time.Now().Unix()) }()
+		default: // previous pass still running
+		}
+	}
+}
+
+// drain blocks until any in-flight Maintain pass has finished.
+func (l *masterLoop) drain() { l.maintaining <- struct{}{} }
 
 func fleetAlert(in fleet.AlertIntent, now int64) Alert {
 	kind := "fire"
@@ -162,52 +287,38 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	}()
 
 	rt.provider.role = config.RoleMaster
+	if fleetJoinURL(cfg) == "" {
+		d.logf("fleet: WARNING fleet.address is empty; children cannot be given a join URL and token creation is refused. Run `serverwatch fleet init --address ...`")
+	}
 	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker,
 		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 
+	loop := newMasterLoop(reg, tracker, sink, d, time.Now())
 	loopCtx, cancel := context.WithCancel(ctx)
+	loopDone := make(chan struct{})
 	go func() {
-		alerter := fleet.NewNodeAlerter()
+		defer close(loopDone)
+		defer loop.drain() // wait out an in-flight Maintain pass
 		tick := time.NewTicker(5 * time.Second)
 		defer tick.Stop()
-		lastFlush, lastMaint := time.Now(), time.Now()
-		maintaining := make(chan struct{}, 1)
-		name := func(id string) string {
-			if n, ok := reg.Get(id); ok {
-				return n.Name
-			}
-			return id
-		}
 		for {
 			select {
 			case <-loopCtx.Done():
 				return
 			case now := <-tick.C:
-				for _, in := range alerter.Plan(tracker.Evaluate(now.Unix()), now.Unix(), name) {
-					d.alert(fleetAlert(in, now.Unix()))
-				}
-				if now.Sub(lastFlush) >= 30*time.Second {
-					lastFlush = now
-					if err := reg.FlushIfDirty(); err != nil {
-						d.logf("fleet: registry flush: %v", err)
-					}
-				}
-				if now.Sub(lastMaint) >= time.Duration(d.getCfg().SampleInterval)*time.Second {
-					lastMaint = now
-					select {
-					case maintaining <- struct{}{}:
-						go func() { defer func() { <-maintaining }(); sink.Maintain(time.Now().Unix()) }()
-					default: // previous pass still running
-					}
-				}
+				loop.tick(now)
 			}
 		}
 	}()
 	rt.stop = func() {
 		cancel()
-		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		deadline := time.Now().Add(5 * time.Second)
+		sctx, scancel := context.WithDeadline(context.Background(), deadline)
 		defer scancel()
 		_ = m.Shutdown(sctx)
+		if !waitBounded(loopDone, deadline) {
+			d.logf("fleet: master loop did not stop within 5s")
+		}
 		_ = reg.FlushIfDirty()
 	}
 	d.logf("fleet: master listening on %s (join URL %s)", ln.Addr(), fleetJoinURL(cfg))
@@ -260,10 +371,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		cancel()
 		// Let the shipper finish its in-flight request before the outbox
 		// closes under it (bounded, so a hung dial cannot stall shutdown).
-		select {
-		case <-shipDone:
-		case <-time.After(5 * time.Second):
-		}
+		waitBounded(shipDone, time.Now().Add(5*time.Second))
 		_ = ob.Close()
 	}
 	d.logf("fleet: child %s shipping to %s", id.NodeID(), cfg.Fleet.MasterURL)

@@ -163,6 +163,11 @@ func (f fleetAPIImpl) RevokeNode(id string) error {
 	if err := m.reg.Update(id, func(n *fleet.Node) error { n.Revoked = true; return nil }); err != nil {
 		return err
 	}
+	if m.tracker.State(id) == "" {
+		// Never tracked (no contact since master start): register it so the
+		// revocation sticks instead of being a no-op.
+		m.tracker.Seen(id, time.Now().Unix(), -1)
+	}
 	m.tracker.SetRevoked(id, true)
 	return nil
 }
@@ -187,6 +192,9 @@ func (f fleetAPIImpl) CreateToken(spec core.TokenSpec) (core.CreatedToken, error
 	m, err := f.requireMaster()
 	if err != nil {
 		return core.CreatedToken{}, err
+	}
+	if m.joinURL == "" {
+		return core.CreatedToken{}, fmt.Errorf("fleet.address is empty; run `serverwatch fleet init --address ...`")
 	}
 	ttl := time.Duration(spec.TTLSeconds) * time.Second
 	if ttl <= 0 {
