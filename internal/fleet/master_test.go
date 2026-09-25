@@ -2,10 +2,12 @@ package fleet
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -285,5 +287,227 @@ func TestRejoinWithPrevKeyKeepsNodeID(t *testing.T) {
 	}
 	if len(f.reg.List()) != 1 {
 		t.Fatalf("registry has %d nodes, want 1", len(f.reg.List()))
+	}
+}
+
+func TestRejoinWithWrongSigGetsNewNodeID(t *testing.T) {
+	f := newMasterFixture(t)
+	plain, _, _ := f.toks.Create(time.Hour, 2, nil, "t", time.Now())
+	_, csr1, _ := NewKeyAndCSR("c")
+	b1, _ := json.Marshal(JoinRequest{Token: plain, CSR: string(csr1), Name: "db"})
+	resp, err := clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(b1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jr1 JoinResponse
+	json.NewDecoder(resp.Body).Decode(&jr1)
+	resp.Body.Close()
+	origBefore, _ := f.reg.Get(jr1.NodeID)
+
+	otherKey, _, err := NewKeyAndCSR("other") // unrelated key, not jr1's
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, csr2, _ := NewKeyAndCSR("c")
+	sig, err := SignPrevKey(otherKey, csr2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := json.Marshal(JoinRequest{Token: plain, CSR: string(csr2), Name: "db2", PrevNodeID: jr1.NodeID, PrevSig: sig})
+	resp, err = clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(b2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jr2 JoinResponse
+	json.NewDecoder(resp.Body).Decode(&jr2)
+	resp.Body.Close()
+
+	if jr2.NodeID == jr1.NodeID {
+		t.Fatal("wrong PrevSig must not rebind to the original node id")
+	}
+	origAfter, _ := f.reg.Get(jr1.NodeID)
+	if origAfter.PubKey != origBefore.PubKey || origAfter.CertSerial != origBefore.CertSerial {
+		t.Fatalf("original node was mutated: before=%+v after=%+v", origBefore, origAfter)
+	}
+	if len(f.reg.List()) != 2 {
+		t.Fatalf("registry has %d nodes, want 2", len(f.reg.List()))
+	}
+}
+
+func TestRejoinToRevokedNodeGetsNewNodeID(t *testing.T) {
+	f := newMasterFixture(t)
+	plain, _, _ := f.toks.Create(time.Hour, 2, nil, "t", time.Now())
+	oldKey, csr1, _ := NewKeyAndCSR("c")
+	b1, _ := json.Marshal(JoinRequest{Token: plain, CSR: string(csr1), Name: "db"})
+	resp, err := clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(b1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jr1 JoinResponse
+	json.NewDecoder(resp.Body).Decode(&jr1)
+	resp.Body.Close()
+
+	if err := f.reg.Update(jr1.NodeID, func(n *Node) error { n.Revoked = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	_, csr2, _ := NewKeyAndCSR("c")
+	sig, err := SignPrevKey(oldKey, csr2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := json.Marshal(JoinRequest{Token: plain, CSR: string(csr2), Name: "db2", PrevNodeID: jr1.NodeID, PrevSig: sig})
+	resp, err = clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(b2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jr2 JoinResponse
+	json.NewDecoder(resp.Body).Decode(&jr2)
+	resp.Body.Close()
+
+	if jr2.NodeID == jr1.NodeID {
+		t.Fatal("rejoin to a revoked node must not rebind")
+	}
+	orig, ok := f.reg.Get(jr1.NodeID)
+	if !ok || !orig.Revoked {
+		t.Fatalf("original node should remain revoked: %+v ok=%v", orig, ok)
+	}
+}
+
+func TestRejoinWithUnknownPrevNodeIDGetsNewNodeID(t *testing.T) {
+	f := newMasterFixture(t)
+	plain, _, _ := f.toks.Create(time.Hour, 1, nil, "t", time.Now())
+	_, csr, _ := NewKeyAndCSR("c")
+	body, _ := json.Marshal(JoinRequest{
+		Token: plain, CSR: string(csr), Name: "x",
+		PrevNodeID: "deadbeefdeadbeefdeadbeefdeadbeef", PrevSig: "bm90LWEtcmVhbC1zaWc=",
+	})
+	resp, err := clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("join status %d: %s", resp.StatusCode, b)
+	}
+	var jr JoinResponse
+	json.NewDecoder(resp.Body).Decode(&jr)
+	if jr.NodeID == "deadbeefdeadbeefdeadbeefdeadbeef" {
+		t.Fatal("unknown PrevNodeID must not be honored")
+	}
+	if len(f.reg.List()) != 1 {
+		t.Fatalf("registry has %d nodes, want 1", len(f.reg.List()))
+	}
+}
+
+func TestJoinWithGarbageCSRDoesNotSpendToken(t *testing.T) {
+	f := newMasterFixture(t)
+	plain, _, err := f.toks.Create(time.Hour, 1, nil, "t", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(JoinRequest{Token: plain, CSR: "not a csr", Name: "x"})
+	resp, err := clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("garbage CSR status %d, want 400", resp.StatusCode)
+	}
+
+	// The token must still be usable: a bad CSR must not have consumed it.
+	_, csr, _ := NewKeyAndCSR("c")
+	body, _ = json.Marshal(JoinRequest{Token: plain, CSR: string(csr), Name: "x"})
+	resp, err = clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("valid join after bad CSR status %d: %s", resp.StatusCode, b)
+	}
+}
+
+func TestServeAndShutdown(t *testing.T) {
+	ca, leaf := newTestPKI(t)
+	dir := t.TempDir()
+	reg, err := OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks, err := OpenTokens(filepath.Join(dir, "tokens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewMaster(MasterConfig{CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: newFakeSink()})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- m.Serve(ln) }()
+
+	url := fmt.Sprintf("https://%s%s", ln.Addr().String(), PathJoin)
+	body, _ := json.Marshal(JoinRequest{Token: "swt_bad", CSR: "x"})
+	resp, err := clientFor(t, SPKIPin(ca.Cert), nil).Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request through Serve failed: %v", err)
+	}
+	resp.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("Serve returned %v, want nil", err)
+	}
+}
+
+func TestShutdownBeforeServeIsSafe(t *testing.T) {
+	ca, leaf := newTestPKI(t)
+	dir := t.TempDir()
+	reg, _ := OpenRegistry(filepath.Join(dir, "registry.json"))
+	toks, _ := OpenTokens(filepath.Join(dir, "tokens.json"))
+	m := NewMaster(MasterConfig{CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: newFakeSink()})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := m.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown before Serve: %v", err)
+	}
+}
+
+func TestIPLimiterBoundsMapSize(t *testing.T) {
+	l := newIPLimiter(5, time.Minute, 3)
+	base := time.Now()
+
+	for _, ip := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"} {
+		if !l.allow(ip, base) {
+			t.Fatalf("first hit from %s should be allowed (map under cap)", ip)
+		}
+	}
+	if l.allow("4.4.4.4", base) {
+		t.Fatal("4th distinct active IP should be refused once the map is at cap")
+	}
+
+	// Existing tracked IPs keep their normal per-IP quota even while the
+	// map is at cap and new IPs are being refused.
+	for i := 0; i < 3; i++ {
+		if !l.allow("1.1.1.1", base.Add(time.Duration(i+1)*time.Second)) {
+			t.Fatalf("tracked IP should still get its quota (attempt %d)", i)
+		}
+	}
+
+	// Once the old entries fall outside the window, a new IP is admitted.
+	later := base.Add(2 * time.Minute)
+	if !l.allow("5.5.5.5", later) {
+		t.Fatal("new IP should be admitted once stale entries are swept")
 	}
 }

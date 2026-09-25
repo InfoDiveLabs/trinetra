@@ -56,7 +56,11 @@ type Master struct {
 	srv     *http.Server
 }
 
-// NewMaster builds a Master; nil Now/OnContact/Logf get safe defaults.
+// NewMaster builds a Master; nil Now/OnContact/Logf get safe defaults. The
+// *http.Server is built here and never reassigned, so Serve and Shutdown
+// only ever read/call a field set once before any goroutine starts -- no
+// lock or nil check is needed at the call sites, and Shutdown is safe to
+// call even if Serve is never called (or hasn't been called yet).
 func NewMaster(cfg MasterConfig) *Master {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -67,7 +71,17 @@ func NewMaster(cfg MasterConfig) *Master {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	return &Master{cfg: cfg, limiter: newIPLimiter(5, time.Minute), locks: map[string]*sync.Mutex{}}
+	m := &Master{cfg: cfg, limiter: newIPLimiter(5, time.Minute, defaultIPLimiterCap), locks: map[string]*sync.Mutex{}}
+	m.srv = &http.Server{
+		Handler:           m.Handler(),
+		TLSConfig:         ServerTLS(cfg.Leaf, cfg.CA.Cert),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+	return m
 }
 
 // Handler returns the fleet HTTP routes.
@@ -81,17 +95,9 @@ func (m *Master) Handler() http.Handler {
 	return mux
 }
 
-// Serve serves TLS on ln until Shutdown.
+// Serve serves TLS on ln until Shutdown. The server was already built by
+// NewMaster, so this only starts it -- Serve does not mutate m.
 func (m *Master) Serve(ln net.Listener) error {
-	m.srv = &http.Server{
-		Handler:           m.Handler(),
-		TLSConfig:         ServerTLS(m.cfg.Leaf, m.cfg.CA.Cert),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    16 << 10,
-	}
 	err := m.srv.ServeTLS(ln, "", "")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -99,11 +105,10 @@ func (m *Master) Serve(ln net.Listener) error {
 	return err
 }
 
-// Shutdown stops Serve gracefully.
+// Shutdown stops Serve gracefully. Safe to call even if Serve was never
+// called or hasn't been called yet: http.Server.Shutdown on a server with no
+// active listeners or connections returns immediately.
 func (m *Master) Shutdown(ctx context.Context) error {
-	if m.srv == nil {
-		return nil
-	}
 	return m.srv.Shutdown(ctx)
 }
 
@@ -205,6 +210,12 @@ func (m *Master) handleJoin(w http.ResponseWriter, r *http.Request) {
 	var req JoinRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// Validate the CSR before spending the single-use token: a malformed
+	// CSR must not burn a token the child can still retry with.
+	if err := CheckCSR([]byte(req.CSR)); err != nil {
+		http.Error(w, "bad csr", http.StatusBadRequest)
 		return
 	}
 	tok, err := m.cfg.Tokens.Consume(req.Token, now)
@@ -366,39 +377,59 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
-// ipLimiter allows n events per window per IP.
+// defaultIPLimiterCap bounds the number of distinct source IPs an ipLimiter
+// tracks at once, so a spray of join attempts from many different IPs cannot
+// grow its map without bound.
+const defaultIPLimiterCap = 10000
+
+// ipLimiter allows n events per window per IP, tracking at most cap distinct
+// IPs at a time.
 type ipLimiter struct {
 	mu     sync.Mutex
 	n      int
 	window time.Duration
+	cap    int
 	hits   map[string][]time.Time
 }
 
-func newIPLimiter(n int, window time.Duration) *ipLimiter {
-	return &ipLimiter{n: n, window: window, hits: map[string][]time.Time{}}
+func newIPLimiter(n int, window time.Duration, cap int) *ipLimiter {
+	return &ipLimiter{n: n, window: window, cap: cap, hits: map[string][]time.Time{}}
 }
 
 func (l *ipLimiter) allow(ip string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cut := now.Add(-l.window)
-	h := l.hits[ip][:0]
-	for _, t := range l.hits[ip] {
-		if t.After(cut) {
-			h = append(h, t)
+
+	if hits, tracked := l.hits[ip]; tracked {
+		fresh := hits[:0]
+		for _, t := range hits {
+			if t.After(cut) {
+				fresh = append(fresh, t)
+			}
 		}
+		if len(fresh) >= l.n {
+			l.hits[ip] = fresh
+			return false
+		}
+		l.hits[ip] = append(fresh, now)
+		return true
 	}
-	if len(h) >= l.n {
-		l.hits[ip] = h
-		return false
-	}
-	l.hits[ip] = append(h, now)
-	if len(l.hits) > 10000 { // bound memory under a spray of source IPs
+
+	// A new IP. Bound the map: sweep out IPs whose most recent hit is
+	// stale, and only if the map is still at/over cap after sweeping do we
+	// refuse -- fail closed rather than let it grow unbounded under a
+	// sustained spray of distinct active IPs.
+	if len(l.hits) >= l.cap {
 		for k, v := range l.hits {
 			if len(v) == 0 || !v[len(v)-1].After(cut) {
 				delete(l.hits, k)
 			}
 		}
+		if len(l.hits) >= l.cap {
+			return false
+		}
 	}
+	l.hits[ip] = []time.Time{now}
 	return true
 }

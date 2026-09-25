@@ -172,23 +172,44 @@ func (ca *CA) IssueServer(hosts []string, now time.Time) (certPEM, keyPEM []byte
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), kp, nil
 }
 
+// parseCSR decodes and fully validates csrPEM: well-formed PEM, a parseable
+// CSR, a self-signature that checks out, and an ECDSA key. It is the single
+// place that validation lives; both CheckCSR and SignClient call it so a
+// caller can validate a CSR before spending anything (e.g. a join token) and
+// SignClient never has to re-check what its caller already checked.
+func parseCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
+	blk, _ := pem.Decode(csrPEM)
+	if blk == nil || blk.Type != "CERTIFICATE REQUEST" {
+		return nil, errors.New("fleet: no CERTIFICATE REQUEST PEM block")
+	}
+	csr, err := x509.ParseCertificateRequest(blk.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("fleet: csr signature: %w", err)
+	}
+	if _, ok := csr.PublicKey.(*ecdsa.PublicKey); !ok {
+		return nil, errors.New("fleet: csr key must be ECDSA")
+	}
+	return csr, nil
+}
+
+// CheckCSR validates csrPEM (PEM, parse, signature, ECDSA key) without
+// issuing anything. Callers that must not spend a resource (like a
+// single-use join token) on a malformed CSR call this first.
+func CheckCSR(csrPEM []byte) error {
+	_, err := parseCSR(csrPEM)
+	return err
+}
+
 // SignClient validates csrPEM and issues a client-auth-only cert with
 // CN=nodeID. It returns the cert PEM, the hex serial, and the base64 PKIX
 // public key (recorded in the registry for re-bind proofs).
 func (ca *CA) SignClient(csrPEM []byte, nodeID string, now time.Time, life time.Duration) ([]byte, string, string, error) {
-	blk, _ := pem.Decode(csrPEM)
-	if blk == nil || blk.Type != "CERTIFICATE REQUEST" {
-		return nil, "", "", errors.New("fleet: no CERTIFICATE REQUEST PEM block")
-	}
-	csr, err := x509.ParseCertificateRequest(blk.Bytes)
+	csr, err := parseCSR(csrPEM)
 	if err != nil {
 		return nil, "", "", err
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return nil, "", "", fmt.Errorf("fleet: csr signature: %w", err)
-	}
-	if _, ok := csr.PublicKey.(*ecdsa.PublicKey); !ok {
-		return nil, "", "", errors.New("fleet: csr key must be ECDSA")
 	}
 	serial, err := randSerial()
 	if err != nil {
