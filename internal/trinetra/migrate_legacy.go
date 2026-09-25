@@ -873,7 +873,7 @@ func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() err
 					return nil
 				}
 				return fmt.Errorf("a serverwatch daemon (pid %d, %s) is still running after `systemctl stop %s`, outside %s.service. "+
-					"%s.service was stopped and disabled; nothing else was changed and no data was moved. "+
+					"%s.service was stopped and disabled; nothing else was changed by this run. "+
 					"Stop that process (sudo kill %d) and re-run `sudo trinetra install`, or re-run with `sudo trinetra install --force` if you are sure it is not using %s. "+
 					"To go back to serverwatch instead: sudo systemctl enable --now %s",
 					pid, exe, legacyServiceName, legacyServiceName, legacyServiceName, pid, legacyStateDirPath, legacyServiceName)

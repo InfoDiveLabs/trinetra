@@ -96,6 +96,8 @@ func Main(args []string) int {
 
 // writesConfigOrState reports whether args is a CLI command that writes the
 // config file or the state dir itself (not through the running daemon).
+// doctor and dump count: opening the sample store creates the state dir's
+// ts/ tree, which would make a later install refuse with "found both".
 func writesConfigOrState(args []string) bool {
 	sub := ""
 	if len(args) > 1 {
@@ -124,7 +126,7 @@ func writesConfigOrState(args []string) bool {
 		return in("purge")
 	case "alerts":
 		return in("ack", "unack")
-	case "migrate":
+	case "migrate", "doctor", "dump":
 		return true
 	case "fleet":
 		return in("init", "join", "leave", "disable")

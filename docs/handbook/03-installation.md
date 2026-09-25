@@ -378,10 +378,12 @@ yet, two kinds of command refuse instead of starting from scratch:
   re-run this command. Nothing was changed". These are `config set|unset`,
   `telegram set-token`, `monitor enable|disable|threshold`, `schedule`,
   `quiet-hours`, `healthchecks`, `channel add|remove|set`, `downtime purge`,
-  `alerts ack|unack`, `migrate`, and `fleet init|join|leave|disable`.
+  `alerts ack|unack`, `migrate`, `fleet init|join|leave|disable`, and also
+  `doctor` and `dump` (opening the sample store creates its directories).
   Without this guard they would create `/etc/trinetra` or
   `/var/lib/trinetra`, and install would then refuse to merge it with the
-  serverwatch data. Read-only commands such as `config get` and `status`
+  serverwatch data. To inspect the old install before upgrading, use the old
+  `serverwatch doctor`. Read-only commands such as `config get` and `status`
   are unaffected.
 
 An empty legacy directory (an old `uninstall --purge` can leave one behind)

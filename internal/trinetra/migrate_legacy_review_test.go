@@ -261,6 +261,8 @@ func TestCLIWritesRefuseOnLegacyOnlyHost(t *testing.T) {
 		{"fleet", "join", "code"},
 		{"fleet", "leave"},
 		{"fleet", "disable"},
+		{"doctor"},
+		{"dump", "--metric", "cpu"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			p := legacyOnlyHost(t)
