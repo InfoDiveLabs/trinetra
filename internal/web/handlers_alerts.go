@@ -137,6 +137,12 @@ type AlertsPageData struct {
 	// action, since alert ack/unack is a per-node write action that isn't
 	// routed to a remote node (global-constraints.md).
 	NodeRemote bool
+	// RemoteReason is the shared "not available for a remote node yet" text
+	// (remoteNodeUnavailableReason, handlers_logs.go) templates/alerts.html
+	// renders as the disabled Ack button's label/title when NodeRemote --
+	// carried as data instead of a second hardcoded literal in the template
+	// (task 3 carry-over from the round-1 Task 2 review).
+	RemoteReason string
 }
 
 // resolvedInWindow counts "recover" events within the last window (relative
@@ -223,6 +229,7 @@ func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
 		UptimePct30d: uptime,
 		HasUptime:    hasUptime,
 		NodeRemote:   !nodeFrom(r).Self,
+		RemoteReason: remoteNodeUnavailableReason,
 	}
 }
 

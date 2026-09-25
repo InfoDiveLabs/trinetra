@@ -19,7 +19,7 @@
     {{if .Host.Memory}}<span class="hs-item"><span class="hs-k">RAM</span> <span class="hs-v mono">{{.Host.Memory}}</span></span>{{end}}
     {{if .Host.Uptime}}<span class="hs-item"><span class="hs-k">Up</span> <span class="hs-v mono">{{.Host.Uptime}}</span></span>{{end}}
     {{if .Host.LocalIP}}<span class="hs-item"><span class="hs-k">IP</span> <span class="hs-v mono">{{.Host.LocalIP}}</span></span>{{end}}
-    <a href="/host" class="hs-more">Host →</a>
+    <a href="{{nodeHref .Node.Prefix "/host"}}" class="hs-more">Host →</a>
   </div>
   {{end}}
 
@@ -94,7 +94,7 @@
   </div>
 
   <div class="grid g-2" style="margin-top:14px">
-    <div class="panel"><div class="head"><span class="eyebrow">Top containers · CPU</span><a href="/monitoring" class="note mono">all →</a></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Top containers · CPU</span><a href="{{nodeHref .Node.Prefix "/monitoring"}}" class="note mono">all →</a></div>
       <div class="hbars" id="top-cpu-bars">
         {{if .TopCPUBars}}
         {{range .TopCPUBars}}
@@ -102,7 +102,7 @@
         {{end}}
         {{else}}<div class="note">no container stats available</div>{{end}}
       </div></div>
-    <div class="panel"><div class="head"><span class="eyebrow">Top containers · Memory</span><a href="/monitoring" class="note mono">all →</a></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Top containers · Memory</span><a href="{{nodeHref .Node.Prefix "/monitoring"}}" class="note mono">all →</a></div>
       <div class="hbars" id="top-mem-bars">
         {{if .TopMemBars}}
         {{range .TopMemBars}}
@@ -112,7 +112,7 @@
       </div></div>
   </div>
 
-  <div class="section-label"><span class="eyebrow">Filesystems</span><a href="/monitoring" class="note mono">details →</a></div>
+  <div class="section-label"><span class="eyebrow">Filesystems</span><a href="{{nodeHref .Node.Prefix "/monitoring"}}" class="note mono">details →</a></div>
   <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
     <thead><tr><th>Mount</th><th>Device</th><th style="width:220px">Usage</th><th>Free</th><th>Trend</th></tr></thead>
     <tbody>

@@ -4,11 +4,15 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
@@ -72,6 +76,103 @@ var funcMap = template.FuncMap{
 	// asset appends the build's content-hash to an asset path for cache-busting
 	// (see assetVersion); templates reference assets via {{asset "/assets/x"}}.
 	"asset": assetURL,
+	// nodeHref/nodeAgo/nodeDur/clockTime/linkUnreachable (task 3, node-aware
+	// templates) back every same-origin link's node prefix and the replica
+	// banner / child link badge's time and threshold formatting -- see each
+	// func's own doc below.
+	"nodeHref":        nodeHref,
+	"nodeAgo":         nodeAgoText,
+	"nodeDur":         nodeDurText,
+	"clockTime":       nodeClockTime,
+	"linkUnreachable": linkUnreachable,
+}
+
+// nodeHref joins a node scope's URL prefix (nodeScope.Prefix, node_scope.go:
+// "" for self, "/n/<id>" for a remote node) with a same-origin route path,
+// for every page-template link/form-action that must follow the current
+// request's node scope (task 3, global-constraints.md's "remote nodes are
+// read-only in the UI" plus the plan's "every same-origin link is node-
+// prefixed" requirement). path must start with "/" -- every caller passes a
+// literal route path, never a relative one, so this is plain concatenation:
+// nodeHref("", "/monitoring") == "/monitoring" (self, byte-identical to
+// before this task), nodeHref("/n/child1", "/monitoring") ==
+// "/n/child1/monitoring".
+func nodeHref(prefix, path string) string {
+	return prefix + path
+}
+
+// nodeDurText renders a Unix timestamp as a short duration since now, with
+// no "ago" suffix: "3s", "2m", "1h", "4d" (seconds precision below a
+// minute, minute above -- mirroring the fleet CLI's own `ago` helper,
+// internal/trinetra/fleet_cmd.go, which this package can't import across
+// the internal/web -> internal/trinetra layering boundary). ts<=0 (never
+// seen) renders "never". Used directly for the topbar child-link pill's
+// "Master unreachable 12m" text, and as nodeAgoText's building block.
+func nodeDurText(ts int64) string {
+	if ts <= 0 {
+		return "never"
+	}
+	d := time.Since(time.Unix(ts, 0))
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// nodeAgoText is nodeDurText with an " ago" suffix ("3s ago", "2m ago"),
+// except ts<=0 which stays the bare "never" (an "never ago" reading would be
+// wrong). Used for the replica banner's "updated Xs ago" and the child
+// link pill's healthy "ack Xs ago".
+func nodeAgoText(ts int64) string {
+	d := nodeDurText(ts)
+	if ts <= 0 {
+		return d
+	}
+	return d + " ago"
+}
+
+// nodeClockTime renders a Unix timestamp as a local HH:MM clock reading, for
+// the replica banner's "child1 is down since 14:02" text. ts<=0 renders
+// "unknown" (no last-seen timestamp to show).
+func nodeClockTime(ts int64) string {
+	if ts <= 0 {
+		return "unknown"
+	}
+	return time.Unix(ts, 0).Local().Format("15:04")
+}
+
+// linkUnreachableThreshold is the controller ruling's cutoff for the topbar
+// child-link pill: a link retrying for longer than this renders the amber
+// "Master unreachable" pill instead of the healthy verdigris "Linked to
+// master" one.
+const linkUnreachableThreshold = 2 * time.Minute
+
+// linkUnreachable reports whether a child's link to its master (from
+// Fleet().Status().Link, core.LinkView) has been retrying for longer than
+// linkUnreachableThreshold. "retrying" is core.LinkView.State's literal
+// value for that condition (internal/fleet.LinkRetrying's own value --
+// internal/web must not import internal/fleet, so this compares the plain
+// string core.LinkView already carries, the same convention core.NodeSummary
+// .State comparisons use elsewhere in this package). A link with no
+// LastAck at all (never once acked) counts as unreachable outright, since
+// there is no better evidence it's healthy.
+func linkUnreachable(l *core.LinkView) bool {
+	if l == nil || l.State != "retrying" {
+		return false
+	}
+	if l.LastAck <= 0 {
+		return true
+	}
+	return time.Since(time.Unix(l.LastAck, 0)) > linkUnreachableThreshold
 }
 
 // NavItem is one entry in the sidebar nav -- either a section heading (just
@@ -116,15 +217,33 @@ var navItems = []navEntry{
 // navForRole returns navItems filtered to what role may see (viewers get
 // everything except AdminOnly entries, admins get everything -- the
 // server-side equivalent of the mockup app.js NAV.filter(role==='admin' ||
-// !n.admin)) with each entry's Badge filled in from counts via badgeFor.
-func navForRole(role string, counts NavCounts) []NavItem {
+// !n.admin)) with each entry's Badge filled in from counts via badgeFor,
+// and (task 3) every entry's Href carrying node's URL prefix.
+//
+// node additionally gates the AdminOnly entries (the "Admin" heading plus
+// Configuration/Channels/Users/Public view): on a remote node's page
+// (node.Self == false) they're hidden outright, regardless of role --
+// config/channels/users/public-settings are master-local pages
+// (masterLocalPrefixes, node_scope.go) that only ever mean "this master",
+// so they stay reachable from the master's own (self-scoped) nav, never
+// from a node-scoped one (global-constraints.md, task-3-brief.md).
+//
+// badgeFor is deliberately called with the entry's ORIGINAL, unprefixed
+// Href (its switch matches literal paths like "/monitoring") -- prefixing
+// happens after, so a remote node's Monitoring badge still resolves
+// correctly instead of silently going blank because "/n/child1/monitoring"
+// never matches badgeFor's cases.
+func navForRole(role string, counts NavCounts, node nodeScope) []NavItem {
 	out := make([]NavItem, 0, len(navItems))
 	for _, n := range navItems {
-		if n.AdminOnly && role != "admin" {
+		if n.AdminOnly && (role != "admin" || !node.Self) {
 			continue
 		}
 		item := n.NavItem
 		item.Badge = badgeFor(item.Href, counts)
+		if item.Href != "" {
+			item.Href = nodeHref(node.Prefix, item.Href)
+		}
 		out = append(out, item)
 	}
 	return out
@@ -218,6 +337,62 @@ type PageData struct {
 	CoreVersion     string
 	WebVersion      string
 	VersionMismatch bool
+	// Node is this request's fleet node scope (node_scope.go's nodeFrom(r)):
+	// the zero value's ID=="self"/Self==true/Prefix=="" replica -- ordinary
+	// solo/master-self/child pages all render identically to before task 3,
+	// since nodeHref(node.Prefix, path) with an empty Prefix is a no-op.
+	// Non-zero (Self==false, Prefix=="/n/<id>") only on a master's page for
+	// a genuinely remote node.
+	Node nodeScope
+	// FleetRole is this daemon's fleet role for the CURRENT request:
+	// "solo"/"master"/"child" (config.RoleSolo/RoleMaster/RoleChild). Drives
+	// the topbar child-link pill (FleetRole=="child") -- see
+	// resolveFleetPageInfo's doc for how this is derived without an extra
+	// Fleet().Status() round trip on a page already known to be a master's
+	// (a node-scoped request, Node.Self==false).
+	FleetRole string
+	// Banner is the replica banner (task 3) for a page scoped to a genuinely
+	// remote fleet node -- nil for every self-scoped page (solo, a master's
+	// own view, a child's own view, or a node-scoped page redirected back to
+	// self). See buildNodeBanner's doc.
+	Banner *NodeBanner
+	// Link is a child daemon's link status to its master (core.LinkView,
+	// from Fleet().Status().Link), non-nil only when FleetRole=="child" and
+	// that Status() call actually reported one. Drives the topbar's "Linked
+	// to master"/"Master unreachable" pill.
+	Link *core.LinkView
+	// MasterURL is a child daemon's configured master address
+	// (core.FleetStatus.MasterURL), surfaced as the child-link pill's
+	// tooltip so an operator can see exactly where "master" points without
+	// following an external link out of this page.
+	MasterURL string
+}
+
+// NodeBanner is the replica banner's render data (task 3, task-3-brief.md's
+// exact interface): a compact summary of the remote node's own last-known
+// state, rendered by base.html's "nodebanner" partial just under the
+// topbar. Built by buildNodeBanner from the current request's nodeScope
+// (node_scope.go), which already carries the roster's NodeSummary for the
+// scoped node (fetched once by withNodeRouter/resolveMasterAndNodes to
+// validate the {node} path segment -- no extra Fleet() round trip here).
+type NodeBanner struct {
+	// Name is the node's display name (NodeSummary.Name).
+	Name string
+	// State is NodeSummary.State verbatim: "online", "lagging", "catching
+	// up", "stale", "down", or "revoked" -- the banner's text and accent
+	// both switch on this.
+	State string
+	// LastSeen is NodeSummary.LastSeen (Unix seconds): the online banner's
+	// "updated Xs ago" and the down/stale banner's "down since HH:MM".
+	LastSeen int64
+	// OutboxBytes is NodeSummary.OutboxBytes verbatim (bytes still queued
+	// for this node), carried alongside the precomputed Behind text below.
+	OutboxBytes int64
+	// Behind is the catching-up/lagging banner's precomputed "N behind"
+	// clause, built from NodeSummary.OutboxBytes/OutboxOldest by
+	// behindText -- empty when neither is known, in which case the banner
+	// omits the clause entirely rather than rendering a bare ", behind".
+	Behind string
 }
 
 // newPageData builds the PageData every page handler needs, deriving Role
@@ -227,6 +402,13 @@ type PageData struct {
 // than each supplying its own. d is also used to compute the nav's live
 // badge counts (navCountsFor); every other field is unchanged from the
 // request/session.
+//
+// Active carries the current node scope's prefix (task 3): a bare
+// r.URL.Path would no longer match a remote node's now-prefixed Nav hrefs
+// (navForRole), breaking the sidebar/mobile-nav "active" highlight on every
+// node-scoped page -- reconstructing the full node-scoped path here keeps
+// the comparison correct, and is a no-op (Prefix=="") for every self-scoped
+// page exactly as before this task.
 func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	role := currentRole(r)
 	name := ""
@@ -240,6 +422,8 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	status, statusText := topbarStatus(activeAlertsViaAPI(r, d))
 	webVer := version.String()
 	coreVer := coreVersionViaAPI(r, d)
+	node := nodeFrom(r)
+	fleetInfo := resolveFleetPageInfo(r, d)
 	return PageData{
 		Title:           title,
 		Sub:             sub,
@@ -249,14 +433,99 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		Role:            role,
 		Name:            name,
 		Initial:         firstInitial(name),
-		Active:          r.URL.Path,
-		Nav:             navForRole(role, navCountsFor(r, d)),
+		Active:          nodeHref(node.Prefix, r.URL.Path),
+		Nav:             navForRole(role, navCountsFor(r, d), node),
 		Nonce:           nonceFromContext(r),
 		CSRF:            csrf,
 		CoreVersion:     coreVer,
 		WebVersion:      webVer,
 		VersionMismatch: coreVer != "" && coreVer != "unknown" && coreVer != webVer,
+		Node:            node,
+		FleetRole:       fleetInfo.role,
+		Banner:          buildNodeBanner(node),
+		Link:            fleetInfo.link,
+		MasterURL:       fleetInfo.masterURL,
 	}
+}
+
+// fleetPageInfo is resolveFleetPageInfo's return shape: PageData's
+// FleetRole/Link/MasterURL fields, computed together so the (at most one)
+// Fleet().Status() call this request makes for page rendering serves all
+// three.
+type fleetPageInfo struct {
+	role      string
+	link      *core.LinkView
+	masterURL string
+}
+
+// resolveFleetPageInfo determines the current request's fleet role (and, for
+// a child, its link status/master URL) for newPageData, honoring the
+// controller ruling: call d.Fleet().Status() at most once per request, and
+// only when the role isn't already known from resolveMasterAndNodes.
+//
+// A request that reached here through withNodeRouter (node_scope.go) --
+// i.e. nodeScopeCtxKey{} is set in its context -- already proved this
+// daemon a master (withNodeRouter only proceeds past resolveMasterAndNodes
+// when isMaster is true), so that case returns "master" outright with no
+// further round trip. Every other request (the vast majority: every
+// unprefixed page, since withNodeRouter only inspects /n/... paths at all)
+// falls through to a single Fleet().Status() call, collapsing every failure
+// mode (nil Deps.Fleet, a nil FleetAPI, a Status() error, or an empty Role
+// -- an old daemon predating Fleet.Status) to "solo", exactly like
+// fleetRole's doc explains for the same failure set.
+func resolveFleetPageInfo(r *http.Request, d Deps) fleetPageInfo {
+	if _, ok := r.Context().Value(nodeScopeCtxKey{}).(nodeScope); ok {
+		return fleetPageInfo{role: config.RoleMaster}
+	}
+	if d.Fleet == nil {
+		return fleetPageInfo{role: config.RoleSolo}
+	}
+	fleet := d.Fleet()
+	if fleet == nil {
+		return fleetPageInfo{role: config.RoleSolo}
+	}
+	status, err := fleet.Status()
+	if err != nil || status.Role == "" {
+		return fleetPageInfo{role: config.RoleSolo}
+	}
+	return fleetPageInfo{role: status.Role, link: status.Link, masterURL: status.MasterURL}
+}
+
+// buildNodeBanner returns the replica banner (NodeBanner) for a page scoped
+// to a genuinely remote fleet node, nil for every self-scoped page (see
+// PageData.Node's doc). ns.Summary is the roster's NodeSummary for the
+// scoped node, already resolved by withNodeRouter/resolveMasterAndNodes to
+// validate the {node} path segment -- building the banner from it costs no
+// extra Fleet() round trip.
+func buildNodeBanner(ns nodeScope) *NodeBanner {
+	if ns.Self {
+		return nil
+	}
+	return &NodeBanner{
+		Name:        ns.Name,
+		State:       ns.Summary.State,
+		LastSeen:    ns.Summary.LastSeen,
+		OutboxBytes: ns.Summary.OutboxBytes,
+		Behind:      behindText(ns.Summary),
+	}
+}
+
+// behindText renders NodeBanner.Behind (the "catching up"/"lagging" banner's
+// "N behind" clause) from NodeSummary.OutboxBytes/OutboxOldest (the
+// controller ruling's exact source fields): the queued byte count
+// (humanBytes) and, when known, how long the oldest queued record has been
+// waiting ("oldest Xm ago", via nodeAgoText). Empty when neither is known,
+// so the banner can omit the clause entirely rather than render a bare
+// trailing ", behind".
+func behindText(n core.NodeSummary) string {
+	var parts []string
+	if n.OutboxBytes > 0 {
+		parts = append(parts, humanBytes(uint64(n.OutboxBytes)))
+	}
+	if n.OutboxOldest > 0 {
+		parts = append(parts, "oldest "+nodeAgoText(n.OutboxOldest))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // coreVersionViaAPI fetches the running core daemon's version over the control

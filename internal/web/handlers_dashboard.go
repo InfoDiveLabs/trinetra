@@ -60,13 +60,13 @@ func activeAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
 		return nil
 	}
 	out := make([]activeAlertView, 0, len(recs))
-	for _, r := range recs {
+	for _, rec := range recs {
 		out = append(out, activeAlertView{
-			Key:      r.Key,
-			Reason:   r.Source,
-			Since:    r.Time,
-			Acked:    r.Acked,
-			Critical: r.Severity == "critical",
+			Key:      rec.Key,
+			Reason:   rec.Source,
+			Since:    rec.Time,
+			Acked:    rec.Acked,
+			Critical: rec.Severity == "critical",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

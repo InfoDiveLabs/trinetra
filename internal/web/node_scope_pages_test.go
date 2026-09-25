@@ -294,10 +294,17 @@ func TestNodeScopedTopbarAndAlertBadgeReflectNode(t *testing.T) {
 	}
 }
 
-// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins the ruling: on a
-// remote node page, the Channels and Users nav badges stay the master's own
-// values (they're master-local concepts), while Monitoring (a daemon
-// concept) follows the node scope.
+// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins the fleet-web-a
+// task 3 ruling (task-3-brief.md's "the admin group is hidden for remote
+// scope"): on a remote node page, master-local admin nav entries (Channels,
+// Users, Configuration, Public view) don't render AT ALL -- they're
+// reachable only from the master's own (self-scoped) nav -- while
+// Monitoring (a daemon concept, node-scoped) still renders and follows the
+// node scope. This supersedes this test's original task-2-era assumption
+// (that Channels/Users would render on a remote page showing the master's
+// own counts); task 3's brief settled on hiding them outright instead, so
+// this test was updated to match rather than left asserting the superseded
+// behavior.
 func TestNodeScopedChannelsAndUsersBadgesStayMasterLocal(t *testing.T) {
 	master := fakeAPI{snap: core.DashboardView{ContainersTotal: 3}}
 	child := fakeAPI{snap: core.DashboardView{ContainersTotal: 9}}
@@ -320,8 +327,8 @@ func TestNodeScopedChannelsAndUsersBadgesStayMasterLocal(t *testing.T) {
 		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, `Channels<span class="ct">2</span>`) {
-		t.Errorf("node-scoped Channels badge should stay the master's own count of 2:\n%s", body)
+	if strings.Contains(body, "Channels") {
+		t.Errorf("node-scoped nav should hide the master-local Channels entry entirely:\n%s", body)
 	}
 	if !strings.Contains(body, `Monitoring<span class="ct">9</span>`) {
 		t.Errorf("node-scoped Monitoring badge should reflect child1's container count of 9:\n%s", body)

@@ -40,10 +40,12 @@
       <div><h1>{{.Title}}</h1><p>{{.Sub}}</p></div>
       <div class="spacer"></div>
       {{if eq .Role "viewer"}}<span class="pill ro-pill">read-only</span>{{end}}
+      {{if eq .FleetRole "child"}}{{if .Link}}{{if linkUnreachable .Link}}<span class="pill" title="{{.MasterURL}}{{if .Link.LastError}} · {{.Link.LastError}}{{end}}"><span class="led warn"></span> Master unreachable {{nodeDur .Link.LastAck}} · alerting locally</span>{{else}}<span class="pill" title="{{.MasterURL}}"><span class="led ok"></span> Linked to master · ack {{nodeAgo .Link.LastAck}}</span>{{end}}{{end}}{{end}}
       <span class="hb hb-gen" title="heartbeat"></span>
       <span class="pill"><span class="led {{.Status}}"></span> {{.StatusText}}</span>
       <button class="icon-btn" id="themeBtn" title="Toggle theme (T)">◑</button>
     </header>
+    {{template "nodebanner" .}}
     <div class="wrap">
       {{block "content" .}}{{end}}
     </div>
@@ -51,10 +53,10 @@
 
   <!-- mobile bottom tab bar (<=640px only; display:none above) -- primary sections -->
   <nav class="botnav" aria-label="Primary">
-    <a href="/"{{if eq "/" .Active}} class="active"{{end}}><span class="ic">◉</span><span class="lb">Dashboard</span></a>
-    <a href="/monitoring"{{if eq "/monitoring" .Active}} class="active"{{end}}><span class="ic">▤</span><span class="lb">Monitoring</span></a>
-    <a href="/history"{{if eq "/history" .Active}} class="active"{{end}}><span class="ic">◔</span><span class="lb">History</span></a>
-    <a href="/alerts"{{if eq "/alerts" .Active}} class="active"{{end}}><span class="ic">!</span><span class="lb">Alerts</span>{{range .Nav}}{{if eq .Href "/alerts"}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}{{end}}{{end}}</a>
+    <a href="{{nodeHref .Node.Prefix "/"}}"{{if eq (nodeHref .Node.Prefix "/") .Active}} class="active"{{end}}><span class="ic">◉</span><span class="lb">Dashboard</span></a>
+    <a href="{{nodeHref .Node.Prefix "/monitoring"}}"{{if eq (nodeHref .Node.Prefix "/monitoring") .Active}} class="active"{{end}}><span class="ic">▤</span><span class="lb">Monitoring</span></a>
+    <a href="{{nodeHref .Node.Prefix "/history"}}"{{if eq (nodeHref .Node.Prefix "/history") .Active}} class="active"{{end}}><span class="ic">◔</span><span class="lb">History</span></a>
+    <a href="{{nodeHref .Node.Prefix "/alerts"}}"{{if eq (nodeHref .Node.Prefix "/alerts") .Active}} class="active"{{end}}><span class="ic">!</span><span class="lb">Alerts</span>{{range .Nav}}{{if eq .Href (nodeHref $.Node.Prefix "/alerts")}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}{{end}}{{end}}</a>
     <button type="button" class="botmore" id="moreBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="moreSheet"><span class="ic">⋯</span><span class="lb">More</span></button>
   </nav>
 
@@ -63,7 +65,7 @@
   <aside class="sheet" id="moreSheet" role="dialog" aria-modal="true" aria-label="More navigation">
     <div class="sheet-grip"></div>
     <nav class="sheet-nav">
-      {{range .Nav}}{{if not .Heading}}{{if and (ne .Href "/") (ne .Href "/monitoring") (ne .Href "/history") (ne .Href "/alerts")}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}{{end}}{{end}}
+      {{range .Nav}}{{if not .Heading}}{{if and (ne .Href (nodeHref $.Node.Prefix "/")) (ne .Href (nodeHref $.Node.Prefix "/monitoring")) (ne .Href (nodeHref $.Node.Prefix "/history")) (ne .Href (nodeHref $.Node.Prefix "/alerts"))}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}{{end}}{{end}}
     </nav>
     <div class="sheet-foot">
       <div class="who">
@@ -82,3 +84,23 @@
 <script src="{{asset "/assets/app.js"}}"></script>
 </body>
 </html>
+
+{{/* nodebanner (task 3): the replica banner rendered just under the topbar
+     on a master's page for a genuinely remote fleet node (PageData.Banner
+     non-nil -- see buildNodeBanner's doc, templates.go). Absent (renders
+     nothing) on every self-scoped page: solo, a master's own view, a
+     child's own view. Text/accent both switch on NodeBanner.State
+     (NodeSummary.State's values: online, lagging, "catching up", stale,
+     down, revoked -- controller ruling). Verdigris (.led.ok) only for
+     online; ember (.led.crit / .nb-down) only for down -- stale renders the
+     identical "is down since..." text but stays neutral, per the ruling. */}}
+{{define "nodebanner"}}{{if .Banner}}
+<div class="nodebanner{{if eq .Banner.State "down"}} nb-down{{else if or (eq .Banner.State "lagging") (eq .Banner.State "catching up")}} nb-behind{{end}}" role="status">
+{{if eq .Banner.State "online"}}<span class="led ok"></span> Viewing {{.Banner.Name}} · replica, updated {{nodeAgo .Banner.LastSeen}}
+{{else if or (eq .Banner.State "lagging") (eq .Banner.State "catching up")}}<span class="led warn"></span> Viewing {{.Banner.Name}} · replica, catching up{{if .Banner.Behind}}, {{.Banner.Behind}} behind{{end}}
+{{else if eq .Banner.State "down"}}<span class="led crit"></span> {{.Banner.Name}} is down since {{clockTime .Banner.LastSeen}} — showing the last data received
+{{else if eq .Banner.State "stale"}}<span class="led"></span> {{.Banner.Name}} is down since {{clockTime .Banner.LastSeen}} — showing the last data received
+{{else if eq .Banner.State "revoked"}}<span class="led"></span> {{.Banner.Name}} was revoked
+{{else}}<span class="led"></span> Viewing {{.Banner.Name}} · replica
+{{end}}</div>
+{{end}}{{end}}
