@@ -17,15 +17,18 @@ import (
 // in tests), so styled home output still contains its literal label text for
 // substring assertions.
 
-// palette -- hex values mirror internal/web/assets/style.css so the terminal
-// and the web dashboard read as the same product.
+// palette -- the Trinetra brand colours, matching the web UI's
+// internal/web/assets/style.css so the terminal and the web dashboard read as
+// the same product. Ember is reserved for the one thing that needs attention
+// (alerts, down); the neutral accent is ash on a dark terminal and ink on a
+// light one.
 var (
-	colOK     = lipgloss.Color("#3fb950") // healthy / online / firing-none
-	colWarn   = lipgloss.Color("#d29922") // elevated
-	colCrit   = lipgloss.Color("#f85149") // critical / offline / firing
-	colSignal = lipgloss.Color("#f5a623") // accent (sparkline, heartbeat)
-	colFaint  = lipgloss.Color("#8b949e") // secondary text
-	colDim    = lipgloss.Color("#6e7681") // empty meter cells, rules
+	colOK     = lipgloss.Color("#3FBFA6")                                 // verdigris: healthy / online
+	colWarn   = lipgloss.Color("#F2B23A")                                 // amber: elevated / lagging
+	colCrit   = lipgloss.Color("#FF5B1F")                                 // ember: critical / down / firing
+	colFaint  = lipgloss.Color("#8A949E")                                 // slate: secondary text
+	colDim    = lipgloss.Color("#5B646D")                                 // dark slate: empty meter cells, rules
+	colSignal = lipgloss.AdaptiveColor{Light: "#0E1114", Dark: "#ECE8E1"} // neutral accent (selection, sparkline, values)
 )
 
 var (

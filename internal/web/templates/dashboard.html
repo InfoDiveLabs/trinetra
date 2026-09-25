@@ -78,7 +78,7 @@
   </div>
 
   <div class="grid g-hero" style="margin-top:16px">
-    <div class="panel"><div class="head"><span class="eyebrow">CPU &amp; load · live</span><div class="legend"><span><i style="background:var(--info)"></i>cpu %</span><span><i style="background:var(--signal)"></i>load</span></div></div>
+    <div class="panel"><div class="head"><span class="eyebrow">CPU &amp; load · live</span><div class="legend"><span><i style="background:var(--info)"></i>cpu %</span><span><i style="background:var(--pink)"></i>load</span></div></div>
       <div id="chart-hero" class="u-chart" style="height:260px"></div></div>
     <div class="panel"><div class="head"><span class="eyebrow">Active alerts</span>
       <span class="badge {{if .Alerts}}crit{{else}}ok{{end}}">{{len .Alerts}} firing</span></div>
@@ -131,7 +131,7 @@
       <div id="chart-mem" class="u-chart" style="height:180px"></div></div>
     <div class="panel"><div class="head"><span class="eyebrow">Network{{if $v.NetIfaces}} · {{(index $v.NetIfaces 0).Name}}{{end}}</span><span class="mono note" id="sub-net-chart">↓{{humanRate $v.NetRxBps}} ↑{{humanRate $v.NetTxBps}}</span></div>
       <div id="chart-net" class="u-chart" style="height:180px"></div>
-      <div class="legend" style="margin-top:6px"><span><i style="background:var(--cyan)"></i>download</span><span><i style="background:var(--signal)"></i>upload</span></div></div>
+      <div class="legend" style="margin-top:6px"><span><i style="background:var(--cyan)"></i>download</span><span><i style="background:var(--pink)"></i>upload</span></div></div>
   </div>
 
 </div>

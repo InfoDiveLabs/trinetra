@@ -197,14 +197,24 @@ func assetHandler(assets fs.FS) http.Handler {
 }
 
 // contentTypeByExt returns the Content-Type this package's vendored/mockup
-// assets need, or "" to let http.FileServer's default sniffing/mime lookup
-// decide (harmless for extensions this handler doesn't special-case).
+// assets and the Trinetra brand files (brand/*.png|.ico, fonts/*.woff2 and
+// the font's OFL.txt) need, or "" to let http.FileServer's default
+// sniffing/mime lookup decide (harmless for extensions this handler doesn't
+// special-case). woff2 in particular is missing from many hosts' mime.types.
 func contentTypeByExt(name string) string {
 	switch {
 	case strings.HasSuffix(name, ".css"):
 		return "text/css; charset=utf-8"
 	case strings.HasSuffix(name, ".js"):
 		return "application/javascript; charset=utf-8"
+	case strings.HasSuffix(name, ".png"):
+		return "image/png"
+	case strings.HasSuffix(name, ".ico"):
+		return "image/x-icon"
+	case strings.HasSuffix(name, ".woff2"):
+		return "font/woff2"
+	case strings.HasSuffix(name, ".txt"):
+		return "text/plain; charset=utf-8"
 	}
 	return ""
 }

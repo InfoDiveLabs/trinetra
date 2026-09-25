@@ -79,3 +79,26 @@ func TestSparkKeepsMostRecent(t *testing.T) {
 		t.Errorf("most-recent (9) should be the tallest block, got %q", got)
 	}
 }
+
+// TestPaletteIsTrinetraBrand pins the TUI accents to the Trinetra palette:
+// ember for alerts / down, verdigris for online, amber for warn and slate for
+// muted text. The neutral accent (selection, sparklines, values) is ash on a
+// dark terminal and ink on a light one, so ember stays reserved for the one
+// thing that needs attention.
+func TestPaletteIsTrinetraBrand(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		got, want string
+	}{
+		{"colCrit (ember)", string(colCrit), "#FF5B1F"},
+		{"colOK (verdigris)", string(colOK), "#3FBFA6"},
+		{"colWarn (amber)", string(colWarn), "#F2B23A"},
+		{"colFaint (slate)", string(colFaint), "#8A949E"},
+		{"colSignal.Dark (ash)", colSignal.Dark, "#ECE8E1"},
+		{"colSignal.Light (ink)", colSignal.Light, "#0E1114"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-/* serverwatch web UI -- shared client behavior.
+/* trinetra web UI -- shared client behavior.
  *
  * Ported from ui-mockup/assets/app.js. The mockup injected the sidebar/topbar
  * shell client-side (from a NAV array + data-shell attributes) and demoed
@@ -23,11 +23,12 @@
   // effectively invisible strokes in both themes. Chart lines therefore use
   // this fixed, theme-independent bright palette rather than var(--…)
   // tokens; keys mirror the style.css custom properties they stand in for
-  // (--signal/--info/--cyan/--violet/--warn/--crit) so the mapping stays
-  // recognizable next to the legend swatches (those ARE plain DOM elements
-  // and can use var(--…) directly, since normal CSS -- not a canvas context
-  // -- resolves them).
-  var CHART_COLORS={signal:'#f5a623',info:'#4aa3ff',cyan:'#34d399',violet:'#a78bfa',warn:'#ffb454',crit:'#ff5c5c'};
+  // (--pink/--info/--cyan/--violet) so the mapping stays recognizable next to
+  // the legend swatches (those ARE plain DOM elements and can use var(--…)
+  // directly, since normal CSS -- not a canvas context -- resolves them).
+  // Data series never use ember (--signal/--crit) or amber (--warn): in the
+  // Trinetra palette those mean "look here" / "lagging", not "a metric".
+  var CHART_COLORS={pink:'#e87ba6',info:'#4aa3ff',cyan:'#34d399',violet:'#a78bfa'};
 
   // ---- axis colors (theme-aware) ----
   // Unlike a series' own stroke/fill (CHART_COLORS above), uPlot's axis
@@ -39,7 +40,7 @@
   // (--muted, --border) instead of leaving it at that default.
   function swAxisColors(){
     var cs=getComputedStyle(document.documentElement);
-    var muted=(cs.getPropertyValue('--muted')||'#8a97a9').trim();
+    var muted=(cs.getPropertyValue('--muted')||'#8A949E').trim();
     var border=(cs.getPropertyValue('--border')||'rgba(255,255,255,.08)').trim();
     return {stroke:muted,grid:border};
   }
@@ -131,7 +132,7 @@
     if(!isFinite(lo)||!isFinite(hi)){ return; }
     if(hi-lo<1e-9){ hi=lo+1; } // flat series: give the band a little height
     var cs=getComputedStyle(document.body);
-    var accent=(cs.getPropertyValue('--signal')||'#F0B429').trim();
+    var accent=(cs.getPropertyValue('--info')||'#5AA9E6').trim();
     var border=(cs.getPropertyValue('--border')||'rgba(128,128,128,.3)').trim();
     function X(i){ return pad+(W-2*pad)*(n===1?0.5:i/(n-1)); }
     function Y(v){ return H-pad-(H-2*pad)*((v-lo)/(hi-lo)); }
@@ -385,11 +386,11 @@
     function pushPoint(arr,v){arr.push(v); if(arr.length>MAXPTS) arr.shift();}
 
     function renderCharts(){
-      var hero=ensureChart('chart-hero',['cpu %','load'],[CHART_COLORS.info,CHART_COLORS.signal]);
+      var hero=ensureChart('chart-hero',['cpu %','load'],[CHART_COLORS.info,CHART_COLORS.pink]);
       if(hero) hero.setData([buf.t,buf.cpu,buf.load]);
       var mem=ensureChart('chart-mem',['mem %'],[CHART_COLORS.violet]);
       if(mem) mem.setData([buf.t,buf.mem]);
-      var net=ensureChart('chart-net',['rx','tx'],[CHART_COLORS.cyan,CHART_COLORS.signal]);
+      var net=ensureChart('chart-net',['rx','tx'],[CHART_COLORS.cyan,CHART_COLORS.pink]);
       if(net) net.setData([buf.t,buf.rx,buf.tx]);
     }
 
@@ -527,13 +528,13 @@
   // GET /api/downtime (downtimeResponse: {events:[{type,start,end,
   // duration_sec}]}) -- a proportional timeline SVG + one row per event,
   // matching the mockup's markup.
-  var HISTORY_COLORS=[CHART_COLORS.signal,CHART_COLORS.info,CHART_COLORS.cyan,CHART_COLORS.violet,CHART_COLORS.warn,CHART_COLORS.crit];
+  var HISTORY_COLORS=[CHART_COLORS.pink,CHART_COLORS.info,CHART_COLORS.cyan,CHART_COLORS.violet];
   // HISTORY_METRIC_COLORS gives the single-series charts (cpu/mem/temp) a
   // color matching the mockup's palette instead of every one of them
-  // defaulting to HISTORY_COLORS[0] (signal/amber) -- CPU=info(blue),
-  // Memory=violet, Temperature=crit(red). Metrics absent here (multi-series
+  // defaulting to HISTORY_COLORS[0] (pink) -- CPU=info(blue),
+  // Memory=violet, Temperature=pink. Metrics absent here (multi-series
   // charts don't consult this map) keep the existing HISTORY_COLORS cycling.
-  var HISTORY_METRIC_COLORS={cpu:CHART_COLORS.info,mem:CHART_COLORS.violet,temp:CHART_COLORS.crit};
+  var HISTORY_METRIC_COLORS={cpu:CHART_COLORS.info,mem:CHART_COLORS.violet,temp:CHART_COLORS.pink};
   var HISTORY_RANGE_SECONDS={'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000};
 
   function historyFmtDur(sec){

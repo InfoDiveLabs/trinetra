@@ -5,13 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}} · trinetra</title>
 <meta name="csrf-token" content="{{.CSRF}}">
+<link rel="icon" href="{{asset "/assets/brand/favicon.ico"}}" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="{{asset "/assets/brand/icon-32.png"}}">
+<link rel="apple-touch-icon" href="{{asset "/assets/brand/icon-180.png"}}">
 <link rel="stylesheet" href="{{asset "/assets/style.css"}}">
 <link rel="stylesheet" href="{{asset "/assets/uPlot.min.css"}}">
 </head>
 <body data-role="{{.Role}}">
 <div class="app">
   <aside class="side">{{block "nav" .}}
-    <div class="brand"><span class="lamp"></span><div><b>trinetra</b><small>{{.ServerName}}</small></div></div>
+    <div class="brand"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="120" height="32"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="120" height="32"><small>{{.ServerName}}</small></div>
     <nav class="nav">
       {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
       {{end}}
