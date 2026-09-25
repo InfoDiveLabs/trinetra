@@ -16,7 +16,7 @@ const SelfNodeID = "self"
 // ErrNotMaster is returned by a FleetAPI implementation for a call that only
 // a fleet master can serve (a child or solo daemon has no fleet to report
 // on).
-var ErrNotMaster = errors.New("this serverwatch is not a fleet master")
+var ErrNotMaster = errors.New("this trinetra is not a fleet master")
 
 // ErrNoSuchNode is returned by FleetProvider.Node (and surfaces from
 // FleetAPI.RenameNode/SetNodeTags/RevokeNode/RemoveNode) when id does not name a known

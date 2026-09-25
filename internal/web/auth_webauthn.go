@@ -78,7 +78,7 @@ func webAuthnConfig(cfg *config.Config, r *http.Request) (*webauthn.WebAuthn, er
 	}
 	return webauthn.New(&webauthn.Config{
 		RPID:          rpID,
-		RPDisplayName: "serverwatch",
+		RPDisplayName: "Trinetra",
 		RPOrigins:     []string{origin},
 	})
 }

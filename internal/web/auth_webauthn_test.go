@@ -155,7 +155,7 @@ func testWebAuthn(t *testing.T, rpID, origin string) *webauthn.WebAuthn {
 	t.Helper()
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          rpID,
-		RPDisplayName: "serverwatch test",
+		RPDisplayName: "trinetra test",
 		RPOrigins:     []string{origin},
 	})
 	if err != nil {

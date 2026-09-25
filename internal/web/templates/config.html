@@ -10,7 +10,7 @@
     </div>
 
     <div class="section-label"><span class="eyebrow">Access &amp; domain</span></div>
-    <p class="note" style="margin:-4px 0 14px">How people reach the web UI, and the address passkeys are bound to -- read-only here: managed via the CLI (<span class="mono">serverwatch config set web.*</span>). Editing the origin/RP&nbsp;ID from the web could lock you out of passkey login, so there's no form control for it on this page.</p>
+    <p class="note" style="margin:-4px 0 14px">How people reach the web UI, and the address passkeys are bound to -- read-only here: managed via the CLI (<span class="mono">trinetra config set web.*</span>). Editing the origin/RP&nbsp;ID from the web could lock you out of passkey login, so there's no form control for it on this page.</p>
     <div class="grid g-2">
       <div class="panel"><div class="head"><span class="eyebrow">How it's served</span></div>
         <label class="field"><span class="lb">Web UI enabled</span><span class="mono">{{if .WebEnabled}}yes{{else}}no{{end}}</span></label>
@@ -106,7 +106,7 @@
     <div class="section-label"><span class="eyebrow">Alerting</span></div>
     <p class="note" style="margin:-4px 0 14px">Where alerts go, and a way to be told when the whole server is unreachable.</p>
     <div class="panel"><div class="head"><span class="eyebrow">Delivery &amp; offline detection</span><a href="/channels" class="btn ghost">Manage channels →</a></div>
-      <label class="field"><span class="lb">Dead-man switch URL (optional)</span><input type="text" name="deadman_url" value="{{.DeadmanURL}}"><span class="hint">serverwatch pings this URL on every heartbeat. If the server (or its internet) dies, the pings stop and the external service (e.g. healthchecks.io) alerts you -- the one case the server can't report itself.</span></label></div>
+      <label class="field"><span class="lb">Dead-man switch URL (optional)</span><input type="text" name="deadman_url" value="{{.DeadmanURL}}"><span class="hint">trinetra pings this URL on every heartbeat. If the server (or its internet) dies, the pings stop and the external service (e.g. healthchecks.io) alerts you -- the one case the server can't report itself.</span></label></div>
 
     <div class="grid g-2" style="margin-top:14px">
       <div class="panel"><div class="head"><span class="eyebrow">Daily digest</span><input type="checkbox" class="switch" name="daily_enabled" value="1" {{if .DailyEnabled}}checked{{end}}></div>

@@ -42,7 +42,7 @@ func TestValidateOriginAllowsEmptyInProxyMode(t *testing.T) {
 // other required fields present.
 func TestValidateOriginAcceptsConsistentConfig(t *testing.T) {
 	cases := []*config.Config{
-		webCfg("manual", "monitor.example.com", "https://monitor.example.com", "", "/etc/serverwatch/tls.crt", "/etc/serverwatch/tls.key"),
+		webCfg("manual", "monitor.example.com", "https://monitor.example.com", "", "/etc/trinetra/tls.crt", "/etc/trinetra/tls.key"),
 		webCfg("autocert", "monitor.example.com", "https://monitor.example.com", "monitor.example.com", "", ""),
 		webCfg("proxy", "monitor.example.com", "https://monitor.example.com", "", "", ""),
 	}

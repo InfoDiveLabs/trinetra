@@ -76,7 +76,7 @@ func buildEmailMessage(from string, to []string, a Alert) []byte {
 		sanitizedTo[i] = sanitizeHeader(addr)
 	}
 
-	subject := sanitizeHeader(fmt.Sprintf("[serverwatch] %s %s", a.Severity, a.Title))
+	subject := sanitizeHeader(fmt.Sprintf("[trinetra] %s %s", a.Severity, a.Title))
 
 	// Normalize the body to CRLF so the whole message is CRLF-consistent,
 	// as SMTP expects.

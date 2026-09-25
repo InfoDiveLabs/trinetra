@@ -250,7 +250,7 @@ func (c *Client) call(method string, params any, result any) error {
 	// daemon's (perfectly valid, ok=true) answer about itself is never
 	// mistaken for the requested node's data.
 	if c.node != "" && resp.Node != c.node {
-		return errors.New("control: daemon does not support fleet node routing (upgrade serverwatch)")
+		return errors.New("control: daemon does not support fleet node routing (upgrade trinetra)")
 	}
 	if !resp.OK {
 		return errors.New(resp.Error)

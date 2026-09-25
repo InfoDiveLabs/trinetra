@@ -11,11 +11,11 @@ import (
 )
 
 const usageChannel = `usage:
-  serverwatch channel list
-  serverwatch channel add <name> --type <type> [--set key=value ...] [--disabled]
-  serverwatch channel remove <name>
-  serverwatch channel set <name> <key> <value>
-  serverwatch channel test <name>`
+  trinetra channel list
+  trinetra channel add <name> --type <type> [--set key=value ...] [--disabled]
+  trinetra channel remove <name>
+  trinetra channel set <name> <key> <value>
+  trinetra channel test <name>`
 
 // cmdChannel implements `serverwatch channel ...`. Every subcommand first
 // applies migrateTelegramChannel (best-effort persisted) so a pre-existing
@@ -207,8 +207,8 @@ func sendTestNotification(c *config.Config, name, source string) error {
 	}
 	a := Alert{
 		Key:      "test",
-		Title:    "serverwatch test",
-		Body:     "This is a test notification from serverwatch.",
+		Title:    "trinetra test",
+		Body:     "This is a test notification from trinetra.",
 		Severity: SevInfo,
 		Kind:     "fire",
 		Source:   source,

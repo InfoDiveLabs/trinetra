@@ -721,10 +721,10 @@ func (m model) homeView() string {
 	return b.String()
 }
 
-// homeHeader is the "serverwatch  ● online   updated 3s ago" status line.
+// homeHeader is the "trinetra  ● online   updated 3s ago" status line.
 func (m model) homeHeader() string {
 	glyph, text, style := onlineGlyph(m.snap.Online)
-	head := titleStyle.Render("serverwatch")
+	head := titleStyle.Render("trinetra")
 	if m.serverName != "" {
 		head += faintStyle.Render(" · " + m.serverName)
 	}
@@ -858,7 +858,7 @@ func (m model) inventoryLine() string {
 // helpView is the global keymap overlay ('?').
 func (m model) helpView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("serverwatch-ctl · keys") + "\n\n")
+	b.WriteString(titleStyle.Render("trinetra-ctl · keys") + "\n\n")
 	section := func(title string, rows [][2]string) {
 		b.WriteString(panelTitleStyle.Render(title) + "\n")
 		for _, r := range rows {

@@ -109,8 +109,8 @@ func TestServerServesDashboardAndAssets(t *testing.T) {
 		t.Fatalf("GET / (signed in) status = %d, want 200", rr.Code)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "serverwatch") {
-		t.Errorf("dashboard body missing brand %q:\n%s", "serverwatch", body)
+	if !strings.Contains(body, "trinetra") {
+		t.Errorf("dashboard body missing brand %q:\n%s", "trinetra", body)
 	}
 	if !strings.Contains(body, "Dashboard") {
 		t.Errorf("dashboard body missing nav item %q:\n%s", "Dashboard", body)

@@ -59,7 +59,7 @@ func TestEmailNotifierSend(t *testing.T) {
 	}
 
 	msg := string(gotMsg)
-	wantSubject := "Subject: [serverwatch] critical Disk full"
+	wantSubject := "Subject: [trinetra] critical Disk full"
 	if !strings.Contains(msg, wantSubject) {
 		t.Errorf("msg missing subject line %q, got:\n%s", wantSubject, msg)
 	}

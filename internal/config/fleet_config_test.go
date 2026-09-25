@@ -68,8 +68,8 @@ func TestFleetManagedKeysRefuseConfigSet(t *testing.T) {
 	c := Default()
 	for _, k := range []string{"fleet.role", "fleet.address", "fleet.master_url", "fleet.ca_pin", "fleet.node_id"} {
 		err := c.Set(k, "x")
-		if err == nil || !strings.Contains(err.Error(), "serverwatch fleet") {
-			t.Fatalf("Set(%s) err = %v, want pointer to `serverwatch fleet`", k, err)
+		if err == nil || !strings.Contains(err.Error(), "trinetra fleet") {
+			t.Fatalf("Set(%s) err = %v, want pointer to `trinetra fleet`", k, err)
 		}
 	}
 }

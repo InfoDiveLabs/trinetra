@@ -44,7 +44,7 @@ func guardControl(network, address string, _ syscall.RawConn) error {
 		return err
 	}
 	if ip := net.ParseIP(host); isBlockedIP(ip) {
-		return fmt.Errorf("serverwatch: refusing to dial blocked outbound target %s (notify.block_private_targets is on)", address)
+		return fmt.Errorf("trinetra: refusing to dial blocked outbound target %s (notify.block_private_targets is on)", address)
 	}
 	return nil
 }

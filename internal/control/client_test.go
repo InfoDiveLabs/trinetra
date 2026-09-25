@@ -235,7 +235,7 @@ func TestClientSurfacesMethodError(t *testing.T) {
 // any other EnrollmentPIN error) must round-trip to the client unchanged,
 // not get swallowed into a zero-value success.
 func TestClientEnrollmentPINSurfacesError(t *testing.T) {
-	wantErr := "serverwatch: enrollment pin requires a running daemon; dial the control socket instead"
+	wantErr := "trinetra: enrollment pin requires a running daemon; dial the control socket instead"
 	fake := &fakeAPI{enrollErr: errors.New(wantErr)}
 	path := startTestServer(t, fake, "")
 

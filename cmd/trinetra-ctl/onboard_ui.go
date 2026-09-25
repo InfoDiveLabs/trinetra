@@ -186,10 +186,10 @@ func (m model) updateOnboardPINKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // onboardView renders whichever onboarding screen is active.
 func (m model) onboardView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("welcome to serverwatch") + "\n\n")
+	b.WriteString(titleStyle.Render("welcome to trinetra") + "\n\n")
 	switch m.onboard.screen {
 	case onboardTokenStep:
-		b.WriteString("let's connect Telegram so serverwatch can alert you.\n\n")
+		b.WriteString("let's connect Telegram so trinetra can alert you.\n\n")
 		fmt.Fprintf(&b, "bot token (from @BotFather):\n\n%s\n", m.onboard.tokenIn.View())
 		if m.onboard.applyErr != nil {
 			b.WriteString("\n" + errStyle.Render(fmt.Sprintf("could not save the token: %v", m.onboard.applyErr)) + "\n")
@@ -207,7 +207,7 @@ func (m model) onboardView() string {
 			b.WriteString(errStyle.Render(fmt.Sprintf("could not fetch the enrollment pin: %v", m.onboard.pinErr)) + "\n")
 			b.WriteString("\n" + hintStyle.Render("the daemon will log it on start: journalctl -u trinetra | grep /start") + "\n")
 		case m.onboard.enrolled:
-			b.WriteString("enrolled! serverwatch can now message you on Telegram.\n")
+			b.WriteString("enrolled! trinetra can now message you on Telegram.\n")
 			b.WriteString("\n" + hintStyle.Render("press any key to continue") + "\n")
 		default:
 			b.WriteString("token saved. to finish enrollment, from your Telegram account message the bot:\n\n")

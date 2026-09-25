@@ -210,7 +210,7 @@ func (f fleetAPIImpl) CreateToken(spec core.TokenSpec) (core.CreatedToken, error
 		return core.CreatedToken{}, err
 	}
 	if m.joinURL == "" {
-		return core.CreatedToken{}, fmt.Errorf("fleet.address is empty; run `serverwatch fleet init --address ...`")
+		return core.CreatedToken{}, fmt.Errorf("fleet.address is empty; run `trinetra fleet init --address ...`")
 	}
 	ttl := time.Duration(spec.TTLSeconds) * time.Second
 	if ttl <= 0 {

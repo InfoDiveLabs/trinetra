@@ -51,7 +51,7 @@ func alertMarker(a Alert) string {
 
 func formatBootReport(evs []DownEvent, snap string) string {
 	var b strings.Builder
-	b.WriteString("🔌 server-watcher back online")
+	b.WriteString("🔌 trinetra back online")
 	for _, e := range evs {
 		if e.Type == "power_down" {
 			start := time.Unix(e.Start, 0).Format("15:04")

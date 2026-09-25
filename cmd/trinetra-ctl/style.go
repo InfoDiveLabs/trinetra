@@ -202,10 +202,10 @@ var manageIcons = map[string]string{
 	"all settings":       "⚙",
 }
 
-// breadcrumb renders a "serverwatch ▸ <leaf>" heading so a sub-screen always
+// breadcrumb renders a "trinetra ▸ <leaf>" heading so a sub-screen always
 // shows where it sits relative to Home.
 func breadcrumb(leaf string) string {
-	return faintStyle.Render("serverwatch") + dimStyle.Render(" ▸ ") + titleStyle.Render(leaf)
+	return faintStyle.Render("trinetra") + dimStyle.Render(" ▸ ") + titleStyle.Render(leaf)
 }
 
 // humanRate renders a bytes-per-second rate compactly (B/s, KB/s, MB/s,

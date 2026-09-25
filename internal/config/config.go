@@ -614,7 +614,7 @@ func (c *Config) SetChannelField(name, key, value string) error {
 
 // Default returns the baked-in defaults. A fresh install works with only a token.
 // ServerName returns the effective display name for this host: the configured
-// server.name when set, else the system hostname, else "serverwatch" if the
+// server.name when set, else the system hostname, else "trinetra" if the
 // hostname lookup fails. Resolved lazily (not baked into Default()) so the name
 // tracks a renamed host instead of freezing at first run, and so Default() does
 // no I/O.
@@ -625,7 +625,7 @@ func (c *Config) ServerName() string {
 	if h, err := os.Hostname(); err == nil && h != "" {
 		return h
 	}
-	return "serverwatch"
+	return "trinetra"
 }
 
 func Default() *Config {
@@ -846,7 +846,7 @@ func (c *Config) Get(key string) (string, bool) {
 
 func (c *Config) Set(key, val string) error {
 	if fleetManagedKeys[key] {
-		return fmt.Errorf("%s is managed by `serverwatch fleet init|join|leave|disable`, not config set", key)
+		return fmt.Errorf("%s is managed by `trinetra fleet init|join|leave|disable`, not config set", key)
 	}
 	f := func() (float64, error) { return strconv.ParseFloat(val, 64) }
 	switch key {

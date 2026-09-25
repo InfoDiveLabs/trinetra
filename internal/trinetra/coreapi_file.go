@@ -35,7 +35,7 @@ import (
 // to report, unlike every other fileAPI read here, which can reconstruct
 // its answer from status.json/alerts.json/the sample store. Dial the
 // control socket instead (control.Client also implements core.API).
-var errEnrollNeedsDaemon = errors.New("serverwatch: enrollment pin requires a running daemon; dial the control socket instead")
+var errEnrollNeedsDaemon = errors.New("trinetra: enrollment pin requires a running daemon; dial the control socket instead")
 
 // fileAPI is the file-backed core.API implementation: every method opens
 // whatever it needs off disk on each call (there is no long-lived daemon

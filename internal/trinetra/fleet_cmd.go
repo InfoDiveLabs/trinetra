@@ -25,16 +25,16 @@ import (
 )
 
 const fleetUsage = `usage:
-  serverwatch fleet init --address HOST[,IP] [--port 9443]   make this host the fleet master
-  serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1]
-  serverwatch fleet token list | token delete <id>
-  serverwatch fleet join <code> [--name NAME]                  join a master as a child
-  serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
-  serverwatch fleet node revoke|remove|rename|tag <node> [value]
-  serverwatch fleet leave [--purge]                            child -> solo
-  serverwatch fleet disable [--purge]                          master -> solo`
+  trinetra fleet init --address HOST[,IP] [--port 9443]   make this host the fleet master
+  trinetra fleet token create [--tags a,b] [--ttl 1h] [--uses 1]
+  trinetra fleet token list | token delete <id>
+  trinetra fleet join <code> [--name NAME]                  join a master as a child
+  trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
+  trinetra fleet node revoke|remove|rename|tag <node> [value]
+  trinetra fleet leave [--purge]                            child -> solo
+  trinetra fleet disable [--purge]                          master -> solo`
 
-const restartHint = "Restart to apply: sudo systemctl restart serverwatch"
+const restartHint = "Restart to apply: sudo systemctl restart trinetra"
 
 func cmdFleet(args []string) int {
 	if len(args) == 0 {
@@ -115,7 +115,7 @@ func fleetInit(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if rejectPositionals("fleet init", "serverwatch fleet init --address HOST[,IP] [--port 9443]", pos) {
+	if rejectPositionals("fleet init", "trinetra fleet init --address HOST[,IP] [--port 9443]", pos) {
 		return 2
 	}
 	var hosts []string
@@ -138,10 +138,10 @@ func fleetInit(args []string) int {
 		return 1
 	}
 	if c.FleetRole() != config.RoleSolo {
-		fmt.Fprintf(stderr, "fleet init: this host is already a fleet %s; run `serverwatch fleet %s` first\n", c.FleetRole(), map[string]string{config.RoleMaster: "disable", config.RoleChild: "leave"}[c.FleetRole()])
+		fmt.Fprintf(stderr, "fleet init: this host is already a fleet %s; run `trinetra fleet %s` first\n", c.FleetRole(), map[string]string{config.RoleMaster: "disable", config.RoleChild: "leave"}[c.FleetRole()])
 		return 1
 	}
-	if err := fleetInitPKI(stateDir, hosts, "serverwatch fleet CA ("+c.ServerName()+")", time.Now()); err != nil {
+	if err := fleetInitPKI(stateDir, hosts, "trinetra fleet CA ("+c.ServerName()+")", time.Now()); err != nil {
 		fmt.Fprintln(stderr, "fleet init:", err)
 		return 1
 	}
@@ -164,7 +164,7 @@ func fleetInit(args []string) int {
 
 %s
 Then create a join code for each server:
-  sudo serverwatch fleet token create --tags prod
+  sudo trinetra fleet token create --tags prod
 `, fleet.SPKIPin(ca.Cert), fleetJoinURL(c), *port, restartHint)
 	return 0
 }
@@ -186,7 +186,7 @@ func fleetJoinCmd(args []string) int {
 		return 1
 	}
 	if c.FleetRole() != config.RoleSolo {
-		fmt.Fprintf(stderr, "fleet join: this host is already a fleet %s; run `serverwatch fleet leave` (child) or `fleet disable` (master) first\n", c.FleetRole())
+		fmt.Fprintf(stderr, "fleet join: this host is already a fleet %s; run `trinetra fleet leave` (child) or `fleet disable` (master) first\n", c.FleetRole())
 		return 1
 	}
 	n := *name
@@ -218,7 +218,7 @@ func fleetLeave(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if rejectPositionals("fleet leave", "serverwatch fleet leave [--purge]", pos) {
+	if rejectPositionals("fleet leave", "trinetra fleet leave [--purge]", pos) {
 		return 2
 	}
 	c, err := loadCfgForFleet()
@@ -246,7 +246,7 @@ func fleetLeave(args []string) int {
 	fmt.Fprintf(stdout, "Left the fleet; this host is solo again (local history kept).\n%s\n", restartHint)
 	// Leaving is local only: the master keeps expecting this node and will
 	// page it as down until it is revoked or removed there.
-	fmt.Fprintf(stdout, "\nThe master will report this node as down until you tell it the node is gone.\nOn the master, run: sudo serverwatch fleet node revoke %s\n(or `sudo serverwatch fleet node remove %s` to also drop it from the node list; its history is kept)\n", nodeID, nodeID)
+	fmt.Fprintf(stdout, "\nThe master will report this node as down until you tell it the node is gone.\nOn the master, run: sudo trinetra fleet node revoke %s\n(or `sudo trinetra fleet node remove %s` to also drop it from the node list; its history is kept)\n", nodeID, nodeID)
 	if !ok {
 		return 1
 	}
@@ -260,7 +260,7 @@ func fleetDisable(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if rejectPositionals("fleet disable", "serverwatch fleet disable [--purge]", pos) {
+	if rejectPositionals("fleet disable", "trinetra fleet disable [--purge]", pos) {
 		return 2
 	}
 	c, err := loadCfgForFleet()
@@ -323,7 +323,7 @@ func purgeAll(verb string, targets []purgeTarget) bool {
 	return ok
 }
 
-var errDaemonDown = errors.New("serverwatch daemon not reachable (is it running? sudo systemctl status serverwatch)")
+var errDaemonDown = errors.New("trinetra daemon not reachable (is it running? sudo systemctl status trinetra)")
 
 func withDaemon(f func(c *control.Client) error) int {
 	tok, _ := os.ReadFile(controlTokenPath())
@@ -390,7 +390,7 @@ func fleetNodes(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if rejectPositionals("fleet nodes", "serverwatch fleet nodes [--tag T] [--state S] [--q TEXT]", pos) {
+	if rejectPositionals("fleet nodes", "trinetra fleet nodes [--tag T] [--state S] [--q TEXT]", pos) {
 		return 2
 	}
 	return withDaemon(func(c *control.Client) error {
@@ -467,7 +467,7 @@ func resolveNodeRef(c *control.Client, ref string) (string, error) {
 	}
 	switch len(hits) {
 	case 0:
-		return "", fmt.Errorf("no node matches %q (see `serverwatch fleet nodes`)", ref)
+		return "", fmt.Errorf("no node matches %q (see `trinetra fleet nodes`)", ref)
 	case 1:
 		return hits[0], nil
 	}
@@ -476,12 +476,12 @@ func resolveNodeRef(c *control.Client, ref string) (string, error) {
 
 func fleetNodeCmd(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: serverwatch fleet node revoke|remove|rename|tag <node> [value]")
+		fmt.Fprintln(stderr, "usage: trinetra fleet node revoke|remove|rename|tag <node> [value]")
 		return 2
 	}
 	verb, ref := args[0], args[1]
 	if (verb == "revoke" || verb == "remove") && len(args) != 2 {
-		fmt.Fprintf(stderr, "usage: serverwatch fleet node %s <node>\n", verb)
+		fmt.Fprintf(stderr, "usage: trinetra fleet node %s <node>\n", verb)
 		return 2
 	}
 	return withDaemon(func(c *control.Client) error {
@@ -525,7 +525,7 @@ func fleetNodeCmd(args []string) int {
 
 func fleetTokenCmd(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: serverwatch fleet token create|list|delete")
+		fmt.Fprintln(stderr, "usage: trinetra fleet token create|list|delete")
 		return 2
 	}
 	switch args[0] {
@@ -538,7 +538,7 @@ func fleetTokenCmd(args []string) int {
 		if err != nil {
 			return 2
 		}
-		if rejectPositionals("fleet token create", "serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1]", pos) {
+		if rejectPositionals("fleet token create", "trinetra fleet token create [--tags a,b] [--ttl 1h] [--uses 1]", pos) {
 			return 2
 		}
 		var tl []string
@@ -552,12 +552,12 @@ func fleetTokenCmd(args []string) int {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(stdout, "Run this on each server to add (valid %s, %d use(s)):\n\n  sudo serverwatch fleet join %s\n\n", ttl.String(), *uses, ct.JoinCode)
+			fmt.Fprintf(stdout, "Run this on each server to add (valid %s, %d use(s)):\n\n  sudo trinetra fleet join %s\n\n", ttl.String(), *uses, ct.JoinCode)
 			return nil
 		})
 	case "list":
 		if len(args) != 1 {
-			fmt.Fprintln(stderr, "usage: serverwatch fleet token list")
+			fmt.Fprintln(stderr, "usage: trinetra fleet token list")
 			return 2
 		}
 		return withDaemon(func(c *control.Client) error {
@@ -574,7 +574,7 @@ func fleetTokenCmd(args []string) int {
 		})
 	case "delete":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "usage: serverwatch fleet token delete <id>")
+			fmt.Fprintln(stderr, "usage: trinetra fleet token delete <id>")
 			return 2
 		}
 		return withDaemon(func(c *control.Client) error { return c.Fleet().DeleteToken(args[1]) })

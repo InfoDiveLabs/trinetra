@@ -11,9 +11,9 @@ import (
 )
 
 const usageAlerts = `usage:
-  serverwatch alerts [list] [--since 24h] [--limit 20]
-  serverwatch alerts ack <key>
-  serverwatch alerts unack <key>`
+  trinetra alerts [list] [--since 24h] [--limit 20]
+  trinetra alerts ack <key>
+  trinetra alerts unack <key>`
 
 func cmdAlerts(args []string) int {
 	if len(args) == 0 {

@@ -54,7 +54,7 @@ func NewCA(commonName string, now time.Time) (*CA, error) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: commonName, Organization: []string{"serverwatch fleet"}},
+		Subject:               pkix.Name{CommonName: commonName, Organization: []string{"trinetra fleet"}},
 		NotBefore:             now.Add(-clockSkewGrace),
 		NotAfter:              now.Add(CALife),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
@@ -148,7 +148,7 @@ func (ca *CA) IssueServer(hosts []string, now time.Time) (certPEM, keyPEM []byte
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "serverwatch fleet master"},
+		Subject:      pkix.Name{CommonName: "trinetra fleet master"},
 		NotBefore:    now.Add(-clockSkewGrace),
 		NotAfter:     now.Add(ServerCertLife),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

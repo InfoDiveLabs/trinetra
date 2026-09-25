@@ -85,37 +85,37 @@ func Main(args []string) int {
 	}
 }
 
-const usage = `serverwatch -- home server monitor
+const usage = `trinetra -- home server monitor
 usage:
-  serverwatch config get [key]
-  serverwatch config set <key> <value>
-  serverwatch config unset <key>
-  serverwatch install [--force] [--state-already-at-new-path]
+  trinetra config get [key]
+  trinetra config set <key> <value>
+  trinetra config unset <key>
+  trinetra install [--force] [--state-already-at-new-path]
                                         # --force: migrate even if systemctl cannot confirm the old serverwatch service stopped
                                         # --state-already-at-new-path: adopt a serverwatch state volume you remounted at /var/lib/trinetra
-  serverwatch uninstall [--purge]
-  serverwatch daemon
-  serverwatch telegram set-token <token>
-  serverwatch monitor list|enable|disable|threshold
-  serverwatch schedule daily HH:MM | weekly dow@HH:MM | off
-  serverwatch quiet-hours <HH-HH>|off
-  serverwatch healthchecks set <url> | off
-  serverwatch channel list|add|remove|set|test
-  serverwatch status
-  serverwatch doctor
-  serverwatch migrate [--force]
-  serverwatch dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]
-  serverwatch downtime purge [--type power_down] [--max-seconds 300]
-  serverwatch alerts [list] [--since 24h] [--limit 20]
-  serverwatch alerts ack <key>
-  serverwatch alerts unack <key>
-  serverwatch fleet init --address HOST[,IP] [--port 9443]
-  serverwatch fleet join <code> [--name NAME] | leave [--purge] | disable [--purge]
-  serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
-  serverwatch fleet node revoke|remove|rename|tag <node> [value]
-  serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1] | list | delete <id>
-  serverwatch cli                       # interactive management (serverwatch-ctl)
-  serverwatch web                       # web UI (serverwatch-web)`
+  trinetra uninstall [--purge]
+  trinetra daemon
+  trinetra telegram set-token <token>
+  trinetra monitor list|enable|disable|threshold
+  trinetra schedule daily HH:MM | weekly dow@HH:MM | off
+  trinetra quiet-hours <HH-HH>|off
+  trinetra healthchecks set <url> | off
+  trinetra channel list|add|remove|set|test
+  trinetra status
+  trinetra doctor
+  trinetra migrate [--force]
+  trinetra dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]
+  trinetra downtime purge [--type power_down] [--max-seconds 300]
+  trinetra alerts [list] [--since 24h] [--limit 20]
+  trinetra alerts ack <key>
+  trinetra alerts unack <key>
+  trinetra fleet init --address HOST[,IP] [--port 9443]
+  trinetra fleet join <code> [--name NAME] | leave [--purge] | disable [--purge]
+  trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
+  trinetra fleet node revoke|remove|rename|tag <node> [value]
+  trinetra fleet token create [--tags a,b] [--ttl 1h] [--uses 1] | list | delete <id>
+  trinetra cli                       # interactive management (trinetra-ctl)
+  trinetra web                       # web UI (trinetra-web)`
 
 func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
 

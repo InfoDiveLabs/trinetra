@@ -11,14 +11,14 @@ import (
 
 func cmdDowntime(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: serverwatch downtime purge [--type power_down] [--max-seconds 300]")
+		fmt.Fprintln(stderr, "usage: trinetra downtime purge [--type power_down] [--max-seconds 300]")
 		return 2
 	}
 	switch args[0] {
 	case "purge":
 		return cmdDowntimePurge(args[1:])
 	default:
-		fmt.Fprintf(stderr, "unknown downtime subcommand %q\nusage: serverwatch downtime purge [--type power_down] [--max-seconds 300]\n", args[0])
+		fmt.Fprintf(stderr, "unknown downtime subcommand %q\nusage: trinetra downtime purge [--type power_down] [--max-seconds 300]\n", args[0])
 		return 2
 	}
 }

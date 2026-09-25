@@ -114,7 +114,7 @@ func serverLeafExpiryWarning(leaf tls.Certificate, now time.Time) string {
 		return ""
 	}
 	return fmt.Sprintf("fleet: WARNING the master's server certificate expires %s (in %d days); children cannot connect after that. "+
-		"Re-issue it with `sudo serverwatch fleet disable` then `sudo serverwatch fleet init --address ...` (keeps the CA, so children need not re-join) and restart.",
+		"Re-issue it with `sudo trinetra fleet disable` then `sudo trinetra fleet init --address ...` (keeps the CA, so children need not re-join) and restart.",
 		c.NotAfter.Format("2006-01-02"), int(left.Hours()/24))
 }
 
@@ -359,7 +359,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	pki := fleetPKIDir(d.stateDir)
 	ca, err := fleet.LoadCA(filepath.Join(pki, "ca.crt"), filepath.Join(pki, "ca.key"))
 	if err != nil {
-		return fmt.Errorf("load CA (run `serverwatch fleet init`): %w", err)
+		return fmt.Errorf("load CA (run `trinetra fleet init`): %w", err)
 	}
 	leaf, err := tls.LoadX509KeyPair(filepath.Join(pki, "server.crt"), filepath.Join(pki, "server.key"))
 	if err != nil {
@@ -417,7 +417,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 
 	rt.provider.role = config.RoleMaster
 	if fleetJoinURL(cfg) == "" {
-		d.logf("fleet: WARNING fleet.address is empty; children cannot be given a join URL and token creation is refused. Run `serverwatch fleet init --address ...`")
+		d.logf("fleet: WARNING fleet.address is empty; children cannot be given a join URL and token creation is refused. Run `trinetra fleet init --address ...`")
 	}
 
 	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker, loop: loop,
@@ -456,7 +456,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetRuntime) error {
 	id, err := fleet.LoadIdentity(fleetChildDir(d.stateDir))
 	if err != nil {
-		return fmt.Errorf("load identity (re-run `serverwatch fleet join`): %w", err)
+		return fmt.Errorf("load identity (re-run `trinetra fleet join`): %w", err)
 	}
 	ob, err := fleet.OpenOutbox(fleetOutboxDir(d.stateDir), cfg.FleetOutboxMaxBytes())
 	if err != nil {

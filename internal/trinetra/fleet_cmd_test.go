@@ -603,7 +603,7 @@ func TestFleetLeavePrintsMasterRevokeHint(t *testing.T) {
 	if rc := Main([]string{"fleet", "leave"}); rc != 0 {
 		t.Fatalf("leave exit %d: %s", rc, errb)
 	}
-	if want := "On the master, run: sudo serverwatch fleet node revoke " + id; !strings.Contains(out.String(), want) {
+	if want := "On the master, run: sudo trinetra fleet node revoke " + id; !strings.Contains(out.String(), want) {
 		t.Fatalf("out = %s, want %q", out, want)
 	}
 }

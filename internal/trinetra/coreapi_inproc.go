@@ -341,7 +341,7 @@ func netIfaceViews(rates map[string]IfaceRate) []core.NetIfaceView {
 // a clearer message for its specific reason), but is kept as a fallback
 // sentinel other future not-yet-implemented core.API methods could still
 // reach for.
-var errCoreNotImplemented = errors.New("serverwatch: core.API method not implemented yet")
+var errCoreNotImplemented = errors.New("trinetra: core.API method not implemented yet")
 
 // errStreamRequiresDaemon is returned by Subscribe when there is no live
 // daemon event bus to subscribe to: fileAPI (coreapi_file.go) always hits
@@ -350,7 +350,7 @@ var errCoreNotImplemented = errors.New("serverwatch: core.API method not impleme
 // constructed without a bus (bus is nil), which never happens for the real
 // control-socket-serving inprocAPI cmdDaemon builds (daemon.go always
 // passes its live bus), only in tests that don't exercise Subscribe.
-var errStreamRequiresDaemon = errors.New("serverwatch: live event streaming requires a running daemon")
+var errStreamRequiresDaemon = errors.New("trinetra: live event streaming requires a running daemon")
 
 // inprocAPI is the in-process core.API implementation: it reads the running
 // daemon's own state directly (no socket/HTTP hop) by holding closures onto
