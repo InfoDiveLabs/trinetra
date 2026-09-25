@@ -546,6 +546,14 @@ func TestBodyDataNodePrefixEmptyOnSelfPage(t *testing.T) {
 // /public/events, /enroll/*, /login/*, /logout, which are master-local and
 // must always target the master regardless of node scope), capturing
 // whether it's immediately preceded by "nodeURL(".
+//
+// Task 4 review carry-over (task-5-brief.md): this regex ONLY catches a
+// quoted string literal ('/api/...' or "/api/..."), not a same-origin URL
+// built any other way (string concatenation, a template literal, a path
+// assembled from a variable) -- it would silently miss a future node-scoped
+// fetch written in one of those shapes. It's sufficient for every call site
+// in app.js today (see the doc above), but a future addition that builds
+// its URL differently needs its own check, not just this scan.
 var appJSNodeScopedLiteral = regexp.MustCompile(`(nodeURL\(\s*)?['"](/api/[^'"]*|/events)['"]`)
 
 // TestAppJSDataFetchesGoThroughNodeURL pins the controller ruling: every

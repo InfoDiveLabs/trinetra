@@ -3,6 +3,9 @@ package web
 import (
 	"net/http"
 	"strconv"
+
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // NavCounts holds the small per-request counts rendered as the sidebar nav's
@@ -26,6 +29,11 @@ type NavCounts struct {
 	// (DashboardView.ContainersTotal) -- the brief's "stable default" choice
 	// for a single meaningful number on the Monitoring nav entry.
 	Monitoring int
+	// FleetDown (task 5, fleet-web-a) is how many fleet nodes are currently
+	// State=="down", for the "Fleet" nav entry's badge -- 0 (no badge) on
+	// every page where this daemon isn't a fleet master, since
+	// navCountsFor only computes it when fleetRole=="master" (see its doc).
+	FleetDown int
 }
 
 // navCountsFor computes NavCounts from Deps: a handful of cheap, per-request
@@ -43,7 +51,15 @@ type NavCounts struct {
 // regardless of scope -- they're master-local concepts (config channels,
 // this trinetra-web instance's own account store), never node-scoped
 // (global-constraints.md).
-func navCountsFor(r *http.Request, d Deps) NavCounts {
+//
+// fleetRole is the caller's already-resolved fleetRole (newPageData's
+// resolveFleetPageInfo, computed once per request) rather than a fresh
+// fleetRole(d) call here: FleetDown is the one count that costs an extra
+// Fleet() round trip (a Nodes() call, on top of whatever Status() call
+// resolving fleetRole itself may have made), so it's skipped outright
+// (stays 0, no badge) on every solo/child/non-fleet request instead of
+// paying that cost to learn "0" every time.
+func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 	var c NavCounts
 
 	c.Alerts = len(activeAlertsViaAPI(r, d))
@@ -63,6 +79,18 @@ func navCountsFor(r *http.Request, d Deps) NavCounts {
 	} else if api := apiFor(r, d); api != nil {
 		if v, err := api.Snapshot(); err == nil {
 			c.Monitoring = v.ContainersTotal
+		}
+	}
+
+	if fleetRole == config.RoleMaster && d.Fleet != nil {
+		if fleet := d.Fleet(); fleet != nil {
+			if nodes, err := fleet.Nodes(core.NodeFilter{}); err == nil {
+				for _, n := range nodes {
+					if n.State == "down" {
+						c.FleetDown++
+					}
+				}
+			}
 		}
 	}
 

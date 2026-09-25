@@ -104,6 +104,28 @@ func TestGzipMiddlewareExcludesSSERoutes(t *testing.T) {
 	}
 }
 
+// TestIsEventsStreamPath is a direct unit test for isEventsStreamPath
+// (Task 4/fleet-web-a review carry-over, task-5-brief.md's global-
+// constraints.md): every prior test only exercised it indirectly through
+// gzipMiddleware's exclusion behavior (TestGzipMiddlewareExcludesSSERoutes
+// above, and node_scope_test.go's node-routing tests) -- this pins the
+// predicate itself, positive and negative, independent of the middleware
+// wrapping it.
+func TestIsEventsStreamPath(t *testing.T) {
+	positive := []string{"/events", "/public/events", "/n/abc/events"}
+	for _, p := range positive {
+		if !isEventsStreamPath(p) {
+			t.Errorf("isEventsStreamPath(%q) = false, want true", p)
+		}
+	}
+	negative := []string{"/n/x/eventsfoo", "/eventsx", "/n/x/events/extra"}
+	for _, p := range negative {
+		if isEventsStreamPath(p) {
+			t.Errorf("isEventsStreamPath(%q) = true, want false", p)
+		}
+	}
+}
+
 // countingResponseWriter wraps an httptest.ResponseRecorder to count
 // WriteHeader calls -- httptest.ResponseRecorder itself silently swallows a
 // second WriteHeader call (only its FIRST call's code/headers stick), which

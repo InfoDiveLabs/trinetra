@@ -276,6 +276,13 @@
   function prefillChannel(m,d){var h=m.querySelector('.mh h3'); if(h)h.textContent='Edit channel'; var name=m.querySelector('input'); if(name)name.value=d.chanName||''; var sel=m.querySelector('[data-cond-src]'); if(sel&&d.chanType){sel.value=d.chanType; sel.dispatchEvent(new Event('change'));}}
   function resetChannel(m){var h=m.querySelector('.mh h3'); if(h&&h.textContent==='Edit channel')h.textContent='Add channel';}
   document.addEventListener('change',function(e){ if(e.target.matches('[data-cond-src]')){var v=e.target.value; document.querySelectorAll('[data-cond]').forEach(function(el){el.classList.toggle('on',el.dataset.cond===v);});} });
+  // [data-autosubmit] (fleet.html's state filter <select>): submits its
+  // form on change, a GET-only plain-navigation equivalent of "auto-apply
+  // this filter" -- delegated through document, the same convention every
+  // other generic behavior here uses, rather than an inline onchange=
+  // attribute (the CSP's script-src has no 'unsafe-inline' -- security.go
+  // -- so an inline event-handler attribute would simply never run).
+  document.addEventListener('change',function(e){ if(e.target.matches('[data-autosubmit]')&&e.target.form){ e.target.form.submit(); } });
 
   // ---- tabs / filter / chips / switches ----
   document.addEventListener('click',function(e){var b=e.target.closest('.tabs button');if(!b)return;var w=b.closest('[data-tabs]');w.querySelectorAll('.tabs button').forEach(function(x){x.classList.toggle('on',x===b)});w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===b.dataset.tab)});});

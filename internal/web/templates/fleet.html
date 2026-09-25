@@ -1,0 +1,80 @@
+{{define "content"}}
+<div class="grid g-4" style="margin-bottom:18px">
+  <a class="count good" href="/fleet?state=online"><div class="n">{{.Health.Online}}</div><div class="lb">Online</div></a>
+  <a class="count warnc" href="/fleet?state=lagging"><div class="n">{{.Health.Behind}}</div><div class="lb">Behind (lagging + stale)</div></a>
+  <a class="count bad" href="/fleet?state=down"><div class="n">{{.Health.Down}}</div><div class="lb">Down</div></a>
+  <a class="count" href="/fleet?state=revoked"><div class="n">{{.Health.Revoked}}</div><div class="lb">Revoked</div></a>
+</div>
+
+<form class="toolbar" method="get" action="/fleet">
+  <input type="hidden" name="sort" value="{{.Query.Sort}}">
+  <input type="hidden" name="dir" value="{{.Query.Dir}}">
+  <div class="search"><input type="text" name="q" value="{{.Query.Query}}" placeholder="search name, id, address…"></div>
+  <input type="text" name="tag" value="{{.Query.Tag}}" placeholder="tag" style="max-width:140px">
+  <select name="state" data-autosubmit style="max-width:160px">
+    <option value="">any state</option>
+    <option value="online"{{if eq .Query.State "online"}} selected{{end}}>online</option>
+    <option value="lagging"{{if eq .Query.State "lagging"}} selected{{end}}>lagging</option>
+    <option value="stale"{{if eq .Query.State "stale"}} selected{{end}}>stale</option>
+    <option value="down"{{if eq .Query.State "down"}} selected{{end}}>down</option>
+    <option value="revoked"{{if eq .Query.State "revoked"}} selected{{end}}>revoked</option>
+  </select>
+  <button class="btn" type="submit">Filter</button>
+  {{if or .Query.Tag .Query.State .Query.Query}}<a class="btn ghost" href="/fleet">Clear</a>{{end}}
+</form>
+
+<div class="panel pad0 cardpanel"><div class="tablewrap">
+  <table id="fleet-nodes" class="cards">
+    <thead><tr>
+      <th><a href="{{index .SortLinks "name"}}">Name</a></th>
+      <th><a href="{{index .SortLinks "state"}}">State</a></th>
+      <th><a href="{{index .SortLinks "cpu"}}">CPU</a></th>
+      <th><a href="{{index .SortLinks "mem"}}">Mem</a></th>
+      <th><a href="{{index .SortLinks "disk"}}">Disk</a></th>
+      <th><a href="{{index .SortLinks "load"}}">Load</a></th>
+      <th><a href="{{index .SortLinks "version"}}">Version</a></th>
+      <th><a href="{{index .SortLinks "lastseen"}}">Last seen</a></th>
+      <th>Tags</th>
+      <th>Link</th>
+    </tr></thead>
+    {{template "fleet_rows" .}}
+  </table>
+</div></div>
+<p class="note" style="margin-top:10px">Showing {{len .Rows}} of {{.TotalNodes}} node{{if ne .TotalNodes 1}}s{{end}} · table refreshes every 5s</p>
+{{end}}
+
+{{/* fleet_rows (task 5): the bare <tbody> fragment GET /fleet/table
+     returns, and the same block the full page uses for its initial render
+     -- both FleetPageData and FleetTableData carry a Rows []FleetRow and a
+     QueryString field, so this block works unmodified against either. The
+     tbody carries its OWN hx-get/hx-trigger/hx-swap (a self-polling
+     element, not a page-level trigger targeting it from outside): every
+     5s it re-fetches itself from /fleet/table with the SAME query string
+     the page was loaded with (QueryString, precomputed server-side from
+     fleetQuery.encode() -- global-constraints.md/task-5-brief.md: "the
+     htmx poll fragment must keep the current query string"), and htmx
+     swaps the whole element (hx-swap="outerHTML") for the new one, which
+     carries the identical id/hx-get/hx-trigger and so keeps polling
+     indefinitely without any page-level boot script. */}}
+{{define "fleet_rows"}}<tbody id="fleet-tbody" hx-get="/fleet/table?{{.QueryString}}" hx-trigger="every 5s" hx-swap="outerHTML">
+{{range .Rows}}
+<tr data-node-id="{{.ID}}">
+  <td class="mono card-title"><a href="{{.Href}}">{{.Name}}</a>{{if .Self}} <span class="note">(this host)</span>{{end}}</td>
+  <td data-label="State"><span class="badge{{if eq .State "online"}} ok{{else if eq .State "down"}} crit{{else if or (eq .State "lagging") (eq .State "stale")}} warn{{end}}">{{.State}}</span></td>
+  <td class="mono" data-label="CPU">{{printf "%.0f" .CPU}}%</td>
+  <td class="mono" data-label="Mem">{{printf "%.0f" .MemPct}}%</td>
+  <td class="mono" data-label="Disk">{{printf "%.0f" .WorstDiskPct}}%</td>
+  <td class="mono" data-label="Load">{{printf "%.2f" .Load1}}</td>
+  <td class="mono note" data-label="Version">{{if .Version}}{{.Version}}{{else}}-{{end}}</td>
+  <td class="mono note" data-label="Last seen">{{nodeAgo .LastSeen}}</td>
+  <td data-label="Tags">{{range .Tags}}<span class="badge">{{.}}</span> {{else}}<span class="note">-</span>{{end}}</td>
+  <td data-label="Link">
+    {{if .SkewWarn}}<div class="fleet-link-warn">{{.SkewWarn}}</div>{{end}}
+    {{if .DropsWarn}}<div class="fleet-link-warn">{{.DropsWarn}}</div>{{end}}
+    {{if and (not .SkewWarn) (not .DropsWarn)}}<span class="note mono">{{.SkewText}}{{if .OutboxText}} · {{.OutboxText}} queued{{end}}</span>{{end}}
+  </td>
+</tr>
+{{else}}
+<tr><td colspan="10" class="note">no fleet nodes match this filter</td></tr>
+{{end}}
+</tbody>{{end}}

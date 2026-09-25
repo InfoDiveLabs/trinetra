@@ -186,12 +186,22 @@ type NavItem struct {
 	Badge   string
 }
 
-// navEntry is a NavItem plus the role gate the mockup expressed as NAV's
-// `admin:true` flag; navForRole filters on it and never exposes it to
-// templates.
+// navEntry is a NavItem plus the role/fleet-role gates navForRole filters
+// on and never exposes to templates: AdminOnly mirrors the mockup NAV's
+// `admin:true` flag; MasterOnly (task 5, fleet-web-a) is this daemon's own
+// fleetRole gate for the "Fleet" entry -- solo/child daemons never show it
+// at all (global-constraints.md: "no fleet nav" on solo/child).
 type navEntry struct {
 	NavItem
 	AdminOnly bool
+	// MasterOnly entries are ALSO exempt from node-prefixing (see
+	// navForRole): unlike Dashboard/Monitoring/etc, "/fleet" is a
+	// master-local URL (node_scope.go's masterLocalPrefixes) that's
+	// reachable -- unprefixed -- from every page, including a remote
+	// node's (task-3-brief.md's nodeLinkAllowlist already carried "/fleet"
+	// in anticipation of this), not just the master's own self-scoped
+	// pages the way AdminOnly entries are restricted to.
+	MasterOnly bool
 }
 
 // navItems mirrors the mockup app.js NAV array verbatim (headings, paths,
@@ -202,6 +212,7 @@ type navEntry struct {
 // below) so they never go stale.
 var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Monitor"}},
+	{NavItem: NavItem{Href: "/fleet", Icon: "⛶", Label: "Fleet"}, MasterOnly: true},
 	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
 	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring"}},
 	{NavItem: NavItem{Href: "/host", Icon: "▢", Label: "Host"}},
@@ -233,15 +244,23 @@ var navItems = []navEntry{
 // happens after, so a remote node's Monitoring badge still resolves
 // correctly instead of silently going blank because "/n/child1/monitoring"
 // never matches badgeFor's cases.
-func navForRole(role string, counts NavCounts, node nodeScope) []NavItem {
+//
+// fleetRole (task 5, fleet-web-a) gates MasterOnly entries: "/fleet" shows
+// only when this daemon is a fleet master (config.RoleMaster), regardless
+// of node/role -- see navEntry.MasterOnly's doc for why its Href is also
+// exempt from the node.Prefix join every other entry gets.
+func navForRole(role string, counts NavCounts, node nodeScope, fleetRole string) []NavItem {
 	out := make([]NavItem, 0, len(navItems))
 	for _, n := range navItems {
 		if n.AdminOnly && (role != "admin" || !node.Self) {
 			continue
 		}
+		if n.MasterOnly && fleetRole != config.RoleMaster {
+			continue
+		}
 		item := n.NavItem
 		item.Badge = badgeFor(item.Href, counts)
-		if item.Href != "" {
+		if item.Href != "" && !n.MasterOnly {
 			item.Href = nodeHref(node.Prefix, item.Href)
 		}
 		out = append(out, item)
@@ -264,6 +283,8 @@ func badgeFor(href string, counts NavCounts) string {
 		return badgeText(counts.Channels)
 	case "/users":
 		return badgeText(counts.Users)
+	case "/fleet":
+		return badgeText(counts.FleetDown)
 	default:
 		return ""
 	}
@@ -434,7 +455,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		Name:            name,
 		Initial:         firstInitial(name),
 		Active:          nodeHref(node.Prefix, r.URL.Path),
-		Nav:             navForRole(role, navCountsFor(r, d), node),
+		Nav:             navForRole(role, navCountsFor(r, d, fleetInfo.role), node, fleetInfo.role),
 		Nonce:           nonceFromContext(r),
 		CSRF:            csrf,
 		CoreVersion:     coreVer,

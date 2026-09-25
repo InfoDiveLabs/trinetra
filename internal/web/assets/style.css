@@ -135,6 +135,12 @@ a:hover{text-decoration-color:var(--text)}
 .count .n .of{color:var(--muted); font-size:22px}
 .count .lb{color:var(--muted); font-size:12px; margin-top:6px}
 .count.good .n{color:var(--ok)} .count.bad .n{color:var(--crit)} .count.warnc .n{color:var(--warn)}
+/* fleet overview (task 5): the health strip's four counts are links
+   (a.count) to /fleet?state=... -- neutralize the anchor's default
+   underline/color so it reads identically to the plain .count tiles
+   elsewhere, plus a hover cue matching .icon-btn/.chip's own convention. */
+a.count{text-decoration:none;color:inherit}
+a.count:hover{border-color:var(--faint)}
 
 /* stat tile */
 .tile{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:14px 15px; position:relative; overflow:hidden}
@@ -194,6 +200,18 @@ a:hover{text-decoration-color:var(--text)}
 table{width:100%; border-collapse:collapse; font-size:13px}
 th{text-align:left; padding:10px 14px; font-family:var(--font-mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--surface); cursor:pointer}
 th:hover{color:var(--text)}
+/* fleet overview (task 5): sortable column headers are plain links
+   (server-rendered ?sort=&dir=, no client JS) -- inherit th's own color/
+   no-underline instead of the app's default link styling. */
+th a{color:inherit; text-decoration:none}
+/* fleet overview (task 5): per-row skew/replica-drops warning text
+   (task-5-brief.md's exact CLI wording, printNodeWarnings) -- the same
+   amber "degraded, not critical" tone .collector-warn already uses
+   elsewhere, sized to sit inline in a table cell rather than a full-width
+   banner. Ember stays reserved for the down state alone (badge.crit /
+   .count.bad), per the ruling. */
+.fleet-link-warn{display:block; padding:4px 8px; margin:0 0 4px; border-radius:var(--r-sm); background:color-mix(in oklab,var(--warn) 14%,var(--surface)); border:1px solid color-mix(in oklab,var(--warn) 40%,var(--border)); color:var(--warn); font-size:11px; line-height:1.35}
+.fleet-link-warn:last-child{margin-bottom:0}
 td{padding:10px 14px; border-bottom:1px solid var(--border-soft)} tr:last-child td{border-bottom:0}
 tbody tr:hover{background:var(--surface2)}
 .tablewrap{max-height:none; overflow:auto}

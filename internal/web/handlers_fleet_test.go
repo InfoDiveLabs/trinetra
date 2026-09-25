@@ -1,0 +1,380 @@
+package web
+
+import (
+	"encoding/json"
+	"html"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
+)
+
+// fleetFiveNodeRoster is task-5-brief.md's exact Step 1 fixture: self
+// online, web1 online tagged "web", web2 lagging (also carrying a clock
+// skew and replica drops, to exercise the Link column's warning chips),
+// db1 down, old1 revoked.
+func fleetFiveNodeRoster() []core.NodeSummary {
+	return []core.NodeSummary{
+		{ID: core.SelfNodeID, Name: "self", Self: true, State: "online", CPU: 5, MemPct: 20, WorstDiskPct: 30, Load1: 0.5, Version: "1.2.3"},
+		{ID: "web1", Name: "web1", State: "online", Tags: []string{"web"}, CPU: 12, MemPct: 40, WorstDiskPct: 55, Load1: 0.8, Version: "1.2.3", LastSeen: 1000},
+		{ID: "web2", Name: "web2", State: "lagging", Tags: []string{"web"}, CPU: 30, MemPct: 60, WorstDiskPct: 70, Load1: 1.1, Version: "1.2.2", LastSeen: 990,
+			SkewSec: 45, DroppedOutOfOrder: 3, DroppedCardinality: 1, DroppedDuplicate: 2, OutboxBytes: 2048, OutboxOldest: 900},
+		{ID: "db1", Name: "db1", State: "down", CPU: 0, MemPct: 0, WorstDiskPct: 90, Load1: 0, Version: "1.2.3", LastSeen: 500},
+		{ID: "old1", Name: "old1", State: "revoked", Revoked: true, Version: "1.0.0", LastSeen: 100},
+	}
+}
+
+// fleetMasterDeps builds a master Deps (fleetTestDeps, node_scope_test.go)
+// whose Fleet().Nodes/Status report the given roster -- config.RoleMaster,
+// so fleetRole(d)/resolveMasterAndNodes both agree this daemon is a fleet
+// master.
+func fleetMasterDeps(t *testing.T, nodes []core.NodeSummary) Deps {
+	t.Helper()
+	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: nodes}
+	return fleetTestDeps(t, masterFakeAPI(fleet, nil))
+}
+
+// fleetSoloDeps builds a non-master Deps: Status reports solo and the
+// roster is just self, mirroring a genuinely solo daemon's Fleet().Nodes
+// (fleet_provider.go).
+func fleetSoloDeps(t *testing.T) Deps {
+	t.Helper()
+	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleSolo}, nodes: []core.NodeSummary{{ID: core.SelfNodeID, Self: true, State: "online"}}}
+	return fleetTestDeps(t, masterFakeAPI(fleet, nil))
+}
+
+// fleetChildDeps builds a child Deps: Status reports child, roster is just
+// self (a child daemon's own Fleet().Nodes never lists siblings -- it only
+// knows its master).
+func fleetChildDeps(t *testing.T) Deps {
+	t.Helper()
+	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleChild}, nodes: []core.NodeSummary{{ID: core.SelfNodeID, Self: true, State: "online"}}}
+	return fleetTestDeps(t, masterFakeAPI(fleet, nil))
+}
+
+func fleetGetAsViewer(t *testing.T, d Deps, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, target))
+	return rr
+}
+
+// TestFleetOverviewHealthStripAndTable pins the full Step 1 page shape: the
+// health strip's four counts, the table's columns/row content, self vs.
+// remote row links, and the Link column's CLI-worded warning chips.
+func TestFleetOverviewHealthStripAndTable(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /fleet status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	// Health strip: online 2 (self, web1), behind 1 (web2, lagging), down 1
+	// (db1), revoked 1 (old1).
+	for _, want := range []string{
+		`href="/fleet?state=online"><div class="n">2</div>`,
+		`href="/fleet?state=lagging"><div class="n">1</div>`,
+		`href="/fleet?state=down"><div class="n">1</div>`,
+		`href="/fleet?state=revoked"><div class="n">1</div>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /fleet: missing health strip fragment %q\nbody:\n%s", want, body)
+		}
+	}
+
+	// Rows: self links to "/", a remote node links to "/n/<id>/".
+	if !strings.Contains(body, `<a href="/">self</a>`) {
+		t.Error(`GET /fleet: self row should link to "/"`)
+	}
+	if !strings.Contains(body, `<a href="/n/web1/">web1</a>`) {
+		t.Error(`GET /fleet: web1 row should link to "/n/web1/"`)
+	}
+	if !strings.Contains(body, `<a href="/n/db1/">db1</a>`) {
+		t.Error(`GET /fleet: db1 row should link to "/n/db1/"`)
+	}
+
+	// Link column: CLI-worded warning chips for web2's skew and drops.
+	// html/template escapes both "'" and "+" (its default text escaper
+	// widens the replacement table beyond the bare minimum), so the
+	// literal wording is checked against the UNescaped body.
+	unescaped := html.UnescapeString(body)
+	if !strings.Contains(unescaped, "clock differs from this master's by +45s") {
+		t.Errorf("GET /fleet: missing web2's clock-skew warning chip\nbody:\n%s", unescaped)
+	}
+	if !strings.Contains(unescaped, "replica drops: 3 out of order, 1 over the series limit, 2 duplicates (harmless re-sends)") {
+		t.Errorf("GET /fleet: missing web2's replica-drops warning chip\nbody:\n%s", unescaped)
+	}
+
+	// State text is never colour-only: every row's literal state string is
+	// present regardless of badge class.
+	for _, want := range []string{">online<", ">lagging<", ">down<", ">revoked<"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /fleet: missing state text %q", want)
+		}
+	}
+}
+
+// TestFleetOverviewFilters pins core.NodeFilter semantics applied through
+// the query string: ?tag=web&state=online&q=we narrows the 5-node roster
+// to exactly web1 (web2 is tagged "web" too but is state=lagging, not
+// online; "we" as a query substring matches "web1"/"web2" by name but the
+// state filter alone already excludes web2).
+func TestFleetOverviewFilters(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet?tag=web&state=online&q=we")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `<a href="/n/web1/">web1</a>`) {
+		t.Error("filtered /fleet: expected web1's row")
+	}
+	for _, absent := range []string{`<a href="/n/web2/">web2</a>`, `<a href="/n/db1/">db1</a>`, `<a href="/n/old1/">old1</a>`, `<a href="/">self</a>`} {
+		if strings.Contains(body, absent) {
+			t.Errorf("filtered /fleet: unexpected row present: %s\nbody:\n%s", absent, body)
+		}
+	}
+	// The health strip stays fleet-wide (unaffected by the filter).
+	if !strings.Contains(body, `href="/fleet?state=online"><div class="n">2</div>`) {
+		t.Error("filtered /fleet: health strip should still show the full-roster online count (2)")
+	}
+}
+
+// TestFleetOverviewBehindStateIncludesStale pins the ruling's documented
+// deviation: the health strip's "Behind" link (?state=lagging) must also
+// surface a "stale" node, not just "lagging" ones.
+func TestFleetOverviewBehindStateIncludesStale(t *testing.T) {
+	nodes := append(fleetFiveNodeRoster(), core.NodeSummary{ID: "cache1", Name: "cache1", State: "stale", LastSeen: 800})
+	d := fleetMasterDeps(t, nodes)
+	rr := fleetGetAsViewer(t, d, "/fleet?state=lagging")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `<a href="/n/web2/">web2</a>`) {
+		t.Error("?state=lagging: expected web2 (state=lagging)")
+	}
+	if !strings.Contains(body, `<a href="/n/cache1/">cache1</a>`) {
+		t.Error("?state=lagging: expected cache1 (state=stale) to also match, per the ruling")
+	}
+	if strings.Contains(body, `<a href="/n/db1/">db1</a>`) {
+		t.Error("?state=lagging: db1 (state=down) must not match")
+	}
+}
+
+// TestFleetOverviewSort pins explicit sort/dir query handling: ?sort=cpu
+// &dir=desc orders rows by descending CPU (web2 30 > web1 12 > self 5 >
+// db1 0, old1 has CPU 0 too but sorts stably after db1).
+func TestFleetOverviewSort(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet?sort=cpu&dir=desc")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	idx := func(id string) int {
+		i := strings.Index(body, `data-node-id="`+id+`"`)
+		if i < 0 {
+			t.Fatalf("row for %q not found in body", id)
+		}
+		return i
+	}
+	iWeb2, iWeb1, iSelf := idx("web2"), idx("web1"), idx(core.SelfNodeID)
+	if !(iWeb2 < iWeb1 && iWeb1 < iSelf) {
+		t.Errorf("sort=cpu&dir=desc: expected web2 < web1 < self by position, got web2=%d web1=%d self=%d", iWeb2, iWeb1, iSelf)
+	}
+}
+
+// TestFleetOverviewDefaultSort pins the documented default: down nodes
+// first, then name ascending.
+func TestFleetOverviewDefaultSort(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	idx := func(id string) int {
+		i := strings.Index(body, `data-node-id="`+id+`"`)
+		if i < 0 {
+			t.Fatalf("row for %q not found in body", id)
+		}
+		return i
+	}
+	iDb1 := idx("db1")
+	for _, other := range []string{core.SelfNodeID, "web1", "web2", "old1"} {
+		if idx(other) < iDb1 {
+			t.Errorf("default sort: expected db1 (down) before %q, got db1=%d %s=%d", other, iDb1, other, idx(other))
+		}
+	}
+	// Among the non-down nodes, name-ascending: old1 < self < web1 < web2.
+	iOld1, iSelf, iWeb1, iWeb2 := idx("old1"), idx(core.SelfNodeID), idx("web1"), idx("web2")
+	if !(iOld1 < iSelf && iSelf < iWeb1 && iWeb1 < iWeb2) {
+		t.Errorf("default sort: expected name-ascending among non-down nodes, got old1=%d self=%d web1=%d web2=%d", iOld1, iSelf, iWeb1, iWeb2)
+	}
+}
+
+// TestFleetTableFragmentReturnsOnlyTbody pins GET /fleet/table's exact
+// output shape: a single <tbody id="fleet-tbody">...</tbody> fragment, no
+// surrounding page/base.html markup, and no loss of the same filter/sort
+// query semantics /fleet itself applies.
+func TestFleetTableFragmentReturnsOnlyTbody(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet/table?tag=web&state=online")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := strings.TrimSpace(rr.Body.String())
+	if !strings.HasPrefix(body, `<tbody id="fleet-tbody"`) {
+		t.Fatalf("GET /fleet/table: body must start with the tbody fragment, got:\n%s", body)
+	}
+	if !strings.HasSuffix(body, "</tbody>") {
+		t.Fatalf("GET /fleet/table: body must end with </tbody>, got:\n%s", body)
+	}
+	if strings.Contains(body, "<html") || strings.Contains(body, "<body") || strings.Contains(body, `class="app"`) {
+		t.Errorf("GET /fleet/table: fragment must not include the page shell:\n%s", body)
+	}
+	if !strings.Contains(body, `<a href="/n/web1/">web1</a>`) {
+		t.Error("GET /fleet/table: filter (tag=web&state=online) should still apply, expected web1's row")
+	}
+	if strings.Contains(body, `<a href="/n/web2/">web2</a>`) {
+		t.Error("GET /fleet/table: web2 (state=lagging) must not match state=online")
+	}
+	// The fragment's own self-poll re-targets the SAME query string it was
+	// rendered with (url.Values.Encode() sorts keys alphabetically: state
+	// before tag), so a subsequent htmx swap-in keeps polling with the
+	// filter still applied.
+	if !strings.Contains(html.UnescapeString(body), `hx-get="/fleet/table?state=online&tag=web"`) {
+		t.Errorf("GET /fleet/table: fragment's self-poll hx-get should preserve the query string, got:\n%s", body)
+	}
+	if !strings.Contains(body, `hx-trigger="every 5s"`) {
+		t.Error("GET /fleet/table: expected hx-trigger=\"every 5s\" on the self-polling tbody")
+	}
+}
+
+// TestFleetPageEmbedsPollingQueryString pins the full page's initial tbody
+// carrying the SAME query string the page itself was requested with -- the
+// htmx poll fragment must keep the current query string (global-
+// constraints.md/task-5-brief.md).
+func TestFleetPageEmbedsPollingQueryString(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet?state=down&sort=name&dir=asc")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := html.UnescapeString(rr.Body.String())
+	if !strings.Contains(body, `hx-get="/fleet/table?dir=asc&sort=name&state=down"`) {
+		t.Errorf("GET /fleet?state=down&sort=name&dir=asc: expected the tbody's hx-get to carry the same query string, body:\n%s", body)
+	}
+}
+
+// TestFleetNodesAPI pins GET /api/fleet/nodes' JSON contract: []core.NodeSummary,
+// filtered by tag/state/q using plain core.NodeFilter.Match semantics (NOT
+// the HTML page's "?state=lagging also matches stale" convenience -- see
+// fleetStateMatches' doc).
+func TestFleetNodesAPI(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/api/fleet/nodes?tag=web")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var got []core.NodeSummary
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v\nbody: %s", err, rr.Body.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2 (web1, web2 -- both tagged \"web\"), body: %s", len(got), rr.Body.String())
+	}
+	ids := map[string]bool{}
+	for _, n := range got {
+		ids[n.ID] = true
+	}
+	if !ids["web1"] || !ids["web2"] {
+		t.Errorf("expected web1 and web2 in result, got %+v", got)
+	}
+
+	// state=lagging on the JSON API is an EXACT match -- a "stale" node
+	// must NOT be included (unlike the HTML page's health-strip link).
+	nodes := append(fleetFiveNodeRoster(), core.NodeSummary{ID: "cache1", Name: "cache1", State: "stale"})
+	d2 := fleetMasterDeps(t, nodes)
+	rr2 := fleetGetAsViewer(t, d2, "/api/fleet/nodes?state=lagging")
+	var got2 []core.NodeSummary
+	if err := json.Unmarshal(rr2.Body.Bytes(), &got2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got2) != 1 || got2[0].ID != "web2" {
+		t.Errorf("state=lagging (JSON API, exact match): got %+v, want only web2", got2)
+	}
+}
+
+// TestFleetRoutesNotFoundOnSoloAndChild pins the "masters only" gate: on a
+// solo or child daemon, all three routes 404 and the nav carries no "Fleet"
+// entry (task-5-brief.md: "All 404 unless fleetRole(d)=='master'";
+// global-constraints.md: "no fleet nav" on solo/child).
+func TestFleetRoutesNotFoundOnSoloAndChild(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		deps func(t *testing.T) Deps
+	}{
+		{"solo", fleetSoloDeps},
+		{"child", fleetChildDeps},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := tc.deps(t)
+			for _, target := range []string{"/fleet", "/fleet/table", "/api/fleet/nodes"} {
+				rr := fleetGetAsViewer(t, d, target)
+				if rr.Code != http.StatusNotFound {
+					t.Errorf("GET %s on %s = %d, want 404", target, tc.name, rr.Code)
+				}
+			}
+
+			// The dashboard's nav must carry no "Fleet" entry/link at all.
+			rr := fleetGetAsViewer(t, d, "/")
+			if rr.Code != http.StatusOK {
+				t.Fatalf("GET / on %s = %d, want 200", tc.name, rr.Code)
+			}
+			body := rr.Body.String()
+			if strings.Contains(body, `href="/fleet"`) {
+				t.Errorf("GET / on %s: nav must not link to /fleet, body:\n%s", tc.name, body)
+			}
+		})
+	}
+}
+
+// TestFleetOverviewNavItemOnMaster is TestFleetRoutesNotFoundOnSoloAndChild's
+// positive counterpart: a master's nav DOES carry the "Fleet" entry, and a
+// down node's count shows as its badge.
+func TestFleetOverviewNavItemOnMaster(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `href="/fleet"`) {
+		t.Errorf("GET / on master: expected nav to link to /fleet, body:\n%s", body)
+	}
+	if !strings.Contains(body, `<span class="ic">⛶</span> Fleet<span class="ct">1</span>`) {
+		t.Errorf("GET / on master: expected the Fleet nav badge to show 1 (one down node), body:\n%s", body)
+	}
+}
+
+// TestFleetOverviewViewerCanSee pins RBAC: /fleet is viewer-reachable, not
+// admin-only (task-5-brief.md: "GET /fleet (viewer)").
+func TestFleetOverviewViewerCanSee(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("viewer GET /fleet status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+}

@@ -59,6 +59,19 @@ func newHandler(d Deps) http.Handler {
 	// /api/container/logs (#115): a docker-logs snapshot for the dashboard
 	// drawer's "View logs" action. Admin-gated -- logs can carry secrets.
 	mux.HandleFunc("GET /api/container/logs", requireRole(RoleAdmin, d, containerLogsHandler(d)))
+	// /fleet + /fleet/table + /api/fleet/nodes (Task 5/fleet-web-a): the
+	// fleet overview -- health strip, filterable/sortable node table, and
+	// its htmx poll fragment/JSON API. Viewer-gated exactly like the rest
+	// of "Monitor" (RBAC doesn't distinguish master from solo/child here);
+	// each handler itself 404s unless fleetRole(d)=="master"
+	// (handlers_fleet.go), so a solo/child daemon's viewer sees a plain
+	// not-found rather than an empty fleet page. /fleet is also on
+	// node_scope.go's masterLocalPrefixes, so /n/{node}/fleet is already a
+	// 404 via withNodeRouter -- these three routes only ever render the
+	// master's own view.
+	mux.HandleFunc("GET /fleet", requireRole(RoleViewer, d, fleetOverviewHandler(d)))
+	mux.HandleFunc("GET /fleet/table", requireRole(RoleViewer, d, fleetTableHandler(d)))
+	mux.HandleFunc("GET /api/fleet/nodes", requireRole(RoleViewer, d, fleetNodesAPIHandler(d)))
 	// beginLimiter caps the unauthenticated ceremony-begin rate per client so an
 	// anonymous caller can't hammer the shared ceremonies.json lock (#95). Both
 	// begins share ONE limiter since they contend the same lock. finish is not
