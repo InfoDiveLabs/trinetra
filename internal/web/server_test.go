@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // testDeps builds a minimal Deps for handler/Start tests: enabled, bound to

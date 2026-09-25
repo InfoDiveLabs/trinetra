@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // TestApplyWebSetupManualSetsCertAndKey asserts manual mode's tls_cert/

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // channelsMutation composes requireRole(RoleAdmin, ...) with requireCSRF,

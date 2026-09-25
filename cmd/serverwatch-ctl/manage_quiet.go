@@ -1,6 +1,6 @@
 package main
 
-import "serverwatch/internal/config"
+import "github.com/InfoDiveLabs/trinetra/internal/config"
 
 // applyQuietHours applies raw onto cfg's quiet_hours key via the SAME
 // validated config.Set setter `serverwatch quiet-hours <HH-HH>|off` uses

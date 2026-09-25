@@ -13,7 +13,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // enrollSessionCookie names the cookie beginRegistration/finishRegistration

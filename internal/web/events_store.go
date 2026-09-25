@@ -1,6 +1,6 @@
 package web
 
-import "serverwatch/internal/core"
+import "github.com/InfoDiveLabs/trinetra/internal/core"
 
 // DownEventView moved to internal/core (core.API contract task 1). This is a
 // Go type alias, not a new type, so every existing handler/template

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // shortSocketPath returns a temp-dir socket path independent of the test

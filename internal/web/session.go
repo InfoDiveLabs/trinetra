@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // sessionCookieName is the cookie a signed-in session lives under (Task

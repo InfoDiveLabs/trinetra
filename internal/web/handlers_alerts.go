@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // alertHistoryViaAPI reads the daemon's alert-log history over the control

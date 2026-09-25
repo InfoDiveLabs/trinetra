@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 func TestNeedsOnboardingNilConfig(t *testing.T) {

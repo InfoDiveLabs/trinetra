@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // fakeEventsStore is a minimal EventsStore test double: events is returned

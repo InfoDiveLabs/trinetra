@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // webSetupStep enumerates the guided "set up the web UI" wizard's screens,

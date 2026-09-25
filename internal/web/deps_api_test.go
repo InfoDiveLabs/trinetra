@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // fakeAPI is a minimal core.API test double for this package's handler
@@ -29,14 +29,14 @@ type fakeAPI struct {
 	// series maps a metric name straight to the points Series should return
 	// for it (ignoring from/to/res unless seriesErr is set), mirroring the
 	// now-removed fakeSeriesStore's shape.
-	series    map[string][]core.SeriesPoint
-	seriesErr error
-	events    []core.DownEventView
-	eventsErr error
-	active    []core.AlertRecord
-	activeErr error
-	history   []core.AlertRecord
-	histErr   error
+	series        map[string][]core.SeriesPoint
+	seriesErr     error
+	events        []core.DownEventView
+	eventsErr     error
+	active        []core.AlertRecord
+	activeErr     error
+	history       []core.AlertRecord
+	histErr       error
 	hostInfo      core.HostInfoView
 	containerLogs string
 	logErr        error
@@ -68,10 +68,12 @@ func (f fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error
 	return f.history, f.histErr
 }
 
-func (f fakeAPI) Config() (*config.Config, error)                         { return nil, nil }
-func (f fakeAPI) Doctor() (core.DoctorReport, error)                      { return core.DoctorReport{}, nil }
-func (f fakeAPI) HostInfo() (core.HostInfoView, error)                    { return f.hostInfo, nil }
-func (f fakeAPI) ContainerLogs(name string, lines int) (string, error)    { return f.containerLogs, f.logErr }
+func (f fakeAPI) Config() (*config.Config, error)      { return nil, nil }
+func (f fakeAPI) Doctor() (core.DoctorReport, error)   { return core.DoctorReport{}, nil }
+func (f fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil }
+func (f fakeAPI) ContainerLogs(name string, lines int) (string, error) {
+	return f.containerLogs, f.logErr
+}
 func (f fakeAPI) Version() (string, error)                                { return f.version, nil }
 func (f fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {

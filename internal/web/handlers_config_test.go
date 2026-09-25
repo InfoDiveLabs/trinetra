@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // publicTestSnapshot is a DashboardView with a distinct, individually

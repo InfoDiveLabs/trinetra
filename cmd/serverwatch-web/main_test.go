@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/control"
-	"serverwatch/internal/core"
-	"serverwatch/internal/web"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/control"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
 // fakeAPI is a minimal core.API test double, the same shape
@@ -48,7 +48,7 @@ func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return core.HostInfoVi
 func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
 	return "", nil
 }
-func (f *fakeAPI) Version() (string, error) { return "v-test", nil }
+func (f *fakeAPI) Version() (string, error)                                { return "v-test", nil }
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil

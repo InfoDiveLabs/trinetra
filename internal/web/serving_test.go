@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // webCfg builds a *config.Config with just the web.* fields serving.go cares

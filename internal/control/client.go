@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // callTimeout bounds how long Client.call waits for a response after

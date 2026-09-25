@@ -24,10 +24,10 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/control"
-	"serverwatch/internal/core"
-	"serverwatch/internal/web"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/control"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
 // defaultRuntimeDir mirrors internal/serverwatch/control_socket.go's

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // TestAlertsPageListsLogEvents pins the core TDD obligation: a populated

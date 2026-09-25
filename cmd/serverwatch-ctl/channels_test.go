@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 func TestBuildChannelConfigDropsEmptySettings(t *testing.T) {

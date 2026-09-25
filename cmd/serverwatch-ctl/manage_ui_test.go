@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // TestHomeKeyMOpensManageMenu asserts 'm' on Home enters the management

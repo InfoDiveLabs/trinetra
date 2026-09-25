@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"sort"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // channelTypeChoices enumerates every channel type buildNotifier

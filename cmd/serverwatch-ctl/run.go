@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"serverwatch/internal/core"
-	"serverwatch/internal/version"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
 // run dispatches a single non-interactive ctl subcommand against api and

@@ -1,6 +1,6 @@
 package main
 
-import "serverwatch/internal/config"
+import "github.com/InfoDiveLabs/trinetra/internal/config"
 
 // scheduleMode enumerates the mutually exclusive choices ctl's Schedule
 // screen offers: off (both keys cleared), a single daily HH:MM firing

@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // API is the single boundary through which every consumer (the web UI, the

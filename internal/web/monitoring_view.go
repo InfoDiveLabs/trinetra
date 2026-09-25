@@ -1,6 +1,6 @@
 package web
 
-import "serverwatch/internal/core"
+import "github.com/InfoDiveLabs/trinetra/internal/core"
 
 // MonitoringView and its nested types moved to internal/core/dto.go (core.API
 // contract task 2). See dashboard_view.go's equivalent note: these are Go

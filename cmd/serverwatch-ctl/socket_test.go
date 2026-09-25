@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/control"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/control"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 func TestResolveSocketPathPrecedence(t *testing.T) {

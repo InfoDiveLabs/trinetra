@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strconv"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // monitorTargetRow is one Monitor thresholds screen row: a discovered

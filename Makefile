@@ -22,7 +22,7 @@ GO_TRIMPATH ?=
 # back to "dev" outside a git checkout. Plain `go build` (no Makefile) leaves it
 # empty and internal/version.String() falls back to build info -> "dev".
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-VERSION_LDFLAGS := -X serverwatch/internal/version.Version=$(VERSION)
+VERSION_LDFLAGS := -X github.com/InfoDiveLabs/trinetra/internal/version.Version=$(VERSION)
 # ALL_LDFLAGS folds the channel flags (empty for beta, -s -w for prod) together
 # with the version stamp, so every build target below carries the version.
 ALL_LDFLAGS = $(GO_LDFLAGS) $(VERSION_LDFLAGS)

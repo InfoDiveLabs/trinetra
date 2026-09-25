@@ -1,6 +1,6 @@
 package web
 
-import "serverwatch/internal/core"
+import "github.com/InfoDiveLabs/trinetra/internal/core"
 
 // AvailabilityBlock, Availability, and ComputeAvailability moved to
 // internal/core/availability.go (core.API contract task 2). Availability is

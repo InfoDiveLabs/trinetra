@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // TestSidebarShowsSignedInUserNotHardcodedName is the #80 guard: the sidebar

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // undeliverableTelegram simulates buildNotifier's rule that a telegram channel

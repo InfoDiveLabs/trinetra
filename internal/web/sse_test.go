@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // eventsTestDeps builds Deps for the SSE tests: a distinctive fake

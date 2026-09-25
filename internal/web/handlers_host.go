@@ -5,7 +5,7 @@ import (
 	"html/template"
 	"net/http"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // HostPageData is what templates/host.html renders against: the static host
@@ -14,16 +14,16 @@ import (
 // shared shell.
 type HostPageData struct {
 	PageData
-	Available  bool // false when the API is unavailable or errored
-	Hostname   string
-	OS         string
-	Kernel     string
-	CPU        string // "model (N cores / M threads @ F MHz)"
-	Memory     string // humanized bytes
-	Uptime     string // "Nd Nh Nm"
-	LocalIP    string
-	PublicIP   string
-	Disks      []hostDiskRow
+	Available bool // false when the API is unavailable or errored
+	Hostname  string
+	OS        string
+	Kernel    string
+	CPU       string // "model (N cores / M threads @ F MHz)"
+	Memory    string // humanized bytes
+	Uptime    string // "Nd Nh Nm"
+	LocalIP   string
+	PublicIP  string
+	Disks     []hostDiskRow
 }
 
 type hostDiskRow struct {

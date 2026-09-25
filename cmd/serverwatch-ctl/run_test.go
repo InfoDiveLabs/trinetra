@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // fakeAPI is a core.API stub returning canned values so run() (and, in
@@ -18,13 +18,13 @@ import (
 // how ApplyConfig fails; applied/applyCalls record what a caller (the web
 // setup wizard) actually posted, for assertions.
 type fakeAPI struct {
-	snapshot core.DashboardView
-	doctor   core.DoctorReport
+	snapshot      core.DashboardView
+	doctor        core.DoctorReport
 	hostInfo      core.HostInfoView
 	containerLogs string
 	logErr        error
 	version       string
-	active   []core.AlertRecord
+	active        []core.AlertRecord
 
 	cfg       *config.Config
 	configErr error
@@ -82,7 +82,7 @@ func (f *fakeAPI) Config() (*config.Config, error) {
 	}
 	return &config.Config{}, nil
 }
-func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+func (f *fakeAPI) Doctor() (core.DoctorReport, error)   { return f.doctor, nil }
 func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil }
 func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
 	return f.containerLogs, f.logErr
@@ -179,8 +179,8 @@ func TestRunHost(t *testing.T) {
 		Hostname: "attic-pi", OS: "Debian GNU/Linux 12", Kernel: "6.1.0-13-arm64",
 		CPUModel: "Cortex-A72", CPUCores: 4, CPUThreads: 4, MemTotalBytes: 8 << 30,
 		UptimeSec: 90061, // 1d 1h 1m
-		LocalIP: "192.168.1.50", PublicIP: "203.0.113.7",
-		Disks:     []core.HostDiskView{{Device: "nvme0n1", Model: "WD SN570", Rotational: false, SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}},
+		LocalIP:   "192.168.1.50", PublicIP: "203.0.113.7",
+		Disks: []core.HostDiskView{{Device: "nvme0n1", Model: "WD SN570", Rotational: false, SizeBytes: 512 << 30, FSType: "ext4", Mount: "/"}},
 	}}
 	var buf bytes.Buffer
 	if code := run(api, []string{"host"}, &buf); code != 0 {

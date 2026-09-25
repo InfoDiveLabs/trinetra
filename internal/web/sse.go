@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // sseDefaultInterval is eventsHandler's fallback per-connection ticker

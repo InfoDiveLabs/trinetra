@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"serverwatch/internal/version"
+	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
 // assetVersion is a short content hash over every embedded asset, appended as

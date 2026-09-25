@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // homeFixture builds a loaded Home model (not loading, no error) with a
@@ -14,13 +14,13 @@ func homeFixture() model {
 		step:    stepHome,
 		loading: false,
 		snap: core.DashboardView{
-			TS:                1_700_000_000,
-			Online:            true,
-			CPU:               77.7,
-			Cores:             4,
-			MemPct:            41.2,
-			SwapPct:           3.0,
-			Load1:             1.5, Load5: 1.4, Load15: 1.3,
+			TS:      1_700_000_000,
+			Online:  true,
+			CPU:     77.7,
+			Cores:   4,
+			MemPct:  41.2,
+			SwapPct: 3.0,
+			Load1:   1.5, Load5: 1.4, Load15: 1.3,
 			TempC:             54.0,
 			Processes:         core.ProcessCounts{Total: 3728, Running: 2, Zombie: 1},
 			ContainersRunning: 12, ContainersTotal: 48,

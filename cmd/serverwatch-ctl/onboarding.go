@@ -8,7 +8,7 @@
 // for the config screens.
 package main
 
-import "serverwatch/internal/config"
+import "github.com/InfoDiveLabs/trinetra/internal/config"
 
 // needsOnboarding reports whether ctl should offer the guided first-run
 // flow: telegram isn't configured at all (no token) or is configured but

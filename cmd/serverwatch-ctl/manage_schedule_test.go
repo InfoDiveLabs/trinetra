@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 func TestApplyScheduleDaily(t *testing.T) {

@@ -1,6 +1,6 @@
 package main
 
-import "serverwatch/internal/config"
+import "github.com/InfoDiveLabs/trinetra/internal/config"
 
 // applyHealthchecks applies raw onto cfg's healthchecks.url key via the
 // SAME config.Set setter `serverwatch healthchecks set <url>|off` uses

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // sessionGCInterval is how often Start's background sweep removes expired

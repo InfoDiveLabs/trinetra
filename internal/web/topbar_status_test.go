@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // TestTopbarStatusCriticalAlertsFiring pins Part 3 of the field-feedback fix:

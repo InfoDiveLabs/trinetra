@@ -1,4 +1,4 @@
-module serverwatch
+module github.com/InfoDiveLabs/trinetra
 
 go 1.24.2
 

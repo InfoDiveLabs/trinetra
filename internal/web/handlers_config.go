@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // configMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
@@ -163,11 +163,11 @@ type ConfigPageData struct {
 	ServerNameRaw   string
 	CollectPublicIP bool
 	DiskPct         string
-	TempC        string
-	MemPct       string
-	CPUPct       string
-	SwapPct      string
-	AnomalySigma string
+	TempC           string
+	MemPct          string
+	CPUPct          string
+	SwapPct         string
+	AnomalySigma    string
 	// BaselineAlerts/BaselineMinPct back the "Anomaly detection" panel:
 	// BaselineAlerts is the important on/off switch for the whole
 	// z-score-deviation branch (defaults to false); BaselineMinPct is

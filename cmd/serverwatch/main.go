@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"serverwatch/internal/serverwatch"
+	"github.com/InfoDiveLabs/trinetra/internal/trinetra"
 )
 
-func main() { os.Exit(serverwatch.Main(os.Args[1:])) }
+func main() { os.Exit(trinetra.Main(os.Args[1:])) }

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // dashboardTestView is a distinctive fake DashboardView: every number is

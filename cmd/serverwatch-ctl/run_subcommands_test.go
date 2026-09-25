@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // TestRunStatusJSON: `status --json` emits valid JSON carrying the snapshot's

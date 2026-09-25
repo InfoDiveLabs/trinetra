@@ -12,7 +12,7 @@
 // ApplyConfig shape every other management screen already uses.
 package main
 
-import "serverwatch/internal/config"
+import "github.com/InfoDiveLabs/trinetra/internal/config"
 
 // settingsGroups returns the distinct groups named in config.Keys(), in the
 // catalog's own first-seen order, for the "all settings" screen's top level

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // errTestActiveAlerts is a stand-in transport error for the degrade-to-nil

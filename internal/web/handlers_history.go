@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // maxSeriesRangeSeconds bounds a single /api/series request's [from, to]

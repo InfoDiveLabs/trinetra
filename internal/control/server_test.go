@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // fakeAPI is a minimal core.API test double for handleConn/dispatch tests:
@@ -84,8 +84,8 @@ func (f *fakeAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, erro
 	return f.history, nil
 }
 
-func (f *fakeAPI) Config() (*config.Config, error)    { return f.cfg, nil }
-func (f *fakeAPI) Doctor() (core.DoctorReport, error) { return f.doctor, nil }
+func (f *fakeAPI) Config() (*config.Config, error)      { return f.cfg, nil }
+func (f *fakeAPI) Doctor() (core.DoctorReport, error)   { return f.doctor, nil }
 func (f *fakeAPI) HostInfo() (core.HostInfoView, error) { return f.hostInfo, nil }
 func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
 	return "logs of " + name, nil

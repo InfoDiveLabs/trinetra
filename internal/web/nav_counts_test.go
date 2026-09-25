@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // TestNavBadgesRenderRealCounts pins Part 2's core obligation: the sidebar

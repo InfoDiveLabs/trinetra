@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 type fleetFake struct {

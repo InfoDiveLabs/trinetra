@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
-	"serverwatch/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // effectiveWebMode returns cfg.Web.Mode, or "proxy" (the documented default,

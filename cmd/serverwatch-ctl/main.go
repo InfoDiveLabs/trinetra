@@ -21,7 +21,7 @@ import (
 	"io"
 	"os"
 
-	"serverwatch/internal/control"
+	"github.com/InfoDiveLabs/trinetra/internal/control"
 )
 
 func main() {

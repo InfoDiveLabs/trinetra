@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // helloMagic is the fixed Hello value both ends of the control socket must

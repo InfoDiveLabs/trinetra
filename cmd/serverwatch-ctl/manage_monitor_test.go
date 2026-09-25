@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"serverwatch/internal/config"
-	"serverwatch/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 func TestBuildMonitorRowsDefaultsEnabledNoThreshold(t *testing.T) {
