@@ -195,3 +195,19 @@ func TestTrackerLaggingOnClockSkew(t *testing.T) {
 		}
 	}
 }
+
+// humanDur renders alert durations: whole seconds under a minute, rounded
+// minutes under an hour, then hours and minutes.
+func TestHumanDur(t *testing.T) {
+	for _, c := range []struct {
+		sec  int64
+		want string
+	}{
+		{0, "0s"}, {35, "35s"}, {59, "59s"}, {60, "1m"}, {89, "1m"}, {90, "2m"},
+		{125, "2m"}, {3569, "59m"}, {3570, "1h"}, {3600, "1h"}, {3900, "1h5m"}, {90000, "25h"},
+	} {
+		if got := humanDur(c.sec); got != c.want {
+			t.Errorf("humanDur(%d) = %q, want %q", c.sec, got, c.want)
+		}
+	}
+}

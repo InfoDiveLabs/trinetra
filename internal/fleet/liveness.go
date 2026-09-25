@@ -220,12 +220,20 @@ func NewNodeAlerter() *NodeAlerter {
 	return &NodeAlerter{alerted: map[string]int64{}, massMembers: map[string]bool{}}
 }
 
+// humanDur renders an alert duration: "35s" under a minute, rounded
+// minutes ("2m") under an hour, then hours and minutes ("1h5m").
 func humanDur(sec int64) string {
-	d := (time.Duration(sec) * time.Second).Round(time.Minute)
-	if d < time.Minute {
+	if sec < 60 {
 		return fmt.Sprintf("%ds", sec)
 	}
-	return d.String()
+	m := (sec + 30) / 60 // rounded to the nearest minute
+	if m < 60 {
+		return fmt.Sprintf("%dm", m)
+	}
+	if m%60 == 0 {
+		return fmt.Sprintf("%dh", m/60)
+	}
+	return fmt.Sprintf("%dh%dm", m/60, m%60)
 }
 
 // Forget drops id from alerting (the node was removed from the fleet): an
