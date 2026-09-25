@@ -1,6 +1,6 @@
 # Storage and the data model
 
-Everything serverwatch knows about your server ends up on disk in one of three
+Everything trinetra knows about your server ends up on disk in one of three
 shapes. This chapter is about telling them apart, because the shape a datapoint
 lives in is not an implementation detail you can ignore. It is the single most
 useful thing to know when you go looking for an answer, and it decides three
@@ -11,14 +11,14 @@ different questions for you at once:
 - Or is it a discrete **thing that happened**, a record of an event?
 
 Get the shape right and the tool to reach it follows immediately. Queryable
-history comes out of `serverwatch dump`. The live picture comes out of
-`serverwatch status`. Events come out of `serverwatch alerts`. Guess the shape
+history comes out of `trinetra dump`. The live picture comes out of
+`trinetra status`. Events come out of `trinetra alerts`. Guess the shape
 wrong and you will hunt for CPU load in the event log, or expect a container's
 network throughput to have a history it was never given.
 
 The three shapes are:
 
-1. **Time-series** under `/var/lib/serverwatch/ts/`, the tsfile store: bounded,
+1. **Time-series** under `/var/lib/trinetra/ts/`, the tsfile store: bounded,
    low-cardinality numeric metrics sampled on a fixed cadence.
 2. **The live snapshot**, `status.json`, rewritten on every fast tick: the full
    in-memory view of "now", including fields that are refreshed constantly but
@@ -36,9 +36,9 @@ graph TD
     snap[Live snapshot<br/>status.json]
     ev[Event log<br/>alertlog.jsonl and ts/events.tsd]
   end
-  dump[serverwatch dump] --> ts
-  status[serverwatch status] --> snap
-  alerts[serverwatch alerts] --> ev
+  dump[trinetra dump] --> ts
+  status[trinetra status] --> snap
+  alerts[trinetra alerts] --> ev
 ```
 
 The rest of this chapter takes them one at a time, then closes with the full
@@ -59,7 +59,7 @@ per running container, one per network interface. What is explicitly kept out
 is anything whose count can grow without limit, like a per-process series or a
 per-container network series. Those live in the snapshot instead (shape #2).
 Unbounded cardinality is exactly what a time-series store handles badly, so
-serverwatch simply refuses to create it.
+trinetra simply refuses to create it.
 
 ### The complete list of series
 
@@ -108,7 +108,7 @@ The default backend is called `tsfile`, and it is a columnar, per-series,
 append-only binary store. One file per series, per resolution:
 
 ```
-/var/lib/serverwatch/ts/
+/var/lib/trinetra/ts/
   raw/cpu.tsd   raw/mem.tsd   raw/swap.tsd   raw/load1.tsd ...
   1m/cpu.tsd    1m/mem.tsd    ...
   events.tsd
@@ -182,12 +182,12 @@ not mean scanning more raw data than you need.
 
 ### Querying a series
 
-You read history with `serverwatch dump`:
+You read history with `trinetra dump`:
 
 ```bash
-serverwatch dump --metric cpu
-serverwatch dump --metric disk:/ --since 24h
-serverwatch dump --metric mem --since 168h --res 1m --format csv
+trinetra dump --metric cpu
+trinetra dump --metric disk:/ --since 24h
+trinetra dump --metric mem --since 168h --res 1m --format csv
 ```
 
 The flags are:
@@ -230,7 +230,7 @@ same interface without the daemon, the handlers, or the digests noticing.
 
 The second shape is a single JSON document, `status.json`, rewritten in full on
 every fast tick. It is the daemon's complete in-memory `Snapshot` serialised to
-disk. Both `serverwatch status` and a plain `cat /var/lib/serverwatch/status.json`
+disk. Both `trinetra status` and a plain `cat /var/lib/trinetra/status.json`
 read this one file.
 
 The snapshot carries the current value of every series from shape #1, so you can
@@ -278,9 +278,9 @@ top-level fields.
 Concretely, a container's CPU percentage is at `container_stats.<name>.CPUPct`,
 not `container_stats.<name>.cpu_pct`. If you are consuming `status.json`
 programmatically rather than through the CLI or Telegram, keep this in mind and
-read the field names off the Go types in `internal/serverwatch/status.go` (and
+read the field names off the Go types in `internal/trinetra/status.go` (and
 the collectors in `docker.go`, `net.go`, `proc.go`, and `discover.go`) rather
-than guessing. Reading it through `serverwatch status` sidesteps the issue
+than guessing. Reading it through `trinetra status` sidesteps the issue
 entirely.
 
 ## 3. The event log: things that happened
@@ -293,7 +293,7 @@ streams.
 notification the daemon has dispatched: every fire and every recover, along with
 the per-channel delivery outcome for each. It is written by every anomaly
 transition, by the boot report, and by the daily and weekly digests. It is
-pruned to roughly 30 days on each slow tick. Read it with `serverwatch alerts`
+pruned to roughly 30 days on each slow tick. Read it with `trinetra alerts`
 rather than parsing the file, which prints the currently active alerts followed
 by recent history and per-channel delivery status.
 
@@ -307,10 +307,10 @@ home.
 
 ## The on-disk layout
 
-Putting it all together, here is what lives under `/var/lib/serverwatch`:
+Putting it all together, here is what lives under `/var/lib/trinetra`:
 
 ```
-/var/lib/serverwatch/
+/var/lib/trinetra/
   status.json           the live snapshot; check this first (shape #2)
   heartbeat             last-alive unix timestamp, rewritten every heartbeat_interval
   ts/                   the tsfile store (shapes #1 and part of #3)
@@ -325,7 +325,7 @@ Putting it all together, here is what lives under `/var/lib/serverwatch`:
 A note on the `<metric>` filenames: the metric id is used directly as the
 filename, with any byte that is not filesystem-safe percent-encoded. So the
 `disk:/` series lands at `ts/raw/disk%3A%2F.tsd`. You should not need to know
-this in practice, because `serverwatch dump --metric disk:/` reads it for you.
+this in practice, because `trinetra dump --metric disk:/` reads it for you.
 Reach for the CLI rather than the raw files, and the encoding stays invisible.
 
 Read this layout back through the lens of the three shapes and it tells its own

@@ -1,6 +1,6 @@
 # Alerting and notification channels
 
-serverwatch does two separate jobs when something goes wrong. First it
+trinetra does two separate jobs when something goes wrong. First it
 *decides* that something is wrong, which is the anomaly engine reducing every
 sampled metric to a small set of fire and recover events. Then it *delivers*
 that decision, which is the dispatcher fanning each event out to whichever
@@ -44,10 +44,10 @@ or disable a specific target. The defaults come from your config (see
 target:
 
 ```bash
-sudo serverwatch config set thresholds.disk_pct 85   # any filesystem at or above 85%
-sudo serverwatch config set thresholds.temp_c 75
-sudo serverwatch monitor threshold disk:/boot 70     # override just this mount
-sudo serverwatch monitor disable docker:some-noisy-container
+sudo trinetra config set thresholds.disk_pct 85   # any filesystem at or above 85%
+sudo trinetra config set thresholds.temp_c 75
+sudo trinetra monitor threshold disk:/boot 70     # override just this mount
+sudo trinetra monitor disable docker:some-noisy-container
 ```
 
 When a threshold check fires, its reason reads like `disk:/ = 91.0 ≥ threshold
@@ -60,7 +60,7 @@ is something to name, and is simply omitted otherwise.
 
 ### Rolling-baseline deviation, opt-in
 
-Alongside the fixed numbers, serverwatch keeps a rolling baseline (a mean and
+Alongside the fixed numbers, trinetra keeps a rolling baseline (a mean and
 variance that decay over time) for those same metrics. A baseline check fires
 when the current reading sits too many standard deviations away from that
 mean, which is meant to catch "this is not normal for this box" without you
@@ -71,8 +71,8 @@ This second branch is off by default. It is opt-in through the
 switch either way:
 
 ```bash
-sudo serverwatch config set baseline_alerts true   # enable z-score deviation checks
-sudo serverwatch config set baseline_sigma 3       # how many sigma is "too far"
+sudo trinetra config set baseline_alerts true   # enable z-score deviation checks
+sudo trinetra config set baseline_sigma 3       # how many sigma is "too far"
 ```
 
 The reason it is opt-in is field experience. On a real home server, cpu, mem,
@@ -151,8 +151,8 @@ the title, and beneath it a per-channel delivery line reading `ok` or
 `FAILED: <err>`.
 
 ```bash
-serverwatch alerts                               # active alerts + recent history
-serverwatch alerts list --since 12h --limit 50   # narrower window, more entries
+trinetra alerts                               # active alerts + recent history
+trinetra alerts list --since 12h --limit 50   # narrower window, more entries
 ```
 
 `--since` defaults to `24h` and bounds how far back the history reaches;
@@ -164,8 +164,8 @@ suppress delivery, it only annotates the currently active entry so the ACTIVE
 section shows it as handled.
 
 ```bash
-serverwatch alerts ack disk:/     # mark the active disk:/ alert as seen
-serverwatch alerts unack disk:/   # clear that acknowledgement
+trinetra alerts ack disk:/     # mark the active disk:/ alert as seen
+trinetra alerts unack disk:/   # clear that acknowledgement
 ```
 
 Both `ack` and `unack` write the state and then best-effort signal the running
@@ -203,7 +203,7 @@ It suppresses non-critical messages during the hours you name, and it wraps
 past midnight, so `23-8` covers eleven at night through eight in the morning:
 
 ```bash
-sudo serverwatch quiet-hours 23-8   # mute non-critical pings overnight
+sudo trinetra quiet-hours 23-8   # mute non-critical pings overnight
 ```
 
 A critical alert during that window is only delivered to channels whose
@@ -216,10 +216,10 @@ it. Every channel, regardless of type, carries the same routing knobs from
 the previous section (`min_severity`, `include_kinds`/`exclude_kinds`,
 `critical_overrides_quiet`) plus a type-specific set of connection fields.
 
-### Managing channels with serverwatch-ctl (recommended)
+### Managing channels with trinetra-ctl (recommended)
 
 The primary, recommended way to add, edit, remove, or test a channel is the
-Channels screen in [`serverwatch-ctl`](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl),
+Channels screen in [`trinetra-ctl`](plugins/trinetra-ctl.md#managing-with-trinetra-ctl),
 the interactive TUI. From Home, press `m` to open the management menu, then
 select Channels. From there:
 
@@ -239,25 +239,25 @@ validation fails. That means a channel that would silently fail to deliver,
 say a typo'd webhook URL or a bad SMTP host, can never be saved while turned
 on; a disabled channel skips that gate, which is how you stage a channel's
 settings before switching it on. See [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl) for
+trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl) for
 the full walk-through of the menu and every other guided screen.
 
 ### Managing channels from the command line
 
-For scripting, automation, or a headless box without `serverwatch-ctl`
+For scripting, automation, or a headless box without `trinetra-ctl`
 installed, every one of those flows has a thin, scriptable equivalent on the
-core `serverwatch` binary: the `channel` subcommands, listed in full in
+core `trinetra` binary: the `channel` subcommands, listed in full in
 [Daemon-only config management](11-command-reference.md#3-daemon-only-config-management).
 Each one that changes config also signals the running daemon so nothing needs
 a restart:
 
 ```bash
-serverwatch channel list            # every channel with its type and routing
-serverwatch channel add <name> --type <type>
-serverwatch channel set <name> setting.<key> <value>
-serverwatch channel set <name> min_severity critical
-serverwatch channel remove <name>
-serverwatch channel test <name>     # send one synthetic alert now, report success/failure
+trinetra channel list            # every channel with its type and routing
+trinetra channel add <name> --type <type>
+trinetra channel set <name> setting.<key> <value>
+trinetra channel set <name> min_severity critical
+trinetra channel remove <name>
+trinetra channel test <name>     # send one synthetic alert now, report success/failure
 ```
 
 `channel test` (or `t` on the Channels screen) is the first thing to reach
@@ -269,7 +269,7 @@ remaining cause.
 
 The settings below are per-channel key/value pairs. On the command line,
 write them with `channel set <name> setting.<key> <value>`, or pass them at
-add time with `--set key=value`; in `serverwatch-ctl` they are the fields the
+add time with `--set key=value`; in `trinetra-ctl` they are the fields the
 Channels screen's add/edit flow prompts for.
 
 | Type | Required settings | Optional settings |
@@ -300,17 +300,17 @@ resolved IP so a hostname that points inward is blocked too. It defaults to
 same box) is a legitimate setup.
 
 A worked example, an email channel that only pages for criticals, scripted
-against the core binary (the equivalent `serverwatch-ctl` path is `m` ->
+against the core binary (the equivalent `trinetra-ctl` path is `m` ->
 Channels -> `a` -> `email`, filling in the same host/from/to fields and
 setting `min_severity` to `critical`):
 
 ```bash
-sudo serverwatch channel add ops-email --type email
-sudo serverwatch channel set ops-email setting.host smtp.fastmail.com
-sudo serverwatch channel set ops-email setting.from serverwatch@home.lan
-sudo serverwatch channel set ops-email setting.to ops@home.lan
-sudo serverwatch channel set ops-email min_severity critical
-sudo serverwatch channel test ops-email
+sudo trinetra channel add ops-email --type email
+sudo trinetra channel set ops-email setting.host smtp.fastmail.com
+sudo trinetra channel set ops-email setting.from trinetra@home.lan
+sudo trinetra channel set ops-email setting.to ops@home.lan
+sudo trinetra channel set ops-email min_severity critical
+sudo trinetra channel test ops-email
 ```
 
 Other useful `channel set` keys are `enabled true|false`, `include_kinds
@@ -322,7 +322,7 @@ true|false`.
 If you set a Telegram token the old way, with `telegram set-token`, that token
 lives in the config's `telegram.token` key rather than in a channel. The first
 time you run any `channel` subcommand, or open the Channels screen in
-`serverwatch-ctl`, serverwatch back-fills a real `telegram`-typed channel from
+`trinetra-ctl`, trinetra back-fills a real `telegram`-typed channel from
 those legacy keys, so an existing Telegram-only install needs no manual
 conversion: the channel simply appears in `channel list` (or on the Channels
 screen) and is managed like any other. The migration is idempotent and will
@@ -332,11 +332,11 @@ fallback regardless, including as the source of the bot token for the
 migrated channel and for the interactive command-reply interface.
 
 On a brand-new install with no token at all, you will most likely never touch
-this migration path directly: `serverwatch-ctl`'s first-run onboarding (see
-[Managing with serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl))
+this migration path directly: `trinetra-ctl`'s first-run onboarding (see
+[Managing with trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl))
 captures the bot token on first launch and then shows you the daemon's
 `/start <pin>` enrollment PIN right there in the flow. If you set the token
-from the command line instead, `serverwatch telegram set-token` now prints
+from the command line instead, `trinetra telegram set-token` now prints
 that same enrollment PIN in the terminal too (#90), rather than making you go
 dig it out of the journal.
 

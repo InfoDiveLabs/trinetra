@@ -1,20 +1,20 @@
 # Advanced configuration and management
 
 This page is the low-level, scriptable reference that sits behind the
-`serverwatch-ctl` screens covered in [Configuration](04-configuration.md).
+`trinetra-ctl` screens covered in [Configuration](04-configuration.md).
 It documents the configuration file model, the general-purpose `config
 get`/`set`/`unset` verbs, the dedicated scriptable verbs that wrap the keys
 you touch most often, how writes persist and hot-reload, the per-target
 overrides that are not flat keys, and the full config-key reference. Reach for
 it when you are automating a change, scripting from cron or a
 configuration-management tool, or administering a headless box without
-`serverwatch-ctl`. Day to day, the ctl screens set all of this for you.
+`trinetra-ctl`. Day to day, the ctl screens set all of this for you.
 
 ## The config file and CLI verbs
 
-Every setting in serverwatch lives in a single JSON file at
-`/etc/serverwatch/config.json`, but you never open that file in an editor. Both
-the `serverwatch-ctl` screens and the CLI verbs below write it for you through
+Every setting in trinetra lives in a single JSON file at
+`/etc/trinetra/config.json`, but you never open that file in an editor. Both
+the `trinetra-ctl` screens and the CLI verbs below write it for you through
 the same validated path. There is no environment variable layer and no
 hand-edited file: the JSON on disk is just where those tools persist what you
 told them. This keeps validation in one place (a bad value is rejected at set
@@ -24,9 +24,9 @@ under the tool's control.
 The general-purpose entry points are three verbs on `config`:
 
 ```bash
-sudo serverwatch config get [key]        # print every effective key, or just one
-sudo serverwatch config set <key> <val>  # set a key, e.g. config set sample_interval 30
-sudo serverwatch config unset <key>      # revert a key to its baked-in default
+sudo trinetra config get [key]        # print every effective key, or just one
+sudo trinetra config set <key> <val>  # set a key, e.g. config set sample_interval 30
+sudo trinetra config unset <key>      # revert a key to its baked-in default
 ```
 
 `config get` with no key prints the full effective configuration: the baked-in
@@ -39,19 +39,19 @@ On top of those generic verbs, a handful of dedicated subcommands wrap the keys
 you touch most often, with friendlier syntax and their own validation:
 
 ```bash
-sudo serverwatch telegram set-token <token>          # writes telegram.token
-sudo serverwatch monitor enable|disable|threshold    # per-target overrides (see below)
-sudo serverwatch schedule daily HH:MM | off          # writes schedule.daily
-sudo serverwatch schedule weekly dow@HH:MM | off      # writes schedule.weekly
-sudo serverwatch quiet-hours HH-HH | off             # writes quiet_hours
-sudo serverwatch healthchecks set <url> | off        # writes healthchecks.url
-sudo serverwatch channel add|list|remove|set|test    # notification channels
+sudo trinetra telegram set-token <token>          # writes telegram.token
+sudo trinetra monitor enable|disable|threshold    # per-target overrides (see below)
+sudo trinetra schedule daily HH:MM | off          # writes schedule.daily
+sudo trinetra schedule weekly dow@HH:MM | off      # writes schedule.weekly
+sudo trinetra quiet-hours HH-HH | off             # writes quiet_hours
+sudo trinetra healthchecks set <url> | off        # writes healthchecks.url
+sudo trinetra channel add|list|remove|set|test    # notification channels
 ```
 
 These are equivalent to the matching `config set` calls, just with a verb-shaped
 interface. Use whichever reads better for the task. Every one of them, plus
 `config get/set/unset` itself, also has a guided, validated screen in
-`serverwatch-ctl`; see [Daemon-only config
+`trinetra-ctl`; see [Daemon-only config
 management](11-command-reference.md#3-daemon-only-config-management) for the
 automation-focused view of this same command set.
 
@@ -64,7 +64,7 @@ token in plaintext, so it stays root-readable only), then renamed over the live
 file. A rename on the same filesystem is atomic, so a reader or a crash mid-write
 always sees either the complete old file or the complete new one, never a
 truncated one. The file is owned by root and lives at
-`/etc/serverwatch/config.json`.
+`/etc/trinetra/config.json`.
 
 Second, the CLI sends `SIGHUP` to the running daemon, which reloads the config
 live on its next tick. Interval changes such as `fast_interval`,
@@ -79,22 +79,22 @@ time-series store is opened at startup. The running store is not reopened on
 until you restart the service:
 
 ```bash
-sudo systemctl restart serverwatch
+sudo systemctl restart trinetra
 ```
 
 ### Per-target overrides are not `config set`
 
 Some state is keyed per discovered target rather than being a single global
 value: whether a specific target is alerting at all, and a per-target threshold
-that overrides the global one. These are managed through `serverwatch monitor`,
+that overrides the global one. These are managed through `trinetra monitor`,
 not `config set`, and are stored under `targets.<id>` in the config file rather
 than as a flat key:
 
 ```bash
-sudo serverwatch monitor list                       # discovered targets + on/off + effective threshold
-sudo serverwatch monitor disable docker:jellyfin    # stop alerting on one target
-sudo serverwatch monitor enable docker:jellyfin     # re-enable it
-sudo serverwatch monitor threshold disk:/ 95        # per-target threshold override
+sudo trinetra monitor list                       # discovered targets + on/off + effective threshold
+sudo trinetra monitor disable docker:jellyfin    # stop alerting on one target
+sudo trinetra monitor enable docker:jellyfin     # re-enable it
+sudo trinetra monitor threshold disk:/ 95        # per-target threshold override
 ```
 
 A target id is namespaced by kind, for example `docker:<container>`,
@@ -102,7 +102,7 @@ A target id is namespaced by kind, for example `docker:<container>`,
 Per-target overrides are not settable with `config set <key>` and will not
 appear as flat keys in `config get`; use the `monitor` verb for them.
 
-In `serverwatch-ctl`, this is the **Monitor thresholds** screen: a live list
+In `trinetra-ctl`, this is the **Monitor thresholds** screen: a live list
 of every discovered target where `enter`/`space` toggles a target on or off
 and `t` opens a threshold-edit input for it, each applying immediately.
 
@@ -126,8 +126,8 @@ gets collected](05-monitoring.md)). The slow tier fires every Nth fast tick, so
 | `heartbeat_interval` | `30` | Integer seconds, minimum 1. Independent of both tiers. |
 
 ```bash
-sudo serverwatch config set fast_interval 5
-sudo serverwatch config set sample_interval 60
+sudo trinetra config set fast_interval 5
+sudo trinetra config set sample_interval 60
 ```
 
 ### Baseline and anomaly
@@ -142,15 +142,15 @@ alerting is off by default; only threshold alerting runs unless you opt in.
 | `baseline_alerts` | `false` | Boolean. Opt-in gate for baseline (z-score) deviation alerting on cpu/mem/swap/temp/disk. Threshold alerting on those same metrics is always on regardless of this setting. Off by default because a metric with a low, unstable mean can read many sigma from its own baseline on a normal wobble and fire every tick. |
 
 ```bash
-sudo serverwatch config set baseline_alerts true    # opt in to deviation alerts
-sudo serverwatch config set baseline_min_pct 0.2
+sudo trinetra config set baseline_alerts true    # opt in to deviation alerts
+sudo trinetra config set baseline_min_pct 0.2
 ```
 
 ### Thresholds
 
 Global threshold ceilings. When a metric crosses its threshold, an alert fires.
 Each scalar check (`cpu`, `mem`, `swap`, `temp`, and each `disk:<mount>`) also
-supports a per-target override via `serverwatch monitor threshold`.
+supports a per-target override via `trinetra monitor threshold`.
 
 | Key | Default | Validation |
 |-----|---------|------------|
@@ -161,7 +161,7 @@ supports a per-target override via `serverwatch monitor threshold`.
 | `thresholds.swap_pct` | `50` | Float percent. |
 
 ```bash
-sudo serverwatch config set thresholds.disk_pct 85
+sudo trinetra config set thresholds.disk_pct 85
 ```
 
 ### Quiet hours
@@ -174,11 +174,11 @@ Suppress non-critical pings during a window that may wrap midnight.
 | `critical_overrides_quiet` | `true` | Boolean. When true, alerts flagged critical (currently any `disk:<mount>` threshold breach) still get through during quiet hours. |
 
 ```bash
-sudo serverwatch quiet-hours 23-8          # or: serverwatch config set quiet_hours 23-8
-sudo serverwatch quiet-hours off           # clears it
+sudo trinetra quiet-hours 23-8          # or: trinetra config set quiet_hours 23-8
+sudo trinetra quiet-hours off           # clears it
 ```
 
-In `serverwatch-ctl`, this is the **Quiet hours** screen in the management
+In `trinetra-ctl`, this is the **Quiet hours** screen in the management
 menu (`m`): a single `HH-HH` window, or `off` to clear it. The command above
 is the scriptable equivalent for automation.
 
@@ -190,17 +190,17 @@ a fresh install.
 
 | Key | Default | Validation |
 |-----|---------|------------|
-| `telegram.token` | empty | None (free-form string). Prefer `serverwatch telegram set-token <token>`. |
+| `telegram.token` | empty | None (free-form string). Prefer `trinetra telegram set-token <token>`. |
 | `telegram.chat_id` | empty | None. Normally set by enrolling the owner chat via `/start <pin>`. |
 
 ```bash
-sudo serverwatch telegram set-token 123456:ABC-DEF   # or: config set telegram.token ...
+sudo trinetra telegram set-token 123456:ABC-DEF   # or: config set telegram.token ...
 ```
 
 `telegram set-token` saves the token, reloads the daemon, and then prints the
 `/start <pin>` enrollment instruction straight to the terminal (falling back
 to a `journalctl` pointer if the daemon cannot be reached yet). In
-`serverwatch-ctl`, the same setup runs as the **first-run onboarding** flow
+`trinetra-ctl`, the same setup runs as the **first-run onboarding** flow
 (token entry, then the same `/start <pin>` shown and polled for you); once
 onboarding is complete, the token can be changed later from the **Channels**
 screen. See
@@ -218,11 +218,11 @@ you directly.
 | `healthchecks.url` | empty | None (free-form string). |
 
 ```bash
-sudo serverwatch healthchecks set https://hc-ping.com/your-uuid   # config set healthchecks.url ...
-sudo serverwatch healthchecks off
+sudo trinetra healthchecks set https://hc-ping.com/your-uuid   # config set healthchecks.url ...
+sudo trinetra healthchecks off
 ```
 
-In `serverwatch-ctl`, this is the **Healthchecks** screen in the management
+In `trinetra-ctl`, this is the **Healthchecks** screen in the management
 menu: a single ping URL, or `off` to clear it.
 
 ### Schedule
@@ -235,12 +235,12 @@ Digest delivery times, in 24-hour local time.
 | `schedule.weekly` | empty | `"dow@HH:MM"` where `dow` is one of `sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, or empty to disable. For example `mon@09:00`. |
 
 ```bash
-sudo serverwatch schedule daily 08:00       # config set schedule.daily 08:00
-sudo serverwatch schedule weekly mon@09:00
-sudo serverwatch schedule daily off
+sudo trinetra schedule daily 08:00       # config set schedule.daily 08:00
+sudo trinetra schedule weekly mon@09:00
+sudo trinetra schedule daily off
 ```
 
-In `serverwatch-ctl`, this is the **Schedule** screen in the management
+In `trinetra-ctl`, this is the **Schedule** screen in the management
 menu: choose `off`, `daily`, or `weekly`, pre-filled with whatever is
 currently set.
 
@@ -248,7 +248,7 @@ currently set.
 
 The time-series backend and its retention windows (detailed in [Storage and the
 data model](09-storage-and-data-model.md)). These keys take effect only after
-`systemctl restart serverwatch`; a `SIGHUP` reload does not reopen the running
+`systemctl restart trinetra`; a `SIGHUP` reload does not reopen the running
 store.
 
 | Key | Default | Validation |
@@ -258,8 +258,8 @@ store.
 | `storage.rollup_retention` | `720h` | Duration string, must be positive. How long 1-minute rollups and downtime events are kept (720h is 30 days). |
 
 ```bash
-sudo serverwatch config set storage.raw_retention 72h
-sudo systemctl restart serverwatch     # required for storage.* changes
+sudo trinetra config set storage.raw_retention 72h
+sudo systemctl restart trinetra     # required for storage.* changes
 ```
 
 ### Collection toggles
@@ -267,7 +267,7 @@ sudo systemctl restart serverwatch     # required for storage.* changes
 The extended collectors are opt-out: unset or absent means enabled. Turn one off
 on a small device, or on a host with hundreds of short-lived
 processes/containers, where the default collection is more than you need.
-`serverwatch doctor` prints the current on/off state of all five plus the
+`trinetra doctor` prints the current on/off state of all five plus the
 resulting series count and disk usage.
 
 | Key | Default | Validation |
@@ -280,22 +280,22 @@ resulting series count and disk usage.
 | `collect.smart_interval` | `1800` | Integer seconds, minimum 1. Throttles the SMART scan (30 minutes by default). Set as low as `sample_interval` to scan every slow tick. |
 
 ```bash
-sudo serverwatch config set collect.processes false     # stop collecting the process table
-sudo serverwatch config set collect.smart_interval 3600
+sudo trinetra config set collect.processes false     # stop collecting the process table
+sudo trinetra config set collect.smart_interval 3600
 ```
 
 ### Web
 
-Settings for the web UI, read by the separate `serverwatch-web` binary (no
+Settings for the web UI, read by the separate `trinetra-web` binary (no
 build tag) when the daemon supervises it or when it is launched with
-`serverwatch web`. The default `serverwatch` binary never reads them, but the
+`trinetra web`. The default `trinetra` binary never reads them, but the
 keys are still manageable so config is portable across binaries. These are
 covered in detail in the [Web UI chapter](08-web-ui.md); the reference is
 repeated here for completeness.
 
 | Key | Default | Validation |
 |-----|---------|------------|
-| `web.enabled` | `false` | Boolean. Turns on daemon supervision of `serverwatch-web`. Opt-in even when the binary is installed. |
+| `web.enabled` | `false` | Boolean. Turns on daemon supervision of `trinetra-web`. Opt-in even when the binary is installed. |
 | `web.listen` | `127.0.0.1:8088` | `host:port` (parsed with `net.SplitHostPort`). Localhost-only by default; front it with a reverse proxy for LAN/WAN. |
 | `web.mode` | `proxy` | One of `proxy`, `autocert`, or `manual`. |
 | `web.rp_id` | empty | None. WebAuthn relying party ID (public hostname, no scheme/port). Required in autocert/manual modes; derived per-request in proxy mode. |
@@ -318,8 +318,8 @@ revealing that a public page exists.
 | `public.panels` | empty | Comma-separated allowlist. Each entry must be one of `availability`, `cpu`, `mem`, `swap`, `load`, `temp`, `uptime`, `services`, `containers`, `net`, or `disk:<mount>` (with a non-empty mount suffix). Any other value is rejected and the whole list is refused. |
 
 ```bash
-sudo serverwatch config set public.enabled true
-sudo serverwatch config set public.panels availability,cpu,mem,uptime,disk:/
+sudo trinetra config set public.enabled true
+sudo trinetra config set public.panels availability,cpu,mem,uptime,disk:/
 ```
 
 The `public.panels` list is the server-side-enforced source of truth for what

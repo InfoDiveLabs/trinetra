@@ -1,6 +1,6 @@
 # Architecture
 
-serverwatch is one Go binary that runs as one systemd service. There is no
+trinetra is one Go binary that runs as one systemd service. There is no
 agent-plus-collector split, no sidecar, no message broker, and no external
 database. Everything the daemon needs, it does inside a single long-running
 process started by systemd and kept alive by it. This chapter is about what
@@ -17,7 +17,7 @@ document.
 
 ## The daemon process
 
-The whole thing runs as `serverwatch daemon`, the long-running process systemd
+The whole thing runs as `trinetra daemon`, the long-running process systemd
 starts from the unit's `ExecStart`. You never launch it by hand; systemd owns
 its lifecycle. Inside that one process, work is split across a small number of
 goroutines, each with a clear owner and no shared mutable state beyond a couple
@@ -31,7 +31,7 @@ Two goroutines always run:
 | Telegram long-poller | Answers inbound bot commands (`/stats`, `/disk`, and so on) and handles owner enrollment | Blocks on Telegram's long-poll, replies in about a second |
 
 When `web.enabled` is set and the control socket is up, the daemon also runs
-a third: a web supervisor goroutine that verifies and spawns `serverwatch-web`
+a third: a web supervisor goroutine that verifies and spawns `trinetra-web`
 as a separate child process, rather than linking any web code into the
 daemon itself. See [Web supervisor](#web-supervisor) below.
 
@@ -42,7 +42,7 @@ looks like this:
 graph TD
   sd[systemd unit] -->|ExecStart| proc
 
-  subgraph proc[serverwatch daemon process]
+  subgraph proc[trinetra daemon process]
     sampler[Sampler loop goroutine]
     poller[Telegram long-poller goroutine]
     supervisor[Web supervisor goroutine]
@@ -55,12 +55,12 @@ graph TD
   api --> sock
 
   supervisor -->|verify and spawn| webplug
-  ctl[serverwatch-ctl plugin] -->|dials with token| sock
-  webplug[serverwatch-web child process] -->|dials with token| sock
+  ctl[trinetra-ctl plugin] -->|dials with token| sock
+  webplug[trinetra-web child process] -->|dials with token| sock
 ```
 
 The sampler loop is the heart of the daemon and lives in `cmdDaemon`
-(`internal/serverwatch/daemon.go`). It is the sole owner of most of the
+(`internal/trinetra/daemon.go`). It is the sole owner of most of the
 daemon's stateful pieces: the previous CPU sample it diffs against, the network
 rate calculator, the per-process CPU calculator, the SMART scan cache, and the
 `merged` snapshot it rebuilds every tick. Because that state belongs to one
@@ -84,7 +84,7 @@ The daemon is written to stay up. If config on disk is corrupt at startup, it
 falls back to defaults rather than crashing (under `Restart=always` a crash
 would become a crash-loop). If the time-series store fails to open, store
 writes are disabled and the daemon keeps running. If the web supervisor fails
-to verify or spawn `serverwatch-web`, or the control socket fails to start,
+to verify or spawn `trinetra-web`, or the control socket fails to start,
 that failure is logged and the daemon carries on without it. The guiding rule
 is that enhancements are never a reason to take
 the monitor down.
@@ -94,7 +94,7 @@ the monitor down.
 The single most important design decision in the daemon is that not all checks
 cost the same, so not all checks run at the same rate. Reading a few numbers
 out of `/proc` is nearly free; shelling out to `df`, `docker`, `systemctl`, and
-`smartctl` is not. serverwatch splits collection into two tiers plus an
+`smartctl` is not. trinetra splits collection into two tiers plus an
 independent heartbeat, and one loop drives all three.
 
 The loop ticks at `fast_interval`. Every Nth tick, where `N =
@@ -243,42 +243,42 @@ separate process can dial in and call the very same methods. A plugin is just a
 separate binary that connects to that socket and talks the contract.
 
 The reason to keep plugins as separate processes is dependency hygiene, and it
-is a hard rule here. The default `serverwatch` binary is 100% standard library.
+is a hard rule here. The default `trinetra` binary is 100% standard library.
 Anything heavier lives in a plugin binary that carries its own dependencies and
 never bloats the daemon. Concretely:
 
 | Binary | Build | Dependencies | Role |
 |--------|-------|--------------|------|
-| `serverwatch` | default | stdlib only | The daemon and the CLI |
-| `serverwatch-web` | no build tag | passkey/webauthn stack and more | Web UI, a separate binary the daemon supervises |
-| `serverwatch-ctl` | no build tag | its own | A richer out-of-process control client |
+| `trinetra` | default | stdlib only | The daemon and the CLI |
+| `trinetra-web` | no build tag | passkey/webauthn stack and more | Web UI, a separate binary the daemon supervises |
+| `trinetra-ctl` | no build tag | its own | A richer out-of-process control client |
 
 The build seam that enforces this is simple, not tag-based: the daemon
 package never imports `internal/web` at all. `internal/web` is an ordinary,
-untagged package like any other, but only `cmd/serverwatch-web` imports it,
+untagged package like any other, but only `cmd/trinetra-web` imports it,
 so none of its dependencies ever reach the daemon. The control-socket code, by
 contrast, ships inside the daemon itself, because `internal/control` imports
 only the standard library plus `internal/core` and `internal/config`, so
 serving it never drags a third-party dependency into the default build.
 
-A word on status: `serverwatch-web` is a plain, separate binary that the
+A word on status: `trinetra-web` is a plain, separate binary that the
 daemon verifies, spawns, restarts, and stops on its own (see [Web
-supervisor](#web-supervisor)). `serverwatch-ctl` is deliberately not
+supervisor](#web-supervisor)). `trinetra-ctl` is deliberately not
 supervised: it is an interactive client you run by hand when you want it, not
 a background service, so nothing manages its process. It is the primary way to
-manage a running serverwatch day to day, with guided screens for schedule,
+manage a running trinetra day to day, with guided screens for schedule,
 quiet hours, healthchecks, monitor thresholds, and channels, plus a first-run
 Telegram onboarding flow (see [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)).
+trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl)).
 
 ### The front-door safe-exec trust model
 
 The core does not expect you to know where the plugin binaries live or invoke
 them directly. Two subcommands on the core binary itself act as front-doors:
-`serverwatch cli` execs `serverwatch-ctl`, and `serverwatch web` execs
-`serverwatch-web` (see [Command reference](11-command-reference.md) for the
-full command details). Both are typically run as root, via `sudo serverwatch
-cli` or `sudo serverwatch web`, because that is how the daemon itself runs.
+`trinetra cli` execs `trinetra-ctl`, and `trinetra web` execs
+`trinetra-web` (see [Command reference](11-command-reference.md) for the
+full command details). Both are typically run as root, via `sudo trinetra
+cli` or `sudo trinetra web`, because that is how the daemon itself runs.
 That single fact is what makes this front-door security-sensitive rather than
 a convenience shim: launching a plugin as root and exec'ing whatever happens to
 be at that path would let an attacker who can plant or modify a file escalate
@@ -288,7 +288,7 @@ proves the plugin is the genuine, unmodified binary it installed.
 Three checks all have to pass, in order, or the core refuses and prints why:
 
 1. **Absolute path from the core's own directory.** The plugin path is
-   `serverwatch-<name>` in the same directory as the running `serverwatch`
+   `trinetra-<name>` in the same directory as the running `trinetra`
    binary (`filepath.Dir(os.Executable())`), symlink-resolved. It is never
    looked up via `$PATH`; a `$PATH` lookup would let an attacker with a
    writable `PATH` entry (or a loosened `sudo secure_path`) plant a malicious
@@ -296,17 +296,17 @@ Three checks all have to pass, in order, or the core refuses and prints why:
 2. **Owner and permissions.** The plugin file, and its parent directory, must
    be owned by uid 0 (root) or by whichever user owns the core binary, and
    neither may be group- or world-writable. Either check failing is a refusal.
-3. **Checksum against the install manifest.** `serverwatch install` records
+3. **Checksum against the install manifest.** `trinetra install` records
    the SHA-256 of each companion binary it finds into a root-only manifest,
    `<stateDir>/plugins.json` (mode `0600`; see [Installation and first
    run](03-installation.md)). Before exec, the core recomputes the plugin's
    SHA-256 and requires it to match the manifest entry for that name. A
    missing manifest, a missing entry, or a mismatch is a refusal, never a
-   silent pass; `serverwatch uninstall` removes the manifest.
+   silent pass; `trinetra uninstall` removes the manifest.
 
 ```mermaid
 flowchart TD
-  start[serverwatch cli or serverwatch web] --> resolve[Resolve serverwatch-name next to the core binary's own directory, symlinks resolved, never PATH]
+  start[trinetra cli or trinetra web] --> resolve[Resolve trinetra-name next to the core binary's own directory, symlinks resolved, never PATH]
   resolve -->|file does not exist| notinstalled[Not installed: print install/build instructions, exit, nothing exec'd]
   resolve -->|file exists| owner[Check file and parent dir: owned by uid 0 or the core binary's owner, not group or world writable]
   owner -->|check fails| refuse[Refuse: print tampering warning, exit, nothing exec'd]
@@ -316,23 +316,25 @@ flowchart TD
 ```
 
 On a successful launch, the core passes the control socket path and a
-per-launch token to the plugin via the `SERVERWATCH_CONTROL_SOCKET` and
-`SERVERWATCH_CONTROL_TOKEN` environment variables, the same way the plugin
+per-launch token to the plugin via the `TRINETRA_CONTROL_SOCKET` and
+`TRINETRA_CONTROL_TOKEN` environment variables (the launcher also sets the old
+`SERVERWATCH_CONTROL_SOCKET`/`TOKEN` names for one release, so a plugin binary
+from before the rename still finds them), the same way the plugin
 would discover them by hand (see the control socket section below). For the
 interactive `cli` front-door specifically, the core uses `syscall.Exec` to
 replace its own process image rather than forking a child, so the terminal is
-handed over to `serverwatch-ctl` cleanly with no wrapper process in between.
+handed over to `trinetra-ctl` cleanly with no wrapper process in between.
 
-Anyone who places `serverwatch-ctl` or `serverwatch-web` next to the daemon
+Anyone who places `trinetra-ctl` or `trinetra-web` next to the daemon
 binary by hand, whether that is a fresh build or a manual copy, must
-(re-)run `serverwatch install` afterward. Until the manifest has a checksum
+(re-)run `trinetra install` afterward. Until the manifest has a checksum
 entry for that exact file, the front-door has nothing to verify it against and
 refuses to run it.
 
 ## Web supervisor
 
 `web.enabled` does not start a goroutine inside the daemon: it tells the
-daemon to supervise `serverwatch-web` as a separate child process. The
+daemon to supervise `trinetra-web` as a separate child process. The
 supervisor's job is to keep that child alive for as long as the daemon
 considers the web UI wanted, and to stay out of the way otherwise.
 
@@ -340,18 +342,19 @@ At startup, the daemon checks `web.enabled` once. If it is off, the
 supervisor does nothing. If it is on and the control socket came up, the
 supervisor runs the exact same `resolveAndVerifyPlugin` check the [front-door
 trust model](#the-front-door-safe-exec-trust-model) above uses for
-`serverwatch cli` and `serverwatch web`: the plugin path must resolve next to
+`trinetra cli` and `trinetra web`: the plugin path must resolve next to
 the core binary's own directory, be owned and permissioned correctly, and
 match the SHA-256 recorded in the install manifest. A verification failure is
 logged as a refusal, and the supervisor does not spawn the child; a plain
-`serverwatch install` after a rebuild refreshes the manifest and clears the
+`trinetra install` after a rebuild refreshes the manifest and clears the
 refusal on the next daemon start. `web.enabled` is not reloaded on SIGHUP, so
-toggling it takes effect on the next `systemctl restart serverwatch`, the
+toggling it takes effect on the next `systemctl restart trinetra`, the
 same as any other `web.*` key.
 
-Once verified, the supervisor spawns `serverwatch-web` as a child process,
+Once verified, the supervisor spawns `trinetra-web` as a child process,
 passing the control socket path and a per-launch token through the same
-`SERVERWATCH_CONTROL_SOCKET` and `SERVERWATCH_CONTROL_TOKEN` environment
+`TRINETRA_CONTROL_SOCKET`/`TRINETRA_CONTROL_TOKEN` (plus the `SERVERWATCH_CONTROL_*`
+compat names, for one release) environment
 variables the front-door uses. The child dials the control socket like any
 other plugin and never sees daemon internals directly.
 
@@ -366,7 +369,7 @@ supervisor stops the child instead of leaving it orphaned.
 ```mermaid
 flowchart TD
   enabled{web.enabled?} -->|no| idle[Supervisor stays idle]
-  enabled -->|yes| verify[resolveAndVerifyPlugin serverwatch web]
+  enabled -->|yes| verify[resolveAndVerifyPlugin trinetra web]
   verify -->|fails| refuse[Log refusal, do not spawn]
   refuse -->|daemon restart| enabled
   verify -->|passes| spawn[Spawn child with socket path and token in env]
@@ -378,7 +381,7 @@ flowchart TD
 ```
 
 The same front-door checks, the same environment variables, and the same
-control socket transport are shared between the manual `serverwatch web`
+control socket transport are shared between the manual `trinetra web`
 front-door and this automatic supervisor; the only difference is who decides
 when to launch the child.
 
@@ -394,17 +397,17 @@ The socket is a unix domain socket named `control.sock`, created inside the
 daemon's runtime directory:
 
 ```
-$RUNTIME_DIRECTORY/control.sock   ->   /run/serverwatch/control.sock
+$RUNTIME_DIRECTORY/control.sock   ->   /run/trinetra/control.sock
 ```
 
 `RUNTIME_DIRECTORY` is set by systemd because the unit declares
-`RuntimeDirectory=serverwatch`. That one line tells systemd to create
-`/run/serverwatch` on a tmpfs before the service starts, own it as
+`RuntimeDirectory=trinetra`. That one line tells systemd to create
+`/run/trinetra` on a tmpfs before the service starts, own it as
 `User=root`, export its path into the service's environment, and remove it when
 the service stops. So the directory always exists with the right lifetime and
 the daemon never has to create or clean it up. When you run the daemon by hand
 outside systemd, `RUNTIME_DIRECTORY` is unset and the code falls back to
-`/run/serverwatch`, creating the directory itself as a best effort.
+`/run/trinetra`, creating the directory itself as a best effort.
 
 ### Permissions
 
@@ -413,9 +416,9 @@ come first.
 
 | Path | Mode | Owner |
 |------|------|-------|
-| `/run/serverwatch/` (parent dir) | `0700` | root |
-| `/run/serverwatch/control.sock` | `0600` | root |
-| `/run/serverwatch/token` | `0600` | root |
+| `/run/trinetra/` (parent dir) | `0700` | root |
+| `/run/trinetra/control.sock` | `0600` | root |
+| `/run/trinetra/token` | `0600` | root |
 
 systemd creates the runtime directory `0755`, so `serveControlSocket`
 explicitly chmods it down to `0700` before binding, closing the window where a
@@ -526,7 +529,7 @@ snapshot or a dispatched alert as soon as it occurs.
 ### The event bus
 
 The bus lives inside the daemon process (`eventBus` in
-`internal/serverwatch/eventbus.go`) and fans out `core.Event` values to any
+`internal/trinetra/eventbus.go`) and fans out `core.Event` values to any
 number of subscribers. There are two publish points:
 
 - The sampler loop, right after it stores the merged snapshot
@@ -598,7 +601,7 @@ flowchart LR
   dispatch[dispatchAndLog: alert fire, recover, digest] -->|publish alert event| bus
   bus -->|fan out, non blocking, drop on full| sub[inprocAPI.Subscribe subscriber channel]
   sub -->|one event per frame, streamID marker| sock[Control socket: dedicated streaming connection]
-  sock -->|client.Subscribe output channel| webproc[serverwatch web process]
+  sock -->|client.Subscribe output channel| webproc[trinetra web process]
   webproc -->|snapshot tick triggers fetch, alert event pushes alert frame| sse[Dashboard SSE stream]
   sse --> browser[Browser: live dashboard]
 ```
@@ -624,29 +627,29 @@ and removes both the socket and the token file.
 
 ## The systemd unit
 
-The unit is written by `serverwatch install`, rendered by `renderUnit` in
-`internal/serverwatch/systemd.go`, and installed to
-`/etc/systemd/system/serverwatch.service`. There is exactly one unit, wrapping
-the `serverwatch` daemon binary; `install` always copies whichever binary is
-running to `/usr/local/bin/serverwatch` and writes this same file around it.
-`serverwatch-web`, when installed, runs as a supervised child of this same
+The unit is written by `trinetra install`, rendered by `renderUnit` in
+`internal/trinetra/systemd.go`, and installed to
+`/etc/systemd/system/trinetra.service`. There is exactly one unit, wrapping
+the `trinetra` daemon binary; `install` always copies whichever binary is
+running to `/usr/local/bin/trinetra` and writes this same file around it.
+`trinetra-web`, when installed, runs as a supervised child of this same
 unit rather than getting a unit of its own; see [Web
 supervisor](#web-supervisor). Here it is exactly as emitted:
 
 ```ini
 [Unit]
-Description=server-watcher host monitor
+Description=Trinetra — self-hosted server & fleet monitor
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/serverwatch daemon
+ExecStart=/usr/local/bin/trinetra daemon
 Restart=always
 RestartSec=5
 WatchdogSec=90
 User=root
-RuntimeDirectory=serverwatch
+RuntimeDirectory=trinetra
 StandardOutput=journal
 StandardError=journal
 
@@ -669,7 +672,7 @@ starting.
 watchdog because the `WATCHDOG=1` notification is accepted from the main PID
 regardless of `Type`, unlike `READY=1` which would require `Type=notify`.
 
-`ExecStart=/usr/local/bin/serverwatch daemon` runs the daemon subcommand. This
+`ExecStart=/usr/local/bin/trinetra daemon` runs the daemon subcommand. This
 is the process this whole chapter is about, and it is the only way the daemon is
 meant to start.
 
@@ -679,8 +682,8 @@ resilience story: if the process exits for any reason, systemd restarts it after
 (which is what `systemctl enable` hooks into), the daemon both starts at boot
 and comes back after a crash.
 
-`RuntimeDirectory=serverwatch` is the line that makes the control socket
-possible. As covered above, it is what creates `/run/serverwatch` with the
+`RuntimeDirectory=trinetra` is the line that makes the control socket
+possible. As covered above, it is what creates `/run/trinetra` with the
 right ownership and lifetime and exports its path into the environment, so the
 socket has a home that appears before the daemon starts and vanishes when it
 stops.
@@ -699,15 +702,15 @@ comfortable headroom above the fast interval.
 `User=root` is required because the daemon reads privileged data and shells out
 to privileged tools (`smartctl`, docker, and so on). `StandardOutput=journal`
 and `StandardError=journal` send all logging to the journal, which is why
-`journalctl -u serverwatch` is the way to read the daemon's output, including
+`journalctl -u trinetra` is the way to read the daemon's output, including
 the one-time Telegram enrollment PIN.
 
 ## Fleet mode
 
 Everything above describes one host watching itself. Fleet mode lets one
-serverwatch collect the history of many others, without changing what any of
+trinetra collect the history of many others, without changing what any of
 them does locally. It lives in `internal/fleet` (standard library only, like
-the daemon) plus a thin adapter layer in `internal/serverwatch`.
+the daemon) plus a thin adapter layer in `internal/trinetra`.
 
 ### Three roles
 
@@ -719,7 +722,7 @@ Every install has a `fleet.role`:
 | master | Everything solo does, plus a TLS listener (`fleet.listen`, default `:9443`) that enrolls children and stores a replica of each one's history. The master shows itself as the node `self`. |
 | child | Everything solo does, plus a shipper that sends a copy of what it records to its master. |
 
-The role is written only by `serverwatch fleet init|join|leave|disable`, never
+The role is written only by `trinetra fleet init|join|leave|disable`, never
 by `config set`, because it has to change together with the certificates those
 commands create. A child keeps sampling, storing and alerting locally exactly
 as a solo host would; the master adds to that, it never replaces it. If the
@@ -728,23 +731,23 @@ later.
 
 ### Enrollment
 
-`serverwatch fleet init` creates a private certificate authority on the master
+`trinetra fleet init` creates a private certificate authority on the master
 (10 years) and a server certificate (2 years) for the addresses children will
-use, under `/var/lib/serverwatch/fleet/pki/`. Running it again reuses the
+use, under `/var/lib/trinetra/fleet/pki/`. Running it again reuses the
 existing CA, so enrolled children never have to re-join; it refuses to replace
 a CA it cannot read rather than silently minting a new one.
 
 Nothing renews the server certificate automatically. From 90 days before it
 expires the master logs a warning at every start; re-issue it with
-`serverwatch fleet disable` followed by `serverwatch fleet init --address ...`
+`trinetra fleet disable` followed by `trinetra fleet init --address ...`
 (without `--purge`, so the CA, registry and replicas are kept and children
 need not re-join), then restart. The same sequence is how you change the
 addresses the certificate covers.
 
-`serverwatch fleet token create` prints a one-line join code (`swj1_...`). The
+`trinetra fleet token create` prints a one-line join code (`swj1_...`). The
 code carries the master's URL, a short-lived single- or multi-use token
 (`swt_...`), and the CA pin: a SHA-256 of the CA's public key. On the child,
-`serverwatch fleet join <code>` generates a private key locally, connects to
+`trinetra fleet join <code>` generates a private key locally, connects to
 the master, and refuses to send anything unless the certificate chain the
 master presents matches that pin. So the only trust decision is copying the
 code; there is no trust-on-first-use. The master spends the token, registers
@@ -760,23 +763,23 @@ against the CA pin) and would strip the client certificate the master uses to
 identify and authorise each node. Forward the port at the TCP level only
 (plain NAT or a TCP/SNI passthrough) if you need anything in between. The child renews its certificate over that same connection once
 two thirds of its life has passed, so a healthy node never expires.
-`serverwatch fleet node revoke` marks a node revoked in the master's registry;
+`trinetra fleet node revoke` marks a node revoked in the master's registry;
 its requests are refused from then on, it stops shipping and raises a local
-alert, and its history on the master is kept. `serverwatch fleet node remove`
+alert, and its history on the master is kept. `trinetra fleet node remove`
 goes further: it deletes the node from the registry and from liveness
 tracking and resolves any open node-down alert for it, keeping only its
 replicated history on disk.
 
-`serverwatch fleet leave` on a child is local only; the master is not told.
+`trinetra fleet leave` on a child is local only; the master is not told.
 Until the node is revoked or removed on the master, the master keeps
 expecting it and pages it as down, so `leave` prints the exact command to run
-there (`sudo serverwatch fleet node revoke <node-id>`).
+there (`sudo trinetra fleet node revoke <node-id>`).
 
 ### The data path
 
 On a child, the store writer appends every sample to the local time-series
 store first, exactly as on a solo host, and only then tees a copy into the
-**outbox**: a durable, append-only spool under `/var/lib/serverwatch/outbox/`
+**outbox**: a durable, append-only spool under `/var/lib/trinetra/outbox/`
 where each record gets an increasing sequence number. Down events and alert
 log entries go through the same outbox. A failure to write the outbox is
 logged and counted but never blocks the local write; the local store is the
@@ -788,7 +791,7 @@ local store.
 The shipper reads the outbox in batches (at most 1 MiB or 5000 records) and
 posts them to the master's `ingest` endpoint. The master applies a batch to
 that node's replica, a normal tsfile store under
-`/var/lib/serverwatch/fleet/nodes/<id>/`, syncs it to disk, records the last
+`/var/lib/trinetra/fleet/nodes/<id>/`, syncs it to disk, records the last
 applied sequence number, and only then acknowledges. The child deletes outbox
 segments once they are acknowledged. A batch the master has already applied
 is acknowledged again without being re-applied, so a retry after a lost
@@ -801,7 +804,7 @@ guard is what makes gap repair, below, safe to retry.
 
 ```mermaid
 flowchart LR
-    subgraph child["child (any serverwatch)"]
+    subgraph child["child (any trinetra)"]
         sw["store writer"] --> local["local tsfile store"]
         sw --> ob["outbox (512 MiB, seq)"]
         ob --> sh["shipper"]
@@ -853,10 +856,10 @@ before it first reaches the master (a young fleet whose applied sequence is
 still small, plus a long outage right after the restore), the ack no longer
 looks ahead, and the master silently skips the new records that reuse
 already-applied numbers. It is rare, but after restoring a child from backup
-the safe course is to leave and re-join: `serverwatch fleet leave --purge` on
+the safe course is to leave and re-join: `trinetra fleet leave --purge` on
 the child (without `--purge` the old identity is kept and a re-join proves
 continuity, so the master would keep the same node and sequence), then
-`serverwatch fleet join` with a new join code. The child comes back as a new
+`trinetra fleet join` with a new join code. The child comes back as a new
 node with a fresh sequence; revoke or remove the old node on the master
 (`leave` prints the command). The old node's replicated history stays on the
 master under its old id.
@@ -915,7 +918,7 @@ alerts. Nothing is silenced by joining a fleet.
 ### What a replica can answer today
 
 The control socket accepts an optional `node` on each request, so
-`serverwatch-ctl`, the web UI and any other plugin can read a remote node the
+`trinetra-ctl`, the web UI and any other plugin can read a remote node the
 same way they read the local one: status, history, metrics, down events, the
 alert log and host inventory all come from the replica. Requests without a
 `node` go to the local daemon, as before. Fleet management itself is a small
@@ -931,7 +934,7 @@ from the master's config, not the child's.
 
 Step back and the shape is simple. One process, started and kept alive by
 systemd, runs a tiered sampler loop and a Telegram poller (and, when
-`web.enabled`, a supervisor that keeps a separate `serverwatch-web` child
+`web.enabled`, a supervisor that keeps a separate `trinetra-web` child
 process alive). The sampler sets the rhythm: cheap checks every few
 seconds, expensive checks every minute, a heartbeat on its own clock, and a
 watchdog ping every tick that lets systemd restart the process if the loop ever

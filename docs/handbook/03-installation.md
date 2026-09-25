@@ -1,6 +1,6 @@
 # Installation and first run
 
-This chapter walks you from a bare Linux host to a running `serverwatch`
+This chapter walks you from a bare Linux host to a running `trinetra`
 service that answers you over Telegram. It is written as a runbook: follow the
 numbered steps in order and you will end up with a monitored server. Each step
 also explains what happens under the hood, so you understand what you just did
@@ -47,9 +47,9 @@ left unmonitored. A missing tool never stops the daemon from running.
 ## 2. Get the binaries
 
 The default, recommended path is to download the prebuilt release assets: the
-releases page ships compiled `serverwatch`, `serverwatch-ctl`, and
-`serverwatch-web` binaries, so you do not need a Go toolchain on the host.
-Download the three you want into one directory and `serverwatch install` in
+releases page ships compiled `trinetra`, `trinetra-ctl`, and
+`trinetra-web` binaries, so you do not need a Go toolchain on the host.
+Download the three you want into one directory and `trinetra install` in
 step 3 picks up and installs all of them in a single command. Building from
 source is a secondary option, covered below, for when you want to compile it
 yourself.
@@ -61,21 +61,21 @@ matches your host:
 
 | Host | Asset |
 |------|-------|
-| x86-64 server or NUC | `serverwatch-linux-amd64` |
-| Raspberry Pi 3/4/5 on a 64-bit OS | `serverwatch-linux-arm64` |
-| Older 32-bit Pi or ARMv7 | `serverwatch-linux-arm` |
+| x86-64 server or NUC | `trinetra-linux-amd64` |
+| Raspberry Pi 3/4/5 on a 64-bit OS | `trinetra-linux-arm64` |
+| Older 32-bit Pi or ARMv7 | `trinetra-linux-arm` |
 
 Download the three assets for your architecture into one directory and make
 them executable. The example below grabs the arm64 builds; swap the `arch`
 value (`linux-amd64` / `linux-arm64` / `linux-arm`) for your host. Each file
-drops its arch suffix so `serverwatch install` finds the plugins by name.
+drops its arch suffix so `trinetra install` finds the plugins by name.
 
 ```bash
 cd /tmp && arch=linux-arm64
-for b in serverwatch serverwatch-ctl serverwatch-web; do
+for b in trinetra trinetra-ctl trinetra-web; do
   curl -fsSL -o "$b" "https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/$b-$arch"
 done
-chmod +x serverwatch serverwatch-ctl serverwatch-web
+chmod +x trinetra trinetra-ctl trinetra-web
 ```
 
 Verify what you downloaded before trusting it. Each release includes a
@@ -83,17 +83,17 @@ Verify what you downloaded before trusting it. Each release includes a
 the line for that asset:
 
 ```bash
-sha256sum serverwatch serverwatch-ctl serverwatch-web
+sha256sum trinetra trinetra-ctl trinetra-web
 ```
 
 Compare each printed hash against the matching line in `checksums.txt`. If any
 differ, do not install; re-download and try again.
 
-The two plugins are optional. Drop `serverwatch-ctl` / `serverwatch-web` from
-the loop if you only want the Telegram daemon; `serverwatch install` (step 3)
+The two plugins are optional. Drop `trinetra-ctl` / `trinetra-web` from
+the loop if you only want the Telegram daemon; `trinetra install` (step 3)
 installs whichever of the three it finds beside the daemon binary. You can
-always add a plugin later by downloading it next to `serverwatch` and running
-`serverwatch install` again.
+always add a plugin later by downloading it next to `trinetra` and running
+`trinetra install` again.
 
 ### Option B: build from source
 
@@ -106,28 +106,28 @@ cd server-monitor
 make linux
 ```
 
-`make linux` produces `dist/serverwatch-linux-amd64` and
-`dist/serverwatch-linux-arm64`. Copy the one you need to the server:
+`make linux` produces `dist/trinetra-linux-amd64` and
+`dist/trinetra-linux-arm64`. Copy the one you need to the server:
 
 ```bash
-scp dist/serverwatch-linux-arm64 myserver:/tmp/serverwatch
+scp dist/trinetra-linux-arm64 myserver:/tmp/trinetra
 ```
 
 The two plugin binaries build the same way, with no build tag, from their own
 `./cmd` package:
 
 ```bash
-GOOS=linux GOARCH=arm64 go build -o dist/serverwatch-ctl-linux-arm64 ./cmd/serverwatch-ctl
-GOOS=linux GOARCH=arm64 go build -o dist/serverwatch-web-linux-arm64 ./cmd/serverwatch-web
+GOOS=linux GOARCH=arm64 go build -o dist/trinetra-ctl-linux-arm64 ./cmd/trinetra-ctl
+GOOS=linux GOARCH=arm64 go build -o dist/trinetra-web-linux-arm64 ./cmd/trinetra-web
 ```
 
-(`make cross` builds this whole matrix, plus `serverwatch`, for every
+(`make cross` builds this whole matrix, plus `trinetra`, for every
 supported platform in one pass.) Copy whichever of them you want next to
-`/tmp/serverwatch` on the server; `serverwatch install` picks up whatever it
+`/tmp/trinetra` on the server; `trinetra install` picks up whatever it
 finds beside the SOURCE binary it is installing and installs it too (see
 step 3 below).
 
-Either way, you now have an executable at `/tmp/serverwatch` on the host, ready
+Either way, you now have an executable at `/tmp/trinetra` on the host, ready
 to install.
 
 ## 3. Install as a systemd service
@@ -135,46 +135,46 @@ to install.
 One command turns that loose binary into a managed, boot-persistent service:
 
 ```bash
-sudo /tmp/serverwatch install
+sudo /tmp/trinetra install
 ```
 
 That single command does seven things. It is worth knowing each one, because
 this is the moment your host goes from "has a binary in /tmp" to "runs a
 monitored service."
 
-1. **Copies the binary to `/usr/local/bin/serverwatch`.** This is the real,
+1. **Copies the binary to `/usr/local/bin/trinetra`.** This is the real,
    permanent home of the executable. The systemd unit points at this absolute
    path.
 
-2. **Symlinks it into `/usr/bin/serverwatch`.** This is a small but important
+2. **Symlinks it into `/usr/bin/trinetra`.** This is a small but important
    detail. On some distributions, notably RHEL and CentOS-family hosts, sudo's
    `secure_path` does not include `/usr/local/bin`. Without the symlink,
-   `sudo serverwatch ...` would fail with "command not found" on those hosts
+   `sudo trinetra ...` would fail with "command not found" on those hosts
    even though the service itself runs fine. The symlink puts the command on a
    directory that is on sudo's `secure_path` everywhere, so the `sudo
-   serverwatch` shortcut always resolves. The symlink is created only if
+   trinetra` shortcut always resolves. The symlink is created only if
    nothing already lives at that path, so it never clobbers a distro-provided
    binary, and it is non-fatal: if the link cannot be made, the binary and unit
    are already in place and only the shortcut is affected.
 
 3. **Copies any plugin binaries it finds next to the source binary.** This is
-   what makes install a true one-step process: if `serverwatch-ctl` and/or
-   `serverwatch-web` are sitting in the same directory as the `serverwatch`
+   what makes install a true one-step process: if `trinetra-ctl` and/or
+   `trinetra-web` are sitting in the same directory as the `trinetra`
    binary you ran install from (step 2), install copies each one it finds into
    `/usr/local/bin` alongside the daemon, mode `0755`. A plugin that is not
    present there is simply skipped, not an error, and a copy hiccup on one
    plugin is non-fatal and does not stop the daemon itself from installing.
    You never have to copy the plugin binaries into place by hand; just
-   download or build them next to `serverwatch` before running install.
+   download or build them next to `trinetra` before running install.
 
    > **Trust the directory you install from.** Because install adopts whatever
-   > `serverwatch-ctl` / `serverwatch-web` sit beside the `serverwatch` binary
+   > `trinetra-ctl` / `trinetra-web` sit beside the `trinetra` binary
    > and records *their* checksums as the trust anchor (step 4), it trusts the
-   > contents of that directory. Only run `sudo serverwatch install` from a
+   > contents of that directory. Only run `sudo trinetra install` from a
    > directory you control and whose binaries you verified (for example the
    > release assets you checksummed against `checksums.txt` in step 2). Do not
    > run it from a world-writable or shared location like `/tmp` where another
-   > user could have dropped a look-alike `serverwatch-ctl`/`serverwatch-web`
+   > user could have dropped a look-alike `trinetra-ctl`/`trinetra-web`
    > beside your binary. This is operator responsibility: install runs as root
    > and executes with root's trust in that directory. (Once installed, the
    > front-door still verifies each plugin against the recorded manifest on
@@ -182,37 +182,37 @@ monitored service."
 
 4. **Records the plugin checksum manifest.** `install` scans the directory it
    just copied the binary (and any plugins) into for the companion plugin
-   binaries, `serverwatch-ctl` and `serverwatch-web`, and writes the SHA-256 of
-   any it finds to `/var/lib/serverwatch/plugins.json`, mode `0600`,
+   binaries, `trinetra-ctl` and `trinetra-web`, and writes the SHA-256 of
+   any it finds to `/var/lib/trinetra/plugins.json`, mode `0600`,
    root-only. This manifest is the trust anchor the safe front-door commands
-   (`serverwatch cli` / `serverwatch web`, see
+   (`trinetra cli` / `trinetra web`, see
    [Architecture](02-architecture.md) and
    [Command reference](11-command-reference.md)) check before they will exec
    either plugin. A hiccup writing the manifest is non-fatal to the rest of
-   install. If you build or hand-copy `serverwatch-ctl` or `serverwatch-web`
+   install. If you build or hand-copy `trinetra-ctl` or `trinetra-web`
    directly into `/usr/local/bin` yourself, bypassing step 3 above, you must
-   (re-)run `serverwatch install` afterward so its checksum gets recorded; the
+   (re-)run `trinetra install` afterward so its checksum gets recorded; the
    front-door refuses to run a plugin binary that is not in the manifest.
 
 5. **Writes and enables the systemd unit** at
-   `/etc/systemd/system/serverwatch.service`, then runs `systemctl
-   daemon-reload` followed by `systemctl enable --now serverwatch`. The unit it
+   `/etc/systemd/system/trinetra.service`, then runs `systemctl
+   daemon-reload` followed by `systemctl enable --now trinetra`. The unit it
    writes looks like this:
 
    ```ini
    [Unit]
-   Description=server-watcher host monitor
+   Description=Trinetra — self-hosted server & fleet monitor
    After=network-online.target docker.service
    Wants=network-online.target
 
    [Service]
    Type=simple
-   ExecStart=/usr/local/bin/serverwatch daemon
+   ExecStart=/usr/local/bin/trinetra daemon
    Restart=always
    RestartSec=5
    WatchdogSec=90
    User=root
-   RuntimeDirectory=serverwatch
+   RuntimeDirectory=trinetra
    StandardOutput=journal
    StandardError=journal
 
@@ -224,7 +224,7 @@ monitored service."
    systemd watchdog: the sampler loop pings systemd on every fast tick (default
    every 5 seconds), comfortably inside the 90-second window, so if the loop
    ever wedges and the pings stop, systemd restarts the unit for you.
-   `RuntimeDirectory=serverwatch` tells systemd to create `/run/serverwatch`
+   `RuntimeDirectory=trinetra` tells systemd to create `/run/trinetra`
    before the service starts and remove it when the service stops; that is
    where the daemon puts its control socket (see
    [Architecture](02-architecture.md)), so the directory is always present
@@ -232,7 +232,7 @@ monitored service."
    `WantedBy=multi-user.target`, the service survives crashes and comes back on
    every boot.
 
-6. **Seeds `/etc/serverwatch/config.json`** if it does not already exist. The
+6. **Seeds `/etc/trinetra/config.json`** if it does not already exist. The
    file is created with mode `0600`, root-owned, because it holds your bot
    token and other secrets. An existing config is left untouched, so a re-run
    of `install` (for example, to upgrade the binary) never overwrites your
@@ -245,13 +245,107 @@ You will see a confirmation line naming which plugins were installed (or
 noting that none were found next to the source binary), followed by a
 reminder to set a token, which is exactly what you do in step 5 below.
 
+## Upgrading from a serverwatch install
+
+trinetra is the rename of what used to be called serverwatch: same daemon,
+same data, new name. If this host already runs a `serverwatch` install
+(`/etc/serverwatch/config.json` or `/var/lib/serverwatch` exists), do not
+follow the fresh-install path above expecting a clean slate — `sudo trinetra
+install` detects it and migrates in place instead, in the **same single
+command** you already know from step 3. There is nothing else to run and
+nothing to prepare beyond getting the `trinetra` binary onto the box (step 2
+above, same as a fresh install).
+
+```bash
+sudo /tmp/trinetra install
+```
+
+Before the normal install steps run, this:
+
+1. **Stops and disables `serverwatch.service`** (`systemctl stop` then
+   `disable`; a missing unit is fine). It then insists systemd confirms the
+   old daemon is actually stopped before touching its files — moving a state
+   directory out from under a live process would lose writes. If systemd
+   cannot confirm that (an unusual host, or systemd being slow to report), the
+   migration refuses and tells you to re-run with `--force` once you have
+   confirmed serverwatch is not running yourself.
+2. **Moves `/etc/serverwatch` → `/etc/trinetra` and `/var/lib/serverwatch` →
+   `/var/lib/trinetra`.** This is an atomic rename on the same filesystem.
+   If the two paths are on different filesystems (`EXDEV`), it instead copies
+   the directory into a staging sibling of the new path, verifies every entry
+   byte-for-byte (type, mode, owner, size, symlink target, and a SHA-256 of
+   file content) against the original, and only removes the original once the
+   copy is proven complete. Nothing is ever deleted before its replacement is
+   verified.
+3. **Rewrites config paths that pointed inside the old directories** (for
+   example `web.tls_cert` / `web.tls_key`), so a TLS cert path under
+   `/etc/serverwatch/tls` becomes `/etc/trinetra/tls` automatically. Nothing
+   else in the config file changes.
+4. Runs the **normal install** (copies the binary and any plugins, writes the
+   plugin manifest, writes and enables `trinetra.service`, starts it) — see
+   steps 1-7 above.
+5. **Removes the old install**: the `serverwatch.service` unit file, and any
+   `serverwatch-ctl` / `serverwatch-web` plugin binaries found in
+   `/usr/local/bin`. (A drop-in override directory for the old unit, if you
+   had one, is left in place with a note — copy what you need into
+   `/etc/systemd/system/trinetra.service.d/` yourself.)
+6. **Replaces `/usr/local/bin/serverwatch` with a compat symlink to
+   `/usr/local/bin/trinetra`**, kept for one release so any script or muscle
+   memory still calling `serverwatch ...` keeps working; running it prints a
+   one-line deprecation notice to stderr. `/usr/bin/serverwatch` is deliberately
+   left in place too, still pointing at `/usr/local/bin/serverwatch` (it is not
+   redirected straight to `trinetra` or removed), so the full chain is
+   `/usr/bin/serverwatch` → `/usr/local/bin/serverwatch` →
+   `/usr/local/bin/trinetra` — `sudo serverwatch ...` keeps resolving on
+   distros whose `secure_path` omits `/usr/local/bin`, exactly the reason that
+   symlink exists in the first place (see step 2 above). This compat link is
+   only installed over a binary the migration recognizes as its own previous
+   serverwatch build (or an existing link to itself); anything else is left
+   untouched and noted.
+7. **Writes `/var/lib/trinetra/migrated-from-serverwatch`**, a timestamp
+   marker recording that (and when) this host was migrated, and prints a
+   summary of exactly what moved.
+
+Because fleet identity, PKI, the node registry, replicas, and the outbox all
+live under the state directory, they move with it — a fleet child or master
+that upgrades this way keeps its role and certificates with no re-enrollment.
+
+**It refuses rather than merges.** If both a `serverwatch` install and
+existing `trinetra` data are present, install stops without touching
+anything and tells you to archive or remove one side yourself; it never
+guesses which one you want to keep. If a legacy directory exists but is
+*empty*, that is treated as suspicious rather than "nothing to migrate" — most
+likely its volume just is not mounted this boot, and migrating the rest would
+strand the real data there. Check `/etc/fstab` and `systemctl list-units
+--type=mount`, mount it, and re-run. If you moved the serverwatch *state*
+volume to `/var/lib/trinetra` yourself ahead of time, tell the migration so it
+adopts it instead of erroring:
+
+```bash
+sudo trinetra install --state-already-at-new-path
+```
+
+The migration is **idempotent and resumable**: it checkpoints before each
+step, so re-running `sudo trinetra install` after an interruption (a crash,
+a reboot, Ctrl-C) picks up exactly where it stopped rather than redoing
+completed work or losing anything. If it does stop partway, the error message
+names the exact step, the current state of every path involved, and both how
+to finish it (just re-run the same command) and how to roll it back by hand if
+you would rather not — moving directories back with `mv`, removing the
+migration marker files it leaves inside them, and re-enabling
+`serverwatch.service`. It is worth reading that message in full if you ever
+see it; it is written to be followed literally, without guessing.
+
+Once migrated, continue with the rest of this chapter as normal — step 4
+onward works identically for a migrated host and a fresh one.
+
 ## 4. Verify discovery and permissions
 
 Before wiring up Telegram, confirm the daemon can actually see the host. Run
 the built-in doctor:
 
 ```bash
-sudo serverwatch doctor
+sudo trinetra doctor
 ```
 
 This runs the same probes the daemon itself uses and prints what works on this
@@ -285,20 +379,20 @@ To see the individual targets discovery found, along with each one's on/off
 state and effective threshold:
 
 ```bash
-sudo serverwatch monitor list
+sudo trinetra monitor list
 ```
 
 ## 5. Connect Telegram and enroll as owner
 
 Now give the bot its token. You can do this from the command line as shown
-below, or from the guided `serverwatch-ctl` first-run onboarding screen
-(`sudo serverwatch cli`; see [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)); both
+below, or from the guided `trinetra-ctl` first-run onboarding screen
+(`sudo trinetra cli`; see [Managing with
+trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl)); both
 paths surface the same enrollment PIN. This runbook continues with the
 command line: use the token you copied from @BotFather in step 1:
 
 ```bash
-sudo serverwatch telegram set-token <token>
+sudo trinetra telegram set-token <token>
 ```
 
 This writes the token into the config and signals the running daemon to reload,
@@ -308,7 +402,7 @@ terminal.
 
 At this point the bot is running but **unclaimed**. It will not answer just
 anyone. To stop a stranger who stumbles onto your bot from reading your data,
-serverwatch requires a one-time enrollment step that ties the bot to a single
+trinetra requires a one-time enrollment step that ties the bot to a single
 Telegram chat: yours.
 
 Here is how enrollment works, and it is important to get this right because the
@@ -316,9 +410,9 @@ old "just message the bot" behavior is gone. While the bot is unclaimed, the
 daemon holds a one-time **6-digit enrollment PIN**. `telegram set-token`
 dials the daemon over the control socket right after saving the token and
 prints that PIN along with the `/start` instruction, so in the normal case
-you never have to leave the terminal you ran it in. The `serverwatch-ctl`
+you never have to leave the terminal you ran it in. The `trinetra-ctl`
 first-run onboarding screen (see the [Command
-reference](plugins/serverwatch-ctl.md)) shows the exact
+reference](plugins/trinetra-ctl.md)) shows the exact
 same PIN the same way, if you set the token through the guided TUI instead.
 If the daemon cannot be reached, for example it is not installed yet or is
 still starting, `telegram set-token` falls back to pointing you at the
@@ -326,11 +420,11 @@ journal, where the daemon also logs the PIN.
 
 ```mermaid
 flowchart TD
-  a[Admin runs serverwatch telegram set-token, or completes the token step in ctl onboarding] --> b[Token saved, daemon reloads, bot unclaimed]
+  a[Admin runs trinetra telegram set-token, or completes the token step in ctl onboarding] --> b[Token saved, daemon reloads, bot unclaimed]
   b --> c[Daemon holds a one-time 6-digit enrollment PIN]
   c --> d{Control socket reachable right now?}
   d -->|Yes| e[set-token or ctl onboarding prints the PIN and the /start instruction]
-  d -->|No| f[Fallback: read the PIN from journalctl -u serverwatch]
+  d -->|No| f[Fallback: read the PIN from journalctl -u trinetra]
   e --> g[Admin sends /start PIN to the bot from their Telegram account]
   f --> g
   g --> h{PIN matches?}
@@ -349,7 +443,7 @@ flowchart TD
    read the PIN from the journal:
 
    ```bash
-   sudo journalctl -u serverwatch | grep "/start"
+   sudo journalctl -u trinetra | grep "/start"
    ```
 
 2. **Claim the bot from your Telegram account.** Open Telegram, find your bot,
@@ -369,7 +463,7 @@ flowchart TD
 > `/start` messages for a short cooldown (default 60 seconds) and rotates the
 > PIN to a fresh value, so a partial guessing run is never able to converge on
 > the six-digit space. If you fat-finger the PIN enough times to trip this, just
-> re-read the new PIN from the journal (`sudo journalctl -u serverwatch | grep
+> re-read the new PIN from the journal (`sudo journalctl -u trinetra | grep
 > "/start"`) and send that one. The threshold and cooldown are tunable via
 > `telegram.enroll_max_attempts` and `telegram.enroll_cooldown` (seconds).
 

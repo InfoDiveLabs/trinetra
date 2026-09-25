@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to serverwatch are recorded here. The format follows
+All notable changes to Trinetra (formerly serverwatch) are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
@@ -27,7 +27,7 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   link has been down for ten minutes.
 - **`serverwatch fleet` commands:** `init`, `join`, `leave`, `disable`,
   `status`, `nodes`, `node revoke|rename|tag`, and `token create|list|delete`.
-  See the [command reference](docs/handbook/11-command-reference.md#serverwatch-fleet).
+  See the [command reference](docs/handbook/11-command-reference.md#trinetra-fleet).
 - **Config keys** `fleet.listen` (default `:9443`), `fleet.outbox_max_mb`
   (default `512`) and `fleet.node_down_after` (default `2m`). The role and
   identity keys are managed by `serverwatch fleet` and refused by `config set`.
@@ -35,6 +35,52 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   replica through the same methods, plus new `Fleet.*` methods for fleet
   management. Both are backward compatible: requests without `node` behave as
   before.
+
+### Changed
+
+- **Renamed to Trinetra.** serverwatch is now **Trinetra** ("Sees what you
+  can't."): module `github.com/InfoDiveLabs/trinetra`, binaries `trinetra`,
+  `trinetra-ctl`, `trinetra-web`, paths `/etc/trinetra`, `/var/lib/trinetra`,
+  `/run/trinetra`, and the `trinetra.service` unit. The web UI, TUI, and
+  notifications carry the new Trinetra visual identity. The GitHub repo stays
+  at `Suraj-Tiwari/server-monitor` for now; only the product name changes.
+  - **Upgrade:** run the one command you already know, `sudo trinetra
+    install`. On a host with an existing serverwatch install it detects it
+    and migrates in place before the normal install runs: it stops and
+    disables `serverwatch.service`, moves `/etc/serverwatch` →
+    `/etc/trinetra` and `/var/lib/serverwatch` → `/var/lib/trinetra` (an
+    atomic rename, or a byte-verified copy when the two are on different
+    filesystems, so nothing is deleted before its replacement is proven in
+    place), rewrites any config paths that pointed inside the old
+    directories, then removes the old unit and plugin binaries (a drop-in
+    override dir for the old unit, if any, is left in place with a note) and
+    replaces `/usr/local/bin/serverwatch` with a compat symlink to
+    `trinetra`; `/usr/bin/serverwatch` is deliberately left pointing at it
+    rather than redirected or removed, so `sudo serverwatch ...` still
+    resolves via `secure_path` on distros that omit `/usr/local/bin`. Both
+    compat names are kept for one release, with a deprecation notice on use.
+    It refuses rather
+    than merges if both a serverwatch install and existing trinetra data are
+    present, or a legacy directory is unexpectedly empty (likely an
+    unmounted volume); `--state-already-at-new-path` adopts a state volume
+    you moved yourself, `--force` proceeds past a `serverwatch.service`
+    systemd could not confirm was stopped. A
+    `/var/lib/trinetra/migrated-from-serverwatch` marker records the
+    migration; the whole thing is idempotent and resumable, and every stop
+    point explains how to finish or roll back by hand. See [Upgrading from a
+    serverwatch install](docs/handbook/03-installation.md#upgrading-from-a-serverwatch-install).
+  - **Kept on purpose:** the web cookie names `sw_session`/`sw_enroll`/`sw_login`
+    (renaming them would log every user out); the WebAuthn RP ID/origin
+    handling (config-driven, bound into existing passkeys); config JSON keys;
+    `plugins.json` key names; the `control.sock`/`token` file names inside the
+    runtime dir; the `/usr/local/bin/serverwatch` → `trinetra` compat symlink
+    and the `/usr/bin/serverwatch` link that keeps pointing at it (both
+    removed in the next release); the
+    `SERVERWATCH_CONTROL_SOCKET`/`TOKEN` environment fallback (also removed in
+    the next release); and the literal `"serverwatch-control"` control-socket
+    handshake magic string. Fleet certificates already issued under a
+    serverwatch install keep their `"serverwatch fleet"` CN text (cosmetic,
+    left as is); new CAs are issued as `"trinetra fleet"`.
 
 ### Unchanged
 

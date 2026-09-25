@@ -1,12 +1,12 @@
 # Downtime and liveness
 
-Most of this handbook is about what serverwatch sees while it is running: CPU
+Most of this handbook is about what trinetra sees while it is running: CPU
 creeping up, a disk filling, a container flapping. This chapter is about the
 harder question, the one a monitor has to answer about its own absence. What
 happened while the daemon was not watching, and how do you find out the host
 went dark when the thing that would normally tell you went dark with it?
 
-serverwatch treats "down" as two distinct failure modes and keeps a separate,
+trinetra treats "down" as two distinct failure modes and keeps a separate,
 purpose-built mechanism for each. On top of those it layers two liveness safety
 nets whose only job is to make sure that a wedged loop or a dead host does not
 pass silently. This chapter walks through all four, in the order you would meet
@@ -19,18 +19,18 @@ chapter keeps circling back to them.
 
 The first is the host being off or the daemon not running. The power dropped,
 the kernel panicked, someone pulled the plug, or the process was killed. During
-this window serverwatch is not executing at all, so nothing can be written down
+this window trinetra is not executing at all, so nothing can be written down
 as it happens. This kind of downtime can only be reconstructed afterwards, from
 whatever the daemon managed to leave on disk before it stopped.
 
 The second is the host being up with its internet gone. The box is powered,
 the daemon is looping happily, but the link to the outside world has dropped.
-Here serverwatch is very much alive and can record the outage live, moment to
+Here trinetra is very much alive and can record the outage live, moment to
 moment, the way it records any other observation.
 
 These two want opposite tools. The first needs a breadcrumb left behind and
 read back after a gap. The second needs a live tracker that opens an interval
-and closes it. serverwatch builds exactly those two things, and we take them in
+and closes it. trinetra builds exactly those two things, and we take them in
 turn.
 
 ## The heartbeat and reconstructed power_down
@@ -86,7 +86,7 @@ Read that gap for what it is. If the daemon had been running continuously it
 would have refreshed the heartbeat within the last interval, so the distance
 between "last known alive" and "now" would be small. A large gap means the
 daemon was not there to keep the file current, and the size of the gap is
-exactly how long it was gone. serverwatch turns that gap into a `power_down`
+exactly how long it was gone. trinetra turns that gap into a `power_down`
 event with a start (the last heartbeat), an end (this boot), and a duration.
 
 The threshold is two heartbeat intervals rather than one. A single interval of
@@ -122,7 +122,7 @@ which removes short `power_down` events (the restart-storm shape) while leaving
 genuine multi-minute outages alone:
 
 ```bash
-serverwatch downtime purge --type power_down --max-seconds 300
+trinetra downtime purge --type power_down --max-seconds 300
 ```
 
 `--max-seconds 0` removes every event of the given type; the default 300 targets
@@ -252,7 +252,7 @@ case "/history", "/down":
 
 The rendered reply lists each event with its start, end, and human-readable
 duration, or a cheerful "no downtime recorded in window" when the window is
-clean. Note that this is a different log from the one `serverwatch alerts`
+clean. Note that this is a different log from the one `trinetra alerts`
 prints. That command reads `alertlog.jsonl`, the record of threshold alert
 fires and recoveries with their per-channel delivery outcomes, which is an
 adjacent event log but not the downtime log. If you want the power and network
@@ -285,13 +285,13 @@ if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
 }
 ```
 
-The message itself is short and legible. It opens with "server-watcher back
+The message itself is short and legible. It opens with "trinetra back
 online", states the window that was lost, and attaches a fresh snapshot of the
 host as it stands right now, so the first thing you see after an outage is both
 the gap and the current health of the box:
 
 ```go
-b.WriteString("🔌 server-watcher back online")
+b.WriteString("🔌 trinetra back online")
 for _, e := range evs {
 	if e.Type == "power_down" {
 		start := time.Unix(e.Start, 0).Format("15:04")
@@ -322,7 +322,7 @@ running, from systemd's point of view, while its sampler loop has hung and is
 doing nothing useful. A plain `Restart=always` will not save you there, because
 nothing has actually crashed.
 
-The systemd watchdog closes that gap. The unit that `serverwatch install`
+The systemd watchdog closes that gap. The unit that `trinetra install`
 writes (see [Architecture](02-architecture.md)) sets a watchdog deadline:
 
 ```
@@ -359,7 +359,7 @@ the extra ceremony that `Type=notify` would demand.
 The watchdog can only help while the host is alive to run systemd. If the whole
 box is off, or its own internet is down, nothing local can send you anything.
 That is the one situation none of the mechanisms above can escape: they all
-depend on serverwatch getting to run, and here it does not.
+depend on trinetra getting to run, and here it does not.
 
 The answer is to invert the signal and put it outside the host entirely. With
 an optional healthchecks.io dead-man switch configured, the daemon pings a
@@ -382,18 +382,18 @@ speak, because the thing raising the alarm is not on the host.
 You point it at a check URL with:
 
 ```bash
-sudo serverwatch healthchecks set https://hc-ping.com/<your-uuid>
+sudo trinetra healthchecks set https://hc-ping.com/<your-uuid>
 ```
 
 and turn it off again with:
 
 ```bash
-sudo serverwatch healthchecks off
+sudo trinetra healthchecks off
 ```
 
-The same setting is also the Healthchecks screen in `serverwatch-ctl`'s
+The same setting is also the Healthchecks screen in `trinetra-ctl`'s
 management menu (see [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)), if
+trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl)), if
 you would rather use the guided TUI than type the URL on the command line.
 
 It is optional, and it is the one piece here that depends on an external
@@ -418,7 +418,7 @@ somewhere else and alerts on silence.
 
 No single one of these covers every case. Together they mean that whether the
 daemon hangs, the link drops, or the whole host goes down, the outage is either
-caught as it happens or reconstructed the moment serverwatch can run again, and
+caught as it happens or reconstructed the moment trinetra can run again, and
 you hear about it.
 
 ---

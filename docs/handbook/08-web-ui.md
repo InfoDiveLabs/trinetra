@@ -1,6 +1,6 @@
 # The web UI
 
-serverwatch is a Telegram tool first, but it ships an optional browser
+trinetra is a Telegram tool first, but it ships an optional browser
 interface for people who would rather look at graphs than read chat messages.
 The web UI is entirely opt-in and passkey only. It is an alternative to
 Telegram, not a replacement for it: the same daemon can push alerts to a chat
@@ -24,23 +24,23 @@ daemon is already producing.
 
 ## How the web UI runs
 
-There is one `serverwatch-web` binary, and it is a plain, separate program
+There is one `trinetra-web` binary, and it is a plain, separate program
 with no build tag:
 
 ```bash
-go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web
+go build -o /usr/local/bin/trinetra-web ./cmd/trinetra-web
 ```
 
 `internal/web` is an ordinary, untagged package like any other in the
 codebase. What keeps its dependencies (the WebAuthn stack and the rest) out of
 the daemon is not a build tag; it is simply that the daemon package never
-imports `internal/web`. `serverwatch install` builds and ships all three
-binaries (`serverwatch`, `serverwatch-ctl`, `serverwatch-web`) and records
+imports `internal/web`. `trinetra install` builds and ships all three
+binaries (`trinetra`, `trinetra-ctl`, `trinetra-web`) and records
 their checksums in the root-only install manifest (see [Installation and
 first run](03-installation.md)).
 
-`serverwatch-web` does not embed the daemon and does not read its state
-directly. Like `serverwatch-ctl`, it dials the daemon's [control
+`trinetra-web` does not embed the daemon and does not read its state
+directly. Like `trinetra-ctl`, it dials the daemon's [control
 socket](02-architecture.md#the-control-socket), borrows the socket client as
 its data source, and serves the UI from its own process. It also opens a
 second, dedicated connection to the same socket to subscribe to the daemon's
@@ -49,19 +49,19 @@ dashboard is pushed fresh data instead of only polling for it; see [Live
 dashboard updates](#live-dashboard-updates) below for how that push reaches
 the browser.
 
-There are two ways `serverwatch-web` gets started:
+There are two ways `trinetra-web` gets started:
 
 - **Supervised, via `web.enabled`.** This is the path for anything you run
   day to day. Once it is enabled, the daemon itself verifies and spawns
-  `serverwatch-web` as a child process, passing it the control socket path and
+  `trinetra-web` as a child process, passing it the control socket path and
   a per-launch token. If the child exits, the daemon restarts it under a
   capped backoff; if the daemon shuts down, it stops the child too. You never
   run or babysit a second process by hand. See [Web
   supervisor](02-architecture.md#web-supervisor) for the full lifecycle and
   its diagram.
 
-  The right way to turn it on is the `serverwatch-ctl` web-setup wizard:
-  `sudo serverwatch cli`, then `s` from Home. It walks you through the serving
+  The right way to turn it on is the `trinetra-ctl` web-setup wizard:
+  `sudo trinetra cli`, then `s` from Home. It walks you through the serving
   mode, listen address, and the domain, RP ID, and origin that passkey login
   depends on, validates the combination, enables the web, and applies it over
   the control socket, so the first time you open the page passkey registration
@@ -78,32 +78,32 @@ There are two ways `serverwatch-web` gets started:
   supervisor decides once, at daemon startup, whether to spawn the child, and
   the `web.*` keys are not reloaded on SIGHUP. The wizard reminds you to
   restart after it applies; a scripted change needs `sudo systemctl restart
-  serverwatch`. There is no separate "web" unit.
+  trinetra`. There is no separate "web" unit.
 
-- **Manual, via `serverwatch web`.** This front-door subcommand runs the same
-  trust checks the supervisor uses, then execs `serverwatch-web` directly in
+- **Manual, via `trinetra web`.** This front-door subcommand runs the same
+  trust checks the supervisor uses, then execs `trinetra-web` directly in
   the foreground. Reach for this when you want to run the web UI yourself,
   for example while testing on a box where `web.enabled` is off.
 
   ```bash
-  sudo serverwatch web
+  sudo trinetra web
   ```
 
-Either way, before `serverwatch-web` can run at all, the core has to be able
+Either way, before `trinetra-web` can run at all, the core has to be able
 to verify it: an absolute path next to the core binary's own directory, root
 ownership with no group/world write bit, and a SHA-256 match against the
-install manifest. If you build or hand-copy `serverwatch-web` into place
-yourself, (re-)run `serverwatch install` afterward so its checksum is
-recorded; until then, both the supervisor and the `serverwatch web`
+install manifest. If you build or hand-copy `trinetra-web` into place
+yourself, (re-)run `trinetra install` afterward so its checksum is
+recorded; until then, both the supervisor and the `trinetra web`
 front-door refuse to run it and log why. See [The front-door safe-exec trust
 model](02-architecture.md#the-front-door-safe-exec-trust-model) for the full
 checks.
 
 A subtle but useful detail: the `web.*` and `public.*` config keys exist in
-`serverwatch`'s config schema regardless of whether `serverwatch-web` is
-installed, so `serverwatch config set web.enabled true` always succeeds even
+`trinetra`'s config schema regardless of whether `trinetra-web` is
+installed, so `trinetra config set web.enabled true` always succeeds even
 before the plugin binary is present. It simply has nothing to supervise until
-`serverwatch-web` exists next to the core binary and passes verification.
+`trinetra-web` exists next to the core binary and passes verification.
 
 ## Authentication and roles
 
@@ -167,7 +167,7 @@ Signed in, the UI is a handful of routes.
 
 ## Live dashboard updates
 
-`serverwatch-web` subscribes to the daemon's [live event
+`trinetra-web` subscribes to the daemon's [live event
 stream](02-architecture.md#the-live-event-stream) at startup, over the same
 control socket its other data comes from, and uses that subscription to
 drive the `/events` SSE endpoint the live dashboard connects to. Two kinds
@@ -202,7 +202,7 @@ page](#the-public-status-page) below for the allowlist itself.
 
 ## Serving modes
 
-`web.mode` decides how the `serverwatch-web` server binds and how (or
+`web.mode` decides how the `trinetra-web` server binds and how (or
 whether) it terminates TLS. Pick the mode that matches how you already expose services on
 the host. Whatever you choose, a web failure never takes down monitoring: the
 web configuration is validated at startup, and an invalid or incomplete
@@ -210,13 +210,13 @@ combination makes the web listener refuse to start while the daemon keeps
 running. Telegram and monitoring are unaffected; the daemon logs the failure,
 skips the listener, and you fix the config and restart.
 
-The guided way to set this up is `serverwatch-ctl`'s web-setup wizard: run
-`sudo serverwatch cli` and press `s` from the Home screen. It walks you
+The guided way to set this up is `trinetra-ctl`'s web-setup wizard: run
+`sudo trinetra cli` and press `s` from the Home screen. It walks you
 through the mode, listen address, domain, RP ID, and origin, derives sensible
 defaults, validates the whole combination up front, and enables and applies it
 over the control socket in one step, so you cannot leave the web in a
 half-configured state. See [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl).
+trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl).
 
 The `config set web.*` commands shown under each mode below are the equivalent
 manual form for automation or a headless box, and double as the reference for
@@ -234,9 +234,9 @@ public bind in this mode would let any client on the network spoof its own
 origin, so keep `web.listen` on `127.0.0.1` when you front it with a proxy.
 
 ```bash
-sudo serverwatch config set web.mode proxy
-sudo serverwatch config set web.listen 127.0.0.1:8088
-sudo systemctl restart serverwatch
+sudo trinetra config set web.mode proxy
+sudo trinetra config set web.listen 127.0.0.1:8088
+sudo systemctl restart trinetra
 ```
 
 You can set `web.rp_id` and `web.origin` explicitly to the public hostname if
@@ -252,12 +252,12 @@ the public hostnames, and `web.rp_id` / `web.origin` set and matching (they are
 required here, not derived).
 
 ```bash
-sudo serverwatch config set web.mode autocert
-sudo serverwatch config set web.listen :443
-sudo serverwatch config set web.autocert_domains monitor.example.com
-sudo serverwatch config set web.rp_id monitor.example.com
-sudo serverwatch config set web.origin https://monitor.example.com
-sudo systemctl restart serverwatch
+sudo trinetra config set web.mode autocert
+sudo trinetra config set web.listen :443
+sudo trinetra config set web.autocert_domains monitor.example.com
+sudo trinetra config set web.rp_id monitor.example.com
+sudo trinetra config set web.origin https://monitor.example.com
+sudo systemctl restart trinetra
 ```
 
 ### `manual`
@@ -267,20 +267,20 @@ already manage. Both `web.tls_cert` and `web.tls_key` must point at readable PEM
 files, and `web.rp_id` / `web.origin` are required and matching as in autocert.
 
 ```bash
-sudo serverwatch config set web.mode manual
-sudo serverwatch config set web.listen :443
-sudo serverwatch config set web.tls_cert /etc/serverwatch/tls/fullchain.pem
-sudo serverwatch config set web.tls_key  /etc/serverwatch/tls/privkey.pem
-sudo serverwatch config set web.rp_id monitor.example.com
-sudo serverwatch config set web.origin https://monitor.example.com
-sudo systemctl restart serverwatch
+sudo trinetra config set web.mode manual
+sudo trinetra config set web.listen :443
+sudo trinetra config set web.tls_cert /etc/trinetra/tls/fullchain.pem
+sudo trinetra config set web.tls_key  /etc/trinetra/tls/privkey.pem
+sudo trinetra config set web.rp_id monitor.example.com
+sudo trinetra config set web.origin https://monitor.example.com
+sudo systemctl restart trinetra
 ```
 
 ### The `web.*` keys
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `web.enabled` | `false` | Turns on daemon supervision of `serverwatch-web`. Opt-in even when the binary is installed. |
+| `web.enabled` | `false` | Turns on daemon supervision of `trinetra-web`. Opt-in even when the binary is installed. |
 | `web.listen` | `127.0.0.1:8088` | The `host:port` the server binds. Loopback by default; front it with a proxy for LAN or WAN access. |
 | `web.mode` | `proxy` | One of `proxy`, `autocert`, or `manual`. |
 | `web.rp_id` | `""` | WebAuthn relying-party ID: the public hostname passkeys are scoped to, no scheme or port. Required in autocert and manual; optional (derived) in proxy. |
@@ -308,8 +308,8 @@ which panels appear, enforced server-side, so a metric absent from the list can
 never leak onto `/public` no matter what is visible elsewhere in the UI.
 
 ```bash
-sudo serverwatch config set public.enabled true
-sudo serverwatch config set public.panels availability,cpu,mem,disk:/,uptime
+sudo trinetra config set public.enabled true
+sudo trinetra config set public.panels availability,cpu,mem,disk:/,uptime
 ```
 
 An admin can also curate the same allowlist from `/settings/public` once signed

@@ -1,6 +1,6 @@
 # Monitoring: what gets collected
 
-serverwatch earns its keep by sampling the machine on a schedule and turning
+trinetra earns its keep by sampling the machine on a schedule and turning
 those readings into three things: a live picture of right now, a rolling
 history you can query, and the raw material the alerting engine reasons over.
 This chapter is about the collection half of that job. It walks the two
@@ -9,7 +9,7 @@ hand-list a disk or a container, and the target namespaces you use to turn
 individual things on and off. How a reading becomes an alert, thresholds,
 baselines, and hysteresis, lives in the [Alerting
 chapter](06-alerting-and-channels.md); here we stay with the
-question of what serverwatch looks at and how often.
+question of what trinetra looks at and how often.
 
 ## Two tiers, one loop
 
@@ -45,7 +45,7 @@ here.
 
 ## The fast tier
 
-The fast tier is deliberately the cheapest thing serverwatch does. It never
+The fast tier is deliberately the cheapest thing trinetra does. It never
 shells out to another program. Every reading comes from a `/proc` file or a
 sysfs node, which are ordinary kernel-backed reads, so running it every 5
 seconds costs almost nothing.
@@ -71,12 +71,12 @@ the temperature is read from the first thermal zone under sysfs.
 Each of those seven readings does three jobs at once. It is appended as a raw
 sample to the time-series store (see [Storage and the data
 model](09-storage-and-data-model.md)), so you can query its history later with
-`serverwatch dump`. It updates the live picture in `status.json`, which is what
+`trinetra dump`. It updates the live picture in `status.json`, which is what
 the dashboard and the Telegram status reply read. And it feeds the rolling
 baseline and the anomaly engine, so the cpu, mem, swap, and temp checks always
 have fresh, high-resolution input to reason about. Because these four scalar
 metrics are the ones that move fastest and matter most, giving them a 5-second
-cadence is what lets serverwatch notice a spike promptly rather than a minute
+cadence is what lets trinetra notice a spike promptly rather than a minute
 after the fact.
 
 ## The slow tier
@@ -104,7 +104,7 @@ up/down state is evaluated as a binary health check (running is good, anything
 else is bad) and is alert-only: it drives alerting but is not written as a
 time-series.
 
-serverwatch also runs `docker stats` to collect per-container CPU, memory, and
+trinetra also runs `docker stats` to collect per-container CPU, memory, and
 network figures, gated by `collect.container_stats` (default on, so a stock
 install already gathers it). The CPU and memory readings become
 `docker:<name>:cpu` and `docker:<name>:mem` series; the per-container network
@@ -117,7 +117,7 @@ always-on `docker ps` check.
 
 Every slow tick runs `systemctl --failed` and treats each failed unit as a
 binary check that recovers on its own once the unit is no longer listed. This is
-alert-only and always on; it is how serverwatch tells you a service died.
+alert-only and always on; it is how trinetra tells you a service died.
 
 It also runs a full `systemctl list-units` inventory of every service and its
 load/active/sub state, gated by `collect.services` (default on). That full
@@ -134,7 +134,7 @@ always on and cheap relative to the attribute read below.
 
 The extra, gated by `collect.smart_attrs` (default on, like the rest), is the
 `-A` attribute read, which pulls the detailed SMART attributes including
-device temperature. This is the heaviest per-device call serverwatch makes,
+device temperature. This is the heaviest per-device call trinetra makes,
 so it is throttled independently by `collect.smart_interval`
 (default 1800 seconds, that is 30 minutes). Even when the slow tier runs every
 minute, the attribute read only happens at most once per `smart_interval`. When
@@ -162,7 +162,7 @@ that churns through hundreds of short-lived processes.
 Every slow tick also does an internet reachability dial, a plain outbound
 connection attempt that answers the "can this box reach the internet" question.
 Separately, if you have set `healthchecks.url`, the slow tier pings that URL on
-each tick so an external healthchecks.io check can notice if serverwatch itself
+each tick so an external healthchecks.io check can notice if trinetra itself
 stops reporting. The dial is about the server's connectivity; the ping is about
 proving the daemon is alive to a third party. Both are covered further in the
 [Downtime and liveness chapter](07-downtime-and-liveness.md).
@@ -217,7 +217,7 @@ configuration changes; the box just has less to watch.
 
 ## Host inventory
 
-Separate from the live metrics, serverwatch also reports the static facts about
+Separate from the live metrics, trinetra also reports the static facts about
 the machine it runs on: hostname, OS and kernel, CPU model with its physical
 core and logical thread counts, total RAM, uptime, and each disk's model, type
 (SSD or HDD), size, and filesystem. This is read straight from the host
@@ -226,14 +226,14 @@ fetched on demand rather than sampled.
 
 It also reports the host's own **local IP** (the primary non-loopback address).
 The **public IP** is off by default because looking it up means an outbound call
-to a third-party service; turn it on with `serverwatch config set
+to a third-party service; turn it on with `trinetra config set
 collect.public_ip true` if you want the internet-facing address shown too.
 
 See it in the web panel's **Host** page, or from a terminal with:
 
 ```bash
-serverwatch-ctl host          # formatted
-serverwatch-ctl --json host   # machine-readable
+trinetra-ctl host          # formatted
+trinetra-ctl --json host   # machine-readable
 ```
 
 ## Target namespaces and managing targets
@@ -262,7 +262,7 @@ monitored; or setting a per-target threshold override for the checks that
 carry a numeric threshold, so you can hold `disk:/` to a tighter bound than the
 rest of the disks without changing the global `thresholds.*` defaults.
 
-The primary, recommended way to do this is `serverwatch-ctl`'s Monitor
+The primary, recommended way to do this is `trinetra-ctl`'s Monitor
 thresholds screen. From Home, press `m` to open the management menu, then
 choose **Monitor thresholds**. The screen lists every target the daemon has
 discovered, fetched live from the daemon rather than probed locally, so it
@@ -271,30 +271,30 @@ shows the same `on`, `off`, and `unavailable` states described above.
 threshold-edit input for a per-target override. Each toggle or edit applies
 immediately over the control socket, so there is no separate save step and no
 daemon restart needed. See [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl) for the
+trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl) for the
 full walkthrough of that screen and the rest of the management menu.
 
-For automation, cron jobs, or a headless box without `serverwatch-ctl`
+For automation, cron jobs, or a headless box without `trinetra-ctl`
 installed, the same three operations are available as scriptable
-`serverwatch monitor` subcommands:
+`trinetra monitor` subcommands:
 
 ```bash
 # List every discovered target with its state and any threshold
-sudo serverwatch monitor list
+sudo trinetra monitor list
 
 # Turn a specific target on or off
-sudo serverwatch monitor enable docker:web
-sudo serverwatch monitor disable iface:eth0
+sudo trinetra monitor enable docker:web
+sudo trinetra monitor disable iface:eth0
 
 # Set a per-target threshold override
-sudo serverwatch monitor threshold disk:/ 85
+sudo trinetra monitor threshold disk:/ 85
 ```
 
 `monitor list` prints one line per target: the namespaced id and its state.
 `enable` and `disable` flip whether a target is monitored. `threshold` sets
 the per-target override described above. Each of these commands writes the
 config through the CLI and signals the running daemon to reload, so, just
-like a change made in `serverwatch-ctl`, it takes effect without a restart.
+like a change made in `trinetra-ctl`, it takes effect without a restart.
 See [Daemon-only config
 management](11-command-reference.md#3-daemon-only-config-management) for the
 full command reference.
@@ -331,13 +331,13 @@ failure. A collector that fails for three consecutive cycles raises a
 `collector:<name>` alert (see the next chapter), which recovers on the first
 success. The current per-collector health (consecutive failures, last success,
 last error) is in `status.json`, shown as a warning banner on the web dashboard,
-and printed by `serverwatch-ctl status`.
+and printed by `trinetra-ctl status`.
 
 ## Series cardinality guardrail (#112)
 
 Stale series (a container removed, a mount that disappeared) are reaped once
 their newest point ages past retention, so `seriesCount` tracks live targets.
-`serverwatch doctor` warns when the count is abnormally high (a healthy host is
+`trinetra doctor` warns when the count is abnormally high (a healthy host is
 in the low hundreds), which usually points at ephemeral targets churning, e.g. a
 Swarm host from before the service-keying fix above.
 

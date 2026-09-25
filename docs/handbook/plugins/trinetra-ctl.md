@@ -1,18 +1,18 @@
-# serverwatch-ctl
+# trinetra-ctl
 
-`serverwatch-ctl` is a separate client binary that dials the daemon's control
-socket. It is the primary, recommended way to manage a running serverwatch day
+`trinetra-ctl` is a separate client binary that dials the daemon's control
+socket. It is the primary, recommended way to manage a running trinetra day
 to day: it wraps the schedule, quiet hours, healthchecks, monitor thresholds,
 and notification channels in guided, validated screens, plus a first-run
 onboarding flow for Telegram, and its generic **all settings** screen reaches
 every remaining flat config key on top of those, so there is no config key
-you have to drop to `serverwatch config set` for. It is a complete, supported
+you have to drop to `trinetra config set` for. It is a complete, supported
 management tool: every config key is reachable through its screens. Nothing
-supervises its process (unlike [serverwatch-web](serverwatch-web.md), which the
+supervises its process (unlike [trinetra-web](trinetra-web.md), which the
 daemon supervises), by design -- it is an interactive client you run by hand
 when you want it, not a background service.
 
-In normal use you do not invoke the binary directly; run `serverwatch cli`
+In normal use you do not invoke the binary directly; run `trinetra cli`
 instead (see [the front-door in the Plugins overview](README.md)), which
 safely locates and execs it. The direct invocations below still apply once
 launched, and remain useful when scripting or working from a non-standard
@@ -20,14 +20,14 @@ install location.
 
 ## At a glance
 
-Where each feature lives in the TUI: launch with `sudo serverwatch cli`, and
+Where each feature lives in the TUI: launch with `sudo trinetra cli`, and
 from the Home screen `m` opens the management menu and `s` opens the web-setup
 wizard. If Telegram is not configured or enrolled yet, launching drops you
 straight into first-run onboarding instead.
 
 ```mermaid
 flowchart TD
-    launch["sudo serverwatch cli"] --> chk{"Telegram configured<br/>and enrolled?"}
+    launch["sudo trinetra cli"] --> chk{"Telegram configured<br/>and enrolled?"}
     chk -->|no| onboard["First-run onboarding:<br/>bot token, then /start pin, until enrolled"]
     chk -->|yes| home["Home: live status<br/>(r refresh, q quit)"]
     onboard --> home
@@ -43,32 +43,32 @@ flowchart TD
 
 ## Installing
 
-`serverwatch-ctl` installs alongside the daemon. The recommended path is to
-download the `serverwatch-ctl-<arch>` asset from the [releases
+`trinetra-ctl` installs alongside the daemon. The recommended path is to
+download the `trinetra-ctl-<arch>` asset from the [releases
 page](https://github.com/Suraj-Tiwari/server-monitor/releases) into the same
-directory as the `serverwatch` binary (renamed to `serverwatch-ctl`, dropping
-the arch suffix), then run `sudo serverwatch install`: it copies the plugin
+directory as the `trinetra` binary (renamed to `trinetra-ctl`, dropping
+the arch suffix), then run `sudo trinetra install`: it copies the plugin
 into `/usr/local/bin` next to the daemon and records its checksum in the
-root-only install manifest, so the `serverwatch cli` front-door can verify and
+root-only install manifest, so the `trinetra cli` front-door can verify and
 run it. If you already installed the daemon, just download the plugin next to
-`serverwatch` and re-run `serverwatch install`. Building from source
-(`go build -o serverwatch-ctl ./cmd/serverwatch-ctl`) is the secondary option.
+`trinetra` and re-run `trinetra install`. Building from source
+(`go build -o trinetra-ctl ./cmd/trinetra-ctl`) is the secondary option.
 See [Installation and first run](../03-installation.md) for the full flow and
 [Plugins](README.md) for the shared install and safe-exec model.
 
-## Running serverwatch-ctl
+## Running trinetra-ctl
 
 Run it with a subcommand for a one-shot, non-interactive read or change that
 mirrors the daemon-side output. Run it with no subcommand to launch the
 interactive Bubble Tea TUI, which is now the primary way to manage a running
-serverwatch. The subcommands are the scriptable counterpart to the TUI: the
+trinetra. The subcommands are the scriptable counterpart to the TUI: the
 read verbs (`status`, `doctor`, `alerts`) mirror the Home dashboard, and
 `config get`/`config set`/`channels test` drive the same validated setters and
 actions the management screens use, for a headless box or an automation script
 that cannot sit in front of a terminal.
 
 ```
-serverwatch-ctl [--socket PATH] [--token PATH] [--json] <command>
+trinetra-ctl [--socket PATH] [--token PATH] [--json] <command>
 ```
 
 | Command | Purpose |
@@ -89,7 +89,7 @@ when the underlying control-socket call fails, consistent throughout `run.go`.
 
 - **`--json`** makes the three read verbs (`status`, `doctor`, `alerts`) emit
   JSON instead of the text layout. It may appear before or after the verb, so
-  `serverwatch-ctl status --json` and `serverwatch-ctl --json alerts` are
+  `trinetra-ctl status --json` and `trinetra-ctl --json alerts` are
   equivalent, and it is inert (silently ignored) for the mutating verbs.
   `alerts --json` always emits a JSON array, `[]` when nothing is firing, so a
   consumer never has to special-case the empty state.
@@ -112,29 +112,29 @@ Socket and token resolution, highest priority first:
 | Source | Socket | Token |
 | --- | --- | --- |
 | Flag | `--socket PATH` | `--token PATH` |
-| Environment | `SERVERWATCH_CONTROL_SOCKET` | `SERVERWATCH_CONTROL_TOKEN` |
-| Default | `$RUNTIME_DIRECTORY/control.sock`, else `/run/serverwatch/control.sock` | the sibling `token` file next to the resolved socket |
+| Environment | `TRINETRA_CONTROL_SOCKET`, else `SERVERWATCH_CONTROL_SOCKET` (compat, one release) | `TRINETRA_CONTROL_TOKEN`, else `SERVERWATCH_CONTROL_TOKEN` (compat, one release) |
+| Default | `$RUNTIME_DIRECTORY/control.sock`, else `/run/trinetra/control.sock` | the sibling `token` file next to the resolved socket |
 
 A missing token file is treated as no-auth (the daemon serves without a token
 when it could not generate one). Any other token read error is fatal.
 
-## Managing with serverwatch-ctl
+## Managing with trinetra-ctl
 
 Every screen the interactive TUI offers follows the same shape: fetch the
 current `Config` over the control socket, mutate it with a validated
 `config.Set` setter, and commit it in one atomic `ApplyConfig` call. Nothing
-is written straight to disk by `serverwatch-ctl` itself, and a screen can
+is written straight to disk by `trinetra-ctl` itself, and a screen can
 never leave the daemon with a half-applied change. Where a screen needs to
 know what the host actually looks like, it asks the daemon rather than
 probing locally: the Monitor thresholds screen lists targets from the
 daemon's own `MonitorTargets`, and an enabled channel is checked with
 `ValidateChannel` before it is ever saved.
 
-**The Home screen.** Launching `serverwatch-ctl` with no subcommand opens
+**The Home screen.** Launching `trinetra-ctl` with no subcommand opens
 Home, a live dashboard that re-fetches itself every couple of seconds (and on
 `r`) so it stays current without you touching it. It renders, top to bottom:
 
-- A **status header**: `serverwatch  ● online   updated Ns ago`, where the dot
+- A **status header**: `trinetra  ● online   updated Ns ago`, where the dot
   is green for online and red for offline, and the "Ns ago" is how stale the
   last snapshot is.
 - A boxed **SYSTEM** panel: colour-coded CPU/MEM/SWAP meter bars with their
@@ -168,8 +168,8 @@ labels survive piping and redirection. From Home:
 
 Pressing `?` from Home opens a **help overlay** listing the whole keymap (the
 Home keys, the shared menu navigation, and the global `ctrl-c`); any key
-dismisses it. The sub-screens carry a breadcrumb heading (`serverwatch ▸ Web
-setup`, `serverwatch ▸ Manage`, and so on) so you always see where you sit
+dismisses it. The sub-screens carry a breadcrumb heading (`trinetra ▸ Web
+setup`, `trinetra ▸ Manage`, and so on) so you always see where you sit
 relative to Home.
 
 If Telegram is not yet configured, or is configured but not yet enrolled,
@@ -221,7 +221,7 @@ Home uses.
 - **All settings.** A generic browse/edit screen over every flat config key,
   grouped (Intervals, Baseline, Thresholds, Alerting, Notifications,
   Schedule, Storage, Collection, Web, Public), so nothing is reachable only
-  through `serverwatch config set`. Pick a group, then a key: each row shows
+  through `trinetra config set`. Pick a group, then a key: each row shows
   its CURRENT value and a one-line description. `enter` opens a value input
   that applies through the exact same validated `config.Set` every other
   screen uses; a rejected value is shown on the result screen and never
@@ -233,20 +233,20 @@ Home uses.
   future release without its own dedicated screen is reachable here the
   moment it is added to the config catalog.
 
-> To manage serverwatch without `serverwatch-ctl`, for scripting, automation,
+> To manage trinetra without `trinetra-ctl`, for scripting, automation,
 > or a headless box, see [Daemon-only config
 > management](../11-command-reference.md#3-daemon-only-config-management).
 
-**First-run onboarding.** The first time `serverwatch-ctl` runs against a
+**First-run onboarding.** The first time `trinetra-ctl` runs against a
 daemon whose Telegram bot has no token, or has a token but is not yet
 enrolled, Home opens into a guided flow instead of the dashboard:
 
 1. **Bot token.** Paste the token from @BotFather. `enter` saves it; `esc`
    skips onboarding for now, since the token can always be set later from the
-   Channels screen or `serverwatch telegram set-token`.
+   Channels screen or `trinetra telegram set-token`.
 2. **Enrollment PIN.** Once the token is saved, the screen fetches the
    daemon's current enrollment PIN over the socket and shows it with the
-   `/start <pin>` instruction, the exact PIN `serverwatch telegram set-token`
+   `/start <pin>` instruction, the exact PIN `trinetra telegram set-token`
    itself now prints (see #90 in [Daemon-only config
    management](../11-command-reference.md#3-daemon-only-config-management)). It
    then polls every two seconds until the daemon reports the chat enrolled.

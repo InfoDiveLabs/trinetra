@@ -1,26 +1,26 @@
 # Command reference
 
-This chapter lists every command shipped by serverwatch. Section 1 covers the
-`serverwatch` binary, which is both the daemon and the operator CLI. Section 2
-covers the two out-of-process plugin binaries, `serverwatch-ctl` and
-`serverwatch-web`, neither of which is part of the shipped daemon binary
-itself. `serverwatch-ctl` is now the primary, recommended way to manage a
-running serverwatch day to day: it wraps the
+This chapter lists every command shipped by trinetra. Section 1 covers the
+`trinetra` binary, which is both the daemon and the operator CLI. Section 2
+covers the two out-of-process plugin binaries, `trinetra-ctl` and
+`trinetra-web`, neither of which is part of the shipped daemon binary
+itself. `trinetra-ctl` is now the primary, recommended way to manage a
+running trinetra day to day: it wraps the
 schedule, quiet hours, healthchecks, monitor thresholds, and notification
 channels in guided, validated screens, plus a first-run onboarding flow for
-Telegram. `serverwatch-web` is a supervised, separate binary that the daemon
+Telegram. `trinetra-web` is a supervised, separate binary that the daemon
 manages (see [Web supervisor](02-architecture.md#web-supervisor)). Section 3
 is the authoritative reference for the thin, scriptable management verbs,
-gathered in one place for anyone managing serverwatch without
-`serverwatch-ctl`.
+gathered in one place for anyone managing trinetra without
+`trinetra-ctl`.
 
-## 1. `serverwatch` (daemon + CLI)
+## 1. `trinetra` (daemon + CLI)
 
-`serverwatch` dispatches a single subcommand per invocation. Run it with no
+`trinetra` dispatches a single subcommand per invocation. Run it with no
 arguments, `help`, `-h`, or `--help` to print usage.
 
 ```
-serverwatch <command> [args]
+trinetra <command> [args]
 ```
 
 Every command falls into one of two modes:
@@ -45,8 +45,8 @@ column.
 | `install` | Write the systemd unit and enable/start the service. | persists (see Notes) |
 | `uninstall [--purge]` | Remove the systemd unit; `--purge` also removes config and state. | persists (see Notes) |
 | `daemon` | Run the sampler/notifier loop in the foreground. | long-running |
-| `cli` | Front-door: verify and exec `serverwatch-ctl`, the management TUI. | see Notes |
-| `web` | Front-door: verify and exec `serverwatch-web`, the web UI. | see Notes |
+| `cli` | Front-door: verify and exec `trinetra-ctl`, the management TUI. | see Notes |
+| `web` | Front-door: verify and exec `trinetra-web`, the web UI. | see Notes |
 | `status` | Print the last status snapshot. | read-only |
 | `doctor` | Print a diagnostic report (collectors, tools, targets). | read-only |
 | `migrate [--force]` | Import legacy data into the time-series store. | persists (see Notes) |
@@ -54,13 +54,13 @@ column.
 | `alerts [list] [...]` | List recent alerts. | read-only |
 | `alerts ack <key>` | Acknowledge an active alert. | persists (see Notes) |
 | `alerts unack <key>` | Un-acknowledge an alert. | persists (see Notes) |
-| `fleet <subcommand>` | Fleet mode: make this host a master, join or leave one, manage nodes and join codes. | see [`serverwatch fleet`](#serverwatch-fleet) |
+| `fleet <subcommand>` | Fleet mode: make this host a master, join or leave one, manage nodes and join codes. | see [`trinetra fleet`](#trinetra-fleet) |
 
 This section covers the daemon, lifecycle, and low-level scriptable commands.
 The day-to-day management verbs (`monitor`, `schedule`, `quiet-hours`,
 `healthchecks`, `channel`, and Telegram onboarding) are not listed here: the
 primary, recommended way to drive them is the interactive
-[`serverwatch-ctl`](plugins/serverwatch-ctl.md) TUI, and their thin scriptable
+[`trinetra-ctl`](plugins/trinetra-ctl.md) TUI, and their thin scriptable
 forms for automation live in [Daemon-only config
 management](#3-daemon-only-config-management).
 
@@ -86,7 +86,7 @@ management](#3-daemon-only-config-management).
 | `--format <fmt>` | `csv` \| `json` | `csv` | Output format. |
 
 ```
-serverwatch dump --metric cpu --since 24h --res 1m --format json
+trinetra dump --metric cpu --since 24h --res 1m --format json
 ```
 
 ### `alerts` flags
@@ -99,65 +99,65 @@ serverwatch dump --metric cpu --since 24h --res 1m --format json
 | `--limit <n>` | `20` | Maximum number of alerts to print. |
 
 ```
-serverwatch alerts --since 24h --limit 20
-serverwatch alerts ack cpu:high
-serverwatch alerts unack cpu:high
+trinetra alerts --since 24h --limit 20
+trinetra alerts ack cpu:high
+trinetra alerts unack cpu:high
 ```
 
 ### `cli` and `web` front-doors
 
 ```
-serverwatch cli
-serverwatch web
+trinetra cli
+trinetra web
 ```
 
 `cli` and `web` are front-doors: the one-command way to launch the two plugin
 binaries documented in section 2, without needing to know their binary names
-or where they live. `cli` execs `serverwatch-ctl`; `web` execs
-`serverwatch-web`. Both are typically run with `sudo`, because that is how the
+or where they live. `cli` execs `trinetra-ctl`; `web` execs
+`trinetra-web`. Both are typically run with `sudo`, because that is how the
 daemon itself runs, and launching a plugin as root means the core must first
 prove it is about to exec the genuine binary it installed, not something an
 attacker planted or modified. See [Architecture](02-architecture.md) for the
 full trust model (absolute path resolved from the core binary's own
 directory, owner and permission checks, and a SHA-256 checksum against the
-manifest `serverwatch install` writes).
+manifest `trinetra install` writes).
 
 There are three outcomes:
 
 | Outcome | What you see |
 | --- | --- |
 | Verified | The plugin runs; the front-door hands off control to it. |
-| Not installed | serverwatch prints an install instruction: download the plugin (`serverwatch-ctl` or `serverwatch-web`) from the releases page next to the daemon binary and run `serverwatch install`, or build it from source (`go build -o /usr/local/bin/serverwatch-ctl ./cmd/serverwatch-ctl`; the web plugin builds the same way, no tag: `go build -o /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`) and then run `serverwatch install` to record its checksum. Nothing is exec'd. |
-| Present but unsafe | The binary exists but fails a check (wrong owner, group/world-writable, or a checksum that does not match the manifest). serverwatch refuses with a warning that this may indicate tampering. Nothing is exec'd. |
+| Not installed | trinetra prints an install instruction: download the plugin (`trinetra-ctl` or `trinetra-web`) from the releases page next to the daemon binary and run `trinetra install`, or build it from source (`go build -o /usr/local/bin/trinetra-ctl ./cmd/trinetra-ctl`; the web plugin builds the same way, no tag: `go build -o /usr/local/bin/trinetra-web ./cmd/trinetra-web`) and then run `trinetra install` to record its checksum. Nothing is exec'd. |
+| Present but unsafe | The binary exists but fails a check (wrong owner, group/world-writable, or a checksum that does not match the manifest). trinetra refuses with a warning that this may indicate tampering. Nothing is exec'd. |
 
-If you build or hand-copy `serverwatch-ctl` / `serverwatch-web` into place
-yourself, you must (re-)run `serverwatch install` afterward so its checksum
+If you build or hand-copy `trinetra-ctl` / `trinetra-web` into place
+yourself, you must (re-)run `trinetra install` afterward so its checksum
 is recorded (see [Installation and first run](03-installation.md)); until
 then the front-door has nothing to verify the unrecorded binary against and
 refuses to run it.
 
-## serverwatch fleet
+## trinetra fleet
 
-`serverwatch fleet` manages fleet mode (see [Fleet
+`trinetra fleet` manages fleet mode (see [Fleet
 mode](02-architecture.md#fleet-mode)). Run it with no arguments or `help` to
 print the usage:
 
 ```
 usage:
-  serverwatch fleet init --address HOST[,IP] [--port 9443]   make this host the fleet master
-  serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1]
-  serverwatch fleet token list | token delete <id>
-  serverwatch fleet join <code> [--name NAME]                  join a master as a child
-  serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
-  serverwatch fleet node revoke|remove|rename|tag <node> [value]
-  serverwatch fleet leave [--purge]                            child -> solo
-  serverwatch fleet disable [--purge]                          master -> solo
+  trinetra fleet init --address HOST[,IP] [--port 9443]   make this host the fleet master
+  trinetra fleet token create [--tags a,b] [--ttl 1h] [--uses 1]
+  trinetra fleet token list | token delete <id>
+  trinetra fleet join <code> [--name NAME]                  join a master as a child
+  trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
+  trinetra fleet node revoke|remove|rename|tag <node> [value]
+  trinetra fleet leave [--purge]                            child -> solo
+  trinetra fleet disable [--purge]                          master -> solo
 ```
 
 The commands split into two kinds. `init`, `join`, `leave` and `disable` change
 this host's role: they write the fleet keys in the config file and the
 certificate files on disk, and do not signal the daemon; each prints `Restart
-to apply: sudo systemctl restart serverwatch`. Everything else asks the running
+to apply: sudo systemctl restart trinetra`. Everything else asks the running
 daemon over the control socket, so it needs the daemon up (on the master, for
 the node and token commands) and changes take effect immediately.
 
@@ -174,7 +174,7 @@ the node and token commands) and changes take effect immediately.
 | `fleet node remove <node>` | none | Master only. Deletes the node from the registry and from liveness tracking and resolves its open node-down alert, if any. Its certificate is refused from then on (an unknown node counts as revoked). Its replicated history stays on disk under `fleet/nodes/<id>/`. Use it for a server that is gone for good. |
 | `fleet node rename <node> <name>` | none | Master only. Changes the node's display name. |
 | `fleet node tag <node> <a,b>` | none | Master only. Replaces the node's tags; an empty string clears them. |
-| `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. Leaving is local only: the master is not told, and it will report the node as down (and page for it) until you run the command `leave` prints, `sudo serverwatch fleet node revoke <node-id>`, on the master (or `fleet node remove <node-id>` to drop it from the list as well). |
+| `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. Leaving is local only: the master is not told, and it will report the node as down (and page for it) until you run the command `leave` prints, `sudo trinetra fleet node revoke <node-id>`, on the master (or `fleet node remove <node-id>` to drop it from the list as well). |
 | `fleet disable` | `--purge`: also delete the CA, node registry and every node's replicated history | Master only. Returns the host to solo. Without `--purge`, running `fleet init` again reuses the same CA, so children need not re-join. `fleet disable` then `fleet init` (and a restart) is also how you re-issue the master's 2-year server certificate, which the master warns about from 90 days before it expires. |
 
 Children must reach the master's fleet port directly, or through TCP-level
@@ -193,41 +193,41 @@ A typical enrollment:
 
 ```
 # on the master
-sudo serverwatch fleet init --address monitor.example.com,203.0.113.7
-sudo systemctl restart serverwatch
-sudo serverwatch fleet token create --tags prod --uses 3
+sudo trinetra fleet init --address monitor.example.com,203.0.113.7
+sudo systemctl restart trinetra
+sudo trinetra fleet token create --tags prod --uses 3
 
 # on each server, with the code it printed
-sudo serverwatch fleet join swj1_...
-sudo systemctl restart serverwatch
+sudo trinetra fleet join swj1_...
+sudo systemctl restart trinetra
 
 # back on the master
-sudo serverwatch fleet nodes --tag prod
+sudo trinetra fleet nodes --tag prod
 ```
 
 ## 2. Plugin binaries
 
 The two out-of-process plugin binaries now have their own dedicated pages.
-Both are separate from the shipped `serverwatch` daemon and dial its control
+Both are separate from the shipped `trinetra` daemon and dial its control
 socket rather than reading state in-process; in normal use you launch them via
-the `serverwatch cli` / `serverwatch web` front-doors (section 1 above).
+the `trinetra cli` / `trinetra web` front-doors (section 1 above).
 
 - **[Plugins overview](plugins/README.md)** -- what the plugins are, how they
   install alongside the daemon, and the front-door safe-exec model.
-- **[serverwatch-ctl](plugins/serverwatch-ctl.md)** -- the interactive
+- **[trinetra-ctl](plugins/trinetra-ctl.md)** -- the interactive
   management TUI: subcommands, socket/token resolution, and the full
   management screens and first-run onboarding.
-- **[serverwatch-web](plugins/serverwatch-web.md)** -- the supervised web
+- **[trinetra-web](plugins/trinetra-web.md)** -- the supervised web
   binary: how the daemon runs it, and its direct-invocation flags.
 
 ## 3. Daemon-only config management
 
-`serverwatch-ctl` (section 2.1) is the primary way to manage a running
-serverwatch, but every flow it offers has a thin, scriptable equivalent on
-the core `serverwatch` binary itself. This section is the authoritative
+`trinetra-ctl` (section 2.1) is the primary way to manage a running
+trinetra, but every flow it offers has a thin, scriptable equivalent on
+the core `trinetra` binary itself. This section is the authoritative
 reference for those scriptable verbs, for automation, cron jobs,
 configuration-management tooling, or a box you administer entirely over SSH
-without `serverwatch-ctl` installed. Prefer `serverwatch-ctl` for day-to-day,
+without `trinetra-ctl` installed. Prefer `trinetra-ctl` for day-to-day,
 interactive management; reach for these verbs when you are scripting a change
 or managing headless.
 
@@ -241,7 +241,7 @@ or managing headless.
 | `channel list\|add\|remove\|set\|test` | List, add, remove, modify, or test-notify a notification channel. |
 | `telegram set-token <token>` | Store the Telegram bot token and print the enrollment PIN (#90, below). |
 
-Every one of these persists to `/etc/serverwatch/config.json` and sends a
+Every one of these persists to `/etc/trinetra/config.json` and sends a
 best-effort `SIGHUP` to reload a running daemon (the persists-plus-SIGHUP
 model described in section 1 and in [Advanced configuration and
 management](advanced-configuration.md#persistence-and-hot-reload)).
@@ -250,7 +250,7 @@ Full flag syntax, validation, and defaults for each key live in the
 
 ### #90: `telegram set-token` now prints the enrollment PIN
 
-`serverwatch telegram set-token <token>` used to only persist the token; you
+`trinetra telegram set-token <token>` used to only persist the token; you
 had to go read the daemon's journal to find the one-time enrollment PIN it
 generated. It now dials the control socket after saving the token and prints
 the `/start <pin>` instruction directly:
@@ -266,19 +266,19 @@ successfully; it just falls back to pointing you at the journal instead:
 
 ```
 Telegram token saved. The daemon will log the enrollment PIN on start:
-  journalctl -u serverwatch | grep /start
+  journalctl -u trinetra | grep /start
 ```
 
 A failed PIN fetch is never treated as `telegram set-token` failing; only the
 printed message changes. See the enrollment diagram in [Installation and
 first run](03-installation.md#5-connect-telegram-and-enroll-as-owner) for how
-this fits together with `serverwatch-ctl`'s onboarding screen, which shows
+this fits together with `trinetra-ctl`'s onboarding screen, which shows
 the same PIN.
 
-### #91: guided setup lives in serverwatch-ctl; `config set` is the escape hatch
+### #91: guided setup lives in trinetra-ctl; `config set` is the escape hatch
 
 The guided, validated walk-through for web UI setup and first-run Telegram
-onboarding lives in `serverwatch-ctl` (section 2.1), not in the core CLI. The
+onboarding lives in `trinetra-ctl` (section 2.1), not in the core CLI. The
 core CLI deliberately does not grow an interactive wizard of its own:
 `config set` and the dedicated verbs above remain the direct, scriptable way
 to write any of the same keys, so nothing you could do before is gone, and

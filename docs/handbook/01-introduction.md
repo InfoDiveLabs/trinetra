@@ -1,6 +1,6 @@
 # Introduction
 
-serverwatch is a monitor for a single Linux home server. It watches one
+trinetra is a monitor for a single Linux home server. It watches one
 systemd host, the kind of machine that lives on a shelf and runs a handful of
 docker containers, and it tells you when something is wrong. By default it
 reports over Telegram: you message a bot, it answers in about a second, and it
@@ -18,7 +18,7 @@ Prometheus, no cloud account, and no external metrics database to stand up and
 babysit. It watches your machine and it stores what it needs locally, and that
 is the end of the dependency list.
 
-There is deliberately no AI anywhere in the decision path. serverwatch decides
+There is deliberately no AI anywhere in the decision path. trinetra decides
 whether to alert two ways, both of them things you can reason about. First, it
 compares metrics against static thresholds you set, so a disk crossing 90
 percent is a plain, predictable event. Second, it keeps a rolling baseline of
@@ -28,16 +28,16 @@ miss. Both are ordinary arithmetic. You can read the rule, and you can predict
 when it will fire.
 
 Configuration follows the same principle. Everything you can change is set
-through the `serverwatch` CLI (see [Configuration](04-configuration.md)), most
-conveniently through the guided `serverwatch-ctl` TUI (see [Managing with
-serverwatch-ctl](plugins/serverwatch-ctl.md#managing-with-serverwatch-ctl)),
+through the `trinetra` CLI (see [Configuration](04-configuration.md)), most
+conveniently through the guided `trinetra-ctl` TUI (see [Managing with
+trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl)),
 which drives the same settings; there is no config file you are meant to
 hand-edit. The scriptable core CLI remains the automation path: you set the
 one required value, the Telegram bot token, the same way you set anything
 else:
 
 ```bash
-sudo serverwatch telegram set-token <token>
+sudo trinetra telegram set-token <token>
 ```
 
 The CLI writes an atomic, private config store on your behalf, so the config on
@@ -46,8 +46,8 @@ past the token most installs need nothing more.
 
 ## The current direction: a core with plugins
 
-serverwatch is organized as a lean core daemon plus optional plugin binaries
-layered on top. The core is the stdlib-only `serverwatch` process: it runs the
+trinetra is organized as a lean core daemon plus optional plugin binaries
+layered on top. The core is the stdlib-only `trinetra` process: it runs the
 tiered sampler loop, keeps the live picture and the time-series history, and
 answers Telegram. Crucially, it exposes its state and its controls over a local
 control socket (see [Architecture](02-architecture.md)), a small
@@ -57,10 +57,10 @@ that socket and call the same internal API the daemon uses itself, with no
 extra dependencies pulled into the core.
 
 The plugins are the processes that speak to that socket. The web UI is one
-such plugin: a separate `serverwatch-web` binary, with no build tag, that the
+such plugin: a separate `trinetra-web` binary, with no build tag, that the
 core supervises. It adds passkey-only auth and the browser dashboard, and the
 core stays free of its heavier dependencies simply because it does not import
-them, not because of a build tag. `serverwatch-ctl` is the other plugin, and
+them, not because of a build tag. `trinetra-ctl` is the other plugin, and
 it is the primary, complete way to manage a running daemon day to day: it
 dials the same control socket from a second process and gives you guided
 screens for the schedule, quiet hours, healthchecks, monitor thresholds, and
@@ -74,8 +74,8 @@ You do not need to know either plugin binary's name to use it. The core
 exposes two front-door subcommands that launch them for you:
 
 ```bash
-sudo serverwatch cli   # launches serverwatch-ctl, the management TUI
-sudo serverwatch web   # launches serverwatch-web, the web UI
+sudo trinetra cli   # launches trinetra-ctl, the management TUI
+sudo trinetra web   # launches trinetra-web, the web UI
 ```
 
 Because these commands are typically run as root, the core does not exec the
