@@ -65,6 +65,8 @@ func Main(args []string) int {
 		return cmdDowntime(args[1:])
 	case "alerts":
 		return cmdAlerts(args[1:])
+	case "fleet":
+		return cmdFleet(args[1:])
 	case "cli":
 		return cmdFrontDoor("cli", "ctl", args[1:])
 	case "web":
@@ -97,6 +99,11 @@ usage:
   serverwatch alerts [list] [--since 24h] [--limit 20]
   serverwatch alerts ack <key>
   serverwatch alerts unack <key>
+  serverwatch fleet init --address HOST[,IP] [--port 9443]
+  serverwatch fleet join <code> [--name NAME] | leave [--purge] | disable [--purge]
+  serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
+  serverwatch fleet node revoke|rename|tag <node> [value]
+  serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1] | list | delete <id>
   serverwatch cli                       # interactive management (serverwatch-ctl)
   serverwatch web                       # web UI (serverwatch-web)`
 
