@@ -3,7 +3,9 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -71,6 +73,29 @@ func startShipper(t *testing.T, f *masterFixture, ob *Outbox, gaps GapFiller) (*
 	return sh, cancel
 }
 
+// startShipperWithFastBackoff is startShipper with the data-loop retry
+// backoff shortened to milliseconds, for tests that deliberately trigger
+// several retries (e.g. gap-fill failures) and would otherwise wait out
+// backoffDelay's real 1s-60s jittered wall-clock sleeps.
+func startShipperWithFastBackoff(t *testing.T, f *masterFixture, ob *Outbox, gaps GapFiller) (*Shipper, context.CancelFunc) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "fleet-child")
+	if _, err := Join(context.Background(), joinCode(f, t, 1), "box", "v1", nil, dir); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := LoadIdentity(dir)
+	sh := NewShipper(ShipperConfig{
+		MasterURL: f.srv.URL, Pin: f.pin, Identity: id, Outbox: ob, Gaps: gaps,
+		Live:      func() (LiveUpdate, error) { return LiveUpdate{Version: "v1", Snapshot: json.RawMessage(`{}`)}, nil },
+		LiveEvery: 50 * time.Millisecond,
+	})
+	sh.backoff = func(int) time.Duration { return 5 * time.Millisecond }
+	ctx, cancel := context.WithCancel(context.Background())
+	go sh.Run(ctx)
+	t.Cleanup(cancel)
+	return sh, cancel
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -123,6 +148,95 @@ func TestShipperRepairsGapsBeforeOutbox(t *testing.T) {
 	}
 }
 
+// flakyGaps fails Fill some number of times (or forever, if always is set)
+// before succeeding, so tests can exercise the shipper's transient-failure
+// retry and abandon-after-N-attempts behaviour.
+type flakyGaps struct {
+	mu     sync.Mutex
+	fails  int
+	always bool
+	calls  int
+}
+
+func (g *flakyGaps) Fill(gap Gap) ([]Record, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls++
+	if g.always || g.fails > 0 {
+		if !g.always {
+			g.fails--
+		}
+		return nil, errors.New("fleet: simulated local rebuild failure")
+	}
+	return []Record{{Kind: KindAlert, TS: gap.MinTS, Data: json.RawMessage(`{}`)}}, nil
+}
+
+func (g *flakyGaps) callCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.calls
+}
+
+func TestShipperRetriesGapFillOnTransientError(t *testing.T) {
+	f := newMasterFixture(t)
+	ob, _ := openOutbox(t.TempDir(), 3000, 1000)
+	appendN(t, ob, 1, 200) // forces a gap
+	if len(ob.Gaps()) == 0 {
+		t.Fatal("setup: no gap")
+	}
+	g := &flakyGaps{fails: 2}
+	startShipperWithFastBackoff(t, f, ob, g)
+	waitFor(t, "drained after transient fill failures", func() bool {
+		return ob.Acked() == 200 && len(ob.Gaps()) == 0
+	})
+	if calls := g.callCount(); calls < 3 {
+		t.Fatalf("gap filler calls = %d, want at least 3 (2 failures then a success)", calls)
+	}
+	f.sink.mu.Lock()
+	defer f.sink.mu.Unlock()
+	if len(f.sink.backfill) == 0 {
+		t.Fatal("no backfill data reached the master; the repaired gap was dropped instead of retried")
+	}
+}
+
+func TestShipperAbandonsGapAfterRepeatedFillFailures(t *testing.T) {
+	f := newMasterFixture(t)
+	ob, _ := openOutbox(t.TempDir(), 3000, 1000)
+	appendN(t, ob, 1, 200) // forces a gap
+	if len(ob.Gaps()) == 0 {
+		t.Fatal("setup: no gap")
+	}
+	g := &flakyGaps{always: true}
+	startShipperWithFastBackoff(t, f, ob, g)
+	waitFor(t, "gap abandoned and outbox still drains", func() bool {
+		return ob.Acked() == 200 && len(ob.Gaps()) == 0
+	})
+	if calls := g.callCount(); calls < gapFillMaxAttempts {
+		t.Fatalf("gap filler calls = %d, want at least %d before abandoning", calls, gapFillMaxAttempts)
+	}
+}
+
+func TestBatchSizeCapsByRecordsAndBytes(t *testing.T) {
+	rec := func(n int) Record { return Record{Data: json.RawMessage(make([]byte, n))} }
+
+	if n := batchSize(nil); n != 0 {
+		t.Fatalf("empty input: batchSize = %d, want 0", n)
+	}
+	if n := batchSize([]Record{rec(MaxBatchBytes + 1)}); n != 1 {
+		t.Fatalf("oversized single record: batchSize = %d, want 1 (always at least one)", n)
+	}
+	if n := batchSize([]Record{rec(MaxBatchBytes/2 + 1), rec(MaxBatchBytes/2 + 1), rec(1)}); n != 1 {
+		t.Fatalf("byte cap: batchSize = %d, want 1", n)
+	}
+	many := make([]Record, MaxBatchRecords+5)
+	for i := range many {
+		many[i] = rec(1)
+	}
+	if n := batchSize(many); n != MaxBatchRecords {
+		t.Fatalf("record cap: batchSize = %d, want %d", n, MaxBatchRecords)
+	}
+}
+
 func TestShipperStopsWhenRevoked(t *testing.T) {
 	f := newMasterFixture(t)
 	ob, _ := OpenOutbox(t.TempDir(), 64<<20)
@@ -157,5 +271,38 @@ func TestShipperRetriesWhileMasterDown(t *testing.T) {
 	waitFor(t, "retrying", func() bool { return sh.Status().State == "retrying" })
 	if ob.Acked() != 0 || sh.Status().LastError == "" {
 		t.Fatalf("status %+v acked %d", sh.Status(), ob.Acked())
+	}
+}
+
+func TestRunReturnsWhenLiveCallbackHangs(t *testing.T) {
+	f := newMasterFixture(t)
+	ob, _ := OpenOutbox(t.TempDir(), 64<<20)
+	dir := filepath.Join(t.TempDir(), "fleet-child")
+	if _, err := Join(context.Background(), joinCode(f, t, 1), "box", "v1", nil, dir); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := LoadIdentity(dir)
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) }) // release the one abandoned goroutine
+
+	sh := NewShipper(ShipperConfig{
+		MasterURL: f.srv.URL, Pin: f.pin, Identity: id, Outbox: ob,
+		Live: func() (LiveUpdate, error) {
+			<-block
+			return LiveUpdate{}, nil
+		},
+		LiveEvery: 20 * time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { sh.Run(ctx); close(done) }()
+
+	// Give liveLoop time to call the hanging Live() at least once.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return within 3s of ctx cancellation while Live was hanging")
 	}
 }

@@ -216,6 +216,12 @@ type LinkStatus struct {
 	Outbox    OutboxStats `json:"outbox"`
 }
 
+// gapFillMaxAttempts bounds how many consecutive GapFiller.Fill failures for
+// the same gap are tolerated before it is abandoned (resolved without being
+// repaired), so a permanently-broken local rebuild cannot block newer data
+// from ever reaching the master.
+const gapFillMaxAttempts = 5
+
 // Shipper moves outbox records and live updates to the master.
 type Shipper struct {
 	cfg     ShipperConfig
@@ -223,6 +229,19 @@ type Shipper struct {
 	revoked atomic.Bool
 	mu      sync.Mutex
 	st      LinkStatus
+
+	// backoff computes the data-loop retry delay for a given attempt count.
+	// It defaults to backoffDelay; tests may shorten it so retry-heavy
+	// scenarios (e.g. gap-fill abandonment) run in milliseconds instead of
+	// real wall-clock backoff.
+	backoff func(attempt int) time.Duration
+
+	// gapFailSeq/gapFailN track consecutive GapFiller.Fill failures for the
+	// gap currently being repaired, keyed by its FirstSeq: reset to the new
+	// gap's key (and 0) whenever the oldest gap changes, and to 0 whenever
+	// Fill succeeds. Only ever touched from the single dataLoop goroutine.
+	gapFailSeq uint64
+	gapFailN   int
 }
 
 // NewShipper builds a Shipper.
@@ -242,7 +261,8 @@ func NewShipper(cfg ShipperConfig) *Shipper {
 			Timeout:   60 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: PinnedClientTLS(cfg.Pin, cfg.Identity.Cert), ForceAttemptHTTP2: true},
 		},
-		st: LinkStatus{State: "connecting"},
+		st:      LinkStatus{State: "connecting"},
+		backoff: backoffDelay,
 	}
 }
 
@@ -330,7 +350,7 @@ func (s *Shipper) dataLoop(ctx context.Context) {
 				s.cfg.Logf("fleet: %v; shipping stopped, data kept locally", err)
 				return
 			}
-			d := backoffDelay(attempt)
+			d := s.backoff(attempt)
 			var ra *retryAfterError
 			if errors.As(err, &ra) && ra.wait > d {
 				d = ra.wait
@@ -363,18 +383,30 @@ func (s *Shipper) dataLoop(ctx context.Context) {
 func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 	if gaps := s.cfg.Outbox.Gaps(); len(gaps) > 0 {
 		g := gaps[0]
+		if s.gapFailSeq != g.FirstSeq {
+			s.gapFailSeq, s.gapFailN = g.FirstSeq, 0
+		}
 		var recs []Record
 		if s.cfg.Gaps != nil {
 			var err error
 			if recs, err = s.cfg.Gaps.Fill(g); err != nil {
-				s.cfg.Logf("fleet: gap %d-%d unrecoverable locally: %v", g.FirstSeq, g.LastSeq, err)
+				s.gapFailN++
+				if s.gapFailN < gapFillMaxAttempts {
+					// A transient local failure: report it as an error so
+					// dataLoop backs off and retries the same gap, instead
+					// of losing it permanently on the first hiccup.
+					return false, fmt.Errorf("fleet: gap %d-%d fill attempt %d/%d failed: %w", g.FirstSeq, g.LastSeq, s.gapFailN, gapFillMaxAttempts, err)
+				}
+				s.cfg.Logf("fleet: gap %d-%d abandoned after %d failed local rebuilds: %v", g.FirstSeq, g.LastSeq, s.gapFailN, err)
 				recs = nil
+			} else {
+				s.gapFailN = 0
 			}
 		} else {
 			s.cfg.Logf("fleet: gap %d-%d dropped (no local history to repair from)", g.FirstSeq, g.LastSeq)
 		}
 		for len(recs) > 0 {
-			n := min(len(recs), MaxBatchRecords)
+			n := batchSize(recs)
 			if _, err := s.post(ctx, PathBackfill, recs[:n]); err != nil {
 				return false, err
 			}
@@ -383,6 +415,7 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		if err := s.cfg.Outbox.ResolveGap(g.FirstSeq); err != nil {
 			return false, err
 		}
+		s.gapFailSeq, s.gapFailN = 0, 0
 		s.setOK()
 		return true, nil
 	}
@@ -407,6 +440,23 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 	}
 	s.setOK()
 	return true, nil
+}
+
+// batchSize returns how many of recs's leading elements fit within
+// MaxBatchRecords and MaxBatchBytes of Data, mirroring the cap Outbox.Read
+// already applies on the ingest path. It always returns at least 1 (if recs
+// is non-empty) so a single oversized record still makes progress instead of
+// stalling forever.
+func batchSize(recs []Record) int {
+	n, total := 0, 0
+	for _, r := range recs {
+		if n > 0 && (n >= MaxBatchRecords || total+len(r.Data) > MaxBatchBytes) {
+			break
+		}
+		total += len(r.Data)
+		n++
+	}
+	return n
 }
 
 func (s *Shipper) post(ctx context.Context, path string, recs []Record) ([]byte, error) {
@@ -443,36 +493,31 @@ func (s *Shipper) do(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
+// liveTimeout bounds how long liveLoop waits for one cfg.Live() call:
+// LiveEvery, but never more than 30s and never less than 1s.
+func liveTimeout(every time.Duration) time.Duration {
+	t := every
+	if t > 30*time.Second {
+		t = 30 * time.Second
+	}
+	if t < time.Second {
+		t = time.Second
+	}
+	return t
+}
+
 func (s *Shipper) liveLoop(ctx context.Context) {
 	t := time.NewTicker(s.cfg.LiveEvery)
 	defer t.Stop()
+	timeout := liveTimeout(s.cfg.LiveEvery)
 	for {
 		if s.revoked.Load() {
 			return
 		}
 		if s.cfg.Live != nil {
-			if u, err := s.cfg.Live(); err == nil {
-				u.SentAt = s.cfg.Now().Unix()
-				u.Outbox = s.cfg.Outbox.Stats()
-				b, err := json.Marshal(u)
-				if err == nil {
-					req, err := http.NewRequestWithContext(ctx, "POST", s.cfg.MasterURL+PathLive, bytes.NewReader(b))
-					if err == nil {
-						req.Header.Set("Content-Type", "application/json")
-						if _, err := s.do(req); err != nil {
-							if ctx.Err() != nil {
-								return
-							}
-							s.setErr(err)
-							if errors.Is(err, ErrRevoked) {
-								s.revoked.Store(true)
-								return
-							}
-						} else {
-							s.setOK()
-						}
-					}
-				}
+			s.liveOnce(ctx, timeout)
+			if ctx.Err() != nil || s.revoked.Load() {
+				return
 			}
 		}
 		select {
@@ -481,6 +526,61 @@ func (s *Shipper) liveLoop(ctx context.Context) {
 		case <-t.C:
 		}
 	}
+}
+
+// liveOnce runs one live-update tick. cfg.Live takes no context, so it is
+// called in a goroutine and raced against ctx and timeout: a callback that
+// hangs (or a master that never responds) skips this tick instead of
+// wedging Run's shutdown forever. If cfg.Live never returns, that one
+// goroutine is abandoned rather than killed -- unavoidable given its
+// signature, and harmless since it can only happen once per stuck call.
+func (s *Shipper) liveOnce(ctx context.Context, timeout time.Duration) {
+	type result struct {
+		u   LiveUpdate
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		u, err := s.cfg.Live()
+		ch <- result{u, err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var r result
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+		s.cfg.Logf("fleet: live snapshot callback did not return within %s, skipping this tick", timeout)
+		return
+	case r = <-ch:
+	}
+	if r.err != nil {
+		return
+	}
+	u := r.u
+	u.SentAt = s.cfg.Now().Unix()
+	u.Outbox = s.cfg.Outbox.Stats()
+	b, err := json.Marshal(u)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", s.cfg.MasterURL+PathLive, bytes.NewReader(b))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if _, err := s.do(req); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		s.setErr(err)
+		if errors.Is(err, ErrRevoked) {
+			s.revoked.Store(true)
+		}
+		return
+	}
+	s.setOK()
 }
 
 func (s *Shipper) renewLoop(ctx context.Context) {
