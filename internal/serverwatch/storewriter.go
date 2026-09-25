@@ -31,7 +31,20 @@ type storeWriter struct {
 	store   SampleStore
 	ch      chan storeWrite
 	dropped atomic.Int64
+	tee     atomic.Pointer[storeTee]
 }
+
+// storeTee receives every sample set and downtime event AFTER it has been
+// written to the local store. The fleet child uses it to spool telemetry for
+// the master (fleet_child.go); nil (the default, and always on solo) means
+// no tee.
+type storeTee interface {
+	Samples(ts int64, ms MetricSet)
+	Event(e DownEvent)
+}
+
+// setTee installs t; safe to call while run is active.
+func (w *storeWriter) setTee(t storeTee) { w.tee.Store(&t) }
 
 // newStoreWriter builds a storeWriter over store with a bounded submit buffer.
 // capacity should be small: it only smooths brief writer lag, and dropping
@@ -68,13 +81,21 @@ func (w *storeWriter) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case sw := <-w.ch:
+			var tee storeTee
+			if p := w.tee.Load(); p != nil {
+				tee = *p
+			}
 			for _, ms := range sw.sets {
 				if len(ms) > 0 {
-					_ = w.store.Append(sw.ts, ms)
+					if err := w.store.Append(sw.ts, ms); err == nil && tee != nil {
+						tee.Samples(sw.ts, ms)
+					}
 				}
 			}
 			for i := range sw.events {
-				_ = w.store.AppendEvent(sw.events[i])
+				if err := w.store.AppendEvent(sw.events[i]); err == nil && tee != nil {
+					tee.Event(sw.events[i])
+				}
 			}
 			if sw.maintain {
 				_ = w.store.Downsample(sw.maintainNow)

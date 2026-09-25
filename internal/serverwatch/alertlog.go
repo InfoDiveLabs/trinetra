@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
 // Delivery records the outcome of dispatching one AlertEvent to one channel.
@@ -35,15 +36,32 @@ type AlertEvent struct {
 // AlertLog is a thin wrapper around a single JSONL file holding AlertEvents.
 type AlertLog struct {
 	path string
+	tee  atomic.Pointer[func(AlertEvent)]
 }
 
 // NewAlertLog returns an AlertLog backed by path. The file is created lazily
 // on first append; it is fine for path not to exist yet.
 func NewAlertLog(path string) *AlertLog { return &AlertLog{path: path} }
 
+// SetTee installs f to receive every event after it is appended (the fleet
+// child ships alert history to the master). nil clears it.
+func (l *AlertLog) SetTee(f func(AlertEvent)) {
+	if f == nil {
+		l.tee.Store(nil)
+		return
+	}
+	l.tee.Store(&f)
+}
+
 // AppendAlertEvent appends ev to the log.
 func (l *AlertLog) AppendAlertEvent(ev AlertEvent) error {
-	return appendJSONL(l.path, ev)
+	if err := appendJSONL(l.path, ev); err != nil {
+		return err
+	}
+	if f := l.tee.Load(); f != nil {
+		(*f)(ev)
+	}
+	return nil
 }
 
 // AlertEventsSince returns every AlertEvent with Time >= sinceUnix, in
