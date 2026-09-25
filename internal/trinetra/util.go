@@ -35,7 +35,7 @@ func trimSpace(b []byte) []byte {
 	return b
 }
 
-func pidFile() string { return stateDir + "/serverwatch.pid" }
+func pidFile() string { return stateDir + "/trinetra.pid" }
 
 func sortStrings(s []string) { sort.Strings(s) }
 

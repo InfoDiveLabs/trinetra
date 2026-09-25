@@ -11,8 +11,8 @@ import (
 // Default paths. Exported so other packages (install scripts, docs) can
 // reference the canonical locations.
 const (
-	ConfigPath = "/etc/serverwatch/config.json"
-	StateDir   = "/var/lib/serverwatch"
+	ConfigPath = "/etc/trinetra/config.json"
+	StateDir   = "/var/lib/trinetra"
 )
 
 // Overridable for tests.

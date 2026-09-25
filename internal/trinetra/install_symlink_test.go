@@ -7,15 +7,15 @@ import (
 )
 
 // #82: install must also expose the binary on a directory that sudo's
-// secure_path includes (e.g. /usr/bin), so `sudo serverwatch ...` resolves on
+// secure_path includes (e.g. /usr/bin), so `sudo trinetra ...` resolves on
 // distros (RHEL/CentOS family) whose secure_path omits /usr/local/bin.
 // linkOnPath/unlinkOnPath are the testable core of that, exercised here with
 // temp paths instead of the real /usr/bin.
 
 func TestLinkOnPathCreatesSymlink(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "local", "serverwatch")
-	link := filepath.Join(dir, "bin", "serverwatch")
+	target := filepath.Join(dir, "local", "trinetra")
+	link := filepath.Join(dir, "bin", "trinetra")
 	mustWrite(t, target, "BINARY")
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestLinkOnPathCreatesSymlink(t *testing.T) {
 
 func TestLinkOnPathIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "serverwatch")
+	target := filepath.Join(dir, "trinetra")
 	link := filepath.Join(dir, "link")
 	mustWrite(t, target, "BINARY")
 
@@ -52,7 +52,7 @@ func TestLinkOnPathIsIdempotent(t *testing.T) {
 
 func TestLinkOnPathDoesNotClobberExistingFile(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "serverwatch")
+	target := filepath.Join(dir, "trinetra")
 	link := filepath.Join(dir, "existing")
 	mustWrite(t, target, "BINARY")
 	mustWrite(t, link, "DISTRO-BINARY") // a real file already at the link path
@@ -68,7 +68,7 @@ func TestLinkOnPathDoesNotClobberExistingFile(t *testing.T) {
 
 func TestUnlinkOnPathRemovesOurSymlink(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "serverwatch")
+	target := filepath.Join(dir, "trinetra")
 	link := filepath.Join(dir, "link")
 	mustWrite(t, target, "BINARY")
 	if err := os.Symlink(target, link); err != nil {
@@ -83,7 +83,7 @@ func TestUnlinkOnPathRemovesOurSymlink(t *testing.T) {
 
 func TestUnlinkOnPathLeavesForeignFile(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "serverwatch")
+	target := filepath.Join(dir, "trinetra")
 	link := filepath.Join(dir, "real")
 	mustWrite(t, target, "BINARY")
 	mustWrite(t, link, "NOT-OURS") // a real file, not our symlink

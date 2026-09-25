@@ -16,12 +16,12 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-const unitPath = "/etc/systemd/system/serverwatch.service"
+const unitPath = "/etc/systemd/system/trinetra.service"
 
 // secondaryBinPath is a symlink install adds alongside the real
-// /usr/local/bin/serverwatch so that `sudo serverwatch ...` resolves on
+// /usr/local/bin/trinetra so that `sudo trinetra ...` resolves on
 // distros whose sudo secure_path omits /usr/local/bin (see cmdInstall).
-const secondaryBinPath = "/usr/bin/serverwatch"
+const secondaryBinPath = "/usr/bin/trinetra"
 
 // renderUnit renders the systemd unit file installed by cmdInstall.
 // WatchdogSec=90 pairs with the sdNotify("WATCHDOG=1") ping now sent by a
@@ -35,27 +35,27 @@ const secondaryBinPath = "/usr/bin/serverwatch"
 // Type=simple still works here: WATCHDOG=1 from the main PID is accepted
 // regardless of Type, unlike READY=1 which needs Type=notify.
 //
-// RuntimeDirectory=serverwatch tells systemd to create /run/serverwatch
+// RuntimeDirectory=trinetra tells systemd to create /run/trinetra
 // (tmpfs, mode 0755, owned by User=root above) before starting the unit and
 // remove it when the unit stops, and to export
-// RUNTIME_DIRECTORY=/run/serverwatch into the service's environment. That is
+// RUNTIME_DIRECTORY=/run/trinetra into the service's environment. That is
 // where serveControlSocket (control_socket.go) puts the control socket the
 // daemon's core.API is served over, so the directory always exists with the
 // right lifetime instead of the daemon having to create/clean it up itself.
 //
 // There is no separate "web" unit: cmdInstall (below) always copies
 // os.Executable(), whichever binary is currently running, to
-// /usr/local/bin/serverwatch and writes this exact same unit around it. So
-// installing the `serverwatch-web` binary (`go build -o
-// /usr/local/bin/serverwatch-web ./cmd/serverwatch-web`, no build tag) and
-// then `serverwatch config set web.enabled true` is the rest of the path to
+// /usr/local/bin/trinetra and writes this exact same unit around it. So
+// installing the `trinetra-web` binary (`go build -o
+// /usr/local/bin/trinetra-web ./cmd/trinetra-web`, no build tag) and
+// then `trinetra config set web.enabled true` is the rest of the path to
 // a web-capable service: the daemon's own supervisor verifies and spawns
-// serverwatch-web as a child once web.enabled is set and the daemon
+// trinetra-web as a child once web.enabled is set and the daemon
 // restarts, so still no unit change is needed. See
 // docs/handbook/08-web-ui.md for the web.*/public.* config keys and serving modes.
 func renderUnit(binPath string) string {
 	return fmt.Sprintf(`[Unit]
-Description=server-watcher host monitor
+Description=Trinetra — self-hosted server & fleet monitor
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -66,7 +66,7 @@ Restart=always
 RestartSec=5
 WatchdogSec=90
 User=root
-RuntimeDirectory=serverwatch
+RuntimeDirectory=trinetra
 StandardOutput=journal
 StandardError=journal
 
@@ -81,21 +81,21 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	dst := "/usr/local/bin/serverwatch"
+	dst := "/usr/local/bin/trinetra"
 	if err := copyFile(self, dst, 0o755); err != nil {
 		fmt.Fprintf(stderr, "copy binary: %v\n", err)
 		return 1
 	}
 	// Also expose the binary on /usr/bin, which is on sudo's secure_path on
 	// every common distro (unlike /usr/local/bin, absent on RHEL/CentOS 7 and
-	// some minimal images). Without this, `sudo serverwatch ...` fails with
+	// some minimal images). Without this, `sudo trinetra ...` fails with
 	// "command not found" there even though the service itself runs fine off
 	// the absolute ExecStart. Non-fatal: the binary and unit are already in
-	// place, so a link failure only affects the `sudo serverwatch` shortcut.
+	// place, so a link failure only affects the `sudo trinetra` shortcut.
 	if err := linkOnPath(dst, secondaryBinPath); err != nil {
 		fmt.Fprintf(stderr, "warning: could not link %s -> %s: %v\n", secondaryBinPath, dst, err)
 	}
-	// Copy any companion plugin binaries (serverwatch-ctl, serverwatch-web)
+	// Copy any companion plugin binaries (trinetra-ctl, trinetra-web)
 	// sitting next to the SOURCE binary (self) into the same directory dst
 	// was just installed into, so the manifest scan below actually finds
 	// something. Per-plugin non-fatal, like everything else here: a copy
@@ -109,8 +109,8 @@ func cmdInstall(args []string) int {
 	// verifies companion binaries against before exec'ing them. Scanning the
 	// SAME directory dst was just copied into (rather than, say, os.Executable
 	// of this process) matters: dst is exactly where pluginPath will look for
-	// serverwatch-ctl/serverwatch-web once this binary is running as
-	// /usr/local/bin/serverwatch. Non-fatal: a manifest hiccup should not
+	// trinetra-ctl/trinetra-web once this binary is running as
+	// /usr/local/bin/trinetra. Non-fatal: a manifest hiccup should not
 	// block installing the daemon itself, since the front-door already fails
 	// closed (refuses to exec) when the manifest is missing or incomplete.
 	if err := writePluginManifest(filepath.Dir(dst)); err != nil {
@@ -128,15 +128,15 @@ func cmdInstall(args []string) int {
 	}
 	x := osExec{}
 	// enable + restart (not `enable --now`): `enable --now` only STARTS a
-	// stopped service, so on an upgrade of an already-running serverwatch the
+	// stopped service, so on an upgrade of an already-running trinetra the
 	// new binary and unit would sit on disk while the old daemon kept running
 	// until a manual restart. `restart` starts a stopped unit and reloads a
 	// running one, so a fresh install and an in-place upgrade both end on the
 	// just-installed binary with the freshly-written unit.
 	for _, a := range [][]string{
 		{"systemctl", "daemon-reload"},
-		{"systemctl", "enable", "serverwatch"},
-		{"systemctl", "restart", "serverwatch"},
+		{"systemctl", "enable", "trinetra"},
+		{"systemctl", "restart", "trinetra"},
 	} {
 		if out, err := x.Run(a[0], a[1:]...); err != nil {
 			fmt.Fprintf(stderr, "%v: %v\n%s\n", a, err, out)
@@ -160,7 +160,7 @@ func cmdInstall(args []string) int {
 func telegramInstallHint() string {
 	c, err := loadCfg()
 	if err != nil || c == nil || c.Telegram.Token == "" {
-		return "set a Telegram token: serverwatch telegram set-token <token>"
+		return "set a Telegram token: trinetra telegram set-token <token>"
 	}
 	if c.Telegram.ChatID != "" {
 		return "Telegram already configured and enrolled."
@@ -178,22 +178,22 @@ func telegramInstallHint() string {
 func installedPluginsMessage() string {
 	manifest, err := loadPluginManifest()
 	if err != nil || len(manifest) == 0 {
-		return "no plugin binaries found alongside the source binary (serverwatch-ctl/serverwatch-web skipped);"
+		return "no plugin binaries found alongside the source binary (trinetra-ctl/trinetra-web skipped);"
 	}
 	var names []string
 	for _, name := range pluginManifestNames {
 		if _, ok := manifest[name]; ok {
-			names = append(names, "serverwatch-"+name)
+			names = append(names, "trinetra-"+name)
 		}
 	}
 	if len(names) == 0 {
-		return "no plugin binaries found alongside the source binary (serverwatch-ctl/serverwatch-web skipped);"
+		return "no plugin binaries found alongside the source binary (trinetra-ctl/trinetra-web skipped);"
 	}
 	return "installed plugins: " + strings.Join(names, ", ") + ";"
 }
 
 // copyPluginsAlongside copies each companion plugin binary
-// ("serverwatch-<name>" for every name in pluginManifestNames) found in
+// ("trinetra-<name>" for every name in pluginManifestNames) found in
 // srcDir into dstDir at mode 0755, using the same atomic copyFile as the
 // daemon binary itself. srcDir is the directory of the SOURCE binary
 // (filepath.Dir(self) in cmdInstall) -- the natural place an operator drops
@@ -213,7 +213,7 @@ func installedPluginsMessage() string {
 func copyPluginsAlongside(srcDir, dstDir string) error {
 	var errs []string
 	for _, name := range pluginManifestNames {
-		binName := "serverwatch-" + name
+		binName := "trinetra-" + name
 		src := filepath.Join(srcDir, binName)
 		info, err := os.Lstat(src)
 		if err != nil {
@@ -269,7 +269,7 @@ func unlinkOnPath(target, link string) {
 }
 
 // pluginManifestNames lists the companion binary name suffixes (matching the
-// "serverwatch-<name>" convention pluginPath/verifyPlugin use in
+// "trinetra-<name>" convention pluginPath/verifyPlugin use in
 // plugin_launch.go) that writePluginManifest looks for next to the daemon
 // binary. Keep this in sync with the launcher's `cli`/`web` front-doors.
 var pluginManifestNames = []string{"ctl", "web"}
@@ -290,7 +290,7 @@ var pluginManifestNames = []string{"ctl", "web"}
 func writePluginManifest(binDir string) error {
 	manifest := make(map[string]string)
 	for _, name := range pluginManifestNames {
-		path := filepath.Join(binDir, "serverwatch-"+name)
+		path := filepath.Join(binDir, "trinetra-"+name)
 		info, err := os.Lstat(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -335,24 +335,24 @@ func writePluginManifest(binDir string) error {
 }
 
 // removeInstalledPlugins removes each companion plugin binary
-// ("serverwatch-<name>" for every name in pluginManifestNames) from binDir.
+// ("trinetra-<name>" for every name in pluginManifestNames) from binDir.
 // Best-effort and symmetric with the other cmdUninstall cleanups: it never
 // returns an error, so a plugin that is already absent (never installed, or
 // removed by hand) is simply a no-op for that name, not a failure that could
 // abort the rest of uninstall.
 func removeInstalledPlugins(binDir string) {
 	for _, name := range pluginManifestNames {
-		_ = os.Remove(filepath.Join(binDir, "serverwatch-"+name))
+		_ = os.Remove(filepath.Join(binDir, "trinetra-"+name))
 	}
 }
 
 func cmdUninstall(args []string) int {
 	x := osExec{}
-	_, _ = x.Run("systemctl", "disable", "--now", "serverwatch")
+	_, _ = x.Run("systemctl", "disable", "--now", "trinetra")
 	_ = os.Remove(unitPath)
 	// Remove the /usr/bin shortcut, but only if it is still OUR symlink into
 	// /usr/local/bin (never a distro-provided real binary).
-	unlinkOnPath("/usr/local/bin/serverwatch", secondaryBinPath)
+	unlinkOnPath("/usr/local/bin/trinetra", secondaryBinPath)
 	// Best-effort, like the other uninstall cleanups above: a plugin the
 	// front-door can no longer verify against is safer than a stale manifest
 	// left lying around after uninstall. --purge below already removes the
@@ -360,7 +360,7 @@ func cmdUninstall(args []string) int {
 	_ = os.Remove(pluginManifestPath())
 	// Symmetric with cmdInstall's copyPluginsAlongside: remove the plugin
 	// binaries install placed next to the daemon, so an uninstall does not
-	// leave orphaned serverwatch-ctl/serverwatch-web binaries -- now
+	// leave orphaned trinetra-ctl/trinetra-web binaries -- now
 	// unverifiable anyway since the manifest above was just removed -- sitting
 	// in /usr/local/bin.
 	removeInstalledPlugins("/usr/local/bin")
@@ -379,7 +379,7 @@ func cmdUninstall(args []string) int {
 // without truncating the existing file, so this succeeds even when dst is a
 // currently-running executable -- a plain truncating write (os.WriteFile over
 // dst) fails there with ETXTBSY "text file busy". This is what lets
-// `serverwatch install` upgrade the binary of a live daemon in place.
+// `trinetra install` upgrade the binary of a live daemon in place.
 func copyFile(src, dst string, perm os.FileMode) error {
 	b, err := os.ReadFile(src)
 	if err != nil {
@@ -484,7 +484,7 @@ func printEnrollmentPIN() {
 		fmt.Fprintln(stdout, "Telegram token saved. The bot is already enrolled.")
 	default:
 		fmt.Fprintln(stdout, "Telegram token saved. The daemon will log the enrollment PIN on start:")
-		fmt.Fprintln(stdout, "  journalctl -u serverwatch | grep /start")
+		fmt.Fprintln(stdout, "  journalctl -u trinetra | grep /start")
 	}
 }
 
@@ -669,7 +669,7 @@ func cmdDoctor(args []string) int {
 	return 0
 }
 
-// buildDoctorReport runs the same probes `serverwatch doctor` has always run
+// buildDoctorReport runs the same probes `trinetra doctor` has always run
 // inline (docker reachability via probeDocker, smartctl availability via
 // `smartctl --scan`, the thermal-zone glob, target discovery via Discover,
 // and the collector on/off toggles plus SampleStore stats via

@@ -43,13 +43,14 @@ func TestCopyFileAtomicReplace(t *testing.T) {
 }
 
 func TestRenderUnit(t *testing.T) {
-	u := renderUnit("/usr/local/bin/serverwatch")
+	u := renderUnit("/usr/local/bin/trinetra")
 	for _, want := range []string{
 		"[Unit]", "[Service]", "[Install]",
-		"ExecStart=/usr/local/bin/serverwatch daemon",
+		"Description=Trinetra — self-hosted server & fleet monitor",
+		"ExecStart=/usr/local/bin/trinetra daemon",
 		"Restart=always",
 		"WatchdogSec=",
-		"RuntimeDirectory=serverwatch",
+		"RuntimeDirectory=trinetra",
 		"WantedBy=multi-user.target",
 	} {
 		if !strings.Contains(u, want) {
@@ -121,12 +122,12 @@ func TestWritePluginManifest_RecordsPresentCompanions(t *testing.T) {
 	t.Cleanup(func() { stateDir = prevStateDir })
 
 	binDir := t.TempDir()
-	ctlContent := []byte("pretend serverwatch-ctl binary")
-	webContent := []byte("pretend serverwatch-web binary")
-	if err := os.WriteFile(filepath.Join(binDir, "serverwatch-ctl"), ctlContent, 0o755); err != nil {
+	ctlContent := []byte("pretend trinetra-ctl binary")
+	webContent := []byte("pretend trinetra-web binary")
+	if err := os.WriteFile(filepath.Join(binDir, "trinetra-ctl"), ctlContent, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "serverwatch-web"), webContent, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "trinetra-web"), webContent, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,11 +135,11 @@ func TestWritePluginManifest_RecordsPresentCompanions(t *testing.T) {
 		t.Fatalf("writePluginManifest: %v", err)
 	}
 
-	wantCtl, err := sha256File(filepath.Join(binDir, "serverwatch-ctl"))
+	wantCtl, err := sha256File(filepath.Join(binDir, "trinetra-ctl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantWeb, err := sha256File(filepath.Join(binDir, "serverwatch-web"))
+	wantWeb, err := sha256File(filepath.Join(binDir, "trinetra-web"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,8 +176,8 @@ func TestWritePluginManifest_RecordsPresentCompanions(t *testing.T) {
 }
 
 // TestWritePluginManifest_OmitsAbsentCompanion checks that when only one
-// companion binary is present next to the daemon (a `serverwatch-ctl`-only
-// install with no `serverwatch-web`, or vice versa), the manifest simply
+// companion binary is present next to the daemon (a `trinetra-ctl`-only
+// install with no `trinetra-web`, or vice versa), the manifest simply
 // omits the absent one rather than erroring or recording a bogus entry.
 func TestWritePluginManifest_OmitsAbsentCompanion(t *testing.T) {
 	prevStateDir := stateDir
@@ -184,10 +185,10 @@ func TestWritePluginManifest_OmitsAbsentCompanion(t *testing.T) {
 	t.Cleanup(func() { stateDir = prevStateDir })
 
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "serverwatch-ctl"), []byte("ctl only"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "trinetra-ctl"), []byte("ctl only"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Deliberately no serverwatch-web in binDir.
+	// Deliberately no trinetra-web in binDir.
 
 	if err := writePluginManifest(binDir); err != nil {
 		t.Fatalf("writePluginManifest: %v", err)
@@ -201,7 +202,7 @@ func TestWritePluginManifest_OmitsAbsentCompanion(t *testing.T) {
 		t.Errorf("manifest missing ctl entry: %v", got)
 	}
 	if _, ok := got["web"]; ok {
-		t.Errorf("manifest has a web entry despite no serverwatch-web on disk: %v", got)
+		t.Errorf("manifest has a web entry despite no trinetra-web on disk: %v", got)
 	}
 }
 
@@ -219,7 +220,7 @@ func TestWritePluginManifest_VerifyPluginAcceptsMatchAndRejectsTamper(t *testing
 	if err := os.Chmod(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ctlPath := filepath.Join(binDir, "serverwatch-ctl")
+	ctlPath := filepath.Join(binDir, "trinetra-ctl")
 	if err := os.WriteFile(ctlPath, []byte("original ctl binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +275,7 @@ func TestWritePluginManifest_NonFatalStyle(t *testing.T) {
 
 // TestWritePluginManifest_ForcesModeOnReinstall guards against a gotcha
 // os.WriteFile has: it only applies its mode argument when CREATING the
-// file. On a re-install (`serverwatch install` run again to upgrade), if
+// file. On a re-install (`trinetra install` run again to upgrade), if
 // plugins.json already exists with looser permissions, a plain
 // os.WriteFile(path, b, 0o600) call would truncate and rewrite its content
 // but leave the existing (looser) mode untouched, silently weakening the
@@ -301,7 +302,7 @@ func TestWritePluginManifest_ForcesModeOnReinstall(t *testing.T) {
 	}
 
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "serverwatch-ctl"), []byte("ctl v2"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "trinetra-ctl"), []byte("ctl v2"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -326,12 +327,12 @@ func TestCopyPluginsAlongsideCopiesPresentPlugins(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
 
-	ctlContent := []byte("fake serverwatch-ctl binary")
-	webContent := []byte("fake serverwatch-web binary")
-	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-ctl"), ctlContent, 0o755); err != nil {
+	ctlContent := []byte("fake trinetra-ctl binary")
+	webContent := []byte("fake trinetra-web binary")
+	if err := os.WriteFile(filepath.Join(srcDir, "trinetra-ctl"), ctlContent, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-web"), webContent, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(srcDir, "trinetra-web"), webContent, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -339,7 +340,7 @@ func TestCopyPluginsAlongsideCopiesPresentPlugins(t *testing.T) {
 		t.Fatalf("copyPluginsAlongside: %v", err)
 	}
 
-	for name, want := range map[string][]byte{"serverwatch-ctl": ctlContent, "serverwatch-web": webContent} {
+	for name, want := range map[string][]byte{"trinetra-ctl": ctlContent, "trinetra-web": webContent} {
 		got, err := os.ReadFile(filepath.Join(dstDir, name))
 		if err != nil {
 			t.Fatalf("read dst %s: %v", name, err)
@@ -358,7 +359,7 @@ func TestCopyPluginsAlongsideCopiesPresentPlugins(t *testing.T) {
 }
 
 // TestCopyPluginsAlongsideSkipsAbsentPlugin checks the per-plugin non-fatal
-// requirement: when only serverwatch-ctl exists in srcDir, the call copies
+// requirement: when only trinetra-ctl exists in srcDir, the call copies
 // ctl, skips web (no error), and a later writePluginManifest(dstDir) records
 // only ctl.
 func TestCopyPluginsAlongsideSkipsAbsentPlugin(t *testing.T) {
@@ -368,20 +369,20 @@ func TestCopyPluginsAlongsideSkipsAbsentPlugin(t *testing.T) {
 
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-ctl"), []byte("ctl only"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(srcDir, "trinetra-ctl"), []byte("ctl only"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Deliberately no serverwatch-web in srcDir.
+	// Deliberately no trinetra-web in srcDir.
 
 	if err := copyPluginsAlongside(srcDir, dstDir); err != nil {
 		t.Fatalf("copyPluginsAlongside: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-ctl")); err != nil {
-		t.Errorf("expected serverwatch-ctl copied to dst: %v", err)
+	if _, err := os.Stat(filepath.Join(dstDir, "trinetra-ctl")); err != nil {
+		t.Errorf("expected trinetra-ctl copied to dst: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-web")); !os.IsNotExist(err) {
-		t.Errorf("expected serverwatch-web absent from dst, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(dstDir, "trinetra-web")); !os.IsNotExist(err) {
+		t.Errorf("expected trinetra-web absent from dst, got err=%v", err)
 	}
 
 	if err := writePluginManifest(dstDir); err != nil {
@@ -395,22 +396,22 @@ func TestCopyPluginsAlongsideSkipsAbsentPlugin(t *testing.T) {
 		t.Errorf("manifest missing ctl entry: %v", got)
 	}
 	if _, ok := got["web"]; ok {
-		t.Errorf("manifest has a web entry despite no serverwatch-web ever being copied: %v", got)
+		t.Errorf("manifest has a web entry despite no trinetra-web ever being copied: %v", got)
 	}
 }
 
 // TestCopyPluginsAlongsideSkipsNonRegular mirrors writePluginManifest's
 // IsRegular guard (systemd.go): a symlink or directory named
-// serverwatch-web in the source must be skipped, not copied.
+// trinetra-web in the source must be skipped, not copied.
 func TestCopyPluginsAlongsideSkipsNonRegular(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(srcDir, "serverwatch-ctl"), []byte("ctl"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(srcDir, "trinetra-ctl"), []byte("ctl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// serverwatch-web is a directory, not a regular file.
-	if err := os.Mkdir(filepath.Join(srcDir, "serverwatch-web"), 0o755); err != nil {
+	// trinetra-web is a directory, not a regular file.
+	if err := os.Mkdir(filepath.Join(srcDir, "trinetra-web"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -418,11 +419,11 @@ func TestCopyPluginsAlongsideSkipsNonRegular(t *testing.T) {
 		t.Fatalf("copyPluginsAlongside: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-ctl")); err != nil {
-		t.Errorf("expected serverwatch-ctl copied to dst: %v", err)
+	if _, err := os.Stat(filepath.Join(dstDir, "trinetra-ctl")); err != nil {
+		t.Errorf("expected trinetra-ctl copied to dst: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dstDir, "serverwatch-web")); !os.IsNotExist(err) {
-		t.Errorf("expected serverwatch-web (a dir in src) not copied to dst, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(dstDir, "trinetra-web")); !os.IsNotExist(err) {
+		t.Errorf("expected trinetra-web (a dir in src) not copied to dst, got err=%v", err)
 	}
 }
 
@@ -432,18 +433,18 @@ func TestCopyPluginsAlongsideSkipsNonRegular(t *testing.T) {
 // absent -- symmetric with copyPluginsAlongside's per-plugin non-fatal style.
 func TestUninstallRemovesInstalledPlugins(t *testing.T) {
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "serverwatch-ctl"), []byte("ctl"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "trinetra-ctl"), []byte("ctl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Deliberately no serverwatch-web in binDir, to exercise "already absent".
+	// Deliberately no trinetra-web in binDir, to exercise "already absent".
 
 	removeInstalledPlugins(binDir)
 
-	if _, err := os.Stat(filepath.Join(binDir, "serverwatch-ctl")); !os.IsNotExist(err) {
-		t.Errorf("expected serverwatch-ctl removed, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(binDir, "trinetra-ctl")); !os.IsNotExist(err) {
+		t.Errorf("expected trinetra-ctl removed, got err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(binDir, "serverwatch-web")); !os.IsNotExist(err) {
-		t.Errorf("expected serverwatch-web still absent, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(binDir, "trinetra-web")); !os.IsNotExist(err) {
+		t.Errorf("expected trinetra-web still absent, got err=%v", err)
 	}
 }
 

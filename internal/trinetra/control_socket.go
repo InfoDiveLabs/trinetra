@@ -25,13 +25,13 @@ import (
 
 // defaultRuntimeDir is where the control socket lives when systemd hasn't
 // set RUNTIME_DIRECTORY (e.g. running the daemon by hand outside the unit).
-// The systemd unit's RuntimeDirectory=serverwatch (systemd.go's renderUnit)
-// makes systemd create /run/serverwatch itself (tmpfs, 0755, root, and
-// auto-removed on stop) and export RUNTIME_DIRECTORY=/run/serverwatch to the
+// The systemd unit's RuntimeDirectory=trinetra (systemd.go's renderUnit)
+// makes systemd create /run/trinetra itself (tmpfs, 0755, root, and
+// auto-removed on stop) and export RUNTIME_DIRECTORY=/run/trinetra to the
 // service -- controlSocketPath below prefers that env var whenever it is
 // set, so under systemd this constant is never actually used; the
 // MkdirAll fallback in serveControlSocket exists for the by-hand case.
-const defaultRuntimeDir = "/run/serverwatch"
+const defaultRuntimeDir = "/run/trinetra"
 
 // controlSocketPath resolves where the control socket should be created:
 // $RUNTIME_DIRECTORY/control.sock when systemd (or a test) has set that
@@ -101,7 +101,7 @@ func writeTokenFile(path, token string) error {
 //
 // Path setup: os.MkdirAll(0o700) is a best-effort attempt to create the
 // runtime directory when it doesn't already exist (the by-hand,
-// no-RUNTIME_DIRECTORY case). Under systemd's RuntimeDirectory=serverwatch
+// no-RUNTIME_DIRECTORY case). Under systemd's RuntimeDirectory=trinetra
 // the directory already exists, but systemd creates it 0755 root -- so it
 // is explicitly chmod'd to 0700 here too (before the socket is bound),
 // closing the window where a non-owner could connect between Listen and

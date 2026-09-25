@@ -1232,8 +1232,8 @@ func TestWebRPIDOriginAutocertTLSGetSetUnset(t *testing.T) {
 		"web.rp_id":            "monitor.example.com",
 		"web.origin":           "https://monitor.example.com",
 		"web.autocert_domains": "monitor.example.com,alt.example.com",
-		"web.tls_cert":         "/etc/serverwatch/tls.crt",
-		"web.tls_key":          "/etc/serverwatch/tls.key",
+		"web.tls_cert":         "/etc/trinetra/tls.crt",
+		"web.tls_key":          "/etc/trinetra/tls.key",
 	}
 	for k, v := range sets {
 		if err := c.Set(k, v); err != nil {
@@ -1297,10 +1297,10 @@ func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
 	if err := c.Set("web.autocert_domains", "monitor.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Set("web.tls_cert", "/etc/serverwatch/tls.crt"); err != nil {
+	if err := c.Set("web.tls_cert", "/etc/trinetra/tls.crt"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Set("web.tls_key", "/etc/serverwatch/tls.key"); err != nil {
+	if err := c.Set("web.tls_key", "/etc/trinetra/tls.key"); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Set("web.session_ttl", "12h"); err != nil {
@@ -1318,8 +1318,8 @@ func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
 		{"web.rp_id", "monitor.example.com"},
 		{"web.origin", "https://monitor.example.com"},
 		{"web.autocert_domains", "monitor.example.com"},
-		{"web.tls_cert", "/etc/serverwatch/tls.crt"},
-		{"web.tls_key", "/etc/serverwatch/tls.key"},
+		{"web.tls_cert", "/etc/trinetra/tls.crt"},
+		{"web.tls_key", "/etc/trinetra/tls.key"},
 		{"web.session_ttl", "12h"},
 	} {
 		if got, _ := c2.Get(tc.key); got != tc.want {
@@ -1437,8 +1437,8 @@ func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 
 // --- Task 2 (#91): config key catalog (KeyInfo/Keys) ---
 //
-// The catalog exists so serverwatch-ctl's generic "all settings" screen
-// (cmd/serverwatch-ctl) can browse and edit every flat key without a
+// The catalog exists so trinetra-ctl's generic "all settings" screen
+// (cmd/trinetra-ctl) can browse and edit every flat key without a
 // dedicated screen per key. These tests are the drift guard: they fail if
 // the catalog and the Set/Get switch (config.go) ever fall out of lockstep,
 // in either direction.
