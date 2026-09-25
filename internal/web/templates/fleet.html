@@ -55,8 +55,17 @@
      htmx poll fragment must keep the current query string"), and htmx
      swaps the whole element (hx-swap="outerHTML") for the new one, which
      carries the identical id/hx-get/hx-trigger and so keeps polling
-     indefinitely without any page-level boot script. */}}
-{{define "fleet_rows"}}<tbody id="fleet-tbody" hx-get="/fleet/table?{{.QueryString}}" hx-trigger="every 5s" hx-swap="outerHTML">
+     indefinitely without any page-level boot script.
+
+     hx-sync="this:replace" (round-1 review): a slow /fleet/table response
+     (a laggy control-socket round trip) could still be in flight when the
+     next 5s tick fires a second request -- without hx-sync, htmx queues
+     both and can apply an older response after a newer one, flashing
+     stale rows back in. "this:replace" makes a new poll abort/replace
+     whatever request this same element already has outstanding, so at
+     most one is ever in flight and the table can only ever show the
+     latest data. */}}
+{{define "fleet_rows"}}<tbody id="fleet-tbody" hx-get="/fleet/table?{{.QueryString}}" hx-trigger="every 5s" hx-swap="outerHTML" hx-sync="this:replace">
 {{range .Rows}}
 <tr data-node-id="{{.ID}}">
   <td class="mono card-title"><a href="{{.Href}}">{{.Name}}</a>{{if .Self}} <span class="note">(this host)</span>{{end}}</td>

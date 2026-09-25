@@ -139,10 +139,10 @@ type FleetRow struct {
 	// mirrored here since internal/web can't import that package): "-" for
 	// self, "0s" for zero skew, else a signed "+Ns"/"-Ns".
 	SkewText string
-	// SkewWarn is the CLI's clock-skew warning sentence
-	// ("clock differs from this master's by <±Ns>", task-5-brief.md's exact
-	// wording to reuse -- see printNodeWarnings), non-empty only when
-	// |SkewSec| > fleetSkewWarnSec and the node isn't self.
+	// SkewWarn is the CLI's clock-skew warning sentence verbatim
+	// ("clock differs from this master's by <±Ns> (fix NTP on that host)",
+	// internal/trinetra/fleet_cmd.go's printNodeWarnings), non-empty only
+	// when |SkewSec| > fleetSkewWarnSec and the node isn't self.
 	SkewWarn string
 	// DropsWarn is the CLI's replica-drops warning sentence ("replica
 	// drops: N out of order, N over the series limit, N duplicates
@@ -168,12 +168,15 @@ func fleetSkewText(n core.NodeSummary) string {
 }
 
 // fleetSkewWarnText renders the CLI's clock-skew warning sentence (see
-// FleetRow.SkewWarn's doc) for n, or "" when it doesn't apply.
+// FleetRow.SkewWarn's doc) for n, or "" when it doesn't apply. Verbatim
+// against internal/trinetra/fleet_cmd.go's printNodeWarnings (round-1
+// review of this task: the "(fix NTP on that host)" suffix was originally
+// dropped, making the wording not actually verbatim -- restored here).
 func fleetSkewWarnText(n core.NodeSummary) string {
 	if n.Self || (n.SkewSec <= fleetSkewWarnSec && n.SkewSec >= -fleetSkewWarnSec) {
 		return ""
 	}
-	return fmt.Sprintf("clock differs from this master's by %s", fleetSkewText(n))
+	return fmt.Sprintf("clock differs from this master's by %s (fix NTP on that host)", fleetSkewText(n))
 }
 
 // fleetDropsWarnText renders the CLI's replica-drops warning sentence (see
@@ -287,22 +290,18 @@ func sortFleetNodes(nodes []core.NodeSummary, sortKey, dir string) {
 	})
 }
 
-// fetchFleetNodes returns the full, unfiltered node roster (Fleet().Nodes
-// with a zero core.NodeFilter, exactly like resolveMasterAndNodes/
-// fleetRole already do elsewhere in this package), degrading a nil
-// Deps.Fleet, a nil FleetAPI, or a read error to an empty roster rather
-// than failing the page -- this daemon has already been proven a master by
-// the caller (fleetOverviewHandler et al.) before this runs, but a
-// transient Nodes() error still shouldn't 500 an otherwise-working page.
-func fetchFleetNodes(d Deps) []core.NodeSummary {
-	if d.Fleet == nil {
-		return nil
-	}
-	fleet := d.Fleet()
-	if fleet == nil {
-		return nil
-	}
-	nodes, err := fleet.Nodes(core.NodeFilter{})
+// fetchFleetNodes returns the full, unfiltered node roster via r's
+// request-scoped fleetMemo (fleet_memo.go) -- the SAME cached
+// Fleet().Nodes(core.NodeFilter{}) result resolveMasterAndNodes/fleetRole/
+// navCountsFor may already have fetched earlier in this request, so this
+// costs a real round trip only when nothing else in the request already
+// paid for one. Degrades a nil Deps.Fleet, a nil FleetAPI, or a read error
+// to an empty roster rather than failing the page -- this daemon has
+// already been proven a master by the caller (fleetOverviewHandler et al.)
+// before this runs, but a transient Nodes() error still shouldn't 500 an
+// otherwise-working page.
+func fetchFleetNodes(r *http.Request, d Deps) []core.NodeSummary {
+	nodes, err := fleetMemoFrom(r).fleetNodes(d)
 	if err != nil {
 		return nil
 	}
@@ -363,7 +362,7 @@ type FleetPageData struct {
 // and the query-string/sort-link plumbing the template needs.
 func buildFleetPageData(r *http.Request, d Deps) FleetPageData {
 	fq := parseFleetQuery(r)
-	nodes := fetchFleetNodes(d)
+	nodes := fetchFleetNodes(r, d)
 	sub := fmt.Sprintf("%d node", len(nodes))
 	if len(nodes) != 1 {
 		sub += "s"
@@ -416,9 +415,13 @@ func renderFleetTableFragment(w http.ResponseWriter, data FleetTableData) error 
 // fleetRole(d)=='master'"), reported via renderNotFound (styled page, for
 // the HTML page) or a bare http.NotFound (for the fragment/JSON endpoints,
 // which have no shell to render). It returns whether the caller should stop
-// (true == already handled, a 404 was written).
+// (true == already handled, a 404 was written). fleetRole(r, d) reads r's
+// request-scoped fleetMemo (fleet_memo.go), so this gate's own Status()
+// check costs a real round trip only once per request even though both
+// GET /fleet's page render AND (for the HTML path) newPageData's own
+// resolveFleetPageInfo ask fleetRole/Status() questions too.
 func fleetGateHTML(w http.ResponseWriter, r *http.Request, d Deps) bool {
-	if fleetRole(d) == config.RoleMaster {
+	if fleetRole(r, d) == config.RoleMaster {
 		return false
 	}
 	renderNotFound(w, r, d, "not found")
@@ -426,7 +429,7 @@ func fleetGateHTML(w http.ResponseWriter, r *http.Request, d Deps) bool {
 }
 
 func fleetGatePlain(w http.ResponseWriter, r *http.Request, d Deps) bool {
-	if fleetRole(d) == config.RoleMaster {
+	if fleetRole(r, d) == config.RoleMaster {
 		return false
 	}
 	http.NotFound(w, r)
@@ -459,7 +462,7 @@ func fleetTableHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		fq := parseFleetQuery(r)
-		data := FleetTableData{Rows: buildFleetRows(fetchFleetNodes(d), fq), QueryString: fq.encode()}
+		data := FleetTableData{Rows: buildFleetRows(fetchFleetNodes(r, d), fq), QueryString: fq.encode()}
 		if err := renderFleetTableFragment(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -472,6 +475,15 @@ func fleetTableHandler(d Deps) http.HandlerFunc {
 // -- see fleetStateMatches' doc for why the JSON API stays a faithful
 // passthrough of Nodes(filter) instead). Response shape is []core.NodeSummary,
 // the same type Fleet().Nodes itself returns.
+//
+// RemoteAddr (round-1 review): a viewer's response has every node's
+// RemoteAddr blanked before encoding -- a node's network address is
+// operationally sensitive (infrastructure topology), and this endpoint's
+// only RBAC floor is RoleViewer (routes.go), the same floor the read-only
+// HTML page/table share. Only an admin session (currentRole(r)=="admin")
+// sees the real value, matching how e.g. container logs (admin-only
+// entirely) treat operationally sensitive data more strictly than plain
+// monitoring data.
 func fleetNodesAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGatePlain(w, r, d) {
@@ -479,12 +491,17 @@ func fleetNodesAPIHandler(d Deps) http.HandlerFunc {
 		}
 		q := r.URL.Query()
 		filter := core.NodeFilter{Tag: q.Get("tag"), State: q.Get("state"), Query: q.Get("q")}
-		nodes := fetchFleetNodes(d)
+		nodes := fetchFleetNodes(r, d)
+		admin := currentRole(r) == "admin"
 		out := make([]core.NodeSummary, 0, len(nodes))
 		for _, n := range nodes {
-			if filter.Match(n) {
-				out = append(out, n)
+			if !filter.Match(n) {
+				continue
 			}
+			if !admin {
+				n.RemoteAddr = ""
+			}
+			out = append(out, n)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(out); err != nil {

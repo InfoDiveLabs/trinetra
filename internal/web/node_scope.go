@@ -68,21 +68,17 @@ func apiFor(r *http.Request, d Deps) core.API {
 }
 
 // fleetRole reports this daemon's fleet role as config.RoleSolo/RoleMaster/
-// RoleChild, via a single Fleet().Status() call. Every failure mode
+// RoleChild, via r's request-scoped fleetMemo (fleet_memo.go) -- a single
+// Fleet().Status() call per REQUEST, not per call site: every failure mode
 // collapses to RoleSolo -- d.Fleet unset, a nil FleetAPI, Status() erroring
 // (an old daemon predating Fleet.Status entirely), or an empty Role. This is
-// the general-purpose "what's my role" answer (e.g. for later tasks' nav
-// visibility); withNodeRouter itself uses the more Fleet()-round-trip-
-// frugal resolveMasterAndNodes below, since it needs the node roster too.
-func fleetRole(d Deps) string {
-	if d.Fleet == nil {
-		return config.RoleSolo
-	}
-	fleet := d.Fleet()
-	if fleet == nil {
-		return config.RoleSolo
-	}
-	status, err := fleet.Status()
+// the general-purpose "what's my role" answer (e.g. handlers_fleet.go's
+// masters-only gate); withNodeRouter itself uses the more roster-aware
+// resolveMasterAndNodes below, since it needs the node roster too -- both
+// share the same memo, so a request that calls into both still costs at
+// most one Status() and one Nodes() call total.
+func fleetRole(r *http.Request, d Deps) string {
+	status, err := fleetMemoFrom(r).fleetStatus(d)
 	if err != nil || status.Role == "" {
 		return config.RoleSolo
 	}
@@ -93,7 +89,13 @@ func fleetRole(d Deps) string {
 // practical, whether this daemon is a fleet master and (when it is) its
 // node roster -- exactly what withNodeRouter needs per request, and the
 // only two questions it needs answered before deciding whether to
-// intercept a /n/... request at all.
+// intercept a /n/... request at all. Both the Nodes() and (when reached)
+// Status() calls below go through r's request-scoped fleetMemo
+// (fleet_memo.go), so this costs a real round trip only the FIRST time
+// either is asked for anywhere in this request -- a later call site in the
+// same request (fleetRole, resolveFleetPageInfo, navCountsFor,
+// handlers_fleet.go's handlers) reuses the cached result instead of making
+// its own.
 //
 // Nodes() alone already proves "master" the moment it reports any node
 // besides self: a solo daemon's (or a plain, pre-fleet daemon's) roster is
@@ -104,15 +106,9 @@ func fleetRole(d Deps) string {
 // only self, or errored), keeping the common "master with at least one
 // node" case down to a single Fleet() round trip that also directly serves
 // the node lookup withNodeRouter needs next.
-func resolveMasterAndNodes(d Deps) (isMaster bool, nodes []core.NodeSummary) {
-	if d.Fleet == nil {
-		return false, nil
-	}
-	fleet := d.Fleet()
-	if fleet == nil {
-		return false, nil
-	}
-	if ns, err := fleet.Nodes(core.NodeFilter{}); err == nil {
+func resolveMasterAndNodes(r *http.Request, d Deps) (isMaster bool, nodes []core.NodeSummary) {
+	memo := fleetMemoFrom(r)
+	if ns, err := memo.fleetNodes(d); err == nil {
 		nodes = ns
 		for _, n := range ns {
 			if n.ID != core.SelfNodeID {
@@ -120,7 +116,7 @@ func resolveMasterAndNodes(d Deps) (isMaster bool, nodes []core.NodeSummary) {
 			}
 		}
 	}
-	status, err := fleet.Status()
+	status, err := memo.fleetStatus(d)
 	if err != nil || status.Role != config.RoleMaster {
 		return false, nodes
 	}
@@ -251,7 +247,7 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 			return
 		}
 
-		isMaster, nodes := resolveMasterAndNodes(d)
+		isMaster, nodes := resolveMasterAndNodes(r, d)
 		if !isMaster {
 			mux.ServeHTTP(w, r)
 			return

@@ -177,7 +177,14 @@ func newHandler(d Deps) http.Handler {
 	// carry the same resolved session/user every other request does before
 	// requireRole/requireCSRF on the re-dispatched (prefix-stripped)
 	// request evaluate it -- node scoping never bypasses auth.
-	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, withNodeRouter(d, mux)))))
+	//
+	// withFleetMemo (fleet_memo.go, fleet-web-a task 5 round-1 review) wraps
+	// just OUTSIDE withNodeRouter: withNodeRouter's own resolveMasterAndNodes
+	// call needs the memo already present, and its request-cloning carries
+	// this context value forward to the re-dispatched node-scoped request
+	// automatically -- see withFleetMemo's own doc for why this is the
+	// narrowest correct place to install it.
+	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, withFleetMemo(withNodeRouter(d, mux))))))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type

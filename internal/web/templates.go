@@ -481,31 +481,27 @@ type fleetPageInfo struct {
 
 // resolveFleetPageInfo determines the current request's fleet role (and, for
 // a child, its link status/master URL) for newPageData, honoring the
-// controller ruling: call d.Fleet().Status() at most once per request, and
-// only when the role isn't already known from resolveMasterAndNodes.
+// controller ruling: call Fleet().Status() at most once per REQUEST (not
+// per call site -- see fleet_memo.go), and only when the role isn't already
+// known from resolveMasterAndNodes.
 //
 // A request that reached here through withNodeRouter (node_scope.go) --
 // i.e. nodeScopeCtxKey{} is set in its context -- already proved this
 // daemon a master (withNodeRouter only proceeds past resolveMasterAndNodes
 // when isMaster is true), so that case returns "master" outright with no
-// further round trip. Every other request (the vast majority: every
+// further round trip -- not even a memoized one, since resolveMasterAndNodes
+// may well have settled "master" from Nodes() alone without ever calling
+// Status() at all. Every other request (the vast majority: every
 // unprefixed page, since withNodeRouter only inspects /n/... paths at all)
-// falls through to a single Fleet().Status() call, collapsing every failure
-// mode (nil Deps.Fleet, a nil FleetAPI, a Status() error, or an empty Role
-// -- an old daemon predating Fleet.Status) to "solo", exactly like
-// fleetRole's doc explains for the same failure set.
+// falls through to r's fleetMemo, collapsing every failure mode (nil
+// Deps.Fleet, a nil FleetAPI, a Status() error, or an empty Role -- an old
+// daemon predating Fleet.Status) to "solo", exactly like fleetRole's doc
+// explains for the same failure set.
 func resolveFleetPageInfo(r *http.Request, d Deps) fleetPageInfo {
 	if _, ok := r.Context().Value(nodeScopeCtxKey{}).(nodeScope); ok {
 		return fleetPageInfo{role: config.RoleMaster}
 	}
-	if d.Fleet == nil {
-		return fleetPageInfo{role: config.RoleSolo}
-	}
-	fleet := d.Fleet()
-	if fleet == nil {
-		return fleetPageInfo{role: config.RoleSolo}
-	}
-	status, err := fleet.Status()
+	status, err := fleetMemoFrom(r).fleetStatus(d)
 	if err != nil || status.Role == "" {
 		return fleetPageInfo{role: config.RoleSolo}
 	}

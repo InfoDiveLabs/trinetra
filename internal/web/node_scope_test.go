@@ -267,7 +267,7 @@ func TestNodeRouterOldDaemonTreatedAsSolo(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
 	}
-	if got := fleetRole(d); got != config.RoleSolo {
+	if got := fleetRole(httptest.NewRequest(http.MethodGet, "/", nil), d); got != config.RoleSolo {
 		t.Errorf("fleetRole = %q, want %q", got, config.RoleSolo)
 	}
 }

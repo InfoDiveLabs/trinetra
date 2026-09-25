@@ -55,14 +55,38 @@ func fleetChildDeps(t *testing.T) Deps {
 	return fleetTestDeps(t, masterFakeAPI(fleet, nil))
 }
 
-func fleetGetAsViewer(t *testing.T, d Deps, target string) *httptest.ResponseRecorder {
+func fleetGetAsRole(t *testing.T, d Deps, role Role, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, target))
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, role, http.MethodGet, target))
 	return rr
+}
+
+func fleetGetAsViewer(t *testing.T, d Deps, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	return fleetGetAsRole(t, d, RoleViewer, target)
+}
+
+// fleetGetAnonymous drives target through the full handler stack with no
+// session at all (no seedSignedInRequest cookie), for the RBAC-anonymous
+// negative cases.
+func fleetGetAnonymous(d Deps, target string) *httptest.ResponseRecorder {
+	h := newHandler(d)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+	return rr
+}
+
+// newCountingFleet builds a countingFleet (templates_node_test.go, shared
+// with the Task 4 Fleet().Status()-budget tests) with BOTH counters wired,
+// for this file's round-1 review test that cares about both Status() and
+// Nodes() call counts.
+func newCountingFleet(inner core.FleetAPI) (countingFleet, *int, *int) {
+	var statusCalls, nodesCalls int
+	return countingFleet{FleetAPI: inner, statusCalls: &statusCalls, nodesCalls: &nodesCalls}, &statusCalls, &nodesCalls
 }
 
 // TestFleetOverviewHealthStripAndTable pins the full Step 1 page shape: the
@@ -100,13 +124,17 @@ func TestFleetOverviewHealthStripAndTable(t *testing.T) {
 		t.Error(`GET /fleet: db1 row should link to "/n/db1/"`)
 	}
 
-	// Link column: CLI-worded warning chips for web2's skew and drops.
-	// html/template escapes both "'" and "+" (its default text escaper
-	// widens the replacement table beyond the bare minimum), so the
-	// literal wording is checked against the UNescaped body.
+	// Link column: CLI-worded warning chips for web2's skew and drops --
+	// asserted as the FULL verbatim sentence (round-1 review: a prefix
+	// match let a dropped "(fix NTP on that host)" suffix slip through
+	// undetected), against internal/trinetra/fleet_cmd.go:448's
+	// printNodeWarnings wording. html/template escapes both "'" and "+"
+	// (its default text escaper widens the replacement table beyond the
+	// bare minimum), so the literal wording is checked against the
+	// UNescaped body.
 	unescaped := html.UnescapeString(body)
-	if !strings.Contains(unescaped, "clock differs from this master's by +45s") {
-		t.Errorf("GET /fleet: missing web2's clock-skew warning chip\nbody:\n%s", unescaped)
+	if !strings.Contains(unescaped, "clock differs from this master's by +45s (fix NTP on that host)") {
+		t.Errorf("GET /fleet: missing web2's full clock-skew warning sentence\nbody:\n%s", unescaped)
 	}
 	if !strings.Contains(unescaped, "replica drops: 3 out of order, 1 over the series limit, 2 duplicates (harmless re-sends)") {
 		t.Errorf("GET /fleet: missing web2's replica-drops warning chip\nbody:\n%s", unescaped)
@@ -118,6 +146,31 @@ func TestFleetOverviewHealthStripAndTable(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /fleet: missing state text %q", want)
 		}
+	}
+}
+
+// TestFleetSkewWarnTextVerbatim is a direct, exact-string unit test for
+// fleetSkewWarnText (round-1 review: the page-level test above only ever
+// asserted a substring/prefix, which didn't catch the missing "(fix NTP on
+// that host)" suffix -- this pins the FULL sentence against
+// internal/trinetra/fleet_cmd.go:448's printNodeWarnings wording with
+// strict equality, not Contains).
+func TestFleetSkewWarnTextVerbatim(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		n    core.NodeSummary
+		want string
+	}{
+		{"ahead", core.NodeSummary{SkewSec: 45}, "clock differs from this master's by +45s (fix NTP on that host)"},
+		{"behind", core.NodeSummary{SkewSec: -60}, "clock differs from this master's by -60s (fix NTP on that host)"},
+		{"within threshold", core.NodeSummary{SkewSec: 30}, ""},
+		{"self always exempt", core.NodeSummary{Self: true, SkewSec: 999}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fleetSkewWarnText(tc.n); got != tc.want {
+				t.Errorf("fleetSkewWarnText(%+v) = %q, want %q", tc.n, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -376,5 +429,129 @@ func TestFleetOverviewViewerCanSee(t *testing.T) {
 	rr := fleetGetAsViewer(t, d, "/fleet")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("viewer GET /fleet status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestFleetRequestScopedMemoLimitsRoundTrips is round-1 review item 2: GET
+// /fleet was making 2x Status() + 2x Nodes() (fleetGateHTML's fleetRole
+// call plus newPageData's resolveFleetPageInfo; fetchFleetNodes plus
+// navCountsFor's FleetDown count). With the request-scoped fleetMemo
+// (fleet_memo.go) wired through every one of those call sites, both GET
+// /fleet (the master-local page) and GET /n/child1/monitoring (a
+// node-scoped page, exercising withNodeRouter's own resolveMasterAndNodes
+// call alongside newPageData's) must make at most one real Status() call
+// and one real Nodes() call each, for the whole request.
+func TestFleetRequestScopedMemoLimitsRoundTrips(t *testing.T) {
+	fakeF := &fakeFleet{
+		status: core.FleetStatus{Role: config.RoleMaster},
+		nodes: []core.NodeSummary{
+			{ID: core.SelfNodeID, Self: true, State: "online"},
+			{ID: "child1", Name: "child-one", State: "online"},
+		},
+	}
+	cf, statusCalls, nodesCalls := newCountingFleet(fakeF)
+	d := fleetTestDeps(t, masterFakeAPI(fakeF, map[string]core.API{"child1": childFakeAPI("child1-svc")}))
+	d.Fleet = func() core.FleetAPI { return cf }
+
+	for _, target := range []string{"/fleet", "/n/child1/monitoring"} {
+		t.Run(target, func(t *testing.T) {
+			*statusCalls, *nodesCalls = 0, 0
+			rr := fleetGetAsViewer(t, d, target)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want 200, body: %s", target, rr.Code, rr.Body.String())
+			}
+			if *statusCalls > 1 {
+				t.Errorf("GET %s: Status() called %d times, want <=1", target, *statusCalls)
+			}
+			if *nodesCalls > 1 {
+				t.Errorf("GET %s: Nodes() called %d times, want <=1", target, *nodesCalls)
+			}
+		})
+	}
+}
+
+// TestFleetTablePollingSyncsThis pins round-1 review item 3: the polling
+// tbody must carry hx-sync="this:replace" so an in-flight poll is aborted/
+// replaced by the next one rather than letting two responses race and
+// apply out of order.
+func TestFleetTablePollingSyncsThis(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `hx-sync="this:replace"`) {
+		t.Errorf("GET /fleet: expected hx-sync=\"this:replace\" on the polling tbody, body:\n%s", rr.Body.String())
+	}
+
+	rr2 := fleetGetAsViewer(t, d, "/fleet/table")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr2.Code)
+	}
+	if !strings.Contains(rr2.Body.String(), `hx-sync="this:replace"`) {
+		t.Errorf("GET /fleet/table: expected hx-sync=\"this:replace\" on the fragment's tbody, body:\n%s", rr2.Body.String())
+	}
+}
+
+// TestFleetNodesAPIRedactsRemoteAddrForNonAdmin is round-1 review item 4:
+// GET /api/fleet/nodes blanks RemoteAddr for a viewer, but an admin session
+// still sees the real value.
+func TestFleetNodesAPIRedactsRemoteAddrForNonAdmin(t *testing.T) {
+	nodes := fleetFiveNodeRoster()
+	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
+	d := fleetMasterDeps(t, nodes)
+
+	rrViewer := fleetGetAsRole(t, d, RoleViewer, "/api/fleet/nodes")
+	if rrViewer.Code != http.StatusOK {
+		t.Fatalf("viewer GET /api/fleet/nodes status = %d, want 200, body: %s", rrViewer.Code, rrViewer.Body.String())
+	}
+	var viewerGot []core.NodeSummary
+	if err := json.Unmarshal(rrViewer.Body.Bytes(), &viewerGot); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, n := range viewerGot {
+		if n.RemoteAddr != "" {
+			t.Errorf("viewer: node %s RemoteAddr = %q, want blank", n.ID, n.RemoteAddr)
+		}
+	}
+
+	rrAdmin := fleetGetAsRole(t, d, RoleAdmin, "/api/fleet/nodes")
+	if rrAdmin.Code != http.StatusOK {
+		t.Fatalf("admin GET /api/fleet/nodes status = %d, want 200, body: %s", rrAdmin.Code, rrAdmin.Body.String())
+	}
+	var adminGot []core.NodeSummary
+	if err := json.Unmarshal(rrAdmin.Body.Bytes(), &adminGot); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, n := range adminGot {
+		if n.ID == "web1" {
+			found = true
+			if n.RemoteAddr != "10.0.0.5:9443" {
+				t.Errorf("admin: web1 RemoteAddr = %q, want the real address", n.RemoteAddr)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("admin response missing web1")
+	}
+}
+
+// TestFleetRoutesAnonymousRedirectToLogin is the brief's "minor" ask:
+// /fleet/table and /api/fleet/nodes are viewer-gated exactly like /fleet
+// itself -- an anonymous caller is redirected to /login (302), not 404 or
+// 401.
+func TestFleetRoutesAnonymousRedirectToLogin(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	for _, target := range []string{"/fleet/table", "/api/fleet/nodes"} {
+		t.Run(target, func(t *testing.T) {
+			rr := fleetGetAnonymous(d, target)
+			if rr.Code != http.StatusFound {
+				t.Errorf("GET %s anon status = %d, want %d", target, rr.Code, http.StatusFound)
+			}
+			if loc := rr.Header().Get("Location"); loc != "/login" {
+				t.Errorf("GET %s anon Location = %q, want /login", target, loc)
+			}
+		})
 	}
 }

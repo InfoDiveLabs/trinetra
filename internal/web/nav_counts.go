@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
-	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // NavCounts holds the small per-request counts rendered as the sidebar nav's
@@ -53,12 +52,14 @@ type NavCounts struct {
 // (global-constraints.md).
 //
 // fleetRole is the caller's already-resolved fleetRole (newPageData's
-// resolveFleetPageInfo, computed once per request) rather than a fresh
-// fleetRole(d) call here: FleetDown is the one count that costs an extra
-// Fleet() round trip (a Nodes() call, on top of whatever Status() call
-// resolving fleetRole itself may have made), so it's skipped outright
-// (stays 0, no badge) on every solo/child/non-fleet request instead of
-// paying that cost to learn "0" every time.
+// resolveFleetPageInfo, computed once per request); FleetDown is skipped
+// outright (stays 0, no badge) on every solo/child/non-fleet request. When
+// it does run, it reads r's request-scoped fleetMemo (fleet_memo.go)
+// instead of calling Fleet().Nodes() directly -- the roster is very likely
+// already cached from resolveMasterAndNodes/fetchFleetNodes/fleetRole
+// itself having asked for it earlier in this same request, so this costs a
+// real round trip only when nothing else in the request already paid for
+// one.
 func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 	var c NavCounts
 
@@ -82,13 +83,11 @@ func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 		}
 	}
 
-	if fleetRole == config.RoleMaster && d.Fleet != nil {
-		if fleet := d.Fleet(); fleet != nil {
-			if nodes, err := fleet.Nodes(core.NodeFilter{}); err == nil {
-				for _, n := range nodes {
-					if n.State == "down" {
-						c.FleetDown++
-					}
+	if fleetRole == config.RoleMaster {
+		if nodes, err := fleetMemoFrom(r).fleetNodes(d); err == nil {
+			for _, n := range nodes {
+				if n.State == "down" {
+					c.FleetDown++
 				}
 			}
 		}

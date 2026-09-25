@@ -384,19 +384,36 @@ func TestSoloDepsWithNoFleetRendersNoFleetMarkup(t *testing.T) {
 
 // ---- Fleet().Status() call budget ---------------------------------------
 
-// countingFleet wraps a core.FleetAPI and counts Status() calls, so a test
-// can pin the controller ruling: "call d.Fleet().Status() at most once per
-// request, and only when the role isn't already known from
-// resolveMasterAndNodes".
+// countingFleet wraps a core.FleetAPI and counts Status()/Nodes() calls
+// separately, so a test can pin the controller ruling: "call
+// d.Fleet().Status() at most once per request, and only when the role
+// isn't already known from resolveMasterAndNodes" -- and, as of the fleet
+// overview's (task 5) round-1 review, the SAME per-request budget for
+// Nodes(). Either counter pointer may be left nil by a test that only
+// cares about the other one (e.g. the two Status()-only tests below):
+// both methods no-op the increment when their pointer is nil rather than
+// panicking, so a caller only pays for what it wires up.
 type countingFleet struct {
 	core.FleetAPI
 	statusCalls *int
+	nodesCalls  *int
 }
 
 func (c countingFleet) Status() (core.FleetStatus, error) {
-	*c.statusCalls++
+	if c.statusCalls != nil {
+		*c.statusCalls++
+	}
 	return c.FleetAPI.Status()
 }
+
+func (c countingFleet) Nodes(f core.NodeFilter) ([]core.NodeSummary, error) {
+	if c.nodesCalls != nil {
+		*c.nodesCalls++
+	}
+	return c.FleetAPI.Nodes(f)
+}
+
+var _ core.FleetAPI = countingFleet{}
 
 // TestFleetStatusCalledAtMostOnceOnRemoteNodePage pins the ctx-known-master
 // short circuit: a /n/child1/... request's Fleet().Status() call count is
