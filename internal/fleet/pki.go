@@ -232,8 +232,14 @@ func (ca *CA) SignClient(csrPEM []byte, nodeID string, now time.Time, life time.
 		return nil, "", "", err
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		hex.EncodeToString(serial.Bytes()), base64.StdEncoding.EncodeToString(pub), nil
+		serialHex(serial), base64.StdEncoding.EncodeToString(pub), nil
 }
+
+func serialHex(serial *big.Int) string { return hex.EncodeToString(serial.Bytes()) }
+
+// CertSerialHex is c's serial in the form SignClient returns and the
+// registry stores (Node.CertSerial).
+func CertSerialHex(c *x509.Certificate) string { return serialHex(c.SerialNumber) }
 
 // NewKeyAndCSR generates a child keypair and a CSR for it. The private key
 // never leaves the child.

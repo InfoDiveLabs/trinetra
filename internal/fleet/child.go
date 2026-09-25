@@ -107,21 +107,60 @@ type Identity struct {
 	leaf atomic.Pointer[x509.Certificate]
 }
 
-// LoadIdentity reads the identity Join wrote.
-func LoadIdentity(dir string) (*Identity, error) {
-	id := &Identity{dir: dir}
-	kp, cp, _ := identityPaths(dir)
-	c, err := tls.LoadX509KeyPair(cp, kp)
+// Renew stages the new pair as node.key.new/node.crt.new before moving it
+// into place, so a crash can never leave a key and cert that do not match.
+const stagedSuffix = ".new"
+
+func loadPair(certPath, keyPath string) (*tls.Certificate, *x509.Certificate, error) {
+	c, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("fleet: load identity: %w", err)
+		return nil, nil, err
 	}
 	leaf, err := x509.ParseCertificate(c.Certificate[0])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	id.cert.Store(&c)
+	return &c, leaf, nil
+}
+
+// LoadIdentity reads the identity Join wrote, finishing an interrupted
+// renewal first: once the master has signed a renewal it only honours the
+// new certificate, so a staged pair that is newer than the installed one (or
+// the only one that loads) is promoted, as is a staged cert whose key was
+// already moved into place when the crash hit.
+func LoadIdentity(dir string) (*Identity, error) {
+	kp, cp, _ := identityPaths(dir)
+	c, leaf, err := loadPair(cp, kp)
+	if nc, nleaf, nerr := loadPair(cp+stagedSuffix, kp+stagedSuffix); nerr == nil && (err != nil || nleaf.NotBefore.After(leaf.NotBefore)) {
+		if perr := promoteStaged(kp); perr != nil {
+			return nil, perr
+		}
+		if perr := promoteStaged(cp); perr != nil {
+			return nil, perr
+		}
+		c, leaf, err = nc, nleaf, nil
+	} else if err != nil {
+		if nc, nleaf, nerr := loadPair(cp+stagedSuffix, kp); nerr == nil {
+			if perr := promoteStaged(cp); perr != nil {
+				return nil, perr
+			}
+			c, leaf, err = nc, nleaf, nil
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fleet: load identity: %w", err)
+	}
+	id := &Identity{dir: dir}
+	id.cert.Store(c)
 	id.leaf.Store(leaf)
 	return id, nil
+}
+
+func promoteStaged(path string) error {
+	if err := os.Rename(path+stagedSuffix, path); err != nil {
+		return fmt.Errorf("fleet: finish interrupted certificate renewal: %w", err)
+	}
+	return nil
 }
 
 // NodeID is the CN of the current cert.
@@ -178,11 +217,22 @@ func (id *Identity) Renew(ctx context.Context, c *http.Client, masterURL string)
 	if err != nil {
 		return err
 	}
+	// Stage both files durably, then rename them into place. A crash at any
+	// point leaves either the old pair intact plus a complete staged pair,
+	// or the new key installed with the new cert still staged; LoadIdentity
+	// finishes the job either way. Writing node.key then node.crt in place
+	// could leave a key that does not match its cert.
 	kp, cp, _ := identityPaths(id.dir)
-	if err := writeFileAtomic(kp, keyPEM, 0o600); err != nil {
+	if err := writeFileAtomic(kp+stagedSuffix, keyPEM, 0o600); err != nil {
 		return err
 	}
-	if err := writeFileAtomic(cp, []byte(rr.Cert), 0o644); err != nil {
+	if err := writeFileAtomic(cp+stagedSuffix, []byte(rr.Cert), 0o644); err != nil {
+		return err
+	}
+	if err := promoteStaged(kp); err != nil {
+		return err
+	}
+	if err := promoteStaged(cp); err != nil {
 		return err
 	}
 	id.cert.Store(&pair)

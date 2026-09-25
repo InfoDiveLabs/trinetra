@@ -2,9 +2,11 @@ package fleet
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -363,4 +365,115 @@ func TestShipperRecoversFromOutboxDivergence(t *testing.T) {
 		defer f.sink.mu.Unlock()
 		return f.sink.applied[res.NodeID] == 101
 	})
+}
+
+// joinedIdentity joins f and returns the identity dir and node id.
+func joinedIdentity(t *testing.T, f *masterFixture) (string, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "fleet-child")
+	res, err := Join(context.Background(), joinCode(f, t, 1), "box", "v1", nil, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, res.NodeID
+}
+
+// newerPair signs a fresh key for id, as a renewal would.
+func newerPair(t *testing.T, f *masterFixture, id string) (keyPEM, certPEM []byte, serial string) {
+	t.Helper()
+	keyPEM, csrPEM, err := NewKeyAndCSR(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, serial, _, err = f.ca.SignClient(csrPEM, id, time.Now().Add(time.Hour), ClientCertLife)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keyPEM, certPEM, serial
+}
+
+func loadedSerial(t *testing.T, id *Identity) string {
+	t.Helper()
+	c, _ := id.Cert()
+	leaf, err := x509.ParseCertificate(c.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return CertSerialHex(leaf)
+}
+
+func TestRenewRotatesIdentityAndLeavesNoStagingFiles(t *testing.T) {
+	f := newMasterFixture(t)
+	dir, nodeID := joinedIdentity(t, f)
+	id, err := LoadIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := loadedSerial(t, id)
+	sh := NewShipper(ShipperConfig{MasterURL: f.srv.URL, Pin: f.pin, Identity: id, Outbox: nil})
+	if err := id.Renew(context.Background(), sh.client, f.srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	after := loadedSerial(t, id)
+	if after == before {
+		t.Fatal("renew kept the old certificate")
+	}
+	if n, _ := f.reg.Get(nodeID); n.CertSerial != after {
+		t.Fatalf("registry serial %s, identity serial %s", n.CertSerial, after)
+	}
+	for _, name := range []string{"node.key.new", "node.crt.new"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s left behind (err=%v)", name, err)
+		}
+	}
+	reloaded, err := LoadIdentity(dir)
+	if err != nil || loadedSerial(t, reloaded) != after {
+		t.Fatalf("reload after renew: err %v", err)
+	}
+}
+
+// A crash after the renewed pair was staged but before it was moved into
+// place must not strand the node on the superseded certificate.
+func TestLoadIdentityPromotesStagedRenewal(t *testing.T) {
+	f := newMasterFixture(t)
+	dir, nodeID := joinedIdentity(t, f)
+	key, crt, serial := newerPair(t, f, nodeID)
+	if err := os.WriteFile(filepath.Join(dir, "node.key.new"), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "node.crt.new"), crt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := LoadIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loadedSerial(t, id); got != serial {
+		t.Fatalf("loaded serial %s, want the staged %s", got, serial)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "node.crt")); string(b) != string(crt) {
+		t.Fatal("staged cert not promoted to node.crt")
+	}
+	assertMode(t, filepath.Join(dir, "node.key"), 0o600)
+}
+
+// A crash between the two renames leaves the new key in place and the new
+// cert still staged.
+func TestLoadIdentityRecoversHalfPromotedRenewal(t *testing.T) {
+	f := newMasterFixture(t)
+	dir, nodeID := joinedIdentity(t, f)
+	key, crt, serial := newerPair(t, f, nodeID)
+	if err := os.WriteFile(filepath.Join(dir, "node.key"), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "node.crt.new"), crt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := LoadIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loadedSerial(t, id); got != serial {
+		t.Fatalf("loaded serial %s, want %s", got, serial)
+	}
 }
