@@ -2,7 +2,7 @@ BIN=serverwatch
 CTL_BIN=serverwatch-ctl
 WEB_BIN=serverwatch-web
 
-.PHONY: test vet build linux cross release release-prod validate fmt
+.PHONY: test vet build linux cross release release-prod validate fleet-e2e fmt
 
 # Build flags, per release channel:
 #   Beta/dev builds keep the symbol table and DWARF so stack traces, delve, and
@@ -97,3 +97,8 @@ release-prod: cross
 
 validate:
 	bash test/docker/scenarios.sh
+
+# fleet-e2e runs the multi-container fleet mode test (master, two children,
+# a solo host, mock Telegram) against the real binary. Needs Docker; ~6 min.
+fleet-e2e:
+	bash test/docker/fleet/run.sh

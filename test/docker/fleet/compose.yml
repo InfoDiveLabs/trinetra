@@ -1,0 +1,40 @@
+# Multi-host fleet topology for run.sh: one master, two children, one solo
+# host and the mock Telegram API, each its own container on one network.
+# Daemons are started by run.sh (docker compose exec -d), not by systemd.
+name: swfleet
+
+x-sw: &sw
+  build:
+    context: ../../..
+    dockerfile: test/docker/Dockerfile
+  image: swfleet-e2e:latest
+  command: ["sleep", "infinity"]
+  init: true
+  networks: [fleetnet]
+  environment:
+    RUNTIME_DIRECTORY: /run/serverwatch
+    TELEGRAM_BASE_URL: "http://mocktg:8080"
+
+services:
+  mocktg:
+    <<: *sw
+    hostname: mocktg
+    command: ["mocktg"]
+    environment:
+      ADDR: ":8080"
+  master:
+    <<: *sw
+    hostname: master
+  child1:
+    <<: *sw
+    hostname: child1
+  child2:
+    <<: *sw
+    hostname: child2
+  solo:
+    <<: *sw
+    hostname: solo
+
+networks:
+  fleetnet:
+    name: swfleet_fleetnet
