@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"serverwatch/internal/config"
 	"serverwatch/internal/core"
@@ -264,5 +265,84 @@ func TestReplicaAlertLogFailureThenRetryWritesOnce(t *testing.T) {
 	}
 	if strings.Count(string(b), "\n") != 1 {
 		t.Fatalf("alertlog = %q, want exactly 1 line (not zero, not duplicated)", b)
+	}
+}
+
+// Replica maintenance (Downsample+Prune, fsync-heavy) runs on the same
+// cadence as the local store's (storeMaintenanceInterval), staggered so each
+// 5s master tick handles only a slice of the nodes.
+func TestReplicaMaintenanceSliceSize(t *testing.T) {
+	cases := []struct {
+		total          int
+		tick, interval time.Duration
+		want           int
+	}{
+		{0, 5 * time.Second, 15 * time.Minute, 0},
+		{1, 5 * time.Second, 15 * time.Minute, 1},
+		{180, 5 * time.Second, 15 * time.Minute, 1},
+		{181, 5 * time.Second, 15 * time.Minute, 2},
+		{1000, 5 * time.Second, 15 * time.Minute, 6},
+		{5, 5 * time.Second, 10 * time.Second, 3},
+		{5, time.Minute, time.Second, 5}, // interval shorter than a tick: everything each tick
+	}
+	for _, c := range cases {
+		if got := maintSliceSize(c.total, c.tick, c.interval); got != c.want {
+			t.Errorf("maintSliceSize(%d, %v, %v) = %d, want %d", c.total, c.tick, c.interval, got, c.want)
+		}
+	}
+}
+
+func TestReplicaMaintenanceVisitsEveryNodeOncePerInterval(t *testing.T) {
+	var s maintScheduler
+	ids := []string{"a", "b", "c", "d", "e"}
+	seen := map[string]int{}
+	for i := 0; i < 2; i++ { // 2 ticks per interval
+		for _, id := range s.next(ids, 5*time.Second, 10*time.Second) {
+			seen[id]++
+		}
+	}
+	for _, id := range ids {
+		if seen[id] == 0 {
+			t.Fatalf("node %s not maintained within one interval: %v", id, seen)
+		}
+	}
+	if len(s.next(nil, 5*time.Second, 10*time.Second)) != 0 {
+		t.Fatal("no nodes should mean an empty slice")
+	}
+}
+
+// Live updates arrive every few seconds per node: they must not rewrite the
+// snapshot and alert state files each time. The node API still serves the
+// latest snapshot (from memory / live.json).
+func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
+	root := t.TempDir()
+	r := newReplicaSink(root, StoreOptions{})
+	snap, _ := json.Marshal(Snapshot{TS: 1, CPU: 7})
+	as := json.RawMessage(`{"active":{}}`)
+	if err := r.Live(testNodeID, fleet.LiveUpdate{Snapshot: snap, AlertState: as}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, testNodeID, "snapshot.json")); !os.IsNotExist(err) {
+		t.Fatalf("snapshot.json written on live update (err=%v)", err)
+	}
+	alertsPath := filepath.Join(root, testNodeID, "alerts.json")
+	old := time.Unix(1000, 0)
+	if err := os.Chtimes(alertsPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Live(testNodeID, fleet.LiveUpdate{Snapshot: snap, AlertState: as}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(alertsPath); !fi.ModTime().Equal(old) {
+		t.Fatal("unchanged alert state rewritten")
+	}
+	api, _ := r.NodeAPI(testNodeID, config.Default)
+	if v, _ := api.Snapshot(); v.CPU != 7 {
+		t.Fatalf("snapshot cpu = %v", v.CPU)
+	}
+	// And after a master restart (fresh sink over the same dir).
+	api2, _ := newReplicaSink(root, StoreOptions{}).NodeAPI(testNodeID, config.Default)
+	if v, _ := api2.Snapshot(); v.CPU != 7 {
+		t.Fatalf("snapshot cpu after restart = %v", v.CPU)
 	}
 }

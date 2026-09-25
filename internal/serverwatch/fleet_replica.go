@@ -422,24 +422,25 @@ func writeFileSynced(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// Live implements fleet.Sink: the latest view is kept in memory and written
-// (unsynced; it is regenerated every few seconds) for the node API and for
-// continuity across a master restart.
+// Live implements fleet.Sink. Every node posts one of these every few
+// seconds, so this is the master's hottest write path and it is kept cheap:
+// the latest view lives in memory (the node API reads the snapshot from
+// there), live.json is rewritten for continuity across a master restart
+// with a plain temp-file + rename and NO fsync (it is regenerated every few
+// seconds, so losing the last one to a crash costs nothing), and alerts.json
+// (read by the node API's ActiveAlerts) is rewritten only when the child's
+// alert state actually changed.
 func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 	n, err := r.node(id)
 	if err != nil {
 		return err
 	}
-	if prev := n.live.Load(); prev != nil && len(u.HostInfo) == 0 {
+	prev := n.live.Load()
+	if prev != nil && len(u.HostInfo) == 0 {
 		u.HostInfo = prev.HostInfo // hostinfo is only sent every few minutes
 	}
 	n.live.Store(&u)
-	if len(u.Snapshot) > 0 {
-		if err := writeFileAtomic(filepath.Join(n.dir, "snapshot.json"), u.Snapshot, 0o600); err != nil {
-			return err
-		}
-	}
-	if len(u.AlertState) > 0 {
+	if len(u.AlertState) > 0 && (prev == nil || !bytes.Equal(prev.AlertState, u.AlertState)) {
 		if err := writeFileAtomic(filepath.Join(n.dir, "alerts.json"), u.AlertState, 0o600); err != nil {
 			return err
 		}
@@ -457,30 +458,68 @@ func (r *replicaSink) LiveOf(id string) *fleet.LiveUpdate {
 	return n.live.Load()
 }
 
-// Maintain downsamples and prunes every known replica. Downsampling uses the
+// maintSliceSize is how many of total replicas one master tick maintains so
+// that each is maintained about once per interval: replica maintenance
+// (Downsample + Prune, which rewrite and fsync series files) runs on the same
+// cadence as the local store's (storeMaintenanceInterval), staggered across
+// ticks instead of every node at once.
+func maintSliceSize(total int, tick, interval time.Duration) int {
+	if total <= 0 {
+		return 0
+	}
+	ticks := int(interval / tick)
+	if ticks < 1 {
+		ticks = 1
+	}
+	return (total + ticks - 1) / ticks
+}
+
+// maintScheduler hands out the next slice of replicas to maintain, rotating
+// through them so every node gets its turn.
+type maintScheduler struct{ cursor int }
+
+func (m *maintScheduler) next(ids []string, tick, interval time.Duration) []string {
+	n := maintSliceSize(len(ids), tick, interval)
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, ids[(m.cursor+i)%len(ids)])
+	}
+	if len(ids) > 0 {
+		m.cursor = (m.cursor + n) % len(ids)
+	}
+	return out
+}
+
+// nodeIDs lists every replica directory on disk, sorted.
+func (r *replicaSink) nodeIDs() []string {
+	ents, err := os.ReadDir(r.root)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, e := range ents {
+		if e.IsDir() && isNodeID(e.Name()) {
+			ids = append(ids, e.Name())
+		}
+	}
+	return ids
+}
+
+// maintainNode downsamples and prunes one replica. Downsampling uses the
 // node's newest ingested sample time as "now", so a child whose backlog is
 // still arriving never has a half-received minute rolled up early.
-func (r *replicaSink) Maintain(now int64) {
-	ents, err := os.ReadDir(r.root)
+func (r *replicaSink) maintainNode(id string, now int64) {
+	n, err := r.node(id)
 	if err != nil {
 		return
 	}
-	for _, e := range ents {
-		if !e.IsDir() || !isNodeID(e.Name()) {
-			continue
-		}
-		n, err := r.node(e.Name())
-		if err != nil {
-			continue
-		}
-		n.mu.Lock()
-		lastTS := n.st.LastIngestTS
-		n.mu.Unlock()
-		if lastTS > 0 {
-			_ = n.store.Downsample(lastTS)
-		}
-		_ = n.store.Prune(now)
+	n.mu.Lock()
+	lastTS := n.st.LastIngestTS
+	n.mu.Unlock()
+	if lastTS > 0 {
+		_ = n.store.Downsample(lastTS)
 	}
+	_ = n.store.Prune(now)
 }
 
 // NodeAPI returns a core.API over id's replica.
@@ -491,8 +530,8 @@ func (r *replicaSink) NodeAPI(id string, getCfg func() *config.Config) (core.API
 	}
 	getSnap := func() Snapshot {
 		var s Snapshot
-		if b, err := os.ReadFile(filepath.Join(n.dir, "snapshot.json")); err == nil {
-			_ = json.Unmarshal(b, &s)
+		if u := n.live.Load(); u != nil && len(u.Snapshot) > 0 {
+			_ = json.Unmarshal(u.Snapshot, &s)
 		}
 		return s
 	}

@@ -158,7 +158,7 @@ func waitBounded(done <-chan struct{}, deadline time.Time) bool {
 
 // masterLoop is the master's periodic work: pick up nodes the tracker does
 // not know yet, evaluate liveness and raise alerts, flush the registry and
-// run replica maintenance. tick is called from one goroutine only.
+// run a slice of replica maintenance. tick is called from one goroutine only.
 type masterLoop struct {
 	reg         *fleet.Registry
 	tracker     *fleet.Tracker
@@ -168,13 +168,16 @@ type masterLoop struct {
 	getCfg      func() *config.Config
 	logf        func(string, ...any)
 	lastFlush   time.Time
-	lastMaint   time.Time
-	maintaining chan struct{} // holds a token while a Maintain pass runs
+	maint       maintScheduler // only touched by the maintenance goroutine
+	maintaining chan struct{}  // holds a token while a maintenance slice runs
 }
+
+// masterTickInterval is how often the master loop ticks.
+const masterTickInterval = 5 * time.Second
 
 func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, d fleetDeps, now time.Time) *masterLoop {
 	return &masterLoop{reg: reg, tracker: tracker, sink: sink, alerter: fleet.NewNodeAlerter(), alert: d.alert,
-		getCfg: d.getCfg, logf: d.logf, lastFlush: now, lastMaint: now, maintaining: make(chan struct{}, 1)}
+		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1)}
 }
 
 // trackUnseen registers every registry node the tracker has never heard of
@@ -213,17 +216,23 @@ func (l *masterLoop) tick(now time.Time) {
 			l.logf("fleet: registry flush: %v", err)
 		}
 	}
-	if now.Sub(l.lastMaint) >= time.Duration(l.getCfg().SampleInterval)*time.Second {
-		l.lastMaint = now
-		select {
-		case l.maintaining <- struct{}{}:
-			go func() { defer func() { <-l.maintaining }(); l.sink.Maintain(time.Now().Unix()) }()
-		default: // previous pass still running
-		}
+	// Replica maintenance rewrites and fsyncs series files, so it runs on
+	// the local store's cadence (storeMaintenanceInterval), a slice of the
+	// nodes per tick, off this goroutine. l.maint is only touched inside the
+	// maintenance goroutine; the token channel orders successive passes.
+	select {
+	case l.maintaining <- struct{}{}:
+		go func() {
+			defer func() { <-l.maintaining }()
+			for _, id := range l.maint.next(l.sink.nodeIDs(), masterTickInterval, storeMaintenanceInterval) {
+				l.sink.maintainNode(id, time.Now().Unix())
+			}
+		}()
+	default: // previous slice still running
 	}
 }
 
-// drain blocks until any in-flight Maintain pass has finished.
+// drain blocks until any in-flight maintenance slice has finished.
 func (l *masterLoop) drain() { l.maintaining <- struct{}{} }
 
 func fleetAlert(in fleet.AlertIntent, now int64) Alert {
@@ -298,8 +307,8 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		defer loop.drain() // wait out an in-flight Maintain pass
-		tick := time.NewTicker(5 * time.Second)
+		defer loop.drain() // wait out an in-flight maintenance slice
+		tick := time.NewTicker(masterTickInterval)
 		defer tick.Stop()
 		for {
 			select {
