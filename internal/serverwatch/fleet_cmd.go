@@ -219,6 +219,7 @@ func fleetLeave(args []string) int {
 	if *purge {
 		os.RemoveAll(fleetChildDir(stateDir))
 		os.RemoveAll(fleetOutboxDir(stateDir))
+		fmt.Fprintln(stdout, "Deleted this node's fleet identity and unsent outbox.")
 	}
 	fmt.Fprintf(stdout, "Left the fleet; this host is solo again (local history kept).\n%s\n", restartHint)
 	return 0
