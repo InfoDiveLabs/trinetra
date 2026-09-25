@@ -96,11 +96,26 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// rejectPositionals prints and returns true if pos is non-empty: a command
+// that takes no positional arguments (init, leave, disable, nodes, token
+// create/list) but received one is a usage error, not silently ignored.
+func rejectPositionals(cmd, usage string, pos []string) bool {
+	if len(pos) == 0 {
+		return false
+	}
+	fmt.Fprintf(stderr, "%s: unexpected argument %q\nusage: %s\n", cmd, pos[0], usage)
+	return true
+}
+
 func fleetInit(args []string) int {
 	fs := newFlags("fleet init")
 	addr := fs.String("address", "", "comma-separated hostnames/IPs children use to reach this host (required)")
 	port := fs.Int("port", 9443, "TCP port for the fleet listener")
-	if _, err := parseInterspersed(fs, args); err != nil {
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if rejectPositionals("fleet init", "serverwatch fleet init --address HOST[,IP] [--port 9443]", pos) {
 		return 2
 	}
 	var hosts []string
@@ -199,7 +214,11 @@ func fleetJoinCmd(args []string) int {
 func fleetLeave(args []string) int {
 	fs := newFlags("fleet leave")
 	purge := fs.Bool("purge", false, "also delete this node's fleet identity and unsent outbox")
-	if _, err := parseInterspersed(fs, args); err != nil {
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if rejectPositionals("fleet leave", "serverwatch fleet leave [--purge]", pos) {
 		return 2
 	}
 	c, err := loadCfgForFleet()
@@ -216,19 +235,28 @@ func fleetLeave(args []string) int {
 		fmt.Fprintln(stderr, "fleet leave: save config:", err)
 		return 1
 	}
+	ok := true
 	if *purge {
-		os.RemoveAll(fleetChildDir(stateDir))
-		os.RemoveAll(fleetOutboxDir(stateDir))
-		fmt.Fprintln(stdout, "Deleted this node's fleet identity and unsent outbox.")
+		ok = purgeAll("left the fleet", []purgeTarget{
+			{path: fleetChildDir(stateDir), what: "this node's fleet identity"},
+			{path: fleetOutboxDir(stateDir), what: "unsent outbox"},
+		})
 	}
 	fmt.Fprintf(stdout, "Left the fleet; this host is solo again (local history kept).\n%s\n", restartHint)
+	if !ok {
+		return 1
+	}
 	return 0
 }
 
 func fleetDisable(args []string) int {
 	fs := newFlags("fleet disable")
 	purge := fs.Bool("purge", false, "also delete the CA, node registry and every node's replicated history")
-	if _, err := parseInterspersed(fs, args); err != nil {
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if rejectPositionals("fleet disable", "serverwatch fleet disable [--purge]", pos) {
 		return 2
 	}
 	c, err := loadCfgForFleet()
@@ -245,14 +273,50 @@ func fleetDisable(args []string) int {
 		fmt.Fprintln(stderr, "fleet disable: save config:", err)
 		return 1
 	}
+	ok := true
 	if *purge {
-		os.RemoveAll(fleetMasterDir(stateDir))
-		fmt.Fprintln(stdout, "Deleted fleet CA, registry and replicas.")
+		ok = purgeAll("disabled the fleet master", []purgeTarget{
+			{path: fleetMasterDir(stateDir), what: "fleet CA, registry and replicas"},
+		})
 	} else {
 		fmt.Fprintln(stdout, "Fleet data kept; `fleet init` again reuses the same CA so children need not re-join.")
 	}
 	fmt.Fprintf(stdout, "This host is solo again.\n%s\n", restartHint)
+	if !ok {
+		return 1
+	}
 	return 0
+}
+
+// purgeTarget is one directory a --purge flag deletes, with what naming it
+// for the success/failure messages.
+type purgeTarget struct {
+	path string
+	what string
+}
+
+// purgeAll removes each target's path with os.RemoveAll. Config has already
+// been switched back to solo by the time this runs, so a removal failure is
+// reported (which path, why) without pretending the role change failed too;
+// it just means the operator has cleanup left to do. verb is the sentence
+// prefix used in a failure line ("left the fleet" / "disabled the fleet
+// master"). The success line lists only the targets that were actually
+// removed. It reports whether every target was removed.
+func purgeAll(verb string, targets []purgeTarget) bool {
+	var deleted []string
+	ok := true
+	for _, t := range targets {
+		if err := os.RemoveAll(t.path); err != nil {
+			fmt.Fprintf(stderr, "%s, but could not delete %s: %v; remove it manually\n", verb, t.path, err)
+			ok = false
+			continue
+		}
+		deleted = append(deleted, t.what)
+	}
+	if len(deleted) > 0 {
+		fmt.Fprintf(stdout, "Deleted %s.\n", strings.Join(deleted, " and "))
+	}
+	return ok
 }
 
 var errDaemonDown = errors.New("serverwatch daemon not reachable (is it running? sudo systemctl status serverwatch)")
@@ -309,7 +373,11 @@ func fleetNodes(args []string) int {
 	tag := fs.String("tag", "", "only nodes with this tag")
 	state := fs.String("state", "", "only nodes in this state (online, lagging, stale, down, revoked)")
 	q := fs.String("q", "", "search name, id or address")
-	if _, err := parseInterspersed(fs, args); err != nil {
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if rejectPositionals("fleet nodes", "serverwatch fleet nodes [--tag T] [--state S] [--q TEXT]", pos) {
 		return 2
 	}
 	return withDaemon(func(c *control.Client) error {
@@ -365,6 +433,10 @@ func fleetNodeCmd(args []string) int {
 		return 2
 	}
 	verb, ref := args[0], args[1]
+	if verb == "revoke" && len(args) != 2 {
+		fmt.Fprintln(stderr, "usage: serverwatch fleet node revoke <node>")
+		return 2
+	}
 	return withDaemon(func(c *control.Client) error {
 		id, err := resolveNodeRef(c, ref)
 		if err != nil {
@@ -410,7 +482,11 @@ func fleetTokenCmd(args []string) int {
 		tags := fs.String("tags", "", "comma-separated tags new nodes get")
 		ttl := fs.Duration("ttl", time.Hour, "how long the code stays valid")
 		uses := fs.Int("uses", 1, "how many servers may join with it")
-		if _, err := parseInterspersed(fs, args[1:]); err != nil {
+		pos, err := parseInterspersed(fs, args[1:])
+		if err != nil {
+			return 2
+		}
+		if rejectPositionals("fleet token create", "serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1]", pos) {
 			return 2
 		}
 		var tl []string
@@ -428,6 +504,10 @@ func fleetTokenCmd(args []string) int {
 			return nil
 		})
 	case "list":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: serverwatch fleet token list")
+			return 2
+		}
 		return withDaemon(func(c *control.Client) error {
 			ts, err := c.Fleet().Tokens()
 			if err != nil {
