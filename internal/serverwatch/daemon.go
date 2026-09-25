@@ -1037,11 +1037,12 @@ func cmdDaemon(args []string) int {
 	c0 := getCfg()
 	cleanStopPath := st.CleanStopPath()
 	// bootReportCh carries the boot/recovery report from its background collector
-	// goroutine (below) to the sampler loop, which delivers it. The sampler loop
-	// is the single writer of the AlertLog (AppendAlertEvent is not
-	// concurrency-safe), so the collector goroutine must not call enqueueAndLog
-	// itself. Cap 1: at most one boot report is ever produced per process start,
-	// so the send never blocks even if the loop is slow to drain it.
+	// goroutine (below) to the sampler loop, which delivers it alongside its
+	// other alerts. This is a hand-off for ordering, not for safety: the
+	// AlertLog serializes appends with its own mutex and enqueueAndLog is
+	// already called from other goroutines (the fleet master's alerts). Cap 1:
+	// at most one boot report is ever produced per process start, so the send
+	// never blocks even if the loop is slow to drain it.
 	bootReportCh := make(chan Alert, 1)
 	if last, ok := readHeartbeat(st.HeartbeatPath(), fs); ok {
 		if _, stopped := readCleanStop(cleanStopPath, fs); !stopped {
@@ -1105,9 +1106,8 @@ func cmdDaemon(args []string) int {
 	var lastSlowVer uint64  // slow-hub version whose slow checks were last evaluated
 	for {
 		// Deliver the boot/recovery report once its background collector has
-		// finished (see bootReportCh above). Done here, on the sampler
-		// goroutine, so the single-writer AlertLog is never touched from two
-		// goroutines. Non-blocking: no report pending is the common case.
+		// finished (see bootReportCh above), in line with the loop's other
+		// alerts. Non-blocking: no report pending is the common case.
 		select {
 		case a := <-bootReportCh:
 			enqueueAndLog(alog, bus, q, a, false) // reports bypass quiet hours
