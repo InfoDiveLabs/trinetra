@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -776,4 +777,102 @@ func (s *tsFileStore) Stats() (int, int64, error) {
 		return 0, 0, err
 	}
 	return count, size, nil
+}
+
+// ---- fleet replica helpers ----
+
+// LastTS returns the timestamp of metric's newest record at res, or
+// math.MinInt64 when the series is empty or missing. The fleet replica uses
+// it to keep appends in nondecreasing order (the Append contract).
+func (s *tsFileStore) LastTS(metric string, res Resolution) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return lastRecordTS(s.metricPath(metric, res))
+}
+
+// AppendRollup appends one ready-made 1m point (fleet gap repair, where the
+// child only still has rollups). Callers keep ts order.
+func (s *tsFileStore) AppendRollup(metric string, p Point) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return appendRecord(s.metricPath(metric, Res1m), tsResolution1m, encodeSampleRecord(p.TS, p.Min, p.Avg, p.Max))
+}
+
+// Metrics lists the metric ids with a series file at res, sorted.
+func (s *tsFileStore) Metrics(res Resolution) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ents, err := os.ReadDir(s.resDir(res))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tsd") {
+			continue
+		}
+		if id, ok := unsafeMetric(strings.TrimSuffix(e.Name(), ".tsd")); ok {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// SyncMetrics fsyncs the raw and 1m files of metrics (those that exist) and,
+// if events is set, events.tsd. The fleet master calls it before acking a
+// batch so an acked record survives a power cut.
+func (s *tsFileStore) SyncMetrics(metrics []string, events bool) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var paths []string
+	for _, m := range metrics {
+		paths = append(paths, s.metricPath(m, ResRaw), s.metricPath(m, Res1m))
+	}
+	if events {
+		paths = append(paths, s.eventsPath())
+	}
+	for _, p := range paths {
+		f, err := os.OpenFile(p, os.O_WRONLY, 0)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		err = f.Sync()
+		f.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unsafeMetric reverses safeMetric.
+func unsafeMetric(stem string) (string, bool) {
+	if stem == "%00" {
+		return "", true
+	}
+	var b strings.Builder
+	for i := 0; i < len(stem); i++ {
+		c := stem[i]
+		if c != '%' {
+			b.WriteByte(c)
+			continue
+		}
+		if i+2 >= len(stem) {
+			return "", false
+		}
+		v, err := strconv.ParseUint(stem[i+1:i+3], 16, 8)
+		if err != nil {
+			return "", false
+		}
+		b.WriteByte(byte(v))
+		i += 2
+	}
+	return b.String(), true
 }
