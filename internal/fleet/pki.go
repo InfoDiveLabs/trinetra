@@ -319,6 +319,14 @@ func ServerTLS(leaf tls.Certificate, ca *x509.Certificate) *tls.Config {
 	}
 }
 
+// ClientCertFromRequest returns the verified client certificate, if any.
+func ClientCertFromRequest(r *http.Request) (*x509.Certificate, bool) {
+	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.VerifiedChains[0]) == 0 {
+		return nil, false
+	}
+	return r.TLS.VerifiedChains[0][0], true
+}
+
 // NodeIDFromRequest returns the CN of the verified client certificate.
 func NodeIDFromRequest(r *http.Request) (string, bool) {
 	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.VerifiedChains[0]) == 0 {

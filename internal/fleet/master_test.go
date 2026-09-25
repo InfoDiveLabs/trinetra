@@ -556,3 +556,68 @@ func TestMasterReportsSkewOnIngestBackfillAndLive(t *testing.T) {
 		t.Fatalf("skews = %v, want ~[100 -100 40]", f.skews)
 	}
 }
+
+// renewVia renews over c and returns a client presenting the new cert.
+func (f *masterFixture) renewVia(t *testing.T, c *http.Client, cn string) *http.Client {
+	t.Helper()
+	keyPEM, csrPEM, _ := NewKeyAndCSR(cn)
+	body, _ := json.Marshal(RenewRequest{CSR: string(csrPEM)})
+	resp, err := c.Post(f.srv.URL+PathRenew, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("renew status %d", resp.StatusCode)
+	}
+	var rr RenewResponse
+	json.NewDecoder(resp.Body).Decode(&rr)
+	cert, err := tls.X509KeyPair([]byte(rr.Cert), keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return clientFor(t, f.pin, &cert)
+}
+
+func liveStatus(t *testing.T, f *masterFixture, c *http.Client) int {
+	t.Helper()
+	b, _ := json.Marshal(LiveUpdate{SentAt: time.Now().Unix()})
+	resp, err := c.Post(f.srv.URL+PathLive, "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+// After a renewal the old certificate keeps working only until the node
+// first uses the new one (so a lost renew response cannot lock it out);
+// from then on the superseded certificate is refused.
+func TestRequireNodeRejectsSupersededCertAfterRenew(t *testing.T) {
+	f := newMasterFixture(t)
+	id, oldC := f.join(t, nil)
+	newC := f.renewVia(t, oldC, id)
+	if st := liveStatus(t, f, oldC); st != 200 {
+		t.Fatalf("old cert before the new one is used: status %d, want 200", st)
+	}
+	if st := liveStatus(t, f, newC); st != 200 {
+		t.Fatalf("new cert: status %d", st)
+	}
+	if st := liveStatus(t, f, oldC); st != http.StatusForbidden {
+		t.Fatalf("superseded cert: status %d, want 403", st)
+	}
+	if st := liveStatus(t, f, newC); st != 200 {
+		t.Fatalf("new cert after refusal: status %d", st)
+	}
+}
+
+// A certificate the registry never recorded for this node (e.g. a cert from
+// before a re-bind) is refused.
+func TestRequireNodeRejectsUnrecordedCert(t *testing.T) {
+	f := newMasterFixture(t)
+	id, _ := f.join(t, nil)
+	stray := issueClient(t, f.ca, id)
+	if st := liveStatus(t, f, clientFor(t, f.pin, &stray)); st != http.StatusForbidden {
+		t.Fatalf("stray cert: status %d, want 403", st)
+	}
+}

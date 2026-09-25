@@ -12,18 +12,22 @@ import (
 
 // Node is one enrolled fleet member as the master sees it.
 type Node struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Tags         []string `json:"tags,omitempty"`
-	Self         bool     `json:"self,omitempty"`
-	PubKey       string   `json:"pubkey,omitempty"`
-	CertSerial   string   `json:"cert_serial,omitempty"`
-	CertNotAfter int64    `json:"cert_not_after,omitempty"`
-	Revoked      bool     `json:"revoked,omitempty"`
-	Version      string   `json:"version,omitempty"`
-	Joined       int64    `json:"joined,omitempty"`
-	LastSeen     int64    `json:"last_seen,omitempty"`
-	RemoteAddr   string   `json:"remote_addr,omitempty"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Tags       []string `json:"tags,omitempty"`
+	Self       bool     `json:"self,omitempty"`
+	PubKey     string   `json:"pubkey,omitempty"`
+	CertSerial string   `json:"cert_serial,omitempty"`
+	// PrevCertSerial is the certificate a renewal replaced. It is still
+	// accepted until the node first presents CertSerial (so a renew response
+	// lost in transit cannot lock the node out), then cleared.
+	PrevCertSerial string `json:"prev_cert_serial,omitempty"`
+	CertNotAfter   int64  `json:"cert_not_after,omitempty"`
+	Revoked        bool   `json:"revoked,omitempty"`
+	Version        string `json:"version,omitempty"`
+	Joined         int64  `json:"joined,omitempty"`
+	LastSeen       int64  `json:"last_seen,omitempty"`
+	RemoteAddr     string `json:"remote_addr,omitempty"`
 }
 
 // NewNodeID returns 128 random bits as 32 hex chars.

@@ -129,8 +129,29 @@ func (m *Master) requireNode(h nodeHandler) http.HandlerFunc {
 			http.Error(w, "client certificate required", http.StatusUnauthorized)
 			return
 		}
-		if m.cfg.Registry.IsRevoked(id) {
+		n, known := m.cfg.Registry.Get(id)
+		if !known || n.Revoked {
 			http.Error(w, "revoked", http.StatusForbidden)
+			return
+		}
+		cert, _ := ClientCertFromRequest(r)
+		switch serial := CertSerialHex(cert); {
+		case n.CertSerial == "" || serial == n.CertSerial:
+			if n.PrevCertSerial != "" {
+				// The renewed cert is in use: the old one is now superseded.
+				_ = m.cfg.Registry.Update(id, func(n *Node) error {
+					if serial == n.CertSerial {
+						n.PrevCertSerial = ""
+					}
+					return nil
+				})
+			}
+		case serial == n.PrevCertSerial:
+			// Renewed but the node has not switched yet (e.g. the renew
+			// response was lost): still honoured until it does.
+		default:
+			m.cfg.Logf("fleet: refused superseded certificate %s for node %s", serial, id)
+			http.Error(w, "certificate superseded", http.StatusForbidden)
 			return
 		}
 		h(w, r, id)
@@ -254,7 +275,8 @@ func (m *Master) handleJoin(w http.ResponseWriter, r *http.Request) {
 	notAfter := now.Add(ClientCertLife).Unix()
 	if rebind {
 		err = m.cfg.Registry.Update(id, func(n *Node) error {
-			n.PubKey, n.CertSerial, n.CertNotAfter = pub, serial, notAfter
+			// A re-bind supersedes every earlier certificate at once.
+			n.PubKey, n.CertSerial, n.PrevCertSerial, n.CertNotAfter = pub, serial, "", notAfter
 			n.Version = req.Version
 			return nil
 		})
@@ -285,7 +307,14 @@ func (m *Master) handleRenew(w http.ResponseWriter, r *http.Request, id string) 
 		http.Error(w, "bad csr", http.StatusBadRequest)
 		return
 	}
+	presented := ""
+	if c, ok := ClientCertFromRequest(r); ok {
+		presented = CertSerialHex(c)
+	}
 	if err := m.cfg.Registry.Update(id, func(n *Node) error {
+		// Keep the certificate this request came in with acceptable until
+		// the node uses the new one.
+		n.PrevCertSerial = presented
 		n.PubKey, n.CertSerial, n.CertNotAfter = pub, serial, now.Add(ClientCertLife).Unix()
 		return nil
 	}); err != nil {
