@@ -252,11 +252,25 @@ same data, new name. If this host already runs a `serverwatch` install
 (`/etc/serverwatch/config.json` or `/var/lib/serverwatch` exists), do not
 follow the fresh-install path above expecting a clean slate — `sudo trinetra
 install` detects it and migrates in place instead, in the **same single
-command** you already know from step 3. There is nothing else to run and
-nothing to prepare beyond getting the `trinetra` binary onto the box (step 2
-above, same as a fresh install).
+command** you already know from step 3. There is no separate migration tool
+to run.
+
+**First put `trinetra` and the plugins you use into one directory**, exactly
+as in step 2's download loop: `trinetra-ctl` if you use the terminal UI
+(`serverwatch cli`), `trinetra-web` if you use the web UI. `trinetra install`
+installs only the plugins it finds next to the `trinetra` binary it runs
+from, and the migration removes the old `serverwatch-ctl` /
+`serverwatch-web`. Upgrading with the core binary alone takes the web UI and
+the terminal UI down until you add the plugins and re-run `sudo trinetra
+install`; the migration summary ends with a `WARNING:` line for each old
+plugin that has no new counterpart.
 
 ```bash
+cd /tmp && arch=linux-arm64     # the same loop as step 2
+for b in trinetra trinetra-ctl trinetra-web; do
+  curl -fsSL -o "$b" "https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/$b-$arch"
+done
+chmod +x trinetra trinetra-ctl trinetra-web
 sudo /tmp/trinetra install
 ```
 
@@ -269,6 +283,22 @@ Before the normal install steps run, this:
    cannot confirm that (an unusual host, or systemd being slow to report), the
    migration refuses and tells you to re-run with `--force` once you have
    confirmed serverwatch is not running yourself.
+
+   A `serverwatch daemon` started by hand (in a terminal, tmux, or a
+   container without systemd) is invisible to `systemctl`, so the migration
+   also reads the old daemon's pid file (`/var/lib/serverwatch/serverwatch.pid`).
+   If that process is alive and its executable is `serverwatch`, install
+   refuses. When `serverwatch.service` is not running, it refuses before
+   touching anything ("is running outside serverwatch.service ... Nothing was
+   changed"). When the service is running, the process may be the service's
+   own daemon, so install stops the service first and looks again. If the
+   process is still alive after the stop, install refuses with
+   `serverwatch.service` already stopped and disabled, and changes nothing
+   else. The message says so, and gives `sudo systemctl enable --now
+   serverwatch` as the way back. Either way, stop the process (`sudo kill
+   <pid>`) and re-run. `--force` proceeds anyway and prints a warning. A stale
+   pid file (no such process, or the pid now belongs to something else) is
+   ignored.
 2. **Moves `/etc/serverwatch` → `/etc/trinetra` and `/var/lib/serverwatch` →
    `/var/lib/trinetra`.** This is an atomic rename on the same filesystem.
    If the two paths are on different filesystems (`EXDEV`), it instead copies
@@ -279,8 +309,10 @@ Before the normal install steps run, this:
    verified.
 3. **Rewrites config paths that pointed inside the old directories** (for
    example `web.tls_cert` / `web.tls_key`), so a TLS cert path under
-   `/etc/serverwatch/tls` becomes `/etc/trinetra/tls` automatically. Nothing
-   else in the config file changes.
+   `/etc/serverwatch/tls` becomes `/etc/trinetra/tls` automatically. No other
+   value changes. When a path is rewritten, the file is re-serialised, so
+   the key order and indentation may differ from the original. It is left
+   byte-for-byte untouched when there is nothing to rewrite.
 4. Runs the **normal install** (copies the binary and any plugins, writes the
    plugin manifest, writes and enables `trinetra.service`, starts it) — see
    steps 1-7 above.
@@ -288,7 +320,12 @@ Before the normal install steps run, this:
    `serverwatch-ctl` / `serverwatch-web` plugin binaries found in
    `/usr/local/bin`. (A drop-in override directory for the old unit, if you
    had one, is left in place with a note — copy what you need into
-   `/etc/systemd/system/trinetra.service.d/` yourself.)
+   `/etc/systemd/system/trinetra.service.d/` yourself.) If an old plugin had
+   no `trinetra-ctl` / `trinetra-web` counterpart installed in step 4, the
+   summary warns, for example "serverwatch-web was installed but no
+   trinetra-web was found next to trinetra; the web UI is down until you put
+   trinetra-web in the same directory as the trinetra binary and re-run `sudo
+   trinetra install`".
 6. **Replaces `/usr/local/bin/serverwatch` with a compat symlink to
    `/usr/local/bin/trinetra`**, kept for one release so any script or muscle
    memory still calling `serverwatch ...` keeps working; running it prints a
@@ -324,6 +361,37 @@ adopts it instead of erroring:
 ```bash
 sudo trinetra install --state-already-at-new-path
 ```
+
+**Before the migration, other trinetra commands wait for it.** On a host
+that has a serverwatch install with data and no trinetra config or state
+yet, two kinds of command refuse instead of starting from scratch:
+
+- `trinetra daemon` (the service's `ExecStart`) exits with an error rather
+  than starting an empty history and a fresh Telegram enrollment next to
+  your real data. The message is "found a serverwatch install at
+  /etc/serverwatch and /var/lib/serverwatch; run `sudo trinetra install` to
+  migrate". You would see this if you start the daemon by hand, or start a
+  `trinetra.service` written some other way, before running install.
+  `systemctl status trinetra` shows it as a failed start.
+- CLI commands that write the config or state stop with "found a serverwatch
+  install at …; run `sudo trinetra install` first to migrate it, then
+  re-run this command. Nothing was changed". These are `config set|unset`,
+  `telegram set-token`, `monitor enable|disable|threshold`, `schedule`,
+  `quiet-hours`, `healthchecks`, `channel add|remove|set`, `downtime purge`,
+  `alerts ack|unack`, `migrate`, and `fleet init|join|leave|disable`.
+  Without this guard they would create `/etc/trinetra` or
+  `/var/lib/trinetra`, and install would then refuse to merge it with the
+  serverwatch data. Read-only commands such as `config get` and `status`
+  are unaffected.
+
+An empty legacy directory (an old `uninstall --purge` can leave one behind)
+does not count as an install for either guard. Likewise, when every legacy
+directory is empty, the migration has nothing to migrate.
+
+A legacy directory that is itself a symlink (for example
+`/var/lib/serverwatch -> /data/sw`) is moved as a symlink:
+`/var/lib/trinetra -> /data/sw`, with the data staying where it is. An
+interrupted run recognises it and resumes.
 
 The migration is **idempotent and resumable**: it checkpoints before each
 step, so re-running `sudo trinetra install` after an interruption (a crash,

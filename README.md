@@ -147,11 +147,20 @@ first run](docs/handbook/03-installation.md).
 
 Trinetra is the rename of what used to be called serverwatch: same daemon,
 same data, new name. If this host already runs a `serverwatch` install, the
-exact same install command migrates it in place — there is no separate
-migration tool and nothing to run first:
+exact same install command migrates it in place. There is no separate
+migration tool.
+
+First download `trinetra` and the plugins you use (`trinetra-ctl` for the
+terminal UI, `trinetra-web` for the web UI) into one directory, with the same
+loop as a fresh install above. `trinetra install` installs only the plugins
+it finds next to the `trinetra` binary, and the migration removes the old
+`serverwatch-ctl` / `serverwatch-web`. If you upgrade with the core binary
+alone, the web UI and terminal UI stay down until you add the plugins and
+re-run install. The migration summary prints a `WARNING:` line when this
+happens.
 
 ```bash
-sudo trinetra install
+sudo ./trinetra install     # run from the directory holding trinetra, trinetra-ctl, trinetra-web
 ```
 
 That one command stops and disables `serverwatch.service`, moves
@@ -178,7 +187,10 @@ It refuses rather than guesses: if both a `serverwatch` install and existing
 empty (usually an unmounted volume), install stops without touching anything
 and tells you exactly what to check. `--state-already-at-new-path` adopts a
 state volume you moved yourself ahead of time, and `--force` proceeds past a
-`serverwatch.service` systemd could not confirm was stopped. The whole
+`serverwatch.service` systemd could not confirm was stopped, or past a
+`serverwatch daemon` still running outside the service. Until you have run
+install, `trinetra daemon` and the commands that change settings refuse on
+such a host and point you at `sudo trinetra install`. The whole
 migration is idempotent and resumable, and every stop point explains both how
 to finish it and how to roll back by hand.
 

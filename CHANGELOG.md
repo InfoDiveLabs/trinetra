@@ -8,7 +8,7 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
-Fleet mode, phase 1: one serverwatch can now collect the history of many,
+Fleet mode, phase 1: one trinetra can now collect the history of many,
 while every host keeps monitoring and alerting on its own exactly as before.
 See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
 
@@ -25,12 +25,12 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   sent. The master raises node-down alerts (folded into one fleet-connectivity
   alert when most of the fleet drops at once); a child warns locally when its
   link has been down for ten minutes.
-- **`serverwatch fleet` commands:** `init`, `join`, `leave`, `disable`,
+- **`trinetra fleet` commands:** `init`, `join`, `leave`, `disable`,
   `status`, `nodes`, `node revoke|rename|tag`, and `token create|list|delete`.
   See the [command reference](docs/handbook/11-command-reference.md#trinetra-fleet).
 - **Config keys** `fleet.listen` (default `:9443`), `fleet.outbox_max_mb`
   (default `512`) and `fleet.node_down_after` (default `2m`). The role and
-  identity keys are managed by `serverwatch fleet` and refused by `config set`.
+  identity keys are managed by `trinetra fleet` and refused by `config set`.
 - **Control socket:** requests take an optional `node` to read a remote node's
   replica through the same methods, plus new `Fleet.*` methods for fleet
   management. Both are backward compatible: requests without `node` behave as
@@ -44,8 +44,9 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   `/run/trinetra`, and the `trinetra.service` unit. The web UI, TUI, and
   notifications carry the new Trinetra visual identity. The GitHub repo stays
   at `Suraj-Tiwari/server-monitor` for now; only the product name changes.
-  - **Upgrade:** run the one command you already know, `sudo trinetra
-    install`. On a host with an existing serverwatch install it detects it
+  - **Upgrade:** download `trinetra` and the plugins you use
+    (`trinetra-ctl`, `trinetra-web`) into one directory, then run the one
+    command you already know, `sudo trinetra install`. On a host with an existing serverwatch install it detects it
     and migrates in place before the normal install runs: it stops and
     disables `serverwatch.service`, moves `/etc/serverwatch` →
     `/etc/trinetra` and `/var/lib/serverwatch` → `/var/lib/trinetra` (an
@@ -64,7 +65,12 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
     present, or a legacy directory is unexpectedly empty (likely an
     unmounted volume); `--state-already-at-new-path` adopts a state volume
     you moved yourself, `--force` proceeds past a `serverwatch.service`
-    systemd could not confirm was stopped. A
+    systemd could not confirm was stopped or a `serverwatch daemon` still
+    running outside it (found through its pid file). An old plugin with no
+    `trinetra-ctl`/`trinetra-web` counterpart next to `trinetra` is named in
+    a `WARNING:` line of the summary. Until install has run, `trinetra
+    daemon` and the config- and state-writing CLI commands refuse on a host
+    that has only a serverwatch install, instead of starting empty. A
     `/var/lib/trinetra/migrated-from-serverwatch` marker records the
     migration; the whole thing is idempotent and resumable, and every stop
     point explains how to finish or roll back by hand. See [Upgrading from a
@@ -79,8 +85,10 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
     `SERVERWATCH_CONTROL_SOCKET`/`TOKEN` environment fallback (also removed in
     the next release); and the literal `"serverwatch-control"` control-socket
     handshake magic string. Fleet certificates already issued under a
-    serverwatch install keep their `"serverwatch fleet"` CN text (cosmetic,
-    left as is); new CAs are issued as `"trinetra fleet"`.
+    serverwatch install keep their old subject names: the CA's Organization
+    `"serverwatch fleet"` and the master certificate's CN `"serverwatch fleet
+    master"` (cosmetic, nothing verifies them, left as is). Newly issued ones
+    use `"trinetra fleet"` and `"trinetra fleet master"`.
 
 ### Unchanged
 
