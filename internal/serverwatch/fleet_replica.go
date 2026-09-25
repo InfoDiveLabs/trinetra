@@ -78,10 +78,14 @@ type replicaNode struct {
 	// seeded from the store on open so the guard survives a master restart.
 	lastEventStart int64
 	live           atomic.Pointer[fleet.LiveUpdate]
-	skewInit       bool    // st.SkewSec holds at least one sample
-	skewWarned     bool    // the reported skew is currently over skewWarnSec
-	skewSamples    []int64 // the last skewWindow raw samples, oldest first
-	skewOverRun    int     // consecutive filtered estimates over skewWarnSec
+	// alertsWritten is the alert state last written to alerts.json
+	// successfully (guarded by mu); Live compares against it, not against
+	// the last update received, so a failed write is retried.
+	alertsWritten []byte
+	skewInit      bool    // st.SkewSec holds at least one sample
+	skewWarned    bool    // the reported skew is currently over skewWarnSec
+	skewSamples   []int64 // the last skewWindow raw samples, oldest first
+	skewOverRun   int     // consecutive filtered estimates over skewWarnSec
 }
 
 // replicaSink implements fleet.Sink over per-node tsfile stores. tsfile opens
@@ -171,7 +175,7 @@ func (n *replicaNode) seedLocked() {
 // replicaNode.apply's durable writes to fail as if the real I/O had failed.
 // op identifies which one is about to happen ("append" raw samples,
 // "rollup" 1m AppendRollup, "event" AppendEvent, "alertlog" the alert log
-// append).
+// append, "alerts" Live's alerts.json rewrite).
 // This is how the ordering-guard-survives-a-failed-batch tests
 // (TestReplicaApplyEvictsNodeOnWriteFailure,
 // TestReplicaAlertLogFailureThenRetryWritesOnce) inject a failure partway
@@ -492,7 +496,8 @@ func writeFileSynced(path string, b []byte) error {
 // with a plain temp-file + rename and NO fsync (it is regenerated every few
 // seconds, so losing the last one to a crash costs nothing), and alerts.json
 // (read by the node API's ActiveAlerts) is rewritten only when the child's
-// alert state actually changed.
+// alert state differs from what it last wrote successfully (so a failed
+// write is retried by the next update even if the state has not changed).
 func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 	n, err := r.node(id)
 	if err != nil {
@@ -503,13 +508,32 @@ func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 		u.HostInfo = prev.HostInfo // hostinfo is only sent every few minutes
 	}
 	n.live.Store(&u)
-	if len(u.AlertState) > 0 && (prev == nil || !bytes.Equal(prev.AlertState, u.AlertState)) {
-		if err := writeFileAtomic(filepath.Join(n.dir, "alerts.json"), u.AlertState, 0o600); err != nil {
-			return err
-		}
+	if err := n.writeAlertState(u.AlertState); err != nil {
+		return fmt.Errorf("write alerts.json: %w", err)
 	}
 	b, _ := json.Marshal(u)
 	return writeFileAtomic(filepath.Join(n.dir, "live.json"), b, 0o600)
+}
+
+// writeAlertState rewrites alerts.json when as differs from the last
+// successfully written state.
+func (n *replicaNode) writeAlertState(as json.RawMessage) error {
+	if len(as) == 0 {
+		return nil
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.alertsWritten != nil && bytes.Equal(n.alertsWritten, as) {
+		return nil
+	}
+	if err := checkReplicaWriteFail("alerts"); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(n.dir, "alerts.json"), as, 0o600); err != nil {
+		return err
+	}
+	n.alertsWritten = bytes.Clone(as)
+	return nil
 }
 
 // RecordSkew adds one clock-skew sample (server_time - sent_at, seconds,

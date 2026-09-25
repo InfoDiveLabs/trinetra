@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -674,5 +676,38 @@ func TestMasterSkewSampledAtArrival(t *testing.T) {
 	defer f.seenM.Unlock()
 	if len(f.skews) != 3 || f.skews[0] != 0 || f.skews[1] != 0 || f.skews[2] != 0 {
 		t.Fatalf("skews = %v, want [0 0 0] (sampled before the slow write)", f.skews)
+	}
+}
+
+type failingLiveSink struct{ Sink }
+
+func (failingLiveSink) Live(string, LiveUpdate) error { return errors.New("disk full") }
+
+// A live update the sink cannot store is logged, not just answered with 500.
+func TestMasterLogsLiveSinkFailure(t *testing.T) {
+	var mu sync.Mutex
+	var logs []string
+	f := newMasterFixture(t, func(c *MasterConfig) {
+		c.Sink = failingLiveSink{c.Sink}
+		c.Logf = func(format string, args ...any) {
+			mu.Lock()
+			logs = append(logs, fmt.Sprintf(format, args...))
+			mu.Unlock()
+		}
+	})
+	_, c := f.join(t, nil)
+	live, _ := json.Marshal(LiveUpdate{SentAt: time.Now().Unix()})
+	resp, err := c.Post(f.srv.URL+PathLive, "application/json", bytes.NewReader(live))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(strings.Join(logs, "\n"), "disk full") {
+		t.Fatalf("logs = %q", logs)
 	}
 }

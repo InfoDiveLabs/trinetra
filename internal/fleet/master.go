@@ -404,6 +404,7 @@ func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if err := m.cfg.Sink.Live(id, u); err != nil {
+		m.cfg.Logf("fleet: live update for %s failed: %v", id, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

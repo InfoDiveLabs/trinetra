@@ -1,6 +1,7 @@
 package serverwatch
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -516,5 +517,32 @@ func TestReplicaLoadsOldDropCounter(t *testing.T) {
 	st := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
 	if st.AppliedSeq != 4 || st.DroppedOutOfOrder != 7 || st.DroppedCardinality != 1 || st.DroppedDuplicate != 0 {
 		t.Fatalf("stats = %+v", st)
+	}
+}
+
+// A failed alerts.json write is retried by the next live update even when
+// the alert state has not changed since: the comparison is against what was
+// last written successfully, not what was last received.
+func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
+	root := t.TempDir()
+	r := newReplicaSink(root, StoreOptions{})
+	replicaWriteFailHook = func(op string) error {
+		if op == "alerts" {
+			return errors.New("injected alerts.json failure")
+		}
+		return nil
+	}
+	t.Cleanup(func() { replicaWriteFailHook = nil })
+	as := json.RawMessage(`{"active":{"cpu":{}}}`)
+	if err := r.Live(testNodeID, fleet.LiveUpdate{AlertState: as}); err == nil {
+		t.Fatal("failed alerts.json write not reported")
+	}
+	replicaWriteFailHook = nil
+	if err := r.Live(testNodeID, fleet.LiveUpdate{AlertState: as}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(root, testNodeID, "alerts.json"))
+	if err != nil || !bytes.Equal(b, as) {
+		t.Fatalf("alerts.json = %q, %v; want %q", b, err, as)
 	}
 }
