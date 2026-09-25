@@ -930,6 +930,185 @@
     if(b) b.addEventListener('click',swLogout);
   });
 
+  // ---- node switcher + Ctrl/Cmd-K palette (Task 6: fleet-web-a) -----------
+  // Both are master-only chrome: base.html only renders #nodeSwitcher/
+  // #nodePalette at all when PageData.Switcher is set (this daemon is a
+  // fleet master) -- solo/child pages have neither element in the DOM, so
+  // every lookup below is null and the whole block is inert there.
+  (function(){
+    var switcherRoot=document.getElementById('nodeSwitcher');
+    var switcherBtn=document.getElementById('nodeSwitcherBtn');
+    var switcherMenu=document.getElementById('nodeSwitcherList');
+    var palette=document.getElementById('nodePalette');
+    if(!switcherRoot && !palette) return; // solo/child: neither renders
+
+    // ---- dropdown switcher ----
+    function closeSwitcher(){
+      if(!switcherMenu||switcherMenu.hidden) return;
+      switcherMenu.hidden=true;
+      switcherBtn.setAttribute('aria-expanded','false');
+    }
+    function openSwitcher(){
+      if(!switcherMenu||!switcherMenu.hidden) return;
+      switcherMenu.hidden=false;
+      switcherBtn.setAttribute('aria-expanded','true');
+      var first=switcherMenu.querySelector('.ns-item');
+      if(first) first.focus();
+    }
+    if(switcherBtn && switcherMenu){
+      switcherBtn.addEventListener('click',function(){
+        if(switcherMenu.hidden) openSwitcher(); else closeSwitcher();
+      });
+      document.addEventListener('click',function(e){
+        if(!switcherRoot.contains(e.target)) closeSwitcher();
+      });
+      switcherMenu.addEventListener('keydown',function(e){
+        var items=Array.prototype.slice.call(switcherMenu.querySelectorAll('.ns-item,.ns-viewall'));
+        var i=items.indexOf(document.activeElement);
+        if(e.key==='ArrowDown'){ e.preventDefault(); if(items.length) items[(i+1+items.length)%items.length].focus(); }
+        else if(e.key==='ArrowUp'){ e.preventDefault(); if(items.length) items[(i-1+items.length)%items.length].focus(); }
+        else if(e.key==='Escape'){ e.preventDefault(); closeSwitcher(); switcherBtn.focus(); }
+        else if(e.key==='Tab'){ closeSwitcher(); } // let focus leave normally, just close first
+      });
+      document.addEventListener('keydown',function(e){
+        if(e.key==='Escape' && switcherMenu && !switcherMenu.hidden){ closeSwitcher(); switcherBtn.focus(); }
+      });
+    }
+
+    // ---- Ctrl/Cmd-K palette ----
+    if(!palette) return;
+    var scrim=document.getElementById('nodePaletteScrim');
+    var input=document.getElementById('nodePaletteInput');
+    var results=document.getElementById('nodePaletteResults');
+    var lastFocused=null;
+    var cache=null, cacheAt=0;
+    var CACHE_MS=30000; // the ruling: cache the fetched roster for 30s
+
+    // MASTER_LOCAL mirrors node_scope.go's masterLocalPrefixes: a page under
+    // one of these has no per-node counterpart, so a palette result targets
+    // that node's dashboard ("/") instead of a (nonexistent) node-scoped
+    // copy of the current page -- templates.go's switcherTargetPath is the
+    // server-side source of truth for the same rule (used by the topbar
+    // switcher above, computed once at render time); this is a client-side
+    // duplicate purely because the palette computes its link target in the
+    // browser rather than round-tripping to the server for it. Keep both in
+    // sync if masterLocalPrefixes ever changes.
+    var MASTER_LOCAL=['/config','/channels','/users','/settings','/enroll','/login','/logout','/assets','/public','/fleet'];
+    function isMasterLocal(p){
+      return MASTER_LOCAL.some(function(prefix){ return p===prefix || p.indexOf(prefix+'/')===0; });
+    }
+    function currentTargetPath(){
+      var prefix=(document.body && document.body.dataset.nodePrefix)||'';
+      var p=window.location.pathname;
+      if(prefix && p.indexOf(prefix)===0) p=p.slice(prefix.length)||'/';
+      return isMasterLocal(p)?'/':p;
+    }
+    // core.SelfNodeID's wire value is the literal "self" -- every
+    // /api/fleet/nodes entry for this daemon's own node carries id:"self".
+    function hrefFor(node){
+      var prefix=(node.id==='self')?'':('/n/'+node.id);
+      return prefix+currentTargetPath();
+    }
+    function ledClassFor(state){
+      if(state==='online') return 'ok';
+      if(state==='down') return 'crit';
+      if(state==='lagging'||state==='stale') return 'warn';
+      return '';
+    }
+
+    function loadNodes(){
+      var now=Date.now();
+      if(cache && (now-cacheAt)<CACHE_MS) return Promise.resolve(cache);
+      // Deliberately NOT nodeURL(...): /api/fleet/nodes is the master's own
+      // fleet roster, a master-local endpoint (node_scope.go's
+      // masterLocalPrefixes lists "/fleet") with no per-node counterpart to
+      // route to -- the same reason /fleet's own links are never
+      // nodeURL(...)-wrapped either. Exempted by name from
+      // TestAppJSDataFetchesGoThroughNodeURL's scan (templates_node_test.go)
+      // for exactly this reason.
+      return fetch('/api/fleet/nodes',{credentials:'same-origin'})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(nodes){ cache=nodes||[]; cacheAt=Date.now(); return cache; })
+        .catch(function(){ return cache||[]; });
+    }
+    function matchesQuery(n,q){
+      if(!q) return true;
+      // remote_addr is present in the JSON only for an admin session
+      // (fleetNodesAPIHandler blanks it for a viewer before encoding), so
+      // this naturally matches address only when the caller can see it --
+      // no role check needed here.
+      var hay=((n.name||'')+' '+(n.tags||[]).join(' ')+' '+(n.remote_addr||'')).toLowerCase();
+      return hay.indexOf(q)>-1;
+    }
+    function renderResults(nodes){
+      var q=(input.value||'').trim().toLowerCase();
+      var filtered=(nodes||[]).filter(function(n){ return matchesQuery(n,q); });
+      results.innerHTML='';
+      if(!filtered.length){
+        results.appendChild(mkEl('div','note node-palette-empty','No nodes match.'));
+        return;
+      }
+      filtered.forEach(function(n){
+        var row=mkEl('a','ns-item');
+        row.href=hrefFor(n);
+        row.setAttribute('role','option');
+        row.appendChild(mkEl('span','led '+ledClassFor(n.state)));
+        row.appendChild(mkEl('span','ns-name',n.id==='self'?'this server':(n.name||n.id)));
+        row.appendChild(mkEl('span','ns-state note',n.state||'online'));
+        results.appendChild(row);
+      });
+    }
+
+    function openPalette(){
+      lastFocused=document.activeElement;
+      palette.hidden=false;
+      input.value='';
+      results.innerHTML='';
+      loadNodes().then(renderResults);
+      input.focus();
+    }
+    function closePalette(){
+      if(palette.hidden) return;
+      palette.hidden=true;
+      if(lastFocused && lastFocused.focus) lastFocused.focus();
+      lastFocused=null;
+    }
+
+    input.addEventListener('input',function(){ loadNodes().then(renderResults); });
+    input.addEventListener('keydown',function(e){
+      if(e.key==='ArrowDown'){ e.preventDefault(); var first=results.querySelector('.ns-item'); if(first) first.focus(); }
+      else if(e.key==='Enter'){ var first=results.querySelector('.ns-item'); if(first) window.location.assign(first.getAttribute('href')); }
+    });
+    results.addEventListener('keydown',function(e){
+      var items=Array.prototype.slice.call(results.querySelectorAll('.ns-item'));
+      var i=items.indexOf(document.activeElement);
+      if(e.key==='ArrowDown'){ e.preventDefault(); if(items.length) (items[i+1]||items[0]).focus(); }
+      else if(e.key==='ArrowUp'){ e.preventDefault(); if(i<=0){ input.focus(); } else { items[i-1].focus(); } }
+      else if(e.key==='Enter'){ var el=document.activeElement; if(el&&el.classList.contains('ns-item')) el.click(); }
+    });
+    palette.addEventListener('keydown',function(e){
+      if(e.key==='Escape'){ e.preventDefault(); closePalette(); return; }
+      if(e.key!=='Tab') return;
+      // Trap focus within the palette while it's open.
+      var focusable=[input].concat(Array.prototype.slice.call(results.querySelectorAll('.ns-item')));
+      var firstEl=focusable[0], lastEl=focusable[focusable.length-1];
+      if(e.shiftKey && document.activeElement===firstEl){ e.preventDefault(); lastEl.focus(); }
+      else if(!e.shiftKey && document.activeElement===lastEl){ e.preventDefault(); firstEl.focus(); }
+    });
+    if(scrim) scrim.addEventListener('click',closePalette);
+
+    document.addEventListener('keydown',function(e){
+      var mod=e.metaKey||e.ctrlKey;
+      if(!mod || e.key.toLowerCase()!=='k') return;
+      if(!palette.hidden){ e.preventDefault(); closePalette(); return; }
+      var el=document.activeElement;
+      var typing=(el && /^(input|textarea|select)$/i.test(el.tagName)) || (el && el.isContentEditable);
+      if(typing) return; // ruling: not while focus is in an input/textarea/select/contenteditable
+      e.preventDefault();
+      openPalette();
+    });
+  })();
+
   // ---- mobile "More" sheet (base.html bottom-nav) ----
   // The bottom tab bar's "More" button opens a slide-up sheet listing the
   // secondary nav items + account/sign-out. Dependency-free: toggle an `.on`

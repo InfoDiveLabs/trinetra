@@ -6,7 +6,9 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
@@ -308,17 +310,61 @@ func fetchFleetNodes(r *http.Request, d Deps) []core.NodeSummary {
 	return nodes
 }
 
-// buildFleetRows filters nodes by fq (tag/query via a zero-State
-// core.NodeFilter, so that half stays exactly core.NodeFilter.Match's own
-// semantics; state via fleetStateMatches, see its doc for the one
+// fleetFilterMatch reports whether n passes every one of f's criteria
+// (State/Tag/Query -- the caller, e.g. buildFleetRows, may additionally
+// apply its own State handling on top when it wants something other than
+// f.State's exact match, such as fleetStateMatches' "lagging also matches
+// stale" convenience; f.State is left "" in that case so this function's own
+// State check is a no-op there), with one deliberate difference from plain
+// core.NodeFilter.Match for a non-admin caller.
+//
+// Round-1 review of Task 5 found that /fleet?q= and /api/fleet/nodes?q=
+// both filtered through core.NodeFilter.Match verbatim, whose Query
+// haystack is "name + id + RemoteAddr" -- letting a viewer probe a node's
+// network address by searching for address fragments, even though
+// RemoteAddr is otherwise redacted from a viewer's view entirely
+// (fleetNodesAPIHandler's own RemoteAddr-blanking, and the HTML table never
+// rendering it at all). admin==true keeps core.NodeFilter.Match's exact
+// semantics (name+id+RemoteAddr) unchanged -- an admin session already sees
+// the real RemoteAddr elsewhere, so matching against it here leaks nothing
+// new. admin==false instead matches Query against name+id+tags, never
+// RemoteAddr; State and Tag are identical either way (neither ever touched
+// RemoteAddr to begin with).
+//
+// This is a web-layer helper, not a change to core.NodeFilter.Match itself
+// (the ruling: "don't change internal/core") -- so the non-admin path
+// duplicates Match's State/Tag checks verbatim rather than trying to call
+// into it.
+func fleetFilterMatch(n core.NodeSummary, f core.NodeFilter, admin bool) bool {
+	if admin {
+		return f.Match(n)
+	}
+	if f.State != "" && n.State != f.State {
+		return false
+	}
+	if f.Tag != "" && !slices.Contains(n.Tags, f.Tag) {
+		return false
+	}
+	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
+		hay := strings.ToLower(n.Name + " " + n.ID + " " + strings.Join(n.Tags, " "))
+		if !strings.Contains(hay, q) {
+			return false
+		}
+	}
+	return true
+}
+
+// buildFleetRows filters nodes by fq (tag/query via fleetFilterMatch, gated
+// by admin so a non-admin caller's q= never matches RemoteAddr -- see that
+// func's doc; state via fleetStateMatches, see its doc for the one
 // documented deviation), sorts the result, and projects each survivor into
 // a FleetRow. Shared by the full page (buildFleetPageData) and the bare
 // htmx fragment (fleetTableHandler) so both render identically.
-func buildFleetRows(nodes []core.NodeSummary, fq fleetQuery) []FleetRow {
+func buildFleetRows(nodes []core.NodeSummary, fq fleetQuery, admin bool) []FleetRow {
 	tagQuery := core.NodeFilter{Tag: fq.Tag, Query: fq.Query}
 	filtered := make([]core.NodeSummary, 0, len(nodes))
 	for _, n := range nodes {
-		if !tagQuery.Match(n) {
+		if !fleetFilterMatch(n, tagQuery, admin) {
 			continue
 		}
 		if !fleetStateMatches(fq.State, n.State) {
@@ -369,7 +415,7 @@ func buildFleetPageData(r *http.Request, d Deps) FleetPageData {
 	}
 	return FleetPageData{
 		PageData:    newPageData(r, d, "Fleet", sub),
-		Rows:        buildFleetRows(nodes, fq),
+		Rows:        buildFleetRows(nodes, fq, currentRole(r) == "admin"),
 		Health:      computeFleetHealth(nodes),
 		Query:       fq,
 		QueryString: fq.encode(),
@@ -462,7 +508,7 @@ func fleetTableHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		fq := parseFleetQuery(r)
-		data := FleetTableData{Rows: buildFleetRows(fetchFleetNodes(r, d), fq), QueryString: fq.encode()}
+		data := FleetTableData{Rows: buildFleetRows(fetchFleetNodes(r, d), fq, currentRole(r) == "admin"), QueryString: fq.encode()}
 		if err := renderFleetTableFragment(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -470,11 +516,11 @@ func fleetTableHandler(d Deps) http.HandlerFunc {
 }
 
 // fleetNodesAPIHandler serves GET /api/fleet/nodes: the JSON roster,
-// filtered by tag/state/q exactly as core.NodeFilter.Match defines it (NOT
-// fleetStateMatches' health-strip "lagging also matches stale" convenience
-// -- see fleetStateMatches' doc for why the JSON API stays a faithful
-// passthrough of Nodes(filter) instead). Response shape is []core.NodeSummary,
-// the same type Fleet().Nodes itself returns.
+// filtered by tag/state/q exactly as core.NodeFilter.Match defines it for an
+// ADMIN caller (NOT fleetStateMatches' health-strip "lagging also matches
+// stale" convenience -- see fleetStateMatches' doc for why the JSON API
+// stays a faithful passthrough of Nodes(filter) instead). Response shape is
+// []core.NodeSummary, the same type Fleet().Nodes itself returns.
 //
 // RemoteAddr (round-1 review): a viewer's response has every node's
 // RemoteAddr blanked before encoding -- a node's network address is
@@ -484,6 +530,12 @@ func fleetTableHandler(d Deps) http.HandlerFunc {
 // sees the real value, matching how e.g. container logs (admin-only
 // entirely) treat operationally sensitive data more strictly than plain
 // monitoring data.
+//
+// Query matching (Task 6 review carry-over): filtering itself goes through
+// fleetFilterMatch, not a bare filter.Match(n) -- a non-admin caller's q=
+// must never be able to confirm/deny a RemoteAddr value even indirectly
+// (whether a node is present in the filtered result), matching the
+// RemoteAddr redaction above. See fleetFilterMatch's doc.
 func fleetNodesAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGatePlain(w, r, d) {
@@ -495,7 +547,7 @@ func fleetNodesAPIHandler(d Deps) http.HandlerFunc {
 		admin := currentRole(r) == "admin"
 		out := make([]core.NodeSummary, 0, len(nodes))
 		for _, n := range nodes {
-			if !filter.Match(n) {
+			if !fleetFilterMatch(n, filter, admin) {
 				continue
 			}
 			if !admin {

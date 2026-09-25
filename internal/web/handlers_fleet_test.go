@@ -537,6 +537,92 @@ func TestFleetNodesAPIRedactsRemoteAddrForNonAdmin(t *testing.T) {
 	}
 }
 
+// TestFleetQueryNonAdminNeverMatchesRemoteAddr is the Task 6 review
+// carry-over from Task 5: a non-admin's q= must never match RemoteAddr --
+// on the HTML page (/fleet?q=) as well as the JSON API (already covered by
+// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr below) -- while an
+// admin session's q= still does (core.NodeFilter.Match's own semantics,
+// unchanged for admin).
+func TestFleetQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
+	nodes := fleetFiveNodeRoster()
+	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
+	d := fleetMasterDeps(t, nodes)
+
+	rrViewer := fleetGetAsRole(t, d, RoleViewer, "/fleet?q=10.0.0.5")
+	if rrViewer.Code != http.StatusOK {
+		t.Fatalf("viewer GET /fleet?q=10.0.0.5 status = %d, want 200, body: %s", rrViewer.Code, rrViewer.Body.String())
+	}
+	if strings.Contains(rrViewer.Body.String(), `<a href="/n/web1/">web1</a>`) {
+		t.Errorf("viewer /fleet?q=10.0.0.5 matched web1 via RemoteAddr, want no match:\n%s", rrViewer.Body.String())
+	}
+
+	rrAdmin := fleetGetAsRole(t, d, RoleAdmin, "/fleet?q=10.0.0.5")
+	if rrAdmin.Code != http.StatusOK {
+		t.Fatalf("admin GET /fleet?q=10.0.0.5 status = %d, want 200, body: %s", rrAdmin.Code, rrAdmin.Body.String())
+	}
+	if !strings.Contains(rrAdmin.Body.String(), `<a href="/n/web1/">web1</a>`) {
+		t.Errorf("admin /fleet?q=10.0.0.5 should still match web1 via RemoteAddr:\n%s", rrAdmin.Body.String())
+	}
+}
+
+// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr is the JSON API's
+// counterpart to TestFleetQueryNonAdminNeverMatchesRemoteAddr: a viewer's
+// q= matching only a node's RemoteAddr returns zero nodes; an admin's same
+// query still finds it.
+func TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
+	nodes := fleetFiveNodeRoster()
+	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
+	d := fleetMasterDeps(t, nodes)
+
+	rrViewer := fleetGetAsRole(t, d, RoleViewer, "/api/fleet/nodes?q=10.0.0.5")
+	if rrViewer.Code != http.StatusOK {
+		t.Fatalf("viewer GET /api/fleet/nodes?q=10.0.0.5 status = %d, want 200, body: %s", rrViewer.Code, rrViewer.Body.String())
+	}
+	var viewerGot []core.NodeSummary
+	if err := json.Unmarshal(rrViewer.Body.Bytes(), &viewerGot); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(viewerGot) != 0 {
+		t.Errorf("viewer q=10.0.0.5 matched %d node(s) via RemoteAddr, want 0: %+v", len(viewerGot), viewerGot)
+	}
+
+	rrAdmin := fleetGetAsRole(t, d, RoleAdmin, "/api/fleet/nodes?q=10.0.0.5")
+	if rrAdmin.Code != http.StatusOK {
+		t.Fatalf("admin GET /api/fleet/nodes?q=10.0.0.5 status = %d, want 200, body: %s", rrAdmin.Code, rrAdmin.Body.String())
+	}
+	var adminGot []core.NodeSummary
+	if err := json.Unmarshal(rrAdmin.Body.Bytes(), &adminGot); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, n := range adminGot {
+		if n.ID == "web1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("admin q=10.0.0.5 should still match web1 via RemoteAddr, got %+v", adminGot)
+	}
+}
+
+// TestFleetQueryNonAdminStillMatchesTags pins the ruling's positive half:
+// a non-admin's q= still matches name/id/tags -- the RemoteAddr fix above
+// must not break ordinary search.
+func TestFleetQueryNonAdminStillMatchesTags(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsRole(t, d, RoleViewer, "/api/fleet/nodes?q=web")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var got []core.NodeSummary
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("viewer q=web: got %d node(s), want 2 (web1, web2 -- name and tag both contain \"web\"): %+v", len(got), got)
+	}
+}
+
 // TestFleetRoutesAnonymousRedirectToLogin is the brief's "minor" ask:
 // /fleet/table and /api/fleet/nodes are viewer-gated exactly like /fleet
 // itself -- an anonymous caller is redirected to /login (302), not 404 or

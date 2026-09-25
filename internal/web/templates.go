@@ -8,6 +8,8 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -387,6 +389,135 @@ type PageData struct {
 	// tooltip so an operator can see exactly where "master" points without
 	// following an external link out of this page.
 	MasterURL string
+	// Switcher is the topbar node switcher/Ctrl-K palette's node list (task
+	// 6, fleet-web-a): up to switcherNodeCap entries (self first, then down
+	// nodes, then the rest by name), each carrying this SPECIFIC page's
+	// link under that node's prefix -- see buildSwitcherNodes' doc. Nil
+	// (base.html renders neither the switcher button nor the #nodePalette
+	// markup at all) unless FleetRole==config.RoleMaster: per the
+	// controller ruling, solo and child daemons get no switcher and no
+	// palette, full stop.
+	Switcher []SwitcherNode
+	// NodeLabel is the switcher button's own text: "this server" for a
+	// self-scoped page (solo, a master's own view, a child's own view --
+	// Node.Self), the node's display name otherwise. See nodeLabelFor.
+	NodeLabel string
+}
+
+// switcherNodeCap is the topbar switcher/Ctrl-K palette's ruling: list up
+// to 20 nodes.
+const switcherNodeCap = 20
+
+// SwitcherNode is one entry in the topbar node switcher dropdown and its
+// Ctrl-K palette counterpart (task 6, fleet-web-a): a fleet roster node
+// projected for THIS request's own page -- its Href already carries the
+// current page's "type" (e.g. /monitoring) under that node's own prefix,
+// per switcherTargetPath's doc, so a template/click handler never needs to
+// re-derive it.
+type SwitcherNode struct {
+	// ID is the roster id (core.NodeSummary.ID; core.SelfNodeID for self).
+	ID string
+	// Name is the display name: "this server" for self, NodeSummary.Name
+	// otherwise (never empty -- a remote node with no configured name still
+	// carries its NodeSummary.Name, which fleet enrollment always sets).
+	Name string
+	// State is NodeSummary.State, defaulting to "online" for self (whose
+	// roster entry may leave State unset -- self's own health is already
+	// reported by the topbar's own status pill, not this list). Always
+	// rendered as plain text next to the led dot -- never color-only.
+	State string
+	// Self mirrors NodeSummary.Self.
+	Self bool
+	// Current reports whether this entry IS the page's own current node
+	// scope (nodeScope.ID) -- the switcher/palette's "you are here" marker.
+	Current bool
+	// Href is this entry's link: the current page's type
+	// (switcherTargetPath) under this node's own URL prefix (nodeHref).
+	Href string
+}
+
+// buildSwitcherNodes projects nodes (the full, unfiltered fleet roster) into
+// the switcher/palette's ordering and per-node Href, per the controller
+// ruling: self first, then down nodes (by name), then the rest (by name),
+// capped at switcherNodeCap. current is this request's own node scope (for
+// the Current flag); targetPath is the page-type path every entry links to
+// under its own node's prefix (switcherTargetPath's result -- already
+// swapped to "/" for a master-local current page).
+func buildSwitcherNodes(nodes []core.NodeSummary, current nodeScope, targetPath string) []SwitcherNode {
+	var self *core.NodeSummary
+	var down, rest []core.NodeSummary
+	for i := range nodes {
+		n := nodes[i]
+		switch {
+		case n.Self:
+			self = &n
+		case n.State == "down":
+			down = append(down, n)
+		default:
+			rest = append(rest, n)
+		}
+	}
+	sort.Slice(down, func(i, j int) bool { return down[i].Name < down[j].Name })
+	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
+
+	ordered := make([]core.NodeSummary, 0, 1+len(down)+len(rest))
+	if self != nil {
+		ordered = append(ordered, *self)
+	}
+	ordered = append(ordered, down...)
+	ordered = append(ordered, rest...)
+	if len(ordered) > switcherNodeCap {
+		ordered = ordered[:switcherNodeCap]
+	}
+
+	out := make([]SwitcherNode, 0, len(ordered))
+	for _, n := range ordered {
+		prefix, name := "", n.Name
+		if n.Self {
+			name = "this server"
+		} else {
+			prefix = "/n/" + n.ID
+		}
+		state := n.State
+		if state == "" {
+			state = "online"
+		}
+		out = append(out, SwitcherNode{
+			ID:      n.ID,
+			Name:    name,
+			State:   state,
+			Self:    n.Self,
+			Current: n.ID == current.ID,
+			Href:    nodeHref(prefix, targetPath),
+		})
+	}
+	return out
+}
+
+// switcherTargetPath returns the page-type path every switcher/palette
+// entry links to: p unchanged (already node-prefix-stripped -- see
+// nodeFrom's doc, and newPageData's caller which passes r.URL.Path
+// directly) for an ordinary node-scoped page, or "/" (every node's own
+// dashboard) when p falls under node_scope.go's masterLocalPrefixes --
+// config/channels/users/settings/fleet/etc. have no per-node counterpart to
+// switch to at all (task 6's ruling: "master-local pages... switch to the
+// node's dashboard instead").
+func switcherTargetPath(p string) string {
+	p = path.Clean(p)
+	if isMasterLocalPath(p) {
+		return "/"
+	}
+	return p
+}
+
+// nodeLabelFor renders PageData.NodeLabel for ns: "this server" for a
+// self-scoped page (solo, a master's own view, a child's own view), ns.Name
+// otherwise.
+func nodeLabelFor(ns nodeScope) string {
+	if ns.Self {
+		return "this server"
+	}
+	return ns.Name
 }
 
 // NodeBanner is the replica banner's render data (task 3, task-3-brief.md's
@@ -445,6 +576,17 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	coreVer := coreVersionViaAPI(r, d)
 	node := nodeFrom(r)
 	fleetInfo := resolveFleetPageInfo(r, d)
+	var switcher []SwitcherNode
+	if fleetInfo.role == config.RoleMaster {
+		// fleetMemoFrom(r).fleetNodes(d) is the SAME cached Fleet().Nodes()
+		// result every other roster lookup this request makes already
+		// shares (fleet_memo.go) -- building the switcher here costs a real
+		// round trip only when nothing else in the request already paid for
+		// one.
+		if nodes, err := fleetMemoFrom(r).fleetNodes(d); err == nil {
+			switcher = buildSwitcherNodes(nodes, node, switcherTargetPath(r.URL.Path))
+		}
+	}
 	return PageData{
 		Title:           title,
 		Sub:             sub,
@@ -466,6 +608,8 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		Banner:          buildNodeBanner(node),
 		Link:            fleetInfo.link,
 		MasterURL:       fleetInfo.masterURL,
+		Switcher:        switcher,
+		NodeLabel:       nodeLabelFor(node),
 	}
 }
 

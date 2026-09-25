@@ -52,6 +52,16 @@ func allowedNodeLink(url, prefix string) bool {
 	return false
 }
 
+// nodeSwitcherItemTag matches a topbar node-switcher entry's own opening <a>
+// tag (task 6, fleet-web-a's base.html: class="ns-item...", role="option").
+// TestNodeScopedPagesLinkAudit strips these before scanning: the switcher's
+// entire job is linking ACROSS nodes from a /n/{node}/... page -- including
+// back to self ("/") and to other remote nodes' own prefixes -- so its
+// hrefs are a deliberate, reviewed exception to "every same-origin link on
+// a node page is node-prefixed or master-local", not a bug this audit
+// should flag.
+var nodeSwitcherItemTag = regexp.MustCompile(`<a[^>]*\bclass="ns-item[^"]*"[^>]*>`)
+
 // TestNodeScopedPagesLinkAudit renders every node-routable page under
 // /n/child1/ and asserts every same-origin href/action/hx-get is either
 // node-prefixed or in the master-local allowlist (task-3-brief.md step 1).
@@ -71,7 +81,7 @@ func TestNodeScopedPagesLinkAudit(t *testing.T) {
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
 			}
-			body := rr.Body.String()
+			body := nodeSwitcherItemTag.ReplaceAllString(rr.Body.String(), "<removed-ns-item>")
 			for _, m := range sameOriginAttr.FindAllStringSubmatch(body, -1) {
 				url := m[1]
 				if strings.Contains(url, "://") || strings.HasPrefix(url, "//") {
@@ -598,6 +608,18 @@ func TestAppJSDataFetchesGoThroughNodeURL(t *testing.T) {
 	unwrapped := 0
 	for _, m := range matches {
 		wrapped, path := m[1], m[2]
+		if path == "/api/fleet/nodes" {
+			// Deliberately exempt (task 6, fleet-web-a): the Ctrl-K palette
+			// fetches the FLEET roster, a master-local endpoint
+			// (node_scope.go's masterLocalPrefixes lists "/fleet") with no
+			// per-node counterpart to route to in the first place -- the
+			// same reason /fleet's own links are never nodeURL(...)-wrapped
+			// either. It must still be an absolute literal, never built
+			// through nodeURL(...): app.js's own comment at the fetch call
+			// site says so, and TestNodePaletteFetchesFleetNodesAbsolute
+			// pins it directly.
+			continue
+		}
 		if wrapped == "" {
 			unwrapped++
 			t.Errorf("app.js: %q is a same-origin /api or /events URL not routed through nodeURL(...)", path)
@@ -605,5 +627,190 @@ func TestAppJSDataFetchesGoThroughNodeURL(t *testing.T) {
 	}
 	if unwrapped > 0 {
 		t.Errorf("%d unwrapped node-scoped data URL(s) in app.js", unwrapped)
+	}
+}
+
+// ---- Task 6: topbar node switcher + Ctrl-K palette ----------------------
+
+// switcherFixtureNodes is this section's shared roster: self (online),
+// web1 (online), db1 (down) -- enough to exercise self-first/down-next/
+// rest-by-name ordering without a 20-node roster.
+func switcherFixtureNodes() []core.NodeSummary {
+	return []core.NodeSummary{
+		{ID: core.SelfNodeID, Self: true, State: "online"},
+		{ID: "web1", Name: "web1", State: "online"},
+		{ID: "db1", Name: "db1", State: "down"},
+	}
+}
+
+// switcherTestDeps builds a master Deps whose fleet roster is nodes, with a
+// fake per-node core.API registered for every non-self id in nodes (so a
+// /n/<id>/... page renders successfully).
+func switcherTestDeps(t *testing.T, nodes []core.NodeSummary) Deps {
+	t.Helper()
+	perNode := map[string]core.API{}
+	for _, n := range nodes {
+		if !n.Self {
+			perNode[n.ID] = fakeAPI{}
+		}
+	}
+	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: nodes}
+	return fleetTestDeps(t, masterFakeAPI(fleet, perNode))
+}
+
+// TestNodeSwitcherListsNodesAndPreservesPageType pins the switcher's core
+// contract on a master: the topbar button/listbox render (role="listbox",
+// no <select>), list every roster node with its own page-type-preserving
+// href, and mark the current node.
+func TestNodeSwitcherListsNodesAndPreservesPageType(t *testing.T) {
+	d := switcherTestDeps(t, switcherFixtureNodes())
+	rr := fleetGetAsViewer(t, d, "/n/web1/monitoring")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, `id="nodeSwitcher"`) {
+		t.Errorf("missing #nodeSwitcher:\n%s", body)
+	}
+	if !strings.Contains(body, `role="listbox"`) {
+		t.Errorf("switcher menu missing role=\"listbox\":\n%s", body)
+	}
+	if !strings.Contains(body, ">web1<") {
+		t.Errorf("switcher button missing current node's name (web1):\n%s", body)
+	}
+
+	// Each entry links to the SAME page type ("/monitoring") under its own
+	// node's prefix -- self unprefixed, web1/db1 under /n/<id>.
+	for _, want := range []string{
+		`href="/monitoring"`,        // self
+		`href="/n/web1/monitoring"`, // current node
+		`href="/n/db1/monitoring"`,  // down node
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing switcher entry %q:\n%s", want, body)
+		}
+	}
+	// The current node (web1) carries the "current" marker.
+	if !strings.Contains(body, `href="/n/web1/monitoring" role="option" class="ns-item current" aria-selected="true"`) {
+		t.Errorf("web1 switcher entry missing the current marker:\n%s", body)
+	}
+	// Self shows "this server", never its (empty) roster name.
+	if !strings.Contains(body, `<span class="ns-name">this server</span>`) {
+		t.Errorf("self switcher entry missing \"this server\" label:\n%s", body)
+	}
+	// State text always renders next to the led dot, never color-only.
+	if !strings.Contains(body, `<span class="ns-state note">down</span>`) {
+		t.Errorf("db1 switcher entry missing its state text:\n%s", body)
+	}
+	// "View all in Fleet" link.
+	if !strings.Contains(body, `<a class="ns-viewall" href="/fleet">View all in Fleet`) {
+		t.Errorf("switcher menu missing the \"View all in Fleet\" link:\n%s", body)
+	}
+}
+
+// TestNodeSwitcherMasterLocalPageSwitchesToDashboard pins the ruling:
+// viewing a master-local page (e.g. /fleet) from ANY node scope, every
+// switcher entry links to that node's dashboard ("/" or "/n/<id>/"), not a
+// (nonexistent) node-scoped /fleet.
+func TestNodeSwitcherMasterLocalPageSwitchesToDashboard(t *testing.T) {
+	d := switcherTestDeps(t, switcherFixtureNodes())
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`href="/"`, `href="/n/web1/"`, `href="/n/db1/"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /fleet: expected switcher entry %q (master-local page switches to the node's dashboard):\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `href="/n/web1/fleet"`) || strings.Contains(body, `href="/n/db1/fleet"`) {
+		t.Errorf("GET /fleet: switcher must not link to a node-scoped /fleet (master-local, no per-node counterpart):\n%s", body)
+	}
+}
+
+// TestNodePaletteMarkupPresentOnMaster pins the palette's server-rendered
+// (hidden) markup: #nodePalette with data-src="/api/fleet/nodes".
+func TestNodePaletteMarkupPresentOnMaster(t *testing.T) {
+	d := switcherTestDeps(t, switcherFixtureNodes())
+	rr := fleetGetAsViewer(t, d, "/")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="nodePalette" data-src="/api/fleet/nodes"`) {
+		t.Errorf("missing #nodePalette with data-src=\"/api/fleet/nodes\":\n%s", body)
+	}
+	if !strings.Contains(body, `id="nodePalette" data-src="/api/fleet/nodes" role="dialog" aria-modal="true" aria-label="Switch node" hidden>`) {
+		t.Errorf("#nodePalette must render hidden by default:\n%s", body)
+	}
+}
+
+// TestNodeSwitcherAndPaletteAbsentOnSoloAndChild pins the controller ruling:
+// "Solo/child: no switcher, no palette."
+func TestNodeSwitcherAndPaletteAbsentOnSoloAndChild(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		deps func(t *testing.T) Deps
+	}{
+		{"solo", fleetSoloDeps},
+		{"child", fleetChildDeps},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := tc.deps(t)
+			rr := fleetGetAsViewer(t, d, "/")
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+			}
+			body := rr.Body.String()
+			if strings.Contains(body, "nodeSwitcher") {
+				t.Errorf("%s page must not render a node switcher:\n%s", tc.name, body)
+			}
+			if strings.Contains(body, "nodePalette") {
+				t.Errorf("%s page must not render the Ctrl-K palette:\n%s", tc.name, body)
+			}
+		})
+	}
+}
+
+// TestNodePaletteFetchesFleetNodesAbsolute pins the ruling: the palette's
+// JS must fetch the literal absolute '/api/fleet/nodes' (master-local, no
+// per-node counterpart), never nodeURL('/api/fleet/nodes') -- and
+// credentials:'same-origin', matching every other same-origin fetch in this
+// file.
+func TestNodePaletteFetchesFleetNodesAbsolute(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+	if !strings.Contains(src, `fetch('/api/fleet/nodes',{credentials:'same-origin'})`) {
+		t.Errorf("app.js missing the palette's literal fetch('/api/fleet/nodes',{credentials:'same-origin'})")
+	}
+	if strings.Contains(src, `nodeURL('/api/fleet/nodes')`) || strings.Contains(src, `nodeURL("/api/fleet/nodes")`) {
+		t.Errorf("app.js must not route /api/fleet/nodes through nodeURL(...) -- it's master-local")
+	}
+}
+
+// TestNodeSwitcherFleetStatusCallBudgetUnchanged pins that building the
+// switcher costs no EXTRA Fleet() round trip: it reads through the same
+// request-scoped fleetMemo every other roster lookup already shares
+// (fleet_memo.go), so TestFleetStatusCalledExactlyOnceOnSelfPage/
+// TestFleetStatusCalledAtMostOnceOnRemoteNodePage's existing budgets still
+// hold with the switcher wired in -- this test only pins Nodes(), the call
+// the switcher itself actually makes.
+func TestNodeSwitcherFleetStatusCallBudgetUnchanged(t *testing.T) {
+	n := 0
+	realFleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: switcherFixtureNodes()}
+	d := fleetTestDeps(t, masterFakeAPI(realFleet, map[string]core.API{"web1": fakeAPI{}, "db1": fakeAPI{}}))
+	d.Fleet = func() core.FleetAPI { return countingFleet{FleetAPI: realFleet, nodesCalls: &n} }
+
+	rr := fleetGetAsViewer(t, d, "/")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if n != 1 {
+		t.Errorf("Fleet().Nodes() called %d time(s) for a self-scoped master page, want exactly 1 (shared fleetMemo)", n)
 	}
 }

@@ -38,6 +38,19 @@
   <div class="main">
     <header class="topbar">
       <div><h1>{{.Title}}</h1><p>{{.Sub}}</p></div>
+      {{if .Switcher}}
+      <div class="node-switcher" id="nodeSwitcher">
+        <button type="button" class="ns-trigger" id="nodeSwitcherBtn" aria-haspopup="listbox" aria-expanded="false" aria-controls="nodeSwitcherList">
+          <span class="ns-label">{{.NodeLabel}}</span>
+          <span class="ns-car" aria-hidden="true">⌄</span>
+        </button>
+        <div class="ns-menu" id="nodeSwitcherList" role="listbox" aria-label="Switch node" hidden>
+          {{range .Switcher}}<a href="{{.Href}}" role="option" class="ns-item{{if .Current}} current{{end}}" aria-selected="{{if .Current}}true{{else}}false{{end}}"><span class="led{{if eq .State "online"}} ok{{else if eq .State "down"}} crit{{else if or (eq .State "lagging") (eq .State "stale")}} warn{{end}}"></span><span class="ns-name">{{.Name}}</span><span class="ns-state note">{{.State}}</span></a>
+          {{end}}
+          <a class="ns-viewall" href="/fleet">View all in Fleet →</a>
+        </div>
+      </div>
+      {{end}}
       <div class="spacer"></div>
       {{if eq .Role "viewer"}}<span class="pill ro-pill">read-only</span>{{end}}
       {{if eq .FleetRole "child"}}{{if .Link}}{{if linkUnreachable .Link}}<span class="pill" title="{{.MasterURL}}{{if .Link.LastError}} · {{.Link.LastError}}{{end}}"><span class="led warn"></span> Master unreachable {{nodeDur .Link.LastAck}} · alerting locally</span>{{else if le .Link.LastAck 0}}<span class="pill" title="{{.MasterURL}}"><span class="led"></span> Connecting to master</span>{{else}}<span class="pill" title="{{.MasterURL}}"><span class="led ok"></span> Linked to master · ack {{nodeAgo .Link.LastAck}}</span>{{end}}{{end}}{{end}}
@@ -78,6 +91,21 @@
       </div>
     </div>
   </aside>
+
+  {{if .Switcher}}
+  {{/* Ctrl/Cmd-K node palette (task 6): server-rendered (not JS-built, unlike
+       the detail drawer) so its markup is present -- hidden -- on first
+       paint; app.js fetches data-src lazily on first open and caches the
+       result for 30s. Master-only, same gate as the switcher above. */}}
+  <div class="node-palette" id="nodePalette" data-src="/api/fleet/nodes" role="dialog" aria-modal="true" aria-label="Switch node" hidden>
+    <div class="node-palette-scrim" id="nodePaletteScrim"></div>
+    <div class="node-palette-box" role="document">
+      <input type="text" id="nodePaletteInput" class="node-palette-input mono" placeholder="{{if eq .Role "admin"}}Search nodes by name, tag or address…{{else}}Search nodes by name or tag…{{end}}" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="nodePaletteResults" aria-autocomplete="list">
+      <div class="node-palette-results" id="nodePaletteResults" role="listbox" aria-label="Nodes"></div>
+      <div class="node-palette-foot"><a href="/fleet">View all in Fleet →</a><span class="note">Esc to close</span></div>
+    </div>
+  </div>
+  {{end}}
 </div>
 <script src="{{asset "/assets/htmx.min.js"}}" nonce="{{.Nonce}}"></script>
 <script src="{{asset "/assets/uPlot.iife.min.js"}}"></script>

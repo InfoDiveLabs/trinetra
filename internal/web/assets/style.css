@@ -271,6 +271,43 @@ label.field .hint{color:var(--faint); font-size:11px; margin-top:5px; display:bl
 .donut .val{stroke-width:10;fill:none;stroke-linecap:round;transform:rotate(-90deg);transform-origin:center}
 .donut text{font-family:var(--font-mono);text-anchor:middle}
 
+/* node switcher + Ctrl/Cmd-K palette (task 6: fleet-web-a) -- master-only
+   topbar chrome for jumping between fleet nodes while keeping the current
+   page type. Reuses the existing pill/menu/modal vocabulary (.pill's
+   border+radius, .led's state dots, .modal's scrim, mono for the search
+   input) rather than inventing a new visual language. */
+.node-switcher{position:relative}
+.ns-trigger{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text);font-size:12.5px;font-weight:550;cursor:pointer}
+.ns-trigger:hover{border-color:var(--faint)}
+.ns-trigger .ns-label{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ns-trigger .ns-car{color:var(--faint);font-size:11px}
+.ns-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:240px;max-width:320px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:6px;z-index:20;max-height:70vh;overflow:auto}
+.ns-menu[hidden]{display:none}
+.ns-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--r-sm);color:var(--text);text-decoration:none;font-size:13px}
+.ns-item:hover,.ns-item:focus-visible{background:var(--surface2)}
+.ns-item.current{background:var(--elev)}
+.ns-item .ns-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ns-item .ns-state{font-family:var(--font-mono);font-size:11px}
+.ns-viewall{display:block;margin-top:4px;padding:8px 10px;border-top:1px solid var(--border-soft);color:var(--muted);font-size:12px;text-decoration:none}
+.ns-viewall:hover{color:var(--text)}
+
+.node-palette{position:fixed;inset:0;z-index:110;display:flex;align-items:flex-start;justify-content:center;padding:14vh 20px 20px}
+.node-palette[hidden]{display:none}
+.node-palette-scrim{position:fixed;inset:0;background:var(--scrim)}
+.node-palette-box{position:relative;width:100%;max-width:520px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden}
+.node-palette-input{border:0;border-bottom:1px solid var(--border-soft);border-radius:0;font-size:15px;padding:16px 18px}
+.node-palette-input:focus-visible{outline:none}
+.node-palette-results{max-height:50vh;overflow:auto;padding:6px}
+.node-palette-results .ns-item{font-size:13.5px}
+.node-palette-empty{padding:14px 12px}
+.node-palette-foot{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-top:1px solid var(--border-soft);font-size:11.5px}
+.node-palette-foot a{color:var(--muted);text-decoration:none}
+.node-palette-foot a:hover{color:var(--text)}
+@media (max-width:640px){
+  .ns-trigger .ns-label{max-width:80px}
+  .node-palette{padding:8vh 12px 12px}
+}
+
 /* modal */
 .modal{position:fixed;inset:0;background:var(--scrim);display:none;place-items:center;z-index:100;padding:24px}
 .modal.on{display:grid}
