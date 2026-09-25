@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -257,6 +258,82 @@ func TestOutboxCapCrashBetweenPersistAndDelete(t *testing.T) {
 	}
 	if _, err := os.Stat(segs[0]); !os.IsNotExist(err) {
 		t.Fatalf("leftover evicted segment file not cleaned up on reopen (err=%v)", err)
+	}
+}
+
+// TestOutboxReconcilesCursorWithGapsOnOpen simulates a crash between
+// enforceCapLocked's two persists: gaps.json commits an eviction (so the
+// records are gone for good) but the crash lands before the cursor file is
+// updated to match, leaving the cursor behind the recorded gap and the
+// evicted segment's file still on disk. Reopening must treat the gap as
+// authoritative: advance and re-persist the cursor to the gap's LastSeq,
+// never re-serve the dropped records, and clean up the stale file.
+func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
+	dir := t.TempDir()
+	o, err := openOutbox(dir, 1<<20, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, o, 1, 30)
+	if err := o.Ack(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	segs, err := filepath.Glob(filepath.Join(dir, "*.seg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(segs)
+	if len(segs) < 2 {
+		t.Fatalf("want >=2 segments to set up the scenario, got %v", segs)
+	}
+	first, err := scanSegment(segs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.last <= 2 {
+		t.Fatalf("test setup invalid: segs[0] (last=%d) already covered by Ack(2)", first.last)
+	}
+	gap := Gap{FirstSeq: first.first, LastSeq: first.last, MinTS: first.minTS, MaxTS: first.maxTS}
+	gb, err := json.Marshal([]Gap{gap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Commit the gap (as enforceCapLocked would) but deliberately leave the
+	// cursor file at its earlier Ack(2) value, and segs[0]'s file in place:
+	// exactly the on-disk state a crash right after this write leaves.
+	if err := writeFileAtomic(filepath.Join(dir, "gaps.json"), gb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	o2, err := openOutbox(dir, 1<<20, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o2.Close()
+
+	if o2.Acked() != gap.LastSeq {
+		t.Fatalf("acked = %d, want %d (reconciled with recorded gap)", o2.Acked(), gap.LastSeq)
+	}
+	recs, err := o2.Read(o2.Acked(), 1<<20, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) == 0 || recs[0].Seq != gap.LastSeq+1 {
+		t.Fatalf("records after reconciled gap start at wrong seq: %+v", recs)
+	}
+	if _, err := os.Stat(segs[0]); !os.IsNotExist(err) {
+		t.Fatalf("stale evicted segment file not cleaned up on reopen (err=%v)", err)
+	}
+	cur, err := os.ReadFile(filepath.Join(dir, "cursor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(cur)); got != strconv.FormatUint(gap.LastSeq, 10) {
+		t.Fatalf("cursor file not reconciled: got %q, want %q", got, strconv.FormatUint(gap.LastSeq, 10))
 	}
 }
 

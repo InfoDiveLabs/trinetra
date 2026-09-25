@@ -70,6 +70,16 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 	if b, err := os.ReadFile(o.gapsPath()); err == nil {
 		_ = json.Unmarshal(b, &o.gaps)
 	}
+	// gaps.json is enforceCapLocked's commit point for "these records are
+	// gone" (it is written before the cursor). A crash between the two
+	// writes can leave the cursor on disk behind a recorded gap. The cursor
+	// must never legitimately trail a recorded gap, so reconcile before
+	// anything below relies on o.acked (segment cleanup, o.next).
+	if o.reconcileAckedWithGaps() {
+		if err := writeFileAtomic(o.cursorPath(), []byte(strconv.FormatUint(o.acked, 10)), 0o600); err != nil {
+			return nil, err
+		}
+	}
 	names, err := filepath.Glob(filepath.Join(dir, "*.seg"))
 	if err != nil {
 		return nil, err
@@ -115,6 +125,21 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 
 func (o *Outbox) cursorPath() string { return filepath.Join(o.dir, "cursor") }
 func (o *Outbox) gapsPath() string   { return filepath.Join(o.dir, "gaps.json") }
+
+// reconcileAckedWithGaps advances o.acked to cover every recorded gap and
+// reports whether it changed anything. Called once at open, before o.acked
+// is used for anything else: see the comment on enforceCapLocked for why
+// gaps.json can be ahead of the cursor file after a crash.
+func (o *Outbox) reconcileAckedWithGaps() bool {
+	changed := false
+	for _, g := range o.gaps {
+		if g.LastSeq > o.acked {
+			o.acked = g.LastSeq
+			changed = true
+		}
+	}
+	return changed
+}
 
 // scanSegment reads every valid frame in path, truncating the file at the
 // first torn or corrupt frame (a crash mid-write), and returns its metadata.
@@ -271,14 +296,23 @@ func (o *Outbox) totalLocked() int64 {
 // The gap/ack advance is computed and durably persisted (gaps.json, then
 // cursor) BEFORE any segment file is deleted. Only once both writes succeed
 // are o.segs updated and the evicted files removed. A crash (or write
-// failure) between computing the drop set and finishing both persists
-// leaves every evicted file on disk and neither o.segs, o.gaps nor o.acked
-// touched, so the exact same drop set is recomputed and retried on the
-// caller's next Append; a crash after both persists succeed but before the
-// deletes run leaves harmless leftover segment files that openOutbox
-// cleans up (see the "last <= acked" loop there) and that Read already
-// skips. Either way no unacked record is ever lost without a matching Gap,
-// and no already-recorded Gap's records survive to be re-delivered.
+// failure) before gaps.json is written leaves every evicted file on disk
+// and neither o.segs, o.gaps nor o.acked touched, so the exact same drop
+// set is recomputed and retried on the caller's next Append.
+//
+// gaps.json is written first and is the real commit point: once it names a
+// range as gone, those records must never be re-served, regardless of what
+// the cursor file says. A crash between the two writes therefore leaves the
+// cursor trailing a recorded gap (gap.LastSeq > the on-disk acked) with the
+// evicted segment file still present; openOutbox reconciles this on open
+// (reconcileAckedWithGaps advances and re-persists the cursor to cover
+// every recorded gap before anything else runs) so the cursor can never
+// legitimately trail a recorded gap by the time segment cleanup, Read or
+// Ack run. A crash after both writes succeed but before the deletes run
+// leaves the same kind of harmless leftover segment file, which the
+// "last <= acked" cleanup loop in openOutbox removes once the cursor is
+// caught up. Either way no unacked record is ever lost without a matching
+// Gap, and no already-recorded Gap's records survive to be re-delivered.
 func (o *Outbox) enforceCapLocked() error {
 	total := o.totalLocked()
 	newGaps := append([]Gap(nil), o.gaps...)
