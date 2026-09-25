@@ -45,7 +45,7 @@ type ingestState struct {
 	LastIngestTS       int64  `json:"last_ingest_ts"`
 	DroppedOld         int64  `json:"dropped_out_of_order,omitempty"`
 	DroppedCardinality int64  `json:"dropped_cardinality,omitempty"`
-	// SkewSec is the smoothed server_time - sent_at (see RecordSkew). It is
+	// SkewSec is the filtered server_time - sent_at (see RecordSkew). It is
 	// persisted with the next applied batch, not on every sample.
 	SkewSec float64 `json:"skew_sec,omitempty"`
 }
@@ -53,6 +53,14 @@ type ingestState struct {
 // skewWarnSec is the clock skew beyond which a node is flagged (spec: warn
 // above 30 s; the tracker marks it lagging at the same line).
 const skewWarnSec = 30
+
+// skewWindow is how many recent skew samples RecordSkew filters over, and
+// skewConfirm how many consecutive over-the-line estimates it takes before
+// a node's skew is reported as over skewWarnSec.
+const (
+	skewWindow  = 10
+	skewConfirm = 3
+)
 
 type replicaNode struct {
 	mu          sync.Mutex
@@ -67,8 +75,10 @@ type replicaNode struct {
 	// seeded from the store on open so the guard survives a master restart.
 	lastEventStart int64
 	live           atomic.Pointer[fleet.LiveUpdate]
-	skewInit       bool // st.SkewSec holds at least one sample
-	skewWarned     bool // |skew| is currently over skewWarnSec
+	skewInit       bool    // st.SkewSec holds at least one sample
+	skewWarned     bool    // the reported skew is currently over skewWarnSec
+	skewSamples    []int64 // the last skewWindow raw samples, oldest first
+	skewOverRun    int     // consecutive filtered estimates over skewWarnSec
 }
 
 // replicaSink implements fleet.Sink over per-node tsfile stores. tsfile opens
@@ -484,10 +494,18 @@ func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 	return writeFileAtomic(filepath.Join(n.dir, "live.json"), b, 0o600)
 }
 
-// RecordSkew folds one clock-skew sample (server_time - sent_at, seconds)
-// into id's smoothed skew (exponential moving average, weight 1/4 per
-// sample) and returns it rounded, plus whether this sample took |skew| over
-// skewWarnSec (true once per excursion, so the caller warns once).
+// RecordSkew adds one clock-skew sample (server_time - sent_at, seconds,
+// server_time taken at request arrival) for id and returns the node's
+// reported skew, plus whether this sample took it over skewWarnSec (true
+// once per excursion, so the caller warns once).
+//
+// Network delay only ever makes a sample larger than the true offset (a
+// request held in a partition and delivered later carries an old sent_at),
+// so the estimate is the sample closest to zero over the last skewWindow
+// samples rather than an average that a burst of delayed requests would
+// drag off. An estimate over the line is only reported once it has held
+// for skewConfirm consecutive samples; until then the previous reported
+// value is kept.
 func (r *replicaSink) RecordSkew(id string, sampleSec int64) (int64, bool) {
 	n, err := r.node(id)
 	if err != nil {
@@ -495,16 +513,26 @@ func (r *replicaSink) RecordSkew(id string, sampleSec int64) (int64, bool) {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if !n.skewInit {
-		n.st.SkewSec, n.skewInit = float64(sampleSec), true
-	} else {
-		n.st.SkewSec = 0.75*n.st.SkewSec + 0.25*float64(sampleSec)
+	n.skewSamples = append(n.skewSamples, sampleSec)
+	if len(n.skewSamples) > skewWindow {
+		n.skewSamples = n.skewSamples[len(n.skewSamples)-skewWindow:]
 	}
-	s := int64(math.Round(n.st.SkewSec))
-	over := s > skewWarnSec || s < -skewWarnSec
+	est := n.skewSamples[0]
+	for _, v := range n.skewSamples[1:] {
+		if abs64(v) < abs64(est) {
+			est = v
+		}
+	}
+	over := est > skewWarnSec || est < -skewWarnSec
+	if !over {
+		n.skewOverRun = 0
+	} else if n.skewOverRun++; n.skewOverRun < skewConfirm {
+		return int64(math.Round(n.st.SkewSec)), false // not yet confirmed
+	}
+	n.st.SkewSec, n.skewInit = float64(est), true
 	crossed := over && !n.skewWarned
 	n.skewWarned = over
-	return s, crossed
+	return est, crossed
 }
 
 // Stats returns a copy of id's ingest counters (zero for an unknown id).

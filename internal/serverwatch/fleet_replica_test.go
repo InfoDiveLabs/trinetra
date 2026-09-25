@@ -347,25 +347,26 @@ func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
 	}
 }
 
-// Clock skew (server_time - sent_at) is smoothed per node, persisted in
-// ingest.state, and reports when it first crosses the 30s warning line.
-func TestReplicaSkewSmoothedAndPersisted(t *testing.T) {
+// Clock skew (server_time - sent_at) is estimated per node from the sample
+// closest to zero over a short window, persisted in ingest.state, and only
+// reported over the 30s line after three consecutive over-line estimates.
+func TestReplicaSkewFilteredAndPersisted(t *testing.T) {
 	root := t.TempDir()
 	r := newReplicaSink(root, StoreOptions{})
+	for i := 1; i <= 2; i++ {
+		if s, crossed := r.RecordSkew(testNodeID, 100); s != 0 || crossed {
+			t.Fatalf("sample %d: skew %d crossed %v, want 0 false (not yet confirmed)", i, s, crossed)
+		}
+	}
 	if s, crossed := r.RecordSkew(testNodeID, 100); s != 100 || !crossed {
-		t.Fatalf("first sample: skew %d crossed %v", s, crossed)
+		t.Fatalf("third sample: skew %d crossed %v, want 100 true", s, crossed)
 	}
-	if s, crossed := r.RecordSkew(testNodeID, 0); s != 75 || crossed {
-		t.Fatalf("second sample: skew %d crossed %v, want 75 false", s, crossed)
+	if s, crossed := r.RecordSkew(testNodeID, 100); s != 100 || crossed {
+		t.Fatalf("fourth sample: skew %d crossed %v, want 100 false (warned once)", s, crossed)
 	}
-	for i := 0; i < 4; i++ {
-		r.RecordSkew(testNodeID, 0)
-	}
-	if s, _ := r.RecordSkew(testNodeID, 0); s >= 30 {
-		t.Fatalf("skew should have decayed below 30, got %d", s)
-	}
-	if _, crossed := r.RecordSkew(testNodeID, 200); !crossed {
-		t.Fatal("crossing the threshold again must be reported again")
+	// Clock fixed: one good sample is enough (closest to zero wins).
+	if s, _ := r.RecordSkew(testNodeID, 1); s != 1 {
+		t.Fatalf("after fix: skew %d, want 1", s)
 	}
 	if err := r.Apply(testNodeID, baseRecs()); err != nil {
 		t.Fatal(err)
@@ -374,12 +375,50 @@ func TestReplicaSkewSmoothedAndPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := r.Stats(testNodeID)
-	if want.SkewSec == 0 || want.DroppedOld != 1 {
-		t.Fatalf("stats = %+v, want skew and one out-of-order drop", want)
+	if want.SkewSec != 1 || want.DroppedOld != 1 {
+		t.Fatalf("stats = %+v, want skew 1 and one out-of-order drop", want)
 	}
 	got := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
 	if got.SkewSec != want.SkewSec || got.DroppedOld != 1 {
 		t.Fatalf("after restart stats = %+v, want %+v", got, want)
+	}
+}
+
+// Network delay only ever inflates server_time - sent_at: a burst of
+// requests held in a partition and then delivered (sent_at 60s old) must
+// not read as a clock 60s behind.
+func TestReplicaSkewIgnoresDelayedBurst(t *testing.T) {
+	r := newReplicaSink(t.TempDir(), StoreOptions{})
+	for i := 0; i < 6; i++ {
+		r.RecordSkew(testNodeID, int64(i%2))
+	}
+	for i := 0; i < 6; i++ {
+		if s, crossed := r.RecordSkew(testNodeID, 60); s > 30 || crossed {
+			t.Fatalf("delayed sample %d: skew %d crossed %v", i, s, crossed)
+		}
+	}
+}
+
+// A genuinely skewed clock (every sample 45s off, either way) is reported
+// and warned about once it has held for three samples.
+func TestReplicaSkewGenuineBothDirections(t *testing.T) {
+	for _, off := range []int64{45, -45} {
+		r := newReplicaSink(t.TempDir(), StoreOptions{})
+		warned := 0
+		var s int64
+		for i := 0; i < 10; i++ {
+			var crossed bool
+			s, crossed = r.RecordSkew(testNodeID, off)
+			if crossed {
+				warned++
+				if i != 2 {
+					t.Fatalf("offset %d: warned at sample %d, want the third", off, i+1)
+				}
+			}
+		}
+		if s != off || warned != 1 {
+			t.Fatalf("offset %d: skew %d warned %d, want %d once", off, s, warned, off)
+		}
 	}
 }
 

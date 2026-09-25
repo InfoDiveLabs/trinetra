@@ -40,7 +40,7 @@ func DefaultTrackerConfig(downAfter time.Duration) TrackerConfig {
 type tracked struct {
 	lastSeen   int64
 	backlogAge int64
-	skew       int64 // smoothed server_time - sent_at, seconds
+	skew       int64 // filtered server_time - sent_at, seconds
 	revoked    bool
 	state      State
 }
@@ -119,7 +119,7 @@ func (t *Tracker) Forget(id string) {
 	delete(t.nodes, id)
 }
 
-// SetSkew records id's smoothed clock skew (server_time - sent_at, seconds).
+// SetSkew records id's filtered clock skew (server_time - sent_at, seconds).
 func (t *Tracker) SetSkew(id string, skewSec int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

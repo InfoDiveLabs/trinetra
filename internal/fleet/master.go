@@ -47,7 +47,8 @@ type MasterConfig struct {
 	OnContact func(nodeID string, now time.Time, u *LiveUpdate)
 	// OnSkew receives the child's send time (unix seconds) for every request
 	// that carries one (HeaderSentAt on ingest/backfill, SentAt on live), so
-	// the caller can track clock skew as now - sentAt. Optional.
+	// the caller can track clock skew as now - sentAt. now is when the
+	// request arrived, before it was applied. Optional.
 	OnSkew func(nodeID string, now time.Time, sentAt int64)
 	Logf   func(format string, args ...any)
 }
@@ -334,6 +335,7 @@ func (m *Master) readBatch(w http.ResponseWriter, r *http.Request) ([]Record, bo
 }
 
 func (m *Master) handleIngest(w http.ResponseWriter, r *http.Request, id string) {
+	arrived := m.cfg.Now()
 	recs, ok := m.readBatch(w, r)
 	if !ok {
 		return
@@ -369,11 +371,12 @@ func (m *Master) handleIngest(w http.ResponseWriter, r *http.Request, id string)
 	now := m.cfg.Now()
 	m.cfg.Registry.Touch(id, now.Unix(), r.RemoteAddr, "")
 	m.cfg.OnContact(id, now, nil)
-	m.noteSentAt(id, now, r)
+	m.noteSentAt(id, arrived, r)
 	writeJSON(w, IngestResponse{AckedSeq: applied, ServerTime: now.Unix()})
 }
 
 func (m *Master) handleBackfill(w http.ResponseWriter, r *http.Request, id string) {
+	arrived := m.cfg.Now()
 	recs, ok := m.readBatch(w, r)
 	if !ok {
 		return
@@ -389,11 +392,12 @@ func (m *Master) handleBackfill(w http.ResponseWriter, r *http.Request, id strin
 	now := m.cfg.Now()
 	m.cfg.Registry.Touch(id, now.Unix(), r.RemoteAddr, "")
 	m.cfg.OnContact(id, now, nil)
-	m.noteSentAt(id, now, r)
+	m.noteSentAt(id, arrived, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
+	arrived := m.cfg.Now()
 	var u LiveUpdate
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&u); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -407,13 +411,14 @@ func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
 	m.cfg.Registry.Touch(id, now.Unix(), r.RemoteAddr, u.Version)
 	m.cfg.OnContact(id, now, &u)
 	if u.SentAt > 0 {
-		m.cfg.OnSkew(id, now, u.SentAt)
+		m.cfg.OnSkew(id, arrived, u.SentAt)
 	}
 	writeJSON(w, map[string]int64{"server_time": now.Unix()})
 }
 
 // noteSentAt reports the request's HeaderSentAt, if present and valid, to
-// OnSkew.
+// OnSkew. arrived is when the request reached the handler: time the master
+// then spends applying it is not the child's clock being off.
 func (m *Master) noteSentAt(id string, now time.Time, r *http.Request) {
 	if v, err := strconv.ParseInt(r.Header.Get(HeaderSentAt), 10, 64); err == nil && v > 0 {
 		m.cfg.OnSkew(id, now, v)

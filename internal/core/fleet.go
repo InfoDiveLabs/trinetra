@@ -42,7 +42,7 @@ type NodeSummary struct {
 	OutboxBytes  int64    `json:"outbox_bytes,omitempty"`
 	OutboxOldest int64    `json:"outbox_oldest,omitempty"`
 	OutboxGaps   int      `json:"outbox_gaps,omitempty"`
-	// SkewSec is the master's smoothed estimate of server_time - sent_at for
+	// SkewSec is the master's filtered estimate of server_time - sent_at for
 	// this node: negative means the node's clock is ahead of the master's.
 	SkewSec int64 `json:"skew_sec,omitempty"`
 	// DroppedOld / DroppedCardinality count points the master's replica

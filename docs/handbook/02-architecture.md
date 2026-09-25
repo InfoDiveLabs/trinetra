@@ -856,8 +856,12 @@ is more than five minutes old or its clock is more than 30 seconds off, `stale` 
 When the master itself starts, every node gets a fresh grace period, so the
 master's own downtime is never blamed on its nodes.
 
-Every request a child sends carries its own send time, and the master keeps a
-smoothed `master time - send time` per node. The replica stores the child's
+Every request a child sends carries its own send time, and the master
+compares it with the time the request arrived. Network delay only ever makes
+that difference larger (a request held up by a partition arrives with an old
+send time), so the master's per-node estimate is the sample closest to zero
+among the last ten, and a value over 30 seconds only counts once it has held
+for three samples in a row. The replica stores the child's
 timestamps unchanged, so a child whose clock runs ahead pushes each series'
 last stored time into the future and the ordering guard then drops newer
 points as out of order. The master logs a warning once when a node's skew

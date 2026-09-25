@@ -64,14 +64,14 @@ type masterFixture struct {
 	skews []int64 // server_time - sent_at per OnSkew call
 }
 
-func newMasterFixture(t *testing.T) *masterFixture {
+func newMasterFixture(t *testing.T, opts ...func(*MasterConfig)) *masterFixture {
 	t.Helper()
 	ca, leaf := newTestPKI(t)
 	dir := t.TempDir()
 	reg, _ := OpenRegistry(filepath.Join(dir, "registry.json"))
 	toks, _ := OpenTokens(filepath.Join(dir, "tokens.json"))
 	f := &masterFixture{ca: ca, reg: reg, toks: toks, sink: newFakeSink(), pin: SPKIPin(ca.Cert)}
-	m := NewMaster(MasterConfig{
+	mc := MasterConfig{
 		CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: f.sink,
 		OnContact: func(id string, _ time.Time, _ *LiveUpdate) {
 			f.seenM.Lock()
@@ -83,7 +83,11 @@ func newMasterFixture(t *testing.T) *masterFixture {
 			f.skews = append(f.skews, now.Unix()-sentAt)
 			f.seenM.Unlock()
 		},
-	})
+	}
+	for _, o := range opts {
+		o(&mc)
+	}
+	m := NewMaster(mc)
 	f.srv = newTLSServer(t, ca, leaf, m.Handler())
 	return f
 }
@@ -619,5 +623,56 @@ func TestRequireNodeRejectsUnrecordedCert(t *testing.T) {
 	stray := issueClient(t, f.ca, id)
 	if st := liveStatus(t, f, clientFor(t, f.pin, &stray)); st != http.StatusForbidden {
 		t.Fatalf("stray cert: status %d, want 403", st)
+	}
+}
+
+// slowSink advances a fake clock inside every write, as a slow disk would.
+type slowSink struct {
+	Sink
+	advance func()
+}
+
+func (s slowSink) Apply(id string, recs []Record) error { s.advance(); return s.Sink.Apply(id, recs) }
+func (s slowSink) Backfill(id string, recs []Record) error {
+	s.advance()
+	return s.Sink.Backfill(id, recs)
+}
+func (s slowSink) Live(id string, u LiveUpdate) error { s.advance(); return s.Sink.Live(id, u) }
+
+// The skew sample is taken at request arrival: time spent applying the
+// request on the master is not the child's clock being behind.
+func TestMasterSkewSampledAtArrival(t *testing.T) {
+	var mu sync.Mutex
+	clock := time.Now()
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	f := newMasterFixture(t, func(c *MasterConfig) {
+		c.Now = now
+		c.Sink = slowSink{Sink: c.Sink, advance: func() { mu.Lock(); clock = clock.Add(50 * time.Second); mu.Unlock() }}
+	})
+	_, c := f.join(t, nil)
+	send := func(path string, body []byte, sentAt int64) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", f.srv.URL+path, bytes.NewReader(body))
+		if sentAt != 0 {
+			req.Header.Set(HeaderSentAt, fmt.Sprint(sentAt))
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			t.Fatalf("%s status %d", path, resp.StatusCode)
+		}
+	}
+	batch, _ := EncodeBatch(seqRecs(1, 1))
+	send(PathIngest, batch, now().Unix())
+	send(PathBackfill, batch, now().Unix())
+	live, _ := json.Marshal(LiveUpdate{SentAt: now().Unix()})
+	send(PathLive, live, 0)
+	f.seenM.Lock()
+	defer f.seenM.Unlock()
+	if len(f.skews) != 3 || f.skews[0] != 0 || f.skews[1] != 0 || f.skews[2] != 0 {
+		t.Fatalf("skews = %v, want [0 0 0] (sampled before the slow write)", f.skews)
 	}
 }

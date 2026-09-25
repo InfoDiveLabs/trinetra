@@ -262,9 +262,10 @@ func (l *masterLoop) tick(now time.Time) {
 	}
 }
 
-// observeSkew is the master's OnSkew hook: it folds the sample into the
-// node's smoothed skew, hands it to the tracker (|skew| > 30 s is lagging),
-// and warns once each time a node's clock drifts past 30 s. The master
+// observeSkew is the master's OnSkew hook: it adds the sample to the node's
+// filtered skew (see replicaSink.RecordSkew), hands that to the tracker
+// (|skew| > 30 s is lagging), and warns once each time a node's clock is
+// confirmed past 30 s. The master
 // stores the child's timestamps unchanged, so a clock running ahead pins the
 // replica's ordering guard to the future and later points are dropped as
 // out of order; the warning and the fleet nodes SKEW column make that
