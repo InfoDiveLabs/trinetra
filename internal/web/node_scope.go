@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
@@ -67,12 +68,12 @@ func apiFor(r *http.Request, d Deps) core.API {
 }
 
 // fleetRole reports this daemon's fleet role as config.RoleSolo/RoleMaster/
-// RoleChild. Every failure mode collapses to RoleSolo -- d.Fleet unset, a
-// nil FleetAPI, Status() erroring (an old daemon predating Fleet.Status
-// entirely), or an empty Role -- so a node router built on this treats all
-// of them exactly like a genuinely solo daemon: no /n/{node}/... routing.
-// Called fresh per request; this task deliberately adds no caching (see
-// task brief).
+// RoleChild, via a single Fleet().Status() call. Every failure mode
+// collapses to RoleSolo -- d.Fleet unset, a nil FleetAPI, Status() erroring
+// (an old daemon predating Fleet.Status entirely), or an empty Role. This is
+// the general-purpose "what's my role" answer (e.g. for later tasks' nav
+// visibility); withNodeRouter itself uses the more Fleet()-round-trip-
+// frugal resolveMasterAndNodes below, since it needs the node roster too.
 func fleetRole(d Deps) string {
 	if d.Fleet == nil {
 		return config.RoleSolo
@@ -86,6 +87,71 @@ func fleetRole(d Deps) string {
 		return config.RoleSolo
 	}
 	return status.Role
+}
+
+// resolveMasterAndNodes determines, in as few Fleet() round trips as
+// practical, whether this daemon is a fleet master and (when it is) its
+// node roster -- exactly what withNodeRouter needs per request, and the
+// only two questions it needs answered before deciding whether to
+// intercept a /n/... request at all.
+//
+// Nodes() alone already proves "master" the moment it reports any node
+// besides self: a solo daemon's (or a plain, pre-fleet daemon's) roster is
+// always just [self] (see fleet_provider.go's Nodes implementation), so
+// finding a second entry needs no further confirmation. Status() -- the
+// only way to tell solo apart from a genuine master with zero children so
+// far -- is called only when Nodes() didn't already settle it (it returned
+// only self, or errored), keeping the common "master with at least one
+// node" case down to a single Fleet() round trip that also directly serves
+// the node lookup withNodeRouter needs next.
+func resolveMasterAndNodes(d Deps) (isMaster bool, nodes []core.NodeSummary) {
+	if d.Fleet == nil {
+		return false, nil
+	}
+	fleet := d.Fleet()
+	if fleet == nil {
+		return false, nil
+	}
+	if ns, err := fleet.Nodes(core.NodeFilter{}); err == nil {
+		nodes = ns
+		for _, n := range ns {
+			if n.ID != core.SelfNodeID {
+				return true, nodes
+			}
+		}
+	}
+	status, err := fleet.Status()
+	if err != nil || status.Role != config.RoleMaster {
+		return false, nodes
+	}
+	return true, nodes
+}
+
+// findNode returns the entry in nodes (already fetched by
+// resolveMasterAndNodes -- never re-fetched here) whose ID exactly matches
+// id.
+func findNode(nodes []core.NodeSummary, id string) (core.NodeSummary, bool) {
+	for _, n := range nodes {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return core.NodeSummary{}, false
+}
+
+// containsDotDotSegment reports whether p, split on "/", has a literal ".."
+// path segment. r.URL.Path is always the percent-decoded form (verified:
+// both a literal "/a/../b" and an escaped "/a/%2e%2e/b" request target
+// arrive here as Path == "/a/../b"), so checking Path's segments catches a
+// raw ".." and a percent-encoded one identically -- there is no separate
+// "raw" form that could hide one from this check.
+func containsDotDotSegment(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // masterLocalPrefixes are the path prefixes that never get node-scoped, even
@@ -109,7 +175,7 @@ var masterLocalPrefixes = []string{
 }
 
 // isMasterLocalPath reports whether p (already stripped of its /n/{node}
-// prefix) falls under one of masterLocalPrefixes.
+// prefix and path.Clean'd) falls under one of masterLocalPrefixes.
 func isMasterLocalPath(p string) bool {
 	for _, prefix := range masterLocalPrefixes {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
@@ -121,41 +187,60 @@ func isMasterLocalPath(p string) bool {
 
 // withNodeRouter wraps mux (the full route table newHandler builds) with
 // /n/{node}/... support. A request whose path starts with /n/ has its node
-// id resolved against the live fleet roster (d.Fleet().Nodes), the id
-// stripped off, and the resulting nodeScope attached to the request context
-// before re-dispatching into mux -- so every handler mux already routes to
-// (requireRole gate and all) runs completely unchanged, just against a
-// request whose context now names a different node and whose data-reading
-// code can ask apiFor for the right core.API. A request whose path doesn't
-// start with /n/ passes straight through to mux untouched.
+// id resolved against the live fleet roster, the id stripped off, and the
+// resulting nodeScope attached to the request context before re-dispatching
+// into mux -- so every handler mux already routes to (requireRole gate and
+// all) runs completely unchanged, just against a request whose context now
+// names a different node and whose data-reading code can ask apiFor for the
+// right core.API. A request whose path doesn't start with /n/ passes
+// straight through to mux untouched.
 //
 // It is wired into newHandler just inside userMiddleware (routes.go), so
 // requireRole/requireCSRF on the re-dispatched request still see the same
-// session/user the outer middleware already resolved -- node scoping never
-// bypasses auth.
+// session/user the outer middleware already resolved, and this handler
+// itself can read userFromContext(r) the same way requireRole does.
 //
 // Node routing is deliberately narrow (global-constraints.md: remote nodes
-// are read-only in the UI):
-//   - only GET/HEAD are node-routable at all, and GET /events is excluded
+// are read-only in the UI), and -- following round-1 review -- deliberately
+// cheap/side-effect-free for anyone who shouldn't see it at all:
+//
+//   - Non-master daemons (solo, child, or Deps without Fleet wired at all)
+//     never get intercepted, full stop: the request is hand off to mux
+//     completely untouched, with no rendering and no core.API call of any
+//     kind -- exactly the pre-fleet stdlib 404 an unmatched /n/... path
+//     already got, for any HTTP method, signed in or not. This is checked
+//     before anything else, via resolveMasterAndNodes.
+//   - On a master, an anonymous caller (no session/user resolved by the
+//     outer middleware -- userFromContext(r)) is redirected 302 to /login
+//     for ANY /n/... path, before any node id is even parsed out of the
+//     path, let alone looked up or rendered -- the same "no session at all"
+//     outcome requireRole gives every other viewer+ route. Only a
+//     signed-in request ever reaches a node lookup or the styled
+//     not-found page (renderNotFound, which -- like every other page --
+//     calls newPageData, which calls into core.API).
+//   - A bare /n/{id} (no trailing slash) 308-redirects to /n/{id}/.
+//   - Only GET/HEAD are node-routable at all, and GET /events is excluded
 //     even though it's GET (a routed/non-self Subscribe is already refused
 //     server-side, and there is no per-node live push yet) -- every other
-//     method, plus /events, 404s under a node prefix rather than acting on
-//     the master or failing deep inside a handler that assumed self.
+//     method, plus /events, 404s under a node prefix.
+//   - The sub-path is rejected outright (404) if it contains a literal ".."
+//     segment (checked before any cleaning -- see containsDotDotSegment),
+//     then path.Clean'd, before the /events and masterLocalPrefixes checks
+//     run against it: a normalized path is what those checks (and the
+//     final dispatch) see, but a path that tried to smuggle ".." through
+//     them is rejected rather than silently resolved.
 //   - masterLocalPrefixes never get node-scoped (see its own doc).
 //   - id == core.SelfNodeID ("self") redirects (308, preserving the query
 //     string) to the bare unprefixed path: /n/self/x is never a distinct
 //     page from /x, just an alternate spelling a future node switcher can
-//     link to uniformly. This is checked (and honored) regardless of fleet
-//     role -- self always resolves, even on a solo daemon.
-//   - on a solo daemon (fleetRole == config.RoleSolo, including every
-//     fleetRole failure mode) every non-self /n/... path 404s: there is no
-//     fleet roster to resolve an id against.
-//   - a non-self id not found in d.Fleet().Nodes(NodeFilter{}) (including
-//     that call itself erroring) 404s with reason "no such node" --
-//     ForNode/Node never fail locally for an unknown id (see
-//     control.Client.ForNode's doc), so this exact-ID-match lookup against
-//     the live roster is what actually validates the id before any handler
-//     runs.
+//     link to uniformly.
+//   - a non-self id not found in the fleet roster (resolveMasterAndNodes'
+//     nodes, from the SAME Fleet().Nodes() call already used to confirm
+//     master status where possible -- see its own doc) 404s with reason
+//     "no such node" -- ForNode/Node never fail locally for an unknown id
+//     (see control.Client.ForNode's doc), so this exact-ID-match lookup
+//     against the live roster is what actually validates the id before any
+//     handler runs.
 func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/n/") {
@@ -163,21 +248,47 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 			return
 		}
 
-		rest := strings.TrimPrefix(r.URL.Path, "/n/")
-		id, sub, ok := strings.Cut(rest, "/")
-		if !ok || id == "" {
-			// Doesn't actually match the documented /n/{node}/... shape
-			// (e.g. a bare "/n/child1" with no trailing segment) -- fall
-			// through to the plain mux, which 404s it the ordinary way.
+		isMaster, nodes := resolveMasterAndNodes(d)
+		if !isMaster {
 			mux.ServeHTTP(w, r)
 			return
 		}
-		subPath := "/" + sub
+
+		if _, ok := userFromContext(r); !ok {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+
+		rest := strings.TrimPrefix(r.URL.Path, "/n/")
+		id, sub, ok := strings.Cut(rest, "/")
+		if id == "" {
+			// "/n/" alone, or similarly degenerate -- doesn't match the
+			// documented /n/{node}/... shape at all.
+			mux.ServeHTTP(w, r)
+			return
+		}
+		if !ok {
+			// Bare /n/{id}, no trailing slash: normalize it.
+			target := "/n/" + id + "/"
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusPermanentRedirect)
+			return
+		}
 
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			renderNotFound(w, r, d, "not found")
 			return
 		}
+
+		subPath := "/" + sub
+		if containsDotDotSegment(subPath) {
+			renderNotFound(w, r, d, "not found")
+			return
+		}
+		subPath = path.Clean(subPath)
+
 		if subPath == "/events" {
 			renderNotFound(w, r, d, "not found")
 			return
@@ -196,12 +307,7 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 			return
 		}
 
-		if fleetRole(d) == config.RoleSolo {
-			renderNotFound(w, r, d, "no such node")
-			return
-		}
-
-		summary, found := lookupNode(d, id)
+		summary, found := findNode(nodes, id)
 		if !found {
 			renderNotFound(w, r, d, "no such node")
 			return
@@ -220,29 +326,4 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 		r2 = r2.WithContext(context.WithValue(r2.Context(), nodeScopeCtxKey{}, scope))
 		mux.ServeHTTP(w, r2)
 	})
-}
-
-// lookupNode resolves id against d.Fleet().Nodes(NodeFilter{}) by exact ID
-// match, reporting (zero value, false) for any failure along the way (no
-// Fleet wired, a nil FleetAPI, Nodes() erroring, or no matching ID) -- every
-// one of those means "can't confirm this id exists", which withNodeRouter
-// treats identically: 404.
-func lookupNode(d Deps, id string) (core.NodeSummary, bool) {
-	if d.Fleet == nil {
-		return core.NodeSummary{}, false
-	}
-	fleet := d.Fleet()
-	if fleet == nil {
-		return core.NodeSummary{}, false
-	}
-	nodes, err := fleet.Nodes(core.NodeFilter{})
-	if err != nil {
-		return core.NodeSummary{}, false
-	}
-	for _, n := range nodes {
-		if n.ID == id {
-			return n, true
-		}
-	}
-	return core.NodeSummary{}, false
 }

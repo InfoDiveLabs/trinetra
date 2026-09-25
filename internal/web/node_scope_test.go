@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,39 @@ func fleetTestDeps(t *testing.T, api fakeAPI) Deps {
 		return n
 	}
 	return d
+}
+
+// fleetTestDepsCounting is fleetTestDeps plus a countingAPI wrapped around
+// api as Deps.API, so a test can assert exactly how many core.API calls (if
+// any) a request actually caused -- Deps.Fleet/NodeAPI are wired to the
+// UNwrapped api (Fleet.* calls are expected and are a different interface
+// entirely; only core.API usage is what round-1 review's "never calls the
+// fake API" tests care about).
+func fleetTestDepsCounting(t *testing.T, api fakeAPI) (Deps, *countingAPI) {
+	t.Helper()
+	d := enrollTestDeps(t)
+	counting := newCountingAPI(api)
+	d.API = counting
+	d.Fleet = api.Fleet
+	d.NodeAPI = func(id string) core.API {
+		n, err := api.Node(id)
+		if err != nil {
+			return nil
+		}
+		return n
+	}
+	return d, counting
+}
+
+// withFakeUser attaches a *User to r's context exactly the way userMiddleware
+// does (userCtxKey{}), without needing a real session/cookie round trip --
+// node_scope_test.go drives withNodeRouter directly (not through the full
+// newHandler middleware chain) for most of its unit-level cases, so this is
+// the lightest way to simulate "userMiddleware already resolved a signed-in
+// user" for those.
+func withFakeUser(r *http.Request, role Role) *http.Request {
+	u := &User{ID: "fake-user", Name: "fake", Role: role}
+	return r.WithContext(context.WithValue(r.Context(), userCtxKey{}, u))
 }
 
 // nodeAwareTestMux stands in for newHandler's real route table, just enough
@@ -70,24 +104,34 @@ func childFakeAPI(marker string) fakeAPI {
 	return fakeAPI{monitoring: core.MonitoringView{FailedUnits: []string{marker}}}
 }
 
-// TestNodeRouterRoutesToNode pins the core plumbing: on a master, GET
-// /n/child1/monitoring must reach the mux with nodeFrom(r).ID=="child1",
-// Prefix=="/n/child1", and apiFor resolving to child1's own fake API (not
-// the master's) -- asserted by the distinct FailedUnits payload.
-func TestNodeRouterRoutesToNode(t *testing.T) {
-	child := childFakeAPI("child1-svc")
-	fleet := &fakeFleet{
+// masterFleetWithChild is the fleet fixture ("a master fake plus a child
+// node") most of this file's master-role tests share: Fleet.Nodes reports
+// self plus child1, which alone (per resolveMasterAndNodes' doc) is enough
+// to prove "master" without a separate Status() call.
+func masterFleetWithChild() *fakeFleet {
+	return &fakeFleet{
 		status: core.FleetStatus{Role: config.RoleMaster},
 		nodes: []core.NodeSummary{
 			{ID: core.SelfNodeID, Name: "master-host", Self: true, State: "up"},
 			{ID: "child1", Name: "child-one", State: "up"},
 		},
 	}
-	d := fleetTestDeps(t, masterFakeAPI(fleet, map[string]core.API{"child1": child}))
+}
+
+// TestNodeRouterRoutesToNode pins the core plumbing: on a master, GET
+// /n/child1/monitoring must reach the mux with nodeFrom(r).ID=="child1",
+// Prefix=="/n/child1", and apiFor resolving to child1's own fake API (not
+// the master's) -- asserted by the distinct FailedUnits payload. Requires a
+// signed-in caller now (round-1 review): withNodeRouter redirects anonymous
+// master requests to /login before ever reaching a node lookup.
+func TestNodeRouterRoutesToNode(t *testing.T) {
+	child := childFakeAPI("child1-svc")
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": child}))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
 
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/n/child1/monitoring", nil))
+	req := withFakeUser(httptest.NewRequest(http.MethodGet, "/n/child1/monitoring", nil), RoleViewer)
+	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
@@ -108,14 +152,15 @@ func TestNodeRouterRoutesToNode(t *testing.T) {
 
 // TestNodeRouterSelfRedirects pins /n/self/... as an alternate spelling of
 // the bare path: a 308 redirect (preserving the request otherwise), not a
-// distinct page.
+// distinct page. Requires a signed-in caller (see TestNodeRouterRoutesToNode's
+// doc).
 func TestNodeRouterSelfRedirects(t *testing.T) {
-	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}}
-	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
 
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/n/self/monitoring", nil))
+	req := withFakeUser(httptest.NewRequest(http.MethodGet, "/n/self/monitoring", nil), RoleViewer)
+	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusPermanentRedirect {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusPermanentRedirect)
@@ -127,17 +172,22 @@ func TestNodeRouterSelfRedirects(t *testing.T) {
 
 // TestNodeRouterUnknownNode404 pins the "no such node" 404: ForNode/Node
 // never fail locally for an unknown id, so withNodeRouter itself must
-// validate {node} against the live roster before ever dispatching.
+// validate {node} against the live roster before ever dispatching. Requires
+// a signed-in caller (see TestNodeRouterRoutesToNode's doc).
 func TestNodeRouterUnknownNode404(t *testing.T) {
 	fleet := &fakeFleet{
 		status: core.FleetStatus{Role: config.RoleMaster},
-		nodes:  []core.NodeSummary{{ID: core.SelfNodeID, Self: true}},
+		nodes: []core.NodeSummary{
+			{ID: core.SelfNodeID, Self: true},
+			{ID: "child1"},
+		},
 	}
 	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
 
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/n/nope/monitoring", nil))
+	req := withFakeUser(httptest.NewRequest(http.MethodGet, "/n/nope/monitoring", nil), RoleViewer)
+	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
@@ -150,16 +200,10 @@ func TestNodeRouterUnknownNode404(t *testing.T) {
 // TestNodeRouterMasterLocalPaths404 pins global-constraints.md: config,
 // channels, users, and public settings are master-local pages, never
 // node-scoped, regardless of whether the node id itself would otherwise
-// resolve.
+// resolve. Requires a signed-in caller (see TestNodeRouterRoutesToNode's
+// doc).
 func TestNodeRouterMasterLocalPaths404(t *testing.T) {
-	fleet := &fakeFleet{
-		status: core.FleetStatus{Role: config.RoleMaster},
-		nodes: []core.NodeSummary{
-			{ID: core.SelfNodeID, Self: true},
-			{ID: "child1"},
-		},
-	}
-	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
 
 	for _, path := range []string{
@@ -170,7 +214,8 @@ func TestNodeRouterMasterLocalPaths404(t *testing.T) {
 	} {
 		t.Run(path, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+			req := withFakeUser(httptest.NewRequest(http.MethodGet, path, nil), RoleViewer)
+			h.ServeHTTP(rr, req)
 			if rr.Code != http.StatusNotFound {
 				t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
 			}
@@ -179,9 +224,11 @@ func TestNodeRouterMasterLocalPaths404(t *testing.T) {
 }
 
 // TestNodeRouterSoloDaemon404 pins the solo case: every /n/... path 404s
-// (there's no fleet roster to resolve against), while the very same
-// unprefixed route keeps working exactly as it did before node routing
-// existed.
+// (there's no fleet roster to resolve against, and -- round-1 review --
+// withNodeRouter must not intercept it at all: no rendering, no core.API
+// call), while the very same unprefixed route keeps working exactly as it
+// did before node routing existed. Deliberately anonymous: solo must not
+// require a session either, since it never even looks.
 func TestNodeRouterSoloDaemon404(t *testing.T) {
 	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleSolo}}
 	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
@@ -205,7 +252,8 @@ func TestNodeRouterSoloDaemon404(t *testing.T) {
 
 // TestNodeRouterOldDaemonTreatedAsSolo pins fleetRole's contract: an old
 // daemon whose Fleet().Status() errors (it predates Fleet.Status entirely)
-// must be treated exactly like solo, not crash or leak a 500.
+// must be treated exactly like solo, not crash or leak a 500. Anonymous, on
+// purpose: solo/non-master never even reaches the auth check.
 func TestNodeRouterOldDaemonTreatedAsSolo(t *testing.T) {
 	fleet := &fakeFleet{statusErr: errNodeScopeTestOldDaemon}
 	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
@@ -223,36 +271,122 @@ func TestNodeRouterOldDaemonTreatedAsSolo(t *testing.T) {
 
 // TestNodeRouterRejectsNonGetMethod pins "remote writes are not routed": a
 // mutation under /n/{node}/... 404s outright rather than reaching a handler
-// that would try to act on a remote node.
+// that would try to act on a remote node. Requires a signed-in caller (see
+// TestNodeRouterRoutesToNode's doc) -- an anonymous POST here instead gets
+// redirected to /login, exactly like an anonymous GET would.
 func TestNodeRouterRejectsNonGetMethod(t *testing.T) {
-	fleet := &fakeFleet{
-		status: core.FleetStatus{Role: config.RoleMaster},
-		nodes:  []core.NodeSummary{{ID: core.SelfNodeID, Self: true}, {ID: "child1"}},
-	}
-	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
 
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/n/child1/alerts/k/ack", nil))
+	req := withFakeUser(httptest.NewRequest(http.MethodPost, "/n/child1/alerts/k/ack", nil), RoleAdmin)
+	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
 	}
 }
 
 // TestNodeRouterRejectsEventsStream pins the /events exclusion: even though
-// it's GET, live event streams aren't routed to remote nodes yet.
+// it's GET, live event streams aren't routed to remote nodes yet. Requires
+// a signed-in caller (see TestNodeRouterRoutesToNode's doc).
 func TestNodeRouterRejectsEventsStream(t *testing.T) {
-	fleet := &fakeFleet{
-		status: core.FleetStatus{Role: config.RoleMaster},
-		nodes:  []core.NodeSummary{{ID: core.SelfNodeID, Self: true}, {ID: "child1"}},
-	}
-	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
 
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/n/child1/events", nil))
+	req := withFakeUser(httptest.NewRequest(http.MethodGet, "/n/child1/events", nil), RoleViewer)
+	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestNodeRouterRejectsDotDotPaths (round-1 review, IMPORTANT 1): a sub-path
+// that tries to smuggle a ".." segment past the master-local/events checks
+// -- whether written literally or percent-encoded -- must be rejected
+// outright (404), not resolved by path.Clean into something that then
+// passes (or fails) those checks by accident.
+func TestNodeRouterRejectsDotDotPaths(t *testing.T) {
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
+	h := withNodeRouter(d, nodeAwareTestMux(d))
+
+	for _, target := range []string{
+		"/n/child1/../config",
+		"/n/child1/%2e%2e/config",
+		"/n/child1/x/../events",
+	} {
+		t.Run(target, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := withFakeUser(httptest.NewRequest(http.MethodGet, target, nil), RoleViewer)
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// TestNodeRouterBareIDRedirects (round-1 review, MINOR): /n/{id} with no
+// trailing slash normalizes to /n/{id}/ via a 308, the same way a bare
+// directory path elsewhere in this app would.
+func TestNodeRouterBareIDRedirects(t *testing.T) {
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
+	h := withNodeRouter(d, nodeAwareTestMux(d))
+
+	rr := httptest.NewRecorder()
+	req := withFakeUser(httptest.NewRequest(http.MethodGet, "/n/child1", nil), RoleViewer)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want %d, body: %s", rr.Code, http.StatusPermanentRedirect, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "/n/child1/" {
+		t.Errorf("Location = %q, want /n/child1/", got)
+	}
+}
+
+// TestNodeRouterAnonymousMasterRedirectsToLogin (round-1 review, CRITICAL
+// b/c/d): on a master, an anonymous request to ANY /n/... path redirects
+// straight to /login, before any node lookup or rendering -- and, pinned
+// with a counting fake, never calls into core.API at all (no
+// newPageData/renderNotFound, which would otherwise call
+// ActiveAlerts/Version even to render a 404).
+func TestNodeRouterAnonymousMasterRedirectsToLogin(t *testing.T) {
+	d, counting := fleetTestDepsCounting(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": childFakeAPI("child1-svc")}))
+	h := withNodeRouter(d, nodeAwareTestMux(d))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/n/child1/monitoring", nil))
+
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d (302 to /login), body: %s", rr.Code, http.StatusFound, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "/login" {
+		t.Errorf("Location = %q, want /login", got)
+	}
+	if n := counting.count(); n != 0 {
+		t.Errorf("core.API was called %d time(s) for an anonymous master /n/... request, want 0", n)
+	}
+}
+
+// TestNodeRouterAnonymousSoloNeverCallsAPI (round-1 review, CRITICAL d): on
+// a solo daemon, an anonymous request to any /n/... path must never call
+// into core.API either -- it's not intercepted at all (see
+// TestNodeRouterSoloDaemon404), so nothing downstream of withNodeRouter
+// touches the fake API.
+func TestNodeRouterAnonymousSoloNeverCallsAPI(t *testing.T) {
+	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleSolo}}
+	d, counting := fleetTestDepsCounting(t, masterFakeAPI(fleet, nil))
+	h := withNodeRouter(d, nodeAwareTestMux(d))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/n/anything/monitoring", nil))
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+	}
+	if n := counting.count(); n != 0 {
+		t.Errorf("core.API was called %d time(s) for an anonymous solo /n/... request, want 0", n)
 	}
 }
 
@@ -270,6 +404,50 @@ func TestNewHandlerWiresNodeRouter(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
 	}
+}
+
+// TestNewHandlerNodeRouterAuthFlow (round-1 review, IMPORTANT 2) drives the
+// real newHandler(d) -- full middleware chain, real monitoringHandler/
+// configPageHandler -- with a master fake plus a registered child node, to
+// pin the end-to-end auth story: anonymous is bounced to /login before
+// anything else; a signed-in viewer reaches the real /monitoring handler
+// (200); a signed-in admin still gets 404 for a master-local page
+// (/config) under a node prefix.
+func TestNewHandlerNodeRouterAuthFlow(t *testing.T) {
+	child := childFakeAPI("child1-svc")
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": child}))
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	t.Run("anonymous redirects to login", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/n/child1/monitoring", nil))
+		if rr.Code != http.StatusFound {
+			t.Fatalf("status = %d, want %d, body: %s", rr.Code, http.StatusFound, rr.Body.String())
+		}
+		if got := rr.Header().Get("Location"); got != "/login" {
+			t.Errorf("Location = %q, want /login", got)
+		}
+	})
+
+	t.Run("signed-in viewer reaches the real monitoring handler", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/n/child1/monitoring")
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("signed-in admin still 404s a master-local page", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/n/child1/config")
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+		}
+	})
 }
 
 // errNodeScopeTestOldDaemon is a canned error standing in for the control

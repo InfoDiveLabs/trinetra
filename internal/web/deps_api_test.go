@@ -223,6 +223,127 @@ func (f *fakeFleet) DeleteToken(id string) error {
 
 var _ core.FleetAPI = (*fakeFleet)(nil)
 
+// countingAPI wraps a core.API and counts every call made through it, so a
+// test can assert a request never touched the underlying (fake) daemon API
+// at all -- the property node_scope_test.go's round-1-review tests pin:
+// withNodeRouter must reject/redirect an anonymous or non-master /n/...
+// request before any handler (and therefore before newPageData/
+// renderNotFound, which call ActiveAlerts/Version) ever calls into
+// core.API. Every core.API method increments the shared counter, then
+// delegates to the wrapped fake -- so count() reflects real usage, not just
+// the couple of methods newPageData happens to call today.
+type countingAPI struct {
+	api   core.API
+	calls *int
+}
+
+// newCountingAPI wraps api with a fresh, zeroed call counter.
+func newCountingAPI(api core.API) *countingAPI {
+	n := 0
+	return &countingAPI{api: api, calls: &n}
+}
+
+// count returns how many core.API calls have gone through this wrapper so
+// far.
+func (c *countingAPI) count() int { return *c.calls }
+
+func (c *countingAPI) Snapshot() (core.DashboardView, error) {
+	*c.calls++
+	return c.api.Snapshot()
+}
+
+func (c *countingAPI) Monitoring() (core.MonitoringView, error) {
+	*c.calls++
+	return c.api.Monitoring()
+}
+
+func (c *countingAPI) Series(metric string, from, to int64, res core.Resolution) ([]core.SeriesPoint, error) {
+	*c.calls++
+	return c.api.Series(metric, from, to, res)
+}
+
+func (c *countingAPI) Events(from, to int64) ([]core.DownEventView, error) {
+	*c.calls++
+	return c.api.Events(from, to)
+}
+
+func (c *countingAPI) ActiveAlerts() ([]core.AlertRecord, error) {
+	*c.calls++
+	return c.api.ActiveAlerts()
+}
+
+func (c *countingAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, error) {
+	*c.calls++
+	return c.api.AlertHistory(since, limit)
+}
+
+func (c *countingAPI) Config() (*config.Config, error) {
+	*c.calls++
+	return c.api.Config()
+}
+
+func (c *countingAPI) Doctor() (core.DoctorReport, error) {
+	*c.calls++
+	return c.api.Doctor()
+}
+
+func (c *countingAPI) HostInfo() (core.HostInfoView, error) {
+	*c.calls++
+	return c.api.HostInfo()
+}
+
+func (c *countingAPI) Version() (string, error) {
+	*c.calls++
+	return c.api.Version()
+}
+
+func (c *countingAPI) ContainerLogs(name string, lines int) (string, error) {
+	*c.calls++
+	return c.api.ContainerLogs(name, lines)
+}
+
+func (c *countingAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
+	*c.calls++
+	return c.api.EnrollmentPIN(ctx)
+}
+
+func (c *countingAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
+	*c.calls++
+	return c.api.MonitorTargets(ctx)
+}
+
+func (c *countingAPI) ApplyConfig(cfg *config.Config) error {
+	*c.calls++
+	return c.api.ApplyConfig(cfg)
+}
+
+func (c *countingAPI) AckAlert(key string) error {
+	*c.calls++
+	return c.api.AckAlert(key)
+}
+
+func (c *countingAPI) UnackAlert(key string) error {
+	*c.calls++
+	return c.api.UnackAlert(key)
+}
+
+func (c *countingAPI) TestChannel(name string) error {
+	*c.calls++
+	return c.api.TestChannel(name)
+}
+
+func (c *countingAPI) ValidateChannel(cc config.ChannelConfig) error {
+	*c.calls++
+	return c.api.ValidateChannel(cc)
+}
+
+func (c *countingAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
+	*c.calls++
+	return c.api.Subscribe(ctx)
+}
+
+var _ core.API = (*countingAPI)(nil)
+
 // TestDashboardReadsFromAPI pins the core TDD obligation for this task: once
 // Deps.API is set, GET / renders the fake API's Snapshot() data rather than
 // Deps.Snapshot(); the dashboard handler must be reading state through
