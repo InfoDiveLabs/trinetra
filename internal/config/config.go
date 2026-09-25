@@ -222,6 +222,23 @@ type Config struct {
 		// never appear on the page even though it's present elsewhere.
 		Panels []string `json:"panels,omitempty"`
 	} `json:"public"`
+	// Fleet holds master/child fleet settings (fleet mode, see
+	// docs/handbook/02-architecture.md "Fleet mode"). Role empty or "solo" means
+	// no fleet code runs at all -- the default, and exactly today's behaviour.
+	// Role, Address, MasterURL, CAPin and NodeID are written only by the
+	// `serverwatch fleet init|join|leave|disable` commands, never by
+	// `config set` (Set refuses them), because they must change together with
+	// the PKI files those commands create.
+	Fleet struct {
+		Role          string `json:"role,omitempty"`
+		Listen        string `json:"listen,omitempty"`
+		Address       string `json:"address,omitempty"`
+		MasterURL     string `json:"master_url,omitempty"`
+		CAPin         string `json:"ca_pin,omitempty"`
+		NodeID        string `json:"node_id,omitempty"`
+		OutboxMaxMB   int    `json:"outbox_max_mb,omitempty"`
+		NodeDownAfter string `json:"node_down_after,omitempty"`
+	} `json:"fleet"`
 }
 
 // ContainerStatsEnabled reports whether the docker-stats collector
@@ -288,6 +305,55 @@ func (c *Config) EnrollCooldownSec() int {
 		return 60
 	}
 	return c.Telegram.EnrollCooldown
+}
+
+// Fleet roles. An empty Fleet.Role is treated as RoleSolo.
+const (
+	RoleSolo   = "solo"
+	RoleMaster = "master"
+	RoleChild  = "child"
+)
+
+// FleetRole is the effective fleet role; empty means solo.
+func (c *Config) FleetRole() string {
+	switch c.Fleet.Role {
+	case RoleMaster, RoleChild:
+		return c.Fleet.Role
+	}
+	return RoleSolo
+}
+
+// FleetListen is the master's fleet listener address; default ":9443".
+func (c *Config) FleetListen() string {
+	if c.Fleet.Listen == "" {
+		return ":9443"
+	}
+	return c.Fleet.Listen
+}
+
+// FleetOutboxMaxBytes is the child's outbox cap; default 512 MiB.
+func (c *Config) FleetOutboxMaxBytes() int64 {
+	if c.Fleet.OutboxMaxMB <= 0 {
+		return 512 << 20
+	}
+	return int64(c.Fleet.OutboxMaxMB) << 20
+}
+
+// FleetNodeDownAfter is how long the master waits without contact before
+// declaring a node down; default 2m. An unparsable stored value (never
+// written by Set, which validates) also falls back to the default.
+func (c *Config) FleetNodeDownAfter() time.Duration {
+	if d, err := time.ParseDuration(c.Fleet.NodeDownAfter); err == nil && d > 0 {
+		return d
+	}
+	return 2 * time.Minute
+}
+
+// fleetManagedKeys are readable via Get but written only by the
+// `serverwatch fleet` commands.
+var fleetManagedKeys = map[string]bool{
+	"fleet.role": true, "fleet.address": true, "fleet.master_url": true,
+	"fleet.ca_pin": true, "fleet.node_id": true,
 }
 
 type TargetOverride struct {
@@ -745,11 +811,30 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.Public.Enabled), true
 	case "public.panels":
 		return strings.Join(c.Public.Panels, ","), true
+	case "fleet.role":
+		return c.FleetRole(), true
+	case "fleet.listen":
+		return c.FleetListen(), true
+	case "fleet.address":
+		return c.Fleet.Address, true
+	case "fleet.master_url":
+		return c.Fleet.MasterURL, true
+	case "fleet.ca_pin":
+		return c.Fleet.CAPin, true
+	case "fleet.node_id":
+		return c.Fleet.NodeID, true
+	case "fleet.outbox_max_mb":
+		return strconv.FormatInt(c.FleetOutboxMaxBytes()>>20, 10), true
+	case "fleet.node_down_after":
+		return c.FleetNodeDownAfter().String(), true
 	}
 	return "", false
 }
 
 func (c *Config) Set(key, val string) error {
+	if fleetManagedKeys[key] {
+		return fmt.Errorf("%s is managed by `serverwatch fleet init|join|leave|disable`, not config set", key)
+	}
 	f := func() (float64, error) { return strconv.ParseFloat(val, 64) }
 	switch key {
 	case "server.name":
@@ -981,6 +1066,23 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.Public.Panels = panels
+	case "fleet.listen":
+		if err := validateListen(val); err != nil {
+			return fmt.Errorf("fleet.listen: %w", err)
+		}
+		c.Fleet.Listen = val
+	case "fleet.outbox_max_mb":
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 16 {
+			return fmt.Errorf("fleet.outbox_max_mb must be an integer >= 16")
+		}
+		c.Fleet.OutboxMaxMB = n
+	case "fleet.node_down_after":
+		d, err := time.ParseDuration(val)
+		if err != nil || d < 30*time.Second {
+			return fmt.Errorf("fleet.node_down_after must be a duration >= 30s, e.g. 2m")
+		}
+		c.Fleet.NodeDownAfter = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
@@ -1078,6 +1180,10 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "public.enabled", Group: "Public", Kind: "bool", Help: "Enable the anonymous /public status page."},
 	{Name: "public.panels", Group: "Public", Kind: "csv", Help: "Comma-separated panel ids exposed on the public page."},
+
+	{Name: "fleet.listen", Group: "Fleet", Kind: "string", Help: "Master only: fleet listener bind address as host:port. Default :9443.", RestartRequired: true},
+	{Name: "fleet.outbox_max_mb", Group: "Fleet", Kind: "int", Help: "Child only: max MiB of telemetry spooled while the master is unreachable. Default 512.", RestartRequired: true},
+	{Name: "fleet.node_down_after", Group: "Fleet", Kind: "duration", Help: "Master only: no contact for this long marks a node down and alerts. Default 2m."},
 
 	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
 }
