@@ -41,10 +41,13 @@ func storeOptionsFor(cfg *config.Config) StoreOptions {
 }
 
 type ingestState struct {
-	AppliedSeq         uint64 `json:"applied_seq"`
-	LastIngestTS       int64  `json:"last_ingest_ts"`
-	DroppedOld         int64  `json:"dropped_out_of_order,omitempty"`
-	DroppedCardinality int64  `json:"dropped_cardinality,omitempty"`
+	AppliedSeq   uint64 `json:"applied_seq"`
+	LastIngestTS int64  `json:"last_ingest_ts"`
+	// DroppedOutOfOrder keeps the pre-split key, whose counter also held
+	// duplicates, so an old ingest.state loads its count here.
+	DroppedOutOfOrder  int64 `json:"dropped_out_of_order,omitempty"`
+	DroppedDuplicate   int64 `json:"dropped_duplicate,omitempty"`
+	DroppedCardinality int64 `json:"dropped_cardinality,omitempty"`
 	// SkewSec is the filtered server_time - sent_at (see RecordSkew). It is
 	// persisted with the next applied batch, not on every sample.
 	SkewSec float64 `json:"skew_sec,omitempty"`
@@ -307,7 +310,11 @@ func (n *replicaNode) admit(metric string, res Resolution, ts int64) (bool, erro
 	}
 	if ts <= last {
 		n.last[key] = last
-		n.st.DroppedOld++
+		if ts == last {
+			n.st.DroppedDuplicate++ // a re-sent copy (refill, retried batch)
+		} else {
+			n.st.DroppedOutOfOrder++
+		}
 		return false, nil
 	}
 	n.last[key] = ts
@@ -373,8 +380,12 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 			if json.Unmarshal(rec.Data, &e) != nil {
 				continue
 			}
-			if e.Start <= n.lastEventStart {
-				n.st.DroppedOld++
+			if e.Start == n.lastEventStart {
+				n.st.DroppedDuplicate++
+				continue
+			}
+			if e.Start < n.lastEventStart {
+				n.st.DroppedOutOfOrder++
 				continue
 			}
 			n.lastEventStart = e.Start
@@ -396,7 +407,14 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 			if json.Compact(&line, rec.Data) != nil {
 				continue
 			}
-			if h.Time < n.lastAlertTS || (h.Time == n.lastAlertTS && n.alertLines[line.String()]) {
+			if h.Time == n.lastAlertTS && n.alertLines[line.String()] {
+				n.st.DroppedDuplicate++
+				continue
+			}
+			// An older alert is skipped uncounted: the dedupe set only holds
+			// the newest timestamp's lines, so it cannot tell a re-sent copy
+			// from a genuinely late alert.
+			if h.Time < n.lastAlertTS {
 				continue
 			}
 			if h.Time > n.lastAlertTS {

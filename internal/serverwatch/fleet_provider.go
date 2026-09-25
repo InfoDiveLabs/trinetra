@@ -120,7 +120,7 @@ func (f fleetAPIImpl) Nodes(filter core.NodeFilter) ([]core.NodeSummary, error) 
 		}
 		st := p.master.sink.Stats(n.ID)
 		s.SkewSec = int64(math.Round(st.SkewSec))
-		s.DroppedOld, s.DroppedCardinality = st.DroppedOld, st.DroppedCardinality
+		s.DroppedOutOfOrder, s.DroppedDuplicate, s.DroppedCardinality = st.DroppedOutOfOrder, st.DroppedDuplicate, st.DroppedCardinality
 		if filter.Match(s) {
 			out = append(out, s)
 		}

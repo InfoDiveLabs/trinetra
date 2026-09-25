@@ -375,11 +375,11 @@ func TestReplicaSkewFilteredAndPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := r.Stats(testNodeID)
-	if want.SkewSec != 1 || want.DroppedOld != 1 {
+	if want.SkewSec != 1 || want.DroppedOutOfOrder != 1 {
 		t.Fatalf("stats = %+v, want skew 1 and one out-of-order drop", want)
 	}
 	got := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
-	if got.SkewSec != want.SkewSec || got.DroppedOld != 1 {
+	if got.SkewSec != want.SkewSec || got.DroppedOutOfOrder != 1 {
 		t.Fatalf("after restart stats = %+v, want %+v", got, want)
 	}
 }
@@ -471,5 +471,50 @@ func TestReplicaAlertDedupeSeedsAllLinesAtLastTimestamp(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(root, testNodeID, "alertlog.jsonl"))
 	if n := strings.Count(string(b), "\n"); n != 3 {
 		t.Fatalf("alertlog has %d lines, want 3 (no duplicates):\n%s", n, b)
+	}
+}
+
+// Re-sent copies of what the replica already holds (a refill, a retried
+// batch) count as duplicates; only points older than the series' last one
+// count as out of order. Both persist across a restart.
+func TestReplicaSplitsDuplicateFromOutOfOrder(t *testing.T) {
+	root := t.TempDir()
+	r := newReplicaSink(root, StoreOptions{})
+	if err := r.Apply(testNodeID, baseRecs()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Backfill(testNodeID, []fleet.Record{
+		samplesRec(0, 105, map[string]float64{"cpu": 20, "mem": 30}), // 2 duplicates
+		samplesRec(0, 90, map[string]float64{"cpu": 1}),              // out of order
+		eventRec(0, 50),         // duplicate
+		eventRec(0, 40),         // out of order
+		alertRec(0, 110, "cpu"), // duplicate
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := r.Stats(testNodeID)
+	if st.DroppedDuplicate != 4 || st.DroppedOutOfOrder != 2 {
+		t.Fatalf("stats = %+v, want 4 duplicates and 2 out of order", st)
+	}
+	got := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
+	if got.DroppedDuplicate != 4 || got.DroppedOutOfOrder != 2 {
+		t.Fatalf("after restart stats = %+v", got)
+	}
+}
+
+// An ingest.state written before the split (one dropped_out_of_order counter
+// that also held duplicates) loads as out of order.
+func TestReplicaLoadsOldDropCounter(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, testNodeID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ingest.state"), []byte(`{"applied_seq":4,"last_ingest_ts":105,"dropped_out_of_order":7,"dropped_cardinality":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
+	if st.AppliedSeq != 4 || st.DroppedOutOfOrder != 7 || st.DroppedCardinality != 1 || st.DroppedDuplicate != 0 {
+		t.Fatalf("stats = %+v", st)
 	}
 }

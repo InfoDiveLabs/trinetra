@@ -197,14 +197,52 @@ type masterLoop struct {
 	lastFlush   time.Time
 	maint       maintScheduler // only touched by the maintenance goroutine
 	maintaining chan struct{}  // holds a token while a maintenance slice runs
+	// dropBase is each node's replica drop counters at the last drop check
+	// (see checkDrops); lastDropCheck is when that ran. Only tick touches
+	// them.
+	dropBase      map[string]dropCounts
+	lastDropCheck time.Time
 }
+
+// dropCounts are the replica drop counters that warrant a warning when they
+// grow (duplicates are harmless and never do).
+type dropCounts struct{ outOfOrder, cardinality int64 }
 
 // masterTickInterval is how often the master loop ticks.
 const masterTickInterval = 5 * time.Second
 
 func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, d fleetDeps, now time.Time) *masterLoop {
-	return &masterLoop{reg: reg, tracker: tracker, sink: sink, alerter: fleet.NewNodeAlerter(), alert: d.alert,
-		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1)}
+	l := &masterLoop{reg: reg, tracker: tracker, sink: sink, alerter: fleet.NewNodeAlerter(), alert: d.alert,
+		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1),
+		dropBase: map[string]dropCounts{}, lastDropCheck: now}
+	// Drops recorded before this start were already reported (or predate
+	// the warning); only growth from here on is.
+	for _, n := range reg.List() {
+		st := sink.Stats(n.ID)
+		l.dropBase[n.ID] = dropCounts{st.DroppedOutOfOrder, st.DroppedCardinality}
+	}
+	return l
+}
+
+// checkDrops logs a warning for every node whose replica dropped points out
+// of order or over the series limit since the previous check. The counters
+// themselves are cumulative (fleet status shows them); this is what makes a
+// new problem visible without warning about an old one forever.
+func (l *masterLoop) checkDrops(now time.Time) {
+	since := now.Sub(l.lastDropCheck).Round(time.Minute)
+	l.lastDropCheck = now
+	for _, n := range l.reg.List() {
+		st := l.sink.Stats(n.ID)
+		cur := dropCounts{st.DroppedOutOfOrder, st.DroppedCardinality}
+		prev := l.dropBase[n.ID]
+		l.dropBase[n.ID] = cur
+		dOld, dCard := cur.outOfOrder-prev.outOfOrder, cur.cardinality-prev.cardinality
+		if dOld <= 0 && dCard <= 0 {
+			continue
+		}
+		l.logf("fleet: WARNING node %s (%s): its replica dropped %d points out of order and %d over the %d-series limit in the last %s. Out-of-order drops usually mean the node's clock jumped back (see the SKEW column in fleet nodes).",
+			n.Name, n.ID, max(dOld, 0), max(dCard, 0), maxReplicaSeries, since)
+	}
 }
 
 // trackUnseen registers every registry node the tracker has never heard of
@@ -245,6 +283,9 @@ func (l *masterLoop) tick(now time.Time) {
 		if err := l.reg.FlushIfDirty(); err != nil {
 			l.logf("fleet: registry flush: %v", err)
 		}
+	}
+	if now.Sub(l.lastDropCheck) >= storeMaintenanceInterval {
+		l.checkDrops(now)
 	}
 	// Replica maintenance rewrites and fsyncs series files, so it runs on
 	// the local store's cadence (storeMaintenanceInterval), a slice of the

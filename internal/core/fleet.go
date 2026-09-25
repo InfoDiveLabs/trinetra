@@ -45,10 +45,13 @@ type NodeSummary struct {
 	// SkewSec is the master's filtered estimate of server_time - sent_at for
 	// this node: negative means the node's clock is ahead of the master's.
 	SkewSec int64 `json:"skew_sec,omitempty"`
-	// DroppedOld / DroppedCardinality count points the master's replica
-	// refused: not newer than the series' last stored point (duplicates, or
-	// a clock that jumped back), or over the per-node series limit.
-	DroppedOld         int64 `json:"dropped_old,omitempty"`
+	// DroppedOutOfOrder / DroppedCardinality count points the master's
+	// replica refused because they were older than the series' last stored
+	// point (a clock that jumped back, data re-sent after a divergence) or
+	// over the per-node series limit. DroppedDuplicate counts harmless
+	// re-sent copies of points it already had (refills, retried batches).
+	DroppedOutOfOrder  int64 `json:"dropped_out_of_order,omitempty"`
+	DroppedDuplicate   int64 `json:"dropped_duplicate,omitempty"`
 	DroppedCardinality int64 `json:"dropped_cardinality,omitempty"`
 }
 

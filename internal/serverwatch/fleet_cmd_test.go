@@ -629,7 +629,7 @@ func TestFleetStatusMasterNotesDropsAndSkew(t *testing.T) {
 		status: core.FleetStatus{Role: config.RoleMaster, Nodes: 3},
 		nodes: []core.NodeSummary{
 			{ID: "self", Name: "master-1", Self: true},
-			{ID: "node-1", Name: "web-1", DroppedOld: 7, DroppedCardinality: 2},
+			{ID: "node-1", Name: "web-1", DroppedOutOfOrder: 7, DroppedCardinality: 2, DroppedDuplicate: 5},
 			{ID: "node-2", Name: "web-2", SkewSec: 120},
 			{ID: "node-3", Name: "web-3"},
 		},
@@ -639,9 +639,16 @@ func TestFleetStatusMasterNotesDropsAndSkew(t *testing.T) {
 		t.Fatalf("exit %d: %s", rc, errb)
 	}
 	got := out.String()
-	for _, want := range []string{"web-1", "7 out-of-order", "2 over the series limit", "web-2", "120s"} {
+	for _, want := range []string{"web-1", "7 out of order", "2 over the series limit", "5 duplicates", "web-2", "120s"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q: %s", want, got)
+		}
+	}
+	// Cumulative drop counts are shown, not warned about: the master logs a
+	// warning when they grow.
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "web-1") && strings.Contains(l, "warning") {
+			t.Fatalf("drop counts printed as a warning: %q", l)
 		}
 	}
 	if strings.Contains(got, "web-3") {

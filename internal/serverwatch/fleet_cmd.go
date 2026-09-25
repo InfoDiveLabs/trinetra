@@ -432,14 +432,17 @@ func printNodes(w io.Writer, ns []core.NodeSummary) {
 }
 
 // printNodeWarnings lists (on a master's fleet status) every node whose
-// replica has refused points or whose clock is off by more than 30 s.
+// replica has refused points, with the counts, and warns about every node
+// whose clock is off by more than 30 s.
 func printNodeWarnings(w io.Writer, ns []core.NodeSummary) {
 	for _, n := range ns {
 		if n.Self {
 			continue
 		}
-		if n.DroppedOld > 0 || n.DroppedCardinality > 0 {
-			fmt.Fprintf(w, "warning: %s (%s) replica dropped %d out-of-order points and %d over the series limit\n", n.Name, n.ID, n.DroppedOld, n.DroppedCardinality)
+		if n.DroppedOutOfOrder > 0 || n.DroppedCardinality > 0 || n.DroppedDuplicate > 0 {
+			// Cumulative counts, shown for reference: the master logs a
+			// warning when out-of-order or over-limit drops grow.
+			fmt.Fprintf(w, "replica drops: %s (%s): %d out of order, %d over the series limit, %d duplicates (harmless re-sends)\n", n.Name, n.ID, n.DroppedOutOfOrder, n.DroppedCardinality, n.DroppedDuplicate)
 		}
 		if n.SkewSec > skewWarnCLI || n.SkewSec < -skewWarnCLI {
 			fmt.Fprintf(w, "warning: %s (%s) clock differs from this master's by %s (fix NTP on that host)\n", n.Name, n.ID, fmtSkew(n))

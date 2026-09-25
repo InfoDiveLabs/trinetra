@@ -865,9 +865,18 @@ for three samples in a row. The replica stores the child's
 timestamps unchanged, so a child whose clock runs ahead pushes each series'
 last stored time into the future and the ordering guard then drops newer
 points as out of order. The master logs a warning once when a node's skew
-passes 30 seconds, marks it `lagging`, shows the skew in `fleet nodes`, and
-`fleet status` lists every node whose replica has dropped points (the
-counters in `ingest.state`). Fix the node's clock (NTP) when you see it.
+passes 30 seconds, marks it `lagging`, and shows the skew in `fleet nodes`.
+Fix the node's clock (NTP) when you see it.
+
+The replica counts what it refuses, in `ingest.state`: points older than the
+series' last stored point (out of order), points over the per-node series
+limit, and duplicates (a copy of a point it already has, re-sent by a gap
+refill or a retried batch; harmless). `fleet status` shows the counts for
+every node that has any. The counters are cumulative, so the master's log
+warns only when a node's out-of-order or over-limit count grows during a
+maintenance interval (15 minutes); duplicates never warn. A replica written
+before duplicates were counted separately loads its old count as out of
+order.
 
 A node going down raises one alert on the master, and its return resolves it.
 If half or more of the fleet (at least three nodes) drops at once, that is
