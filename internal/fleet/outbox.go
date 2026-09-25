@@ -59,6 +59,12 @@ func OpenOutbox(dir string, maxBytes int64) (*Outbox, error) {
 	return openOutbox(dir, maxBytes, defaultSegmentMax)
 }
 
+// OpenOutboxSegmented is OpenOutbox with an explicit segment size, for tests
+// and for tuning very small caps.
+func OpenOutboxSegmented(dir string, maxBytes, segmentBytes int64) (*Outbox, error) {
+	return openOutbox(dir, maxBytes, segmentBytes)
+}
+
 func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err

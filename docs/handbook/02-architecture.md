@@ -702,6 +702,154 @@ and `StandardError=journal` send all logging to the journal, which is why
 `journalctl -u serverwatch` is the way to read the daemon's output, including
 the one-time Telegram enrollment PIN.
 
+## Fleet mode
+
+Everything above describes one host watching itself. Fleet mode lets one
+serverwatch collect the history of many others, without changing what any of
+them does locally. It lives in `internal/fleet` (standard library only, like
+the daemon) plus a thin adapter layer in `internal/serverwatch`.
+
+### Three roles
+
+Every install has a `fleet.role`:
+
+| Role | What it does |
+|------|--------------|
+| solo (empty) | The default and exactly the behaviour described in the rest of this chapter. No fleet goroutine, no listener, no fleet directories on disk. |
+| master | Everything solo does, plus a TLS listener (`fleet.listen`, default `:9443`) that enrolls children and stores a replica of each one's history. The master shows itself as the node `self`. |
+| child | Everything solo does, plus a shipper that sends a copy of what it records to its master. |
+
+The role is written only by `serverwatch fleet init|join|leave|disable`, never
+by `config set`, because it has to change together with the certificates those
+commands create. A child keeps sampling, storing and alerting locally exactly
+as a solo host would; the master adds to that, it never replaces it. If the
+master disappears, every child carries on as if it were solo and catches up
+later.
+
+### Enrollment
+
+`serverwatch fleet init` creates a private certificate authority on the master
+(10 years) and a server certificate (2 years) for the addresses children will
+use, under `/var/lib/serverwatch/fleet/pki/`. Running it again reuses the
+existing CA, so enrolled children never have to re-join; it refuses to replace
+a CA it cannot read rather than silently minting a new one.
+
+`serverwatch fleet token create` prints a one-line join code (`swj1_...`). The
+code carries the master's URL, a short-lived single- or multi-use token
+(`swt_...`), and the CA pin: a SHA-256 of the CA's public key. On the child,
+`serverwatch fleet join <code>` generates a private key locally, connects to
+the master, and refuses to send anything unless the certificate chain the
+master presents matches that pin. So the only trust decision is copying the
+code; there is no trust-on-first-use. The master spends the token, registers
+the node, and signs a 90-day client certificate for it. Joins are rate-limited
+per source IP.
+
+From then on every request from the child is mutual TLS: the master knows
+which node is talking from the client certificate, not from anything in the
+request body. The child renews its certificate over that same connection once
+two thirds of its life has passed, so a healthy node never expires.
+`serverwatch fleet node revoke` marks a node revoked in the master's registry;
+its requests are refused from then on, it stops shipping and raises a local
+alert, and its history on the master is kept.
+
+### The data path
+
+On a child, the store writer appends every sample to the local time-series
+store first, exactly as on a solo host, and only then tees a copy into the
+**outbox**: a durable, append-only spool under `/var/lib/serverwatch/outbox/`
+where each record gets an increasing sequence number. Down events and alert
+log entries go through the same outbox. A failure to write the outbox is
+logged and counted but never blocks the local write; the local store is the
+source of truth.
+
+The shipper reads the outbox in batches (at most 1 MiB or 5000 records) and
+posts them to the master's `ingest` endpoint. The master applies a batch to
+that node's replica, a normal tsfile store under
+`/var/lib/serverwatch/fleet/nodes/<id>/`, syncs it to disk, records the last
+applied sequence number, and only then acknowledges. The child deletes outbox
+segments once they are acknowledged. A batch the master has already applied
+is acknowledged again without being re-applied, so a retry after a lost
+response never duplicates data.
+
+The replica also has an ordering guard: tsfile series must only grow in time,
+so the master drops any point whose timestamp is not newer than the last one
+it stored for that series (and counts it in the node's `ingest.state`). That
+guard is what makes gap repair, below, safe to retry.
+
+```mermaid
+flowchart LR
+    subgraph child["child (any serverwatch)"]
+        sw["store writer"] --> local["local tsfile store"]
+        sw --> ob["outbox (512 MiB, seq)"]
+        ob --> sh["shipper"]
+        local -. gap repair .-> sh
+    end
+    sh -->|"mTLS: ingest / backfill / live"| m["master fleet listener :9443"]
+    m --> rep["replica per node\nfleet/nodes/<id>/"]
+    m --> live["liveness tracker"] --> alerts["node-down alerts"]
+```
+
+Separately from the durable path, the child sends a small **live** update every
+fast interval: the current snapshot, alert state and version, plus host
+inventory every ten minutes. It is latest-wins and not spooled; it is what the
+master shows as the node's current state.
+
+### Store and forward, and gap repair
+
+When the master is unreachable, the outbox simply grows and the shipper retries
+with backoff (1 s up to 60 s, jittered). When the master comes back, the
+backlog drains in order, and the replica ends up identical to the child's own
+store.
+
+The outbox is capped (`fleet.outbox_max_mb`, default 512 MiB). If a long
+outage fills it, the oldest segments are dropped and the dropped range is
+recorded as a **gap** (sequence range and time range) before anything is
+deleted. Nothing is lost, because the same data still sits in the child's
+local store. Before sending anything newer from the outbox, the shipper
+repairs the oldest gap first: it rebuilds that time range from local history
+(raw points while raw retention still holds them, 1-minute rollups before
+that) and posts it to the master's `backfill` endpoint. Only then does the
+remaining outbox follow. Oldest-first matters: because of the ordering guard,
+sending newer data first would make the master reject the older points
+forever.
+
+A gap that cannot be rebuilt locally after several attempts is given up on and
+logged, so one broken range cannot hold back everything newer.
+
+### Liveness and node-down alerts
+
+The master tracks when it last heard from each node. A node is `online` while
+it is in contact, `lagging` when it is in contact but its oldest unsent data
+is more than five minutes old, `stale` after 30 seconds of silence, and `down` after
+`fleet.node_down_after` (default 2 minutes); revoked nodes show as `revoked`.
+When the master itself starts, every node gets a fresh grace period, so the
+master's own downtime is never blamed on its nodes.
+
+A node going down raises one alert on the master, and its return resolves it.
+If half or more of the fleet (at least three nodes) drops at once, that is
+almost always the master's own network, so the master raises a single "fleet
+connectivity" alert instead of one per node. On the child side, a link that
+has been down for ten minutes raises a local warning (telemetry is still being
+spooled), and it resolves when the link is back.
+
+In this release children still send every one of their own alerts locally,
+exactly as before; the master only adds the node-down and fleet-connectivity
+alerts. Nothing is silenced by joining a fleet.
+
+### What a replica can answer today
+
+The control socket accepts an optional `node` on each request, so
+`serverwatch-ctl`, the web UI and any other plugin can read a remote node the
+same way they read the local one: status, history, metrics, down events, the
+alert log and host inventory all come from the replica. Requests without a
+`node` go to the local daemon, as before. Fleet management itself is a small
+set of `Fleet.*` methods (status, nodes, rename, tags, revoke, tokens).
+
+Some things still need the live child and are refused for a remote node in
+this release: container logs, config changes, alert acks, channel tests,
+`doctor`, and the live event stream. Thresholds shown for a remote node come
+from the master's config, not the child's.
+
 ## Putting it together
 
 Step back and the shape is simple. One process, started and kept alive by
@@ -715,7 +863,9 @@ through one interface, `core.API`, and the daemon serves that interface over a
 token-authenticated local socket so that separate, dependency-carrying plugin
 processes can drive it while the default binary stays pure standard library.
 The systemd unit ties the resilience and the socket lifetime together in a
-dozen lines. That is the architecture the rest of this handbook builds on.
+dozen lines. Fleet mode, when you turn it on, adds a spool and a shipper on
+children and a listener and replicas on the master, without changing any of
+that. That is the architecture the rest of this handbook builds on.
 
 ---
 

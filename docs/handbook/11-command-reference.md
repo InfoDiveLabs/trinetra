@@ -54,6 +54,7 @@ column.
 | `alerts [list] [...]` | List recent alerts. | read-only |
 | `alerts ack <key>` | Acknowledge an active alert. | persists (see Notes) |
 | `alerts unack <key>` | Un-acknowledge an alert. | persists (see Notes) |
+| `fleet <subcommand>` | Fleet mode: make this host a master, join or leave one, manage nodes and join codes. | see [`serverwatch fleet`](#serverwatch-fleet) |
 
 This section covers the daemon, lifecycle, and low-level scriptable commands.
 The day-to-day management verbs (`monitor`, `schedule`, `quiet-hours`,
@@ -134,6 +135,69 @@ yourself, you must (re-)run `serverwatch install` afterward so its checksum
 is recorded (see [Installation and first run](03-installation.md)); until
 then the front-door has nothing to verify the unrecorded binary against and
 refuses to run it.
+
+## serverwatch fleet
+
+`serverwatch fleet` manages fleet mode (see [Fleet
+mode](02-architecture.md#fleet-mode)). Run it with no arguments or `help` to
+print the usage:
+
+```
+usage:
+  serverwatch fleet init --address HOST[,IP] [--port 9443]   make this host the fleet master
+  serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1]
+  serverwatch fleet token list | token delete <id>
+  serverwatch fleet join <code> [--name NAME]                  join a master as a child
+  serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
+  serverwatch fleet node revoke|rename|tag <node> [value]
+  serverwatch fleet leave [--purge]                            child -> solo
+  serverwatch fleet disable [--purge]                          master -> solo
+```
+
+The commands split into two kinds. `init`, `join`, `leave` and `disable` change
+this host's role: they write the fleet keys in the config file and the
+certificate files on disk, and do not signal the daemon; each prints `Restart
+to apply: sudo systemctl restart serverwatch`. Everything else asks the running
+daemon over the control socket, so it needs the daemon up (on the master, for
+the node and token commands) and changes take effect immediately.
+
+| Command | Flags | What it does |
+| --- | --- | --- |
+| `fleet init` | `--address HOST[,IP]` (required): the names and IPs children will use to reach this host; `--port` (default `9443`) | Makes a solo host the master. Creates the fleet CA (or reuses an existing one) and a server certificate for the addresses, sets `fleet.role` to master, and prints the CA fingerprint. Refuses if the host is already a master or child. |
+| `fleet token create` | `--tags a,b` (tags every node that joins with it), `--ttl` (default `1h`), `--uses` (default `1`) | Master only. Prints a join code (`swj1_...`) and the exact `fleet join` line to run on each server. |
+| `fleet token list` | none | Master only. Lists unexpired join tokens: id, uses left, expiry, tags. |
+| `fleet token delete <id>` | none | Master only. Deletes a join token so it can no longer be used. |
+| `fleet join <code>` | `--name NAME` (default `server.name`) | Makes a solo host a child of the master in the code. Verifies the master against the CA pin in the code before sending anything, stores the node's key and certificate, and sets `fleet.role` to child. |
+| `fleet status` | none | This host's role. On a master: listen address, join URL, CA fingerprint, node count. On a child: node id, master, link state, last ack, outbox size, unsent records and gaps, last error. |
+| `fleet nodes` | `--tag T`, `--state S` (`online`, `lagging`, `stale`, `down`, `revoked`), `--q TEXT` (search name, id or address) | Table of nodes: on a master every enrolled node plus this host as `self`, elsewhere only `self`. Columns: state, CPU, memory, worst disk, version, last seen, tags, short id. |
+| `fleet node revoke <node>` | none | Master only. Refuses the node's certificate from now on; its history is kept. `<node>` is a node id, an id prefix of at least 6 characters, or an exact name. |
+| `fleet node rename <node> <name>` | none | Master only. Changes the node's display name. |
+| `fleet node tag <node> <a,b>` | none | Master only. Replaces the node's tags; an empty string clears them. |
+| `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. |
+| `fleet disable` | `--purge`: also delete the CA, node registry and every node's replicated history | Master only. Returns the host to solo. Without `--purge`, running `fleet init` again reuses the same CA, so children need not re-join. |
+
+The tunable fleet keys are ordinary config keys, set with `config set` and
+applied on restart: `fleet.listen` (master listen address, default `:9443`),
+`fleet.outbox_max_mb` (child outbox cap, default `512`, minimum `16`) and
+`fleet.node_down_after` (how long the master waits before calling a silent node
+down, default `2m`, minimum `30s`). The role, address, master URL, CA pin and
+node id are written only by the commands above; `config set` refuses them.
+
+A typical enrollment:
+
+```
+# on the master
+sudo serverwatch fleet init --address monitor.example.com,203.0.113.7
+sudo systemctl restart serverwatch
+sudo serverwatch fleet token create --tags prod --uses 3
+
+# on each server, with the code it printed
+sudo serverwatch fleet join swj1_...
+sudo systemctl restart serverwatch
+
+# back on the master
+sudo serverwatch fleet nodes --tag prod
+```
 
 ## 2. Plugin binaries
 

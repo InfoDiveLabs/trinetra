@@ -149,14 +149,17 @@ plain about them:
   this on.
 - **Per-interface throughput alerting.** Throughput is collected as a series,
   but alerting on a specific interface crossing a threshold is not wired up.
+- **Fleet mode (master/child).** Phase 1 (enrollment, store-and-forward
+  telemetry, replicas, node-down alerts, `serverwatch fleet` CLI) is in; the
+  fleet web UI, alert routing/escalation/silences, and managed config follow.
+  See [Fleet mode](02-architecture.md#fleet-mode).
 
 ## Not planned, for now
 
 A couple of directions are deliberately out of scope at this stage. Continuous
-integration and delivery is intentionally deferred. Multi-host aggregation and
-external metrics export, such as Prometheus or remote-write, are the kind of
-thing the `SampleStore` interface was designed to allow later, but they are not
-being built now.
+integration and delivery is intentionally deferred. External metrics export,
+such as Prometheus or remote-write, is the kind of thing the `SampleStore`
+interface was designed to allow later, but it is not being built now.
 
 ---
 

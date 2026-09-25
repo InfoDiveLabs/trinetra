@@ -6,6 +6,41 @@ uses [semantic versioning](https://semver.org/spec/v2.0.0.html). Dates are
 YYYY-MM-DD. Preview builds are cut as `vX.Y.Z-beta.N` tags on the `develop`
 branch; stable releases are tagged on `main`.
 
+## [Unreleased]
+
+Fleet mode, phase 1: one serverwatch can now collect the history of many,
+while every host keeps monitoring and alerting on its own exactly as before.
+See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
+
+### Added
+
+- **Fleet mode (master/child), phase 1.** A master enrolls children with a
+  one-line join code that pins its CA (no trust-on-first-use); children then
+  talk to it over mutual TLS with 90-day client certificates that renew
+  themselves, and can be revoked. Each child spools a copy of its samples, down
+  events and alert log into a durable, capped outbox and ships it to the
+  master, which keeps a per-node replica. A master outage loses nothing: the
+  backlog drains in order when it returns, and if the outbox cap was hit the
+  dropped range is rebuilt from the child's local store before newer data is
+  sent. The master raises node-down alerts (folded into one fleet-connectivity
+  alert when most of the fleet drops at once); a child warns locally when its
+  link has been down for ten minutes.
+- **`serverwatch fleet` commands:** `init`, `join`, `leave`, `disable`,
+  `status`, `nodes`, `node revoke|rename|tag`, and `token create|list|delete`.
+  See the [command reference](docs/handbook/11-command-reference.md#serverwatch-fleet).
+- **Config keys** `fleet.listen` (default `:9443`), `fleet.outbox_max_mb`
+  (default `512`) and `fleet.node_down_after` (default `2m`). The role and
+  identity keys are managed by `serverwatch fleet` and refused by `config set`.
+- **Control socket:** requests take an optional `node` to read a remote node's
+  replica through the same methods, plus new `Fleet.*` methods for fleet
+  management. Both are backward compatible: requests without `node` behave as
+  before.
+
+### Unchanged
+
+- Solo installs (no `fleet.role`, the default) run no fleet code, open no
+  listener and create no fleet directories.
+
 ## [0.4.1] - 2026-08-20
 
 The stable cut of the `0.4.1-beta.1`…`beta.3` line, tested on the live host
