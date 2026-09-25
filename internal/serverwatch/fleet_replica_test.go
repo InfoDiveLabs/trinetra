@@ -518,6 +518,11 @@ func TestReplicaLoadsOldDropCounter(t *testing.T) {
 	if st.AppliedSeq != 4 || st.DroppedOutOfOrder != 7 || st.DroppedCardinality != 1 || st.DroppedDuplicate != 0 {
 		t.Fatalf("stats = %+v", st)
 	}
+	// The old counter (which also held duplicates) is taken as already
+	// warned about, so upgrading does not raise a warning for it.
+	if st.WarnedOutOfOrder != 7 || st.WarnedCardinality != 1 {
+		t.Fatalf("drop-warning baseline = %d/%d, want 7/1", st.WarnedOutOfOrder, st.WarnedCardinality)
+	}
 }
 
 // A failed alerts.json write is retried by the next live update even when

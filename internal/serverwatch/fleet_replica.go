@@ -48,6 +48,13 @@ type ingestState struct {
 	DroppedOutOfOrder  int64 `json:"dropped_out_of_order,omitempty"`
 	DroppedDuplicate   int64 `json:"dropped_duplicate,omitempty"`
 	DroppedCardinality int64 `json:"dropped_cardinality,omitempty"`
+	// WarnedOutOfOrder / WarnedCardinality are the drop counters as of the
+	// master's last drop check (see masterLoop.checkDrops), persisted so
+	// growth that a restart interrupts is still warned about. Not
+	// omitempty: an absent key means an ingest.state from before these
+	// existed (see seedLocked).
+	WarnedOutOfOrder  int64 `json:"warned_out_of_order"`
+	WarnedCardinality int64 `json:"warned_cardinality"`
 	// SkewSec is the filtered server_time - sent_at (see RecordSkew). It is
 	// persisted with the next applied batch, not on every sample.
 	SkewSec float64 `json:"skew_sec,omitempty"`
@@ -142,6 +149,15 @@ func (n *replicaNode) seedLocked() {
 	n.st = ingestState{}
 	if b, err := os.ReadFile(filepath.Join(n.dir, "ingest.state")); err == nil {
 		_ = json.Unmarshal(b, &n.st)
+		var w struct {
+			OutOfOrder *int64 `json:"warned_out_of_order"`
+		}
+		if json.Unmarshal(b, &w) == nil && w.OutOfOrder == nil {
+			// Written before the drop-warning baseline existed: its counts
+			// (the out-of-order one also held duplicates) are taken as
+			// already reported rather than warned about on upgrade.
+			n.st.WarnedOutOfOrder, n.st.WarnedCardinality = n.st.DroppedOutOfOrder, n.st.DroppedCardinality
+		}
 	}
 	if n.skewInit {
 		n.st.SkewSec = skew
@@ -575,6 +591,24 @@ func (r *replicaSink) RecordSkew(id string, sampleSec int64) (int64, bool) {
 	crossed := over && !n.skewWarned
 	n.skewWarned = over
 	return est, crossed
+}
+
+// MarkDropsChecked records outOfOrder/cardinality as id's drop-warning
+// baseline and persists it in ingest.state (only when it changed), so the
+// next check, even after a master restart, warns only about growth beyond it.
+func (r *replicaSink) MarkDropsChecked(id string, outOfOrder, cardinality int64) error {
+	n, err := r.node(id)
+	if err != nil {
+		return err
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.st.WarnedOutOfOrder == outOfOrder && n.st.WarnedCardinality == cardinality {
+		return nil
+	}
+	n.st.WarnedOutOfOrder, n.st.WarnedCardinality = outOfOrder, cardinality
+	b, _ := json.Marshal(n.st)
+	return writeFileSynced(filepath.Join(n.dir, "ingest.state"), b)
 }
 
 // Stats returns a copy of id's ingest counters (zero for an unknown id).

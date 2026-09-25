@@ -888,9 +888,11 @@ limit, and duplicates (a copy of a point it already has, re-sent by a gap
 refill or a retried batch; harmless). `fleet status` shows the counts for
 every node that has any. The counters are cumulative, so the master's log
 warns only when a node's out-of-order or over-limit count grows during a
-maintenance interval (15 minutes); duplicates never warn. A replica written
-before duplicates were counted separately loads its old count as out of
-order.
+maintenance interval (15 minutes); duplicates never warn. The counts as of
+the last check are kept in `ingest.state` too, so growth that a master
+restart interrupts is still warned about afterwards. A replica written before
+duplicates were counted separately loads its old count as out of order and
+treats it as already reported.
 
 A node going down raises one alert on the master, and its return resolves it.
 If half or more of the fleet (at least three nodes) drops at once, that is

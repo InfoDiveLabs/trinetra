@@ -197,46 +197,34 @@ type masterLoop struct {
 	lastFlush   time.Time
 	maint       maintScheduler // only touched by the maintenance goroutine
 	maintaining chan struct{}  // holds a token while a maintenance slice runs
-	// dropBase is each node's replica drop counters at the last drop check
-	// (see checkDrops); lastDropCheck is when that ran. Only tick touches
-	// them.
-	dropBase      map[string]dropCounts
+	// lastDropCheck is when checkDrops last ran. Only tick touches it; the
+	// per-node baselines live in each replica's ingest.state.
 	lastDropCheck time.Time
 }
-
-// dropCounts are the replica drop counters that warrant a warning when they
-// grow (duplicates are harmless and never do).
-type dropCounts struct{ outOfOrder, cardinality int64 }
 
 // masterTickInterval is how often the master loop ticks.
 const masterTickInterval = 5 * time.Second
 
 func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, d fleetDeps, now time.Time) *masterLoop {
-	l := &masterLoop{reg: reg, tracker: tracker, sink: sink, alerter: fleet.NewNodeAlerter(), alert: d.alert,
-		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1),
-		dropBase: map[string]dropCounts{}, lastDropCheck: now}
-	// Drops recorded before this start were already reported (or predate
-	// the warning); only growth from here on is.
-	for _, n := range reg.List() {
-		st := sink.Stats(n.ID)
-		l.dropBase[n.ID] = dropCounts{st.DroppedOutOfOrder, st.DroppedCardinality}
-	}
-	return l
+	return &masterLoop{reg: reg, tracker: tracker, sink: sink, alerter: fleet.NewNodeAlerter(), alert: d.alert,
+		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1), lastDropCheck: now}
 }
 
 // checkDrops logs a warning for every node whose replica dropped points out
 // of order or over the series limit since the previous check. The counters
 // themselves are cumulative (fleet status shows them); this is what makes a
-// new problem visible without warning about an old one forever.
+// new problem visible without warning about an old one forever. The
+// baseline it compares against is persisted per node (ingest.state), so
+// growth a master restart interrupts is still warned about after it.
 func (l *masterLoop) checkDrops(now time.Time) {
 	since := now.Sub(l.lastDropCheck).Round(time.Minute)
 	l.lastDropCheck = now
 	for _, n := range l.reg.List() {
 		st := l.sink.Stats(n.ID)
-		cur := dropCounts{st.DroppedOutOfOrder, st.DroppedCardinality}
-		prev := l.dropBase[n.ID]
-		l.dropBase[n.ID] = cur
-		dOld, dCard := cur.outOfOrder-prev.outOfOrder, cur.cardinality-prev.cardinality
+		dOld, dCard := st.DroppedOutOfOrder-st.WarnedOutOfOrder, st.DroppedCardinality-st.WarnedCardinality
+		if err := l.sink.MarkDropsChecked(n.ID, st.DroppedOutOfOrder, st.DroppedCardinality); err != nil {
+			l.logf("fleet: save drop-warning baseline for %s: %v", n.ID, err)
+		}
 		if dOld <= 0 && dCard <= 0 {
 			continue
 		}

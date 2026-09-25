@@ -556,62 +556,113 @@ func TestServerLeafExpiryWarning(t *testing.T) {
 	}
 }
 
-// The master logs a warning when a node's replica drops points out of
-// order (or over the series limit) during a maintenance interval, once per
-// increase; duplicates from refills and drops it already had at start-up
-// are not warned about.
-func TestMasterWarnsWhenOutOfOrderDropsGrow(t *testing.T) {
+// dropWarnFixture is a master loop over a replica sink in dir with one
+// registered node, logging into logs.
+type dropWarnFixture struct {
+	dir     string
+	d       fleetDeps
+	reg     *fleet.Registry
+	tracker *fleet.Tracker
+	id      string
+	logs    *[]string
+}
+
+func newDropWarnFixture(t *testing.T) *dropWarnFixture {
 	dir := t.TempDir()
 	d, _ := testDeps(t, dir)
-	var logs []string
-	d.logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+	logs := &[]string{}
+	d.logf = func(format string, args ...any) { *logs = append(*logs, fmt.Sprintf(format, args...)) }
 	reg, _ := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
-	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
-	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{})
-	now := time.Now()
 	id, _ := fleet.NewNodeID()
-	if err := reg.Add(fleet.Node{ID: id, Name: "web-9", Joined: now.Unix()}); err != nil {
+	if err := reg.Add(fleet.Node{ID: id, Name: "web-9", Joined: time.Now().Unix()}); err != nil {
 		t.Fatal(err)
 	}
-	tracker.Seen(id, now.Unix(), 0)
-	// Drops from before this master started.
-	if err := sink.Apply(id, []fleet.Record{samplesRec(1, 100, map[string]float64{"cpu": 1}), samplesRec(2, 90, map[string]float64{"cpu": 2})}); err != nil {
-		t.Fatal(err)
-	}
-	loop := newMasterLoop(reg, tracker, sink, d, now)
-	warnings := func() int {
-		n := 0
-		for _, l := range logs {
-			if strings.Contains(l, "WARNING") && strings.Contains(l, "web-9") && strings.Contains(l, "out of order") {
-				n++
-			}
+	return &dropWarnFixture{dir: dir, d: d, reg: reg, tracker: fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute)), id: id, logs: logs}
+}
+
+// start builds a master loop over a fresh sink on the same directory, as a
+// master (re)start does.
+func (f *dropWarnFixture) start(now time.Time) (*masterLoop, *replicaSink) {
+	sink := newReplicaSink(filepath.Join(f.dir, "nodes"), StoreOptions{})
+	return newMasterLoop(f.reg, f.tracker, sink, f.d, now), sink
+}
+
+func (f *dropWarnFixture) warnings() int {
+	n := 0
+	for _, l := range *f.logs {
+		if strings.Contains(l, "WARNING") && strings.Contains(l, "web-9") && strings.Contains(l, "out of order") {
+			n++
 		}
-		return n
+	}
+	return n
+}
+
+// The master logs a warning when a node's replica drops points out of
+// order (or over the series limit) during a maintenance interval, once per
+// increase; duplicates from refills are not warned about.
+func TestMasterWarnsWhenOutOfOrderDropsGrow(t *testing.T) {
+	f := newDropWarnFixture(t)
+	now := time.Now()
+	loop, sink := f.start(now)
+	if err := sink.Apply(f.id, []fleet.Record{samplesRec(1, 100, map[string]float64{"cpu": 1})}); err != nil {
+		t.Fatal(err)
 	}
 	// A duplicate only.
-	if err := sink.Backfill(id, []fleet.Record{samplesRec(0, 100, map[string]float64{"cpu": 1})}); err != nil {
+	if err := sink.Backfill(f.id, []fleet.Record{samplesRec(0, 100, map[string]float64{"cpu": 1})}); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(storeMaintenanceInterval)
 	loop.tick(now)
-	if w := warnings(); w != 0 {
-		t.Fatalf("warned %d times for old drops / duplicates: %q", w, logs)
+	if w := f.warnings(); w != 0 {
+		t.Fatalf("warned %d times for a duplicate: %q", w, *f.logs)
 	}
-	if err := sink.Backfill(id, []fleet.Record{samplesRec(0, 50, map[string]float64{"cpu": 1}), samplesRec(0, 60, map[string]float64{"cpu": 1})}); err != nil {
+	if err := sink.Backfill(f.id, []fleet.Record{samplesRec(0, 50, map[string]float64{"cpu": 1}), samplesRec(0, 60, map[string]float64{"cpu": 1})}); err != nil {
 		t.Fatal(err)
 	}
 	loop.tick(now.Add(masterTickInterval)) // mid-interval: not yet
-	if w := warnings(); w != 0 {
-		t.Fatalf("warned before the interval ended: %q", logs)
+	if w := f.warnings(); w != 0 {
+		t.Fatalf("warned before the interval ended: %q", *f.logs)
 	}
 	now = now.Add(storeMaintenanceInterval)
 	loop.tick(now)
-	if w := warnings(); w != 1 || !strings.Contains(logs[len(logs)-1], "2 points") {
+	logs := *f.logs
+	if w := f.warnings(); w != 1 || !strings.Contains(logs[len(logs)-1], "2 points") {
 		t.Fatalf("warnings = %d, want 1 naming 2 points: %q", w, logs)
 	}
 	now = now.Add(storeMaintenanceInterval)
 	loop.tick(now)
-	if w := warnings(); w != 1 {
-		t.Fatalf("warned again without new drops: %q", logs)
+	if w := f.warnings(); w != 1 {
+		t.Fatalf("warned again without new drops: %q", *f.logs)
+	}
+}
+
+// The warning baseline is persisted: drops that happen after the last
+// check but before a master restart are still warned about after it, and
+// drops already warned about are not warned about again.
+func TestMasterDropWarningSurvivesRestart(t *testing.T) {
+	f := newDropWarnFixture(t)
+	now := time.Now()
+	loop, sink := f.start(now)
+	if err := sink.Apply(f.id, []fleet.Record{samplesRec(1, 100, map[string]float64{"cpu": 1})}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(storeMaintenanceInterval)
+	loop.tick(now) // baseline: nothing dropped yet
+	if err := sink.Backfill(f.id, []fleet.Record{samplesRec(0, 50, map[string]float64{"cpu": 1})}); err != nil {
+		t.Fatal(err)
+	}
+	// Restart before the next check.
+	loop, _ = f.start(now)
+	now = now.Add(storeMaintenanceInterval)
+	loop.tick(now)
+	if w := f.warnings(); w != 1 {
+		t.Fatalf("warnings after restart = %d, want 1: %q", w, *f.logs)
+	}
+	// Another restart: that drop was already warned about.
+	loop, _ = f.start(now)
+	now = now.Add(storeMaintenanceInterval)
+	loop.tick(now)
+	if w := f.warnings(); w != 1 {
+		t.Fatalf("already-warned drop warned again after restart: %q", *f.logs)
 	}
 }
