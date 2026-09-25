@@ -648,3 +648,23 @@ func TestFleetStatusMasterNotesDropsAndSkew(t *testing.T) {
 		t.Fatalf("healthy node listed: %s", got)
 	}
 }
+
+// A child whose live updates reach the master while its data lane retries
+// says so, rather than claiming the link is fine or down.
+func TestFleetStatusChildCatchingUp(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{status: core.FleetStatus{
+		Role: config.RoleChild, NodeID: "node-42", MasterURL: "https://master.local:9443",
+		Link: &core.LinkView{State: "catching up", LastAck: time.Now().Unix(), LastError: "fleet: master busy (503)", Unacked: 40},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "status"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	for _, want := range []string{"link: catching up (master reachable; unsent data is being retried)", "40 unsent", "last error: fleet: master busy (503)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q: %s", want, got)
+		}
+	}
+}

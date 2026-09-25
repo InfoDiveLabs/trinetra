@@ -477,3 +477,41 @@ func TestLoadIdentityRecoversHalfPromotedRenewal(t *testing.T) {
 		t.Fatalf("loaded serial %s, want %s", got, serial)
 	}
 }
+
+// failingApplySink makes Apply fail while fail is set (the master's disk is
+// refusing writes) while live updates keep working.
+type failingApplySink struct {
+	Sink
+	fail *atomic.Bool
+}
+
+func (s failingApplySink) Apply(id string, recs []Record) error {
+	if s.fail.Load() {
+		return errors.New("injected apply failure")
+	}
+	return s.Sink.Apply(id, recs)
+}
+
+// While live updates get through but the data lane is backing off with
+// unacked records, the link reads "catching up", never "linked"; once the
+// backlog drains it is "linked" again.
+func TestShipperCatchingUpWhileDataLaneRetries(t *testing.T) {
+	var fail atomic.Bool
+	fail.Store(true)
+	f := newMasterFixture(t, func(c *MasterConfig) { c.Sink = failingApplySink{Sink: c.Sink, fail: &fail} })
+	ob, _ := OpenOutbox(t.TempDir(), 64<<20)
+	appendN(t, ob, 1, 3)
+	sh, _ := startShipperWithFastBackoff(t, f, ob, nil)
+	waitFor(t, "catching up", func() bool { return sh.Status().State == "catching up" })
+	for i := 0; i < 30; i++ { // across several live ticks
+		if st := sh.Status(); st.State != "catching up" || st.LastError == "" {
+			t.Fatalf("status %+v, want catching up with the data error", st)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	fail.Store(false)
+	waitFor(t, "linked", func() bool { return sh.Status().State == "linked" })
+	if st := sh.Status(); st.Outbox.Unacked != 0 || st.LastError != "" {
+		t.Fatalf("status after drain %+v", st)
+	}
+}

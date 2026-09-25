@@ -81,6 +81,8 @@ func (f NodeFilter) Match(n NodeSummary) bool {
 // LinkView is a child's view of its own link to the fleet master: the
 // shipper's connection state, the last successful ack, and outbox backlog.
 type LinkView struct {
+	// State is connecting, linked, catching up (live updates reach the
+	// master but unsent data is being retried), retrying or revoked.
 	State         string `json:"state"`
 	LastAck       int64  `json:"last_ack"`
 	LastError     string `json:"last_error"`

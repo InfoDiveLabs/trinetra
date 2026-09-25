@@ -108,7 +108,7 @@ node_state() { # <name> -> STATE column from the master's fleet nodes
   on master serverwatch fleet nodes | awk -v n="$1" '$1==n {print $2}'
 }
 node_is() { [ "$(node_state "$1")" = "$2" ]; }
-link_state() { on "$1" serverwatch fleet status | sed -n 's/^link: \([a-z]*\),.*/\1/p'; }
+link_state() { on "$1" serverwatch fleet status | sed -n 's/^link: \([a-z][a-z ]*[a-z]\)[ ,(].*/\1/p'; } # e.g. linked, catching up
 link_is() { [ "$(link_state "$1")" = "$2" ]; }
 unsent() { on "$1" serverwatch fleet status | sed -n 's/^outbox: .* MB, \([0-9]*\) unsent.*/\1/p'; }
 unsent_is_zero() { [ "$(unsent "$1")" = "0" ]; }

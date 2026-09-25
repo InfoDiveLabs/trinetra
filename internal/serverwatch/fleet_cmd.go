@@ -368,7 +368,11 @@ func fleetStatus(c *control.Client) error {
 	case config.RoleChild:
 		fmt.Fprintf(stdout, "node id: %s\nmaster: %s\n", st.NodeID, st.MasterURL)
 		if l := st.Link; l != nil {
-			fmt.Fprintf(stdout, "link: %s, last ack %s\noutbox: %.1f MB, %d unsent, %d gaps\n", l.State, ago(l.LastAck), float64(l.OutboxBytes)/(1<<20), l.Unacked, l.Gaps)
+			state := l.State
+			if state == fleet.LinkCatchingUp {
+				state += " (master reachable; unsent data is being retried)"
+			}
+			fmt.Fprintf(stdout, "link: %s, last ack %s\noutbox: %.1f MB, %d unsent, %d gaps\n", state, ago(l.LastAck), float64(l.OutboxBytes)/(1<<20), l.Unacked, l.Gaps)
 			if l.LastError != "" {
 				fmt.Fprintf(stdout, "last error: %s\n", l.LastError)
 			}

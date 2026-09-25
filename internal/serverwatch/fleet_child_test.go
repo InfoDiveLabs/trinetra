@@ -148,3 +148,22 @@ func TestChildLinkAlerts(t *testing.T) {
 		t.Fatal("revoked alert repeated")
 	}
 }
+
+// "catching up" means the master is reachable again (live updates get
+// through while the backlog drains): it resolves the link-down warning and
+// never raises one.
+func TestChildLinkAlertsCatchingUpIsReachable(t *testing.T) {
+	var c childLinkAlerts
+	start := int64(1000)
+	if a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+601); len(a) != 1 || a[0].Kind != "fire" {
+		t.Fatalf("link down alert = %+v", a)
+	}
+	a := c.Plan(fleet.LinkStatus{State: fleet.LinkCatchingUp, LastAck: start + 700}, "https://m", start, start+700)
+	if len(a) != 1 || a[0].Kind != "recover" {
+		t.Fatalf("catching up should recover the link alert, got %+v", a)
+	}
+	var d childLinkAlerts
+	if a := d.Plan(fleet.LinkStatus{State: fleet.LinkCatchingUp}, "https://m", start, start+601); len(a) != 0 {
+		t.Fatalf("catching up raised %+v", a)
+	}
+}

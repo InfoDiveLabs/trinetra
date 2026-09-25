@@ -224,12 +224,15 @@ func (c *childLinkAlerts) Plan(st fleet.LinkStatus, masterURL string, startedAt,
 	if lastOK == 0 {
 		lastOK = startedAt
 	}
+	// "catching up" is reachable too: live updates get through while the
+	// spooled backlog drains.
+	reachable := st.State == fleet.LinkLinked || st.State == fleet.LinkCatchingUp
 	switch {
-	case st.State == "linked" && c.linkDownRaised:
+	case reachable && c.linkDownRaised:
 		c.linkDownRaised = false
 		out = append(out, Alert{Key: "fleet:link:down", Severity: SevWarning, Kind: "recover", Source: "fleet", Time: now,
 			Title: "🟢 Fleet link restored; spooled telemetry is being sent to the master."})
-	case st.State != "linked" && !c.linkDownRaised && now-lastOK >= linkDownWarnAfter:
+	case !reachable && !c.linkDownRaised && now-lastOK >= linkDownWarnAfter:
 		c.linkDownRaised = true
 		out = append(out, Alert{Key: "fleet:link:down", Severity: SevWarning, Kind: "fire", Source: "fleet", Time: now,
 			Title: fmt.Sprintf("⚠ Fleet master %s unreachable for %d min. Alerts continue locally; telemetry is spooled (%.1f MB) and will be sent when it's back.",

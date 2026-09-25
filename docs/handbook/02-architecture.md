@@ -876,6 +876,13 @@ connectivity" alert instead of one per node. On the child side, a link that
 has been down for ten minutes raises a local warning (telemetry is still being
 spooled), and it resolves when the link is back.
 
+`fleet status` on a child shows the link as `linked` only while its data is
+actually being accepted (or nothing is waiting to be sent). When live updates
+reach the master but the data lane is still retrying with records unsent (for
+example right after an outage, or while the master's disk refuses writes), it
+shows `catching up` with the last data error; `retrying` means the master is
+unreachable or refusing requests.
+
 In this release children still send every one of their own alerts locally,
 exactly as before; the master only adds the node-down and fleet-connectivity
 alerts. Nothing is silenced by joining a fleet.

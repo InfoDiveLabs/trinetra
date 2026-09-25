@@ -258,6 +258,15 @@ type ShipperConfig struct {
 	Logf      func(format string, args ...any)
 }
 
+// Link states reported in LinkStatus.State.
+const (
+	LinkConnecting = "connecting"  // nothing has reached the master yet
+	LinkLinked     = "linked"      // the master is reachable and data is flowing
+	LinkCatchingUp = "catching up" // live updates reach the master, but the data lane is retrying with records still unsent
+	LinkRetrying   = "retrying"    // the master is unreachable or refusing requests
+	LinkRevoked    = "revoked"     // the master revoked this node
+)
+
 // LinkStatus is the child's view of its link to the master.
 type LinkStatus struct {
 	State     string      `json:"state"`
@@ -278,7 +287,10 @@ type Shipper struct {
 	client  *http.Client
 	revoked atomic.Bool
 	mu      sync.Mutex
-	st      LinkStatus
+	st      LinkStatus // LastAck; State and LastError are derived in Status
+	// Per-lane outcome of the most recent attempt: "" before the first,
+	// laneOK after a success, otherwise the error text.
+	dataLane, liveLane string
 
 	// backoff computes the data-loop retry delay for a given attempt count.
 	// It defaults to backoffDelay; tests may shorten it so retry-heavy
@@ -311,39 +323,71 @@ func NewShipper(cfg ShipperConfig) *Shipper {
 			Timeout:   60 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: PinnedClientTLS(cfg.Pin, cfg.Identity.Cert), ForceAttemptHTTP2: true},
 		},
-		st:      LinkStatus{State: "connecting"},
+		st:      LinkStatus{State: LinkConnecting},
 		backoff: backoffDelay,
 	}
 }
 
-// Status returns the current link status.
+// laneOK marks a lane whose last attempt succeeded.
+const laneOK = "ok"
+
+// Status returns the current link status. The state combines both lanes: it
+// is "linked" only while the data lane's last attempt succeeded (or nothing
+// is waiting to be sent), and "catching up" when live updates get through
+// but the data lane is backing off with records still unsent.
 func (s *Shipper) Status() LinkStatus {
+	ob := s.cfg.Outbox.Stats()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.st
-	st.Outbox = s.cfg.Outbox.Stats()
+	st.Outbox = ob
+	dataFailing := s.dataLane != "" && s.dataLane != laneOK
+	liveFailing := s.liveLane != "" && s.liveLane != laneOK
+	switch {
+	case s.revoked.Load() || st.State == LinkRevoked:
+		st.State = LinkRevoked
+	case dataFailing && ob.Unacked == 0 && ob.Gaps == 0 && !liveFailing:
+		st.State = LinkLinked // nothing waiting on the failed lane
+	case dataFailing && s.liveLane == laneOK:
+		st.State = LinkCatchingUp
+	case dataFailing || liveFailing:
+		st.State = LinkRetrying
+	case s.dataLane == laneOK || s.liveLane == laneOK:
+		st.State = LinkLinked
+	}
+	switch {
+	case dataFailing:
+		st.LastError = s.dataLane
+	case liveFailing:
+		st.LastError = s.liveLane
+	}
 	return st
 }
 
-func (s *Shipper) setOK() {
+// setOK records a successful attempt on a lane (data when data is true).
+func (s *Shipper) setOK(data bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.st.State != "revoked" {
-		s.st.State = "linked"
+	if data {
+		s.dataLane = laneOK
+	} else {
+		s.liveLane = laneOK
 	}
 	s.st.LastAck = s.cfg.Now().Unix()
-	s.st.LastError = ""
 }
 
-func (s *Shipper) setErr(err error) {
+// setErr records a failed attempt on a lane.
+func (s *Shipper) setErr(data bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if errors.Is(err, ErrRevoked) {
-		s.st.State = "revoked"
-	} else if s.st.State != "revoked" {
-		s.st.State = "retrying"
+		s.st.State = LinkRevoked
 	}
-	s.st.LastError = err.Error()
+	if data {
+		s.dataLane = err.Error()
+	} else {
+		s.liveLane = err.Error()
+	}
 }
 
 // retryAfterError carries a server-requested minimum wait.
@@ -394,7 +438,7 @@ func (s *Shipper) dataLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			s.setErr(err)
+			s.setErr(true, err)
 			if errors.Is(err, ErrRevoked) {
 				s.revoked.Store(true)
 				s.cfg.Logf("fleet: %v; shipping stopped, data kept locally", err)
@@ -466,7 +510,7 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		s.gapFailSeq, s.gapFailN = 0, 0
-		s.setOK()
+		s.setOK(true)
 		return true, nil
 	}
 	recs, err := s.cfg.Outbox.Read(s.cfg.Outbox.Acked(), MaxBatchBytes, MaxBatchRecords)
@@ -494,7 +538,7 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		// master's); say so loudly and carry on.
 		s.cfg.Logf("fleet: WARNING %v", div)
 	}
-	s.setOK()
+	s.setOK(true)
 	return true, nil
 }
 
@@ -630,13 +674,13 @@ func (s *Shipper) liveOnce(ctx context.Context, timeout time.Duration) {
 		if ctx.Err() != nil {
 			return
 		}
-		s.setErr(err)
+		s.setErr(false, err)
 		if errors.Is(err, ErrRevoked) {
 			s.revoked.Store(true)
 		}
 		return
 	}
-	s.setOK()
+	s.setOK(false)
 }
 
 func (s *Shipper) renewLoop(ctx context.Context) {
