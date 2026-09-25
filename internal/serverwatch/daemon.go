@@ -741,7 +741,7 @@ func cmdDaemon(args []string) int {
 	// touches this config. Best-effort: a save failure here must not stop
 	// the daemon from starting.
 	if migrateTelegramChannel(cfg) {
-		_ = saveCfg(cfg)
+		_ = saveDaemonCfg(cfg)
 	}
 	// dispatcher fans outbound alerts (anomalies, boot report, digests) out to
 	// every configured Channel. It is stored alongside cfg, guarded by the
@@ -808,8 +808,11 @@ func cmdDaemon(args []string) int {
 	// newInprocAPI's ApplyConfig exposes to the control socket (and, through
 	// it, the web config editor, issue #66) so writes take effect
 	// immediately, without a SIGHUP round-trip.
+	// saveDaemonCfg keeps the on-disk fleet identity keys: this daemon's
+	// in-memory config (or a plugin's) may predate a `serverwatch fleet`
+	// command, which must be the only thing that changes them.
 	reload := func(newCfg *config.Config) error {
-		if err := saveCfg(newCfg); err != nil {
+		if err := saveDaemonCfg(newCfg); err != nil {
 			return err
 		}
 		applyConfig(newCfg)
@@ -825,10 +828,13 @@ func cmdDaemon(args []string) int {
 		mu.Lock()
 		nc := *cfg // shallow struct copy
 		nc.Telegram.ChatID = id
+		// Saved (which overlays the on-disk fleet keys onto nc, so a
+		// `fleet join` made since start is never wiped) BEFORE the swap:
+		// nc must not be mutated once other goroutines can read it.
+		_ = saveDaemonCfg(&nc)
 		cfg = &nc // swap pointer; existing readers keep old struct
 		nd := NewDispatcher(channelsFromConfig(cfg), dispatcherTimeout)
 		dispatcher = nd
-		_ = saveCfg(cfg)
 		mu.Unlock()
 		// Propagate the rebuilt dispatcher to the async notifier worker, mirroring
 		// applyConfig: delivery runs off the queue's own dispatcher pointer, so a

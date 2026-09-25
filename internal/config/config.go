@@ -241,6 +241,19 @@ type Config struct {
 	} `json:"fleet"`
 }
 
+// KeepFleetIdentity copies the fleet identity keys (role, address, master
+// URL, CA pin, node id) from onDisk into c. Every config save other than a
+// `serverwatch fleet` command goes through this so only those commands can
+// change them; the tunables (listen, outbox_max_mb, node_down_after) stay
+// editable.
+func (c *Config) KeepFleetIdentity(onDisk *Config) {
+	c.Fleet.Role = onDisk.Fleet.Role
+	c.Fleet.Address = onDisk.Fleet.Address
+	c.Fleet.MasterURL = onDisk.Fleet.MasterURL
+	c.Fleet.CAPin = onDisk.Fleet.CAPin
+	c.Fleet.NodeID = onDisk.Fleet.NodeID
+}
+
 // ContainerStatsEnabled reports whether the docker-stats collector
 // (collect.container_stats) is enabled: unset (nil) defaults to true.
 func (c *Config) ContainerStatsEnabled() bool {

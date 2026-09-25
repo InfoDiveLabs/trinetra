@@ -258,14 +258,14 @@ func (a *fileAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error)
 	return targetViewsFromTargets(DiscoverLocal()), nil
 }
 
-// ApplyConfig implements core.API: it persists c to cfgPath (saveCfg, the
-// same package-level helper every `channel`/`target`/... CLI setter already
-// uses) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks
+// ApplyConfig implements core.API: it persists c to cfgPath (saveDaemonCfg:
+// saveCfg with the on-disk fleet identity keys preserved, so only
+// `serverwatch fleet` commands change them) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks
 // the change up immediately -- the exact save-then-signal sequence every
 // existing CLI config-mutating command follows (see channel.go's
 // cmdChannelAdd/Remove/Set for the pattern this generalizes).
 func (a *fileAPI) ApplyConfig(c *config.Config) error {
-	if err := saveCfg(c); err != nil {
+	if err := saveDaemonCfg(c); err != nil {
 		return err
 	}
 	reloadDaemon()

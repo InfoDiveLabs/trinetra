@@ -211,3 +211,19 @@ func cmdConfig(args []string) int {
 func jsonMarshalIndent(v any) ([]byte, error) {
 	return jsonIndent(v)
 }
+
+// saveDaemonCfg is saveCfg for every save that is NOT a `serverwatch fleet`
+// command (daemon reload/ApplyConfig, the Telegram chat-id capture, other
+// plugins' config writes): it first overlays the fleet identity keys from
+// the config currently on disk onto c, so a config built before a
+// `fleet init|join|leave|disable` (or by a plugin that knows nothing about
+// fleet) can never wipe or change them. c is modified in place so the
+// in-memory config matches what was saved.
+func saveDaemonCfg(c *config.Config) error {
+	// A missing file loads as defaults (no fleet identity). An unreadable
+	// or corrupt file cannot be trusted either way, so c is saved as given.
+	if onDisk, err := config.Load(cfgPath); err == nil {
+		c.KeepFleetIdentity(onDisk)
+	}
+	return saveCfg(c)
+}
