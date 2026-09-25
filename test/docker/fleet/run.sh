@@ -225,9 +225,16 @@ on mocktg curl -s http://localhost:8080/_messages | tr ',' '\n' | grep -F child1
 for m in cpu mem; do
   fidelity child1 "$C1" "$m" -from "$P_FROM" -to "$P_TO" -maxgap $(( 2 * FAST ))
 done
-# Informational: requests that sat in the partition carry an old send time,
-# which the master's clock-skew estimate can mistake for a slow clock.
-on master grep -F "clock is" /var/log/sw.log | sed 's/^/  note: master log: /' || true
+# Requests that sat in the partition arrive with an old send time; the
+# master's skew filter must not read that delay as a slow clock.
+SKEW_LOG=$(on master sh -c 'grep -F "clock is" /var/log/sw.log || true' | tr -d '\r')
+[ -z "$SKEW_LOG" ] || fail "partition delay reported as clock skew: $SKEW_LOG"
+SKEW_C1=$(on master serverwatch fleet nodes | awk '$1=="child1" {print $3}')
+case "$SKEW_C1" in
+  0s|[+-][0-9]s|[+-][12][0-9]s|[+-]30s) ;;
+  *) fail "child1 skew after the partition is $SKEW_C1 (want within 30s)" ;;
+esac
+echo "  no clock-skew warning after the partition (child1 skew $SKEW_C1)"
 pass "partitioned $(( P_TO - P_FROM ))s, no hole in the replica"
 
 # ---------------------------------------------------------------------------
