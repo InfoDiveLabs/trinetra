@@ -1,8 +1,11 @@
 package serverwatch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -271,4 +274,43 @@ func TestEnqueueAndLogNilBusIsSafe(t *testing.T) {
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1}
 	enqueueAndLog(alog, nil, q, a, false)
+}
+
+// The sampler, the fleet master loop and the child link-alert goroutine all
+// append concurrently. Writes must be serialized, and the tee (which ships
+// alert history to the fleet master in outbox order) must see events in the
+// same order they landed in the file.
+func TestAlertLogConcurrentAppendsTeeInFileOrder(t *testing.T) {
+	l := NewAlertLog(filepath.Join(t.TempDir(), "alertlog.jsonl"))
+	var mu sync.Mutex
+	var teed []string
+	l.SetTee(func(ev AlertEvent) {
+		runtime.Gosched()
+		mu.Lock()
+		teed = append(teed, ev.Key)
+		mu.Unlock()
+	})
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				_ = l.AppendAlertEvent(AlertEvent{Time: 1, Key: fmt.Sprintf("g%d-%d", g, i)})
+			}
+		}(g)
+	}
+	wg.Wait()
+	evs, err := l.AlertEventsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 400 || len(teed) != 400 {
+		t.Fatalf("file has %d events, tee saw %d; want 400 each", len(evs), len(teed))
+	}
+	for i := range evs {
+		if evs[i].Key != teed[i] {
+			t.Fatalf("event %d: file %s, tee %s: tee order differs from file order", i, evs[i].Key, teed[i])
+		}
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -34,8 +35,13 @@ type AlertEvent struct {
 }
 
 // AlertLog is a thin wrapper around a single JSONL file holding AlertEvents.
+// Safe for concurrent use: the sampler, the fleet master loop and the fleet
+// child's link-alert goroutine all append. mu serializes every write (append
+// plus tee, and prune), so lines land in call order and the tee, which ships
+// alert history to the fleet master, sees them in exactly that order too.
 type AlertLog struct {
 	path string
+	mu   sync.Mutex
 	tee  atomic.Pointer[func(AlertEvent)]
 }
 
@@ -55,6 +61,8 @@ func (l *AlertLog) SetTee(f func(AlertEvent)) {
 
 // AppendAlertEvent appends ev to the log.
 func (l *AlertLog) AppendAlertEvent(ev AlertEvent) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if err := appendJSONL(l.path, ev); err != nil {
 		return err
 	}
@@ -102,6 +110,8 @@ func (l *AlertLog) AlertEventsSince(sinceUnix int64) ([]AlertEvent, error) {
 // daemon's slow tick) to bound the log to roughly the caller's chosen
 // retention window; it is a no-op (not an error) if the log doesn't exist yet.
 func (l *AlertLog) PruneAlertLog(beforeUnix int64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if _, err := os.Stat(l.path); os.IsNotExist(err) {
 		return nil // nothing to prune; don't create an empty file
 	}
