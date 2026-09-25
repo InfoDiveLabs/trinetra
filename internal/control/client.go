@@ -38,6 +38,19 @@ var callTimeout = 30 * time.Second
 // forever, since callers here (notably serverwatch-web) hold one Client for
 // the whole process lifetime with no reconnect of their own.
 type Client struct {
+	*clientConn
+	// node, when non-empty, routes every call through this Client to that
+	// fleet node instead of the daemon's own host (see ForNode). Views
+	// share clientConn with the Client they came from, so closing one never
+	// closes the connection every other view and the base Client depend on.
+	node string
+}
+
+// clientConn is the connection state shared by a Client and every node view
+// (Client.ForNode) built from it: the socket, its buffered reader, the
+// dial parameters needed to reconnect, and the mutex/id-counter pair that
+// serializes request/response pairs across every one of those views.
+type clientConn struct {
 	conn net.Conn
 	r    *bufio.Reader
 
@@ -55,6 +68,7 @@ type Client struct {
 }
 
 var _ core.API = (*Client)(nil)
+var _ core.FleetProvider = (*Client)(nil)
 
 // Dial connects to the control socket at path, exchanges the protocol hello
 // with the server (presenting token, the per-launch secret the server was
@@ -65,11 +79,37 @@ var _ core.API = (*Client)(nil)
 // wrong token makes the server close the connection after writing an error
 // response instead of echoing a valid hello.
 func Dial(path, token string) (*Client, error) {
-	c := &Client{path: path, token: token}
+	c := &Client{clientConn: &clientConn{path: path, token: token}}
 	if err := c.connect(); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// ForNode returns a view of c whose calls are routed to fleet node id
+// instead of c's own host (see clientConn's Node field on request/response,
+// and resolveNode in server.go). The view shares c's clientConn -- the same
+// socket, mutex and id counter -- so it never dials its own connection;
+// closing it (Close, below) is a no-op, since the view does not own the
+// connection. Passing core.SelfNodeID explicitly asks for this daemon's own
+// host by the same routing path a real node id uses, rather than c's
+// unrouted default.
+func (c *Client) ForNode(id string) *Client {
+	return &Client{clientConn: c.clientConn, node: id}
+}
+
+// Node implements core.FleetProvider by returning a node view (ForNode) of
+// c. It never fails locally -- id is validated server-side, on the first
+// call made through the returned API -- so a caller only learns of an
+// unknown node (core.ErrNoSuchNode) once it actually calls a method.
+func (c *Client) Node(id string) (core.API, error) { return c.ForNode(id), nil }
+
+// Fleet implements core.FleetProvider: it returns a core.FleetAPI whose
+// methods call the daemon's Fleet.* control-socket methods. The returned
+// value carries its own unrouted Client view (node "") since Fleet.* methods
+// always run against the master, never a specific node.
+func (c *Client) Fleet() core.FleetAPI {
+	return fleetClient{c: &Client{clientConn: c.clientConn}}
 }
 
 // connect dials the control socket and completes the hello handshake,
@@ -130,8 +170,13 @@ func (c *Client) poison() {
 	}
 }
 
-// Close closes the underlying connection.
+// Close closes the underlying connection. A node view (ForNode) does not own
+// the connection -- it shares clientConn with the Client it came from, which
+// may still be in use -- so Close on a view is a no-op.
 func (c *Client) Close() error {
+	if c.node != "" {
+		return nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn == nil {
@@ -176,7 +221,7 @@ func (c *Client) call(method string, params any, result any) error {
 	c.nextID++
 	id := c.nextID
 
-	req := request{ID: id, Method: method, Params: rawParams}
+	req := request{ID: id, Method: method, Params: rawParams, Node: c.node}
 	if err := writeFrame(c.conn, req); err != nil {
 		c.poison()
 		return err
@@ -198,6 +243,14 @@ func (c *Client) call(method string, params any, result any) error {
 	if resp.ID != id {
 		c.poison()
 		return fmt.Errorf("control: response id %d does not match request id %d", resp.ID, id)
+	}
+	// An old daemon that predates fleet routing has no idea req.Node exists:
+	// it answers every call with its own host's data and never echoes Node
+	// back. Catch that here, before the ok/error check below, so such a
+	// daemon's (perfectly valid, ok=true) answer about itself is never
+	// mistaken for the requested node's data.
+	if c.node != "" && resp.Node != c.node {
+		return errors.New("control: daemon does not support fleet node routing (upgrade serverwatch)")
 	}
 	if !resp.OK {
 		return errors.New(resp.Error)
@@ -368,6 +421,9 @@ func (c *Client) ValidateChannel(cc config.ChannelConfig) error {
 // force that closure on ctx.Done without leaking once the stream ends for
 // some other reason.
 func (c *Client) Subscribe(ctx context.Context) (<-chan core.Event, error) {
+	if c.node != "" && c.node != core.SelfNodeID {
+		return nil, errors.New("control: live event streams are not available for remote fleet nodes yet")
+	}
 	dc, err := Dial(c.path, c.token)
 	if err != nil {
 		return nil, err
@@ -436,4 +492,50 @@ func (c *Client) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	}()
 
 	return out, nil
+}
+
+// fleetClient implements core.FleetAPI over a control socket: each method
+// sends the matching Fleet.* request (server.go's dispatchFleet) on c, which
+// always carries node "" -- Fleet.* methods run against the master, never a
+// specific node, regardless of which view of a Client Fleet() was called on.
+type fleetClient struct{ c *Client }
+
+func (f fleetClient) Status() (core.FleetStatus, error) {
+	var v core.FleetStatus
+	err := f.c.call("Fleet.Status", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) Nodes(filter core.NodeFilter) ([]core.NodeSummary, error) {
+	var v []core.NodeSummary
+	err := f.c.call("Fleet.Nodes", map[string]any{"filter": filter}, &v)
+	return v, err
+}
+
+func (f fleetClient) RenameNode(id, name string) error {
+	return f.c.call("Fleet.RenameNode", map[string]any{"id": id, "name": name}, nil)
+}
+
+func (f fleetClient) SetNodeTags(id string, tags []string) error {
+	return f.c.call("Fleet.SetNodeTags", map[string]any{"id": id, "tags": tags}, nil)
+}
+
+func (f fleetClient) RevokeNode(id string) error {
+	return f.c.call("Fleet.RevokeNode", map[string]any{"id": id}, nil)
+}
+
+func (f fleetClient) Tokens() ([]core.TokenView, error) {
+	var v []core.TokenView
+	err := f.c.call("Fleet.Tokens", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) CreateToken(s core.TokenSpec) (core.CreatedToken, error) {
+	var v core.CreatedToken
+	err := f.c.call("Fleet.CreateToken", map[string]any{"spec": s}, &v)
+	return v, err
+}
+
+func (f fleetClient) DeleteToken(id string) error {
+	return f.c.call("Fleet.DeleteToken", map[string]any{"id": id}, nil)
 }

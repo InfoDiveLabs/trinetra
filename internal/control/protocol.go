@@ -12,20 +12,31 @@ import (
 const ProtocolVersion = 1
 
 // request is one client-to-server call frame: invoke Method with Params and
-// expect a matching response frame carrying the same ID.
+// expect a matching response frame carrying the same ID. Node, when
+// non-empty, asks the server to route the call to that fleet node instead of
+// serving it locally (see server.go's resolveNode); it is omitted entirely
+// when empty so an old daemon that doesn't know about fleet routing sees no
+// change to the frames it already understands.
 type request struct {
 	ID     int             `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
+	Node   string          `json:"node,omitempty"`
 }
 
 // response is one server-to-client reply frame. When OK is false, Error
-// carries the method's error text and Result is empty.
+// carries the method's error text and Result is empty. Node echoes the
+// request's Node field so the client can detect a daemon that doesn't
+// understand fleet routing: such a daemon still answers (with its own
+// host's data) but never echoes Node, since it has no idea the field exists
+// (see client.go's call, which treats a missing echo as a hard error rather
+// than silently returning the wrong node's data).
 type response struct {
 	ID     int             `json:"id"`
 	OK     bool            `json:"ok"`
 	Result json.RawMessage `json:"result"`
 	Error  string          `json:"error"`
+	Node   string          `json:"node,omitempty"`
 }
 
 // streamID is the reserved response.ID for every event frame a connection

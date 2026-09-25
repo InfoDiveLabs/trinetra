@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"serverwatch/internal/config"
@@ -119,12 +121,28 @@ func handleConn(api core.API, conn net.Conn, token string) {
 			// client's own design of opening a brand-new connection for
 			// each subscription (client.go's Subscribe) rather than reusing
 			// its mutex-serialized primary conn.
+			if req.Node != "" && req.Node != core.SelfNodeID {
+				_ = writeFrame(conn, response{ID: req.ID, Node: req.Node, OK: false, Error: "control: live event streams are not available for remote fleet nodes yet"})
+				return
+			}
 			streamSubscribe(api, conn, r, req.ID)
 			return
 		}
 
-		result, callErr := dispatch(api, req.Method, req.Params)
-		resp := response{ID: req.ID}
+		var result json.RawMessage
+		var callErr error
+		switch {
+		case strings.HasPrefix(req.Method, "Fleet."):
+			result, callErr = dispatchFleet(api, req.Method, req.Params)
+		default:
+			target, err := resolveNode(api, req.Node)
+			if err != nil {
+				callErr = err
+			} else {
+				result, callErr = dispatch(target, req.Method, req.Params)
+			}
+		}
+		resp := response{ID: req.ID, Node: req.Node}
 		if callErr != nil {
 			resp.OK = false
 			resp.Error = callErr.Error()
@@ -394,4 +412,101 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 	default:
 		return nil, fmt.Errorf("control: unknown method %q", method)
 	}
+}
+
+// resolveNode maps a request's node field to the API that should serve it:
+// "" or core.SelfNodeID means this daemon's own api, anything else requires
+// api to be a core.FleetProvider (a plain solo/child daemon has no fleet to
+// route into).
+func resolveNode(api core.API, node string) (core.API, error) {
+	if node == "" || node == core.SelfNodeID {
+		return api, nil
+	}
+	fp, ok := api.(core.FleetProvider)
+	if !ok {
+		return nil, errors.New("control: this daemon has no fleet support")
+	}
+	return fp.Node(node)
+}
+
+// dispatchFleet serves the Fleet.* methods against api's core.FleetAPI. Like
+// dispatch, its write methods (RenameNode, SetNodeTags, RevokeNode,
+// DeleteToken) return emptyResult on success -- the same ok=true/empty-result
+// shape dispatch's own write methods (AckAlert and friends) use -- so the
+// client's call sees a uniform response regardless of which dispatch path
+// served it.
+func dispatchFleet(api core.API, method string, params json.RawMessage) (json.RawMessage, error) {
+	fp, ok := api.(core.FleetProvider)
+	if !ok {
+		return nil, errors.New("control: this daemon has no fleet support")
+	}
+	f := fp.Fleet()
+
+	var p struct {
+		ID     string          `json:"id"`
+		Name   string          `json:"name"`
+		Tags   []string        `json:"tags"`
+		Filter core.NodeFilter `json:"filter"`
+		Spec   core.TokenSpec  `json:"spec"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	switch method {
+	case "Fleet.Status":
+		v, err := f.Status()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.Nodes":
+		v, err := f.Nodes(p.Filter)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.RenameNode":
+		if err := f.RenameNode(p.ID, p.Name); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.SetNodeTags":
+		if err := f.SetNodeTags(p.ID, p.Tags); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.RevokeNode":
+		if err := f.RevokeNode(p.ID); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.Tokens":
+		v, err := f.Tokens()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.CreateToken":
+		v, err := f.CreateToken(p.Spec)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.DeleteToken":
+		if err := f.DeleteToken(p.ID); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+	}
+	return nil, fmt.Errorf("control: unknown method %q", method)
 }
