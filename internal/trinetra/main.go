@@ -90,7 +90,9 @@ usage:
   serverwatch config get [key]
   serverwatch config set <key> <value>
   serverwatch config unset <key>
-  serverwatch install [--force]         # --force: migrate even if systemctl cannot confirm the old serverwatch service stopped
+  serverwatch install [--force] [--state-already-at-new-path]
+                                        # --force: migrate even if systemctl cannot confirm the old serverwatch service stopped
+                                        # --state-already-at-new-path: adopt a serverwatch state volume you remounted at /var/lib/trinetra
   serverwatch uninstall [--purge]
   serverwatch daemon
   serverwatch telegram set-token <token>

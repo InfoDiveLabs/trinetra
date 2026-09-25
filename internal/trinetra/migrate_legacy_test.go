@@ -21,6 +21,7 @@ type fakeMigrationOps struct {
 	ebusy     bool   // primary old->new directory renames fail with EBUSY
 	isActive  string // what `systemctl is-active serverwatch` prints
 	failStep  string // checkpoint that fails (simulated crash)
+	opts      planOptions
 	calls     [][]string
 	chowns    map[string][2]int
 	installed int
@@ -176,7 +177,7 @@ func testMigrationPaths(t *testing.T) migrationPaths {
 // runMigration plans and applies once, the way cmdInstall does.
 func runMigration(t *testing.T, f *fakeMigrationOps) (*migrationSummary, error) {
 	t.Helper()
-	plan, err := planLegacyMigration(f.paths)
+	plan, err := planLegacyMigration(f.paths, f.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +313,7 @@ func TestLegacyMigrationMovesEverything(t *testing.T) {
 			}
 
 			// Idempotent: a re-run after success is a plain install.
-			plan, err := planLegacyMigration(p)
+			plan, err := planLegacyMigration(p, planOptions{})
 			if err != nil || plan != nil {
 				t.Fatalf("re-run after success: plan=%v err=%v, want nil/nil", plan, err)
 			}
@@ -334,7 +335,7 @@ func TestLegacyMigrationRefusesWhenBothPresent(t *testing.T) {
 			root := filepath.Dir(filepath.Dir(p.OldConfigDir)) // temp root
 			before := snapshot(t, root)
 
-			plan, err := planLegacyMigration(p)
+			plan, err := planLegacyMigration(p, planOptions{})
 			if err == nil {
 				t.Fatalf("expected refusal, got plan %v", plan)
 			}
@@ -352,14 +353,14 @@ func TestLegacyMigrationRefusesWhenBothPresent(t *testing.T) {
 
 func TestLegacyMigrationNoLegacyIsNoop(t *testing.T) {
 	p := testMigrationPaths(t)
-	plan, err := planLegacyMigration(p)
+	plan, err := planLegacyMigration(p, planOptions{})
 	if err != nil || plan != nil {
 		t.Fatalf("fresh host: plan=%v err=%v, want nil/nil", plan, err)
 	}
 	// An existing trinetra install alone is not a migration either.
 	mustWrite(t, filepath.Join(p.NewConfigDir, "config.json"), "{}")
 	mustWrite(t, filepath.Join(p.NewStateDir, "plugins.json"), "{}")
-	plan, err = planLegacyMigration(p)
+	plan, err = planLegacyMigration(p, planOptions{})
 	if err != nil || plan != nil {
 		t.Fatalf("trinetra-only host: plan=%v err=%v, want nil/nil", plan, err)
 	}
@@ -383,6 +384,7 @@ func TestLegacyMigrationResumesAfterCrashAtEveryStep(t *testing.T) {
 					t.Fatalf("expected a migrationError at %s, got %v", step, err)
 				}
 				msg := err.Error()
+				assertNoUnsafeDeleteAdvice(t, p, msg)
 				for _, want := range []string{step, "sudo trinetra install", "Current state", "roll back"} {
 					if !strings.Contains(msg, want) {
 						t.Errorf("failure report missing %q:\n%s", want, msg)
@@ -454,7 +456,7 @@ func TestLegacyMigrationRefusesUnmarkedLeftover(t *testing.T) {
 		t.Fatal("expected simulated crash")
 	}
 	mustWrite(t, filepath.Join(p.OldStateDir, "important"), "data")
-	if _, err := planLegacyMigration(p); err == nil {
+	if _, err := planLegacyMigration(p, planOptions{}); err == nil {
 		t.Fatal("expected refusal for an unmarked old dir next to a migrated new dir")
 	}
 	if !lexistsT(filepath.Join(p.OldStateDir, "important")) {
@@ -890,7 +892,7 @@ func TestLegacyMigrationRefusesMountPointUpFront(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(p.OldConfigDir))
 	before := snapshot(t, root)
 
-	_, err := planLegacyMigration(p)
+	_, err := planLegacyMigration(p, planOptions{})
 	if err == nil {
 		t.Fatal("expected refusal for a mount-point legacy dir")
 	}
@@ -905,7 +907,9 @@ func TestLegacyMigrationRefusesMountPointUpFront(t *testing.T) {
 }
 
 // Following that advice (volume now mounted at the new path, old path left
-// empty) migrates the rest and keeps the volume's data where it is.
+// empty) needs the explicit --state-already-at-new-path opt-in: without it,
+// refuse with nothing changed; with it, migrate the rest, adopt the volume's
+// data where it is, and say so.
 func TestLegacyMigrationAfterVolumeRemountedAtNewPath(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
@@ -919,7 +923,17 @@ func TestLegacyMigrationAfterVolumeRemountedAtNewPath(t *testing.T) {
 	if err := os.Mkdir(p.OldStateDir, 0o755); err != nil { // empty mount point left
 		t.Fatal(err)
 	}
+	root := filepath.Dir(filepath.Dir(p.OldConfigDir))
+	before := snapshot(t, root)
 	f := &fakeMigrationOps{paths: p}
+	if _, err := runMigration(t, f); err == nil || !strings.Contains(err.Error(), "--state-already-at-new-path") {
+		t.Fatalf("without the flag: expected a refusal naming the flag, got %v", err)
+	}
+	if after := snapshot(t, root); !equalSnap(before, after) || len(f.calls) != 0 {
+		t.Fatal("refusal changed something")
+	}
+
+	f.opts.stateAtNewPath = true
 	sum, err := runMigration(t, f)
 	if err != nil {
 		t.Fatal(err)
@@ -932,8 +946,8 @@ func TestLegacyMigrationAfterVolumeRemountedAtNewPath(t *testing.T) {
 	if lexistsT(p.OldStateDir) || lexistsT(p.OldConfigDir) {
 		t.Error("old dirs left behind")
 	}
-	if !strings.Contains(sum.String(), "kept the existing") {
-		t.Errorf("summary lacks the kept-state note:\n%s", sum)
+	if !strings.Contains(sum.String(), "ADOPTED the existing state at "+p.NewStateDir) {
+		t.Errorf("summary does not say the state was adopted:\n%s", sum)
 	}
 }
 
@@ -972,7 +986,7 @@ func TestLegacyMigrationNeedsForceWhenSystemctlCannotAnswer(t *testing.T) {
 		}
 		assertLegacyIntact(t, p, wantState)
 
-		plan, err := planLegacyMigration(p)
+		plan, err := planLegacyMigration(p, planOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1073,5 +1087,236 @@ func TestInstallRejectsUnknownFlag(t *testing.T) {
 	stderr = &errb
 	if code := cmdInstall([]string{"--bogus"}); code != 2 || !strings.Contains(errb.String(), "--force") {
 		t.Fatalf("code=%d stderr=%q", code, errb.String())
+	}
+}
+
+// refuseNothingChanged runs the migration and requires a refusal containing
+// want, with zero writes under the temp root and no systemctl calls.
+func refuseNothingChanged(t *testing.T, p migrationPaths, f *fakeMigrationOps, want string) {
+	t.Helper()
+	root := filepath.Dir(filepath.Dir(p.OldConfigDir))
+	before := snapshot(t, root)
+	_, err := runMigration(t, f)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected a refusal containing %q, got %v", want, err)
+	}
+	if after := snapshot(t, root); !equalSnap(before, after) {
+		t.Fatal("refusal changed the filesystem")
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("systemctl called before refusing: %v", f.calls)
+	}
+}
+
+// P1/P4: the legacy state volume is not mounted this boot. Config present,
+// state dir empty: refuse, change nothing (no rmdir either).
+func TestLegacyMigrationRefusesEmptyStateDirNextToConfig(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	if err := os.RemoveAll(p.OldStateDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p.OldStateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refuseNothingChanged(t, p, &fakeMigrationOps{paths: p}, "is its volume mounted?")
+	if !lexistsT(p.OldStateDir) {
+		t.Fatal("empty legacy state dir was removed")
+	}
+}
+
+// An empty legacy dir that fstab or a .mount unit mounts something on is
+// refused even without other legacy data, and even with the opt-in flag.
+func TestLegacyMigrationRefusesEmptyMountTarget(t *testing.T) {
+	for _, via := range []string{"fstab", "mount-unit"} {
+		for _, flag := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/flag=%v", via, flag), func(t *testing.T) {
+				p := testMigrationPaths(t)
+				makeLegacyInstall(t, p)
+				if err := os.RemoveAll(p.OldStateDir); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(p.OldStateDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if flag {
+					mustWrite(t, filepath.Join(p.NewStateDir, "status.json"), "{}")
+				}
+				etc := t.TempDir()
+				of, od := fstabPath, mountUnitDirs
+				t.Cleanup(func() { fstabPath, mountUnitDirs = of, od })
+				fstabPath = filepath.Join(etc, "fstab")
+				mountUnitDirs = []string{filepath.Join(etc, "units")}
+				mustWrite(t, fstabPath, "# comment\nUUID=abc / ext4 defaults 0 1\n")
+				if via == "fstab" {
+					mustWrite(t, fstabPath, "UUID=abc / ext4 defaults 0 1\n/dev/sdb1 "+strings.ReplaceAll(p.OldStateDir, " ", `\040`)+" ext4 defaults 0 2\n")
+				} else {
+					mustWrite(t, filepath.Join(etc, "units", systemdEscapePath(p.OldStateDir)+".mount"), "[Mount]\n")
+				}
+				f := &fakeMigrationOps{paths: p, opts: planOptions{stateAtNewPath: flag}}
+				refuseNothingChanged(t, p, f, "mount target")
+			})
+		}
+	}
+}
+
+func TestSystemdEscapePath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/var/lib/serverwatch": "var-lib-serverwatch",
+		"/mnt/my-disk":         `mnt-my\x2ddisk`,
+		"/a/.b":                `a-\x2eb`,
+		"/":                    "-",
+		"/srv/data v2/":        `srv-data\x20v2`,
+	} {
+		if got := systemdEscapePath(in); got != want {
+			t.Errorf("systemdEscapePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// P2: an unrelated trinetra install with state but no config, a leftover
+// serverwatch config and an empty legacy state dir: refuse without the flag.
+func TestLegacyMigrationRefusesForeignStateWithoutFlag(t *testing.T) {
+	for _, emptyOld := range []bool{true, false} {
+		t.Run(fmt.Sprintf("emptyOldStateDir=%v", emptyOld), func(t *testing.T) {
+			p := testMigrationPaths(t)
+			makeLegacyInstall(t, p)
+			if err := os.RemoveAll(p.OldStateDir); err != nil {
+				t.Fatal(err)
+			}
+			if emptyOld {
+				if err := os.Mkdir(p.OldStateDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mustWrite(t, filepath.Join(p.NewStateDir, "trinetra.pid"), "1")
+			mustWrite(t, filepath.Join(p.NewStateDir, "samples", "real-trinetra.dat"), "T")
+			refuseNothingChanged(t, p, &fakeMigrationOps{paths: p}, "--state-already-at-new-path")
+		})
+	}
+}
+
+// The flag is refused when the legacy state dir still holds data, or when
+// there is nothing at the new path to adopt.
+func TestStateAtNewPathFlagRefusals(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	refuseNothingChanged(t, p, &fakeMigrationOps{paths: p, opts: planOptions{stateAtNewPath: true}}, "still holds data")
+
+	q := testMigrationPaths(t)
+	makeLegacyInstall(t, q)
+	if err := os.RemoveAll(q.OldStateDir); err != nil {
+		t.Fatal(err)
+	}
+	refuseNothingChanged(t, q, &fakeMigrationOps{paths: q, opts: planOptions{stateAtNewPath: true}}, "no existing trinetra state to adopt")
+}
+
+// assertNoUnsafeDeleteAdvice: an error text may advise `rm -rf <old dir>` only
+// when the new dir is provably a complete, separate copy of it.
+func assertNoUnsafeDeleteAdvice(t *testing.T, p migrationPaths, text string) {
+	t.Helper()
+	for _, d := range p.pairs() {
+		if !strings.Contains(text, "rm -rf "+d.old+" ") {
+			continue
+		}
+		ns := inspectNewDir(d.new)
+		if ns.kind != newDirCopied || !copyProvablyComplete(d.old, d.new, ns.token) {
+			t.Errorf("advice deletes %s although %s is not a provably complete copy:\n%s", d.old, d.new, text)
+		}
+	}
+}
+
+// N1: with a matching token but an incomplete copy (e.g. serverwatch was
+// started by hand after a crash and wrote new samples into the old dir) the
+// rollback advice must not delete the old dir.
+func TestRollbackAdviceNeverDeletesAnUnprovenSource(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	f := &fakeMigrationOps{paths: p, exdev: true, failStep: "move-state"}
+	if _, err := runMigration(t, f); err == nil {
+		t.Fatal("expected simulated crash")
+	}
+	tok, _ := readMarkerToken(filepath.Join(p.OldStateDir, migratingMarker))
+	mustWrite(t, filepath.Join(p.NewStateDir, copyVerifiedMarker), tok+"\n")
+	mustWrite(t, filepath.Join(p.NewStateDir, "status.json"), `{"ok":true}`)
+	text := describeMigrationState(p)
+	assertNoUnsafeDeleteAdvice(t, p, text)
+	if strings.Contains(text, "rm -rf "+p.OldStateDir) || !strings.Contains(text, "do NOT delete either "+p.OldStateDir) {
+		t.Errorf("unsafe or missing advice:\n%s", text)
+	}
+
+	// Mismatched token: same.
+	mustWrite(t, filepath.Join(p.NewStateDir, copyVerifiedMarker), "other\n")
+	text = describeMigrationState(p)
+	if strings.Contains(text, "rm -rf "+p.OldStateDir) {
+		t.Errorf("advice deletes the source despite a token mismatch:\n%s", text)
+	}
+}
+
+// When the copy is provably complete (source removal was interrupted), the
+// advice does suggest keeping the copy.
+func TestRollbackAdviceKeepsProvenCopy(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	wantState := snapshot(t, p.OldStateDir)
+	f := &fakeMigrationOps{paths: p, exdev: true, failStep: "rewrite-config"}
+	if _, err := runMigration(t, f); err == nil {
+		t.Fatal("expected simulated crash")
+	}
+	// Rebuild a partly removed source: its marker plus one identical file.
+	tok, _ := readMarkerToken(filepath.Join(p.NewStateDir, copyVerifiedMarker))
+	mustWrite(t, filepath.Join(p.OldStateDir, migratingMarker), tok+"\n")
+	mustWrite(t, filepath.Join(p.OldStateDir, "status.json"), `{"ok":true}`)
+	if err := os.Chmod(filepath.Join(p.OldStateDir, "status.json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = wantState
+	text := describeMigrationState(p)
+	assertNoUnsafeDeleteAdvice(t, p, text)
+	if !strings.Contains(text, "rm -rf "+p.OldStateDir+" && mv "+p.NewStateDir+" "+p.OldStateDir) {
+		t.Errorf("expected keep-the-copy advice:\n%s", text)
+	}
+}
+
+// A leftover staging dir that is really the old dir (a symlink to it) is not
+// deleted.
+func TestLegacyMigrationRefusesAliasedStagingDir(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	wantState := snapshot(t, p.OldStateDir)
+	f := &fakeMigrationOps{paths: p, exdev: true, failStep: "move-state"}
+	if _, err := runMigration(t, f); err == nil {
+		t.Fatal("expected simulated crash")
+	}
+	if err := os.MkdirAll(filepath.Dir(p.NewStateDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(p.OldStateDir, p.NewStateDir+stagingSuffix); err != nil {
+		t.Fatal(err)
+	}
+	f.failStep = ""
+	_, err := runMigration(t, f)
+	if err == nil || !strings.Contains(err.Error(), "not a separate copy") {
+		t.Fatalf("expected refusal, got %v", err)
+	}
+	assertLegacyIntact(t, p, wantState)
+	assertNoUnsafeDeleteAdvice(t, p, err.Error())
+	if strings.Contains(err.Error(), "rm -rf "+p.NewStateDir+stagingSuffix) {
+		t.Errorf("advice deletes an aliased staging dir:\n%v", err)
+	}
+}
+
+func TestMigrationPrintsVerifyProgress(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	var out bytes.Buffer
+	orig := progressOut
+	progressOut = &out
+	t.Cleanup(func() { progressOut = orig })
+	if _, err := runMigration(t, &fakeMigrationOps{paths: p, exdev: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "verifying ") || !strings.Contains(out.String(), p.NewStateDir+stagingSuffix) {
+		t.Errorf("no verify progress line:\n%s", out.String())
 	}
 }

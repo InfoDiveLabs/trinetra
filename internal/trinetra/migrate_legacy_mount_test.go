@@ -101,3 +101,42 @@ func TestSameDeviceBindMountDetectedAsRoot(t *testing.T) {
 		t.Error("bind mount not detected as an alias")
 	}
 }
+
+// P4: the real legacy state volume did not mount this boot (an empty mount
+// point dir). Refuse without touching anything; once the volume is back, the
+// migration moves its data.
+func TestLegacyMigrationUnmountedStateVolumeAsRoot(t *testing.T) {
+	p := testMigrationPaths(t)
+	makeLegacyInstall(t, p)
+	wantState := snapshot(t, p.OldStateDir)
+	stash := t.TempDir()
+	if out, err := exec.Command("cp", "-a", p.OldStateDir+"/.", stash).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	if err := os.RemoveAll(p.OldStateDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p.OldStateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mountOrSkip(t, "-t", "tmpfs", "tmpfs", p.OldStateDir)
+	if out, err := exec.Command("umount", p.OldStateDir).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	refuseNothingChanged(t, p, &fakeMigrationOps{paths: p}, "is its volume mounted?")
+	if !lexistsT(p.OldStateDir) {
+		t.Fatal("mount point dir removed")
+	}
+	// The volume is back (data restored into the dir): migrate normally.
+	if out, err := exec.Command("cp", "-a", stash+"/.", p.OldStateDir).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	if _, err := runMigration(t, &fakeMigrationOps{paths: p}); err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot(t, p.NewStateDir)
+	delete(got, migratedFromServerwatchMarker)
+	if !equalSnap(got, wantState) {
+		t.Fatalf("state not migrated intact\n got %v\nwant %v", got, wantState)
+	}
+}

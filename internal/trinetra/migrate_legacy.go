@@ -87,9 +87,21 @@ var legacyRoot = ""
 // Seams for tests: mount-point detection and "is this our serverwatch binary".
 var (
 	isMountPointFn      = isMountPoint
+	isMountTargetFn     = isMountTarget
 	isOurLegacyBinaryFn = isOurLegacyBinary
 	mountinfoPath       = "/proc/self/mountinfo"
+	fstabPath           = "/etc/fstab"
+	mountUnitDirs       = []string{"/etc/systemd/system", "/run/systemd/system", "/usr/lib/systemd/system", "/lib/systemd/system"}
+	// progressOut receives progress lines for long walks (nil: silent);
+	// cmdInstall points it at stdout.
+	progressOut io.Writer
 )
+
+func progressf(format string, a ...any) {
+	if progressOut != nil {
+		fmt.Fprintf(progressOut, format+"\n", a...)
+	}
+}
 
 const errMigrationRefusedF = "refusing to migrate. Nothing was changed"
 
@@ -179,43 +191,95 @@ type legacyPlan struct {
 	notes []string
 }
 
+// planOptions are the operator's explicit choices for planLegacyMigration.
+type planOptions struct {
+	// stateAtNewPath (install --state-already-at-new-path): the operator
+	// moved the serverwatch state volume to the trinetra state path, so an
+	// existing trinetra state dir next to the legacy config is adopted. It
+	// is never inferred.
+	stateAtNewPath bool
+}
+
 // planLegacyMigration inspects the host without changing anything. It returns
 // (nil, nil) when there is nothing to migrate (fresh host, trinetra-only host,
 // or a finished migration), a plan when a serverwatch install is present (or a
 // previous migration was interrupted), and an error when it must refuse.
-func planLegacyMigration(p migrationPaths) (*legacyPlan, error) {
+func planLegacyMigration(p migrationPaths, opts planOptions) (*legacyPlan, error) {
 	plan := &legacyPlan{paths: p}
+	type pairInfo struct {
+		d            dirPair
+		exists, data bool
+		ns           newDirStatus
+	}
+	var infos []pairInfo
 	legacy := false
 	var oldFound []string
-	var conflicts []string
-	configForeign := false
 	for _, d := range p.pairs() {
-		oldPresent, err := legacyDirPresent(d.old)
+		data, err := legacyDirPresent(d.old)
 		if err != nil {
 			return nil, err
 		}
-		ns := inspectNewDir(d.new)
-		if !oldPresent {
+		infos = append(infos, pairInfo{d: d, exists: lexists(d.old), data: data, ns: inspectNewDir(d.new)})
+		if data {
+			legacy = true
+			oldFound = append(oldFound, d.old)
+		}
+	}
+	// A legacy dir that exists but is empty is suspicious, never "absent":
+	// most likely its volume is not mounted this boot, and migrating the rest
+	// would strand the real data there.
+	for _, in := range infos {
+		if !in.exists || in.data {
+			continue
+		}
+		if isMountTargetFn(in.d.old) || isMountPointFn(in.d.old) {
+			return nil, fmt.Errorf("%s is empty but is a mount point or a mount target (/etc/fstab or a systemd .mount unit): is its volume mounted? "+
+				"Check /etc/fstab and `systemctl list-units --type=mount`, mount it, and re-run `sudo trinetra install`. "+
+				"If you moved the volume to %s yourself, remove the old mount entry first. %s", in.d.old, in.d.new, errMigrationRefusedF)
+		}
+		if in.ns.ours() {
+			continue // the tail of our own interrupted source removal
+		}
+		if legacy {
+			if in.d.name == "state" && opts.stateAtNewPath {
+				continue
+			}
+			return nil, fmt.Errorf("%s is empty while %s still holds data: is its volume mounted? Check /etc/fstab and `systemctl list-units --type=mount`. "+
+				"If you moved the serverwatch state volume to %s yourself, re-run with `sudo trinetra install --state-already-at-new-path`. %s",
+				in.d.old, strings.Join(oldFound, ", "), in.d.new, errMigrationRefusedF)
+		}
+	}
+	var conflicts []string
+	for _, in := range infos {
+		d, ns := in.d, in.ns
+		if !in.data {
 			if ns.ours() {
 				plan.resuming = true
 			}
-			if ns.kind == newDirForeign {
-				if d.name == "config" {
-					configForeign = true
-				} else {
-					plan.notes = append(plan.notes, fmt.Sprintf("kept the existing %s as trinetra's state (%s is absent or empty)", d.new, d.old))
+			if d.name == "state" && opts.stateAtNewPath && legacy {
+				if ns.kind != newDirForeign {
+					return nil, fmt.Errorf("--state-already-at-new-path was given but %s holds no existing trinetra state to adopt; %s", d.new, errMigrationRefusedF)
 				}
+				plan.notes = append(plan.notes, fmt.Sprintf("ADOPTED the existing state at %s as trinetra's state (--state-already-at-new-path); nothing was moved from %s", d.new, d.old))
+				continue
+			}
+			if ns.kind == newDirForeign && legacy {
+				conflicts = append(conflicts, fmt.Sprintf("%s already holds data", d.new))
 			}
 			continue
 		}
-		legacy = true
-		oldFound = append(oldFound, d.old)
+		if d.name == "state" && opts.stateAtNewPath {
+			return nil, fmt.Errorf("--state-already-at-new-path was given but %s still holds data; %s", d.old, errMigrationRefusedF)
+		}
 		if isMountPointFn(d.old) {
+			advice := fmt.Sprintf("mount it at %s instead (update /etc/fstab), leave %s empty or remove it, then re-run `sudo trinetra install --state-already-at-new-path`", d.new, d.old)
+			if d.name != "state" {
+				advice = fmt.Sprintf("copy its contents into a plain directory at %s on the root filesystem, then re-run `sudo trinetra install`", d.old)
+			}
 			return nil, fmt.Errorf("%s is a mount point, so it cannot be moved by renaming; %s.\n"+
-				"Stop serverwatch (sudo systemctl stop serverwatch), unmount the volume from %s first, "+
-				"mount it at %s instead (update /etc/fstab), leave %s as an empty directory, then re-run `sudo trinetra install`.\n"+
+				"Stop serverwatch (sudo systemctl stop serverwatch), unmount the volume from %s first, then %s.\n"+
 				"Do not mount the volume at %s while it is still mounted at %s",
-				d.old, errMigrationRefusedF, d.old, d.new, d.old, d.new, d.old)
+				d.old, errMigrationRefusedF, d.old, advice, d.new, d.old)
 		}
 		switch ns.kind {
 		case newDirAbsent, newDirEmpty:
@@ -238,14 +302,12 @@ func planLegacyMigration(p migrationPaths) (*legacyPlan, error) {
 			conflicts = append(conflicts, fmt.Sprintf("%s already holds data", d.new))
 		}
 	}
-	if legacy && configForeign {
-		conflicts = append(conflicts, fmt.Sprintf("%s already holds a trinetra config", p.NewConfigDir))
-	}
 	if legacy && len(conflicts) > 0 {
 		return nil, fmt.Errorf("found both a serverwatch install (%s) and trinetra data: %s; refusing to merge them. Nothing was changed.\n"+
 			"If the trinetra paths hold nothing you need (for example a test install), stop it (sudo systemctl stop trinetra), move them aside (e.g. sudo mv %s %s.bak) and re-run `sudo trinetra install`.\n"+
+			"If you moved the serverwatch state volume to %s yourself, re-run with `sudo trinetra install --state-already-at-new-path`.\n"+
 			"Otherwise keep trinetra's data and archive or remove the serverwatch paths yourself",
-			strings.Join(oldFound, ", "), strings.Join(conflicts, "; "), p.NewStateDir, p.NewStateDir)
+			strings.Join(oldFound, ", "), strings.Join(conflicts, "; "), p.NewStateDir, p.NewStateDir, p.NewStateDir)
 	}
 	if !legacy && !plan.resuming {
 		return nil, nil
@@ -254,7 +316,7 @@ func planLegacyMigration(p migrationPaths) (*legacyPlan, error) {
 }
 
 // legacyDirPresent reports whether a legacy dir holds anything. An empty dir
-// (for example an unmounted mount point left behind) does not count.
+// is not data, but the planner treats it as suspicious (see above).
 func legacyDirPresent(path string) (bool, error) {
 	if !lexists(path) {
 		return false, nil
@@ -369,6 +431,58 @@ func isMountPoint(dir string) bool {
 		}
 	}
 	return false
+}
+
+// isMountTarget reports whether dir is configured to have something mounted
+// on it: a mount point in /etc/fstab (second field) or a systemd
+// <escaped-path>.mount / .automount unit.
+func isMountTarget(dir string) bool {
+	clean := filepath.Clean(dir)
+	if b, err := os.ReadFile(fstabPath); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			f := strings.Fields(line)
+			if len(f) > 1 && filepath.Clean(unescapeMountinfo(f[1])) == clean {
+				return true
+			}
+		}
+	}
+	unit := systemdEscapePath(clean)
+	for _, d := range mountUnitDirs {
+		for _, ext := range []string{".mount", ".automount"} {
+			if lexists(filepath.Join(d, unit+ext)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// systemdEscapePath is `systemd-escape --path`: strip slashes at both ends,
+// "/" -> "-", and \xNN for bytes outside [A-Za-z0-9:_.] (and a leading ".").
+func systemdEscapePath(p string) string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return "-"
+	}
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		switch {
+		case c == '/':
+			b.WriteByte('-')
+		case c == '.' && (i == 0 || p[i-1] == '/'):
+			fmt.Fprintf(&b, `\x%02x`, c)
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == ':', c == '_', c == '.':
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		}
+	}
+	return b.String()
 }
 
 // unescapeMountinfo decodes the \NNN octal escapes /proc/self/mountinfo uses.
@@ -611,14 +725,16 @@ func describeMigrationState(p migrationPaths) string {
 	b.WriteString("To finish: fix the cause above and re-run `sudo trinetra install`; it resumes where it stopped.\n")
 	b.WriteString("To roll back by hand instead (as root):\n")
 	for _, d := range p.pairs() {
-		if lexists(d.new + stagingSuffix) {
+		if lexists(d.new+stagingSuffix) && (!lexists(d.old) || checkNotAliased(d.old, d.new+stagingSuffix) == nil) {
 			fmt.Fprintf(&b, "  rm -rf %s\n", d.new+stagingSuffix)
 		}
 		ns := inspectNewDir(d.new)
 		switch {
-		case lexists(d.old) && ns.kind == newDirCopied:
-			fmt.Fprintf(&b, "  # %s is a verified copy of %s, which was being removed; keep the copy:\n", d.new, d.old)
+		case lexists(d.old) && ns.kind == newDirCopied && copyProvablyComplete(d.old, d.new, ns.token):
+			fmt.Fprintf(&b, "  # %s is a verified, complete copy of %s, which was being removed; keep the copy:\n", d.new, d.old)
 			fmt.Fprintf(&b, "  rm -rf %s && mv %s %s\n", d.old, d.new, d.old)
+		case lexists(d.old) && lexists(d.new):
+			fmt.Fprintf(&b, "  # do NOT delete either %s or %s: compare them (e.g. diff -r %s %s) and keep the one with the newest data\n", d.old, d.new, d.old, d.new)
 		case !lexists(d.old) && ns.ours():
 			fmt.Fprintf(&b, "  mv %s %s\n", d.new, d.old)
 		}
@@ -633,6 +749,15 @@ func describeMigrationState(p migrationPaths) string {
 	}
 	b.WriteString("  systemctl disable --now trinetra 2>/dev/null; rm -f /etc/systemd/system/trinetra.service\n")
 	return b.String()
+}
+
+// copyProvablyComplete: newDir is a verified copy made from oldDir's run
+// (tokens match), is a separate tree, and holds everything oldDir holds, so
+// deleting oldDir loses nothing.
+func copyProvablyComplete(oldDir, newDir, newTok string) bool {
+	oldTok, _ := readMarkerToken(filepath.Join(oldDir, migratingMarker))
+	return oldTok != "" && oldTok == newTok &&
+		checkNotAliased(oldDir, newDir) == nil && verifySubset(oldDir, newDir) == nil
 }
 
 // applyLegacyMigration carries out plan. install runs the normal install
@@ -886,7 +1011,7 @@ func moveLegacyDir(old, newp string, ops migrationOps) (string, error) {
 		// Nothing (left) to move. An empty old dir (a verified source whose
 		// removal was interrupted after its marker went, or an unmounted
 		// mount point) is removed; rmdir never removes anything with data.
-		if lexists(old) && !isMountPointFn(old) {
+		if lexists(old) && !isMountPointFn(old) && !isMountTargetFn(old) {
 			if err := os.Remove(old); err != nil {
 				return "", err
 			}
@@ -910,6 +1035,7 @@ func moveLegacyDir(old, newp string, ops migrationOps) (string, error) {
 		if err := checkNotAliased(old, newp); err != nil {
 			return "", fmt.Errorf("%w; refusing to delete %s", err, old)
 		}
+		progressf("verifying %s against %s before removing it...", old, newp)
 		if err := verifySubset(old, newp); err != nil {
 			return "", fmt.Errorf("%w; refusing to delete %s", err, old)
 		}
@@ -928,6 +1054,9 @@ func moveLegacyDir(old, newp string, ops migrationOps) (string, error) {
 	// A staging dir next to an intact source is a copy that did not finish
 	// (or finished but was not yet renamed): start it over.
 	if lexists(staging) {
+		if err := checkNotAliased(old, staging); err != nil {
+			return "", fmt.Errorf("leftover %s is not a separate copy (%v); refusing to delete it, remove it by hand after checking", staging, err)
+		}
 		if err := os.RemoveAll(staging); err != nil {
 			return "", fmt.Errorf("remove leftover partial copy %s: %w", staging, err)
 		}
@@ -945,6 +1074,7 @@ func moveLegacyDir(old, newp string, ops migrationOps) (string, error) {
 		}
 		return "", err
 	}
+	progressf("%s and %s are on different filesystems; copying...", old, newp)
 	files, size, err := copyTreeVerified(old, staging, ops)
 	if err != nil {
 		if rmErr := os.RemoveAll(staging); rmErr != nil {
@@ -1081,6 +1211,7 @@ func copyTreeVerified(src, dst string, ops migrationOps) (int, int64, error) {
 			return 0, 0, err
 		}
 	}
+	progressf("verifying %d entries in %s...", len(want), dst)
 	return verifyTree(dst, want)
 }
 

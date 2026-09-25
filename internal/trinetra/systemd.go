@@ -77,14 +77,19 @@ WantedBy=multi-user.target
 
 func cmdInstall(args []string) int {
 	force := false
+	var opts planOptions
 	for _, a := range args {
 		switch a {
 		case "--force":
 			// Only relaxes the serverwatch migration's "is the old service
 			// really stopped?" check when systemctl cannot answer.
 			force = true
+		case "--state-already-at-new-path":
+			// The operator moved the serverwatch state volume to the
+			// trinetra state path; adopt it instead of refusing.
+			opts.stateAtNewPath = true
 		default:
-			fmt.Fprintf(stderr, "unknown install flag %q\nusage: install [--force]\n", a)
+			fmt.Fprintf(stderr, "unknown install flag %q\nusage: install [--force] [--state-already-at-new-path]\n", a)
 			return 2
 		}
 	}
@@ -95,7 +100,7 @@ func cmdInstall(args []string) int {
 	}
 	// An existing serverwatch install is migrated in place first (see
 	// migrate_legacy.go); planning only looks, so a refusal changes nothing.
-	plan, err := planLegacyMigration(defaultMigrationPaths())
+	plan, err := planLegacyMigration(defaultMigrationPaths(), opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -104,6 +109,7 @@ func cmdInstall(args []string) int {
 	var summary *migrationSummary
 	if plan != nil {
 		plan.force = force
+		progressOut = stdout
 		fmt.Fprintln(stdout, "found a serverwatch install; migrating it to trinetra")
 		summary, err = applyLegacyMigration(plan, osMigrationOps{}, install)
 	} else {
