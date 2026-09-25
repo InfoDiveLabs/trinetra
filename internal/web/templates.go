@@ -317,6 +317,18 @@ func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
 	}
 }
 
+// renderNotFound is renderDenied's 404 counterpart (templates/notfound.html,
+// same "panel denied" styling), through the full app-shell layout. reason is
+// a short, user-facing explanation rendered into the panel body (e.g. "no
+// such node") -- withNodeRouter (node_scope.go) is this task's caller, for
+// an unresolvable or rejected /n/{node}/... path.
+func renderNotFound(w http.ResponseWriter, r *http.Request, d Deps, reason string) {
+	data := newPageData(r, d, "Not found", reason)
+	if err := renderPageStatus(w, "notfound.html", data, http.StatusNotFound); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // BarePageData is what a "bare"/centered page (enroll now; login and the
 // public dashboard in later tasks, per the mockup's login.html/public.html
 // which use the same centered `.card`/`.center` styling rather than the app

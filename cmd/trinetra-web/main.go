@@ -242,6 +242,17 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 			}()
 			return out, nil
 		},
+		// Fleet/NodeAPI (fleet-web-a task 1): client.Fleet is always
+		// unrouted (Fleet.* calls run against the master regardless of node
+		// scope, see internal/control's Client.Fleet doc); client.ForNode
+		// returns a routed view that never fails locally -- an unknown id
+		// only errors once a method is called through it, which is exactly
+		// why internal/web's node router validates {node} against
+		// Fleet().Nodes(...) itself before ever calling NodeAPI.
+		Fleet: client.Fleet,
+		NodeAPI: func(id string) core.API {
+			return client.ForNode(id)
+		},
 	}
 	c := cfg()
 	deps.Enabled = c.Web.Enabled

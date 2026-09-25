@@ -158,7 +158,13 @@ func newHandler(d Deps) http.Handler {
 	// congested uplinks, gated on Accept-Encoding: gzip and a 1KB minimum,
 	// and excludes /events + /public/events (SSE streams -- see its doc in
 	// compress.go for why buffering those would break live push).
-	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, mux))))
+	//
+	// withNodeRouter (node_scope.go, fleet-web-a task 1) sits just inside
+	// userMiddleware, not outside it: a /n/{node}/... request must already
+	// carry the same resolved session/user every other request does before
+	// requireRole/requireCSRF on the re-dispatched (prefix-stripped)
+	// request evaluate it -- node scoping never bypasses auth.
+	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, withNodeRouter(d, mux)))))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type

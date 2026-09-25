@@ -46,6 +46,16 @@ type fakeAPI struct {
 	testChannel func(name string) error
 	ackAlert    func(key string) error
 	unackAlert  func(key string) error
+
+	// fleet and nodes are optional fleet-routing fixtures (fleet-web-a task
+	// 1, node_scope_test.go): setting fleet makes Fleet() return it (nil ->
+	// Fleet() returns a literal nil core.FleetAPI, mirroring "no fleet
+	// support"), and nodes maps a node id straight to the core.API a test
+	// wants apiFor to resolve to for it (mirroring control.Client.ForNode's
+	// shape) -- neither is read by any handler test that predates fleet
+	// routing.
+	fleet *fakeFleet
+	nodes map[string]core.API
 }
 
 func (f fakeAPI) Snapshot() (core.DashboardView, error)    { return f.snap, f.snapErr }
@@ -117,6 +127,101 @@ func (f fakeAPI) TestChannel(name string) error {
 func (f fakeAPI) ValidateChannel(cc config.ChannelConfig) error { return nil }
 
 func (f fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) { return nil, nil }
+
+// Fleet and Node make fakeAPI satisfy core.FleetProvider (fleet-web-a task
+// 1), mirroring control.Client's own split: Fleet() is always this fake's
+// canned f.fleet (a literal nil core.FleetAPI when unset, not a typed-nil
+// *fakeFleet, so callers' `d.Fleet() == nil`-shaped checks behave like the
+// real "no fleet support" case); Node(id) mirrors
+// (*control.Client).Node/ForNode -- "self"/"" resolves to this fake itself,
+// any id present in f.nodes resolves to that fixture, anything else is
+// core.ErrNoSuchNode.
+func (f fakeAPI) Fleet() core.FleetAPI {
+	if f.fleet == nil {
+		return nil
+	}
+	return f.fleet
+}
+
+func (f fakeAPI) Node(id string) (core.API, error) {
+	if id == "" || id == core.SelfNodeID {
+		return f, nil
+	}
+	if api, ok := f.nodes[id]; ok {
+		return api, nil
+	}
+	return nil, core.ErrNoSuchNode
+}
+
+var _ core.FleetProvider = fakeAPI{}
+
+// fakeFleet is a minimal core.FleetAPI test double: Status/Nodes return
+// canned fixtures (plus canned errors, for the "old daemon" and
+// roster-lookup-fails cases node_scope_test.go exercises); the
+// fleet-master mutation methods record what they were called with so a
+// later task's admin-page tests can assert against them, defaulting to a
+// harmless no-op/zero-value response.
+type fakeFleet struct {
+	status    core.FleetStatus
+	statusErr error
+	nodes     []core.NodeSummary
+	nodesErr  error
+
+	renamed        map[string]string
+	tagged         map[string][]string
+	revoked        []string
+	removed        []string
+	tokens         []core.TokenView
+	tokensErr      error
+	createdToken   core.CreatedToken
+	createTokenErr error
+	deletedTokens  []string
+}
+
+func (f *fakeFleet) Status() (core.FleetStatus, error) { return f.status, f.statusErr }
+
+func (f *fakeFleet) Nodes(core.NodeFilter) ([]core.NodeSummary, error) {
+	return f.nodes, f.nodesErr
+}
+
+func (f *fakeFleet) RenameNode(id, name string) error {
+	if f.renamed == nil {
+		f.renamed = map[string]string{}
+	}
+	f.renamed[id] = name
+	return nil
+}
+
+func (f *fakeFleet) SetNodeTags(id string, tags []string) error {
+	if f.tagged == nil {
+		f.tagged = map[string][]string{}
+	}
+	f.tagged[id] = tags
+	return nil
+}
+
+func (f *fakeFleet) RevokeNode(id string) error {
+	f.revoked = append(f.revoked, id)
+	return nil
+}
+
+func (f *fakeFleet) RemoveNode(id string) error {
+	f.removed = append(f.removed, id)
+	return nil
+}
+
+func (f *fakeFleet) Tokens() ([]core.TokenView, error) { return f.tokens, f.tokensErr }
+
+func (f *fakeFleet) CreateToken(core.TokenSpec) (core.CreatedToken, error) {
+	return f.createdToken, f.createTokenErr
+}
+
+func (f *fakeFleet) DeleteToken(id string) error {
+	f.deletedTokens = append(f.deletedTokens, id)
+	return nil
+}
+
+var _ core.FleetAPI = (*fakeFleet)(nil)
 
 // TestDashboardReadsFromAPI pins the core TDD obligation for this task: once
 // Deps.API is set, GET / renders the fake API's Snapshot() data rather than

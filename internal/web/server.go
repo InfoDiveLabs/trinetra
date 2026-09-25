@@ -126,6 +126,28 @@ type Deps struct {
 	// publicEventsHandler (sse.go) treat a nil Subscribe exactly like the
 	// pre-Task-3 pure-ticker behavior, never call it, never panic.
 	Subscribe func(context.Context) (<-chan LiveEvent, error)
+	// Fleet returns the daemon's core.FleetAPI (fleet-wide status and the
+	// node roster) -- the trinetra-web binary's buildDeps wires this to
+	// client.Fleet (internal/control, always unrouted: Fleet.* calls run
+	// against the master regardless of any node scope). nil means no fleet
+	// support at all (e.g. a test Deps that doesn't exercise routing);
+	// node_scope.go's fleetRole/withNodeRouter treat a nil Fleet, a nil
+	// FleetAPI, or a Status() error identically: "solo", no /n/{node}/...
+	// routing. Even a genuinely solo daemon answers Fleet().Status() (role
+	// "solo") once wired -- see fleetRole's doc for why every failure mode
+	// collapses to that same answer rather than needing separate handling.
+	Fleet func() core.FleetAPI
+	// NodeAPI returns a core.API view routed to fleet node id (the
+	// trinetra-web binary's buildDeps wires this to
+	// func(id string) core.API { return client.ForNode(id) }, internal/
+	// control's routed-view client): every core.API method called through
+	// it carries that node's id on the wire (see control.Client.ForNode's
+	// doc), so it never fails locally for an unknown id -- withNodeRouter
+	// validates {node} against Fleet().Nodes(...) before a request ever
+	// reaches a handler that would call this. nil means only self is
+	// available (no fleet routing wired); node_scope.go's apiFor falls back
+	// to d.API in that case, exactly like the self scope.
+	NodeAPI func(id string) core.API
 }
 
 // Start is the web server's entry point: given Deps, it binds and serves
