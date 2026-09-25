@@ -5,13 +5,32 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // pingInterval is how often the master sends a ping frame down an otherwise
 // idle stream connection, keeping it (and anything in between) from being
-// mistaken for dead. A package-level var so tests can shorten it.
-var pingInterval = 20 * time.Second
+// mistaken for dead -- and, via streamIdleTimeout in child.go, how the child
+// judges a connection to have gone silent. It's read repeatedly by
+// long-running background goroutines on both the master (the ping ticker)
+// and the child (the read-idle watchdog), so it's an atomic.Int64
+// (nanoseconds) rather than a plain var: a test shortening it needs that to
+// be race-safe even while such a goroutine is already running, not merely
+// safe at the moment the goroutine was started.
+var pingInterval atomic.Int64
+
+func init() { pingInterval.Store(int64(20 * time.Second)) }
+
+// pingIntervalDuration reads the current ping interval.
+func pingIntervalDuration() time.Duration { return time.Duration(pingInterval.Load()) }
+
+// setPingInterval sets the ping interval and returns the previous value, so
+// a test can restore it with `defer setPingInterval(setPingInterval(d))` or
+// `old := setPingInterval(d); t.Cleanup(func() { setPingInterval(old) })`.
+func setPingInterval(d time.Duration) time.Duration {
+	return time.Duration(pingInterval.Swap(int64(d)))
+}
 
 // hubQueueSize bounds how many frames the master queues for one connected
 // node before it starts dropping the newest ones.
@@ -67,7 +86,16 @@ func (h *Hub) OnConnect(f func(nodeID string)) {
 	h.onConnect = f
 }
 
-// OnRPCResult sets the callback fired when a child posts an RPC result.
+// OnRPCResult sets the callback fired when a child posts an RPC result via
+// PathRPC. nodeID is authenticated (mTLS, via requireNode); id is whatever
+// the child put in the URL, taken as-is.
+//
+// This layer does NOT verify that id was ever issued to nodeID as a pending
+// RPC -- a child (compromised, buggy, or just racing a retry) can post any
+// id it likes. The caller of OnRPCResult owns the pending-RPC registry and
+// MUST check that id names an RPC it actually sent to this exact nodeID
+// before trusting body; otherwise a node could spoof a result for an RPC it
+// was never sent, or that was sent to a different node.
 func (h *Hub) OnRPCResult(f func(nodeID, id string, body []byte)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -91,12 +119,17 @@ func (h *Hub) connect(nodeID string) *nodeConn {
 
 // release removes nodeID's connection if c is still the current one. If a
 // newer connection has already replaced it, this is a no-op: the newer
-// connection owns the map entry now.
+// connection owns the map entry now, and nodeID may still be reachable
+// through it, so lastDrop must not be pruned in that case.
 func (h *Hub) release(nodeID string, c *nodeConn) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.conns[nodeID] == c {
+	removed := h.conns[nodeID] == c
+	if removed {
 		delete(h.conns, nodeID)
+	}
+	h.mu.Unlock()
+	if removed {
+		h.pruneDrop(nodeID)
 	}
 }
 
@@ -132,6 +165,14 @@ func (h *Hub) logDrop(nodeID string) {
 	h.logf("fleet: dropped a stream frame for node %s: queue full", nodeID)
 }
 
+// pruneDrop forgets nodeID's drop-log rate-limit state, so lastDrop does not
+// grow without bound for a fleet with high node churn.
+func (h *Hub) pruneDrop(nodeID string) {
+	h.dropMu.Lock()
+	delete(h.lastDrop, nodeID)
+	h.dropMu.Unlock()
+}
+
 // Connected reports whether nodeID currently has an open stream connection.
 func (h *Hub) Connected(nodeID string) bool {
 	h.mu.Lock()
@@ -150,6 +191,7 @@ func (h *Hub) Disconnect(nodeID string) {
 	h.mu.Unlock()
 	if ok {
 		close(c.done)
+		h.pruneDrop(nodeID)
 	}
 }
 
@@ -185,7 +227,7 @@ func (m *Master) handleStream(w http.ResponseWriter, r *http.Request, nodeID str
 	m.cfg.Logf("fleet: node %s stream connected", nodeID)
 
 	enc := json.NewEncoder(w)
-	ticker := time.NewTicker(pingInterval)
+	ticker := time.NewTicker(pingIntervalDuration())
 	defer ticker.Stop()
 	ctx := r.Context()
 	for {
@@ -210,7 +252,9 @@ func (m *Master) handleStream(w http.ResponseWriter, r *http.Request, nodeID str
 
 // handleRPC serves POST PathRPC+"{id}": the child posts the result of an RPC
 // the master pushed over the stream. The node id comes from requireNode
-// (mTLS), never from the body.
+// (mTLS), never from the body or the URL. id itself, however, is untrusted:
+// this handler does not check that id was ever issued to nodeID as a
+// pending RPC -- see the warning on Hub.OnRPCResult, whose caller must.
 func (m *Master) handleRPC(w http.ResponseWriter, r *http.Request, nodeID string) {
 	id := r.PathValue("id")
 	if id == "" {

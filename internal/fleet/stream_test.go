@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -146,9 +147,8 @@ func TestStreamOnConnectFiresBeforeHandlerDrains(t *testing.T) {
 }
 
 func TestStreamPingKeepsConnectionAliveAndIsNotExposed(t *testing.T) {
-	old := pingInterval
-	pingInterval = 20 * time.Millisecond
-	t.Cleanup(func() { pingInterval = old })
+	old := setPingInterval(20 * time.Millisecond)
+	t.Cleanup(func() { setPingInterval(old) })
 
 	hub := NewHub(nil)
 	f := newMasterFixture(t, func(c *MasterConfig) { c.Hub = hub })
@@ -430,5 +430,231 @@ func TestStreamNegotiatesHTTP2(t *testing.T) {
 	defer mu.Unlock()
 	if proto != 2 {
 		t.Fatalf("stream negotiated HTTP/%d, want HTTP/2", proto)
+	}
+}
+
+// streamOnlyFixture builds a masterFixture whose PathStream requests are
+// answered by stream, while every other request (join, renew, ...) goes to
+// a real Master.Handler(): enough for Join/LoadIdentity to work normally,
+// while giving a test full, direct control over what the stream connection
+// itself does.
+func streamOnlyFixture(t *testing.T, stream http.HandlerFunc) *masterFixture {
+	t.Helper()
+	ca, leaf := newTestPKI(t)
+	dir := t.TempDir()
+	reg, err := OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks, err := OpenTokens(filepath.Join(dir, "tokens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := newFakeSink()
+	m := NewMaster(MasterConfig{CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: sink})
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == PathStream {
+			stream(w, r)
+			return
+		}
+		m.Handler().ServeHTTP(w, r)
+	})
+	srv := newTLSServer(t, ca, leaf, wrapped)
+	return &masterFixture{ca: ca, reg: reg, toks: toks, sink: sink, srv: srv, pin: SPKIPin(ca.Cert)}
+}
+
+// TestStreamBackoffResetsAfterEstablishedConnection is the regression test
+// for the CRITICAL fix in fix round 1: streamLoop's attempt counter must
+// reset to 0 once a connection was actually established (read at least one
+// frame), even though that connection later ends in an error -- not just on
+// the unreachable "clean shutdown" path. Without the fix, three failed
+// connection attempts followed by one that connects, reads a frame, and then
+// ends would drive the *next* backoff call to attempt 3 (and every one
+// after that, forever, once past attempt 6, pinned at the ~60s-equivalent
+// ceiling); with the fix it's attempt 0 again, matching the very first call.
+//
+// The test uses the real backoffDelay formula (not a stubbed-out replacement
+// backoff func): it scales backoffBase down so the real jittered shape runs
+// in milliseconds, and asserts both on the sequence of attempt values passed
+// to it (deterministic) and, for the post-reset call, on the actual delay
+// backoffDelay(0) can produce for attempt 0: it must land in
+// [backoffBase, 2*backoffBase), a range only attempt 0 can produce.
+func TestStreamBackoffResetsAfterEstablishedConnection(t *testing.T) {
+	oldBase := backoffBase
+	backoffBase = 2 * time.Millisecond
+	t.Cleanup(func() { backoffBase = oldBase })
+
+	var connCount int32
+	f := streamOnlyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&connCount, 1)
+		if n <= 3 {
+			http.Error(w, "boom", http.StatusServiceUnavailable)
+			return
+		}
+		// The 4th connection: succeed, deliver exactly one frame, then
+		// return -- ending the response (the client sees EOF right after).
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("ResponseWriter is not a Flusher")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(Frame{Type: "ping"})
+		flusher.Flush()
+	})
+
+	dir := filepath.Join(t.TempDir(), "fleet-child")
+	if _, err := Join(context.Background(), joinCode(f, t, 1), "box", "v1", nil, dir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := LoadIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := NewShipper(ShipperConfig{MasterURL: f.srv.URL, Pin: f.pin, Identity: id, OnFrame: func(Frame) {}})
+
+	type call struct {
+		attempt int
+		delay   time.Duration
+	}
+	var mu sync.Mutex
+	var calls []call
+	done := make(chan struct{})
+	sh.backoff = func(attempt int) time.Duration {
+		d := backoffDelay(attempt) // the real, scaled-down shape
+		mu.Lock()
+		calls = append(calls, call{attempt, d})
+		n := len(calls)
+		mu.Unlock()
+		if n >= 4 {
+			select {
+			case <-done:
+			default:
+				close(done)
+			}
+		}
+		return d
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go sh.streamLoop(ctx)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not observe 4 backoff calls in time")
+	}
+	cancel()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) < 4 {
+		t.Fatalf("only %d backoff calls recorded", len(calls))
+	}
+	gotAttempts := []int{calls[0].attempt, calls[1].attempt, calls[2].attempt, calls[3].attempt}
+	wantAttempts := []int{0, 1, 2, 0}
+	for i := range wantAttempts {
+		if gotAttempts[i] != wantAttempts[i] {
+			t.Fatalf("backoff attempt sequence = %v, want %v (attempt must reset to 0 after the 4th, successful, connection)", gotAttempts, wantAttempts)
+		}
+	}
+	if d := calls[3].delay; d < backoffBase || d >= 2*backoffBase {
+		t.Fatalf("post-reset delay = %v, want in [%v, %v) -- the first-attempt range, not a larger one grown from the 3 failures before it connected", d, backoffBase, 2*backoffBase)
+	}
+}
+
+// TestStreamOutlivesScaledDownClientTimeoutEquivalent proves the stream no
+// longer dies at Shipper.client's 60s Client.Timeout (IMPORTANT 1 in fix
+// round 1): it must use a dedicated client with no such cap. Since we can't
+// wait out a real 60s in a test, pingInterval is shortened and the same
+// ratio the old cap had to the default ping (60s / 20s = 3x) is applied to
+// the shortened one, giving a scaled-down analogue of "the old cap would
+// have fired here"; the stream is kept alive several multiples past that
+// point.
+func TestStreamOutlivesScaledDownClientTimeoutEquivalent(t *testing.T) {
+	oldPing := setPingInterval(15 * time.Millisecond)
+	t.Cleanup(func() { setPingInterval(oldPing) })
+	scaledOldTimeoutEquivalent := 3 * pingIntervalDuration()
+
+	hub := NewHub(nil)
+	// A server WriteTimeout comfortably above the window under test, so the
+	// server side is not what's keeping this connection alive.
+	f := newMasterFixtureWithServerTimeout(t, 10*scaledOldTimeoutEquivalent, func(c *MasterConfig) { c.Hub = hub })
+
+	frames := make(chan Frame, 64)
+	_, id, _ := startShipperWithFrames(t, f, func(fr Frame) {
+		select {
+		case frames <- fr:
+		default:
+		}
+	}, false)
+
+	waitFor(t, "connected", func() bool { return hub.Connected(id) })
+
+	deadline := time.Now().Add(8 * scaledOldTimeoutEquivalent)
+	for time.Now().Before(deadline) {
+		hub.Push(id, Frame{Type: "lease"})
+		time.Sleep(scaledOldTimeoutEquivalent / 4)
+	}
+	if !hub.Connected(id) {
+		t.Fatalf("stream ended before %v, well past the old 60s Client.Timeout's equivalent scaled to this ping interval", 8*scaledOldTimeoutEquivalent)
+	}
+}
+
+// TestStreamReconnectsAfterPingsStop proves the child's own read-idle
+// watchdog (IMPORTANT 1 in fix round 1), not just the removal of
+// Shipper.client's Timeout: a connection that stays open at the TCP/TLS
+// level but stops delivering anything -- pings included -- must still be
+// abandoned and reconnected, at roughly 3x the ping interval.
+func TestStreamReconnectsAfterPingsStop(t *testing.T) {
+	oldPing := setPingInterval(60 * time.Millisecond)
+	t.Cleanup(func() { setPingInterval(oldPing) })
+	ping := pingIntervalDuration()
+
+	var mu sync.Mutex
+	var connectTimes []time.Time
+	f := streamOnlyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		connectTimes = append(connectTimes, time.Now())
+		mu.Unlock()
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("ResponseWriter is not a Flusher")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(Frame{Type: "ping"}) // one ping, then silence
+		flusher.Flush()
+		<-r.Context().Done() // hang until the child gives up and disconnects
+	})
+
+	// fast=true: the connect-to-connect gap under test is the idle-detection
+	// delay (~3x ping) plus whatever streamLoop's post-error backoff adds on
+	// top; a near-zero backoff keeps that addition negligible so the gap
+	// isolates idle detection instead of being dominated by backoffDelay's
+	// real (1s-60s) shape.
+	_, _, _ = startShipperWithFrames(t, f, func(Frame) {}, true)
+
+	waitFor(t, "a second connection attempt (reconnect after pings stopped)", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(connectTimes) >= 2
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	gap := connectTimes[1].Sub(connectTimes[0])
+	want := 3 * ping
+	// Generous window: detection can lag up to one more watchdog tick past
+	// want, and the reconnect itself (dial + TLS handshake) adds more on a
+	// loaded CI box, especially under -race.
+	lower := want - ping
+	upper := want + 5*ping + 500*time.Millisecond
+	if gap < lower || gap > upper {
+		t.Fatalf("reconnect gap = %v, want roughly %v (in [%v, %v])", gap, want, lower, upper)
 	}
 }
