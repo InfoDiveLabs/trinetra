@@ -7,6 +7,7 @@ package serverwatch
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -117,6 +118,9 @@ func (f fleetAPIImpl) Nodes(filter core.NodeFilter) ([]core.NodeSummary, error) 
 			}
 			s.OutboxBytes, s.OutboxOldest, s.OutboxGaps = u.Outbox.Bytes, u.Outbox.OldestUnackedTS, u.Outbox.Gaps
 		}
+		st := p.master.sink.Stats(n.ID)
+		s.SkewSec = int64(math.Round(st.SkewSec))
+		s.DroppedOld, s.DroppedCardinality = st.DroppedOld, st.DroppedCardinality
 		if filter.Match(s) {
 			out = append(out, s)
 		}

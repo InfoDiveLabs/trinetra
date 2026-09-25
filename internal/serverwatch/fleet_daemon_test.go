@@ -3,6 +3,7 @@ package serverwatch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -479,5 +480,55 @@ func TestFleetRemoveNodeResolvesDownAlertAndKeepsReplica(t *testing.T) {
 	}
 	if err := p.Fleet().RemoveNode(id); err != core.ErrNoSuchNode {
 		t.Fatalf("second remove err = %v", err)
+	}
+}
+
+// A child whose clock is far off is flagged lagging, surfaced in the node
+// list with its drop counters, and warned about once (not every request).
+func TestMasterSkewWarnsOnceMarksLaggingAndSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	d, _ := testDeps(t, dir)
+	var logs []string
+	d.logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+	reg, _ := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{})
+	now := time.Now()
+	loop := newMasterLoop(reg, tracker, sink, d, now)
+	id, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: id, Name: "fast-clock", Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Seen(id, now.Unix(), 0)
+	for i := 0; i < 3; i++ {
+		loop.observeSkew(id, now, now.Unix()+90) // child clock 90s ahead
+	}
+	warned := 0
+	for _, l := range logs {
+		if strings.Contains(l, "clock") && strings.Contains(l, "fast-clock") {
+			warned++
+		}
+	}
+	if warned != 1 {
+		t.Fatalf("skew warnings = %d, want 1: %q", warned, logs)
+	}
+	loop.tick(now)
+	if s := tracker.State(id); s != fleet.StateLagging {
+		t.Fatalf("state = %q, want lagging", s)
+	}
+	if err := sink.Apply(id, []fleet.Record{samplesRec(1, 100, map[string]float64{"cpu": 1}), samplesRec(2, 100, map[string]float64{"cpu": 2})}); err != nil {
+		t.Fatal(err)
+	}
+	p := &fleetProvider{self: d.self, role: config.RoleMaster, selfName: func() string { return "m" },
+		master: &masterState{reg: reg, sink: sink, tracker: tracker, loop: loop, getCfg: d.getCfg}}
+	ns, _ := p.Fleet().Nodes(core.NodeFilter{})
+	var n core.NodeSummary
+	for _, s := range ns {
+		if s.ID == id {
+			n = s
+		}
+	}
+	if n.SkewSec != -90 || n.DroppedOld != 1 || n.State != string(fleet.StateLagging) {
+		t.Fatalf("node summary = %+v, want skew -90, 1 dropped, lagging", n)
 	}
 }

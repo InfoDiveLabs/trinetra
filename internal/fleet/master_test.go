@@ -61,6 +61,7 @@ type masterFixture struct {
 	pin   string
 	seen  []string
 	seenM sync.Mutex
+	skews []int64 // server_time - sent_at per OnSkew call
 }
 
 func newMasterFixture(t *testing.T) *masterFixture {
@@ -75,6 +76,11 @@ func newMasterFixture(t *testing.T) *masterFixture {
 		OnContact: func(id string, _ time.Time, _ *LiveUpdate) {
 			f.seenM.Lock()
 			f.seen = append(f.seen, id)
+			f.seenM.Unlock()
+		},
+		OnSkew: func(id string, now time.Time, sentAt int64) {
+			f.seenM.Lock()
+			f.skews = append(f.skews, now.Unix()-sentAt)
 			f.seenM.Unlock()
 		},
 	})
@@ -509,5 +515,44 @@ func TestIPLimiterBoundsMapSize(t *testing.T) {
 	later := base.Add(2 * time.Minute)
 	if !l.allow("5.5.5.5", later) {
 		t.Fatal("new IP should be admitted once stale entries are swept")
+	}
+}
+
+// The master measures clock skew (server_time - sent_at) from the child's
+// X-SW-Sent-At header on ingest and backfill, and from sent_at on live.
+func TestMasterReportsSkewOnIngestBackfillAndLive(t *testing.T) {
+	f := newMasterFixture(t)
+	_, c := f.join(t, nil)
+	send := func(path string, body []byte, sentAt int64, ct string) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", f.srv.URL+path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", ct)
+		if sentAt != 0 {
+			req.Header.Set(HeaderSentAt, fmt.Sprint(sentAt))
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			t.Fatalf("%s status %d", path, resp.StatusCode)
+		}
+	}
+	now := time.Now().Unix()
+	batch, _ := EncodeBatch(seqRecs(1, 1))
+	send(PathIngest, batch, now-100, "application/x-ndjson")
+	send(PathBackfill, batch, now+100, "application/x-ndjson")
+	live, _ := json.Marshal(LiveUpdate{SentAt: now - 40})
+	send(PathLive, live, 0, "application/json")
+	send(PathIngest, batch, 0, "application/x-ndjson") // no header: no sample
+	f.seenM.Lock()
+	defer f.seenM.Unlock()
+	if len(f.skews) != 3 {
+		t.Fatalf("skew samples = %v, want 3", f.skews)
+	}
+	near := func(got, want int64) bool { return got >= want-5 && got <= want+5 }
+	if !near(f.skews[0], 100) || !near(f.skews[1], -100) || !near(f.skews[2], 40) {
+		t.Fatalf("skews = %v, want ~[100 -100 40]", f.skews)
 	}
 }

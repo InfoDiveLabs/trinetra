@@ -238,6 +238,36 @@ func (l *masterLoop) tick(now time.Time) {
 	}
 }
 
+// observeSkew is the master's OnSkew hook: it folds the sample into the
+// node's smoothed skew, hands it to the tracker (|skew| > 30 s is lagging),
+// and warns once each time a node's clock drifts past 30 s. The master
+// stores the child's timestamps unchanged, so a clock running ahead pins the
+// replica's ordering guard to the future and later points are dropped as
+// out of order; the warning and the fleet nodes SKEW column make that
+// visible.
+func (l *masterLoop) observeSkew(id string, now time.Time, sentAt int64) {
+	skew, crossed := l.sink.RecordSkew(id, now.Unix()-sentAt)
+	l.tracker.SetSkew(id, skew)
+	if crossed {
+		name := id
+		if n, ok := l.reg.Get(id); ok {
+			name = n.Name
+		}
+		dir := "behind"
+		if skew < 0 {
+			dir = "ahead of"
+		}
+		l.logf("fleet: WARNING node %s (%s) clock is %ds %s the master's; its data is stored with its own timestamps and may be dropped as out of order. Fix NTP on that host.", name, id, abs64(skew), dir)
+	}
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // remove deletes node id from the registry and liveness tracking and
 // resolves any open alert for it. Its replica directory is left on disk.
 func (l *masterLoop) remove(id string, now time.Time) error {
@@ -300,8 +330,10 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	}
 	tracker.Seed(ids, revoked, time.Now().Unix())
 
+	loop := newMasterLoop(reg, tracker, sink, d, time.Now())
 	m := fleet.NewMaster(fleet.MasterConfig{
 		CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: sink, Logf: d.logf,
+		OnSkew: loop.observeSkew,
 		OnContact: func(id string, now time.Time, u *fleet.LiveUpdate) {
 			backlog := int64(-1)
 			if u != nil {
@@ -331,7 +363,6 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		d.logf("fleet: WARNING fleet.address is empty; children cannot be given a join URL and token creation is refused. Run `serverwatch fleet init --address ...`")
 	}
 
-	loop := newMasterLoop(reg, tracker, sink, d, time.Now())
 	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker, loop: loop,
 		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 	loopCtx, cancel := context.WithCancel(ctx)

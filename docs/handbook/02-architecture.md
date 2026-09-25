@@ -828,10 +828,19 @@ logged, so one broken range cannot hold back everything newer.
 
 The master tracks when it last heard from each node. A node is `online` while
 it is in contact, `lagging` when it is in contact but its oldest unsent data
-is more than five minutes old, `stale` after 30 seconds of silence, and `down` after
+is more than five minutes old or its clock is more than 30 seconds off, `stale` after 30 seconds of silence, and `down` after
 `fleet.node_down_after` (default 2 minutes); revoked nodes show as `revoked`.
 When the master itself starts, every node gets a fresh grace period, so the
 master's own downtime is never blamed on its nodes.
+
+Every request a child sends carries its own send time, and the master keeps a
+smoothed `master time - send time` per node. The replica stores the child's
+timestamps unchanged, so a child whose clock runs ahead pushes each series'
+last stored time into the future and the ordering guard then drops newer
+points as out of order. The master logs a warning once when a node's skew
+passes 30 seconds, marks it `lagging`, shows the skew in `fleet nodes`, and
+`fleet status` lists every node whose replica has dropped points (the
+counters in `ingest.state`). Fix the node's clock (NTP) when you see it.
 
 A node going down raises one alert on the master, and its return resolves it.
 If half or more of the fleet (at least three nodes) drops at once, that is

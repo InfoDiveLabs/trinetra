@@ -26,17 +26,21 @@ type TrackerConfig struct {
 	MassWindow   time.Duration
 	MassFraction float64
 	MassMin      int
+	// MaxSkew: a node whose clock differs from the master's by more than
+	// this is lagging (its timestamps are not trustworthy for ordering).
+	MaxSkew time.Duration
 }
 
 // DefaultTrackerConfig returns the spec defaults with a configurable down threshold.
 func DefaultTrackerConfig(downAfter time.Duration) TrackerConfig {
 	return TrackerConfig{StaleAfter: 30 * time.Second, DownAfter: downAfter, LagAfter: 5 * time.Minute,
-		MassWindow: time.Minute, MassFraction: 0.5, MassMin: 3}
+		MassWindow: time.Minute, MassFraction: 0.5, MassMin: 3, MaxSkew: 30 * time.Second}
 }
 
 type tracked struct {
 	lastSeen   int64
 	backlogAge int64
+	skew       int64 // smoothed server_time - sent_at, seconds
 	revoked    bool
 	state      State
 }
@@ -115,6 +119,15 @@ func (t *Tracker) Forget(id string) {
 	delete(t.nodes, id)
 }
 
+// SetSkew records id's smoothed clock skew (server_time - sent_at, seconds).
+func (t *Tracker) SetSkew(id string, skewSec int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if n, ok := t.nodes[id]; ok {
+		n.skew = skewSec
+	}
+}
+
 // State returns id's state as of the last Evaluate ("" if unknown).
 func (t *Tracker) State(id string) State {
 	t.mu.Lock()
@@ -136,8 +149,17 @@ func (t *Tracker) classify(n *tracked, now int64) State {
 		return StateStale
 	case time.Duration(n.backlogAge)*time.Second > t.cfg.LagAfter:
 		return StateLagging
+	case t.cfg.MaxSkew > 0 && time.Duration(abs64(n.skew))*time.Second > t.cfg.MaxSkew:
+		return StateLagging
 	}
 	return StateOnline
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // Evaluate recomputes every state and reports transitions and mass loss.

@@ -360,6 +360,11 @@ func fleetStatus(c *control.Client) error {
 	switch st.Role {
 	case config.RoleMaster:
 		fmt.Fprintf(stdout, "listening: %s\njoin URL: %s\nCA fingerprint: %s\nnodes: %d (incl. this host)\n", st.Listen, st.JoinURL, st.CAPin, st.Nodes)
+		ns, err := c.Fleet().Nodes(core.NodeFilter{})
+		if err != nil {
+			return err
+		}
+		printNodeWarnings(stdout, ns)
 	case config.RoleChild:
 		fmt.Fprintf(stdout, "node id: %s\nmaster: %s\n", st.NodeID, st.MasterURL)
 		if l := st.Link; l != nil {
@@ -394,17 +399,48 @@ func fleetNodes(args []string) int {
 	})
 }
 
+// fmtSkew renders a node's clock skew (server_time - sent_at): negative
+// means the node's clock is ahead of the master's.
+func fmtSkew(n core.NodeSummary) string {
+	switch {
+	case n.Self:
+		return "-"
+	case n.SkewSec == 0:
+		return "0s"
+	}
+	return fmt.Sprintf("%+ds", n.SkewSec)
+}
+
+// skewWarnCLI mirrors the master's 30 s skew warning line.
+const skewWarnCLI = 30
+
 func printNodes(w io.Writer, ns []core.NodeSummary) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSTATE\tCPU\tMEM\tDISK\tVERSION\tLAST SEEN\tTAGS\tID")
+	fmt.Fprintln(tw, "NAME\tSTATE\tSKEW\tCPU\tMEM\tDISK\tVERSION\tLAST SEEN\tTAGS\tID")
 	for _, n := range ns {
 		id := n.ID
 		if len(id) > 8 {
 			id = id[:8]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%.0f%%\t%.0f%%\t%.0f%%\t%s\t%s\t%s\t%s\n", n.Name, n.State, n.CPU, n.MemPct, n.WorstDiskPct, n.Version, ago(n.LastSeen), strings.Join(n.Tags, ","), id)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%.0f%%\t%.0f%%\t%.0f%%\t%s\t%s\t%s\t%s\n", n.Name, n.State, fmtSkew(n), n.CPU, n.MemPct, n.WorstDiskPct, n.Version, ago(n.LastSeen), strings.Join(n.Tags, ","), id)
 	}
 	tw.Flush()
+}
+
+// printNodeWarnings lists (on a master's fleet status) every node whose
+// replica has refused points or whose clock is off by more than 30 s.
+func printNodeWarnings(w io.Writer, ns []core.NodeSummary) {
+	for _, n := range ns {
+		if n.Self {
+			continue
+		}
+		if n.DroppedOld > 0 || n.DroppedCardinality > 0 {
+			fmt.Fprintf(w, "warning: %s (%s) replica dropped %d out-of-order points and %d over the series limit\n", n.Name, n.ID, n.DroppedOld, n.DroppedCardinality)
+		}
+		if n.SkewSec > skewWarnCLI || n.SkewSec < -skewWarnCLI {
+			fmt.Fprintf(w, "warning: %s (%s) clock differs from this master's by %s (fix NTP on that host)\n", n.Name, n.ID, fmtSkew(n))
+		}
+	}
 }
 
 // resolveNodeRef maps an id, id prefix (>= 6 chars) or exact name to one node id.

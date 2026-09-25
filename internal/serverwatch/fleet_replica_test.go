@@ -346,3 +346,39 @@ func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
 		t.Fatalf("snapshot cpu after restart = %v", v.CPU)
 	}
 }
+
+// Clock skew (server_time - sent_at) is smoothed per node, persisted in
+// ingest.state, and reports when it first crosses the 30s warning line.
+func TestReplicaSkewSmoothedAndPersisted(t *testing.T) {
+	root := t.TempDir()
+	r := newReplicaSink(root, StoreOptions{})
+	if s, crossed := r.RecordSkew(testNodeID, 100); s != 100 || !crossed {
+		t.Fatalf("first sample: skew %d crossed %v", s, crossed)
+	}
+	if s, crossed := r.RecordSkew(testNodeID, 0); s != 75 || crossed {
+		t.Fatalf("second sample: skew %d crossed %v, want 75 false", s, crossed)
+	}
+	for i := 0; i < 4; i++ {
+		r.RecordSkew(testNodeID, 0)
+	}
+	if s, _ := r.RecordSkew(testNodeID, 0); s >= 30 {
+		t.Fatalf("skew should have decayed below 30, got %d", s)
+	}
+	if _, crossed := r.RecordSkew(testNodeID, 200); !crossed {
+		t.Fatal("crossing the threshold again must be reported again")
+	}
+	if err := r.Apply(testNodeID, baseRecs()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Apply(testNodeID, []fleet.Record{samplesRec(5, 100, map[string]float64{"cpu": 1})}); err != nil {
+		t.Fatal(err)
+	}
+	want := r.Stats(testNodeID)
+	if want.SkewSec == 0 || want.DroppedOld != 1 {
+		t.Fatalf("stats = %+v, want skew and one out-of-order drop", want)
+	}
+	got := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
+	if got.SkewSec != want.SkewSec || got.DroppedOld != 1 {
+		t.Fatalf("after restart stats = %+v, want %+v", got, want)
+	}
+}

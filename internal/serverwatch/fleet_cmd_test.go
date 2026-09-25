@@ -607,3 +607,44 @@ func TestFleetLeavePrintsMasterRevokeHint(t *testing.T) {
 		t.Fatalf("out = %s, want %q", out, want)
 	}
 }
+
+func TestFleetNodesShowsSkew(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{nodes: []core.NodeSummary{
+		{ID: "self", Name: "master-1", Self: true, State: "online"},
+		{ID: "node-aaaaaa1111", Name: "web-1", State: "lagging", SkewSec: -45},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "nodes"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if got := out.String(); !strings.Contains(got, "SKEW") || !strings.Contains(got, "-45s") {
+		t.Fatalf("output = %s", got)
+	}
+}
+
+func TestFleetStatusMasterNotesDropsAndSkew(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{
+		status: core.FleetStatus{Role: config.RoleMaster, Nodes: 3},
+		nodes: []core.NodeSummary{
+			{ID: "self", Name: "master-1", Self: true},
+			{ID: "node-1", Name: "web-1", DroppedOld: 7, DroppedCardinality: 2},
+			{ID: "node-2", Name: "web-2", SkewSec: 120},
+			{ID: "node-3", Name: "web-3"},
+		},
+	}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "status"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	for _, want := range []string{"web-1", "7 out-of-order", "2 over the series limit", "web-2", "120s"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "web-3") {
+		t.Fatalf("healthy node listed: %s", got)
+	}
+}

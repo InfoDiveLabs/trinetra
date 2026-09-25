@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +45,11 @@ type MasterConfig struct {
 	Sink      Sink
 	Now       func() time.Time
 	OnContact func(nodeID string, now time.Time, u *LiveUpdate)
-	Logf      func(format string, args ...any)
+	// OnSkew receives the child's send time (unix seconds) for every request
+	// that carries one (HeaderSentAt on ingest/backfill, SentAt on live), so
+	// the caller can track clock skew as now - sentAt. Optional.
+	OnSkew func(nodeID string, now time.Time, sentAt int64)
+	Logf   func(format string, args ...any)
 }
 
 // Master serves the fleet endpoints.
@@ -70,6 +75,9 @@ func NewMaster(cfg MasterConfig) *Master {
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
+	}
+	if cfg.OnSkew == nil {
+		cfg.OnSkew = func(string, time.Time, int64) {}
 	}
 	m := &Master{cfg: cfg, limiter: newIPLimiter(5, time.Minute, defaultIPLimiterCap), locks: map[string]*sync.Mutex{}}
 	m.srv = &http.Server{
@@ -332,6 +340,7 @@ func (m *Master) handleIngest(w http.ResponseWriter, r *http.Request, id string)
 	now := m.cfg.Now()
 	m.cfg.Registry.Touch(id, now.Unix(), r.RemoteAddr, "")
 	m.cfg.OnContact(id, now, nil)
+	m.noteSentAt(id, now, r)
 	writeJSON(w, IngestResponse{AckedSeq: applied, ServerTime: now.Unix()})
 }
 
@@ -351,6 +360,7 @@ func (m *Master) handleBackfill(w http.ResponseWriter, r *http.Request, id strin
 	now := m.cfg.Now()
 	m.cfg.Registry.Touch(id, now.Unix(), r.RemoteAddr, "")
 	m.cfg.OnContact(id, now, nil)
+	m.noteSentAt(id, now, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -367,7 +377,18 @@ func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
 	now := m.cfg.Now()
 	m.cfg.Registry.Touch(id, now.Unix(), r.RemoteAddr, u.Version)
 	m.cfg.OnContact(id, now, &u)
+	if u.SentAt > 0 {
+		m.cfg.OnSkew(id, now, u.SentAt)
+	}
 	writeJSON(w, map[string]int64{"server_time": now.Unix()})
+}
+
+// noteSentAt reports the request's HeaderSentAt, if present and valid, to
+// OnSkew.
+func (m *Master) noteSentAt(id string, now time.Time, r *http.Request) {
+	if v, err := strconv.ParseInt(r.Header.Get(HeaderSentAt), 10, 64); err == nil && v > 0 {
+		m.cfg.OnSkew(id, now, v)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

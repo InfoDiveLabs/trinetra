@@ -179,3 +179,19 @@ func TestNodeAlerterForgetResolvesOpenDown(t *testing.T) {
 		t.Fatalf("second forget = %+v", in)
 	}
 }
+
+// Spec 5.3: a node in contact but with |clock skew| > 30s is lagging.
+func TestTrackerLaggingOnClockSkew(t *testing.T) {
+	tr := NewTracker(cfgT())
+	tr.Seen("a", 1000, 0)
+	for _, c := range []struct {
+		skew int64
+		want State
+	}{{45, StateLagging}, {-45, StateLagging}, {30, StateOnline}, {-5, StateOnline}} {
+		tr.SetSkew("a", c.skew)
+		tr.Evaluate(1000)
+		if got := tr.State("a"); got != c.want {
+			t.Fatalf("skew %d: state %s, want %s", c.skew, got, c.want)
+		}
+	}
+}

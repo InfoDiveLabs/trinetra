@@ -45,7 +45,14 @@ type ingestState struct {
 	LastIngestTS       int64  `json:"last_ingest_ts"`
 	DroppedOld         int64  `json:"dropped_out_of_order,omitempty"`
 	DroppedCardinality int64  `json:"dropped_cardinality,omitempty"`
+	// SkewSec is the smoothed server_time - sent_at (see RecordSkew). It is
+	// persisted with the next applied batch, not on every sample.
+	SkewSec float64 `json:"skew_sec,omitempty"`
 }
+
+// skewWarnSec is the clock skew beyond which a node is flagged (spec: warn
+// above 30 s; the tracker marks it lagging at the same line).
+const skewWarnSec = 30
 
 type replicaNode struct {
 	mu          sync.Mutex
@@ -60,6 +67,8 @@ type replicaNode struct {
 	// seeded from the store on open so the guard survives a master restart.
 	lastEventStart int64
 	live           atomic.Pointer[fleet.LiveUpdate]
+	skewInit       bool // st.SkewSec holds at least one sample
+	skewWarned     bool // |skew| is currently over skewWarnSec
 }
 
 // replicaSink implements fleet.Sink over per-node tsfile stores. tsfile opens
@@ -149,6 +158,7 @@ func (r *replicaSink) node(id string) (*replicaNode, error) {
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "ingest.state")); err == nil {
 		_ = json.Unmarshal(b, &n.st)
+		n.skewInit = n.st.SkewSec != 0
 	}
 	if ms, err := st.Metrics(ResRaw); err == nil {
 		n.series = len(ms)
@@ -447,6 +457,40 @@ func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 	}
 	b, _ := json.Marshal(u)
 	return writeFileAtomic(filepath.Join(n.dir, "live.json"), b, 0o600)
+}
+
+// RecordSkew folds one clock-skew sample (server_time - sent_at, seconds)
+// into id's smoothed skew (exponential moving average, weight 1/4 per
+// sample) and returns it rounded, plus whether this sample took |skew| over
+// skewWarnSec (true once per excursion, so the caller warns once).
+func (r *replicaSink) RecordSkew(id string, sampleSec int64) (int64, bool) {
+	n, err := r.node(id)
+	if err != nil {
+		return 0, false
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.skewInit {
+		n.st.SkewSec, n.skewInit = float64(sampleSec), true
+	} else {
+		n.st.SkewSec = 0.75*n.st.SkewSec + 0.25*float64(sampleSec)
+	}
+	s := int64(math.Round(n.st.SkewSec))
+	over := s > skewWarnSec || s < -skewWarnSec
+	crossed := over && !n.skewWarned
+	n.skewWarned = over
+	return s, crossed
+}
+
+// Stats returns a copy of id's ingest counters (zero for an unknown id).
+func (r *replicaSink) Stats(id string) ingestState {
+	n, err := r.node(id)
+	if err != nil {
+		return ingestState{}
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.st
 }
 
 // LiveOf returns the last live update for id, or nil.
