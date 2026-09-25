@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -168,4 +169,45 @@ func TestTokenDeleteRollsBackOnSaveFailure(t *testing.T) {
 	if list[0].ID != tok.ID {
 		t.Fatalf("token ID mismatch after rollback")
 	}
+}
+
+// Expired tokens are dropped from tokens.json whenever the store is written,
+// so the file does not grow with every code ever minted.
+func TestTokenStorePrunesExpiredOnCreateAndConsume(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tokens.json")
+	s, _ := OpenTokens(p)
+	t0 := time.Unix(1_000_000, 0)
+	if _, _, err := s.Create(time.Minute, 1, nil, "t", t0); err != nil {
+		t.Fatal(err)
+	}
+	later := t0.Add(time.Hour)
+	plain, _, err := s.Create(time.Hour, 2, nil, "t", later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := storedTokens(t, p); n != 1 {
+		t.Fatalf("after create: %d tokens stored, want 1 (expired one pruned)", n)
+	}
+	if _, _, err := s.Create(time.Minute, 1, nil, "t", later); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Consume(plain, later.Add(30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if n := storedTokens(t, p); n != 1 {
+		t.Fatalf("after consume: %d tokens stored, want 1", n)
+	}
+}
+
+func storedTokens(t *testing.T, path string) int {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toks []Token
+	if err := json.Unmarshal(b, &toks); err != nil {
+		t.Fatal(err)
+	}
+	return len(toks)
 }

@@ -96,12 +96,25 @@ func (s *TokenStore) Create(ttl time.Duration, uses int, tags []string, creator 
 	tok := Token{ID: h[:8], Hash: h, Expires: now.Add(ttl).Unix(), Uses: uses, Tags: tags, Created: now.Unix(), Creator: creator}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.toks = append(s.toks, tok)
+	old := s.toks
+	s.toks = append(s.unexpiredLocked(now), tok)
 	if err := s.saveLocked(); err != nil {
-		s.toks = s.toks[:len(s.toks)-1]
+		s.toks = old
 		return "", Token{}, err
 	}
 	return plain, tok, nil
+}
+
+// unexpiredLocked returns a new slice of the tokens still valid at now;
+// every write prunes expired ones so tokens.json stays small.
+func (s *TokenStore) unexpiredLocked(now time.Time) []Token {
+	out := make([]Token, 0, len(s.toks)+1)
+	for _, t := range s.toks {
+		if t.Expires > now.Unix() {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // Consume validates plain and spends one use. Every stored hash is compared
@@ -128,6 +141,7 @@ func (s *TokenStore) Consume(plain string, now time.Time) (Token, error) {
 	if s.toks[idx].Uses == 0 {
 		s.toks = append(s.toks[:idx], s.toks[idx+1:]...)
 	}
+	s.toks = s.unexpiredLocked(now)
 	if err := s.saveLocked(); err != nil {
 		// Restore state if save failed
 		s.toks = oldToks
