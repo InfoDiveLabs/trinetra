@@ -86,6 +86,19 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 		}
 		o.segs = append(o.segs, s)
 	}
+	// A segment fully covered by the acked cursor is a leftover: either the
+	// normal case (Ack deletes fully-acked segments but always keeps one to
+	// append into) or a crash that landed after enforceCapLocked durably
+	// persisted the gap/ack advance but before it deleted the evicted
+	// segment file. Either way Read already skips it (seq <= after), so it
+	// is safe, and simplest, to clean it up here rather than carry it
+	// forward. Mirrors the eviction loop in Ack.
+	for len(o.segs) > 1 && o.segs[0].last <= o.acked {
+		if err := os.Remove(o.segs[0].path); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		o.segs = o.segs[1:]
+	}
 	o.next = o.acked + 1
 	if n := len(o.segs); n > 0 && o.segs[n-1].last+1 > o.next {
 		o.next = o.segs[n-1].last + 1
@@ -254,47 +267,80 @@ func (o *Outbox) totalLocked() int64 {
 
 // enforceCapLocked drops the oldest segments (never the one being written)
 // while over the cap, recording any unacked records they held as a gap.
+//
+// The gap/ack advance is computed and durably persisted (gaps.json, then
+// cursor) BEFORE any segment file is deleted. Only once both writes succeed
+// are o.segs updated and the evicted files removed. A crash (or write
+// failure) between computing the drop set and finishing both persists
+// leaves every evicted file on disk and neither o.segs, o.gaps nor o.acked
+// touched, so the exact same drop set is recomputed and retried on the
+// caller's next Append; a crash after both persists succeed but before the
+// deletes run leaves harmless leftover segment files that openOutbox
+// cleans up (see the "last <= acked" loop there) and that Read already
+// skips. Either way no unacked record is ever lost without a matching Gap,
+// and no already-recorded Gap's records survive to be re-delivered.
 func (o *Outbox) enforceCapLocked() error {
+	total := o.totalLocked()
+	newGaps := append([]Gap(nil), o.gaps...)
+	newAcked := o.acked
+	remaining := o.segs
+	var drop []*segment
 	changed := false
-	for o.totalLocked() > o.max && len(o.segs) > 1 {
-		s := o.segs[0]
-		if s.last > o.acked {
+	for total > o.max && len(remaining) > 1 {
+		s := remaining[0]
+		if s.last > newAcked {
 			first := s.first
-			if o.acked+1 > first {
-				first = o.acked + 1
+			if newAcked+1 > first {
+				first = newAcked + 1
 			}
 			g := Gap{FirstSeq: first, LastSeq: s.last, MinTS: s.minTS, MaxTS: s.maxTS}
-			if n := len(o.gaps); n > 0 && o.gaps[n-1].LastSeq+1 == g.FirstSeq {
-				o.gaps[n-1].LastSeq = g.LastSeq
-				if g.MaxTS > o.gaps[n-1].MaxTS {
-					o.gaps[n-1].MaxTS = g.MaxTS
+			if n := len(newGaps); n > 0 && newGaps[n-1].LastSeq+1 == g.FirstSeq {
+				newGaps[n-1].LastSeq = g.LastSeq
+				if g.MaxTS > newGaps[n-1].MaxTS {
+					newGaps[n-1].MaxTS = g.MaxTS
 				}
 			} else {
-				o.gaps = append(o.gaps, g)
+				newGaps = append(newGaps, g)
 			}
-			o.acked = s.last
+			newAcked = s.last
 			changed = true
 		}
+		drop = append(drop, s)
+		total -= s.size
+		remaining = remaining[1:]
+	}
+	if len(drop) == 0 {
+		return nil
+	}
+	if changed {
+		if err := o.writeGapsFile(newGaps); err != nil {
+			return err
+		}
+		if err := writeFileAtomic(o.cursorPath(), []byte(strconv.FormatUint(newAcked, 10)), 0o600); err != nil {
+			return err
+		}
+		o.gaps = newGaps
+		o.acked = newAcked
+	}
+	o.segs = remaining
+	for _, s := range drop {
 		if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		o.segs = o.segs[1:]
 	}
-	if !changed {
-		return nil
-	}
-	if err := o.saveGapsLocked(); err != nil {
-		return err
-	}
-	return writeFileAtomic(o.cursorPath(), []byte(strconv.FormatUint(o.acked, 10)), 0o600)
+	return nil
 }
 
-func (o *Outbox) saveGapsLocked() error {
-	b, err := json.Marshal(o.gaps)
+func (o *Outbox) writeGapsFile(gaps []Gap) error {
+	b, err := json.Marshal(gaps)
 	if err != nil {
 		return err
 	}
 	return writeFileAtomic(o.gapsPath(), b, 0o600)
+}
+
+func (o *Outbox) saveGapsLocked() error {
+	return o.writeGapsFile(o.gaps)
 }
 
 // Read returns up to maxRecords records with seq > after, stopping once

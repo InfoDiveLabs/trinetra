@@ -1,10 +1,16 @@
 package fleet
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func appendN(t *testing.T, o *Outbox, from, n int) {
@@ -178,5 +184,186 @@ func TestOutboxNotifyOnAppend(t *testing.T) {
 	case <-o.Notify():
 	default:
 		t.Fatal("no notification after append")
+	}
+}
+
+// TestOutboxCapCrashBetweenPersistAndDelete simulates a crash that lands
+// after enforceCapLocked durably persists the gap/ack advance for an
+// evicted segment but before it deletes that segment's file. Reopening
+// must not re-read those records as unacked (Read(Acked()) must start
+// right after the gap), and the leftover file must be cleaned up.
+func TestOutboxCapCrashBetweenPersistAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	// Cap far above what we write, so no real eviction happens here — we
+	// construct the "persisted but not yet deleted" state by hand below.
+	o, err := openOutbox(dir, 1<<20, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, o, 1, 30)
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	segs, err := filepath.Glob(filepath.Join(dir, "*.seg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(segs)
+	if len(segs) < 2 {
+		t.Fatalf("want >=2 segments to set up the scenario, got %v", segs)
+	}
+	first, err := scanSegment(segs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	gap := Gap{FirstSeq: first.first, LastSeq: first.last, MinTS: first.minTS, MaxTS: first.maxTS}
+	gb, err := json.Marshal([]Gap{gap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(filepath.Join(dir, "gaps.json"), gb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(filepath.Join(dir, "cursor"), []byte(strconv.FormatUint(gap.LastSeq, 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// segs[0]'s file is deliberately left in place: this is the exact
+	// on-disk state a crash between the persist and the delete leaves.
+
+	o2, err := openOutbox(dir, 1<<20, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o2.Close()
+
+	if o2.Acked() != gap.LastSeq {
+		t.Fatalf("acked = %d, want %d", o2.Acked(), gap.LastSeq)
+	}
+	if gaps := o2.Gaps(); len(gaps) != 1 || gaps[0] != gap {
+		t.Fatalf("gaps = %+v, want [%+v]", gaps, gap)
+	}
+	recs, err := o2.Read(o2.Acked(), 1<<20, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) == 0 || recs[0].Seq != gap.LastSeq+1 {
+		t.Fatalf("records after crash-recovered gap start at wrong seq: %+v", recs)
+	}
+	for _, r := range recs {
+		if r.Seq <= gap.LastSeq {
+			t.Fatalf("record seq %d re-read as unacked below acked cursor %d", r.Seq, o2.Acked())
+		}
+	}
+	if _, err := os.Stat(segs[0]); !os.IsNotExist(err) {
+		t.Fatalf("leftover evicted segment file not cleaned up on reopen (err=%v)", err)
+	}
+}
+
+// TestOutboxConcurrentAppendReadAck exercises the outbox under its documented
+// concurrent-use contract: one goroutine appends continuously (driving
+// segment rotation and cap eviction) while another concurrently reads from
+// and acks the cursor (driving segment deletion), for about a second with a
+// small cap/segment size so rotation and eviction happen throughout the run.
+func TestOutboxConcurrentAppendReadAck(t *testing.T) {
+	dir := t.TempDir()
+	o, err := openOutbox(dir, 4096, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+
+	const runFor = 1 * time.Second
+	appenderDone := make(chan struct{})
+	var appended atomic.Uint64
+	var appendErr error
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(appenderDone)
+		i := int64(1)
+		deadline := time.Now().Add(runFor)
+		for time.Now().Before(deadline) {
+			seq, err := o.Append(KindSamples, i, []byte(`{"cpu":1}`))
+			if err != nil {
+				appendErr = err
+				return
+			}
+			appended.Store(seq)
+			i++
+		}
+	}()
+
+	var delivered []uint64
+	var readErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			recs, err := o.Read(o.Acked(), 1<<20, 50)
+			if err != nil {
+				readErr = err
+				return
+			}
+			if len(recs) == 0 {
+				select {
+				case <-appenderDone:
+					if o.Acked() >= appended.Load() {
+						return
+					}
+				default:
+				}
+				time.Sleep(time.Millisecond)
+				continue
+			}
+			for _, r := range recs {
+				delivered = append(delivered, r.Seq)
+			}
+			if err := o.Ack(recs[len(recs)-1].Seq); err != nil {
+				readErr = err
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+	if appendErr != nil {
+		t.Fatalf("append: %v", appendErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read/ack: %v", readErr)
+	}
+	total := appended.Load()
+	if total < 1000 {
+		t.Fatalf("test didn't generate enough load: appended=%d", total)
+	}
+
+	// Seqs delivered by Read must be strictly increasing across the whole
+	// run: never repeated, never delivered out of order, never re-delivered
+	// once past the (monotonically advancing) acked cursor.
+	for i := 1; i < len(delivered); i++ {
+		if delivered[i] <= delivered[i-1] {
+			t.Fatalf("delivered seqs not strictly increasing at %d: %d <= %d", i, delivered[i], delivered[i-1])
+		}
+	}
+
+	// Every seq that was ever appended must be accounted for: either
+	// delivered, or covered by a recorded Gap (dropped by the cap before
+	// the reader could catch up).
+	covered := make([]bool, total+1)
+	for _, s := range delivered {
+		covered[s] = true
+	}
+	for _, g := range o.Gaps() {
+		for s := g.FirstSeq; s <= g.LastSeq; s++ {
+			covered[s] = true
+		}
+	}
+	for s := uint64(1); s <= total; s++ {
+		if !covered[s] {
+			t.Fatalf("seq %d neither delivered nor gapped (appended=%d, delivered=%d, gaps=%+v)", s, total, len(delivered), o.Gaps())
+		}
 	}
 }
