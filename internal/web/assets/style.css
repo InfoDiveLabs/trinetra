@@ -84,7 +84,8 @@ a:hover{text-decoration-color:var(--text)}
 .side .foot{margin-top:auto; padding:10px 8px 2px; border-top:1px solid var(--border-soft)}
 .avatar{width:26px;height:26px;border-radius:50%;background:var(--elev);border:1px solid var(--border);display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:700}
 .who{display:flex; align-items:center; gap:9px}
-.side .foot .ver{display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:10.5px; color:var(--faint)}
+.side .foot .ver{min-width:0; max-width:100%; display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:10.5px; color:var(--faint)}
+.side .foot .ver span{max-width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .side .foot .ver .ver-warn{color:var(--warn)}
 .main{min-width:0}
 .topbar{display:flex; align-items:center; gap:16px; padding:14px 30px; border-bottom:1px solid var(--border); background:var(--bg); position:sticky; top:0; z-index:5}
