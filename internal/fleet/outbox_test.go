@@ -215,7 +215,7 @@ func TestOutboxCapCrashBetweenPersistAndDelete(t *testing.T) {
 	if len(segs) < 2 {
 		t.Fatalf("want >=2 segments to set up the scenario, got %v", segs)
 	}
-	first, err := scanSegment(segs[0])
+	first, _, err := scanSegment(segs[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
 	if len(segs) < 2 {
 		t.Fatalf("want >=2 segments to set up the scenario, got %v", segs)
 	}
-	first, err := scanSegment(segs[0])
+	first, _, err := scanSegment(segs[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,5 +581,131 @@ func TestOutboxOldestUnackedIsPerRecord(t *testing.T) {
 	}
 	if st := o.Stats(); st.OldestUnackedTS != 0 {
 		t.Fatalf("fully acked = %d, want 0", st.OldestUnackedTS)
+	}
+}
+
+// ReadPriority finds unacked KindAlert records via the in-memory index,
+// ahead of (and without needing to scan) a large general backlog.
+func TestOutboxReadPriorityFindsAlertsAheadOfBacklog(t *testing.T) {
+	o, _ := OpenOutbox(t.TempDir(), 64<<20)
+	defer o.Close()
+	appendN(t, o, 1, 50) // seqs 1-50, KindSamples
+	alertSeq, err := o.Append(KindAlert, 999, []byte(`{"key":"cpu"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err := o.ReadPriority(1<<20, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Seq != alertSeq || recs[0].Kind != KindAlert {
+		t.Fatalf("ReadPriority = %+v, want just the alert (seq %d)", recs, alertSeq)
+	}
+	// The general backlog is untouched: the alert is still there too (it is
+	// not "consumed" by ReadPriority -- only a real Ack removes it).
+	recs, err = o.Read(0, 1<<20, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 51 {
+		t.Fatalf("Read after ReadPriority = %d records, want 51 (backlog untouched)", len(recs))
+	}
+}
+
+// ReadPriority returns multiple pending alerts in ascending seq order.
+func TestOutboxReadPriorityAscendingMultipleAlerts(t *testing.T) {
+	o, _ := OpenOutbox(t.TempDir(), 64<<20)
+	defer o.Close()
+	appendN(t, o, 1, 5)
+	a2, _ := o.Append(KindAlert, 2, []byte(`{"k":2}`))
+	appendN(t, o, 10, 5)
+	a1, _ := o.Append(KindAlert, 1, []byte(`{"k":1}`))
+	_ = a1
+	recs, err := o.ReadPriority(1<<20, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || recs[0].Seq != a2 || recs[1].Seq != a1 {
+		t.Fatalf("ReadPriority = %+v, want ascending [%d, %d]", recs, a2, a1)
+	}
+}
+
+// Once an alert's seq is genuinely acked (the normal Ingest path, not
+// ReadPriority), it drops out of the priority index so it is never sent a
+// third time.
+func TestOutboxReadPriorityPrunedByAck(t *testing.T) {
+	o, _ := OpenOutbox(t.TempDir(), 64<<20)
+	defer o.Close()
+	seq, _ := o.Append(KindAlert, 1, []byte(`{}`))
+	if err := o.Ack(seq); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := o.ReadPriority(1<<20, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("ReadPriority after ack = %+v, want none", recs)
+	}
+}
+
+// The alert-seq index survives a close/reopen (rebuilt from the on-disk
+// segments), so a crash or restart between shipping an alert with
+// ReadPriority (which never acks) and the normal backlog catching up to it
+// does not lose the alert's priority.
+func TestOutboxReadPrioritySurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	o, err := OpenOutbox(dir, 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, o, 1, 20)
+	alertSeq, _ := o.Append(KindAlert, 5, []byte(`{}`))
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	o2, err := OpenOutbox(dir, 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o2.Close()
+	recs, err := o2.ReadPriority(1<<20, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Seq != alertSeq {
+		t.Fatalf("ReadPriority after reopen = %+v, want just seq %d", recs, alertSeq)
+	}
+}
+
+// An alert record evicted by the cap before it was ever acked or shipped
+// becomes a Gap like any other record; ReadPriority must not keep offering
+// its now-nonexistent seq forever.
+func TestOutboxReadPriorityDropsStaleEntryOnCapEviction(t *testing.T) {
+	dir := t.TempDir()
+	o, err := OpenOutboxSegmented(dir, 3000, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	alertSeq, err := o.Append(KindAlert, 1, []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Push enough samples through to force the cap to evict the segment
+	// holding the alert before it is ever acked.
+	appendN(t, o, 2, 400)
+	if len(o.Gaps()) == 0 {
+		t.Fatal("test setup invalid: expected the cap to record a gap")
+	}
+	recs, err := o.ReadPriority(1<<20, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.Seq == alertSeq {
+			t.Fatalf("ReadPriority still offers evicted seq %d", alertSeq)
+		}
 	}
 }

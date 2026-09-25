@@ -609,6 +609,43 @@ const alertLogRetention = 30 * 24 * time.Hour
 // the time.
 const storeMaintenanceInterval = 15 * time.Minute
 
+// alertRoute, when set, decides whether an Alert reaching enqueueAndLog is
+// delivered locally (true) or held back because the fleet master is
+// expected to deliver it instead (false, while it holds a valid delivery
+// lease -- see fleet_lease.go). It is nil for solo and for a master
+// (enqueueAndLog then behaves exactly as it always has: everything is
+// delivered locally) and is set only by a child, in startChild, to its
+// *handoff.Route. This package-level hook -- rather than threading a route
+// func through enqueueAndLog's signature or fleetDeps -- is deliberate:
+// enqueueAndLog is called from half a dozen sites across this file (the
+// anomaly sampler, boot report, digests, and fleetDeps.alert itself), most
+// of which have no fleetDeps in scope at all, and every one of them must
+// keep working byte-for-byte unchanged for solo and master. A signature or
+// fleetDeps-threading change would touch every call site just to reach the
+// one (startChild) that needs it; a hook that defaults to nil touches none
+// of them and leaves solo/master's control flow through enqueueAndLog
+// identical to before this file changed.
+//
+// A pointer-to-func (not a plain func) behind atomic.Pointer so startChild's
+// wiring (and rt.stop's teardown, and a test's cleanup) can install/clear it
+// without racing a concurrent read from the sampler goroutine.
+var alertRoute atomic.Pointer[func(Alert) bool]
+
+// setAlertRoute installs f (nil clears it) as alertRoute and returns a
+// restore func that puts back whatever was installed before -- so
+// startChild's shutdown, and a test's t.Cleanup, can undo exactly their own
+// wiring rather than unconditionally clearing a route something else in the
+// same process installed.
+func setAlertRoute(f func(Alert) bool) (restore func()) {
+	var prev *func(Alert) bool
+	if f == nil {
+		prev = alertRoute.Swap(nil)
+	} else {
+		prev = alertRoute.Swap(&f)
+	}
+	return func() { alertRoute.Store(prev) }
+}
+
 // enqueueAndLog records the alert to the AlertLog and the live event bus, then
 // hands delivery to the async notifier queue. This is the single choke point
 // every alert in the daemon (anomaly fire/recover, boot report, digests) goes
@@ -621,15 +658,26 @@ const storeMaintenanceInterval = 15 * time.Minute
 // may also be nil (eventBus.Publish's own nil-guard). alertEventKind maps the
 // bus event Kind exactly as before, so control-socket subscribers see the
 // same alert_fire/alert_recover/digest shapes.
+//
+// alertRoute (see above), if set, can turn the local delivery
+// (q.Enqueue) off: AppendAlertEvent and bus.Publish always run regardless,
+// so a routed-to-master alert is still recorded and visible everywhere it
+// always was, just not queued for this host's own notifier channels.
 func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool) {
+	deliverLocally := true
+	if route := alertRoute.Load(); route != nil {
+		deliverLocally = (*route)(a)
+	}
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
-			Time:     a.Time,
-			Key:      a.Key,
-			Title:    a.Title,
-			Severity: a.Severity.String(),
-			Kind:     a.Kind,
-			Source:   a.Source,
+			Time:           a.Time,
+			Key:            a.Key,
+			Title:          a.Title,
+			Severity:       a.Severity.String(),
+			Kind:           a.Kind,
+			Source:         a.Source,
+			RoutedToMaster: !deliverLocally,
+			FiredAt:        a.Time,
 		})
 	}
 	bus.Publish(core.Event{
@@ -639,7 +687,9 @@ func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, qui
 		Title:    a.Title,
 		Time:     a.Time,
 	})
-	q.Enqueue(a, quiet)
+	if deliverLocally {
+		q.Enqueue(a, quiet)
+	}
 }
 
 // alertEventKind maps a dispatched Alert onto the Kind string its
@@ -918,6 +968,9 @@ func cmdDaemon(args []string) int {
 		store: store, alog: alog, alertStatePath: st.AlertStatePath(),
 		alert: func(a Alert) {
 			enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		},
+		alertFallback: func(a Alert) {
+			deliverFallback(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix())
 		},
 		logf: func(format string, args ...any) { fmt.Fprintf(stderr, format+"\n", args...) },
 	})

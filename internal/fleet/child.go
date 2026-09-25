@@ -727,13 +727,44 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		s.setOK(true)
 		return true, nil
 	}
+
+	// Priority lane: ship any still-unacked KindAlert record(s) as their own
+	// ascending batch, via Backfill (unsequenced), *before* touching the
+	// general backlog below -- so a fired alert reaches the master's replica
+	// promptly even sitting behind a huge samples backlog. Backfill never
+	// advances the master's per-node AppliedSeq (that only moves on the
+	// sequenced Ingest path; see replicaNode.apply's `sequenced` flag in
+	// package trinetra), and this call never Acks the outbox either, so the
+	// ordinary Read/Ingest batch just below is completely unaffected: it
+	// still starts at Outbox.Acked(), and once it reaches this same alert's
+	// seq (as part of the ordinary backlog, since ReadPriority never removes
+	// it from Read's view), that Ingest applies -- and genuinely Acks -- it,
+	// which is what finally drops it from the priority index (Outbox.Ack).
+	// Until then, every shipOnce call re-sends it here; the master's replica
+	// alert guard (dedup by time + line) makes that free. A record the
+	// priority lane skipped past is therefore never lost, never permanently
+	// stuck: it is sent (and durably visible) here first, then re-sent and
+	// deduped once the backlog naturally reaches it.
+	prioritySent := false
+	precs, err := s.cfg.Outbox.ReadPriority(MaxBatchBytes, MaxBatchRecords)
+	if err != nil {
+		return false, err
+	}
+	if len(precs) > 0 {
+		if _, err := s.post(ctx, PathBackfill, precs); err != nil {
+			return false, err
+		}
+		s.setOK(true)
+		prioritySent = true
+	}
+
 	recs, err := s.cfg.Outbox.Read(s.cfg.Outbox.Acked(), MaxBatchBytes, MaxBatchRecords)
 	if err != nil {
 		return false, err
 	}
 	if len(recs) == 0 {
 		// Nothing queued; a live update may still be keeping the link warm.
-		return false, nil
+		return prioritySent, nil
 	}
 	body, err := s.post(ctx, PathIngest, recs)
 	if err != nil {

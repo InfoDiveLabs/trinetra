@@ -1578,3 +1578,69 @@ func TestFleetKeysRequireRestart(t *testing.T) {
 		t.Fatalf("keys missing from catalog: %v", want)
 	}
 }
+
+// fleet.fallback_after and fleet.link_down_warn_after apply live (the lease
+// holder / handoff and the child's link-alert planner all read the config
+// pointer fresh each time, unlike fleet.node_down_after's once-at-start
+// liveness tracker), so unlike the other fleet tunables they must NOT
+// require a restart.
+func TestFleetFallbackAndLinkDownWarnKeysApplyLive(t *testing.T) {
+	dontWant := map[string]bool{"fleet.fallback_after": true, "fleet.link_down_warn_after": true}
+	for _, k := range Keys() {
+		if dontWant[k.Name] {
+			if k.RestartRequired {
+				t.Errorf("%s: RestartRequired = true, want false (applies live)", k.Name)
+			}
+			delete(dontWant, k.Name)
+		}
+	}
+	if len(dontWant) != 0 {
+		t.Fatalf("keys missing from catalog: %v", dontWant)
+	}
+}
+
+func TestFleetFallbackAfterDefaultAndSet(t *testing.T) {
+	c := &Config{}
+	if got := c.FleetFallbackAfter(); got != 2*time.Minute {
+		t.Fatalf("default = %s, want 2m", got)
+	}
+	if err := c.Set("fleet.fallback_after", "90s"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.FleetFallbackAfter(); got != 90*time.Second {
+		t.Fatalf("after set = %s, want 90s", got)
+	}
+	if got, ok := c.Get("fleet.fallback_after"); !ok || got != "1m30s" {
+		t.Fatalf("Get = %q, %v", got, ok)
+	}
+	for _, bad := range []string{"", "not-a-duration", "1s", "-1m"} {
+		if err := c.Set("fleet.fallback_after", bad); err == nil {
+			t.Errorf("Set(%q) accepted, want a validation error", bad)
+		}
+	}
+	// A rejected Set must not have clobbered the last good value.
+	if got := c.FleetFallbackAfter(); got != 90*time.Second {
+		t.Fatalf("after rejected sets = %s, want unchanged 90s", got)
+	}
+}
+
+func TestFleetLinkDownWarnAfterDefaultAndSet(t *testing.T) {
+	c := &Config{}
+	if got := c.FleetLinkDownWarnAfter(); got != 10*time.Minute {
+		t.Fatalf("default = %s, want 10m", got)
+	}
+	if err := c.Set("fleet.link_down_warn_after", "5m"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.FleetLinkDownWarnAfter(); got != 5*time.Minute {
+		t.Fatalf("after set = %s, want 5m", got)
+	}
+	if got, ok := c.Get("fleet.link_down_warn_after"); !ok || got != "5m0s" {
+		t.Fatalf("Get = %q, %v", got, ok)
+	}
+	for _, bad := range []string{"", "not-a-duration", "1s", "-1m"} {
+		if err := c.Set("fleet.link_down_warn_after", bad); err == nil {
+			t.Errorf("Set(%q) accepted, want a validation error", bad)
+		}
+	}
+}

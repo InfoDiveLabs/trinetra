@@ -202,15 +202,19 @@ func (l *liveBuilder) Build() (fleet.LiveUpdate, error) {
 	return u, nil
 }
 
-const linkDownWarnAfter = 10 * 60 // seconds
-
 // childLinkAlerts decides the child's local alerts about its own link.
 type childLinkAlerts struct {
 	linkDownRaised bool
 	revokedRaised  bool
 }
 
-func (c *childLinkAlerts) Plan(st fleet.LinkStatus, masterURL string, startedAt, now int64) []Alert {
+// Plan decides the child's local link alerts. warnAfterSec is how long the
+// link must be unreachable before the "fleet link down" warning fires --
+// config.Config.FleetLinkDownWarnAfter(), in seconds (default 10m; see
+// config.go). It is passed in rather than read from a captured config
+// snapshot so a live config change (fleet.link_down_warn_after is not
+// RestartRequired) takes effect on the very next call.
+func (c *childLinkAlerts) Plan(st fleet.LinkStatus, masterURL string, startedAt, now, warnAfterSec int64) []Alert {
 	var out []Alert
 	if st.State == "revoked" {
 		if !c.revokedRaised {
@@ -232,7 +236,7 @@ func (c *childLinkAlerts) Plan(st fleet.LinkStatus, masterURL string, startedAt,
 		c.linkDownRaised = false
 		out = append(out, Alert{Key: "fleet:link:down", Severity: SevWarning, Kind: "recover", Source: "fleet", Time: now,
 			Title: "🟢 Fleet link restored; spooled telemetry is being sent to the master."})
-	case !reachable && !c.linkDownRaised && now-lastOK >= linkDownWarnAfter:
+	case !reachable && !c.linkDownRaised && now-lastOK >= warnAfterSec:
 		c.linkDownRaised = true
 		out = append(out, Alert{Key: "fleet:link:down", Severity: SevWarning, Kind: "fire", Source: "fleet", Time: now,
 			Title: fmt.Sprintf("⚠ Fleet master %s unreachable for %d min. Alerts continue locally; telemetry is spooled (%.1f MB) and will be sent when it's back.",

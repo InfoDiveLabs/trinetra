@@ -126,26 +126,42 @@ func TestLiveBuilderIncludesHostInfoPeriodically(t *testing.T) {
 func TestChildLinkAlerts(t *testing.T) {
 	var c childLinkAlerts
 	start := int64(1000)
-	if a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+300); len(a) != 0 {
+	const warnAfter = 600 // 10m, matching config.FleetLinkDownWarnAfter's default
+	if a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+300, warnAfter); len(a) != 0 {
 		t.Fatalf("alert before 10m: %+v", a)
 	}
-	a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+601)
+	a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+601, warnAfter)
 	if len(a) != 1 || a[0].Severity != SevWarning || a[0].Kind != "fire" {
 		t.Fatalf("link down alert = %+v", a)
 	}
-	if again := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+700); len(again) != 0 {
+	if again := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+700, warnAfter); len(again) != 0 {
 		t.Fatal("link down alert repeated")
 	}
-	a = c.Plan(fleet.LinkStatus{State: "linked", LastAck: start + 710}, "https://m", start, start+710)
+	a = c.Plan(fleet.LinkStatus{State: "linked", LastAck: start + 710}, "https://m", start, start+710, warnAfter)
 	if len(a) != 1 || a[0].Kind != "recover" {
 		t.Fatalf("recovery = %+v", a)
 	}
-	a = c.Plan(fleet.LinkStatus{State: "revoked"}, "https://m", start, start+800)
+	a = c.Plan(fleet.LinkStatus{State: "revoked"}, "https://m", start, start+800, warnAfter)
 	if len(a) != 1 || a[0].Severity != SevCritical {
 		t.Fatalf("revoked = %+v", a)
 	}
-	if again := c.Plan(fleet.LinkStatus{State: "revoked"}, "https://m", start, start+900); len(again) != 0 {
+	if again := c.Plan(fleet.LinkStatus{State: "revoked"}, "https://m", start, start+900, warnAfter); len(again) != 0 {
 		t.Fatal("revoked alert repeated")
+	}
+}
+
+// The warn-after threshold comes from config.Config.FleetLinkDownWarnAfter
+// (fleet.link_down_warn_after), not a fixed constant: a shorter threshold
+// must fire sooner, a longer one later.
+func TestChildLinkAlertsUsesConfiguredWarnAfter(t *testing.T) {
+	var c childLinkAlerts
+	start := int64(1000)
+	if a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+61, 60); len(a) != 1 || a[0].Kind != "fire" {
+		t.Fatalf("with a 60s warnAfter, alert at +61s = %+v, want one fire", a)
+	}
+	var d childLinkAlerts
+	if a := d.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+61, 3600); len(a) != 0 {
+		t.Fatalf("with a 3600s warnAfter, alert at +61s = %+v, want none yet", a)
 	}
 }
 
@@ -155,15 +171,16 @@ func TestChildLinkAlerts(t *testing.T) {
 func TestChildLinkAlertsCatchingUpIsReachable(t *testing.T) {
 	var c childLinkAlerts
 	start := int64(1000)
-	if a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+601); len(a) != 1 || a[0].Kind != "fire" {
+	const warnAfter = 600
+	if a := c.Plan(fleet.LinkStatus{State: "retrying"}, "https://m", start, start+601, warnAfter); len(a) != 1 || a[0].Kind != "fire" {
 		t.Fatalf("link down alert = %+v", a)
 	}
-	a := c.Plan(fleet.LinkStatus{State: fleet.LinkCatchingUp, LastAck: start + 700}, "https://m", start, start+700)
+	a := c.Plan(fleet.LinkStatus{State: fleet.LinkCatchingUp, LastAck: start + 700}, "https://m", start, start+700, warnAfter)
 	if len(a) != 1 || a[0].Kind != "recover" {
 		t.Fatalf("catching up should recover the link alert, got %+v", a)
 	}
 	var d childLinkAlerts
-	if a := d.Plan(fleet.LinkStatus{State: fleet.LinkCatchingUp}, "https://m", start, start+601); len(a) != 0 {
+	if a := d.Plan(fleet.LinkStatus{State: fleet.LinkCatchingUp}, "https://m", start, start+601, warnAfter); len(a) != 0 {
 		t.Fatalf("catching up raised %+v", a)
 	}
 }

@@ -24,6 +24,11 @@ type fakeSink struct {
 	recs     map[string][]Record
 	backfill map[string][]Record
 	live     map[string]LiveUpdate
+	// order records each Apply/Backfill call in arrival order, as
+	// "apply:<seqs>" / "backfill:<seqs>", so a test can assert call order
+	// (e.g. the priority lane's Backfill landing before the backlog's
+	// Ingest/Apply) without relying on timing.
+	order []string
 }
 
 func newFakeSink() *fakeSink {
@@ -39,12 +44,14 @@ func (s *fakeSink) Apply(id string, recs []Record) error {
 	defer s.mu.Unlock()
 	s.recs[id] = append(s.recs[id], recs...)
 	s.applied[id] = recs[len(recs)-1].Seq
+	s.order = append(s.order, fmt.Sprintf("apply:%s", seqRangeOf(recs)))
 	return nil
 }
 func (s *fakeSink) Backfill(id string, recs []Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.backfill[id] = append(s.backfill[id], recs...)
+	s.order = append(s.order, fmt.Sprintf("backfill:%s", seqRangeOf(recs)))
 	return nil
 }
 func (s *fakeSink) Live(id string, u LiveUpdate) error {
@@ -52,6 +59,41 @@ func (s *fakeSink) Live(id string, u LiveUpdate) error {
 	defer s.mu.Unlock()
 	s.live[id] = u
 	return nil
+}
+
+// seqRangeOf renders recs' seqs for order log entries: "a" for one record,
+// "a-b" (first-last) for more than one, regardless of whether the run is
+// contiguous -- compact enough to print in a test failure even for a
+// multi-thousand-record batch.
+func seqRangeOf(recs []Record) string {
+	if len(recs) == 0 {
+		return ""
+	}
+	if len(recs) == 1 {
+		return fmt.Sprintf("%d", recs[0].Seq)
+	}
+	return fmt.Sprintf("%d-%d", recs[0].Seq, recs[len(recs)-1].Seq)
+}
+
+func (s *fakeSink) Order() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.order...)
+}
+func (s *fakeSink) AppliedFor(id string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.applied[id]
+}
+func (s *fakeSink) AppliedRecsFor(id string) []Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Record(nil), s.recs[id]...)
+}
+func (s *fakeSink) BackfillFor(id string) []Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Record(nil), s.backfill[id]...)
 }
 
 type masterFixture struct {

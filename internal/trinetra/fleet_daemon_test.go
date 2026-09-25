@@ -27,6 +27,7 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 		alog:           NewAlertLog(filepath.Join(dir, "alertlog.jsonl")),
 		alertStatePath: filepath.Join(dir, "alerts.json"),
 		alert:          func(a Alert) { alerts = append(alerts, a) },
+		alertFallback:  func(a Alert) { alerts = append(alerts, a) },
 		logf:           t.Logf,
 	}, &alerts
 }

@@ -32,6 +32,23 @@ type AlertEvent struct {
 	Kind      string     `json:"kind"` // "fire" | "recover"
 	Source    string     `json:"source"`
 	Delivered []Delivery `json:"delivered,omitempty"`
+
+	// RoutedToMaster is true when a child held a valid lease for this alert
+	// at enqueue time, so it was NOT enqueued for local delivery (the master
+	// is expected to deliver it instead). Always false for solo and master.
+	RoutedToMaster bool `json:"routed_to_master,omitempty"`
+	// DeliveredLocally is true on the second AlertEvent a child's handoff
+	// records when a routed alert's receipt never arrived (or the lease
+	// expired) and it fell back to local delivery. That second event shares
+	// FiredAt with the original routed one -- see FiredAt.
+	DeliveredLocally bool `json:"delivered_locally,omitempty"`
+	// FiredAt is the original fire (or recover) event's unix time. For an
+	// ordinary (non-fallback) AlertEvent it always equals Time. A fallback's
+	// recover record carries the ORIGINAL alert's FiredAt here (not the
+	// fallback's own Time), so the master's dedup key (node_id, key,
+	// fired_at) still lines up with the alert it is a late local delivery
+	// of.
+	FiredAt int64 `json:"fired_at,omitempty"`
 }
 
 // AlertLog is a thin wrapper around a single JSONL file holding AlertEvents.

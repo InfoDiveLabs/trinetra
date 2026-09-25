@@ -33,7 +33,15 @@ type fleetDeps struct {
 	alog           *AlertLog
 	alertStatePath string
 	alert          func(Alert)
-	logf           func(string, ...any)
+	// alertFallback delivers a alert locally after the child's lease/receipt
+	// handoff (fleet_lease.go) gave up waiting on the master: it mirrors
+	// alert's construction (same alog/bus/q closed over) but calls
+	// deliverFallback instead of enqueueAndLog, since that delivery must be
+	// unconditional (see deliverFallback's doc comment). Only startChild
+	// ever calls it; solo and master never construct a handoff to call it
+	// from.
+	alertFallback func(a Alert)
+	logf          func(string, ...any)
 }
 
 type fleetRuntime struct {
@@ -464,12 +472,27 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	}
 	tee := newOutboxTee(ob, d.logf)
 	live := newLiveBuilder(d.latestSnapshot, d.alertStatePath, func() HostInfo { return collectHostInfoFor(d.getCfg()) })
+
+	// Lease-based alert handoff (fleet_lease.go): while the master holds a
+	// valid lease, a firing/recovering alert is routed to it instead of
+	// delivered locally (alertRoute, consulted from enqueueAndLog), falling
+	// back to local delivery if no receipt arrives within
+	// fleet.fallback_after or the lease expires first (handoffState.Tick,
+	// driven below). lease/handoffState start with no lease ever granted, so
+	// until the first "lease" frame arrives -- including forever, against an
+	// old master with no stream endpoint at all -- Route always returns
+	// true: local delivery, exactly today's behaviour.
+	lease := newLeaseHolder(time.Now)
+	handoffState := newHandoff(time.Now, func() time.Duration { return d.getCfg().FleetFallbackAfter() }, lease)
+	restoreRoute := setAlertRoute(handoffState.Route)
+
 	sh := fleet.NewShipper(fleet.ShipperConfig{
 		MasterURL: cfg.Fleet.MasterURL, Pin: cfg.Fleet.CAPin, Identity: id, Outbox: ob,
 		Gaps:      &localGapFiller{store: d.store, alog: d.alog, rawRetention: configuredRawRetention(cfg), now: time.Now},
 		Live:      live.Build,
 		LiveEvery: time.Duration(cfg.FastInterval) * time.Second,
 		Logf:      d.logf,
+		OnFrame:   func(f fleet.Frame) { onStreamFrame(lease, handoffState, f) },
 	})
 	cctx, cancel := context.WithCancel(ctx)
 	shipDone := make(chan struct{})
@@ -484,8 +507,26 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 			case <-cctx.Done():
 				return
 			case now := <-t.C:
-				for _, a := range la.Plan(sh.Status(), cfg.Fleet.MasterURL, started, now.Unix()) {
+				warnAfter := int64(d.getCfg().FleetLinkDownWarnAfter() / time.Second)
+				for _, a := range la.Plan(sh.Status(), cfg.Fleet.MasterURL, started, now.Unix(), warnAfter) {
 					d.alert(a)
+				}
+			}
+		}
+	}()
+	// handoffState.Tick every 5s: any alert whose master receipt is overdue,
+	// or whose lease expired first, is delivered locally now (exactly once)
+	// via alertFallback -- see fleetDeps.alertFallback and deliverFallback.
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-cctx.Done():
+				return
+			case <-t.C:
+				for _, a := range handoffState.Tick() {
+					d.alertFallback(a)
 				}
 			}
 		}
@@ -497,6 +538,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	rt.provider.masterURL = cfg.Fleet.MasterURL
 	rt.stop = func() {
 		cancel()
+		restoreRoute()
 		// Let the shipper finish its in-flight request before the outbox
 		// closes under it (bounded, so a hung dial cannot stall shutdown).
 		waitBounded(shipDone, time.Now().Add(5*time.Second))
