@@ -888,7 +888,26 @@ func cmdDaemon(args []string) int {
 	// exact same pin instead of only ever seeing it in the daemon's log).
 	enroll := &enrollState{}
 	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload, bus, enroll)
-	stopControl, socketPath, token, err := serveControlSocket(controlAPI)
+	// fleet: the ONE place the fleet role is honoured (fleet_daemon.go). For
+	// solo this only builds an in-memory provider reporting this host -- no
+	// files, no listener, no goroutines. The role is read once at start;
+	// `serverwatch fleet init|join|leave|disable` tell the operator to restart.
+	fleetRT := startFleet(daemonCtx, cfgAtStart, fleetDeps{
+		stateDir: stateDir, getCfg: getCfg, self: controlAPI, latestSnapshot: latestSnapshot,
+		store: store, alog: alog, alertStatePath: st.AlertStatePath(),
+		alert: func(a Alert) {
+			enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		},
+		logf: func(format string, args ...any) { fmt.Fprintf(stderr, format+"\n", args...) },
+	})
+	defer fleetRT.stop()
+	if fleetRT.tee != nil {
+		if sw != nil {
+			sw.setTee(fleetRT.tee)
+		}
+		alog.SetTee(fleetRT.tee.Alert)
+	}
+	stopControl, socketPath, token, err := serveControlSocket(&fleetAwareAPI{API: controlAPI, fleetProvider: fleetRT.provider})
 	if err != nil {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
 	} else {
