@@ -1,4 +1,4 @@
-// Package serverwatch: collector_health.go makes slow-tier collection
+// Package trinetra: collector_health.go makes slow-tier collection
 // fail-visible (#110). A monitoring daemon must never silently degrade: when a
 // collection command (docker/df/systemctl/smartctl) fails or times out, that is
 // itself a monitoring failure the operator should be alerted to, not a reason

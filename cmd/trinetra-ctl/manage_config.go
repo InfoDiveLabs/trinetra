@@ -43,7 +43,7 @@ func settingsGroupKeys(group string) []config.KeyInfo {
 }
 
 // applyConfigKey sets exactly one key on cfg via config.Set -- the same
-// validated setter `serverwatch config set` and every other manage screen
+// validated setter `trinetra config set` and every other manage screen
 // ultimately use -- so the generic screen's value input gets each key's
 // real validation for free and can never disagree with config.go. Returns
 // config.Set's error unapplied: the caller must not persist an invalid

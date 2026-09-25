@@ -49,7 +49,7 @@ func newHandler(d Deps) http.Handler {
 	// processes/filesystems), ported from ui-mockup/monitoring.html. Same
 	// viewer+ floor as the rest of "Monitor" -- see monitoringHandler
 	// (handlers_monitoring.go) and web.MonitoringView/
-	// internal/serverwatch/coreapi_inproc.go's buildMonitoringView adapter for
+	// internal/trinetra/coreapi_inproc.go's buildMonitoringView adapter for
 	// where its data comes from.
 	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, d, monitoringHandler(d)))
 	// /host (#100): the static host hardware/OS inventory, read over the

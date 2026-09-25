@@ -9,7 +9,7 @@ import (
 // plain-text snapshot of a docker container's recent logs (#115), for the
 // dashboard drawer's "View logs" action. Admin-gated (see routes.go) because
 // container logs can carry secrets. The daemon validates name against the live
-// container list before shelling out (see serverwatch.collectContainerLogs), so
+// container list before shelling out (see trinetra.collectContainerLogs), so
 // this handler forwards the query verbatim and lets that layer refuse an
 // unknown or malformed name.
 func containerLogsHandler(d Deps) http.HandlerFunc {

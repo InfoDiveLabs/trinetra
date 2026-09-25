@@ -1,4 +1,4 @@
-// Package serverwatch: downtime_cmd.go implements the `serverwatch downtime`
+// Package trinetra: downtime_cmd.go implements the `trinetra downtime`
 // CLI, whose only subcommand today is `purge` -- an operator tool to clear
 // bogus downtime events from the store, e.g. the short fabricated power_downs a
 // daemon crash loop wrote before the #116 classification fix stopped them.

@@ -1,4 +1,4 @@
-// Package serverwatch: eventbus.go implements the daemon's in-process live
+// Package trinetra: eventbus.go implements the daemon's in-process live
 // event fan-out (issue-tracked as the A2 "live push" epic): the sampler
 // loop and enqueueAndLog (daemon.go) both PUBLISH core.Event values on
 // every snapshot tick / dispatched alert, and inprocAPI.Subscribe

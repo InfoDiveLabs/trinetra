@@ -35,7 +35,7 @@ var callTimeout = 30 * time.Second
 // every call thereafter). call therefore closes and discards the connection
 // on any such failure (poison), and the next call re-dials transparently.
 // Without this a single slow daemon response would wedge a long-lived Client
-// forever, since callers here (notably serverwatch-web) hold one Client for
+// forever, since callers here (notably trinetra-web) hold one Client for
 // the whole process lifetime with no reconnect of their own.
 type Client struct {
 	*clientConn

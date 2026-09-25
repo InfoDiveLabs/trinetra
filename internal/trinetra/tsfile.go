@@ -1,4 +1,4 @@
-// Package serverwatch: tsfile.go implements the default "tsfile" SampleStore
+// Package trinetra: tsfile.go implements the default "tsfile" SampleStore
 // backend described in docs/handbook/09-storage-and-data-model.md -- a compact, append-only,
 // per-series binary store.
 //
@@ -743,7 +743,7 @@ func (s *tsFileStore) Close() error { return nil }
 // Stats reports cardinality/disk cost: seriesCount is the total number of
 // .tsd files under ts/raw and ts/1m, plus events.tsd if it exists, and
 // diskBytes is their combined size on disk. See the SampleStore.Stats doc
-// comment for how `serverwatch doctor` uses this.
+// comment for how `trinetra doctor` uses this.
 func (s *tsFileStore) Stats() (int, int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

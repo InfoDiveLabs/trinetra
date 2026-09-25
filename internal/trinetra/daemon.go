@@ -816,7 +816,7 @@ func cmdDaemon(args []string) int {
 	// it, the web config editor, issue #66) so writes take effect
 	// immediately, without a SIGHUP round-trip.
 	// saveDaemonCfg keeps the on-disk fleet identity keys: this daemon's
-	// in-memory config (or a plugin's) may predate a `serverwatch fleet`
+	// in-memory config (or a plugin's) may predate a `trinetra fleet`
 	// command, which must be the only thing that changes them.
 	reload := func(newCfg *config.Config) error {
 		if err := saveDaemonCfg(newCfg); err != nil {
@@ -897,8 +897,8 @@ func cmdDaemon(args []string) int {
 	bus := newEventBus()
 
 	// control socket: serves the daemon's own core.API over a unix socket
-	// under RUNTIME_DIRECTORY (or /run/serverwatch) for the out-of-process
-	// plugins (serverwatch-ctl, serverwatch-web). newInprocAPI is untagged,
+	// under RUNTIME_DIRECTORY (or /run/trinetra) for the out-of-process
+	// plugins (trinetra-ctl, trinetra-web). newInprocAPI is untagged,
 	// so this carries no third-party dependency. Non-fatal: a bind failure
 	// just logs and leaves the daemon running without the socket (and thus
 	// without the web UI, which dials it).
@@ -912,7 +912,7 @@ func cmdDaemon(args []string) int {
 	// fleet: the ONE place the fleet role is honoured (fleet_daemon.go). For
 	// solo this only builds an in-memory provider reporting this host -- no
 	// files, no listener, no goroutines. The role is read once at start;
-	// `serverwatch fleet init|join|leave|disable` tell the operator to restart.
+	// `trinetra fleet init|join|leave|disable` tell the operator to restart.
 	fleetRT := startFleet(daemonCtx, cfgAtStart, fleetDeps{
 		stateDir: stateDir, getCfg: getCfg, self: controlAPI, latestSnapshot: latestSnapshot,
 		store: store, alog: alog, alertStatePath: st.AlertStatePath(),
@@ -934,7 +934,7 @@ func cmdDaemon(args []string) int {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
 	} else {
 		defer stopControl()
-		// web UI: when enabled, supervise the serverwatch-web plugin as a
+		// web UI: when enabled, supervise the trinetra-web plugin as a
 		// verified child process (it dials the control socket above). Nothing
 		// is embedded in the daemon anymore -- see web_supervisor.go.
 		if shouldStartWeb(cfgAtStart, true) {
@@ -1278,7 +1278,7 @@ func cmdDaemon(args []string) int {
 		// (fast=5s, slow=60s) write volume for no benefit.
 		if stateChanged {
 			// Pull any CLI-written ack flags back onto the in-memory state
-			// before saving, or this save would clobber a `serverwatch alerts
+			// before saving, or this save would clobber a `trinetra alerts
 			// ack` that landed on disk since the daemon last loaded.
 			alerts.MergeAckFromDisk(st.AlertStatePath(), fs)
 			_ = alerts.Save(st.AlertStatePath())
@@ -1374,7 +1374,7 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 		// unclaimed bot is claimed only by "/start <pin>", not by whoever
 		// messages first. enroll (enroll.go) generates and caches it on
 		// first call, so this stays stable for as long as the bot remains
-		// unclaimed -- and is the SAME pin `serverwatch telegram set-token`
+		// unclaimed -- and is the SAME pin `trinetra telegram set-token`
 		// can now read back over the control socket (core.API.
 		// EnrollmentPIN), instead of only ever reaching the daemon's own
 		// log.

@@ -6,7 +6,7 @@ import "github.com/InfoDiveLabs/trinetra/internal/config"
 // screen offers: off (both keys cleared), a single daily HH:MM firing
 // time, or a single weekly dow@HH:MM firing time. The underlying config
 // keys (schedule.daily/schedule.weekly) are independent knobs that
-// `serverwatch schedule daily|weekly ...` (systemd.go's cmdSchedule) can
+// `trinetra schedule daily|weekly ...` (systemd.go's cmdSchedule) can
 // each set without touching the other, but the ctl screen presents them as
 // one mutually exclusive choice for a simpler guided flow: picking daily
 // clears any existing weekly schedule and vice versa, and off clears both.
@@ -29,7 +29,7 @@ type scheduleAnswers struct {
 }
 
 // applySchedule applies ans onto cfg via the SAME validated config.Set
-// setters `serverwatch schedule daily|weekly` uses (schedule.daily/
+// setters `trinetra schedule daily|weekly` uses (schedule.daily/
 // schedule.weekly), so ctl gets identical HH:MM/dow@HH:MM validation for
 // free. Exactly one of schedule.daily/schedule.weekly ends up non-empty (or
 // both empty for Off): the other key is explicitly cleared so a stale value

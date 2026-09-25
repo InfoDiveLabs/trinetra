@@ -1,4 +1,4 @@
-// Package serverwatch: culprit.go enriches CPU and memory alerts by naming the
+// Package trinetra: culprit.go enriches CPU and memory alerts by naming the
 // top process and/or container consuming that resource (#103), so a "cpu high"
 // alert reads "cpu = 96.0 >= threshold 95.0 (top: ffmpeg 82%, container web
 // 30%)" instead of a bare number. It reads only the process/container data

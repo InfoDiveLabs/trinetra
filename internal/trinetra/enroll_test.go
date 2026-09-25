@@ -1,4 +1,4 @@
-// Package serverwatch: enroll_test.go covers enrollState (enroll.go), the
+// Package trinetra: enroll_test.go covers enrollState (enroll.go), the
 // shared holder that makes the daemon's poll loop and the control socket's
 // EnrollmentPIN read the SAME Telegram enrollment pin (#90).
 package trinetra
@@ -78,7 +78,7 @@ func TestEnrollStatePINNotConfigured(t *testing.T) {
 }
 
 // TestEnrollStateReset: Reset clears the cached pin (white-box: this test
-// lives in package serverwatch, so it can inspect e.pin directly), so the
+// lives in package trinetra, so it can inspect e.pin directly), so the
 // next PIN() call generates a fresh one rather than reusing a pin that was
 // already consumed by a successful enrollment.
 func TestEnrollStateReset(t *testing.T) {

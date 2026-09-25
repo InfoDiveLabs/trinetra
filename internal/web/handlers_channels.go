@@ -57,8 +57,8 @@ var channelTypes = []struct{ Value, Label string }{
 
 // describeRoutesWeb mirrors channel.go's describeRoutes (unexported to that
 // package, so duplicated here rather than reached into across the
-// serverwatch/web boundary, per the rule that internal/web must never
-// import internal/serverwatch, to keep the module graph one-way).
+// trinetra/web boundary, per the rule that internal/web must never
+// import internal/trinetra, to keep the module graph one-way).
 func describeRoutesWeb(cc config.ChannelConfig) string {
 	var parts []string
 	if len(cc.IncludeKinds) > 0 {
@@ -469,9 +469,9 @@ func channelsRemoveHandler(d Deps) http.HandlerFunc {
 // channelsTestHandler handles POST /channels/{name}/test: sends a one-off
 // test notification via Deps.API.TestChannel (task 8; previously
 // Deps.TestChannel directly -- both backends' TestChannel call the exact
-// same sendTestNotification internal/serverwatch always has, see
+// same sendTestNotification internal/trinetra always has, see
 // coreapi_inproc.go/coreapi_file.go). A nil Deps.API (some minimal test
-// Deps, or a hypothetical future non-serverwatch host of this package)
+// Deps, or a hypothetical future non-trinetra host of this package)
 // renders a clear "not wired" result rather than panicking.
 func channelsTestHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

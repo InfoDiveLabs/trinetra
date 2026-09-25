@@ -233,7 +233,7 @@ func runVersion(api core.API, out io.Writer) int {
 }
 
 // runLogs prints a docker container's recent logs (#115 parity):
-// `serverwatch-ctl logs <container> [--tail N]`.
+// `trinetra-ctl logs <container> [--tail N]`.
 func runLogs(api core.API, args []string, out io.Writer) int {
 	name := ""
 	tail := 200

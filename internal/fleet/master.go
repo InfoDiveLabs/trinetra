@@ -21,7 +21,7 @@ import (
 	"unicode/utf8"
 )
 
-// Sink is where the master puts what children send. The serverwatch package
+// Sink is where the master puts what children send. The trinetra package
 // implements it over per-node tsfile replicas.
 type Sink interface {
 	// AppliedSeq is the highest seq durably applied for nodeID (0 if none).

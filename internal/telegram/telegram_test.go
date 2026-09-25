@@ -31,7 +31,7 @@ func TestSendMessage(t *testing.T) {
 }
 
 // TestSendMessageSetsParseModeHTML asserts SendMessage requests HTML
-// parsing, since renderers (internal/serverwatch/status.go) now emit
+// parsing, since renderers (internal/trinetra/status.go) now emit
 // <pre>/<b> tags and HTML-escape dynamic content to match.
 func TestSendMessageSetsParseModeHTML(t *testing.T) {
 	var gotMode string

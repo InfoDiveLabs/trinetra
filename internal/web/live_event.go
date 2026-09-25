@@ -4,8 +4,8 @@ package web
 // -- the Kind/Severity/Source/Title/Time shape core.API.Subscribe's live
 // stream carries -- kept as a package-local type rather than importing
 // core.Event directly into this package's SSE consumer path (sse.go, Deps'
-// Subscribe field). The serverwatch-web binary's buildDeps
-// (cmd/serverwatch-web/main.go) is the one place that adapts a real
+// Subscribe field). The trinetra-web binary's buildDeps
+// (cmd/trinetra-web/main.go) is the one place that adapts a real
 // core.Event into a LiveEvent (a trivial field copy); internal/web never
 // needs to know core.Event exists to consume the stream.
 type LiveEvent struct {

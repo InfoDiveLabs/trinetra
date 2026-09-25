@@ -1,4 +1,4 @@
-// Package serverwatch: swarm.go collapses Docker Swarm task containers to their
+// Package trinetra: swarm.go collapses Docker Swarm task containers to their
 // SERVICE (#118). A Swarm task container is named "<service>.<slot>.<taskid>"
 // where taskid changes on every (re)deploy, so keying series/alerts/UI on the
 // raw name means every rolling deploy (a) creates two new permanent series

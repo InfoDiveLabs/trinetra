@@ -62,7 +62,7 @@ type RollupPoint struct {
 	Max float64 `json:"max"`
 }
 
-// DownEventData mirrors serverwatch.DownEvent's JSON shape.
+// DownEventData mirrors trinetra.DownEvent's JSON shape.
 type DownEventData struct {
 	Type        string `json:"type"`
 	Start       int64  `json:"start"`

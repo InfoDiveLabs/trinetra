@@ -1,4 +1,4 @@
-// Package serverwatch: eventbus_test.go pins eventBus's core contract --
+// Package trinetra: eventbus_test.go pins eventBus's core contract --
 // the whole reason it exists, per its own doc (eventbus.go): Publish must
 // NEVER block the sampler loop / dispatchAndLog caller, regardless of how
 // many subscribers there are or how slow/absent they are. Every test here

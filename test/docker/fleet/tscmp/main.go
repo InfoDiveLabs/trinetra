@@ -3,7 +3,7 @@
 //
 // A tsfile is a 16-byte header followed by fixed 32-byte records
 // (ts int64, min, avg, max float64, big-endian); see
-// internal/serverwatch/tsfile.go. The replica must be a byte-for-byte prefix
+// internal/trinetra/tsfile.go. The replica must be a byte-for-byte prefix
 // of the child's file (same header, same records, in order), lag behind it by
 // at most -maxlag records, and hold strictly increasing timestamps (no
 // duplicates). With -from/-to it also checks that the replica has no hole in

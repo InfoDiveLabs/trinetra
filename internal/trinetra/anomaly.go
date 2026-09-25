@@ -9,7 +9,7 @@ import (
 type ActiveAlert struct {
 	Since  int64  `json:"since"`
 	Reason string `json:"reason"`
-	// Acked/AckedAt record a manual `serverwatch alerts ack <key>`. Both are
+	// Acked/AckedAt record a manual `trinetra alerts ack <key>`. Both are
 	// omitempty so an alerts.json written before these fields existed still
 	// unmarshals cleanly (missing fields simply zero-value: Acked=false,
 	// AckedAt=0), and so a not-yet-acked alert doesn't grow the JSON.

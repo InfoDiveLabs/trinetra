@@ -1,6 +1,6 @@
-// Package serverwatch: enroll.go holds the shared Telegram enrollment-pin
+// Package trinetra: enroll.go holds the shared Telegram enrollment-pin
 // state (#90). Before this, the enrollment pin was a pollLoop-local
-// variable (daemon.go) known only inside that goroutine, so `serverwatch
+// variable (daemon.go) known only inside that goroutine, so `trinetra
 // telegram set-token` -- a separate process -- had no way to show the user
 // the pin the daemon would actually accept in "/start <pin>". enrollState
 // is constructed once in cmdDaemon and handed to BOTH pollLoop and

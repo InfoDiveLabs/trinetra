@@ -18,7 +18,7 @@ type activeAlertView struct {
 	Reason string
 	Since  int64
 	Acked  bool
-	// Critical mirrors serverwatch.ActiveAlert.Critical -- the severity of
+	// Critical mirrors trinetra.ActiveAlert.Critical -- the severity of
 	// whatever condition raised this alert, recorded at fire time -- so
 	// callers (topbarStatus) can tell a critical alert from a mere warning
 	// among currently active alerts without re-deriving it from Reason
@@ -34,7 +34,7 @@ type activeAlertView struct {
 // directly off disk: a plugin must not read daemon-owned state from disk, so
 // all four callers now go through core.API.
 //
-// The AlertRecord shape comes from serverwatch's activeAlertRecords mapping:
+// The AlertRecord shape comes from trinetra's activeAlertRecords mapping:
 // the human reason text is carried in Source, and Critical is encoded as
 // Severity == "critical" (Severity.String is "info"/"warning"/"critical").
 // Results are ordered most-recent-first (Since desc, then Key asc), the same
@@ -43,7 +43,7 @@ type activeAlertView struct {
 // A nil API or a read error (a transient socket failure) degrades to nil --
 // "no active alerts" -- rather than failing the whole page: these panels are
 // display-only, never the source of truth for alert state (that stays the
-// daemon's AlertState and the `serverwatch alerts` CLI).
+// daemon's AlertState and the `trinetra alerts` CLI).
 func activeAlertsViaAPI(d Deps) []activeAlertView {
 	if d.API == nil {
 		return nil

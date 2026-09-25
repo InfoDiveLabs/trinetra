@@ -146,7 +146,7 @@ func (m model) updateOnboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // (fetch, set telegram.token, ApplyConfig, all off the UI goroutine via
 // applyOnboardTokenCmd) once non-empty, esc skips onboarding for now and
 // returns to Home (the user can always set the token later via the
-// Channels screen or `serverwatch telegram set-token`).
+// Channels screen or `trinetra telegram set-token`).
 func (m model) updateOnboardTokenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":

@@ -25,7 +25,7 @@ func TestServeControlSocketRoundTrip(t *testing.T) {
 	// ~104-byte sun_path limit unix domain sockets are bound by. Use a short,
 	// flat MkdirTemp instead so this test's socket path stays well under that
 	// limit on every platform; under systemd (the real deployment path)
-	// RUNTIME_DIRECTORY is always the short /run/serverwatch, so this is
+	// RUNTIME_DIRECTORY is always the short /run/trinetra, so this is
 	// purely a test-environment accommodation.
 	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
 	if err != nil {

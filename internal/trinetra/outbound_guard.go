@@ -1,4 +1,4 @@
-// Package serverwatch: outbound_guard.go provides an opt-in SSRF guard for the
+// Package trinetra: outbound_guard.go provides an opt-in SSRF guard for the
 // URLs the daemon dials on the operator's behalf (webhook/Slack/Discord/ntfy/
 // gotify channels and the healthchecks ping). Setting a channel URL already
 // requires an admin/root config write, so this is defense-in-depth, off by

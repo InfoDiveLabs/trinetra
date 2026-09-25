@@ -1,4 +1,4 @@
-// Package serverwatch: coreapi_enroll_test.go covers core.API's
+// Package trinetra: coreapi_enroll_test.go covers core.API's
 // EnrollmentPIN (#90) on both implementations: inprocAPI reads through the
 // shared enrollState it was constructed with (coreapi_inproc.go), while
 // fileAPI -- a separate CLI process with no live daemon state -- always

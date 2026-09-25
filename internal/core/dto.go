@@ -10,8 +10,8 @@ const (
 	// ResAuto is a sentinel meaning "let the implementation pick the
 	// resolution". A Series caller that doesn't need to care about raw vs
 	// 1m can pass this; a later task's implementation resolves it via
-	// serverwatch.PickResolution (the age/config-dependent picker, which
-	// stays in internal/serverwatch since it needs the store's actual
+	// trinetra.PickResolution (the age/config-dependent picker, which
+	// stays in internal/trinetra since it needs the store's actual
 	// raw-retention configuration, out of reach for this stdlib-only
 	// package).
 	ResAuto
@@ -41,21 +41,21 @@ type DownEventView struct {
 
 // DashboardView is core's projection of the daemon's live Snapshot: exactly
 // the fields templates/dashboard.html (and the /events SSE stream, sse.go)
-// need to render the dashboard, expressed with no serverwatch import.
+// need to render the dashboard, expressed with no trinetra import.
 //
 // Deps.Snapshot returns this type (aliased in internal/web as
-// web.DashboardView) rather than serverwatch.Snapshot itself because this
-// package must never import internal/serverwatch (see doc.go's import
-// contract). internal/serverwatch/coreapi_inproc.go's buildDashboardView
-// builds one of these by copying values out of a serverwatch.Snapshot; the
-// serverwatch-web binary's buildDeps (cmd/serverwatch-web) carries the
+// web.DashboardView) rather than trinetra.Snapshot itself because this
+// package must never import internal/trinetra (see doc.go's import
+// contract). internal/trinetra/coreapi_inproc.go's buildDashboardView
+// builds one of these by copying values out of a trinetra.Snapshot; the
+// trinetra-web binary's buildDeps (cmd/trinetra-web) carries the
 // finished value across the control socket into Deps, so web only ever
-// consumes it via the alias, never importing serverwatch directly.
+// consumes it via the alias, never importing trinetra directly.
 //
 // Every field here is a copy (scalars, or a freshly built slice) taken from
 // the Snapshot at adapt time, never a map/slice alias into it: the adapter
 // only reads the Snapshot it's given, exactly as the concurrency contract in
-// internal/serverwatch/snapshot_hub.go's snapshotHub doc requires (readers
+// internal/trinetra/snapshot_hub.go's snapshotHub doc requires (readers
 // must never mutate a published Snapshot's map fields -- see that file for
 // why that invariant is what makes the atomic.Pointer safe without a lock).
 type DashboardView struct {
@@ -126,12 +126,12 @@ type DashboardView struct {
 	// (#110): each carries its consecutive-failure count and last error so an
 	// operator sees that MONITORING ITSELF is degraded, not just missing data.
 	// Empty when every collector is healthy. Shown as a warning banner in the
-	// web dashboard and a status line in serverwatch-ctl.
+	// web dashboard and a status line in trinetra-ctl.
 	DegradedCollectors []CollectorHealthView `json:"degraded_collectors,omitempty"`
 }
 
 // CollectorHealthView is one degraded slow-tier collector's health (#110), the
-// core-DTO projection of serverwatch.CollectorStat.
+// core-DTO projection of trinetra.CollectorStat.
 type CollectorHealthView struct {
 	Name            string `json:"name"`             // "docker" | "disk" | "services" | "smart"
 	Fails           int    `json:"fails"`            // consecutive failed cycles
@@ -139,7 +139,7 @@ type CollectorHealthView struct {
 	LastSuccessUnix int64  `json:"last_success_unix"` // 0 if never succeeded
 }
 
-// ProcessCounts mirrors serverwatch.ProcSnapshot's aggregate counts (Top is
+// ProcessCounts mirrors trinetra.ProcSnapshot's aggregate counts (Top is
 // deliberately not carried here -- the dashboard only shows counts, not a
 // process list; that's the Monitoring page's job).
 type ProcessCounts struct {
@@ -166,7 +166,7 @@ type DiskView struct {
 	UsagePct  float64 `json:"usage_pct"`
 	FreeBytes uint64  `json:"free_bytes"`
 	SizeBytes uint64  `json:"size_bytes"`
-	// DaysToFull/DaysToFullKnown mirror serverwatch.DiskDetail's linear-fill
+	// DaysToFull/DaysToFullKnown mirror trinetra.DiskDetail's linear-fill
 	// projection; DaysToFullKnown false means "no meaningful trend yet"
 	// (fewer than 2 history points, or flat/declining usage).
 	DaysToFull      float64 `json:"days_to_full,omitempty"`
@@ -189,7 +189,7 @@ const dashboardTopN = 4
 // color -- a display-only threshold for the dashboard's summary tiles,
 // independent of (and not a substitute for) the daemon's own configurable
 // alert thresholds (internal/config), which keep driving real alert
-// delivery. Exported so internal/serverwatch/coreapi_inproc.go's
+// delivery. Exported so internal/trinetra/coreapi_inproc.go's
 // buildDashboardView adapter can count DisksCritical using the exact same
 // cutoff this package's template uses to color the same mounts.
 const DiskCriticalPct = 90.0
@@ -201,26 +201,26 @@ const DiskWarnPct = 70.0
 // MonitoringView is core's projection of the daemon's live Snapshot for the
 // /monitoring detail page (ported from ui-mockup/monitoring.html): the
 // Containers/Units/Processes/Filesystems tables, expressed with no
-// serverwatch import -- the same seam DashboardView already established for
+// trinetra import -- the same seam DashboardView already established for
 // the dashboard. See that type's doc for why the projection crosses the
-// core <-> serverwatch boundary this way instead of serverwatch.Snapshot
+// core <-> trinetra boundary this way instead of trinetra.Snapshot
 // itself, and for the map-safety/copy-only contract
-// internal/serverwatch/coreapi_inproc.go's buildMonitoringView adapter must
+// internal/trinetra/coreapi_inproc.go's buildMonitoringView adapter must
 // honor when building one of these.
 type MonitoringView struct {
 	// Containers is every container the daemon's plain state listing knows
-	// about (serverwatch.Snapshot.Containers, name -> state), each merged
+	// about (trinetra.Snapshot.Containers, name -> state), each merged
 	// with its live docker-stats row (ContainerStats) when present -- see
 	// MonitoringContainerView.HasStats for when cpu/mem/net are meaningful.
 	Containers []MonitoringContainerView `json:"containers,omitempty"`
 
 	// FailedUnits is the systemd units currently in a failed state
-	// (serverwatch.Snapshot.FailedUnits) -- always populated regardless of
+	// (trinetra.Snapshot.FailedUnits) -- always populated regardless of
 	// UnitsEnabled below, since `systemctl --failed` is always collected
 	// (the same alerting input service:* checks use), independent of the
 	// opt-in full-inventory collector.
 	FailedUnits []string `json:"failed_units,omitempty"`
-	// Units is the full systemd unit inventory (serverwatch.Snapshot.Units),
+	// Units is the full systemd unit inventory (trinetra.Snapshot.Units),
 	// populated only when UnitsEnabled -- the page renders a "collector
 	// disabled" note in its place otherwise, rather than an empty table
 	// that looks like "zero units" (which is never really true).
@@ -229,7 +229,7 @@ type MonitoringView struct {
 	// at adapt time.
 	UnitsEnabled bool `json:"units_enabled"`
 
-	// Processes is the top-N process list (serverwatch.Snapshot.Processes.Top),
+	// Processes is the top-N process list (trinetra.Snapshot.Processes.Top),
 	// populated only when ProcessesEnabled -- same "collector disabled" note
 	// otherwise.
 	Processes []MonitoringProcessView `json:"processes,omitempty"`
@@ -237,12 +237,12 @@ type MonitoringView struct {
 	// (collect.processes) at adapt time.
 	ProcessesEnabled bool `json:"processes_enabled"`
 	// ProcessesTotal is the full process-table count
-	// (serverwatch.Snapshot.Processes.Total) backing the "Top by CPU · N
+	// (trinetra.Snapshot.Processes.Total) backing the "Top by CPU · N
 	// total" note beneath the processes table; 0 whenever ProcessesEnabled
 	// is false (there is no total to report).
 	ProcessesTotal int `json:"processes_total"`
 
-	// Disks is every mounted filesystem (serverwatch.Snapshot.Disks) merged
+	// Disks is every mounted filesystem (trinetra.Snapshot.Disks) merged
 	// with its DiskDetail (device/fstype/inode%/size/free/fill projection)
 	// when present -- always collected, no collector toggle, mirroring
 	// DashboardView.Disks.
@@ -295,7 +295,7 @@ type MonitoringDiskView struct {
 	FreeBytes uint64  `json:"free_bytes"`
 	SizeBytes uint64  `json:"size_bytes"`
 	// DaysToFull/DaysToFullKnown mirror DiskView's identically named fields
-	// (serverwatch.DiskDetail's linear-fill projection).
+	// (trinetra.DiskDetail's linear-fill projection).
 	DaysToFull      float64 `json:"days_to_full,omitempty"`
 	DaysToFullKnown bool    `json:"days_to_full_known,omitempty"`
 }
@@ -318,12 +318,12 @@ func (v MonitoringView) DisksWarnCritCount() int {
 }
 
 // TargetView is one monitorable target as core.API.MonitorTargets reports
-// it: a mirror of serverwatch.Target's exported fields (ID/Kind/Display/
+// it: a mirror of trinetra.Target's exported fields (ID/Kind/Display/
 // Available), kept as its own DTO here (rather than reusing
-// serverwatch.Target directly) so internal/core -- which imports nothing
+// trinetra.Target directly) so internal/core -- which imports nothing
 // but stdlib + internal/config, see internal/core/doc.go -- never has to
-// import internal/serverwatch. ID is the namespaced identifier
-// (serverwatch.Discover's doc: "docker:web", "disk:/", "iface:eth0",
+// import internal/trinetra. ID is the namespaced identifier
+// (trinetra.Discover's doc: "docker:web", "disk:/", "iface:eth0",
 // "temp", "smart:/dev/sda") the SAME config.Config.SetTarget/
 // SetTargetThreshold/TargetEnabled/TargetThreshold calls key on, so a
 // caller can round-trip a TargetView straight into those setters.
@@ -335,16 +335,16 @@ type TargetView struct {
 }
 
 // AlertRecord is one alert as rendered to a consumer, covering both a
-// currently-active alert (serverwatch.ActiveAlert, keyed by Key) and a
-// historical fire/recover entry (serverwatch.AlertEvent): Key identifies
+// currently-active alert (trinetra.ActiveAlert, keyed by Key) and a
+// historical fire/recover entry (trinetra.AlertEvent): Key identifies
 // the check that fired (for example "cpu"), Kind is "fire" or "recover"
 // (empty for an active alert, which has no fire/recover distinction of its
 // own), Source identifies what raised it, Time is the Unix-seconds
 // timestamp it fired (or, for an active alert, went active), and Acked
-// mirrors a manual `serverwatch alerts ack <key>`.
+// mirrors a manual `trinetra alerts ack <key>`.
 //
 // AckedAt/Title/Delivered are populated only where the underlying record
-// actually carries that data (see internal/serverwatch/coreapi_alerts.go's
+// actually carries that data (see internal/trinetra/coreapi_alerts.go's
 // activeAlertRecords/alertHistoryRecords): an active alert has an ack
 // timestamp but no title or delivery outcome of its own (those live on the
 // alert-log dispatch record instead), while a history entry has a title and
@@ -359,7 +359,7 @@ type AlertRecord struct {
 	Source   string `json:"source"`
 	Time     int64  `json:"time"`
 	Acked    bool   `json:"acked"`
-	// AckedAt is the Unix-seconds timestamp a manual `serverwatch alerts ack
+	// AckedAt is the Unix-seconds timestamp a manual `trinetra alerts ack
 	// <key>` was recorded (an active alert's ActiveAlert.AckedAt); 0 for a
 	// history entry, which carries no ack timestamp.
 	AckedAt int64 `json:"acked_at,omitempty"`
@@ -382,8 +382,8 @@ type AlertRecord struct {
 	DeliveredTo []string `json:"delivered_to,omitempty"`
 }
 
-// DoctorReport is core's projection of `serverwatch doctor`'s diagnostic
-// output (internal/serverwatch/systemd.go's cmdDoctor): docker reachability,
+// DoctorReport is core's projection of `trinetra doctor`'s diagnostic
+// output (internal/trinetra/systemd.go's cmdDoctor): docker reachability,
 // smartctl availability, discovered thermal zones and monitoring targets,
 // the on/off state of every opt-in extended collector, and a
 // human-readable summary of the configured SampleStore's series count and

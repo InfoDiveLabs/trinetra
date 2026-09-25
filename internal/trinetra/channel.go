@@ -17,7 +17,7 @@ const usageChannel = `usage:
   trinetra channel set <name> <key> <value>
   trinetra channel test <name>`
 
-// cmdChannel implements `serverwatch channel ...`. Every subcommand first
+// cmdChannel implements `trinetra channel ...`. Every subcommand first
 // applies migrateTelegramChannel (best-effort persisted) so a pre-existing
 // telegram.token setup shows up as a real channel without the user having
 // to run `channel add` themselves.
@@ -108,7 +108,7 @@ func cmdChannelAdd(c *config.Config, args []string) int {
 	}
 	// #83: validate up front, same as the ctl Channels screen's
 	// validate-before-save gate (saveChannel/channelNeedsValidation in
-	// cmd/serverwatch-ctl/channels.go). Only ENABLED channels are gated -- a
+	// cmd/trinetra-ctl/channels.go). Only ENABLED channels are gated -- a
 	// disabled channel can't misdeliver (it's never wired into the
 	// Dispatcher while off), so it may still be staged with incomplete
 	// settings via --disabled. buildNotifier is the same call
@@ -188,7 +188,7 @@ func cmdChannelTest(c *config.Config, args []string) int {
 // web-issued one (issue #66's "send test" button, reached over the control
 // socket via inprocAPI.TestChannel, coreapi_inproc.go).
 //
-// Shared by cmdChannelTest (`serverwatch channel test <name>`) and the web
+// Shared by cmdChannelTest (`trinetra channel test <name>`) and the web
 // channels page's "Send test" action so both paths exercise the exact same
 // notifier-construction and delivery logic -- no channel type can behave
 // differently for one caller than the other.

@@ -222,7 +222,7 @@ func jsonMarshalIndent(v any) ([]byte, error) {
 	return jsonIndent(v)
 }
 
-// saveDaemonCfg is saveCfg for every save that is NOT a `serverwatch fleet`
+// saveDaemonCfg is saveCfg for every save that is NOT a `trinetra fleet`
 // command (daemon reload/ApplyConfig, the Telegram chat-id capture, other
 // plugins' config writes): it first overlays the fleet identity keys from
 // the config currently on disk onto c, so a config built before a

@@ -763,7 +763,7 @@ func TestSafeMetricDeterministicAndDistinct(t *testing.T) {
 
 // TestTSFileStoreStats asserts tsFileStore.Stats counts the .tsd files
 // written under ts/raw (+ ts/1m once Downsample has run, + events.tsd once
-// an event is appended) and sums their on-disk sizes, giving `serverwatch
+// an event is appended) and sums their on-disk sizes, giving `trinetra
 // doctor` its cardinality/disk guardrail numbers (docs/handbook/12-roadmap-and-status.md Epic #69
 // x7).
 func TestTSFileStoreStats(t *testing.T) {

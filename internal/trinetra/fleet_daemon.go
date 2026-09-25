@@ -1,4 +1,4 @@
-// Package serverwatch: fleet_daemon.go is the single place the daemon's
+// Package trinetra: fleet_daemon.go is the single place the daemon's
 // fleet role is honoured. startFleet does nothing at all for solo (no
 // directories, no listener, no goroutines); for a master it serves the fleet
 // port, tracks liveness and raises node-down alerts; for a child it starts

@@ -12,7 +12,7 @@ import (
 )
 
 // undeliverableTelegram simulates buildNotifier's rule that a telegram channel
-// with no resolvable chat id cannot deliver. It is what the serverwatch-web
+// with no resolvable chat id cannot deliver. It is what the trinetra-web
 // binary's buildDeps wires Deps.ValidateChannel to in production (via
 // client.ValidateChannel, which dry-runs the real buildNotifier on the
 // daemon side).

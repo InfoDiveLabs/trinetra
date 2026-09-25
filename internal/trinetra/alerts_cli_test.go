@@ -92,7 +92,7 @@ func TestAlertsListShowsActiveAndHistoryViaCLI(t *testing.T) {
 	}
 }
 
-// TestAlertsListGoldenOutput is the task-6 golden test: it pins `serverwatch
+// TestAlertsListGoldenOutput is the task-6 golden test: it pins `trinetra
 // alerts list`'s exact rendered output against a fixture exercising both
 // output paths core.AlertRecord cannot fully reproduce --
 //

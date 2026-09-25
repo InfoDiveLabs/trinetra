@@ -44,7 +44,7 @@ func auditLogPath(stateDir string) string {
 
 // appendAudit appends rec as one JSONL line to <StateDir>/audit.jsonl,
 // creating the state directory and file as needed. Mirrors
-// internal/serverwatch's own appendJSONL (alertlog.go/store.go): a single
+// internal/trinetra's own appendJSONL (alertlog.go/store.go): a single
 // os.OpenFile(O_APPEND)+Write of one short line is atomic against
 // interleaving from concurrent appenders on the same filesystem (POSIX
 // guarantees a single write() to an O_APPEND-opened fd is atomic for writes

@@ -114,7 +114,7 @@ func TestInprocMonitoringMatchesBuildMonitoringView(t *testing.T) {
 // TestSeriesResolutionMapping exercises Series against a real tsfile
 // SampleStore (not a mock) seeded with genuinely distinct raw and 1m data,
 // pinning all three of: the explicit core.ResRaw/core.Res1m mapping onto
-// their serverwatch.Resolution counterparts, and core.ResAuto's delegation
+// their trinetra.Resolution counterparts, and core.ResAuto's delegation
 // to PickResolution.
 //
 // Timestamps are computed relative to the start of the current minute

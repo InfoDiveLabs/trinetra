@@ -1,4 +1,4 @@
-// Package serverwatch: fleet_provider.go implements core.FleetProvider for
+// Package trinetra: fleet_provider.go implements core.FleetProvider for
 // the daemon. On solo and child it reports just this host ("self"); on a
 // master it adds every enrolled node from the registry, with state from the
 // liveness tracker and metrics from each node's latest live update.

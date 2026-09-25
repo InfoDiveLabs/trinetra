@@ -62,13 +62,13 @@ type configTargetRow struct {
 //
 // This is NOT the full auto-discovered target list the mockup's config.html
 // shows (disk + docker + smart + temp, sourced from
-// internal/serverwatch/discover.go's Discover): internal/web must not import
-// internal/serverwatch, to keep the module graph one-way, and Deps doesn't
+// internal/trinetra/discover.go's Discover): internal/web must not import
+// internal/trinetra, to keep the module graph one-way, and Deps doesn't
 // expose a generic target inventory today -- only Snapshot's disk mounts and
 // whatever overrides already exist in config. Extending Deps with a full
 // target list is future work; scoping to what's actually available here
 // keeps this task's "enable/disable + per-target threshold" contract real
-// and testable without widening the serverwatch/web seam further.
+// and testable without widening the trinetra/web seam further.
 func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow {
 	seen := map[string]bool{}
 	var out []configTargetRow
@@ -101,7 +101,7 @@ func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow 
 // clearTargetThreshold removes a target's threshold override (if any),
 // leaving its Disabled flag untouched -- the config package itself only
 // exposes SetTargetThreshold (always sets), not a way to clear one, since
-// the CLI (`serverwatch target threshold ... `, if it existed) has never
+// the CLI (`trinetra target threshold ... `, if it existed) has never
 // needed to; the web form does, since leaving the "Alert at" cell blank
 // means "use the global threshold above" (configTargetRow.Threshold == "").
 func clearTargetThreshold(c *config.Config, name string) {
@@ -211,7 +211,7 @@ type ConfigPageData struct {
 	// Deliberately not editable here: the page must render no <input> that
 	// config.Set could apply a web.* key from, since a mistaken/forged
 	// origin or rp_id change from the web UI itself could lock an admin out
-	// of passkey login. Managed via `serverwatch config set web.*` instead.
+	// of passkey login. Managed via `trinetra config set web.*` instead.
 	WebEnabled    bool
 	WebMode       string
 	WebOrigin     string

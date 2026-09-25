@@ -80,9 +80,9 @@ func parseFailedUnits(s string) []string {
 
 // DiscoverLocal enumerates monitorable targets on THIS host using the real
 // OS-backed Exec/FileSource (os/exec, os.ReadFile, filepath.Glob) -- the
-// same probes cmdMonitor (systemd.go) runs for `serverwatch monitor list`.
+// same probes cmdMonitor (systemd.go) runs for `trinetra monitor list`.
 // Exported so a caller guaranteed to run on the same host as the daemon it
-// is managing -- serverwatch-ctl, whose control socket is always a local
+// is managing -- trinetra-ctl, whose control socket is always a local
 // unix socket (internal/control), never a network one -- can list targets
 // for its monitor-thresholds screen without duplicating Discover's exec/fs
 // plumbing or routing target discovery through core.API (which would mean

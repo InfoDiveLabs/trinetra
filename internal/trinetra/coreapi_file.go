@@ -1,6 +1,6 @@
-// Package serverwatch: coreapi_file.go implements core.API file-backed --
+// Package trinetra: coreapi_file.go implements core.API file-backed --
 // the counterpart to coreapi_inproc.go's in-process implementation, for the
-// separate CLI process (`serverwatch status`/`dump`/`alerts`/...), which has
+// separate CLI process (`trinetra status`/`dump`/`alerts`/...), which has
 // no access to the running daemon's live memory and so must read everything
 // back off disk: status.json for Snapshot, the configured SampleStore for
 // Series/Events, and alerts.json/alertlog.jsonl for ActiveAlerts/
@@ -201,7 +201,7 @@ func (a *fileAPI) Config() (*config.Config, error) {
 }
 
 // Doctor implements core.API via the shared buildDoctorReport (systemd.go),
-// the same probe orchestration `serverwatch doctor` (cmdDoctor) runs: x/fs
+// the same probe orchestration `trinetra doctor` (cmdDoctor) runs: x/fs
 // are the real osExec{}/osFS{}, same as cmdDoctor itself (there is no
 // injected Exec/FileSource on fileAPI). Unlike inprocAPI.Doctor, this CLI
 // process has no long-lived store to reuse, so it opens the configured
@@ -222,7 +222,7 @@ func (a *fileAPI) Doctor() (core.DoctorReport, error) {
 
 // HostInfo implements core.API (#100). Host-info is cheap host-local data with
 // no daemon dependency, so the CLI path collects it directly (mirroring
-// Doctor/MonitorTargets), which lets `serverwatch-ctl host` work without a
+// Doctor/MonitorTargets), which lets `trinetra-ctl host` work without a
 // running daemon.
 func (a *fileAPI) HostInfo() (core.HostInfoView, error) {
 	return buildHostInfoView(collectHostInfoFor(a.cfg), time.Now().Unix()), nil
@@ -249,7 +249,7 @@ func (a *fileAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 // MonitorTargets implements core.API: unlike EnrollmentPIN above, target
 // discovery needs no live daemon state -- it is the same osExec{}/osFS{}
 // probes DiscoverLocal runs from the daemon, run here from the CLI
-// process' own environment instead (`serverwatch monitor list`,
+// process' own environment instead (`trinetra monitor list`,
 // systemd.go's cmdMonitor, already does exactly this). A real deployment's
 // ctl always talks to the daemon over the control socket (inprocAPI.MonitorTargets),
 // so this path mainly keeps fileAPI a complete core.API implementation for
@@ -260,7 +260,7 @@ func (a *fileAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error)
 
 // ApplyConfig implements core.API: it persists c to cfgPath (saveDaemonCfg:
 // saveCfg with the on-disk fleet identity keys preserved, so only
-// `serverwatch fleet` commands change them) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks
+// `trinetra fleet` commands change them) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks
 // the change up immediately -- the exact save-then-signal sequence every
 // existing CLI config-mutating command follows (see channel.go's
 // cmdChannelAdd/Remove/Set for the pattern this generalizes).

@@ -10,8 +10,8 @@ import (
 // CLI, and the control-socket client) reads daemon state and applies
 // changes. Implementations: an in-process one inside the daemon, a
 // file-backed one for CLI subcommands with no live daemon connection, and
-// control.Client (internal/control), which serverwatch-ctl and
-// serverwatch-web use to reach a running daemon over its control socket.
+// control.Client (internal/control), which trinetra-ctl and
+// trinetra-web use to reach a running daemon over its control socket.
 type API interface {
 	// reads
 	Snapshot() (DashboardView, error)
@@ -47,13 +47,13 @@ type API interface {
 	EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error)
 	// MonitorTargets lists every monitorable target the host currently
 	// exposes (docker containers, disk mounts, network interfaces, the
-	// thermal zone, smart devices -- serverwatch.Discover), independent of
+	// thermal zone, smart devices -- trinetra.Discover), independent of
 	// any config.Config.Targets override: enable/disable and threshold
 	// state live in Config()/ApplyConfig(), not here (mirroring how
 	// MonitorTargets and TargetEnabled/TargetThreshold are already split in
 	// internal/config). Unlike Monitoring(), which internal/web's
 	// Monitoring page polls on every page load, this runs live discovery
-	// (docker ps / df / smartctl --scan) via serverwatch.DiscoverLocal, so
+	// (docker ps / df / smartctl --scan) via trinetra.DiscoverLocal, so
 	// implementations only call it when a caller (ctl's monitor-thresholds
 	// screen) deliberately asks, never as part of another read's hot path.
 	MonitorTargets(ctx context.Context) ([]TargetView, error)

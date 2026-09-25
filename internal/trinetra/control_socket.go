@@ -1,7 +1,7 @@
-// Package serverwatch: control_socket.go starts the control-socket server
+// Package trinetra: control_socket.go starts the control-socket server
 // (internal/control) over the daemon's own core.API (newInprocAPI,
 // coreapi_inproc.go), the transport that lets a separate-process consumer
-// (S3's serverwatch-ctl, S4's serverwatch-web) talk to the running daemon
+// (S3's trinetra-ctl, S4's trinetra-web) talk to the running daemon
 // without going through the CLI's file-backed core.API.
 //
 // This file is deliberately UNTAGGED, same reasoning as coreapi_inproc.go:
@@ -90,7 +90,7 @@ func writeTokenFile(path, token string) error {
 // (controlSocketPath) and returns a stop func that shuts it down, plus the
 // socket path and the per-launch auth token so the caller can hand them to
 // the web supervisor (startWeb, web_supervisor.go), which passes them to the
-// serverwatch-web child via env. The control socket is an enhancement:
+// trinetra-web child via env. The control socket is an enhancement:
 // cmdDaemon treats any error from this as non-fatal (log to stderr, keep
 // running without it) rather than a reason to crash-loop the daemon --
 // callers should follow that same pattern rather than propagating a failure

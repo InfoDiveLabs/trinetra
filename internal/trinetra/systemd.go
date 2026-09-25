@@ -85,7 +85,7 @@ func cmdInstall(args []string) int {
 			// really stopped?" check when systemctl cannot answer.
 			force = true
 		case "--state-already-at-new-path":
-			// The operator moved the serverwatch state volume to the
+			// The operator moved the trinetra state volume to the
 			// trinetra state path; adopt it instead of refusing.
 			opts.stateAtNewPath = true
 		default:

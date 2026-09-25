@@ -12,7 +12,7 @@ import (
 // monitorTargetRow is one Monitor thresholds screen row: a discovered
 // target (core.TargetView, from api.MonitorTargets over the control
 // socket) merged with its current config overrides -- the same enable/
-// threshold state `serverwatch monitor list` reports (systemd.go's
+// threshold state `trinetra monitor list` reports (systemd.go's
 // cmdMonitor) via config.Config.TargetEnabled/TargetThreshold.
 type monitorTargetRow struct {
 	ID           string
@@ -49,7 +49,7 @@ func buildMonitorRows(targets []core.TargetView, cfg *config.Config) []monitorTa
 }
 
 // applyMonitorEnable sets target's enabled/disabled override on cfg via the
-// SAME config.Config.SetTarget setter `serverwatch monitor enable|disable`
+// SAME config.Config.SetTarget setter `trinetra monitor enable|disable`
 // uses (systemd.go's cmdMonitor). SetTarget does no validation (any target
 // id is accepted, matching the CLI, which never checks the id against a
 // live discovery list either), so this cannot fail.
@@ -59,7 +59,7 @@ func applyMonitorEnable(cfg *config.Config, target string, enabled bool) {
 
 // applyMonitorThreshold parses valueStr and sets target's threshold
 // override on cfg via config.Config.SetTargetThreshold, the same parse +
-// setter `serverwatch monitor threshold <target> <value>` uses
+// setter `trinetra monitor threshold <target> <value>` uses
 // (systemd.go's cmdMonitor). Returns a wrapped strconv error (nothing
 // applied) when valueStr isn't a valid float.
 func applyMonitorThreshold(cfg *config.Config, target, valueStr string) error {

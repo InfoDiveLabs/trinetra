@@ -1,10 +1,10 @@
-// Interactive management TUI for serverwatch-ctl, built on Bubble Tea
+// Interactive management TUI for trinetra-ctl, built on Bubble Tea
 // (github.com/charmbracelet/bubbletea). This is the only place in the
 // module that third-party terminal UI packages (bubbletea, bubbles,
-// lipgloss) are imported: cmd/serverwatch-ctl is a separate binary from
-// the serverwatch daemon (cmd/serverwatch), which stays stdlib-only (see
-// internal/serverwatch/buildtag_test.go's TestDefaultBuildIsStdlibOnly,
-// scoped to cmd/serverwatch's own dependency graph for exactly this
+// lipgloss) are imported: cmd/trinetra-ctl is a separate binary from
+// the trinetra daemon (cmd/trinetra), which stays stdlib-only (see
+// internal/trinetra/buildtag_test.go's TestDefaultBuildIsStdlibOnly,
+// scoped to cmd/trinetra's own dependency graph for exactly this
 // reason).
 //
 // The model is deliberately split from the terminal plumbing: Init/Update/

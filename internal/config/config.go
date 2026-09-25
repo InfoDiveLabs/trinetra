@@ -1,5 +1,5 @@
-// Package config is the CLI-managed configuration store for serverwatch.
-// There is no env or hand-edited file: all keys are set via `serverwatch config set`.
+// Package config is the CLI-managed configuration store for trinetra.
+// There is no env or hand-edited file: all keys are set via `trinetra config set`.
 package config
 
 import (
@@ -43,7 +43,7 @@ type Config struct {
 	// (disk/docker/etc.) are unaffected.
 	BaselineMinPct float64 `json:"baseline_min_pct,omitempty"`
 	// BaselineAlerts gates the baseline (z-score) deviation branch of
-	// anomaly evaluation (internal/serverwatch/anomaly.go breach/Evaluate):
+	// anomaly evaluation (internal/trinetra/anomaly.go breach/Evaluate):
 	// threshold-based alerting (disk/docker/service/smart + cpu/mem/swap/
 	// temp over their configured thresholds) is unaffected and always on.
 	// Defaults to false -- field feedback showed spiky host metrics
@@ -98,11 +98,11 @@ type Config struct {
 	// CriticalOverridesQuiet lets disk-full-imminent style alerts bypass quiet hours.
 	CriticalOverridesQuiet bool `json:"critical_overrides_quiet,omitempty"`
 	// Channels holds user-defined notification channels, managed via
-	// `serverwatch channel add|list|remove|set|test`.
+	// `trinetra channel add|list|remove|set|test`.
 	Channels []ChannelConfig `json:"channels,omitempty"`
 	Storage  struct {
 		// Backend selects the SampleStore implementation (see
-		// internal/serverwatch/samplestore.go and docs/handbook/09-storage-and-data-model.md).
+		// internal/trinetra/samplestore.go and docs/handbook/09-storage-and-data-model.md).
 		// One of validStorageBackends; defaults to "tsfile".
 		Backend string `json:"backend,omitempty"`
 		// RawRetention/RollupRetention are duration strings (time.ParseDuration
@@ -119,29 +119,29 @@ type Config struct {
 	// would then re-fill it from Default() (true) instead of honoring it.
 	Collect struct {
 		// ContainerStats gates the slow-tier `docker stats` collector
-		// (internal/serverwatch/docker.go dockerAccess.stats). Defaults to
+		// (internal/trinetra/docker.go dockerAccess.stats). Defaults to
 		// true; nil is treated as true everywhere it's read.
 		ContainerStats *bool `json:"container_stats,omitempty"`
 		// NetThroughput gates the slow-tier per-interface network throughput
-		// collector (internal/serverwatch/net.go NetRateCalc, /proc/net/dev
+		// collector (internal/trinetra/net.go NetRateCalc, /proc/net/dev
 		// deltas -> bytes/sec). Defaults to true; nil is treated as true
 		// everywhere it's read.
 		NetThroughput *bool `json:"net_throughput,omitempty"`
 		// Services gates the slow-tier full systemd unit inventory collector
-		// (internal/serverwatch/discover.go listUnits/parseUnits, snapshot
+		// (internal/trinetra/discover.go listUnits/parseUnits, snapshot
 		// -only -- never persisted as a SampleStore series). Defaults to
 		// true; nil is treated as true everywhere it's read. The existing
 		// `systemctl --failed` alerting collection is separate and always
 		// runs regardless of this setting.
 		Services *bool `json:"services,omitempty"`
 		// Processes gates the slow-tier process-table overview collector
-		// (internal/serverwatch/proc.go collectProcesses: counts + top-N by
+		// (internal/trinetra/proc.go collectProcesses: counts + top-N by
 		// CPU/mem, for the Monitoring "processes" tab). Snapshot-only -- never
 		// persisted as a SampleStore series (per-process cardinality).
 		// Defaults to true; nil is treated as true everywhere it's read.
 		Processes *bool `json:"processes,omitempty"`
 		// SmartAttrs gates the slow-tier per-device `smartctl -A` attribute
-		// reads (internal/serverwatch/daemon.go collectSlow, feeding the
+		// reads (internal/trinetra/daemon.go collectSlow, feeding the
 		// "smart:<dev>:temp" series) -- the heaviest optional per-device call.
 		// Defaults to true; nil is treated as true everywhere it's read. The
 		// cheaper `smartctl --scan`/`-H` health checks are unaffected and
@@ -159,14 +159,14 @@ type Config struct {
 		PublicIP *bool `json:"public_ip,omitempty"`
 	} `json:"collect"`
 	// Web holds the web UI server's settings (internal/web, compiled into
-	// the serverwatch-web binary, no build tag -- see
+	// the trinetra-web binary, no build tag -- see
 	// docs/handbook/12-roadmap-and-status.md epic #56). The default
-	// serverwatch binary never reads these, but the keys live here so
-	// they're manageable via `serverwatch config set` regardless of which
+	// trinetra binary never reads these, but the keys live here so
+	// they're manageable via `trinetra config set` regardless of which
 	// binary is installed.
 	Web struct {
 		// Enabled toggles the web server. Defaults to false: the web UI is
-		// opt-in even in the serverwatch-web binary, which the core daemon
+		// opt-in even in the trinetra-web binary, which the core daemon
 		// only supervises (spawns/restarts) when this is set.
 		Enabled bool `json:"enabled,omitempty"`
 		// Listen is the "host:port" the web server binds, validated with
@@ -205,7 +205,7 @@ type Config struct {
 		SessionTTL string `json:"session_ttl,omitempty"`
 	} `json:"web"`
 	// Public holds the admin-curated exposure settings for the anonymous
-	// /public status page (internal/web, compiled into the serverwatch-web
+	// /public status page (internal/web, compiled into the trinetra-web
 	// binary, no build tag -- see docs/handbook/12-roadmap-and-status.md
 	// issue #67). Both fields default to "off"/empty:
 	// nothing is exposed anonymously until an admin explicitly enables it
@@ -226,7 +226,7 @@ type Config struct {
 	// docs/handbook/02-architecture.md "Fleet mode"). Role empty or "solo" means
 	// no fleet code runs at all -- the default, and exactly today's behaviour.
 	// Role, Address, MasterURL, CAPin and NodeID are written only by the
-	// `serverwatch fleet init|join|leave|disable` commands, never by
+	// `trinetra fleet init|join|leave|disable` commands, never by
 	// `config set` (Set refuses them), because they must change together with
 	// the PKI files those commands create.
 	Fleet struct {
@@ -243,7 +243,7 @@ type Config struct {
 
 // KeepFleetIdentity copies the fleet identity keys (role, address, master
 // URL, CA pin, node id) from onDisk into c. Every config save other than a
-// `serverwatch fleet` command goes through this so only those commands can
+// `trinetra fleet` command goes through this so only those commands can
 // change them; the tunables (listen, outbox_max_mb, node_down_after) stay
 // editable.
 func (c *Config) KeepFleetIdentity(onDisk *Config) {
@@ -363,7 +363,7 @@ func (c *Config) FleetNodeDownAfter() time.Duration {
 }
 
 // fleetManagedKeys are readable via Get but written only by the
-// `serverwatch fleet` commands.
+// `trinetra fleet` commands.
 var fleetManagedKeys = map[string]bool{
 	"fleet.role": true, "fleet.address": true, "fleet.master_url": true,
 	"fleet.ca_pin": true, "fleet.node_id": true,
@@ -376,7 +376,7 @@ type TargetOverride struct {
 
 // ChannelConfig describes one user-configured notification channel. The
 // concrete delivery mechanism (Telegram, email, webhook, ...) is chosen by
-// Type and is built elsewhere (package serverwatch's buildNotifier factory);
+// Type and is built elsewhere (package trinetra's buildNotifier factory);
 // this package only stores and validates the configuration.
 type ChannelConfig struct {
 	Name    string `json:"name"`
@@ -392,15 +392,15 @@ type ChannelConfig struct {
 	CriticalOverridesQuiet bool     `json:"critical_overrides_quiet,omitempty"`
 }
 
-// validSeverities is a local allowlist mirroring serverwatch.Severity's
-// string form. config cannot import package serverwatch (that would create
-// an import cycle, since serverwatch imports config), so severity strings
-// are validated here independently rather than via serverwatch.ParseSeverity.
+// validSeverities is a local allowlist mirroring trinetra.Severity's
+// string form. config cannot import package trinetra (that would create
+// an import cycle, since trinetra imports config), so severity strings
+// are validated here independently rather than via trinetra.ParseSeverity.
 var validSeverities = map[string]bool{"info": true, "warning": true, "critical": true}
 
 // validStorageBackends allowlists storage.backend. "tsfile" is the design's
 // default backend (docs/handbook/09-storage-and-data-model.md, lands in a later task); "memory"
-// is the in-memory reference SampleStore (internal/serverwatch/samplestore.go).
+// is the in-memory reference SampleStore (internal/trinetra/samplestore.go).
 var validStorageBackends = map[string]bool{"tsfile": true, "memory": true}
 
 // validateStorageBackend rejects anything outside validStorageBackends.
@@ -1102,13 +1102,13 @@ func (c *Config) Set(key, val string) error {
 	return nil
 }
 
-// KeyInfo describes one flat, settable config key for serverwatch-ctl's
+// KeyInfo describes one flat, settable config key for trinetra-ctl's
 // generic "all settings" browse/edit screen (issue #91): every string this
 // package's Set/Get accept, annotated with a human display Group, a short
 // value-Kind hint, a one-line Help description, and whether the daemon must
 // be restarted before a change takes effect. This is pure data, no new
-// imports, so it does not touch cmd/serverwatch's stdlib-only dependency
-// graph (internal/serverwatch/buildtag_test.go TestDefaultBuildIsStdlibOnly).
+// imports, so it does not touch cmd/trinetra's stdlib-only dependency
+// graph (internal/trinetra/buildtag_test.go TestDefaultBuildIsStdlibOnly).
 //
 // Kind is a hint only ("int", "float", "bool", "string", "enum", "csv", or
 // "duration") for how a caller should present a value before handing it to

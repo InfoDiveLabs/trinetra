@@ -37,7 +37,7 @@ func New(token, chatID string) *Client {
 }
 
 // telegramMaxMessageLen is Telegram's hard limit on a single sendMessage
-// text (4096 characters). Renderers (internal/serverwatch/status.go) are
+// text (4096 characters). Renderers (internal/trinetra/status.go) are
 // designed to stay well under this via summary-first/only-failures
 // rendering, but this is the safety net for whatever still doesn't: a
 // message this size used to come back as an HTTP 400 that daemon.go

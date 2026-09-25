@@ -1,4 +1,4 @@
-// Package serverwatch: fleet_replica.go is the master's side of fleet
+// Package trinetra: fleet_replica.go is the master's side of fleet
 // ingest: a fleet.Sink that writes each child's records into its own tsfile
 // store under <stateDir>/fleet/nodes/<id>/, plus a core.API view over that
 // replica so every existing per-server read works for a remote node.

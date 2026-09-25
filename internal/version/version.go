@@ -1,6 +1,6 @@
-// Package version carries the product/release version each serverwatch binary
+// Package version carries the product/release version each trinetra binary
 // was built with (#107). The Version var is stamped at build time via
-// -ldflags "-X serverwatch/internal/version.Version=<v>" (see the Makefile),
+// -ldflags "-X trinetra/internal/version.Version=<v>" (see the Makefile),
 // so the core daemon, the ctl plugin, and the web plugin each report their own
 // compiled-in version, and a partial upgrade (a plugin older than the core it
 // dials) becomes observable rather than silent.

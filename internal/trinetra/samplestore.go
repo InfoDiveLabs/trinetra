@@ -1,4 +1,4 @@
-// Package serverwatch: samplestore.go defines the SampleStore abstraction
+// Package trinetra: samplestore.go defines the SampleStore abstraction
 // described in docs/handbook/09-storage-and-data-model.md -- the swappable seam between the
 // daemon/handlers/digests and the concrete time-series storage engine.
 //
@@ -72,7 +72,7 @@ type SampleStore interface {
 	// (tsFileStore: the number of .tsd files on disk across raw/1m/events;
 	// memStore: the number of in-memory metric series) and diskBytes is the
 	// total bytes those series occupy on disk (always 0 for memStore, which
-	// is non-persistent). `serverwatch doctor` surfaces this as a
+	// is non-persistent). `trinetra doctor` surfaces this as a
 	// cardinality/disk guardrail (docs/handbook/12-roadmap-and-status.md Epic #69 x7).
 	Stats() (seriesCount int, diskBytes int64, err error)
 }

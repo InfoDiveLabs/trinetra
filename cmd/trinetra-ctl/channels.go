@@ -16,13 +16,13 @@ import (
 )
 
 // channelTypeChoices enumerates every channel type buildNotifier
-// (internal/serverwatch/channels.go) implements, in the order offered when
+// (internal/trinetra/channels.go) implements, in the order offered when
 // adding a channel.
 var channelTypeChoices = []string{"telegram", "email", "webhook", "slack", "discord", "ntfy", "gotify"}
 
 // channelFieldDef is one per-type Settings field the add/edit screen walks
 // the user through, in order. Key matches the Settings map key buildNotifier
-// reads for that type (internal/serverwatch/channels.go); Required is
+// reads for that type (internal/trinetra/channels.go); Required is
 // informational only here -- buildNotifier (via the validate-before-save
 // gate below) is still the source of truth an empty required field fails
 // against, this package does not duplicate that check.
@@ -34,7 +34,7 @@ type channelFieldDef struct {
 
 // channelTypeFields lists channelFieldDefs per channel type, mirroring
 // exactly what buildNotifier reads out of cc.Settings for that type
-// (internal/serverwatch/channels.go), so the ctl screen never asks for (or
+// (internal/trinetra/channels.go), so the ctl screen never asks for (or
 // omits) a field the daemon doesn't actually use.
 var channelTypeFields = map[string][]channelFieldDef{
 	"telegram": {
@@ -111,7 +111,7 @@ func buildChannelConfig(ans channelAnswers) config.ChannelConfig {
 }
 
 // applyChannelAdd appends a new channel built from ans onto cfg, mirroring
-// `serverwatch channel add`'s (internal/serverwatch/channel.go) own
+// `trinetra channel add`'s (internal/trinetra/channel.go) own
 // duplicate-name check: it refuses, leaving cfg untouched, if a channel
 // named ans.Name already exists (or ans.Name is empty).
 func applyChannelAdd(cfg *config.Config, ans channelAnswers) error {
@@ -187,7 +187,7 @@ func saveChannel(api core.API, cfg *config.Config, name string, ans channelAnswe
 }
 
 // sortedChannels returns a stable-ordered copy of cfg's channels sorted by
-// name, the same order printChannelList (internal/serverwatch/channel.go)
+// name, the same order printChannelList (internal/trinetra/channel.go)
 // uses for `channel list`, so the ctl screen's row order never depends on
 // json.Unmarshal's (unspecified) slice order.
 func sortedChannels(cfg *config.Config) []config.ChannelConfig {

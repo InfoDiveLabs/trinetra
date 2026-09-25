@@ -22,17 +22,17 @@ const sessionGCInterval = 10 * time.Minute
 // registration ceremony: webAuthnConfig/beginRegistration/
 // finishRegistration in auth_webauthn.go, and *User's webauthn.User
 // implementation in users.go (issue #60). This package is compiled into the
-// serverwatch-web binary, no build tag.
+// trinetra-web binary, no build tag.
 
 // Deps is what the web server needs from the running daemon, expressed
-// without importing internal/serverwatch (internal/web must never import
-// internal/serverwatch, to keep the module graph one-way). API is this
+// without importing internal/trinetra (internal/web must never import
+// internal/trinetra, to keep the module graph one-way). API is this
 // package's single seam onto the daemon's live state (see Deps.API's own
 // doc below): the dashboard,
 // monitoring, history/series, and downtime handlers all read through it,
 // and its write methods (ApplyConfig/TestChannel/AckAlert/UnackAlert) cover
 // config and channel writes too, so this package never needs to import
-// serverwatch's own store/config-reload types directly.
+// trinetra's own store/config-reload types directly.
 type Deps struct {
 	// Cfg returns the current config (race-safe against the daemon's reload).
 	Cfg func() *config.Config
@@ -72,10 +72,10 @@ type Deps struct {
 	Events EventsStore
 	// Snapshot returns the latest live snapshot, already projected into this
 	// package's own DashboardView (dashboard_view.go) by
-	// internal/serverwatch/coreapi_inproc.go's buildDashboardView, then
-	// carried here over the control socket by the serverwatch-web binary's
-	// buildDeps (cmd/serverwatch-web) -- see that type's doc for why the
-	// projection (rather than serverwatch.Snapshot itself) is what
+	// internal/trinetra/coreapi_inproc.go's buildDashboardView, then
+	// carried here over the control socket by the trinetra-web binary's
+	// buildDeps (cmd/trinetra-web) -- see that type's doc for why the
+	// projection (rather than trinetra.Snapshot itself) is what
 	// crosses this boundary. Lock-free/cheap: safe to call from any
 	// goroutine, any number of times. Still used directly by the SSE
 	// handlers (sse.go, on every tick), the sidebar nav counts
@@ -90,18 +90,18 @@ type Deps struct {
 	// socket, so the plugin reads no daemon-owned state off disk.
 	StateDir string
 	// TestChannel sends a one-off test notification through the named
-	// channel (internal/serverwatch/daemon.go's testChannel closure, built
-	// from sendTestNotification/buildNotifier -- the same logic `serverwatch
+	// channel (internal/trinetra/daemon.go's testChannel closure, built
+	// from sendTestNotification/buildNotifier -- the same logic `trinetra
 	// channel test <name>` uses). As of task 8, channelsTestHandler
 	// (handlers_channels.go) reads through Deps.API.TestChannel instead --
-	// this field is kept on Deps (still assigned by the serverwatch-web
-	// binary's buildDeps, cmd/serverwatch-web) but no
+	// this field is kept on Deps (still assigned by the trinetra-web
+	// binary's buildDeps, cmd/trinetra-web) but no
 	// longer read by this package; it stays only in case a future
 	// non-core.API consumer needs it directly.
 	TestChannel func(name string) error
 	// ValidateChannel reports whether a channel config could actually build a
-	// working notifier (the serverwatch-web binary's buildDeps wires it to
-	// client.ValidateChannel, which dry-runs serverwatch.buildNotifier on the
+	// working notifier (the trinetra-web binary's buildDeps wires it to
+	// client.ValidateChannel, which dry-runs trinetra.buildNotifier on the
 	// daemon side over the control socket), the same check `channel test` and
 	// delivery use, minus the network send.
 	// The channels handlers call it before persisting an ENABLED channel so
@@ -119,7 +119,7 @@ type Deps struct {
 	// Subscribe opens a live event stream: the daemon's core.API.Subscribe
 	// (Task 2's socket streaming), adapted into this package's own LiveEvent
 	// type (see LiveEvent's doc) so internal/web never needs to import
-	// core.Event for this path -- the serverwatch-web binary's buildDeps
+	// core.Event for this path -- the trinetra-web binary's buildDeps
 	// wires this to a closure calling client.Subscribe(ctx) and copying each
 	// core.Event's fields into a LiveEvent. nil when unavailable (e.g. a
 	// test that doesn't exercise the SSE handlers): eventsHandler/
@@ -132,12 +132,12 @@ type Deps struct {
 // (per cfg.Web.Mode, see serving.go's listenAndServe) when Deps.Enabled and
 // returns a stop func that gracefully shuts it down. If Deps.Enabled is
 // false, Start binds nothing and returns a no-op stop and a nil error: the
-// serverwatch-web binary calls Start unconditionally (see cmd/serverwatch-web),
+// trinetra-web binary calls Start unconditionally (see cmd/trinetra-web),
 // so "disabled" has to be a valid, harmless outcome here rather than an error.
 //
 // When Enabled is true, Start first calls validateOrigin (issue #59) to
 // fail fast on a passkey-unsafe or incomplete web.* config BEFORE binding
-// anything: a non-nil return here means the caller (serverwatch-web) must
+// anything: a non-nil return here means the caller (trinetra-web) must
 // log it and treat the web server as not started, while it itself
 // keeps running.
 func Start(d Deps) (stop func(), err error) {

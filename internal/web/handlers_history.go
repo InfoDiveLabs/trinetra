@@ -85,7 +85,7 @@ func parseSeriesRange(r *http.Request) (from, to int64, ok bool) {
 // core.ResAuto is passed for the resolution: this endpoint preserves the
 // pre-core.API behavior of letting the implementation pick raw-vs-1m off the
 // requested range and the daemon's configured storage.raw_retention
-// (serverwatch.PickResolution, wrapped by inprocAPI.Series) rather than this
+// (trinetra.PickResolution, wrapped by inprocAPI.Series) rather than this
 // package ever needing a Resolution type of its own.
 func seriesAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

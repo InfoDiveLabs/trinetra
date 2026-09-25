@@ -11,7 +11,7 @@ import (
 )
 
 // configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like
-// the real daemon's (see internal/serverwatch/daemon.go's reload closure):
+// the real daemon's (see internal/trinetra/daemon.go's reload closure):
 // Cfg() returns whatever was last successfully applied, so a test can POST
 // /config or /channels and then assert against Cfg() the same way the real
 // web server would after a live SIGHUP-free reload. Both Deps.Reload (still

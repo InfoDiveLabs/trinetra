@@ -331,8 +331,8 @@ func applyHealthchecksCmd(api core.API, raw string) tea.Cmd {
 
 // discoverMonitorCmd calls api.MonitorTargets over the control socket --
 // the daemon runs its own live target discovery (docker/df/smartctl probes,
-// serverwatch.DiscoverLocal) and reports back a []core.TargetView, so ctl
-// never has to import internal/serverwatch or run those probes itself --
+// trinetra.DiscoverLocal) and reports back a []core.TargetView, so ctl
+// never has to import internal/trinetra or run those probes itself --
 // alongside a fresh Config fetch, so the Monitor thresholds screen can merge
 // them via buildMonitorRows.
 func discoverMonitorCmd(api core.API) tea.Cmd {
@@ -348,7 +348,7 @@ func discoverMonitorCmd(api core.API) tea.Cmd {
 
 // applyMonitorEnableCmd fetches Config fresh, flips target's enabled state
 // via applyMonitorEnable (manage_monitor.go), and posts it with
-// ApplyConfig -- one atomic apply per toggle, matching `serverwatch
+// ApplyConfig -- one atomic apply per toggle, matching `trinetra
 // monitor enable|disable` doing one save per invocation.
 func applyMonitorEnableCmd(api core.API, target string, enabled bool) tea.Cmd {
 	return func() tea.Msg {
@@ -395,7 +395,7 @@ func fetchChannelsConfigCmd(api core.API) tea.Cmd {
 
 // removeChannelCmd fetches Config fresh, removes name via applyChannelRemove
 // (channels.go), and posts it with ApplyConfig -- one atomic apply per
-// removal, matching `serverwatch channel remove` doing one save per
+// removal, matching `trinetra channel remove` doing one save per
 // invocation. The freshly-applied cfg comes back on channelActionMsg so the
 // list can be rebuilt from what was actually saved.
 func removeChannelCmd(api core.API, name string) tea.Cmd {
@@ -416,7 +416,7 @@ func removeChannelCmd(api core.API, name string) tea.Cmd {
 
 // testChannelCmd calls api.TestChannel(name) -- the same send-a-real-test-
 // notification path `channel test`/the web channels page's "send test"
-// button use (sendTestNotification, internal/serverwatch/channel.go) --
+// button use (sendTestNotification, internal/trinetra/channel.go) --
 // against the channel as it is CURRENTLY saved on the daemon; it does not
 // touch config.
 func testChannelCmd(api core.API, name string) tea.Cmd {

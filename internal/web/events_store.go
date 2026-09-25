@@ -13,10 +13,10 @@ type DownEventView = core.DownEventView
 // EventsStore is this package's own minimal seam onto the daemon's downtime
 // event log: Events returns the downtime events overlapping [from, to]
 // (Unix seconds). This is the Task 9 (#65) pattern: internal/web must never
-// import internal/serverwatch (the directional-import rule that keeps the
-// module graph one-way), so it cannot reference serverwatch.SampleStore or
-// serverwatch.DownEvent directly. This interface is internal/web's own shape,
-// and the serverwatch-web binary satisfies it with its control-socket client
+// import internal/trinetra (the directional-import rule that keeps the
+// module graph one-way), so it cannot reference trinetra.SampleStore or
+// trinetra.DownEvent directly. This interface is internal/web's own shape,
+// and the trinetra-web binary satisfies it with its control-socket client
 // (control.Client), which returns the same DownEventView values over the
 // socket.
 //

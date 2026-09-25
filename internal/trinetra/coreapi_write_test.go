@@ -1,4 +1,4 @@
-// Package serverwatch: coreapi_write_test.go covers the task-8 write methods
+// Package trinetra: coreapi_write_test.go covers the task-8 write methods
 // (ApplyConfig/AckAlert/UnackAlert/TestChannel) on both core.API
 // implementations -- the counterpart to coreapi_inproc_test.go/
 // coreapi_file_test.go's read-method coverage.

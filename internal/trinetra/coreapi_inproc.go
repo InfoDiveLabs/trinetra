@@ -1,17 +1,17 @@
-// Package serverwatch: coreapi_inproc.go implements core.API in-process,
+// Package trinetra: coreapi_inproc.go implements core.API in-process,
 // adapting the running daemon's live state (Snapshot, SampleStore, config,
 // alert files) directly -- no HTTP/socket round-trip. This is the daemon's
 // own consumer of the core.API contract (internal/core/api.go, task 3): the
-// serverwatch-web binary, over the control socket, and, eventually, an
+// trinetra-web binary, over the control socket, and, eventually, an
 // in-process CLI path both read through this contract rather than reaching
-// into serverwatch internals themselves.
+// into trinetra internals themselves.
 //
 // This file never imports internal/web: core.API and its DTOs live in
 // internal/core, which imports nothing but stdlib + internal/config (see
 // internal/core/doc.go), so building this adapter never pulls internal/web's
 // third-party dependencies into the default build. That's also why
 // buildDashboardView/buildMonitoringView (below) live here rather than in
-// internal/web itself: both this in-process API and the serverwatch-web
+// internal/web itself: both this in-process API and the trinetra-web
 // binary (which gets its data through core.API over the control socket)
 // need the exact same Snapshot -> view projection, and this package never
 // has to import internal/web to provide it.
@@ -31,10 +31,10 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
-// buildDashboardView adapts a serverwatch.Snapshot (native to this package)
+// buildDashboardView adapts a trinetra.Snapshot (native to this package)
 // into a core.DashboardView -- the Task 8 (#64) resolution of the Task 1
 // placeholder that made Deps.Snapshot return `any`, re-homed here (task 4)
-// so the default build can construct one too, not just the serverwatch-web
+// so the default build can construct one too, not just the trinetra-web
 // binary.
 //
 // CONCURRENCY: snap is a value the caller (d.Snapshot(), ultimately
@@ -116,7 +116,7 @@ func degradedCollectorViews(health map[string]CollectorStat) []core.CollectorHea
 	return out
 }
 
-// buildMonitoringView adapts a serverwatch.Snapshot plus the daemon's
+// buildMonitoringView adapts a trinetra.Snapshot plus the daemon's
 // current config (for the collect.services/collect.processes opt-in
 // toggles -- see the doc atop core.MonitoringView) into a core.MonitoringView,
 // the /monitoring detail page's counterpart to buildDashboardView above.
@@ -431,7 +431,7 @@ func (a *inprocAPI) Monitoring() (core.MonitoringView, error) {
 // Series implements core.API: core.ResAuto resolves to raw-vs-1m via the
 // existing PickResolution (the same age/config-dependent picker) against
 // the daemon's configured storage.raw_retention; core.ResRaw/core.Res1m map
-// straight onto their serverwatch.Resolution counterparts. A nil store (
+// straight onto their trinetra.Resolution counterparts. A nil store (
 // store-writes-disabled mode) degrades to an empty result rather than a
 // panic, mirroring every other store-backed method here.
 func (a *inprocAPI) Series(metric string, from, to int64, res core.Resolution) ([]core.SeriesPoint, error) {
@@ -511,7 +511,7 @@ func (a *inprocAPI) Config() (*config.Config, error) {
 }
 
 // Doctor implements core.API via the shared buildDoctorReport (systemd.go),
-// the same probe orchestration `serverwatch doctor` (cmdDoctor) runs --
+// the same probe orchestration `trinetra doctor` (cmdDoctor) runs --
 // x/fs are the real osExec{}/osFS{} (there is no injected Exec/FileSource on
 // inprocAPI, same as cmdDoctor itself), but the SampleStore is this
 // inprocAPI's own live a.store (possibly nil in store-writes-disabled mode,
@@ -540,7 +540,7 @@ func (a *inprocAPI) ContainerLogs(name string, lines int) (string, error) {
 	return collectContainerLogs(osExec{}, osFS{}, name, lines)
 }
 
-// buildHostInfoView adapts the serverwatch HostInfo into the core DTO, deriving
+// buildHostInfoView adapts the trinetra HostInfo into the core DTO, deriving
 // UptimeSec from BootTime and nowUnix (a cached BootTime therefore yields a
 // correct uptime on every read). A zero/unknown BootTime yields uptime 0.
 func buildHostInfoView(h HostInfo, nowUnix int64) core.HostInfoView {
@@ -675,7 +675,7 @@ func (a *inprocAPI) UnackAlert(key string) error {
 
 // TestChannel implements core.API: it calls sendTestNotification
 // (channel.go) against the LIVE config (a.getCfg(), race-safe against a
-// concurrent SIGHUP/Reload), mirroring `serverwatch channel test <name>`
+// concurrent SIGHUP/Reload), mirroring `trinetra channel test <name>`
 // (channel.go's cmdChannelTest) -- for the web channels page's "Send test"
 // button (issue #66), reached over the control socket rather than a
 // daemon-local closure now that the web UI is out-of-process.

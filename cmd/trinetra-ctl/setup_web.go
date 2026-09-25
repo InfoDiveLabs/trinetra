@@ -98,7 +98,7 @@ func validateManualPath(label, val string) error {
 }
 
 // applyWebSetup applies ans onto cfg via config.Config.Set, the same
-// validated setter `serverwatch-ctl config set`/the web config page use, so
+// validated setter `trinetra-ctl config set`/the web config page use, so
 // the wizard gets exactly the same validation (web.listen host:port shape,
 // web.mode allowlist) for free instead of duplicating it. It returns the
 // first validation error encountered (nothing is applied, and nothing to

@@ -292,7 +292,7 @@ func TestHandleConnEnrollmentPINRoundTrip(t *testing.T) {
 // errEnrollNeedsDaemon (or any other EnrollmentPIN error) must come back
 // over the wire as ok=false, not a zero-value success.
 func TestHandleConnEnrollmentPINPropagatesError(t *testing.T) {
-	fake := &fakeAPI{enrollErr: errors.New("serverwatch: enrollment pin requires a running daemon")}
+	fake := &fakeAPI{enrollErr: errors.New("trinetra: enrollment pin requires a running daemon")}
 	client, r, done := dialTestConn(t, fake)
 	defer client.Close()
 
@@ -301,7 +301,7 @@ func TestHandleConnEnrollmentPINPropagatesError(t *testing.T) {
 	if resp.OK {
 		t.Fatalf("resp.OK = true, want false (error propagation)")
 	}
-	if resp.Error != "serverwatch: enrollment pin requires a running daemon" {
+	if resp.Error != "trinetra: enrollment pin requires a running daemon" {
 		t.Errorf("resp.Error = %q, want the fake's enrollErr text", resp.Error)
 	}
 

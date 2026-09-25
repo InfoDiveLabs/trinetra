@@ -1,4 +1,4 @@
-// Package serverwatch: coreapi_alerts.go holds the AlertState/AlertLog ->
+// Package trinetra: coreapi_alerts.go holds the AlertState/AlertLog ->
 // []core.AlertRecord mapping shared by both core.API implementations
 // (inprocAPI.ActiveAlerts/AlertHistory in coreapi_inproc.go, and
 // fileAPI.ActiveAlerts/AlertHistory in coreapi_file.go). Before this file

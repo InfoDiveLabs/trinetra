@@ -13,7 +13,7 @@ import "github.com/InfoDiveLabs/trinetra/internal/config"
 // needsOnboarding reports whether ctl should offer the guided first-run
 // flow: telegram isn't configured at all (no token) or is configured but
 // not yet enrolled (no chat id) -- the same "configured AND not enrolled"
-// split enrollState.PIN (internal/serverwatch/enroll.go) uses to decide
+// split enrollState.PIN (internal/trinetra/enroll.go) uses to decide
 // whether there's an active enrollment pin at all. A nil cfg (e.g. the
 // initial Config() fetch failed) is treated as needing onboarding too, so a
 // transient fetch error doesn't hide the flow from a genuinely fresh
@@ -26,7 +26,7 @@ func needsOnboarding(cfg *config.Config) bool {
 }
 
 // applyOnboardToken sets telegram.token on cfg via the SAME validated
-// config.Set setter `serverwatch telegram set-token` uses (systemd.go's
+// config.Set setter `trinetra telegram set-token` uses (systemd.go's
 // cmdTelegram), so the guided flow gets identical treatment (today a no-op
 // validator, but wired the same way schedule/quiet-hours/healthchecks are
 // in manage_schedule.go/manage_quiet.go/manage_health.go).

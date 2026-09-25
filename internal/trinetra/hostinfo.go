@@ -1,4 +1,4 @@
-// Package serverwatch: hostinfo.go collects static host hardware/OS inventory
+// Package trinetra: hostinfo.go collects static host hardware/OS inventory
 // (#100): RAM, CPU model and core/thread split, kernel and OS, per-disk model
 // and rotational type, and the host boot time (uptime is derived at read time).
 // All reads go through the injected Exec/FileSource seam so the parsers are

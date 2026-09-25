@@ -1,4 +1,4 @@
-// Package serverwatch: coreapi_alerts_test.go pins the S3-task-1 field
+// Package trinetra: coreapi_alerts_test.go pins the S3-task-1 field
 // mapping (core.AlertRecord's AckedAt/Title/Delivered) added on top of the
 // pre-existing Key/Severity/Kind/Source/Time/Acked mapping already covered
 // by TestActiveAlertsMapsFields/TestAlertHistoryNewestFirstAndLimit.

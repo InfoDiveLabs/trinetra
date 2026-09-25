@@ -10,12 +10,12 @@ import "fmt"
 // whenever it was "warn", no matter how many alerts were actually active.
 //
 // Severity comes from each active alert's Critical flag
-// (serverwatch.ActiveAlert.Critical, set at fire time from the breaching
+// (trinetra.ActiveAlert.Critical, set at fire time from the breaching
 // Check's own Critical field): any active critical alert makes the pill
 // "crit"; short of that, any active (non-critical) alert makes it "warn";
 // with none active it's "ok". Ack state is deliberately NOT weighed here --
 // an acked alert is still an active condition, just a silenced notification
-// (see AlertState.Ack's doc, internal/serverwatch/anomaly.go) -- the /alerts
+// (see AlertState.Ack's doc, internal/trinetra/anomaly.go) -- the /alerts
 // page's own firing/acked breakdown is a separate, more detailed view.
 func topbarStatus(alerts []activeAlertView) (status, text string) {
 	var crit, warn int

@@ -1,4 +1,4 @@
-// Package serverwatch: fleet_cmd.go is the `serverwatch fleet` command. Role
+// Package trinetra: fleet_cmd.go is the `trinetra fleet` command. Role
 // changes (init/join/leave/disable) edit config and PKI files directly and
 // ask for a restart, because the daemon reads the role once at start. Every
 // other subcommand goes through the running daemon's control socket, which

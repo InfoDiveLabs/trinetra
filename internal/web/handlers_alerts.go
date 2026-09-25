@@ -14,7 +14,7 @@ import (
 // socket (Deps.API.AlertHistory) rather than decoding the alertlog.jsonl file
 // off disk: a plugin must not read daemon-owned state from disk. It requests
 // the whole log (since 0, no limit) newest-first -- alertHistoryRecords
-// (serverwatch) already sorts it that way -- and the callers cap/window it as
+// (trinetra) already sorts it that way -- and the callers cap/window it as
 // before (alertHistoryRows to maxAlertHistoryRows, resolvedInWindow to 7d). A
 // nil API or a read error degrades to nil (empty history) rather than failing
 // the page, the same display-only tolerance the old loadAlertLogEvents had.
