@@ -1561,3 +1561,20 @@ func TestKeyCatalogCoversEverySetKey(t *testing.T) {
 		}
 	}
 }
+
+// The master reads fleet.node_down_after once, when it builds its liveness
+// tracker at start, so the key needs a restart like the other fleet tunables.
+func TestFleetKeysRequireRestart(t *testing.T) {
+	want := map[string]bool{"fleet.listen": true, "fleet.outbox_max_mb": true, "fleet.node_down_after": true}
+	for _, k := range Keys() {
+		if want[k.Name] {
+			if !k.RestartRequired {
+				t.Errorf("%s: RestartRequired = false", k.Name)
+			}
+			delete(want, k.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("keys missing from catalog: %v", want)
+	}
+}

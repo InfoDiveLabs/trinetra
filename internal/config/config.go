@@ -1196,7 +1196,7 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "fleet.listen", Group: "Fleet", Kind: "string", Help: "Master only: fleet listener bind address as host:port. Default :9443.", RestartRequired: true},
 	{Name: "fleet.outbox_max_mb", Group: "Fleet", Kind: "int", Help: "Child only: max MiB of telemetry spooled while the master is unreachable. Default 512.", RestartRequired: true},
-	{Name: "fleet.node_down_after", Group: "Fleet", Kind: "duration", Help: "Master only: no contact for this long marks a node down and alerts. Default 2m."},
+	{Name: "fleet.node_down_after", Group: "Fleet", Kind: "duration", Help: "Master only: no contact for this long marks a node down and alerts. Default 2m.", RestartRequired: true},
 
 	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
 }
