@@ -87,3 +87,67 @@ func TestNodeAlerterMassDisconnectIsOneIncident(t *testing.T) {
 		t.Fatalf("mass recover intents = %+v", in)
 	}
 }
+
+// TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers reproduces the review
+// finding: a,b,c go silent and open a mass incident; d,e,f then go silent
+// too (only reaching "stale", not yet "down") while the incident is already
+// open; a,b,c reconnect. The incident must NOT resolve while d,e,f are still
+// lost (whether stale or, later, down), no individual down alert may ever
+// fire for d,e,f, and exactly one connectivity-recover intent must fire once
+// every node is finally back.
+func TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers(t *testing.T) {
+	tr := NewTracker(cfgT())
+	ids := []string{"a", "b", "c", "d", "e", "f"}
+	tr.Seed(ids, nil, 0)
+	al := NewNodeAlerter()
+
+	// d,e,f are still fresh when a,b,c go down and open the incident.
+	tr.Seen("d", 115, 0)
+	tr.Seen("e", 115, 0)
+	tr.Seen("f", 115, 0)
+	in := al.Plan(tr.Evaluate(121), 121, names)
+	if len(in) != 1 || in[0].Key != "fleet:connectivity" || in[0].Recover {
+		t.Fatalf("open intents = %+v", in)
+	}
+
+	// d,e,f go stale (not yet down) while the incident is open: must join
+	// silently, no alert emitted.
+	in = al.Plan(tr.Evaluate(200), 200, names)
+	if len(in) != 0 {
+		t.Fatalf("stale-join intents = %+v", in)
+	}
+
+	// a,b,c reconnect while d,e,f are still stale: the incident must stay
+	// open (this is exactly the bug: it used to fire an early Recover here).
+	tr.Seen("a", 230, 0)
+	tr.Seen("b", 230, 0)
+	tr.Seen("c", 230, 0)
+	in = al.Plan(tr.Evaluate(230), 230, names)
+	if len(in) != 0 {
+		t.Fatalf("premature intents while d/e/f still stale = %+v", in)
+	}
+
+	// d,e,f now roll from stale to down without ever being paged individually.
+	in = al.Plan(tr.Evaluate(250), 250, names)
+	if len(in) != 0 {
+		t.Fatalf("stale->down intents for late members = %+v", in)
+	}
+
+	// Finally d,e,f reconnect: exactly one connectivity recover, no
+	// individual down alert was ever raised for d, e or f.
+	tr.Seen("d", 260, 0)
+	tr.Seen("e", 260, 0)
+	tr.Seen("f", 260, 0)
+	in = al.Plan(tr.Evaluate(260), 260, names)
+	if len(in) != 1 || in[0].Key != "fleet:connectivity" || !in[0].Recover {
+		t.Fatalf("final recover intents = %+v", in)
+	}
+	for _, id := range []string{"d", "e", "f"} {
+		key := "fleet:node:" + id + ":down"
+		for _, intent := range in {
+			if intent.Key == key {
+				t.Fatalf("individual alert for late member %s: %+v", id, intent)
+			}
+		}
+	}
+}

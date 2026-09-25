@@ -200,30 +200,45 @@ func humanDur(sec int64) string {
 }
 
 // Plan returns the alerts to raise/resolve for ev. A mass disconnect opens
-// one fleet:connectivity incident; nodes that are part of it (or go down
-// while it is open) are not paged individually, and the incident resolves
-// once every member is back.
+// one fleet:connectivity incident; nodes that are part of it (or go stale or
+// down while it is open, even if they join after the incident opened) are
+// not paged individually. Membership is added, never inferred solely from
+// the opening ev.MassDown set: every tick the incident is open, any node
+// newly reported in ev.MassDown or newly transitioning to stale or down
+// (and not already individually alerted) joins the incident. A member
+// leaves only when it transitions to online, lagging or revoked, and the
+// incident resolves once every member has left — so a node that goes silent
+// after the incident opened, and is still lost when the original members
+// recover, correctly keeps the incident open instead of triggering an early
+// "restored" alert followed by a late, separate individual page.
 func (a *NodeAlerter) Plan(ev Evaluation, now int64, name func(id string) string) []AlertIntent {
 	var out []AlertIntent
 	if !a.massActive && len(ev.MassDown) > 0 {
 		a.massActive = true
-		for _, id := range ev.MassDown {
-			if _, ok := a.alerted[id]; !ok {
-				a.massMembers[id] = true
-			}
-		}
 		out = append(out, AlertIntent{
 			Key:      "fleet:connectivity",
 			Title:    fmt.Sprintf("🔴 Fleet connectivity: %d nodes lost contact at once (check the master's network)", len(ev.MassDown)),
 			Critical: true,
 		})
 	}
+	if a.massActive {
+		for _, id := range ev.MassDown {
+			if _, ok := a.alerted[id]; !ok {
+				a.massMembers[id] = true
+			}
+		}
+	}
 	for _, tr := range ev.Transitions {
 		switch tr.To {
-		case StateDown:
+		case StateDown, StateStale:
 			if a.massActive {
-				a.massMembers[tr.NodeID] = true
+				if _, ok := a.alerted[tr.NodeID]; !ok {
+					a.massMembers[tr.NodeID] = true
+				}
 				continue
+			}
+			if tr.To == StateStale {
+				continue // still lost; nothing to do
 			}
 			a.alerted[tr.NodeID] = tr.LastSeen
 			out = append(out, AlertIntent{
@@ -231,8 +246,6 @@ func (a *NodeAlerter) Plan(ev Evaluation, now int64, name func(id string) string
 				Title:    fmt.Sprintf("🔴 %s is down: no contact for %s", name(tr.NodeID), humanDur(now-tr.LastSeen)),
 				Critical: true,
 			})
-		case StateStale:
-			// still lost; nothing to do
 		default: // online, lagging, revoked: the node is reachable again (or retired)
 			delete(a.massMembers, tr.NodeID)
 			if since, ok := a.alerted[tr.NodeID]; ok {
