@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,5 +89,83 @@ func TestTokenCreateValidates(t *testing.T) {
 	}
 	if _, _, err := s.Create(time.Hour, 1, []string{"bad tag!"}, "a", now); err == nil {
 		t.Fatal("bad tag accepted")
+	}
+}
+
+func TestTokenConsumeRollsBackOnSaveFailure(t *testing.T) {
+	// Skip if running as root (can't make directories read-only)
+	if os.Geteuid() == 0 {
+		t.Skip("skipping as root")
+	}
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tokens.json")
+	s, _ := OpenTokens(p)
+	now := time.Unix(1_000_000, 0)
+	plain, _, _ := s.Create(time.Hour, 2, nil, "admin", now)
+
+	// Make directory read-only to force save failure
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod failed: %v", err)
+	}
+	defer os.Chmod(dir, 0o700) // restore for cleanup
+
+	// Attempt to consume should fail
+	_, err := s.Consume(plain, now)
+	if err == nil {
+		t.Fatal("Consume succeeded when save should have failed")
+	}
+
+	// Restore directory permissions
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("restore chmod failed: %v", err)
+	}
+
+	// Token should still be consumable (2 uses, only 0 decremented in-memory before rollback)
+	tok, err := s.Consume(plain, now)
+	if err != nil {
+		t.Fatalf("Consume after rollback failed: %v", err)
+	}
+	if tok.Uses != 2 { // Should be original value since mutation was rolled back
+		t.Fatalf("token uses after rollback = %d, want 2", tok.Uses)
+	}
+}
+
+func TestTokenDeleteRollsBackOnSaveFailure(t *testing.T) {
+	// Skip if running as root (can't make directories read-only)
+	if os.Geteuid() == 0 {
+		t.Skip("skipping as root")
+	}
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tokens.json")
+	s, _ := OpenTokens(p)
+	now := time.Unix(1_000_000, 0)
+	_, tok, _ := s.Create(time.Hour, 1, nil, "admin", now)
+
+	// Make directory read-only to force save failure
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod failed: %v", err)
+	}
+	defer os.Chmod(dir, 0o700) // restore for cleanup
+
+	// Attempt to delete should fail
+	err := s.Delete(tok.ID)
+	if err == nil {
+		t.Fatal("Delete succeeded when save should have failed")
+	}
+
+	// Restore directory permissions
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("restore chmod failed: %v", err)
+	}
+
+	// Token should still be in the list (deletion was rolled back)
+	list := s.List(now)
+	if len(list) != 1 {
+		t.Fatalf("List after rollback has %d tokens, want 1", len(list))
+	}
+	if list[0].ID != tok.ID {
+		t.Fatalf("token ID mismatch after rollback")
 	}
 }

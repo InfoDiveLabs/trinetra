@@ -120,11 +120,17 @@ func (s *TokenStore) Consume(plain string, now time.Time) (Token, error) {
 		return Token{}, ErrTokenInvalid
 	}
 	tok := s.toks[idx]
+	// Snapshot state before mutation in case save fails
+	oldToks := make([]Token, len(s.toks))
+	copy(oldToks, s.toks)
+
 	s.toks[idx].Uses--
 	if s.toks[idx].Uses == 0 {
 		s.toks = append(s.toks[:idx], s.toks[idx+1:]...)
 	}
 	if err := s.saveLocked(); err != nil {
+		// Restore state if save failed
+		s.toks = oldToks
 		return Token{}, err
 	}
 	return tok, nil
@@ -149,8 +155,17 @@ func (s *TokenStore) Delete(id string) error {
 	defer s.mu.Unlock()
 	for i := range s.toks {
 		if s.toks[i].ID == id {
+			// Snapshot state before mutation in case save fails
+			oldToks := make([]Token, len(s.toks))
+			copy(oldToks, s.toks)
+
 			s.toks = append(s.toks[:i], s.toks[i+1:]...)
-			return s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				// Restore state if save failed
+				s.toks = oldToks
+				return err
+			}
+			return nil
 		}
 	}
 	return fmt.Errorf("fleet: no token %q", id)
