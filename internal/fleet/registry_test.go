@@ -65,3 +65,22 @@ func TestRegistryTouchFlushAndRevoke(t *testing.T) {
 		t.Fatal("revoke not applied")
 	}
 }
+
+func TestRegistryDelete(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, _ := OpenRegistry(p)
+	id, _ := NewNodeID()
+	_ = r.Add(Node{ID: id, Name: "n"})
+	if err := r.Delete(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Get(id); ok {
+		t.Fatal("deleted node still listed")
+	}
+	if r2, _ := OpenRegistry(p); len(r2.List()) != 0 {
+		t.Fatal("delete not persisted")
+	}
+	if err := r.Delete(id); err == nil {
+		t.Fatal("deleting an unknown node succeeded")
+	}
+}

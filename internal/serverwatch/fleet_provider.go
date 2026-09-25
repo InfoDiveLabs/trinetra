@@ -22,6 +22,7 @@ type masterState struct {
 	tokens  *fleet.TokenStore
 	sink    *replicaSink
 	tracker *fleet.Tracker
+	loop    *masterLoop
 	joinURL string
 	pin     string
 	listen  string
@@ -170,6 +171,17 @@ func (f fleetAPIImpl) RevokeNode(id string) error {
 	}
 	m.tracker.SetRevoked(id, true)
 	return nil
+}
+
+func (f fleetAPIImpl) RemoveNode(id string) error {
+	m, err := f.requireMaster()
+	if err != nil {
+		return err
+	}
+	if m.loop == nil {
+		return core.ErrNotMaster
+	}
+	return m.loop.remove(id, time.Now())
 }
 
 func tokenView(t fleet.Token) core.TokenView {

@@ -30,7 +30,7 @@ const fleetUsage = `usage:
   serverwatch fleet token list | token delete <id>
   serverwatch fleet join <code> [--name NAME]                  join a master as a child
   serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
-  serverwatch fleet node revoke|rename|tag <node> [value]
+  serverwatch fleet node revoke|remove|rename|tag <node> [value]
   serverwatch fleet leave [--purge]                            child -> solo
   serverwatch fleet disable [--purge]                          master -> solo`
 
@@ -230,6 +230,7 @@ func fleetLeave(args []string) int {
 		fmt.Fprintln(stderr, "fleet leave: this host is not a fleet child")
 		return 1
 	}
+	nodeID := c.Fleet.NodeID
 	c.Fleet.Role, c.Fleet.MasterURL, c.Fleet.CAPin, c.Fleet.NodeID = "", "", "", ""
 	if err := saveCfg(c); err != nil {
 		fmt.Fprintln(stderr, "fleet leave: save config:", err)
@@ -243,6 +244,9 @@ func fleetLeave(args []string) int {
 		})
 	}
 	fmt.Fprintf(stdout, "Left the fleet; this host is solo again (local history kept).\n%s\n", restartHint)
+	// Leaving is local only: the master keeps expecting this node and will
+	// page it as down until it is revoked or removed there.
+	fmt.Fprintf(stdout, "\nThe master will report this node as down until you tell it the node is gone.\nOn the master, run: sudo serverwatch fleet node revoke %s\n(or `sudo serverwatch fleet node remove %s` to also drop it from the node list; its history is kept)\n", nodeID, nodeID)
 	if !ok {
 		return 1
 	}
@@ -429,12 +433,12 @@ func resolveNodeRef(c *control.Client, ref string) (string, error) {
 
 func fleetNodeCmd(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: serverwatch fleet node revoke|rename|tag <node> [value]")
+		fmt.Fprintln(stderr, "usage: serverwatch fleet node revoke|remove|rename|tag <node> [value]")
 		return 2
 	}
 	verb, ref := args[0], args[1]
-	if verb == "revoke" && len(args) != 2 {
-		fmt.Fprintln(stderr, "usage: serverwatch fleet node revoke <node>")
+	if (verb == "revoke" || verb == "remove") && len(args) != 2 {
+		fmt.Fprintf(stderr, "usage: serverwatch fleet node %s <node>\n", verb)
 		return 2
 	}
 	return withDaemon(func(c *control.Client) error {
@@ -448,6 +452,11 @@ func fleetNodeCmd(args []string) int {
 				return err
 			}
 			fmt.Fprintf(stdout, "Revoked %s; it can no longer send data. Its history is kept.\n", id)
+		case "remove":
+			if err := c.Fleet().RemoveNode(id); err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "Removed %s from the fleet; it can no longer send data and is no longer monitored. Its history is kept on disk.\n", id)
 		case "rename":
 			if len(args) != 3 {
 				return errors.New("usage: fleet node rename <node> <new-name>")
@@ -465,7 +474,7 @@ func fleetNodeCmd(args []string) int {
 			}
 			return c.Fleet().SetNodeTags(id, tags)
 		default:
-			return fmt.Errorf("unknown node action %q (revoke, rename, tag)", verb)
+			return fmt.Errorf("unknown node action %q (revoke, remove, rename, tag)", verb)
 		}
 		return nil
 	})

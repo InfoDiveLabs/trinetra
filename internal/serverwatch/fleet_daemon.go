@@ -160,9 +160,12 @@ func waitBounded(done <-chan struct{}, deadline time.Time) bool {
 // not know yet, evaluate liveness and raise alerts, flush the registry and
 // run a slice of replica maintenance. tick is called from one goroutine only.
 type masterLoop struct {
-	reg         *fleet.Registry
-	tracker     *fleet.Tracker
-	sink        *replicaSink
+	reg     *fleet.Registry
+	tracker *fleet.Tracker
+	sink    *replicaSink
+	// mu serializes tick's liveness/alert pass with remove, so a node
+	// removed mid-tick can never be re-tracked and paged. Guards alerter.
+	mu          sync.Mutex
 	alerter     *fleet.NodeAlerter
 	alert       func(Alert)
 	getCfg      func() *config.Config
@@ -200,6 +203,7 @@ func trackUnseen(reg *fleet.Registry, tracker *fleet.Tracker, now int64) {
 }
 
 func (l *masterLoop) tick(now time.Time) {
+	l.mu.Lock()
 	trackUnseen(l.reg, l.tracker, now.Unix())
 	name := func(id string) string {
 		if n, ok := l.reg.Get(id); ok {
@@ -207,7 +211,9 @@ func (l *masterLoop) tick(now time.Time) {
 		}
 		return id
 	}
-	for _, in := range l.alerter.Plan(l.tracker.Evaluate(now.Unix()), now.Unix(), name) {
+	intents := l.alerter.Plan(l.tracker.Evaluate(now.Unix()), now.Unix(), name)
+	l.mu.Unlock()
+	for _, in := range intents {
 		l.alert(fleetAlert(in, now.Unix()))
 	}
 	if now.Sub(l.lastFlush) >= 30*time.Second {
@@ -230,6 +236,28 @@ func (l *masterLoop) tick(now time.Time) {
 		}()
 	default: // previous slice still running
 	}
+}
+
+// remove deletes node id from the registry and liveness tracking and
+// resolves any open alert for it. Its replica directory is left on disk.
+func (l *masterLoop) remove(id string, now time.Time) error {
+	l.mu.Lock()
+	n, ok := l.reg.Get(id)
+	if !ok {
+		l.mu.Unlock()
+		return core.ErrNoSuchNode
+	}
+	if err := l.reg.Delete(id); err != nil {
+		l.mu.Unlock()
+		return err
+	}
+	l.tracker.Forget(id)
+	intents := l.alerter.Forget(id, n.Name)
+	l.mu.Unlock()
+	for _, in := range intents {
+		l.alert(fleetAlert(in, now.Unix()))
+	}
+	return nil
 }
 
 // drain blocks until any in-flight maintenance slice has finished.
@@ -282,6 +310,9 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 					backlog = now.Unix() - u.Outbox.OldestUnackedTS
 				}
 			}
+			if _, ok := reg.Get(id); !ok {
+				return // removed while this request was in flight
+			}
 			tracker.Seen(id, now.Unix(), backlog)
 		},
 	})
@@ -299,10 +330,10 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	if fleetJoinURL(cfg) == "" {
 		d.logf("fleet: WARNING fleet.address is empty; children cannot be given a join URL and token creation is refused. Run `serverwatch fleet init --address ...`")
 	}
-	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker,
-		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 
 	loop := newMasterLoop(reg, tracker, sink, d, time.Now())
+	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker, loop: loop,
+		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 	loopCtx, cancel := context.WithCancel(ctx)
 	loopDone := make(chan struct{})
 	go func() {

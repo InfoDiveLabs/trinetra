@@ -149,7 +149,7 @@ usage:
   serverwatch fleet token list | token delete <id>
   serverwatch fleet join <code> [--name NAME]                  join a master as a child
   serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
-  serverwatch fleet node revoke|rename|tag <node> [value]
+  serverwatch fleet node revoke|remove|rename|tag <node> [value]
   serverwatch fleet leave [--purge]                            child -> solo
   serverwatch fleet disable [--purge]                          master -> solo
 ```
@@ -171,9 +171,10 @@ the node and token commands) and changes take effect immediately.
 | `fleet status` | none | This host's role. On a master: listen address, join URL, CA fingerprint, node count. On a child: node id, master, link state, last ack, outbox size, unsent records and gaps, last error. |
 | `fleet nodes` | `--tag T`, `--state S` (`online`, `lagging`, `stale`, `down`, `revoked`), `--q TEXT` (search name, id or address) | Table of nodes: on a master every enrolled node plus this host as `self`, elsewhere only `self`. Columns: state, CPU, memory, worst disk, version, last seen, tags, short id. |
 | `fleet node revoke <node>` | none | Master only. Refuses the node's certificate from now on; its history is kept. `<node>` is a node id, an id prefix of at least 6 characters, or an exact name. |
+| `fleet node remove <node>` | none | Master only. Deletes the node from the registry and from liveness tracking and resolves its open node-down alert, if any. Its certificate is refused from then on (an unknown node counts as revoked). Its replicated history stays on disk under `fleet/nodes/<id>/`. Use it for a server that is gone for good. |
 | `fleet node rename <node> <name>` | none | Master only. Changes the node's display name. |
 | `fleet node tag <node> <a,b>` | none | Master only. Replaces the node's tags; an empty string clears them. |
-| `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. |
+| `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. Leaving is local only: the master is not told, and it will report the node as down (and page for it) until you run the command `leave` prints, `sudo serverwatch fleet node revoke <node-id>`, on the master (or `fleet node remove <node-id>` to drop it from the list as well). |
 | `fleet disable` | `--purge`: also delete the CA, node registry and every node's replicated history | Master only. Returns the host to solo. Without `--purge`, running `fleet init` again reuses the same CA, so children need not re-join. |
 
 The tunable fleet keys are ordinary config keys, set with `config set` and

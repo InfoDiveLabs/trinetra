@@ -19,7 +19,7 @@ const SelfNodeID = "self"
 var ErrNotMaster = errors.New("this serverwatch is not a fleet master")
 
 // ErrNoSuchNode is returned by FleetProvider.Node (and surfaces from
-// FleetAPI.RenameNode/SetNodeTags/RevokeNode) when id does not name a known
+// FleetAPI.RenameNode/SetNodeTags/RevokeNode/RemoveNode) when id does not name a known
 // fleet node.
 var ErrNoSuchNode = errors.New("no such fleet node")
 
@@ -131,6 +131,9 @@ type FleetAPI interface {
 	RenameNode(id, name string) error
 	SetNodeTags(id string, tags []string) error
 	RevokeNode(id string) error
+	// RemoveNode deletes id from the fleet (registry and liveness), resolving
+	// any open node-down alert; its replicated history stays on disk.
+	RemoveNode(id string) error
 	Tokens() ([]TokenView, error)
 	CreateToken(TokenSpec) (CreatedToken, error)
 	DeleteToken(id string) error

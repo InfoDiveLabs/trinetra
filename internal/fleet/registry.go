@@ -151,6 +151,22 @@ func (r *Registry) Update(id string, fn func(*Node) error) error {
 	return nil
 }
 
+// Delete removes node id and persists.
+func (r *Registry) Delete(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n, ok := r.nodes[id]
+	if !ok {
+		return fmt.Errorf("fleet: no node %s", id)
+	}
+	delete(r.nodes, id)
+	if err := r.saveLocked(); err != nil {
+		r.nodes[id] = n
+		return err
+	}
+	return nil
+}
+
 // Touch records contact from id in memory only.
 func (r *Registry) Touch(id string, now int64, remoteAddr, version string) {
 	r.mu.Lock()

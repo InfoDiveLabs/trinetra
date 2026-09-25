@@ -100,6 +100,7 @@ type fleetCLIFake struct {
 	taggedTags           []string
 	revokedID            string
 	revokeErr            error
+	removedID            string
 	deletedTokenID       string
 	createSpec           core.TokenSpec
 	createResult         core.CreatedToken
@@ -135,6 +136,11 @@ func (a fleetCLIFakeFleetAPI) SetNodeTags(id string, tags []string) error {
 func (a fleetCLIFakeFleetAPI) RevokeNode(id string) error {
 	a.f.revokedID = id
 	return a.f.revokeErr
+}
+
+func (a fleetCLIFakeFleetAPI) RemoveNode(id string) error {
+	a.f.removedID = id
+	return nil
 }
 
 func (a fleetCLIFakeFleetAPI) Tokens() ([]core.TokenView, error) { return a.f.tokens, nil }
@@ -563,5 +569,41 @@ func TestFleetNodeRevokeRejectsExtraArgument(t *testing.T) {
 	fleetCLIEnv(t)
 	if rc := Main([]string{"fleet", "node", "revoke", "node-1", "extra"}); rc != 2 {
 		t.Fatalf("exit %d, want 2", rc)
+	}
+}
+
+func TestFleetNodeRemove(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{nodes: []core.NodeSummary{
+		{ID: "self", Name: "master-1", Self: true},
+		{ID: "node-1", Name: "web-1"},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "node", "remove", "web-1"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.removedID != "node-1" {
+		t.Fatalf("removedID = %q", fake.removedID)
+	}
+	if !strings.Contains(out.String(), "Removed node-1") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+// Leaving is local: the master keeps expecting the node, so leave tells the
+// operator exactly what to run there.
+func TestFleetLeavePrintsMasterRevokeHint(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	code := testMasterForCLI(t)
+	if rc := Main([]string{"fleet", "join", code}); rc != 0 {
+		t.Fatalf("join exit %d: %s", rc, errb)
+	}
+	id := loadTestCfg(t).Fleet.NodeID
+	out.Reset()
+	if rc := Main([]string{"fleet", "leave"}); rc != 0 {
+		t.Fatalf("leave exit %d: %s", rc, errb)
+	}
+	if want := "On the master, run: sudo serverwatch fleet node revoke " + id; !strings.Contains(out.String(), want) {
+		t.Fatalf("out = %s, want %q", out, want)
 	}
 }

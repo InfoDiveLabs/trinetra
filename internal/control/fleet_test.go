@@ -12,6 +12,7 @@ type fleetFake struct {
 	*fakeAPI
 	nodes   map[string]core.API
 	renamed string
+	removed string
 }
 
 type fleetFakeAPI struct{ f *fleetFake }
@@ -40,6 +41,7 @@ func (a fleetFakeAPI) Nodes(f core.NodeFilter) ([]core.NodeSummary, error) {
 func (a fleetFakeAPI) RenameNode(id, name string) error   { a.f.renamed = id + "=" + name; return nil }
 func (a fleetFakeAPI) SetNodeTags(string, []string) error { return nil }
 func (a fleetFakeAPI) RevokeNode(string) error            { return errors.New("nope") }
+func (a fleetFakeAPI) RemoveNode(id string) error         { a.f.removed = id; return nil }
 func (a fleetFakeAPI) Tokens() ([]core.TokenView, error) {
 	return []core.TokenView{{ID: "t1", Uses: 1}}, nil
 }
@@ -101,6 +103,9 @@ func TestClientFleetMethods(t *testing.T) {
 	}
 	if err := fl.RevokeNode("n1"); err == nil || err.Error() != "nope" {
 		t.Fatalf("revoke err = %v", err)
+	}
+	if err := fl.RemoveNode("n1"); err != nil || f.removed != "n1" {
+		t.Fatalf("remove err %v removed %q", err, f.removed)
 	}
 	ct, err := fl.CreateToken(core.TokenSpec{Tags: []string{"lab"}})
 	if err != nil || ct.JoinCode != "swj1_x" || ct.Token.Tags[0] != "lab" {

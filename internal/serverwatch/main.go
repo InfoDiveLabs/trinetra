@@ -102,7 +102,7 @@ usage:
   serverwatch fleet init --address HOST[,IP] [--port 9443]
   serverwatch fleet join <code> [--name NAME] | leave [--purge] | disable [--purge]
   serverwatch fleet status | nodes [--tag T] [--state S] [--q TEXT]
-  serverwatch fleet node revoke|rename|tag <node> [value]
+  serverwatch fleet node revoke|remove|rename|tag <node> [value]
   serverwatch fleet token create [--tags a,b] [--ttl 1h] [--uses 1] | list | delete <id>
   serverwatch cli                       # interactive management (serverwatch-ctl)
   serverwatch web                       # web UI (serverwatch-web)`

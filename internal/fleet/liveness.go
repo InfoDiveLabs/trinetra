@@ -108,6 +108,13 @@ func (t *Tracker) SetRevoked(id string, revoked bool) {
 	}
 }
 
+// Forget stops tracking id (a node removed from the fleet).
+func (t *Tracker) Forget(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.nodes, id)
+}
+
 // State returns id's state as of the last Evaluate ("" if unknown).
 func (t *Tracker) State(id string) State {
 	t.mu.Lock()
@@ -197,6 +204,25 @@ func humanDur(sec int64) string {
 		return fmt.Sprintf("%ds", sec)
 	}
 	return d.String()
+}
+
+// Forget drops id from alerting (the node was removed from the fleet): an
+// open node-down page is resolved, and if id was the last member of an open
+// fleet-connectivity incident that is resolved too.
+func (a *NodeAlerter) Forget(id, name string) []AlertIntent {
+	var out []AlertIntent
+	if _, ok := a.alerted[id]; ok {
+		delete(a.alerted, id)
+		out = append(out, AlertIntent{Key: "fleet:node:" + id + ":down", Title: fmt.Sprintf("🟢 %s was removed from the fleet", name), Recover: true})
+	}
+	if a.massMembers[id] {
+		delete(a.massMembers, id)
+		if a.massActive && len(a.massMembers) == 0 {
+			a.massActive = false
+			out = append(out, AlertIntent{Key: "fleet:connectivity", Title: "🟢 Fleet connectivity restored", Recover: true})
+		}
+	}
+	return out
 }
 
 // Plan returns the alerts to raise/resolve for ev. A mass disconnect opens

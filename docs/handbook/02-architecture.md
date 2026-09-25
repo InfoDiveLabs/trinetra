@@ -750,7 +750,15 @@ request body. The child renews its certificate over that same connection once
 two thirds of its life has passed, so a healthy node never expires.
 `serverwatch fleet node revoke` marks a node revoked in the master's registry;
 its requests are refused from then on, it stops shipping and raises a local
-alert, and its history on the master is kept.
+alert, and its history on the master is kept. `serverwatch fleet node remove`
+goes further: it deletes the node from the registry and from liveness
+tracking and resolves any open node-down alert for it, keeping only its
+replicated history on disk.
+
+`serverwatch fleet leave` on a child is local only; the master is not told.
+Until the node is revoked or removed on the master, the master keeps
+expecting it and pages it as down, so `leave` prints the exact command to run
+there (`sudo serverwatch fleet node revoke <node-id>`).
 
 ### The data path
 
@@ -843,7 +851,8 @@ The control socket accepts an optional `node` on each request, so
 same way they read the local one: status, history, metrics, down events, the
 alert log and host inventory all come from the replica. Requests without a
 `node` go to the local daemon, as before. Fleet management itself is a small
-set of `Fleet.*` methods (status, nodes, rename, tags, revoke, tokens).
+set of `Fleet.*` methods (status, nodes, rename, tags, revoke, remove,
+tokens).
 
 Some things still need the live child and are refused for a remote node in
 this release: container logs, config changes, alert acks, channel tests,

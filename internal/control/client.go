@@ -524,6 +524,10 @@ func (f fleetClient) RevokeNode(id string) error {
 	return f.c.call("Fleet.RevokeNode", map[string]any{"id": id}, nil)
 }
 
+func (f fleetClient) RemoveNode(id string) error {
+	return f.c.call("Fleet.RemoveNode", map[string]any{"id": id}, nil)
+}
+
 func (f fleetClient) Tokens() ([]core.TokenView, error) {
 	var v []core.TokenView
 	err := f.c.call("Fleet.Tokens", struct{}{}, &v)

@@ -430,7 +430,7 @@ func resolveNode(api core.API, node string) (core.API, error) {
 }
 
 // dispatchFleet serves the Fleet.* methods against api's core.FleetAPI. Like
-// dispatch, its write methods (RenameNode, SetNodeTags, RevokeNode,
+// dispatch, its write methods (RenameNode, SetNodeTags, RevokeNode, RemoveNode,
 // DeleteToken) return emptyResult on success -- the same ok=true/empty-result
 // shape dispatch's own write methods (AckAlert and friends) use -- so the
 // client's call sees a uniform response regardless of which dispatch path
@@ -484,6 +484,12 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 
 	case "Fleet.RevokeNode":
 		if err := f.RevokeNode(p.ID); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.RemoveNode":
+		if err := f.RemoveNode(p.ID); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil

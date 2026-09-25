@@ -431,3 +431,53 @@ func TestFleetStopIsIdempotent(t *testing.T) {
 		t.Fatal("stop hung")
 	}
 }
+
+// `fleet node remove` drops a node from the registry and liveness tracking,
+// resolves its open node-down page, and keeps its replicated history.
+func TestFleetRemoveNodeResolvesDownAlertAndKeepsReplica(t *testing.T) {
+	dir := t.TempDir()
+	d, alerts := testDeps(t, dir)
+	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{})
+	now := time.Now()
+	loop := newMasterLoop(reg, tracker, sink, d, now)
+	p := &fleetProvider{self: d.self, role: config.RoleMaster, selfName: func() string { return "m" },
+		master: &masterState{reg: reg, sink: sink, tracker: tracker, loop: loop, getCfg: d.getCfg}}
+	id, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: id, Name: "gone-box", Joined: now.Unix() - 3600}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Apply(id, []fleet.Record{samplesRec(1, 100, map[string]float64{"cpu": 1})}); err != nil {
+		t.Fatal(err)
+	}
+	loop.tick(now)
+	if len(*alerts) != 1 || (*alerts)[0].Kind != "fire" {
+		t.Fatalf("setup alerts = %+v", *alerts)
+	}
+	if err := p.Fleet().RemoveNode(id); err != nil {
+		t.Fatal(err)
+	}
+	if len(*alerts) != 2 || (*alerts)[1].Kind != "recover" || (*alerts)[1].Key != "fleet:node:"+id+":down" {
+		t.Fatalf("alerts after remove = %+v", *alerts)
+	}
+	if _, ok := reg.Get(id); ok {
+		t.Fatal("node still in registry")
+	}
+	if s := tracker.State(id); s != "" {
+		t.Fatalf("tracker state = %q", s)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "nodes", id)); err != nil {
+		t.Fatalf("replica data not kept: %v", err)
+	}
+	loop.tick(now.Add(10 * time.Second))
+	if len(*alerts) != 2 {
+		t.Fatalf("removed node paged again: %+v", *alerts)
+	}
+	if err := p.Fleet().RemoveNode(id); err != core.ErrNoSuchNode {
+		t.Fatalf("second remove err = %v", err)
+	}
+}

@@ -151,3 +151,31 @@ func TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers(t *testing.T) {
 		}
 	}
 }
+
+func TestTrackerForget(t *testing.T) {
+	tr := NewTracker(cfgT())
+	tr.Seen("a", 100, 0)
+	tr.Evaluate(100)
+	tr.Forget("a")
+	if s := tr.State("a"); s != "" {
+		t.Fatalf("state after forget = %q", s)
+	}
+}
+
+// Removing a node that is paged as down resolves its open alert instead of
+// leaving it firing forever.
+func TestNodeAlerterForgetResolvesOpenDown(t *testing.T) {
+	tr := NewTracker(cfgT())
+	tr.Seed([]string{"a"}, nil, 0)
+	al := NewNodeAlerter()
+	if in := al.Plan(tr.Evaluate(200), 200, names); len(in) != 1 || in[0].Recover {
+		t.Fatalf("setup intents = %+v", in)
+	}
+	in := al.Forget("a", "host-a")
+	if len(in) != 1 || !in[0].Recover || in[0].Key != "fleet:node:a:down" || !strings.Contains(in[0].Title, "host-a") {
+		t.Fatalf("forget intents = %+v", in)
+	}
+	if in := al.Forget("a", "host-a"); len(in) != 0 {
+		t.Fatalf("second forget = %+v", in)
+	}
+}
