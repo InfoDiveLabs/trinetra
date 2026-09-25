@@ -780,7 +780,10 @@ store first, exactly as on a solo host, and only then tees a copy into the
 where each record gets an increasing sequence number. Down events and alert
 log entries go through the same outbox. A failure to write the outbox is
 logged and counted but never blocks the local write; the local store is the
-source of truth.
+source of truth. The failed record is not lost either: the outbox cuts off
+any half-written frame, starts a fresh segment, and records the unsent range
+up to that record as a gap (see gap repair below), which is rebuilt from the
+local store.
 
 The shipper reads the outbox in batches (at most 1 MiB or 5000 records) and
 posts them to the master's `ingest` endpoint. The master applies a batch to
@@ -835,6 +838,14 @@ forever.
 
 A gap that cannot be rebuilt locally after several attempts is given up on and
 logged, so one broken range cannot hold back everything newer.
+
+If a child keeps its identity but loses or rolls back its outbox (a restore
+from backup, or someone deleting `outbox/`), its sequence numbers restart
+below what the master has already applied, and the master would otherwise
+treat every new record as a duplicate. The master's ack reveals this (it acks
+a sequence number the child never issued), so the child logs a warning,
+turns whatever it had not yet had acknowledged into a gap for repair, and
+continues numbering after the master's sequence.
 
 ### Liveness and node-down alerts
 
