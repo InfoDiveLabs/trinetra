@@ -252,9 +252,10 @@ func resolveAndVerifyPlugin(name string) (string, error) {
 // inherited environment), which is how the plugin dials the daemon's
 // control socket. The old SERVERWATCH_CONTROL_SOCKET/TOKEN names are ALSO
 // set, for one release, so a plugin binary built before the rename (which
-// only reads the old names) still works when launched by a new core; see
-// socket.go's readControlSocketEnv equivalent in each plugin, which reads
-// TRINETRA_* first and falls back to SERVERWATCH_*.
+// only reads the old names) still works when launched by a new core. The
+// plugins themselves read TRINETRA_* first and fall back to SERVERWATCH_*
+// (resolveSocketPath in cmd/trinetra-ctl/socket.go, the env lookups in
+// cmd/trinetra-web/main.go).
 //
 // syscall.Exec does not return on success, so this function only ever
 // returns an error: either from resolveAndVerifyPlugin (not installed, or

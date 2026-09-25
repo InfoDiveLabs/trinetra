@@ -123,9 +123,9 @@ func superviseWeb(socketPath, token string, stopCh <-chan struct{}, done chan<- 
 	env := append(os.Environ(),
 		"TRINETRA_CONTROL_SOCKET="+socketPath,
 		"TRINETRA_CONTROL_TOKEN="+token,
-		// Compat: kept for one release so a pre-rename trinetra-web binary
-		// (which only reads the old names) still works when spawned by a
-		// new core.
+		// Compat: kept for one release so a pre-rename serverwatch-web
+		// binary (which only reads the old names) still works when spawned
+		// by a new core.
 		"SERVERWATCH_CONTROL_SOCKET="+socketPath,
 		"SERVERWATCH_CONTROL_TOKEN="+token,
 	)

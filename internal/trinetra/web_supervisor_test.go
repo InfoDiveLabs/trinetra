@@ -199,7 +199,7 @@ func containsEnv(env []string, kv string) bool {
 // startWeb, the supervisor resolves the plugin path via resolveWebPlugin and
 // spawns it via startWebProc with the control socket and token passed as the
 // TRINETRA_CONTROL_SOCKET / TRINETRA_CONTROL_TOKEN env vars, and ALSO (compat,
-// for one release, so a pre-rename trinetra-web binary still works) the old
+// for one release, so a pre-rename serverwatch-web binary still works) the old
 // SERVERWATCH_CONTROL_SOCKET / SERVERWATCH_CONTROL_TOKEN names. Calling the
 // returned stop func kills the running child and blocks until the supervisor
 // loop has actually exited.
