@@ -512,3 +512,50 @@ func TestOutboxAckBeyondNextOnEmptyOutboxRecordsNoGap(t *testing.T) {
 		t.Fatalf("seq = %d, want 51", seq)
 	}
 }
+
+// TestOutboxFailedAppendBecomesGapAndKeepsSegmentReadable injects a write
+// failure that leaves half a frame on disk mid-segment. The torn bytes must
+// not hide later records (they are truncated away and the next append goes to
+// a fresh segment), the failed record's seq must not be silently reused, and
+// its time range must become a gap so local-history backfill repairs it.
+func TestOutboxFailedAppendBecomesGapAndKeepsSegmentReadable(t *testing.T) {
+	dir := t.TempDir()
+	o, err := OpenOutbox(dir, 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, o, 1, 3) // seqs 1..3, ts 1..3
+	if err := o.Ack(1); err != nil {
+		t.Fatal(err)
+	}
+	o.writeFrame = func(f *os.File, b []byte) (int, error) {
+		n, _ := f.Write(b[:len(b)/2])
+		return n, errors.New("injected: disk full")
+	}
+	if _, err := o.Append(KindSamples, 4, []byte(`{"ts":4}`)); err == nil {
+		t.Fatal("append with failing writer succeeded")
+	}
+	o.writeFrame = nil
+	gaps := o.Gaps()
+	if len(gaps) != 1 || gaps[0].FirstSeq != 2 || gaps[0].LastSeq != 4 || gaps[0].MinTS > 2 || gaps[0].MaxTS != 4 {
+		t.Fatalf("gaps = %+v, want one gap 2-4 covering ts 2..4", gaps)
+	}
+	appendN(t, o, 5, 2)
+	recs, err := o.Read(o.Acked(), 1<<20, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || recs[0].Seq != 5 || recs[0].TS != 5 || recs[1].Seq != 6 {
+		t.Fatalf("records after failed append = %+v", recs)
+	}
+	o.Close()
+	o2, err := OpenOutbox(dir, 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o2.Close()
+	recs, _ = o2.Read(o2.Acked(), 1<<20, 100)
+	if len(recs) != 2 || recs[0].Seq != 5 || len(o2.Gaps()) != 1 {
+		t.Fatalf("after reopen: recs=%+v gaps=%+v", recs, o2.Gaps())
+	}
+}

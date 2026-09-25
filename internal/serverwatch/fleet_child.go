@@ -20,7 +20,14 @@ import (
 
 // outboxTee appends local writes to the fleet outbox. Failures are counted
 // and logged once per minute, never propagated: the local store is the
-// source of truth and a full or broken outbox is repaired as a gap later.
+// source of truth. A record the outbox cannot write is not silently lost:
+// Outbox.Append truncates any torn frame, moves to a fresh segment, and
+// records the unsent range (including the failed record) as a gap that the
+// shipper rebuilds from the local store (localGapFiller) before shipping
+// anything newer. Only if the outbox cannot even persist that gap (for
+// example the disk is completely unwritable) is the record left to the
+// local store alone, and that failure is what the log line reports. A
+// marshal failure is also only counted and logged.
 type outboxTee struct {
 	ob       *fleet.Outbox
 	logf     func(string, ...any)

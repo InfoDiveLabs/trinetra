@@ -52,6 +52,10 @@ type Outbox struct {
 	acked  uint64
 	gaps   []Gap
 	notify chan struct{}
+
+	// writeFrame, when non-nil, replaces the active segment's Write so tests
+	// can inject a failed or partial append. nil in production.
+	writeFrame func(f *os.File, b []byte) (int, error)
 }
 
 // OpenOutbox opens (creating if needed) the outbox in dir, capped at maxBytes.
@@ -240,12 +244,16 @@ func (o *Outbox) Append(kind string, ts int64, data []byte) (uint64, error) {
 		s = o.segs[n-1]
 	} else {
 		if err := o.rotateLocked(seq); err != nil {
-			return 0, err
+			return 0, o.recordFailedAppendLocked(nil, seq, ts, err)
 		}
 		s = o.segs[len(o.segs)-1]
 	}
-	if _, err := o.cur.Write(frame); err != nil {
-		return 0, err
+	write := (*os.File).Write
+	if o.writeFrame != nil {
+		write = o.writeFrame
+	}
+	if _, err := write(o.cur, frame); err != nil {
+		return 0, o.recordFailedAppendLocked(s, seq, ts, err)
 	}
 	if s.count == 0 {
 		s.first, s.minTS, s.maxTS = seq, ts, ts
@@ -268,6 +276,64 @@ func (o *Outbox) Append(kind string, ts int64, data []byte) (uint64, error) {
 	default:
 	}
 	return seq, nil
+}
+
+// recordFailedAppendLocked handles a failed (possibly partial) write of the
+// record seq/ts into segment s, the active segment (s is nil when opening a
+// new segment failed, so nothing was written).
+//
+// A partial frame is truncated away and the segment is closed, so the next
+// append starts a fresh segment and torn bytes can never sit in front of
+// later frames (Read stops at the first bad frame).
+//
+// The record itself is then lost from the outbox, so it is handed to gap
+// repair the same way a cap eviction is: every still-unacked record up to
+// and including seq becomes one Gap (repaired from the local store) and the
+// cursor moves to seq. Covering the whole unacked prefix rather than just
+// seq keeps the outbox invariants (the cursor never trails a recorded gap;
+// gaps are repaired before any later record is shipped), so the repair can
+// never be applied after newer data and dropped by the master's ordering
+// guard. Records before seq that are still in segments are simply re-sent
+// from local history instead; the master's guard makes that idempotent.
+//
+// The write error is returned either way. If the gap cannot be persisted
+// the outbox is left as it was before this append (seq is not issued).
+func (o *Outbox) recordFailedAppendLocked(s *segment, seq uint64, ts int64, werr error) error {
+	if s != nil && o.cur != nil {
+		if err := o.cur.Truncate(s.size); err != nil {
+			werr = fmt.Errorf("%w (and truncating the torn frame failed: %v)", werr, err)
+		}
+		o.cur.Close()
+		o.cur = nil
+		if s.count == 0 {
+			_ = os.Remove(s.path)
+			o.segs = o.segs[:len(o.segs)-1]
+		}
+	}
+	g := Gap{FirstSeq: o.acked + 1, LastSeq: seq, MinTS: ts, MaxTS: ts}
+	for _, sg := range o.segs {
+		if sg.count == 0 || sg.last <= o.acked {
+			continue
+		}
+		g.MinTS = min(g.MinTS, sg.minTS)
+		g.MaxTS = max(g.MaxTS, sg.maxTS)
+	}
+	newGaps := append(append([]Gap(nil), o.gaps...), g)
+	if err := o.writeGapsFile(newGaps); err != nil {
+		return fmt.Errorf("%w; recording the loss as a gap also failed: %v", werr, err)
+	}
+	if err := writeFileAtomic(o.cursorPath(), []byte(strconv.FormatUint(seq, 10)), 0o600); err != nil {
+		// gaps.json is the commit point; openOutbox reconciles the cursor.
+		werr = fmt.Errorf("%w; persisting the cursor failed: %v", werr, err)
+	}
+	o.gaps = newGaps
+	o.acked = seq
+	o.next = seq + 1
+	for len(o.segs) > 0 && o.segs[0].last <= o.acked {
+		_ = os.Remove(o.segs[0].path)
+		o.segs = o.segs[1:]
+	}
+	return fmt.Errorf("fleet: outbox append failed, records %d-%d handed to gap repair: %w", g.FirstSeq, g.LastSeq, werr)
 }
 
 func (o *Outbox) rotateLocked(firstSeq uint64) error {
