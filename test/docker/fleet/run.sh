@@ -35,11 +35,15 @@ dump_evidence() {
   done
   echo "--- master: alertlog.jsonl ---"
   on master sh -c 'cat /var/lib/serverwatch/alertlog.jsonl 2>/dev/null' 2>/dev/null || true
-  echo "--- master: fleet nodes ---"
+  echo "--- master: fleet status / nodes ---"
+  on master serverwatch fleet status 2>&1 || true
   on master serverwatch fleet nodes 2>&1 || true
+  echo "--- master: replica ingest.state and raw cpu sizes per node ---"
+  on master sh -c 'for d in /var/lib/serverwatch/fleet/nodes/*/; do echo "$d: $(cat "$d/ingest.state" 2>/dev/null) cpu.tsd=$(stat -c %s "$d/ts/raw/cpu.tsd" 2>/dev/null)"; done' 2>/dev/null || true
   for s in child1 child2; do
     echo "--- $s: fleet status ---"
     on "$s" serverwatch fleet status 2>&1 || true
+    on "$s" sh -c 'echo "outbox: $(ls /var/lib/serverwatch/outbox 2>/dev/null | tr "\n" " ") cursor=$(cat /var/lib/serverwatch/outbox/cursor 2>/dev/null)"; echo "local cpu.tsd=$(stat -c %s /var/lib/serverwatch/ts/raw/cpu.tsd 2>/dev/null)"' 2>/dev/null || true
   done
   echo "--- mocktg: messages ---"
   on mocktg curl -s http://localhost:8080/_messages 2>/dev/null || true
@@ -52,6 +56,10 @@ dump_evidence() {
 cleanup() {
   local rc=$?
   if [ "$rc" -ne 0 ] && [ -n "$STEP" ]; then dump_evidence; fi
+  if [ "$rc" -ne 0 ] && [ -n "${KEEP_ON_FAIL:-}" ]; then
+    echo "KEEP_ON_FAIL set: leaving the containers up (docker compose -f $(pwd)/compose.yml down -v)"
+    rm -rf "$SCRATCH"; exit "$rc"
+  fi
   echo "== cleanup =="
   compose down -v -t 2 >/dev/null 2>&1 || true
   rm -rf "$SCRATCH"
@@ -217,6 +225,9 @@ on mocktg curl -s http://localhost:8080/_messages | tr ',' '\n' | grep -F child1
 for m in cpu mem; do
   fidelity child1 "$C1" "$m" -from "$P_FROM" -to "$P_TO" -maxgap $(( 2 * FAST ))
 done
+# Informational: requests that sat in the partition carry an old send time,
+# which the master's clock-skew estimate can mistake for a slow clock.
+on master grep -F "clock is" /var/log/sw.log | sed 's/^/  note: master log: /' || true
 pass "partitioned $(( P_TO - P_FROM ))s, no hole in the replica"
 
 # ---------------------------------------------------------------------------
@@ -241,8 +252,15 @@ echo "  both children online $(( $(now_in master) - T_RESTART ))s after the mast
 while [ $(( $(now_in master) - T_RESTART )) -lt $(( DOWN_AFTER + 5 )) ]; do sleep 2; done
 FIRES_AFTER=$(on master sh -c "grep -F '\"key\":\"fleet:' /var/lib/serverwatch/alertlog.jsonl | grep -cF '\"kind\":\"fire\"' || true" | tr -d '\r')
 [ "$FIRES_AFTER" -eq "$FIRES_BEFORE" ] || fail "fleet alerts fired after master restart ($FIRES_BEFORE -> $FIRES_AFTER): $(on master tail -n 3 /var/lib/serverwatch/alertlog.jsonl)"
+# The live update reconnects at once, but the data shipper may be asleep in
+# its retry backoff (up to ~61 s after a 40 s outage), so give the spooled
+# backlog time to drain before comparing replicas.
 for c in child1 child2; do
-  node_is "$c" online || fail "$c is $(node_state "$c") $(( DOWN_AFTER + 5 ))s after restart"
+  wait_until 90 "$c outbox drained after master restart" unsent_is_zero "$c"
+done
+echo "  both outboxes drained $(( $(now_in master) - T_RESTART ))s after the master daemon started"
+for c in child1 child2; do
+  node_is "$c" online || fail "$c is $(node_state "$c") after restart"
   # The children kept sampling while the master was away: no hole there either.
   for m in cpu mem; do fidelity "$c" "$(id_of "$c")" "$m" -from "$R_FROM" -to "$T_RESTART" -maxgap $(( 2 * FAST )); done
 done
