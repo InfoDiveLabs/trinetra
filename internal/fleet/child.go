@@ -436,7 +436,13 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("fleet: bad ingest response: %w", err)
 	}
 	if err := s.cfg.Outbox.Ack(ir.AckedSeq); err != nil {
-		return false, err
+		var div *DivergenceError
+		if !errors.As(err, &div) {
+			return false, err
+		}
+		// Already repaired by Ack (gap recorded, numbering moved past the
+		// master's); say so loudly and carry on.
+		s.cfg.Logf("fleet: WARNING %v", div)
 	}
 	s.setOK()
 	return true, nil

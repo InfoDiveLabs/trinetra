@@ -432,13 +432,40 @@ func (o *Outbox) Read(after uint64, maxBytes, maxRecords int) ([]Record, error) 
 	return out, nil
 }
 
+// DivergenceError reports that the master acked a seq this outbox never
+// issued: the child kept its identity but its outbox was deleted or rolled
+// back (restore, rm -rf outbox/), so the master already holds a higher seq
+// than anything local. Ack has already repaired the state when it returns
+// this (see Ack); it is returned so the caller can log it loudly.
+type DivergenceError struct {
+	LocalNext   uint64 // the seq the outbox would have issued next
+	MasterAcked uint64 // the seq the master acked
+	Gap         *Gap   // the local unacked range handed to gap repair, if any
+}
+
+func (e *DivergenceError) Error() string {
+	msg := fmt.Sprintf("fleet: outbox diverged from the master (master acked seq %d, local outbox only reached %d); local seq numbering jumps past the master's", e.MasterAcked, e.LocalNext-1)
+	if e.Gap != nil {
+		msg += fmt.Sprintf(", unsent records %d-%d will be re-sent from local history", e.Gap.FirstSeq, e.Gap.LastSeq)
+	}
+	return msg
+}
+
 // Ack records that the master durably holds everything up to seq, and
 // deletes segments that are now fully acked (except the one being written).
+//
+// An ack beyond the last issued seq means the outbox and the master have
+// diverged (see DivergenceError). Clamping it would be silent, lasting loss:
+// the master drops every record with seq <= its applied seq, so every new
+// record would be discarded until local numbering caught up. Instead the
+// still-unacked local records become a Gap (repaired from the local store
+// under the master's ordering guard), numbering resumes at seq+1, and a
+// *DivergenceError is returned after the new state is durably persisted.
 func (o *Outbox) Ack(seq uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if seq >= o.next {
-		seq = o.next - 1
+		return o.divergeLocked(seq)
 	}
 	if seq <= o.acked {
 		return nil
@@ -454,6 +481,53 @@ func (o *Outbox) Ack(seq uint64) error {
 		o.segs = o.segs[1:]
 	}
 	return nil
+}
+
+// divergeLocked handles an ack at or beyond o.next; see Ack.
+func (o *Outbox) divergeLocked(seq uint64) error {
+	div := &DivergenceError{LocalNext: o.next, MasterAcked: seq}
+	newGaps := append([]Gap(nil), o.gaps...)
+	if o.acked+1 <= o.next-1 {
+		g := Gap{FirstSeq: o.acked + 1, LastSeq: o.next - 1}
+		first := true
+		for _, s := range o.segs {
+			if s.count == 0 || s.last < g.FirstSeq {
+				continue
+			}
+			if first || s.minTS < g.MinTS {
+				g.MinTS = s.minTS
+			}
+			if first || s.maxTS > g.MaxTS {
+				g.MaxTS = s.maxTS
+			}
+			first = false
+		}
+		newGaps = append(newGaps, g)
+		div.Gap = &g
+	}
+	// Same commit order as enforceCapLocked: gaps.json first, then cursor.
+	if err := o.writeGapsFile(newGaps); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(o.cursorPath(), []byte(strconv.FormatUint(seq, 10)), 0o600); err != nil {
+		return err
+	}
+	o.gaps = newGaps
+	o.acked = seq
+	o.next = seq + 1
+	// Every local segment now lies at or below the ack. Drop them all and
+	// start a fresh segment (named by the new first seq) on the next append.
+	if o.cur != nil {
+		o.cur.Close()
+		o.cur = nil
+	}
+	// A file that cannot be removed is harmless: every record in it is at
+	// or below the cursor, so Read skips it and openOutbox cleans it up.
+	for _, s := range o.segs {
+		_ = os.Remove(s.path)
+	}
+	o.segs = nil
+	return div
 }
 
 // Acked returns the highest acked seq.

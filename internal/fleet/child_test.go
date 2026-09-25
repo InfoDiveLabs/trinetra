@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -305,4 +308,59 @@ func TestRunReturnsWhenLiveCallbackHangs(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return within 3s of ctx cancellation while Live was hanging")
 	}
+}
+
+// TestShipperRecoversFromOutboxDivergence: the master already applied up to
+// seq 100 for this node (e.g. the child's outbox was restored from an old
+// backup or deleted) while the child's outbox restarts at 1. The master drops
+// seqs 1..3 as already applied, and acks 100. The child must not lose those
+// records: they are re-sent via backfill, and newer records get seqs > 100.
+func TestShipperRecoversFromOutboxDivergence(t *testing.T) {
+	f := newMasterFixture(t)
+	dir := filepath.Join(t.TempDir(), "fleet-child")
+	res, err := Join(context.Background(), joinCode(f, t, 1), "box", "v1", nil, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sink.mu.Lock()
+	f.sink.applied[res.NodeID] = 100
+	f.sink.mu.Unlock()
+	ob, _ := OpenOutbox(t.TempDir(), 64<<20)
+	appendN(t, ob, 500, 3) // seqs 1..3, ts 500..502
+	id, _ := LoadIdentity(dir)
+	var logged atomic.Int32
+	sh := NewShipper(ShipperConfig{
+		MasterURL: f.srv.URL, Pin: f.pin, Identity: id, Outbox: ob, Gaps: &fakeGaps{},
+		LiveEvery: time.Hour,
+		Logf: func(format string, args ...any) {
+			if strings.Contains(fmt.Sprintf(format, args...), "diverged") {
+				logged.Add(1)
+			}
+		},
+	})
+	sh.backoff = func(int) time.Duration { return 5 * time.Millisecond }
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go sh.Run(ctx)
+	waitFor(t, "divergent range backfilled", func() bool {
+		f.sink.mu.Lock()
+		defer f.sink.mu.Unlock()
+		for _, r := range f.sink.backfill[res.NodeID] {
+			if r.TS == 500 {
+				return true
+			}
+		}
+		return false
+	})
+	if logged.Load() == 0 {
+		t.Fatal("divergence was not logged")
+	}
+	if seq, _ := ob.Append(KindSamples, 600, []byte(`{}`)); seq <= 100 {
+		t.Fatalf("seq after divergence = %d, want > 100", seq)
+	}
+	waitFor(t, "new record applied", func() bool {
+		f.sink.mu.Lock()
+		defer f.sink.mu.Unlock()
+		return f.sink.applied[res.NodeID] == 101
+	})
 }

@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -442,5 +443,72 @@ func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 		if !covered[s] {
 			t.Fatalf("seq %d neither delivered nor gapped (appended=%d, delivered=%d, gaps=%+v)", s, total, len(delivered), o.Gaps())
 		}
+	}
+}
+
+// TestOutboxAckBeyondNextRecordsDivergenceGap covers a child whose outbox was
+// deleted or rolled back while the master kept its applied seq: the master
+// acks a seq the local outbox never issued. The unacked local records must
+// become a gap (repaired from local history) and seq numbering must jump past
+// the master's view, instead of the ack being clamped and every new record
+// silently discarded by the master as "already applied".
+func TestOutboxAckBeyondNextRecordsDivergenceGap(t *testing.T) {
+	dir := t.TempDir()
+	o, err := OpenOutbox(dir, 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, o, 10, 4) // seqs 1..4, ts 10..13; next == 5
+	err = o.Ack(100)
+	var div *DivergenceError
+	if !errors.As(err, &div) {
+		t.Fatalf("Ack(100) err = %v, want *DivergenceError", err)
+	}
+	if div.LocalNext != 5 || div.MasterAcked != 100 {
+		t.Fatalf("divergence = %+v", div)
+	}
+	gaps := o.Gaps()
+	if len(gaps) != 1 || gaps[0] != (Gap{FirstSeq: 1, LastSeq: 4, MinTS: 10, MaxTS: 13}) {
+		t.Fatalf("gaps = %+v", gaps)
+	}
+	if st := o.Stats(); st.NextSeq != 101 || st.AckedSeq != 100 || st.Unacked != 0 {
+		t.Fatalf("stats = %+v", st)
+	}
+	seq, err := o.Append(KindSamples, 20, []byte(`{}`))
+	if err != nil || seq != 101 {
+		t.Fatalf("append after divergence: seq %d err %v", seq, err)
+	}
+	recs, _ := o.Read(o.Acked(), 1<<20, 100)
+	if len(recs) != 1 || recs[0].Seq != 101 {
+		t.Fatalf("read after divergence = %+v", recs)
+	}
+	o.Close()
+
+	o2, err := OpenOutbox(dir, 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o2.Close()
+	if o2.Acked() != 100 || len(o2.Gaps()) != 1 {
+		t.Fatalf("after reopen acked=%d gaps=%+v", o2.Acked(), o2.Gaps())
+	}
+	if seq, _ := o2.Append(KindSamples, 21, []byte(`{}`)); seq != 102 {
+		t.Fatalf("seq after reopen = %d, want 102", seq)
+	}
+}
+
+// An empty outbox (nothing unacked) that diverges just jumps ahead; there is
+// nothing to repair.
+func TestOutboxAckBeyondNextOnEmptyOutboxRecordsNoGap(t *testing.T) {
+	o, _ := OpenOutbox(t.TempDir(), 64<<20)
+	defer o.Close()
+	if err := o.Ack(50); err == nil {
+		t.Fatal("want divergence error")
+	}
+	if len(o.Gaps()) != 0 {
+		t.Fatalf("gaps = %+v", o.Gaps())
+	}
+	if seq, _ := o.Append(KindSamples, 1, []byte(`{}`)); seq != 51 {
+		t.Fatalf("seq = %d, want 51", seq)
 	}
 }
