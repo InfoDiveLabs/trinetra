@@ -753,7 +753,12 @@ per source IP.
 
 From then on every request from the child is mutual TLS: the master knows
 which node is talking from the client certificate, not from anything in the
-request body. The child renews its certificate over that same connection once
+request body. That is why the master has to terminate TLS itself: do not put
+a TLS-terminating reverse proxy or load balancer in front of the fleet port
+(`:9443`). A proxy would present its own certificate (so children refuse it
+against the CA pin) and would strip the client certificate the master uses to
+identify and authorise each node. Forward the port at the TCP level only
+(plain NAT or a TCP/SNI passthrough) if you need anything in between. The child renews its certificate over that same connection once
 two thirds of its life has passed, so a healthy node never expires.
 `serverwatch fleet node revoke` marks a node revoked in the master's registry;
 its requests are refused from then on, it stops shipping and raises a local

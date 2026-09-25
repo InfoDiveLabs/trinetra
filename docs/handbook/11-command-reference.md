@@ -177,6 +177,11 @@ the node and token commands) and changes take effect immediately.
 | `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. Leaving is local only: the master is not told, and it will report the node as down (and page for it) until you run the command `leave` prints, `sudo serverwatch fleet node revoke <node-id>`, on the master (or `fleet node remove <node-id>` to drop it from the list as well). |
 | `fleet disable` | `--purge`: also delete the CA, node registry and every node's replicated history | Master only. Returns the host to solo. Without `--purge`, running `fleet init` again reuses the same CA, so children need not re-join. `fleet disable` then `fleet init` (and a restart) is also how you re-issue the master's 2-year server certificate, which the master warns about from 90 days before it expires. |
 
+Children must reach the master's fleet port directly, or through TCP-level
+forwarding only: the master terminates the mutual TLS itself, so a
+TLS-terminating reverse proxy in front of it breaks both the CA pin check and
+node authentication (see [Fleet mode](02-architecture.md#fleet-mode)).
+
 The tunable fleet keys are ordinary config keys, set with `config set` and
 applied on restart: `fleet.listen` (master listen address, default `:9443`),
 `fleet.outbox_max_mb` (child outbox cap, default `512`, minimum `16`) and
