@@ -559,3 +559,27 @@ func TestOutboxFailedAppendBecomesGapAndKeepsSegmentReadable(t *testing.T) {
 		t.Fatalf("after reopen: recs=%+v gaps=%+v", recs, o2.Gaps())
 	}
 }
+
+// OldestUnackedTS is the ts of the first record after the ack, not the
+// oldest ts in its segment: a partly acked segment must not make a caught-up
+// node look like it has a large backlog (and so "lagging").
+func TestOutboxOldestUnackedIsPerRecord(t *testing.T) {
+	o, _ := OpenOutbox(t.TempDir(), 64<<20)
+	defer o.Close()
+	appendN(t, o, 100, 10) // one segment, ts 100..109
+	if st := o.Stats(); st.OldestUnackedTS != 100 {
+		t.Fatalf("before ack = %d, want 100", st.OldestUnackedTS)
+	}
+	if err := o.Ack(7); err != nil {
+		t.Fatal(err)
+	}
+	if st := o.Stats(); st.OldestUnackedTS != 107 {
+		t.Fatalf("after ack 7 = %d, want 107", st.OldestUnackedTS)
+	}
+	if err := o.Ack(10); err != nil {
+		t.Fatal(err)
+	}
+	if st := o.Stats(); st.OldestUnackedTS != 0 {
+		t.Fatalf("fully acked = %d, want 0", st.OldestUnackedTS)
+	}
+}

@@ -53,6 +53,12 @@ type Outbox struct {
 	gaps   []Gap
 	notify chan struct{}
 
+	// oldestAck/oldestTS cache Stats' OldestUnackedTS: the ts of the first
+	// record after oldestAck. Valid while o.acked == oldestAck and oldestTS
+	// != 0 (a positive result never changes until the ack moves).
+	oldestAck uint64
+	oldestTS  int64
+
 	// writeFrame, when non-nil, replaces the active segment's Write so tests
 	// can inject a failed or partial append. nil in production.
 	writeFrame func(f *os.File, b []byte) (int, error)
@@ -631,13 +637,47 @@ func (o *Outbox) Stats() OutboxStats {
 	if o.next-1 > o.acked {
 		st.Unacked = o.next - 1 - o.acked
 	}
-	for _, s := range o.segs {
-		if s.last > o.acked {
-			st.OldestUnackedTS = s.minTS
-			break
-		}
-	}
+	st.OldestUnackedTS = o.oldestUnackedTSLocked()
 	return st
+}
+
+// oldestUnackedTSLocked returns the ts of the first record with seq >
+// o.acked (0 if none). It is per record, not the segment's minTS: a partly
+// acked segment would otherwise report its oldest, already-acked record and
+// make a caught-up node look backlogged. The segment is scanned once per ack
+// change and the answer cached.
+func (o *Outbox) oldestUnackedTSLocked() int64 {
+	if o.oldestTS != 0 && o.oldestAck == o.acked {
+		return o.oldestTS
+	}
+	for _, s := range o.segs {
+		if s.count == 0 || s.last <= o.acked {
+			continue
+		}
+		b := make([]byte, s.size)
+		f, err := os.Open(s.path)
+		if err != nil {
+			return s.minTS
+		}
+		_, err = io.ReadFull(f, b)
+		f.Close()
+		if err != nil {
+			return s.minTS
+		}
+		for off := 0; off < len(b); {
+			rec, n, ok := decodeFrame(b[off:])
+			if !ok {
+				break
+			}
+			off += n
+			if rec.Seq > o.acked {
+				o.oldestAck, o.oldestTS = o.acked, rec.TS
+				return rec.TS
+			}
+		}
+		return s.minTS
+	}
+	return 0
 }
 
 // Notify fires (coalesced) after each Append.
