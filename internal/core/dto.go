@@ -133,9 +133,9 @@ type DashboardView struct {
 // CollectorHealthView is one degraded slow-tier collector's health (#110), the
 // core-DTO projection of trinetra.CollectorStat.
 type CollectorHealthView struct {
-	Name            string `json:"name"`             // "docker" | "disk" | "services" | "smart"
-	Fails           int    `json:"fails"`            // consecutive failed cycles
-	LastError       string `json:"last_error"`       // most recent error text
+	Name            string `json:"name"`              // "docker" | "disk" | "services" | "smart"
+	Fails           int    `json:"fails"`             // consecutive failed cycles
+	LastError       string `json:"last_error"`        // most recent error text
 	LastSuccessUnix int64  `json:"last_success_unix"` // 0 if never succeeded
 }
 
