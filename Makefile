@@ -2,7 +2,7 @@ BIN=trinetra
 CTL_BIN=trinetra-ctl
 WEB_BIN=trinetra-web
 
-.PHONY: test vet build linux cross release release-prod validate fleet-e2e fmt
+.PHONY: test vet build linux cross release release-prod validate fleet-e2e migration-e2e fmt
 
 # Build flags, per release channel:
 #   Beta/dev builds keep the symbol table and DWARF so stack traces, delve, and
@@ -102,3 +102,10 @@ validate:
 # a solo host, mock Telegram) against the real binary. Needs Docker; ~6 min.
 fleet-e2e:
 	bash test/docker/fleet/run.sh
+
+# migration-e2e installs the last serverwatch-named build on a systemd
+# container, gives it real state, then runs `trinetra install` and checks the
+# in-place migration (see test/docker/migration/run.sh). Needs Docker with
+# privileged containers; about 1 min after the image build.
+migration-e2e:
+	bash test/docker/migration/run.sh

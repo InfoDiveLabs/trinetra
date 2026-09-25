@@ -1,7 +1,7 @@
 # Fleet mode Docker end-to-end test
 
 `run.sh` proves fleet mode across real, separate hosts: each role runs the
-real `serverwatch` binary and daemon in its own container on one Docker
+real `trinetra` binary and daemon in its own container on one Docker
 network, driven only through the CLI.
 
 ```
@@ -22,7 +22,7 @@ network and volumes are removed on exit, pass or fail.
 | `mocktg` | mock Telegram API; records what the master sends |
 
 No systemd: `run.sh` starts each daemon with `docker compose exec -d` and sets
-`RUNTIME_DIRECTORY=/run/serverwatch` so the CLI finds the control socket.
+`RUNTIME_DIRECTORY=/run/trinetra` so the CLI finds the control socket.
 Daemon output goes to `/var/log/sw.log` in each container. No container is
 privileged and none mounts the Docker socket.
 
@@ -35,7 +35,7 @@ privileged and none mounts the Docker socket.
 5. **Master restart**: stop the master container for 40 s (longer than `node_down_after`), start it and its daemon again. No fleet alert fires in the 35 s after (past `node_down_after`), both children `online`, both outboxes drain (the shipper may sit in its up-to-60 s retry backoff first), fidelity holds with no hole across the master's outage.
 6. **Revoke**: `fleet node revoke child2`; child2's link shows `revoked` and it logs `fleet:link:revoked` locally; the master's replica of child2 stops growing while child2's local store keeps growing.
 7. **Leave + remove**: `fleet leave --purge` on child1 and restart: role solo, `fleet-child/` and `outbox/` gone. `fleet node remove child1` on the master: gone from `fleet nodes`, and no down alert for it (nor for revoked child2) after 45 s.
-8. **Solo regression**: no `fleet/`, `fleet-child/` or `outbox/` directories, nothing listening on 9443, `fleet status` says solo, `serverwatch status` works.
+8. **Solo regression**: no `fleet/`, `fleet-child/` or `outbox/` directories, nothing listening on 9443, `fleet status` says solo, `trinetra status` works.
 9. **Security spot checks**: `POST /fleet/v1/ingest` from `solo` without a client certificate is refused with 401; a garbage join code and the spent code are both refused and register no node.
 
 Output is one `PASS <step>` / `FAIL <step>: <why>` line per scenario; the

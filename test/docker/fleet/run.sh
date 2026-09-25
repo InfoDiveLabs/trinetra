@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Multi-container end-to-end test for serverwatch fleet mode.
+# Multi-container end-to-end test for trinetra fleet mode.
 #
-# Runs the real serverwatch binary and real daemons in separate containers on
+# Runs the real trinetra binary and real daemons in separate containers on
 # one Docker network (compose.yml): a master, two children, a solo host that
 # never joins, and the mock Telegram API. It drives everything through the
 # CLI, the way an operator would, and asserts on what the daemons actually
@@ -34,16 +34,16 @@ dump_evidence() {
     on "$s" sh -c 'tail -n 40 /var/log/sw.log 2>/dev/null || echo "(no log)"' 2>/dev/null || echo "(container unavailable)"
   done
   echo "--- master: alertlog.jsonl ---"
-  on master sh -c 'cat /var/lib/serverwatch/alertlog.jsonl 2>/dev/null' 2>/dev/null || true
+  on master sh -c 'cat /var/lib/trinetra/alertlog.jsonl 2>/dev/null' 2>/dev/null || true
   echo "--- master: fleet status / nodes ---"
-  on master serverwatch fleet status 2>&1 || true
-  on master serverwatch fleet nodes 2>&1 || true
+  on master trinetra fleet status 2>&1 || true
+  on master trinetra fleet nodes 2>&1 || true
   echo "--- master: replica ingest.state and raw cpu sizes per node ---"
-  on master sh -c 'for d in /var/lib/serverwatch/fleet/nodes/*/; do echo "$d: $(cat "$d/ingest.state" 2>/dev/null) cpu.tsd=$(stat -c %s "$d/ts/raw/cpu.tsd" 2>/dev/null)"; done' 2>/dev/null || true
+  on master sh -c 'for d in /var/lib/trinetra/fleet/nodes/*/; do echo "$d: $(cat "$d/ingest.state" 2>/dev/null) cpu.tsd=$(stat -c %s "$d/ts/raw/cpu.tsd" 2>/dev/null)"; done' 2>/dev/null || true
   for s in child1 child2; do
     echo "--- $s: fleet status ---"
-    on "$s" serverwatch fleet status 2>&1 || true
-    on "$s" sh -c 'echo "outbox: $(ls /var/lib/serverwatch/outbox 2>/dev/null | tr "\n" " ") cursor=$(cat /var/lib/serverwatch/outbox/cursor 2>/dev/null)"; echo "local cpu.tsd=$(stat -c %s /var/lib/serverwatch/ts/raw/cpu.tsd 2>/dev/null)"' 2>/dev/null || true
+    on "$s" trinetra fleet status 2>&1 || true
+    on "$s" sh -c 'echo "outbox: $(ls /var/lib/trinetra/outbox 2>/dev/null | tr "\n" " ") cursor=$(cat /var/lib/trinetra/outbox/cursor 2>/dev/null)"; echo "local cpu.tsd=$(stat -c %s /var/lib/trinetra/ts/raw/cpu.tsd 2>/dev/null)"' 2>/dev/null || true
   done
   echo "--- mocktg: messages ---"
   on mocktg curl -s http://localhost:8080/_messages 2>/dev/null || true
@@ -88,29 +88,29 @@ id_of() { eval "echo \$ID_$1"; }
 now_in() { on "$1" date +%s | tr -d '\r'; } # clock as the containers see it
 
 start_daemon() {
-  compose exec -d "$1" sh -c 'serverwatch daemon >>/var/log/sw.log 2>&1'
-  wait_until 30 "$1 daemon control socket" on "$1" serverwatch fleet status
+  compose exec -d "$1" sh -c 'trinetra daemon >>/var/log/sw.log 2>&1'
+  wait_until 30 "$1 daemon control socket" on "$1" trinetra fleet status
 }
 
 stop_daemon() {
-  on "$1" sh -c 'pkill -f "^serverwatch daemon" || true'
-  wait_until 30 "$1 daemon to exit" on "$1" sh -c '! pgrep -f "^serverwatch daemon"'
+  on "$1" sh -c 'pkill -f "^trinetra daemon" || true'
+  wait_until 30 "$1 daemon to exit" on "$1" sh -c '! pgrep -f "^trinetra daemon"'
 }
 
 # Fleet alert lines in the master's alert log for key/kind.
 alert_count() { # <svc> <key> <kind>
-  on "$1" sh -c "grep -F '\"key\":\"$2\"' /var/lib/serverwatch/alertlog.jsonl 2>/dev/null | grep -cF '\"kind\":\"$3\"' || true" | tr -d '\r'
+  on "$1" sh -c "grep -F '\"key\":\"$2\"' /var/lib/trinetra/alertlog.jsonl 2>/dev/null | grep -cF '\"kind\":\"$3\"' || true" | tr -d '\r'
 }
 alert_seen() { [ "$(alert_count "$@")" -ge 1 ]; }
 alert_more_than() { [ "$(alert_count "$1" "$2" "$3")" -gt "$4" ]; }
 
 node_state() { # <name> -> STATE column from the master's fleet nodes
-  on master serverwatch fleet nodes | awk -v n="$1" '$1==n {print $2}'
+  on master trinetra fleet nodes | awk -v n="$1" '$1==n {print $2}'
 }
 node_is() { [ "$(node_state "$1")" = "$2" ]; }
-link_state() { on "$1" serverwatch fleet status | sed -n 's/^link: \([a-z][a-z ]*[a-z]\)[ ,(].*/\1/p'; } # e.g. linked, catching up
+link_state() { on "$1" trinetra fleet status | sed -n 's/^link: \([a-z][a-z ]*[a-z]\)[ ,(].*/\1/p'; } # e.g. linked, catching up
 link_is() { [ "$(link_state "$1")" = "$2" ]; }
-unsent() { on "$1" serverwatch fleet status | sed -n 's/^outbox: .* MB, \([0-9]*\) unsent.*/\1/p'; }
+unsent() { on "$1" trinetra fleet status | sed -n 's/^outbox: .* MB, \([0-9]*\) unsent.*/\1/p'; }
 unsent_is_zero() { [ "$(unsent "$1")" = "0" ]; }
 mocktg_has() { on mocktg curl -s http://localhost:8080/_messages | grep -qF "$1"; }
 
@@ -124,8 +124,8 @@ fidelity() {
   local svc=$1 id=$2 metric=$3; shift 3
   local out rc=0 try
   for try in 1 2 3 4 5; do
-    cpq "master:/var/lib/serverwatch/fleet/nodes/$id/ts/raw/$metric.tsd" "$SCRATCH/replica.tsd"
-    cpq "$svc:/var/lib/serverwatch/ts/raw/$metric.tsd" "$SCRATCH/child.tsd"
+    cpq "master:/var/lib/trinetra/fleet/nodes/$id/ts/raw/$metric.tsd" "$SCRATCH/replica.tsd"
+    cpq "$svc:/var/lib/trinetra/ts/raw/$metric.tsd" "$SCRATCH/child.tsd"
     cpq "$SCRATCH/replica.tsd" master:/tmp/replica.tsd
     cpq "$SCRATCH/child.tsd" master:/tmp/child.tsd
     rc=0
@@ -152,17 +152,17 @@ on master sh -c 'cd /src && go build -o /usr/local/bin/tscmp ./test/docker/fleet
 
 # Master: telegram against the mock, fast node-down, then a normal solo start
 # followed by `fleet init` and a restart, as an operator would do it.
-on master serverwatch telegram set-token TESTTOKEN >/dev/null
-on master serverwatch config set telegram.chat_id 999 >/dev/null
-on master serverwatch config set fleet.node_down_after ${DOWN_AFTER}s >/dev/null
+on master trinetra telegram set-token TESTTOKEN >/dev/null
+on master trinetra config set telegram.chat_id 999 >/dev/null
+on master trinetra config set fleet.node_down_after ${DOWN_AFTER}s >/dev/null
 start_daemon master
 start_daemon solo
-INIT=$(on master serverwatch fleet init --address master) || fail "fleet init: $INIT"
+INIT=$(on master trinetra fleet init --address master) || fail "fleet init: $INIT"
 FPR=$(sed -n 's/^ *CA fingerprint: \(sha256:[^ ]*\).*/\1/p' <<<"$INIT")
 [ -n "$FPR" ] || fail "no CA fingerprint in fleet init output: $INIT"
 stop_daemon master
 start_daemon master
-ST=$(on master serverwatch fleet status)
+ST=$(on master trinetra fleet status)
 grep -qx "role: master" <<<"$ST" || fail "master fleet status: $ST"
 grep -qx "CA fingerprint: $FPR" <<<"$ST" || fail "fleet status fingerprint differs from init's ($FPR): $ST"
 grep -q "listening: .*:9443" <<<"$ST" || fail "master not listening on 9443: $ST"
@@ -170,11 +170,11 @@ pass "role master, CA $FPR"
 
 # ---------------------------------------------------------------------------
 step "2 enrol"
-TOK=$(on master serverwatch fleet token create --uses 2 --tags lab) || fail "token create: $TOK"
+TOK=$(on master trinetra fleet token create --uses 2 --tags lab) || fail "token create: $TOK"
 CODE=$(grep -o 'swj1_[A-Za-z0-9_=-]*' <<<"$TOK" | head -1)
 [ -n "$CODE" ] || fail "no swj1_ code in: $TOK"
 for c in child1 child2; do
-  J=$(on "$c" serverwatch fleet join "$CODE" --name "$c") || fail "$c join: $J"
+  J=$(on "$c" trinetra fleet join "$CODE" --name "$c") || fail "$c join: $J"
   id=$(sed -n 's/^Joined fleet master https:\/\/master:9443 as node \([0-9a-f]*\) .*/\1/p' <<<"$J")
   [ -n "$id" ] || fail "$c: no node id in join output: $J"
   eval "ID_$c=$id"
@@ -183,7 +183,7 @@ done
 T_CHILDREN=$(date +%s)
 wait_until 60 "child1 online on master" node_is child1 online
 wait_until 60 "child2 online on master" node_is child2 online
-NODES=$(on master serverwatch fleet nodes)
+NODES=$(on master trinetra fleet nodes)
 echo "$NODES"
 awk '$1=="master" && $NF=="self"' <<<"$NODES" | grep -q . || fail "master does not list itself as self"
 for c in child1 child2; do
@@ -229,7 +229,7 @@ done
 # master's skew filter must not read that delay as a slow clock.
 SKEW_LOG=$(on master sh -c 'grep -F "clock is" /var/log/sw.log || true' | tr -d '\r')
 [ -z "$SKEW_LOG" ] || fail "partition delay reported as clock skew: $SKEW_LOG"
-SKEW_C1=$(on master serverwatch fleet nodes | awk '$1=="child1" {print $3}')
+SKEW_C1=$(on master trinetra fleet nodes | awk '$1=="child1" {print $3}')
 case "$SKEW_C1" in
   0s|[+-][0-9]s|[+-][12][0-9]s|[+-]30s) ;;
   *) fail "child1 skew after the partition is $SKEW_C1 (want within 30s)" ;;
@@ -239,7 +239,7 @@ pass "partitioned $(( P_TO - P_FROM ))s, no hole in the replica"
 
 # ---------------------------------------------------------------------------
 step "5 master restart"
-FIRES_BEFORE=$(on master sh -c "grep -F '\"key\":\"fleet:' /var/lib/serverwatch/alertlog.jsonl | grep -cF '\"kind\":\"fire\"' || true" | tr -d '\r')
+FIRES_BEFORE=$(on master sh -c "grep -F '\"key\":\"fleet:' /var/lib/trinetra/alertlog.jsonl | grep -cF '\"kind\":\"fire\"' || true" | tr -d '\r')
 # A restart whose outage outlasts node_down_after (a bare `compose restart`
 # is back in ~1 s), so the master's start-up grace period is what keeps it
 # from paging nodes whose last contact is older than node_down_after, and the
@@ -257,8 +257,8 @@ echo "  both children online $(( $(now_in master) - T_RESTART ))s after the mast
 # No node-down storm: nodes that keep shipping must not be paged. Watch past
 # node_down_after so a wrongly-expired grace period would show.
 while [ $(( $(now_in master) - T_RESTART )) -lt $(( DOWN_AFTER + 5 )) ]; do sleep 2; done
-FIRES_AFTER=$(on master sh -c "grep -F '\"key\":\"fleet:' /var/lib/serverwatch/alertlog.jsonl | grep -cF '\"kind\":\"fire\"' || true" | tr -d '\r')
-[ "$FIRES_AFTER" -eq "$FIRES_BEFORE" ] || fail "fleet alerts fired after master restart ($FIRES_BEFORE -> $FIRES_AFTER): $(on master tail -n 3 /var/lib/serverwatch/alertlog.jsonl)"
+FIRES_AFTER=$(on master sh -c "grep -F '\"key\":\"fleet:' /var/lib/trinetra/alertlog.jsonl | grep -cF '\"kind\":\"fire\"' || true" | tr -d '\r')
+[ "$FIRES_AFTER" -eq "$FIRES_BEFORE" ] || fail "fleet alerts fired after master restart ($FIRES_BEFORE -> $FIRES_AFTER): $(on master tail -n 3 /var/lib/trinetra/alertlog.jsonl)"
 # The live update reconnects at once, but the data shipper may be asleep in
 # its retry backoff (up to ~61 s after a 40 s outage), so give the spooled
 # backlog time to drain before comparing replicas.
@@ -276,13 +276,13 @@ pass "no fleet alerts, both online, replicas intact across the $(( T_RESTART - R
 # ---------------------------------------------------------------------------
 step "6 revoke"
 C2=$ID_child2
-R=$(on master serverwatch fleet node revoke child2) || fail "revoke: $R"
+R=$(on master trinetra fleet node revoke child2) || fail "revoke: $R"
 grep -q "^Revoked $C2" <<<"$R" || fail "unexpected revoke output: $R"
 wait_until 60 "child2 link revoked" link_is child2 revoked
 wait_until 30 "child2 local revoked alert" alert_seen child2 "fleet:link:revoked" fire
 wait_until 30 "master shows child2 revoked" node_is child2 revoked
-REP=/var/lib/serverwatch/fleet/nodes/$C2/ts/raw/cpu.tsd
-LOC=/var/lib/serverwatch/ts/raw/cpu.tsd
+REP=/var/lib/trinetra/fleet/nodes/$C2/ts/raw/cpu.tsd
+LOC=/var/lib/trinetra/ts/raw/cpu.tsd
 S1=$(file_size master "$REP"); L1=$(file_size child2 "$LOC")
 sleep $(( 4 * FAST ))  # stability window: the replica must not grow
 S2=$(file_size master "$REP"); L2=$(file_size child2 "$LOC")
@@ -292,56 +292,56 @@ pass "child2 link revoked, local alert raised, replica frozen at $S1 bytes while
 
 # ---------------------------------------------------------------------------
 step "7 leave + remove"
-L=$(on child1 serverwatch fleet leave --purge) || fail "leave: $L"
+L=$(on child1 trinetra fleet leave --purge) || fail "leave: $L"
 grep -q "fleet node revoke $C1" <<<"$L" || fail "leave did not print the master-side command: $L"
 stop_daemon child1
 start_daemon child1
-ST=$(on child1 serverwatch fleet status)
+ST=$(on child1 trinetra fleet status)
 grep -qx "role: solo" <<<"$ST" || fail "child1 after leave: $ST"
-on child1 sh -c '! test -e /var/lib/serverwatch/fleet-child && ! test -e /var/lib/serverwatch/outbox' \
-  || fail "child1 still has fleet-child/ or outbox/: $(on child1 ls /var/lib/serverwatch)"
-RM=$(on master serverwatch fleet node remove child1) || fail "remove: $RM"
+on child1 sh -c '! test -e /var/lib/trinetra/fleet-child && ! test -e /var/lib/trinetra/outbox' \
+  || fail "child1 still has fleet-child/ or outbox/: $(on child1 ls /var/lib/trinetra)"
+RM=$(on master trinetra fleet node remove child1) || fail "remove: $RM"
 grep -q "^Removed $C1" <<<"$RM" || fail "unexpected remove output: $RM"
 T_RM=$(now_in master)
 DOWN_AT_RM=$(alert_count master "fleet:node:$C1:down" fire)
-on master serverwatch fleet nodes | awk '$1=="child1"' | grep -q . && fail "master still lists child1: $(on master serverwatch fleet nodes)"
+on master trinetra fleet nodes | awk '$1=="child1"' | grep -q . && fail "master still lists child1: $(on master trinetra fleet nodes)"
 while [ $(( $(now_in master) - T_RM )) -lt $(( DOWN_AFTER + 15 )) ]; do sleep 2; done
 [ "$(alert_count master "fleet:node:$C1:down" fire)" -eq "$DOWN_AT_RM" ] || fail "master paged removed child1 as down"
-on master serverwatch fleet nodes | awk '$1=="child1"' | grep -q . && fail "child1 reappeared in fleet nodes"
+on master trinetra fleet nodes | awk '$1=="child1"' | grep -q . && fail "child1 reappeared in fleet nodes"
 # child2 has been revoked (and silent) for longer than node_down_after by now.
 [ "$(alert_count master "fleet:node:$C2:down" fire)" -eq 0 ] || fail "master paged revoked child2 as down"
 pass "child1 solo with identity purged; removed on master, no down page for it (or revoked child2) after $(( DOWN_AFTER + 15 ))s"
 
 # ---------------------------------------------------------------------------
 step "8 solo regression"
-on solo sh -c '! test -e /var/lib/serverwatch/fleet && ! test -e /var/lib/serverwatch/fleet-child && ! test -e /var/lib/serverwatch/outbox' \
-  || fail "solo has fleet dirs: $(on solo ls /var/lib/serverwatch)"
+on solo sh -c '! test -e /var/lib/trinetra/fleet && ! test -e /var/lib/trinetra/fleet-child && ! test -e /var/lib/trinetra/outbox' \
+  || fail "solo has fleet dirs: $(on solo ls /var/lib/trinetra)"
 # 9443 = 0x24E3; state 0A = LISTEN.
 on solo sh -c '! awk "\$4==\"0A\"" /proc/net/tcp /proc/net/tcp6 | grep -qi ":24E3 "' \
   || fail "something listens on 9443 on solo"
-ST=$(on solo serverwatch fleet status)
+ST=$(on solo trinetra fleet status)
 grep -qx "role: solo" <<<"$ST" || fail "solo fleet status: $ST"
-wait_until 30 "solo serverwatch status" on solo serverwatch status
-SS=$(on solo serverwatch status)
+wait_until 30 "solo trinetra status" on solo trinetra status
+SS=$(on solo trinetra status)
 grep -qi "cpu" <<<"$SS" || fail "solo status lacks CPU: $SS"
-on solo test -s /var/lib/serverwatch/ts/raw/cpu.tsd || fail "solo is not recording samples"
+on solo test -s /var/lib/trinetra/ts/raw/cpu.tsd || fail "solo is not recording samples"
 pass "no fleet dirs, no :9443 listener, role solo, status works"
 
 # ---------------------------------------------------------------------------
 step "9 security spot checks"
-NODES_BEFORE=$(on master serverwatch fleet nodes | tail -n +2 | wc -l | tr -d ' ')
+NODES_BEFORE=$(on master trinetra fleet nodes | tail -n +2 | wc -l | tr -d ' ')
 CODE_HTTP=$(on solo curl -sk -X POST -o /dev/null -w '%{http_code}' https://master:9443/fleet/v1/ingest)
 [ "$CODE_HTTP" = "401" ] || fail "ingest without client cert returned $CODE_HTTP, want 401"
 echo "  POST /fleet/v1/ingest without client cert -> 401"
-if OUT=$(on solo serverwatch fleet join swj1_garbage --name bogus 2>&1); then fail "garbage join code accepted: $OUT"; fi
+if OUT=$(on solo trinetra fleet join swj1_garbage --name bogus 2>&1); then fail "garbage join code accepted: $OUT"; fi
 echo "  garbage code refused: $OUT"
-if OUT=$(on solo serverwatch fleet join "$CODE" --name reused 2>&1); then fail "spent join code accepted: $OUT"; fi
+if OUT=$(on solo trinetra fleet join "$CODE" --name reused 2>&1); then fail "spent join code accepted: $OUT"; fi
 echo "  spent code refused: $OUT"
-ST=$(on solo serverwatch fleet status)
+ST=$(on solo trinetra fleet status)
 grep -qx "role: solo" <<<"$ST" || fail "solo changed role after refused joins: $ST"
-NODES_AFTER=$(on master serverwatch fleet nodes | tail -n +2 | wc -l | tr -d ' ')
+NODES_AFTER=$(on master trinetra fleet nodes | tail -n +2 | wc -l | tr -d ' ')
 [ "$NODES_AFTER" -eq "$NODES_BEFORE" ] || fail "node count changed $NODES_BEFORE -> $NODES_AFTER"
-on master serverwatch fleet nodes | awk '$1=="bogus" || $1=="reused"' | grep -q . && fail "refused join registered a node"
+on master trinetra fleet nodes | awk '$1=="bogus" || $1=="reused"' | grep -q . && fail "refused join registered a node"
 pass "401 without cert; garbage and spent codes refused, no node registered"
 
 STEP=""

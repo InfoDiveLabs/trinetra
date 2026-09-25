@@ -12,7 +12,7 @@ x-sw: &sw
   init: true
   networks: [fleetnet]
   environment:
-    RUNTIME_DIRECTORY: /run/serverwatch
+    RUNTIME_DIRECTORY: /run/trinetra
     TELEGRAM_BASE_URL: "http://mocktg:8080"
 
 services:

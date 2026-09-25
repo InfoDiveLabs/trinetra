@@ -3,8 +3,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     stress-ng smartmontools docker.io curl sudo procps && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN go build -o /usr/local/bin/serverwatch ./cmd/serverwatch \
+RUN go build -o /usr/local/bin/trinetra ./cmd/trinetra \
  && go build -o /usr/local/bin/mocktg ./test/docker/mocktg
 # The telegram client is redirected to the mock via TELEGRAM_BASE_URL (set in compose).
-ENV SW_STATE=/var/lib/serverwatch
+ENV SW_STATE=/var/lib/trinetra
 CMD ["sleep", "infinity"]

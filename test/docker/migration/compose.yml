@@ -1,0 +1,19 @@
+# Topology for run.sh: a systemd "host" (privileged, /sbin/init) where the
+# legacy serverwatch install is created and then migrated, and the mock
+# Telegram API. The image is built by run.sh (it needs the legacy source as a
+# named build context), not by compose.
+name: trmig
+
+services:
+  mocktg:
+    image: trmig-e2e:latest
+    hostname: mocktg
+    command: ["/usr/local/sbin/mocktg"]
+    environment:
+      ADDR: ":8080"
+  host:
+    image: trmig-e2e:latest
+    hostname: host
+    privileged: true
+    tmpfs: ["/run", "/run/lock", "/tmp"]
+    depends_on: [mocktg]

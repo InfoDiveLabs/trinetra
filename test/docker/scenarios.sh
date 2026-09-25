@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end validation harness for serverwatch.
+# End-to-end validation harness for trinetra.
 #
 # Brings up the daemon plus a mock Telegram server in Docker, configures the
 # daemon entirely via its CLI (no env, no real bot), then drives real scenarios
@@ -64,15 +64,15 @@ for i in $(seq 1 30); do
 done
 
 echo "== configure daemon via CLI (proves config-by-CLI) =="
-compose exec -T sw serverwatch telegram set-token TESTTOKEN
-compose exec -T sw serverwatch config set telegram.chat_id 999
-compose exec -T sw serverwatch config set sample_interval 5
+compose exec -T sw trinetra telegram set-token TESTTOKEN
+compose exec -T sw trinetra config set telegram.chat_id 999
+compose exec -T sw trinetra config set sample_interval 5
 
 # ---------------------------------------------------------------------------
 # Scenario 1: discovery
 # ---------------------------------------------------------------------------
 echo "== scenario 1: discovery (doctor) =="
-OUT=$(compose exec -T sw serverwatch doctor)
+OUT=$(compose exec -T sw trinetra doctor)
 echo "$OUT"
 assert_contains "$OUT" "docker: available=true"
 assert_contains "$OUT" "targets discovered:"
@@ -86,7 +86,7 @@ echo "ok: discovered $N targets"
 # Start the daemon.
 # ---------------------------------------------------------------------------
 echo "== start daemon =="
-compose exec -d sw serverwatch daemon
+compose exec -d sw trinetra daemon
 sleep 8   # let it beat + sample a couple of times
 
 # ---------------------------------------------------------------------------
@@ -123,9 +123,9 @@ wait_for_message "$VICTIM (exited)" 30
 # Scenario 4 (downtime): kill daemon, wait > 2*interval, restart -> boot report
 # ---------------------------------------------------------------------------
 echo "== scenario 4: downtime / boot report =="
-compose exec -T sw pkill -f 'serverwatch daemon' || true
+compose exec -T sw pkill -f 'trinetra daemon' || true
 sleep 25   # gap > 2*sample_interval (2*5s)
-compose exec -d sw serverwatch daemon
+compose exec -d sw trinetra daemon
 wait_for_message "back online" 30
 
 echo "ALL SCENARIOS PASSED"
