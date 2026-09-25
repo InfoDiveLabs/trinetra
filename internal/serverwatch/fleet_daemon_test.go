@@ -2,6 +2,7 @@ package serverwatch
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -530,5 +531,27 @@ func TestMasterSkewWarnsOnceMarksLaggingAndSurfaces(t *testing.T) {
 	}
 	if n.SkewSec != -90 || n.DroppedOld != 1 || n.State != string(fleet.StateLagging) {
 		t.Fatalf("node summary = %+v, want skew -90, 1 dropped, lagging", n)
+	}
+}
+
+// The master warns at start when its server certificate is within 90 days
+// of expiry, and says how to re-issue it without re-enrolling children.
+func TestServerLeafExpiryWarning(t *testing.T) {
+	dir := t.TempDir()
+	issued := time.Now()
+	if err := fleetInitPKI(dir, []string{"127.0.0.1"}, "test", issued); err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := tls.LoadX509KeyPair(filepath.Join(fleetPKIDir(dir), "server.crt"), filepath.Join(fleetPKIDir(dir), "server.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := serverLeafExpiryWarning(leaf, issued); w != "" {
+		t.Fatalf("fresh leaf warned: %s", w)
+	}
+	nearEnd := issued.Add(fleet.ServerCertLife - 30*24*time.Hour)
+	w := serverLeafExpiryWarning(leaf, nearEnd)
+	if !strings.Contains(w, "expires") || !strings.Contains(w, "fleet disable") || !strings.Contains(w, "fleet init") {
+		t.Fatalf("warning = %q", w)
 	}
 }

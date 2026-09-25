@@ -734,6 +734,13 @@ use, under `/var/lib/serverwatch/fleet/pki/`. Running it again reuses the
 existing CA, so enrolled children never have to re-join; it refuses to replace
 a CA it cannot read rather than silently minting a new one.
 
+Nothing renews the server certificate automatically. From 90 days before it
+expires the master logs a warning at every start; re-issue it with
+`serverwatch fleet disable` followed by `serverwatch fleet init --address ...`
+(without `--purge`, so the CA, registry and replicas are kept and children
+need not re-join), then restart. The same sequence is how you change the
+addresses the certificate covers.
+
 `serverwatch fleet token create` prints a one-line join code (`swj1_...`). The
 code carries the master's URL, a short-lived single- or multi-use token
 (`swt_...`), and the CA pin: a SHA-256 of the CA's public key. On the child,

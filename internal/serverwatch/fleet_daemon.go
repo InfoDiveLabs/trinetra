@@ -8,6 +8,7 @@ package serverwatch
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -92,6 +93,29 @@ func fleetInitPKI(stateDir string, hosts []string, caName string, now time.Time)
 	}
 	chain := append(append([]byte{}, leaf...), ca.CertPEM...)
 	return os.WriteFile(filepath.Join(dir, "server.crt"), chain, 0o644)
+}
+
+// serverLeafWarnBefore is how long before the master's server certificate
+// expires that startMaster starts warning. Nothing renews it automatically.
+const serverLeafWarnBefore = 90 * 24 * time.Hour
+
+// serverLeafExpiryWarning returns a warning when the master's server
+// certificate expires within serverLeafWarnBefore of now, else "".
+func serverLeafExpiryWarning(leaf tls.Certificate, now time.Time) string {
+	if len(leaf.Certificate) == 0 {
+		return ""
+	}
+	c, err := x509.ParseCertificate(leaf.Certificate[0])
+	if err != nil {
+		return ""
+	}
+	left := c.NotAfter.Sub(now)
+	if left > serverLeafWarnBefore {
+		return ""
+	}
+	return fmt.Sprintf("fleet: WARNING the master's server certificate expires %s (in %d days); children cannot connect after that. "+
+		"Re-issue it with `sudo serverwatch fleet disable` then `sudo serverwatch fleet init --address ...` (keeps the CA, so children need not re-join) and restart.",
+		c.NotAfter.Format("2006-01-02"), int(left.Hours()/24))
 }
 
 // fileMissing reports whether path does not exist; any other stat error is
@@ -310,6 +334,9 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	leaf, err := tls.LoadX509KeyPair(filepath.Join(pki, "server.crt"), filepath.Join(pki, "server.key"))
 	if err != nil {
 		return fmt.Errorf("load server certificate: %w", err)
+	}
+	if w := serverLeafExpiryWarning(leaf, time.Now()); w != "" {
+		d.logf("%s", w)
 	}
 	dir := fleetMasterDir(d.stateDir)
 	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
