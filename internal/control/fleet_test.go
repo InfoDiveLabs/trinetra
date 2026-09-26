@@ -26,6 +26,10 @@ type fleetFake struct {
 	savedMaintenance  core.Maintenance
 	deletedMaintID    string
 	deletedMaintActor string
+
+	setAlertingCfg   core.AlertingConfig
+	setAlertingActor string
+	routeTestAlert   core.TestAlert
 }
 
 type fleetFakeAPI struct{ f *fleetFake }
@@ -104,6 +108,20 @@ func (a fleetFakeAPI) SaveMaintenance(m core.Maintenance) (core.Maintenance, err
 func (a fleetFakeAPI) DeleteMaintenance(id, actor string) error {
 	a.f.deletedMaintID, a.f.deletedMaintActor = id, actor
 	return nil
+}
+
+func (a fleetFakeAPI) Alerting() (core.AlertingConfig, error) {
+	return core.AlertingConfig{DefaultPolicy: "default"}, nil
+}
+
+func (a fleetFakeAPI) SetAlerting(cfg core.AlertingConfig, actor string) error {
+	a.f.setAlertingCfg, a.f.setAlertingActor = cfg, actor
+	return nil
+}
+
+func (a fleetFakeAPI) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
+	a.f.routeTestAlert = alert
+	return core.RouteDecision{Policy: "default"}, nil
 }
 
 func TestClientRoutesToNode(t *testing.T) {

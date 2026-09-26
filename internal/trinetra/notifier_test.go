@@ -79,6 +79,73 @@ func TestDispatcherFansOutToAll(t *testing.T) {
 	}
 }
 
+// TestDispatcherDispatchToNamedSubset covers fleet routing (task 5): only
+// the named channel receives the alert, even though every channel is
+// enabled and would otherwise allow it.
+func TestDispatcherDispatchToNamedSubset(t *testing.T) {
+	slack := &fakeNotifier{name: "slack"}
+	pager := &fakeNotifier{name: "pager"}
+	d := NewDispatcher([]Channel{allowAllChannel(slack), allowAllChannel(pager)}, time.Second)
+
+	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire"}
+	results := d.DispatchTo(a, false, []string{"slack"})
+	if len(results) != 1 || results[0].Channel != "slack" {
+		t.Fatalf("results = %+v, want exactly slack", results)
+	}
+	if got := slack.received(); len(got) != 1 {
+		t.Fatalf("slack received %d, want 1", len(got))
+	}
+	if got := pager.received(); len(got) != 0 {
+		t.Fatalf("pager received %d, want 0 (not named)", len(got))
+	}
+}
+
+// TestDispatcherDispatchToWildcardActsLikeDispatch: "*" reaches every
+// enabled, routing-matched channel, exactly like Dispatch.
+func TestDispatcherDispatchToWildcardActsLikeDispatch(t *testing.T) {
+	n1 := &fakeNotifier{name: "n1"}
+	n2 := &fakeNotifier{name: "n2"}
+	d := NewDispatcher([]Channel{allowAllChannel(n1), allowAllChannel(n2)}, time.Second)
+
+	results := d.DispatchTo(Alert{Key: "cpu", Severity: SevWarning, Kind: "fire"}, false, []string{"*"})
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2 (every enabled channel)", len(results))
+	}
+}
+
+// TestDispatcherDispatchToStillGatesOnRouteAllows covers the task-5 ruling:
+// naming a channel never bypasses its own Route.Allows -- quiet hours and
+// severity gating still apply exactly as they do for Dispatch.
+func TestDispatcherDispatchToStillGatesOnRouteAllows(t *testing.T) {
+	slack := &fakeNotifier{name: "slack"}
+	pager := &fakeNotifier{name: "pager"}
+	d := NewDispatcher([]Channel{
+		{N: slack, Route: Route{MinSeverity: SevWarning}, Enabled: true},
+		{N: pager, Route: Route{MinSeverity: SevWarning, CriticalOverridesQuiet: true}, Enabled: true},
+	}, time.Second)
+
+	// During quiet hours, a non-critical alert is gated out on EVERY channel,
+	// named or not.
+	results := d.DispatchTo(Alert{Key: "cpu", Severity: SevWarning, Kind: "fire"}, true, []string{"slack", "pager"})
+	if len(results) != 0 {
+		t.Fatalf("results during quiet hours = %+v, want none (severity below critical)", results)
+	}
+
+	// A critical alert during quiet hours still only reaches the channel
+	// whose Route explicitly overrides quiet hours.
+	results = d.DispatchTo(Alert{Key: "cpu", Severity: SevCritical, Kind: "fire"}, true, []string{"slack", "pager"})
+	if len(results) != 1 || results[0].Channel != "pager" {
+		t.Fatalf("results for a critical alert during quiet hours = %+v, want only pager", results)
+	}
+
+	// Naming a channel not in the config's channel set (config drift) simply
+	// delivers to nothing -- no panic, no error.
+	results = d.DispatchTo(Alert{Key: "cpu", Severity: SevCritical, Kind: "fire"}, false, []string{"does-not-exist"})
+	if len(results) != 0 {
+		t.Fatalf("results for an unknown channel name = %+v, want none", results)
+	}
+}
+
 func TestDispatcherIsolatesFailures(t *testing.T) {
 	failing := &fakeNotifier{name: "failing", err: errors.New("send failed")}
 	ok1 := &fakeNotifier{name: "ok1"}

@@ -48,6 +48,17 @@ type fleetDeps struct {
 	// engine's own per-alert dispatch goroutine, never from a hot path
 	// that must not block.
 	deliverSync func(Alert) bool
+	// deliverSyncTo is deliverSync narrowed to a specific channel-name subset
+	// (fleet routing, task 5): same synchronous, completion-reporting
+	// contract, used for the fire/recover legs once a routing config is
+	// wired (fleetAlertEngine.SetRouting's deliverNamed) -- it also logs to
+	// the alert log/live bus, exactly like deliverSync.
+	deliverSyncTo func(a Alert, channels []string) bool
+	// dispatchOnly delivers to a channel-name subset WITHOUT logging to the
+	// alert log/live bus (fleet routing, task 5): used for escalation/repeat
+	// notifications (fleetAlertEngine.SetRouting's dispatchOnly), which are
+	// not new alert records -- only the fire/recover legs are.
+	dispatchOnly func(a Alert, channels []string) bool
 	// alertFallback delivers a alert locally after the child's lease/receipt
 	// handoff (fleet_lease.go) gave up waiting on the master: it mirrors
 	// alert's construction (same alog/bus/q closed over) but calls
@@ -351,6 +362,7 @@ func (l *masterLoop) tick(now time.Time) {
 	if l.engine != nil {
 		l.engine.TickLeases(now, nodeIDs)
 		l.engine.TickSilences(now, nodeIDs)
+		l.engine.TickEscalations(now)
 	}
 	if now.Sub(l.lastFlush) >= 30*time.Second {
 		l.lastFlush = now
@@ -539,6 +551,10 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	if err != nil {
 		return fmt.Errorf("load silences: %w", err)
 	}
+	alerting, err := loadAlertingStore(filepath.Join(dir, "alerting.json"))
+	if err != nil {
+		return fmt.Errorf("load alerting config: %w", err)
+	}
 	audit := newAuditLog(filepath.Join(dir, "audit.jsonl"))
 	engine := newFleetAlertEngine(time.Now, d.deliverSync, hub.Push, hub.Connected, incidents)
 	engine.SetSilences(silences, func(id string) (string, []string) {
@@ -547,6 +563,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		}
 		return id, nil
 	})
+	engine.SetRouting(alerting, d.deliverSyncTo, d.dispatchOnly)
 	// A freshly (re)connected node gets a lease and its current silence set
 	// immediately, rather than waiting up to one masterTickInterval /
 	// silencePushInterval for the next Tick pass.
@@ -607,7 +624,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	}
 
 	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker, loop: loop,
-		hub: hub, engine: engine, audit: audit, silences: silences,
+		hub: hub, engine: engine, audit: audit, silences: silences, alerting: alerting,
 		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 	loopCtx, cancel := context.WithCancel(ctx)
 	loopDone := make(chan struct{})

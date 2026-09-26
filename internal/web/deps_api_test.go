@@ -241,6 +241,15 @@ func (f *fakeFleet) Maintenances() ([]core.Maintenance, error)                  
 func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) { return m, nil }
 func (f *fakeFleet) DeleteMaintenance(string, string) error                       { return nil }
 
+// Alerting/SetAlerting/RouteTest: task 5's routing/escalation config has no
+// web surface yet (plan C); these stubs exist only so fakeFleet keeps
+// satisfying core.FleetAPI.
+func (f *fakeFleet) Alerting() (core.AlertingConfig, error)        { return core.AlertingConfig{}, nil }
+func (f *fakeFleet) SetAlerting(core.AlertingConfig, string) error { return nil }
+func (f *fakeFleet) RouteTest(core.TestAlert) (core.RouteDecision, error) {
+	return core.RouteDecision{}, nil
+}
+
 var _ core.FleetAPI = (*fakeFleet)(nil)
 
 // countingAPI wraps a core.API and counts every call made through it, so a

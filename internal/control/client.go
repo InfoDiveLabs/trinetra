@@ -600,6 +600,22 @@ func (f fleetClient) SaveMaintenance(m core.Maintenance) (core.Maintenance, erro
 	return v, err
 }
 
+func (f fleetClient) Alerting() (core.AlertingConfig, error) {
+	var v core.AlertingConfig
+	err := f.c.call("Fleet.Alerting", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) SetAlerting(cfg core.AlertingConfig, actor string) error {
+	return f.c.call("Fleet.SetAlerting", map[string]any{"alerting": cfg, "actor": actor}, nil)
+}
+
+func (f fleetClient) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
+	var v core.RouteDecision
+	err := f.c.call("Fleet.RouteTest", map[string]any{"test_alert": alert}, &v)
+	return v, err
+}
+
 func (f fleetClient) DeleteMaintenance(id, actor string) error {
 	return f.c.call("Fleet.DeleteMaintenance", map[string]any{"id": id, "actor": actor}, nil)
 }

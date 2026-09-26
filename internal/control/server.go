@@ -454,6 +454,8 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 		Limit       int                 `json:"limit"`
 		Silence     core.Silence        `json:"silence"`
 		Maintenance core.Maintenance    `json:"maintenance"`
+		Alerting    core.AlertingConfig `json:"alerting"`
+		TestAlert   core.TestAlert      `json:"test_alert"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -593,6 +595,26 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 			return nil, err
 		}
 		return emptyResult, nil
+
+	case "Fleet.Alerting":
+		v, err := f.Alerting()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.SetAlerting":
+		if err := f.SetAlerting(p.Alerting, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.RouteTest":
+		v, err := f.RouteTest(p.TestAlert)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
 	}
 	return nil, fmt.Errorf("control: unknown method %q", method)
 }

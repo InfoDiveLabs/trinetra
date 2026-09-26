@@ -308,6 +308,99 @@ type AuditEntry struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// Route picks a Policy for an alert matching any of its Matchers (OR'd,
+// exactly like Silence.Matchers -- each field within one Matcher is ANDed,
+// see Matcher.Matches). Routes are evaluated in order: the first match wins,
+// unless Continue is true, in which case evaluation keeps going into later
+// routes too and every matched route's Policy contributes its own steps
+// (fan-out) -- see the trinetra package's resolveRoute, the one function
+// both the alerting engine's real delivery and RouteTest ever call. GroupBy
+// is reserved for B6 (grouping); it is stored but not yet interpreted.
+type Route struct {
+	Name     string    `json:"name"`
+	Matchers []Matcher `json:"matchers"`
+	Policy   string    `json:"policy"`
+	GroupBy  []string  `json:"group_by,omitempty"`
+	Continue bool      `json:"continue,omitempty"`
+}
+
+// PolicyStep is one delivery step of a Policy: After is a time.ParseDuration
+// string measured from the incident's first successful delivery (After:"0s"
+// is the immediate, first delivery), and Channels are channel NAMES from the
+// master's own config.Config.Channels -- or the literal "*", meaning every
+// currently enabled channel (still gated by each channel's own Route.Allows:
+// quiet hours, severity, kind).
+type PolicyStep struct {
+	After    string   `json:"after"`
+	Channels []string `json:"channels"`
+}
+
+// Policy is a named escalation schedule: Steps fire in order as their After
+// duration elapses since the incident's first delivery (unacked and still
+// firing); once the last step is reached, RepeatEvery (if non-empty)
+// re-notifies that last step's channels on that cadence until the incident
+// is acked or resolved. SendResolved (default true when nil) gates whether a
+// recover is actually delivered for incidents using this policy -- always
+// recorded either way.
+type Policy struct {
+	Name         string       `json:"name"`
+	Steps        []PolicyStep `json:"steps"`
+	RepeatEvery  string       `json:"repeat_every,omitempty"`
+	SendResolved *bool        `json:"send_resolved,omitempty"`
+}
+
+// AggregateRule names a grouping/aggregation rule (B7 fills in Expr's
+// evaluation); AlertingConfig stores it untouched until then.
+type AggregateRule struct {
+	Name     string `json:"name"`
+	Expr     string `json:"expr"`
+	Severity string `json:"severity,omitempty"`
+}
+
+// AlertingConfig is the fleet master's routing/escalation configuration
+// (spec 6), persisted to fleet/alerting.json. Version is an optimistic-
+// concurrency token: SetAlerting rejects a stale Version with ErrConflict,
+// except Version 0, which is unconditional (used by `fleet alerting apply`,
+// which does not do optimistic locking). An absent alerting.json behaves
+// exactly like {DefaultPolicy:"default", Policies:[{Name:"default",
+// Steps:[{After:"0s",Channels:["*"]}], SendResolved:true}]} -- today's
+// behaviour, byte for byte.
+type AlertingConfig struct {
+	Version       int64           `json:"version"`
+	Routes        []Route         `json:"routes,omitempty"`
+	Policies      []Policy        `json:"policies,omitempty"`
+	DefaultPolicy string          `json:"default_policy,omitempty"`
+	Rules         []AggregateRule `json:"rules,omitempty"`
+}
+
+// ErrConflict is returned by FleetAPI.SetAlerting when the config's Version
+// no longer matches what is actually stored (someone else saved a change
+// since it was loaded) -- Version 0 bypasses this check unconditionally.
+var ErrConflict = errors.New("the alerting config changed since it was loaded")
+
+// TestAlert is a synthetic alert FleetAPI.RouteTest evaluates against the
+// current routing config without actually firing anything: Node is a
+// display name or exact node id (as core.Matcher.Node accepts), Rule is the
+// alert key/rule glob target, Severity is the alert's severity.
+type TestAlert struct {
+	Node     string   `json:"node"`
+	Tags     []string `json:"tags,omitempty"`
+	Rule     string   `json:"rule"`
+	Severity string   `json:"severity"`
+}
+
+// RouteDecision is FleetAPI.RouteTest's result: which route matched (empty
+// when none did -- DefaultPolicy was used), which policy applies, its
+// resolved steps (merged across every matched route's policy when Continue
+// chained more than one), and, if a current silence/maintenance window would
+// suppress this exact alert, why.
+type RouteDecision struct {
+	Route      string       `json:"route,omitempty"`
+	Policy     string       `json:"policy"`
+	Steps      []PolicyStep `json:"steps"`
+	Suppressed string       `json:"suppressed,omitempty"`
+}
+
 // FleetAPI is the set of fleet-master operations exposed alongside a
 // FleetProvider's per-node API surface: fleet-wide status, the node roster,
 // node management, join tokens, incidents and the audit log.
@@ -353,6 +446,21 @@ type FleetAPI interface {
 	SaveMaintenance(Maintenance) (Maintenance, error)
 	// DeleteMaintenance removes maintenance window id, recording actor.
 	DeleteMaintenance(id, actor string) error
+
+	// Alerting returns the current routing/escalation config, synthesizing
+	// the built-in default (see AlertingConfig's doc comment) when
+	// alerting.json has never been saved.
+	Alerting() (AlertingConfig, error)
+	// SetAlerting validates and atomically replaces the routing/escalation
+	// config: an unknown channel or policy name, a bad duration, a bad glob,
+	// or a duplicate route/policy name is rejected with nothing saved. A
+	// stale cfg.Version (see AlertingConfig's doc comment) is rejected with
+	// ErrConflict. actor is recorded on the "fleet.alerting.set" audit entry.
+	SetAlerting(cfg AlertingConfig, actor string) error
+	// RouteTest dry-runs alert through the exact same route/policy selection
+	// the alerting engine uses for real delivery, plus a current-silence
+	// check, without firing anything.
+	RouteTest(alert TestAlert) (RouteDecision, error)
 }
 
 // FleetProvider is optional; implementations of API that know about a fleet

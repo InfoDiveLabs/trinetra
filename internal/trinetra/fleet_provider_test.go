@@ -279,4 +279,106 @@ func TestFleetAPIMutationsNilSafeWithoutOptionalFields(t *testing.T) {
 	if err := api.RemoveNode(nodeID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := api.Alerting(); err != nil {
+		t.Fatalf("Alerting() with no alerting store must return the built-in default, not error: %v", err)
+	}
+	if _, err := api.RouteTest(core.TestAlert{Rule: "cpu"}); err != nil {
+		t.Fatalf("RouteTest() with no silences/registry must not error: %v", err)
+	}
+}
+
+// TestFleetAPIAlertingShowApplyRoundTrip covers the task-5 "show|apply"
+// contract: Alerting() reports the built-in default until SetAlerting saves
+// something, SetAlerting validates against the master's CURRENT channel
+// config, and a successful save is audited.
+func TestFleetAPIAlertingShowApplyRoundTrip(t *testing.T) {
+	m := newTestMasterState(t)
+	dir := t.TempDir()
+	alerting, err := loadAlertingStore(filepath.Join(dir, "alerting.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.alerting = alerting
+	m.getCfg = func() *config.Config {
+		return &config.Config{Channels: []config.ChannelConfig{{Name: "slack", Type: "webhook", Enabled: true}}}
+	}
+	api := fleetAPIFor(m)
+
+	got, err := api.Alerting()
+	if err != nil || got.Version != 0 || got.DefaultPolicy != "default" {
+		t.Fatalf("Alerting() before any save = %+v err %v, want the built-in default", got, err)
+	}
+
+	bad := core.AlertingConfig{
+		Policies:      []core.Policy{{Name: "p", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"bogus"}}}}},
+		DefaultPolicy: "p",
+	}
+	if err := api.SetAlerting(bad, "cli"); err == nil {
+		t.Fatal("SetAlerting with an unknown channel name must fail")
+	}
+
+	good := core.AlertingConfig{
+		Policies:      []core.Policy{{Name: "p", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"slack"}}}}},
+		DefaultPolicy: "p",
+	}
+	if err := api.SetAlerting(good, "cli-tester"); err != nil {
+		t.Fatalf("SetAlerting with a valid config: %v", err)
+	}
+	got, err = api.Alerting()
+	if err != nil || got.Version != 1 || got.DefaultPolicy != "p" {
+		t.Fatalf("Alerting() after save = %+v err %v", got, err)
+	}
+
+	entries, err := api.Audit(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == "fleet.alerting.set" && e.Actor == "cli-tester" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("audit log missing fleet.alerting.set: %+v", entries)
+	}
+}
+
+// TestFleetAPIRouteTestMatchesResolveRoute is the test-enforced invariant
+// (task-5 brief): RouteTest must be a thin wrapper around the exact same
+// resolveRoute function the alerting engine's real delivery uses, so a dry
+// run can never disagree with what actually happens for the same input.
+func TestFleetAPIRouteTestMatchesResolveRoute(t *testing.T) {
+	m := newTestMasterState(t)
+	dir := t.TempDir()
+	alerting, err := loadAlertingStore(filepath.Join(dir, "alerting.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := core.AlertingConfig{
+		Routes:        []core.Route{{Name: "web", Matchers: []core.Matcher{{Node: "web*"}}, Policy: "p"}},
+		Policies:      []core.Policy{{Name: "p", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"slack"}}}}},
+		DefaultPolicy: "p",
+	}
+	if _, err := alerting.Set(cfg, allChannelsValid); err != nil {
+		t.Fatal(err)
+	}
+	m.alerting = alerting
+	nodeID, err := fleet.NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.reg.Add(fleet.Node{ID: nodeID, Name: "web1", Tags: []string{"prod"}, Joined: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	api := fleetAPIFor(m)
+
+	got, err := api.RouteTest(core.TestAlert{Node: "web1", Rule: "cpu", Severity: "critical"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := resolveRoute(alerting.Get(), nodeID, "web1", []string{"prod"}, "cpu", "critical")
+	if got.Route != want.RouteName || got.Policy != want.PolicyName {
+		t.Fatalf("RouteTest = %+v, want route=%q policy=%q matching resolveRoute directly", got, want.RouteName, want.PolicyName)
+	}
 }

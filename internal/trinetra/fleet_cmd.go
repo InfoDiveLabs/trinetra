@@ -39,6 +39,8 @@ const fleetUsage = `usage:
   trinetra fleet silence list | expire <id>
   trinetra fleet maintenance add --name N --match ... --days mon,tue --from 22:00 --to 02:00 --tz Asia/Kolkata
   trinetra fleet maintenance list | delete <id>
+  trinetra fleet route test --node web1 [--tag t] --rule cpu --severity critical
+  trinetra fleet alerting show | apply <file.json>
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo`
 
@@ -78,6 +80,10 @@ func cmdFleet(args []string) int {
 		return fleetSilenceCmd(args[1:])
 	case "maintenance":
 		return fleetMaintenanceCmd(args[1:])
+	case "route":
+		return fleetRouteCmd(args[1:])
+	case "alerting":
+		return fleetAlertingCmd(args[1:])
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, fleetUsage)
 		return 0
@@ -1015,6 +1021,119 @@ func fleetMaintenanceDelete(args []string) int {
 			return err
 		}
 		fmt.Fprintf(stdout, "Deleted maintenance window %s.\n", args[0])
+		return nil
+	})
+}
+
+func fleetRouteCmd(args []string) int {
+	if len(args) == 0 || args[0] != "test" {
+		fmt.Fprintln(stderr, "usage: trinetra fleet route test --node NAME [--tag t1,t2] --rule RULE --severity SEV")
+		return 2
+	}
+	return fleetRouteTest(args[1:])
+}
+
+func fleetRouteTest(args []string) int {
+	fs := newFlags("fleet route test")
+	node := fs.String("node", "", "node display name or id")
+	tag := fs.String("tag", "", "comma-separated tags")
+	rule := fs.String("rule", "", "alert key/rule")
+	severity := fs.String("severity", "", "severity (info, warning, critical)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	usage := "trinetra fleet route test --node NAME [--tag t1,t2] --rule RULE --severity SEV"
+	if rejectPositionals("fleet route test", usage, pos) {
+		return 2
+	}
+	var tags []string
+	if strings.TrimSpace(*tag) != "" {
+		tags = strings.Split(*tag, ",")
+	}
+	return withDaemon(func(c *control.Client) error {
+		d, err := c.Fleet().RouteTest(core.TestAlert{Node: *node, Tags: tags, Rule: *rule, Severity: *severity})
+		if err != nil {
+			return err
+		}
+		printRouteDecision(stdout, d)
+		return nil
+	})
+}
+
+func printRouteDecision(w io.Writer, d core.RouteDecision) {
+	route := d.Route
+	if route == "" {
+		route = "(no route matched; using the default policy)"
+	}
+	fmt.Fprintf(w, "route: %s\npolicy: %s\n", route, d.Policy)
+	for i, s := range d.Steps {
+		fmt.Fprintf(w, "  step %d: after %s -> %s\n", i, s.After, strings.Join(s.Channels, ", "))
+	}
+	if d.Suppressed != "" {
+		fmt.Fprintf(w, "suppressed: %s\n", d.Suppressed)
+	} else {
+		fmt.Fprintln(w, "suppressed: no")
+	}
+}
+
+func fleetAlertingCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet alerting show|apply <file.json>")
+		return 2
+	}
+	switch args[0] {
+	case "show":
+		return fleetAlertingShow(args[1:])
+	case "apply":
+		return fleetAlertingApply(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown alerting command %q\n", args[0])
+	return 2
+}
+
+func fleetAlertingShow(args []string) int {
+	if rejectPositionals("fleet alerting show", "trinetra fleet alerting show", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		cfg, err := c.Fleet().Alerting()
+		if err != nil {
+			return err
+		}
+		b, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, string(b))
+		return nil
+	})
+}
+
+// fleetAlertingApply applies file's config with Version 0 (unconditional):
+// the CLI does not do optimistic locking (that is plan C's web editor's
+// job), so it always overwrites whatever is currently stored.
+func fleetAlertingApply(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet alerting apply <file.json>")
+		return 2
+	}
+	b, err := os.ReadFile(args[0])
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet alerting apply:", err)
+		return 1
+	}
+	var cfg core.AlertingConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		fmt.Fprintf(stderr, "fleet alerting apply: parse %s: %v\n", args[0], err)
+		return 1
+	}
+	cfg.Version = 0
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().SetAlerting(cfg, "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Applied alerting config from %s.\n", args[0])
 		return nil
 	})
 }

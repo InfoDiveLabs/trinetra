@@ -13,6 +13,7 @@ package trinetra
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -95,6 +96,19 @@ type fleetAlertEngine struct {
 	silences        *silenceStore
 	nodeInfo        func(nodeID string) (name string, tags []string)
 	lastSilencePush int64 // unix time of the last push-to-all pass; 0 means never
+
+	// alerting, deliverNamed and dispatchOnly (task 5) are wired once, after
+	// construction, via SetRouting -- exactly SetSilences's pattern (see its
+	// doc comment): a nil alerting keeps every existing call site/test that
+	// never calls SetRouting behaving exactly as before routing existed (a
+	// single e.deliver call per leg, no escalation, sendResolved hard-coded
+	// true above). deliverNamed logs to the alert log/live bus AND dispatches
+	// (fire/recover legs, the same role e.deliver plays when alerting is
+	// nil); dispatchOnly only dispatches, no logging (escalation/repeat
+	// notifications are not new alert records).
+	alerting     *alertingStore
+	deliverNamed func(a Alert, channels []string) bool
+	dispatchOnly func(a Alert, channels []string) bool
 }
 
 // newFleetAlertEngine builds a fleetAlertEngine. now defaults to time.Now if
@@ -256,27 +270,122 @@ func legLabel(a Alert) string {
 // (the alert must still reach its channels), but there is nothing to append
 // a "delivered" event to.
 func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, firedAt int64, incidentID, note string) {
-	if a.Kind == "recover" && !e.sendResolved {
-		return
-	}
-	if e.deliver == nil {
-		return
-	}
 	da := a
 	if src.NodeID != "" {
 		da.Title = src.NodeName + ": " + a.Title
 	}
-	if !e.deliver(da) {
+
+	var ok bool
+	detail := legLabel(a) + ": " + note
+	if e.alerting != nil {
+		// Routing/escalation (task 5): resolve the SAME way RouteTest does
+		// (resolveRoute), and deliver only to the resolved channels rather
+		// than every enabled one.
+		cfg := e.alerting.Get()
+		res := resolveRoute(cfg, src.NodeID, src.NodeName, src.Tags, a.Key, a.Severity.String())
+		var channels []string
+		if a.Kind == "recover" {
+			if !res.SendResolved {
+				return
+			}
+			// The resolved message goes to the union of every channel that
+			// received any step of the fire leg -- an escalation may have
+			// widened delivery past step 0's own channels.
+			channels = e.unionDeliveredChannels(incidentID)
+			if len(channels) == 0 {
+				channels = firstStepChannels(res.Steps)
+			}
+		} else {
+			channels = firstStepChannels(res.Steps)
+		}
+		if e.deliverNamed == nil {
+			return
+		}
+		ok = e.deliverNamed(da, channels)
+		detail = legLabel(a) + ": " + stepDetail(0, channels)
+	} else {
+		if a.Kind == "recover" && !e.sendResolved {
+			return
+		}
+		if e.deliver == nil {
+			return
+		}
+		ok = e.deliver(da)
+	}
+	if !ok {
 		return // no channel accepted it: no receipt, no "delivered" event.
 	}
 	if e.incidents != nil && incidentID != "" {
 		_, _ = e.incidents.AppendEvent(incidentID, core.IncidentEvent{
-			TS: e.now().Unix(), Kind: "delivered", Detail: legLabel(a) + ": " + note, Actor: "system",
+			TS: e.now().Unix(), Kind: "delivered", Detail: detail, Actor: "system",
 		})
 	}
 	if src.NodeID != "" && e.push != nil {
 		e.pushReceipt(src.NodeID, a.Key, firedAt)
 	}
+}
+
+// stepDetail formats a step-N delivery/escalation/repeat timeline event's
+// Detail: "step N: chan1, chan2" (task-5 ruling's literal example for
+// "escalated") -- used for every routed delivery (fire's own step 0,
+// escalated, repeated) so unionDeliveredChannels/lastStepEventTS can parse
+// them all the same way.
+func stepDetail(step int, channels []string) string {
+	return fmt.Sprintf("step %d: %s", step, strings.Join(channels, ", "))
+}
+
+// parseStepChannels extracts the channel list from a stepDetail-formatted
+// string (with an optional "fire: "/"recover: " leg prefix already present):
+// everything after the LAST ": " separator. Channel names are simple
+// identifiers (config.ChannelConfig.Name) that never contain ": ", so this
+// is unambiguous.
+func parseStepChannels(detail string) []string {
+	i := strings.LastIndex(detail, ": ")
+	if i < 0 {
+		return nil
+	}
+	var out []string
+	for _, c := range strings.Split(detail[i+2:], ", ") {
+		if c = strings.TrimSpace(c); c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// unionDeliveredChannels returns the deduplicated, order-preserving union of
+// every channel that received the FIRE leg's step 0 delivery, any escalation
+// or any repeat notification for incidentID -- what a resolved message
+// should go to (task-5 ruling), since an escalation may have widened
+// delivery past whatever channel(s) the fire itself went to.
+func (e *fleetAlertEngine) unionDeliveredChannels(incidentID string) []string {
+	if incidentID == "" || e.incidents == nil {
+		return nil
+	}
+	inc, ok := e.incidents.Get(incidentID)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(channels []string) {
+		for _, c := range channels {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	for _, ev := range inc.Timeline {
+		switch {
+		case ev.Kind == "delivered" && strings.HasPrefix(ev.Detail, "fire: "):
+			add(parseStepChannels(strings.TrimPrefix(ev.Detail, "fire: ")))
+		case ev.Kind == "escalated" || ev.Kind == "repeated":
+			add(parseStepChannels(ev.Detail))
+		}
+	}
+	return out
 }
 
 // legDeliveredStatus scans inc's timeline for "delivered" events and reports
@@ -532,6 +641,22 @@ func (e *fleetAlertEngine) SetSilences(store *silenceStore, nodeInfo func(id str
 	e.nodeInfo = nodeInfo
 }
 
+// SetRouting wires the engine to the master's routing/escalation config
+// store and its channel-scoped delivery functions (task 5), mirroring
+// SetSilences's pattern: called once from startMaster, after the engine
+// exists. A nil store (never called, e.g. every pre-existing engine test)
+// keeps Submit's delivery, resurrection and unsilenced-redelivery paths
+// exactly as they behaved before routing existed -- see
+// deliverAndReceiptDetail's alerting==nil branch. deliverNamed is used for
+// the fire/recover legs (it also logs to the alert log/live bus, like
+// e.deliver); dispatchOnly is used for escalation/repeat notifications
+// (dispatch only, no logging -- they are not new alert records).
+func (e *fleetAlertEngine) SetRouting(store *alertingStore, deliverNamed, dispatchOnly func(a Alert, channels []string) bool) {
+	e.alerting = store
+	e.deliverNamed = deliverNamed
+	e.dispatchOnly = dispatchOnly
+}
+
 // TickSilences prunes long-expired silences, delivers any incident that was
 // suppressed but should no longer be (its silence lapsed, or the
 // maintenance window ended, while the alert kept firing), and refreshes
@@ -654,6 +779,207 @@ func (e *fleetAlertEngine) pushSilencesNow(id string, now time.Time) {
 		return
 	}
 	e.push(id, fleet.Frame{Type: "silences", Data: data})
+}
+
+// TickEscalations evaluates every currently firing (state=="firing" -- not
+// acked, suppressed or resolved) incident's escalation schedule, called from
+// masterLoop.tick alongside TickLeases/TickSilences. A no-op entirely when
+// routing has never been wired (e.alerting == nil): escalation is a
+// routing-config-driven feature with nothing to evaluate otherwise.
+//
+// The actual work runs inside a job enqueued on the incident's OWN keyed
+// lane (fleet_dispatch.go), exactly like deliverUnsilenced/
+// tryDeliverUnsilenced: by the time the job runs, the incident may have been
+// acked or resolved by something else already queued ahead of it on that
+// lane, so tryEscalate re-checks everything against the incident's CURRENT
+// state, not this scan's snapshot.
+func (e *fleetAlertEngine) TickEscalations(now time.Time) {
+	if e.alerting == nil || e.incidents == nil {
+		return
+	}
+	cfg := e.alerting.Get()
+	for _, inc := range e.incidents.List(core.IncidentFilter{State: "firing"}, nil) {
+		id, lane := inc.ID, inc.GroupKey
+		e.dispatch.Enqueue(lane, func() { e.tryEscalate(id, cfg, now) })
+	}
+}
+
+// escalatedTo reports whether inc's timeline already records step as
+// escalated -- the escalation state is entirely durable, derived from the
+// timeline (task-5 ruling), so a restarted master never re-sends a step it
+// already reached.
+func escalatedTo(inc core.Incident, step int) bool {
+	prefix := fmt.Sprintf("step %d:", step)
+	for _, ev := range inc.Timeline {
+		if ev.Kind == "escalated" && strings.HasPrefix(ev.Detail, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstFireDeliveryTS returns the timestamp of inc's fire leg's own
+// "delivered" event (step 0, task-5 ruling: escalation timers are measured
+// from the incident's first successful delivery), and whether one exists at
+// all -- it may not yet, if the fire itself hasn't been delivered (e.g. still
+// queued behind a slow channel, or every channel is currently failing).
+func firstFireDeliveryTS(inc core.Incident) (int64, bool) {
+	for _, ev := range inc.Timeline {
+		if ev.Kind == "delivered" && strings.HasPrefix(ev.Detail, "fire: ") {
+			return ev.TS, true
+		}
+	}
+	return 0, false
+}
+
+// lastStepEventTS returns the most recent timestamp among: reaching step
+// (its "delivered" event for step 0, or its "escalated" event otherwise) and
+// any later "repeated" event recorded for that same step -- the reference
+// point maybeRepeat measures RepeatEvery's cadence from, itself entirely
+// derived from the timeline.
+func lastStepEventTS(inc core.Incident, step int) int64 {
+	var ts int64
+	prefix := fmt.Sprintf("step %d:", step)
+	bump := func(t int64) {
+		if t > ts {
+			ts = t
+		}
+	}
+	for _, ev := range inc.Timeline {
+		switch {
+		case step == 0 && ev.Kind == "delivered" && strings.HasPrefix(ev.Detail, "fire: "):
+			bump(ev.TS)
+		case ev.Kind == "escalated" && strings.HasPrefix(ev.Detail, prefix):
+			bump(ev.TS)
+		case ev.Kind == "repeated" && strings.HasPrefix(ev.Detail, prefix):
+			bump(ev.TS)
+		}
+	}
+	return ts
+}
+
+// tryEscalate runs INSIDE id's keyed lane (enqueued by TickEscalations):
+// re-reads the incident fresh (see TickEscalations's doc comment), and, if
+// it is still firing with its fire leg delivered, delivers any step whose
+// After has elapsed since that first delivery and that is not already
+// recorded as escalated, then considers a RepeatEvery notification for
+// whichever step was most recently reached.
+func (e *fleetAlertEngine) tryEscalate(id string, cfg core.AlertingConfig, now time.Time) {
+	inc, ok := e.incidents.Get(id)
+	if !ok || inc.State != "firing" || len(inc.Alerts) == 0 {
+		return
+	}
+	al := inc.Alerts[len(inc.Alerts)-1]
+	if al.ResolvedAt != 0 {
+		return
+	}
+	firstTS, ok := firstFireDeliveryTS(inc)
+	if !ok {
+		return // the fire itself hasn't been delivered yet: nothing to escalate from.
+	}
+	name, tags := al.Node, []string(nil)
+	if al.Node != "" && e.nodeInfo != nil {
+		name, tags = e.nodeInfo(al.Node)
+	}
+	res := resolveRoute(cfg, al.Node, name, tags, al.Key, al.Severity)
+
+	lastReached := 0
+	for step := 1; step < len(res.Steps); step++ {
+		if escalatedTo(inc, step) {
+			lastReached = step
+			continue
+		}
+		due, err := time.ParseDuration(res.Steps[step].After)
+		if err != nil {
+			continue
+		}
+		if now.Unix() < firstTS+int64(due/time.Second) {
+			continue // not due yet -- steps need not be strictly ordered by After.
+		}
+		if e.escalateStep(id, step, res.Steps[step].Channels, now) {
+			lastReached = step
+			// Re-read: escalateStep just appended a timeline event.
+			if updated, ok := e.incidents.Get(id); ok {
+				inc = updated
+			}
+		}
+	}
+	e.maybeRepeat(id, inc, al, res, lastReached, now)
+}
+
+// escalateStep delivers channels for step through the same keyed dispatch
+// (dispatchOnly: no alert-log/live-bus record -- an escalation is not a new
+// alert), and, only on success, durably records
+// {Kind:"escalated", Detail:"step N: chan1, chan2"} (task-5 ruling's literal
+// format) so a restarted master never resends it (escalatedTo).
+func (e *fleetAlertEngine) escalateStep(id string, step int, channels []string, now time.Time) bool {
+	if e.dispatchOnly == nil {
+		return false
+	}
+	a, ok := e.lastAlertOf(id)
+	if !ok {
+		return false
+	}
+	if !e.dispatchOnly(a, channels) {
+		return false
+	}
+	_, _ = e.incidents.AppendEvent(id, core.IncidentEvent{
+		TS: now.Unix(), Kind: "escalated", Detail: stepDetail(step, channels), Actor: "system",
+	})
+	return true
+}
+
+// maybeRepeat re-notifies lastReached's channels once RepeatEvery has
+// elapsed since that step was last reached or last repeated (lastStepEventTS
+// -- durable, timeline-derived), while inc is still firing and unacked
+// (tryEscalate's caller already confirmed inc.State=="firing"). Recorded as
+// {Kind:"repeated"} (task-5 ruling).
+func (e *fleetAlertEngine) maybeRepeat(id string, inc core.Incident, al core.IncidentAlert, res routeResolution, lastReached int, now time.Time) {
+	if res.RepeatEvery == "" || e.dispatchOnly == nil {
+		return
+	}
+	every, err := time.ParseDuration(res.RepeatEvery)
+	if err != nil || every <= 0 {
+		return
+	}
+	ref := lastStepEventTS(inc, lastReached)
+	if ref == 0 || now.Unix()-ref < int64(every/time.Second) {
+		return
+	}
+	var channels []string
+	if lastReached < len(res.Steps) {
+		channels = res.Steps[lastReached].Channels
+	}
+	if len(channels) == 0 {
+		return
+	}
+	sev, err := ParseSeverity(al.Severity)
+	if err != nil {
+		sev = SevWarning
+	}
+	a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: "fire", Time: al.FiredAt}
+	if !e.dispatchOnly(a, channels) {
+		return
+	}
+	_, _ = e.incidents.AppendEvent(id, core.IncidentEvent{
+		TS: now.Unix(), Kind: "repeated", Detail: stepDetail(lastReached, channels), Actor: "system",
+	})
+}
+
+// lastAlertOf builds the Alert an escalation/repeat notification re-sends:
+// id's most recently recorded alert instance, as an ordinary "fire" (an
+// escalation only ever fires while the incident is still firing).
+func (e *fleetAlertEngine) lastAlertOf(id string) (Alert, bool) {
+	inc, ok := e.incidents.Get(id)
+	if !ok || len(inc.Alerts) == 0 {
+		return Alert{}, false
+	}
+	al := inc.Alerts[len(inc.Alerts)-1]
+	sev, err := ParseSeverity(al.Severity)
+	if err != nil {
+		sev = SevWarning
+	}
+	return Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: "fire", Time: al.FiredAt}, true
 }
 
 // PushAck pushes an "ack" (unack=false) or "unack" (unack=true) frame for

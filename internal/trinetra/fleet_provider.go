@@ -33,6 +33,7 @@ type masterState struct {
 	engine   *fleetAlertEngine
 	audit    *auditLog
 	silences *silenceStore
+	alerting *alertingStore
 	joinURL  string
 	pin      string
 	listen   string
@@ -500,4 +501,98 @@ func (f fleetAPIImpl) DeleteMaintenance(id, actor string) error {
 	m.audited(actor, "delete_maintenance", id, "")
 	m.pushSilencesToAll(time.Now())
 	return nil
+}
+
+// Alerting returns the current routing/escalation config (task 5):
+// defaultAlertingConfig if nothing has ever been saved (m.alerting == nil
+// covers a masterState built by an older test suite that never wired one).
+func (f fleetAPIImpl) Alerting() (core.AlertingConfig, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return core.AlertingConfig{}, err
+	}
+	if m.alerting == nil {
+		return defaultAlertingConfig(), nil
+	}
+	return m.alerting.Get(), nil
+}
+
+// validChannelName reports whether name is a configured channel (used by
+// SetAlerting's validation): "*" itself is checked separately by
+// validateAlertingConfig, never passed here.
+func (m *masterState) validChannelName(name string) bool {
+	if m.getCfg == nil {
+		return false
+	}
+	c := m.getCfg()
+	if c == nil {
+		return false
+	}
+	for _, cc := range c.Channels {
+		if cc.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// SetAlerting validates and atomically replaces the routing/escalation
+// config, auditing the change under actor.
+func (f fleetAPIImpl) SetAlerting(cfg core.AlertingConfig, actor string) error {
+	m, err := f.requireMaster()
+	if err != nil {
+		return err
+	}
+	if m.alerting == nil {
+		return fmt.Errorf("alerting config is not available")
+	}
+	saved, err := m.alerting.Set(cfg, m.validChannelName)
+	if err != nil {
+		return err
+	}
+	if actor == "" {
+		actor = "unknown"
+	}
+	m.audited(actor, "fleet.alerting.set", "", fmt.Sprintf("%d routes, %d policies", len(saved.Routes), len(saved.Policies)))
+	return nil
+}
+
+// RouteTest dry-runs alert through resolveRoute -- the exact same function
+// the alerting engine's real delivery uses (fleet_engine.go's
+// deliverAndReceiptDetail/tryEscalate) -- plus a current-silence check,
+// without firing anything. alert.Node is resolved against the registry (by
+// id or display name) when it names a known node, so Matcher.Node's
+// exact-id-or-name-glob semantics apply exactly as they would for a real
+// alert from that node; an unrecognized Node is tried as a display name only
+// (a dry run against a node that doesn't exist yet, or a typo, is still a
+// useful "what would this match" answer, not an error).
+func (f fleetAPIImpl) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return core.RouteDecision{}, err
+	}
+	cfg := defaultAlertingConfig()
+	if m.alerting != nil {
+		cfg = m.alerting.Get()
+	}
+	id, name, tags := alert.Node, alert.Node, alert.Tags
+	if m.reg != nil {
+		for _, n := range m.reg.List() {
+			if n.ID == alert.Node || n.Name == alert.Node {
+				id, name = n.ID, n.Name
+				if len(alert.Tags) == 0 {
+					tags = n.Tags
+				}
+				break
+			}
+		}
+	}
+	res := resolveRoute(cfg, id, name, tags, alert.Rule, alert.Severity)
+	suppressed := ""
+	if m.silences != nil {
+		if info := m.silences.Suppressed(time.Now().Unix(), id, name, tags, alert.Rule, alert.Severity); info != nil {
+			suppressed = info.Reason
+		}
+	}
+	return core.RouteDecision{Route: res.RouteName, Policy: res.PolicyName, Steps: res.Steps, Suppressed: suppressed}, nil
 }

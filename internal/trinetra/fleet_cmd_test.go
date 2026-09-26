@@ -131,6 +131,15 @@ type fleetCLIFake struct {
 	saveMaintErr      error
 	deletedMaintID    string
 	deletedMaintActor string
+
+	alertingCfg      core.AlertingConfig
+	alertingErr      error
+	setAlertingCfg   core.AlertingConfig
+	setAlertingActor string
+	setAlertingErr   error
+	routeTestAlert   core.TestAlert
+	routeTestResult  core.RouteDecision
+	routeTestErr     error
 }
 
 func (f *fleetCLIFake) Fleet() core.FleetAPI          { return fleetCLIFakeFleetAPI{f} }
@@ -240,6 +249,20 @@ func (a fleetCLIFakeFleetAPI) SaveMaintenance(m core.Maintenance) (core.Maintena
 func (a fleetCLIFakeFleetAPI) DeleteMaintenance(id, actor string) error {
 	a.f.deletedMaintID, a.f.deletedMaintActor = id, actor
 	return nil
+}
+
+func (a fleetCLIFakeFleetAPI) Alerting() (core.AlertingConfig, error) {
+	return a.f.alertingCfg, a.f.alertingErr
+}
+
+func (a fleetCLIFakeFleetAPI) SetAlerting(cfg core.AlertingConfig, actor string) error {
+	a.f.setAlertingCfg, a.f.setAlertingActor = cfg, actor
+	return a.f.setAlertingErr
+}
+
+func (a fleetCLIFakeFleetAPI) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
+	a.f.routeTestAlert = alert
+	return a.f.routeTestResult, a.f.routeTestErr
 }
 
 // startFleetDaemon stands up a real control.Serve loop at
@@ -1064,5 +1087,117 @@ func TestFleetMaintenanceDelete(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Deleted maintenance window mabc") {
 		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestFleetRouteTestPrintsDecision(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{routeTestResult: core.RouteDecision{
+		Route: "web-cpu", Policy: "p",
+		Steps:      []core.PolicyStep{{After: "0s", Channels: []string{"slack"}}, {After: "5m", Channels: []string{"pager"}}},
+		Suppressed: "silence sabc by cli",
+	}}
+	startFleetDaemon(t, fake)
+	rc := Main([]string{"fleet", "route", "test", "--node", "web1", "--tag", "prod", "--rule", "cpu", "--severity", "critical"})
+	if rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.routeTestAlert.Node != "web1" || fake.routeTestAlert.Rule != "cpu" || fake.routeTestAlert.Severity != "critical" ||
+		len(fake.routeTestAlert.Tags) != 1 || fake.routeTestAlert.Tags[0] != "prod" {
+		t.Fatalf("routeTestAlert = %+v", fake.routeTestAlert)
+	}
+	got := out.String()
+	for _, want := range []string{"web-cpu", "policy: p", "step 0: after 0s -> slack", "step 1: after 5m -> pager", "suppressed: silence sabc by cli"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("out missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestFleetRouteTestNoMatchPrintsDefaultNote(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{routeTestResult: core.RouteDecision{Policy: "default", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"*"}}}}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "route", "test", "--node", "web1", "--rule", "cpu", "--severity", "critical"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	if !strings.Contains(got, "no route matched") || !strings.Contains(got, "suppressed: no") {
+		t.Fatalf("out = %s", got)
+	}
+}
+
+func TestFleetAlertingShow(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{alertingCfg: core.AlertingConfig{
+		Version: 3, DefaultPolicy: "default",
+		Policies: []core.Policy{{Name: "default", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"*"}}}}},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "alerting", "show"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	var got core.AlertingConfig
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if got.Version != 3 || got.DefaultPolicy != "default" {
+		t.Fatalf("decoded = %+v", got)
+	}
+}
+
+func TestFleetAlertingApply(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	path := filepath.Join(t.TempDir(), "alerting.json")
+	body := `{"version":99,"default_policy":"p","policies":[{"name":"p","steps":[{"after":"0s","channels":["slack"]}]}]}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rc := Main([]string{"fleet", "alerting", "apply", path}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.setAlertingCfg.Version != 0 {
+		t.Fatalf("applied Version = %d, want 0 (CLI apply is always unconditional)", fake.setAlertingCfg.Version)
+	}
+	if fake.setAlertingCfg.DefaultPolicy != "p" || fake.setAlertingActor != "cli" {
+		t.Fatalf("applied cfg = %+v actor = %q", fake.setAlertingCfg, fake.setAlertingActor)
+	}
+	if !strings.Contains(out.String(), "Applied alerting config") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestFleetAlertingApplyRejectsBadJSON(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	path := filepath.Join(t.TempDir(), "alerting.json")
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rc := Main([]string{"fleet", "alerting", "apply", path}); rc != 1 {
+		t.Fatalf("exit %d, want 1", rc)
+	}
+	if !strings.Contains(errb.String(), "parse") {
+		t.Fatalf("stderr = %s", errb)
+	}
+}
+
+func TestFleetAlertingApplySurfacesValidationError(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{setAlertingErr: errors.New(`policy "p" step 0: unknown channel "bogus"`)}
+	startFleetDaemon(t, fake)
+	path := filepath.Join(t.TempDir(), "alerting.json")
+	body := `{"default_policy":"p","policies":[{"name":"p","steps":[{"after":"0s","channels":["bogus"]}]}]}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rc := Main([]string{"fleet", "alerting", "apply", path}); rc != 1 {
+		t.Fatalf("exit %d, want 1", rc)
+	}
+	if !strings.Contains(errb.String(), "unknown channel") {
+		t.Fatalf("stderr = %s", errb)
 	}
 }

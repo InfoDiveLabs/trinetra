@@ -731,6 +731,51 @@ func deliverSyncAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert,
 	return false
 }
 
+// deliverSyncAndLogTo is deliverSyncAndLog narrowed to a specific
+// channel-name subset (fleet routing, task 5): identical alert-log/live-bus
+// recording, but dispatches via the Dispatcher's DispatchTo rather than
+// Dispatch -- used as fleetAlertEngine.SetRouting's deliverNamed once a
+// routing config is wired (fleetDeps.deliverSyncTo below).
+func deliverSyncAndLogTo(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, channels []string) bool {
+	if alog != nil {
+		_ = alog.AppendAlertEvent(AlertEvent{
+			Time: a.Time, Key: a.Key, Title: a.Title, Severity: a.Severity.String(),
+			Kind: a.Kind, Source: a.Source, FiredAt: a.Time,
+		})
+	}
+	bus.Publish(core.Event{
+		Kind: alertEventKind(a), Severity: a.Severity.String(), Source: a.Source, Title: a.Title, Time: a.Time,
+	})
+	d := q.disp.Load()
+	if d == nil {
+		return false
+	}
+	for _, r := range d.DispatchTo(a, quiet, channels) {
+		if r.Err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// dispatchOnlyTo dispatches to a channel-name subset WITHOUT any
+// alert-log/live-bus recording (fleet routing, task 5): used as
+// fleetAlertEngine.SetRouting's dispatchOnly for escalation/repeat
+// notifications, which re-send an alert that was already recorded once (at
+// its own fire) rather than logging a new record every time.
+func dispatchOnlyTo(q *NotifierQueue, a Alert, quiet bool, channels []string) bool {
+	d := q.disp.Load()
+	if d == nil {
+		return false
+	}
+	for _, r := range d.DispatchTo(a, quiet, channels) {
+		if r.Err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // alertEventKind maps a dispatched Alert onto the Kind string its
 // core.Event carries on the live event bus. Only anomaly-sourced alerts
 // (Source "anomaly", from eventToAlert above) have a real fire/recover
@@ -1010,6 +1055,12 @@ func cmdDaemon(args []string) int {
 		},
 		deliverSync: func(a Alert) bool {
 			return deliverSyncAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		},
+		deliverSyncTo: func(a Alert, channels []string) bool {
+			return deliverSyncAndLogTo(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), channels)
+		},
+		dispatchOnly: func(a Alert, channels []string) bool {
+			return dispatchOnlyTo(q, a, inQuietHours(getCfg().QuietHours, time.Now()), channels)
 		},
 		alertFallback: func(a Alert, silences *pushedSilences) {
 			deliverFallback(silences, alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix())

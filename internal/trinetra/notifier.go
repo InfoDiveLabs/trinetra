@@ -173,7 +173,43 @@ func (d *Dispatcher) Dispatch(a Alert, quiet bool) []DeliveryResult {
 			matched = append(matched, c)
 		}
 	}
+	return d.dispatchMatched(a, matched)
+}
 
+// DispatchTo is Dispatch narrowed to a specific channel-name subset (fleet
+// routing/escalation, task 5): a channel is sent to only if it is enabled,
+// its own Route still Allows a (quiet hours/severity/kind gating is never
+// bypassed by routing), AND either names contains the literal "*" or its
+// Name() is in names. names with neither "*" nor any matching name delivers
+// to nothing (an empty result), which is a valid outcome (e.g. a policy step
+// naming a channel that was since removed from config).
+func (d *Dispatcher) DispatchTo(a Alert, quiet bool, names []string) []DeliveryResult {
+	all := false
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		if n == "*" {
+			all = true
+			continue
+		}
+		set[n] = true
+	}
+	var matched []Channel
+	for _, c := range d.channels {
+		if !c.Enabled || !c.Route.Allows(a, quiet) {
+			continue
+		}
+		if !all && !set[c.N.Name()] {
+			continue
+		}
+		matched = append(matched, c)
+	}
+	return d.dispatchMatched(a, matched)
+}
+
+// dispatchMatched fans a out to every channel in matched concurrently,
+// bounding each by d.timeout -- the shared tail of Dispatch and DispatchTo,
+// which differ only in how they build matched.
+func (d *Dispatcher) dispatchMatched(a Alert, matched []Channel) []DeliveryResult {
 	results := make([]DeliveryResult, len(matched))
 
 	var wg sync.WaitGroup
