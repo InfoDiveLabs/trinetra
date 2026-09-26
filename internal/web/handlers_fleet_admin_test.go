@@ -551,3 +551,14 @@ func TestFleetAdminFleetAPIErrorsRenderAsFlashNever500(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateNodeNameRejectsFormattingCharacters(t *testing.T) {
+	for _, bad := range []string{"web‮1", "db​1", "a\x07b"} {
+		if _, err := validateNodeName(bad); err == nil {
+			t.Errorf("validateNodeName(%q) accepted a control/formatting character", bad)
+		}
+	}
+	if got, err := validateNodeName("  web-1 ünïcode "); err != nil || got != "web-1 ünïcode" {
+		t.Errorf("validateNodeName ordinary name = %q, %v", got, err)
+	}
+}

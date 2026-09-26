@@ -136,8 +136,10 @@ func validateNodeName(raw string) (string, error) {
 		return "", fmt.Errorf("name must be 64 characters or fewer")
 	}
 	for _, r := range name {
-		if unicode.IsControl(r) {
-			return "", fmt.Errorf("name must not contain control characters")
+		// Cf covers bidi overrides (e.g. U+202E) that could make one node's
+		// name render as another's in the admin table.
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return "", fmt.Errorf("name must not contain control or formatting characters")
 		}
 	}
 	return name, nil
