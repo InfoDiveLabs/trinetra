@@ -310,6 +310,317 @@ func fetchFleetNodes(r *http.Request, d Deps) []core.NodeSummary {
 	return nodes
 }
 
+// fleetMetric is the heatmap's metric selector (?metric=cpu|mem|disk|load,
+// task-1a-brief.md), defaulting to cpu.
+type fleetMetric string
+
+const (
+	fleetMetricCPU  fleetMetric = "cpu"
+	fleetMetricMem  fleetMetric = "mem"
+	fleetMetricDisk fleetMetric = "disk"
+	fleetMetricLoad fleetMetric = "load"
+)
+
+// fleetMetricLabels is the metric selector's link order/labels, top to
+// bottom -- also fleetMetricOptions' iteration order, so the chips render
+// CPU, Memory, Disk, Load regardless of Go map ordering.
+var fleetMetricLabels = []struct {
+	key   fleetMetric
+	label string
+}{
+	{fleetMetricCPU, "CPU"},
+	{fleetMetricMem, "Memory"},
+	{fleetMetricDisk, "Disk"},
+	{fleetMetricLoad, "Load"},
+}
+
+// parseFleetMetric reads ?metric= off r's query string, defaulting to cpu
+// for anything absent/unrecognized -- the same "unknown value degrades to
+// the default" convention parseFleetQuery's dir field already uses.
+func parseFleetMetric(r *http.Request) fleetMetric {
+	switch fleetMetric(r.URL.Query().Get("metric")) {
+	case fleetMetricMem:
+		return fleetMetricMem
+	case fleetMetricDisk:
+		return fleetMetricDisk
+	case fleetMetricLoad:
+		return fleetMetricLoad
+	default:
+		return fleetMetricCPU
+	}
+}
+
+// fleetPageQueryString returns fq's encoded query string (its own encode(),
+// UNCHANGED -- see that method's doc; the table's htmx poll relies on its
+// exact output, so this never mutates fq or its encode()) plus a trailing
+// metric=. Used by the heatmap's metric-selector links and the panels'
+// "Refresh" link, which reload the full page with the current filter/sort
+// AND the current metric selection; the table's own poll deliberately does
+// NOT carry metric (fleetQuery.encode() has no such field), since the
+// selected heatmap metric has no bearing on the table's rows.
+func fleetPageQueryString(fq fleetQuery, metric fleetMetric) string {
+	v, _ := url.ParseQuery(fq.encode())
+	v.Set("metric", string(metric))
+	return v.Encode()
+}
+
+// FleetMetricOption is one entry in the heatmap's metric selector -- a
+// plain link (task-1a-brief.md: "The metric selector is links, not a
+// form"), not a <select>/radio group.
+type FleetMetricOption struct {
+	Label  string
+	Href   string
+	Active bool
+}
+
+// fleetMetricOptions builds the metric selector's four options in
+// fleetMetricLabels' order, each link carrying fq's other query params
+// (tag/state/q/sort/dir) via fleetPageQueryString.
+func fleetMetricOptions(fq fleetQuery, active fleetMetric) []FleetMetricOption {
+	opts := make([]FleetMetricOption, 0, len(fleetMetricLabels))
+	for _, m := range fleetMetricLabels {
+		opts = append(opts, FleetMetricOption{
+			Label:  m.label,
+			Href:   "/fleet?" + fleetPageQueryString(fq, m.key),
+			Active: m.key == active,
+		})
+	}
+	return opts
+}
+
+// fleetHeatBand is the heatmap tile's discrete colour band. The controller
+// ruling: below 70% is neutral (graphite/slate, .heat-neutral), 70-85% is
+// amber at low intensity (.heat-amber-low), 85%+ is amber at FULL intensity
+// with bold text (.heat-amber-full) -- ember is NEVER used for a metric
+// value, no matter how hot. fleetHeatDown/fleetHeatRevoked override the
+// metric ramp entirely for a node that isn't reporting a normal value: a
+// down tile gets an ember OUTLINE (the one place this ramp touches ember,
+// matching the rest of the app's "ember is down, nothing else" rule) plus
+// the literal text "down"; a revoked tile stays neutral with the text
+// "revoked".
+type fleetHeatBand string
+
+const (
+	fleetHeatNeutral   fleetHeatBand = "neutral"
+	fleetHeatAmberLow  fleetHeatBand = "amber-low"
+	fleetHeatAmberFull fleetHeatBand = "amber-full"
+	fleetHeatDown      fleetHeatBand = "down"
+	fleetHeatRevoked   fleetHeatBand = "revoked"
+)
+
+// pctHeatBand buckets a 0-100 percentage metric (CPU/mem/disk) into the
+// controller ruling's three numeric bands.
+func pctHeatBand(pct float64) fleetHeatBand {
+	switch {
+	case pct >= 85:
+		return fleetHeatAmberFull
+	case pct >= 70:
+		return fleetHeatAmberLow
+	default:
+		return fleetHeatNeutral
+	}
+}
+
+// Load1's absolute heatmap thresholds (task-1a-brief.md: "Load uses the
+// thresholds 1, 2 and 4 per core only if core count is available in
+// NodeSummary; otherwise use absolute load thresholds 1, 4 and 8, and
+// document the choice"). core.NodeSummary carries no core-count field at
+// all (see its doc in internal/core/fleet.go), so the per-core ramp is never
+// reachable here and this package always uses the absolute numbers.
+//
+// fleetLoadAmberLowAt (1) is "one core's worth of runnable work" -- below it
+// every tile stays neutral regardless of the box's real size.
+// fleetLoadAmberFullAt (4) is where a small (roughly 4-core) box is already
+// saturated -- at or above it the tile goes to the ramp's top band.
+//
+// The brief's third number, 8 ("thresholds 1, 4 and 8"), is kept here as a
+// named, documented "severely overloaded" reference point, but it does NOT
+// get a fourth visual tier of its own: the controller ruling caps the
+// metric ramp at three bands (neutral/amber-low/amber-full) and reserves
+// ember for "down" alone, so both the 4-8 and the 8+ range render
+// identically (amber-full, bold) -- the same way the per-core ramp's own
+// >4-per-core region would have had nowhere further to go past its own top
+// band either.
+const (
+	fleetLoadAmberLowAt  = 1.0
+	fleetLoadAmberFullAt = 4.0
+	// fleetLoadSevereAt is intentionally unused by loadHeatBand -- see the
+	// doc above.
+	fleetLoadSevereAt = 8.0
+)
+
+// loadHeatBand buckets an absolute Load1 value per the thresholds above.
+func loadHeatBand(load float64) fleetHeatBand {
+	switch {
+	case load >= fleetLoadAmberFullAt:
+		return fleetHeatAmberFull
+	case load >= fleetLoadAmberLowAt:
+		return fleetHeatAmberLow
+	default:
+		return fleetHeatNeutral
+	}
+}
+
+// fleetHeatValue resolves metric's band and display text for n. A down or
+// revoked node short-circuits to its own band/text regardless of metric
+// (task-1a-brief.md: "Down and revoked nodes show their state instead of
+// the value ... Each tile ALWAYS shows the node name and the numeric value
+// as text, so colour is never the only signal" -- for these two states, the
+// state word itself IS that text).
+func fleetHeatValue(n core.NodeSummary, metric fleetMetric) (band fleetHeatBand, text string) {
+	switch n.State {
+	case "down":
+		return fleetHeatDown, "down"
+	case "revoked":
+		return fleetHeatRevoked, "revoked"
+	}
+	switch metric {
+	case fleetMetricMem:
+		return pctHeatBand(n.MemPct), fmt.Sprintf("%.0f%%", n.MemPct)
+	case fleetMetricDisk:
+		return pctHeatBand(n.WorstDiskPct), fmt.Sprintf("%.0f%%", n.WorstDiskPct)
+	case fleetMetricLoad:
+		return loadHeatBand(n.Load1), fmt.Sprintf("%.2f", n.Load1)
+	default: // fleetMetricCPU
+		return pctHeatBand(n.CPU), fmt.Sprintf("%.0f%%", n.CPU)
+	}
+}
+
+// FleetHeatTile is one heatmap tile: the roster entry plus the band/text/
+// link the template can't compute itself.
+type FleetHeatTile struct {
+	core.NodeSummary
+	Href string
+	Band fleetHeatBand
+	Text string
+}
+
+// buildFleetHeatTiles builds one FleetHeatTile per node in nodes (already
+// filtered by the page's current tag/state/q, see fleetFilterNodes), sorted
+// by name for a stable order that doesn't depend on the table's own current
+// sort column.
+func buildFleetHeatTiles(nodes []core.NodeSummary, metric fleetMetric) []FleetHeatTile {
+	tiles := make([]FleetHeatTile, 0, len(nodes))
+	for _, n := range nodes {
+		band, text := fleetHeatValue(n, metric)
+		prefix := ""
+		if !n.Self {
+			prefix = "/n/" + n.ID
+		}
+		tiles = append(tiles, FleetHeatTile{NodeSummary: n, Href: nodeHref(prefix, "/"), Band: band, Text: text})
+	}
+	sort.SliceStable(tiles, func(i, j int) bool { return tiles[i].Name < tiles[j].Name })
+	return tiles
+}
+
+// fleetTopN is the top-N panels' row count (task-1a-brief.md: "top 5 by
+// CPU, top 5 by memory, top 5 by worst disk").
+const fleetTopN = 5
+
+// FleetTopRow is one row in a top-N ranking panel: reuses
+// templates/dashboard.html's containerBar shape (Name/ValueText/WidthPct)
+// so the ".hbars"/".hbar" CSS already styling that panel applies unchanged
+// here, plus the row's node link.
+type FleetTopRow struct {
+	Name      string
+	Href      string
+	ValueText string
+	WidthPct  float64
+}
+
+// topNByMetric ranks nodes (excluding down/revoked -- task-1a-brief.md:
+// "Down and revoked nodes are excluded from the metric rankings") by value,
+// descending, ties broken by name for a deterministic presentation order,
+// and returns at most fleetTopN rows. value is assumed to be a 0-100
+// percentage (CPU/mem/worst-disk are the only metrics this backs); WidthPct
+// is the same value clamped to [0,100] for the bar's width (a multi-core
+// box's aggregate CPU can exceed 100%, in which case the bar still shows
+// full while ValueText keeps the real number).
+func topNByMetric(nodes []core.NodeSummary, value func(core.NodeSummary) float64) []FleetTopRow {
+	elig := make([]core.NodeSummary, 0, len(nodes))
+	for _, n := range nodes {
+		if n.State == "down" || n.State == "revoked" {
+			continue
+		}
+		elig = append(elig, n)
+	}
+	sort.SliceStable(elig, func(i, j int) bool {
+		vi, vj := value(elig[i]), value(elig[j])
+		if vi != vj {
+			return vi > vj
+		}
+		return elig[i].Name < elig[j].Name
+	})
+	if len(elig) > fleetTopN {
+		elig = elig[:fleetTopN]
+	}
+	rows := make([]FleetTopRow, 0, len(elig))
+	for _, n := range elig {
+		prefix := ""
+		if !n.Self {
+			prefix = "/n/" + n.ID
+		}
+		v := value(n)
+		width := v
+		if width > 100 {
+			width = 100
+		}
+		if width < 0 {
+			width = 0
+		}
+		rows = append(rows, FleetTopRow{Name: n.Name, Href: nodeHref(prefix, "/"), ValueText: fmt.Sprintf("%.0f%%", v), WidthPct: width})
+	}
+	return rows
+}
+
+// FleetDownRow is one row in the "Down now" panel: node name/link plus how
+// long ago it was last seen (rendered via the "nodeAgo" template helper,
+// same as the table's own Last seen column).
+type FleetDownRow struct {
+	Name     string
+	Href     string
+	LastSeen int64
+}
+
+// fleetDownRows lists every down node in nodes, name-ascending.
+func fleetDownRows(nodes []core.NodeSummary) []FleetDownRow {
+	rows := make([]FleetDownRow, 0)
+	for _, n := range nodes {
+		if n.State != "down" {
+			continue
+		}
+		prefix := ""
+		if !n.Self {
+			prefix = "/n/" + n.ID
+		}
+		rows = append(rows, FleetDownRow{Name: n.Name, Href: nodeHref(prefix, "/"), LastSeen: n.LastSeen})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows
+}
+
+// fleetFilterNodes returns the subset of nodes passing fq's tag/state/q
+// filters (fleetFilterMatch/fleetStateMatches -- see their docs, including
+// fleetFilterMatch's non-admin RemoteAddr exclusion), in nodes' original
+// order. Shared by the table (buildFleetRows sorts this further) and the
+// heatmap/top-N panels (task-1a-brief.md: "the heatmap and the panels
+// respect the page's existing filters (tag/state/q, using the same
+// non-admin q rule as the table)").
+func fleetFilterNodes(nodes []core.NodeSummary, fq fleetQuery, admin bool) []core.NodeSummary {
+	tagQuery := core.NodeFilter{Tag: fq.Tag, Query: fq.Query}
+	filtered := make([]core.NodeSummary, 0, len(nodes))
+	for _, n := range nodes {
+		if !fleetFilterMatch(n, tagQuery, admin) {
+			continue
+		}
+		if !fleetStateMatches(fq.State, n.State) {
+			continue
+		}
+		filtered = append(filtered, n)
+	}
+	return filtered
+}
+
 // fleetFilterMatch reports whether n passes every one of f's criteria
 // (State/Tag/Query -- the caller, e.g. buildFleetRows, may additionally
 // apply its own State handling on top when it wants something other than
@@ -361,17 +672,7 @@ func fleetFilterMatch(n core.NodeSummary, f core.NodeFilter, admin bool) bool {
 // a FleetRow. Shared by the full page (buildFleetPageData) and the bare
 // htmx fragment (fleetTableHandler) so both render identically.
 func buildFleetRows(nodes []core.NodeSummary, fq fleetQuery, admin bool) []FleetRow {
-	tagQuery := core.NodeFilter{Tag: fq.Tag, Query: fq.Query}
-	filtered := make([]core.NodeSummary, 0, len(nodes))
-	for _, n := range nodes {
-		if !fleetFilterMatch(n, tagQuery, admin) {
-			continue
-		}
-		if !fleetStateMatches(fq.State, n.State) {
-			continue
-		}
-		filtered = append(filtered, n)
-	}
+	filtered := fleetFilterNodes(nodes, fq, admin)
 	sortFleetNodes(filtered, fq.Sort, fq.Dir)
 
 	rows := make([]FleetRow, 0, len(filtered))
@@ -401,26 +702,52 @@ type FleetPageData struct {
 	QueryString string
 	SortLinks   map[string]string
 	TotalNodes  int
+	// Metric/MetricOptions/RefreshHref/HeatTiles/TopCPU/TopMem/TopDisk/
+	// DownNow back the heatmap and top-N panels (task 1a) that sit above the
+	// table -- see buildFleetPageData.
+	Metric        fleetMetric
+	MetricOptions []FleetMetricOption
+	RefreshHref   string
+	HeatTiles     []FleetHeatTile
+	TopCPU        []FleetTopRow
+	TopMem        []FleetTopRow
+	TopDisk       []FleetTopRow
+	DownNow       []FleetDownRow
 }
 
 // buildFleetPageData assembles FleetPageData for GET /fleet: the full
 // roster (for the health strip), the current query's filtered/sorted rows,
-// and the query-string/sort-link plumbing the template needs.
+// the query-string/sort-link plumbing the template needs, and (task 1a) the
+// heatmap tiles and top-N panels -- built from the SAME filtered node slice
+// the table itself filters from (fetchFleetNodes' single memoized Nodes()
+// call, task-1a-brief.md: "Both render from the request-scoped memo's
+// single Nodes() call. No extra Fleet() round trips").
 func buildFleetPageData(r *http.Request, d Deps) FleetPageData {
 	fq := parseFleetQuery(r)
+	metric := parseFleetMetric(r)
+	admin := currentRole(r) == "admin"
 	nodes := fetchFleetNodes(r, d)
+	filtered := fleetFilterNodes(nodes, fq, admin)
 	sub := fmt.Sprintf("%d node", len(nodes))
 	if len(nodes) != 1 {
 		sub += "s"
 	}
 	return FleetPageData{
-		PageData:    newPageData(r, d, "Fleet", sub),
-		Rows:        buildFleetRows(nodes, fq, currentRole(r) == "admin"),
-		Health:      computeFleetHealth(nodes),
-		Query:       fq,
-		QueryString: fq.encode(),
-		SortLinks:   fleetSortLinks(fq),
-		TotalNodes:  len(nodes),
+		PageData:      newPageData(r, d, "Fleet", sub),
+		Rows:          buildFleetRows(nodes, fq, admin),
+		Health:        computeFleetHealth(nodes),
+		Query:         fq,
+		QueryString:   fq.encode(),
+		SortLinks:     fleetSortLinks(fq),
+		TotalNodes:    len(nodes),
+		Metric:        metric,
+		MetricOptions: fleetMetricOptions(fq, metric),
+		RefreshHref:   "/fleet?" + fleetPageQueryString(fq, metric),
+		HeatTiles:     buildFleetHeatTiles(filtered, metric),
+		TopCPU:        topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.CPU }),
+		TopMem:        topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.MemPct }),
+		TopDisk:       topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.WorstDiskPct }),
+		DownNow:       fleetDownRows(filtered),
 	}
 }
 

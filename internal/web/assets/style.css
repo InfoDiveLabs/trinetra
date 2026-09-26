@@ -262,6 +262,47 @@ tbody tr:hover{background:var(--surface2)}
 .hbar .track{flex:1; height:14px; background:var(--track); border-radius:4px; overflow:hidden}
 .hbar .track i{display:block; height:100%; background:var(--info); border-radius:4px}
 .hbar.mem .track i{background:var(--violet)} .hbar .v{width:44px; text-align:right; font-family:var(--font-mono)}
+/* fleet top-N panels (task 1a) are node LINKS, not plain rows -- neutralize
+   the anchor's default underline/colour exactly like a.count already does
+   for the health strip above, so an hbar/row reads identically whether or
+   not it's clickable. */
+.hbars a.hbar,.rows a.row{text-decoration:none; color:inherit}
+.hbars a.hbar:hover,.rows a.row:hover{background:var(--surface2)}
+
+/* fleet heatmap (task 1a): one tile per node, coloured by the selected
+   metric's discrete ramp. Neutral is the plain neutral surface (graphite/
+   slate text on --surface2, no tint) -- amber-low/amber-full tint the same
+   surface with --warn at increasing strength (never --crit: the header
+   rule's "ember is only for the one thing that needs attention" reserves it
+   for "down" alone, which the heatmap enforces separately below). Sized via
+   the .grid's own auto-fill/minmax so phone width wraps the same way
+   .g-tiles already does elsewhere, no extra media query needed. */
+.g-heat{grid-template-columns:repeat(auto-fill,minmax(112px,1fr))}
+.heat-tile{display:flex; flex-direction:column; justify-content:center; gap:4px; min-height:56px; padding:10px 12px; border-radius:var(--r-sm); border:1px solid var(--border); background:var(--surface2); text-decoration:none}
+.heat-tile:hover{border-color:var(--faint)}
+.heat-tile .heat-name{font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.heat-tile .heat-val{font-family:var(--font-mono); font-size:15px; color:var(--text)}
+.heat-amber-low{background:color-mix(in oklab,var(--warn) 14%,var(--surface2)); border-color:color-mix(in oklab,var(--warn) 30%,var(--border))}
+.heat-amber-low .heat-val{color:var(--warn)}
+.heat-amber-full{background:color-mix(in oklab,var(--warn) 26%,var(--surface2)); border-color:color-mix(in oklab,var(--warn) 55%,var(--border))}
+.heat-amber-full .heat-val{color:var(--warn); font-weight:700}
+/* down: ember OUTLINE only (never a filled/tinted background -- the header
+   rule's one ember use is "an alert, a down state", and an outline matches
+   .tile.alarm's existing convention for the same state elsewhere). revoked:
+   plain neutral tile, its "revoked" text in --muted so it never reads as an
+   active alert. */
+.heat-down{border-color:color-mix(in oklab,var(--crit) 60%,var(--border))}
+.heat-down .heat-val{color:var(--crit)}
+.heat-revoked .heat-val{color:var(--muted)}
+
+/* fleet top-N panels grid (task 1a): 4 panels (CPU/memory/disk/"down now")
+   above the table, mirroring the health strip's own g-4 breakpoints but as
+   its own class since g-4's phone-width rule intentionally keeps 2 columns
+   for the health strip's four short counters -- these panels are taller and
+   read better as a single column once the layout goes narrow. */
+.g-topn{grid-template-columns:repeat(4,1fr)}
+@media (max-width:1000px){.g-topn{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.g-topn{grid-template-columns:1fr}}
 
 /* controls */
 .toolbar{display:flex; gap:10px; align-items:center; margin-bottom:14px; flex-wrap:wrap}

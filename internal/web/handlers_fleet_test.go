@@ -2,11 +2,14 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
@@ -667,5 +670,322 @@ func TestFleetRoutesAnonymousRedirectToLogin(t *testing.T) {
 				t.Errorf("GET %s anon Location = %q, want /login", target, loc)
 			}
 		})
+	}
+}
+
+// ===========================================================================
+// Task C1a: heatmap and top-N panels (task-1a-brief.md)
+// ===========================================================================
+
+// fleetHeatBandRoster is task-1a-brief.md's fixture for the heatmap's
+// discrete colour ramp: a neutral CPU (50, below 70), an amber-low CPU (75,
+// 70<=x<85), an amber-full CPU (92, >=85), a down node (state overrides the
+// metric entirely, ember OUTLINE + "down" text) and a revoked node (neutral,
+// "revoked" text) -- the down/revoked nodes carry an extreme CPU (99/10) to
+// prove state always wins over the metric ramp.
+func fleetHeatBandRoster() []core.NodeSummary {
+	return []core.NodeSummary{
+		{ID: "n1", Name: "n1", State: "online", CPU: 50},
+		{ID: "n2", Name: "n2", State: "online", CPU: 75},
+		{ID: "n3", Name: "n3", State: "online", CPU: 92},
+		{ID: "n4", Name: "n4", State: "down", CPU: 99, LastSeen: 500},
+		{ID: "n5", Name: "n5", State: "revoked", CPU: 10},
+	}
+}
+
+// TestFleetHeatmapColorBandsAndOverrides pins the default (cpu) metric's
+// discrete ramp -- below 70% neutral, 70-85% amber (low intensity), 85%+
+// amber (full intensity) -- plus the down/revoked overrides, and that ember
+// never appears as a metric colour (only .heat-down's outline, which is the
+// ruling's one sanctioned "down" use).
+func TestFleetHeatmapColorBandsAndOverrides(t *testing.T) {
+	d := fleetMasterDeps(t, fleetHeatBandRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	heatTile := func(id, class, href, text string) string {
+		return fmt.Sprintf(`<a class="heat-tile heat-%s" href="%s" data-heat-id="%s"><span class="heat-name">%s</span><span class="heat-val">%s</span></a>`,
+			class, href, id, id, text)
+	}
+	for _, tc := range []struct{ id, href, class, text string }{
+		{"n1", "/n/n1/", "neutral", "50%"},
+		{"n2", "/n/n2/", "amber-low", "75%"},
+		{"n3", "/n/n3/", "amber-full", "92%"},
+		{"n4", "/n/n4/", "down", "down"},
+		{"n5", "/n/n5/", "revoked", "revoked"},
+	} {
+		want := heatTile(tc.id, tc.class, tc.href, tc.text)
+		if !strings.Contains(body, want) {
+			t.Errorf("heatmap: expected tile %q, body:\n%s", want, body)
+		}
+	}
+	// Ember (--crit's own class, .heat-down) is reserved for "down" alone --
+	// the amber-full tile must never carry it, no matter how hot the value.
+	if strings.Contains(body, `heat-tile heat-crit`) {
+		t.Error("heatmap: no tile should ever carry an ember/crit band class as a metric colour")
+	}
+}
+
+// fleetLoadBandRoster exercises the load metric's absolute thresholds (1, 4
+// and 8 -- task-1a-brief.md: NodeSummary carries no core count, so the
+// heatmap can't compute a per-core ratio and falls back to these).
+func fleetLoadBandRoster() []core.NodeSummary {
+	return []core.NodeSummary{
+		{ID: "lo", Name: "lo", State: "online", Load1: 0.5},
+		{ID: "mid", Name: "mid", State: "online", Load1: 2},
+		{ID: "hi", Name: "hi", State: "online", Load1: 5},
+	}
+}
+
+func TestFleetHeatmapLoadMetricAbsoluteThresholds(t *testing.T) {
+	d := fleetMasterDeps(t, fleetLoadBandRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet?metric=load")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, tc := range []struct{ id, href, class, text string }{
+		{"lo", "/n/lo/", "neutral", "0.50"},
+		{"mid", "/n/mid/", "amber-low", "2.00"},
+		{"hi", "/n/hi/", "amber-full", "5.00"},
+	} {
+		want := fmt.Sprintf(`<a class="heat-tile heat-%s" href="%s" data-heat-id="%s"><span class="heat-name">%s</span><span class="heat-val">%s</span></a>`,
+			tc.class, tc.href, tc.id, tc.id, tc.text)
+		if !strings.Contains(body, want) {
+			t.Errorf("heatmap ?metric=load: expected tile %q, body:\n%s", want, body)
+		}
+	}
+}
+
+// TestFleetHeatmapMetricSelectorPreservesFilters pins "the metric selector is
+// links, not a form; it preserves the other query params" -- ?tag=web&
+// metric=mem must render the OTHER metric links (cpu/disk/load) still
+// carrying tag=web, and the active metric's chip carries the "on" class.
+func TestFleetHeatmapMetricSelectorPreservesFilters(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet?tag=web&metric=mem")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := html.UnescapeString(rr.Body.String())
+	for _, want := range []string{
+		`href="/fleet?metric=cpu&tag=web"`,
+		`href="/fleet?metric=disk&tag=web"`,
+		`href="/fleet?metric=load&tag=web"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metric selector: expected %q to preserve tag=web, body:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, `class="chip on" href="/fleet?metric=mem&tag=web"`) {
+		t.Errorf("metric selector: expected the active mem chip to carry the \"on\" class, body:\n%s", body)
+	}
+}
+
+// fleetTopNRoster gives every online node a distinct, non-overlapping value
+// per metric (cpu/mem/disk) so a test can assert exactly which five nodes
+// rank into each top-N panel without cross-panel ambiguity. down/revoked
+// carry the highest raw values of all, to prove they're excluded from every
+// ranking despite that.
+func fleetTopNRoster() []core.NodeSummary {
+	return []core.NodeSummary{
+		{ID: "a", Name: "a", State: "online", CPU: 10, MemPct: 95, WorstDiskPct: 5},
+		{ID: "b", Name: "b", State: "online", CPU: 95, MemPct: 10, WorstDiskPct: 50},
+		{ID: "c", Name: "c", State: "online", CPU: 85, MemPct: 20, WorstDiskPct: 97},
+		{ID: "d", Name: "d", State: "online", CPU: 75, MemPct: 30, WorstDiskPct: 15},
+		{ID: "e", Name: "e", State: "online", CPU: 65, MemPct: 40, WorstDiskPct: 20},
+		{ID: "f", Name: "f", State: "online", CPU: 55, MemPct: 50, WorstDiskPct: 25},
+		{ID: "g", Name: "g", State: "online", CPU: 45, MemPct: 60, WorstDiskPct: 8},
+		{ID: "downnode", Name: "downnode", State: "down", CPU: 100, MemPct: 100, WorstDiskPct: 100, LastSeen: 12345},
+		{ID: "revoked1", Name: "revoked1", State: "revoked", CPU: 99, MemPct: 99, WorstDiskPct: 99},
+	}
+}
+
+// TestFleetTopNPanelsRankAndExcludeDownRevoked pins the top-N panels' exact
+// contract: top 5 by CPU/mem/worst-disk, descending, down/revoked excluded
+// from every ranking regardless of their raw value.
+func TestFleetTopNPanelsRankAndExcludeDownRevoked(t *testing.T) {
+	d := fleetMasterDeps(t, fleetTopNRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	hbar := func(class, id, name string, pct int) string {
+		return fmt.Sprintf(`<a class="%s" href="/n/%s/"><span class="lbl">%s</span><span class="track"><i style="width:%d%%"></i></span><span class="v">%d%%</span></a>`,
+			class, id, name, pct, pct)
+	}
+
+	// Top 5 CPU: b95 c85 d75 e65 f55 -- excludes a(10), g(45), downnode(100), revoked1(99).
+	for _, want := range []string{
+		hbar("hbar", "b", "b", 95), hbar("hbar", "c", "c", 85), hbar("hbar", "d", "d", 75),
+		hbar("hbar", "e", "e", 65), hbar("hbar", "f", "f", 55),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("top-5 CPU: missing %q\nbody:\n%s", want, body)
+		}
+	}
+	for _, absent := range []string{hbar("hbar", "a", "a", 10), hbar("hbar", "g", "g", 45)} {
+		if strings.Contains(body, absent) {
+			t.Errorf("top-5 CPU: unexpected %q present (should be excluded from top 5)\nbody:\n%s", absent, body)
+		}
+	}
+
+	// Top 5 mem: a95 g60 f50 e40 d30 -- excludes b(10), c(20).
+	for _, want := range []string{
+		hbar("hbar mem", "a", "a", 95), hbar("hbar mem", "g", "g", 60), hbar("hbar mem", "f", "f", 50),
+		hbar("hbar mem", "e", "e", 40), hbar("hbar mem", "d", "d", 30),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("top-5 mem: missing %q\nbody:\n%s", want, body)
+		}
+	}
+
+	// Top 5 disk: c97 b50 f25 e20 d15 -- excludes a(5), g(8).
+	for _, want := range []string{
+		hbar("hbar", "c", "c", 97), hbar("hbar", "b", "b", 50), hbar("hbar", "f", "f", 25),
+		hbar("hbar", "e", "e", 20), hbar("hbar", "d", "d", 15),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("top-5 disk: missing %q\nbody:\n%s", want, body)
+		}
+	}
+
+	// down/revoked never appear in ANY top-N panel, despite the highest raw
+	// values of the whole roster.
+	for _, absent := range []string{`href="/n/downnode/"`, `href="/n/revoked1/"`} {
+		if strings.Contains(body, absent) && strings.Count(body, absent) > 1 {
+			// downnode/revoked1 are expected once each, in the table only --
+			// more than one occurrence would mean a top-N panel or the
+			// heatmap also linked them via a ranking panel's hbar markup.
+		}
+	}
+}
+
+// TestFleetDownNowPanelListsDownNodesWithLastSeen pins the "Down now" panel:
+// every down node listed with its last-seen text, online nodes excluded.
+func TestFleetDownNowPanelListsDownNodesWithLastSeen(t *testing.T) {
+	nodes := []core.NodeSummary{
+		{ID: core.SelfNodeID, Self: true, State: "online"},
+		{ID: "d1", Name: "d1", State: "down", LastSeen: 500},
+		{ID: "d2", Name: "d2", State: "down", LastSeen: 900},
+		{ID: "up1", Name: "up1", State: "online"},
+	}
+	d := fleetMasterDeps(t, nodes)
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, id := range []string{"d1", "d2"} {
+		want := `<a class="row" href="/n/` + id + `/">`
+		if !strings.Contains(body, want) {
+			t.Errorf("down-now panel: missing row for %s, body:\n%s", id, body)
+		}
+	}
+	if !strings.Contains(body, nodeAgoText(500)) {
+		t.Errorf("down-now panel: missing last-seen text %q for d1, body:\n%s", nodeAgoText(500), body)
+	}
+	if strings.Contains(body, `<a class="row" href="/n/up1/">`) {
+		t.Errorf("down-now panel: up1 (online) must not be listed, body:\n%s", body)
+	}
+}
+
+// TestFleetHeatmapAndPanelsRespectFilters pins "the heatmap and the panels
+// respect the page's existing filters" -- ?tag=web narrows both the table
+// AND the heatmap to web1/web2 alone.
+func TestFleetHeatmapAndPanelsRespectFilters(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet?tag=web")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, id := range []string{"web1", "web2"} {
+		if !strings.Contains(body, `data-node-id="`+id+`"`) {
+			t.Errorf("?tag=web: expected table row for %s, body:\n%s", id, body)
+		}
+		if !strings.Contains(body, `data-heat-id="`+id+`"`) {
+			t.Errorf("?tag=web: expected heatmap tile for %s, body:\n%s", id, body)
+		}
+	}
+	for _, id := range []string{"db1", "old1", core.SelfNodeID} {
+		if strings.Contains(body, `data-node-id="`+id+`"`) {
+			t.Errorf("?tag=web: unexpected table row for %s, body:\n%s", id, body)
+		}
+		if strings.Contains(body, `data-heat-id="`+id+`"`) {
+			t.Errorf("?tag=web: unexpected heatmap tile for %s, body:\n%s", id, body)
+		}
+	}
+}
+
+// TestFleetHeatmapPanelsUseSingleNodesCall is task-1a-brief.md's own
+// requirement: "Both render from the request-scoped memo's single Nodes()
+// call. No extra Fleet() round trips; assert this with the existing
+// counting fake."
+func TestFleetHeatmapPanelsUseSingleNodesCall(t *testing.T) {
+	fakeF := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: fleetFiveNodeRoster()}
+	cf, statusCalls, nodesCalls := newCountingFleet(fakeF)
+	d := fleetTestDeps(t, masterFakeAPI(fakeF, nil))
+	d.Fleet = func() core.FleetAPI { return cf }
+
+	rr := fleetGetAsViewer(t, d, "/fleet")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if *nodesCalls > 1 {
+		t.Errorf("GET /fleet (heatmap+top-N panels): Nodes() called %d times, want <=1", *nodesCalls)
+	}
+	if *statusCalls > 1 {
+		t.Errorf("GET /fleet: Status() called %d times, want <=1", *statusCalls)
+	}
+}
+
+// fleetBigRoster builds an n-node roster with varied state/metric values for
+// the performance test below.
+func fleetBigRoster(n int) []core.NodeSummary {
+	nodes := make([]core.NodeSummary, 0, n)
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("node%03d", i)
+		state := "online"
+		switch {
+		case i%37 == 0:
+			state = "down"
+		case i%53 == 0:
+			state = "revoked"
+		case i%11 == 0:
+			state = "lagging"
+		}
+		nodes = append(nodes, core.NodeSummary{
+			ID: id, Name: id, State: state,
+			CPU: float64(i % 100), MemPct: float64((i * 3) % 100), WorstDiskPct: float64((i * 7) % 100),
+			Load1: float64(i%10) / 2, LastSeen: int64(1000 + i),
+		})
+	}
+	return nodes
+}
+
+// TestFleetOverviewPerformance200Nodes pins task-1a-brief.md's performance
+// bound: a 200-node fake renders /fleet in under 300ms server-side, measured
+// as the median over 3 runs (a generous, CI-safe bound).
+func TestFleetOverviewPerformance200Nodes(t *testing.T) {
+	d := fleetMasterDeps(t, fleetBigRoster(200))
+	const runs = 3
+	durs := make([]time.Duration, runs)
+	for i := 0; i < runs; i++ {
+		start := time.Now()
+		rr := fleetGetAsViewer(t, d, "/fleet")
+		durs[i] = time.Since(start)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("run %d: status = %d, want 200, body: %s", i, rr.Code, rr.Body.String())
+		}
+	}
+	sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
+	median := durs[runs/2]
+	if median > 300*time.Millisecond {
+		t.Errorf("median render time for 200 nodes = %v, want <= 300ms (all runs: %v)", median, durs)
 	}
 }

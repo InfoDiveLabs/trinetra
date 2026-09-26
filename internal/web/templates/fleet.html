@@ -23,6 +23,46 @@
   {{if or .Query.Tag .Query.State .Query.Query}}<a class="btn ghost" href="/fleet">Clear</a>{{end}}
 </form>
 
+{{/* Task 1a: heatmap + top-N panels, above the table. They render from the
+     same request as the table (no independent poll -- global-constraints.md/
+     task-1a-brief.md: "they refresh on page load, plus a 'Refresh' link.
+     Keep it simple"), and respect the page's current tag/state/q filter
+     exactly like the table below them. */}}
+<div class="panel" style="margin-bottom:14px">
+  <div class="head">
+    <div class="legend">
+      {{range .MetricOptions}}<a class="chip{{if .Active}} on{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}
+    </div>
+    <a class="note mono" href="{{.RefreshHref}}">Refresh</a>
+  </div>
+  <div class="grid g-heat" id="fleet-heatmap">
+    {{range .HeatTiles}}<a class="heat-tile heat-{{.Band}}" href="{{.Href}}" data-heat-id="{{.ID}}"><span class="heat-name">{{.Name}}</span><span class="heat-val">{{.Text}}</span></a>{{else}}<div class="note">no fleet nodes match this filter</div>{{end}}
+  </div>
+</div>
+
+<div class="grid g-topn" style="margin-bottom:18px">
+  <div class="panel"><div class="head"><span class="eyebrow">Top 5 · CPU</span></div>
+    <div class="hbars">
+      {{range .TopCPU}}<a class="hbar" href="{{.Href}}"><span class="lbl">{{.Name}}</span><span class="track"><i style="width:{{printf "%.0f" .WidthPct}}%"></i></span><span class="v">{{.ValueText}}</span></a>{{else}}<div class="note">no nodes</div>{{end}}
+    </div>
+  </div>
+  <div class="panel"><div class="head"><span class="eyebrow">Top 5 · Memory</span></div>
+    <div class="hbars">
+      {{range .TopMem}}<a class="hbar mem" href="{{.Href}}"><span class="lbl">{{.Name}}</span><span class="track"><i style="width:{{printf "%.0f" .WidthPct}}%"></i></span><span class="v">{{.ValueText}}</span></a>{{else}}<div class="note">no nodes</div>{{end}}
+    </div>
+  </div>
+  <div class="panel"><div class="head"><span class="eyebrow">Top 5 · Disk</span></div>
+    <div class="hbars">
+      {{range .TopDisk}}<a class="hbar" href="{{.Href}}"><span class="lbl">{{.Name}}</span><span class="track"><i style="width:{{printf "%.0f" .WidthPct}}%"></i></span><span class="v">{{.ValueText}}</span></a>{{else}}<div class="note">no nodes</div>{{end}}
+    </div>
+  </div>
+  <div class="panel"><div class="head"><span class="eyebrow">Down now</span></div>
+    <div class="rows">
+      {{range .DownNow}}<a class="row" href="{{.Href}}"><span class="led crit"></span><div class="name"><b>{{.Name}}</b></div><span class="note mono">{{nodeAgo .LastSeen}}</span></a>{{else}}<div class="note">no down nodes</div>{{end}}
+    </div>
+  </div>
+</div>
+
 <div class="panel pad0 cardpanel"><div class="tablewrap">
   <table id="fleet-nodes" class="cards">
     <thead><tr>
