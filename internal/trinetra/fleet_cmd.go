@@ -459,13 +459,13 @@ const skewWarnCLI = 30
 
 func printNodes(w io.Writer, ns []core.NodeSummary) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSTATE\tSKEW\tCPU\tMEM\tDISK\tVERSION\tLAST SEEN\tTAGS\tID")
+	fmt.Fprintln(tw, "NAME\tSTATE\tSKEW\tCPU\tMEM\tDISK\tVERSION\tLAST SEEN\tTAGS\tDEPENDS ON\tID")
 	for _, n := range ns {
 		id := n.ID
 		if len(id) > 8 {
 			id = id[:8]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%.0f%%\t%.0f%%\t%.0f%%\t%s\t%s\t%s\t%s\n", n.Name, n.State, fmtSkew(n), n.CPU, n.MemPct, n.WorstDiskPct, n.Version, ago(n.LastSeen), strings.Join(n.Tags, ","), id)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%.0f%%\t%.0f%%\t%.0f%%\t%s\t%s\t%s\t%s\t%s\n", n.Name, n.State, fmtSkew(n), n.CPU, n.MemPct, n.WorstDiskPct, n.Version, ago(n.LastSeen), strings.Join(n.Tags, ","), strings.Join(n.DependsOn, ","), id)
 	}
 	tw.Flush()
 }
@@ -515,7 +515,7 @@ func resolveNodeRef(c *control.Client, ref string) (string, error) {
 
 func fleetNodeCmd(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: trinetra fleet node revoke|remove|rename|tag <node> [value]")
+		fmt.Fprintln(stderr, "usage: trinetra fleet node revoke|remove|rename|tag|depends <node> [value]")
 		return 2
 	}
 	verb, ref := args[0], args[1]
@@ -555,8 +555,19 @@ func fleetNodeCmd(args []string) int {
 				}
 			}
 			return c.Fleet().SetNodeTags(id, tags)
+		case "depends":
+			if len(args) != 3 {
+				return errors.New("usage: fleet node depends <node> dep1,dep2,tag:t (empty string clears)")
+			}
+			var deps []string
+			for _, d := range strings.Split(args[2], ",") {
+				if d = strings.TrimSpace(d); d != "" {
+					deps = append(deps, d)
+				}
+			}
+			return c.Fleet().SetNodeDeps(id, deps, "cli")
 		default:
-			return fmt.Errorf("unknown node action %q (revoke, remove, rename, tag)", verb)
+			return fmt.Errorf("unknown node action %q (revoke, remove, rename, tag, depends)", verb)
 		}
 		return nil
 	})

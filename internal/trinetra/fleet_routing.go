@@ -143,8 +143,25 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 				return fmt.Errorf("route %q: invalid rule glob %q", routeLabel(r), m.Rule)
 			}
 		}
+		for _, g := range r.GroupBy {
+			if !validGroupByField(g) {
+				return fmt.Errorf("route %q: invalid group_by field %q", routeLabel(r), g)
+			}
+		}
 	}
 	return nil
+}
+
+// validGroupByField reports whether g is one of the incident-grouping
+// (task 6 part 2) GroupBy fields a route may list: "node", "rule",
+// "severity", or "tag:<key>" for any non-empty key.
+func validGroupByField(g string) bool {
+	switch g {
+	case "node", "rule", "severity":
+		return true
+	}
+	tag, ok := strings.CutPrefix(g, "tag:")
+	return ok && tag != ""
 }
 
 func routeLabel(r core.Route) string {
@@ -252,6 +269,12 @@ func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name stri
 type routeResolution struct {
 	Route    string
 	Policies []core.Policy
+	// GroupBy is the FIRST matched route's own GroupBy (task 6 part 2),
+	// exactly mirroring how Route itself is only ever set from the first
+	// match: an empty GroupBy (no route matched, or the matched route didn't
+	// set one) means "use the default (rule, severity) group key" -- see
+	// groupKeyFor.
+	GroupBy []string
 }
 
 // resolveRoute evaluates cfg's routes against an alert on the given node
@@ -274,6 +297,8 @@ func resolveRoute(cfg core.AlertingConfig, nodeID, nodeName string, tags []strin
 	}
 
 	routeName := ""
+	var groupBy []string
+	firstMatch := true
 	var matched []core.Policy
 	for _, r := range cfg.Routes {
 		if !matchersApply(r.Matchers, nodeID, nodeName, tags, rule, severity) {
@@ -281,6 +306,10 @@ func resolveRoute(cfg core.AlertingConfig, nodeID, nodeName string, tags []strin
 		}
 		if routeName == "" {
 			routeName = r.Name
+		}
+		if firstMatch {
+			groupBy = r.GroupBy
+			firstMatch = false
 		}
 		if p, ok := byName[r.Policy]; ok {
 			matched = append(matched, p)
@@ -292,6 +321,7 @@ func resolveRoute(cfg core.AlertingConfig, nodeID, nodeName string, tags []strin
 
 	if len(matched) == 0 {
 		routeName = ""
+		groupBy = nil
 		dp := cfg.DefaultPolicy
 		if dp == "" {
 			dp = defaultPolicyName
@@ -303,7 +333,7 @@ func resolveRoute(cfg core.AlertingConfig, nodeID, nodeName string, tags []strin
 		}
 	}
 
-	return routeResolution{Route: routeName, Policies: matched}
+	return routeResolution{Route: routeName, Policies: matched, GroupBy: groupBy}
 }
 
 func sendResolvedOf(p core.Policy) bool {

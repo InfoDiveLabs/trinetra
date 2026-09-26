@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -363,6 +364,7 @@ func (l *masterLoop) tick(now time.Time) {
 		l.engine.TickLeases(now, nodeIDs)
 		l.engine.TickSilences(now, nodeIDs)
 		l.engine.TickEscalations(now)
+		l.engine.TickGrouping(now)
 	}
 	if now.Sub(l.lastFlush) >= 30*time.Second {
 		l.lastFlush = now
@@ -424,17 +426,25 @@ func (l *masterLoop) checkOrphanedIncidents(now time.Time, ev fleet.Evaluation) 
 		return
 	}
 	for _, inc := range l.engine.incidents.List(core.IncidentFilter{}, nil) {
-		if len(inc.Nodes) != 0 || len(inc.Alerts) == 0 {
-			continue // not a master-own incident, or nothing recorded on it
+		if !isOpenState(inc.State) || len(inc.Alerts) == 0 {
+			continue // not open, or nothing recorded on it
 		}
-		if !isOpenState(inc.State) {
-			continue // not open
+		// (task 6 part 2) A grouped or dependency-folded incident can hold
+		// several independent master-own members (e.g. two down nodes
+		// sharing one incident, or a dependency fold): each is reconciled on
+		// its own condition, not just the incident's last-appended alert. A
+		// dependency-folded member (Suppressed != "") is left alone here --
+		// it recovers/releases through the dependency machinery itself
+		// (Submit/releaseFoldedDependents), not this reconciliation pass.
+		for _, al := range inc.Alerts {
+			if al.Node != "" || al.ResolvedAt != 0 || al.Suppressed != "" {
+				continue
+			}
+			if l.stillActive(al.Key, ev) {
+				continue
+			}
+			l.alert(fleetAlert(fleet.AlertIntent{Key: al.Key, Title: orphanRecoverTitle(al.Title), Recover: true}, now.Unix()))
 		}
-		key := inc.Alerts[len(inc.Alerts)-1].Key
-		if l.stillActive(key, ev) {
-			continue
-		}
-		l.alert(fleetAlert(fleet.AlertIntent{Key: key, Title: orphanRecoverTitle(inc), Recover: true}, now.Unix()))
 	}
 }
 
@@ -442,8 +452,8 @@ func (l *masterLoop) checkOrphanedIncidents(now time.Time, ev fleet.Evaluation) 
 // incident being reconciled after a restart, reusing the incident's own
 // recorded title (its last known fire, which already carries its own 🔴)
 // rather than re-deriving one from the key.
-func orphanRecoverTitle(inc core.Incident) string {
-	return inc.Title + " -- recovered (reconciled after restart)"
+func orphanRecoverTitle(title string) string {
+	return title + " -- recovered (reconciled after restart)"
 }
 
 // observeSkew is the master's OnSkew hook: it adds the sample to the node's
@@ -564,6 +574,39 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		return id, nil
 	})
 	engine.SetRouting(alerting, d.deliverSyncTo, d.dispatchOnly)
+	// SetDependencies (task 6 part 3): expand a node's DependsOn ("tag:<t>"
+	// entries resolved against the registry's CURRENT tag membership, read
+	// fresh on every call so a tag added/removed after the fact takes effect
+	// immediately) into a concrete node-id list the engine can check for
+	// "is any of this node's dependencies currently down" without knowing
+	// anything about the registry itself.
+	engine.SetDependencies(func(id string) []string {
+		n, ok := reg.Get(id)
+		if !ok {
+			return nil
+		}
+		var out []string
+		seen := map[string]bool{}
+		add := func(depID string) {
+			if depID == "" || depID == id || seen[depID] {
+				return
+			}
+			seen[depID] = true
+			out = append(out, depID)
+		}
+		for _, d := range n.DependsOn {
+			if tag, isTag := strings.CutPrefix(d, "tag:"); isTag {
+				for _, other := range reg.List() {
+					if slices.Contains(other.Tags, tag) {
+						add(other.ID)
+					}
+				}
+				continue
+			}
+			add(d)
+		}
+		return out
+	})
 	// A freshly (re)connected node gets a lease and its current silence set
 	// immediately, rather than waiting up to one masterTickInterval /
 	// silencePushInterval for the next Tick pass.

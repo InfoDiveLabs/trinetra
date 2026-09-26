@@ -200,6 +200,10 @@ func (f *fakeFleet) SetNodeTags(id string, tags []string) error {
 	return nil
 }
 
+func (f *fakeFleet) SetNodeDeps(id string, deps []string, actor string) error {
+	return nil
+}
+
 func (f *fakeFleet) RevokeNode(id string) error {
 	f.revoked = append(f.revoked, id)
 	return nil

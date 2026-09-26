@@ -520,6 +520,10 @@ func (f fleetClient) SetNodeTags(id string, tags []string) error {
 	return f.c.call("Fleet.SetNodeTags", map[string]any{"id": id, "tags": tags}, nil)
 }
 
+func (f fleetClient) SetNodeDeps(id string, deps []string, actor string) error {
+	return f.c.call("Fleet.SetNodeDeps", map[string]any{"id": id, "deps": deps, "actor": actor}, nil)
+}
+
 func (f fleetClient) RevokeNode(id string) error {
 	return f.c.call("Fleet.RevokeNode", map[string]any{"id": id}, nil)
 }

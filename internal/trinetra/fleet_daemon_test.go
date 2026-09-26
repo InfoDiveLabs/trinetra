@@ -393,6 +393,40 @@ func TestMasterProviderNodesAndManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// task 6 part 3: SetNodeDeps validates self-dependency and unknown
+	// node ids, accepts a mix of node ids and "tag:<t>" entries, and audits.
+	if err := fa.SetNodeDeps(live, []string{live}, "op"); err == nil {
+		t.Fatal("self-dependency accepted")
+	}
+	if err := fa.SetNodeDeps(live, []string{"no-such-node"}, "op"); err == nil {
+		t.Fatal("unknown dependency accepted")
+	}
+	if err := fa.SetNodeDeps(live, []string{quiet, "tag:eu-1"}, "op"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := m.reg.Get(live); len(n.DependsOn) != 2 || n.DependsOn[0] != quiet || n.DependsOn[1] != "tag:eu-1" {
+		t.Fatalf("deps = %v", n.DependsOn)
+	}
+	auditEntries, err := fa.Audit(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDepsAudit := false
+	for _, e := range auditEntries {
+		if e.Action == "fleet.node.deps" && e.Target == live && e.Actor == "op" {
+			foundDepsAudit = true
+		}
+	}
+	if !foundDepsAudit {
+		t.Fatalf("no fleet.node.deps audit entry in %+v", auditEntries)
+	}
+	if err := fa.SetNodeDeps(live, nil, "op"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := m.reg.Get(live); len(n.DependsOn) != 0 {
+		t.Fatalf("deps after clear = %v", n.DependsOn)
+	}
+
 	if err := fa.RevokeNode(quiet); err != nil {
 		t.Fatal(err)
 	}
@@ -450,6 +484,7 @@ func TestNonMasterProviderRefusesMasterOps(t *testing.T) {
 		errs := map[string]error{
 			"RenameNode":  fa.RenameNode("x", "y"),
 			"SetNodeTags": fa.SetNodeTags("x", nil),
+			"SetNodeDeps": fa.SetNodeDeps("x", nil, "op"),
 			"RevokeNode":  fa.RevokeNode("x"),
 			"DeleteToken": fa.DeleteToken("x"),
 		}
@@ -505,6 +540,7 @@ func TestMasterLoopAlertsNeverContactedNode(t *testing.T) {
 // d.alert (via the engine's deliver) AND create a firing incident, keyed
 // "self:<alert key>" since a master-generated alert has no source node.
 func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
+	disableGroupWaitForTest(t)
 	dir := t.TempDir()
 	d, alerts := testDeps(t, dir)
 	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
@@ -536,7 +572,12 @@ func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 		t.Fatalf("alerts = %+v, want one node-down (delivered via the engine)", *alerts)
 	}
 	incs := incidents.List(core.IncidentFilter{}, nil)
-	wantGroupKey := "self:fleet:node:" + oldID + ":down"
+	// (task 6 part 2) The default group key is (rule, severity) -- a
+	// master-own node-down alert's key already embeds the target node id,
+	// so this bucket is still unique to this one node (see ruleFromKey's doc
+	// comment), just no longer formatted as the old "self:<key>" per-alert
+	// identity.
+	wantGroupKey := "rule=fleet:node:" + oldID + ":down|severity=critical"
 	if len(incs) != 1 || incs[0].GroupKey != wantGroupKey || incs[0].State != "firing" {
 		t.Fatalf("incidents = %+v, want one firing incident with group key %q", incs, wantGroupKey)
 	}
@@ -960,6 +1001,7 @@ func TestMasterLoopStillActiveVariants(t *testing.T) {
 // blind window (node_down_after since this masterLoop started) has passed,
 // giving the tracker a real chance to observe the node's true state first.
 func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
+	disableGroupWaitForTest(t)
 	dir := t.TempDir()
 	d, _ := testDeps(t, dir)
 	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
@@ -990,9 +1032,15 @@ func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
 	// restart, while the node itself is (and, per tracker.Seen below,
 	// always was in this test) online.
 	key := "fleet:node:" + nodeID + ":down"
+	// groupKey matches EXACTLY what a real fire through the engine would
+	// have computed (groupKeyFor's default, task 6 part 2) -- this direct
+	// Apply call is simulating "recorded before a restart", and the
+	// reconciling recover below goes through the real engine/Submit, which
+	// must find this exact incident open under that same bucket.
 	if _, err := incidents.Apply(incidentApply{
 		src: alertSource{}, alert: Alert{Key: key, Title: "🔴 web1 is down", Severity: SevCritical, Kind: "fire", Time: started.Unix()},
 		firedAt: started.Unix(), now: started.Unix(),
+		groupKey: groupKeyFor(nil, alertSource{}, Alert{Key: key, Severity: SevCritical}),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1015,7 +1063,8 @@ func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
 		t.Fatalf("orphaned incident not recovered after the blind window: %+v", incs)
 	}
 	resolved := incidents.List(core.IncidentFilter{State: "resolved"}, nil)
-	if len(resolved) != 1 || resolved[0].GroupKey != "self:"+key {
+	wantGroupKey := groupKeyFor(nil, alertSource{}, Alert{Key: key, Severity: SevCritical})
+	if len(resolved) != 1 || resolved[0].GroupKey != wantGroupKey {
 		t.Fatalf("resolved incidents = %+v", resolved)
 	}
 

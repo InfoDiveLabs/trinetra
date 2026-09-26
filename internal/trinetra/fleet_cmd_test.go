@@ -100,6 +100,10 @@ type fleetCLIFake struct {
 	renamedID, renamedTo string
 	taggedID             string
 	taggedTags           []string
+	depsID               string
+	depsSet              []string
+	depsActor            string
+	depsErr              error
 	revokedID            string
 	revokeErr            error
 	removedID            string
@@ -167,6 +171,11 @@ func (a fleetCLIFakeFleetAPI) RenameNode(id, name string) error {
 func (a fleetCLIFakeFleetAPI) SetNodeTags(id string, tags []string) error {
 	a.f.taggedID, a.f.taggedTags = id, tags
 	return nil
+}
+
+func (a fleetCLIFakeFleetAPI) SetNodeDeps(id string, deps []string, actor string) error {
+	a.f.depsID, a.f.depsSet, a.f.depsActor = id, deps, actor
+	return a.f.depsErr
 }
 
 func (a fleetCLIFakeFleetAPI) RevokeNode(id string) error {
@@ -652,6 +661,31 @@ func TestFleetNodeRevoke(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Revoked node-1") {
 		t.Fatalf("out = %s", out)
+	}
+}
+
+// TestFleetNodeDependsSetsAndClears covers task 6 part 3's CLI:
+// `fleet node depends <node> <dep,...>`, with an empty value clearing it.
+func TestFleetNodeDependsSetsAndClears(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{nodes: []core.NodeSummary{
+		{ID: "self", Name: "master-1", Self: true},
+		{ID: "node-1", Name: "web-1"},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "node", "depends", "node-1", "node-2,tag:db"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.depsID != "node-1" || fake.depsActor != "cli" || strings.Join(fake.depsSet, ",") != "node-2,tag:db" {
+		t.Fatalf("depsID=%q depsActor=%q depsSet=%v", fake.depsID, fake.depsActor, fake.depsSet)
+	}
+	_ = out
+
+	if rc := Main([]string{"fleet", "node", "depends", "node-1", ""}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.depsID != "node-1" || len(fake.depsSet) != 0 {
+		t.Fatalf("clearing deps: depsID=%q depsSet=%v, want empty", fake.depsID, fake.depsSet)
 	}
 }
 

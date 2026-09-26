@@ -30,6 +30,7 @@ type NodeSummary struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	Tags         []string `json:"tags,omitempty"`
+	DependsOn    []string `json:"depends_on,omitempty"`
 	Self         bool     `json:"self,omitempty"`
 	State        string   `json:"state"`
 	Version      string   `json:"version,omitempty"`
@@ -158,21 +159,57 @@ type Incident struct {
 // IncidentAlert is one alert instance folded into an Incident.
 type IncidentAlert struct {
 	Node             string `json:"node"`
+	NodeName         string `json:"node_name,omitempty"`
 	Key              string `json:"key"`
 	Title            string `json:"title"`
 	Severity         string `json:"severity"`
 	FiredAt          int64  `json:"fired_at"`
 	ResolvedAt       int64  `json:"resolved_at,omitempty"`
 	DeliveredLocally bool   `json:"delivered_locally,omitempty"`
+	// Suppressed, when non-empty, means this member alert is folded into the
+	// incident but was never (and, while this stays set, will never be)
+	// delivered on its own -- currently only a node-dependency fold (task 6
+	// part 3): "suppressed: parent <name> down". Cleared (and the member
+	// delivered as its own incident) when the dependency releases -- see
+	// fleetAlertEngine's dependency handling.
+	Suppressed string `json:"suppressed,omitempty"`
 }
 
 // IncidentEvent is one entry in an Incident's pipeline trail (fleet explain
 // prints these): fired|grouped|suppressed|delivered|escalated|acked|resolved|receipt.
+//
+// Leg/AlertKey/Node/FiredAt/Policy/Step/Channels (fleet phase 2 task 6,
+// "structured timeline events") are the machine-readable form of what Detail
+// otherwise only records as free text: which member alert (Node, AlertKey,
+// FiredAt) and which leg ("fire" or "recover") this event covers, and, for a
+// routed delivery/escalation/repeat, which policy/step/channels produced it.
+// Every event this codebase writes from here on sets them; Detail is kept
+// too, for display. An event with neither Leg nor Policy set is a LEGACY
+// event recorded before this existed -- every reader of these fields must
+// fall back to parsing Detail only for such an event, never for one that has
+// them (see e.g. legDeliveredStatusFor, stepEventInfo in the trinetra
+// package).
 type IncidentEvent struct {
 	TS     int64  `json:"ts"`
 	Kind   string `json:"kind"`
 	Detail string `json:"detail,omitempty"`
 	Actor  string `json:"actor,omitempty"`
+
+	// Leg is "fire" or "recover": which half of an alert's lifecycle this
+	// event covers. Empty for an event that isn't leg-specific (acked,
+	// grouped) or a legacy event recorded before this field existed.
+	Leg string `json:"leg,omitempty"`
+	// AlertKey/Node/FiredAt identify the specific IncidentAlert member this
+	// event is about, exactly like alertDedupKey: Node is "" for a
+	// master-own alert.
+	AlertKey string `json:"alert_key,omitempty"`
+	Node     string `json:"node,omitempty"`
+	FiredAt  int64  `json:"fired_at,omitempty"`
+	// Policy/Step/Channels identify a routed delivery/escalation/repeat: which
+	// policy and step index produced it, and which channels it went to.
+	Policy   string   `json:"policy,omitempty"`
+	Step     int      `json:"step,omitempty"`
+	Channels []string `json:"channels,omitempty"`
 }
 
 // IncidentFilter narrows a FleetAPI.Incidents call to incidents matching
@@ -413,6 +450,11 @@ type FleetAPI interface {
 	// RemoveNode deletes id from the fleet (registry and liveness), resolving
 	// any open node-down alert; its replicated history stays on disk.
 	RemoveNode(id string) error
+	// SetNodeDeps replaces id's dependency list (node ids or "tag:<t>"
+	// entries): every referenced node id must exist and id may not depend on
+	// itself, directly. An empty deps clears the list. Records a
+	// "fleet.node.deps" audit entry naming actor.
+	SetNodeDeps(id string, deps []string, actor string) error
 	Tokens() ([]TokenView, error)
 	CreateToken(TokenSpec) (CreatedToken, error)
 	DeleteToken(id string) error

@@ -116,7 +116,7 @@ func (f fleetAPIImpl) Nodes(filter core.NodeFilter) ([]core.NodeSummary, error) 
 		return out, nil
 	}
 	for _, n := range p.master.reg.List() {
-		s := core.NodeSummary{ID: n.ID, Name: n.Name, Tags: n.Tags, Version: n.Version, LastSeen: n.LastSeen,
+		s := core.NodeSummary{ID: n.ID, Name: n.Name, Tags: n.Tags, DependsOn: n.DependsOn, Version: n.Version, LastSeen: n.LastSeen,
 			RemoteAddr: n.RemoteAddr, Revoked: n.Revoked, State: string(p.master.tracker.State(n.ID))}
 		if s.State == "" {
 			s.State = "unknown"
@@ -213,6 +213,53 @@ func (f fleetAPIImpl) SetNodeTags(id string, tags []string) error {
 		return err
 	}
 	m.audited("unknown", "set_node_tags", id, strings.Join(tags, ","))
+	return nil
+}
+
+// validDepEntry reports whether an entry in Node.DependsOn is well-formed:
+// either a bare node id (validated against the registry by the caller) or
+// "tag:<t>" naming a valid tag.
+func validDepEntry(entry string) (tag string, isTag bool) {
+	if t, ok := strings.CutPrefix(entry, "tag:"); ok {
+		return t, true
+	}
+	return "", false
+}
+
+func (f fleetAPIImpl) SetNodeDeps(id string, deps []string, actor string) error {
+	m, err := f.requireMaster()
+	if err != nil {
+		return err
+	}
+	if _, ok := m.reg.Get(id); !ok {
+		return core.ErrNoSuchNode
+	}
+	seen := map[string]bool{}
+	var clean []string
+	for _, d := range deps {
+		d = strings.TrimSpace(d)
+		if d == "" || seen[d] {
+			continue
+		}
+		if tag, isTag := validDepEntry(d); isTag {
+			if !fleet.ValidTag(tag) {
+				return fmt.Errorf("invalid dependency %q: not a valid tag", d)
+			}
+		} else {
+			if d == id {
+				return fmt.Errorf("node %s cannot depend on itself", id)
+			}
+			if _, ok := m.reg.Get(d); !ok {
+				return fmt.Errorf("dependency %q: %w", d, core.ErrNoSuchNode)
+			}
+		}
+		seen[d] = true
+		clean = append(clean, d)
+	}
+	if err := m.reg.Update(id, func(n *fleet.Node) error { n.DependsOn = clean; return nil }); err != nil {
+		return err
+	}
+	m.audited(actor, "fleet.node.deps", id, strings.Join(clean, ","))
 	return nil
 }
 

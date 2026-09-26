@@ -446,6 +446,7 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 		ID          string              `json:"id"`
 		Name        string              `json:"name"`
 		Tags        []string            `json:"tags"`
+		Deps        []string            `json:"deps"`
 		Filter      core.NodeFilter     `json:"filter"`
 		Spec        core.TokenSpec      `json:"spec"`
 		IncFilter   core.IncidentFilter `json:"inc_filter"`
@@ -486,6 +487,12 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 
 	case "Fleet.SetNodeTags":
 		if err := f.SetNodeTags(p.ID, p.Tags); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.SetNodeDeps":
+		if err := f.SetNodeDeps(p.ID, p.Deps, p.Actor); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil

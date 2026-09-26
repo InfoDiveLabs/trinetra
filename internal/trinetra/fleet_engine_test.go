@@ -13,6 +13,25 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
+// TestMain zeroes groupWait/groupInterval (task 6 part 2) for this package's
+// ENTIRE test binary run: every engine/daemon test that predates incident
+// grouping fires an alert (often via a bare newFleetAlertEngine, not just
+// the shared engineFixture/routingFixture constructors) and expects it
+// delivered immediately off a fixed fake clock that never advances, but
+// tryDeliverGroup now gates a fire's first notification on groupWait having
+// elapsed since the incident opened. Rather than hunt down every direct
+// construction site, the whole binary's baseline is 0 (immediate, exactly
+// today's pre-grouping behaviour); a grouping-timing-specific test sets
+// these package vars to whatever it wants to exercise directly and restores
+// them via t.Cleanup (disableGroupWaitForTest does this to explicitly
+// restore back to this 0 baseline, which also documents the intent at each
+// call site) -- they are package VARS, not consts, precisely so a test can
+// do this (task 6 brief).
+func TestMain(m *testing.M) {
+	groupWait, groupInterval = 0, 0
+	os.Exit(m.Run())
+}
+
 // engineFixture wires a fleetAlertEngine over a real incidentStore (on disk,
 // like production) with fake push/deliver/connected so a test can assert
 // exactly what the engine decided without any network or dispatcher
@@ -37,8 +56,25 @@ type pushedFrame struct {
 	f    fleet.Frame
 }
 
+// disableGroupWaitForTest zeroes groupWait/groupInterval for the duration of
+// a test (restored via t.Cleanup): every engine test that predates task 6's
+// incident grouping fires an alert and expects it delivered immediately, but
+// group_wait/group_interval now gate a fire's first/updated group
+// notification (tryDeliverGroup). groupWait/groupInterval are package VARS,
+// not consts, precisely so a test can do this (task 6 brief) -- a
+// grouping-specific test instead sets them to whatever it wants to exercise
+// directly, or leaves this disabled and drives timing through the fake
+// clock + an explicit TickGrouping call, exactly like escalation testing.
+func disableGroupWaitForTest(t *testing.T) {
+	t.Helper()
+	prevWait, prevInterval := groupWait, groupInterval
+	groupWait, groupInterval = 0, 0
+	t.Cleanup(func() { groupWait, groupInterval = prevWait, prevInterval })
+}
+
 func newEngineFixture(t *testing.T) *engineFixture {
 	t.Helper()
+	disableGroupWaitForTest(t)
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
 	if err != nil {
@@ -313,8 +349,9 @@ func TestEngineMasterOwnAlertGoesThroughSubmitUnprefixed(t *testing.T) {
 		t.Fatalf("title = %q, want unprefixed %q", got, "x is down")
 	}
 	incs := ef.incidents.List(core.IncidentFilter{}, nil)
-	if len(incs) != 1 || incs[0].GroupKey != "self:fleet:node:x:down" || len(incs[0].Nodes) != 0 {
-		t.Fatalf("incident = %+v", incs)
+	wantGroupKey := groupKeyFor(nil, alertSource{}, a)
+	if len(incs) != 1 || incs[0].GroupKey != wantGroupKey || len(incs[0].Nodes) != 0 {
+		t.Fatalf("incident = %+v, want group key %q", incs, wantGroupKey)
 	}
 }
 
@@ -864,7 +901,7 @@ func TestEngineHandleChildAckSyncAcksOpenIncident(t *testing.T) {
 	as, _ := json.Marshal(AlertState{Active: map[string]ActiveAlert{"cpu": {Since: 1000, Acked: true, AckedAt: 1010}}})
 	ef.engine.HandleChildAckSync("n1", as)
 
-	inc, ok := ef.incidents.OpenForGroupKey(incidentGroupKey("n1", "cpu"))
+	inc, ok := ef.incidents.OpenAlertIncident("n1", "cpu")
 	if !ok || inc.State != "acked" || inc.AckedBy != "node:n1" {
 		t.Fatalf("incident after ack sync = %+v ok=%v", inc, ok)
 	}

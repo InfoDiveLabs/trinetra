@@ -42,6 +42,7 @@ type routingFixture struct {
 // escalation/repeat state survives a fresh engine instance.
 func newRoutingFixtureAt(t *testing.T, dir string, cfg core.AlertingConfig, now time.Time) *routingFixture {
 	t.Helper()
+	disableGroupWaitForTest(t)
 	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -524,5 +525,102 @@ func TestEngineEscalationSurvivesRestartNoResend(t *testing.T) {
 	rf3.tick()
 	if rf3.dispatchedCount() != 1 {
 		t.Fatalf("dispatchedTo after crossing the next repeat interval = %d, want 1", rf3.dispatchedCount())
+	}
+}
+
+// --- task 6 part 1: structured timeline events ----------------------------
+
+// TestEngineStructuredEventsSurviveAmbiguousChannelName is the review
+// finding this part fixes: a channel literally NAMED "step 5: pager" used to
+// confuse the old text-only parser (policyStepDetail's Detail text embeds
+// the policy/step/channels as plain text, and a channel name containing the
+// substring " step N: " could be misread as a second step marker). With
+// structured fields (Policy/Step/Channels) written on every event and read
+// FIRST (stepEventInfo), this channel name is no longer special at all: the
+// step is recognized as already escalated (no re-send on a later tick) and
+// stepEventInfo reports the exact channel list, untouched by text parsing.
+func TestEngineStructuredEventsSurviveAmbiguousChannelName(t *testing.T) {
+	trickyChannel := "step 5: pager"
+	cfg := twoStepPolicy("5m", "")
+	cfg.Policies[0].Steps[1].Channels = []string{trickyChannel}
+	rf := newRoutingFixture(t, cfg)
+	rf.engine.Submit(alertSource{}, Alert{Key: "cpu", Kind: "fire", Severity: SevCritical, Time: rf.now.Unix()})
+	rf.waitIdle()
+
+	rf.advance(6 * time.Minute)
+	rf.tick()
+	if rf.dispatchedCount() != 1 {
+		t.Fatalf("dispatchedTo = %d, want 1", rf.dispatchedCount())
+	}
+	if got := rf.lastDispatched().channels; len(got) != 1 || got[0] != trickyChannel {
+		t.Fatalf("escalated channels = %v, want [%q]", got, trickyChannel)
+	}
+
+	inc := rf.onlyIncident(t)
+	var escalated core.IncidentEvent
+	found := false
+	for _, ev := range inc.Timeline {
+		if ev.Kind == "escalated" {
+			escalated, found = ev, true
+		}
+	}
+	if !found {
+		t.Fatalf("timeline missing the escalated event: %+v", inc.Timeline)
+	}
+	policy, step, channels, ok := stepEventInfo(escalated)
+	if !ok || policy != "esc" || step != 1 || len(channels) != 1 || channels[0] != trickyChannel {
+		t.Fatalf("stepEventInfo(escalated) = policy=%q step=%d channels=%v ok=%v, want policy=esc step=1 channels=[%q]",
+			policy, step, channels, ok, trickyChannel)
+	}
+
+	// A later tick must NOT re-escalate: escalatedTo matches on the
+	// structured Policy/Step fields, never on the (now ambiguous-looking)
+	// Detail text.
+	rf.advance(time.Hour)
+	rf.tick()
+	if rf.dispatchedCount() != 1 {
+		t.Fatalf("dispatchedTo after a further tick = %d, want still 1 (no re-escalation)", rf.dispatchedCount())
+	}
+}
+
+// TestEngineLegacyTextEventsStillParse: an incident recorded by a build from
+// before structured fields existed (Leg/Policy/AlertKey all zero, everything
+// carried in Detail text) must still be read correctly by every reader that
+// now prefers structured fields first -- resurrection's per-member leg
+// check and stepEventInfo's policy/step/channel extraction both fall back to
+// the exact old text-parsing rules for such an event.
+func TestEngineLegacyTextEventsStillParse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+	incidents, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := alertSource{}
+	inc, err := incidents.Apply(incidentApply{
+		src: src, alert: Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Time: 1000},
+		firedAt: 1000, now: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A hand-built, PURELY LEGACY event: no Leg/AlertKey/Node/FiredAt/Policy
+	// at all, exactly what an older build would have written.
+	if _, err := incidents.AppendEvent(inc.ID, core.IncidentEvent{
+		TS: 1010, Kind: "delivered", Detail: "fire: policy esc step 0: slack", Actor: "system",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := incidents.Get(inc.ID)
+	if !ok {
+		t.Fatal("incident missing")
+	}
+	if fireDelivered, recoverDelivered := legDeliveredStatusFor(got, "", "fleet:node:x:down", 1000); !fireDelivered || recoverDelivered {
+		t.Fatalf("legDeliveredStatusFor(legacy event) = fire=%v recover=%v, want fire=true recover=false", fireDelivered, recoverDelivered)
+	}
+	policy, step, channels, ok := stepEventInfo(got.Timeline[len(got.Timeline)-1])
+	if !ok || policy != "esc" || step != 0 || len(channels) != 1 || channels[0] != "slack" {
+		t.Fatalf("stepEventInfo(legacy event) = policy=%q step=%d channels=%v ok=%v", policy, step, channels, ok)
 	}
 }

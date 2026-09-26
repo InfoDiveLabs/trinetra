@@ -29,6 +29,13 @@ type Node struct {
 	Joined         int64  `json:"joined,omitempty"`
 	LastSeen       int64  `json:"last_seen,omitempty"`
 	RemoteAddr     string `json:"remote_addr,omitempty"`
+	// DependsOn is this node's dependency list (fleet phase 2 task 6, part
+	// 3): each entry is either another node's id, or "tag:<t>" meaning every
+	// node currently carrying tag t. When any dependency is down, this
+	// node's own node-down alert is folded into the dependency's open
+	// node-down incident as a suppressed member instead of delivered on its
+	// own -- see fleetAlertEngine's dependency handling.
+	DependsOn []string `json:"depends_on,omitempty"`
 }
 
 // NewNodeID returns 128 random bits as 32 hex chars.
@@ -77,6 +84,7 @@ func (r *Registry) listLocked() []Node {
 	for _, n := range r.nodes {
 		c := *n
 		c.Tags = append([]string(nil), n.Tags...)
+		c.DependsOn = append([]string(nil), n.DependsOn...)
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -164,6 +172,7 @@ func (r *Registry) NameConflict(name, excludeID string) (Node, bool) {
 	n := r.nodes[id]
 	c := *n
 	c.Tags = append([]string(nil), n.Tags...)
+	c.DependsOn = append([]string(nil), n.DependsOn...)
 	return c, true
 }
 
@@ -251,6 +260,7 @@ func (r *Registry) Get(id string) (Node, bool) {
 	}
 	c := *n
 	c.Tags = append([]string(nil), n.Tags...)
+	c.DependsOn = append([]string(nil), n.DependsOn...)
 	return c, true
 }
 
