@@ -1,7 +1,9 @@
 package trinetra
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -11,18 +13,21 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// engineFixture wires a fleetAlertEngine over a real incidentStore/auditLog
-// (both on disk, like production) with fake push/deliver/connected so a test
-// can assert exactly what the engine decided without any network or
-// dispatcher machinery.
+// engineFixture wires a fleetAlertEngine over a real incidentStore (on disk,
+// like production) with fake push/deliver/connected so a test can assert
+// exactly what the engine decided without any network or dispatcher
+// machinery. deliver runs synchronously (matching deliverSyncAndLog's real
+// contract) but Submit still calls it off its own goroutine, so any test
+// that triggers an actual delivery attempt must call waitIdle before
+// asserting on delivered/pushed.
 type engineFixture struct {
-	mu        sync.Mutex
-	delivered []Alert
-	pushed    []pushedFrame
-	connected map[string]bool
+	mu          sync.Mutex
+	delivered   []Alert
+	pushed      []pushedFrame
+	connected   map[string]bool
+	deliverFail bool // when true, deliver reports failure (no channel accepted it)
 
 	incidents *incidentStore
-	audit     *auditLog
 	engine    *fleetAlertEngine
 	now       time.Time
 }
@@ -42,12 +47,19 @@ func newEngineFixture(t *testing.T) *engineFixture {
 	ef := &engineFixture{
 		connected: map[string]bool{},
 		incidents: incidents,
-		audit:     newAuditLog(filepath.Join(dir, "audit.jsonl")),
 		now:       time.Unix(1_700_000_000, 0),
 	}
 	ef.engine = newFleetAlertEngine(
 		func() time.Time { return ef.now },
-		func(a Alert) { ef.mu.Lock(); ef.delivered = append(ef.delivered, a); ef.mu.Unlock() },
+		func(a Alert) bool {
+			ef.mu.Lock()
+			fail := ef.deliverFail
+			if !fail {
+				ef.delivered = append(ef.delivered, a)
+			}
+			ef.mu.Unlock()
+			return !fail
+		},
 		func(node string, f fleet.Frame) bool {
 			ef.mu.Lock()
 			defer ef.mu.Unlock()
@@ -58,10 +70,14 @@ func newEngineFixture(t *testing.T) *engineFixture {
 			return true
 		},
 		func(node string) bool { ef.mu.Lock(); defer ef.mu.Unlock(); return ef.connected[node] },
-		incidents, ef.audit,
+		incidents,
 	)
 	return ef
 }
+
+// waitIdle blocks until every delivery goroutine Submit has spawned so far
+// has finished, so assertions on delivered/pushed are deterministic.
+func (ef *engineFixture) waitIdle() { ef.engine.waitIdleForTest() }
 
 func (ef *engineFixture) connect(node string) {
 	ef.mu.Lock()
@@ -106,6 +122,7 @@ func TestEngineChildFireEnrichesDeliversAndReceipts(t *testing.T) {
 
 	ev := AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000}
 	ef.engine.HandleChildAlert("n1", "box1", []string{"web"}, ev)
+	ef.waitIdle() // delivery (Submit steps 2-4) runs off its own goroutine
 
 	if ef.deliveredCount() != 1 {
 		t.Fatalf("delivered count = %d, want 1", ef.deliveredCount())
@@ -151,6 +168,7 @@ func TestEngineDedupsSameAlertArrivingTwice(t *testing.T) {
 	// once via Ingest -- must be processed (delivered, receipted) only once.
 	ef.engine.HandleChildAlert("n1", "box1", nil, ev)
 	ef.engine.HandleChildAlert("n1", "box1", nil, ev)
+	ef.waitIdle()
 
 	if ef.deliveredCount() != 1 {
 		t.Fatalf("delivered count = %d, want 1", ef.deliveredCount())
@@ -253,9 +271,11 @@ func TestEngineRecoverResolvesIncidentAndDeliversByDefault(t *testing.T) {
 
 	fire := AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000}
 	ef.engine.HandleChildAlert("n1", "box1", nil, fire)
+	ef.waitIdle()
 
 	recov := AlertEvent{Time: 1050, Key: "cpu", Title: "cpu back to normal", Severity: "warning", Kind: "recover", Source: "anomaly", RoutedToMaster: true, FiredAt: 1050}
 	ef.engine.HandleChildAlert("n1", "box1", nil, recov)
+	ef.waitIdle()
 
 	if ef.deliveredCount() != 2 {
 		t.Fatalf("delivered count = %d, want 2 (fire + recover)", ef.deliveredCount())
@@ -284,6 +304,7 @@ func TestEngineMasterOwnAlertGoesThroughSubmitUnprefixed(t *testing.T) {
 	ef := newEngineFixture(t)
 	a := Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Source: "fleet", Time: 500}
 	ef.engine.Submit(alertSource{}, a)
+	ef.waitIdle()
 
 	if ef.deliveredCount() != 1 {
 		t.Fatalf("delivered count = %d, want 1", ef.deliveredCount())
@@ -341,7 +362,7 @@ func TestEngineIncidentsReloadAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_700_000_000, 0)
-	engine := newFleetAlertEngine(func() time.Time { return now }, func(Alert) {}, func(string, fleet.Frame) bool { return true }, func(string) bool { return true }, incidents, nil)
+	engine := newFleetAlertEngine(func() time.Time { return now }, func(Alert) bool { return true }, func(string, fleet.Frame) bool { return true }, func(string) bool { return true }, incidents)
 	engine.PushLeaseNow("n1", now.Add(-time.Minute))
 	engine.HandleChildAlert("n1", "box1", nil, AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000})
 
@@ -356,7 +377,7 @@ func TestEngineIncidentsReloadAfterRestart(t *testing.T) {
 	}
 
 	var delivered []Alert
-	engine2 := newFleetAlertEngine(func() time.Time { return now }, func(a Alert) { delivered = append(delivered, a) }, func(string, fleet.Frame) bool { return true }, func(string) bool { return true }, incidents2, nil)
+	engine2 := newFleetAlertEngine(func() time.Time { return now }, func(a Alert) bool { delivered = append(delivered, a); return true }, func(string, fleet.Frame) bool { return true }, func(string) bool { return true }, incidents2)
 	// The restarted engine's dedup set is seeded from the reloaded
 	// incidents, so re-processing the exact same (node, key, fired_at)
 	// record must not redeliver it.
@@ -426,6 +447,7 @@ func TestEngineHandleChildAckSyncAcksOpenIncident(t *testing.T) {
 	ef.connect("n1")
 	ef.engine.PushLeaseNow("n1", time.Unix(500, 0))
 	ef.engine.HandleChildAlert("n1", "box1", nil, AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000})
+	ef.waitIdle()
 
 	as, _ := json.Marshal(AlertState{Active: map[string]ActiveAlert{"cpu": {Since: 1000, Acked: true, AckedAt: 1010}}})
 	ef.engine.HandleChildAckSync("n1", as)
@@ -433,5 +455,253 @@ func TestEngineHandleChildAckSyncAcksOpenIncident(t *testing.T) {
 	inc, ok := ef.incidents.OpenForGroupKey(incidentGroupKey("n1", "cpu"))
 	if !ok || inc.State != "acked" || inc.AckedBy != "node:n1" {
 		t.Fatalf("incident after ack sync = %+v ok=%v", inc, ok)
+	}
+}
+
+// --- B3 review round 1: ordering (record -> deliver -> receipt) ----------
+
+// TestEngineReceiptFollowsDeliveredEventOnSuccess is the ruling's "success"
+// case: the receipt goes out only AFTER the "delivered" timeline event is
+// durably recorded, never before. The fake push callback checks the
+// incident's OWN on-disk-backed state at the moment it is invoked (both run
+// in the same goroutine, in program order, inside deliverAndReceipt), so if
+// the ordering were ever reversed this test would see no "delivered" event
+// yet when the receipt frame arrives.
+func TestEngineReceiptFollowsDeliveredEventOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(500, 0)
+
+	var mu sync.Mutex
+	var receiptPushed, sawDeliveredBeforeReceipt bool
+	engine := newFleetAlertEngine(
+		func() time.Time { return now },
+		func(Alert) bool { return true }, // every delivery succeeds
+		func(node string, f fleet.Frame) bool {
+			if f.Type == "receipt" {
+				mu.Lock()
+				receiptPushed = true
+				if inc, ok := incidents.FindByAlertKey("cpu"); ok {
+					for _, e := range inc.Timeline {
+						if e.Kind == "delivered" {
+							sawDeliveredBeforeReceipt = true
+						}
+					}
+				}
+				mu.Unlock()
+			}
+			return true
+		},
+		func(string) bool { return true },
+		incidents,
+	)
+	engine.PushLeaseNow("n1", now)
+	engine.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: 1000,
+	})
+	engine.waitIdleForTest()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !receiptPushed {
+		t.Fatal("receipt was never pushed")
+	}
+	if !sawDeliveredBeforeReceipt {
+		t.Fatal("receipt was pushed before the delivered event was recorded")
+	}
+}
+
+// TestEngineAllChannelsFailSendsNoReceipt is the ruling's "all channels
+// fail" case: no receipt goes out, the incident stays firing with no
+// "delivered" event, and (per HandleChildAlert's contract) the child's own
+// fallback remains the only path to actual delivery.
+func TestEngineAllChannelsFailSendsNoReceipt(t *testing.T) {
+	ef := newEngineFixture(t)
+	ef.connect("n1")
+	ef.engine.PushLeaseNow("n1", time.Unix(500, 0))
+	ef.deliverFail = true
+
+	ef.engine.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: 1000,
+	})
+	ef.waitIdle()
+
+	if ef.deliveredCount() != 0 {
+		t.Fatalf("delivered = %+v, want none recorded (every channel failed)", ef.delivered)
+	}
+	if got := len(ef.framesFor("n1", "receipt")); got != 0 {
+		t.Fatalf("receipts = %d, want 0", got)
+	}
+	inc, ok := ef.incidents.FindByAlertKey("cpu")
+	if !ok {
+		t.Fatal("incident missing")
+	}
+	if inc.State != "firing" {
+		t.Fatalf("incident state = %q, want still firing", inc.State)
+	}
+	for _, e := range inc.Timeline {
+		if e.Kind == "delivered" {
+			t.Fatalf("timeline should not show delivered when every channel failed: %+v", inc.Timeline)
+		}
+	}
+}
+
+// TestEngineCrashBetweenRecordAndReceiptThenChildFallback is the ruling's
+// "crash between record and receipt" case: incidents.Apply records the fire
+// durably (step 1), then the process is gone before delivery ever runs (no
+// receipt is ever sent). A restarted engine, built fresh over the same
+// file, then receives the child's OWN later fallback delivery (the receipt
+// never arrived, so the child fell back on schedule) for the exact same
+// (node, key, fired_at) -- the master must record delivered_locally and
+// must NOT attempt delivery again.
+func TestEngineCrashBetweenRecordAndReceiptThenChildFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+
+	// Step 1 only, exactly what Submit does before ever attempting delivery
+	// -- simulating a crash immediately after this, before any goroutine
+	// for delivery ever ran.
+	incidents1, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := incidents1.Apply(incidentApply{
+		src:              alertSource{NodeID: "n1", NodeName: "box1"},
+		alert:            Alert{Key: "cpu", Title: "cpu high", Severity: SevWarning, Kind: "fire", Time: 1000},
+		firedAt:          1000,
+		deliveredLocally: false,
+		now:              1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// "Restart": a fresh incidentStore/engine over the same file. Its dedup
+	// set is seeded from disk, so (n1, cpu, 1000) is already known.
+	incidents2, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered []Alert
+	var pushed []fleet.Frame
+	engine2 := newFleetAlertEngine(
+		func() time.Time { return time.Unix(2000, 0) },
+		func(a Alert) bool { delivered = append(delivered, a); return true },
+		func(node string, f fleet.Frame) bool { pushed = append(pushed, f); return true },
+		func(string) bool { return true },
+		incidents2,
+	)
+
+	// The child's fallback: same (node, key, fired_at), DeliveredLocally
+	// true, RoutedToMaster left at its zero value (deliverFallback never
+	// sets it) -- exactly the shape fleet_lease.go's deliverFallback logs.
+	engine2.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: 1300, Key: "cpu", Title: "via local fallback: master unreachable — cpu high",
+		Severity: "warning", Kind: "fire", Source: "anomaly", DeliveredLocally: true, FiredAt: 1000,
+	})
+	engine2.waitIdleForTest()
+
+	if len(delivered) != 0 {
+		t.Fatalf("engine redelivered after the child's fallback: %+v", delivered)
+	}
+	if len(pushed) != 0 {
+		t.Fatalf("engine pushed a frame after the child's fallback: %+v", pushed)
+	}
+	inc, ok := incidents2.FindByAlertKey("cpu")
+	if !ok {
+		t.Fatal("incident missing")
+	}
+	if len(inc.Alerts) != 1 || !inc.Alerts[0].DeliveredLocally {
+		t.Fatalf("incident alert not marked delivered_locally: %+v", inc.Alerts)
+	}
+	foundChildDelivered := false
+	for _, e := range inc.Timeline {
+		if e.Kind == "delivered" && e.Actor == "child" {
+			foundChildDelivered = true
+		}
+	}
+	if !foundChildDelivered {
+		t.Fatalf("timeline missing the child-delivered event: %+v", inc.Timeline)
+	}
+}
+
+// --- rotation + restart dedup memory (B3 review round 1) ------------------
+
+// TestEngineDedupSurvivesRotationAndReplay covers: an incident resolves,
+// incidents.jsonl rotates (the resolved incident's only record of it moves
+// to incidents.jsonl.1), the engine restarts, and the SAME original fire
+// record (now stale) is replayed. It must not be redelivered, and no orphan
+// incident may be recreated for that (node, key).
+func TestEngineDedupSurvivesRotationAndReplay(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+
+	s1, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := alertSource{NodeID: "n1", NodeName: "box1"}
+	if _, err := s1.Apply(incidentApply{src: src, alert: Alert{Key: "cpu", Kind: "fire", Severity: SevWarning, Time: 1000}, firedAt: 1000, now: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s1.Apply(incidentApply{src: src, alert: Alert{Key: "cpu", Kind: "recover", Severity: SevWarning, Time: 1050}, firedAt: 1050, now: 1050}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force rotation: pad the file past the threshold with harmless
+	// newline-delimited filler (long lines, not one giant token -- see
+	// TestIncidentStoreRotatesAt50MB), then append one more (unrelated)
+	// record to trigger appendLine's rotation check.
+	line := append(bytes.Repeat([]byte("x"), 4096), '\n')
+	pad := bytes.Repeat(line, incidentRotateBytes/len(line)+1)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(pad); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s1.Apply(incidentApply{src: alertSource{NodeID: "n2"}, alert: Alert{Key: "mem", Kind: "fire", Severity: SevWarning, Time: 2000}, firedAt: 2000, now: 2000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Fatalf("expected rotation to %s.1: %v", path, err)
+	}
+
+	// "Restart": a fresh store + engine over the (now rotated) file.
+	s2, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered []Alert
+	engine := newFleetAlertEngine(
+		func() time.Time { return time.Unix(3000, 0) },
+		func(a Alert) bool { delivered = append(delivered, a); return true },
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		s2,
+	)
+
+	// Replay the ORIGINAL (now rotated-away) fire record.
+	engine.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: 1000,
+	})
+	engine.waitIdleForTest()
+
+	if len(delivered) != 0 {
+		t.Fatalf("redelivered a rotated-away record after restart: %+v", delivered)
+	}
+	for _, inc := range s2.List(core.IncidentFilter{}, nil) {
+		if inc.GroupKey == "n1:cpu" {
+			t.Fatalf("orphan incident recreated for n1/cpu after rotation+restart: %+v", inc)
+		}
 	}
 }

@@ -192,3 +192,81 @@ func TestIncidentStoreSeenKeysCoversFireAndRecover(t *testing.T) {
 		t.Fatal("seenKeys missing the recover")
 	}
 }
+
+// TestIncidentStoreAckGuardsResolvedIncidents is a MINOR from the B3 review
+// round 1: acking an already-resolved incident must do nothing (return an
+// error), not silently flip it back to "acked" while leaving Resolved set.
+func TestIncidentStoreAckGuardsResolvedIncidents(t *testing.T) {
+	dir := t.TempDir()
+	s, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := alertSource{NodeID: "n1"}
+	if _, err := s.Apply(incidentApply{src: src, alert: Alert{Key: "cpu", Kind: "fire", Time: 1000}, firedAt: 1000, now: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	inc, err := s.Apply(incidentApply{src: src, alert: Alert{Key: "cpu", Kind: "recover", Time: 1050}, firedAt: 1050, now: 1050})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inc.State != "resolved" {
+		t.Fatalf("precondition: incident state = %q, want resolved", inc.State)
+	}
+
+	if _, err := s.Ack(inc.ID, "cli", 2000); err == nil {
+		t.Fatal("Ack on a resolved incident should fail")
+	}
+
+	got, ok := s.Get(inc.ID)
+	if !ok || got.State != "resolved" || got.AckedBy != "" {
+		t.Fatalf("incident after a refused ack = %+v ok=%v", got, ok)
+	}
+}
+
+// TestIncidentStoreAppendEventAndMarkDeliveredLocally exercises the two
+// primitives fleetAlertEngine.deliverAndReceipt/Submit's alreadySeen branch
+// use directly, independent of the engine (B3 review round 1).
+func TestIncidentStoreAppendEventAndMarkDeliveredLocally(t *testing.T) {
+	dir := t.TempDir()
+	s, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := alertSource{NodeID: "n1", NodeName: "box1"}
+	inc, err := s.Apply(incidentApply{src: src, alert: Alert{Key: "cpu", Kind: "fire", Time: 1000}, firedAt: 1000, now: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := s.AppendEvent(inc.ID, core.IncidentEvent{TS: 1010, Kind: "delivered", Detail: "sent via the master's dispatcher", Actor: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Timeline) != 2 || updated.Timeline[1].Kind != "delivered" || updated.Updated != 1010 {
+		t.Fatalf("incident after AppendEvent = %+v", updated)
+	}
+	if _, err := s.AppendEvent("no-such-id", core.IncidentEvent{TS: 1010, Kind: "delivered"}); err == nil {
+		t.Fatal("AppendEvent on an unknown id should fail")
+	}
+
+	marked, ok, err := s.MarkDeliveredLocally("n1", "cpu", 1000, 1020)
+	if err != nil || !ok || !marked.Alerts[0].DeliveredLocally {
+		t.Fatalf("MarkDeliveredLocally = %+v ok=%v err=%v", marked, ok, err)
+	}
+	foundChildEvent := false
+	for _, e := range marked.Timeline {
+		if e.Kind == "delivered" && e.Actor == "child" {
+			foundChildEvent = true
+		}
+	}
+	if !foundChildEvent {
+		t.Fatalf("MarkDeliveredLocally did not append a child-delivered event: %+v", marked.Timeline)
+	}
+
+	// No matching alert at all: a no-op, not an error.
+	_, ok, err = s.MarkDeliveredLocally("n1", "cpu", 9999, 1030)
+	if err != nil || ok {
+		t.Fatalf("MarkDeliveredLocally for an unknown (node,key,firedAt) = ok=%v err=%v", ok, err)
+	}
+}

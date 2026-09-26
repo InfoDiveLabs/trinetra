@@ -32,7 +32,12 @@ type fleetDeps struct {
 	store          SampleStore
 	alog           *AlertLog
 	alertStatePath string
-	alert          func(Alert)
+	// alert is master-only: it delivers an alert through the master's own
+	// dispatcher and reports whether at least one channel accepted it (see
+	// deliverSyncAndLog and fleetAlertEngine.deliver, fleet_engine.go) --
+	// the fleet alerting engine needs that completion signal before it may
+	// push a receipt down to a node.
+	alert func(Alert) bool
 	// alertFallback delivers a alert locally after the child's lease/receipt
 	// handoff (fleet_lease.go) gave up waiting on the master: it mirrors
 	// alert's construction (same alog/bus/q closed over) but calls
@@ -205,7 +210,7 @@ type masterLoop struct {
 	// removed mid-tick can never be re-tracked and paged. Guards alerter.
 	mu          sync.Mutex
 	alerter     *fleet.NodeAlerter
-	alert       func(Alert)
+	alert       func(Alert) bool
 	getCfg      func() *config.Config
 	logf        func(string, ...any)
 	lastFlush   time.Time
@@ -225,7 +230,7 @@ const masterTickInterval = 5 * time.Second
 func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, engine *fleetAlertEngine, d fleetDeps, now time.Time) *masterLoop {
 	alert := d.alert
 	if engine != nil {
-		alert = func(a Alert) { engine.Submit(alertSource{}, a) }
+		alert = func(a Alert) bool { engine.Submit(alertSource{}, a); return true }
 	}
 	return &masterLoop{reg: reg, tracker: tracker, sink: sink, engine: engine, alerter: fleet.NewNodeAlerter(), alert: alert,
 		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1), lastDropCheck: now}
@@ -422,7 +427,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		return fmt.Errorf("load incidents: %w", err)
 	}
 	audit := newAuditLog(filepath.Join(dir, "audit.jsonl"))
-	engine := newFleetAlertEngine(time.Now, d.alert, hub.Push, hub.Connected, incidents, audit)
+	engine := newFleetAlertEngine(time.Now, d.alert, hub.Push, hub.Connected, incidents)
 	// A freshly (re)connected node gets a lease immediately, rather than
 	// waiting up to one masterTickInterval for the next TickLeases pass.
 	hub.OnConnect(func(id string) { engine.PushLeaseNow(id, time.Now()) })

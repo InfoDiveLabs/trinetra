@@ -32,8 +32,8 @@ func newTestMasterState(t *testing.T) *masterState {
 	}
 	audit := newAuditLog(filepath.Join(dir, "audit.jsonl"))
 	hub := fleet.NewHub(nil)
-	engine := newFleetAlertEngine(time.Now, func(Alert) {}, hub.Push, hub.Connected, incidents, audit)
-	loop := newMasterLoop(reg, tracker, sink, engine, fleetDeps{alert: func(Alert) {}}, time.Now())
+	engine := newFleetAlertEngine(time.Now, func(Alert) bool { return true }, hub.Push, hub.Connected, incidents)
+	loop := newMasterLoop(reg, tracker, sink, engine, fleetDeps{alert: func(Alert) bool { return true }}, time.Now())
 	return &masterState{reg: reg, tokens: toks, tracker: tracker, sink: sink, loop: loop, hub: hub, engine: engine, audit: audit, getCfg: config.Default}
 }
 
@@ -224,7 +224,7 @@ func TestFleetAPIMutationsNilSafeWithoutOptionalFields(t *testing.T) {
 	}
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(time.Minute))
 	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{}, nil)
-	loop := newMasterLoop(reg, tracker, sink, nil, fleetDeps{alert: func(Alert) {}}, time.Now())
+	loop := newMasterLoop(reg, tracker, sink, nil, fleetDeps{alert: func(Alert) bool { return true }}, time.Now())
 	m := &masterState{reg: reg, tracker: tracker, sink: sink, loop: loop}
 	api := fleetAPIFor(m)
 

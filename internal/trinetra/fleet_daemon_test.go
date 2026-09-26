@@ -27,7 +27,7 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 		latestSnapshot: func() Snapshot { return Snapshot{CPU: 12} },
 		alog:           NewAlertLog(filepath.Join(dir, "alertlog.jsonl")),
 		alertStatePath: filepath.Join(dir, "alerts.json"),
-		alert:          func(a Alert) { alerts = append(alerts, a) },
+		alert:          func(a Alert) bool { alerts = append(alerts, a); return true },
 		alertFallback:  func(a Alert) { alerts = append(alerts, a) },
 		logf:           t.Logf,
 	}, &alerts
@@ -446,7 +446,7 @@ func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := newFleetAlertEngine(func() time.Time { return now }, d.alert,
-		func(string, fleet.Frame) bool { return false }, func(string) bool { return false }, incidents, nil)
+		func(string, fleet.Frame) bool { return false }, func(string) bool { return false }, incidents)
 	loop := newMasterLoop(reg, tracker, sink, engine, d, now)
 
 	oldID, _ := fleet.NewNodeID()
@@ -454,6 +454,9 @@ func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop.tick(now)
+	// Submit's actual delivery (steps 2-4) runs off its own goroutine now
+	// (B3 review round 1); wait for it before asserting on *alerts.
+	engine.waitIdleForTest()
 
 	if len(*alerts) != 1 {
 		t.Fatalf("alerts = %+v, want one node-down (delivered via the engine)", *alerts)
@@ -495,7 +498,7 @@ func TestMasterLoopTickPushesLeasesExcludingRevoked(t *testing.T) {
 			mu.Unlock()
 			return true
 		},
-		func(string) bool { return true }, incidents, nil)
+		func(string) bool { return true }, incidents)
 	loop := newMasterLoop(reg, tracker, sink, engine, d, now)
 
 	goodID, _ := fleet.NewNodeID()

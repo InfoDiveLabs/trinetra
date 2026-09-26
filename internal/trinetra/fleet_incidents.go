@@ -45,13 +45,18 @@ func incidentGroupKey(nodeID, key string) string {
 }
 
 // incidentApply is what fleetAlertEngine.Submit hands to incidentStore.Apply
-// for one dedup'd alert record.
+// for one dedup'd alert record. It records ONLY the fire/recover decision
+// (deliveredLocally: the child already delivered it, so the master never
+// will) -- whether the master itself successfully delivers it is known only
+// later, off Submit's own goroutine, and recorded separately via
+// incidentStore.AppendEvent once delivery actually completes (B3 review
+// round 1: the record must be durable before delivery is even attempted, not
+// after).
 type incidentApply struct {
 	src              alertSource
 	alert            Alert
 	firedAt          int64
 	deliveredLocally bool
-	delivered        bool // true iff the engine actually called deliver for this record
 	now              int64
 }
 
@@ -79,15 +84,19 @@ func loadIncidentStore(path string) (*incidentStore, error) {
 	return s, nil
 }
 
-func (s *incidentStore) load() error {
-	f, err := os.Open(s.path)
+// loadIncidentsRaw parses one incidents.jsonl-shaped file into a
+// last-line-per-id map. A missing file is not an error (nothing recorded
+// there yet, or nothing has ever been rotated).
+func loadIncidentsRaw(path string) (map[string]core.Incident, error) {
+	f, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
+	out := map[string]core.Incident{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 8<<20)
 	for sc.Scan() {
@@ -99,35 +108,68 @@ func (s *incidentStore) load() error {
 		if json.Unmarshal(line, &inc) != nil {
 			continue // a corrupt line is skipped, not fatal
 		}
-		s.byID[inc.ID] = inc // later lines for the same id overwrite earlier ones
+		out[inc.ID] = inc // later lines for the same id overwrite earlier ones
+	}
+	return out, sc.Err()
+}
+
+// load reconstructs byID/open from disk: the previous rotation (path+".1")
+// first, keeping only its STILL-OPEN incidents (a resolved/suppressed one
+// from a rotated-away file up to 50 MB is not worth holding in memory
+// forever -- it stays on disk in .1, just not reachable via Get/List), then
+// the current file, whose entries win for any id present in both.
+func (s *incidentStore) load() error {
+	prev, err := loadIncidentsRaw(s.path + ".1")
+	if err != nil {
+		return err
+	}
+	for id, inc := range prev {
+		if inc.State == "firing" || inc.State == "acked" {
+			s.byID[id] = inc
+		}
+	}
+	cur, err := loadIncidentsRaw(s.path)
+	if err != nil {
+		return err
+	}
+	for id, inc := range cur {
+		s.byID[id] = inc
 	}
 	for id, inc := range s.byID {
 		if inc.State == "firing" || inc.State == "acked" {
 			s.open[inc.GroupKey] = id
 		}
 	}
-	return sc.Err()
+	return nil
 }
 
-// seenKeys returns the (node, key, firedAt) dedup key for every alert
-// already folded into a loaded incident, so a restarted engine's dedup set
-// can be seeded from disk and never re-process (and so never re-deliver) an
-// alert it already handled before the restart.
+// seenKeys returns the (node, key, firedAt) dedup key for every alert ever
+// recorded, read directly from BOTH the current file and its previous
+// rotation (path+".1") -- unlike load's byID/open reconstruction, dedup
+// memory must cover a resolved/rotated-away incident too, or a replayed old
+// record right after a rotation+restart would look never-before-seen and
+// get redelivered. Called once, at engine construction, so reading straight
+// off disk rather than caching is simplest.
 func (s *incidentStore) seenKeys() map[alertDedupKey]struct{} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	out := map[alertDedupKey]struct{}{}
-	for _, inc := range s.byID {
-		for _, a := range inc.Alerts {
-			out[alertDedupKey{node: a.Node, key: a.Key, firedAt: a.FiredAt}] = struct{}{}
-			// A resolved alert's ResolvedAt is a SECOND, separately dedup'd
-			// alert record (the recover, whose own fired_at is ResolvedAt --
-			// see Apply's recover branch, which updates the fire's own
-			// IncidentAlert in place rather than appending a new one). Both
-			// must be seeded, or a restarted engine would treat a replayed
-			// recover record as never-before-seen and redeliver it.
-			if a.ResolvedAt != 0 && a.ResolvedAt != a.FiredAt {
-				out[alertDedupKey{node: a.Node, key: a.Key, firedAt: a.ResolvedAt}] = struct{}{}
+	for _, path := range [2]string{s.path + ".1", s.path} {
+		incs, err := loadIncidentsRaw(path)
+		if err != nil {
+			continue
+		}
+		for _, inc := range incs {
+			for _, a := range inc.Alerts {
+				out[alertDedupKey{node: a.Node, key: a.Key, firedAt: a.FiredAt}] = struct{}{}
+				// A resolved alert's ResolvedAt is a SECOND, separately
+				// dedup'd alert record (the recover, whose own fired_at is
+				// ResolvedAt -- see Apply's recover branch, which updates
+				// the fire's own IncidentAlert in place rather than
+				// appending a new one). Both must be seeded, or a restarted
+				// engine would treat a replayed recover record as
+				// never-before-seen and redeliver it.
+				if a.ResolvedAt != 0 && a.ResolvedAt != a.FiredAt {
+					out[alertDedupKey{node: a.Node, key: a.Key, firedAt: a.ResolvedAt}] = struct{}{}
+				}
 			}
 		}
 	}
@@ -197,9 +239,13 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 			})
 		}
 		inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "resolved", Detail: recoverDetail(u), Actor: "system"})
-		if u.delivered {
-			inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "delivered", Detail: "recover notification sent", Actor: "system"})
+		if u.deliveredLocally {
+			inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child"})
 		}
+		// A "delivered" event for the master's OWN successful dispatch is
+		// appended later, by AppendEvent, once delivery has actually
+		// completed (see fleetAlertEngine.deliverAndReceipt) -- never here,
+		// before delivery is even attempted.
 		delete(s.open, gk)
 		s.byID[inc.ID] = inc
 		return inc, s.appendLine(inc)
@@ -221,12 +267,13 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 		FiredAt: u.firedAt, DeliveredLocally: u.deliveredLocally,
 	})
 	inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "fired", Detail: fireDetail(u), Actor: "system"})
-	switch {
-	case u.delivered:
-		inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "delivered", Detail: "sent via the master's dispatcher", Actor: "system"})
-	case u.deliveredLocally:
+	if u.deliveredLocally {
 		inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child"})
 	}
+	// A "delivered" event for the master's OWN successful dispatch is
+	// appended later, by AppendEvent, once delivery has actually completed
+	// (see fleetAlertEngine.deliverAndReceipt) -- never here, before
+	// delivery is even attempted.
 	s.open[gk] = inc.ID
 	s.byID[inc.ID] = inc
 	return inc, s.appendLine(inc)
@@ -257,13 +304,68 @@ func (s *incidentStore) lookupOpenLocked(gk string) (core.Incident, bool) {
 	return inc, ok
 }
 
-// Ack marks id acknowledged by actor and appends the resulting snapshot.
+// AppendEvent appends ev to id's timeline and persists the updated snapshot.
+// Used by fleetAlertEngine.deliverAndReceipt to record the master's own
+// successful delivery AFTER it actually completes (see Submit's ordering
+// doc comment) -- a bookkeeping update to an already-recorded incident, not
+// a new fire/recover decision, so it does not go through Apply.
+func (s *incidentStore) AppendEvent(id string, ev core.IncidentEvent) (core.Incident, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inc, ok := s.byID[id]
+	if !ok {
+		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+	}
+	inc.Timeline = append(inc.Timeline, ev)
+	inc.Updated = ev.TS
+	s.byID[id] = inc
+	return inc, s.appendLine(inc)
+}
+
+// MarkDeliveredLocally records, on the specific IncidentAlert (node, key,
+// firedAt) identifies, that the child ended up delivering it locally after
+// all -- see fleetAlertEngine.Submit's alreadySeen branch: a fallback record
+// reaching the master strictly after the original fire it fell back from.
+// A no-op (not an error, ok=false) if no matching alert is found: the
+// original fire predates this store (e.g. rotated away before this
+// fallback finally arrived), so there is nothing left to update -- and, per
+// Submit's own dedup, no delivery was ever going to be (re-)attempted for
+// it anyway.
+func (s *incidentStore) MarkDeliveredLocally(node, key string, firedAt, now int64) (inc core.Incident, ok bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, cand := range s.byID {
+		for i := range cand.Alerts {
+			al := &cand.Alerts[i]
+			if al.Node != node || al.Key != key || al.FiredAt != firedAt {
+				continue
+			}
+			if al.DeliveredLocally {
+				return cand, true, nil // already recorded
+			}
+			al.DeliveredLocally = true
+			cand.Updated = now
+			cand.Timeline = append(cand.Timeline, core.IncidentEvent{TS: now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child"})
+			s.byID[id] = cand
+			return cand, true, s.appendLine(cand)
+		}
+	}
+	return core.Incident{}, false, nil
+}
+
+// Ack marks id acknowledged by actor and appends the resulting snapshot. A
+// resolved incident cannot be (re-)acked -- there is nothing left to
+// acknowledge once it's over, and doing so would incorrectly reopen it as
+// "acked" in State while leaving Resolved set.
 func (s *incidentStore) Ack(id, actor string, now int64) (core.Incident, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	inc, ok := s.byID[id]
 	if !ok {
 		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+	}
+	if inc.State == "resolved" {
+		return core.Incident{}, fmt.Errorf("incident %q is already resolved", id)
 	}
 	inc.State = "acked"
 	inc.AckedBy = actor

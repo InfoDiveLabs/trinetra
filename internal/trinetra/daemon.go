@@ -692,6 +692,45 @@ func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, qui
 	}
 }
 
+// deliverSyncAndLog is enqueueAndLog's synchronous twin, used ONLY as the
+// fleet master's alerting-engine delivery hook (fleetDeps.alert,
+// fleetAlertEngine.deliver in fleet_engine.go). The engine must know
+// whether at least one channel actually accepted the alert before it pushes
+// a receipt down to a child node (B3 review round 1: a receipt must never
+// go out before delivery has actually completed) -- something
+// enqueueAndLog's fire-and-forget NotifierQueue.Enqueue cannot report. It
+// logs and publishes exactly like enqueueAndLog (so the master's own
+// alertlog.jsonl/live event bus stay a complete history for its own alerts,
+// same as before this existed), then dispatches synchronously against q's
+// CURRENT Dispatcher -- bypassing the async queue and its drop policy
+// entirely, which exists for the high-volume local anomaly path this isn't
+// -- and reports whether at least one channel succeeded.
+//
+// The engine already runs this off its own goroutine per alert (see
+// Submit), so blocking here for up to the Dispatcher's ~15s-per-channel
+// timeout does not stall the engine's caller.
+func deliverSyncAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool) bool {
+	if alog != nil {
+		_ = alog.AppendAlertEvent(AlertEvent{
+			Time: a.Time, Key: a.Key, Title: a.Title, Severity: a.Severity.String(),
+			Kind: a.Kind, Source: a.Source, FiredAt: a.Time,
+		})
+	}
+	bus.Publish(core.Event{
+		Kind: alertEventKind(a), Severity: a.Severity.String(), Source: a.Source, Title: a.Title, Time: a.Time,
+	})
+	d := q.disp.Load()
+	if d == nil {
+		return false
+	}
+	for _, r := range d.Dispatch(a, quiet) {
+		if r.Err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // alertEventKind maps a dispatched Alert onto the Kind string its
 // core.Event carries on the live event bus. Only anomaly-sourced alerts
 // (Source "anomaly", from eventToAlert above) have a real fire/recover
@@ -966,8 +1005,8 @@ func cmdDaemon(args []string) int {
 	fleetRT := startFleet(daemonCtx, cfgAtStart, fleetDeps{
 		stateDir: stateDir, getCfg: getCfg, self: controlAPI, latestSnapshot: latestSnapshot,
 		store: store, alog: alog, alertStatePath: st.AlertStatePath(),
-		alert: func(a Alert) {
-			enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		alert: func(a Alert) bool {
+			return deliverSyncAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
 		},
 		alertFallback: func(a Alert) {
 			deliverFallback(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix())
