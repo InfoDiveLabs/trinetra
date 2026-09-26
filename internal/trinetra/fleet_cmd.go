@@ -227,10 +227,20 @@ func fleetJoinCmd(args []string) int {
 		fmt.Fprintln(stderr, "fleet join: save config:", err)
 		return 1
 	}
-	if res.Name != n {
-		fmt.Fprintf(stdout, "Note: %q was already taken on this master; registered as %q instead.\n", n, res.Name)
+	// An older master's JoinResponse has no "name" field at all, which
+	// decodes as "" here -- that must read as "the master didn't report a
+	// final name" (fall back to what was requested), never as "the master
+	// registered this node under the empty string" (review round 3, item 1:
+	// the old code printed a false "registered as \"\" instead" note against
+	// any pre-round-2 master).
+	finalName := res.Name
+	if finalName == "" {
+		finalName = n
 	}
-	fmt.Fprintf(stdout, "Joined fleet master %s as node %s (%s).\n%s\n", res.MasterURL, res.NodeID, res.Name, restartHint)
+	if finalName != n {
+		fmt.Fprintf(stdout, "Note: %q was already taken on this master; registered as %q instead.\n", n, finalName)
+	}
+	fmt.Fprintf(stdout, "Joined fleet master %s as node %s (%s).\n%s\n", res.MasterURL, res.NodeID, finalName, restartHint)
 	return 0
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
 // --- Matcher / validation ----------------------------------------------
@@ -64,6 +65,29 @@ func TestMatcherNodeMatchesExactIDRegardlessOfName(t *testing.T) {
 	}
 	if !m.CouldApplyToNode(idOfDB1, "totally-renamed", nil) {
 		t.Fatal("CouldApplyToNode must also recognize the exact-id match")
+	}
+}
+
+// TestMatcherNodeWithRealHexIDIsNotAUsableGlob is the review round-3 minor:
+// a real, generated node id (fleet.NewNodeID, 32 hex chars) pins that it can
+// only ever match via the exact-id branch, never as a glob pattern -- hex
+// characters have no special meaning to path.Match, so a real id used as
+// Matcher.Node can never accidentally act as a wildcard against some other
+// node's name or id.
+func TestMatcherNodeWithRealHexIDIsNotAUsableGlob(t *testing.T) {
+	id, err := fleet.NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := core.Matcher{Node: id}
+	if !m.Matches(id, "renamed-away", nil, "cpu_pct", "critical") {
+		t.Fatal("must match its own exact id regardless of its current name")
+	}
+	if m.Matches("some-other-id", "web1", nil, "cpu_pct", "critical") {
+		t.Fatal("a real hex id used as Node must not match an unrelated id/name")
+	}
+	if m.Matches("some-other-id", "totally-unrelated-but-longer-name", nil, "cpu_pct", "critical") {
+		t.Fatal("a real hex id used as Node must not glob-match an unrelated name")
 	}
 }
 

@@ -187,11 +187,11 @@ func (f fleetAPIImpl) RenameNode(id, name string) error {
 	// Names must stay unique (case-insensitively) so a Matcher.Node glob has
 	// a precise target (review round 2, item b): unlike a join, a rename is
 	// a deliberate operator action, so a collision is refused rather than
-	// silently suffixed.
-	if conflict, ok := m.reg.NameConflict(name, id); ok {
-		return fmt.Errorf("name %q is already used by node %s", name, fleet.ShortNodeID(conflict.ID))
-	}
-	if err := m.reg.Update(id, func(n *fleet.Node) error { n.Name = name; return nil }); err != nil {
+	// silently suffixed. Registry.Rename checks and applies this atomically
+	// under one lock (review round 3, item 2: a separate NameConflict-then-
+	// Update here was a TOCTOU race two concurrent renames, or a rename
+	// racing a join, could both slip through).
+	if err := m.reg.Rename(id, name); err != nil {
 		return err
 	}
 	m.audited("unknown", "rename_node", id, name)

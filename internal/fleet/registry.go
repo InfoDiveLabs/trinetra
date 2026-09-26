@@ -126,44 +126,72 @@ func (r *Registry) Add(n Node) error {
 // needed. Caller holds r.mu.
 func (r *Registry) uniqueNameLocked(base, excludeID string) string {
 	name := base
-	for i := 2; r.nameTakenLocked(name, excludeID); i++ {
+	for i := 2; ; i++ {
+		if _, taken := r.nameConflictLocked(name, excludeID); !taken {
+			return name
+		}
 		name = fmt.Sprintf("%s-%d", base, i)
 	}
-	return name
 }
 
-func (r *Registry) nameTakenLocked(name, excludeID string) bool {
+// nameConflictLocked returns the id of a node other than excludeID whose
+// name matches name case-insensitively, if any. Caller holds r.mu (either
+// lock: this never mutates).
+func (r *Registry) nameConflictLocked(name, excludeID string) (string, bool) {
 	for id, n := range r.nodes {
 		if id == excludeID {
 			continue
 		}
 		if strings.EqualFold(n.Name, name) {
-			return true
+			return id, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // NameConflict reports whether name is already used (case-insensitively) by
-// a node other than excludeID, returning that node if so -- used by a
-// rename to reject a collision before it happens (Registry.Add/
-// uniqueNameLocked handles the join case automatically; a rename is a
-// deliberate operator action, so it is refused instead of silently
-// suffixed).
+// a node other than excludeID, returning that node if so. A read-only check
+// -- Rename is what actually applies a rename, doing its own equivalent
+// check atomically under the same lock as the write (see Rename's doc
+// comment for why a separate check-then-act here would be a TOCTOU race).
 func (r *Registry) NameConflict(name, excludeID string) (Node, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for id, n := range r.nodes {
-		if id == excludeID {
-			continue
-		}
-		if strings.EqualFold(n.Name, name) {
-			c := *n
-			c.Tags = append([]string(nil), n.Tags...)
-			return c, true
-		}
+	id, ok := r.nameConflictLocked(name, excludeID)
+	if !ok {
+		return Node{}, false
 	}
-	return Node{}, false
+	n := r.nodes[id]
+	c := *n
+	c.Tags = append([]string(nil), n.Tags...)
+	return c, true
+}
+
+// Rename atomically checks name for a case-insensitive conflict with any
+// node other than id and, if none, sets id's name and persists -- all under
+// one critical section (review round 3, item 2): RenameNode used to call
+// NameConflict, then separately Update, which left a gap between the check
+// and the write where two concurrent renames (or a rename racing a join)
+// could both pass the check and both apply, leaving a duplicate name after
+// all. The error text matches exactly what fleet_provider.go's RenameNode
+// used to build itself; it now just returns this verbatim.
+func (r *Registry) Rename(id, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n, ok := r.nodes[id]
+	if !ok {
+		return fmt.Errorf("fleet: no node %s", id)
+	}
+	if conflictID, ok := r.nameConflictLocked(name, id); ok {
+		return fmt.Errorf("name %q is already used by node %s", name, ShortNodeID(conflictID))
+	}
+	prev := n.Name
+	n.Name = name
+	if err := r.saveLocked(); err != nil {
+		n.Name = prev
+		return err
+	}
+	return nil
 }
 
 // ShortNodeID returns id truncated to 8 characters (or id itself if

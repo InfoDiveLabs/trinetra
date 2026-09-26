@@ -1,8 +1,11 @@
 package fleet
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -128,6 +131,108 @@ func TestRegistryNameConflict(t *testing.T) {
 	}
 	if _, ok := r.NameConflict("nobody-has-this", id1); ok {
 		t.Fatal("an unused name must not conflict")
+	}
+}
+
+// TestRegistryRenameConcurrentExactlyOneWinner is the review round-3 item 2
+// concurrency test: N goroutines rename N DIFFERENT existing nodes to the
+// SAME target name at once. Registry.Rename's check-then-write is atomic
+// under one lock, so exactly one of them must win; the rest must see the
+// name already taken (by whichever one got there first) and fail, leaving
+// no duplicate afterward.
+func TestRegistryRenameConcurrentExactlyOneWinner(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, err := OpenRegistry(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 20
+	ids := make([]string, n)
+	for i := range ids {
+		id, err := NewNodeID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = id
+		if err := r.Add(Node{ID: id, Name: fmt.Sprintf("node-%d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	var successes int32
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := r.Rename(id, "contended"); err == nil {
+				atomic.AddInt32(&successes, 1)
+			}
+		}(id)
+	}
+	wg.Wait()
+
+	if successes != 1 {
+		t.Fatalf("successful renames = %d, want exactly 1", successes)
+	}
+	count := 0
+	for _, node := range r.List() {
+		if strings.EqualFold(node.Name, "contended") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("nodes named %q (case-insensitive) after the race = %d, want exactly 1", "contended", count)
+	}
+}
+
+// TestRegistryRenameRacesJoinNoDuplicateNames is the review round-3 item 2
+// concurrency test's second half: a Rename racing several concurrent Adds
+// (a join) all targeting the same name. Add always succeeds (suffixing on
+// collision); Rename either wins the exact name outright or is refused --
+// either way, every write is atomic under Registry's single lock, so no
+// duplicate (case-insensitive) name can result.
+func TestRegistryRenameRacesJoinNoDuplicateNames(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, err := OpenRegistry(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingID, err := NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(Node{ID: existingID, Name: "other"}); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, err := NewNodeID()
+			if err != nil {
+				return
+			}
+			_ = r.Add(Node{ID: id, Name: "contended"})
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = r.Rename(existingID, "contended")
+	}()
+	wg.Wait()
+
+	seen := map[string]bool{}
+	for _, node := range r.List() {
+		key := strings.ToLower(node.Name)
+		if seen[key] {
+			t.Fatalf("duplicate name %q after a rename racing concurrent joins", node.Name)
+		}
+		seen[key] = true
 	}
 }
 

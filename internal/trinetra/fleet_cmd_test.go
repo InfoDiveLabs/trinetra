@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -346,6 +348,85 @@ func TestFleetJoinAndLeave(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "fleet-child")); !os.IsNotExist(err) {
 		t.Fatal("purge kept fleet-child")
+	}
+}
+
+// testOldMasterForCLI stands up a bare-bones fake master that answers
+// POST /fleet/v1/join with a JoinResponse containing no "name" field at
+// all -- exactly what an older master (from before JoinResponse.Name
+// existed) would send. It signs the child's CSR for real (via the same CA
+// fleet.Join validates the returned cert against), but has none of the real
+// master's token/registry bookkeeping: it exists purely to test the CLI's
+// handling of a response with the name field entirely absent.
+func testOldMasterForCLI(t *testing.T) (code string) {
+	t.Helper()
+	mdir := t.TempDir()
+	if err := fleetInitPKI(mdir, []string{"127.0.0.1"}, "t", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	pki := fleetPKIDir(mdir)
+	ca, err := fleet.LoadCA(filepath.Join(pki, "ca.crt"), filepath.Join(pki, "ca.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := tls.LoadX509KeyPair(filepath.Join(pki, "server.crt"), filepath.Join(pki, "server.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPEM, err := os.ReadFile(filepath.Join(pki, "ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST "+fleet.PathJoin, func(w http.ResponseWriter, r *http.Request) {
+		var req fleet.JoinRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		id, err := fleet.NewNodeID()
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		certPEM, _, _, err := ca.SignClient([]byte(req.CSR), id, time.Now(), fleet.ClientCertLife)
+		if err != nil {
+			http.Error(w, "bad csr", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Deliberately no "name" key at all -- an older master's shape.
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"node_id": id,
+			"cert":    string(certPEM),
+			"ca":      string(caPEM),
+		})
+	})
+	srv := httptest.NewUnstartedServer(mux)
+	srv.TLS = fleet.ServerTLS(leaf, ca.Cert)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return fleet.EncodeJoin(fleet.JoinInfo{URL: srv.URL, Token: "swt_unused", Pin: fleet.SPKIPin(ca.Cert)})
+}
+
+// TestFleetJoinAgainstOlderMasterPrintsRequestedName is the review round-3
+// item 1 regression test: an older master's JoinResponse has no "name"
+// field, which decodes as "" -- the CLI must treat that as "not reported"
+// (fall back to the requested name) rather than printing a false
+// "registered as \"\" instead" note.
+func TestFleetJoinAgainstOlderMasterPrintsRequestedName(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	code := testOldMasterForCLI(t)
+	if rc := Main([]string{"fleet", "join", code, "--name", "box-1"}); rc != 0 {
+		t.Fatalf("join exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	if strings.Contains(got, "Note:") {
+		t.Fatalf("out = %s, want no Note line against an older master that never reports a name", got)
+	}
+	if !strings.Contains(got, "(box-1)") {
+		t.Fatalf("out = %s, want the success line to show the requested name box-1", got)
 	}
 }
 
