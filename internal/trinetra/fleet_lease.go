@@ -7,7 +7,12 @@
 package trinetra
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,13 +140,26 @@ func (h *handoff) Route(a Alert) bool {
 }
 
 // Receipt marks (key, firedAt) as delivered by the master: dropped from
-// pending, so Tick will never fall it back to local delivery. A receipt for
-// something not (or no longer) pending -- late, duplicate, or for an alert
-// this process never routed -- is a harmless no-op.
-func (h *handoff) Receipt(key string, firedAt int64) {
+// pending, so Tick will never fall it back to local delivery. It reports the
+// Kind ("fire" or "recover") of the pending entry it resolved and whether
+// one was actually found, so a caller (onStreamFrame) can durably record
+// which kind of receipt this was -- the receipt frame itself carries no
+// Kind (wire format is just {"key","fired_at"}), only whatever Route/
+// Reconcile already stored for that (key, firedAt).
+//
+// A receipt for something not (or no longer) pending -- late, duplicate, or
+// for an alert this process never routed -- is a harmless no-op: ok is
+// false and kind is "".
+func (h *handoff) Receipt(key string, firedAt int64) (kind string, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	delete(h.pending, handoffKey{key, firedAt})
+	k := handoffKey{key, firedAt}
+	p, exists := h.pending[k]
+	if !exists {
+		return "", false
+	}
+	delete(h.pending, k)
+	return p.alert.Kind, true
 }
 
 // Reconcile re-adds alerts a restarted process lost from memory (see
@@ -204,15 +222,107 @@ type receiptFrameData struct {
 	FiredAt int64  `json:"fired_at"`
 }
 
-// receiptMarkerKind is the AlertEvent.Kind recorded for a receipt, purely so
-// a restarted child can reconstruct handoff.pending from alertlog.jsonl (see
-// reconcilePendingFromLog): it is never dispatched (onStreamFrame appends it
-// directly via AlertLog.AppendAlertEvent, not enqueueAndLog) and carries no
-// Title/Severity, only the (Key, FiredAt) identity a receipt resolves.
-// Existing readers of AlertEvent.Kind (alertEventKind, the web UI, `fleet
-// explain`) only ever branch on "fire"/"recover" and pass anything else
-// through unchanged/ignored, so this new value cannot break them.
-const receiptMarkerKind = "receipt"
+// handoffReceipt is one line in the child-private receipts sidecar (see
+// handoffReceiptsPath): a durable record that the master acknowledged
+// (Key, FiredAt) of the given Kind, so a restarted child's reconciliation
+// (reconcilePendingFromLog) knows not to treat it as still pending.
+//
+// Deliberately NOT part of alertlog.jsonl: that file feeds every unfiltered
+// alert-history reader (alertHistoryRecords -> the web UI's /alerts history,
+// `trinetra alerts list`) and is teed to the outbox (shipped to the master's
+// replica, and re-shipped by localGapFiller on gap repair) -- a receipt is
+// neither a fire nor a recover a human or the master's replica should ever
+// see as an alert. It is purely this child's own internal handoff
+// bookkeeping, so it gets its own small sidecar file instead.
+type handoffReceipt struct {
+	Key     string `json:"key"`
+	FiredAt int64  `json:"fired_at"`
+	Kind    string `json:"kind"` // "fire" | "recover"
+	TS      int64  `json:"ts"`   // when this receipt was recorded
+}
+
+// handoffReceiptsPath is the sidecar's path under the daemon's state
+// directory: <stateDir>/fleet-child/handoff-receipts.jsonl. fleet-child/
+// already exists by the time this is ever used (fleet.LoadIdentity requires
+// it, and startChild calls that before anything here runs).
+func handoffReceiptsPath(stateDir string) string {
+	return filepath.Join(fleetChildDir(stateDir), "handoff-receipts.jsonl")
+}
+
+// appendHandoffReceipt durably (fsync'd) appends one receipt line to path.
+func appendHandoffReceipt(path string, r handoffReceipt) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// readHandoffReceipts returns every receipt in path with TS >= sinceUnix,
+// mirroring AlertLog.AlertEventsSince: a missing file is not an error (no
+// receipts recorded yet), and a corrupt/malformed line is skipped rather
+// than failing the whole read.
+func readHandoffReceipts(path string, sinceUnix int64) ([]handoffReceipt, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var out []handoffReceipt
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var r handoffReceipt
+		if json.Unmarshal([]byte(line), &r) != nil {
+			continue
+		}
+		if r.TS >= sinceUnix {
+			out = append(out, r)
+		}
+	}
+	return out, sc.Err()
+}
+
+// pruneHandoffReceipts rewrites path keeping only receipts with TS >=
+// beforeUnix, mirroring AlertLog.PruneAlertLog. Called once at startChild
+// (the same reconcile window used by reconcilePendingFromLog) so the
+// sidecar does not grow forever; a missing file is a no-op.
+func pruneHandoffReceipts(path string, beforeUnix int64) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	rs, err := readHandoffReceipts(path, beforeUnix)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, r := range rs {
+		if err := enc.Encode(r); err != nil {
+			return err
+		}
+	}
+	return writeFileAtomic(path, buf.Bytes(), 0o600)
+}
 
 // onStreamFrame is startChild's fleet.ShipperConfig.OnFrame: it decodes a
 // "lease" or "receipt" frame and applies it to lease/h, ignoring anything
@@ -222,20 +332,21 @@ const receiptMarkerKind = "receipt"
 // runs synchronously on the stream's read loop, so it must never block or
 // crash on hostile/garbled input from the wire.
 //
-// A "receipt" frame is also durably recorded as a receiptMarkerKind
-// AlertEvent (alog may be nil in tests that don't need this) so a restart
-// between this receipt and the alert's eventual resolution doesn't
-// resurrect it as pending: reconcilePendingFromLog treats this marker as a
-// resolving entry exactly like a delivered_locally record. now is injected
-// (rather than calling time.Now directly) purely so a test can pin the
-// marker's Time without sleeping; production passes time.Now.
+// A "receipt" frame that actually resolved something pending is also
+// durably recorded in the receipts sidecar at receiptsPath (see
+// handoffReceipt) so a restart between this receipt and the alert's
+// eventual resolution doesn't resurrect it as pending
+// (reconcilePendingFromLog). now is injected (rather than calling time.Now
+// directly) purely so a test can pin the recorded TS without sleeping;
+// production passes time.Now.
 //
 // Every branch here is cheap (a JSON unmarshal of a tiny fixed struct, a
-// mutex-guarded field/map update, and -- receipt only -- one small appended
-// log line) so this comfortably meets OnFrame's "must not block" contract
-// (see ShipperConfig.OnFrame's doc comment); AppendAlertEvent's own fsync
-// cost is the same one every ordinary alert already pays on this same disk.
-func onStreamFrame(lease *leaseHolder, h *handoff, alog *AlertLog, now func() time.Time, f fleet.Frame) {
+// mutex-guarded field/map update, and -- only for a receipt that actually
+// resolved something -- one small appended, fsync'd line) so this
+// comfortably meets OnFrame's "must not block" contract (see
+// ShipperConfig.OnFrame's doc comment); that fsync cost is the same one
+// every ordinary alert already pays on this same disk via AlertLog.
+func onStreamFrame(lease *leaseHolder, h *handoff, receiptsPath string, now func() time.Time, f fleet.Frame) {
 	switch f.Type {
 	case "lease":
 		var p leaseFrameData
@@ -245,39 +356,33 @@ func onStreamFrame(lease *leaseHolder, h *handoff, alog *AlertLog, now func() ti
 	case "receipt":
 		var p receiptFrameData
 		if json.Unmarshal(f.Data, &p) == nil {
-			h.Receipt(p.Key, p.FiredAt)
-			if alog != nil {
-				_ = alog.AppendAlertEvent(AlertEvent{
-					Time:    now().Unix(),
-					Key:     p.Key,
-					Kind:    receiptMarkerKind,
-					Source:  "fleet",
-					FiredAt: p.FiredAt,
+			if kind, ok := h.Receipt(p.Key, p.FiredAt); ok {
+				_ = appendHandoffReceipt(receiptsPath, handoffReceipt{
+					Key: p.Key, FiredAt: p.FiredAt, Kind: kind, TS: now().Unix(),
 				})
 			}
 		}
 	}
 }
 
-// reconcilePendingFromLog rebuilds the routed alerts a restarted child lost
-// from memory (handoff.pending is in-memory only): any "fire" AlertEvent
-// logged as RoutedToMaster that has no later entry resolving the same (key,
-// fired_at) -- a receiptMarkerKind record, a delivered_locally record, or a
-// recover for that key logged after that fire -- is still owed either a
-// receipt or a fallback delivery, and is returned here for handoff.Reconcile
-// to re-add (with its original fire time preserved, so Tick's fallback
-// timing applies as if the process never restarted).
-//
-// Only "fire" events are reconciled, per design: a routed "recover" that
-// itself never got a receipt is lower-value to chase after a restart (the
-// condition it reports has already cleared) and reconciling it would need
-// its own resolving-entry rules; this mirrors exactly what was asked for.
+// reconcilePendingFromLog rebuilds the routed alerts (fires AND recovers) a
+// restarted child lost from memory (handoff.pending is in-memory only): any
+// "fire" or "recover" AlertEvent logged as RoutedToMaster that has no later
+// entry resolving the same (key, fired_at) -- a receipt in the sidecar at
+// receiptsPath, a delivered_locally record, or (fires only) a recover for
+// that key logged after it -- is still owed either a receipt or a fallback
+// delivery, and is returned here for handoff.Reconcile to re-add (with its
+// original fire/recover time preserved, so Tick's fallback timing applies as
+// if the process never restarted). The "never zero times" rule (see
+// global-constraints) covers recovers exactly like fires, so both are
+// reconciled the same way.
 //
 // The scan is bounded to the last fallbackAfter*10 window (generous enough
-// that a fire right at the edge of a normal fallback window is never
+// that an event right at the edge of a normal fallback window is never
 // missed, short enough that a long-lived, mostly-pruned log cannot slow
-// startup) rather than the whole file.
-func reconcilePendingFromLog(alog *AlertLog, fallbackAfter time.Duration, now time.Time) []Alert {
+// startup) rather than the whole file, for both alertlog.jsonl and the
+// receipts sidecar.
+func reconcilePendingFromLog(alog *AlertLog, receiptsPath string, fallbackAfter time.Duration, now time.Time) []Alert {
 	if alog == nil {
 		return nil
 	}
@@ -286,11 +391,16 @@ func reconcilePendingFromLog(alog *AlertLog, fallbackAfter time.Duration, now ti
 	if err != nil {
 		return nil
 	}
+	// A read failure here just means fewer resolutions are found than truly
+	// happened -- an unresolved entry gets redelivered instead of lost,
+	// which is the safe direction per "never zero times" (a redundant
+	// redelivery is the documented fallback race, not a bug).
+	receipts, _ := readHandoffReceipts(receiptsPath, since)
+
 	pending := map[handoffKey]Alert{}
 	for _, ev := range events {
 		key := handoffKey{ev.Key, ev.FiredAt}
-		switch {
-		case ev.Kind == "fire" && ev.RoutedToMaster:
+		if (ev.Kind == "fire" || ev.Kind == "recover") && ev.RoutedToMaster {
 			sev, err := ParseSeverity(ev.Severity)
 			if err != nil {
 				sev = SevWarning // never drop the alert over an unparsable severity
@@ -299,22 +409,31 @@ func reconcilePendingFromLog(alog *AlertLog, fallbackAfter time.Duration, now ti
 				Key:      ev.Key,
 				Title:    ev.Title,
 				Severity: sev,
-				Kind:     "fire",
+				Kind:     ev.Kind,
 				Source:   ev.Source,
 				Time:     ev.FiredAt,
 			}
-		case ev.DeliveredLocally:
+		}
+		if ev.DeliveredLocally {
 			delete(pending, key)
-		case ev.Kind == receiptMarkerKind:
-			delete(pending, key)
-		case ev.Kind == "recover":
-			for k := range pending {
-				if k.key == ev.Key && ev.Time > k.firedAt {
+		}
+		if ev.Kind == "recover" {
+			// ANY recover for this key -- routed or not, receipted or not --
+			// resolves an earlier pending FIRE for the same key: the
+			// condition already cleared, so there is no point still chasing
+			// a stale fire notification. This does not touch a pending
+			// RECOVER (only a fire): recovers don't resolve each other.
+			for k, a := range pending {
+				if k.key == ev.Key && a.Kind == "fire" && ev.Time > k.firedAt {
 					delete(pending, k)
 				}
 			}
 		}
 	}
+	for _, r := range receipts {
+		delete(pending, handoffKey{r.Key, r.FiredAt})
+	}
+
 	out := make([]Alert, 0, len(pending))
 	for _, a := range pending {
 		out = append(out, a)

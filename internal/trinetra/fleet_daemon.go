@@ -490,11 +490,19 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	// alert whose receipt (or fallback) hadn't landed yet before this
 	// process last stopped would otherwise vanish -- delivered neither by
 	// the master (no receipt ever arrived here to prove it) nor locally.
-	// Rebuild it from alertlog.jsonl, which already durably records every
-	// routed fire (RoutedToMaster) and every receipt/fallback that resolves
-	// one (see reconcilePendingFromLog), before the ticker below starts
-	// judging anything.
-	handoffState.Reconcile(reconcilePendingFromLog(d.alog, d.getCfg().FleetFallbackAfter(), time.Now()))
+	// Rebuild it from alertlog.jsonl (every routed fire/recover,
+	// RoutedToMaster, and every delivered_locally fallback that resolves
+	// one) plus the receipts sidecar (every receipt that resolves one --
+	// see reconcilePendingFromLog), before the ticker below starts judging
+	// anything. The sidecar is pruned to the same reconcile window right
+	// after, so it does not grow forever; a prune failure is non-fatal
+	// (logged), matching AlertLog's own nil-degrades-gracefully convention.
+	receiptsPath := handoffReceiptsPath(d.stateDir)
+	fallbackAfter := d.getCfg().FleetFallbackAfter()
+	handoffState.Reconcile(reconcilePendingFromLog(d.alog, receiptsPath, fallbackAfter, time.Now()))
+	if err := pruneHandoffReceipts(receiptsPath, time.Now().Add(-10*fallbackAfter).Unix()); err != nil {
+		d.logf("fleet: could not prune handoff receipts: %v", err)
+	}
 
 	sh := fleet.NewShipper(fleet.ShipperConfig{
 		MasterURL: cfg.Fleet.MasterURL, Pin: cfg.Fleet.CAPin, Identity: id, Outbox: ob,
@@ -502,7 +510,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		Live:      live.Build,
 		LiveEvery: time.Duration(cfg.FastInterval) * time.Second,
 		Logf:      d.logf,
-		OnFrame:   func(f fleet.Frame) { onStreamFrame(lease, handoffState, d.alog, time.Now, f) },
+		OnFrame:   func(f fleet.Frame) { onStreamFrame(lease, handoffState, receiptsPath, time.Now, f) },
 	})
 	cctx, cancel := context.WithCancel(ctx)
 	shipDone := make(chan struct{})
