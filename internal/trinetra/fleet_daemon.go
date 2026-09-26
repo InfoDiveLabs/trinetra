@@ -516,6 +516,15 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	if err != nil {
 		return err
 	}
+	// Node names are required to be unique for every NEW join or rename
+	// (review round 2, item b), but an existing registry from before that
+	// requirement is loaded as-is, with no migration -- just a one-time
+	// warning naming the duplicates, so the operator knows a
+	// silence/maintenance Matcher.Node glob on one of these names may hit
+	// more than one node until they're renamed apart.
+	if dups := fleet.DuplicateNames(reg.List()); len(dups) > 0 {
+		d.logf("fleet: WARNING registry has nodes sharing a name (case-insensitive); a Matcher.Node glob on one of these will match all of them until renamed apart: %s", strings.Join(dups, "; "))
+	}
 	toks, err := fleet.OpenTokens(filepath.Join(dir, "tokens.json"))
 	if err != nil {
 		return err
@@ -671,14 +680,12 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	// childSilences is this child's copy of the master's last pushed
 	// "silences" frame (fleet_silences.go), restored from its sidecar so a
 	// restart while the master stays unreachable keeps honouring it for
-	// fallback deliveries (see deliverFallback). selfName is this node's
-	// OWN display name (config.ServerName -- the same value it joined the
-	// fleet with, and what a Node matcher's glob is meant to read), read
-	// fresh on every check so a live `config set server.name` takes effect
-	// without a restart; it may drift from the master's registry if the
-	// operator later renames this node there (`fleet node rename`), a
-	// known, accepted gap (review round 1, item 1(b)).
-	childSilences := loadPushedSilences(childSilencesPath(d.stateDir), func() string { return d.getCfg().ServerName() })
+	// fallback deliveries (see deliverFallback). It applies whatever the
+	// master pushed verbatim, with no local Node re-check: the master is the
+	// only place with the authoritative registry to resolve Node against
+	// (review round 2 -- see pushedSilences's doc comment for why an
+	// earlier round's child-side re-check was removed).
+	childSilences := loadPushedSilences(childSilencesPath(d.stateDir))
 
 	// Restart safety: handoff.pending lives only in memory, so a routed
 	// alert whose receipt (or fallback) hadn't landed yet before this

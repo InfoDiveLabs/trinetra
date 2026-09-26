@@ -193,6 +193,60 @@ func TestJoinRegistersNodeWithTokenTags(t *testing.T) {
 	}
 }
 
+// joinNamed performs a full join with an explicit name and returns the node
+// id and the FINAL name the master's JoinResponse reports (review round 2,
+// item b: it may be suffixed if it collided).
+func joinNamed(t *testing.T, f *masterFixture, name string) (id, finalName string) {
+	t.Helper()
+	plain, _, err := f.toks.Create(time.Hour, 1, nil, "test", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, csrPEM, _ := NewKeyAndCSR("child")
+	body, _ := json.Marshal(JoinRequest{Token: plain, CSR: string(csrPEM), Name: name, Version: "v1"})
+	resp, err := clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("join status %d: %s", resp.StatusCode, b)
+	}
+	var jr JoinResponse
+	if err := json.NewDecoder(resp.Body).Decode(&jr); err != nil {
+		t.Fatal(err)
+	}
+	return jr.NodeID, jr.Name
+}
+
+// TestJoinDedupesNameCaseInsensitive is the review round-2 item (b)
+// regression test at the master's HTTP surface: a join whose requested name
+// collides (case-insensitively) with an already-registered node's is
+// registered under a suffixed name, and the join RESPONSE reports that final
+// name (the child prints it, not the one it asked for).
+func TestJoinDedupesNameCaseInsensitive(t *testing.T) {
+	f := newMasterFixture(t)
+	id1, name1 := joinNamed(t, f, "Web1")
+	if name1 != "Web1" {
+		t.Fatalf("first join name = %q, want unchanged Web1", name1)
+	}
+	id2, name2 := joinNamed(t, f, "web1")
+	if name2 != "web1-2" {
+		t.Fatalf("second join name = %q, want web1-2", name2)
+	}
+	id3, name3 := joinNamed(t, f, "WEB1")
+	if name3 != "WEB1-3" {
+		t.Fatalf("third join name = %q, want WEB1-3", name3)
+	}
+	n1, _ := f.reg.Get(id1)
+	n2, _ := f.reg.Get(id2)
+	n3, _ := f.reg.Get(id3)
+	if n1.Name != "Web1" || n2.Name != "web1-2" || n3.Name != "WEB1-3" {
+		t.Fatalf("registry names = %q %q %q", n1.Name, n2.Name, n3.Name)
+	}
+}
+
 func TestJoinRejectsReusedToken(t *testing.T) {
 	f := newMasterFixture(t)
 	plain, _, _ := f.toks.Create(time.Hour, 1, nil, "t", time.Now())

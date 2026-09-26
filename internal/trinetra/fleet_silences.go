@@ -59,9 +59,9 @@ func validateMatchers(ms []core.Matcher) error {
 	return nil
 }
 
-func matchersApply(ms []core.Matcher, nodeName string, tags []string, rule, severity string) bool {
+func matchersApply(ms []core.Matcher, nodeID, nodeName string, tags []string, rule, severity string) bool {
 	for _, m := range ms {
-		if m.Matches(nodeName, tags, rule, severity) {
+		if m.Matches(nodeID, nodeName, tags, rule, severity) {
 			return true
 		}
 	}
@@ -74,13 +74,15 @@ func matchersApply(ms []core.Matcher, nodeName string, tags []string, rule, seve
 // "meant for" this particular node -- pushing the whole list to every node
 // any single matcher applies to would leak an unrelated matcher (e.g. one
 // meant only for a different node, with no Rule/Severity of its own) to a
-// node it was never meant to cover; see pushedSilence's doc comment and
-// pushedSilences.Suppressed's defense-in-depth re-check for the other half
-// of this fix.
-func applicableMatchers(ms []core.Matcher, nodeName string, tags []string) []core.Matcher {
+// node it was never meant to cover. The MASTER is the only place this
+// filtering happens (review round 2): it resolves nodeID/nodeName from its
+// own registry, where names are kept unique, so this is a precise, one-node
+// decision -- the child (pushedSilences.Suppressed) trusts the result
+// verbatim and never re-derives it.
+func applicableMatchers(ms []core.Matcher, nodeID, nodeName string, tags []string) []core.Matcher {
 	var out []core.Matcher
 	for _, m := range ms {
-		if m.CouldApplyToNode(nodeName, tags) {
+		if m.CouldApplyToNode(nodeID, nodeName, tags) {
 			out = append(out, m)
 		}
 	}
@@ -428,10 +430,10 @@ func (s *silenceStore) Prune(now int64) {
 }
 
 // Suppressed reports whether an alert with the given rule (its Key) and
-// severity, on the node identified by its display name/tags ("" / nil for a
-// master-own alert), is currently covered by an active silence or
+// severity, on the node identified by its id/display name/tags ("" / nil
+// for a master-own alert), is currently covered by an active silence or
 // maintenance window at unix time now. Explicit silences are checked first.
-func (s *silenceStore) Suppressed(now int64, nodeName string, tags []string, rule, severity string) *suppressionInfo {
+func (s *silenceStore) Suppressed(now int64, nodeID, nodeName string, tags []string, rule, severity string) *suppressionInfo {
 	s.mu.Lock()
 	silences := append([]core.Silence(nil), s.silences...)
 	maints := append([]core.Maintenance(nil), s.maintenances...)
@@ -441,13 +443,13 @@ func (s *silenceStore) Suppressed(now int64, nodeName string, tags []string, rul
 		if sil.Start > now || sil.End <= now {
 			continue
 		}
-		if matchersApply(sil.Matchers, nodeName, tags, rule, severity) {
+		if matchersApply(sil.Matchers, nodeID, nodeName, tags, rule, severity) {
 			return &suppressionInfo{Reason: fmt.Sprintf("silence %s by %s", sil.ID, sil.Author)}
 		}
 	}
 	tNow := time.Unix(now, 0)
 	for _, m := range maints {
-		if !matchersApply(m.Matchers, nodeName, tags, rule, severity) {
+		if !matchersApply(m.Matchers, nodeID, nodeName, tags, rule, severity) {
 			continue
 		}
 		if maintenanceActiveAt(m, tNow) {
@@ -458,12 +460,14 @@ func (s *silenceStore) Suppressed(now int64, nodeName string, tags []string, rul
 }
 
 // silencesForNode builds the filtered "silences" frame payload for a node
-// with the given display name/tags: every currently active explicit silence
-// with at least one matcher that could apply to it (only THOSE matchers are
-// sent, not the whole OR'd list -- review round 1, item 1(a)), plus every
-// occurrence of a maintenance window (likewise filtered) in the next 24h,
-// each expanded to a concrete [Start,End) instant.
-func (s *silenceStore) silencesForNode(now int64, nodeName string, tags []string) []pushedSilence {
+// with the given id/display name/tags: every currently active explicit
+// silence with at least one matcher that could apply to it (only THOSE
+// matchers are sent, not the whole OR'd list -- review round 1, item 1(a)),
+// plus every occurrence of a maintenance window (likewise filtered) in the
+// next 24h, each expanded to a concrete [Start,End) instant. The master is
+// the only place Node is ever resolved/matched (review round 2): the child
+// applies whatever comes out of this verbatim.
+func (s *silenceStore) silencesForNode(now int64, nodeID, nodeName string, tags []string) []pushedSilence {
 	s.mu.Lock()
 	silences := append([]core.Silence(nil), s.silences...)
 	maints := append([]core.Maintenance(nil), s.maintenances...)
@@ -474,7 +478,7 @@ func (s *silenceStore) silencesForNode(now int64, nodeName string, tags []string
 		if sil.Start > now || sil.End <= now {
 			continue
 		}
-		applicable := applicableMatchers(sil.Matchers, nodeName, tags)
+		applicable := applicableMatchers(sil.Matchers, nodeID, nodeName, tags)
 		if len(applicable) == 0 {
 			continue
 		}
@@ -486,7 +490,7 @@ func (s *silenceStore) silencesForNode(now int64, nodeName string, tags []string
 	from := time.Unix(now, 0)
 	until := from.Add(24 * time.Hour)
 	for _, m := range maints {
-		applicable := applicableMatchers(m.Matchers, nodeName, tags)
+		applicable := applicableMatchers(m.Matchers, nodeID, nodeName, tags)
 		if len(applicable) == 0 {
 			continue
 		}
@@ -516,28 +520,35 @@ func childSilencesPath(stateDir string) string {
 // routed anything to the master is unaffected by anything the master ever
 // pushed.
 //
-// selfName supplies this child's own display name for Suppressed's
-// defense-in-depth Node re-check (review round 1, item 1(b)): a nil
-// selfName (should not happen outside a test) just skips that re-check,
-// trusting the master's own per-node filtering (silencesForNode) alone.
+// The child never re-derives Node/Tag applicability (review round 2): an
+// earlier round added a Node re-check keyed off this child's own
+// config.ServerName, but that name is not reliably the same string the
+// master's registry has for this node (a fresh join's `--name` is never
+// written back into server.name, and node names were not even unique on
+// the master until this round) -- so the re-check could reject an entry the
+// master correctly meant for this exact node, silently letting a SILENCED
+// alert fall back and deliver. The master is the only place with the
+// authoritative registry (unique names, per round 2) to resolve Node
+// against, and it already filters `silencesForNode` down to exactly the
+// matchers that apply to THIS node before ever sending them -- the child
+// simply applies whatever it was pushed.
 type pushedSilences struct {
-	path     string
-	selfName func() string
+	path string
 
 	mu       sync.Mutex
 	silences []pushedSilence
 }
 
 // newPushedSilences builds an empty pushedSilences (no push received yet).
-func newPushedSilences(path string, selfName func() string) *pushedSilences {
-	return &pushedSilences{path: path, selfName: selfName}
+func newPushedSilences(path string) *pushedSilences {
+	return &pushedSilences{path: path}
 }
 
 // loadPushedSilences restores the sidecar written by a previous process. A
 // missing or corrupt file just starts empty -- exactly like never having
 // received a push.
-func loadPushedSilences(path string, selfName func() string) *pushedSilences {
-	p := &pushedSilences{path: path, selfName: selfName}
+func loadPushedSilences(path string) *pushedSilences {
+	p := &pushedSilences{path: path}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return p
@@ -570,28 +581,11 @@ func (p *pushedSilences) Set(silences []pushedSilence) error {
 // rule (its Key) and severity is currently covered by a pushed silence or
 // maintenance occurrence, and if so, its reason.
 //
-// Node and Rule/Severity are all re-checked here (review round 1, item
-// 1(b)): the master already filtered Tag/Node at push time
-// (silencesForNode only ever sends a MATCHER whose Node/Tag constraints
-// could apply to this exact node), but re-checking Node costs nothing (this
-// child always knows its own name, via selfName) and is the defense-in-depth
-// that closes the leak a filtering bug -- or an OR'd matcher meant for a
-// different node with no Rule/Severity of its own -- would otherwise cause:
-// without it, a matcher like {Node:"db1"} (no Rule/Severity) would look like
-// "matches every rule" to a child that only ever checks Rule/Severity, even
-// though it was pushed as part of the SAME Silence as a legitimate,
-// unrelated {Rule:"mem*"} matcher meant for every node.
-//
-// Tag is NOT re-checked: a child has no reliable way to learn its own
-// current tags (they are a master-registry concept the child is never told
-// about, and can change at any time via `fleet node tag`), so a Tag
-// matcher's applicability is trusted entirely from the master's own
-// filtering. This is a deliberate, documented gap: a Tag-scoped matcher can
-// therefore never leak WORSE than "some entries a node's tags no longer
-// justify might still apply for a few minutes until the master's own
-// registry/push catches up" -- it can never leak an entry meant for a
-// DIFFERENT node's identity the way an unchecked Node matcher could, since
-// Node is always re-verified.
+// Only Rule/Severity are checked here (review round 2: Node was re-checked
+// in an earlier round, but removed -- see pushedSilences's doc comment for
+// why): Node/Tag applicability was already decided at the master, over its
+// own registry, before this entry was ever pushed to this specific node, and
+// the child has no more authoritative source to re-derive it from.
 //
 // A nil receiver reports no suppression (no push ever received).
 func (p *pushedSilences) Suppressed(now int64, rule, severity string) (string, bool) {
@@ -599,21 +593,13 @@ func (p *pushedSilences) Suppressed(now int64, rule, severity string) (string, b
 		return "", false
 	}
 	p.mu.Lock()
-	name, silences := "", p.silences
-	if p.selfName != nil {
-		name = p.selfName()
-	}
+	silences := p.silences
 	p.mu.Unlock()
 	for _, s := range silences {
 		if s.Start > now || s.End <= now {
 			continue
 		}
 		for _, m := range s.Matchers {
-			if m.Node != "" {
-				if ok, _ := path.Match(m.Node, name); !ok {
-					continue
-				}
-			}
 			if m.Rule != "" {
 				if ok, _ := path.Match(m.Rule, rule); !ok {
 					continue

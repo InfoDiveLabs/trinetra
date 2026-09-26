@@ -189,16 +189,24 @@ type IncidentFilter struct {
 // anything, which is why a Silence/Maintenance must reject one (see
 // Matcher.Empty) -- though an explicit wildcard like Rule:"*" is fine and
 // deliberate (it still has a non-empty field; Empty is about a matcher with
-// NO fields set at all). Node and Rule are shell globs (path.Match); Tag
-// matches if the node carries it exactly; Severity is an exact,
-// case-insensitive match.
+// NO fields set at all). Rule is a shell glob (path.Match); Tag matches if
+// the node carries it exactly; Severity is an exact, case-insensitive match.
 //
-// Node matches against the node's DISPLAY NAME (what `fleet nodes` shows,
-// e.g. "db1"), never its internal hex node id: an operator writing
-// `--match node=db*` has no reason to know or type the random id, and only
-// the name is typable/globbable. Both the master (Submit's suppression
-// check, the per-node "silences" push) and the child (its own defense-in-depth
-// re-check, see pushedSilences.Suppressed) match Node this way.
+// Node matches if it globs (path.Match) the node's DISPLAY NAME (what
+// `fleet nodes` shows, e.g. "db1"), OR if it EXACTLY equals the node's
+// internal id: the name is what an operator can type and glob
+// (`--match node=db*`), but names are not immutable (`fleet node rename`),
+// so the exact-id form gives a precise, rename-proof target when that
+// matters more than typability. Renaming a node stops a name-based silence
+// from matching it (its old name no longer globs the new one) -- an
+// id-based silence keeps matching regardless. THE MASTER IS THE ONLY PLACE
+// Node is ever evaluated (Submit's suppression check, and per-node
+// filtering before the "silences" push): node names are enforced unique on
+// the registry (Registry.Add/RenameNode, review round 2) specifically so
+// this glob has one precise target, and the child trusts whatever the
+// master already filtered for it rather than re-deriving anything (a child
+// only reliably knows its OWN identity, and by the time it hears about a
+// rename its cached copy is stale anyway -- see pushedSilences.Suppressed).
 type Matcher struct {
 	Tag      string `json:"tag,omitempty"`
 	Node     string `json:"node,omitempty"`
@@ -215,11 +223,11 @@ func (m Matcher) Empty() bool {
 
 // Matches reports whether m applies to an alert with the given rule
 // (typically the alert's Key) and severity, on a node with the given
-// display name/tags (both "" / nil for a master-own alert, which no
+// id/display name/tags (all "" / nil for a master-own alert, which no
 // Node/Tag matcher ever pins down but a Rule/Severity-only matcher still
-// can).
-func (m Matcher) Matches(nodeName string, nodeTags []string, rule, severity string) bool {
-	if m.Node != "" {
+// can). See Matcher's doc comment for how Node matches nodeID/nodeName.
+func (m Matcher) Matches(nodeID, nodeName string, nodeTags []string, rule, severity string) bool {
+	if m.Node != "" && m.Node != nodeID {
 		if ok, _ := path.Match(m.Node, nodeName); !ok {
 			return false
 		}
@@ -239,13 +247,15 @@ func (m Matcher) Matches(nodeName string, nodeTags []string, rule, severity stri
 }
 
 // CouldApplyToNode reports whether m might match some alert on this node
-// (identified by its display name/tags), checking only the Node/Tag fields
-// (Rule/Severity describe the alert, not the node, so a Rule- or
+// (identified by its id/display name/tags), checking only the Node/Tag
+// fields (Rule/Severity describe the alert, not the node, so a Rule- or
 // Severity-only matcher always could apply). Used to decide which nodes a
 // silence/maintenance window -- and which of its OR'd Matchers -- are worth
-// pushing to a given node.
-func (m Matcher) CouldApplyToNode(nodeName string, nodeTags []string) bool {
-	if m.Node != "" {
+// pushing to a given node; the master is the only place this (or Matches)
+// is ever called, and the exact set of Matchers it decides applies here is
+// what the child trusts verbatim (see Matcher's doc comment).
+func (m Matcher) CouldApplyToNode(nodeID, nodeName string, nodeTags []string) bool {
+	if m.Node != "" && m.Node != nodeID {
 		if ok, _ := path.Match(m.Node, nodeName); !ok {
 			return false
 		}

@@ -227,7 +227,10 @@ func fleetJoinCmd(args []string) int {
 		fmt.Fprintln(stderr, "fleet join: save config:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Joined fleet master %s as node %s (%s).\n%s\n", res.MasterURL, res.NodeID, n, restartHint)
+	if res.Name != n {
+		fmt.Fprintf(stdout, "Note: %q was already taken on this master; registered as %q instead.\n", n, res.Name)
+	}
+	fmt.Fprintf(stdout, "Joined fleet master %s as node %s (%s).\n%s\n", res.MasterURL, res.NodeID, res.Name, restartHint)
 	return 0
 }
 
@@ -793,7 +796,8 @@ func fleetSilenceCmd(args []string) int {
 
 func fleetSilenceAdd(args []string) int {
 	fs := newFlags("fleet silence add")
-	match := fs.String("match", "", "comma-separated matchers: tag=,node=,rule=,severity=")
+	match := fs.String("match", "", "comma-separated matchers: tag=,node=,rule=,severity= "+
+		"(node= matches the node name (glob) or its exact id; renaming a node stops name-based silences from matching it)")
 	forDur := fs.Duration("for", 0, "how long the silence lasts from now")
 	until := fs.String("until", "", "RFC3339 end time (alternative to --for)")
 	comment := fs.String("comment", "", "why")
@@ -801,7 +805,8 @@ func fleetSilenceAdd(args []string) int {
 	if err != nil {
 		return 2
 	}
-	usage := "trinetra fleet silence add --match tag=web,node=db*,rule=cpu*,severity=critical --for 2h | --until RFC3339 [--comment ...]"
+	usage := "trinetra fleet silence add --match tag=web,node=db*,rule=cpu*,severity=critical --for 2h | --until RFC3339 [--comment ...]\n" +
+		"  node= matches the node name (glob) or its exact id; renaming a node stops name-based silences from matching it."
 	if rejectPositionals("fleet silence add", usage, pos) {
 		return 2
 	}

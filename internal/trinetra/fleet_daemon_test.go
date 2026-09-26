@@ -36,6 +36,77 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 	}, &alerts
 }
 
+// TestStartMasterWarnsOnceAboutDuplicateRegistryNames is the review round-2
+// item (b) regression test: an EXISTING registry.json (from before names
+// were unique) is loaded as-is -- no migration, no auto-rename -- but
+// startMaster logs one warning line naming the duplicates.
+func TestStartMasterWarnsOnceAboutDuplicateRegistryNames(t *testing.T) {
+	dir := t.TempDir()
+	if err := fleetInitPKI(dir, []string{"127.0.0.1"}, "test", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	regPath := filepath.Join(fleetMasterDir(dir), "registry.json")
+	if err := os.MkdirAll(filepath.Dir(regPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dupNodes := []fleet.Node{
+		{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "web1"},
+		{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Name: "Web1"},
+	}
+	b, err := json.Marshal(dupNodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regPath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	cfg := config.Default()
+	self := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, nil, dir, nil, nil, nil)
+	d := fleetDeps{
+		stateDir: dir, getCfg: func() *config.Config { return cfg }, self: self,
+		latestSnapshot: func() Snapshot { return Snapshot{} },
+		alog:           NewAlertLog(filepath.Join(dir, "alertlog.jsonl")),
+		alertStatePath: filepath.Join(dir, "alerts.json"),
+		alert:          func(Alert) {}, deliverSync: func(Alert) bool { return true },
+		alertFallback: func(Alert, *pushedSilences) {},
+		logf: func(format string, args ...any) {
+			mu.Lock()
+			lines = append(lines, fmt.Sprintf(format, args...))
+			mu.Unlock()
+		},
+	}
+	cfg.Fleet.Role = config.RoleMaster
+	cfg.Fleet.Address = "127.0.0.1"
+	cfg.Fleet.Listen = "127.0.0.1:0"
+	rt := startFleet(context.Background(), cfg, d)
+	t.Cleanup(rt.stop)
+	if rt.provider.master == nil {
+		t.Fatal("master did not start")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, l := range lines {
+		low := strings.ToLower(l)
+		if strings.Contains(l, "WARNING") && strings.Contains(low, "web1") && strings.Contains(low, "aaaaaaaa") && strings.Contains(low, "bbbbbbbb") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("log lines = %v, want one WARNING line naming both duplicate-name nodes", lines)
+	}
+	// No migration: both nodes keep their original (still-duplicate) names.
+	n1, ok1 := rt.provider.master.reg.Get(dupNodes[0].ID)
+	n2, ok2 := rt.provider.master.reg.Get(dupNodes[1].ID)
+	if !ok1 || !ok2 || n1.Name != "web1" || n2.Name != "Web1" {
+		t.Fatalf("registry nodes = %+v(%v) %+v(%v), want unchanged", n1, ok1, n2, ok2)
+	}
+}
+
 func TestStartFleetSoloCreatesNothing(t *testing.T) {
 	dir := t.TempDir()
 	d, _ := testDeps(t, dir)

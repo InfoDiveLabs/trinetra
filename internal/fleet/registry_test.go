@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +64,94 @@ func TestRegistryTouchFlushAndRevoke(t *testing.T) {
 	}
 	if !r.IsRevoked(id) {
 		t.Fatal("revoke not applied")
+	}
+}
+
+// TestRegistryAddDedupesNameCaseInsensitive is the review round-2 item (b)
+// regression test: a join whose requested name collides (case-insensitively)
+// with an existing node's is registered as "<name>-2", "-3", ... instead of
+// silently sharing the name.
+func TestRegistryAddDedupesNameCaseInsensitive(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, err := OpenRegistry(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id1, _ := NewNodeID()
+	id2, _ := NewNodeID()
+	id3, _ := NewNodeID()
+	if err := r.Add(Node{ID: id1, Name: "Web1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(Node{ID: id2, Name: "web1"}); err != nil { // case-insensitive collision
+		t.Fatal(err)
+	}
+	if err := r.Add(Node{ID: id3, Name: "WEB1"}); err != nil { // collides with both
+		t.Fatal(err)
+	}
+	n1, _ := r.Get(id1)
+	n2, _ := r.Get(id2)
+	n3, _ := r.Get(id3)
+	if n1.Name != "Web1" {
+		t.Fatalf("first join name = %q, want unchanged Web1", n1.Name)
+	}
+	if n2.Name != "web1-2" {
+		t.Fatalf("second join name = %q, want web1-2", n2.Name)
+	}
+	if n3.Name != "WEB1-3" {
+		t.Fatalf("third join name = %q, want WEB1-3", n3.Name)
+	}
+
+	// A registry unrelated to these names is untouched by the dedup logic.
+	id4, _ := NewNodeID()
+	if err := r.Add(Node{ID: id4, Name: "db1"}); err != nil {
+		t.Fatal(err)
+	}
+	if n4, _ := r.Get(id4); n4.Name != "db1" {
+		t.Fatalf("unrelated name = %q, want unchanged db1", n4.Name)
+	}
+}
+
+func TestRegistryNameConflict(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, _ := OpenRegistry(p)
+	id1, _ := NewNodeID()
+	id2, _ := NewNodeID()
+	_ = r.Add(Node{ID: id1, Name: "web1"})
+	_ = r.Add(Node{ID: id2, Name: "db1"})
+
+	if conflict, ok := r.NameConflict("WEB1", id2); !ok || conflict.ID != id1 {
+		t.Fatalf("NameConflict(WEB1, id2) = %+v, %v, want id1's node", conflict, ok)
+	}
+	if _, ok := r.NameConflict("web1", id1); ok {
+		t.Fatal("a node's own current name must not conflict with itself")
+	}
+	if _, ok := r.NameConflict("nobody-has-this", id1); ok {
+		t.Fatal("an unused name must not conflict")
+	}
+}
+
+func TestShortNodeID(t *testing.T) {
+	if got := ShortNodeID("abcdefgh12345678"); got != "abcdefgh" {
+		t.Fatalf("ShortNodeID = %q, want abcdefgh", got)
+	}
+	if got := ShortNodeID("short"); got != "short" {
+		t.Fatalf("ShortNodeID(short) = %q, want unchanged", got)
+	}
+}
+
+func TestDuplicateNames(t *testing.T) {
+	nodes := []Node{
+		{ID: "aaaaaaaaaaaa", Name: "web1"},
+		{ID: "bbbbbbbbbbbb", Name: "Web1"},
+		{ID: "cccccccccccc", Name: "db1"},
+	}
+	got := DuplicateNames(nodes)
+	if len(got) != 1 || !strings.Contains(got[0], "web1") || !strings.Contains(got[0], "aaaaaaaa") || !strings.Contains(got[0], "bbbbbbbb") {
+		t.Fatalf("DuplicateNames = %+v, want one entry for web1/Web1 naming both short ids", got)
+	}
+	if got := DuplicateNames([]Node{{ID: "x", Name: "unique"}}); len(got) != 0 {
+		t.Fatalf("DuplicateNames with no collisions = %+v, want none", got)
 	}
 }
 

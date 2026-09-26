@@ -13,44 +13,70 @@ import (
 
 // --- Matcher / validation ----------------------------------------------
 
+// idOfDB1/idOfWeb1/idOfApp1 are placeholder node ids distinct from any test
+// node's NAME, so a test asserting on name-glob behaviour can never
+// accidentally pass via the separate exact-id-match branch instead.
+const (
+	idOfDB1  = "id-of-db1-node"
+	idOfWeb1 = "id-of-web1-node"
+	idOfApp1 = "id-of-app1-node"
+)
+
 func TestMatcherMatchesGlobsExactFieldsAndEmptyMeansAny(t *testing.T) {
 	m := core.Matcher{Node: "db*", Rule: "cpu*", Severity: "critical", Tag: "web"}
-	if !m.Matches("db1", []string{"web", "prod"}, "cpu_pct", "critical") {
+	if !m.Matches(idOfDB1, "db1", []string{"web", "prod"}, "cpu_pct", "critical") {
 		t.Fatal("want match: node glob, rule glob, tag present, severity exact")
 	}
-	if m.Matches("app1", []string{"web"}, "cpu_pct", "critical") {
+	if m.Matches(idOfApp1, "app1", []string{"web"}, "cpu_pct", "critical") {
 		t.Fatal("node glob must reject a non-matching node")
 	}
-	if m.Matches("db1", []string{"web"}, "mem_pct", "critical") {
+	if m.Matches(idOfDB1, "db1", []string{"web"}, "mem_pct", "critical") {
 		t.Fatal("rule glob must reject a non-matching rule")
 	}
-	if m.Matches("db1", []string{"web"}, "cpu_pct", "warning") {
+	if m.Matches(idOfDB1, "db1", []string{"web"}, "cpu_pct", "warning") {
 		t.Fatal("severity must be exact")
 	}
-	if m.Matches("db1", []string{"prod"}, "cpu_pct", "critical") {
+	if m.Matches(idOfDB1, "db1", []string{"prod"}, "cpu_pct", "critical") {
 		t.Fatal("tag must be present on the node")
 	}
 
 	empty := core.Matcher{}
-	if !empty.Matches("anything", nil, "anything", "anything") {
+	if !empty.Matches("id", "anything", nil, "anything", "anything") {
 		t.Fatal("an entirely empty matcher must match anything")
 	}
 	ruleOnly := core.Matcher{Rule: "cpu*"}
-	if !ruleOnly.Matches("some-other-node", nil, "cpu_pct", "critical") {
+	if !ruleOnly.Matches("some-id", "some-other-node", nil, "cpu_pct", "critical") {
 		t.Fatal("a rule-only matcher must apply regardless of node")
+	}
+}
+
+// TestMatcherNodeMatchesExactIDRegardlessOfName is the review round-2 item
+// (c) test: Matcher.Node matches if it EXACTLY equals the node's internal
+// id, even when it does NOT glob-match the node's current display name --
+// giving a precise, rename-proof target.
+func TestMatcherNodeMatchesExactIDRegardlessOfName(t *testing.T) {
+	m := core.Matcher{Node: idOfDB1}
+	if !m.Matches(idOfDB1, "totally-renamed", nil, "cpu_pct", "critical") {
+		t.Fatal("an exact node id match must apply even though the name no longer globs it")
+	}
+	if m.Matches("some-other-id", "db1", nil, "cpu_pct", "critical") {
+		t.Fatal("a different node's id must not match")
+	}
+	if !m.CouldApplyToNode(idOfDB1, "totally-renamed", nil) {
+		t.Fatal("CouldApplyToNode must also recognize the exact-id match")
 	}
 }
 
 func TestMatcherCouldApplyToNodeIgnoresRuleAndSeverity(t *testing.T) {
 	m := core.Matcher{Rule: "cpu*", Severity: "critical"}
-	if !m.CouldApplyToNode("any-node", nil) {
+	if !m.CouldApplyToNode("any-id", "any-node", nil) {
 		t.Fatal("a rule/severity-only matcher could apply to every node")
 	}
 	tagged := core.Matcher{Tag: "web"}
-	if tagged.CouldApplyToNode("n1", []string{"db"}) {
+	if tagged.CouldApplyToNode("id-n1", "n1", []string{"db"}) {
 		t.Fatal("a tag matcher must not apply to a node missing that tag")
 	}
-	if !tagged.CouldApplyToNode("n1", []string{"web"}) {
+	if !tagged.CouldApplyToNode("id-n1", "n1", []string{"web"}) {
 		t.Fatal("a tag matcher must apply to a node carrying that tag")
 	}
 }
@@ -278,13 +304,13 @@ func TestSilenceStoreSuppressedMatchesActiveSilenceAndMaintenance(t *testing.T) 
 	if _, err := s.Create(core.Silence{Matchers: []core.Matcher{{Rule: "cpu*"}}, Start: 1000, End: 2000, Author: "cli"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Suppressed(1500, "n1", nil, "cpu_pct", "critical"); got == nil || !strings.HasPrefix(got.Reason, "silence ") {
+	if got := s.Suppressed(1500, "id-n1", "n1", nil, "cpu_pct", "critical"); got == nil || !strings.HasPrefix(got.Reason, "silence ") {
 		t.Fatalf("want suppressed by the active silence, got %+v", got)
 	}
-	if got := s.Suppressed(2500, "n1", nil, "cpu_pct", "critical"); got != nil {
+	if got := s.Suppressed(2500, "id-n1", "n1", nil, "cpu_pct", "critical"); got != nil {
 		t.Fatalf("want not suppressed once the silence has ended, got %+v", got)
 	}
-	if got := s.Suppressed(1500, "n1", nil, "mem_pct", "critical"); got != nil {
+	if got := s.Suppressed(1500, "id-n1", "n1", nil, "mem_pct", "critical"); got != nil {
 		t.Fatalf("want not suppressed: rule doesn't match, got %+v", got)
 	}
 
@@ -294,10 +320,10 @@ func TestSilenceStoreSuppressedMatchesActiveSilenceAndMaintenance(t *testing.T) 
 		t.Fatal(err)
 	}
 	duringMonday := time.Date(2024, 1, 1, 23, 0, 0, 0, time.UTC).Unix()
-	if got := s.Suppressed(duringMonday, "n1", []string{"web"}, "mem_pct", "warning"); got == nil || !strings.HasPrefix(got.Reason, "maintenance ") {
+	if got := s.Suppressed(duringMonday, "id-n1", "n1", []string{"web"}, "mem_pct", "warning"); got == nil || !strings.HasPrefix(got.Reason, "maintenance ") {
 		t.Fatalf("want suppressed by the active maintenance window, got %+v", got)
 	}
-	if got := s.Suppressed(duringMonday, "n1", []string{"db"}, "mem_pct", "warning"); got != nil {
+	if got := s.Suppressed(duringMonday, "id-n1", "n1", []string{"db"}, "mem_pct", "warning"); got != nil {
 		t.Fatalf("want not suppressed: node lacks the required tag, got %+v", got)
 	}
 }
@@ -318,16 +344,16 @@ func TestSilenceStoreSilencesForNodeFiltersByMatcherAndExpandsMaintenance(t *tes
 		t.Fatal(err)
 	}
 
-	forWeb := s.silencesForNode(1000, "web1", []string{"web"})
+	forWeb := s.silencesForNode(1000, "id-web1", "web1", []string{"web"})
 	if len(forWeb) != 1 || forWeb[0].Reason != "" && !strings.HasPrefix(forWeb[0].Reason, "silence ") {
 		t.Fatalf("silences for web1 = %+v, want exactly the tag=web silence (not the node=db* one)", forWeb)
 	}
-	forDB := s.silencesForNode(1000, "db1", nil)
+	forDB := s.silencesForNode(1000, "id-db1", "db1", nil)
 	if len(forDB) != 1 {
 		t.Fatalf("silences for db1 = %+v, want exactly the node=db* silence", forDB)
 	}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	forOps := s.silencesForNode(now, "ops1", []string{"ops"})
+	forOps := s.silencesForNode(now, "id-ops1", "ops1", []string{"ops"})
 	maintCount := 0
 	for _, p := range forOps {
 		if strings.HasPrefix(p.Reason, "maintenance ") {
@@ -337,7 +363,7 @@ func TestSilenceStoreSilencesForNodeFiltersByMatcherAndExpandsMaintenance(t *tes
 	if maintCount != 1 {
 		t.Fatalf("want the maintenance window expanded into (at least) one next-24h occurrence, got %d (%+v)", maintCount, forOps)
 	}
-	forOther := s.silencesForNode(now, "other1", nil)
+	forOther := s.silencesForNode(now, "id-other1", "other1", nil)
 	for _, p := range forOther {
 		if strings.HasPrefix(p.Reason, "maintenance ") {
 			t.Fatalf("a tag=ops maintenance window must not be pushed to a node without that tag: %+v", forOther)
@@ -594,22 +620,22 @@ func TestSilencesForNodeWeb1DB1MultiMatcherLeak(t *testing.T) {
 
 	// Master side (fix a): web1 must be pushed ONLY the matcher that could
 	// apply to it (the global disk* one); db1 gets both.
-	web1Pushed := store.silencesForNode(1000, "web1", nil)
+	web1Pushed := store.silencesForNode(1000, "id-web1", "web1", nil)
 	if len(web1Pushed) != 1 || len(web1Pushed[0].Matchers) != 1 || web1Pushed[0].Matchers[0].Node != "" {
 		t.Fatalf("silencesForNode(web1) = %+v, want only the Rule:disk* matcher (not Node:db1)", web1Pushed)
 	}
-	db1Pushed := store.silencesForNode(1000, "db1", nil)
+	db1Pushed := store.silencesForNode(1000, "id-db1", "db1", nil)
 	if len(db1Pushed) != 1 || len(db1Pushed[0].Matchers) != 2 {
 		t.Fatalf("silencesForNode(db1) = %+v, want both matchers (Node:db1 applies, Rule:disk* applies to every node)", db1Pushed)
 	}
 
 	// Child side: feed each node's own filtered push into its own
 	// pushedSilences and check a MEM alert (unrelated to disk*).
-	web1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"), selfNameFn("web1"))
+	web1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
 	if err := web1.Set(web1Pushed); err != nil {
 		t.Fatal(err)
 	}
-	db1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"), selfNameFn("db1"))
+	db1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
 	if err := db1.Set(db1Pushed); err != nil {
 		t.Fatal(err)
 	}

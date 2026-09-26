@@ -117,9 +117,14 @@ type JoinRequest struct {
 	PrevSig    string          `json:"prev_sig,omitempty"`
 }
 
-// JoinResponse carries the new identity.
+// JoinResponse carries the new identity. Name is the name actually stored
+// in the registry, which may differ from the requested name if it collided
+// (case-insensitively) with an existing node -- Registry.Add suffixes it
+// "-2", "-3", ... to keep names unique (review round 2, item b), and the
+// child prints this one, not the one it asked for.
 type JoinResponse struct {
 	NodeID string `json:"node_id"`
+	Name   string `json:"name"`
 	Cert   string `json:"cert"`
 	CA     string `json:"ca"`
 }

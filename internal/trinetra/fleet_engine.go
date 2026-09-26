@@ -186,11 +186,11 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 	// A silence/maintenance window check only matters when this alert would
 	// otherwise actually be delivered by the master: a record the child
 	// already delivered locally has nothing left to suppress. Matcher.Node
-	// matches against the node's DISPLAY NAME (src.NodeName), not its
-	// internal id (src.NodeID) -- see core.Matcher's doc comment.
+	// matches src.NodeID exactly, or globs src.NodeName -- see core.Matcher's
+	// doc comment.
 	var supp *suppressionInfo
 	if !deliveredLocally && e.silences != nil {
-		supp = e.silences.Suppressed(e.now().Unix(), src.NodeName, src.Tags, a.Key, a.Severity.String())
+		supp = e.silences.Suppressed(e.now().Unix(), src.NodeID, src.NodeName, src.Tags, a.Key, a.Severity.String())
 	}
 
 	// Step 1: durably record the decision before attempting delivery.
@@ -606,7 +606,7 @@ func (e *fleetAlertEngine) tryDeliverUnsilenced(id string) {
 	if al.Node != "" && e.nodeInfo != nil {
 		name, tags = e.nodeInfo(al.Node)
 	}
-	if e.silences.Suppressed(e.now().Unix(), name, tags, al.Key, al.Severity) != nil {
+	if e.silences.Suppressed(e.now().Unix(), al.Node, name, tags, al.Key, al.Severity) != nil {
 		return // silenced again (or still) by the time this job actually ran
 	}
 	sev, err := ParseSeverity(al.Severity)
@@ -649,7 +649,7 @@ func (e *fleetAlertEngine) pushSilencesNow(id string, now time.Time) {
 	if e.nodeInfo != nil {
 		name, tags = e.nodeInfo(id)
 	}
-	data, err := json.Marshal(silencesFrameData{Silences: e.silences.silencesForNode(now.Unix(), name, tags)})
+	data, err := json.Marshal(silencesFrameData{Silences: e.silences.silencesForNode(now.Unix(), id, name, tags)})
 	if err != nil {
 		return
 	}

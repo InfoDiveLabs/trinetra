@@ -1,6 +1,7 @@
 package trinetra
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -203,6 +204,47 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 		if !seen[action] {
 			t.Errorf("audit missing action %q; entries = %+v", action, entries)
 		}
+	}
+}
+
+// TestRenameNodeRejectsNameAlreadyUsed is the review round-2 item (b)
+// regression test: renaming a node to a name already used (case-
+// insensitively) by ANOTHER node is refused with the exact error text, and
+// the target node keeps its original name.
+func TestRenameNodeRejectsNameAlreadyUsed(t *testing.T) {
+	m := newTestMasterState(t)
+	id1, err := fleet.NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := fleet.NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.reg.Add(fleet.Node{ID: id1, Name: "web1", Joined: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.reg.Add(fleet.Node{ID: id2, Name: "db1", Joined: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	api := fleetAPIFor(m)
+
+	err = api.RenameNode(id2, "WEB1")
+	if err == nil {
+		t.Fatal("rename to an already-used name (case-insensitive) must be refused")
+	}
+	wantErr := fmt.Sprintf("name %q is already used by node %s", "WEB1", fleet.ShortNodeID(id1))
+	if err.Error() != wantErr {
+		t.Fatalf("err = %q, want %q", err.Error(), wantErr)
+	}
+	if n, _ := m.reg.Get(id2); n.Name != "db1" {
+		t.Fatalf("node kept its original name after a refused rename, got %q", n.Name)
+	}
+
+	// Renaming a node to ITS OWN current name (even different case) is not a
+	// conflict with itself.
+	if err := api.RenameNode(id1, "WEB1"); err != nil {
+		t.Fatalf("renaming to a case-variant of its own current name should succeed: %v", err)
 	}
 }
 

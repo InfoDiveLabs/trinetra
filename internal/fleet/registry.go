@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -99,19 +100,117 @@ func (r *Registry) saveLocked() error {
 	return nil
 }
 
-// Add registers a new node; the ID must be unused.
+// Add registers a new node; the ID must be unused. If n.Name is already used
+// (case-insensitively) by another node, it is suffixed with "-2", "-3", ...
+// until unique -- names must be unique so a silence/maintenance Matcher.Node
+// glob has a precise, non-ambiguous target (review round 2, item b). A
+// caller that needs to know the name actually stored (e.g. a join response)
+// should Get(n.ID) after Add returns.
 func (r *Registry) Add(n Node) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.nodes[n.ID]; ok {
 		return fmt.Errorf("fleet: node %s already registered", n.ID)
 	}
+	n.Name = r.uniqueNameLocked(n.Name, "")
 	r.nodes[n.ID] = &n
 	if err := r.saveLocked(); err != nil {
 		delete(r.nodes, n.ID)
 		return err
 	}
 	return nil
+}
+
+// uniqueNameLocked returns a name that does not collide (case-insensitively)
+// with any node other than excludeID, appending "-2", "-3", ... to base as
+// needed. Caller holds r.mu.
+func (r *Registry) uniqueNameLocked(base, excludeID string) string {
+	name := base
+	for i := 2; r.nameTakenLocked(name, excludeID); i++ {
+		name = fmt.Sprintf("%s-%d", base, i)
+	}
+	return name
+}
+
+func (r *Registry) nameTakenLocked(name, excludeID string) bool {
+	for id, n := range r.nodes {
+		if id == excludeID {
+			continue
+		}
+		if strings.EqualFold(n.Name, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// NameConflict reports whether name is already used (case-insensitively) by
+// a node other than excludeID, returning that node if so -- used by a
+// rename to reject a collision before it happens (Registry.Add/
+// uniqueNameLocked handles the join case automatically; a rename is a
+// deliberate operator action, so it is refused instead of silently
+// suffixed).
+func (r *Registry) NameConflict(name, excludeID string) (Node, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id, n := range r.nodes {
+		if id == excludeID {
+			continue
+		}
+		if strings.EqualFold(n.Name, name) {
+			c := *n
+			c.Tags = append([]string(nil), n.Tags...)
+			return c, true
+		}
+	}
+	return Node{}, false
+}
+
+// ShortNodeID returns id truncated to 8 characters (or id itself if
+// shorter), the short form used in log lines and error messages that name a
+// node without printing its full 32-hex-char id.
+func ShortNodeID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// DuplicateNames returns a human-readable summary ("name (id1, id2)") for
+// every name shared, case-insensitively, by 2+ nodes in nodes -- used only
+// for a one-time startup warning: an EXISTING registry (from before names
+// were required to be unique) is loaded as-is, never auto-renamed, but the
+// operator is told about it once (review round 2, item b).
+func DuplicateNames(nodes []Node) []string {
+	type group struct {
+		name string
+		ids  []string
+	}
+	byKey := map[string]*group{}
+	var order []string
+	for _, n := range nodes {
+		key := strings.ToLower(n.Name)
+		g, ok := byKey[key]
+		if !ok {
+			g = &group{name: n.Name}
+			byKey[key] = g
+			order = append(order, key)
+		}
+		g.ids = append(g.ids, n.ID)
+	}
+	var out []string
+	for _, key := range order {
+		g := byKey[key]
+		if len(g.ids) < 2 {
+			continue
+		}
+		short := make([]string, len(g.ids))
+		for i, id := range g.ids {
+			short[i] = ShortNodeID(id)
+		}
+		out = append(out, fmt.Sprintf("%s (%s)", g.name, strings.Join(short, ", ")))
+	}
+	return out
 }
 
 // Get returns a copy of node id.

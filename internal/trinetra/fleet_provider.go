@@ -184,6 +184,13 @@ func (f fleetAPIImpl) RenameNode(id, name string) error {
 	if name == "" || utf8.RuneCountInString(name) > 64 {
 		return fmt.Errorf("node name must be 1-64 characters")
 	}
+	// Names must stay unique (case-insensitively) so a Matcher.Node glob has
+	// a precise target (review round 2, item b): unlike a join, a rename is
+	// a deliberate operator action, so a collision is refused rather than
+	// silently suffixed.
+	if conflict, ok := m.reg.NameConflict(name, id); ok {
+		return fmt.Errorf("name %q is already used by node %s", name, fleet.ShortNodeID(conflict.ID))
+	}
 	if err := m.reg.Update(id, func(n *fleet.Node) error { n.Name = name; return nil }); err != nil {
 		return err
 	}

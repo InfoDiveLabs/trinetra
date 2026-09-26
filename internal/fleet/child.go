@@ -22,9 +22,12 @@ import (
 // ErrRevoked means the master refused this node's certificate.
 var ErrRevoked = errors.New("fleet: this node was revoked by the master")
 
-// JoinResult is what the caller persists into config after a join.
+// JoinResult is what the caller persists into config after a join. Name is
+// the name actually stored on the master (which may differ from what was
+// requested -- see JoinResponse's doc comment), for the CLI to print.
 type JoinResult struct {
 	NodeID    string
+	Name      string
 	MasterURL string
 	Pin       string
 }
@@ -97,7 +100,7 @@ func Join(ctx context.Context, code, name, version string, hostinfo json.RawMess
 	if err := writeFileAtomic(caPath, []byte(jr.CA), 0o644); err != nil {
 		return JoinResult{}, err
 	}
-	return JoinResult{NodeID: jr.NodeID, MasterURL: info.URL, Pin: info.Pin}, nil
+	return JoinResult{NodeID: jr.NodeID, Name: jr.Name, MasterURL: info.URL, Pin: info.Pin}, nil
 }
 
 // Identity is a child's current key and cert, swappable on renewal.

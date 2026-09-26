@@ -301,8 +301,15 @@ func (m *Master) handleJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	m.cfg.Logf("fleet: node %s (%s) joined from %s (rebind=%v)", id, cleanName(req.Name, id), remoteIP(r), rebind)
-	writeJSON(w, JoinResponse{NodeID: id, Cert: string(certPEM), CA: string(m.cfg.CA.CertPEM)})
+	// The name actually stored may differ from what was requested (Add
+	// suffixes a case-insensitive collision with "-2", "-3", ...): re-fetch
+	// it so the join response -- and the log line -- report the real name.
+	finalName := cleanName(req.Name, id)
+	if n, ok := m.cfg.Registry.Get(id); ok {
+		finalName = n.Name
+	}
+	m.cfg.Logf("fleet: node %s (%s) joined from %s (rebind=%v)", id, finalName, remoteIP(r), rebind)
+	writeJSON(w, JoinResponse{NodeID: id, Name: finalName, Cert: string(certPEM), CA: string(m.cfg.CA.CertPEM)})
 }
 
 func (m *Master) handleRenew(w http.ResponseWriter, r *http.Request, id string) {
