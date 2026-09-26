@@ -6,6 +6,7 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strings"
 	"testing"
@@ -784,6 +785,47 @@ func TestFleetHeatmapMetricSelectorPreservesFilters(t *testing.T) {
 	}
 }
 
+// TestFleetHeatmapUnknownMetricFallsBackToCPU pins parseFleetMetric's
+// documented default: an unrecognized ?metric= value degrades to cpu rather
+// than 500ing or rendering an all-zero/blank ramp.
+func TestFleetHeatmapUnknownMetricFallsBackToCPU(t *testing.T) {
+	d := fleetMasterDeps(t, fleetHeatBandRoster())
+	rr := fleetGetAsViewer(t, d, "/fleet?metric=bogus")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// n2's CPU is 75 (amber-low); n2 has no MemPct/WorstDiskPct/Load1 set,
+	// so this tile would render "0%"/neutral instead if ?metric=bogus fell
+	// through to anything other than cpu.
+	want := `<a class="heat-tile heat-amber-low" href="/n/n2/" data-heat-id="n2"><span class="heat-name">n2</span><span class="heat-val">75%</span></a>`
+	if !strings.Contains(body, want) {
+		t.Errorf("?metric=bogus: expected fallback to cpu, missing %q\nbody:\n%s", want, body)
+	}
+	if !strings.Contains(html.UnescapeString(body), `class="chip on" href="/fleet?metric=cpu"`) {
+		t.Errorf("?metric=bogus: expected the CPU chip to be the active one, body:\n%s", html.UnescapeString(body))
+	}
+}
+
+// TestFleetHeatmapMetricSelectorEscapesQueryValue pins that the metric
+// selector's links correctly re-encode a q= value containing characters
+// that are meaningful in a URL (a space and a literal "&") -- fq.encode()
+// followed by fleetPageQueryString's re-parse/re-encode round trip must not
+// corrupt or truncate the value.
+func TestFleetHeatmapMetricSelectorEscapesQueryValue(t *testing.T) {
+	d := fleetMasterDeps(t, fleetFiveNodeRoster())
+	target := "/fleet?metric=mem&q=" + url.QueryEscape("a b&c")
+	rr := fleetGetAsViewer(t, d, target)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := html.UnescapeString(rr.Body.String())
+	want := `href="/fleet?metric=cpu&q=a+b%26c"`
+	if !strings.Contains(body, want) {
+		t.Errorf("metric selector: expected %q (q=%q correctly re-encoded), body:\n%s", want, "a b&c", body)
+	}
+}
+
 // fleetTopNRoster gives every online node a distinct, non-overlapping value
 // per metric (cpu/mem/disk) so a test can assert exactly which five nodes
 // rank into each top-N panel without cross-panel ambiguity. down/revoked
@@ -854,13 +896,17 @@ func TestFleetTopNPanelsRankAndExcludeDownRevoked(t *testing.T) {
 		}
 	}
 
-	// down/revoked never appear in ANY top-N panel, despite the highest raw
-	// values of the whole roster.
-	for _, absent := range []string{`href="/n/downnode/"`, `href="/n/revoked1/"`} {
-		if strings.Contains(body, absent) && strings.Count(body, absent) > 1 {
-			// downnode/revoked1 are expected once each, in the table only --
-			// more than one occurrence would mean a top-N panel or the
-			// heatmap also linked them via a ranking panel's hbar markup.
+	// down/revoked never appear in ANY of the three metric ranking panels,
+	// despite the highest raw values of the whole roster -- scoped to the
+	// panels' own hbar markup (class="hbar"/"hbar mem") so this doesn't
+	// false-negative against downnode's legitimate appearance in the "Down
+	// now" list or either node's appearance in the table/heatmap.
+	for _, id := range []string{"downnode", "revoked1"} {
+		for _, class := range []string{"hbar", "hbar mem"} {
+			bad := `<a class="` + class + `" href="/n/` + id + `/">`
+			if strings.Contains(body, bad) {
+				t.Errorf("top-N panels: %s must not appear in any metric ranking (found %q)\nbody:\n%s", id, bad, body)
+			}
 		}
 	}
 }

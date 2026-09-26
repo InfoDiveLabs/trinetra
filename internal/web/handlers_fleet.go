@@ -433,20 +433,15 @@ func pctHeatBand(pct float64) fleetHeatBand {
 // fleetLoadAmberFullAt (4) is where a small (roughly 4-core) box is already
 // saturated -- at or above it the tile goes to the ramp's top band.
 //
-// The brief's third number, 8 ("thresholds 1, 4 and 8"), is kept here as a
-// named, documented "severely overloaded" reference point, but it does NOT
-// get a fourth visual tier of its own: the controller ruling caps the
-// metric ramp at three bands (neutral/amber-low/amber-full) and reserves
-// ember for "down" alone, so both the 4-8 and the 8+ range render
-// identically (amber-full, bold) -- the same way the per-core ramp's own
-// >4-per-core region would have had nowhere further to go past its own top
-// band either.
+// The brief's third number, 8 ("thresholds 1, 4 and 8"), is NOT used: this
+// ramp has exactly three numeric bands (neutral/amber-low/amber-full,
+// round-1 review's controller ruling), so only two edges are needed to
+// place a value into one of them. Ember stays reserved for "down" alone, so
+// there's no fourth, more-severe tile state for a fourth number to select
+// even at extreme load.
 const (
 	fleetLoadAmberLowAt  = 1.0
 	fleetLoadAmberFullAt = 4.0
-	// fleetLoadSevereAt is intentionally unused by loadHeatBand -- see the
-	// doc above.
-	fleetLoadSevereAt = 8.0
 )
 
 // loadHeatBand buckets an absolute Load1 value per the thresholds above.
@@ -672,9 +667,20 @@ func fleetFilterMatch(n core.NodeSummary, f core.NodeFilter, admin bool) bool {
 // a FleetRow. Shared by the full page (buildFleetPageData) and the bare
 // htmx fragment (fleetTableHandler) so both render identically.
 func buildFleetRows(nodes []core.NodeSummary, fq fleetQuery, admin bool) []FleetRow {
-	filtered := fleetFilterNodes(nodes, fq, admin)
-	sortFleetNodes(filtered, fq.Sort, fq.Dir)
+	return sortAndBuildFleetRows(fleetFilterNodes(nodes, fq, admin), fq)
+}
 
+// sortAndBuildFleetRows sorts an ALREADY-filtered node slice (fq.Sort/
+// fq.Dir, in place) and projects it into FleetRows. Split out of
+// buildFleetRows (round-1 review) so a caller that has already filtered the
+// roster for some other purpose -- buildFleetPageData filters once for the
+// heatmap/top-N panels, then reuses that same slice here -- doesn't pay for
+// a second, redundant filter pass over the whole roster. Mutates filtered's
+// order in place (sortFleetNodes), so a caller that still needs filtered in
+// its original order for something else must copy it first; buildFleetPageData
+// doesn't, since it always calls this last.
+func sortAndBuildFleetRows(filtered []core.NodeSummary, fq fleetQuery) []FleetRow {
+	sortFleetNodes(filtered, fq.Sort, fq.Dir)
 	rows := make([]FleetRow, 0, len(filtered))
 	for _, n := range filtered {
 		rows = append(rows, newFleetRow(n))
@@ -732,9 +738,21 @@ func buildFleetPageData(r *http.Request, d Deps) FleetPageData {
 	if len(nodes) != 1 {
 		sub += "s"
 	}
+
+	// Every one of these reads filtered without depending on its order (each
+	// does its own sort/selection internally), so it's safe to compute them
+	// all from the one shared filtered slice BEFORE the final
+	// sortAndBuildFleetRows call below reorders it in place for the table.
+	heatTiles := buildFleetHeatTiles(filtered, metric)
+	topCPU := topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.CPU })
+	topMem := topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.MemPct })
+	topDisk := topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.WorstDiskPct })
+	downNow := fleetDownRows(filtered)
+	rows := sortAndBuildFleetRows(filtered, fq)
+
 	return FleetPageData{
 		PageData:      newPageData(r, d, "Fleet", sub),
-		Rows:          buildFleetRows(nodes, fq, admin),
+		Rows:          rows,
 		Health:        computeFleetHealth(nodes),
 		Query:         fq,
 		QueryString:   fq.encode(),
@@ -743,11 +761,11 @@ func buildFleetPageData(r *http.Request, d Deps) FleetPageData {
 		Metric:        metric,
 		MetricOptions: fleetMetricOptions(fq, metric),
 		RefreshHref:   "/fleet?" + fleetPageQueryString(fq, metric),
-		HeatTiles:     buildFleetHeatTiles(filtered, metric),
-		TopCPU:        topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.CPU }),
-		TopMem:        topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.MemPct }),
-		TopDisk:       topNByMetric(filtered, func(n core.NodeSummary) float64 { return n.WorstDiskPct }),
-		DownNow:       fleetDownRows(filtered),
+		HeatTiles:     heatTiles,
+		TopCPU:        topCPU,
+		TopMem:        topMem,
+		TopDisk:       topDisk,
+		DownNow:       downNow,
 	}
 }
 
