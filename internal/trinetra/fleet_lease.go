@@ -222,6 +222,13 @@ type receiptFrameData struct {
 	FiredAt int64  `json:"fired_at"`
 }
 
+// ackFrameData is the "ack"/"unack" stream frame's Data shape: the master's
+// AckIncident (fleet_engine.go) pushes one of these per member node; the
+// child applies it via applyAckFrame below.
+type ackFrameData struct {
+	Key string `json:"key"`
+}
+
 // handoffReceipt is one line in the child-private receipts sidecar (see
 // handoffReceiptsPath): a durable record that the master acknowledged
 // (Key, FiredAt) of the given Kind, so a restarted child's reconciliation
@@ -361,6 +368,31 @@ func onStreamFrame(lease *leaseHolder, h *handoff, receiptsPath string, now func
 					Key: p.Key, FiredAt: p.FiredAt, Kind: kind, TS: now().Unix(),
 				})
 			}
+		}
+	}
+}
+
+// applyAckFrame handles the "ack"/"unack" stream frame types the master's
+// AckIncident pushes (fleet_engine.go's PushAck): it applies
+// AlertState.Ack/Unack locally via the core API (self), the same effect a
+// manual `trinetra alerts ack`/`unack` on this host would have. Any other
+// frame type, a nil self, or a malformed payload is a harmless no-op: like
+// onStreamFrame, this runs synchronously on the stream's read loop and must
+// never block or panic on hostile/garbled input from the wire.
+func applyAckFrame(self core.API, f fleet.Frame) {
+	if self == nil {
+		return
+	}
+	switch f.Type {
+	case "ack":
+		var p ackFrameData
+		if json.Unmarshal(f.Data, &p) == nil {
+			_ = self.AckAlert(p.Key)
+		}
+	case "unack":
+		var p ackFrameData
+		if json.Unmarshal(f.Data, &p) == nil {
+			_ = self.UnackAlert(p.Key)
 		}
 	}
 }

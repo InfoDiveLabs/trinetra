@@ -43,7 +43,7 @@ func baseRecs() []fleet.Record {
 
 func TestReplicaAppliesSamplesEventsAlerts(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 	if err := r.Apply(testNodeID, baseRecs()); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestReplicaAppliesSamplesEventsAlerts(t *testing.T) {
 
 func TestReplicaIgnoresReplayedAndOlderPoints(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 	if err := r.Apply(testNodeID, baseRecs()); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestReplicaIgnoresReplayedAndOlderPoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reopen from disk: the guard must survive a master restart.
-	r2 := newReplicaSink(root, StoreOptions{})
+	r2 := newReplicaSink(root, StoreOptions{}, nil)
 	if err := r2.Backfill(testNodeID, baseRecs()); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestReplicaIgnoresReplayedAndOlderPoints(t *testing.T) {
 }
 
 func TestReplicaRollupBackfill(t *testing.T) {
-	r := newReplicaSink(t.TempDir(), StoreOptions{})
+	r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 	b, _ := json.Marshal(fleet.SamplesData{TS: 60, Res: "1m", Rollups: map[string]fleet.RollupPoint{"cpu": {Min: 1, Avg: 2, Max: 3}}})
 	if err := r.Backfill(testNodeID, []fleet.Record{{Kind: fleet.KindSamples, TS: 60, Data: b}}); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestReplicaRollupBackfill(t *testing.T) {
 }
 
 func TestReplicaRejectsBadNodeID(t *testing.T) {
-	r := newReplicaSink(t.TempDir(), StoreOptions{})
+	r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 	for _, id := range []string{"../etc", "", "ABCDEF0123456789ABCDEF0123456789", "short"} {
 		if _, err := r.AppliedSeq(id); err == nil {
 			t.Errorf("id %q accepted", id)
@@ -115,7 +115,7 @@ func TestReplicaRejectsBadNodeID(t *testing.T) {
 }
 
 func TestReplicaNodeAPIServesReplica(t *testing.T) {
-	r := newReplicaSink(t.TempDir(), StoreOptions{})
+	r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 	if err := r.Apply(testNodeID, baseRecs()); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestTSFileMetricsDecodeEncodedIDs(t *testing.T) {
 // must advance only once the retry actually succeeds.
 func TestReplicaApplyEvictsNodeOnWriteFailure(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 
 	calls := 0
 	replicaWriteFailHook = func(op string) error {
@@ -237,7 +237,7 @@ func TestReplicaApplyEvictsNodeOnWriteFailure(t *testing.T) {
 // makes the identical retry silently drop the alert as "already seen".
 func TestReplicaAlertLogFailureThenRetryWritesOnce(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 
 	replicaWriteFailHook = func(op string) error {
 		if op == "alertlog" {
@@ -317,7 +317,7 @@ func TestReplicaMaintenanceVisitsEveryNodeOncePerInterval(t *testing.T) {
 // latest snapshot (from memory / live.json).
 func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 	snap, _ := json.Marshal(Snapshot{TS: 1, CPU: 7})
 	as := json.RawMessage(`{"active":{}}`)
 	if err := r.Live(testNodeID, fleet.LiveUpdate{Snapshot: snap, AlertState: as}); err != nil {
@@ -342,7 +342,7 @@ func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
 		t.Fatalf("snapshot cpu = %v", v.CPU)
 	}
 	// And after a master restart (fresh sink over the same dir).
-	api2, _ := newReplicaSink(root, StoreOptions{}).NodeAPI(testNodeID, config.Default)
+	api2, _ := newReplicaSink(root, StoreOptions{}, nil).NodeAPI(testNodeID, config.Default)
 	if v, _ := api2.Snapshot(); v.CPU != 7 {
 		t.Fatalf("snapshot cpu after restart = %v", v.CPU)
 	}
@@ -353,7 +353,7 @@ func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
 // reported over the 30s line after three consecutive over-line estimates.
 func TestReplicaSkewFilteredAndPersisted(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 	for i := 1; i <= 2; i++ {
 		if s, crossed := r.RecordSkew(testNodeID, 100); s != 0 || crossed {
 			t.Fatalf("sample %d: skew %d crossed %v, want 0 false (not yet confirmed)", i, s, crossed)
@@ -379,7 +379,7 @@ func TestReplicaSkewFilteredAndPersisted(t *testing.T) {
 	if want.SkewSec != 1 || want.DroppedOutOfOrder != 1 {
 		t.Fatalf("stats = %+v, want skew 1 and one out-of-order drop", want)
 	}
-	got := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
+	got := newReplicaSink(root, StoreOptions{}, nil).Stats(testNodeID)
 	if got.SkewSec != want.SkewSec || got.DroppedOutOfOrder != 1 {
 		t.Fatalf("after restart stats = %+v, want %+v", got, want)
 	}
@@ -389,7 +389,7 @@ func TestReplicaSkewFilteredAndPersisted(t *testing.T) {
 // requests held in a partition and then delivered (sent_at 60s old) must
 // not read as a clock 60s behind.
 func TestReplicaSkewIgnoresDelayedBurst(t *testing.T) {
-	r := newReplicaSink(t.TempDir(), StoreOptions{})
+	r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 	for i := 0; i < 6; i++ {
 		r.RecordSkew(testNodeID, int64(i%2))
 	}
@@ -404,7 +404,7 @@ func TestReplicaSkewIgnoresDelayedBurst(t *testing.T) {
 // and warned about once it has held for three samples.
 func TestReplicaSkewGenuineBothDirections(t *testing.T) {
 	for _, off := range []int64{45, -45} {
-		r := newReplicaSink(t.TempDir(), StoreOptions{})
+		r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 		warned := 0
 		var s int64
 		for i := 0; i < 10; i++ {
@@ -428,7 +428,7 @@ func TestReplicaSkewGenuineBothDirections(t *testing.T) {
 // second tsFileStore on the same directory while maintenance may still hold
 // the first.
 func TestReplicaFailedApplyReseedsSameNode(t *testing.T) {
-	r := newReplicaSink(t.TempDir(), StoreOptions{})
+	r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 	before, err := r.node(testNodeID)
 	if err != nil {
 		t.Fatal(err)
@@ -462,10 +462,10 @@ func TestReplicaFailedApplyReseedsSameNode(t *testing.T) {
 func TestReplicaAlertDedupeSeedsAllLinesAtLastTimestamp(t *testing.T) {
 	root := t.TempDir()
 	recs := []fleet.Record{alertRec(1, 110, "cpu"), alertRec(2, 110, "mem"), alertRec(3, 110, "disk")}
-	if err := newReplicaSink(root, StoreOptions{}).Apply(testNodeID, recs); err != nil {
+	if err := newReplicaSink(root, StoreOptions{}, nil).Apply(testNodeID, recs); err != nil {
 		t.Fatal(err)
 	}
-	r2 := newReplicaSink(root, StoreOptions{}) // master restart
+	r2 := newReplicaSink(root, StoreOptions{}, nil) // master restart
 	if err := r2.Backfill(testNodeID, []fleet.Record{alertRec(0, 110, "cpu"), alertRec(0, 110, "mem"), alertRec(0, 110, "disk")}); err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestReplicaAlertDedupeSeedsAllLinesAtLastTimestamp(t *testing.T) {
 // count as out of order. Both persist across a restart.
 func TestReplicaSplitsDuplicateFromOutOfOrder(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 	if err := r.Apply(testNodeID, baseRecs()); err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +497,7 @@ func TestReplicaSplitsDuplicateFromOutOfOrder(t *testing.T) {
 	if st.DroppedDuplicate != 4 || st.DroppedOutOfOrder != 2 {
 		t.Fatalf("stats = %+v, want 4 duplicates and 2 out of order", st)
 	}
-	got := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
+	got := newReplicaSink(root, StoreOptions{}, nil).Stats(testNodeID)
 	if got.DroppedDuplicate != 4 || got.DroppedOutOfOrder != 2 {
 		t.Fatalf("after restart stats = %+v", got)
 	}
@@ -514,7 +514,7 @@ func TestReplicaLoadsOldDropCounter(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "ingest.state"), []byte(`{"applied_seq":4,"last_ingest_ts":105,"dropped_out_of_order":7,"dropped_cardinality":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	st := newReplicaSink(root, StoreOptions{}).Stats(testNodeID)
+	st := newReplicaSink(root, StoreOptions{}, nil).Stats(testNodeID)
 	if st.AppliedSeq != 4 || st.DroppedOutOfOrder != 7 || st.DroppedCardinality != 1 || st.DroppedDuplicate != 0 {
 		t.Fatalf("stats = %+v", st)
 	}
@@ -530,7 +530,7 @@ func TestReplicaLoadsOldDropCounter(t *testing.T) {
 // last written successfully, not what was last received.
 func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
 	root := t.TempDir()
-	r := newReplicaSink(root, StoreOptions{})
+	r := newReplicaSink(root, StoreOptions{}, nil)
 	replicaWriteFailHook = func(op string) error {
 		if op == "alerts" {
 			return errors.New("injected alerts.json failure")

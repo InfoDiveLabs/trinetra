@@ -221,6 +221,15 @@ func (f *fakeFleet) DeleteToken(id string) error {
 	return nil
 }
 
+// Incidents/Incident/AckIncident/Explain/Audit: not yet exercised by any web
+// test (fleet phase 2's web surface for incidents lands in a later task);
+// these stubs exist only so fakeFleet keeps satisfying core.FleetAPI.
+func (f *fakeFleet) Incidents(core.IncidentFilter) ([]core.Incident, error) { return nil, nil }
+func (f *fakeFleet) Incident(string) (core.Incident, error)                 { return core.Incident{}, nil }
+func (f *fakeFleet) AckIncident(string, string) error                       { return nil }
+func (f *fakeFleet) Explain(string) ([]core.IncidentEvent, error)           { return nil, nil }
+func (f *fakeFleet) Audit(int) ([]core.AuditEntry, error)                   { return nil, nil }
+
 var _ core.FleetAPI = (*fakeFleet)(nil)
 
 // countingAPI wraps a core.API and counts every call made through it, so a

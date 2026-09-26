@@ -103,10 +103,27 @@ type replicaSink struct {
 	opts  StoreOptions
 	mu    sync.Mutex
 	nodes map[string]*replicaNode
+	// onAlert, if set, is called once for every genuinely new (not a
+	// byte-identical re-send) KindAlert record applied for a node -- the
+	// master alerting engine's entry point for child-shipped alerts (see
+	// fleet_engine.go's HandleChildAlert). nil is a valid no-op (a child or
+	// solo daemon never constructs a replicaSink at all; kept nil-safe here
+	// too so a replicaSink built without one, e.g. in older tests, still
+	// works).
+	onAlert func(nodeID string, ev AlertEvent)
+	// onAckSync, if set, is called whenever a node's alerts.json actually
+	// changes (see Live below): the master alerting engine's entry point
+	// for a child-side ack/unack reaching the master (fleet_engine.go's
+	// HandleChildAckSync). Unlike onAlert, it is not a constructor
+	// parameter -- it is set directly on the field by startMaster, since it
+	// is task-3-only wiring and every existing newReplicaSink call site
+	// (tests included) would otherwise need updating a second time for a
+	// hook most of them never exercise.
+	onAckSync func(nodeID string, as json.RawMessage)
 }
 
-func newReplicaSink(root string, opts StoreOptions) *replicaSink {
-	return &replicaSink{root: root, opts: opts, nodes: map[string]*replicaNode{}}
+func newReplicaSink(root string, opts StoreOptions, onAlert func(nodeID string, ev AlertEvent)) *replicaSink {
+	return &replicaSink{root: root, opts: opts, nodes: map[string]*replicaNode{}, onAlert: onAlert}
 }
 
 // reseed rebuilds every in-memory ordering guard of n from what is actually
@@ -286,7 +303,7 @@ func (r *replicaSink) Apply(id string, recs []fleet.Record) error {
 	if err != nil {
 		return err
 	}
-	if err := n.apply(recs, true); err != nil {
+	if err := n.apply(id, recs, true, r.onAlert); err != nil {
 		n.reseed()
 		return err
 	}
@@ -299,7 +316,7 @@ func (r *replicaSink) Backfill(id string, recs []fleet.Record) error {
 	if err != nil {
 		return err
 	}
-	if err := n.apply(recs, false); err != nil {
+	if err := n.apply(id, recs, false, r.onAlert); err != nil {
 		n.reseed()
 		return err
 	}
@@ -341,7 +358,7 @@ func (n *replicaNode) admit(metric string, res Resolution, ts int64) (bool, erro
 	return true, nil
 }
 
-func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
+func (n *replicaNode) apply(id string, recs []fleet.Record, sequenced bool, onAlert func(nodeID string, ev AlertEvent)) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	touched := map[string]bool{}
@@ -417,33 +434,41 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 			}
 			events = true
 		case fleet.KindAlert:
-			var h struct {
-				Time int64 `json:"time"`
-			}
-			if json.Unmarshal(rec.Data, &h) != nil {
+			var ev AlertEvent
+			if json.Unmarshal(rec.Data, &ev) != nil {
 				continue
 			}
 			var line bytes.Buffer
 			if json.Compact(&line, rec.Data) != nil {
 				continue
 			}
-			if h.Time == n.lastAlertTS && n.alertLines[line.String()] {
+			if ev.Time == n.lastAlertTS && n.alertLines[line.String()] {
 				n.st.DroppedDuplicate++
 				continue
 			}
 			// An older alert is skipped uncounted: the dedupe set only holds
 			// the newest timestamp's lines, so it cannot tell a re-sent copy
 			// from a genuinely late alert.
-			if h.Time < n.lastAlertTS {
+			if ev.Time < n.lastAlertTS {
 				continue
 			}
-			if h.Time > n.lastAlertTS {
-				n.lastAlertTS = h.Time
+			if ev.Time > n.lastAlertTS {
+				n.lastAlertTS = ev.Time
 				n.alertLines = map[string]bool{}
 			}
 			n.alertLines[line.String()] = true
 			alerts.Write(line.Bytes())
 			alerts.WriteByte('\n')
+			// The master alerting engine's entry point for a genuinely new
+			// (not a byte-identical re-send) alert record: see
+			// fleet_engine.go's HandleChildAlert. Called with n.mu still
+			// held, same as every other durable write in this method --
+			// HandleChildAlert must not call back into this replicaSink or
+			// it will deadlock; it doesn't (it only touches the engine's own
+			// state, the hub and the master's dispatcher).
+			if onAlert != nil {
+				onAlert(id, ev)
+			}
 		}
 	}
 	if alerts.Len() > 0 {
@@ -524,32 +549,43 @@ func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 		u.HostInfo = prev.HostInfo // hostinfo is only sent every few minutes
 	}
 	n.live.Store(&u)
-	if err := n.writeAlertState(u.AlertState); err != nil {
+	changed, err := n.writeAlertState(u.AlertState)
+	if err != nil {
 		return fmt.Errorf("write alerts.json: %w", err)
+	}
+	// onAckSync (task 3): a child's own AlertState.Ack -- via a manual
+	// `trinetra alerts ack` on that node, or the master's own AckIncident
+	// push applied there -- reaches the master purely through this same
+	// LiveUpdate.AlertState channel (nothing else ships alerts.json). Only
+	// worth re-scanning when the state actually changed: writeAlertState's
+	// own dedup already limits this to real transitions, not every few-
+	// second heartbeat.
+	if changed && r.onAckSync != nil {
+		r.onAckSync(id, u.AlertState)
 	}
 	b, _ := json.Marshal(u)
 	return writeFileAtomic(filepath.Join(n.dir, "live.json"), b, 0o600)
 }
 
 // writeAlertState rewrites alerts.json when as differs from the last
-// successfully written state.
-func (n *replicaNode) writeAlertState(as json.RawMessage) error {
+// successfully written state, reporting whether it actually wrote.
+func (n *replicaNode) writeAlertState(as json.RawMessage) (bool, error) {
 	if len(as) == 0 {
-		return nil
+		return false, nil
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.alertsWritten != nil && bytes.Equal(n.alertsWritten, as) {
-		return nil
+		return false, nil
 	}
 	if err := checkReplicaWriteFail("alerts"); err != nil {
-		return err
+		return false, err
 	}
 	if err := writeFileAtomic(filepath.Join(n.dir, "alerts.json"), as, 0o600); err != nil {
-		return err
+		return false, err
 	}
 	n.alertsWritten = bytes.Clone(as)
-	return nil
+	return true, nil
 }
 
 // RecordSkew adds one clock-skew sample (server_time - sent_at, seconds,

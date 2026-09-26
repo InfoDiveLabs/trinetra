@@ -1343,6 +1343,16 @@ func cmdDaemon(args []string) int {
 			// a stuck disk can't block the sampler here.
 			_ = baseline.Save(st.BaselinePath())
 			_ = alog.PruneAlertLog(now.Add(-alertLogRetention).Unix())
+			// A child's handoff-receipts sidecar (fleet_lease.go) needs the
+			// same periodic pruning as the alert log, not only the one-shot
+			// prune startChild does at reconciliation time -- otherwise it
+			// grows forever on a long-lived child. fleet.fallback_after is
+			// re-read live (not RestartRequired), mirroring how startChild's
+			// own prune window is computed.
+			if fleetRT.provider.role == config.RoleChild {
+				fallbackAfter := getCfg().FleetFallbackAfter()
+				_ = pruneHandoffReceipts(handoffReceiptsPath(stateDir), now.Add(-10*fallbackAfter).Unix())
+			}
 		}
 
 		<-fastTicker.C

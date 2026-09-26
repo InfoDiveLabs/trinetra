@@ -13,6 +13,12 @@ type fleetFake struct {
 	nodes   map[string]core.API
 	renamed string
 	removed string
+
+	incidentsFilter core.IncidentFilter
+	ackedID         string
+	ackedActor      string
+	explainKey      string
+	auditLimit      int
 }
 
 type fleetFakeAPI struct{ f *fleetFake }
@@ -49,6 +55,25 @@ func (a fleetFakeAPI) CreateToken(s core.TokenSpec) (core.CreatedToken, error) {
 	return core.CreatedToken{Token: core.TokenView{ID: "t2", Tags: s.Tags}, JoinCode: "swj1_x"}, nil
 }
 func (a fleetFakeAPI) DeleteToken(string) error { return nil }
+func (a fleetFakeAPI) Incidents(f core.IncidentFilter) ([]core.Incident, error) {
+	a.f.incidentsFilter = f
+	return []core.Incident{{ID: "abc123def456", State: f.State, Title: "cpu high"}}, nil
+}
+func (a fleetFakeAPI) Incident(id string) (core.Incident, error) {
+	return core.Incident{ID: id, State: "firing", Title: "cpu high"}, nil
+}
+func (a fleetFakeAPI) AckIncident(id, actor string) error {
+	a.f.ackedID, a.f.ackedActor = id, actor
+	return nil
+}
+func (a fleetFakeAPI) Explain(key string) ([]core.IncidentEvent, error) {
+	a.f.explainKey = key
+	return []core.IncidentEvent{{TS: 1000, Kind: "fired", Detail: "fired on n1"}}, nil
+}
+func (a fleetFakeAPI) Audit(limit int) ([]core.AuditEntry, error) {
+	a.f.auditLimit = limit
+	return []core.AuditEntry{{TS: 1000, Actor: "cli", Action: "revoke_node"}}, nil
+}
 
 func TestClientRoutesToNode(t *testing.T) {
 	remote := &fakeAPI{snapshot: core.DashboardView{CPU: 77}}
@@ -110,6 +135,26 @@ func TestClientFleetMethods(t *testing.T) {
 	ct, err := fl.CreateToken(core.TokenSpec{Tags: []string{"lab"}})
 	if err != nil || ct.JoinCode != "swj1_x" || ct.Token.Tags[0] != "lab" {
 		t.Fatalf("create token %+v err %v", ct, err)
+	}
+
+	incs, err := fl.Incidents(core.IncidentFilter{State: "firing"})
+	if err != nil || len(incs) != 1 || incs[0].ID != "abc123def456" || f.incidentsFilter.State != "firing" {
+		t.Fatalf("incidents = %+v err %v filter %+v", incs, err, f.incidentsFilter)
+	}
+	inc, err := fl.Incident("abc123def456")
+	if err != nil || inc.ID != "abc123def456" || inc.State != "firing" {
+		t.Fatalf("incident = %+v err %v", inc, err)
+	}
+	if err := fl.AckIncident("abc123def456", "cli"); err != nil || f.ackedID != "abc123def456" || f.ackedActor != "cli" {
+		t.Fatalf("ack err %v id %q actor %q", err, f.ackedID, f.ackedActor)
+	}
+	events, err := fl.Explain("cpu")
+	if err != nil || len(events) != 1 || events[0].Kind != "fired" || f.explainKey != "cpu" {
+		t.Fatalf("explain = %+v err %v", events, err)
+	}
+	audit, err := fl.Audit(5)
+	if err != nil || len(audit) != 1 || audit[0].Action != "revoke_node" || f.auditLimit != 5 {
+		t.Fatalf("audit = %+v err %v", audit, err)
 	}
 }
 

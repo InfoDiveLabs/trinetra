@@ -135,9 +135,67 @@ type CreatedToken struct {
 	JoinCode string    `json:"join_code"`
 }
 
+// Incident is one (node, alert key) fire→recover episode as the master's
+// alerting engine tracks it: opened on the first "fire", updated as more
+// alerts join it (grouping arrives in a later task; for now one incident
+// covers exactly one (node, key) pair), and resolved on "recover".
+type Incident struct {
+	ID       string          `json:"id"`
+	GroupKey string          `json:"group_key"`
+	Title    string          `json:"title"`
+	Severity string          `json:"severity"`
+	State    string          `json:"state"` // firing|acked|resolved|suppressed
+	Nodes    []string        `json:"nodes"`
+	Alerts   []IncidentAlert `json:"alerts"`
+	Opened   int64           `json:"opened"`
+	Updated  int64           `json:"updated"`
+	Resolved int64           `json:"resolved,omitempty"`
+	AckedBy  string          `json:"acked_by,omitempty"`
+	Timeline []IncidentEvent `json:"timeline"`
+}
+
+// IncidentAlert is one alert instance folded into an Incident.
+type IncidentAlert struct {
+	Node             string `json:"node"`
+	Key              string `json:"key"`
+	Title            string `json:"title"`
+	Severity         string `json:"severity"`
+	FiredAt          int64  `json:"fired_at"`
+	ResolvedAt       int64  `json:"resolved_at,omitempty"`
+	DeliveredLocally bool   `json:"delivered_locally,omitempty"`
+}
+
+// IncidentEvent is one entry in an Incident's pipeline trail (fleet explain
+// prints these): fired|grouped|suppressed|delivered|escalated|acked|resolved|receipt.
+type IncidentEvent struct {
+	TS     int64  `json:"ts"`
+	Kind   string `json:"kind"`
+	Detail string `json:"detail,omitempty"`
+	Actor  string `json:"actor,omitempty"`
+}
+
+// IncidentFilter narrows a FleetAPI.Incidents call to incidents matching
+// every non-empty criterion; Limit <= 0 means unlimited.
+type IncidentFilter struct {
+	State string `json:"state"`
+	Node  string `json:"node"`
+	Tag   string `json:"tag"`
+	Limit int    `json:"limit"`
+}
+
+// AuditEntry is one line in the fleet audit log: a record of who did what to
+// the fleet (rename, revoke, ack, token create, ...) and when.
+type AuditEntry struct {
+	TS     int64  `json:"ts"`
+	Actor  string `json:"actor"`
+	Action string `json:"action"`
+	Target string `json:"target,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // FleetAPI is the set of fleet-master operations exposed alongside a
 // FleetProvider's per-node API surface: fleet-wide status, the node roster,
-// node management, and join tokens.
+// node management, join tokens, incidents and the audit log.
 type FleetAPI interface {
 	Status() (FleetStatus, error)
 	Nodes(NodeFilter) ([]NodeSummary, error)
@@ -150,6 +208,20 @@ type FleetAPI interface {
 	Tokens() ([]TokenView, error)
 	CreateToken(TokenSpec) (CreatedToken, error)
 	DeleteToken(id string) error
+
+	// Incidents lists incidents matching filter, newest-updated first.
+	Incidents(IncidentFilter) ([]Incident, error)
+	// Incident returns one incident by id.
+	Incident(id string) (Incident, error)
+	// AckIncident acknowledges an incident: it pushes an ack frame to every
+	// member node (applied locally via AlertState.Ack) and records actor as
+	// the acknowledger.
+	AckIncident(id, actor string) error
+	// Explain returns the pipeline trail for an alert key or an incident id.
+	Explain(key string) ([]IncidentEvent, error)
+	// Audit returns the most recent audit entries, newest first, up to
+	// limit (<= 0 means unlimited).
+	Audit(limit int) ([]AuditEntry, error)
 }
 
 // FleetProvider is optional; implementations of API that know about a fleet

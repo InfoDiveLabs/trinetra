@@ -443,11 +443,15 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 	f := fp.Fleet()
 
 	var p struct {
-		ID     string          `json:"id"`
-		Name   string          `json:"name"`
-		Tags   []string        `json:"tags"`
-		Filter core.NodeFilter `json:"filter"`
-		Spec   core.TokenSpec  `json:"spec"`
+		ID        string              `json:"id"`
+		Name      string              `json:"name"`
+		Tags      []string            `json:"tags"`
+		Filter    core.NodeFilter     `json:"filter"`
+		Spec      core.TokenSpec      `json:"spec"`
+		IncFilter core.IncidentFilter `json:"inc_filter"`
+		Actor     string              `json:"actor"`
+		Key       string              `json:"key"`
+		Limit     int                 `json:"limit"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -513,6 +517,40 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 			return nil, err
 		}
 		return emptyResult, nil
+
+	case "Fleet.Incidents":
+		v, err := f.Incidents(p.IncFilter)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.Incident":
+		v, err := f.Incident(p.ID)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.AckIncident":
+		if err := f.AckIncident(p.ID, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.Explain":
+		v, err := f.Explain(p.Key)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.Audit":
+		v, err := f.Audit(p.Limit)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
 	}
 	return nil, fmt.Errorf("control: unknown method %q", method)
 }

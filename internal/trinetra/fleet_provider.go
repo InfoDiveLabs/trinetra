@@ -24,6 +24,14 @@ type masterState struct {
 	sink    *replicaSink
 	tracker *fleet.Tracker
 	loop    *masterLoop
+	// hub fans lease/receipt/ack/rpc frames out to connected nodes; engine
+	// is the alerting engine (fleet_engine.go), and audit the fleet audit
+	// log (fleet_audit.go). All three are nil-safe to call through
+	// fleetAPIImpl's helpers when absent (should not happen once startMaster
+	// has run, but keeps older tests that build a bare masterState working).
+	hub     *fleet.Hub
+	engine  *fleetAlertEngine
+	audit   *auditLog
 	joinURL string
 	pin     string
 	listen  string
@@ -135,6 +143,16 @@ func (f fleetAPIImpl) requireMaster() (*masterState, error) {
 	return f.p.master, nil
 }
 
+// audit appends an entry to m's audit log (nil-safe: see auditLog.Append).
+// actor is "unknown" for every mutation whose FleetAPI signature has no
+// actor parameter today (Rename/SetNodeTags/Revoke/Remove/DeleteToken) --
+// TODO(plan C): thread a real actor (CLI user / web session) through those
+// signatures; changing them now would break plan A's already-compiling web
+// code, which this task must not touch.
+func (m *masterState) audited(actor, action, target, detail string) {
+	_ = m.audit.Append(actor, action, target, detail, time.Now().Unix())
+}
+
 func (f fleetAPIImpl) RenameNode(id, name string) error {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -144,7 +162,11 @@ func (f fleetAPIImpl) RenameNode(id, name string) error {
 	if name == "" || utf8.RuneCountInString(name) > 64 {
 		return fmt.Errorf("node name must be 1-64 characters")
 	}
-	return m.reg.Update(id, func(n *fleet.Node) error { n.Name = name; return nil })
+	if err := m.reg.Update(id, func(n *fleet.Node) error { n.Name = name; return nil }); err != nil {
+		return err
+	}
+	m.audited("unknown", "rename_node", id, name)
+	return nil
 }
 
 func (f fleetAPIImpl) SetNodeTags(id string, tags []string) error {
@@ -157,7 +179,11 @@ func (f fleetAPIImpl) SetNodeTags(id string, tags []string) error {
 			return fmt.Errorf("invalid tag %q (lowercase letters, digits, _ . -; max 32)", t)
 		}
 	}
-	return m.reg.Update(id, func(n *fleet.Node) error { n.Tags = tags; return nil })
+	if err := m.reg.Update(id, func(n *fleet.Node) error { n.Tags = tags; return nil }); err != nil {
+		return err
+	}
+	m.audited("unknown", "set_node_tags", id, strings.Join(tags, ","))
+	return nil
 }
 
 func (f fleetAPIImpl) RevokeNode(id string) error {
@@ -174,6 +200,10 @@ func (f fleetAPIImpl) RevokeNode(id string) error {
 		m.tracker.Seen(id, time.Now().Unix(), -1)
 	}
 	m.tracker.SetRevoked(id, true)
+	if m.hub != nil {
+		m.hub.Disconnect(id) // a revoked node keeps no lease, no open stream
+	}
+	m.audited("unknown", "revoke_node", id, "")
 	return nil
 }
 
@@ -185,7 +215,14 @@ func (f fleetAPIImpl) RemoveNode(id string) error {
 	if m.loop == nil {
 		return core.ErrNotMaster
 	}
-	return m.loop.remove(id, time.Now())
+	if err := m.loop.remove(id, time.Now()); err != nil {
+		return err
+	}
+	if m.hub != nil {
+		m.hub.Disconnect(id)
+	}
+	m.audited("unknown", "remove_node", id, "")
+	return nil
 }
 
 func tokenView(t fleet.Token) core.TokenView {
@@ -225,6 +262,11 @@ func (f fleetAPIImpl) CreateToken(spec core.TokenSpec) (core.CreatedToken, error
 		return core.CreatedToken{}, err
 	}
 	code := fleet.EncodeJoin(fleet.JoinInfo{URL: m.joinURL, Token: plain, Pin: m.pin})
+	actor := spec.Creator
+	if actor == "" {
+		actor = "unknown"
+	}
+	m.audited(actor, "create_token", tok.ID, strings.Join(spec.Tags, ","))
 	return core.CreatedToken{Token: tokenView(tok), JoinCode: code}, nil
 }
 
@@ -233,5 +275,98 @@ func (f fleetAPIImpl) DeleteToken(id string) error {
 	if err != nil {
 		return err
 	}
-	return m.tokens.Delete(id)
+	if err := m.tokens.Delete(id); err != nil {
+		return err
+	}
+	m.audited("unknown", "delete_token", id, "")
+	return nil
+}
+
+func (f fleetAPIImpl) Incidents(filter core.IncidentFilter) ([]core.Incident, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	if m.engine == nil || m.engine.incidents == nil {
+		return nil, nil
+	}
+	tagsOf := func(nodeID string) []string {
+		if n, ok := m.reg.Get(nodeID); ok {
+			return n.Tags
+		}
+		return nil
+	}
+	return m.engine.incidents.List(filter, tagsOf), nil
+}
+
+func (f fleetAPIImpl) Incident(id string) (core.Incident, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return core.Incident{}, err
+	}
+	if m.engine == nil || m.engine.incidents == nil {
+		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+	}
+	inc, ok := m.engine.incidents.Get(id)
+	if !ok {
+		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+	}
+	return inc, nil
+}
+
+// AckIncident acknowledges incident id: it pushes an "ack" frame (applied
+// via AlertState.Ack on the child, fleet_lease.go's applyAckFrame) for every
+// still-open alert on every member node, then records the ack itself.
+func (f fleetAPIImpl) AckIncident(id, actor string) error {
+	m, err := f.requireMaster()
+	if err != nil {
+		return err
+	}
+	if m.engine == nil || m.engine.incidents == nil {
+		return fmt.Errorf("no such incident %q", id)
+	}
+	inc, ok := m.engine.incidents.Get(id)
+	if !ok {
+		return fmt.Errorf("no such incident %q", id)
+	}
+	if actor == "" {
+		actor = "unknown"
+	}
+	for _, al := range inc.Alerts {
+		if al.Node == "" || al.ResolvedAt != 0 {
+			continue
+		}
+		m.engine.PushAck(al.Node, al.Key, false)
+	}
+	if _, err := m.engine.incidents.Ack(id, actor, time.Now().Unix()); err != nil {
+		return err
+	}
+	m.audited(actor, "ack_incident", id, "")
+	return nil
+}
+
+// Explain returns the pipeline trail for an alert key or an incident id.
+func (f fleetAPIImpl) Explain(key string) ([]core.IncidentEvent, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	if m.engine == nil || m.engine.incidents == nil {
+		return nil, fmt.Errorf("no incident or alert key %q found", key)
+	}
+	if inc, ok := m.engine.incidents.Get(key); ok {
+		return inc.Timeline, nil
+	}
+	if inc, ok := m.engine.incidents.FindByAlertKey(key); ok {
+		return inc.Timeline, nil
+	}
+	return nil, fmt.Errorf("no incident or alert key %q found", key)
+}
+
+func (f fleetAPIImpl) Audit(limit int) ([]core.AuditEntry, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	return m.audit.Recent(limit)
 }

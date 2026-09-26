@@ -31,6 +31,10 @@ const fleetUsage = `usage:
   trinetra fleet join <code> [--name NAME]                  join a master as a child
   trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
   trinetra fleet node revoke|remove|rename|tag <node> [value]
+  trinetra fleet incidents [--state firing]                 list incidents
+  trinetra fleet incident <id>                              show one incident
+  trinetra fleet ack <id>                                   acknowledge an incident
+  trinetra fleet explain <key|id>                           print an alert's pipeline trail
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo`
 
@@ -58,6 +62,14 @@ func cmdFleet(args []string) int {
 		return fleetNodeCmd(args[1:])
 	case "token":
 		return fleetTokenCmd(args[1:])
+	case "incidents":
+		return fleetIncidentsCmd(args[1:])
+	case "incident":
+		return fleetIncidentCmd(args[1:])
+	case "ack":
+		return fleetAckCmd(args[1:])
+	case "explain":
+		return fleetExplainCmd(args[1:])
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, fleetUsage)
 		return 0
@@ -581,4 +593,118 @@ func fleetTokenCmd(args []string) int {
 	}
 	fmt.Fprintf(stderr, "unknown token command %q\n", args[0])
 	return 2
+}
+
+func fleetIncidentsCmd(args []string) int {
+	fs := newFlags("fleet incidents")
+	state := fs.String("state", "", "only incidents in this state (firing, acked, resolved, suppressed)")
+	node := fs.String("node", "", "only incidents involving this node")
+	tag := fs.String("tag", "", "only incidents involving a node with this tag")
+	limit := fs.Int("limit", 0, "max incidents to show (0 = unlimited)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if rejectPositionals("fleet incidents", "trinetra fleet incidents [--state S] [--node N] [--tag T] [--limit N]", pos) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		incs, err := c.Fleet().Incidents(core.IncidentFilter{State: *state, Node: *node, Tag: *tag, Limit: *limit})
+		if err != nil {
+			return err
+		}
+		printIncidents(stdout, incs)
+		return nil
+	})
+}
+
+func printIncidents(w io.Writer, incs []core.Incident) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATE\tSEVERITY\tTITLE\tNODES\tOPENED\tUPDATED")
+	for _, inc := range incs {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inc.ID, inc.State, inc.Severity, inc.Title, strings.Join(inc.Nodes, ","), ago(inc.Opened), ago(inc.Updated))
+	}
+	tw.Flush()
+}
+
+func fleetIncidentCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet incident <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		inc, err := c.Fleet().Incident(args[0])
+		if err != nil {
+			return err
+		}
+		printIncidentDetail(stdout, inc)
+		return nil
+	})
+}
+
+func printIncidentDetail(w io.Writer, inc core.Incident) {
+	fmt.Fprintf(w, "id: %s\nstate: %s\nseverity: %s\ntitle: %s\nnodes: %s\nopened: %s\nupdated: %s\n",
+		inc.ID, inc.State, inc.Severity, inc.Title, strings.Join(inc.Nodes, ","),
+		time.Unix(inc.Opened, 0).Format(time.RFC3339), time.Unix(inc.Updated, 0).Format(time.RFC3339))
+	if inc.Resolved > 0 {
+		fmt.Fprintf(w, "resolved: %s\n", time.Unix(inc.Resolved, 0).Format(time.RFC3339))
+	}
+	if inc.AckedBy != "" {
+		fmt.Fprintf(w, "acked by: %s\n", inc.AckedBy)
+	}
+	fmt.Fprintln(w, "alerts:")
+	for _, a := range inc.Alerts {
+		fmt.Fprintf(w, "  %s %s (%s) fired %s", a.Node, a.Key, a.Severity, ago(a.FiredAt))
+		if a.ResolvedAt > 0 {
+			fmt.Fprintf(w, " resolved %s", ago(a.ResolvedAt))
+		}
+		if a.DeliveredLocally {
+			fmt.Fprint(w, " [delivered locally]")
+		}
+		fmt.Fprintln(w)
+	}
+	fmt.Fprintln(w, "timeline:")
+	printIncidentEvents(w, inc.Timeline)
+}
+
+func printIncidentEvents(w io.Writer, events []core.IncidentEvent) {
+	for _, e := range events {
+		fmt.Fprintf(w, "  %s %s", time.Unix(e.TS, 0).Format(time.RFC3339), e.Kind)
+		if e.Detail != "" {
+			fmt.Fprintf(w, ": %s", e.Detail)
+		}
+		if e.Actor != "" {
+			fmt.Fprintf(w, " (%s)", e.Actor)
+		}
+		fmt.Fprintln(w)
+	}
+}
+
+func fleetAckCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet ack <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().AckIncident(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Acknowledged incident %s.\n", args[0])
+		return nil
+	})
+}
+
+func fleetExplainCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet explain <key|id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		events, err := c.Fleet().Explain(args[0])
+		if err != nil {
+			return err
+		}
+		printIncidentEvents(stdout, events)
+		return nil
+	})
 }

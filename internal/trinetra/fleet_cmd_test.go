@@ -104,6 +104,19 @@ type fleetCLIFake struct {
 	deletedTokenID       string
 	createSpec           core.TokenSpec
 	createResult         core.CreatedToken
+
+	incidentsFilter core.IncidentFilter
+	incidents       []core.Incident
+	incident        core.Incident
+	incidentErr     error
+	ackedID         string
+	ackedActor      string
+	ackErr          error
+	explainKey      string
+	explainResult   []core.IncidentEvent
+	explainErr      error
+	auditLimit      int
+	auditResult     []core.AuditEntry
 }
 
 func (f *fleetCLIFake) Fleet() core.FleetAPI          { return fleetCLIFakeFleetAPI{f} }
@@ -153,6 +166,30 @@ func (a fleetCLIFakeFleetAPI) CreateToken(spec core.TokenSpec) (core.CreatedToke
 func (a fleetCLIFakeFleetAPI) DeleteToken(id string) error {
 	a.f.deletedTokenID = id
 	return nil
+}
+
+func (a fleetCLIFakeFleetAPI) Incidents(filter core.IncidentFilter) ([]core.Incident, error) {
+	a.f.incidentsFilter = filter
+	return a.f.incidents, nil
+}
+
+func (a fleetCLIFakeFleetAPI) Incident(id string) (core.Incident, error) {
+	return a.f.incident, a.f.incidentErr
+}
+
+func (a fleetCLIFakeFleetAPI) AckIncident(id, actor string) error {
+	a.f.ackedID, a.f.ackedActor = id, actor
+	return a.f.ackErr
+}
+
+func (a fleetCLIFakeFleetAPI) Explain(key string) ([]core.IncidentEvent, error) {
+	a.f.explainKey = key
+	return a.f.explainResult, a.f.explainErr
+}
+
+func (a fleetCLIFakeFleetAPI) Audit(limit int) ([]core.AuditEntry, error) {
+	a.f.auditLimit = limit
+	return a.f.auditResult, nil
 }
 
 // startFleetDaemon stands up a real control.Serve loop at
@@ -228,7 +265,7 @@ func testMasterForCLI(t *testing.T) (code string) {
 	leaf, _ := tls.LoadX509KeyPair(filepath.Join(pki, "server.crt"), filepath.Join(pki, "server.key"))
 	reg, _ := fleet.OpenRegistry(filepath.Join(mdir, "fleet", "registry.json"))
 	toks, _ := fleet.OpenTokens(filepath.Join(mdir, "fleet", "tokens.json"))
-	m := fleet.NewMaster(fleet.MasterConfig{CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: newReplicaSink(filepath.Join(mdir, "nodes"), StoreOptions{})})
+	m := fleet.NewMaster(fleet.MasterConfig{CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: newReplicaSink(filepath.Join(mdir, "nodes"), StoreOptions{}, nil)})
 	srv := httptest.NewUnstartedServer(m.Handler())
 	srv.TLS = fleet.ServerTLS(leaf, ca.Cert)
 	srv.StartTLS()
@@ -673,5 +710,89 @@ func TestFleetStatusChildCatchingUp(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q: %s", want, got)
 		}
+	}
+}
+
+func TestFleetIncidentsListsAndFilters(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{incidents: []core.Incident{
+		{ID: "abc123def456", State: "firing", Severity: "critical", Title: "cpu high", Nodes: []string{"n1"}, Opened: time.Now().Unix(), Updated: time.Now().Unix()},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "incidents", "--state", "firing"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.incidentsFilter.State != "firing" {
+		t.Fatalf("filter = %+v", fake.incidentsFilter)
+	}
+	got := out.String()
+	if !strings.Contains(got, "abc123def456") || !strings.Contains(got, "cpu high") {
+		t.Fatalf("out = %s", got)
+	}
+}
+
+func TestFleetIncidentShowsDetail(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{incident: core.Incident{
+		ID: "abc123def456", State: "resolved", Severity: "warning", Title: "cpu high", Nodes: []string{"n1"},
+		Opened: 1000, Updated: 1050, Resolved: 1050,
+		Alerts:   []core.IncidentAlert{{Node: "n1", Key: "cpu", Severity: "warning", FiredAt: 1000, ResolvedAt: 1050}},
+		Timeline: []core.IncidentEvent{{TS: 1000, Kind: "fired", Detail: "fired on n1", Actor: "system"}},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "incident", "abc123def456"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	for _, want := range []string{"id: abc123def456", "state: resolved", "n1 cpu (warning)", "fired: fired on n1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestFleetAckCallsAckIncidentWithCLIActor(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "ack", "abc123def456"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.ackedID != "abc123def456" || fake.ackedActor != "cli" {
+		t.Fatalf("ackedID = %q, ackedActor = %q", fake.ackedID, fake.ackedActor)
+	}
+	if !strings.Contains(out.String(), "Acknowledged incident abc123def456") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestFleetExplainPrintsTimeline(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{explainResult: []core.IncidentEvent{
+		{TS: 1000, Kind: "fired", Detail: "fired on n1", Actor: "system"},
+		{TS: 1001, Kind: "delivered", Detail: "sent via the master's dispatcher"},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "explain", "cpu"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.explainKey != "cpu" {
+		t.Fatalf("explainKey = %q", fake.explainKey)
+	}
+	got := out.String()
+	if !strings.Contains(got, "fired: fired on n1 (system)") || !strings.Contains(got, "delivered: sent via the master's dispatcher") {
+		t.Fatalf("out = %s", got)
+	}
+}
+
+func TestFleetExplainSurfacesDaemonError(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{explainErr: errors.New("no incident or alert key \"cpu\" found")}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "explain", "cpu"}); rc != 1 {
+		t.Fatalf("exit %d, want 1", rc)
+	}
+	if !strings.Contains(errb.String(), "no incident or alert key") {
+		t.Fatalf("stderr = %s", errb)
 	}
 }

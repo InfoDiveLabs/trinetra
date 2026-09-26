@@ -543,3 +543,31 @@ func (f fleetClient) CreateToken(s core.TokenSpec) (core.CreatedToken, error) {
 func (f fleetClient) DeleteToken(id string) error {
 	return f.c.call("Fleet.DeleteToken", map[string]any{"id": id}, nil)
 }
+
+func (f fleetClient) Incidents(filter core.IncidentFilter) ([]core.Incident, error) {
+	var v []core.Incident
+	err := f.c.call("Fleet.Incidents", map[string]any{"inc_filter": filter}, &v)
+	return v, err
+}
+
+func (f fleetClient) Incident(id string) (core.Incident, error) {
+	var v core.Incident
+	err := f.c.call("Fleet.Incident", map[string]any{"id": id}, &v)
+	return v, err
+}
+
+func (f fleetClient) AckIncident(id, actor string) error {
+	return f.c.call("Fleet.AckIncident", map[string]any{"id": id, "actor": actor}, nil)
+}
+
+func (f fleetClient) Explain(key string) ([]core.IncidentEvent, error) {
+	var v []core.IncidentEvent
+	err := f.c.call("Fleet.Explain", map[string]any{"key": key}, &v)
+	return v, err
+}
+
+func (f fleetClient) Audit(limit int) ([]core.AuditEntry, error) {
+	var v []core.AuditEntry
+	err := f.c.call("Fleet.Audit", map[string]any{"limit": limit}, &v)
+	return v, err
+}

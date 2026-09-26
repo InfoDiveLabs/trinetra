@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -401,7 +402,7 @@ func TestMasterLoopAlertsNeverContactedNode(t *testing.T) {
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
 	tracker.Seed(nil, nil, time.Now().Unix()) // master start: no nodes yet
 	now := time.Now()
-	loop := newMasterLoop(reg, tracker, newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default())), d, now)
+	loop := newMasterLoop(reg, tracker, newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil), nil, d, now)
 
 	oldID, _ := fleet.NewNodeID()
 	freshID, _ := fleet.NewNodeID()
@@ -421,6 +422,103 @@ func TestMasterLoopAlertsNeverContactedNode(t *testing.T) {
 	}
 	if s := tracker.State(freshID); s != fleet.StateOnline {
 		t.Fatalf("fresh node state = %q", s)
+	}
+}
+
+// TestMasterLoopNodeDownAlertGoesThroughEngine covers task 3's "masterLoop's
+// own fleet alerts go through the same engine as a child's": with a real
+// fleetAlertEngine wired as loop.alert, a node-down fire must both reach
+// d.alert (via the engine's deliver) AND create a firing incident, keyed
+// "self:<alert key>" since a master-generated alert has no source node.
+func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
+	dir := t.TempDir()
+	d, alerts := testDeps(t, dir)
+	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
+	tracker.Seed(nil, nil, time.Now().Unix())
+	now := time.Now()
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil)
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := newFleetAlertEngine(func() time.Time { return now }, d.alert,
+		func(string, fleet.Frame) bool { return false }, func(string) bool { return false }, incidents, nil)
+	loop := newMasterLoop(reg, tracker, sink, engine, d, now)
+
+	oldID, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: oldID, Name: "ghost", Joined: now.Unix() - 3600}); err != nil {
+		t.Fatal(err)
+	}
+	loop.tick(now)
+
+	if len(*alerts) != 1 {
+		t.Fatalf("alerts = %+v, want one node-down (delivered via the engine)", *alerts)
+	}
+	incs := incidents.List(core.IncidentFilter{}, nil)
+	wantGroupKey := "self:fleet:node:" + oldID + ":down"
+	if len(incs) != 1 || incs[0].GroupKey != wantGroupKey || incs[0].State != "firing" {
+		t.Fatalf("incidents = %+v, want one firing incident with group key %q", incs, wantGroupKey)
+	}
+}
+
+// TestMasterLoopTickPushesLeasesExcludingRevoked covers the lease cadence
+// ruling: tick pushes a lease to every connected, non-revoked node; a
+// revoked node gets none.
+func TestMasterLoopTickPushesLeasesExcludingRevoked(t *testing.T) {
+	dir := t.TempDir()
+	d, _ := testDeps(t, dir)
+	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
+	now := time.Now()
+	tracker.Seed(nil, nil, now.Unix())
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil)
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	pushed := map[string]int{}
+	engine := newFleetAlertEngine(func() time.Time { return now }, d.alert,
+		func(node string, f fleet.Frame) bool {
+			if f.Type != "lease" {
+				return true
+			}
+			mu.Lock()
+			pushed[node]++
+			mu.Unlock()
+			return true
+		},
+		func(string) bool { return true }, incidents, nil)
+	loop := newMasterLoop(reg, tracker, sink, engine, d, now)
+
+	goodID, _ := fleet.NewNodeID()
+	badID, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: goodID, Name: "good", Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Add(fleet.Node{ID: badID, Name: "bad", Revoked: true, Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Seen(goodID, now.Unix(), 0)
+	tracker.Seen(badID, now.Unix(), 0)
+	tracker.SetRevoked(badID, true)
+
+	loop.tick(now)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if pushed[goodID] != 1 {
+		t.Fatalf("good node leases = %d, want 1", pushed[goodID])
+	}
+	if pushed[badID] != 0 {
+		t.Fatalf("revoked node leases = %d, want 0", pushed[badID])
 	}
 }
 
@@ -445,9 +543,9 @@ func TestFleetRemoveNodeResolvesDownAlertAndKeepsReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
-	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{})
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{}, nil)
 	now := time.Now()
-	loop := newMasterLoop(reg, tracker, sink, d, now)
+	loop := newMasterLoop(reg, tracker, sink, nil, d, now)
 	p := &fleetProvider{self: d.self, role: config.RoleMaster, selfName: func() string { return "m" },
 		master: &masterState{reg: reg, sink: sink, tracker: tracker, loop: loop, getCfg: d.getCfg}}
 	id, _ := fleet.NewNodeID()
@@ -494,9 +592,9 @@ func TestMasterSkewWarnsOnceMarksLaggingAndSurfaces(t *testing.T) {
 	d.logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
 	reg, _ := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
-	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{})
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{}, nil)
 	now := time.Now()
-	loop := newMasterLoop(reg, tracker, sink, d, now)
+	loop := newMasterLoop(reg, tracker, sink, nil, d, now)
 	id, _ := fleet.NewNodeID()
 	if err := reg.Add(fleet.Node{ID: id, Name: "fast-clock", Joined: now.Unix()}); err != nil {
 		t.Fatal(err)
@@ -584,8 +682,8 @@ func newDropWarnFixture(t *testing.T) *dropWarnFixture {
 // start builds a master loop over a fresh sink on the same directory, as a
 // master (re)start does.
 func (f *dropWarnFixture) start(now time.Time) (*masterLoop, *replicaSink) {
-	sink := newReplicaSink(filepath.Join(f.dir, "nodes"), StoreOptions{})
-	return newMasterLoop(f.reg, f.tracker, sink, f.d, now), sink
+	sink := newReplicaSink(filepath.Join(f.dir, "nodes"), StoreOptions{}, nil)
+	return newMasterLoop(f.reg, f.tracker, sink, nil, f.d, now), sink
 }
 
 func (f *dropWarnFixture) warnings() int {

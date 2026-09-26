@@ -195,6 +195,12 @@ type masterLoop struct {
 	reg     *fleet.Registry
 	tracker *fleet.Tracker
 	sink    *replicaSink
+	// engine is the master alerting engine (fleet_engine.go): every alert
+	// this loop raises (node-down/connectivity) goes through
+	// engine.Submit(alertSource{}, ...) exactly like a child-shipped one, so
+	// incidents/dedup cover both producers uniformly. It also owns the lease
+	// push cadence (TickLeases, called from tick below).
+	engine *fleetAlertEngine
 	// mu serializes tick's liveness/alert pass with remove, so a node
 	// removed mid-tick can never be re-tracked and paged. Guards alerter.
 	mu          sync.Mutex
@@ -213,8 +219,15 @@ type masterLoop struct {
 // masterTickInterval is how often the master loop ticks.
 const masterTickInterval = 5 * time.Second
 
-func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, d fleetDeps, now time.Time) *masterLoop {
-	return &masterLoop{reg: reg, tracker: tracker, sink: sink, alerter: fleet.NewNodeAlerter(), alert: d.alert,
+// newMasterLoop builds a masterLoop. A nil engine (test convenience for
+// suites that don't exercise alerting) makes l.alert fall back to d.alert
+// directly, exactly as before the alerting engine existed.
+func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, engine *fleetAlertEngine, d fleetDeps, now time.Time) *masterLoop {
+	alert := d.alert
+	if engine != nil {
+		alert = func(a Alert) { engine.Submit(alertSource{}, a) }
+	}
+	return &masterLoop{reg: reg, tracker: tracker, sink: sink, engine: engine, alerter: fleet.NewNodeAlerter(), alert: alert,
 		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1), lastDropCheck: now}
 }
 
@@ -270,9 +283,26 @@ func (l *masterLoop) tick(now time.Time) {
 		return id
 	}
 	intents := l.alerter.Plan(l.tracker.Evaluate(now.Unix()), now.Unix(), name)
+	var nodeIDs []string
+	if l.engine != nil {
+		for _, n := range l.reg.List() {
+			if !n.Revoked {
+				nodeIDs = append(nodeIDs, n.ID)
+			}
+		}
+	}
 	l.mu.Unlock()
 	for _, in := range intents {
 		l.alert(fleetAlert(in, now.Unix()))
+	}
+	// Lease cadence (global-constraints/task-3 ruling): push lease{until:
+	// now+90s} to every connected, non-revoked node at least every 30s.
+	// Revoked/removed nodes are simply absent from nodeIDs. A freshly
+	// connected node also gets one immediately via Hub.OnConnect
+	// (engine.PushLeaseNow), so this loop need not special-case "just
+	// joined".
+	if l.engine != nil {
+		l.engine.TickLeases(now, nodeIDs)
 	}
 	if now.Sub(l.lastFlush) >= 30*time.Second {
 		l.lastFlush = now
@@ -385,7 +415,26 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	if err != nil {
 		return err
 	}
-	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(cfg))
+	hub := fleet.NewHub(d.logf)
+
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		return fmt.Errorf("load incidents: %w", err)
+	}
+	audit := newAuditLog(filepath.Join(dir, "audit.jsonl"))
+	engine := newFleetAlertEngine(time.Now, d.alert, hub.Push, hub.Connected, incidents, audit)
+	// A freshly (re)connected node gets a lease immediately, rather than
+	// waiting up to one masterTickInterval for the next TickLeases pass.
+	hub.OnConnect(func(id string) { engine.PushLeaseNow(id, time.Now()) })
+
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(cfg), func(nodeID string, ev AlertEvent) {
+		name, tags := nodeID, []string(nil)
+		if n, ok := reg.Get(nodeID); ok {
+			name, tags = n.Name, n.Tags
+		}
+		engine.HandleChildAlert(nodeID, name, tags, ev)
+	})
+	sink.onAckSync = engine.HandleChildAckSync
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(cfg.FleetNodeDownAfter()))
 	var ids []string
 	revoked := map[string]bool{}
@@ -395,9 +444,9 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	}
 	tracker.Seed(ids, revoked, time.Now().Unix())
 
-	loop := newMasterLoop(reg, tracker, sink, d, time.Now())
+	loop := newMasterLoop(reg, tracker, sink, engine, d, time.Now())
 	m := fleet.NewMaster(fleet.MasterConfig{
-		CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: sink, Logf: d.logf,
+		CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: sink, Hub: hub, Logf: d.logf,
 		OnSkew: loop.observeSkew,
 		OnContact: func(id string, now time.Time, u *fleet.LiveUpdate) {
 			backlog := int64(-1)
@@ -429,6 +478,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	}
 
 	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker, loop: loop,
+		hub: hub, engine: engine, audit: audit,
 		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 	loopCtx, cancel := context.WithCancel(ctx)
 	loopDone := make(chan struct{})
@@ -510,7 +560,10 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		Live:      live.Build,
 		LiveEvery: time.Duration(cfg.FastInterval) * time.Second,
 		Logf:      d.logf,
-		OnFrame:   func(f fleet.Frame) { onStreamFrame(lease, handoffState, receiptsPath, time.Now, f) },
+		OnFrame: func(f fleet.Frame) {
+			onStreamFrame(lease, handoffState, receiptsPath, time.Now, f)
+			applyAckFrame(d.self, f)
+		},
 	})
 	cctx, cancel := context.WithCancel(ctx)
 	shipDone := make(chan struct{})
