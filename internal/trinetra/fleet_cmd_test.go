@@ -1090,11 +1090,18 @@ func TestFleetMaintenanceDelete(t *testing.T) {
 	}
 }
 
+// TestFleetRouteTestPrintsDecision covers the B5 fix round 1 CLI output:
+// every matched policy (here, two -- as a Continue chain would produce)
+// prints its own steps and repeat_every separately, since each escalates
+// independently.
 func TestFleetRouteTestPrintsDecision(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{routeTestResult: core.RouteDecision{
-		Route: "web-cpu", Policy: "p",
-		Steps:      []core.PolicyStep{{After: "0s", Channels: []string{"slack"}}, {After: "5m", Channels: []string{"pager"}}},
+		Route: "web-cpu",
+		Policies: []core.Policy{
+			{Name: "p1", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"slack"}}, {After: "5m", Channels: []string{"pager"}}}},
+			{Name: "p2", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"email"}}}, RepeatEvery: "30m"},
+		},
 		Suppressed: "silence sabc by cli",
 	}}
 	startFleetDaemon(t, fake)
@@ -1107,7 +1114,11 @@ func TestFleetRouteTestPrintsDecision(t *testing.T) {
 		t.Fatalf("routeTestAlert = %+v", fake.routeTestAlert)
 	}
 	got := out.String()
-	for _, want := range []string{"web-cpu", "policy: p", "step 0: after 0s -> slack", "step 1: after 5m -> pager", "suppressed: silence sabc by cli"} {
+	for _, want := range []string{
+		"web-cpu", "policy: p1", "step 0: after 0s -> slack", "step 1: after 5m -> pager",
+		"policy: p2", "step 0: after 0s -> email", "repeat_every: 30m",
+		"suppressed: silence sabc by cli",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("out missing %q: %s", want, got)
 		}
@@ -1116,7 +1127,9 @@ func TestFleetRouteTestPrintsDecision(t *testing.T) {
 
 func TestFleetRouteTestNoMatchPrintsDefaultNote(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
-	fake := &fleetCLIFake{routeTestResult: core.RouteDecision{Policy: "default", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"*"}}}}}
+	fake := &fleetCLIFake{routeTestResult: core.RouteDecision{
+		Policies: []core.Policy{{Name: "default", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"*"}}}}},
+	}}
 	startFleetDaemon(t, fake)
 	if rc := Main([]string{"fleet", "route", "test", "--node", "web1", "--rule", "cpu", "--severity", "critical"}); rc != 0 {
 		t.Fatalf("exit %d: %s", rc, errb)

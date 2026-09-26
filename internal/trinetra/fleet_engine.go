@@ -14,6 +14,8 @@ package trinetra
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -275,77 +277,168 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 		da.Title = src.NodeName + ": " + a.Title
 	}
 
-	var ok bool
-	detail := legLabel(a) + ": " + note
-	if e.alerting != nil {
-		// Routing/escalation (task 5): resolve the SAME way RouteTest does
-		// (resolveRoute), and deliver only to the resolved channels rather
-		// than every enabled one.
-		cfg := e.alerting.Get()
-		res := resolveRoute(cfg, src.NodeID, src.NodeName, src.Tags, a.Key, a.Severity.String())
-		var channels []string
-		if a.Kind == "recover" {
-			if !res.SendResolved {
-				return
-			}
-			// The resolved message goes to the union of every channel that
-			// received any step of the fire leg -- an escalation may have
-			// widened delivery past step 0's own channels.
-			channels = e.unionDeliveredChannels(incidentID)
-			if len(channels) == 0 {
-				channels = firstStepChannels(res.Steps)
-			}
-		} else {
-			channels = firstStepChannels(res.Steps)
-		}
-		if e.deliverNamed == nil {
-			return
-		}
-		ok = e.deliverNamed(da, channels)
-		detail = legLabel(a) + ": " + stepDetail(0, channels)
-	} else {
+	if e.alerting == nil {
+		// Pre-routing behaviour, byte for byte: every existing call site/test
+		// that never wires SetRouting never sees anything below this branch.
 		if a.Kind == "recover" && !e.sendResolved {
 			return
 		}
 		if e.deliver == nil {
 			return
 		}
-		ok = e.deliver(da)
+		if !e.deliver(da) {
+			return // no channel accepted it: no receipt, no "delivered" event.
+		}
+		if e.incidents != nil && incidentID != "" {
+			_, _ = e.incidents.AppendEvent(incidentID, core.IncidentEvent{
+				TS: e.now().Unix(), Kind: "delivered", Detail: legLabel(a) + ": " + note, Actor: "system",
+			})
+		}
+		if src.NodeID != "" && e.push != nil {
+			e.pushReceipt(src.NodeID, a.Key, firedAt)
+		}
+		return
 	}
-	if !ok {
+
+	// Routing/escalation (B5 fix round 1): resolve the SAME way RouteTest
+	// does (resolveRoute) -- EVERY matched policy applies independently (see
+	// routeResolution's doc comment), so from here on there is no single
+	// "the" policy/step list any more.
+	if e.deliverNamed == nil {
+		return
+	}
+	cfg := e.alerting.Get()
+	res := resolveRoute(cfg, src.NodeID, src.NodeName, src.Tags, a.Key, a.Severity.String())
+
+	if a.Kind == "recover" {
+		e.deliverResolved(src, da, firedAt, incidentID, res.Policies)
+		return
+	}
+
+	// fire: one physical dispatch to the union of every matched policy's
+	// step 0 (ruling: "in one dispatch, as now"), but one timeline event PER
+	// policy, so later escalation/repeat/resolved-union bookkeeping can
+	// attribute each channel to the policy that actually asked for it.
+	channels := unionStepChannels(res.Policies, 0)
+	if !e.deliverNamed(da, channels) {
 		return // no channel accepted it: no receipt, no "delivered" event.
 	}
 	if e.incidents != nil && incidentID != "" {
-		_, _ = e.incidents.AppendEvent(incidentID, core.IncidentEvent{
-			TS: e.now().Unix(), Kind: "delivered", Detail: detail, Actor: "system",
-		})
+		ts := e.now().Unix()
+		for _, p := range res.Policies {
+			if len(p.Steps) == 0 {
+				continue
+			}
+			_, _ = e.incidents.AppendEvent(incidentID, core.IncidentEvent{
+				TS: ts, Kind: "delivered", Detail: legLabel(a) + ": " + policyStepDetail(p.Name, 0, p.Steps[0].Channels), Actor: "system",
+			})
+		}
 	}
 	if src.NodeID != "" && e.push != nil {
 		e.pushReceipt(src.NodeID, a.Key, firedAt)
 	}
 }
 
-// stepDetail formats a step-N delivery/escalation/repeat timeline event's
-// Detail: "step N: chan1, chan2" (task-5 ruling's literal example for
-// "escalated") -- used for every routed delivery (fire's own step 0,
-// escalated, repeated) so unionDeliveredChannels/lastStepEventTS can parse
-// them all the same way.
-func stepDetail(step int, channels []string) string {
-	return fmt.Sprintf("step %d: %s", step, strings.Join(channels, ", "))
+// deliverResolved delivers the recover leg once routing is wired: the
+// resolved message goes to the union of every channel that received a step
+// (fire, escalated or repeated) from a policy whose SendResolved is true
+// (default true) -- task-5/B5 ruling. If history has nothing to derive that
+// from (e.g. a resurrection edge case), it falls back to the union of step
+// 0 across every SendResolved-true matched policy, so a legitimate resolved
+// message is never silently dropped just because history was incomplete. If
+// NO matched policy wants it sent at all, nothing is delivered (matching the
+// old single-policy !SendResolved early return).
+func (e *fleetAlertEngine) deliverResolved(src alertSource, da Alert, firedAt int64, incidentID string, policies []core.Policy) {
+	channels := e.unionResolvedChannels(incidentID, policies)
+	if len(channels) == 0 {
+		for _, p := range policies {
+			if len(p.Steps) == 0 || !sendResolvedOf(p) {
+				continue
+			}
+			channels = append(channels, p.Steps[0].Channels...)
+		}
+		channels = dedupStrings(channels)
+	}
+	if len(channels) == 0 {
+		return
+	}
+	if !e.deliverNamed(da, channels) {
+		return
+	}
+	if e.incidents != nil && incidentID != "" {
+		_, _ = e.incidents.AppendEvent(incidentID, core.IncidentEvent{
+			TS: e.now().Unix(), Kind: "delivered", Detail: legLabel(da) + ": " + strings.Join(channels, ", "), Actor: "system",
+		})
+	}
+	if src.NodeID != "" && e.push != nil {
+		e.pushReceipt(src.NodeID, da.Key, firedAt)
+	}
 }
 
-// parseStepChannels extracts the channel list from a stepDetail-formatted
-// string (with an optional "fire: "/"recover: " leg prefix already present):
-// everything after the LAST ": " separator. Channel names are simple
-// identifiers (config.ChannelConfig.Name) that never contain ": ", so this
-// is unambiguous.
-func parseStepChannels(detail string) []string {
-	i := strings.LastIndex(detail, ": ")
-	if i < 0 {
-		return nil
+// policyStepDetail formats a step-N delivery/escalation/repeat timeline
+// event's Detail: "policy P step N: chan1, chan2" (B5 fix round 1 ruling) --
+// used for every routed per-policy delivery (fire's own step 0, escalated,
+// repeated) so stepEventInfo can parse them all the same way and attribute
+// each to the policy that produced it.
+func policyStepDetail(policy string, step int, channels []string) string {
+	return fmt.Sprintf("policy %s step %d: %s", policy, step, strings.Join(channels, ", "))
+}
+
+// stepEventDetailRe/legacyStepDetailRe parse policyStepDetail's format, and
+// its PRE-fix-round-1 predecessor ("step N: chan1, chan2", no policy name --
+// B5 ruling: "legacy events with no policy prefix: treat them as belonging
+// to the first matched policy"). A policy name is taken greedily up to the
+// LAST " step N: " it could possibly precede, so a policy name that
+// contained the literal substring " step " (unlikely -- policy names are
+// short identifiers) would still parse correctly.
+var (
+	stepEventDetailRe  = regexp.MustCompile(`^policy (.+) step (\d+): (.*)$`)
+	legacyStepDetailRe = regexp.MustCompile(`^step (\d+): (.*)$`)
+)
+
+// stepEventInfo extracts (policy, step, channels) from a "delivered" (fire
+// leg only -- a "fire: " prefix is required), "escalated" or "repeated"
+// timeline event, per policyStepDetail's format. policy is "" for a legacy,
+// pre-policy-labelling event (caller attributes it to the first matched
+// policy -- see escalatedTo/lastStepEventTS). ok is false for anything else
+// (a recover's own "delivered" event, an unrelated event kind, or a
+// malformed detail).
+func stepEventInfo(ev core.IncidentEvent) (policy string, step int, channels []string, ok bool) {
+	detail := ev.Detail
+	switch ev.Kind {
+	case "delivered":
+		var hasFire bool
+		detail, hasFire = strings.CutPrefix(ev.Detail, "fire: ")
+		if !hasFire {
+			return "", 0, nil, false
+		}
+	case "escalated", "repeated":
+		// detail already set above
+	default:
+		return "", 0, nil, false
 	}
+	if m := stepEventDetailRe.FindStringSubmatch(detail); m != nil {
+		n, err := strconv.Atoi(m[2])
+		if err != nil {
+			return "", 0, nil, false
+		}
+		return m[1], n, splitChannelList(m[3]), true
+	}
+	if m := legacyStepDetailRe.FindStringSubmatch(detail); m != nil {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return "", 0, nil, false
+		}
+		return "", n, splitChannelList(m[2]), true
+	}
+	return "", 0, nil, false
+}
+
+// splitChannelList splits a comma-and-space-joined channel list back into
+// its entries (the inverse of strings.Join(channels, ", ")).
+func splitChannelList(s string) []string {
 	var out []string
-	for _, c := range strings.Split(detail[i+2:], ", ") {
+	for _, c := range strings.Split(s, ", ") {
 		if c = strings.TrimSpace(c); c != "" {
 			out = append(out, c)
 		}
@@ -353,12 +446,13 @@ func parseStepChannels(detail string) []string {
 	return out
 }
 
-// unionDeliveredChannels returns the deduplicated, order-preserving union of
-// every channel that received the FIRE leg's step 0 delivery, any escalation
-// or any repeat notification for incidentID -- what a resolved message
-// should go to (task-5 ruling), since an escalation may have widened
-// delivery past whatever channel(s) the fire itself went to.
-func (e *fleetAlertEngine) unionDeliveredChannels(incidentID string) []string {
+// unionResolvedChannels returns the deduplicated, order-preserving union of
+// every channel from a step-event (the fire leg's own step 0, any
+// escalation, any repeat) whose OWNING POLICY has SendResolved true --
+// default true for a policy no longer present in the current matched set
+// (e.g. the config changed mid-incident): B5 ruling, "the union of channels
+// that received steps from policies with SendResolved=true".
+func (e *fleetAlertEngine) unionResolvedChannels(incidentID string, policies []core.Policy) []string {
 	if incidentID == "" || e.incidents == nil {
 		return nil
 	}
@@ -366,23 +460,33 @@ func (e *fleetAlertEngine) unionDeliveredChannels(incidentID string) []string {
 	if !ok {
 		return nil
 	}
+	sendResolved := map[string]bool{}
+	for _, p := range policies {
+		sendResolved[p.Name] = sendResolvedOf(p)
+	}
+	firstPolicy := ""
+	if len(policies) > 0 {
+		firstPolicy = policies[0].Name
+	}
 	seen := map[string]bool{}
 	var out []string
-	add := func(channels []string) {
+	for _, ev := range inc.Timeline {
+		policy, _, channels, ok := stepEventInfo(ev)
+		if !ok {
+			continue
+		}
+		if policy == "" {
+			policy = firstPolicy
+		}
+		if sr, known := sendResolved[policy]; known && !sr {
+			continue
+		}
 		for _, c := range channels {
 			if seen[c] {
 				continue
 			}
 			seen[c] = true
 			out = append(out, c)
-		}
-	}
-	for _, ev := range inc.Timeline {
-		switch {
-		case ev.Kind == "delivered" && strings.HasPrefix(ev.Detail, "fire: "):
-			add(parseStepChannels(strings.TrimPrefix(ev.Detail, "fire: ")))
-		case ev.Kind == "escalated" || ev.Kind == "repeated":
-			add(parseStepChannels(ev.Detail))
 		}
 	}
 	return out
@@ -804,25 +908,38 @@ func (e *fleetAlertEngine) TickEscalations(now time.Time) {
 	}
 }
 
-// escalatedTo reports whether inc's timeline already records step as
-// escalated -- the escalation state is entirely durable, derived from the
+// escalatedTo reports whether inc's timeline already records (policy, step)
+// as escalated -- the escalation state is entirely durable, derived from the
 // timeline (task-5 ruling), so a restarted master never re-sends a step it
-// already reached.
-func escalatedTo(inc core.Incident, step int) bool {
-	prefix := fmt.Sprintf("step %d:", step)
+// already reached. isFirst attributes a legacy, pre-policy-labelling event
+// (B5 fix round 1: recorded by an engine build before per-policy escalation
+// existed) to policy when policy is the first matched policy -- see
+// stepEventInfo.
+func escalatedTo(inc core.Incident, policy string, step int, isFirst bool) bool {
 	for _, ev := range inc.Timeline {
-		if ev.Kind == "escalated" && strings.HasPrefix(ev.Detail, prefix) {
+		if ev.Kind != "escalated" {
+			continue
+		}
+		p, n, _, ok := stepEventInfo(ev)
+		if !ok || n != step {
+			continue
+		}
+		if p == policy || (p == "" && isFirst) {
 			return true
 		}
 	}
 	return false
 }
 
-// firstFireDeliveryTS returns the timestamp of inc's fire leg's own
-// "delivered" event (step 0, task-5 ruling: escalation timers are measured
-// from the incident's first successful delivery), and whether one exists at
-// all -- it may not yet, if the fire itself hasn't been delivered (e.g. still
+// firstFireDeliveryTS returns the timestamp of inc's fire leg's own step-0
+// "delivered" event (task-5 ruling: escalation timers are measured from the
+// incident's first successful delivery -- ONE shared reference time across
+// every matched policy, per B5's ruling), and whether one exists at all --
+// it may not yet, if the fire itself hasn't been delivered (e.g. still
 // queued behind a slow channel, or every channel is currently failing).
+// Every matched policy's own step-0 "delivered" event is appended with the
+// SAME timestamp (deliverAndReceiptDetail's fire branch), so it does not
+// matter which one this happens to find first.
 func firstFireDeliveryTS(inc core.Incident) (int64, bool) {
 	for _, ev := range inc.Timeline {
 		if ev.Kind == "delivered" && strings.HasPrefix(ev.Detail, "fire: ") {
@@ -832,27 +949,24 @@ func firstFireDeliveryTS(inc core.Incident) (int64, bool) {
 	return 0, false
 }
 
-// lastStepEventTS returns the most recent timestamp among: reaching step
-// (its "delivered" event for step 0, or its "escalated" event otherwise) and
-// any later "repeated" event recorded for that same step -- the reference
-// point maybeRepeat measures RepeatEvery's cadence from, itself entirely
-// derived from the timeline.
-func lastStepEventTS(inc core.Incident, step int) int64 {
+// lastStepEventTS returns the most recent timestamp among: policy reaching
+// step (its step-0 "delivered" event, or its "escalated" event otherwise)
+// and any later "repeated" event recorded for that same (policy, step) --
+// the reference point maybeRepeat measures RepeatEvery's cadence from,
+// itself entirely derived from the timeline. isFirst is escalatedTo's
+// legacy-event attribution rule.
+func lastStepEventTS(inc core.Incident, policy string, step int, isFirst bool) int64 {
 	var ts int64
-	prefix := fmt.Sprintf("step %d:", step)
-	bump := func(t int64) {
-		if t > ts {
-			ts = t
-		}
-	}
 	for _, ev := range inc.Timeline {
-		switch {
-		case step == 0 && ev.Kind == "delivered" && strings.HasPrefix(ev.Detail, "fire: "):
-			bump(ev.TS)
-		case ev.Kind == "escalated" && strings.HasPrefix(ev.Detail, prefix):
-			bump(ev.TS)
-		case ev.Kind == "repeated" && strings.HasPrefix(ev.Detail, prefix):
-			bump(ev.TS)
+		if ev.Kind != "delivered" && ev.Kind != "escalated" && ev.Kind != "repeated" {
+			continue
+		}
+		p, n, _, ok := stepEventInfo(ev)
+		if !ok || n != step {
+			continue
+		}
+		if (p == policy || (p == "" && isFirst)) && ev.TS > ts {
+			ts = ev.TS
 		}
 	}
 	return ts
@@ -860,10 +974,19 @@ func lastStepEventTS(inc core.Incident, step int) int64 {
 
 // tryEscalate runs INSIDE id's keyed lane (enqueued by TickEscalations):
 // re-reads the incident fresh (see TickEscalations's doc comment), and, if
-// it is still firing with its fire leg delivered, delivers any step whose
-// After has elapsed since that first delivery and that is not already
-// recorded as escalated, then considers a RepeatEvery notification for
-// whichever step was most recently reached.
+// it is still firing with its fire leg delivered, walks EVERY matched
+// policy independently (B5 fix round 1 ruling: each policy has its own
+// steps, After durations, RepeatEvery and SendResolved -- there is no
+// merging), delivering any step whose After has elapsed since the shared
+// first-delivery time and that is not already recorded as escalated for
+// THAT policy, then considers a RepeatEvery notification for whichever step
+// that policy most recently reached.
+//
+// PARKED (B5 review, same precedent as unsilence's tryDeliverUnsilenced): an
+// ack or resolve can land on this incident, from a different code path,
+// between the state check above and an escalateStep/dispatchOnly call
+// below -- a step already in flight can still be delivered a moment after
+// the operator acked it. Accepted, not fixed here.
 func (e *fleetAlertEngine) tryEscalate(id string, cfg core.AlertingConfig, now time.Time) {
 	inc, ok := e.incidents.Get(id)
 	if !ok || inc.State != "firing" || len(inc.Alerts) == 0 {
@@ -883,36 +1006,39 @@ func (e *fleetAlertEngine) tryEscalate(id string, cfg core.AlertingConfig, now t
 	}
 	res := resolveRoute(cfg, al.Node, name, tags, al.Key, al.Severity)
 
-	lastReached := 0
-	for step := 1; step < len(res.Steps); step++ {
-		if escalatedTo(inc, step) {
-			lastReached = step
-			continue
-		}
-		due, err := time.ParseDuration(res.Steps[step].After)
-		if err != nil {
-			continue
-		}
-		if now.Unix() < firstTS+int64(due/time.Second) {
-			continue // not due yet -- steps need not be strictly ordered by After.
-		}
-		if e.escalateStep(id, step, res.Steps[step].Channels, now) {
-			lastReached = step
-			// Re-read: escalateStep just appended a timeline event.
-			if updated, ok := e.incidents.Get(id); ok {
-				inc = updated
+	for pi, p := range res.Policies {
+		isFirst := pi == 0
+		lastReached := 0
+		for step := 1; step < len(p.Steps); step++ {
+			if escalatedTo(inc, p.Name, step, isFirst) {
+				lastReached = step
+				continue
+			}
+			due, err := time.ParseDuration(p.Steps[step].After)
+			if err != nil {
+				continue
+			}
+			if now.Unix() < firstTS+int64(due/time.Second) {
+				continue // not due yet -- steps need not be strictly ordered by After.
+			}
+			if e.escalateStep(id, p.Name, step, p.Steps[step].Channels, now) {
+				lastReached = step
+				// Re-read: escalateStep just appended a timeline event.
+				if updated, ok := e.incidents.Get(id); ok {
+					inc = updated
+				}
 			}
 		}
+		e.maybeRepeat(id, inc, al, p, isFirst, lastReached, now)
 	}
-	e.maybeRepeat(id, inc, al, res, lastReached, now)
 }
 
-// escalateStep delivers channels for step through the same keyed dispatch
-// (dispatchOnly: no alert-log/live-bus record -- an escalation is not a new
-// alert), and, only on success, durably records
-// {Kind:"escalated", Detail:"step N: chan1, chan2"} (task-5 ruling's literal
-// format) so a restarted master never resends it (escalatedTo).
-func (e *fleetAlertEngine) escalateStep(id string, step int, channels []string, now time.Time) bool {
+// escalateStep delivers channels for (policy, step) through the same keyed
+// dispatch (dispatchOnly: no alert-log/live-bus record -- an escalation is
+// not a new alert), and, only on success, durably records
+// {Kind:"escalated", Detail:"policy P step N: chan1, chan2"} (B5 fix round 1
+// ruling) so a restarted master never resends it (escalatedTo).
+func (e *fleetAlertEngine) escalateStep(id, policy string, step int, channels []string, now time.Time) bool {
 	if e.dispatchOnly == nil {
 		return false
 	}
@@ -924,31 +1050,33 @@ func (e *fleetAlertEngine) escalateStep(id string, step int, channels []string, 
 		return false
 	}
 	_, _ = e.incidents.AppendEvent(id, core.IncidentEvent{
-		TS: now.Unix(), Kind: "escalated", Detail: stepDetail(step, channels), Actor: "system",
+		TS: now.Unix(), Kind: "escalated", Detail: policyStepDetail(policy, step, channels), Actor: "system",
 	})
 	return true
 }
 
-// maybeRepeat re-notifies lastReached's channels once RepeatEvery has
-// elapsed since that step was last reached or last repeated (lastStepEventTS
-// -- durable, timeline-derived), while inc is still firing and unacked
-// (tryEscalate's caller already confirmed inc.State=="firing"). Recorded as
-// {Kind:"repeated"} (task-5 ruling).
-func (e *fleetAlertEngine) maybeRepeat(id string, inc core.Incident, al core.IncidentAlert, res routeResolution, lastReached int, now time.Time) {
-	if res.RepeatEvery == "" || e.dispatchOnly == nil {
+// maybeRepeat re-notifies p's last-reached step's channels once p's OWN
+// RepeatEvery has elapsed since that step was last reached or last repeated
+// for p (lastStepEventTS -- durable, timeline-derived), while inc is still
+// firing and unacked (tryEscalate's caller already confirmed
+// inc.State=="firing"). Recorded as {Kind:"repeated"} (task-5 ruling); each
+// matched policy is considered independently (B5 fix round 1), with its own
+// cadence and its own last-reached step.
+func (e *fleetAlertEngine) maybeRepeat(id string, inc core.Incident, al core.IncidentAlert, p core.Policy, isFirst bool, lastReached int, now time.Time) {
+	if p.RepeatEvery == "" || e.dispatchOnly == nil {
 		return
 	}
-	every, err := time.ParseDuration(res.RepeatEvery)
+	every, err := time.ParseDuration(p.RepeatEvery)
 	if err != nil || every <= 0 {
 		return
 	}
-	ref := lastStepEventTS(inc, lastReached)
+	ref := lastStepEventTS(inc, p.Name, lastReached, isFirst)
 	if ref == 0 || now.Unix()-ref < int64(every/time.Second) {
 		return
 	}
 	var channels []string
-	if lastReached < len(res.Steps) {
-		channels = res.Steps[lastReached].Channels
+	if lastReached < len(p.Steps) {
+		channels = p.Steps[lastReached].Channels
 	}
 	if len(channels) == 0 {
 		return
@@ -962,7 +1090,7 @@ func (e *fleetAlertEngine) maybeRepeat(id string, inc core.Incident, al core.Inc
 		return
 	}
 	_, _ = e.incidents.AppendEvent(id, core.IncidentEvent{
-		TS: now.Unix(), Kind: "repeated", Detail: stepDetail(lastReached, channels), Actor: "system",
+		TS: now.Unix(), Kind: "repeated", Detail: policyStepDetail(p.Name, lastReached, channels), Actor: "system",
 	})
 }
 

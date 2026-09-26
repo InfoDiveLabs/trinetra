@@ -390,15 +390,15 @@ type TestAlert struct {
 }
 
 // RouteDecision is FleetAPI.RouteTest's result: which route matched (empty
-// when none did -- DefaultPolicy was used), which policy applies, its
-// resolved steps (merged across every matched route's policy when Continue
-// chained more than one), and, if a current silence/maintenance window would
-// suppress this exact alert, why.
+// when none did -- DefaultPolicy was used), EVERY policy that applies (more
+// than one when Continue chained several matched routes together -- B5
+// fix round 1: each matched policy escalates independently, so there is no
+// single merged policy/step list any more), and, if a current silence/
+// maintenance window would suppress this exact alert, why.
 type RouteDecision struct {
-	Route      string       `json:"route,omitempty"`
-	Policy     string       `json:"policy"`
-	Steps      []PolicyStep `json:"steps"`
-	Suppressed string       `json:"suppressed,omitempty"`
+	Route      string   `json:"route,omitempty"`
+	Policies   []Policy `json:"policies"`
+	Suppressed string   `json:"suppressed,omitempty"`
 }
 
 // FleetAPI is the set of fleet-master operations exposed alongside a

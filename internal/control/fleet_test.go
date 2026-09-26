@@ -121,7 +121,7 @@ func (a fleetFakeAPI) SetAlerting(cfg core.AlertingConfig, actor string) error {
 
 func (a fleetFakeAPI) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
 	a.f.routeTestAlert = alert
-	return core.RouteDecision{Policy: "default"}, nil
+	return core.RouteDecision{Policies: []core.Policy{{Name: "default"}}}, nil
 }
 
 func TestClientRoutesToNode(t *testing.T) {

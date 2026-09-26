@@ -378,7 +378,12 @@ func TestFleetAPIRouteTestMatchesResolveRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := resolveRoute(alerting.Get(), nodeID, "web1", []string{"prod"}, "cpu", "critical")
-	if got.Route != want.RouteName || got.Policy != want.PolicyName {
-		t.Fatalf("RouteTest = %+v, want route=%q policy=%q matching resolveRoute directly", got, want.RouteName, want.PolicyName)
+	if got.Route != want.Route || len(got.Policies) != len(want.Policies) {
+		t.Fatalf("RouteTest = %+v, want route=%q policies=%+v matching resolveRoute directly", got, want.Route, want.Policies)
+	}
+	for i, p := range want.Policies {
+		if got.Policies[i].Name != p.Name {
+			t.Fatalf("RouteTest.Policies[%d] = %q, want %q", i, got.Policies[i].Name, p.Name)
+		}
 	}
 }

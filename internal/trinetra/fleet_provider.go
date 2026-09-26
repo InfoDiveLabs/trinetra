@@ -594,5 +594,5 @@ func (f fleetAPIImpl) RouteTest(alert core.TestAlert) (core.RouteDecision, error
 			suppressed = info.Reason
 		}
 	}
-	return core.RouteDecision{Route: res.RouteName, Policy: res.PolicyName, Steps: res.Steps, Suppressed: suppressed}, nil
+	return core.RouteDecision{Route: res.Route, Policies: res.Policies, Suppressed: suppressed}, nil
 }

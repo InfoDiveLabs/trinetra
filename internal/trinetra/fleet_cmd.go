@@ -1061,14 +1061,25 @@ func fleetRouteTest(args []string) int {
 	})
 }
 
+// printRouteDecision prints d: the matched route, then EVERY matched policy
+// (more than one when Continue chained several routes together -- B5 fix
+// round 1: each escalates independently, so each gets its own steps and
+// repeat_every printed separately) and, last, whether a silence would
+// suppress this exact alert.
 func printRouteDecision(w io.Writer, d core.RouteDecision) {
 	route := d.Route
 	if route == "" {
 		route = "(no route matched; using the default policy)"
 	}
-	fmt.Fprintf(w, "route: %s\npolicy: %s\n", route, d.Policy)
-	for i, s := range d.Steps {
-		fmt.Fprintf(w, "  step %d: after %s -> %s\n", i, s.After, strings.Join(s.Channels, ", "))
+	fmt.Fprintf(w, "route: %s\n", route)
+	for _, p := range d.Policies {
+		fmt.Fprintf(w, "policy: %s\n", p.Name)
+		for i, s := range p.Steps {
+			fmt.Fprintf(w, "  step %d: after %s -> %s\n", i, s.After, strings.Join(s.Channels, ", "))
+		}
+		if p.RepeatEvery != "" {
+			fmt.Fprintf(w, "  repeat_every: %s\n", p.RepeatEvery)
+		}
 	}
 	if d.Suppressed != "" {
 		fmt.Fprintf(w, "suppressed: %s\n", d.Suppressed)

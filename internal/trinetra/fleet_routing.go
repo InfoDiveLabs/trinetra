@@ -87,6 +87,9 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 			return fmt.Errorf("duplicate policy name %q", p.Name)
 		}
 		policyNames[p.Name] = true
+		if len(p.Steps) == 0 {
+			return fmt.Errorf("policy %q: needs at least one step", p.Name)
+		}
 		for i, st := range p.Steps {
 			if st.After == "" || !validDuration(st.After) {
 				return fmt.Errorf("policy %q step %d: invalid duration %q", p.Name, i, st.After)
@@ -239,25 +242,27 @@ func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name stri
 
 // --- route selection ---------------------------------------------------
 
-// routeResolution is resolveRoute's result: everything the engine needs to
-// deliver, escalate and repeat-notify one alert.
+// routeResolution is resolveRoute's result: which route matched (if any) and
+// EVERY policy that applies. B5 fix round 1 ruling: a Continue chain that
+// matches several routes escalates each matched policy independently (its
+// own steps, its own RepeatEvery, its own SendResolved) rather than merging
+// them into one synthetic policy -- so there is nothing left to compute here
+// beyond the ordered list of policies themselves; the engine and RouteTest
+// both iterate Policies directly.
 type routeResolution struct {
-	RouteName    string
-	PolicyName   string
-	Steps        []core.PolicyStep
-	RepeatEvery  string
-	SendResolved bool
+	Route    string
+	Policies []core.Policy
 }
 
 // resolveRoute evaluates cfg's routes against an alert on the given node
 // (id/display name/tags, "" / nil for a master-own alert) with the given
 // rule (the alert's Key) and severity: routes are evaluated in order, the
-// FIRST match sets RouteName, and Continue:true on a matched route keeps
-// evaluating LATER routes too, each further match's policy also
-// contributing its steps (fan-out, see mergeSteps) -- exactly Alertmanager's
-// well-known "continue" semantics. No match at all uses cfg.DefaultPolicy
-// (or the built-in default if that isn't set either, e.g. cfg is the
-// zero/empty value).
+// FIRST match sets Route, and Continue:true on a matched route keeps
+// evaluating LATER routes too, each further match's policy appended to
+// Policies too -- exactly Alertmanager's well-known "continue" semantics.
+// No match at all uses cfg.DefaultPolicy (or the built-in default if that
+// isn't set either, e.g. cfg is the zero/empty value); either way exactly
+// one policy is returned in that case.
 //
 // This is the ONE function both the alerting engine's real delivery and
 // FleetAPI.RouteTest call: RouteTest can never disagree with what the engine
@@ -269,7 +274,7 @@ func resolveRoute(cfg core.AlertingConfig, nodeID, nodeName string, tags []strin
 	}
 
 	routeName := ""
-	var matchedPolicies []core.Policy
+	var matched []core.Policy
 	for _, r := range cfg.Routes {
 		if !matchersApply(r.Matchers, nodeID, nodeName, tags, rule, severity) {
 			continue
@@ -278,34 +283,27 @@ func resolveRoute(cfg core.AlertingConfig, nodeID, nodeName string, tags []strin
 			routeName = r.Name
 		}
 		if p, ok := byName[r.Policy]; ok {
-			matchedPolicies = append(matchedPolicies, p)
+			matched = append(matched, p)
 		}
 		if !r.Continue {
 			break
 		}
 	}
 
-	if len(matchedPolicies) == 0 {
+	if len(matched) == 0 {
 		routeName = ""
 		dp := cfg.DefaultPolicy
 		if dp == "" {
 			dp = defaultPolicyName
 		}
 		if p, ok := byName[dp]; ok {
-			matchedPolicies = []core.Policy{p}
+			matched = []core.Policy{p}
 		} else {
-			matchedPolicies = []core.Policy{builtinDefaultPolicy()}
+			matched = []core.Policy{builtinDefaultPolicy()}
 		}
 	}
 
-	primary := matchedPolicies[0]
-	return routeResolution{
-		RouteName:    routeName,
-		PolicyName:   primary.Name,
-		Steps:        mergeSteps(matchedPolicies),
-		RepeatEvery:  primary.RepeatEvery,
-		SendResolved: sendResolvedOf(primary),
-	}
+	return routeResolution{Route: routeName, Policies: matched}
 }
 
 func sendResolvedOf(p core.Policy) bool {
@@ -315,37 +313,19 @@ func sendResolvedOf(p core.Policy) bool {
 	return *p.SendResolved
 }
 
-// mergeSteps merges several matched policies' steps (Continue fan-out) by
-// index: step i's After is the first policy's that has one, and its
-// Channels are the union (deduplicated, order-preserving) of every policy's
-// step i Channels. A single matched policy (the overwhelmingly common case)
-// passes through unchanged.
-func mergeSteps(policies []core.Policy) []core.PolicyStep {
-	if len(policies) == 1 {
-		return policies[0].Steps
-	}
-	maxLen := 0
+// unionStepChannels returns the deduplicated, order-preserving union of
+// step-`step`'s Channels across every policy that has that many steps
+// (policies with fewer steps simply don't contribute at that index). Used
+// for the FIRE leg's single physical dispatch to step 0 across every matched
+// policy at once (B5 fix round 1 ruling: "in one dispatch, as now").
+func unionStepChannels(policies []core.Policy, step int) []string {
+	var all []string
 	for _, p := range policies {
-		if len(p.Steps) > maxLen {
-			maxLen = len(p.Steps)
+		if step < len(p.Steps) {
+			all = append(all, p.Steps[step].Channels...)
 		}
 	}
-	merged := make([]core.PolicyStep, 0, maxLen)
-	for i := 0; i < maxLen; i++ {
-		after := ""
-		var channels []string
-		for _, p := range policies {
-			if i >= len(p.Steps) {
-				continue
-			}
-			if after == "" {
-				after = p.Steps[i].After
-			}
-			channels = append(channels, p.Steps[i].Channels...)
-		}
-		merged = append(merged, core.PolicyStep{After: after, Channels: dedupStrings(channels)})
-	}
-	return merged
+	return dedupStrings(all)
 }
 
 func dedupStrings(ss []string) []string {
@@ -359,15 +339,4 @@ func dedupStrings(ss []string) []string {
 		out = append(out, s)
 	}
 	return out
-}
-
-// firstStepChannels returns steps[0].Channels, or every channel ("*") if
-// steps is empty (should not happen for a validated config, but a resolved
-// policy with zero steps must still not silently deliver nowhere in a way
-// that looks like a bug rather than a deliberate empty policy).
-func firstStepChannels(steps []core.PolicyStep) []string {
-	if len(steps) == 0 {
-		return nil
-	}
-	return steps[0].Channels
 }

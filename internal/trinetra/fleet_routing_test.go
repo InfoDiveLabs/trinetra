@@ -15,16 +15,17 @@ func noChannelsValid(string) bool { return false }
 
 func TestResolveRouteDefaultConfigMatchesTodaysBehaviour(t *testing.T) {
 	res := resolveRoute(defaultAlertingConfig(), "n1", "web1", []string{"web"}, "cpu", "critical")
-	if res.RouteName != "" {
-		t.Fatalf("RouteName = %q, want empty (no routes at all)", res.RouteName)
+	if res.Route != "" {
+		t.Fatalf("Route = %q, want empty (no routes at all)", res.Route)
 	}
-	if res.PolicyName != "default" {
-		t.Fatalf("PolicyName = %q, want %q", res.PolicyName, "default")
+	if len(res.Policies) != 1 || res.Policies[0].Name != "default" {
+		t.Fatalf("Policies = %+v, want exactly [default]", res.Policies)
 	}
-	if len(res.Steps) != 1 || res.Steps[0].After != "0s" || len(res.Steps[0].Channels) != 1 || res.Steps[0].Channels[0] != "*" {
-		t.Fatalf("Steps = %+v, want a single immediate step to every channel", res.Steps)
+	steps := res.Policies[0].Steps
+	if len(steps) != 1 || steps[0].After != "0s" || len(steps[0].Channels) != 1 || steps[0].Channels[0] != "*" {
+		t.Fatalf("Steps = %+v, want a single immediate step to every channel", steps)
 	}
-	if !res.SendResolved {
+	if !sendResolvedOf(res.Policies[0]) {
 		t.Fatal("SendResolved = false, want true by default")
 	}
 }
@@ -42,11 +43,11 @@ func TestResolveRouteFirstMatchWins(t *testing.T) {
 		DefaultPolicy: "loud",
 	}
 	res := resolveRoute(cfg, "n1", "web1", nil, "cpu_pct", "critical")
-	if res.RouteName != "web-cpu" || res.PolicyName != "quiet" {
-		t.Fatalf("got route=%q policy=%q, want the FIRST matching route (web-cpu/quiet)", res.RouteName, res.PolicyName)
+	if res.Route != "web-cpu" || len(res.Policies) != 1 || res.Policies[0].Name != "quiet" {
+		t.Fatalf("got route=%q policies=%+v, want the FIRST matching route (web-cpu/quiet) only", res.Route, res.Policies)
 	}
-	if len(res.Steps) != 1 || res.Steps[0].Channels[0] != "slack" {
-		t.Fatalf("Steps = %+v, want quiet's own step", res.Steps)
+	if res.Policies[0].Steps[0].Channels[0] != "slack" {
+		t.Fatalf("Steps = %+v, want quiet's own step", res.Policies[0].Steps)
 	}
 }
 
@@ -62,18 +63,19 @@ func TestResolveRouteNoMatchUsesDefaultPolicy(t *testing.T) {
 		DefaultPolicy: "loud",
 	}
 	res := resolveRoute(cfg, "n1", "db1", nil, "cpu_pct", "critical")
-	if res.RouteName != "" {
-		t.Fatalf("RouteName = %q, want empty (nothing matched)", res.RouteName)
+	if res.Route != "" {
+		t.Fatalf("Route = %q, want empty (nothing matched)", res.Route)
 	}
-	if res.PolicyName != "loud" {
-		t.Fatalf("PolicyName = %q, want the DefaultPolicy %q", res.PolicyName, "loud")
+	if len(res.Policies) != 1 || res.Policies[0].Name != "loud" {
+		t.Fatalf("Policies = %+v, want the DefaultPolicy %q only", res.Policies, "loud")
 	}
 }
 
-// TestResolveRouteContinueChainsAndMergesChannels covers the task-5 ruling:
-// Continue:true keeps evaluating later routes too, and every matched route's
-// policy contributes its own channels to the SAME step index (fan-out).
-func TestResolveRouteContinueChainsAndMergesChannels(t *testing.T) {
+// TestResolveRouteContinueChainsKeepsEachPolicySeparate covers the B5 fix
+// round 1 ruling: Continue:true keeps evaluating later routes too, and every
+// matched route's policy is returned SEPARATELY (never merged) -- each one
+// escalates independently.
+func TestResolveRouteContinueChainsKeepsEachPolicySeparate(t *testing.T) {
 	cfg := core.AlertingConfig{
 		Routes: []core.Route{
 			{Name: "first", Matchers: []core.Matcher{{Rule: "cpu*"}}, Policy: "slack-only", Continue: true},
@@ -86,18 +88,11 @@ func TestResolveRouteContinueChainsAndMergesChannels(t *testing.T) {
 		DefaultPolicy: "slack-only",
 	}
 	res := resolveRoute(cfg, "n1", "web1", nil, "cpu_pct", "critical")
-	if res.RouteName != "first" {
-		t.Fatalf("RouteName = %q, want the FIRST matched route's name", res.RouteName)
+	if res.Route != "first" {
+		t.Fatalf("Route = %q, want the FIRST matched route's name", res.Route)
 	}
-	if len(res.Steps) != 1 {
-		t.Fatalf("Steps = %+v, want exactly one merged step", res.Steps)
-	}
-	got := map[string]bool{}
-	for _, c := range res.Steps[0].Channels {
-		got[c] = true
-	}
-	if !got["slack"] || !got["pager"] {
-		t.Fatalf("Steps[0].Channels = %v, want the union of both matched routes' channels", res.Steps[0].Channels)
+	if len(res.Policies) != 2 || res.Policies[0].Name != "slack-only" || res.Policies[1].Name != "pager-only" {
+		t.Fatalf("Policies = %+v, want [slack-only pager-only], each kept distinct", res.Policies)
 	}
 }
 
@@ -114,8 +109,29 @@ func TestResolveRouteWithoutContinueStopsAtFirstMatch(t *testing.T) {
 		DefaultPolicy: "slack-only",
 	}
 	res := resolveRoute(cfg, "n1", "web1", nil, "cpu_pct", "critical")
-	if len(res.Steps) != 1 || res.Steps[0].Channels[0] != "slack" || len(res.Steps[0].Channels) != 1 {
-		t.Fatalf("Steps = %+v, want ONLY the first matched route's channels (no continue)", res.Steps)
+	if len(res.Policies) != 1 || res.Policies[0].Name != "slack-only" {
+		t.Fatalf("Policies = %+v, want ONLY the first matched route's policy (no continue)", res.Policies)
+	}
+}
+
+// TestUnionStepChannelsAcrossPolicies covers the B5 fix round 1 ruling for
+// the fire leg's single physical dispatch: step 0's channels are the union
+// across every matched policy that has that many steps.
+func TestUnionStepChannelsAcrossPolicies(t *testing.T) {
+	policies := []core.Policy{
+		{Name: "a", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"slack"}}, {After: "5m", Channels: []string{"pager"}}}},
+		{Name: "b", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"email", "slack"}}}},
+	}
+	got := unionStepChannels(policies, 0)
+	set := map[string]bool{}
+	for _, c := range got {
+		set[c] = true
+	}
+	if len(set) != 2 || !set["slack"] || !set["email"] {
+		t.Fatalf("unionStepChannels(step 0) = %v, want deduped [slack email]", got)
+	}
+	if got := unionStepChannels(policies, 1); len(got) != 1 || got[0] != "pager" {
+		t.Fatalf("unionStepChannels(step 1) = %v, want [pager] (only policy a has a step 1)", got)
 	}
 }
 
@@ -220,6 +236,19 @@ func TestValidateAlertingConfigDuplicateNames(t *testing.T) {
 	}
 	if err := validateAlertingConfig(cfg2, allChannelsValid); err == nil {
 		t.Fatal("want an error for duplicate route names")
+	}
+}
+
+// TestValidateAlertingConfigRejectsZeroStepPolicy is the B5 fix round 1
+// minor: a policy with no steps at all is rejected (it would silently
+// deliver nowhere, forever, for every incident routed to it).
+func TestValidateAlertingConfigRejectsZeroStepPolicy(t *testing.T) {
+	cfg := core.AlertingConfig{
+		Policies:      []core.Policy{{Name: "p", Steps: nil}},
+		DefaultPolicy: "p",
+	}
+	if err := validateAlertingConfig(cfg, allChannelsValid); err == nil {
+		t.Fatal("want an error for a policy with zero steps")
 	}
 }
 
