@@ -176,6 +176,18 @@ type fakeFleet struct {
 	createdToken   core.CreatedToken
 	createTokenErr error
 	deletedTokens  []string
+
+	// renameErr/tagsErr/revokeErr/removeErr/deleteTokenErr (Task 7, fleet
+	// admin) let a test force a mutation method to fail -- e.g. a bogus
+	// node id or a daemon that stopped being a master mid-request -- so
+	// handlers_fleet_admin_test.go can pin the "FleetAPI errors render as a
+	// flash, never a 500" ruling. nil (the zero value) preserves every
+	// existing caller's assumption that these methods always succeed.
+	renameErr      error
+	tagsErr        error
+	revokeErr      error
+	removeErr      error
+	deleteTokenErr error
 }
 
 func (f *fakeFleet) Status() (core.FleetStatus, error) { return f.status, f.statusErr }
@@ -185,6 +197,9 @@ func (f *fakeFleet) Nodes(core.NodeFilter) ([]core.NodeSummary, error) {
 }
 
 func (f *fakeFleet) RenameNode(id, name string) error {
+	if f.renameErr != nil {
+		return f.renameErr
+	}
 	if f.renamed == nil {
 		f.renamed = map[string]string{}
 	}
@@ -193,6 +208,9 @@ func (f *fakeFleet) RenameNode(id, name string) error {
 }
 
 func (f *fakeFleet) SetNodeTags(id string, tags []string) error {
+	if f.tagsErr != nil {
+		return f.tagsErr
+	}
 	if f.tagged == nil {
 		f.tagged = map[string][]string{}
 	}
@@ -201,11 +219,17 @@ func (f *fakeFleet) SetNodeTags(id string, tags []string) error {
 }
 
 func (f *fakeFleet) RevokeNode(id string) error {
+	if f.revokeErr != nil {
+		return f.revokeErr
+	}
 	f.revoked = append(f.revoked, id)
 	return nil
 }
 
 func (f *fakeFleet) RemoveNode(id string) error {
+	if f.removeErr != nil {
+		return f.removeErr
+	}
 	f.removed = append(f.removed, id)
 	return nil
 }
@@ -217,6 +241,9 @@ func (f *fakeFleet) CreateToken(core.TokenSpec) (core.CreatedToken, error) {
 }
 
 func (f *fakeFleet) DeleteToken(id string) error {
+	if f.deleteTokenErr != nil {
+		return f.deleteTokenErr
+	}
 	f.deletedTokens = append(f.deletedTokens, id)
 	return nil
 }

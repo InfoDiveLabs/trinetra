@@ -225,6 +225,15 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/settings/public", Icon: "◈", Label: "Public view"}, AdminOnly: true},
+	// Fleet admin (Task 7, fleet-web-a): node management + join tokens.
+	// Admin role AND fleet master, both required (global-constraints.md/
+	// task-7-brief.md's ruling) -- AdminOnly gates on role (and, like every
+	// other AdminOnly entry, on node.Self: it's a master-local page,
+	// node_scope.go's masterLocalPrefixes), MasterOnly gates on fleetRole
+	// exactly like the "/fleet" entry above, and (per MasterOnly's own doc)
+	// also exempts this entry's Href from node-prefixing -- "/fleet/admin"
+	// only ever means "this master's own admin page".
+	{NavItem: NavItem{Href: "/fleet/admin", Icon: "⚑", Label: "Fleet admin"}, AdminOnly: true, MasterOnly: true},
 }
 
 // navForRole returns navItems filtered to what role may see (viewers get

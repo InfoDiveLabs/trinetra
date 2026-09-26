@@ -181,6 +181,37 @@ a.count:hover{border-color:var(--faint)}
 .db canvas.spark{display:block; margin:6px 0; border:1px solid var(--border-soft); border-radius:var(--r-sm); background:var(--surface2)}
 .logbox{margin:8px 0 0; max-height:340px; overflow:auto; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm); font-family:var(--font-mono); font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; color:var(--text)}
 
+/* fleet admin (task 7): a page-level flash after a mutation. Success uses
+   the plain neutral surface; an error uses the same amber "degraded, not
+   critical" tone .fleet-link-warn/.collector-warn already use -- ember
+   stays reserved for a down node / a revoked-as-alert state (the header
+   rule), not a form/API-rejection message. */
+.flash{padding:10px 14px; margin-bottom:14px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface); font-size:13px}
+.flash.err{border-color:color-mix(in oklab,var(--warn) 45%,var(--border)); background:color-mix(in oklab,var(--warn) 12%,var(--surface)); color:var(--warn)}
+.field-err{display:block; color:var(--warn); font-size:11px; margin-top:5px}
+
+/* fleet admin: the join-token "copy" box -- a read-only command plus a
+   copy-to-clipboard button (assets/app.js's [data-copy] delegated handler). */
+.copybox{display:flex; align-items:center; gap:8px; margin:10px 0 4px; flex-wrap:wrap}
+.copybox code{flex:1; min-width:220px; padding:9px 11px; background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm); font-family:var(--font-mono); font-size:12.5px; overflow-x:auto; white-space:pre}
+
+/* fleet admin: two-step in-page confirm for revoke/remove -- a CSS-only
+   checkbox toggle, no confirm()/alert(). The checkbox is visually hidden
+   (not display:none, so it stays focusable/keyboard-operable and visible
+   to assistive tech) but its two <label for> siblings act as the visible
+   controls: "Revoke"/"Remove" (.confirm-ask) checks it, revealing
+   "Confirm revoke"/"Confirm remove" plus "Cancel" (.confirm-armed, whose
+   OWN "Cancel" label unchecks the same box). Mirrors users.html's own
+   destructive-form pattern (plain POST + hx-post, no browser confirm()),
+   extended with this reveal step per the controller ruling. */
+.confirm-check{position:absolute; opacity:0; width:1px; height:1px; overflow:hidden}
+.confirm-toggle{display:inline-flex; align-items:center; gap:8px; margin-left:8px}
+.confirm-toggle:first-child{margin-left:0}
+.confirm-toggle .confirm-armed{display:none; align-items:center; gap:8px}
+.confirm-check:checked ~ .confirm-ask{display:none}
+.confirm-check:checked ~ .confirm-armed{display:inline-flex}
+.confirm-check:focus-visible ~ .confirm-ask{outline:2px solid var(--info); outline-offset:2px}
+
 /* LED / badges */
 .led{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--faint)}
 .led.ok{background:var(--ok);box-shadow:0 0 7px color-mix(in oklab,var(--ok) 70%,transparent)}

@@ -288,6 +288,28 @@
   document.addEventListener('click',function(e){var b=e.target.closest('.tabs button');if(!b)return;var w=b.closest('[data-tabs]');w.querySelectorAll('.tabs button').forEach(function(x){x.classList.toggle('on',x===b)});w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===b.dataset.tab)});});
   document.querySelectorAll('[data-filter]').forEach(function(inp){inp.addEventListener('input',function(){var q=inp.value.toLowerCase();document.querySelectorAll(inp.dataset.filter).forEach(function(tbl){tbl.querySelectorAll('tbody tr').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>-1?'':'none';});});});});
   document.addEventListener('click',function(e){var c=e.target.closest('.chip');if(c&&c.parentElement&&c.parentElement.classList.contains('chips')){c.parentElement.querySelectorAll('.chip').forEach(function(x){x.classList.remove('on')});c.classList.add('on');}});
+  // fleet admin (task 7): a generic "copy this element's text" button --
+  // data-copy names the id of the element to copy (fleet_admin.html's
+  // join-code <code> box). Delegated + always registered (like the chip/
+  // tabs handlers above) rather than gated on a page-specific root element,
+  // since any future page can reuse the same [data-copy] hook. Falls back
+  // to a hidden-textarea + execCommand('copy') when the async Clipboard API
+  // isn't available (non-secure context, or an older browser).
+  document.addEventListener('click',function(e){
+    var b=e.target.closest('[data-copy]'); if(!b) return;
+    var target=document.getElementById(b.getAttribute('data-copy')); if(!target) return;
+    var text=target.textContent||'';
+    var flash=function(){ var prev=b.textContent; b.textContent='Copied'; setTimeout(function(){ b.textContent=prev; },1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(flash,function(){});
+      return;
+    }
+    var ta=document.createElement('textarea');
+    ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); flash(); }catch(err){}
+    document.body.removeChild(ta);
+  });
   // A real `<input type="checkbox" class="switch">` (every server-rendered
   // switch in config.html/public_settings.html/channels.html's modal forms,
   // plus /settings/public's "enabled" + "panel" checkboxes) is driven purely

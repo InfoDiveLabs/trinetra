@@ -72,6 +72,22 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /fleet", requireRole(RoleViewer, d, fleetOverviewHandler(d)))
 	mux.HandleFunc("GET /fleet/table", requireRole(RoleViewer, d, fleetTableHandler(d)))
 	mux.HandleFunc("GET /api/fleet/nodes", requireRole(RoleViewer, d, fleetNodesAPIHandler(d)))
+	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a):
+	// node management (rename/tags/revoke/remove) and join-token
+	// issuance/revocation, admin+CSRF-gated like /users/* below -- see
+	// fleetAdminMutation's doc. Each handler additionally 404s unless
+	// fleetRole(d)=="master" (fleetGateHTML, handlers_fleet_admin.go),
+	// exactly like the read-only /fleet routes above. "/fleet/admin" is
+	// already on node_scope.go's masterLocalPrefixes (its "/fleet" entry
+	// prefix-matches every /fleet/... path), so /n/{node}/fleet/admin is
+	// already a 404 via withNodeRouter.
+	mux.HandleFunc("GET /fleet/admin", requireRole(RoleAdmin, d, fleetAdminPageHandler(d)))
+	mux.HandleFunc("POST /fleet/tokens", fleetAdminMutation(d, fleetTokenCreateHandler(d)))
+	mux.HandleFunc("POST /fleet/tokens/{id}/delete", fleetAdminMutation(d, fleetTokenDeleteHandler(d)))
+	mux.HandleFunc("POST /fleet/nodes/{id}/rename", fleetAdminMutation(d, fleetNodeRenameHandler(d)))
+	mux.HandleFunc("POST /fleet/nodes/{id}/tags", fleetAdminMutation(d, fleetNodeTagsHandler(d)))
+	mux.HandleFunc("POST /fleet/nodes/{id}/revoke", fleetAdminMutation(d, fleetNodeRevokeHandler(d)))
+	mux.HandleFunc("POST /fleet/nodes/{id}/remove", fleetAdminMutation(d, fleetNodeRemoveHandler(d)))
 	// beginLimiter caps the unauthenticated ceremony-begin rate per client so an
 	// anonymous caller can't hammer the shared ceremonies.json lock (#95). Both
 	// begins share ONE limiter since they contend the same lock. finish is not

@@ -1,0 +1,149 @@
+{{/* fleet_admin.html (Task 7, fleet-web-a): /fleet/admin -- join-token
+     issuance/revocation, node rename/tags/revoke/remove, and a per-node
+     link-health table. Every mutation form below posts with hx-post and
+     hx-target="#fleet-admin-page" hx-swap="outerHTML" -- the same in-page
+     swap pattern users.html uses for its own mutations -- so a save/delete
+     never navigates away or loses the rest of the page's state.
+
+     Destructive actions (revoke/remove) use a CSS-only two-step confirm
+     (no confirm()/JS): a checkbox (visually hidden, still focusable) plus
+     two <label for> "buttons" toggle between an initial "Revoke"/"Remove"
+     control and a revealed "Confirm revoke"/"Confirm remove" + "Cancel"
+     pair -- see style.css's .confirm-* rules. */}}
+{{define "content"}}
+<div id="fleet-admin-page">
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+
+  <div class="panel" style="margin-bottom:18px">
+    <div class="head"><span class="eyebrow">Join tokens</span></div>
+    <form method="post" action="/fleet/tokens" hx-post="/fleet/tokens" hx-target="#fleet-admin-page" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <div class="grid g-3">
+        <label class="field"><span class="lb">TTL</span><input type="text" name="ttl" value="{{.TokenTTL}}" placeholder="1h">
+          <span class="hint">Go duration, 5m to 720h</span>
+        </label>
+        <label class="field"><span class="lb">Uses</span><input type="text" name="uses" value="{{.TokenUses}}" placeholder="1">
+          <span class="hint">1 to 100</span>
+        </label>
+        <label class="field"><span class="lb">Tags (comma-separated)</span><input type="text" name="tags" value="{{.TokenTags}}" placeholder="web,prod">
+          <span class="hint">up to 10, lowercase letters/digits/_/-</span>
+        </label>
+      </div>
+      {{if .TokenErr}}<span class="field-err">{{.TokenErr}}</span>{{end}}
+      <button class="btn primary" type="submit" style="margin-top:10px">Create join token</button>
+    </form>
+    {{if .Issued}}
+    <div class="copybox">
+      <code id="joinCode">{{.Issued.JoinCommand}}</code>
+      <button type="button" class="btn ghost" data-copy="joinCode">Copy</button>
+    </div>
+    <p class="note">Shown once -- copy it now. Valid {{.Issued.TTL}}, {{.Issued.Uses}} use{{if ne .Issued.Uses 1}}s{{end}}{{if .Issued.Tags}}, tags {{.Issued.Tags}}{{end}}.</p>
+    {{end}}
+  </div>
+
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>ID</th><th>Uses left</th><th>Expires</th><th>Tags</th><th>Created by</th><th></th></tr></thead>
+    <tbody>
+      {{range .Tokens}}
+      <tr>
+        <td class="mono card-title" data-label="ID">{{.ID}}</td>
+        <td class="mono" data-label="Uses left">{{.UsesLeft}}</td>
+        <td class="mono note" data-label="Expires">{{.Expires}}</td>
+        <td data-label="Tags">{{if .Tags}}{{.Tags}}{{else}}<span class="note">-</span>{{end}}</td>
+        <td class="mono note" data-label="Created by">{{if .Creator}}{{.Creator}}{{else}}<span class="note">-</span>{{end}}</td>
+        <td class="card-actions" style="text-align:right">
+          <form method="post" action="/fleet/tokens/{{.ID}}/delete" hx-post="/fleet/tokens/{{.ID}}/delete" hx-target="#fleet-admin-page" hx-swap="outerHTML" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" class="note">no active join tokens</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+
+  <div class="section-label"><span class="eyebrow">Nodes</span></div>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Node</th><th>State</th><th>Rename</th><th>Tags</th><th></th></tr></thead>
+    <tbody>
+      {{range .Nodes}}
+      <tr data-node-id="{{.ID}}">
+        <td class="mono card-title" data-label="Node">{{.Name}}</td>
+        {{/* Badge coloring mirrors fleet.html's exact convention (Task 5):
+             ember (.crit) is reserved for "down" alone -- a revoked node is
+             an administrative state, not itself an alert, so it stays the
+             plain neutral badge, same as the /fleet overview table. */}}
+        <td data-label="State"><span class="badge{{if eq .State "online"}} ok{{else if eq .State "down"}} crit{{else if or (eq .State "lagging") (eq .State "stale")}} warn{{end}}">{{.State}}</span></td>
+        <td data-label="Rename">
+          <form method="post" action="/fleet/nodes/{{.ID}}/rename" hx-post="/fleet/nodes/{{.ID}}/rename" hx-target="#fleet-admin-page" hx-swap="outerHTML" style="display:flex;gap:6px">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="text" name="name" value="{{.RenameValue}}" maxlength="64">
+            <button class="btn ghost" type="submit">Rename</button>
+          </form>
+          {{if .RenameErr}}<span class="field-err">{{.RenameErr}}</span>{{end}}
+        </td>
+        <td data-label="Tags">
+          <form method="post" action="/fleet/nodes/{{.ID}}/tags" hx-post="/fleet/nodes/{{.ID}}/tags" hx-target="#fleet-admin-page" hx-swap="outerHTML" style="display:flex;gap:6px">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="text" name="tags" value="{{.TagsValue}}" placeholder="web,prod">
+            <button class="btn ghost" type="submit">Save</button>
+          </form>
+          {{if .TagsErr}}<span class="field-err">{{.TagsErr}}</span>{{end}}
+        </td>
+        <td class="card-actions" style="text-align:right">
+          <span class="confirm-toggle">
+            <input type="checkbox" id="revoke-{{.ID}}" class="confirm-check">
+            <label for="revoke-{{.ID}}" class="btn ghost confirm-ask">Revoke</label>
+            <span class="confirm-armed">
+              <form method="post" action="/fleet/nodes/{{.ID}}/revoke" hx-post="/fleet/nodes/{{.ID}}/revoke" hx-target="#fleet-admin-page" hx-swap="outerHTML" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn danger" type="submit">Confirm revoke</button>
+              </form>
+              <label for="revoke-{{.ID}}" class="btn ghost">Cancel</label>
+            </span>
+          </span>
+          {{if .CanRemove}}
+          <span class="confirm-toggle">
+            <input type="checkbox" id="remove-{{.ID}}" class="confirm-check">
+            <label for="remove-{{.ID}}" class="btn ghost confirm-ask">Remove</label>
+            <span class="confirm-armed">
+              <form method="post" action="/fleet/nodes/{{.ID}}/remove" hx-post="/fleet/nodes/{{.ID}}/remove" hx-target="#fleet-admin-page" hx-swap="outerHTML" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn danger" type="submit">Confirm remove</button>
+              </form>
+              <label for="remove-{{.ID}}" class="btn ghost">Cancel</label>
+            </span>
+          </span>
+          {{end}}
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" class="note">no other fleet nodes yet</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+  <p class="note" style="margin-top:8px">Remove is only available for revoked or down nodes; its history stays on disk.</p>
+
+  <div class="section-label"><span class="eyebrow">Link health</span></div>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Node</th><th>State</th><th>Last seen</th><th>Skew</th><th>Outbox</th><th>Replica drops</th><th>Remote address</th></tr></thead>
+    <tbody>
+      {{range .Nodes}}
+      <tr>
+        <td class="mono card-title" data-label="Node">{{.Name}}</td>
+        <td data-label="State"><span class="badge{{if eq .State "online"}} ok{{else if eq .State "down"}} crit{{else if or (eq .State "lagging") (eq .State "stale")}} warn{{end}}">{{.State}}</span></td>
+        <td class="mono note" data-label="Last seen">{{nodeAgo .LastSeen}}</td>
+        <td data-label="Skew">{{if .SkewWarn}}<div class="fleet-link-warn">{{.SkewWarn}}</div>{{else}}<span class="mono note">{{.SkewText}}</span>{{end}}</td>
+        <td data-label="Outbox"><span class="mono note">{{if .OutboxText}}{{.OutboxText}}{{else}}-{{end}}{{if .OldestText}} · oldest {{.OldestText}}{{end}}{{if .OutboxGaps}} · {{.OutboxGaps}} gaps{{end}}</span></td>
+        <td data-label="Replica drops">{{if .DropsWarn}}<div class="fleet-link-warn">{{.DropsWarn}}</div>{{else}}<span class="note">none</span>{{end}}</td>
+        <td class="mono note" data-label="Remote address">{{if .RemoteAddr}}{{.RemoteAddr}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="7" class="note">no other fleet nodes yet</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+</div>
+{{end}}
