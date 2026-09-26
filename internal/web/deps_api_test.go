@@ -230,6 +230,17 @@ func (f *fakeFleet) AckIncident(string, string) error                       { re
 func (f *fakeFleet) Explain(string) ([]core.IncidentEvent, error)           { return nil, nil }
 func (f *fakeFleet) Audit(int) ([]core.AuditEntry, error)                   { return nil, nil }
 
+// Silences/CreateSilence/ExpireSilence/Maintenances/SaveMaintenance/
+// DeleteMaintenance: task 4's silences/maintenance windows have no web
+// surface yet; these stubs exist only so fakeFleet keeps satisfying
+// core.FleetAPI.
+func (f *fakeFleet) Silences() ([]core.Silence, error)                            { return nil, nil }
+func (f *fakeFleet) CreateSilence(s core.Silence) (core.Silence, error)           { return s, nil }
+func (f *fakeFleet) ExpireSilence(string, string) error                           { return nil }
+func (f *fakeFleet) Maintenances() ([]core.Maintenance, error)                    { return nil, nil }
+func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) { return m, nil }
+func (f *fakeFleet) DeleteMaintenance(string, string) error                       { return nil }
+
 var _ core.FleetAPI = (*fakeFleet)(nil)
 
 // countingAPI wraps a core.API and counts every call made through it, so a

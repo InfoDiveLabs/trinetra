@@ -19,6 +19,13 @@ type fleetFake struct {
 	ackedActor      string
 	explainKey      string
 	auditLimit      int
+
+	createdSilence    core.Silence
+	expiredSilenceID  string
+	expiredActor      string
+	savedMaintenance  core.Maintenance
+	deletedMaintID    string
+	deletedMaintActor string
 }
 
 type fleetFakeAPI struct{ f *fleetFake }
@@ -73,6 +80,30 @@ func (a fleetFakeAPI) Explain(key string) ([]core.IncidentEvent, error) {
 func (a fleetFakeAPI) Audit(limit int) ([]core.AuditEntry, error) {
 	a.f.auditLimit = limit
 	return []core.AuditEntry{{TS: 1000, Actor: "cli", Action: "revoke_node"}}, nil
+}
+func (a fleetFakeAPI) Silences() ([]core.Silence, error) {
+	return []core.Silence{{ID: "s1", Author: "cli"}}, nil
+}
+func (a fleetFakeAPI) CreateSilence(s core.Silence) (core.Silence, error) {
+	a.f.createdSilence = s
+	s.ID = "s2"
+	return s, nil
+}
+func (a fleetFakeAPI) ExpireSilence(id, actor string) error {
+	a.f.expiredSilenceID, a.f.expiredActor = id, actor
+	return nil
+}
+func (a fleetFakeAPI) Maintenances() ([]core.Maintenance, error) {
+	return []core.Maintenance{{ID: "m1", Name: "patch window"}}, nil
+}
+func (a fleetFakeAPI) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) {
+	a.f.savedMaintenance = m
+	m.ID = "m2"
+	return m, nil
+}
+func (a fleetFakeAPI) DeleteMaintenance(id, actor string) error {
+	a.f.deletedMaintID, a.f.deletedMaintActor = id, actor
+	return nil
 }
 
 func TestClientRoutesToNode(t *testing.T) {

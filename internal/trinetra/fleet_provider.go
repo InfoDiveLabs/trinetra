@@ -29,13 +29,14 @@ type masterState struct {
 	// log (fleet_audit.go). All three are nil-safe to call through
 	// fleetAPIImpl's helpers when absent (should not happen once startMaster
 	// has run, but keeps older tests that build a bare masterState working).
-	hub     *fleet.Hub
-	engine  *fleetAlertEngine
-	audit   *auditLog
-	joinURL string
-	pin     string
-	listen  string
-	getCfg  func() *config.Config
+	hub      *fleet.Hub
+	engine   *fleetAlertEngine
+	audit    *auditLog
+	silences *silenceStore
+	joinURL  string
+	pin      string
+	listen   string
+	getCfg   func() *config.Config
 }
 
 type fleetProvider struct {
@@ -151,6 +152,27 @@ func (f fleetAPIImpl) requireMaster() (*masterState, error) {
 // code, which this task must not touch.
 func (m *masterState) audited(actor, action, target, detail string) {
 	_ = m.audit.Append(actor, action, target, detail, time.Now().Unix())
+}
+
+// nonRevokedNodeIDs returns every non-revoked node id in reg.
+func nonRevokedNodeIDs(reg *fleet.Registry) []string {
+	var ids []string
+	for _, n := range reg.List() {
+		if !n.Revoked {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids
+}
+
+// pushSilencesToAll immediately refreshes every connected node's pushed
+// silence set -- called after any silence/maintenance mutation ("on
+// change").
+func (m *masterState) pushSilencesToAll(now time.Time) {
+	if m.engine == nil {
+		return
+	}
+	m.engine.PushSilencesToAll(now, nonRevokedNodeIDs(m.reg))
 }
 
 func (f fleetAPIImpl) RenameNode(id, name string) error {
@@ -369,4 +391,106 @@ func (f fleetAPIImpl) Audit(limit int) ([]core.AuditEntry, error) {
 		return nil, err
 	}
 	return m.audit.Recent(limit)
+}
+
+func (f fleetAPIImpl) Silences() ([]core.Silence, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	if m.silences == nil {
+		return nil, nil
+	}
+	return m.silences.List(), nil
+}
+
+// CreateSilence validates and stores s, audits it under s.Author (the CLI
+// always sets this to "cli"; a caller with none is recorded as "unknown"),
+// and immediately pushes the updated silence set to every connected node.
+func (f fleetAPIImpl) CreateSilence(s core.Silence) (core.Silence, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return core.Silence{}, err
+	}
+	if m.silences == nil {
+		return core.Silence{}, fmt.Errorf("silences are not available")
+	}
+	created, err := m.silences.Create(s)
+	if err != nil {
+		return core.Silence{}, err
+	}
+	actor := created.Author
+	if actor == "" {
+		actor = "unknown"
+	}
+	m.audited(actor, "create_silence", created.ID, formatMatchers(created.Matchers))
+	m.pushSilencesToAll(time.Now())
+	return created, nil
+}
+
+func (f fleetAPIImpl) ExpireSilence(id, actor string) error {
+	m, err := f.requireMaster()
+	if err != nil {
+		return err
+	}
+	if m.silences == nil {
+		return fmt.Errorf("no such silence %q", id)
+	}
+	if err := m.silences.Expire(id, time.Now().Unix()); err != nil {
+		return err
+	}
+	m.audited(actor, "expire_silence", id, "")
+	m.pushSilencesToAll(time.Now())
+	return nil
+}
+
+func (f fleetAPIImpl) Maintenances() ([]core.Maintenance, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	if m.silences == nil {
+		return nil, nil
+	}
+	return m.silences.Maintenances(), nil
+}
+
+// SaveMaintenance validates and stores mw (new if mw.ID is "", else an
+// update to the existing window), audits it under mw.Author, and
+// immediately pushes the updated silence set to every connected node.
+func (f fleetAPIImpl) SaveMaintenance(mw core.Maintenance) (core.Maintenance, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return core.Maintenance{}, err
+	}
+	if m.silences == nil {
+		return core.Maintenance{}, fmt.Errorf("silences are not available")
+	}
+	saved, err := m.silences.SaveMaintenance(mw)
+	if err != nil {
+		return core.Maintenance{}, err
+	}
+	actor := saved.Author
+	if actor == "" {
+		actor = "unknown"
+	}
+	m.audited(actor, "save_maintenance", saved.ID, saved.Name)
+	m.pushSilencesToAll(time.Now())
+	return saved, nil
+}
+
+func (f fleetAPIImpl) DeleteMaintenance(id, actor string) error {
+	m, err := f.requireMaster()
+	if err != nil {
+		return err
+	}
+	if m.silences == nil {
+		return fmt.Errorf("no such maintenance %q", id)
+	}
+	if err := m.silences.DeleteMaintenance(id); err != nil {
+		return err
+	}
+	m.audited(actor, "delete_maintenance", id, "")
+	m.pushSilencesToAll(time.Now())
+	return nil
 }

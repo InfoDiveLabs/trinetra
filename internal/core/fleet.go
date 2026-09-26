@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"path"
 	"slices"
 	"strings"
 )
@@ -183,6 +184,92 @@ type IncidentFilter struct {
 	Limit int    `json:"limit"`
 }
 
+// Matcher narrows a silence or maintenance window to the alerts it covers:
+// every non-empty field must match (AND); an entirely empty Matcher matches
+// anything, which is why a Silence/Maintenance must reject one (see
+// Matcher.Empty). Node and Rule are shell globs (path.Match); Tag matches if
+// the node carries it exactly; Severity is an exact, case-insensitive match.
+type Matcher struct {
+	Tag      string `json:"tag,omitempty"`
+	Node     string `json:"node,omitempty"`
+	Rule     string `json:"rule,omitempty"`
+	Severity string `json:"severity,omitempty"`
+}
+
+// Empty reports whether m has no fields set -- such a Matcher matches every
+// alert on every node, which a Silence/Maintenance must never be allowed to
+// contain (see the "a silence must match something" validation).
+func (m Matcher) Empty() bool {
+	return m.Tag == "" && m.Node == "" && m.Rule == "" && m.Severity == ""
+}
+
+// Matches reports whether m applies to an alert with the given rule
+// (typically the alert's Key) and severity, on a node with nodeID/nodeTags
+// (both "" / nil for a master-own alert, which no Node/Tag matcher ever
+// pins down but a Rule/Severity-only matcher still can).
+func (m Matcher) Matches(nodeID string, nodeTags []string, rule, severity string) bool {
+	if m.Node != "" {
+		if ok, _ := path.Match(m.Node, nodeID); !ok {
+			return false
+		}
+	}
+	if m.Tag != "" && !slices.Contains(nodeTags, m.Tag) {
+		return false
+	}
+	if m.Rule != "" {
+		if ok, _ := path.Match(m.Rule, rule); !ok {
+			return false
+		}
+	}
+	if m.Severity != "" && !strings.EqualFold(m.Severity, severity) {
+		return false
+	}
+	return true
+}
+
+// CouldApplyToNode reports whether m might match some alert on this node,
+// checking only the Node/Tag fields (Rule/Severity describe the alert, not
+// the node, so a Rule- or Severity-only matcher always could apply). Used to
+// decide which nodes a silence/maintenance window is worth pushing to.
+func (m Matcher) CouldApplyToNode(nodeID string, nodeTags []string) bool {
+	if m.Node != "" {
+		if ok, _ := path.Match(m.Node, nodeID); !ok {
+			return false
+		}
+	}
+	if m.Tag != "" && !slices.Contains(nodeTags, m.Tag) {
+		return false
+	}
+	return true
+}
+
+// Silence mutes matching alerts between Start and End (unix seconds):
+// recorded, never delivered, while active.
+type Silence struct {
+	ID       string    `json:"id"`
+	Matchers []Matcher `json:"matchers"`
+	Start    int64     `json:"start"`
+	End      int64     `json:"end"`
+	Author   string    `json:"author"`
+	Comment  string    `json:"comment,omitempty"`
+}
+
+// Maintenance is a recurring window that acts exactly like a silence
+// (reason "maintenance <name>") whenever it is active: Weekdays are
+// time.Weekday ints (Sunday=0), From/To are "HH:MM" in TZ (an IANA name
+// loaded with time.LoadLocation), and From > To means the window crosses
+// midnight.
+type Maintenance struct {
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Matchers []Matcher `json:"matchers"`
+	Weekdays []int     `json:"weekdays"`
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	TZ       string    `json:"tz"`
+	Author   string    `json:"author"`
+}
+
 // AuditEntry is one line in the fleet audit log: a record of who did what to
 // the fleet (rename, revoke, ack, token create, ...) and when.
 type AuditEntry struct {
@@ -222,6 +309,22 @@ type FleetAPI interface {
 	// Audit returns the most recent audit entries, newest first, up to
 	// limit (<= 0 means unlimited).
 	Audit(limit int) ([]AuditEntry, error)
+
+	// Silences lists every silence (active, future or expired) known to the
+	// master.
+	Silences() ([]Silence, error)
+	// CreateSilence validates and stores a new silence, assigning it an ID.
+	CreateSilence(Silence) (Silence, error)
+	// ExpireSilence ends silence id immediately (its End is pulled back to
+	// now, if it isn't already in the past), recording actor.
+	ExpireSilence(id, actor string) error
+	// Maintenances lists every configured maintenance window.
+	Maintenances() ([]Maintenance, error)
+	// SaveMaintenance validates and stores m: a new window if m.ID is "",
+	// otherwise an update to the existing window with that ID.
+	SaveMaintenance(Maintenance) (Maintenance, error)
+	// DeleteMaintenance removes maintenance window id, recording actor.
+	DeleteMaintenance(id, actor string) error
 }
 
 // FleetProvider is optional; implementations of API that know about a fleet

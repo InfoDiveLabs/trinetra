@@ -35,6 +35,10 @@ const fleetUsage = `usage:
   trinetra fleet incident <id>                              show one incident
   trinetra fleet ack <id>                                   acknowledge an incident
   trinetra fleet explain <key|id>                           print an alert's pipeline trail
+  trinetra fleet silence add --match tag=web,rule=cpu* --for 2h [--comment C]
+  trinetra fleet silence list | expire <id>
+  trinetra fleet maintenance add --name N --match ... --days mon,tue --from 22:00 --to 02:00 --tz Asia/Kolkata
+  trinetra fleet maintenance list | delete <id>
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo`
 
@@ -70,6 +74,10 @@ func cmdFleet(args []string) int {
 		return fleetAckCmd(args[1:])
 	case "explain":
 		return fleetExplainCmd(args[1:])
+	case "silence":
+		return fleetSilenceCmd(args[1:])
+	case "maintenance":
+		return fleetMaintenanceCmd(args[1:])
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, fleetUsage)
 		return 0
@@ -705,6 +713,293 @@ func fleetExplainCmd(args []string) int {
 			return err
 		}
 		printIncidentEvents(stdout, events)
+		return nil
+	})
+}
+
+// --- silence / maintenance -------------------------------------------------
+
+// parseMatchSpec parses a comma-separated "key=value" matcher spec, e.g.
+// "tag=web,node=db*,rule=cpu*,severity=critical", into a single core.Matcher
+// (AND semantics across its fields; empty fields match anything).
+func parseMatchSpec(spec string) (core.Matcher, error) {
+	var m core.Matcher
+	if strings.TrimSpace(spec) == "" {
+		return m, errors.New("--match is required, e.g. --match tag=web,rule=cpu*")
+	}
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			return core.Matcher{}, fmt.Errorf("invalid --match term %q (want key=value)", part)
+		}
+		k, v := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		switch k {
+		case "tag":
+			m.Tag = v
+		case "node":
+			m.Node = v
+		case "rule":
+			m.Rule = v
+		case "severity":
+			m.Severity = v
+		default:
+			return core.Matcher{}, fmt.Errorf("unknown match key %q (want tag, node, rule or severity)", k)
+		}
+	}
+	return m, nil
+}
+
+func formatMatchers(ms []core.Matcher) string {
+	var parts []string
+	for _, m := range ms {
+		var kv []string
+		if m.Tag != "" {
+			kv = append(kv, "tag="+m.Tag)
+		}
+		if m.Node != "" {
+			kv = append(kv, "node="+m.Node)
+		}
+		if m.Rule != "" {
+			kv = append(kv, "rule="+m.Rule)
+		}
+		if m.Severity != "" {
+			kv = append(kv, "severity="+m.Severity)
+		}
+		parts = append(parts, strings.Join(kv, "&"))
+	}
+	return strings.Join(parts, " OR ")
+}
+
+func fleetSilenceCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet silence add|list|expire")
+		return 2
+	}
+	switch args[0] {
+	case "add":
+		return fleetSilenceAdd(args[1:])
+	case "list":
+		return fleetSilenceList(args[1:])
+	case "expire":
+		return fleetSilenceExpire(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown silence command %q\n", args[0])
+	return 2
+}
+
+func fleetSilenceAdd(args []string) int {
+	fs := newFlags("fleet silence add")
+	match := fs.String("match", "", "comma-separated matchers: tag=,node=,rule=,severity=")
+	forDur := fs.Duration("for", 0, "how long the silence lasts from now")
+	until := fs.String("until", "", "RFC3339 end time (alternative to --for)")
+	comment := fs.String("comment", "", "why")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	usage := "trinetra fleet silence add --match tag=web,node=db*,rule=cpu*,severity=critical --for 2h | --until RFC3339 [--comment ...]"
+	if rejectPositionals("fleet silence add", usage, pos) {
+		return 2
+	}
+	m, err := parseMatchSpec(*match)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet silence add:", err)
+		return 2
+	}
+	var end int64
+	switch {
+	case *forDur > 0:
+		end = time.Now().Add(*forDur).Unix()
+	case *until != "":
+		t, err := time.Parse(time.RFC3339, *until)
+		if err != nil {
+			fmt.Fprintln(stderr, "fleet silence add: --until must be RFC3339:", err)
+			return 2
+		}
+		end = t.Unix()
+	default:
+		fmt.Fprintln(stderr, "fleet silence add: one of --for or --until is required")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		sil, err := c.Fleet().CreateSilence(core.Silence{
+			Matchers: []core.Matcher{m}, Start: time.Now().Unix(), End: end, Author: "cli", Comment: *comment,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Created silence %s, active until %s.\n", sil.ID, time.Unix(sil.End, 0).Format(time.RFC3339))
+		return nil
+	})
+}
+
+func fleetSilenceList(args []string) int {
+	if rejectPositionals("fleet silence list", "trinetra fleet silence list", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		sils, err := c.Fleet().Silences()
+		if err != nil {
+			return err
+		}
+		printSilences(stdout, sils)
+		return nil
+	})
+}
+
+func printSilences(w io.Writer, sils []core.Silence) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tMATCH\tSTART\tEND\tAUTHOR\tCOMMENT")
+	for _, s := range sils {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, formatMatchers(s.Matchers),
+			time.Unix(s.Start, 0).Format(time.RFC3339), time.Unix(s.End, 0).Format(time.RFC3339), s.Author, s.Comment)
+	}
+	tw.Flush()
+}
+
+func fleetSilenceExpire(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet silence expire <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().ExpireSilence(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Expired silence %s.\n", args[0])
+		return nil
+	})
+}
+
+var weekdayNames = map[string]int{"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
+var weekdayShort = [7]string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+
+func parseWeekdays(s string) ([]int, error) {
+	var out []int
+	for _, part := range strings.Split(s, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			continue
+		}
+		wd, ok := weekdayNames[part]
+		if !ok {
+			return nil, fmt.Errorf("invalid --days value %q (want mon,tue,wed,thu,fri,sat,sun)", part)
+		}
+		out = append(out, wd)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("--days is required, e.g. --days mon,tue")
+	}
+	return out, nil
+}
+
+func formatWeekdays(wds []int) string {
+	var out []string
+	for _, wd := range wds {
+		if wd >= 0 && wd < 7 {
+			out = append(out, weekdayShort[wd])
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+func fleetMaintenanceCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet maintenance add|list|delete")
+		return 2
+	}
+	switch args[0] {
+	case "add":
+		return fleetMaintenanceAdd(args[1:])
+	case "list":
+		return fleetMaintenanceList(args[1:])
+	case "delete":
+		return fleetMaintenanceDelete(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown maintenance command %q\n", args[0])
+	return 2
+}
+
+func fleetMaintenanceAdd(args []string) int {
+	fs := newFlags("fleet maintenance add")
+	name := fs.String("name", "", "name")
+	match := fs.String("match", "", "comma-separated matchers")
+	days := fs.String("days", "", "comma-separated weekdays: mon,tue,wed,thu,fri,sat,sun")
+	from := fs.String("from", "", "start time HH:MM (in --tz)")
+	to := fs.String("to", "", "end time HH:MM (in --tz; before --from means it crosses midnight)")
+	tz := fs.String("tz", "UTC", "IANA time zone")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	usage := "trinetra fleet maintenance add --name N --match ... --days mon,tue --from HH:MM --to HH:MM --tz TZ"
+	if rejectPositionals("fleet maintenance add", usage, pos) {
+		return 2
+	}
+	if strings.TrimSpace(*name) == "" {
+		fmt.Fprintln(stderr, "fleet maintenance add: --name is required")
+		return 2
+	}
+	m, err := parseMatchSpec(*match)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet maintenance add:", err)
+		return 2
+	}
+	wds, err := parseWeekdays(*days)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet maintenance add:", err)
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		mw, err := c.Fleet().SaveMaintenance(core.Maintenance{
+			Name: *name, Matchers: []core.Matcher{m}, Weekdays: wds, From: *from, To: *to, TZ: *tz, Author: "cli",
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Created maintenance window %s (%s).\n", mw.ID, mw.Name)
+		return nil
+	})
+}
+
+func fleetMaintenanceList(args []string) int {
+	if rejectPositionals("fleet maintenance list", "trinetra fleet maintenance list", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		ms, err := c.Fleet().Maintenances()
+		if err != nil {
+			return err
+		}
+		printMaintenances(stdout, ms)
+		return nil
+	})
+}
+
+func printMaintenances(w io.Writer, ms []core.Maintenance) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tMATCH\tDAYS\tFROM\tTO\tTZ\tAUTHOR")
+	for _, m := range ms {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.ID, m.Name, formatMatchers(m.Matchers),
+			formatWeekdays(m.Weekdays), m.From, m.To, m.TZ, m.Author)
+	}
+	tw.Flush()
+}
+
+func fleetMaintenanceDelete(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet maintenance delete <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().DeleteMaintenance(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Deleted maintenance window %s.\n", args[0])
 		return nil
 	})
 }

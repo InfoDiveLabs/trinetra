@@ -443,15 +443,17 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 	f := fp.Fleet()
 
 	var p struct {
-		ID        string              `json:"id"`
-		Name      string              `json:"name"`
-		Tags      []string            `json:"tags"`
-		Filter    core.NodeFilter     `json:"filter"`
-		Spec      core.TokenSpec      `json:"spec"`
-		IncFilter core.IncidentFilter `json:"inc_filter"`
-		Actor     string              `json:"actor"`
-		Key       string              `json:"key"`
-		Limit     int                 `json:"limit"`
+		ID          string              `json:"id"`
+		Name        string              `json:"name"`
+		Tags        []string            `json:"tags"`
+		Filter      core.NodeFilter     `json:"filter"`
+		Spec        core.TokenSpec      `json:"spec"`
+		IncFilter   core.IncidentFilter `json:"inc_filter"`
+		Actor       string              `json:"actor"`
+		Key         string              `json:"key"`
+		Limit       int                 `json:"limit"`
+		Silence     core.Silence        `json:"silence"`
+		Maintenance core.Maintenance    `json:"maintenance"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -551,6 +553,46 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 			return nil, err
 		}
 		return json.Marshal(v)
+
+	case "Fleet.Silences":
+		v, err := f.Silences()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.CreateSilence":
+		v, err := f.CreateSilence(p.Silence)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.ExpireSilence":
+		if err := f.ExpireSilence(p.ID, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.Maintenances":
+		v, err := f.Maintenances()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.SaveMaintenance":
+		v, err := f.SaveMaintenance(p.Maintenance)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.DeleteMaintenance":
+		if err := f.DeleteMaintenance(p.ID, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
 	}
 	return nil, fmt.Errorf("control: unknown method %q", method)
 }

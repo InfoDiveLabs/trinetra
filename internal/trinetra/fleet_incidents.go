@@ -57,7 +57,25 @@ type incidentApply struct {
 	alert            Alert
 	firedAt          int64
 	deliveredLocally bool
-	now              int64
+	// suppressed is set when a silence or active maintenance window covers
+	// this alert record: it is recorded as a "suppressed" timeline event
+	// (leg-labelled "fire: "/"recover: " for a master-own incident, so
+	// legDeliveredStatus's resurrection check treats it as handled) and the
+	// incident's State becomes "suppressed" instead of "firing" (fire only;
+	// a suppressed recover still resolves the incident normally).
+	suppressed *suppressionInfo
+	now        int64
+}
+
+// suppressedDetail formats u.suppressed's reason for the incident timeline:
+// leg-labelled ("fire: "/"recover: ") for a master-own alert (so a restart's
+// resurrection check can tell which leg it covers), plain for a
+// child-sourced one (per the task-4 ruling's literal example).
+func suppressedDetail(u incidentApply) string {
+	if u.src.NodeID == "" {
+		return legLabel(u.alert) + ": " + u.suppressed.Reason
+	}
+	return u.suppressed.Reason
 }
 
 // incidentStore is the master's durable incident history: an in-memory
@@ -124,7 +142,7 @@ func (s *incidentStore) load() error {
 		return err
 	}
 	for id, inc := range prev {
-		if inc.State == "firing" || inc.State == "acked" {
+		if isOpenState(inc.State) {
 			s.byID[id] = inc
 		}
 	}
@@ -136,11 +154,19 @@ func (s *incidentStore) load() error {
 		s.byID[id] = inc
 	}
 	for id, inc := range s.byID {
-		if inc.State == "firing" || inc.State == "acked" {
+		if isOpenState(inc.State) {
 			s.open[inc.GroupKey] = id
 		}
 	}
 	return nil
+}
+
+// isOpenState reports whether an incident in this state is still "open" --
+// tracked in s.open so a later fire/recover for the same (node, key) updates
+// it rather than opening a duplicate. A suppressed incident is open exactly
+// like a firing one: it is still an active episode, just not delivered.
+func isOpenState(state string) bool {
+	return state == "firing" || state == "acked" || state == "suppressed"
 }
 
 // seenKeys returns the (node, key, firedAt) dedup key for every alert ever
@@ -242,6 +268,9 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 		if u.deliveredLocally {
 			inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child"})
 		}
+		if u.suppressed != nil {
+			inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "suppressed", Detail: suppressedDetail(u), Actor: "system"})
+		}
 		// A "delivered" event for the master's OWN successful dispatch is
 		// appended later, by AppendEvent, once delivery has actually
 		// completed (see fleetAlertEngine.deliverAndReceipt) -- never here,
@@ -261,6 +290,9 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 		inc = core.Incident{ID: id, GroupKey: gk, Title: u.alert.Title, Severity: u.alert.Severity.String(), Nodes: nodesFor(u.src), Opened: u.now}
 	}
 	inc.State = "firing"
+	if u.suppressed != nil {
+		inc.State = "suppressed"
+	}
 	inc.Updated = u.now
 	inc.Alerts = append(inc.Alerts, core.IncidentAlert{
 		Node: u.src.NodeID, Key: u.alert.Key, Title: u.alert.Title, Severity: u.alert.Severity.String(),
@@ -269,6 +301,9 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 	inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "fired", Detail: fireDetail(u), Actor: "system"})
 	if u.deliveredLocally {
 		inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child"})
+	}
+	if u.suppressed != nil {
+		inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: u.now, Kind: "suppressed", Detail: suppressedDetail(u), Actor: "system"})
 	}
 	// A "delivered" event for the master's OWN successful dispatch is
 	// appended later, by AppendEvent, once delivery has actually completed
@@ -315,6 +350,14 @@ func (s *incidentStore) AppendEvent(id string, ev core.IncidentEvent) (core.Inci
 	inc, ok := s.byID[id]
 	if !ok {
 		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+	}
+	if ev.Kind == "delivered" && inc.State == "suppressed" {
+		// A "delivered" event only ever reaches a suppressed incident via
+		// fleetAlertEngine.deliverUnsilenced (task 4: the silence/
+		// maintenance window that suppressed it no longer applies, and it
+		// was actually delivered just now) -- it is firing again, not
+		// suppressed, from this point on.
+		inc.State = "firing"
 	}
 	inc.Timeline = append(inc.Timeline, ev)
 	inc.Updated = ev.TS

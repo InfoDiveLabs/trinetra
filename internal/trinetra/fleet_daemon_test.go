@@ -31,7 +31,7 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 		alertStatePath: filepath.Join(dir, "alerts.json"),
 		alert:          record,
 		deliverSync:    func(a Alert) bool { record(a); return true },
-		alertFallback:  record,
+		alertFallback:  func(a Alert, _ *pushedSilences) { record(a) },
 		logf:           t.Logf,
 	}, &alerts
 }

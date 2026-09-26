@@ -117,6 +117,18 @@ type fleetCLIFake struct {
 	explainErr      error
 	auditLimit      int
 	auditResult     []core.AuditEntry
+
+	silences         []core.Silence
+	createdSilence   core.Silence
+	createSilenceErr error
+	expiredID        string
+	expiredActor     string
+
+	maintenances      []core.Maintenance
+	savedMaintenance  core.Maintenance
+	saveMaintErr      error
+	deletedMaintID    string
+	deletedMaintActor string
 }
 
 func (f *fleetCLIFake) Fleet() core.FleetAPI          { return fleetCLIFakeFleetAPI{f} }
@@ -190,6 +202,42 @@ func (a fleetCLIFakeFleetAPI) Explain(key string) ([]core.IncidentEvent, error) 
 func (a fleetCLIFakeFleetAPI) Audit(limit int) ([]core.AuditEntry, error) {
 	a.f.auditLimit = limit
 	return a.f.auditResult, nil
+}
+
+func (a fleetCLIFakeFleetAPI) Silences() ([]core.Silence, error) { return a.f.silences, nil }
+
+func (a fleetCLIFakeFleetAPI) CreateSilence(s core.Silence) (core.Silence, error) {
+	a.f.createdSilence = s
+	if a.f.createSilenceErr != nil {
+		return core.Silence{}, a.f.createSilenceErr
+	}
+	s.ID = "sil123"
+	return s, nil
+}
+
+func (a fleetCLIFakeFleetAPI) ExpireSilence(id, actor string) error {
+	a.f.expiredID, a.f.expiredActor = id, actor
+	return nil
+}
+
+func (a fleetCLIFakeFleetAPI) Maintenances() ([]core.Maintenance, error) {
+	return a.f.maintenances, nil
+}
+
+func (a fleetCLIFakeFleetAPI) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) {
+	a.f.savedMaintenance = m
+	if a.f.saveMaintErr != nil {
+		return core.Maintenance{}, a.f.saveMaintErr
+	}
+	if m.ID == "" {
+		m.ID = "maint123"
+	}
+	return m, nil
+}
+
+func (a fleetCLIFakeFleetAPI) DeleteMaintenance(id, actor string) error {
+	a.f.deletedMaintID, a.f.deletedMaintActor = id, actor
+	return nil
 }
 
 // startFleetDaemon stands up a real control.Serve loop at
@@ -794,5 +842,146 @@ func TestFleetExplainSurfacesDaemonError(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "no incident or alert key") {
 		t.Fatalf("stderr = %s", errb)
+	}
+}
+
+// --- silence / maintenance CLI ---------------------------------------------
+
+func TestFleetSilenceAddParsesMatchAndFor(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "silence", "add", "--match", "tag=web,rule=cpu*,severity=critical", "--for", "2h", "--comment", "known issue"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	s := fake.createdSilence
+	if len(s.Matchers) != 1 || s.Matchers[0].Tag != "web" || s.Matchers[0].Rule != "cpu*" || s.Matchers[0].Severity != "critical" {
+		t.Fatalf("matchers = %+v", s.Matchers)
+	}
+	if s.Author != "cli" || s.Comment != "known issue" {
+		t.Fatalf("author/comment = %q/%q", s.Author, s.Comment)
+	}
+	if s.End-s.Start < 2*3600-5 || s.End-s.Start > 2*3600+5 {
+		t.Fatalf("duration = %ds, want ~2h", s.End-s.Start)
+	}
+	if !strings.Contains(out.String(), "sil123") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestFleetSilenceAddWithUntil(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	until := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
+	if rc := Main([]string{"fleet", "silence", "add", "--match", "node=db1", "--until", until}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	wantEnd, _ := time.Parse(time.RFC3339, until)
+	if fake.createdSilence.End != wantEnd.Unix() {
+		t.Fatalf("end = %d, want %d", fake.createdSilence.End, wantEnd.Unix())
+	}
+}
+
+func TestFleetSilenceAddRequiresMatch(t *testing.T) {
+	fleetCLIEnv(t)
+	if rc := Main([]string{"fleet", "silence", "add", "--for", "1h"}); rc != 2 {
+		t.Fatalf("exit %d, want 2 (no daemon needed: parsed before dialing)", rc)
+	}
+}
+
+func TestFleetSilenceAddRequiresForOrUntil(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "silence", "add", "--match", "tag=web"}); rc != 2 {
+		t.Fatalf("exit %d, want 2", rc)
+	}
+	if !strings.Contains(errb.String(), "--for or --until") {
+		t.Fatalf("stderr = %s", errb)
+	}
+}
+
+func TestFleetSilenceList(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{silences: []core.Silence{
+		{ID: "sabc", Matchers: []core.Matcher{{Tag: "web"}}, Start: 1000, End: 2000, Author: "cli", Comment: "c1"},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "silence", "list"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	if !strings.Contains(got, "sabc") || !strings.Contains(got, "tag=web") || !strings.Contains(got, "c1") {
+		t.Fatalf("out = %s", got)
+	}
+}
+
+func TestFleetSilenceExpire(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "silence", "expire", "sabc"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.expiredID != "sabc" || fake.expiredActor != "cli" {
+		t.Fatalf("expiredID = %q actor = %q", fake.expiredID, fake.expiredActor)
+	}
+	if !strings.Contains(out.String(), "Expired silence sabc") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestFleetMaintenanceAdd(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	rc := Main([]string{"fleet", "maintenance", "add", "--name", "patch window", "--match", "tag=web",
+		"--days", "mon,tue", "--from", "22:00", "--to", "02:00", "--tz", "Asia/Kolkata"})
+	if rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	m := fake.savedMaintenance
+	if m.Name != "patch window" || m.From != "22:00" || m.To != "02:00" || m.TZ != "Asia/Kolkata" {
+		t.Fatalf("maintenance = %+v", m)
+	}
+	if len(m.Weekdays) != 2 || m.Weekdays[0] != 1 || m.Weekdays[1] != 2 {
+		t.Fatalf("weekdays = %v, want [1 2] (mon,tue)", m.Weekdays)
+	}
+	if m.Author != "cli" {
+		t.Fatalf("author = %q", m.Author)
+	}
+	if !strings.Contains(out.String(), "maint123") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestFleetMaintenanceList(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{maintenances: []core.Maintenance{
+		{ID: "mabc", Name: "patch", Weekdays: []int{1, 2}, From: "22:00", To: "02:00", TZ: "UTC", Author: "cli"},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "maintenance", "list"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	if !strings.Contains(got, "mabc") || !strings.Contains(got, "mon,tue") {
+		t.Fatalf("out = %s", got)
+	}
+}
+
+func TestFleetMaintenanceDelete(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "maintenance", "delete", "mabc"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.deletedMaintID != "mabc" || fake.deletedMaintActor != "cli" {
+		t.Fatalf("deletedMaintID = %q actor = %q", fake.deletedMaintID, fake.deletedMaintActor)
+	}
+	if !strings.Contains(out.String(), "Deleted maintenance window mabc") {
+		t.Fatalf("out = %s", out)
 	}
 }

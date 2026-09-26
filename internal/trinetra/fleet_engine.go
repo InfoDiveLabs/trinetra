@@ -86,6 +86,15 @@ type fleetAlertEngine struct {
 	// before its own fire, and globally bounded to dispatchConcurrency
 	// concurrent dispatches (B3 review round 2).
 	dispatch *keyedDispatcher
+
+	// silences and nodeInfo are wired once, after construction, via
+	// SetSilences (task 4): a nil silences (the default) makes every
+	// suppression check and TickSilences call a no-op, so every existing
+	// call site/test that never calls SetSilences keeps behaving exactly as
+	// before silences existed.
+	silences        *silenceStore
+	nodeInfo        func(nodeID string) (name string, tags []string)
+	lastSilencePush int64 // unix time of the last push-to-all pass; 0 means never
 }
 
 // newFleetAlertEngine builds a fleetAlertEngine. now defaults to time.Now if
@@ -174,12 +183,20 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 		return
 	}
 
+	// A silence/maintenance window check only matters when this alert would
+	// otherwise actually be delivered by the master: a record the child
+	// already delivered locally has nothing left to suppress.
+	var supp *suppressionInfo
+	if !deliveredLocally && e.silences != nil {
+		supp = e.silences.Suppressed(e.now().Unix(), src.NodeID, src.Tags, a.Key, a.Severity.String())
+	}
+
 	// Step 1: durably record the decision before attempting delivery.
 	var incidentID string
 	if e.incidents != nil {
 		inc, err := e.incidents.Apply(incidentApply{
 			src: src, alert: a, firedAt: firedAt,
-			deliveredLocally: deliveredLocally, now: e.now().Unix(),
+			deliveredLocally: deliveredLocally, suppressed: supp, now: e.now().Unix(),
 		})
 		if err == nil {
 			incidentID = inc.ID
@@ -188,6 +205,16 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 
 	if deliveredLocally {
 		return // the child already delivered this; nothing more to do.
+	}
+
+	if supp != nil {
+		// Suppressed: recorded above, never dispatched. A child-sourced
+		// alert still gets its receipt, so it does not fall back and
+		// deliver the silenced alert locally instead.
+		if src.NodeID != "" && e.push != nil {
+			e.pushReceipt(src.NodeID, a.Key, firedAt)
+		}
+		return
 	}
 
 	e.dispatch.Enqueue(incidentGroupKey(src.NodeID, a.Key), func() {
@@ -256,9 +283,18 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 // predates this labeling (B3 review round 2 and earlier) and, per the
 // ruling, counts as fire-delivered -- the only leg that could possibly have
 // existed before per-leg tracking was added.
+//
+// A leg-labelled "suppressed" event (task 4: a silence or maintenance window
+// covered this leg) counts as delivered too -- the master decided, on
+// purpose, never to deliver it, so resurrectMasterAlerts must not try to
+// deliver it now either. An UNLABELLED "suppressed" event (e.g.
+// resurrectMasterAlerts's own "not delivered: master restarted", recorded
+// once a resurrection attempt itself gives up) explicitly means the
+// opposite and must never be treated as delivered, so only the leg-labelled
+// form is recognized here.
 func legDeliveredStatus(inc core.Incident) (fireDelivered, recoverDelivered bool) {
 	for _, ev := range inc.Timeline {
-		if ev.Kind != "delivered" {
+		if ev.Kind != "delivered" && ev.Kind != "suppressed" {
 			continue
 		}
 		switch {
@@ -266,8 +302,8 @@ func legDeliveredStatus(inc core.Incident) (fireDelivered, recoverDelivered bool
 			fireDelivered = true
 		case strings.HasPrefix(ev.Detail, "recover: "):
 			recoverDelivered = true
-		default:
-			fireDelivered = true
+		case ev.Kind == "delivered":
+			fireDelivered = true // pre-leg-labelling "delivered" event
 		}
 	}
 	return fireDelivered, recoverDelivered
@@ -480,6 +516,121 @@ func (e *fleetAlertEngine) HandleChildAckSync(nodeID string, as json.RawMessage)
 		}
 		_, _ = e.incidents.Ack(inc.ID, "node:"+nodeID, now)
 	}
+}
+
+// SetSilences wires the engine to the master's silence/maintenance store and
+// a node info lookup (name, tags), used by Submit's suppression check,
+// TickSilences's unsilence-delivery pass and the periodic/on-connect
+// "silences" frame push. Called once from startMaster, after both the
+// engine and the store exist -- a constructor parameter would force every
+// existing (and future) test call site to thread through a store even when
+// it never exercises silences at all.
+func (e *fleetAlertEngine) SetSilences(store *silenceStore, nodeInfo func(id string) (string, []string)) {
+	e.silences = store
+	e.nodeInfo = nodeInfo
+}
+
+// TickSilences prunes long-expired silences, delivers any incident that was
+// suppressed but should no longer be (its silence lapsed, or the
+// maintenance window ended, while the alert kept firing), and refreshes
+// every id's pushed silence set at most once every silencePushInterval (so a
+// maintenance window's next-24h expansion stays current even with no
+// silence ever changing). ids is the master's current non-revoked node list
+// (masterLoop.tick already computes this for TickLeases); a not-actually-
+// connected id is simply skipped, exactly like TickLeases.
+func (e *fleetAlertEngine) TickSilences(now time.Time, ids []string) {
+	if e.silences == nil {
+		return
+	}
+	e.silences.Prune(now.Unix())
+	e.deliverUnsilenced(now)
+
+	e.leaseMu.Lock()
+	due := e.lastSilencePush == 0 || now.Unix()-e.lastSilencePush >= int64(silencePushInterval/time.Second)
+	if due {
+		e.lastSilencePush = now.Unix()
+	}
+	e.leaseMu.Unlock()
+	if !due {
+		return
+	}
+	e.PushSilencesToAll(now, ids)
+}
+
+// deliverUnsilenced finds every incident this engine suppressed that is
+// still firing (its most recent alert has no ResolvedAt) and whose
+// suppression no longer applies, and delivers it now through the normal
+// keyed dispatch path, noting "delivered after silence ended" instead of the
+// usual delivery note.
+func (e *fleetAlertEngine) deliverUnsilenced(now time.Time) {
+	if e.incidents == nil || e.silences == nil {
+		return
+	}
+	nowUnix := now.Unix()
+	for _, inc := range e.incidents.List(core.IncidentFilter{State: "suppressed"}, nil) {
+		if len(inc.Alerts) == 0 {
+			continue
+		}
+		al := inc.Alerts[len(inc.Alerts)-1]
+		if al.ResolvedAt != 0 {
+			continue // already recovered; nothing left to deliver
+		}
+		name, tags := al.Node, []string(nil)
+		if al.Node != "" && e.nodeInfo != nil {
+			name, tags = e.nodeInfo(al.Node)
+		}
+		if e.silences.Suppressed(nowUnix, al.Node, tags, al.Key, al.Severity) != nil {
+			continue // still silenced
+		}
+		sev, err := ParseSeverity(al.Severity)
+		if err != nil {
+			sev = SevWarning
+		}
+		src := alertSource{}
+		if al.Node != "" {
+			src = alertSource{NodeID: al.Node, NodeName: name, Tags: tags}
+		}
+		a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: "fire", Time: al.FiredAt}
+		id, firedAt, lane := inc.ID, al.FiredAt, inc.GroupKey
+		e.dispatch.Enqueue(lane, func() {
+			e.deliverAndReceiptDetail(src, a, firedAt, id, "delivered after silence ended")
+		})
+	}
+}
+
+// PushSilencesToAll immediately refreshes every id's pushed silence set
+// (skipping any not currently connected), bypassing TickSilences's periodic
+// cadence gate -- called on any silence/maintenance mutation ("on change").
+func (e *fleetAlertEngine) PushSilencesToAll(now time.Time, ids []string) {
+	for _, id := range ids {
+		if e.connected != nil && !e.connected(id) {
+			continue
+		}
+		e.pushSilencesNow(id, now)
+	}
+}
+
+// PushSilencesNow pushes id's current filtered silence set unconditionally
+// -- used on Hub.OnConnect, mirroring PushLeaseNow, so a freshly
+// (re)connected node's fallback path honours the master's current silences
+// immediately rather than up to silencePushInterval late.
+func (e *fleetAlertEngine) PushSilencesNow(id string, now time.Time) {
+	e.pushSilencesNow(id, now)
+}
+
+func (e *fleetAlertEngine) pushSilencesNow(id string, now time.Time) {
+	if e.push == nil || e.silences == nil {
+		return
+	}
+	var tags []string
+	if e.nodeInfo != nil {
+		_, tags = e.nodeInfo(id)
+	}
+	data, err := json.Marshal(silencesFrameData{Silences: e.silences.silencesForNode(now.Unix(), id, tags)})
+	if err != nil {
+		return
+	}
+	e.push(id, fleet.Frame{Type: "silences", Data: data})
 }
 
 // PushAck pushes an "ack" (unack=false) or "unack" (unack=true) frame for

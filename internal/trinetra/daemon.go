@@ -1011,8 +1011,8 @@ func cmdDaemon(args []string) int {
 		deliverSync: func(a Alert) bool {
 			return deliverSyncAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
 		},
-		alertFallback: func(a Alert) {
-			deliverFallback(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix())
+		alertFallback: func(a Alert, silences *pushedSilences) {
+			deliverFallback(silences, alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix())
 		},
 		logf: func(format string, args ...any) { fmt.Fprintf(stderr, format+"\n", args...) },
 	})

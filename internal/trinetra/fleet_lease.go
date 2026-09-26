@@ -332,12 +332,12 @@ func pruneHandoffReceipts(path string, beforeUnix int64) error {
 }
 
 // onStreamFrame is startChild's fleet.ShipperConfig.OnFrame: it decodes a
-// "lease" or "receipt" frame and applies it to lease/h, ignoring anything
-// else (silences, managed_config, rpc, ack/unack are other tasks' frame
-// types; ping never reaches OnFrame at all -- the stream client filters it
-// out itself). A malformed payload is dropped rather than panicking: OnFrame
-// runs synchronously on the stream's read loop, so it must never block or
-// crash on hostile/garbled input from the wire.
+// "lease", "receipt" or "silences" frame and applies it to lease/h/silences,
+// ignoring anything else (managed_config, rpc, ack/unack are other tasks'
+// frame types; ping never reaches OnFrame at all -- the stream client
+// filters it out itself). A malformed payload is dropped rather than
+// panicking: OnFrame runs synchronously on the stream's read loop, so it
+// must never block or crash on hostile/garbled input from the wire.
 //
 // A "receipt" frame that actually resolved something pending is also
 // durably recorded in the receipts sidecar at receiptsPath (see
@@ -353,7 +353,7 @@ func pruneHandoffReceipts(path string, beforeUnix int64) error {
 // comfortably meets OnFrame's "must not block" contract (see
 // ShipperConfig.OnFrame's doc comment); that fsync cost is the same one
 // every ordinary alert already pays on this same disk via AlertLog.
-func onStreamFrame(lease *leaseHolder, h *handoff, receiptsPath string, now func() time.Time, f fleet.Frame) {
+func onStreamFrame(lease *leaseHolder, h *handoff, receiptsPath string, silences *pushedSilences, now func() time.Time, f fleet.Frame) {
 	switch f.Type {
 	case "lease":
 		var p leaseFrameData
@@ -368,6 +368,11 @@ func onStreamFrame(lease *leaseHolder, h *handoff, receiptsPath string, now func
 					Key: p.Key, FiredAt: p.FiredAt, Kind: kind, TS: now().Unix(),
 				})
 			}
+		}
+	case "silences":
+		var p silencesFrameData
+		if json.Unmarshal(f.Data, &p) == nil {
+			_ = silences.Set(p.Silences)
 		}
 	}
 }
@@ -487,9 +492,22 @@ func reconcilePendingFromLog(alog *AlertLog, receiptsPath string, fallbackAfter 
 // (node_id, alert_key, fired_at) still lines up the two records this one
 // alert produced -- the earlier "routed_to_master" one Route's caller
 // logged, and this one -- as the same alert.
-func deliverFallback(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, nowUnix int64) {
+//
+// silences (task 4) is checked ONLY here -- a fallback delivery -- never for
+// an ordinary local alert that never routed to the master: if a pushed
+// silence or maintenance occurrence still covers this alert, the record is
+// still logged (DeliveredLocally true, so the master never redelivers it
+// either) but the title notes the suppression and neither bus.Publish nor
+// q.Enqueue is called, so nothing actually fires. A nil silences (no push
+// ever received) behaves exactly as before task 4.
+func deliverFallback(silences *pushedSilences, alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, nowUnix int64) {
 	firedAt := a.Time
-	a.Title = fallbackPrefix + a.Title
+	reason, suppressed := silences.Suppressed(nowUnix, a.Key, a.Severity.String())
+	if suppressed {
+		a.Title = "silenced (" + reason + "): " + a.Title
+	} else {
+		a.Title = fallbackPrefix + a.Title
+	}
 	a.Time = nowUnix
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
@@ -502,6 +520,9 @@ func deliverFallback(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, q
 			DeliveredLocally: true,
 			FiredAt:          firedAt,
 		})
+	}
+	if suppressed {
+		return // recorded above (delivered_locally=true), never actually delivered
 	}
 	bus.Publish(core.Event{
 		Kind:     alertEventKind(a),

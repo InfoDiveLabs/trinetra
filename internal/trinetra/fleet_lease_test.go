@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
@@ -247,7 +249,7 @@ func TestDeliverFallbackPrefixesTitleAndRecordsSecondEvent(t *testing.T) {
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1000}
-	deliverFallback(alog, nil, q, a, false, 1200)
+	deliverFallback(nil, alog, nil, q, a, false, 1200)
 
 	events, err := alog.AlertEventsSince(0)
 	if err != nil {
@@ -287,7 +289,7 @@ func TestOnStreamFrameLease(t *testing.T) {
 	if lease.Valid() {
 		t.Fatal("no lease frame processed yet, want invalid")
 	}
-	onStreamFrame(lease, h, noReceiptsPath(t), nowFn, fleet.Frame{Type: "lease", Data: json.RawMessage(`{"until":1090}`)})
+	onStreamFrame(lease, h, noReceiptsPath(t), nil, nowFn, fleet.Frame{Type: "lease", Data: json.RawMessage(`{"until":1090}`)})
 	if !lease.Valid() {
 		t.Fatal("want valid after a lease frame")
 	}
@@ -304,7 +306,7 @@ func TestOnStreamFrameReceipt(t *testing.T) {
 	a := Alert{Key: "cpu", Kind: "fire", Time: 1000}
 	h.Route(a)
 	now = time.Unix(1005, 0)
-	onStreamFrame(lease, h, receiptsPath, nowFn, fleet.Frame{Type: "receipt", Data: json.RawMessage(`{"key":"cpu","fired_at":1000}`)})
+	onStreamFrame(lease, h, receiptsPath, nil, nowFn, fleet.Frame{Type: "receipt", Data: json.RawMessage(`{"key":"cpu","fired_at":1000}`)})
 
 	now = time.Unix(2000, 0) // long past fallback_after; a real receipt must have cancelled it
 	if got := h.Tick(); len(got) != 0 {
@@ -335,7 +337,7 @@ func TestOnStreamFrameReceiptForNothingPendingRecordsNothing(t *testing.T) {
 	lease := newLeaseHolder(nil)
 	h := newHandoff(nil, func() time.Duration { return time.Minute }, lease)
 
-	onStreamFrame(lease, h, receiptsPath, time.Now, fleet.Frame{Type: "receipt", Data: json.RawMessage(`{"key":"cpu","fired_at":1000}`)})
+	onStreamFrame(lease, h, receiptsPath, nil, time.Now, fleet.Frame{Type: "receipt", Data: json.RawMessage(`{"key":"cpu","fired_at":1000}`)})
 
 	receipts, err := readHandoffReceipts(receiptsPath, 0)
 	if err != nil {
@@ -351,9 +353,9 @@ func TestOnStreamFrameReceiptForNothingPendingRecordsNothing(t *testing.T) {
 func TestOnStreamFrameIgnoresGarbageAndUnknownTypes(t *testing.T) {
 	lease := newLeaseHolder(nil)
 	h := newHandoff(nil, func() time.Duration { return time.Minute }, lease)
-	onStreamFrame(lease, h, noReceiptsPath(t), time.Now, fleet.Frame{Type: "lease", Data: json.RawMessage(`not json`)})
-	onStreamFrame(lease, h, noReceiptsPath(t), time.Now, fleet.Frame{Type: "receipt", Data: json.RawMessage(`not json`)})
-	onStreamFrame(lease, h, noReceiptsPath(t), time.Now, fleet.Frame{Type: "silences", Data: json.RawMessage(`{}`)})
+	onStreamFrame(lease, h, noReceiptsPath(t), nil, time.Now, fleet.Frame{Type: "lease", Data: json.RawMessage(`not json`)})
+	onStreamFrame(lease, h, noReceiptsPath(t), nil, time.Now, fleet.Frame{Type: "receipt", Data: json.RawMessage(`not json`)})
+	onStreamFrame(lease, h, noReceiptsPath(t), nil, time.Now, fleet.Frame{Type: "silences", Data: json.RawMessage(`{}`)})
 	if lease.Valid() {
 		t.Fatal("garbage lease data must not grant a lease")
 	}
@@ -370,7 +372,7 @@ func TestDeliverFallbackDoesNotMutateCallersAlert(t *testing.T) {
 
 	a := Alert{Key: "cpu", Title: "CPU high", Kind: "fire", Time: 1000}
 	orig := a
-	deliverFallback(alog, nil, q, a, false, 1200)
+	deliverFallback(nil, alog, nil, q, a, false, 1200)
 	if a != orig {
 		t.Fatalf("caller's Alert mutated: got %+v, want unchanged %+v", a, orig)
 	}
@@ -686,7 +688,7 @@ func TestRestartWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.T) {
 	}
 
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
-	deliverFallback(alog, nil, q, got[0], false, now.Unix())
+	deliverFallback(nil, alog, nil, q, got[0], false, now.Unix())
 
 	wantTitle := fallbackPrefix + "CPU high"
 	events, err := alog.AlertEventsSince(0)
@@ -822,7 +824,7 @@ func TestRestartRecoverWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.
 	}
 
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
-	deliverFallback(alog, nil, q, got[0], false, now.Unix())
+	deliverFallback(nil, alog, nil, q, got[0], false, now.Unix())
 
 	wantTitle := fallbackPrefix + "CPU back to normal"
 	events, err := alog.AlertEventsSince(0)
@@ -880,7 +882,7 @@ func TestReceiptNeverLeaksIntoAlertlogOrOutbox(t *testing.T) {
 	h := newHandoff(nowFn, func() time.Duration { return time.Minute }, lease)
 	h.Route(Alert{Key: "cpu", Title: "CPU high", Kind: "fire", Time: 1000})
 
-	onStreamFrame(lease, h, receiptsPath, nowFn, fleet.Frame{
+	onStreamFrame(lease, h, receiptsPath, nil, nowFn, fleet.Frame{
 		Type: "receipt", Data: json.RawMessage(`{"key":"cpu","fired_at":1000}`),
 	})
 
@@ -966,5 +968,159 @@ func TestHandoffReconcileDoesNotOverwriteAlreadyPendingEntry(t *testing.T) {
 	got := h.Tick()
 	if len(got) != 1 || got[0].Title != "fresh title" {
 		t.Fatalf("Tick = %+v, want Route's own entry preserved, not overwritten by Reconcile", got)
+	}
+}
+
+// --- pushed silences (child side, task 4) -----------------------------------
+
+func TestPushedSilencesSuppressedMatchesRuleAndSeverity(t *testing.T) {
+	p := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
+	if err := p.Set([]pushedSilence{
+		{ID: "s1", Start: 1000, End: 2000, Reason: "silence s1 by cli"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// An entry with no matchers (shouldn't normally happen; defensive)
+	// matches nothing on the child side rather than panicking.
+	if _, ok := p.Suppressed(1500, "cpu", "critical"); ok {
+		t.Fatal("an entry with no matchers must not suppress anything")
+	}
+
+	if err := p.Set([]pushedSilence{
+		{ID: "s2", Start: 1000, End: 2000, Reason: "silence s2 by cli", Matchers: []core.Matcher{{Rule: "cpu*", Severity: "critical"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if reason, ok := p.Suppressed(1500, "cpu_pct", "critical"); !ok || reason != "silence s2 by cli" {
+		t.Fatalf("Suppressed = %q, %v, want silence s2 by cli, true", reason, ok)
+	}
+	if _, ok := p.Suppressed(1500, "mem_pct", "critical"); ok {
+		t.Fatal("rule glob must not match an unrelated rule")
+	}
+	if _, ok := p.Suppressed(1500, "cpu_pct", "warning"); ok {
+		t.Fatal("severity must be exact")
+	}
+	if _, ok := p.Suppressed(2500, "cpu_pct", "critical"); ok {
+		t.Fatal("must not suppress once the window has ended")
+	}
+}
+
+func TestPushedSilencesNilReceiverIsNeverSuppressed(t *testing.T) {
+	var p *pushedSilences
+	if _, ok := p.Suppressed(1500, "cpu", "critical"); ok {
+		t.Fatal("a nil pushedSilences (no push ever received) must never suppress")
+	}
+	if err := p.Set(nil); err != nil {
+		t.Fatalf("Set on a nil receiver must be a no-op, not an error: %v", err)
+	}
+}
+
+func TestPushedSilencesPersistsAndReloads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "silences.json")
+	p := newPushedSilences(path)
+	if err := p.Set([]pushedSilence{{ID: "s1", Start: 1000, End: 2000, Reason: "maintenance patch", Matchers: []core.Matcher{{Rule: "*"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := loadPushedSilences(path)
+	if reason, ok := reloaded.Suppressed(1500, "anything", "warning"); !ok || reason != "maintenance patch" {
+		t.Fatalf("reloaded Suppressed = %q, %v, want maintenance patch, true", reason, ok)
+	}
+}
+
+func TestLoadPushedSilencesMissingFileStartsEmpty(t *testing.T) {
+	p := loadPushedSilences(filepath.Join(t.TempDir(), "nope.json"))
+	if _, ok := p.Suppressed(1000, "cpu", "warning"); ok {
+		t.Fatal("a missing sidecar must start with no silences known")
+	}
+}
+
+// --- deliverFallback honours a pushed silence (task 4) ----------------------
+
+func TestDeliverFallbackHonoursPushedSilenceSuppressesLocalDelivery(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
+
+	silences := newPushedSilences(filepath.Join(dir, "silences.json"))
+	if err := silences.Set([]pushedSilence{
+		{ID: "s1", Start: 0, End: 5000, Reason: "silence s1 by cli", Matchers: []core.Matcher{{Rule: "cpu*"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1000}
+	deliverFallback(silences, alog, nil, q, a, false, 1200)
+
+	events, err := alog.AlertEventsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want 1", events)
+	}
+	e := events[0]
+	if !e.DeliveredLocally {
+		t.Fatal("a suppressed fallback must still be recorded DeliveredLocally=true, so the master never redelivers it")
+	}
+	if !strings.Contains(e.Title, "silenced (silence s1 by cli)") {
+		t.Fatalf("title = %q, want it to note the suppression", e.Title)
+	}
+	if keys := q.snapshotKeysForTest(); len(keys) != 0 {
+		t.Fatalf("queue = %v, want nothing actually delivered (silenced)", keys)
+	}
+}
+
+func TestDeliverFallbackWithoutMatchingSilenceStillDelivers(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
+
+	silences := newPushedSilences(filepath.Join(dir, "silences.json"))
+	if err := silences.Set([]pushedSilence{
+		{ID: "s1", Start: 0, End: 5000, Reason: "silence s1 by cli", Matchers: []core.Matcher{{Rule: "mem*"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1000}
+	deliverFallback(silences, alog, nil, q, a, false, 1200)
+
+	if keys := q.snapshotKeysForTest(); len(keys) != 1 || keys[0] != "cpu" {
+		t.Fatalf("queue = %v, want the alert delivered locally (no matching silence)", keys)
+	}
+}
+
+// --- onStreamFrame applies a "silences" frame (task 4) ----------------------
+
+func TestOnStreamFrameSilencesUpdatesPushedSetAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	silencesPath := filepath.Join(dir, "silences.json")
+	silences := newPushedSilences(silencesPath)
+	lease := newLeaseHolder(nil)
+	h := newHandoff(nil, func() time.Duration { return time.Minute }, lease)
+
+	frameData, err := json.Marshal(silencesFrameData{Silences: []pushedSilence{
+		{ID: "s1", Start: 1000, End: 2000, Reason: "silence s1 by cli", Matchers: []core.Matcher{{Rule: "cpu*"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	onStreamFrame(lease, h, noReceiptsPath(t), silences, time.Now, fleet.Frame{Type: "silences", Data: frameData})
+
+	if reason, ok := silences.Suppressed(1500, "cpu_pct", "warning"); !ok || reason != "silence s1 by cli" {
+		t.Fatalf("in-memory Suppressed = %q, %v, want silence s1 by cli, true", reason, ok)
+	}
+
+	reloaded := loadPushedSilences(silencesPath)
+	if _, ok := reloaded.Suppressed(1500, "cpu_pct", "warning"); !ok {
+		t.Fatal("the silences frame must also be persisted to the sidecar (0600), for restart safety")
+	}
+
+	info, err := os.Stat(silencesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("sidecar perm = %v, want 0600", info.Mode().Perm())
 	}
 }

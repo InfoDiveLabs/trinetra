@@ -54,8 +54,11 @@ type fleetDeps struct {
 	// deliverFallback instead of enqueueAndLog, since that delivery must be
 	// unconditional (see deliverFallback's doc comment). Only startChild
 	// ever calls it; solo and master never construct a handoff to call it
-	// from.
-	alertFallback func(a Alert)
+	// from. silences is startChild's own pushedSilences (task 4): passed
+	// through opaquely here since daemon.go builds this closure once, before
+	// any child-specific state exists, and forwarded to deliverFallback so a
+	// fallback delivery still covered by a pushed silence is suppressed.
+	alertFallback func(a Alert, silences *pushedSilences)
 	logf          func(string, ...any)
 }
 
@@ -347,6 +350,7 @@ func (l *masterLoop) tick(now time.Time) {
 	// joined".
 	if l.engine != nil {
 		l.engine.TickLeases(now, nodeIDs)
+		l.engine.TickSilences(now, nodeIDs)
 	}
 	if now.Sub(l.lastFlush) >= 30*time.Second {
 		l.lastFlush = now
@@ -411,7 +415,7 @@ func (l *masterLoop) checkOrphanedIncidents(now time.Time, ev fleet.Evaluation) 
 		if len(inc.Nodes) != 0 || len(inc.Alerts) == 0 {
 			continue // not a master-own incident, or nothing recorded on it
 		}
-		if inc.State != "firing" && inc.State != "acked" {
+		if !isOpenState(inc.State) {
 			continue // not open
 		}
 		key := inc.Alerts[len(inc.Alerts)-1].Key
@@ -522,11 +526,26 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	if err != nil {
 		return fmt.Errorf("load incidents: %w", err)
 	}
+	silences, err := loadSilenceStore(filepath.Join(dir, "silences.json"))
+	if err != nil {
+		return fmt.Errorf("load silences: %w", err)
+	}
 	audit := newAuditLog(filepath.Join(dir, "audit.jsonl"))
 	engine := newFleetAlertEngine(time.Now, d.deliverSync, hub.Push, hub.Connected, incidents)
-	// A freshly (re)connected node gets a lease immediately, rather than
-	// waiting up to one masterTickInterval for the next TickLeases pass.
-	hub.OnConnect(func(id string) { engine.PushLeaseNow(id, time.Now()) })
+	engine.SetSilences(silences, func(id string) (string, []string) {
+		if n, ok := reg.Get(id); ok {
+			return n.Name, n.Tags
+		}
+		return id, nil
+	})
+	// A freshly (re)connected node gets a lease and its current silence set
+	// immediately, rather than waiting up to one masterTickInterval /
+	// silencePushInterval for the next Tick pass.
+	hub.OnConnect(func(id string) {
+		now := time.Now()
+		engine.PushLeaseNow(id, now)
+		engine.PushSilencesNow(id, now)
+	})
 
 	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(cfg), func(nodeID string, ev AlertEvent) {
 		name, tags := nodeID, []string(nil)
@@ -579,7 +598,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	}
 
 	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker, loop: loop,
-		hub: hub, engine: engine, audit: audit,
+		hub: hub, engine: engine, audit: audit, silences: silences,
 		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 	loopCtx, cancel := context.WithCancel(ctx)
 	loopDone := make(chan struct{})
@@ -649,6 +668,12 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	handoffState := newHandoff(time.Now, func() time.Duration { return d.getCfg().FleetFallbackAfter() }, lease)
 	restoreRoute := setAlertRoute(handoffState.Route)
 
+	// childSilences is this child's copy of the master's last pushed
+	// "silences" frame (fleet_silences.go), restored from its sidecar so a
+	// restart while the master stays unreachable keeps honouring it for
+	// fallback deliveries (see deliverFallback).
+	childSilences := loadPushedSilences(childSilencesPath(d.stateDir))
+
 	// Restart safety: handoff.pending lives only in memory, so a routed
 	// alert whose receipt (or fallback) hadn't landed yet before this
 	// process last stopped would otherwise vanish -- delivered neither by
@@ -674,7 +699,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		LiveEvery: time.Duration(cfg.FastInterval) * time.Second,
 		Logf:      d.logf,
 		OnFrame: func(f fleet.Frame) {
-			onStreamFrame(lease, handoffState, receiptsPath, time.Now, f)
+			onStreamFrame(lease, handoffState, receiptsPath, childSilences, time.Now, f)
 			applyAckFrame(d.self, f)
 		},
 	})
@@ -710,7 +735,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 				return
 			case <-t.C:
 				for _, a := range handoffState.Tick() {
-					d.alertFallback(a)
+					d.alertFallback(a, childSilences)
 				}
 			}
 		}

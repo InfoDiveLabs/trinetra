@@ -571,3 +571,35 @@ func (f fleetClient) Audit(limit int) ([]core.AuditEntry, error) {
 	err := f.c.call("Fleet.Audit", map[string]any{"limit": limit}, &v)
 	return v, err
 }
+
+func (f fleetClient) Silences() ([]core.Silence, error) {
+	var v []core.Silence
+	err := f.c.call("Fleet.Silences", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) CreateSilence(s core.Silence) (core.Silence, error) {
+	var v core.Silence
+	err := f.c.call("Fleet.CreateSilence", map[string]any{"silence": s}, &v)
+	return v, err
+}
+
+func (f fleetClient) ExpireSilence(id, actor string) error {
+	return f.c.call("Fleet.ExpireSilence", map[string]any{"id": id, "actor": actor}, nil)
+}
+
+func (f fleetClient) Maintenances() ([]core.Maintenance, error) {
+	var v []core.Maintenance
+	err := f.c.call("Fleet.Maintenances", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) {
+	var v core.Maintenance
+	err := f.c.call("Fleet.SaveMaintenance", map[string]any{"maintenance": m}, &v)
+	return v, err
+}
+
+func (f fleetClient) DeleteMaintenance(id, actor string) error {
+	return f.c.call("Fleet.DeleteMaintenance", map[string]any{"id": id, "actor": actor}, nil)
+}
