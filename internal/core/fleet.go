@@ -187,8 +187,18 @@ type IncidentFilter struct {
 // Matcher narrows a silence or maintenance window to the alerts it covers:
 // every non-empty field must match (AND); an entirely empty Matcher matches
 // anything, which is why a Silence/Maintenance must reject one (see
-// Matcher.Empty). Node and Rule are shell globs (path.Match); Tag matches if
-// the node carries it exactly; Severity is an exact, case-insensitive match.
+// Matcher.Empty) -- though an explicit wildcard like Rule:"*" is fine and
+// deliberate (it still has a non-empty field; Empty is about a matcher with
+// NO fields set at all). Node and Rule are shell globs (path.Match); Tag
+// matches if the node carries it exactly; Severity is an exact,
+// case-insensitive match.
+//
+// Node matches against the node's DISPLAY NAME (what `fleet nodes` shows,
+// e.g. "db1"), never its internal hex node id: an operator writing
+// `--match node=db*` has no reason to know or type the random id, and only
+// the name is typable/globbable. Both the master (Submit's suppression
+// check, the per-node "silences" push) and the child (its own defense-in-depth
+// re-check, see pushedSilences.Suppressed) match Node this way.
 type Matcher struct {
 	Tag      string `json:"tag,omitempty"`
 	Node     string `json:"node,omitempty"`
@@ -204,12 +214,13 @@ func (m Matcher) Empty() bool {
 }
 
 // Matches reports whether m applies to an alert with the given rule
-// (typically the alert's Key) and severity, on a node with nodeID/nodeTags
-// (both "" / nil for a master-own alert, which no Node/Tag matcher ever
-// pins down but a Rule/Severity-only matcher still can).
-func (m Matcher) Matches(nodeID string, nodeTags []string, rule, severity string) bool {
+// (typically the alert's Key) and severity, on a node with the given
+// display name/tags (both "" / nil for a master-own alert, which no
+// Node/Tag matcher ever pins down but a Rule/Severity-only matcher still
+// can).
+func (m Matcher) Matches(nodeName string, nodeTags []string, rule, severity string) bool {
 	if m.Node != "" {
-		if ok, _ := path.Match(m.Node, nodeID); !ok {
+		if ok, _ := path.Match(m.Node, nodeName); !ok {
 			return false
 		}
 	}
@@ -227,13 +238,15 @@ func (m Matcher) Matches(nodeID string, nodeTags []string, rule, severity string
 	return true
 }
 
-// CouldApplyToNode reports whether m might match some alert on this node,
-// checking only the Node/Tag fields (Rule/Severity describe the alert, not
-// the node, so a Rule- or Severity-only matcher always could apply). Used to
-// decide which nodes a silence/maintenance window is worth pushing to.
-func (m Matcher) CouldApplyToNode(nodeID string, nodeTags []string) bool {
+// CouldApplyToNode reports whether m might match some alert on this node
+// (identified by its display name/tags), checking only the Node/Tag fields
+// (Rule/Severity describe the alert, not the node, so a Rule- or
+// Severity-only matcher always could apply). Used to decide which nodes a
+// silence/maintenance window -- and which of its OR'd Matchers -- are worth
+// pushing to a given node.
+func (m Matcher) CouldApplyToNode(nodeName string, nodeTags []string) bool {
 	if m.Node != "" {
-		if ok, _ := path.Match(m.Node, nodeID); !ok {
+		if ok, _ := path.Match(m.Node, nodeName); !ok {
 			return false
 		}
 	}
@@ -244,7 +257,10 @@ func (m Matcher) CouldApplyToNode(nodeID string, nodeTags []string) bool {
 }
 
 // Silence mutes matching alerts between Start and End (unix seconds):
-// recorded, never delivered, while active.
+// recorded, never delivered, while active. Matchers is ORed (the silence
+// applies if ANY entry matches); the fields WITHIN one Matcher are ANDed
+// (see Matcher.Matches) -- a Silence with several Matchers is really
+// several independent silences sharing one ID/window/author.
 type Silence struct {
 	ID       string    `json:"id"`
 	Matchers []Matcher `json:"matchers"`
@@ -258,7 +274,9 @@ type Silence struct {
 // (reason "maintenance <name>") whenever it is active: Weekdays are
 // time.Weekday ints (Sunday=0), From/To are "HH:MM" in TZ (an IANA name
 // loaded with time.LoadLocation), and From > To means the window crosses
-// midnight.
+// midnight (owned by the weekday of its START, i.e. a Sunday 22:00 -> Monday
+// 02:00 window fires on Sunday, not Monday). Matchers is ORed, its fields
+// ANDed, exactly like Silence.Matchers.
 type Maintenance struct {
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`

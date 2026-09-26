@@ -89,13 +89,20 @@ type incidentStore struct {
 	// later fire/recover for the same (node, key) updates it instead of
 	// opening a duplicate.
 	open map[string]string
+	// suppressed indexes every incident currently in state "suppressed" by
+	// id (review round 1, item 3's second half): fleetAlertEngine.
+	// deliverUnsilenced runs every 5s (TickSilences) and must not do a full
+	// List() scan that often just to find the handful of incidents a
+	// silence might have ended for. Kept in lockstep with byID's State by
+	// Apply, AppendEvent (the suppressed->firing transition), Ack and load.
+	suppressed map[string]struct{}
 }
 
 // loadIncidentStore opens (or creates) the incident store at path, replaying
 // every line already on disk (a missing file is not an error: a fresh
 // master has none yet).
 func loadIncidentStore(path string) (*incidentStore, error) {
-	s := &incidentStore{path: path, byID: map[string]core.Incident{}, open: map[string]string{}}
+	s := &incidentStore{path: path, byID: map[string]core.Incident{}, open: map[string]string{}, suppressed: map[string]struct{}{}}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -157,8 +164,26 @@ func (s *incidentStore) load() error {
 		if isOpenState(inc.State) {
 			s.open[inc.GroupKey] = id
 		}
+		if inc.State == "suppressed" {
+			s.suppressed[id] = struct{}{}
+		}
 	}
 	return nil
+}
+
+// SuppressedOpen returns every currently suppressed-and-open incident, from
+// the maintained index rather than a full scan of byID -- see the
+// suppressed field's doc comment.
+func (s *incidentStore) SuppressedOpen() []core.Incident {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]core.Incident, 0, len(s.suppressed))
+	for id := range s.suppressed {
+		if inc, ok := s.byID[id]; ok {
+			out = append(out, cloneIncident(inc))
+		}
+	}
+	return out
 }
 
 // isOpenState reports whether an incident in this state is still "open" --
@@ -276,6 +301,7 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 		// completed (see fleetAlertEngine.deliverAndReceipt) -- never here,
 		// before delivery is even attempted.
 		delete(s.open, gk)
+		delete(s.suppressed, inc.ID) // resolved: no longer suppressed-and-open
 		s.byID[inc.ID] = inc
 		return inc, s.appendLine(inc)
 	}
@@ -310,6 +336,11 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 	// (see fleetAlertEngine.deliverAndReceipt) -- never here, before
 	// delivery is even attempted.
 	s.open[gk] = inc.ID
+	if inc.State == "suppressed" {
+		s.suppressed[inc.ID] = struct{}{}
+	} else {
+		delete(s.suppressed, inc.ID)
+	}
 	s.byID[inc.ID] = inc
 	return inc, s.appendLine(inc)
 }
@@ -353,11 +384,12 @@ func (s *incidentStore) AppendEvent(id string, ev core.IncidentEvent) (core.Inci
 	}
 	if ev.Kind == "delivered" && inc.State == "suppressed" {
 		// A "delivered" event only ever reaches a suppressed incident via
-		// fleetAlertEngine.deliverUnsilenced (task 4: the silence/
+		// fleetAlertEngine.tryDeliverUnsilenced (task 4: the silence/
 		// maintenance window that suppressed it no longer applies, and it
 		// was actually delivered just now) -- it is firing again, not
 		// suppressed, from this point on.
 		inc.State = "firing"
+		delete(s.suppressed, id)
 	}
 	inc.Timeline = append(inc.Timeline, ev)
 	inc.Updated = ev.TS
@@ -414,6 +446,7 @@ func (s *incidentStore) Ack(id, actor string, now int64) (core.Incident, error) 
 	inc.AckedBy = actor
 	inc.Updated = now
 	inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: now, Kind: "acked", Actor: actor})
+	delete(s.suppressed, id) // acked is no longer "suppressed" (see the field's doc comment)
 	s.byID[id] = inc
 	return inc, s.appendLine(inc)
 }
@@ -423,7 +456,26 @@ func (s *incidentStore) Get(id string) (core.Incident, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	inc, ok := s.byID[id]
-	return inc, ok
+	return cloneIncident(inc), ok
+}
+
+// cloneIncident returns a copy of inc whose slice fields (Nodes, Alerts,
+// Timeline) do NOT share a backing array with whatever is stored in
+// s.byID: every incidentStore method that hands an Incident to a caller
+// runs this first (review round 1, item 3's race finding). Without it, a
+// caller holding a Get/List/etc. result -- e.g. fleetAlertEngine.
+// tryDeliverUnsilenced, reading inc.Alerts from a background dispatcher
+// goroutine, entirely outside s.mu -- could race a LATER in-place mutation
+// of that same backing array (Apply's recover branch does exactly that:
+// `inc.Alerts[i].ResolvedAt = ...`), which the race detector correctly
+// flags as a genuine data race even though every WRITE is itself properly
+// mutex-guarded: the shallow copy a plain `inc, ok := s.byID[id]` produces
+// still aliases the live array through its slice header.
+func cloneIncident(inc core.Incident) core.Incident {
+	inc.Nodes = append([]string(nil), inc.Nodes...)
+	inc.Alerts = append([]core.IncidentAlert(nil), inc.Alerts...)
+	inc.Timeline = append([]core.IncidentEvent(nil), inc.Timeline...)
+	return inc
 }
 
 // OpenForGroupKey returns the currently open (firing or acked) incident for
@@ -432,7 +484,8 @@ func (s *incidentStore) Get(id string) (core.Incident, bool) {
 func (s *incidentStore) OpenForGroupKey(gk string) (core.Incident, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.lookupOpenLocked(gk)
+	inc, ok := s.lookupOpenLocked(gk)
+	return cloneIncident(inc), ok
 }
 
 // nodeTagsFunc looks up a node's tags for IncidentFilter.Tag matching; nil
@@ -456,7 +509,7 @@ func (s *incidentStore) List(filter core.IncidentFilter, tagsOf nodeTagsFunc) []
 	s.mu.Lock()
 	all := make([]core.Incident, 0, len(s.byID))
 	for _, inc := range s.byID {
-		all = append(all, inc)
+		all = append(all, cloneIncident(inc))
 	}
 	s.mu.Unlock()
 	sort.Slice(all, func(i, j int) bool { return all[i].Updated > all[j].Updated })
@@ -497,5 +550,5 @@ func (s *incidentStore) FindByAlertKey(key string) (core.Incident, bool) {
 			break
 		}
 	}
-	return best, found
+	return cloneIncident(best), found
 }

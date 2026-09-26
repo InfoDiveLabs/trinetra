@@ -185,10 +185,12 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 
 	// A silence/maintenance window check only matters when this alert would
 	// otherwise actually be delivered by the master: a record the child
-	// already delivered locally has nothing left to suppress.
+	// already delivered locally has nothing left to suppress. Matcher.Node
+	// matches against the node's DISPLAY NAME (src.NodeName), not its
+	// internal id (src.NodeID) -- see core.Matcher's doc comment.
 	var supp *suppressionInfo
 	if !deliveredLocally && e.silences != nil {
-		supp = e.silences.Suppressed(e.now().Unix(), src.NodeID, src.Tags, a.Key, a.Severity.String())
+		supp = e.silences.Suppressed(e.now().Unix(), src.NodeName, src.Tags, a.Key, a.Severity.String())
 	}
 
 	// Step 1: durably record the decision before attempting delivery.
@@ -557,45 +559,66 @@ func (e *fleetAlertEngine) TickSilences(now time.Time, ids []string) {
 	e.PushSilencesToAll(now, ids)
 }
 
-// deliverUnsilenced finds every incident this engine suppressed that is
-// still firing (its most recent alert has no ResolvedAt) and whose
-// suppression no longer applies, and delivers it now through the normal
-// keyed dispatch path, noting "delivered after silence ended" instead of the
-// usual delivery note.
+// deliverUnsilenced scans the incidents currently indexed as suppressed-and-
+// open (incidentStore.SuppressedOpen -- a small, maintained index, not a
+// full List() scan every 5s, review round 1, item 3's second half) and, for
+// each one whose most recent alert has no ResolvedAt yet, enqueues a
+// RE-CHECK job on that incident's own keyed lane. The actual "is it still
+// suppressed, still unresolved, still silenced?" decision is made inside
+// that job (tryDeliverUnsilenced), not here -- see its doc comment for why.
 func (e *fleetAlertEngine) deliverUnsilenced(now time.Time) {
 	if e.incidents == nil || e.silences == nil {
 		return
 	}
-	nowUnix := now.Unix()
-	for _, inc := range e.incidents.List(core.IncidentFilter{State: "suppressed"}, nil) {
-		if len(inc.Alerts) == 0 {
-			continue
+	for _, inc := range e.incidents.SuppressedOpen() {
+		if len(inc.Alerts) == 0 || inc.Alerts[len(inc.Alerts)-1].ResolvedAt != 0 {
+			continue // nothing recorded, or already recovered: nothing to deliver
 		}
-		al := inc.Alerts[len(inc.Alerts)-1]
-		if al.ResolvedAt != 0 {
-			continue // already recovered; nothing left to deliver
-		}
-		name, tags := al.Node, []string(nil)
-		if al.Node != "" && e.nodeInfo != nil {
-			name, tags = e.nodeInfo(al.Node)
-		}
-		if e.silences.Suppressed(nowUnix, al.Node, tags, al.Key, al.Severity) != nil {
-			continue // still silenced
-		}
-		sev, err := ParseSeverity(al.Severity)
-		if err != nil {
-			sev = SevWarning
-		}
-		src := alertSource{}
-		if al.Node != "" {
-			src = alertSource{NodeID: al.Node, NodeName: name, Tags: tags}
-		}
-		a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: "fire", Time: al.FiredAt}
-		id, firedAt, lane := inc.ID, al.FiredAt, inc.GroupKey
-		e.dispatch.Enqueue(lane, func() {
-			e.deliverAndReceiptDetail(src, a, firedAt, id, "delivered after silence ended")
-		})
+		id, lane := inc.ID, inc.GroupKey
+		e.dispatch.Enqueue(lane, func() { e.tryDeliverUnsilenced(id) })
 	}
+}
+
+// tryDeliverUnsilenced runs INSIDE id's keyed lane (enqueued by
+// deliverUnsilenced above): by the time a lane job actually executes, an
+// arbitrary amount of time may have passed and another job for the very
+// same incident -- most importantly, its own recover -- may have already
+// run ahead of it in that same lane's FIFO order (review round 1, item 3:
+// deliverUnsilenced's OLD behaviour decided everything at scan time and
+// could deliver a stale "fire" for an incident that had since recovered,
+// landing a fire notification AFTER its own recover). So every check that
+// matters is re-done here, against the incident's CURRENT state and the
+// CURRENT time and silence set, not whatever deliverUnsilenced's scan saw:
+// still suppressed, still no recover, and no silence/maintenance window
+// matches it any more. Any of those failing is a silent no-op -- there is
+// nothing wrong to report; the world just moved on before this job's turn
+// came up.
+func (e *fleetAlertEngine) tryDeliverUnsilenced(id string) {
+	inc, ok := e.incidents.Get(id)
+	if !ok || inc.State != "suppressed" || len(inc.Alerts) == 0 {
+		return
+	}
+	al := inc.Alerts[len(inc.Alerts)-1]
+	if al.ResolvedAt != 0 {
+		return // recovered while this job was queued behind something else
+	}
+	name, tags := al.Node, []string(nil)
+	if al.Node != "" && e.nodeInfo != nil {
+		name, tags = e.nodeInfo(al.Node)
+	}
+	if e.silences.Suppressed(e.now().Unix(), name, tags, al.Key, al.Severity) != nil {
+		return // silenced again (or still) by the time this job actually ran
+	}
+	sev, err := ParseSeverity(al.Severity)
+	if err != nil {
+		sev = SevWarning
+	}
+	src := alertSource{}
+	if al.Node != "" {
+		src = alertSource{NodeID: al.Node, NodeName: name, Tags: tags}
+	}
+	a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: "fire", Time: al.FiredAt}
+	e.deliverAndReceiptDetail(src, a, al.FiredAt, id, "delivered after silence ended")
 }
 
 // PushSilencesToAll immediately refreshes every id's pushed silence set
@@ -622,11 +645,11 @@ func (e *fleetAlertEngine) pushSilencesNow(id string, now time.Time) {
 	if e.push == nil || e.silences == nil {
 		return
 	}
-	var tags []string
+	name, tags := id, []string(nil)
 	if e.nodeInfo != nil {
-		_, tags = e.nodeInfo(id)
+		name, tags = e.nodeInfo(id)
 	}
-	data, err := json.Marshal(silencesFrameData{Silences: e.silences.silencesForNode(now.Unix(), id, tags)})
+	data, err := json.Marshal(silencesFrameData{Silences: e.silences.silencesForNode(now.Unix(), name, tags)})
 	if err != nil {
 		return
 	}

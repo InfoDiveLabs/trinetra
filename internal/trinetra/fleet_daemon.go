@@ -671,8 +671,14 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	// childSilences is this child's copy of the master's last pushed
 	// "silences" frame (fleet_silences.go), restored from its sidecar so a
 	// restart while the master stays unreachable keeps honouring it for
-	// fallback deliveries (see deliverFallback).
-	childSilences := loadPushedSilences(childSilencesPath(d.stateDir))
+	// fallback deliveries (see deliverFallback). selfName is this node's
+	// OWN display name (config.ServerName -- the same value it joined the
+	// fleet with, and what a Node matcher's glob is meant to read), read
+	// fresh on every check so a live `config set server.name` takes effect
+	// without a restart; it may drift from the master's registry if the
+	// operator later renames this node there (`fleet node rename`), a
+	// known, accepted gap (review round 1, item 1(b)).
+	childSilences := loadPushedSilences(childSilencesPath(d.stateDir), func() string { return d.getCfg().ServerName() })
 
 	// Restart safety: handoff.pending lives only in memory, so a routed
 	// alert whose receipt (or fallback) hadn't landed yet before this

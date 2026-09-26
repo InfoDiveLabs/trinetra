@@ -973,8 +973,12 @@ func TestHandoffReconcileDoesNotOverwriteAlreadyPendingEntry(t *testing.T) {
 
 // --- pushed silences (child side, task 4) -----------------------------------
 
+// selfNameFn is a fixed selfName closure for tests that don't care about a
+// live-reloading name.
+func selfNameFn(name string) func() string { return func() string { return name } }
+
 func TestPushedSilencesSuppressedMatchesRuleAndSeverity(t *testing.T) {
-	p := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
+	p := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"), selfNameFn("web1"))
 	if err := p.Set([]pushedSilence{
 		{ID: "s1", Start: 1000, End: 2000, Reason: "silence s1 by cli"},
 	}); err != nil {
@@ -1005,6 +1009,44 @@ func TestPushedSilencesSuppressedMatchesRuleAndSeverity(t *testing.T) {
 	}
 }
 
+// TestPushedSilencesReChecksNodeAgainstOwnName is the review round-1 item 1
+// regression test: a matcher meant for a DIFFERENT node (db1, no
+// Rule/Severity of its own) must never suppress an alert on this node
+// (web1), even if it somehow ended up in this node's pushed set (defense in
+// depth on top of the master's own per-node filtering, silencesForNode).
+func TestPushedSilencesReChecksNodeAgainstOwnName(t *testing.T) {
+	// The Silence a human wrote: "everything on db1" OR'd with "any mem*
+	// alert everywhere". Simulates the master having (incorrectly, or as a
+	// belt-and-suspenders check) pushed the WHOLE unfiltered matcher list to
+	// web1, including the db1-only matcher.
+	matchers := []core.Matcher{{Node: "db1"}, {Rule: "mem*"}}
+
+	web1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"), selfNameFn("web1"))
+	if err := web1.Set([]pushedSilence{{ID: "s1", Start: 0, End: 5000, Reason: "silence s1 by cli", Matchers: matchers}}); err != nil {
+		t.Fatal(err)
+	}
+	db1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"), selfNameFn("db1"))
+	if err := db1.Set([]pushedSilence{{ID: "s1", Start: 0, End: 5000, Reason: "silence s1 by cli", Matchers: matchers}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// web1's own mem alert: the {Node:"db1"} matcher must NOT apply to it
+	// (Node re-check), and {Rule:"mem*"} doesn't match "cpu_pct" either.
+	if _, ok := web1.Suppressed(1000, "cpu_pct", "warning"); ok {
+		t.Fatal("web1 must not suppress its cpu alert: neither matcher applies to it")
+	}
+	// db1's cpu alert: {Node:"db1"} applies (own name matches), regardless
+	// of rule.
+	if reason, ok := db1.Suppressed(1000, "cpu_pct", "warning"); !ok || reason != "silence s1 by cli" {
+		t.Fatalf("db1 Suppressed = %q, %v, want suppressed by the Node:db1 matcher", reason, ok)
+	}
+	// web1's mem alert: {Rule:"mem*"} legitimately applies everywhere,
+	// regardless of node.
+	if reason, ok := web1.Suppressed(1000, "mem_pct", "warning"); !ok || reason != "silence s1 by cli" {
+		t.Fatalf("web1 mem Suppressed = %q, %v, want suppressed by the Rule:mem* matcher (applies everywhere)", reason, ok)
+	}
+}
+
 func TestPushedSilencesNilReceiverIsNeverSuppressed(t *testing.T) {
 	var p *pushedSilences
 	if _, ok := p.Suppressed(1500, "cpu", "critical"); ok {
@@ -1017,18 +1059,18 @@ func TestPushedSilencesNilReceiverIsNeverSuppressed(t *testing.T) {
 
 func TestPushedSilencesPersistsAndReloads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "silences.json")
-	p := newPushedSilences(path)
+	p := newPushedSilences(path, selfNameFn("anything"))
 	if err := p.Set([]pushedSilence{{ID: "s1", Start: 1000, End: 2000, Reason: "maintenance patch", Matchers: []core.Matcher{{Rule: "*"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	reloaded := loadPushedSilences(path)
+	reloaded := loadPushedSilences(path, selfNameFn("anything"))
 	if reason, ok := reloaded.Suppressed(1500, "anything", "warning"); !ok || reason != "maintenance patch" {
 		t.Fatalf("reloaded Suppressed = %q, %v, want maintenance patch, true", reason, ok)
 	}
 }
 
 func TestLoadPushedSilencesMissingFileStartsEmpty(t *testing.T) {
-	p := loadPushedSilences(filepath.Join(t.TempDir(), "nope.json"))
+	p := loadPushedSilences(filepath.Join(t.TempDir(), "nope.json"), selfNameFn("box1"))
 	if _, ok := p.Suppressed(1000, "cpu", "warning"); ok {
 		t.Fatal("a missing sidecar must start with no silences known")
 	}
@@ -1041,7 +1083,7 @@ func TestDeliverFallbackHonoursPushedSilenceSuppressesLocalDelivery(t *testing.T
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 
-	silences := newPushedSilences(filepath.Join(dir, "silences.json"))
+	silences := newPushedSilences(filepath.Join(dir, "silences.json"), selfNameFn("box1"))
 	if err := silences.Set([]pushedSilence{
 		{ID: "s1", Start: 0, End: 5000, Reason: "silence s1 by cli", Matchers: []core.Matcher{{Rule: "cpu*"}}},
 	}); err != nil {
@@ -1075,7 +1117,7 @@ func TestDeliverFallbackWithoutMatchingSilenceStillDelivers(t *testing.T) {
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 
-	silences := newPushedSilences(filepath.Join(dir, "silences.json"))
+	silences := newPushedSilences(filepath.Join(dir, "silences.json"), selfNameFn("box1"))
 	if err := silences.Set([]pushedSilence{
 		{ID: "s1", Start: 0, End: 5000, Reason: "silence s1 by cli", Matchers: []core.Matcher{{Rule: "mem*"}}},
 	}); err != nil {
@@ -1095,7 +1137,7 @@ func TestDeliverFallbackWithoutMatchingSilenceStillDelivers(t *testing.T) {
 func TestOnStreamFrameSilencesUpdatesPushedSetAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	silencesPath := filepath.Join(dir, "silences.json")
-	silences := newPushedSilences(silencesPath)
+	silences := newPushedSilences(silencesPath, selfNameFn("box1"))
 	lease := newLeaseHolder(nil)
 	h := newHandoff(nil, func() time.Duration { return time.Minute }, lease)
 
@@ -1111,7 +1153,7 @@ func TestOnStreamFrameSilencesUpdatesPushedSetAndPersists(t *testing.T) {
 		t.Fatalf("in-memory Suppressed = %q, %v, want silence s1 by cli, true", reason, ok)
 	}
 
-	reloaded := loadPushedSilences(silencesPath)
+	reloaded := loadPushedSilences(silencesPath, selfNameFn("box1"))
 	if _, ok := reloaded.Suppressed(1500, "cpu_pct", "warning"); !ok {
 		t.Fatal("the silences frame must also be persisted to the sidecar (0600), for restart safety")
 	}

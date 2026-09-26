@@ -2,6 +2,7 @@ package trinetra
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,6 +115,79 @@ func TestMaintenanceOccurrencesInRangeExpandsNext24h(t *testing.T) {
 	occs := maintenanceOccurrencesInRange(m, from, from.Add(24*time.Hour))
 	if len(occs) != 1 {
 		t.Fatalf("occurrences = %+v, want 1 (only today's 01:00-03:00 fits a 24h forward window from midnight)", occs)
+	}
+}
+
+// --- review round 1, item 2: DST -------------------------------------------
+
+// TestMaintenanceOccurrenceFallBackLastsExactlyOneHour is the review round-1
+// item 2 regression test: 2024-11-03 is the US fall-back day in
+// America/New_York (clocks go from 02:00 EDT back to 01:00 EST, so the
+// 01:00-02:00 hour occurs twice in real time). Computing the occurrence's
+// end independently via time.Date (the old code) would double this window
+// to 2 real hours; computing it as start.Add(wallDuration) keeps it at
+// exactly 1h regardless.
+func TestMaintenanceOccurrenceFallBackLastsExactlyOneHour(t *testing.T) {
+	m := core.Maintenance{Name: "w", Weekdays: []int{0}, From: "01:00", To: "02:00", TZ: "America/New_York"} // Sunday
+	from := time.Date(2024, 11, 3, 0, 0, 0, 0, time.UTC)                                                     // 2024-11-03 is a Sunday
+	occs := maintenanceOccurrencesInRange(m, from, from.Add(24*time.Hour))
+	if len(occs) != 1 {
+		t.Fatalf("occurrences = %+v, want 1", occs)
+	}
+	if dur := time.Duration(occs[0].End-occs[0].Start) * time.Second; dur != time.Hour {
+		t.Fatalf("duration across the fall-back transition = %s, want exactly 1h", dur)
+	}
+}
+
+// TestMaintenanceOccurrenceSpringForwardDocumented documents the accepted
+// trade-off on the other DST transition (review round 1, item 2): on
+// 2024-03-10 in America/New_York (spring-forward: clocks jump from 02:00
+// EST straight to 03:00 EDT, so wall-clock 02:00-02:59 never happens that
+// day), a 01:30-02:30 window's real elapsed duration still comes out to
+// exactly the configured 1h (start.Add(wallDuration) is immune to the gap),
+// but its END lands on 03:30 local time, not 02:30 -- because 02:30 simply
+// never existed that day, so "1h after 01:30" is 03:30 once the gap is
+// accounted for.
+func TestMaintenanceOccurrenceSpringForwardDocumented(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := core.Maintenance{Name: "w", Weekdays: []int{0}, From: "01:30", To: "02:30", TZ: "America/New_York"} // Sunday
+	from := time.Date(2024, 3, 10, 0, 0, 0, 0, loc)                                                          // 2024-03-10 is a Sunday
+	occs := maintenanceOccurrencesInRange(m, from, from.Add(24*time.Hour))
+	if len(occs) != 1 {
+		t.Fatalf("occurrences = %+v, want 1", occs)
+	}
+	if dur := time.Duration(occs[0].End-occs[0].Start) * time.Second; dur != time.Hour {
+		t.Fatalf("duration across the spring-forward gap = %s, want exactly the configured 1h", dur)
+	}
+	endLocal := time.Unix(occs[0].End, 0).In(loc)
+	if endLocal.Hour() != 3 || endLocal.Minute() != 30 {
+		t.Fatalf("end local time = %s, want 03:30 (documented: lands past the gap, not at the nonexistent 02:30)", endLocal.Format("15:04"))
+	}
+}
+
+// TestMaintenanceOccurrenceOwnedBySundayNotMonday is the review round-1 item
+// 2 weekday-ownership test: a window crossing midnight is scheduled by the
+// weekday of its START, never the day its End happens to land on.
+// Weekdays=[Sunday] must produce the Sunday 22:00 -> Monday 02:00
+// occurrence; it must NOT also (or instead) require Monday in Weekdays.
+func TestMaintenanceOccurrenceOwnedBySundayNotMonday(t *testing.T) {
+	m := core.Maintenance{Name: "w", Weekdays: []int{0}, From: "22:00", To: "02:00", TZ: "UTC"} // Sunday only
+	from := time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC)                                         // 2024-01-07 is a Sunday
+	until := time.Date(2024, 1, 9, 0, 0, 0, 0, time.UTC)
+	occs := maintenanceOccurrencesInRange(m, from, until)
+	if len(occs) != 1 {
+		t.Fatalf("occurrences = %+v, want exactly 1: Weekdays=[Sunday] alone must produce it", occs)
+	}
+	start := time.Unix(occs[0].Start, 0).UTC()
+	end := time.Unix(occs[0].End, 0).UTC()
+	if start.Weekday() != time.Sunday {
+		t.Fatalf("occurrence start weekday = %v, want Sunday (the window is owned by the day its start falls on)", start.Weekday())
+	}
+	if end.Weekday() != time.Monday {
+		t.Fatalf("occurrence end weekday = %v, want Monday (crossing midnight lands the end there, but ownership stays with Sunday)", end.Weekday())
 	}
 }
 
@@ -391,6 +465,77 @@ func TestEngineDeliversAfterSilenceEnded(t *testing.T) {
 	}
 }
 
+// TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied is the
+// review round-1 item 3 regression test. The race it guards against: a
+// deliverUnsilenced SCAN (at some earlier tick) sees an incident suppressed
+// and unresolved and enqueues a re-check job for it; before that job's turn
+// in its lane actually comes up, a RECOVER for the very same key arrives and
+// is fully Applied. Without moving the delivery DECISION into the job
+// itself (and re-reading fresh state there, as tryDeliverUnsilenced now
+// does), a scan-time decision would still think it's suppressed and
+// unresolved by the time it runs, and deliver a stale "fire" AFTER the
+// recover already went out.
+//
+// This is exercised by calling tryDeliverUnsilenced directly, standing in
+// for "the re-check job finally getting its turn in the lane": the actual
+// wall-clock race between a background dispatcher goroutine and this
+// test's own Submit call is not itself deterministic (nor should a test's
+// pass/fail depend on winning it) -- what IS deterministic, and what this
+// pins, is that whenever that job DOES run, it must see the incident's
+// CURRENT state, not a stale snapshot.
+func TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied(t *testing.T) {
+	ef := newEngineFixture(t)
+	ef.connect("n1")
+	ef.engine.PushLeaseNow("n1", time.Unix(500, 0))
+
+	store := newTestSilenceStore(t)
+	sil, err := store.Create(core.Silence{Matchers: []core.Matcher{{Rule: "cpu*"}}, Start: 0, End: ef.now.Unix() + 100, Author: "cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ef.engine.SetSilences(store, func(id string) (string, []string) { return "box1", []string{"web"} })
+
+	fire := AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000}
+	ef.engine.HandleChildAlert("n1", "box1", []string{"web"}, fire)
+	ef.waitIdle()
+	if ef.deliveredCount() != 0 {
+		t.Fatalf("delivered = %+v, want none while silenced", ef.delivered)
+	}
+	incs := ef.incidents.List(core.IncidentFilter{}, nil)
+	if len(incs) != 1 {
+		t.Fatalf("incidents = %+v, want 1", incs)
+	}
+	id := incs[0].ID
+
+	// The silence ends, and (in the real race) a scan would have enqueued a
+	// re-check job for id here, while it is still suppressed-and-unresolved.
+	if err := store.Expire(sil.ID, ef.now.Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A recover for the same key arrives and is fully processed BEFORE the
+	// re-check job's turn comes up -- delivered normally, resolving the
+	// incident.
+	rec := AlertEvent{Time: 1010, Key: "cpu", Title: "cpu back to normal", Severity: "warning", Kind: "recover", Source: "anomaly", RoutedToMaster: true, FiredAt: 1010}
+	ef.engine.HandleChildAlert("n1", "box1", []string{"web"}, rec)
+	ef.waitIdle()
+	if ef.deliveredCount() != 1 || ef.lastDelivered().Kind != "recover" {
+		t.Fatalf("delivered = %+v, want exactly the recover so far", ef.delivered)
+	}
+
+	// Now the re-check job finally runs: it must re-read the incident fresh
+	// (already resolved) and be a silent no-op -- never a stale fire.
+	ef.engine.tryDeliverUnsilenced(id)
+	ef.waitIdle()
+
+	if ef.deliveredCount() != 1 {
+		t.Fatalf("delivered after the stale re-check = %+v, want still just the recover (no stale fire)", ef.delivered)
+	}
+	if inc, ok := ef.incidents.Get(id); !ok || inc.State != "resolved" {
+		t.Fatalf("incident = %+v, ok=%v, want state resolved (not reopened by a stale fire)", inc, ok)
+	}
+}
+
 func TestEnginePushesSilencesOnConnectAndOnChange(t *testing.T) {
 	ef := newEngineFixture(t)
 	store := newTestSilenceStore(t)
@@ -430,5 +575,49 @@ func TestEngineTickSilencesPrunesLongExpired(t *testing.T) {
 	ef.engine.TickSilences(ef.now, nil)
 	if got := store.List(); len(got) != 0 {
 		t.Fatalf("silences after TickSilences = %+v, want the long-expired one pruned", got)
+	}
+}
+
+// --- review round 1, item 1: multi-matcher leak, end to end (web1/db1) -----
+
+// TestSilencesForNodeWeb1DB1MultiMatcherLeak is the review round-1 item 1
+// regression test, end to end: a Silence with two OR'd matchers -- "silence
+// everything on db1" and "silence disk* alerts everywhere" -- must never let
+// web1 suppress an unrelated (mem) alert just because the db1-only matcher
+// rode along in the same OR list. web1 must not suppress; db1 must.
+func TestSilencesForNodeWeb1DB1MultiMatcherLeak(t *testing.T) {
+	store := newTestSilenceStore(t)
+	matchers := []core.Matcher{{Node: "db1"}, {Rule: "disk*"}}
+	if _, err := store.Create(core.Silence{Matchers: matchers, Start: 0, End: 5000, Author: "cli"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Master side (fix a): web1 must be pushed ONLY the matcher that could
+	// apply to it (the global disk* one); db1 gets both.
+	web1Pushed := store.silencesForNode(1000, "web1", nil)
+	if len(web1Pushed) != 1 || len(web1Pushed[0].Matchers) != 1 || web1Pushed[0].Matchers[0].Node != "" {
+		t.Fatalf("silencesForNode(web1) = %+v, want only the Rule:disk* matcher (not Node:db1)", web1Pushed)
+	}
+	db1Pushed := store.silencesForNode(1000, "db1", nil)
+	if len(db1Pushed) != 1 || len(db1Pushed[0].Matchers) != 2 {
+		t.Fatalf("silencesForNode(db1) = %+v, want both matchers (Node:db1 applies, Rule:disk* applies to every node)", db1Pushed)
+	}
+
+	// Child side: feed each node's own filtered push into its own
+	// pushedSilences and check a MEM alert (unrelated to disk*).
+	web1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"), selfNameFn("web1"))
+	if err := web1.Set(web1Pushed); err != nil {
+		t.Fatal(err)
+	}
+	db1 := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"), selfNameFn("db1"))
+	if err := db1.Set(db1Pushed); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := web1.Suppressed(1000, "mem_pct", "warning"); ok {
+		t.Fatal("web1 must NOT suppress its mem alert: the db1-only matcher never reached it, and disk* doesn't match mem")
+	}
+	if reason, ok := db1.Suppressed(1000, "mem_pct", "warning"); !ok || reason != fmt.Sprintf("silence %s by cli", db1Pushed[0].ID) {
+		t.Fatalf("db1 Suppressed = %q, %v, want suppressed (silence everything on db1)", reason, ok)
 	}
 }

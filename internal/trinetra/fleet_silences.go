@@ -59,22 +59,32 @@ func validateMatchers(ms []core.Matcher) error {
 	return nil
 }
 
-func matchersApply(ms []core.Matcher, nodeID string, tags []string, rule, severity string) bool {
+func matchersApply(ms []core.Matcher, nodeName string, tags []string, rule, severity string) bool {
 	for _, m := range ms {
-		if m.Matches(nodeID, tags, rule, severity) {
+		if m.Matches(nodeName, tags, rule, severity) {
 			return true
 		}
 	}
 	return false
 }
 
-func matchersCouldApplyToNode(ms []core.Matcher, nodeID string, tags []string) bool {
+// applicableMatchers returns the SUBSET of ms whose Node/Tag constraints
+// could apply to this node (review round 1, item 1(a)): a Silence/
+// Maintenance's Matchers are OR'd, but only some of them may have been
+// "meant for" this particular node -- pushing the whole list to every node
+// any single matcher applies to would leak an unrelated matcher (e.g. one
+// meant only for a different node, with no Rule/Severity of its own) to a
+// node it was never meant to cover; see pushedSilence's doc comment and
+// pushedSilences.Suppressed's defense-in-depth re-check for the other half
+// of this fix.
+func applicableMatchers(ms []core.Matcher, nodeName string, tags []string) []core.Matcher {
+	var out []core.Matcher
 	for _, m := range ms {
-		if m.CouldApplyToNode(nodeID, tags) {
-			return true
+		if m.CouldApplyToNode(nodeName, tags) {
+			out = append(out, m)
 		}
 	}
-	return false
+	return out
 }
 
 // validHHMM wraps the shared parseHHMM (digest.go) with the range check it
@@ -125,13 +135,44 @@ func validateSilence(s core.Silence) error {
 // recurring definition expands to.
 type occurrence struct{ Start, End int64 }
 
+// wallDuration returns the elapsed clock time from fromH:fromM to toH:toM,
+// wrapping past midnight (adding 24h) when crosses is true. This is a plain
+// duration derived from the two wall-clock readings, deliberately NOT tied
+// to any specific calendar day or timezone offset.
+func wallDuration(fromH, fromM, toH, toM int, crosses bool) time.Duration {
+	diff := (toH*60 + toM) - (fromH*60 + fromM)
+	if crosses {
+		diff += 24 * 60
+	}
+	return time.Duration(diff) * time.Minute
+}
+
 // maintenanceOccurrencesInRange returns every occurrence of m that overlaps
 // [from, until), expanded in m's own TZ. From > To (lexicographically, which
 // works for zero-padded HH:MM) means the window crosses midnight, so the
-// occurrence's End lands on the following calendar day. An unparsable
-// From/To/TZ (should not happen -- validated at creation) yields no
-// occurrences rather than an error, since this is also called from the
-// alert-suppression hot path, which must never fail loudly on bad data.
+// occurrence's END is computed as start.Add(wallDuration) -- NOT via a
+// second time.Date call on the following calendar day.
+//
+// This matters across a DST transition (review round 1, item 2): building
+// both ends independently with time.Date, then adding a calendar day for a
+// midnight crossing, lets a fall-back transition (clocks set back an hour)
+// silently double the occurrence's real elapsed duration -- e.g. a
+// 01:00-02:00 window in America/New_York on 2024-11-03 would otherwise last
+// 2 real hours, not 1, because "01:00" and "02:00" that day straddle the
+// point where the clock repeats an hour. Adding a plain, timezone-agnostic
+// wallDuration to an absolute start Time is immune to that: the occurrence
+// always lasts exactly as long as its configured HH:MM difference says,
+// regardless of any DST transition inside it. The trade-off (deliberate,
+// see the tests) is that the occurrence's END may land on a different local
+// wall-clock reading than its own To field would suggest when a transition
+// falls inside the window (e.g. a window crossing a spring-forward gap ends
+// one hour later on the wall clock than From+wallDuration would look like
+// on a normal day, because that hour never existed locally).
+//
+// An unparsable From/To/TZ (should not happen -- validated at creation)
+// yields no occurrences rather than an error, since this is also called
+// from the alert-suppression hot path, which must never fail loudly on bad
+// data.
 func maintenanceOccurrencesInRange(m core.Maintenance, from, until time.Time) []occurrence {
 	loc, err := time.LoadLocation(m.TZ)
 	if err != nil {
@@ -143,6 +184,10 @@ func maintenanceOccurrencesInRange(m core.Maintenance, from, until time.Time) []
 		return nil
 	}
 	crosses := m.From > m.To
+	dur := wallDuration(fromH, fromM, toH, toM, crosses)
+	if dur <= 0 {
+		return nil
+	}
 
 	var out []occurrence
 	// Scan a day either side of the range too, so an occurrence that starts
@@ -151,14 +196,15 @@ func maintenanceOccurrencesInRange(m core.Maintenance, from, until time.Time) []
 	d := from.In(loc).AddDate(0, 0, -1)
 	end := until.In(loc).AddDate(0, 0, 1)
 	for !d.After(end) {
+		// The occurrence's weekday is the weekday of its START (review round
+		// 1, item 2): a Sunday 22:00 -> Monday 02:00 window is owned by
+		// Sunday, the day being scanned here, never by the Monday its End
+		// happens to land on.
 		if slices.Contains(m.Weekdays, int(d.Weekday())) {
 			y, mo, day := d.Date()
 			occStart := time.Date(y, mo, day, fromH, fromM, 0, 0, loc)
-			occEnd := time.Date(y, mo, day, toH, toM, 0, 0, loc)
-			if crosses {
-				occEnd = occEnd.AddDate(0, 0, 1)
-			}
-			if occEnd.After(occStart) && occEnd.After(from) && occStart.Before(until) {
+			occEnd := occStart.Add(dur)
+			if occEnd.After(from) && occStart.Before(until) {
 				out = append(out, occurrence{Start: occStart.Unix(), End: occEnd.Unix()})
 			}
 		}
@@ -382,10 +428,10 @@ func (s *silenceStore) Prune(now int64) {
 }
 
 // Suppressed reports whether an alert with the given rule (its Key) and
-// severity, on the node identified by nodeID/tags ("" / nil for a
+// severity, on the node identified by its display name/tags ("" / nil for a
 // master-own alert), is currently covered by an active silence or
 // maintenance window at unix time now. Explicit silences are checked first.
-func (s *silenceStore) Suppressed(now int64, nodeID string, tags []string, rule, severity string) *suppressionInfo {
+func (s *silenceStore) Suppressed(now int64, nodeName string, tags []string, rule, severity string) *suppressionInfo {
 	s.mu.Lock()
 	silences := append([]core.Silence(nil), s.silences...)
 	maints := append([]core.Maintenance(nil), s.maintenances...)
@@ -395,13 +441,13 @@ func (s *silenceStore) Suppressed(now int64, nodeID string, tags []string, rule,
 		if sil.Start > now || sil.End <= now {
 			continue
 		}
-		if matchersApply(sil.Matchers, nodeID, tags, rule, severity) {
+		if matchersApply(sil.Matchers, nodeName, tags, rule, severity) {
 			return &suppressionInfo{Reason: fmt.Sprintf("silence %s by %s", sil.ID, sil.Author)}
 		}
 	}
 	tNow := time.Unix(now, 0)
 	for _, m := range maints {
-		if !matchersApply(m.Matchers, nodeID, tags, rule, severity) {
+		if !matchersApply(m.Matchers, nodeName, tags, rule, severity) {
 			continue
 		}
 		if maintenanceActiveAt(m, tNow) {
@@ -412,11 +458,12 @@ func (s *silenceStore) Suppressed(now int64, nodeID string, tags []string, rule,
 }
 
 // silencesForNode builds the filtered "silences" frame payload for a node
-// with the given id/tags: every currently active explicit silence whose
-// matchers could apply to it, plus every occurrence of a maintenance window
-// (likewise filtered) in the next 24h, each expanded to a concrete
-// [Start,End) instant.
-func (s *silenceStore) silencesForNode(now int64, nodeID string, tags []string) []pushedSilence {
+// with the given display name/tags: every currently active explicit silence
+// with at least one matcher that could apply to it (only THOSE matchers are
+// sent, not the whole OR'd list -- review round 1, item 1(a)), plus every
+// occurrence of a maintenance window (likewise filtered) in the next 24h,
+// each expanded to a concrete [Start,End) instant.
+func (s *silenceStore) silencesForNode(now int64, nodeName string, tags []string) []pushedSilence {
 	s.mu.Lock()
 	silences := append([]core.Silence(nil), s.silences...)
 	maints := append([]core.Maintenance(nil), s.maintenances...)
@@ -427,23 +474,25 @@ func (s *silenceStore) silencesForNode(now int64, nodeID string, tags []string) 
 		if sil.Start > now || sil.End <= now {
 			continue
 		}
-		if !matchersCouldApplyToNode(sil.Matchers, nodeID, tags) {
+		applicable := applicableMatchers(sil.Matchers, nodeName, tags)
+		if len(applicable) == 0 {
 			continue
 		}
 		out = append(out, pushedSilence{
-			Matchers: sil.Matchers, Start: sil.Start, End: sil.End, ID: sil.ID,
+			Matchers: applicable, Start: sil.Start, End: sil.End, ID: sil.ID,
 			Reason: fmt.Sprintf("silence %s by %s", sil.ID, sil.Author),
 		})
 	}
 	from := time.Unix(now, 0)
 	until := from.Add(24 * time.Hour)
 	for _, m := range maints {
-		if !matchersCouldApplyToNode(m.Matchers, nodeID, tags) {
+		applicable := applicableMatchers(m.Matchers, nodeName, tags)
+		if len(applicable) == 0 {
 			continue
 		}
 		for _, occ := range maintenanceOccurrencesInRange(m, from, until) {
 			out = append(out, pushedSilence{
-				Matchers: m.Matchers, Start: occ.Start, End: occ.End, ID: m.ID,
+				Matchers: applicable, Start: occ.Start, End: occ.End, ID: m.ID,
 				Reason: "maintenance " + m.Name,
 			})
 		}
@@ -466,23 +515,29 @@ func childSilencesPath(stateDir string) string {
 // deliverFallback): an ordinary local alert on a child that has never
 // routed anything to the master is unaffected by anything the master ever
 // pushed.
+//
+// selfName supplies this child's own display name for Suppressed's
+// defense-in-depth Node re-check (review round 1, item 1(b)): a nil
+// selfName (should not happen outside a test) just skips that re-check,
+// trusting the master's own per-node filtering (silencesForNode) alone.
 type pushedSilences struct {
-	path string
+	path     string
+	selfName func() string
 
 	mu       sync.Mutex
 	silences []pushedSilence
 }
 
 // newPushedSilences builds an empty pushedSilences (no push received yet).
-func newPushedSilences(path string) *pushedSilences {
-	return &pushedSilences{path: path}
+func newPushedSilences(path string, selfName func() string) *pushedSilences {
+	return &pushedSilences{path: path, selfName: selfName}
 }
 
 // loadPushedSilences restores the sidecar written by a previous process. A
 // missing or corrupt file just starts empty -- exactly like never having
 // received a push.
-func loadPushedSilences(path string) *pushedSilences {
-	p := &pushedSilences{path: path}
+func loadPushedSilences(path string, selfName func() string) *pushedSilences {
+	p := &pushedSilences{path: path, selfName: selfName}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return p
@@ -513,22 +568,52 @@ func (p *pushedSilences) Set(silences []pushedSilence) error {
 
 // Suppressed reports whether a fallback delivery for an alert with the given
 // rule (its Key) and severity is currently covered by a pushed silence or
-// maintenance occurrence, and if so, its reason. Node/Tag matching already
-// happened at the master (silencesForNode only ever sends entries that
-// could apply to THIS node), so only Rule/Severity -- which describe the
-// alert, not the node -- are re-checked here. A nil receiver reports no
-// suppression (no push ever received).
+// maintenance occurrence, and if so, its reason.
+//
+// Node and Rule/Severity are all re-checked here (review round 1, item
+// 1(b)): the master already filtered Tag/Node at push time
+// (silencesForNode only ever sends a MATCHER whose Node/Tag constraints
+// could apply to this exact node), but re-checking Node costs nothing (this
+// child always knows its own name, via selfName) and is the defense-in-depth
+// that closes the leak a filtering bug -- or an OR'd matcher meant for a
+// different node with no Rule/Severity of its own -- would otherwise cause:
+// without it, a matcher like {Node:"db1"} (no Rule/Severity) would look like
+// "matches every rule" to a child that only ever checks Rule/Severity, even
+// though it was pushed as part of the SAME Silence as a legitimate,
+// unrelated {Rule:"mem*"} matcher meant for every node.
+//
+// Tag is NOT re-checked: a child has no reliable way to learn its own
+// current tags (they are a master-registry concept the child is never told
+// about, and can change at any time via `fleet node tag`), so a Tag
+// matcher's applicability is trusted entirely from the master's own
+// filtering. This is a deliberate, documented gap: a Tag-scoped matcher can
+// therefore never leak WORSE than "some entries a node's tags no longer
+// justify might still apply for a few minutes until the master's own
+// registry/push catches up" -- it can never leak an entry meant for a
+// DIFFERENT node's identity the way an unchecked Node matcher could, since
+// Node is always re-verified.
+//
+// A nil receiver reports no suppression (no push ever received).
 func (p *pushedSilences) Suppressed(now int64, rule, severity string) (string, bool) {
 	if p == nil {
 		return "", false
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, s := range p.silences {
+	name, silences := "", p.silences
+	if p.selfName != nil {
+		name = p.selfName()
+	}
+	p.mu.Unlock()
+	for _, s := range silences {
 		if s.Start > now || s.End <= now {
 			continue
 		}
 		for _, m := range s.Matchers {
+			if m.Node != "" {
+				if ok, _ := path.Match(m.Node, name); !ok {
+					continue
+				}
+			}
 			if m.Rule != "" {
 				if ok, _ := path.Match(m.Rule, rule); !ok {
 					continue
