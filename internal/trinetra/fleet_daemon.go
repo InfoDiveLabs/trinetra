@@ -32,12 +32,22 @@ type fleetDeps struct {
 	store          SampleStore
 	alog           *AlertLog
 	alertStatePath string
-	// alert is master-only: it delivers an alert through the master's own
-	// dispatcher and reports whether at least one channel accepted it (see
-	// deliverSyncAndLog and fleetAlertEngine.deliver, fleet_engine.go) --
-	// the fleet alerting engine needs that completion signal before it may
-	// push a receipt down to a node.
-	alert func(Alert) bool
+	// alert delivers an alert the ordinary asynchronous way (enqueueAndLog):
+	// logged/published immediately, actual dispatch happens off the sampler
+	// goroutine on the NotifierQueue worker. Used by a child's own
+	// link-status alerts (childLinkAlerts, below) and, as a fallback, by
+	// masterLoop when no alerting engine is present (nil engine, tests
+	// only in practice) -- never blocks its caller.
+	alert func(Alert)
+	// deliverSync is master-only: it delivers an alert SYNCHRONOUSLY,
+	// directly against the master's own Dispatcher (bypassing the async
+	// NotifierQueue), and reports whether at least one channel accepted it
+	// (see deliverSyncAndLog and fleetAlertEngine.deliver, fleet_engine.go)
+	// -- the fleet alerting engine needs that completion signal before it
+	// may push a receipt down to a node. Only ever called from the
+	// engine's own per-alert dispatch goroutine, never from a hot path
+	// that must not block.
+	deliverSync func(Alert) bool
 	// alertFallback delivers a alert locally after the child's lease/receipt
 	// handoff (fleet_lease.go) gave up waiting on the master: it mirrors
 	// alert's construction (same alog/bus/q closed over) but calls
@@ -210,7 +220,7 @@ type masterLoop struct {
 	// removed mid-tick can never be re-tracked and paged. Guards alerter.
 	mu          sync.Mutex
 	alerter     *fleet.NodeAlerter
-	alert       func(Alert) bool
+	alert       func(Alert)
 	getCfg      func() *config.Config
 	logf        func(string, ...any)
 	lastFlush   time.Time
@@ -219,6 +229,16 @@ type masterLoop struct {
 	// lastDropCheck is when checkDrops last ran. Only tick touches it; the
 	// per-node baselines live in each replica's ingest.state.
 	lastDropCheck time.Time
+	// started is when this masterLoop was built (master start, or the most
+	// recent restart). nodeDownAfter is the blind window (spec: every node
+	// is seeded as "seen at master start", so an outage that predates a
+	// restart is never mistaken for a fresh one) -- captured once, matching
+	// how the tracker itself was seeded, rather than re-read live. Together
+	// they gate orphanChecked (B3 review round 2 1(b)): the FIRST tick once
+	// now >= started+nodeDownAfter runs checkOrphanedIncidents exactly once.
+	started       time.Time
+	nodeDownAfter time.Duration
+	orphanChecked bool
 }
 
 // masterTickInterval is how often the master loop ticks.
@@ -230,10 +250,17 @@ const masterTickInterval = 5 * time.Second
 func newMasterLoop(reg *fleet.Registry, tracker *fleet.Tracker, sink *replicaSink, engine *fleetAlertEngine, d fleetDeps, now time.Time) *masterLoop {
 	alert := d.alert
 	if engine != nil {
-		alert = func(a Alert) bool { engine.Submit(alertSource{}, a); return true }
+		alert = func(a Alert) { engine.Submit(alertSource{}, a) }
+	}
+	nodeDownAfter := 2 * time.Minute // config.Default()'s own fallback, mirrored for a fleetDeps with no getCfg (tests)
+	if d.getCfg != nil {
+		if c := d.getCfg(); c != nil {
+			nodeDownAfter = c.FleetNodeDownAfter()
+		}
 	}
 	return &masterLoop{reg: reg, tracker: tracker, sink: sink, engine: engine, alerter: fleet.NewNodeAlerter(), alert: alert,
-		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1), lastDropCheck: now}
+		getCfg: d.getCfg, logf: d.logf, lastFlush: now, maintaining: make(chan struct{}, 1), lastDropCheck: now,
+		started: now, nodeDownAfter: nodeDownAfter}
 }
 
 // checkDrops logs a warning for every node whose replica dropped points out
@@ -287,7 +314,8 @@ func (l *masterLoop) tick(now time.Time) {
 		}
 		return id
 	}
-	intents := l.alerter.Plan(l.tracker.Evaluate(now.Unix()), now.Unix(), name)
+	ev := l.tracker.Evaluate(now.Unix())
+	intents := l.alerter.Plan(ev, now.Unix(), name)
 	var nodeIDs []string
 	if l.engine != nil {
 		for _, n := range l.reg.List() {
@@ -296,9 +324,20 @@ func (l *masterLoop) tick(now time.Time) {
 			}
 		}
 	}
+	// checkOrphanedIncidents runs exactly once: the first tick at or after
+	// the blind window (node_down_after since this masterLoop started) has
+	// elapsed, so the tracker has had a real chance to observe every node's
+	// TRUE state before anything is judged orphaned (B3 review round 2 1(b)).
+	runOrphanCheck := !l.orphanChecked && now.Sub(l.started) >= l.nodeDownAfter
+	if runOrphanCheck {
+		l.orphanChecked = true
+	}
 	l.mu.Unlock()
 	for _, in := range intents {
 		l.alert(fleetAlert(in, now.Unix()))
+	}
+	if runOrphanCheck {
+		l.checkOrphanedIncidents(now, ev)
 	}
 	// Lease cadence (global-constraints/task-3 ruling): push lease{until:
 	// now+90s} to every connected, non-revoked node at least every 30s.
@@ -332,6 +371,63 @@ func (l *masterLoop) tick(now time.Time) {
 		}()
 	default: // previous slice still running
 	}
+}
+
+// stillActive reports whether the condition key names is still true, so
+// checkOrphanedIncidents knows whether an open master-own incident for it
+// should be recovered. It is deliberately small and generic (a plain
+// switch on the key's shape) so a later task's rule alerts (B7) can extend
+// it with their own keys without touching the reconciliation logic itself;
+// an unrecognized key defaults to "still active" (leave it alone) rather
+// than guessing it should be auto-resolved.
+func (l *masterLoop) stillActive(key string, ev fleet.Evaluation) bool {
+	switch {
+	case key == "fleet:connectivity":
+		return len(ev.MassDown) > 0
+	case strings.HasPrefix(key, "fleet:node:") && strings.HasSuffix(key, ":down"):
+		id := strings.TrimSuffix(strings.TrimPrefix(key, "fleet:node:"), ":down")
+		n, ok := l.reg.Get(id)
+		if !ok || n.Revoked {
+			return false // removed or revoked: never still "down" in a way worth paging
+		}
+		return l.tracker.State(id) == fleet.StateDown
+	default:
+		return true
+	}
+}
+
+// checkOrphanedIncidents recovers any open (firing or acked) master-own
+// incident whose condition is no longer active (B3 review round 2 1(b)): a
+// restart clears the in-memory NodeAlerter/tracker state that would
+// normally notice and emit the matching recover itself, so without this an
+// incident whose node came back online (or was removed/revoked) while the
+// master was down, or a mass-connectivity event that has since ended, would
+// stay stuck "firing" forever. Runs once, from tick, after the blind window.
+func (l *masterLoop) checkOrphanedIncidents(now time.Time, ev fleet.Evaluation) {
+	if l.engine == nil || l.engine.incidents == nil {
+		return
+	}
+	for _, inc := range l.engine.incidents.List(core.IncidentFilter{}, nil) {
+		if len(inc.Nodes) != 0 || len(inc.Alerts) == 0 {
+			continue // not a master-own incident, or nothing recorded on it
+		}
+		if inc.State != "firing" && inc.State != "acked" {
+			continue // not open
+		}
+		key := inc.Alerts[len(inc.Alerts)-1].Key
+		if l.stillActive(key, ev) {
+			continue
+		}
+		l.alert(fleetAlert(fleet.AlertIntent{Key: key, Title: orphanRecoverTitle(inc), Recover: true}, now.Unix()))
+	}
+}
+
+// orphanRecoverTitle builds a human-readable recover title for an orphaned
+// incident being reconciled after a restart, reusing the incident's own
+// recorded title (its last known fire, which already carries its own 🔴)
+// rather than re-deriving one from the key.
+func orphanRecoverTitle(inc core.Incident) string {
+	return inc.Title + " -- recovered (reconciled after restart)"
 }
 
 // observeSkew is the master's OnSkew hook: it adds the sample to the node's
@@ -427,7 +523,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		return fmt.Errorf("load incidents: %w", err)
 	}
 	audit := newAuditLog(filepath.Join(dir, "audit.jsonl"))
-	engine := newFleetAlertEngine(time.Now, d.alert, hub.Push, hub.Connected, incidents)
+	engine := newFleetAlertEngine(time.Now, d.deliverSync, hub.Push, hub.Connected, incidents)
 	// A freshly (re)connected node gets a lease immediately, rather than
 	// waiting up to one masterTickInterval for the next TickLeases pass.
 	hub.OnConnect(func(id string) { engine.PushLeaseNow(id, time.Now()) })

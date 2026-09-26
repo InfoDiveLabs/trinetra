@@ -318,6 +318,129 @@ func TestEngineMasterOwnAlertGoesThroughSubmitUnprefixed(t *testing.T) {
 	}
 }
 
+// --- B3 review round 2 1(a): master-own alert crash recovery -------------
+
+// TestEngineResurrectsMasterOwnAlertAfterCrash: the master records a
+// node-down fire (Submit's step 1) and then "crashes" before any delivery
+// goroutine ever ran (simulated here by calling incidentStore.Apply
+// directly, exactly what Submit's step 1 does, without ever reaching
+// step 2). A freshly constructed engine over the same file must redeliver
+// it exactly once, at construction, marking the incident "redelivered
+// after restart" -- and a SECOND restart, after that succeeds, must not
+// redeliver it again.
+func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+
+	incidents1, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inc0, err := incidents1.Apply(incidentApply{
+		src: alertSource{}, alert: Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Time: 1000},
+		firedAt: 1000, now: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	incidents2, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var delivered []Alert
+	engine := newFleetAlertEngine(
+		func() time.Time { return time.Unix(1100, 0) }, // well within 24h of the fire
+		func(a Alert) bool { mu.Lock(); delivered = append(delivered, a); mu.Unlock(); return true },
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents2,
+	)
+	engine.waitIdleForTest()
+
+	mu.Lock()
+	gotDelivered := append([]Alert(nil), delivered...)
+	mu.Unlock()
+	if len(gotDelivered) != 1 || gotDelivered[0].Key != "fleet:node:x:down" || gotDelivered[0].Title != "x is down" {
+		t.Fatalf("delivered = %+v, want exactly one redelivery", gotDelivered)
+	}
+	inc, ok := incidents2.Get(inc0.ID)
+	if !ok {
+		t.Fatal("incident missing after resurrection")
+	}
+	last := inc.Timeline[len(inc.Timeline)-1]
+	if last.Kind != "delivered" || last.Detail != "redelivered after restart" {
+		t.Fatalf("last timeline event = %+v, want a redelivered-after-restart delivered event", last)
+	}
+
+	// A THIRD restart, after the redelivery already succeeded, must not
+	// redeliver it again -- the incident's last event is now "delivered",
+	// not "fired".
+	incidents3, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered2 []Alert
+	engine2 := newFleetAlertEngine(
+		func() time.Time { return time.Unix(1200, 0) },
+		func(a Alert) bool { mu.Lock(); delivered2 = append(delivered2, a); mu.Unlock(); return true },
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents3,
+	)
+	engine2.waitIdleForTest()
+	if len(delivered2) != 0 {
+		t.Fatalf("redelivered a second time after already succeeding: %+v", delivered2)
+	}
+}
+
+// TestEngineDoesNotResurrectMasterOwnAlertOlderThan24h covers the 24h cutoff:
+// an un-delivered master-own fire older than 24h is given up on, not
+// redelivered, and the incident records why.
+func TestEngineDoesNotResurrectMasterOwnAlertOlderThan24h(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+
+	incidents1, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inc0, err := incidents1.Apply(incidentApply{
+		src: alertSource{}, alert: Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Time: 1000},
+		firedAt: 1000, now: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	incidents2, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered []Alert
+	engine := newFleetAlertEngine(
+		func() time.Time { return time.Unix(1000+int64(25*time.Hour/time.Second), 0) }, // > 24h later
+		func(a Alert) bool { delivered = append(delivered, a); return true },
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents2,
+	)
+	engine.waitIdleForTest()
+
+	if len(delivered) != 0 {
+		t.Fatalf("delivered = %+v, want none (entry older than 24h)", delivered)
+	}
+	inc, ok := incidents2.Get(inc0.ID)
+	if !ok {
+		t.Fatal("incident missing")
+	}
+	last := inc.Timeline[len(inc.Timeline)-1]
+	if last.Kind != "suppressed" || last.Detail != "not delivered: master restarted" {
+		t.Fatalf("last timeline event = %+v, want the not-delivered-after-restart note", last)
+	}
+}
+
 func TestEngineTickLeasesCadenceAndOnConnect(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -439,6 +562,112 @@ func TestReplicaSinkOnAlertHookDedupsByteIdenticalRecord(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 1 {
 		t.Fatalf("onAlert calls = %d, want 1: %+v", len(got), got)
+	}
+}
+
+// --- B3 review round 2: keyed dispatch ordering + bounded concurrency -----
+
+// TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel exercises the
+// keyed dispatcher (fleet_dispatch.go) through Submit/HandleChildAlert
+// directly: a fire on a slow channel must still be delivered before its
+// later recover, never raced.
+func TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel(t *testing.T) {
+	dir := t.TempDir()
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(500, 0)
+	var mu sync.Mutex
+	var order []string
+	engine := newFleetAlertEngine(
+		func() time.Time { return now },
+		func(a Alert) bool {
+			if a.Kind == "fire" {
+				time.Sleep(50 * time.Millisecond) // the slow channel
+			}
+			mu.Lock()
+			order = append(order, a.Kind)
+			mu.Unlock()
+			return true
+		},
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents,
+	)
+	engine.PushLeaseNow("n1", now)
+	engine.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: 1000,
+	})
+	engine.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: 1050, Key: "cpu", Title: "cpu back to normal", Severity: "warning", Kind: "recover", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: 1050,
+	})
+	engine.waitIdleForTest()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 2 || order[0] != "fire" || order[1] != "recover" {
+		t.Fatalf("delivery order = %v, want [fire recover]", order)
+	}
+}
+
+// TestEngineBoundsConcurrentDispatches is the engine-level counterpart of
+// TestKeyedDispatcherBoundsGlobalConcurrency: 200 concurrent Submits (each
+// its own node/key, so nothing serializes them against each other on
+// ordering grounds) must never exceed dispatchConcurrency dispatches
+// actually running through the engine's own deliver hook at once.
+func TestEngineBoundsConcurrentDispatches(t *testing.T) {
+	dir := t.TempDir()
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(500, 0)
+
+	var mu sync.Mutex
+	current, max := 0, 0
+	engine := newFleetAlertEngine(
+		func() time.Time { return now },
+		func(Alert) bool {
+			mu.Lock()
+			current++
+			if current > max {
+				max = current
+			}
+			mu.Unlock()
+			time.Sleep(2 * time.Millisecond)
+			mu.Lock()
+			current--
+			mu.Unlock()
+			return true
+		},
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents,
+	)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			nodeID := keyFor(i)
+			engine.PushLeaseNow(nodeID, now)
+			engine.HandleChildAlert(nodeID, "box", nil, AlertEvent{
+				Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly",
+				RoutedToMaster: true, FiredAt: 1000,
+			})
+		}(i)
+	}
+	wg.Wait() // every Submit call has returned (it never blocks on dispatch)
+	engine.waitIdleForTest()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if max > dispatchConcurrency {
+		t.Fatalf("observed %d concurrent dispatches through the engine, want <= %d", max, dispatchConcurrency)
 	}
 }
 

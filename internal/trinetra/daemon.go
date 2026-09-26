@@ -1005,7 +1005,10 @@ func cmdDaemon(args []string) int {
 	fleetRT := startFleet(daemonCtx, cfgAtStart, fleetDeps{
 		stateDir: stateDir, getCfg: getCfg, self: controlAPI, latestSnapshot: latestSnapshot,
 		store: store, alog: alog, alertStatePath: st.AlertStatePath(),
-		alert: func(a Alert) bool {
+		alert: func(a Alert) {
+			enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		},
+		deliverSync: func(a Alert) bool {
 			return deliverSyncAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
 		},
 		alertFallback: func(a Alert) {

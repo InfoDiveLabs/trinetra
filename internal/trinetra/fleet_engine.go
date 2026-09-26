@@ -80,10 +80,11 @@ type fleetAlertEngine struct {
 	// per-route policy (alerting.json) arrives in a later task.
 	sendResolved bool
 
-	// wg tracks in-flight deliverAndReceipt goroutines (see Submit), purely
-	// so a test can deterministically wait for one to finish
-	// (waitIdleForTest) instead of racing it.
-	wg sync.WaitGroup
+	// dispatch runs every deliverAndReceipt call off Submit's own goroutine
+	// (see Submit), keyed per (node, key) so a recover is never dispatched
+	// before its own fire, and globally bounded to dispatchConcurrency
+	// concurrent dispatches (B3 review round 2).
+	dispatch *keyedDispatcher
 }
 
 // newFleetAlertEngine builds a fleetAlertEngine. now defaults to time.Now if
@@ -99,12 +100,15 @@ func newFleetAlertEngine(now func() time.Time, deliver func(Alert) bool, push fu
 	if incidents != nil {
 		seen = incidents.seenKeys()
 	}
-	return &fleetAlertEngine{
+	e := &fleetAlertEngine{
 		now: now, deliver: deliver, push: push, connected: connected,
 		incidents: incidents, seen: seen,
 		lastLeasePush: map[string]int64{}, firstLeaseAt: map[string]int64{},
 		sendResolved: true,
+		dispatch:     newKeyedDispatcher(),
 	}
+	e.resurrectMasterAlerts()
+	return e
 }
 
 // Submit is the engine's single entry point: every child-shipped alert (via
@@ -128,10 +132,14 @@ func newFleetAlertEngine(now func() time.Time, deliver func(Alert) bool, push fu
 // must be RECORDED) or redelivered (it must never trigger a second delivery
 // attempt).
 //
-// Delivery (steps 2-4) runs on its own goroutine so Submit itself never
-// blocks its caller (replicaNode.apply holds n.mu across this call, and
-// masterLoop.tick calls it inline) on the Dispatcher's ~15s-per-channel
-// timeout.
+// Delivery (steps 2-4) runs off Submit's own goroutine, through the keyed
+// dispatcher (fleet_dispatch.go, B3 review round 2): Enqueue itself never
+// blocks Submit's caller (replicaNode.apply holds n.mu across this call, and
+// masterLoop.tick calls it inline), the (node, key) lane keeps a fire and
+// its later recover in order regardless of how long the fire's own dispatch
+// takes, and the dispatcher's global semaphore bounds how many dispatches
+// (each up to the Dispatcher's ~15s-per-channel timeout) run at once across
+// every key.
 func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 	firedAt := a.Time
 	key := alertDedupKey{node: src.NodeID, key: a.Key, firedAt: firedAt}
@@ -181,20 +189,26 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 		return // the child already delivered this; nothing more to do.
 	}
 
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
+	e.dispatch.Enqueue(incidentGroupKey(src.NodeID, a.Key), func() {
 		e.deliverAndReceipt(src, a, firedAt, incidentID)
-	}()
+	})
 }
 
-// deliverAndReceipt is Submit's steps 2-4, run off Submit's own goroutine:
-// attempt delivery, and ONLY on success (at least one channel accepted it)
-// record the "delivered" timeline event and push the receipt. incidentID
-// may be "" if step 1's Apply failed to record anything -- delivery still
-// proceeds (the alert must still reach its channels), but there is nothing
-// to append a "delivered" event to.
+// deliverAndReceipt is Submit's steps 2-4, run off Submit's own goroutine
+// (via the keyed dispatcher): attempt delivery, and ONLY on success record
+// the "delivered" timeline event and push the receipt.
 func (e *fleetAlertEngine) deliverAndReceipt(src alertSource, a Alert, firedAt int64, incidentID string) {
+	e.deliverAndReceiptDetail(src, a, firedAt, incidentID, "sent via the master's dispatcher")
+}
+
+// deliverAndReceiptDetail is deliverAndReceipt with a caller-chosen
+// "delivered" timeline detail -- resurrectMasterAlerts uses this to mark a
+// post-restart redelivery distinctly ("redelivered after restart") from an
+// ordinary first delivery. incidentID may be "" if step 1's Apply (or, for
+// a resurrection, the incident itself) failed to record anything -- delivery
+// still proceeds (the alert must still reach its channels), but there is
+// nothing to append a "delivered" event to.
+func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, firedAt int64, incidentID, detail string) {
 	if a.Kind == "recover" && !e.sendResolved {
 		return
 	}
@@ -210,7 +224,7 @@ func (e *fleetAlertEngine) deliverAndReceipt(src alertSource, a Alert, firedAt i
 	}
 	if e.incidents != nil && incidentID != "" {
 		_, _ = e.incidents.AppendEvent(incidentID, core.IncidentEvent{
-			TS: e.now().Unix(), Kind: "delivered", Detail: "sent via the master's dispatcher", Actor: "system",
+			TS: e.now().Unix(), Kind: "delivered", Detail: detail, Actor: "system",
 		})
 	}
 	if src.NodeID != "" && e.push != nil {
@@ -218,10 +232,58 @@ func (e *fleetAlertEngine) deliverAndReceipt(src alertSource, a Alert, firedAt i
 	}
 }
 
-// waitIdleForTest blocks until every in-flight deliverAndReceipt goroutine
-// Submit has spawned has finished. Test-only: production code never needs
+// resurrectMasterAlerts runs once, at engine construction ("at engine
+// start"): master-own alerts (src.NodeID == "", e.g. node-down/
+// connectivity) have no child-side fallback to fall back on if the master
+// crashes between recording a fire/recover (Submit's step 1) and actually
+// delivering it -- unlike a child's own alert, nothing else will ever retry
+// it. For every master-own incident whose most recent timeline entry is
+// still exactly "fired" or "resolved" (meaning deliverAndReceipt never
+// completed for it -- see Submit's ordering invariant: a "delivered" event
+// is always the NEXT entry when delivery actually succeeds), this either
+// re-attempts delivery (if that decision is under 24h old) or gives up and
+// records why (B3 review round 2 1(a)).
+func (e *fleetAlertEngine) resurrectMasterAlerts() {
+	if e.incidents == nil {
+		return
+	}
+	now := e.now()
+	cutoff := now.Add(-24 * time.Hour).Unix()
+	for _, inc := range e.incidents.List(core.IncidentFilter{}, nil) {
+		if len(inc.Nodes) != 0 || len(inc.Alerts) == 0 || len(inc.Timeline) == 0 {
+			continue // not a master-own incident, or nothing recorded on it
+		}
+		last := inc.Timeline[len(inc.Timeline)-1]
+		if last.Kind != "fired" && last.Kind != "resolved" {
+			continue // already delivered (or acked, or otherwise concluded)
+		}
+		al := inc.Alerts[len(inc.Alerts)-1]
+		sev, err := ParseSeverity(al.Severity)
+		if err != nil {
+			sev = SevWarning
+		}
+		kind, firedAt := "fire", al.FiredAt
+		if inc.State == "resolved" {
+			kind, firedAt = "recover", al.ResolvedAt
+		}
+		if inc.Updated < cutoff {
+			_, _ = e.incidents.AppendEvent(inc.ID, core.IncidentEvent{
+				TS: now.Unix(), Kind: "suppressed", Detail: "not delivered: master restarted", Actor: "system",
+			})
+			continue
+		}
+		a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: kind, Time: firedAt}
+		id := inc.ID
+		e.dispatch.Enqueue(inc.GroupKey, func() {
+			e.deliverAndReceiptDetail(alertSource{}, a, firedAt, id, "redelivered after restart")
+		})
+	}
+}
+
+// waitIdleForTest blocks until every deliverAndReceipt job Submit has
+// enqueued so far has actually run. Test-only: production code never needs
 // Submit's delivery to be synchronous from the caller's point of view.
-func (e *fleetAlertEngine) waitIdleForTest() { e.wg.Wait() }
+func (e *fleetAlertEngine) waitIdleForTest() { e.dispatch.waitIdleForTest() }
 
 // HandleChildAlert converts a child's shipped AlertEvent (as decoded by the
 // replica from a KindAlert record) into an Alert and submits it, using
