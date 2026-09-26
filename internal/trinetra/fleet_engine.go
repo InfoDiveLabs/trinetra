@@ -13,6 +13,7 @@ package trinetra
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -201,14 +202,31 @@ func (e *fleetAlertEngine) deliverAndReceipt(src alertSource, a Alert, firedAt i
 	e.deliverAndReceiptDetail(src, a, firedAt, incidentID, "sent via the master's dispatcher")
 }
 
-// deliverAndReceiptDetail is deliverAndReceipt with a caller-chosen
-// "delivered" timeline detail -- resurrectMasterAlerts uses this to mark a
-// post-restart redelivery distinctly ("redelivered after restart") from an
-// ordinary first delivery. incidentID may be "" if step 1's Apply (or, for
-// a resurrection, the incident itself) failed to record anything -- delivery
-// still proceeds (the alert must still reach its channels), but there is
-// nothing to append a "delivered" event to.
-func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, firedAt int64, incidentID, detail string) {
+// legLabel is "fire" or "recover", exactly matching Alert.Kind for the two
+// values fleetAlertEngine ever hands to deliverAndReceiptDetail.
+func legLabel(a Alert) string {
+	if a.Kind == "recover" {
+		return "recover"
+	}
+	return "fire"
+}
+
+// deliverAndReceiptDetail is deliverAndReceipt with a caller-chosen note on
+// the "delivered" timeline event -- resurrectMasterAlerts uses this to mark
+// a post-restart redelivery distinctly ("redelivered after restart") from an
+// ordinary first delivery ("sent via the master's dispatcher"). The event's
+// Detail is always prefixed with WHICH LEG it covers ("fire: " or
+// "recover: ", B3 review round 3): a master-own incident's fire and recover
+// share one IncidentAlert entry, so without this label there would be no way
+// to tell, from the incident alone, whether an undelivered leg is the fire,
+// the recover, or (before this existed) either -- see legDeliveredStatus,
+// which resurrectMasterAlerts uses to tell them apart on restart.
+//
+// incidentID may be "" if step 1's Apply (or, for a resurrection, the
+// incident itself) failed to record anything -- delivery still proceeds
+// (the alert must still reach its channels), but there is nothing to append
+// a "delivered" event to.
+func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, firedAt int64, incidentID, note string) {
 	if a.Kind == "recover" && !e.sendResolved {
 		return
 	}
@@ -224,7 +242,7 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 	}
 	if e.incidents != nil && incidentID != "" {
 		_, _ = e.incidents.AppendEvent(incidentID, core.IncidentEvent{
-			TS: e.now().Unix(), Kind: "delivered", Detail: detail, Actor: "system",
+			TS: e.now().Unix(), Kind: "delivered", Detail: legLabel(a) + ": " + note, Actor: "system",
 		})
 	}
 	if src.NodeID != "" && e.push != nil {
@@ -232,17 +250,43 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 	}
 }
 
+// legDeliveredStatus scans inc's timeline for "delivered" events and reports
+// which leg(s) (fire, recover) they cover, per deliverAndReceiptDetail's
+// "fire: "/"recover: " labeling. A "delivered" event with neither prefix
+// predates this labeling (B3 review round 2 and earlier) and, per the
+// ruling, counts as fire-delivered -- the only leg that could possibly have
+// existed before per-leg tracking was added.
+func legDeliveredStatus(inc core.Incident) (fireDelivered, recoverDelivered bool) {
+	for _, ev := range inc.Timeline {
+		if ev.Kind != "delivered" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(ev.Detail, "fire: "):
+			fireDelivered = true
+		case strings.HasPrefix(ev.Detail, "recover: "):
+			recoverDelivered = true
+		default:
+			fireDelivered = true
+		}
+	}
+	return fireDelivered, recoverDelivered
+}
+
 // resurrectMasterAlerts runs once, at engine construction ("at engine
 // start"): master-own alerts (src.NodeID == "", e.g. node-down/
-// connectivity) have no child-side fallback to fall back on if the master
-// crashes between recording a fire/recover (Submit's step 1) and actually
-// delivering it -- unlike a child's own alert, nothing else will ever retry
-// it. For every master-own incident whose most recent timeline entry is
-// still exactly "fired" or "resolved" (meaning deliverAndReceipt never
-// completed for it -- see Submit's ordering invariant: a "delivered" event
-// is always the NEXT entry when delivery actually succeeds), this either
-// re-attempts delivery (if that decision is under 24h old) or gives up and
-// records why (B3 review round 2 1(a)).
+// connectivity) have no child-side fallback if the master crashes between
+// recording a fire/recover (Submit's step 1) and actually delivering it --
+// unlike a child's own alert, nothing else will ever retry it. It checks the
+// FIRE and RECOVER legs of every master-own incident independently (B3
+// review round 3: a single check based only on the incident's current
+// state/last timeline entry could miss an undelivered fire when the
+// recover, recorded later, is the one that happens to look "undelivered"):
+// for an incident younger than 24h, any leg with no matching "delivered"
+// event is re-enqueued on the SAME keyed lane, fire before recover, so
+// ordering is preserved exactly as an ordinary Submit call would produce it.
+// 24h or older, it gives up on whichever leg(s) are still undelivered and
+// records why, once, without delivering anything.
 func (e *fleetAlertEngine) resurrectMasterAlerts() {
 	if e.incidents == nil {
 		return
@@ -250,33 +294,47 @@ func (e *fleetAlertEngine) resurrectMasterAlerts() {
 	now := e.now()
 	cutoff := now.Add(-24 * time.Hour).Unix()
 	for _, inc := range e.incidents.List(core.IncidentFilter{}, nil) {
-		if len(inc.Nodes) != 0 || len(inc.Alerts) == 0 || len(inc.Timeline) == 0 {
+		if len(inc.Nodes) != 0 || len(inc.Alerts) == 0 {
 			continue // not a master-own incident, or nothing recorded on it
 		}
-		last := inc.Timeline[len(inc.Timeline)-1]
-		if last.Kind != "fired" && last.Kind != "resolved" {
-			continue // already delivered (or acked, or otherwise concluded)
-		}
 		al := inc.Alerts[len(inc.Alerts)-1]
-		sev, err := ParseSeverity(al.Severity)
-		if err != nil {
-			sev = SevWarning
+		hasRecover := al.ResolvedAt != 0
+		fireDelivered, recoverDelivered := legDeliveredStatus(inc)
+		if fireDelivered && (!hasRecover || recoverDelivered) {
+			continue // both recorded legs already confirmed delivered
 		}
-		kind, firedAt := "fire", al.FiredAt
-		if inc.State == "resolved" {
-			kind, firedAt = "recover", al.ResolvedAt
-		}
+
 		if inc.Updated < cutoff {
 			_, _ = e.incidents.AppendEvent(inc.ID, core.IncidentEvent{
 				TS: now.Unix(), Kind: "suppressed", Detail: "not delivered: master restarted", Actor: "system",
 			})
 			continue
 		}
-		a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: kind, Time: firedAt}
+
+		sev, err := ParseSeverity(al.Severity)
+		if err != nil {
+			sev = SevWarning
+		}
 		id := inc.ID
-		e.dispatch.Enqueue(inc.GroupKey, func() {
-			e.deliverAndReceiptDetail(alertSource{}, a, firedAt, id, "redelivered after restart")
-		})
+		lane := inc.GroupKey
+		if !fireDelivered {
+			a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: "fire", Time: al.FiredAt}
+			firedAt := al.FiredAt
+			e.dispatch.Enqueue(lane, func() {
+				e.deliverAndReceiptDetail(alertSource{}, a, firedAt, id, "redelivered after restart")
+			})
+		}
+		if hasRecover && !recoverDelivered {
+			a := Alert{Key: al.Key, Title: al.Title, Severity: sev, Kind: "recover", Time: al.ResolvedAt}
+			firedAt := al.ResolvedAt
+			// Enqueued on the SAME lane as the fire above (both use
+			// incidentGroupKey via inc.GroupKey), so the keyed dispatcher's
+			// per-lane FIFO guarantees the recover never runs first even
+			// though both were just enqueued back to back here.
+			e.dispatch.Enqueue(lane, func() {
+				e.deliverAndReceiptDetail(alertSource{}, a, firedAt, id, "redelivered after restart")
+			})
+		}
 	}
 }
 
@@ -284,6 +342,12 @@ func (e *fleetAlertEngine) resurrectMasterAlerts() {
 // enqueued so far has actually run. Test-only: production code never needs
 // Submit's delivery to be synchronous from the caller's point of view.
 func (e *fleetAlertEngine) waitIdleForTest() { e.dispatch.waitIdleForTest() }
+
+// Stop stops the engine's keyed dispatcher accepting new work and waits up
+// to timeout for everything already queued or in flight to finish (see
+// keyedDispatcher.Stop's doc comment for what happens to anything left
+// undelivered when it expires -- resurrectMasterAlerts at the next start).
+func (e *fleetAlertEngine) Stop(timeout time.Duration) bool { return e.dispatch.Stop(timeout) }
 
 // HandleChildAlert converts a child's shipped AlertEvent (as decoded by the
 // replica from a KindAlert record) into an Alert and submits it, using

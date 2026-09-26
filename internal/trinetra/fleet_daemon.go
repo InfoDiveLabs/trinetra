@@ -606,6 +606,18 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		if !waitBounded(loopDone, deadline) {
 			d.logf("fleet: master loop did not stop within 5s")
 		}
+		// Drain the alerting engine's keyed dispatcher last, once nothing
+		// new can reach it (the listener is closed and the loop has
+		// stopped): any delivery still in flight or queued gets up to 5s to
+		// actually finish. Anything still undelivered when that expires is
+		// NOT retried here -- resurrectMasterAlerts (fleet_engine.go), run
+		// at the next start, is what recovers it, since its incident record
+		// (written durably before delivery was ever attempted) shows no
+		// "delivered" event for it. Shutdown must stay bounded rather than
+		// wait forever for a stuck channel.
+		if !engine.Stop(5 * time.Second) {
+			d.logf("fleet: alerting engine did not finish delivering within 5s; undelivered alerts will be resurrected on next start")
+		}
 		_ = reg.FlushIfDirty()
 	}
 	d.logf("fleet: master listening on %s (join URL %s)", ln.Addr(), fleetJoinURL(cfg))

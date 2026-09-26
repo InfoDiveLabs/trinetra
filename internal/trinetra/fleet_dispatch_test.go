@@ -1,6 +1,7 @@
 package trinetra
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -146,4 +147,97 @@ func TestKeyedDispatcherEnqueueNeverBlocks(t *testing.T) {
 	}
 	close(blocking)
 	d.waitIdleForTest()
+}
+
+// TestKeyedDispatcherRetiresDrainedLanes is the B3 review round 3 minor 1:
+// a lane whose queue drains to empty must be removed from d.lanes, not held
+// forever, so a long-lived dispatcher with high key churn doesn't leak one
+// lane object per key it has ever seen.
+func TestKeyedDispatcherRetiresDrainedLanes(t *testing.T) {
+	d := newKeyedDispatcher()
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		key := keyFor(i)
+		go func(key string) {
+			defer wg.Done()
+			d.Enqueue(key, func() {})
+		}(key)
+	}
+	wg.Wait()
+	d.waitIdleForTest()
+
+	// waitIdleForTest only guarantees every job RAN; pump's own lane
+	// deletion happens immediately after, in the same loop iteration that
+	// observed the queue empty, so poll briefly rather than assuming it has
+	// already happened by the time wg.Wait() returns.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if n := d.laneCountForTest(); n == 0 {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("lanes = %d, want 0 after draining", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait is the B3 review round
+// 3 minor 2: Stop returns promptly (bounded by its own timeout) even while
+// a job is still blocked, work enqueued after Stop is dropped rather than
+// queued forever, and no goroutine is left running once everything that WAS
+// queued before Stop actually finishes.
+func TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	d := newKeyedDispatcher()
+	var mu sync.Mutex
+	ran := 0
+	block := make(chan struct{})
+	d.Enqueue("k1", func() {
+		<-block // still in flight when Stop is called
+		mu.Lock()
+		ran++
+		mu.Unlock()
+	})
+	d.Enqueue("k1", func() { mu.Lock(); ran++; mu.Unlock() }) // queued behind it
+
+	stopped := make(chan bool, 1)
+	go func() { stopped <- d.Stop(50 * time.Millisecond) }()
+
+	select {
+	case ok := <-stopped:
+		if ok {
+			t.Fatal("Stop reported everything drained, but a job is still deliberately blocked")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return within roughly its own timeout")
+	}
+
+	// Enqueue after Stop must be a no-op, not queued forever.
+	d.Enqueue("k2", func() { mu.Lock(); ran++; mu.Unlock() })
+
+	close(block) // let the two pre-Stop jobs actually finish
+	d.waitIdleForTest()
+
+	mu.Lock()
+	got := ran
+	mu.Unlock()
+	if got != 2 {
+		t.Fatalf("ran = %d, want 2 (the two jobs queued before Stop; k2 must have been dropped)", got)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if n := d.laneCountForTest(); n == 0 {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("lanes = %d, want 0 once everything has drained", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond) // let Stop's own wait-goroutine exit
+	if after := runtime.NumGoroutine(); after > before {
+		t.Fatalf("goroutines = %d, want <= %d (baseline) -- leak after Stop drained", after, before)
+	}
 }

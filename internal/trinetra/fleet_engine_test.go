@@ -370,8 +370,8 @@ func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 		t.Fatal("incident missing after resurrection")
 	}
 	last := inc.Timeline[len(inc.Timeline)-1]
-	if last.Kind != "delivered" || last.Detail != "redelivered after restart" {
-		t.Fatalf("last timeline event = %+v, want a redelivered-after-restart delivered event", last)
+	if last.Kind != "delivered" || last.Detail != "fire: redelivered after restart" {
+		t.Fatalf("last timeline event = %+v, want a redelivered-after-restart delivered event labeled fire", last)
 	}
 
 	// A THIRD restart, after the redelivery already succeeded, must not
@@ -392,6 +392,126 @@ func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 	engine2.waitIdleForTest()
 	if len(delivered2) != 0 {
 		t.Fatalf("redelivered a second time after already succeeding: %+v", delivered2)
+	}
+}
+
+// TestEngineResurrectsBothLegsFireBeforeRecover covers the B3 review round 3
+// IMPORTANT fix: if the master crashed with BOTH the fire and its recover
+// recorded but neither delivered, resurrection must redeliver both -- not
+// just whichever leg the incident's current state happens to reflect -- and
+// the fire must go out before the recover.
+func TestEngineResurrectsBothLegsFireBeforeRecover(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+
+	incidents1, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := alertSource{}
+	if _, err := incidents1.Apply(incidentApply{
+		src: src, alert: Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Time: 1000},
+		firedAt: 1000, now: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inc0, err := incidents1.Apply(incidentApply{
+		src: src, alert: Alert{Key: "fleet:node:x:down", Title: "x is back", Severity: SevCritical, Kind: "recover", Time: 1050},
+		firedAt: 1050, now: 1050,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Crash: neither leg's delivery goroutine ever ran.
+
+	incidents2, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var order []string
+	engine := newFleetAlertEngine(
+		func() time.Time { return time.Unix(1100, 0) },
+		func(a Alert) bool { mu.Lock(); order = append(order, a.Kind); mu.Unlock(); return true },
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents2,
+	)
+	engine.waitIdleForTest()
+
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "fire" || got[1] != "recover" {
+		t.Fatalf("delivery order = %v, want [fire recover]", got)
+	}
+	inc, ok := incidents2.Get(inc0.ID)
+	if !ok {
+		t.Fatal("incident missing")
+	}
+	fireDelivered, recoverDelivered := legDeliveredStatus(inc)
+	if !fireDelivered || !recoverDelivered {
+		t.Fatalf("legDeliveredStatus = fire=%v recover=%v, want both true", fireDelivered, recoverDelivered)
+	}
+}
+
+// TestEngineResurrectsOnlyUndeliveredRecoverLeg: the fire already delivered
+// (labeled "fire: ...") before the crash; only the recover is missing its
+// "delivered" event, so only the recover is redelivered.
+func TestEngineResurrectsOnlyUndeliveredRecoverLeg(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+
+	incidents1, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := alertSource{}
+	fireInc, err := incidents1.Apply(incidentApply{
+		src: src, alert: Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Time: 1000},
+		firedAt: 1000, now: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := incidents1.AppendEvent(fireInc.ID, core.IncidentEvent{
+		TS: 1010, Kind: "delivered", Detail: "fire: sent via the master's dispatcher", Actor: "system",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inc0, err := incidents1.Apply(incidentApply{
+		src: src, alert: Alert{Key: "fleet:node:x:down", Title: "x is back", Severity: SevCritical, Kind: "recover", Time: 1050},
+		firedAt: 1050, now: 1050,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Crash before the recover's own delivery.
+
+	incidents2, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered []Alert
+	engine := newFleetAlertEngine(
+		func() time.Time { return time.Unix(1100, 0) },
+		func(a Alert) bool { delivered = append(delivered, a); return true },
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents2,
+	)
+	engine.waitIdleForTest()
+
+	if len(delivered) != 1 || delivered[0].Kind != "recover" {
+		t.Fatalf("delivered = %+v, want exactly one recover redelivery", delivered)
+	}
+	inc, ok := incidents2.Get(inc0.ID)
+	if !ok {
+		t.Fatal("incident missing")
+	}
+	fireDelivered, recoverDelivered := legDeliveredStatus(inc)
+	if !fireDelivered || !recoverDelivered {
+		t.Fatalf("legDeliveredStatus = fire=%v recover=%v, want both true after resurrection", fireDelivered, recoverDelivered)
 	}
 }
 
@@ -669,6 +789,69 @@ func TestEngineBoundsConcurrentDispatches(t *testing.T) {
 	if max > dispatchConcurrency {
 		t.Fatalf("observed %d concurrent dispatches through the engine, want <= %d", max, dispatchConcurrency)
 	}
+}
+
+// TestEngineStopLeavesUndeliveredJobCleanForResurrection is the B3 review
+// round 3 minor 2's engine-level check: a job still in flight when Stop's
+// timeout expires leaves the incident exactly as step 1 recorded it -- no
+// "delivered" event -- so resurrectMasterAlerts at the next start (a fresh
+// engine over the same store) is what actually redelivers it.
+func TestEngineStopLeavesUndeliveredJobCleanForResurrection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incidents.jsonl")
+	incidents, err := loadIncidentStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := make(chan struct{})
+	engine := newFleetAlertEngine(
+		func() time.Time { return time.Unix(500, 0) },
+		func(Alert) bool { <-block; return true }, // deliberately stuck
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents,
+	)
+	engine.Submit(alertSource{}, Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Time: 1000})
+
+	if ok := engine.Stop(50 * time.Millisecond); ok {
+		t.Fatal("Stop reported everything drained, but the job is deliberately stuck")
+	}
+
+	// While the job is STILL stuck (block not yet closed): the durable
+	// record from step 1 shows no "delivered" event, exactly what
+	// resurrectMasterAlerts needs to see to redeliver it.
+	inc, ok := incidents.FindByAlertKey("fleet:node:x:down")
+	if !ok {
+		t.Fatal("incident missing")
+	}
+	if inc.State != "firing" {
+		t.Fatalf("incident state = %q, want firing", inc.State)
+	}
+	if fireDelivered, _ := legDeliveredStatus(inc); fireDelivered {
+		t.Fatal("fire leg shows delivered, but the job is deliberately still stuck")
+	}
+
+	// A "restart" (a fresh engine, over the SAME store -- same effect as
+	// reloading from disk, since resurrectMasterAlerts reads through
+	// incidentStore.List, not a snapshot) resurrects it while the original
+	// is still stuck.
+	var delivered []Alert
+	engine2 := newFleetAlertEngine(
+		func() time.Time { return time.Unix(600, 0) },
+		func(a Alert) bool { delivered = append(delivered, a); return true },
+		func(string, fleet.Frame) bool { return true },
+		func(string) bool { return true },
+		incidents,
+	)
+	engine2.waitIdleForTest()
+	if len(delivered) != 1 || delivered[0].Key != "fleet:node:x:down" {
+		t.Fatalf("delivered after restart = %+v, want exactly one redelivery", delivered)
+	}
+
+	// Clean up: let the original stuck job finish so nothing leaks past
+	// this test.
+	close(block)
+	engine.waitIdleForTest()
 }
 
 func TestEngineHandleChildAckSyncAcksOpenIncident(t *testing.T) {
