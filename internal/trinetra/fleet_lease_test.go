@@ -286,13 +286,15 @@ func TestOnStreamFrameLease(t *testing.T) {
 	if lease.Valid() {
 		t.Fatal("no lease frame processed yet, want invalid")
 	}
-	onStreamFrame(lease, h, fleet.Frame{Type: "lease", Data: json.RawMessage(`{"until":1090}`)})
+	onStreamFrame(lease, h, nil, nowFn, fleet.Frame{Type: "lease", Data: json.RawMessage(`{"until":1090}`)})
 	if !lease.Valid() {
 		t.Fatal("want valid after a lease frame")
 	}
 }
 
 func TestOnStreamFrameReceipt(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
 	lease := newLeaseHolder(nowFn)
@@ -301,11 +303,26 @@ func TestOnStreamFrameReceipt(t *testing.T) {
 
 	a := Alert{Key: "cpu", Kind: "fire", Time: 1000}
 	h.Route(a)
-	onStreamFrame(lease, h, fleet.Frame{Type: "receipt", Data: json.RawMessage(`{"key":"cpu","fired_at":1000}`)})
+	now = time.Unix(1005, 0)
+	onStreamFrame(lease, h, alog, nowFn, fleet.Frame{Type: "receipt", Data: json.RawMessage(`{"key":"cpu","fired_at":1000}`)})
 
 	now = time.Unix(2000, 0) // long past fallback_after; a real receipt must have cancelled it
 	if got := h.Tick(); len(got) != 0 {
 		t.Fatalf("Tick after a receipt frame = %v, want none", got)
+	}
+
+	// The receipt must also be durably recorded, so a restart doesn't
+	// resurrect this alert as pending (reconcilePendingFromLog).
+	events, err := alog.AlertEventsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want 1 receipt marker", events)
+	}
+	e := events[0]
+	if e.Kind != receiptMarkerKind || e.Key != "cpu" || e.FiredAt != 1000 || e.Time != 1005 {
+		t.Fatalf("receipt marker = %+v, want kind=%s key=cpu fired_at=1000 time=1005", e, receiptMarkerKind)
 	}
 }
 
@@ -314,9 +331,9 @@ func TestOnStreamFrameReceipt(t *testing.T) {
 func TestOnStreamFrameIgnoresGarbageAndUnknownTypes(t *testing.T) {
 	lease := newLeaseHolder(nil)
 	h := newHandoff(nil, func() time.Duration { return time.Minute }, lease)
-	onStreamFrame(lease, h, fleet.Frame{Type: "lease", Data: json.RawMessage(`not json`)})
-	onStreamFrame(lease, h, fleet.Frame{Type: "receipt", Data: json.RawMessage(`not json`)})
-	onStreamFrame(lease, h, fleet.Frame{Type: "silences", Data: json.RawMessage(`{}`)})
+	onStreamFrame(lease, h, nil, time.Now, fleet.Frame{Type: "lease", Data: json.RawMessage(`not json`)})
+	onStreamFrame(lease, h, nil, time.Now, fleet.Frame{Type: "receipt", Data: json.RawMessage(`not json`)})
+	onStreamFrame(lease, h, nil, time.Now, fleet.Frame{Type: "silences", Data: json.RawMessage(`{}`)})
 	if lease.Valid() {
 		t.Fatal("garbage lease data must not grant a lease")
 	}
@@ -336,5 +353,289 @@ func TestDeliverFallbackDoesNotMutateCallersAlert(t *testing.T) {
 	deliverFallback(alog, nil, q, a, false, 1200)
 	if a != orig {
 		t.Fatalf("caller's Alert mutated: got %+v, want unchanged %+v", a, orig)
+	}
+}
+
+// --- reconcilePendingFromLog (restart safety) -------------------------------
+//
+// handoff.pending lives only in memory: these tests pin the fix for the gap
+// where a child restarting between Route (lease valid, so nothing delivered
+// locally) and a receipt would otherwise lose the alert -- delivered by
+// neither the master nor, ever, locally.
+
+func routedFireEvent(key, title string, firedAt int64) AlertEvent {
+	return AlertEvent{
+		Time: firedAt, Key: key, Title: title, Severity: "warning", Kind: "fire",
+		Source: "anomaly", RoutedToMaster: true, FiredAt: firedAt,
+	}
+}
+
+func TestReconcilePendingFromLogFindsUnresolvedRoutedFire(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", 1000)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := reconcilePendingFromLog(alog, time.Minute, time.Unix(1010, 0))
+	if len(got) != 1 || got[0].Key != "cpu" || got[0].Time != 1000 || got[0].Title != "CPU high" || got[0].Severity != SevWarning {
+		t.Fatalf("reconcile = %+v, want the one unresolved routed fire", got)
+	}
+}
+
+// A fire that was NOT routed to the master (RoutedToMaster=false: solo,
+// master, or a child with no lease at the time) was delivered locally
+// already, synchronously, when it first fired -- it must never be treated
+// as still pending.
+func TestReconcilePendingFromLogIgnoresUnroutedFire(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	ev := routedFireEvent("cpu", "CPU high", 1000)
+	ev.RoutedToMaster = false
+	if err := alog.AppendAlertEvent(ev); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := reconcilePendingFromLog(alog, time.Minute, time.Unix(1010, 0)); len(got) != 0 {
+		t.Fatalf("reconcile = %+v, want none (never routed)", got)
+	}
+}
+
+func TestReconcilePendingFromLogSkipsReceiptResolved(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", 1000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := alog.AppendAlertEvent(AlertEvent{Time: 1005, Key: "cpu", Kind: receiptMarkerKind, Source: "fleet", FiredAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := reconcilePendingFromLog(alog, time.Minute, time.Unix(1010, 0)); len(got) != 0 {
+		t.Fatalf("reconcile = %+v, want none: a receipt marker resolves it", got)
+	}
+}
+
+func TestReconcilePendingFromLogSkipsDeliveredLocallyResolved(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", 1000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := alog.AppendAlertEvent(AlertEvent{
+		Time: 1065, Key: "cpu", Title: fallbackPrefix + "CPU high", Severity: "warning", Kind: "fire",
+		Source: "anomaly", DeliveredLocally: true, FiredAt: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := reconcilePendingFromLog(alog, time.Minute, time.Unix(1070, 0)); len(got) != 0 {
+		t.Fatalf("reconcile = %+v, want none: a delivered_locally record resolves it", got)
+	}
+}
+
+func TestReconcilePendingFromLogSkipsRecoveredAfterFire(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", 1000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := alog.AppendAlertEvent(AlertEvent{
+		Time: 1030, Key: "cpu", Title: "CPU back to normal", Severity: "warning", Kind: "recover", Source: "anomaly",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := reconcilePendingFromLog(alog, time.Minute, time.Unix(1040, 0)); len(got) != 0 {
+		t.Fatalf("reconcile = %+v, want none: a later recover for the same key resolves the fire", got)
+	}
+}
+
+// A recover logged BEFORE the fire it shares a key with (a stale/reordered
+// line, or simply an earlier unrelated recover) must not resolve it.
+func TestReconcilePendingFromLogRecoverBeforeFireDoesNotResolveIt(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	if err := alog.AppendAlertEvent(AlertEvent{
+		Time: 900, Key: "cpu", Title: "CPU back to normal", Severity: "warning", Kind: "recover", Source: "anomaly",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", 1000)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := reconcilePendingFromLog(alog, time.Minute, time.Unix(1010, 0))
+	if len(got) != 1 || got[0].Time != 1000 {
+		t.Fatalf("reconcile = %+v, want the fire still pending (the recover predates it)", got)
+	}
+}
+
+// The scan is bounded to the last fallbackAfter*10 window: a routed fire far
+// outside it must not slow startup or resurrect a years-old, long-resolved
+// alert.
+func TestReconcilePendingFromLogBoundedByWindow(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", 1000)); err != nil {
+		t.Fatal(err)
+	}
+
+	fallbackAfter := time.Minute // window = 10 * 60s = 600s
+	now := time.Unix(1000+601, 0)
+	if got := reconcilePendingFromLog(alog, fallbackAfter, now); len(got) != 0 {
+		t.Fatalf("reconcile = %+v, want none: the fire is outside the scan window", got)
+	}
+	now = time.Unix(1000+599, 0)
+	if got := reconcilePendingFromLog(alog, fallbackAfter, now); len(got) != 1 {
+		t.Fatalf("reconcile = %+v, want the fire still found just inside the window", got)
+	}
+}
+
+func TestReconcilePendingFromLogNilAlogReturnsNil(t *testing.T) {
+	if got := reconcilePendingFromLog(nil, time.Minute, time.Now()); got != nil {
+		t.Fatalf("reconcile with nil alog = %v, want nil", got)
+	}
+}
+
+// --- full restart flow (the review's three required scenarios) -------------
+
+// Scenario 1: the child restarts mid-handoff with no receipt ever logged.
+// After restart, once fallback_after has passed (judged against the
+// ORIGINAL fire time, not restart time), the alert is delivered locally
+// exactly once, with the fallback prefix.
+func TestRestartWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	fireTime := int64(1000)
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", fireTime)); err != nil {
+		t.Fatal(err)
+	}
+
+	fallbackAfter := 60 * time.Second
+
+	// "Restart": a fresh handoff/lease, reconciled from the log the way
+	// startChild does, with a FRESH valid lease already re-granted (so it is
+	// fallback timing -- not lease expiry -- that must trigger delivery).
+	now := time.Unix(fireTime+30, 0) // fallback_after not yet elapsed
+	nowFn := func() time.Time { return now }
+	lease := newLeaseHolder(nowFn)
+	lease.Grant(now.Unix() + 1000)
+	h := newHandoff(nowFn, func() time.Duration { return fallbackAfter }, lease)
+	h.Reconcile(reconcilePendingFromLog(alog, fallbackAfter, now))
+
+	if got := h.Tick(); len(got) != 0 {
+		t.Fatalf("Tick before fallback_after (measured from the ORIGINAL fire) elapsed = %v, want none yet", got)
+	}
+
+	now = time.Unix(fireTime+61, 0) // now past it
+	got := h.Tick()
+	if len(got) != 1 || got[0].Key != "cpu" || got[0].Time != fireTime {
+		t.Fatalf("Tick once fallback_after (from the original fire) elapsed = %+v, want the reconciled alert delivered once", got)
+	}
+
+	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
+	deliverFallback(alog, nil, q, got[0], false, now.Unix())
+
+	wantTitle := fallbackPrefix + "CPU high"
+	events, err := alog.AlertEventsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered := 0
+	for _, e := range events {
+		if e.DeliveredLocally {
+			delivered++
+			if e.Title != wantTitle || e.FiredAt != fireTime {
+				t.Fatalf("delivered_locally event = %+v, want title %q fired_at %d", e, wantTitle, fireTime)
+			}
+		}
+	}
+	if delivered != 1 {
+		t.Fatalf("delivered_locally events = %d, want exactly 1", delivered)
+	}
+	if keys := q.snapshotKeysForTest(); len(keys) != 1 || keys[0] != "cpu" {
+		t.Fatalf("queue = %v, want the alert delivered locally exactly once", keys)
+	}
+	if got2 := h.Tick(); len(got2) != 0 {
+		t.Fatalf("second Tick = %v, want none: already delivered, must not repeat", got2)
+	}
+}
+
+// Scenario 2: same as above, but the receipt was logged before the restart.
+// No local delivery, ever.
+func TestRestartWithReceiptLoggedBeforeRestartNeverDeliversLocally(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	fireTime := int64(1000)
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", fireTime)); err != nil {
+		t.Fatal(err)
+	}
+	if err := alog.AppendAlertEvent(AlertEvent{Time: fireTime + 2, Key: "cpu", Kind: receiptMarkerKind, Source: "fleet", FiredAt: fireTime}); err != nil {
+		t.Fatal(err)
+	}
+
+	fallbackAfter := 60 * time.Second
+	now := time.Unix(fireTime+1000, 0) // long past fallback_after and lease expiry
+	nowFn := func() time.Time { return now }
+	lease := newLeaseHolder(nowFn) // no lease held after restart either
+	h := newHandoff(nowFn, func() time.Duration { return fallbackAfter }, lease)
+	h.Reconcile(reconcilePendingFromLog(alog, fallbackAfter, now))
+
+	if got := h.Tick(); len(got) != 0 {
+		t.Fatalf("Tick after a pre-restart receipt = %v, want none: never deliver locally", got)
+	}
+}
+
+// Scenario 3: same as above, but a delivered_locally record is already
+// present (the fallback delivery happened, then the process restarted
+// again before Tick's normal single-delivery guard would matter). No
+// second delivery.
+func TestRestartWithDeliveredLocallyAlreadyPresentNoSecondDelivery(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	fireTime := int64(1000)
+	if err := alog.AppendAlertEvent(routedFireEvent("cpu", "CPU high", fireTime)); err != nil {
+		t.Fatal(err)
+	}
+	if err := alog.AppendAlertEvent(AlertEvent{
+		Time: fireTime + 65, Key: "cpu", Title: fallbackPrefix + "CPU high", Severity: "warning", Kind: "fire",
+		Source: "anomaly", DeliveredLocally: true, FiredAt: fireTime,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fallbackAfter := 60 * time.Second
+	now := time.Unix(fireTime+1000, 0)
+	nowFn := func() time.Time { return now }
+	lease := newLeaseHolder(nowFn)
+	h := newHandoff(nowFn, func() time.Duration { return fallbackAfter }, lease)
+	h.Reconcile(reconcilePendingFromLog(alog, fallbackAfter, now))
+
+	if got := h.Tick(); len(got) != 0 {
+		t.Fatalf("Tick after a pre-restart delivered_locally record = %v, want none: no second delivery", got)
+	}
+}
+
+// Reconcile must not clobber a pending entry Route already created after
+// construction but before the reconciliation scan ran (e.g. a fresh fire
+// racing startup).
+func TestHandoffReconcileDoesNotOverwriteAlreadyPendingEntry(t *testing.T) {
+	now := time.Unix(1000, 0)
+	nowFn := func() time.Time { return now }
+	lease := newLeaseHolder(nowFn)
+	lease.Grant(1_000_000)
+	h := newHandoff(nowFn, func() time.Duration { return time.Minute }, lease)
+
+	fresh := Alert{Key: "cpu", Title: "fresh title", Kind: "fire", Time: 1000}
+	h.Route(fresh) // Route's own routedAt = now (1000)
+
+	stale := Alert{Key: "cpu", Title: "stale title from the log", Kind: "fire", Time: 1000}
+	h.Reconcile([]Alert{stale})
+
+	now = time.Unix(1061, 0) // past fallback_after
+	got := h.Tick()
+	if len(got) != 1 || got[0].Title != "fresh title" {
+		t.Fatalf("Tick = %+v, want Route's own entry preserved, not overwritten by Reconcile", got)
 	}
 }

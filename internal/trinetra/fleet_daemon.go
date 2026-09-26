@@ -486,13 +486,23 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	handoffState := newHandoff(time.Now, func() time.Duration { return d.getCfg().FleetFallbackAfter() }, lease)
 	restoreRoute := setAlertRoute(handoffState.Route)
 
+	// Restart safety: handoff.pending lives only in memory, so a routed
+	// alert whose receipt (or fallback) hadn't landed yet before this
+	// process last stopped would otherwise vanish -- delivered neither by
+	// the master (no receipt ever arrived here to prove it) nor locally.
+	// Rebuild it from alertlog.jsonl, which already durably records every
+	// routed fire (RoutedToMaster) and every receipt/fallback that resolves
+	// one (see reconcilePendingFromLog), before the ticker below starts
+	// judging anything.
+	handoffState.Reconcile(reconcilePendingFromLog(d.alog, d.getCfg().FleetFallbackAfter(), time.Now()))
+
 	sh := fleet.NewShipper(fleet.ShipperConfig{
 		MasterURL: cfg.Fleet.MasterURL, Pin: cfg.Fleet.CAPin, Identity: id, Outbox: ob,
 		Gaps:      &localGapFiller{store: d.store, alog: d.alog, rawRetention: configuredRawRetention(cfg), now: time.Now},
 		Live:      live.Build,
 		LiveEvery: time.Duration(cfg.FastInterval) * time.Second,
 		Logf:      d.logf,
-		OnFrame:   func(f fleet.Frame) { onStreamFrame(lease, handoffState, f) },
+		OnFrame:   func(f fleet.Frame) { onStreamFrame(lease, handoffState, d.alog, time.Now, f) },
 	})
 	cctx, cancel := context.WithCancel(ctx)
 	shipDone := make(chan struct{})

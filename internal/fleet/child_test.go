@@ -219,6 +219,73 @@ func nodeIDFromOutbox(t *testing.T, f *masterFixture, ob *Outbox) string {
 	return ""
 }
 
+// shipOnce must report that the priority lane already made real progress
+// (a durable Backfill the master has) even when the general backlog Read
+// that follows it fails: worked must be true alongside the error, not
+// false, so a caller can tell "something happened" from "nothing did."
+func TestShipOnceReportsWorkedTrueWhenPriorityBackfillSucceedsButReadFails(t *testing.T) {
+	f := newMasterFixture(t)
+	dir := t.TempDir()
+	// A tiny segMax forces the alert and the backlog samples after it into
+	// separate segment files, so the backlog's segment(s) can be broken
+	// without touching the one the priority lane reads from.
+	ob, err := OpenOutboxSegmented(dir, 1<<20, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ob.Close()
+
+	alertSeq, err := ob.Append(KindAlert, 1, []byte(`{"key":"cpu"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, ob, 2, 5)
+
+	// Break every segment that does NOT hold the alert: replace its file
+	// with a directory, so reading it returns a real (non-ErrNotExist)
+	// error instead of silently skipping it like a cap-evicted segment
+	// would.
+	broke := 0
+	for _, s := range ob.segs {
+		if s.first <= alertSeq && alertSeq <= s.last {
+			continue // the priority lane's own segment must stay readable
+		}
+		if err := os.Remove(s.path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(s.path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		broke++
+	}
+	if broke == 0 {
+		t.Fatal("test setup invalid: expected the backlog to land in a separate, breakable segment")
+	}
+
+	childDir := filepath.Join(t.TempDir(), "fleet-child")
+	if _, err := Join(context.Background(), joinCode(f, t, 1), "box", "v1", nil, childDir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := LoadIdentity(childDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := NewShipper(ShipperConfig{MasterURL: f.srv.URL, Pin: f.pin, Identity: id, Outbox: ob})
+
+	worked, err := sh.shipOnce(context.Background())
+	if err == nil {
+		t.Fatal("shipOnce returned a nil error, want the broken segment to surface as a Read error")
+	}
+	if !worked {
+		t.Fatalf("shipOnce reported worked=false (err=%v), want true: the priority Backfill already made real progress before Read failed", err)
+	}
+
+	backfilled := f.sink.BackfillFor(nodeIDFromOutbox(t, f, ob))
+	if len(backfilled) != 1 || backfilled[0].Seq != alertSeq {
+		t.Fatalf("backfilled = %+v, want exactly the alert (seq %d) to have gone through before the Read failure", backfilled, alertSeq)
+	}
+}
+
 type fakeGaps struct{ calls int }
 
 func (g *fakeGaps) Fill(gap Gap) ([]Record, error) {

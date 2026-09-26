@@ -760,7 +760,13 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 
 	recs, err := s.cfg.Outbox.Read(s.cfg.Outbox.Acked(), MaxBatchBytes, MaxBatchRecords)
 	if err != nil {
-		return false, err
+		// The priority send already made real progress (a durable Backfill
+		// the master has, dedup-safe even if resent) even though the
+		// backlog read that follows it failed: report that truthfully
+		// rather than as "no progress," even though dataLoop's own retry
+		// loop currently ignores worked on an error return -- this is about
+		// shipOnce's contract, which a direct caller/test can rely on.
+		return prioritySent, err
 	}
 	if len(recs) == 0 {
 		// Nothing queued; a live update may still be keeping the link warm.
