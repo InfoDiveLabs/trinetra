@@ -781,3 +781,190 @@ func (f fleetAPIImpl) ManagedStatus() ([]core.ManagedStatus, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].Node < out[j].Node })
 	return out, nil
 }
+
+// fleetSeriesCap is FleetSeries' agg="none" node-count ceiling (plan C, task
+// 1b: "capped at 10 nodes"); it also bounds the web compare page's checkbox
+// selection.
+const fleetSeriesCap = 10
+
+// toSeriesResolution maps a core.Resolution onto this package's own
+// Resolution (mirroring coreapi_inproc.go's Series conversion): core.ResRaw
+// is raw, everything else (core.Res1m, and core.ResAuto -- FleetSeries has
+// no age-dependent picker of its own, unlike Series/PickResolution, since
+// the web compare page already decides raw-vs-1m itself off the requested
+// range) is Res1m.
+func toSeriesResolution(res core.Resolution) Resolution {
+	if res == core.ResRaw {
+		return ResRaw
+	}
+	return Res1m
+}
+
+// diskSeriesPoints returns, for every timestamp bucket present in ANY of
+// store's disk:<mount> series over [from, to] at res, that bucket's WORST
+// (highest) mount value -- the bucketed counterpart of fleet_rules.go's
+// diskSeriesAverage (a single window-wide worst-mount average), used by
+// FleetSeries' "disk" metric so a compare chart sees the same "disk (worst)"
+// framing NodeSummary.WorstDiskPct/the aggregate rules already use, just
+// across a whole series instead of one instant or one window average. A
+// mount missing a point at a given bucket simply doesn't contribute to that
+// bucket's max, exactly like diskSeriesAverage excluding a mount with no
+// points from its own average.
+func diskSeriesPoints(store SampleStore, from, to int64, res Resolution) ([]Point, error) {
+	metrics, ok := diskMountMetrics(store, res)
+	if !ok || len(metrics) == 0 {
+		return nil, nil
+	}
+	worst := map[int64]float64{}
+	seen := map[int64]bool{}
+	for _, m := range metrics {
+		pts, err := store.Query(m, from, to, res)
+		if err != nil {
+			continue
+		}
+		for _, p := range pts {
+			if !seen[p.TS] || p.Avg > worst[p.TS] {
+				worst[p.TS], seen[p.TS] = p.Avg, true
+			}
+		}
+	}
+	out := make([]Point, 0, len(worst))
+	for ts, v := range worst {
+		out = append(out, Point{TS: ts, Min: v, Avg: v, Max: v})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
+	return out, nil
+}
+
+// querySeriesPoints reads metric's points from store over [from, to] at res,
+// special-casing "disk" to diskSeriesPoints' worst-mount-per-bucket series
+// (see its doc); a nil store (no data source at all for this node -- e.g.
+// self before the aggregate-rule evaluator has ever been wired) degrades to
+// no points rather than panicking.
+func querySeriesPoints(store SampleStore, metric string, from, to int64, res Resolution) ([]Point, error) {
+	if store == nil {
+		return nil, nil
+	}
+	if metric == "disk" {
+		return diskSeriesPoints(store, from, to, res)
+	}
+	return store.Query(metric, from, to, res)
+}
+
+// fleetSeriesAggregate combines vals (one value per contributing node at a
+// shared timestamp bucket) per agg; avg is the default for any value other
+// than max/min (including AggNone, which never reaches here -- see
+// FleetSeries).
+func fleetSeriesAggregate(agg core.Agg, vals []float64) float64 {
+	switch agg {
+	case core.AggMax:
+		m := vals[0]
+		for _, v := range vals[1:] {
+			if v > m {
+				m = v
+			}
+		}
+		return m
+	case core.AggMin:
+		m := vals[0]
+		for _, v := range vals[1:] {
+			if v < m {
+				m = v
+			}
+		}
+		return m
+	default: // core.AggAvg
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		return sum / float64(len(vals))
+	}
+}
+
+// FleetSeries implements core.FleetAPI (plan C, task 1b): metric's time
+// series across every node matching filter, either one series per node
+// (agg="none", capped at fleetSeriesCap nodes) or one aggregated series
+// (agg avg/max/min, Node ""). The master's own node is included the same
+// way B7's aggregate rules include it (fleet_rules.go's ruleSelfSource):
+// this reuses the exact self Name/Store the master's own rule evaluator was
+// wired with (m.engine.rules.self) rather than plumbing a second reference
+// onto masterState, so a nil/never-wired evaluator (bare-bones test
+// masterState) just means self contributes no data, not a panic.
+func (f fleetAPIImpl) FleetSeries(metric string, filter core.NodeFilter, agg core.Agg, from, to int64, res core.Resolution) ([]core.FleetSeriesPoint, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	storeRes := toSeriesResolution(res)
+
+	type nodeSource struct {
+		name  string
+		store SampleStore
+	}
+	var sources []nodeSource
+
+	selfName := f.p.selfName()
+	if filter.Match(core.NodeSummary{ID: core.SelfNodeID, Name: selfName, Self: true, State: string(fleet.StateOnline)}) {
+		var store SampleStore
+		if m.engine != nil && m.engine.rules != nil {
+			store = m.engine.rules.self.Store
+		}
+		sources = append(sources, nodeSource{name: selfName, store: store})
+	}
+	for _, n := range m.reg.List() {
+		if n.Revoked {
+			continue
+		}
+		s := core.NodeSummary{ID: n.ID, Name: n.Name, Tags: n.Tags, State: string(m.tracker.State(n.ID))}
+		if s.State == "" {
+			s.State = "unknown"
+		}
+		if !filter.Match(s) {
+			continue
+		}
+		rn, err := m.sink.node(n.ID)
+		if err != nil {
+			continue
+		}
+		sources = append(sources, nodeSource{name: n.Name, store: rn.store})
+	}
+
+	if agg == core.AggNone || agg == "" {
+		if len(sources) > fleetSeriesCap {
+			return nil, fmt.Errorf("compare at most %d nodes", fleetSeriesCap)
+		}
+		var out []core.FleetSeriesPoint
+		for _, s := range sources {
+			pts, err := querySeriesPoints(s.store, metric, from, to, storeRes)
+			if err != nil {
+				continue
+			}
+			for _, p := range pts {
+				out = append(out, core.FleetSeriesPoint{Node: s.name, TS: p.TS, Value: p.Avg})
+			}
+		}
+		return out, nil
+	}
+
+	buckets := map[int64][]float64{}
+	for _, s := range sources {
+		pts, err := querySeriesPoints(s.store, metric, from, to, storeRes)
+		if err != nil {
+			continue
+		}
+		for _, p := range pts {
+			buckets[p.TS] = append(buckets[p.TS], p.Avg)
+		}
+	}
+	tsList := make([]int64, 0, len(buckets))
+	for ts := range buckets {
+		tsList = append(tsList, ts)
+	}
+	sort.Slice(tsList, func(i, j int) bool { return tsList[i] < tsList[j] })
+	out := make([]core.FleetSeriesPoint, 0, len(tsList))
+	for _, ts := range tsList {
+		out = append(out, core.FleetSeriesPoint{TS: ts, Value: fleetSeriesAggregate(agg, buckets[ts])})
+	}
+	return out, nil
+}

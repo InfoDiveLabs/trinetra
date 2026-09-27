@@ -1033,25 +1033,43 @@ type seriesMetricLister interface {
 	Metrics(res Resolution) ([]string, error)
 }
 
+// diskMountMetrics returns every "disk:<mount>" series name store holds at
+// res, or ok=false when store's backend can't enumerate its series at all
+// (see seriesMetricLister) -- shared by diskSeriesAverage (single-value,
+// used by the aggregate-rule engine) and fleet_provider.go's diskSeriesPoints
+// (bucketed, used by FleetSeries/plan C task 1b), so both read the exact
+// same "which mounts does this node have" answer instead of duplicating the
+// enumeration.
+func diskMountMetrics(store SampleStore, res Resolution) ([]string, bool) {
+	lister, ok := store.(seriesMetricLister)
+	if !ok {
+		return nil, false
+	}
+	all, err := lister.Metrics(res)
+	if err != nil {
+		return nil, false
+	}
+	var out []string
+	for _, m := range all {
+		if strings.HasPrefix(m, "disk:") {
+			out = append(out, m)
+		}
+	}
+	return out, true
+}
+
 // diskSeriesAverage computes, for every "disk:<mount>" 1m series store has,
 // that mount's own average over [from, to], and returns the WORST (highest)
 // of those per-mount averages -- "disk (worst)", the same framing
 // worstDisk(snap.Disks) uses for the instantaneous case (evalCount), applied
 // here across the window instead of a single point in time.
 func diskSeriesAverage(store SampleStore, from, to int64) (float64, bool) {
-	lister, ok := store.(seriesMetricLister)
+	metrics, ok := diskMountMetrics(store, Res1m)
 	if !ok {
-		return 0, false
-	}
-	metrics, err := lister.Metrics(Res1m)
-	if err != nil {
 		return 0, false
 	}
 	worst, has := 0.0, false
 	for _, m := range metrics {
-		if !strings.HasPrefix(m, "disk:") {
-			continue
-		}
 		pts, err := store.Query(m, from, to, Res1m)
 		if err != nil || len(pts) == 0 {
 			continue

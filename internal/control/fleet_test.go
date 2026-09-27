@@ -41,6 +41,14 @@ type fleetFake struct {
 	deletedManagedID    string
 	deletedManagedActor string
 	managedStatus       []core.ManagedStatus
+
+	fleetSeries       []core.FleetSeriesPoint
+	fleetSeriesMetric string
+	fleetSeriesFilter core.NodeFilter
+	fleetSeriesAgg    core.Agg
+	fleetSeriesFrom   int64
+	fleetSeriesTo     int64
+	fleetSeriesRes    core.Resolution
 }
 
 type fleetFakeAPI struct{ f *fleetFake }
@@ -162,6 +170,12 @@ func (a fleetFakeAPI) ManagedStatus() ([]core.ManagedStatus, error) {
 	return a.f.managedStatus, nil
 }
 
+func (a fleetFakeAPI) FleetSeries(metric string, filter core.NodeFilter, agg core.Agg, from, to int64, res core.Resolution) ([]core.FleetSeriesPoint, error) {
+	a.f.fleetSeriesMetric, a.f.fleetSeriesFilter, a.f.fleetSeriesAgg = metric, filter, agg
+	a.f.fleetSeriesFrom, a.f.fleetSeriesTo, a.f.fleetSeriesRes = from, to, res
+	return a.f.fleetSeries, nil
+}
+
 func TestClientRoutesToNode(t *testing.T) {
 	remote := &fakeAPI{snapshot: core.DashboardView{CPU: 77}}
 	f := &fleetFake{fakeAPI: &fakeAPI{snapshot: core.DashboardView{CPU: 11}}, nodes: map[string]core.API{"n1": remote}}
@@ -251,6 +265,17 @@ func TestClientFleetMethods(t *testing.T) {
 	rs, err := fl.RuleStates()
 	if err != nil || len(rs) != 1 || rs[0].Name != "hot-web" || !rs[0].Firing {
 		t.Fatalf("rule states = %+v err %v", rs, err)
+	}
+
+	f.fleetSeries = []core.FleetSeriesPoint{{Node: "web-01", TS: 1000, Value: 42}}
+	fs, err := fl.FleetSeries("cpu", core.NodeFilter{Tag: "web"}, core.AggNone, 500, 1500, core.ResRaw)
+	if err != nil || len(fs) != 1 || fs[0].Node != "web-01" || fs[0].Value != 42 {
+		t.Fatalf("fleet series = %+v err %v", fs, err)
+	}
+	if f.fleetSeriesMetric != "cpu" || f.fleetSeriesFilter.Tag != "web" || f.fleetSeriesAgg != core.AggNone ||
+		f.fleetSeriesFrom != 500 || f.fleetSeriesTo != 1500 || f.fleetSeriesRes != core.ResRaw {
+		t.Fatalf("fleet series args not carried over the wire: metric=%q filter=%+v agg=%q from=%d to=%d res=%v",
+			f.fleetSeriesMetric, f.fleetSeriesFilter, f.fleetSeriesAgg, f.fleetSeriesFrom, f.fleetSeriesTo, f.fleetSeriesRes)
 	}
 }
 

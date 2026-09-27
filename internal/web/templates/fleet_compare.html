@@ -1,0 +1,29 @@
+{{define "content"}}
+<div id="fleet-compare-page">
+  <div class="toolbar">
+    <div class="legend">
+      {{range .MetricOptions}}<a class="chip{{if .Active}} on{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}
+    </div>
+    <span class="spacer"></span>
+    <div class="legend">
+      {{range .RangeOptions}}<a class="chip{{if .Active}} on{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}
+    </div>
+  </div>
+
+  {{if not .Selected}}
+  <div class="panel"><div class="note">Select nodes from the <a href="/fleet">fleet table</a> and choose Compare, or add <span class="mono">?tag=</span> to this page's URL.</div></div>
+  {{else if .ErrorMsg}}
+  <div class="flash err" role="status">{{.ErrorMsg}}</div>
+  {{else}}
+  <div class="panel">
+    <div class="head">
+      <span class="eyebrow">Compare</span>
+      <div class="legend" id="fleetCompareLegend">
+        {{range .Legend}}<span><i style="background:{{.Color}}"></i>{{.Name}}</span>{{end}}
+      </div>
+    </div>
+    <div id="chart-fleet-compare" class="u-chart" data-series="{{.DataJSON}}" style="height:320px"></div>
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -66,6 +66,7 @@
 <div class="panel pad0 cardpanel"><div class="tablewrap">
   <table id="fleet-nodes" class="cards">
     <thead><tr>
+      <th></th>
       <th><a href="{{index .SortLinks "name"}}">Name</a></th>
       <th><a href="{{index .SortLinks "state"}}">State</a></th>
       <th><a href="{{index .SortLinks "cpu"}}">CPU</a></th>
@@ -80,7 +81,12 @@
     {{template "fleet_rows" .}}
   </table>
 </div></div>
-<p class="note" style="margin-top:10px">Showing {{len .Rows}} of {{.TotalNodes}} node{{if ne .TotalNodes 1}}s{{end}} · table refreshes every 5s</p>
+<div class="toolbar" style="margin-top:10px">
+  <p class="note" style="margin:0">Showing {{len .Rows}} of {{.TotalNodes}} node{{if ne .TotalNodes 1}}s{{end}} · table refreshes every 5s</p>
+  <span class="spacer"></span>
+  <span class="note mono" id="fleetCompareCount">0 selected</span>
+  <button type="button" class="btn" id="fleetCompareBtn" disabled>Compare</button>
+</div>
 {{end}}
 
 {{/* fleet_rows (task 5): the bare <tbody> fragment GET /fleet/table
@@ -108,6 +114,7 @@
 {{define "fleet_rows"}}<tbody id="fleet-tbody" hx-get="/fleet/table?{{.QueryString}}" hx-trigger="every 5s" hx-swap="outerHTML" hx-sync="this:replace">
 {{range .Rows}}
 <tr data-node-id="{{.ID}}">
+  <td><input type="checkbox" class="fleet-compare-check" value="{{.ID}}"></td>
   <td class="mono card-title"><a href="{{.Href}}">{{.Name}}</a>{{if .Self}} <span class="note">(this host)</span>{{end}}</td>
   <td data-label="State"><span class="badge{{if eq .State "online"}} ok{{else if eq .State "down"}} crit{{else if or (eq .State "lagging") (eq .State "stale")}} warn{{end}}">{{.State}}</span></td>
   <td class="mono" data-label="CPU">{{printf "%.0f" .CPU}}%</td>
@@ -124,6 +131,6 @@
   </td>
 </tr>
 {{else}}
-<tr><td colspan="10" class="note">no fleet nodes match this filter</td></tr>
+<tr><td colspan="11" class="note">no fleet nodes match this filter</td></tr>
 {{end}}
 </tbody>{{end}}

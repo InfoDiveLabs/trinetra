@@ -458,6 +458,11 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 		Alerting        core.AlertingConfig  `json:"alerting"`
 		TestAlert       core.TestAlert       `json:"test_alert"`
 		ManagedFragment core.ManagedFragment `json:"managed_fragment"`
+		Metric          string               `json:"metric"`
+		Agg             core.Agg             `json:"agg"`
+		From            int64                `json:"from"`
+		To              int64                `json:"to"`
+		Res             core.Resolution      `json:"res"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -653,6 +658,13 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 
 	case "Fleet.ManagedStatus":
 		v, err := f.ManagedStatus()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.FleetSeries":
+		v, err := f.FleetSeries(p.Metric, p.Filter, p.Agg, p.From, p.To, p.Res)
 		if err != nil {
 			return nil, err
 		}

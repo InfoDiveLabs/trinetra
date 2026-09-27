@@ -320,6 +320,13 @@ func (a fleetCLIFakeFleetAPI) ManagedStatus() ([]core.ManagedStatus, error) {
 	return a.f.managedStatus, a.f.managedStatusErr
 }
 
+// FleetSeries: plan C task 1b's fleet-wide series API has no CLI surface;
+// this stub exists only so fleetCLIFakeFleetAPI keeps satisfying
+// core.FleetAPI.
+func (a fleetCLIFakeFleetAPI) FleetSeries(string, core.NodeFilter, core.Agg, int64, int64, core.Resolution) ([]core.FleetSeriesPoint, error) {
+	return nil, nil
+}
+
 // startFleetDaemon stands up a real control.Serve loop at
 // controlSocketPath/controlTokenPath, so withDaemon's control.Dial in
 // fleet_cmd.go reaches it precisely as it would a real daemon. It points

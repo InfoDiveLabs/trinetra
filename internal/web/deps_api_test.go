@@ -188,6 +188,17 @@ type fakeFleet struct {
 	revokeErr      error
 	removeErr      error
 	deleteTokenErr error
+
+	// series/seriesErr (task C1b, fleet compare) let a test control
+	// FleetSeries' result/error; seriesCalls/lastSeries* record what it was
+	// called with, so handlers_fleet_compare_test.go can assert the compare
+	// page makes exactly one FleetSeries call per request.
+	series           []core.FleetSeriesPoint
+	seriesErr        error
+	seriesCalls      int
+	lastSeriesMetric string
+	lastSeriesFilter core.NodeFilter
+	lastSeriesAgg    core.Agg
 }
 
 func (f *fakeFleet) Status() (core.FleetStatus, error) { return f.status, f.statusErr }
@@ -296,6 +307,14 @@ func (f *fakeFleet) SaveManaged(frag core.ManagedFragment, actor string) (core.M
 }
 func (f *fakeFleet) DeleteManaged(string, string) error           { return nil }
 func (f *fakeFleet) ManagedStatus() ([]core.ManagedStatus, error) { return nil, nil }
+
+// FleetSeries (task C1b, fleet compare) records every call for
+// handlers_fleet_compare_test.go's "single FleetSeries call" assertions.
+func (f *fakeFleet) FleetSeries(metric string, filter core.NodeFilter, agg core.Agg, from, to int64, res core.Resolution) ([]core.FleetSeriesPoint, error) {
+	f.seriesCalls++
+	f.lastSeriesMetric, f.lastSeriesFilter, f.lastSeriesAgg = metric, filter, agg
+	return f.series, f.seriesErr
+}
 
 var _ core.FleetAPI = (*fakeFleet)(nil)
 

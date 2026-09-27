@@ -651,3 +651,11 @@ func (f fleetClient) ManagedStatus() ([]core.ManagedStatus, error) {
 	err := f.c.call("Fleet.ManagedStatus", struct{}{}, &v)
 	return v, err
 }
+
+func (f fleetClient) FleetSeries(metric string, filter core.NodeFilter, agg core.Agg, from, to int64, res core.Resolution) ([]core.FleetSeriesPoint, error) {
+	var v []core.FleetSeriesPoint
+	err := f.c.call("Fleet.FleetSeries", map[string]any{
+		"metric": metric, "filter": filter, "agg": agg, "from": from, "to": to, "res": res,
+	}, &v)
+	return v, err
+}

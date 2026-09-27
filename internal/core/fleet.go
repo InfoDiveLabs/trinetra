@@ -63,11 +63,20 @@ type NodeFilter struct {
 	Tag   string `json:"tag"`
 	State string `json:"state"`
 	Query string `json:"query"`
+	// Nodes, when non-empty, restricts Match to exactly the named nodes (by
+	// id, e.g. core.SelfNodeID, or exact display name) -- the fleet compare
+	// view's explicit ?nodes=a,b,c selection (plan C, task 1b). When set,
+	// Tag/State/Query are ignored: an explicit list is exact, not another
+	// filter dimension to AND against.
+	Nodes []string `json:"nodes,omitempty"`
 }
 
 // Match reports whether n passes every non-empty criterion of f. Query is a
 // case-insensitive substring match over name, id and remote address.
 func (f NodeFilter) Match(n NodeSummary) bool {
+	if len(f.Nodes) > 0 {
+		return slices.Contains(f.Nodes, n.ID) || slices.Contains(f.Nodes, n.Name)
+	}
 	if f.State != "" && n.State != f.State {
 		return false
 	}
@@ -624,6 +633,41 @@ type FleetAPI interface {
 	// fragment (or an unresolved conflict): its desired-set generation, what
 	// it last reported applying, and any drift/conflicts.
 	ManagedStatus() ([]ManagedStatus, error)
+
+	// FleetSeries reads metric's time series across every node matching
+	// filter (plan C, task 1b: the fleet-wide series API backing the web
+	// compare view). agg "none" returns one series per node (Node set to
+	// the node's display name), capped at 10 nodes -- above the cap nothing
+	// is returned and the error is "compare at most 10 nodes" (a caller
+	// wanting more must narrow filter). agg avg/max/min instead return ONE
+	// series (Node "") aggregating every matching node's value at each
+	// timestamp bucket the underlying stores share. The master's own node
+	// (self) is included exactly the way the aggregate-rule engine includes
+	// it (fleet_rules.go's ruleSelfSource), via its local store. Metrics:
+	// cpu, mem, swap, load1, temp, disk (worst mount, exactly like
+	// NodeSummary.WorstDiskPct/the aggregate rules' "disk" metric).
+	FleetSeries(metric string, filter NodeFilter, agg Agg, from, to int64, res Resolution) ([]FleetSeriesPoint, error)
+}
+
+// Agg picks how FleetSeries combines several nodes' series into its result:
+// "none" keeps one series per node, "avg"/"max"/"min" collapse every
+// matching node into a single aggregated series.
+type Agg string
+
+const (
+	AggNone Agg = "none"
+	AggAvg  Agg = "avg"
+	AggMax  Agg = "max"
+	AggMin  Agg = "min"
+)
+
+// FleetSeriesPoint is one sample of a FleetAPI.FleetSeries result: Node is
+// the node's display name for an agg="none" per-node series, or "" for an
+// aggregated (avg/max/min) series.
+type FleetSeriesPoint struct {
+	Node  string  `json:"node"`
+	TS    int64   `json:"ts"`
+	Value float64 `json:"value"`
 }
 
 // FleetProvider is optional; implementations of API that know about a fleet

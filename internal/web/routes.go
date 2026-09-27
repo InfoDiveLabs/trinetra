@@ -72,6 +72,13 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /fleet", requireRole(RoleViewer, d, fleetOverviewHandler(d)))
 	mux.HandleFunc("GET /fleet/table", requireRole(RoleViewer, d, fleetTableHandler(d)))
 	mux.HandleFunc("GET /api/fleet/nodes", requireRole(RoleViewer, d, fleetNodesAPIHandler(d)))
+	// /fleet/compare (Task C1b, plan C): the fleet-wide metric compare view
+	// over FleetAPI.FleetSeries -- ?nodes=a,b,c (the table's "Compare"
+	// action below) or ?tag=web selects the nodes, one uPlot overlay per
+	// request. Viewer-gated and master-only exactly like the read-only
+	// /fleet routes above; already on node_scope.go's masterLocalPrefixes
+	// via its "/fleet" entry.
+	mux.HandleFunc("GET /fleet/compare", requireRole(RoleViewer, d, fleetCompareHandler(d)))
 	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a):
 	// node management (rename/tags/revoke/remove) and join-token
 	// issuance/revocation, admin+CSRF-gated like /users/* below -- see

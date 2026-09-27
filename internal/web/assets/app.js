@@ -802,6 +802,82 @@
   var historyRoot=document.querySelector('[data-history]');
   if(historyRoot) window.swBootHistoryCharts();
 
+  // ---- fleet compare (task C1b: /fleet's checkbox selection + /fleet/compare's chart) ----
+  // templates/fleet.html's table rows each carry a ".fleet-compare-check"
+  // checkbox (value=node id); #fleetCompareBtn/#fleetCompareCount live
+  // outside the table's self-polling tbody (fleet_rows, hx-swap="outerHTML"
+  // every 5s) so they survive a poll even though the checkboxes themselves
+  // don't -- the listener is delegated onto #fleet-nodes (the <table>
+  // itself, never replaced) rather than bound per-checkbox, so it keeps
+  // working after every poll without re-binding anything.
+  //
+  // /fleet/compare is master-local (routes.go, node_scope.go's
+  // masterLocalPrefixes), never a per-node view, so this deliberately uses
+  // a plain relative URL -- NOT nodeURL() -- exactly like the rest of
+  // /fleet's own links.
+  (function(){
+    var table=document.getElementById('fleet-nodes');
+    if(!table) return;
+    var btn=document.getElementById('fleetCompareBtn');
+    var count=document.getElementById('fleetCompareCount');
+    var CAP=10;
+    function selectedIds(){
+      return Array.prototype.map.call(table.querySelectorAll('.fleet-compare-check:checked'),function(cb){return cb.value;});
+    }
+    function refresh(){
+      var ids=selectedIds();
+      if(count) count.textContent=ids.length+' selected'+(ids.length>CAP?' (max '+CAP+')':'');
+      if(btn) btn.disabled=ids.length===0||ids.length>CAP;
+    }
+    table.addEventListener('change',function(e){
+      if(e.target&&e.target.classList&&e.target.classList.contains('fleet-compare-check')) refresh();
+    });
+    document.body.addEventListener('htmx:afterSwap',function(e){
+      if(e.detail&&e.detail.target&&e.detail.target.id==='fleet-tbody') refresh();
+    });
+    if(btn){
+      btn.addEventListener('click',function(){
+        var ids=selectedIds();
+        if(!ids.length||ids.length>CAP) return;
+        window.location.href='/fleet/compare?nodes='+ids.map(encodeURIComponent).join(',');
+      });
+    }
+    refresh();
+  })();
+
+  // /fleet/compare's own chart: templates/fleet_compare.html embeds its
+  // FleetSeries result once, server-side, as JSON in
+  // #chart-fleet-compare[data-series] (handlers_fleet_compare.go's
+  // fleetCompareData) -- no separate fetch, so the whole page (including
+  // its one FleetSeries call) renders from a single request.
+  window.swBootFleetCompare=function(){
+    var el=document.getElementById('chart-fleet-compare');
+    if(!el||!window.uPlot) return;
+    var raw=el.dataset.series;
+    if(!raw) return;
+    var parsed;
+    try{ parsed=JSON.parse(raw); }catch(e){ return; }
+    var nodes=parsed.nodes||[];
+    var chart=null;
+    function build(){
+      var uSeries=[{}];
+      nodes.forEach(function(name,i){
+        var c=HISTORY_COLORS[i%HISTORY_COLORS.length];
+        uSeries.push({label:name,stroke:c,width:1.8,fill:c+'22'});
+      });
+      var opts={width:el.clientWidth||600,height:el.clientHeight||320,series:uSeries,cursor:{show:true},legend:{show:false},axes:swAxesOpt()};
+      chart=new uPlot(opts,parsed.series||[[]],el);
+      swRegisterChart(chart,el);
+    }
+    build();
+    document.addEventListener('sw-theme',function(){
+      if(chart) chart.destroy();
+      build();
+    });
+  };
+  var fleetCompareRoot=document.getElementById('chart-fleet-compare');
+  if(fleetCompareRoot) window.swBootFleetCompare();
+
   // ---- passkey enrollment (templates/enroll.html) ----
   // navigator.credentials.create()'s PublicKeyCredentialCreationOptions (and
   // the credential it returns) carry several fields as ArrayBuffers, but the
