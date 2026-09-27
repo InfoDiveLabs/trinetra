@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/InfoDiveLabs/trinetra/internal/telegram"
 )
 
 // Severity classifies how urgent an Alert is.
@@ -57,6 +59,13 @@ type Alert struct {
 	Kind     string // "fire" | "recover"
 	Source   string
 	Time     int64
+	// Buttons (task 9), when non-nil, is an inline keyboard the telegram
+	// Notifier attaches to this Alert's message (SendMessageWithButtons):
+	// the master's alerting engine sets it on an incident's fire
+	// notification only. Every other Notifier ignores it -- this is a
+	// generic, channel-agnostic field so a future channel could use it too,
+	// not a Telegram-specific one.
+	Buttons [][]telegram.Button
 }
 
 // Notifier delivers an Alert over some channel (Telegram, email, webhook, ...).

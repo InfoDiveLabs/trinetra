@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -373,7 +374,7 @@ func TestDeliverFallbackDoesNotMutateCallersAlert(t *testing.T) {
 	a := Alert{Key: "cpu", Title: "CPU high", Kind: "fire", Time: 1000}
 	orig := a
 	deliverFallback(nil, alog, nil, q, a, false, 1200)
-	if a != orig {
+	if !reflect.DeepEqual(a, orig) {
 		t.Fatalf("caller's Alert mutated: got %+v, want unchanged %+v", a, orig)
 	}
 }

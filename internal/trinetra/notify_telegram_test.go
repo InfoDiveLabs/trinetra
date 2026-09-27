@@ -64,3 +64,54 @@ func TestTelegramNotifierSendRespectsCancelledContext(t *testing.T) {
 		t.Error("expected Send to bail out before hitting the server when ctx is already cancelled")
 	}
 }
+
+// TestTelegramNotifierSendWithButtonsSetsMarkup pins task 9's Send wiring:
+// an Alert carrying Buttons is sent with a reply_markup inline keyboard.
+func TestTelegramNotifierSendWithButtonsSetsMarkup(t *testing.T) {
+	var gotMarkup string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotMarkup = r.FormValue("reply_markup")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	client := telegram.New("tok", "123")
+	client.BaseURL = srv.URL
+	n := &telegramNotifier{client: client, name: "tg"}
+
+	a := Alert{Title: "node down", Kind: "fire", Buttons: [][]telegram.Button{{{Text: "Ack", Data: "ack:abc123abc123"}}}}
+	if err := n.Send(context.Background(), a); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if gotMarkup == "" {
+		t.Fatal("Alert.Buttons set but no reply_markup was sent")
+	}
+}
+
+// TestTelegramNotifierSendWithoutButtonsSetsNoMarkup pins "solo/child
+// behaviour unchanged": an Alert with no Buttons (every non-incident alert,
+// and every alert on solo/child, which never sets Buttons at all) sends the
+// exact same plain request as before this task -- no reply_markup field.
+func TestTelegramNotifierSendWithoutButtonsSetsNoMarkup(t *testing.T) {
+	sawMarkup := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("reply_markup") != "" {
+			sawMarkup = true
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	client := telegram.New("tok", "123")
+	client.BaseURL = srv.URL
+	n := &telegramNotifier{client: client, name: "tg"}
+
+	if err := n.Send(context.Background(), Alert{Title: "cpu high", Kind: "fire"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if sawMarkup {
+		t.Fatal("an Alert with no Buttons must not set reply_markup")
+	}
+}

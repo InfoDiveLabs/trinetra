@@ -73,11 +73,71 @@ func (c *Client) SendMessageContext(ctx context.Context, text string) error {
 	return nil
 }
 
+// Button is one inline-keyboard button: Text is what the user sees, Data is
+// echoed back verbatim as the resulting callback_query's Data when tapped.
+// Keep Data at 64 bytes or less -- Telegram's own limit on callback_data.
+type Button struct {
+	Text string
+	Data string
+}
+
+// SendMessageWithButtons sends text (see SendMessage) with an inline
+// keyboard attached: rows renders top to bottom, each inner slice one row
+// of buttons left to right. Unlike SendMessage, this never chunks -- a
+// reply_markup cannot sensibly span more than one message bubble, and every
+// caller (fleet_engine.go's incident-fire notifications) only ever passes
+// short text. It delegates to SendMessageWithButtonsContext with a
+// background context.
+func (c *Client) SendMessageWithButtons(text string, rows [][]Button) error {
+	return c.SendMessageWithButtonsContext(context.Background(), text, rows)
+}
+
+// SendMessageWithButtonsContext is SendMessageWithButtons' ctx-aware variant.
+func (c *Client) SendMessageWithButtonsContext(ctx context.Context, text string, rows [][]Button) error {
+	markup, err := json.Marshal(inlineKeyboardMarkup{InlineKeyboard: buttonRowsJSON(rows)})
+	if err != nil {
+		return err
+	}
+	return c.sendFormContext(ctx, text, string(markup))
+}
+
+// inlineKeyboardButton/inlineKeyboardMarkup mirror the Telegram Bot API's
+// InlineKeyboardButton/InlineKeyboardMarkup JSON shape: marshaled, this is
+// exactly the value the "reply_markup" form field carries.
+type inlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+type inlineKeyboardMarkup struct {
+	InlineKeyboard [][]inlineKeyboardButton `json:"inline_keyboard"`
+}
+
+func buttonRowsJSON(rows [][]Button) [][]inlineKeyboardButton {
+	out := make([][]inlineKeyboardButton, len(rows))
+	for i, row := range rows {
+		r := make([]inlineKeyboardButton, len(row))
+		for j, b := range row {
+			r[j] = inlineKeyboardButton{Text: b.Text, CallbackData: b.Data}
+		}
+		out[i] = r
+	}
+	return out
+}
+
 func (c *Client) sendOneContext(ctx context.Context, text string) error {
+	return c.sendFormContext(ctx, text, "")
+}
+
+// sendFormContext posts one sendMessage call; replyMarkup, if non-empty, is
+// the pre-marshaled JSON of an InlineKeyboardMarkup.
+func (c *Client) sendFormContext(ctx context.Context, text, replyMarkup string) error {
 	form := url.Values{}
 	form.Set("chat_id", c.ChatID)
 	form.Set("text", text)
 	form.Set("parse_mode", "HTML")
+	if replyMarkup != "" {
+		form.Set("reply_markup", replyMarkup)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/sendMessage", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
@@ -98,6 +158,39 @@ func (c *Client) sendOneContext(ctx context.Context, text string) error {
 			return fmt.Errorf("sendMessage status %d: %s", resp.StatusCode, apiErr.Description)
 		}
 		return fmt.Errorf("sendMessage status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// AnswerCallbackQuery acknowledges a callback query: Telegram requires this
+// on every callback_query it delivers, or the tapped button's spinner never
+// stops on the user's client. text, if non-empty, is shown as a brief toast.
+func (c *Client) AnswerCallbackQuery(ctx context.Context, id, text string) error {
+	form := url.Values{}
+	form.Set("callback_query_id", id)
+	if text != "" {
+		form.Set("text", text)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/answerCallbackQuery", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		var apiErr struct {
+			Description string `json:"description"`
+		}
+		_ = json.Unmarshal(body, &apiErr)
+		if apiErr.Description != "" {
+			return fmt.Errorf("answerCallbackQuery status %d: %s", resp.StatusCode, apiErr.Description)
+		}
+		return fmt.Errorf("answerCallbackQuery status %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -211,10 +304,23 @@ func chunkMessage(s string, limit int) []string {
 	return chunks
 }
 
+// Update is one inbound item from GetUpdates: either a plain text message
+// (Text/ChatID) or a button tap (CallbackID/CallbackData/CallbackChat) --
+// never both. CallbackID is empty for a plain message.
 type Update struct {
 	UpdateID int
 	Text     string
 	ChatID   string
+
+	// CallbackID is the callback_query's own id: AnswerCallbackQuery must be
+	// called with exactly this value, or the tap's spinner never resolves.
+	CallbackID string
+	// CallbackData is the tapped button's Button.Data, verbatim.
+	CallbackData string
+	// CallbackChat is the chat the original message (carrying the inline
+	// keyboard) was sent to -- the same value ChatID carries for a plain
+	// message, used identically to authorize the sender.
+	CallbackChat string
 }
 
 func (c *Client) GetUpdates(offset, timeoutSec int) ([]Update, error) {
@@ -234,6 +340,18 @@ func (c *Client) GetUpdates(offset, timeoutSec int) ([]Update, error) {
 					ID int64 `json:"id"`
 				} `json:"chat"`
 			} `json:"message"`
+			CallbackQuery struct {
+				ID   string `json:"id"`
+				Data string `json:"data"`
+				From struct {
+					ID int64 `json:"id"`
+				} `json:"from"`
+				Message struct {
+					Chat struct {
+						ID int64 `json:"id"`
+					} `json:"chat"`
+				} `json:"message"`
+			} `json:"callback_query"`
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
@@ -241,11 +359,17 @@ func (c *Client) GetUpdates(offset, timeoutSec int) ([]Update, error) {
 	}
 	var ups []Update
 	for _, r := range raw.Result {
-		ups = append(ups, Update{
+		u := Update{
 			UpdateID: r.UpdateID,
 			Text:     strings.TrimSpace(r.Message.Text),
 			ChatID:   strconv.FormatInt(r.Message.Chat.ID, 10),
-		})
+		}
+		if r.CallbackQuery.ID != "" {
+			u.CallbackID = r.CallbackQuery.ID
+			u.CallbackData = r.CallbackQuery.Data
+			u.CallbackChat = strconv.FormatInt(r.CallbackQuery.Message.Chat.ID, 10)
+		}
+		ups = append(ups, u)
 	}
 	return ups, nil
 }

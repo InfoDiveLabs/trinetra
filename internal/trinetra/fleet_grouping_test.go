@@ -5,6 +5,7 @@
 package trinetra
 
 import (
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -73,6 +74,12 @@ func TestGroupingTwoNodesWithinWaitProduceOneDelivery(t *testing.T) {
 		if len(ef.framesFor(node, "receipt")) != 1 {
 			t.Fatalf("node %s receipts = %d, want 1", node, len(ef.framesFor(node, "receipt")))
 		}
+	}
+	// task 9: a grouped fire notification carries Ack/Silence buttons for
+	// its own incident too, exactly like an ungrouped one.
+	want := incidentButtons(incs[0].ID)
+	if got := ef.lastDelivered().Buttons; !reflect.DeepEqual(got, want) {
+		t.Fatalf("buttons = %+v, want %+v", got, want)
 	}
 }
 

@@ -661,6 +661,16 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		engine.HandleChildAlert(nodeID, name, tags, ev)
 	})
 	sink.onAckSync = engine.HandleChildAckSync
+	// rpcReg (task 9) is the master's pending-RPC registry for remote calls
+	// (currently just container_logs) over the master-to-child stream:
+	// wired into both the hub (to receive results) and the sink (so
+	// replicaAPI.ContainerLogs/AckAlert/UnackAlert can reach hub/rpcReg/
+	// incidents through NodeAPI).
+	rpcReg := newRPCRegistry(time.Now, d.logf)
+	hub.OnRPCResult(rpcReg.Deliver)
+	sink.hub = hub
+	sink.rpc = rpcReg
+	sink.incidents = incidents
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(cfg.FleetNodeDownAfter()))
 	var ids []string
 	revoked := map[string]bool{}
@@ -836,7 +846,12 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		d.logf("fleet: could not prune handoff receipts: %v", err)
 	}
 
-	sh := fleet.NewShipper(fleet.ShipperConfig{
+	// sh is declared with var (rather than :=) so OnFrame's closure -- which
+	// runs only later, off the stream's read loop, well after this literal
+	// finishes constructing it -- can reference it to post an RPC's result
+	// (handleRPCFrame/fleet_rpc_child.go, task 9).
+	var sh *fleet.Shipper
+	sh = fleet.NewShipper(fleet.ShipperConfig{
 		MasterURL: cfg.Fleet.MasterURL, Pin: cfg.Fleet.CAPin, Identity: id, Outbox: ob,
 		Gaps:      &localGapFiller{store: d.store, alog: d.alog, rawRetention: configuredRawRetention(cfg), now: time.Now},
 		Live:      live.Build,
@@ -846,6 +861,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 			onStreamFrame(lease, handoffState, receiptsPath, childSilences, time.Now, f)
 			applyAckFrame(d.self, f)
 			applyManagedConfigFrame(managedState, f)
+			handleRPCFrame(d.self, sh, d.logf, f)
 		},
 	})
 	cctx, cancel := context.WithCancel(ctx)

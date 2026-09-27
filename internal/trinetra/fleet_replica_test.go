@@ -551,3 +551,184 @@ func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
 		t.Fatalf("alerts.json = %q, %v; want %q", b, err, as)
 	}
 }
+
+// --- replicaAPI: remote ack/unack and container logs (task 9) --------------
+//
+// These use the real fleet.Hub/Master harness from fleet_rpc_test.go
+// (rpcTestMaster), since AckAlert/UnackAlert/ContainerLogs all need a
+// genuinely connected node.
+
+// TestReplicaAPIAckAlertPushesFrameAndRecordsIncident: on a connected node,
+// AckAlert pushes an "ack" frame down that node's stream (a real, joined
+// child observes it) AND records the ack on the master's own open incident
+// for (node, key) immediately, per the task-9 ruling.
+func TestReplicaAPIAckAlertPushesFrameAndRecordsIncident(t *testing.T) {
+	m := newRPCTestMaster(t)
+	frames := make(chan fleet.Frame, 4)
+	nodeID, _, stop := m.connect("ack-node", func(f fleet.Frame) { frames <- f })
+	defer stop()
+
+	if _, err := m.incidents.Apply(incidentApply{
+		src:     alertSource{NodeID: nodeID, NodeName: "ack-node"},
+		alert:   Alert{Key: "cpu", Title: "cpu high", Kind: "fire", Severity: SevWarning, Time: 1000},
+		firedAt: 1000, now: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	api, err := m.sink.NodeAPI(nodeID, config.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := api.AckAlert("cpu"); err != nil {
+		t.Fatalf("AckAlert: %v", err)
+	}
+
+	select {
+	case f := <-frames:
+		if f.Type != "ack" {
+			t.Fatalf("frame type = %q, want ack", f.Type)
+		}
+		var data ackFrameData
+		if err := json.Unmarshal(f.Data, &data); err != nil || data.Key != "cpu" {
+			t.Fatalf("ack frame data = %+v, err %v", data, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no ack frame reached the connected node")
+	}
+
+	inc, ok := m.incidents.OpenAlertIncident(nodeID, "cpu")
+	if !ok {
+		t.Fatal("no open incident found for (node, cpu) after AckAlert")
+	}
+	if inc.AckedBy != "web" {
+		t.Fatalf("AckedBy = %q, want %q (actor recorded as \"web\" until plan C)", inc.AckedBy, "web")
+	}
+}
+
+// TestReplicaAPIUnackAlertPushesFrame: UnackAlert on a connected node pushes
+// an "unack" frame -- it does not touch the incident store (there is no
+// "unack" concept on an incident's own AckedBy).
+func TestReplicaAPIUnackAlertPushesFrame(t *testing.T) {
+	m := newRPCTestMaster(t)
+	frames := make(chan fleet.Frame, 4)
+	nodeID, _, stop := m.connect("unack-node", func(f fleet.Frame) { frames <- f })
+	defer stop()
+
+	api, err := m.sink.NodeAPI(nodeID, config.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := api.UnackAlert("mem"); err != nil {
+		t.Fatalf("UnackAlert: %v", err)
+	}
+	select {
+	case f := <-frames:
+		if f.Type != "unack" {
+			t.Fatalf("frame type = %q, want unack", f.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no unack frame reached the connected node")
+	}
+}
+
+// TestReplicaAPIAckAlertNotConnected pins the exact wording (task-9 ruling)
+// for a node with no open stream connection.
+func TestReplicaAPIAckAlertNotConnected(t *testing.T) {
+	m := newRPCTestMaster(t)
+	// NodeAPI needs the node to exist in the registry, but it need never
+	// have connected: seed it via node() directly (mirrors how other
+	// replica tests build a node without a real join).
+	if _, err := m.sink.node(testNodeID); err != nil {
+		t.Fatal(err)
+	}
+	api, err := m.sink.NodeAPI(testNodeID, config.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := api.AckAlert("cpu"); err == nil || err.Error() != "node is not connected" {
+		t.Fatalf("err = %v, want \"node is not connected\"", err)
+	}
+	if err := api.UnackAlert("cpu"); err == nil || err.Error() != "node is not connected" {
+		t.Fatalf("err = %v, want \"node is not connected\"", err)
+	}
+}
+
+// TestReplicaAPIContainerLogsRoundTrip: ContainerLogs on a connected node
+// runs the RPC over the stream and returns the child's real output.
+func TestReplicaAPIContainerLogsRoundTrip(t *testing.T) {
+	m := newRPCTestMaster(t)
+	var sh *fleet.Shipper
+	self := fakeLogsAPI{out: "log line 1\nlog line 2\n"}
+	nodeID, childSh, stop := m.connect("logs-node", func(f fleet.Frame) {
+		handleRPCFrame(self, sh, t.Logf, f)
+	})
+	sh = childSh
+	defer stop()
+
+	api, err := m.sink.NodeAPI(nodeID, config.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := api.ContainerLogs("web", 50)
+	if err != nil {
+		t.Fatalf("ContainerLogs: %v", err)
+	}
+	if out != "log line 1\nlog line 2\n" {
+		t.Fatalf("out = %q", out)
+	}
+}
+
+// TestReplicaAPIContainerLogsNotConnected pins the exact wording (task-9
+// ruling) for a node with no open stream connection.
+func TestReplicaAPIContainerLogsNotConnected(t *testing.T) {
+	m := newRPCTestMaster(t)
+	if _, err := m.sink.node(testNodeID); err != nil {
+		t.Fatal(err)
+	}
+	api, err := m.sink.NodeAPI(testNodeID, config.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.ContainerLogs("web", 50); err == nil || err.Error() != "node is not connected" {
+		t.Fatalf("err = %v, want \"node is not connected\"", err)
+	}
+}
+
+// TestReplicaAPIContainerLogsTimeout pins the exact wording (task-9 ruling)
+// when a connected node never answers.
+func TestReplicaAPIContainerLogsTimeout(t *testing.T) {
+	withShortRPCTimeout(t, 100*time.Millisecond)
+	m := newRPCTestMaster(t)
+	nodeID, _, stop := m.connect("silent-logs", func(fleet.Frame) {})
+	defer stop()
+
+	api, err := m.sink.NodeAPI(nodeID, config.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.ContainerLogs("web", 50); err == nil || err.Error() != "node did not answer in 10s" {
+		t.Fatalf("err = %v, want \"node did not answer in 10s\"", err)
+	}
+}
+
+// TestReplicaAPIContainerLogsChildErrorPassesThrough pins "the child's own
+// error, passed through" (task-9 ruling).
+func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
+	m := newRPCTestMaster(t)
+	var sh *fleet.Shipper
+	self := fakeLogsAPI{err: errors.New("no such container \"web\"")}
+	nodeID, childSh, stop := m.connect("err-logs", func(f fleet.Frame) {
+		handleRPCFrame(self, sh, t.Logf, f)
+	})
+	sh = childSh
+	defer stop()
+
+	api, err := m.sink.NodeAPI(nodeID, config.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.ContainerLogs("web", 50); err == nil || err.Error() != `no such container "web"` {
+		t.Fatalf("err = %v", err)
+	}
+}

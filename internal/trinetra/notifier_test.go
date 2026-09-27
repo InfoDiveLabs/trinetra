@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -73,7 +74,7 @@ func TestDispatcherFansOutToAll(t *testing.T) {
 	}
 	for _, n := range []*fakeNotifier{n1, n2, n3} {
 		got := n.received()
-		if len(got) != 1 || got[0] != a {
+		if len(got) != 1 || !reflect.DeepEqual(got[0], a) {
 			t.Errorf("%s: expected to receive %+v, got %+v", n.name, a, got)
 		}
 	}

@@ -24,7 +24,27 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
+	"github.com/InfoDiveLabs/trinetra/internal/telegram"
 )
+
+// incidentButtons builds the inline keyboard attached to an incident's fire
+// notification (task 9): Ack and a 1-hour silence, both carrying the
+// incident id verbatim in their callback data (see daemon.go's pollLoop/
+// processUpdates for the master-side handler). Both stay well under
+// Telegram's 64-byte callback_data limit even though incident ids here are
+// only 12 hex characters (randomIncidentID). Only the telegram Notifier
+// looks at Alert.Buttons at all -- every other channel ignores it -- so
+// this is set unconditionally on a fire Alert without knowing (or caring)
+// which channels it will actually be routed to.
+func incidentButtons(incidentID string) [][]telegram.Button {
+	if incidentID == "" {
+		return nil
+	}
+	return [][]telegram.Button{{
+		{Text: "Ack", Data: "ack:" + incidentID},
+		{Text: "Silence 1h", Data: "sil1h:" + incidentID},
+	}}
+}
 
 // leaseInterval/leaseValidFor are the lease cadence (global-constraints:
 // sent every 30s, valid 90s).
@@ -786,7 +806,7 @@ func (e *fleetAlertEngine) deliverGroup(inc core.Incident, pending []core.Incide
 	}
 	title := e.groupAlertTitle(inc, pending)
 	lead := pending[0]
-	da := Alert{Key: lead.Key, Title: title, Severity: sev, Kind: "fire", Time: now}
+	da := Alert{Key: lead.Key, Title: title, Severity: sev, Kind: "fire", Time: now, Buttons: incidentButtons(inc.ID)}
 
 	var ok bool
 	var record func()
@@ -866,6 +886,12 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 	da := a
 	if src.NodeID != "" {
 		da.Title = src.NodeName + ": " + a.Title
+	}
+	if a.Kind == "fire" && incidentID != "" {
+		// task 9: only an incident's fire notification carries Ack/Silence
+		// buttons -- a recover never does, matching the ruling's "only on
+		// incident fire messages".
+		da.Buttons = incidentButtons(incidentID)
 	}
 
 	if e.alerting == nil {

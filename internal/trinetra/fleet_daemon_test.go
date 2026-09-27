@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -289,7 +290,7 @@ func TestFleetInitPKIRefusesToReplaceBrokenCA(t *testing.T) {
 func TestFleetAlert(t *testing.T) {
 	a := fleetAlert(fleet.AlertIntent{Key: "fleet:node:x:down", Title: "x is down", Critical: true}, 1234)
 	want := Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Source: "fleet", Time: 1234}
-	if a != want {
+	if !reflect.DeepEqual(a, want) {
 		t.Fatalf("fire = %+v, want %+v", a, want)
 	}
 	r := fleetAlert(fleet.AlertIntent{Key: "fleet:node:x:down", Title: "x is back", Recover: true}, 99)

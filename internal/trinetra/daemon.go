@@ -1304,7 +1304,7 @@ func cmdDaemon(args []string) int {
 	_ = os.Remove(cleanStopPath)
 
 	// telegram long-poller (owns its own prevCPU internally)
-	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll)
+	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll, fleetRT.provider.Fleet())
 
 	// sampler loop: ticks at fast_interval and does NO blocking subprocess or
 	// network I/O -- that all lives on the slow-collector / healthchecks /
@@ -1578,7 +1578,7 @@ func digestNow(store SampleStore, now time.Time, days int, title string, rawRete
 	return buildDigest(title, window, peakCPU, peakMem, len(countPts), downs)
 }
 
-func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess, enroll *enrollState) {
+func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess, enroll *enrollState, fleetAPI core.FleetAPI) {
 	// The poller owns its CPUStat; it is never shared with the sampler goroutine.
 	offset := 0
 	var prevCPU CPUStat
@@ -1630,19 +1630,47 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			setChatID(id)
 			enroll.Reset()
 		}
-		offset, c = processUpdates(ups, offset, c, enroll, time.Now, getCfg, onEnroll, reply)
+		// onCallback (task 9) answers a button tap: unlike reply, it is
+		// invoked for EVERY callback_query processUpdates sees, authorized
+		// or not, since Telegram requires an answer either way. On solo/
+		// child, fleetAPI is that role's own core.FleetAPI (never nil --
+		// fleetProvider.Fleet always returns one), whose write methods all
+		// fail closed with core.ErrNotMaster, so telegramCallbackAnswer's
+		// action branches simply never succeed there -- matching the
+		// ruling that solo/child callbacks are ignored beyond the answer.
+		onCallback := func(cc *config.Config, u telegram.Update) {
+			text := telegramCallbackAnswer(fleetAPI, cc.Telegram.ChatID, u, time.Now)
+			client := telegram.New(cc.Telegram.Token, cc.Telegram.ChatID)
+			if err := client.AnswerCallbackQuery(context.Background(), u.CallbackID, text); err != nil {
+				fmt.Fprintln(stderr, "telegram answer callback:", err)
+			}
+		}
+		offset, c = processUpdates(ups, offset, c, enroll, time.Now, getCfg, onEnroll, reply, onCallback)
 	}
 }
 
 // processUpdates handles one batch of inbound Telegram updates. It advances
 // the offset, enrolls the owner from a correct "/start <pin>" while the bot is
 // unclaimed, drops any update whose sender is not the owner chat, and invokes
-// reply for authorized commands. It returns the new offset and the (possibly
-// reloaded) config so the caller can carry both into the next GetUpdates
-// cycle.
-func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll *enrollState, now func() time.Time, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
+// reply for authorized text commands or onCallback for a button tap (task 9;
+// onCallback runs for EVERY callback_query, authorized or not -- it decides
+// authorization itself and always answers). It returns the new offset and
+// the (possibly reloaded) config so the caller can carry both into the next
+// GetUpdates cycle.
+func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll *enrollState, now func() time.Time, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update), onCallback func(*config.Config, telegram.Update)) (int, *config.Config) {
 	for _, u := range ups {
 		offset = u.UpdateID + 1
+		if u.CallbackID != "" {
+			// A button tap is never a text command and never participates
+			// in enrollment: it carries its own authorization check (the
+			// enrolled owner chat, exactly like a text command) and must
+			// always be answered, even from a foreign chat or before
+			// anyone has ever enrolled at all.
+			if onCallback != nil {
+				onCallback(c, u)
+			}
+			continue
+		}
 		if c.Telegram.ChatID == "" {
 			// Unclaimed: ownership is granted ONLY by a correct "/start <pin>"
 			// (#78 Scenario A). Everything else is ignored, so an attacker who

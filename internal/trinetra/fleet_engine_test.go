@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -192,6 +193,44 @@ func TestEngineChildFireEnrichesDeliversAndReceipts(t *testing.T) {
 	}
 	if !foundDelivered {
 		t.Fatalf("timeline missing a delivered event: %+v", inc.Timeline)
+	}
+}
+
+// TestEngineFireCarriesIncidentButtons pins task 9's wiring: a delivered
+// fire Alert carries Ack/Silence-1h buttons naming its own incident's id.
+func TestEngineFireCarriesIncidentButtons(t *testing.T) {
+	ef := newEngineFixture(t)
+	ef.connect("n1")
+	ef.engine.PushLeaseNow("n1", time.Unix(500, 0))
+	ef.engine.HandleChildAlert("n1", "box1", nil, AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000})
+	ef.waitIdle()
+
+	incs := ef.incidents.List(core.IncidentFilter{}, nil)
+	if len(incs) != 1 {
+		t.Fatalf("incidents = %d, want 1", len(incs))
+	}
+	want := incidentButtons(incs[0].ID)
+	if got := ef.lastDelivered().Buttons; !reflect.DeepEqual(got, want) {
+		t.Fatalf("buttons = %+v, want %+v", got, want)
+	}
+}
+
+// TestEngineRecoverCarriesNoButtons: a recover notification never carries
+// Ack/Silence buttons (task-9 ruling: "only on incident fire messages").
+func TestEngineRecoverCarriesNoButtons(t *testing.T) {
+	ef := newEngineFixture(t)
+	ef.connect("n1")
+	ef.engine.PushLeaseNow("n1", time.Unix(500, 0))
+	ef.engine.HandleChildAlert("n1", "box1", nil, AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000})
+	ef.waitIdle()
+	ef.engine.HandleChildAlert("n1", "box1", nil, AlertEvent{Time: 1050, Key: "cpu", Title: "cpu normal", Severity: "warning", Kind: "recover", Source: "anomaly", RoutedToMaster: true, FiredAt: 1050})
+	ef.waitIdle()
+
+	if ef.deliveredCount() != 2 {
+		t.Fatalf("delivered count = %d, want 2 (fire + recover)", ef.deliveredCount())
+	}
+	if got := ef.lastDelivered().Buttons; got != nil {
+		t.Fatalf("recover carried buttons: %+v", got)
 	}
 }
 

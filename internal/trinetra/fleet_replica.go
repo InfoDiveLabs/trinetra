@@ -120,6 +120,17 @@ type replicaSink struct {
 	// (tests included) would otherwise need updating a second time for a
 	// hook most of them never exercise.
 	onAckSync func(nodeID string, as json.RawMessage)
+
+	// hub/rpc/incidents (task 9) wire remote ack/unack and remote container
+	// logs into NodeAPI's replicaAPI. Like onAckSync, these are set
+	// directly on the field by startMaster rather than threaded through
+	// newReplicaSink, for the same reason: most existing (and future)
+	// callers/tests never exercise them, and a nil value degrades every
+	// method that needs it to errRemoteNode/errNodeNotConnected rather than
+	// panicking.
+	hub       *fleet.Hub
+	rpc       *rpcRegistry
+	incidents *incidentStore
 }
 
 func newReplicaSink(root string, opts StoreOptions, onAlert func(nodeID string, ev AlertEvent)) *replicaSink {
@@ -745,14 +756,24 @@ func (r *replicaSink) NodeAPI(id string, getCfg func() *config.Config) (core.API
 		return s
 	}
 	reload := func(*config.Config) error { return errRemoteNode }
-	return &replicaAPI{API: newInprocAPI(getSnap, getCfg, n.store, n.dir, reload, nil, nil), n: n}, nil
+	return &replicaAPI{
+		API: newInprocAPI(getSnap, getCfg, n.store, n.dir, reload, nil, nil),
+		n:   n, nodeID: id, hub: r.hub, rpc: r.rpc, incidents: r.incidents,
+	}, nil
 }
 
-// replicaAPI serves reads from a replica and refuses what needs the live
-// child (phase 1: container logs, config writes, acks, channel tests).
+// replicaAPI serves reads from a replica and refuses what still needs the
+// live child directly (config writes, channel tests): ack/unack and
+// container logs (task 9) instead go out over the master-to-child stream
+// via hub/rpc, so they work for a remote node exactly like they do locally,
+// just with a round trip.
 type replicaAPI struct {
 	core.API
-	n *replicaNode
+	n         *replicaNode
+	nodeID    string
+	hub       *fleet.Hub
+	rpc       *rpcRegistry
+	incidents *incidentStore
 }
 
 func (a *replicaAPI) HostInfo() (core.HostInfoView, error) {
@@ -770,12 +791,70 @@ func (a *replicaAPI) Version() (string, error) {
 	return "", nil
 }
 
-func (a *replicaAPI) Doctor() (core.DoctorReport, error)         { return core.DoctorReport{}, errRemoteNode }
-func (a *replicaAPI) ContainerLogs(string, int) (string, error)  { return "", errRemoteNode }
-func (a *replicaAPI) ApplyConfig(*config.Config) error           { return errRemoteNode }
-func (a *replicaAPI) AckAlert(string) error                      { return errRemoteNode }
-func (a *replicaAPI) UnackAlert(string) error                    { return errRemoteNode }
-func (a *replicaAPI) TestChannel(string) error                   { return errRemoteNode }
+func (a *replicaAPI) Doctor() (core.DoctorReport, error) { return core.DoctorReport{}, errRemoteNode }
+func (a *replicaAPI) ApplyConfig(*config.Config) error   { return errRemoteNode }
+func (a *replicaAPI) TestChannel(string) error           { return errRemoteNode }
+
+// AckAlert/UnackAlert (task 9): push an ack/unack frame down this node's
+// stream connection -- the child applies it locally via AlertState.Ack/
+// Unack (fleet_lease.go's applyAckFrame), exactly as a local `trinetra
+// alerts ack/unack` would. Neither waits for the child to actually apply
+// it: Push either lands in the node's stream queue or the node isn't
+// connected at all, and there is no receipt for ack/unack the way there is
+// for a delivered alert.
+func (a *replicaAPI) AckAlert(key string) error   { return a.remoteAck(key, false) }
+func (a *replicaAPI) UnackAlert(key string) error { return a.remoteAck(key, true) }
+
+func (a *replicaAPI) remoteAck(key string, unack bool) error {
+	if a.hub == nil || !a.hub.Connected(a.nodeID) {
+		return errNodeNotConnected
+	}
+	data, err := json.Marshal(ackFrameData{Key: key})
+	if err != nil {
+		return err
+	}
+	frameType := "ack"
+	if unack {
+		frameType = "unack"
+	}
+	a.hub.Push(a.nodeID, fleet.Frame{Type: frameType, Data: data})
+	if !unack && a.incidents != nil {
+		// Also record the ack on the master's own incident view immediately
+		// (task-9 ruling), so the UI need not wait for anything to come
+		// back over the stream. The actor isn't known at this layer -- this
+		// package has no notion of "which web user clicked ack" -- so it is
+		// recorded as "web" for now.
+		// TODO(plan C): thread the actual authenticated web user through
+		// here once the web UI wires up remote ack.
+		if inc, ok := a.incidents.OpenAlertIncident(a.nodeID, key); ok {
+			_, _ = a.incidents.Ack(inc.ID, "web", time.Now().Unix())
+		}
+	}
+	return nil
+}
+
+// ContainerLogs (task 9) runs `docker logs` on the remote node via an RPC
+// over the master-to-child stream (fleet_rpc.go): the master pushes an
+// "rpc" frame naming this call's id/method/args and waits up to 10s for the
+// child to POST a matching result. See rpcRegistry.Call for the exact error
+// wording on each failure mode.
+func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
+	if a.hub == nil || a.rpc == nil {
+		return "", errRemoteNode
+	}
+	args, err := json.Marshal(rpcContainerLogsArgs{Name: name, Lines: lines})
+	if err != nil {
+		return "", err
+	}
+	res, err := a.rpc.Call(a.hub, a.nodeID, "container_logs", args)
+	if err != nil {
+		return "", err
+	}
+	if !res.OK {
+		return "", errors.New(res.Error)
+	}
+	return res.Output, nil
+}
 func (a *replicaAPI) ValidateChannel(config.ChannelConfig) error { return errRemoteNode }
 func (a *replicaAPI) EnrollmentPIN(context.Context) (string, bool, error) {
 	return "", false, errRemoteNode
