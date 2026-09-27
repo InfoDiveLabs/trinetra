@@ -90,13 +90,18 @@ type pendingCall struct {
 // timing without sleeping; production passes time.Now. logf receives one
 // line per rejected result (unknown id, wrong node, or a duplicate/already-
 // completed id) -- Hub.OnRPCResult's doc comment requires this never be
-// silent, since a rejected result is either a bug or an attempted spoof.
+// silent, since a rejected result is either a bug or an attempted spoof --
+// rate-limited per node (see logRejectRateLimited) so a wedged or hostile
+// child retrying the same bad id in a loop cannot flood the log.
 type rpcRegistry struct {
 	now  func() time.Time
 	logf func(format string, args ...any)
 
 	mu      sync.Mutex
 	pending map[string]*pendingCall
+
+	rejectMu   sync.Mutex
+	lastReject map[string]time.Time
 }
 
 // newRPCRegistry builds an rpcRegistry. A nil now defaults to time.Now, a
@@ -108,7 +113,26 @@ func newRPCRegistry(now func() time.Time, logf func(string, ...any)) *rpcRegistr
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &rpcRegistry{now: now, logf: logf, pending: map[string]*pendingCall{}}
+	return &rpcRegistry{now: now, logf: logf, pending: map[string]*pendingCall{}, lastReject: map[string]time.Time{}}
+}
+
+// logRejectRateLimited logs one Deliver-rejection line for nodeID, at most
+// once per second per node -- the same rate-limit shape as fleet.Hub's own
+// logDrop (internal/fleet/stream.go), for the same reason: a rejected
+// result is attacker- or bug-triggerable on every single POST a child (or
+// something impersonating one) makes, so without this a fast retry loop
+// could flood the master's log.
+func (r *rpcRegistry) logRejectRateLimited(nodeID, format string, args ...any) {
+	now := r.now()
+	r.rejectMu.Lock()
+	last, seen := r.lastReject[nodeID]
+	if seen && now.Sub(last) < time.Second {
+		r.rejectMu.Unlock()
+		return
+	}
+	r.lastReject[nodeID] = now
+	r.rejectMu.Unlock()
+	r.logf(format, args...)
 }
 
 // randomRPCID returns 16 random bytes, hex-encoded (task-9 ruling).
@@ -212,12 +236,12 @@ func (r *rpcRegistry) Deliver(nodeID, id string, body []byte) {
 	p, ok := r.pending[id]
 	if !ok {
 		r.mu.Unlock()
-		r.logf("fleet: rpc result for unknown or already-completed id %s from node %s: rejected", id, nodeID)
+		r.logRejectRateLimited(nodeID, "fleet: rpc result for unknown or already-completed id %s from node %s: rejected", id, nodeID)
 		return
 	}
 	if p.node != nodeID {
 		r.mu.Unlock()
-		r.logf("fleet: rpc result for id %s posted by node %s but was sent to node %s: rejected", id, nodeID, p.node)
+		r.logRejectRateLimited(nodeID, "fleet: rpc result for id %s posted by node %s but was sent to node %s: rejected", id, nodeID, p.node)
 		return
 	}
 	delete(r.pending, id) // single-use: any further result for id is now "unknown" above.

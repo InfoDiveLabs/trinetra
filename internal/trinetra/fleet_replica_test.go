@@ -665,6 +665,7 @@ func TestReplicaAPIContainerLogsRoundTrip(t *testing.T) {
 	})
 	sh = childSh
 	defer stop()
+	defer drainRPCSemForTest(t) // see its doc comment: required by every test exercising the real handleRPCFrame
 
 	api, err := m.sink.NodeAPI(nodeID, config.Default)
 	if err != nil {
@@ -723,6 +724,7 @@ func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 	})
 	sh = childSh
 	defer stop()
+	defer drainRPCSemForTest(t) // see its doc comment: required by every test exercising the real handleRPCFrame
 
 	api, err := m.sink.NodeAPI(nodeID, config.Default)
 	if err != nil {

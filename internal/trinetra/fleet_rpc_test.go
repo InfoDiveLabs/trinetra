@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -186,6 +187,7 @@ func TestRPCRegistryCallHappyPath(t *testing.T) {
 	})
 	sh = childSh
 	defer stop()
+	defer drainRPCSemForTest(t) // see its doc comment: required by every test exercising the real handleRPCFrame
 
 	args, _ := json.Marshal(rpcContainerLogsArgs{Name: "web", Lines: 50})
 	res, err := m.reg.Call(m.hub, nodeID, "container_logs", args)
@@ -313,6 +315,38 @@ func TestRPCRegistryDeliverRejectsUnknownID(t *testing.T) {
 	}
 }
 
+// TestRPCRegistryRejectionLogsRateLimitedPerNode pins the round-1 fix
+// (mirrors fleet.Hub.logDrop): a node spamming rejected results is logged
+// at most once per second, not once per rejection -- but a DIFFERENT node
+// gets its own independent line, exactly like logDrop's per-node map.
+func TestRPCRegistryRejectionLogsRateLimitedPerNode(t *testing.T) {
+	fakeNow := time.Unix(1_700_000_000, 0)
+	var logs []string
+	reg := newRPCRegistry(func() time.Time { return fakeNow }, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+
+	for i := 0; i < 5; i++ {
+		reg.Deliver("node-a", "deadbeefdeadbeef", []byte(`{"ok":true}`))
+	}
+	if len(logs) != 1 {
+		t.Fatalf("5 rejections within the same second logged %d lines, want 1", len(logs))
+	}
+
+	// A different node is never suppressed by node-a's rate limit.
+	reg.Deliver("node-b", "deadbeefdeadbeef", []byte(`{"ok":true}`))
+	if len(logs) != 2 {
+		t.Fatalf("a different node's rejection was suppressed: logs = %+v", logs)
+	}
+
+	// Once a full second has passed, node-a logs again.
+	fakeNow = fakeNow.Add(time.Second)
+	reg.Deliver("node-a", "deadbeefdeadbeef", []byte(`{"ok":true}`))
+	if len(logs) != 3 {
+		t.Fatalf("node-a's rejection after 1s was suppressed: logs = %+v", logs)
+	}
+}
+
 // TestRPCRegistryDeliverRejectsDuplicate: once a result has been delivered
 // for an id, a second POST for the same id (a retry, or an attempted
 // replay) is rejected -- the entry is single-use.
@@ -327,6 +361,7 @@ func TestRPCRegistryDeliverRejectsDuplicate(t *testing.T) {
 	})
 	sh = childSh
 	defer stop()
+	defer drainRPCSemForTest(t) // see its doc comment: required by every test exercising the real handleRPCFrame
 
 	var rejectLogs []string
 	m.reg.logf = func(format string, args ...any) { rejectLogs = append(rejectLogs, fmt.Sprintf(format, args...)) }
@@ -497,6 +532,14 @@ func TestHandleRPCFrameRunsOffTheReadLoop(t *testing.T) {
 	})
 	sh = childSh
 	defer stop()
+	// Ensure the "blocker" worker's own rpcSem release has genuinely
+	// happened before this test returns (registered after defer stop() so
+	// it runs FIRST, while the connection is still up): otherwise a
+	// straggling handleRPCFrame goroutine from this test can race the next
+	// test's read of rpcSem (see TestHandleRPCFrameConcurrencyBounded's own
+	// use of drainRPCSemForTest for the same reason, and the round-1 review
+	// fix this pins).
+	defer drainRPCSemForTest(t)
 
 	firstArgs, _ := json.Marshal(rpcContainerLogsArgs{Name: "blocker", Lines: 1})
 	firstDone := make(chan struct{})
@@ -528,4 +571,174 @@ type blockingLogsAPI struct {
 func (b blockingLogsAPI) ContainerLogs(string, int) (string, error) {
 	<-b.release
 	return "", nil
+}
+
+// drainRPCSemForTest blocks until every rpcSem slot currently held by an
+// in-flight (or straggling) handleRPCFrame worker has actually been
+// released, then leaves rpcSem empty again. It must be called (directly or
+// via defer, registered early enough to run before the test's connection
+// goes down) by any test whose self.ContainerLogs runs through the real
+// handleRPCFrame, before that test returns -- otherwise a straggling
+// worker goroutine (its result already reached the master, but its own
+// deferred `<-rpcSem` hasn't executed yet -- these are NOT the same
+// instant, see handleRPCFrame's release-after-PostRPCResult ordering) can
+// still be reading the rpcSem variable when a LATER test reassigns it
+// (withFreshRPCSem), or just leave a stale held slot for a later test that
+// assumes rpcSem starts empty.
+//
+// Sending rpcMaxConcurrent more values into rpcSem is a genuine
+// synchronization point, unlike polling len(rpcSem): each send can only
+// complete once a slot is actually freed by a worker's own receive, and
+// the Go memory model guarantees that receive happens-before this send
+// completes (the standard channel-as-semaphore guarantee) -- len() reads
+// the buffer's current count but establishes no such happens-before edge,
+// so a race detector can (and, empirically, sometimes does) still flag a
+// concurrent access it can't prove is safe.
+func drainRPCSemForTest(t *testing.T) {
+	t.Helper()
+	for i := 0; i < rpcMaxConcurrent; i++ {
+		select {
+		case rpcSem <- struct{}{}:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a handleRPCFrame worker never released its rpcSem slot")
+		}
+	}
+	for i := 0; i < rpcMaxConcurrent; i++ {
+		<-rpcSem
+	}
+}
+
+// withFreshRPCSem swaps in a brand-new rpcSem for the duration of one test
+// (restored via t.Cleanup), exactly like withShortRPCTimeout does for
+// rpcCallTimeout: a concurrency test needs a semaphore starting empty and
+// entirely its own, not one still holding slots from -- or being raced by
+// -- whatever ran before it. The test itself is still responsible for
+// calling drainRPCSemForTest before it returns, so the swap-back in
+// t.Cleanup is never racing a straggler from THIS test either.
+func withFreshRPCSem(t *testing.T) {
+	t.Helper()
+	old := rpcSem
+	rpcSem = make(chan struct{}, rpcMaxConcurrent)
+	t.Cleanup(func() { rpcSem = old })
+}
+
+// trackingBlockingLogsAPI blocks every call on release, counting how many
+// are in ContainerLogs at once (current) and the high-water mark (peak),
+// guarded by mu.
+type trackingBlockingLogsAPI struct {
+	fleetCLIFakeAPI
+	release chan struct{}
+
+	mu      sync.Mutex
+	current int
+	peak    int
+}
+
+func (b *trackingBlockingLogsAPI) ContainerLogs(string, int) (string, error) {
+	b.mu.Lock()
+	b.current++
+	if b.current > b.peak {
+		b.peak = b.current
+	}
+	b.mu.Unlock()
+	<-b.release
+	b.mu.Lock()
+	b.current--
+	b.mu.Unlock()
+	return "ok", nil
+}
+
+// TestHandleRPCFrameConcurrencyBounded is the round-1 review fix, IMPORTANT
+// 2: 20 rapid rpc frames for the same node never run more than
+// rpcMaxConcurrent (8) at once, and every frame beyond that cap is refused
+// immediately with {"ok":false,"error":"node busy"} instead of being queued
+// or run anyway.
+//
+// This drives the full real master<->child round trip (like
+// TestRPCRegistryCallHappyPath) rather than calling handleRPCFrame
+// directly, specifically so the "extras get node busy" half of the
+// assertion is checked exactly the way a real caller (replicaAPI.
+// ContainerLogs, via rpcRegistry.Call) actually observes it: as the
+// rpcResultData a Call returns, not as an internal implementation detail.
+func TestHandleRPCFrameConcurrencyBounded(t *testing.T) {
+	withFreshRPCSem(t)
+	m := newRPCTestMaster(t)
+	release := make(chan struct{})
+	self := &trackingBlockingLogsAPI{release: release}
+
+	var sh *fleet.Shipper
+	nodeID, childSh, stop := m.connect("busy-node", func(f fleet.Frame) {
+		handleRPCFrame(self, sh, t.Logf, f)
+	})
+	sh = childSh
+	defer stop()
+
+	const n = 20
+	type outcome struct {
+		res rpcResultData
+		err error
+	}
+	results := make(chan outcome, n)
+	args, _ := json.Marshal(rpcContainerLogsArgs{Name: "web", Lines: 1})
+	for i := 0; i < n; i++ {
+		go func() {
+			res, err := m.reg.Call(m.hub, nodeID, "container_logs", args)
+			results <- outcome{res, err}
+		}()
+	}
+
+	// The busy rejections resolve near-instantly (no semaphore wait, no
+	// blocking work); the rpcMaxConcurrent genuinely-running ones stay
+	// blocked on release. Collect exactly the busy ones first.
+	const wantBusy = n - rpcMaxConcurrent
+	busy := 0
+	for busy < wantBusy {
+		select {
+		case o := <-results:
+			if o.err != nil {
+				t.Fatalf("Call error: %v", o.err)
+			}
+			if o.res.OK || o.res.Error != "node busy" {
+				t.Fatalf("expected a busy rejection, got %+v", o.res)
+			}
+			busy++
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only got %d/%d busy rejections", busy, wantBusy)
+		}
+	}
+
+	self.mu.Lock()
+	cur, peak := self.current, self.peak
+	self.mu.Unlock()
+	if cur != rpcMaxConcurrent {
+		t.Fatalf("currently running = %d, want exactly %d (the busy slots must be genuinely occupied, not merely counted)", cur, rpcMaxConcurrent)
+	}
+	if peak > rpcMaxConcurrent {
+		t.Fatalf("peak concurrency = %d, want <= %d", peak, rpcMaxConcurrent)
+	}
+
+	close(release)
+	for i := 0; i < rpcMaxConcurrent; i++ {
+		select {
+		case o := <-results:
+			if o.err != nil {
+				t.Fatalf("Call error: %v", o.err)
+			}
+			if !o.res.OK || o.res.Output != "ok" {
+				t.Fatalf("expected a real ok result, got %+v", o.res)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for the real (non-busy) results")
+		}
+	}
+	if peak > rpcMaxConcurrent {
+		t.Fatalf("peak concurrency (final) = %d, want <= %d", peak, rpcMaxConcurrent)
+	}
+	// Collecting all rpcMaxConcurrent results does not by itself guarantee
+	// every worker goroutine has finished running yet (its own rpcSem
+	// release happens strictly after its PostRPCResult call returns, which
+	// is strictly after the master already received and delivered the
+	// result above) -- see drainRPCSemForTest's doc comment for why this
+	// matters before withFreshRPCSem's t.Cleanup swaps rpcSem back.
+	drainRPCSemForTest(t)
 }

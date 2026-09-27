@@ -36,12 +36,35 @@ const rpcTruncatedMarker = "... (truncated to the last 512 KiB) ...\n"
 // forever if the link is actually down for good.
 const rpcPostTimeout = 30 * time.Second
 
+// rpcMaxConcurrent bounds how many RPC executions this child runs at once
+// (round-1 review fix, IMPORTANT 2): each one shells out to `docker logs`
+// (dispatchContainerLogs -> collectContainerLogs), so a master pushing rpc
+// frames faster than they complete -- buggy or hostile -- must not be able
+// to spawn an unbounded pile of concurrent subprocesses/goroutines. Beyond
+// this many already running, a new rpc frame is refused immediately with
+// {"ok":false,"error":"node busy"} rather than queued or run anyway.
+const rpcMaxConcurrent = 8
+
+// rpcSem admits at most rpcMaxConcurrent concurrent RPC executions, used as
+// a non-blocking semaphore (an empty struct sent into it "holds" a slot,
+// received back out "releases" it). A package-level var, like rpcCallTimeout
+// (fleet_rpc.go), so a test can swap in a fresh one instead of contending
+// with whatever a previous test left in flight; exactly one child role runs
+// per daemon process, so a single package-level semaphore is the correct
+// scope in production.
+var rpcSem = make(chan struct{}, rpcMaxConcurrent)
+
 // handleRPCFrame is startChild's response to an "rpc" stream frame: it runs
 // the requested method in its OWN goroutine -- never on the stream's read
 // loop, which (like onStreamFrame) must never block -- and posts the result
 // back via sh.PostRPCResult. self may be nil defensively (mirrors
 // applyAckFrame); sh is used only to post the result, never to read from
 // the stream.
+//
+// If rpcMaxConcurrent executions are already running, this refuses the new
+// one immediately (still off the read loop: posting the "busy" result is
+// itself a network call, via PostRPCResult) rather than queuing it or
+// blocking the read loop waiting for a slot to free up.
 func handleRPCFrame(self core.API, sh *fleet.Shipper, logf func(format string, args ...any), f fleet.Frame) {
 	if f.Type != "rpc" {
 		return
@@ -50,7 +73,30 @@ func handleRPCFrame(self core.API, sh *fleet.Shipper, logf func(format string, a
 	if json.Unmarshal(f.Data, &req) != nil || req.ID == "" {
 		return
 	}
-	go runRPC(self, sh, logf, req)
+	select {
+	case rpcSem <- struct{}{}:
+		go func() {
+			defer func() { <-rpcSem }()
+			runRPC(self, sh, logf, req)
+		}()
+	default:
+		go postRPCBusy(sh, logf, req.ID)
+	}
+}
+
+// postRPCBusy posts the fixed "node busy" rejection for an rpc frame that
+// arrived while rpcMaxConcurrent executions were already running.
+func postRPCBusy(sh *fleet.Shipper, logf func(string, ...any), id string) {
+	body, err := json.Marshal(rpcResultData{OK: false, Error: "node busy"})
+	if err != nil {
+		logf("fleet: could not marshal the busy rpc result for %s: %v", id, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), rpcPostTimeout)
+	defer cancel()
+	if err := sh.PostRPCResult(ctx, id, body); err != nil {
+		logf("fleet: could not post the busy rpc result for %s: %v", id, err)
+	}
 }
 
 // runRPC does the actual work for one "rpc" frame and posts its result.

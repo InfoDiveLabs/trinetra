@@ -97,6 +97,39 @@ func TestTelegramCallbackSilence1hAuthorized(t *testing.T) {
 	}
 }
 
+// TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence is the
+// round-1 review fix: a "sil1h:<id>" callback on an incident that has
+// already resolved (e.g. a stale button on an old message, tapped after the
+// alert cleared on its own) must create no silence at all and answer
+// "unknown/expired" -- not silently silence a rule/node combo that isn't
+// even firing any more.
+func TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence(t *testing.T) {
+	m := newTelegramTestMaster(t)
+	nodeID, incID := openIncidentFor(t, m, "web1", "cpu")
+	m.engine.Submit(alertSource{NodeID: nodeID, NodeName: "web1"}, Alert{Key: "cpu", Kind: "recover", Severity: SevWarning, Time: 1050})
+	api := fleetAPIFor(m)
+
+	inc, err := api.Incident(incID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inc.State != "resolved" {
+		t.Fatalf("test setup: incident state = %q, want resolved before exercising the callback", inc.State)
+	}
+
+	text := telegramCallbackAnswer(api, "999", cbUpdate("999", "sil1h:"+incID), time.Now)
+	if text != "unknown/expired" {
+		t.Fatalf("answer = %q, want \"unknown/expired\"", text)
+	}
+	sils, err := api.Silences()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sils) != 0 {
+		t.Fatalf("a resolved incident's sil1h callback created a silence: %+v", sils)
+	}
+}
+
 // TestTelegramCallbackForeignChatRejected: a callback from any chat other
 // than the enrolled owner is answered "not authorized" and performs no
 // action, even with an otherwise-valid ack: payload.
