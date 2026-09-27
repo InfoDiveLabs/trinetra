@@ -646,6 +646,29 @@ func setAlertRoute(f func(Alert) bool) (restore func()) {
 	return func() { alertRoute.Store(prev) }
 }
 
+// reloadOnHUP is the SIGHUP handler's actual logic, extracted from its
+// goroutine (below, in the daemon's own startup function) so it is testable
+// without spinning the whole daemon: read cfgPath and, if that succeeds,
+// apply it via reload -- which reimposes any managed-config values before
+// persisting (round-2 review, IMPORTANT: an operator's SIGHUP after a
+// direct config.json edit, a restored backup, or an offline write must not
+// silently adopt a diverged managed key) and then applies in-process,
+// exactly as this handler always has. A Load failure is silently ignored
+// (msg == "", err == nil), matching this handler's behaviour before this
+// extraction; a reload failure (e.g. saveDaemonCfg's write failing) is
+// returned for the caller to report, which could not happen before reload
+// replaced a direct, always-succeeding applyConfig call here.
+func reloadOnHUP(cfgPath string, reload func(*config.Config) error) (msg string, err error) {
+	c, loadErr := config.Load(cfgPath)
+	if loadErr != nil {
+		return "", nil
+	}
+	if err := reload(c); err != nil {
+		return "", err
+	}
+	return "config reloaded", nil
+}
+
 // enqueueAndLog records the alert to the AlertLog and the live event bus, then
 // hands delivery to the async notifier queue. This is the single choke point
 // every alert in the daemon (anomaly fire/recover, boot report, digests) goes
@@ -900,9 +923,10 @@ func cmdDaemon(args []string) int {
 	go q.Run(daemonCtx)
 	// applyConfig swaps the shared cfg pointer and rebuilds the dispatcher
 	// under mu (mirroring setChatID's pointer-swap pattern below). It does
-	// NOT persist: callers that already have c on disk (the SIGHUP handler,
-	// which just re-read cfgPath) call this directly; reload (below) persists
-	// first, then applies.
+	// NOT persist and does NOT reimpose managed-config values -- reload
+	// (below) is the one path that does both, and every caller with reason
+	// to do either (including the SIGHUP handler, round 2 review) goes
+	// through it instead of calling this directly any more.
 	applyConfig := func(c *config.Config) {
 		nd := NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
 		mu.Lock()
@@ -915,16 +939,6 @@ func cmdDaemon(args []string) int {
 		// concurrent applyConfig may already be rewriting under mu.
 		q.SetDispatcher(nd)
 	}
-	hup := make(chan os.Signal, 1)
-	signal.Notify(hup, sighup)
-	go func() {
-		for range hup {
-			if c, err := config.Load(cfgPath); err == nil {
-				applyConfig(c)
-				fmt.Fprintln(stdout, "config reloaded")
-			}
-		}
-	}()
 	// SIGTERM/SIGINT: write the clean-stop marker (so the NEXT boot's downtime
 	// reconstruction knows this stop was intentional, not a crash/power loss),
 	// cancel the daemon context to unwind the background goroutines, and exit.
@@ -976,6 +990,36 @@ func cmdDaemon(args []string) int {
 		applyConfig(newCfg)
 		return nil
 	}
+	// SIGHUP: re-read cfgPath and apply it. Routed through reload (round-2
+	// review, IMPORTANT), not applyConfig directly as before: an external
+	// edit to config.json (a direct edit, a restored backup, an offline
+	// write) can diverge a managed key from its committed value, and SIGHUP
+	// is exactly the mechanism an operator would use to pick such an edit
+	// up -- without going through reload's reimpose, that divergence would
+	// be picked up VERBATIM (including the diverged managed key) and then
+	// PERSIST there forever, since it's now what's on disk AND in memory.
+	// reload's reimpose forces any managed key straight back and, if that
+	// actually changed anything, saveDaemonCfg writes the corrected file
+	// back out -- so a SIGHUP after an external edit self-heals instead of
+	// adopting the drift. This preserves the handler's existing observable
+	// behaviour otherwise (read cfgPath, apply in-process, print "config
+	// reloaded"; a Load error stays silent, exactly as before) -- reload
+	// adds only the reimpose-then-save step in front of the same
+	// applyConfig call it already made.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, sighup)
+	go func() {
+		for range hup {
+			msg, err := reloadOnHUP(cfgPath, reload)
+			if err != nil {
+				fmt.Fprintf(stderr, "config reload failed: %v\n", err)
+				continue
+			}
+			if msg != "" {
+				fmt.Fprintln(stdout, msg)
+			}
+		}
+	}()
 	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
 	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
 	// the in-use struct: getCfg readers read fields after releasing the RLock.

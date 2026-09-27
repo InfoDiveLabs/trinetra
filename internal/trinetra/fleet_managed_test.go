@@ -904,3 +904,170 @@ func TestManagedFragmentSaveUpsertsByTagAtomically(t *testing.T) {
 		t.Fatal("an explicit, unknown id must still be rejected")
 	}
 }
+
+// --- round-2 review: startup reconciliation + tightened short-circuit -----
+
+// TestReconcileManagedValuesAtStartFixesDivergedConfig is the round-2
+// review's first required test: a restart where the live config holds a
+// diverged value for a managed key (simulating config.json having been
+// hand-edited, restored from a backup, or written to offline while the
+// daemon wasn't running) -- after reconcileManagedValuesAtStart runs (which
+// startChild now calls immediately after loadManagedChild, before the
+// shipper starts), both the live config AND whatever ApplyConfig persisted
+// must hold the managed value again.
+func TestReconcileManagedValuesAtStartFixesDivergedConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "managed.json")
+
+	// A previous process committed cpu_pct=85 and persisted the sidecar...
+	sidecar := managedChildFileV1{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "85"}, Fragments: map[string]string{"thresholds.cpu_pct": "frag1"}}
+	b, _ := json.Marshal(sidecar)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// ...but the live config (loaded fresh at this restart, e.g. from a
+	// hand-edited or restored config.json) diverged to 50.
+	cfg := config.Default()
+	cfg.Thresholds.CPUPct = 50
+
+	self := &managedApplyAPI{}
+	getCfg := func() *config.Config {
+		if self.applied != nil {
+			return self.applied
+		}
+		return cfg
+	}
+	mc := loadManagedChild(path, getCfg, self, nil)
+	if got := cfg.Thresholds.CPUPct; got != 50 {
+		t.Fatalf("sanity: cfg.Thresholds.CPUPct = %v, want 50 before reconciliation", got)
+	}
+
+	reconcileManagedValuesAtStart(mc, nil)
+
+	if self.applied == nil {
+		t.Fatal("reconcileManagedValuesAtStart must persist the correction via ApplyConfig when the live config diverged")
+	}
+	if got, _ := self.applied.Get("thresholds.cpu_pct"); got != "85" {
+		t.Fatalf("persisted thresholds.cpu_pct = %q, want the managed value 85", got)
+	}
+	if got := getCfg().Thresholds.CPUPct; got != 85 {
+		t.Fatalf("live thresholds.cpu_pct = %v, want 85 after reconciliation", got)
+	}
+}
+
+// TestReconcileManagedValuesAtStartNoOpWhenAlreadyConverged pins the
+// "otherwise a no-op" half: no ApplyConfig call at all when the live config
+// already matches the committed values (the common, non-diverged case on
+// every ordinary restart).
+func TestReconcileManagedValuesAtStartNoOpWhenAlreadyConverged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "managed.json")
+	sidecar := managedChildFileV1{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "85"}}
+	b, _ := json.Marshal(sidecar)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Thresholds.CPUPct = 85 // already converged
+	self := &managedApplyAPI{}
+	mc := loadManagedChild(path, func() *config.Config { return cfg }, self, nil)
+
+	reconcileManagedValuesAtStart(mc, nil)
+
+	if self.applyCalls != 0 {
+		t.Fatalf("applyCalls = %d, want 0 (nothing to reconcile)", self.applyCalls)
+	}
+}
+
+// TestReconcileManagedValuesAtStartNoOpWhenNothingManaged covers a plain
+// solo/master-like managedChild (nil) and a child that has never managed
+// anything -- both must be complete no-ops.
+func TestReconcileManagedValuesAtStartNoOpWhenNothingManaged(t *testing.T) {
+	reconcileManagedValuesAtStart(nil, nil) // must not panic
+
+	cfg := config.Default()
+	self := &managedApplyAPI{}
+	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), func() *config.Config { return cfg }, self, nil)
+	reconcileManagedValuesAtStart(mc, nil)
+	if self.applyCalls != 0 {
+		t.Fatalf("applyCalls = %d, want 0", self.applyCalls)
+	}
+}
+
+// TestManagedChildApplyReAppliesWhenLiveConfigDiverged is the round-2
+// review's third required test: a same-version, same-values push arrives
+// (previously a guaranteed short-circuit) while the live config has
+// diverged from what was committed -- Apply must notice via
+// configMatchesValues and re-apply instead of trusting the stale
+// version/values match.
+func TestManagedChildApplyReAppliesWhenLiveConfigDiverged(t *testing.T) {
+	cfg := config.Default()
+	self := &managedApplyAPI{}
+	getCfg := func() *config.Config {
+		if self.applied != nil {
+			return self.applied
+		}
+		return cfg
+	}
+	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), getCfg, self, nil)
+
+	frame := managedConfigFrameData{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "85"}}
+	mc.Apply(frame)
+	if self.applyCalls != 1 {
+		t.Fatalf("applyCalls = %d, want 1 after the first apply", self.applyCalls)
+	}
+
+	// Simulate external drift: something (a direct edit, a SIGHUP that
+	// predates round 2, ...) changed the live config's managed key without
+	// going through managedChild at all.
+	self.applied.Thresholds.CPUPct = 12
+
+	// The identical version+values arrives again.
+	mc.Apply(frame)
+	if self.applyCalls != 2 {
+		t.Fatalf("applyCalls = %d, want 2 (a diverged live config must never short-circuit)", self.applyCalls)
+	}
+	if got := getCfg().Thresholds.CPUPct; got != 85 {
+		t.Fatalf("live thresholds.cpu_pct = %v, want restored to 85", got)
+	}
+}
+
+// TestManagedChildApplyShortCircuitsWhenNoDivergence is the round-2 review's
+// fourth required test: a same-version push with NO divergence stays
+// short-circuited -- no re-apply, no disk write -- confirming the tightened
+// check did not regress the round-1 short-circuit for the common case.
+func TestManagedChildApplyShortCircuitsWhenNoDivergence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "managed.json")
+	cfg := config.Default()
+	self := &managedApplyAPI{}
+	getCfg := func() *config.Config {
+		if self.applied != nil {
+			return self.applied
+		}
+		return cfg
+	}
+	mc := newManagedChild(path, getCfg, self, nil)
+
+	frame := managedConfigFrameData{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "85"}, Fragments: map[string]string{"thresholds.cpu_pct": "frag1"}}
+	mc.Apply(frame)
+	if self.applyCalls != 1 {
+		t.Fatalf("applyCalls = %d, want 1", self.applyCalls)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mc.Apply(frame) // identical version+values, live config unchanged (no divergence)
+	if self.applyCalls != 1 {
+		t.Fatalf("applyCalls = %d, want still 1 (no divergence must still short-circuit)", self.applyCalls)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("sidecar rewritten despite no divergence:\nbefore=%s\nafter=%s", before, after)
+	}
+}

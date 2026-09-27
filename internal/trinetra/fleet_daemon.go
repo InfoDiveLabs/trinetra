@@ -786,6 +786,13 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	// from its sidecar (fleet-child/managed.json) so a restart while the
 	// master is unreachable keeps enforcing whatever was last applied.
 	managedState := loadManagedChild(managedChildPath(d.stateDir), d.getCfg, d.self, time.Now)
+	// Round-2 review, IMPORTANT: reconcile once, right after restoring
+	// managedState and before the shipper (or anything else) starts, so a
+	// child whose config.json diverged from its committed managed values
+	// while this process wasn't running (a direct edit, a restored backup,
+	// an offline write) self-heals on restart instead of the divergence
+	// becoming permanent (see reconcileManagedValuesAtStart's doc comment).
+	reconcileManagedValuesAtStart(managedState, d.logf)
 	live := newLiveBuilder(d.latestSnapshot, d.alertStatePath, func() HostInfo { return collectHostInfoFor(d.getCfg()) }, managedState)
 
 	// Lease-based alert handoff (fleet_lease.go): while the master holds a

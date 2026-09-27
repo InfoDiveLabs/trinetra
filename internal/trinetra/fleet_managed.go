@@ -591,11 +591,20 @@ func cloneConfigJSON(c *config.Config) (*config.Config, error) {
 // config is left completely untouched and the error is recorded for the
 // next report.
 //
-// Round-1 review, MINOR: an incoming frame identical to what is already
-// applied (same version AND same values) is a complete no-op -- no
-// re-validation, no ApplyConfig call, no sidecar rewrite -- so the periodic
-// (every managedPushInterval) re-push does not thrash the disk or the
-// dispatcher on every otherwise-unchanged refresh.
+// Round-1 review, MINOR (tightened by round-2 review, IMPORTANT): an
+// incoming frame identical to what is already applied (same version AND
+// same values) is a complete no-op -- no re-validation, no ApplyConfig
+// call, no sidecar rewrite -- so the periodic (every managedPushInterval)
+// re-push does not thrash the disk or the dispatcher on every otherwise-
+// unchanged refresh. Round 2 tightened this: version+values matching is no
+// longer sufficient on its own -- the LIVE config's effective value for
+// every managed key must ALSO already equal what was committed
+// (configMatchesValues), or the push re-applies anyway. Without this, a
+// child whose live config diverged from its committed values (a direct
+// config.json edit, a restored backup, an offline write, or -- before round
+// 2 -- a SIGHUP that bypassed reload's reimpose) would short-circuit every
+// subsequent same-version push forever: the version/values match on their
+// own prove nothing about what the live config currently holds.
 //
 // Round-1 review, IMPORTANT 1: mc.values (the committed set
 // reimposeManagedValues re-forces onto every OTHER full-config apply) is
@@ -614,10 +623,10 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 	mc.mu.Lock()
 	mc.everReceived = true
 	mc.fragments = cloneStringMap(p.Fragments)
-	unchanged := mc.applied && mc.version == p.Version && stringMapsEqual(mc.values, p.Values)
+	sameVersionAndValues := mc.applied && mc.version == p.Version && stringMapsEqual(mc.values, p.Values)
 	prevValues := cloneStringMap(mc.values)
 	mc.mu.Unlock()
-	if unchanged {
+	if sameVersionAndValues && configMatchesValues(mc.getCfg(), p.Values) {
 		return
 	}
 
@@ -751,6 +760,72 @@ func reimposeManagedValues(mc *managedChild, c *config.Config) {
 			continue
 		}
 		_ = c.Set(k, v)
+	}
+}
+
+// configMatchesValues reports whether c's current effective value for every
+// key in values matches it exactly (round-2 review, IMPORTANT): used both to
+// tighten managedChild.Apply's short-circuit (see its doc comment) and by
+// reconcileManagedValuesAtStart to decide whether a startup reconciliation
+// write is actually needed. A nil c never matches (vacuously "diverged",
+// forcing a caller to treat it as needing correction rather than silently
+// trusting an absent config).
+func configMatchesValues(c *config.Config, values map[string]string) bool {
+	if c == nil {
+		return false
+	}
+	for k, v := range values {
+		cur, ok := c.Get(k)
+		if !ok || cur != v {
+			return false
+		}
+	}
+	return true
+}
+
+// reconcileManagedValuesAtStart re-imposes mc's committed managed values (if
+// any) onto the live config immediately at child startup, persisting the
+// correction via the normal reload path if the live config had actually
+// diverged (round-2 review, IMPORTANT): a child's config can drift from its
+// committed values between restarts -- a direct config.json edit, a
+// restored backup, an offline write, or (before round 2) a SIGHUP that
+// bypassed reload's reimpose -- and, combined with Apply's short-circuit,
+// that divergence would otherwise be permanent: every subsequent push at
+// the SAME version would short-circuit forever without this reconciliation
+// ever running. Called once, from startChild, right after loadManagedChild
+// and before the shipper starts.
+//
+// A nil mc, nothing currently managed, or a live config that already
+// matches is a complete no-op (no clone, no ApplyConfig call). Errors are
+// logged, never returned or panicked on: this must never prevent the child
+// from starting.
+func reconcileManagedValuesAtStart(mc *managedChild, logf func(string, ...any)) {
+	if mc == nil {
+		return
+	}
+	values := mc.CurrentValues()
+	if len(values) == 0 {
+		return
+	}
+	cfg := mc.getCfg()
+	if configMatchesValues(cfg, values) {
+		return
+	}
+	clone, err := cloneConfigJSON(cfg)
+	if err != nil {
+		if logf != nil {
+			logf("fleet: managed config: could not check for drift at startup: %v", err)
+		}
+		return
+	}
+	reimposeManagedValues(mc, clone)
+	if mc.self == nil {
+		return
+	}
+	if err := mc.self.ApplyConfig(clone); err != nil {
+		if logf != nil {
+			logf("fleet: managed config: could not persist reconciled values at startup: %v", err)
+		}
 	}
 }
 

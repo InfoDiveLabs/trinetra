@@ -1,7 +1,10 @@
 package trinetra
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1311,5 +1314,97 @@ func TestSlowHubVersioning(t *testing.T) {
 	_, v2, _ := h.latest()
 	if v2 <= v1 {
 		t.Fatalf("version did not advance: %d -> %d", v1, v2)
+	}
+}
+
+// TestReloadOnHUPRestoresManagedValueAfterExternalEdit is the round-2
+// review's second required test: a SIGHUP after an external edit to
+// config.json (simulated by writing a diverged config directly -- the same
+// effect a hand edit, a restored backup, or an offline write would have)
+// must restore the managed value rather than adopting the drift, because
+// reloadOnHUP (extracted from the SIGHUP handler, daemon.go) routes through
+// reload, which reimposes managed-config values before persisting.
+func TestReloadOnHUPRestoresManagedValueAfterExternalEdit(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	// What's on disk right now: an external edit diverged the managed key
+	// back to 50, while the committed value (below) is 85.
+	diverged := config.Default()
+	diverged.Thresholds.CPUPct = 50
+	if err := diverged.Save(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+
+	sidecarPath := filepath.Join(dir, "managed.json")
+	sidecar := managedChildFileV1{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "85"}}
+	b, err := json.Marshal(sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sidecarPath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mc := loadManagedChild(sidecarPath, nil, nil, nil)
+
+	var persisted *config.Config
+	reload := func(c *config.Config) error {
+		reimposeManagedValues(mc, c)
+		persisted = c
+		return nil
+	}
+
+	msg, err := reloadOnHUP(cfgPath, reload)
+	if err != nil {
+		t.Fatalf("reloadOnHUP err = %v", err)
+	}
+	if msg != "config reloaded" {
+		t.Fatalf("msg = %q, want %q (unchanged observable behaviour)", msg, "config reloaded")
+	}
+	if persisted == nil {
+		t.Fatal("reload was never called")
+	}
+	if got, _ := persisted.Get("thresholds.cpu_pct"); got != "85" {
+		t.Fatalf("reloaded thresholds.cpu_pct = %q, want the managed value 85 restored, not the diverged 50 adopted", got)
+	}
+}
+
+// TestReloadOnHUPSilentOnLoadFailure pins the extraction's preserved
+// behaviour: a cfgPath that fails to load is silently ignored (no message,
+// no error), exactly like the pre-round-2 handler.
+func TestReloadOnHUPSilentOnLoadFailure(t *testing.T) {
+	// A MISSING cfgPath is not a Load failure at all (config.Load treats it
+	// as "use defaults", exactly like the pre-round-2 handler always did);
+	// a genuine Load failure needs a file that exists but fails to parse.
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(cfgPath, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	reload := func(*config.Config) error { called = true; return nil }
+	msg, err := reloadOnHUP(cfgPath, reload)
+	if err != nil || msg != "" {
+		t.Fatalf("msg=%q err=%v, want empty/nil on a load failure", msg, err)
+	}
+	if called {
+		t.Fatal("reload must not be called when Load fails")
+	}
+}
+
+// TestReloadOnHUPSurfacesReloadError: a reload failure (e.g. saveDaemonCfg's
+// write erroring) is returned for the caller to report -- something that
+// could never happen before round 2 routed SIGHUP through reload instead of
+// a direct, always-succeeding applyConfig call.
+func TestReloadOnHUPSurfacesReloadError(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := config.Default().Save(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("boom")
+	reload := func(*config.Config) error { return wantErr }
+	msg, err := reloadOnHUP(cfgPath, reload)
+	if err != wantErr || msg != "" {
+		t.Fatalf("msg=%q err=%v, want (\"\", %v)", msg, err, wantErr)
 	}
 }
