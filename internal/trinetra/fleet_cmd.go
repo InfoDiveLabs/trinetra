@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -41,6 +42,7 @@ const fleetUsage = `usage:
   trinetra fleet maintenance list | delete <id>
   trinetra fleet route test --node web1 [--tag t] --rule cpu --severity critical
   trinetra fleet alerting show | apply <file.json>
+  trinetra fleet rules                                      list aggregate rules and their state
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo`
 
@@ -84,6 +86,8 @@ func cmdFleet(args []string) int {
 		return fleetRouteCmd(args[1:])
 	case "alerting":
 		return fleetAlertingCmd(args[1:])
+	case "rules":
+		return fleetRulesCmd(args[1:])
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, fleetUsage)
 		return 0
@@ -1158,4 +1162,54 @@ func fleetAlertingApply(args []string) int {
 		fmt.Fprintf(stdout, "Applied alerting config from %s.\n", args[0])
 		return nil
 	})
+}
+
+// fleetRulesCmd is `trinetra fleet rules` (task 7): a table of every
+// configured aggregate rule's current value/firing state.
+func fleetRulesCmd(args []string) int {
+	if rejectPositionals("fleet rules", "trinetra fleet rules", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		states, err := c.Fleet().RuleStates()
+		if err != nil {
+			return err
+		}
+		printRuleStates(stdout, states)
+		return nil
+	})
+}
+
+// ruleStateLabel renders one rule's STATE column: an Error takes priority
+// (the Expr currently fails to parse -- shouldn't happen, since SetAlerting
+// validates it, but surfaced rather than hidden if it ever does), then
+// "no data" (task-7 ruling: never fires/recovers, holds the previous
+// firing/since), then firing/ok.
+func ruleStateLabel(s core.RuleState) string {
+	switch {
+	case s.Error != "":
+		return "error: " + s.Error
+	case s.NoData:
+		return "no data"
+	case s.Firing:
+		return "firing"
+	}
+	return "ok"
+}
+
+func printRuleStates(w io.Writer, states []core.RuleState) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSTATE\tVALUE\tSINCE\tEXPR")
+	for _, s := range states {
+		value := "-"
+		if s.HasValue {
+			value = strconv.FormatFloat(s.Value, 'f', -1, 64)
+		}
+		since := "-"
+		if s.Since > 0 {
+			since = time.Unix(s.Since, 0).Format(time.RFC3339)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, ruleStateLabel(s), value, since, s.Expr)
+	}
+	tw.Flush()
 }

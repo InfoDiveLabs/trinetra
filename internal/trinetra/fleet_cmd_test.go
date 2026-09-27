@@ -144,6 +144,9 @@ type fleetCLIFake struct {
 	routeTestAlert   core.TestAlert
 	routeTestResult  core.RouteDecision
 	routeTestErr     error
+
+	ruleStates    []core.RuleState
+	ruleStatesErr error
 }
 
 func (f *fleetCLIFake) Fleet() core.FleetAPI          { return fleetCLIFakeFleetAPI{f} }
@@ -272,6 +275,10 @@ func (a fleetCLIFakeFleetAPI) SetAlerting(cfg core.AlertingConfig, actor string)
 func (a fleetCLIFakeFleetAPI) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
 	a.f.routeTestAlert = alert
 	return a.f.routeTestResult, a.f.routeTestErr
+}
+
+func (a fleetCLIFakeFleetAPI) RuleStates() ([]core.RuleState, error) {
+	return a.f.ruleStates, a.f.ruleStatesErr
 }
 
 // startFleetDaemon stands up a real control.Serve loop at
@@ -1190,6 +1197,25 @@ func TestFleetAlertingShow(t *testing.T) {
 	}
 	if got.Version != 3 || got.DefaultPolicy != "default" {
 		t.Fatalf("decoded = %+v", got)
+	}
+}
+
+func TestFleetRulesCmd(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{ruleStates: []core.RuleState{
+		{Name: "hot-web", Expr: "count(tag:web, cpu > 90) >= 1 for 5m", Value: 1, HasValue: true, Firing: true, Since: 1_700_000_000},
+		{Name: "db-mem", Expr: "avg(tag:db, mem) > 85 for 10m"},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "rules"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	if !strings.Contains(got, "hot-web") || !strings.Contains(got, "firing") || !strings.Contains(got, "count(tag:web, cpu > 90) >= 1 for 5m") {
+		t.Fatalf("output missing firing rule row: %s", got)
+	}
+	if !strings.Contains(got, "db-mem") || !strings.Contains(got, "ok") {
+		t.Fatalf("output missing idle rule row: %s", got)
 	}
 }
 

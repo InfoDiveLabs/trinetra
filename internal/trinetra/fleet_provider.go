@@ -651,3 +651,19 @@ func (f fleetAPIImpl) RouteTest(alert core.TestAlert) (core.RouteDecision, error
 	}
 	return core.RouteDecision{Route: res.Route, Policies: res.Policies, Suppressed: suppressed}, nil
 }
+
+// RuleStates returns every aggregate rule's current value/firing state
+// (task 7); nil (never an error) when the engine has no rule evaluator
+// wired (m.engine == nil never happens once startMaster has run, but keeps
+// a bare-bones masterState test working, exactly RuleStates' sibling
+// Alerting/Incidents accessors' own nil-safety pattern).
+func (f fleetAPIImpl) RuleStates() ([]core.RuleState, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	if m.engine == nil {
+		return nil, nil
+	}
+	return m.engine.RuleStates(), nil
+}

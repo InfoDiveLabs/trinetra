@@ -33,6 +33,7 @@ type fleetFake struct {
 	setAlertingCfg   core.AlertingConfig
 	setAlertingActor string
 	routeTestAlert   core.TestAlert
+	ruleStates       []core.RuleState
 }
 
 type fleetFakeAPI struct{ f *fleetFake }
@@ -131,6 +132,10 @@ func (a fleetFakeAPI) RouteTest(alert core.TestAlert) (core.RouteDecision, error
 	return core.RouteDecision{Policies: []core.Policy{{Name: "default"}}}, nil
 }
 
+func (a fleetFakeAPI) RuleStates() ([]core.RuleState, error) {
+	return a.f.ruleStates, nil
+}
+
 func TestClientRoutesToNode(t *testing.T) {
 	remote := &fakeAPI{snapshot: core.DashboardView{CPU: 77}}
 	f := &fleetFake{fakeAPI: &fakeAPI{snapshot: core.DashboardView{CPU: 11}}, nodes: map[string]core.API{"n1": remote}}
@@ -167,7 +172,8 @@ func TestClientRoutesToNode(t *testing.T) {
 }
 
 func TestClientFleetMethods(t *testing.T) {
-	f := &fleetFake{fakeAPI: &fakeAPI{}, nodes: map[string]core.API{}}
+	f := &fleetFake{fakeAPI: &fakeAPI{}, nodes: map[string]core.API{},
+		ruleStates: []core.RuleState{{Name: "hot-web", Expr: "count(tag:web, cpu > 90) >= 1 for 5m", Value: 1, HasValue: true, Firing: true}}}
 	c, _ := Dial(startTestServer(t, f, "tok"), "tok")
 	defer c.Close()
 	fl := c.Fleet()
@@ -215,6 +221,10 @@ func TestClientFleetMethods(t *testing.T) {
 	audit, err := fl.Audit(5)
 	if err != nil || len(audit) != 1 || audit[0].Action != "revoke_node" || f.auditLimit != 5 {
 		t.Fatalf("audit = %+v err %v", audit, err)
+	}
+	rs, err := fl.RuleStates()
+	if err != nil || len(rs) != 1 || rs[0].Name != "hot-web" || !rs[0].Firing {
+		t.Fatalf("rule states = %+v err %v", rs, err)
 	}
 }
 

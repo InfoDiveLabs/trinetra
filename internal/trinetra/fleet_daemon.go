@@ -365,6 +365,9 @@ func (l *masterLoop) tick(now time.Time) {
 		l.engine.TickSilences(now, nodeIDs)
 		l.engine.TickEscalations(now)
 		l.engine.TickGrouping(now)
+		// TickRules (task 7) self-gates to ruleTickInterval (30s); called
+		// every 5s tick exactly like the others above, cheap no-op otherwise.
+		l.engine.TickRules(now)
 	}
 	if now.Sub(l.lastFlush) >= 30*time.Second {
 		l.lastFlush = now
@@ -409,6 +412,14 @@ func (l *masterLoop) stillActive(key string, ev fleet.Evaluation) bool {
 			return false // removed or revoked: never still "down" in a way worth paging
 		}
 		return l.tracker.State(id) == fleet.StateDown
+	case strings.HasPrefix(key, "fleet:rule:"):
+		// task 7: false if the rule no longer exists in the live config, or
+		// its current in-memory state (reset by this very restart) is not
+		// firing -- see fleetAlertEngine.ruleStillFiring.
+		if l.engine == nil {
+			return false
+		}
+		return l.engine.ruleStillFiring(strings.TrimPrefix(key, "fleet:rule:"))
 	default:
 		return true
 	}
@@ -636,6 +647,13 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		revoked[n.ID] = n.Revoked
 	}
 	tracker.Seed(ids, revoked, time.Now().Unix())
+	// SetRules (task 7): reg/sink/tracker now all exist, so the aggregate-
+	// rule evaluator can read tags/LastSeen, snapshots/1m series and
+	// liveness state directly (fleet-phase2-map.md section 8). started is
+	// this master start's own timestamp -- absent(...)'s blind window
+	// measures from here, same reference point masterLoop.started uses for
+	// its own orphan-check blind window.
+	engine.SetRules(reg, sink, tracker, time.Now())
 
 	loop := newMasterLoop(reg, tracker, sink, engine, d, time.Now())
 	m := fleet.NewMaster(fleet.MasterConfig{

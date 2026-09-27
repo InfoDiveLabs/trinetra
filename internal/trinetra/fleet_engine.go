@@ -155,6 +155,12 @@ type fleetAlertEngine struct {
 	// SetConfig) falls back to fleetFallbackAfterDefault, mirroring
 	// masterLoop's own "no getCfg" fallback (newMasterLoop).
 	getCfg func() *config.Config
+
+	// rules (task 7), wired once via SetRules, is the aggregate-rule
+	// evaluator TickRules drives every ruleTickInterval. A nil rules (every
+	// existing call site/test that never calls SetRules) makes
+	// TickRules/RuleStates/ruleStillFiring all no-ops -- see fleet_rules.go.
+	rules *fleetRuleEvaluator
 }
 
 // newFleetAlertEngine builds a fleetAlertEngine. now defaults to time.Now if

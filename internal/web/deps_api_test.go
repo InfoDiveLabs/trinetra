@@ -254,6 +254,10 @@ func (f *fakeFleet) RouteTest(core.TestAlert) (core.RouteDecision, error) {
 	return core.RouteDecision{}, nil
 }
 
+// RuleStates: task 7's aggregate rules have no web surface yet; this stub
+// exists only so fakeFleet keeps satisfying core.FleetAPI.
+func (f *fakeFleet) RuleStates() ([]core.RuleState, error) { return nil, nil }
+
 var _ core.FleetAPI = (*fakeFleet)(nil)
 
 // countingAPI wraps a core.API and counts every call made through it, so a

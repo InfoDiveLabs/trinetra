@@ -72,10 +72,14 @@ func validDuration(s string) bool {
 // saves a partially-valid config either way). validChannel reports whether a
 // channel name exists in the master's current config.Channels.
 func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name string) bool) error {
-	// A totally empty config (no routes, no policies, no default) is the
-	// explicit "reset to the built-in default" case -- always valid.
+	// A totally empty ROUTING config (no routes, no policies, no default) is
+	// the explicit "reset to the built-in default" case -- always valid, and
+	// skips every routing-specific check below. Rules (task 7) are a
+	// separate concern validated unconditionally further down: a config that
+	// only sets Rules, leaving routing untouched/default, must not be forced
+	// to also supply a DefaultPolicy just to save its rules.
 	if len(cfg.Routes) == 0 && len(cfg.Policies) == 0 && cfg.DefaultPolicy == "" {
-		return nil
+		return validateRules(cfg.Rules)
 	}
 
 	policyNames := map[string]bool{}
@@ -149,7 +153,7 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 			}
 		}
 	}
-	return nil
+	return validateRules(cfg.Rules)
 }
 
 // validGroupByField reports whether g is one of the incident-grouping

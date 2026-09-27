@@ -397,8 +397,9 @@ type Policy struct {
 	SendResolved *bool        `json:"send_resolved,omitempty"`
 }
 
-// AggregateRule names a grouping/aggregation rule (B7 fills in Expr's
-// evaluation); AlertingConfig stores it untouched until then.
+// AggregateRule names a grouping/aggregation rule (task 7 fills in Expr's
+// grammar/evaluation, trinetra package's parseRuleExpr); AlertingConfig
+// stores it, validated at Set time.
 type AggregateRule struct {
 	Name     string `json:"name"`
 	Expr     string `json:"expr"`
@@ -419,6 +420,26 @@ type AlertingConfig struct {
 	Policies      []Policy        `json:"policies,omitempty"`
 	DefaultPolicy string          `json:"default_policy,omitempty"`
 	Rules         []AggregateRule `json:"rules,omitempty"`
+}
+
+// RuleState is one aggregate rule's current value/firing state (task 7),
+// returned by FleetAPI.RuleStates in AlertingConfig.Rules order. Value is
+// meaningless when HasValue is false (the rule has never produced a value
+// yet); NoData is true when the rule's last evaluation found nothing to
+// compute from (task-7 ruling: "no data does not fire and does not recover;
+// it holds the previous state") -- Firing/Since then still reflect whatever
+// they were before that. Error is set when the rule's Expr currently fails
+// to parse (should not happen: SetAlerting validates every Expr before
+// saving it), in which case the rule is treated as "no data" too.
+type RuleState struct {
+	Name     string  `json:"name"`
+	Expr     string  `json:"expr"`
+	Value    float64 `json:"value"`
+	HasValue bool    `json:"has_value"`
+	Firing   bool    `json:"firing"`
+	Since    int64   `json:"since,omitempty"`
+	Error    string  `json:"error,omitempty"`
+	NoData   bool    `json:"no_data,omitempty"`
 }
 
 // ErrConflict is returned by FleetAPI.SetAlerting when the config's Version
@@ -514,6 +535,9 @@ type FleetAPI interface {
 	// the alerting engine uses for real delivery, plus a current-silence
 	// check, without firing anything.
 	RouteTest(alert TestAlert) (RouteDecision, error)
+	// RuleStates returns every aggregate rule's current value/firing state
+	// (task 7), in AlertingConfig.Rules order.
+	RuleStates() ([]RuleState, error)
 }
 
 // FleetProvider is optional; implementations of API that know about a fleet

@@ -622,6 +622,13 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 			return nil, err
 		}
 		return json.Marshal(v)
+
+	case "Fleet.RuleStates":
+		v, err := f.RuleStates()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
 	}
 	return nil, fmt.Errorf("control: unknown method %q", method)
 }

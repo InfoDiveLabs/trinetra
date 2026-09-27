@@ -620,6 +620,12 @@ func (f fleetClient) RouteTest(alert core.TestAlert) (core.RouteDecision, error)
 	return v, err
 }
 
+func (f fleetClient) RuleStates() ([]core.RuleState, error) {
+	var v []core.RuleState
+	err := f.c.call("Fleet.RuleStates", struct{}{}, &v)
+	return v, err
+}
+
 func (f fleetClient) DeleteMaintenance(id, actor string) error {
 	return f.c.call("Fleet.DeleteMaintenance", map[string]any{"id": id, "actor": actor}, nil)
 }
