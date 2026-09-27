@@ -652,8 +652,22 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	// liveness state directly (fleet-phase2-map.md section 8). started is
 	// this master start's own timestamp -- absent(...)'s blind window
 	// measures from here, same reference point masterLoop.started uses for
-	// its own orphan-check blind window.
-	engine.SetRules(reg, sink, tracker, time.Now())
+	// its own orphan-check blind window. self (round-1 review fix,
+	// IMPORTANT 2) is the master's own node data -- rt.provider.selfName is
+	// already built (startFleet, before this role branch ever runs);
+	// d.latestSnapshot/d.store are the exact same accessors the daemon's own
+	// control socket and local sampler already use for "this host".
+	engine.SetRules(reg, sink, tracker, time.Now(), ruleSelfSource{
+		Name: rt.provider.selfName,
+		Snap: func() (Snapshot, bool) {
+			if d.latestSnapshot == nil {
+				return Snapshot{}, false
+			}
+			s := d.latestSnapshot()
+			return s, s.TS != 0
+		},
+		Store: d.store,
+	})
 
 	loop := newMasterLoop(reg, tracker, sink, engine, d, time.Now())
 	m := fleet.NewMaster(fleet.MasterConfig{

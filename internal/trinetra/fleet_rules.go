@@ -28,12 +28,14 @@ package trinetra
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
@@ -152,7 +154,19 @@ func (lx *ruleLexer) next() (ruleToken, error) {
 		}
 		return ruleToken{kind: tokWord, text: lx.s[start:lx.pos], pos: start}, nil
 	}
-	return ruleToken{}, perr(start, "unexpected character %q", string(c))
+	// Round-1 review fix: c is only the first BYTE of whatever is here, so a
+	// non-ASCII character (a UTF-8 multi-byte rune) must be decoded properly
+	// rather than reported as the raw byte value reinterpreted as a rune
+	// (string(byte) treats it as a Latin-1 code point, which garbles anything
+	// outside ASCII). A genuinely invalid encoding still advances by one byte
+	// so the lexer can't loop forever on it.
+	r, size := utf8.DecodeRuneInString(lx.s[lx.pos:])
+	if r == utf8.RuneError && size <= 1 {
+		lx.pos++
+		return ruleToken{}, perr(start, "unexpected character %q", lx.s[start:start+1])
+	}
+	lx.pos += size
+	return ruleToken{}, perr(start, "unexpected character %q", string(r))
 }
 
 // ---- grammar: AST --------------------------------------------------------
@@ -296,6 +310,15 @@ func (p *ruleParser) parseNumber() (float64, error) {
 	text, pos := p.tok.text, p.tok.pos
 	v, err := strconv.ParseFloat(text, 64)
 	if err != nil {
+		return 0, perr(pos, "invalid number %q", text)
+	}
+	// Round-1 review fix: strconv.ParseFloat happily accepts "NaN"/"Inf"/
+	// "+Inf"/"-Inf"/"Infinity" (case-insensitively) as valid float64 literals,
+	// but none of those are a sane threshold for a metric comparison (every
+	// compare() against one is either always true, always false, or
+	// undefined) -- reject them the same way an unparseable number is
+	// rejected, at the same position.
+	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0, perr(pos, "invalid number %q", text)
 	}
 	if err := p.advance(); err != nil {
@@ -534,7 +557,14 @@ type ruleState struct {
 	hasValue bool
 	noData   bool
 	parseErr string
-	severity string
+	severity string // the last-APPLIED effective severity (round 1: used to detect an in-place edit)
+	expr     string // the last-APPLIED Expr text (round 1: ditto)
+	// initialized is false only before this rule's very first evaluation --
+	// it exists so a brand new rule's expr/severity (compared against the
+	// zero value "") is never itself mistaken for an "edit" (round 1,
+	// IMPORTANT 1: a genuine edit must have a PRIOR applied definition to
+	// differ from).
+	initialized bool
 }
 
 // ruleEvalResult is one tick's raw evaluation of a single rule's condition,
@@ -545,6 +575,32 @@ type ruleEvalResult struct {
 	hasValue bool
 	noData   bool // task-7 ruling: "no data" never fires/recovers, holds the previous firing state
 	condTrue bool // meaningless when noData
+}
+
+// ruleSelfSource bundles the master's own node data for aggregate rules
+// (round-1 review fix, IMPORTANT 2): `all` and `node:<glob>` selectors must
+// include the master's own node ("self" never appears in the registry, so
+// without this it was silently excluded from every aggregate rule). Every
+// field is nil-safe (a fleetRuleEvaluator built with the zero value, e.g. by
+// an older test, simply never matches self) -- Name/Snap/Store mirror
+// exactly what `fleetProvider`/`fleetDeps` already expose in production
+// (selfName, latestSnapshot, and the daemon's own local SampleStore).
+type ruleSelfSource struct {
+	// Name is the master's own display name (fleetProvider.selfName,
+	// ultimately config.ServerName()) -- what a `node:<glob>` selector globs
+	// self's name against.
+	Name func() string
+	// Snap returns the master's own current Snapshot and whether one has
+	// ever been collected yet (false before the sampler loop's first tick --
+	// see snapshot_hub.go's latestSnapshot doc comment).
+	Snap func() (Snapshot, bool)
+	// Store is the master's own local SampleStore (fleetDeps.store): the
+	// same series count()/avg()/max()/min() read for every other node, just
+	// local instead of replicated. Its "disk (worst)" handling needs to list
+	// this store's own "disk:<mount>" series; not every SampleStore backend
+	// can (see diskSeriesAverage), so that case degrades to "no data" for
+	// self rather than failing the whole rule.
+	Store SampleStore
 }
 
 // fleetRuleEvaluator holds the master-only data sources aggregate rules read
@@ -560,14 +616,15 @@ type fleetRuleEvaluator struct {
 	sink    *replicaSink
 	tracker *fleet.Tracker
 	started time.Time // absent(...)'s blind window measures from here
+	self    ruleSelfSource
 
 	mu       sync.Mutex
 	states   map[string]*ruleState
 	lastTick int64 // unix time of the last actual evaluation (ruleTickInterval gate)
 }
 
-func newFleetRuleEvaluator(reg *fleet.Registry, sink *replicaSink, tracker *fleet.Tracker, started time.Time) *fleetRuleEvaluator {
-	return &fleetRuleEvaluator{reg: reg, sink: sink, tracker: tracker, started: started, states: map[string]*ruleState{}}
+func newFleetRuleEvaluator(reg *fleet.Registry, sink *replicaSink, tracker *fleet.Tracker, started time.Time, self ruleSelfSource) *fleetRuleEvaluator {
+	return &fleetRuleEvaluator{reg: reg, sink: sink, tracker: tracker, started: started, self: self, states: map[string]*ruleState{}}
 }
 
 // due reports whether ruleTickInterval has elapsed since the last
@@ -616,7 +673,29 @@ func (r *fleetRuleEvaluator) evaluate(now time.Time, rules []core.AggregateRule)
 			st = &ruleState{}
 			r.states[rule.Name] = st
 		}
-		st.severity = ruleRuntimeSeverity(rule)
+
+		// Round-1 review fix, IMPORTANT 1: an in-place edit of a firing rule
+		// (same Name, different Expr or Severity) used to be a silent no-op --
+		// the old firing/since state just kept being evaluated against
+		// whatever the NEW Expr happened to compute, with no recover for the
+		// old definition and no fresh `for` sustain window for the new one.
+		// Detect the edit here (only once this rule has been evaluated
+		// before -- see ruleState.initialized), before doing anything else
+		// with it this tick.
+		effSeverity := ruleRuntimeSeverity(rule)
+		oldExpr, oldSeverity := st.expr, st.severity
+		if edited := st.initialized && (rule.Expr != oldExpr || effSeverity != oldSeverity); edited {
+			if st.firing {
+				actions = append(actions, ruleAction{name: rule.Name, expr: oldExpr, severity: oldSeverity, kind: "recover", value: st.value, hasValue: st.hasValue})
+			}
+			// Reset to a completely fresh state: the re-evaluation below must
+			// re-establish `since` from scratch and so cannot fire on this
+			// same tick (its own `for` sustain has not elapsed yet), even
+			// though the underlying condition may already read true under the
+			// new definition.
+			st.since, st.firing, st.value, st.hasValue, st.noData = 0, false, 0, false, false
+		}
+		st.expr, st.severity, st.initialized = rule.Expr, effSeverity, true
 
 		expr, err := parseRuleExpr(rule.Expr)
 		if err != nil {
@@ -662,7 +741,7 @@ func (r *fleetRuleEvaluator) evaluate(now time.Time, rules []core.AggregateRule)
 			continue
 		}
 		if st.firing {
-			actions = append(actions, ruleAction{name: name, severity: st.severity, kind: "recover", value: st.value, hasValue: st.hasValue})
+			actions = append(actions, ruleAction{name: name, expr: st.expr, severity: st.severity, kind: "recover", value: st.value, hasValue: st.hasValue})
 		}
 		delete(r.states, name)
 	}
@@ -697,23 +776,66 @@ func (r *fleetRuleEvaluator) snapshot(rules []core.AggregateRule) []core.RuleSta
 	return out
 }
 
-// matchNodes returns every non-revoked registry node matching sel. A
-// revoked node is excluded from every rule's selector match, consistently
-// across count/online/avg/max/min/absent: it is effectively gone from the
-// fleet (fleet_provider.go's Nodes/RevokeNode's own doc comments use the
-// same framing), so an aggregate rule should neither count it toward
-// "online" nor mistake its frozen LastSeen for a currently-absent report.
-func (r *fleetRuleEvaluator) matchNodes(sel ruleSelector) []fleet.Node {
-	var out []fleet.Node
+// matchNodes returns whether sel matches the master's own "self" node
+// (round-1 review fix, IMPORTANT 2 -- see selfMatches) and every non-revoked
+// REGISTRY node matching sel. A revoked node is excluded from every rule's
+// selector match, consistently across count/online/avg/max/min/absent: it
+// is effectively gone from the fleet (fleet_provider.go's Nodes/RevokeNode's
+// own doc comments use the same framing), so an aggregate rule should
+// neither count it toward "online" nor mistake its frozen LastSeen for a
+// currently-absent report.
+func (r *fleetRuleEvaluator) matchNodes(sel ruleSelector) (includeSelf bool, nodes []fleet.Node) {
+	includeSelf = r.selfMatches(sel)
 	for _, n := range r.reg.List() {
 		if n.Revoked {
 			continue
 		}
 		if selectorMatches(sel, n) {
-			out = append(out, n)
+			nodes = append(nodes, n)
 		}
 	}
-	return out
+	return includeSelf, nodes
+}
+
+// selfMatches reports whether sel matches the master's own node (round-1
+// review fix, IMPORTANT 2): `all` always includes self; `node:<glob>`
+// includes self when the glob matches its display name (ServerName(), via
+// ruleSelfSource.Name) OR the matcher names the exact `self` id
+// (core.SelfNodeID) verbatim -- the same "id-exact-or-name-glob" shape
+// core.Matcher.Node uses for every other node. `tag:<t>` never matches self:
+// the master's own node carries no tags (it isn't a registry entry at all).
+func (r *fleetRuleEvaluator) selfMatches(sel ruleSelector) bool {
+	switch sel.Kind {
+	case "all":
+		return true
+	case "node":
+		if sel.Value == core.SelfNodeID {
+			return true
+		}
+		name := r.selfNodeName()
+		if name == "" {
+			return false
+		}
+		ok, _ := path.Match(sel.Value, name)
+		return ok
+	}
+	return false
+}
+
+func (r *fleetRuleEvaluator) selfNodeName() string {
+	if r.self.Name == nil {
+		return ""
+	}
+	return r.self.Name()
+}
+
+// selfSnapshot returns the master's own current Snapshot, or false if
+// ruleSelfSource.Snap is unset or reports none collected yet.
+func (r *fleetRuleEvaluator) selfSnapshot() (Snapshot, bool) {
+	if r.self.Snap == nil {
+		return Snapshot{}, false
+	}
+	return r.self.Snap()
 }
 
 func selectorMatches(sel ruleSelector, n fleet.Node) bool {
@@ -816,10 +938,18 @@ func (r *fleetRuleEvaluator) evalExpr(expr *ruleExpr, now time.Time) ruleEvalRes
 // per-node condition (metric compared against InnerNum) counted across
 // every selector-matching node currently online or lagging (task-7 ruling:
 // "For count, stale, down and revoked nodes are skipped"), then that COUNT
-// compared against OuterNum.
+// compared against OuterNum. Self (round-1 review fix, IMPORTANT 2) is
+// always eligible -- its "state" is definitionally always online -- so it
+// contributes whenever it matches sel and a current snapshot is available.
 func (r *fleetRuleEvaluator) evalCount(expr *ruleExpr) ruleEvalResult {
 	count := 0
-	for _, n := range r.matchNodes(expr.Sel) {
+	includeSelf, nodes := r.matchNodes(expr.Sel)
+	if includeSelf {
+		if snap, ok := r.selfSnapshot(); ok && compare(metricValue(expr.Metric, snap), expr.InnerOp, expr.InnerNum) {
+			count++
+		}
+	}
+	for _, n := range nodes {
 		if !r.nodeOnlineOrLagging(n.ID) {
 			continue
 		}
@@ -836,10 +966,17 @@ func (r *fleetRuleEvaluator) evalCount(expr *ruleExpr) ruleEvalResult {
 
 // evalOnline implements online(<sel>) <op> <int>: the count of
 // selector-matching nodes currently online or lagging (task-7 ruling: "For
-// online, they [stale/down/revoked] count as not online").
+// online, they [stale/down/revoked] count as not online"). Self (round-1
+// review fix, IMPORTANT 2) always counts as online when it matches sel --
+// unconditionally, per the ruling ("state: always online"), regardless of
+// whether a snapshot has ever been collected for it.
 func (r *fleetRuleEvaluator) evalOnline(expr *ruleExpr) ruleEvalResult {
 	online := 0
-	for _, n := range r.matchNodes(expr.Sel) {
+	includeSelf, nodes := r.matchNodes(expr.Sel)
+	if includeSelf {
+		online++
+	}
+	for _, n := range nodes {
 		if r.nodeOnlineOrLagging(n.ID) {
 			online++
 		}
@@ -849,17 +986,33 @@ func (r *fleetRuleEvaluator) evalOnline(expr *ruleExpr) ruleEvalResult {
 
 // nodeSeriesAverage returns id's average value of metric over [from, to] at
 // 1m resolution, and whether it has any points at all in that window (task-7
-// ruling: "If a node has no points in the window, exclude it"). "disk" is
-// special-cased to the worst mount's own average (nodeDiskSeriesAverage).
+// ruling: "If a node has no points in the window, exclude it").
 func (r *fleetRuleEvaluator) nodeSeriesAverage(id, metric string, from, to int64) (float64, bool) {
 	n, err := r.sink.node(id)
 	if err != nil {
 		return 0, false
 	}
+	return seriesAverage(n.store, metric, from, to)
+}
+
+// seriesAverage returns store's average value of metric over [from, to] at
+// 1m resolution, and whether it has any points at all in that window. "disk"
+// is special-cased to the worst mount's own average (diskSeriesAverage).
+// Shared by nodeSeriesAverage (a replicated fleet node's own *tsFileStore)
+// and the master's own local store (round-1 review fix, IMPORTANT 2:
+// ruleSelfSource.Store) -- both satisfy SampleStore, so one implementation
+// serves both.
+//
+// TODO(perf): every rule with a series-based condition (avg/max/min) queries
+// its own window fresh, per node, every TickRules pass; two rules reading
+// the same (node, metric, window) today issue the query twice. If aggregate
+// rules grow numerous enough for this to matter, cache Query results keyed
+// by (node/self, metric, from, to) for the duration of one evaluate() call.
+func seriesAverage(store SampleStore, metric string, from, to int64) (float64, bool) {
 	if metric == "disk" {
-		return nodeDiskSeriesAverage(n, from, to)
+		return diskSeriesAverage(store, from, to)
 	}
-	pts, err := n.store.Query(metric, from, to, Res1m)
+	pts, err := store.Query(metric, from, to, Res1m)
 	if err != nil || len(pts) == 0 {
 		return 0, false
 	}
@@ -870,13 +1023,27 @@ func (r *fleetRuleEvaluator) nodeSeriesAverage(id, metric string, from, to int64
 	return sum / float64(len(pts)), true
 }
 
-// nodeDiskSeriesAverage computes, for every "disk:<mount>" 1m series n has,
+// seriesMetricLister is the subset of SampleStore's concrete backends (today
+// only *tsFileStore) that can enumerate which metrics they hold -- needed to
+// discover a node's "disk:<mount>" series without knowing the mount names in
+// advance. Not every SampleStore backend (e.g. the in-memory "memory"
+// storage.backend option) implements it; diskSeriesAverage degrades to "no
+// data" rather than failing the whole rule when it doesn't.
+type seriesMetricLister interface {
+	Metrics(res Resolution) ([]string, error)
+}
+
+// diskSeriesAverage computes, for every "disk:<mount>" 1m series store has,
 // that mount's own average over [from, to], and returns the WORST (highest)
 // of those per-mount averages -- "disk (worst)", the same framing
 // worstDisk(snap.Disks) uses for the instantaneous case (evalCount), applied
 // here across the window instead of a single point in time.
-func nodeDiskSeriesAverage(n *replicaNode, from, to int64) (float64, bool) {
-	metrics, err := n.store.Metrics(Res1m)
+func diskSeriesAverage(store SampleStore, from, to int64) (float64, bool) {
+	lister, ok := store.(seriesMetricLister)
+	if !ok {
+		return 0, false
+	}
+	metrics, err := lister.Metrics(Res1m)
 	if err != nil {
 		return 0, false
 	}
@@ -885,7 +1052,7 @@ func nodeDiskSeriesAverage(n *replicaNode, from, to int64) (float64, bool) {
 		if !strings.HasPrefix(m, "disk:") {
 			continue
 		}
-		pts, err := n.store.Query(m, from, to, Res1m)
+		pts, err := store.Query(m, from, to, Res1m)
 		if err != nil || len(pts) == 0 {
 			continue
 		}
@@ -907,12 +1074,21 @@ func nodeDiskSeriesAverage(n *replicaNode, from, to int64) (float64, bool) {
 // then the rule's own aggregation function (avg/max/min) applied across
 // those per-node averages. If NO node has any data, the result is "no data"
 // (task-7 ruling: "does not fire and does not recover; it holds the
-// previous state").
+// previous state"). Self (round-1 review fix, IMPORTANT 2) contributes its
+// own local-store average exactly like any other node's replicated one, via
+// ruleSelfSource.Store; a nil Store (or a backend that has never collected
+// this metric) simply excludes self, same as a node with no points.
 func (r *fleetRuleEvaluator) evalAggSeries(expr *ruleExpr, now time.Time) ruleEvalResult {
 	from := now.Add(-expr.ForDur).Unix()
 	to := now.Unix()
 	var perNode []float64
-	for _, n := range r.matchNodes(expr.Sel) {
+	includeSelf, nodes := r.matchNodes(expr.Sel)
+	if includeSelf && r.self.Store != nil {
+		if v, ok := seriesAverage(r.self.Store, expr.Metric, from, to); ok {
+			perNode = append(perNode, v)
+		}
+	}
+	for _, n := range nodes {
 		if v, ok := r.nodeSeriesAverage(n.ID, expr.Metric, from, to); ok {
 			perNode = append(perNode, v)
 		}
@@ -949,25 +1125,33 @@ func (r *fleetRuleEvaluator) evalAggSeries(expr *ruleExpr, now time.Time) ruleEv
 // AbsentFor of now, but only once the master itself has been up at least
 // AbsentFor (task-7 ruling's blind window) -- during that window condTrue is
 // forced false, not "no data" (the state is known: deliberately not yet
-// judged). value is the number of seconds since the most recently seen
-// matching node last reported (or since the master started, if none match
-// at all), which is not specified by the brief but is the one number that
-// makes the alert title/CLI value column meaningful for this rule kind.
+// judged). Self (round-1 review fix, IMPORTANT 2) contributes `now` as its
+// own LastSeen whenever it matches sel (the ruling: "LastSeen: now") -- it
+// can never itself be the reason an absent() rule fires. value is the number
+// of seconds since the most recently seen matching node last reported (or
+// since the master started, if no matching node has EVER reported -- round-1
+// review fix: a node whose LastSeen is genuinely 0, same as none matching at
+// all, must not be read as "reported at the Unix epoch", which would make
+// value a nonsensical ~55-year number).
 func (r *fleetRuleEvaluator) evalAbsent(expr *ruleExpr, now time.Time) ruleEvalResult {
-	maxLastSeen := int64(-1)
-	for _, n := range r.matchNodes(expr.Sel) {
+	includeSelf, nodes := r.matchNodes(expr.Sel)
+	maxLastSeen := int64(0) // 0 means "no matching node has ever reported"
+	if includeSelf {
+		maxLastSeen = now.Unix()
+	}
+	for _, n := range nodes {
 		if n.LastSeen > maxLastSeen {
 			maxLastSeen = n.LastSeen
 		}
 	}
 	var value float64
-	if maxLastSeen >= 0 {
+	if maxLastSeen > 0 {
 		value = float64(now.Unix() - maxLastSeen)
 	} else {
 		value = now.Sub(r.started).Seconds()
 	}
 	cutoff := now.Add(-expr.AbsentFor).Unix()
-	reported := maxLastSeen >= cutoff
+	reported := maxLastSeen > 0 && maxLastSeen >= cutoff
 	blind := now.Sub(r.started) < expr.AbsentFor
 	return ruleEvalResult{value: value, hasValue: true, condTrue: !reported && !blind}
 }
@@ -989,9 +1173,11 @@ func formatRuleValue(v float64, hasValue bool) string {
 // SetSilences/SetRouting/SetDependencies's own "called once from
 // startMaster, after both the engine and its data sources exist" pattern. A
 // nil e.rules (no SetRules call, every existing engine test) makes
-// TickRules/RuleStates/ruleStillFiring all no-ops.
-func (e *fleetAlertEngine) SetRules(reg *fleet.Registry, sink *replicaSink, tracker *fleet.Tracker, started time.Time) {
-	e.rules = newFleetRuleEvaluator(reg, sink, tracker, started)
+// TickRules/RuleStates/ruleStillFiring all no-ops. self (round-1 review fix,
+// IMPORTANT 2) is the master's own node data, so `all`/`node:<glob>`
+// selectors include it too -- see ruleSelfSource's doc comment.
+func (e *fleetAlertEngine) SetRules(reg *fleet.Registry, sink *replicaSink, tracker *fleet.Tracker, started time.Time, self ruleSelfSource) {
+	e.rules = newFleetRuleEvaluator(reg, sink, tracker, started, self)
 }
 
 // TickRules evaluates every configured aggregate rule at most once every

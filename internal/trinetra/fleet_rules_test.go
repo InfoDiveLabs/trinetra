@@ -2,6 +2,7 @@ package trinetra
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -246,6 +247,15 @@ type ruleFixture struct {
 	silences  *silenceStore
 	engine    *fleetAlertEngine
 	now       time.Time
+
+	// self (round-1 review fix, IMPORTANT 2: all/node:<glob> selectors
+	// include the master's own node) backs ruleSelfSource. selfMu guards
+	// selfName/selfSnap/hasSelf since a test may mutate them between ticks.
+	selfMu      sync.Mutex
+	selfName    string
+	selfSnap    Snapshot
+	hasSelf     bool
+	selfTSStore *tsFileStore // concrete, so tests can AppendRollup directly
 }
 
 func newRuleFixture(t *testing.T) *ruleFixture {
@@ -270,9 +280,14 @@ func newRuleFixture(t *testing.T) *ruleFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	selfStore, err := newTSFileStore(filepath.Join(dir, "self"), StoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	rf := &ruleFixture{dir: dir, reg: reg, tracker: tracker, sink: sink, incidents: incidents,
-		alerting: alerting, silences: silences, now: time.Unix(1_700_000_000, 0)}
+		alerting: alerting, silences: silences, now: time.Unix(1_700_000_000, 0),
+		selfName: "master1", selfTSStore: selfStore}
 	rf.engine = newFleetAlertEngine(
 		func() time.Time { return rf.now },
 		func(Alert) bool { return true },
@@ -292,8 +307,35 @@ func newRuleFixture(t *testing.T) *ruleFixture {
 		rf.deliveredTo = append(rf.deliveredTo, namedDelivery{a, channels})
 		return true
 	}, func(a Alert, channels []string) bool { return true })
-	rf.engine.SetRules(reg, sink, tracker, rf.now)
+	rf.engine.SetRules(reg, sink, tracker, rf.now, ruleSelfSource{
+		Name: func() string { rf.selfMu.Lock(); defer rf.selfMu.Unlock(); return rf.selfName },
+		Snap: func() (Snapshot, bool) {
+			rf.selfMu.Lock()
+			defer rf.selfMu.Unlock()
+			return rf.selfSnap, rf.hasSelf
+		},
+		Store: selfStore,
+	})
 	return rf
+}
+
+// setSelfSnapshot posts the master's own current snapshot (round-1 review
+// fix, IMPORTANT 2's ruleSelfSource.Snap).
+func (rf *ruleFixture) setSelfSnapshot(snap Snapshot) {
+	rf.selfMu.Lock()
+	defer rf.selfMu.Unlock()
+	rf.selfSnap, rf.hasSelf = snap, true
+}
+
+// appendSelfSeriesPoint appends one 1m-resolution rollup point to the
+// master's own local store (round-1 review fix, IMPORTANT 2's
+// ruleSelfSource.Store), exactly like appendSeriesPoint does for a
+// replicated fleet node.
+func (rf *ruleFixture) appendSelfSeriesPoint(t *testing.T, metric string, ts int64, v float64) {
+	t.Helper()
+	if err := rf.selfTSStore.AppendRollup(metric, Point{TS: ts, Min: v, Avg: v, Max: v}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (rf *ruleFixture) waitIdle() { rf.engine.waitIdleForTest() }
@@ -662,7 +704,7 @@ func TestRuleOrphanRecoverViaStillActive(t *testing.T) {
 	freshEngine := newFleetAlertEngine(func() time.Time { return rf.now }, func(Alert) bool { return true },
 		func(string, fleet.Frame) bool { return true }, func(string) bool { return true }, freshIncidents)
 	freshEngine.SetRouting(rf.alerting, func(Alert, []string) bool { return true }, func(Alert, []string) bool { return true })
-	freshEngine.SetRules(rf.reg, rf.sink, rf.tracker, rf.now)
+	freshEngine.SetRules(rf.reg, rf.sink, rf.tracker, rf.now, ruleSelfSource{})
 
 	loop := newMasterLoop(rf.reg, rf.tracker, rf.sink, freshEngine, fleetDeps{alert: func(Alert) {}}, rf.now)
 	if loop.stillActive(ruleAlertKey("hot-web"), fleet.Evaluation{}) {
@@ -727,4 +769,281 @@ func TestRuleAlertRoutedNormallyWhenNotSilenced(t *testing.T) {
 	if rf.deliveredCount() != 1 {
 		t.Fatalf("an unsilenced rule alert must be delivered exactly once: delivered = %d", rf.deliveredCount())
 	}
+}
+
+// =====================================================================
+// Round-1 review fixes
+// =====================================================================
+
+// ---- IMPORTANT 1: an in-place edit of a firing rule is no longer a
+// silent no-op --------------------------------------------------------
+
+func TestRuleInPlaceEditWhileFiringRecoversThenRefires(t *testing.T) {
+	rf := newRuleFixture(t)
+	node := rf.addNode(t, "web1", []string{"web"})
+	rf.setOnline(node.ID)
+	rf.setSnapshot(t, node.ID, Snapshot{CPU: 95})
+	oldExpr := "count(tag:web, cpu > 90) >= 1 for 1m"
+	rf.setRules(t, core.AggregateRule{Name: "hot-web", Expr: oldExpr})
+
+	rf.tick()
+	rf.advance(90 * time.Second)
+	rf.tick()
+	if st := rf.ruleState(t, "hot-web"); !st.Firing {
+		t.Fatalf("hot-web should be firing before the edit: %+v", st)
+	}
+	if rf.deliveredCount() != 1 {
+		t.Fatalf("delivered before edit = %d, want 1", rf.deliveredCount())
+	}
+
+	// Edit in place: same Name, a lower (still-true) threshold.
+	newExpr := "count(tag:web, cpu > 50) >= 1 for 1m"
+	rf.setRules(t, core.AggregateRule{Name: "hot-web", Expr: newExpr})
+
+	rf.advance(30 * time.Second)
+	rf.tick()
+	if rf.deliveredCount() != 2 {
+		t.Fatalf("delivered right after the edit = %d, want 2 (a recover for the OLD definition)", rf.deliveredCount())
+	}
+	recover := rf.lastDelivered()
+	if recover.a.Kind != "recover" || !strings.Contains(recover.a.Title, oldExpr) {
+		t.Fatalf("post-edit recover = %+v, want kind recover and the OLD expr in its title", recover.a)
+	}
+	if st := rf.ruleState(t, "hot-web"); st.Firing {
+		t.Fatalf("hot-web must not still be firing right after an edit: %+v", st)
+	}
+
+	// The fresh evaluation under the new definition must NOT fire on this
+	// same tick (its own `for` sustain has not elapsed yet), even though the
+	// underlying condition (cpu 95 > 50) is already true.
+	rf.advance(30 * time.Second)
+	rf.tick()
+	if rf.deliveredCount() != 2 {
+		t.Fatalf("delivered too early after the edit (should not re-fire before the new `for` elapses) = %d, want 2", rf.deliveredCount())
+	}
+
+	// Once the NEW `for` window elapses (measured from the edit tick, not
+	// the original fire), it fires again -- with the new title/severity.
+	rf.advance(35 * time.Second) // total since the edit tick: 65s >= 1m
+	rf.tick()
+	if rf.deliveredCount() != 3 {
+		t.Fatalf("delivered after the new `for` elapsed = %d, want 3", rf.deliveredCount())
+	}
+	refire := rf.lastDelivered()
+	if refire.a.Kind != "fire" || !strings.Contains(refire.a.Title, newExpr) {
+		t.Fatalf("re-fire = %+v, want kind fire and the NEW expr in its title", refire.a)
+	}
+}
+
+func TestRuleInPlaceSeverityOnlyChangeWhileFiringRecoversThenRefires(t *testing.T) {
+	rf := newRuleFixture(t)
+	node := rf.addNode(t, "web1", []string{"web"})
+	rf.setOnline(node.ID)
+	rf.setSnapshot(t, node.ID, Snapshot{CPU: 95})
+	expr := "count(tag:web, cpu > 90) >= 1 for 1m"
+	rf.setRules(t, core.AggregateRule{Name: "hot-web", Expr: expr, Severity: "warning"})
+
+	rf.tick()
+	rf.advance(90 * time.Second)
+	rf.tick()
+	fire := rf.lastDelivered()
+	if fire.a.Kind != "fire" || fire.a.Severity != SevWarning {
+		t.Fatalf("initial fire = %+v, want kind fire severity warning", fire.a)
+	}
+
+	// Severity-only edit: same Expr, different Severity.
+	rf.setRules(t, core.AggregateRule{Name: "hot-web", Expr: expr, Severity: "critical"})
+	rf.advance(30 * time.Second)
+	rf.tick()
+	if rf.deliveredCount() != 2 {
+		t.Fatalf("delivered after severity-only edit = %d, want 2 (a recover for the OLD severity)", rf.deliveredCount())
+	}
+	recover := rf.lastDelivered()
+	if recover.a.Kind != "recover" || recover.a.Severity != SevWarning {
+		t.Fatalf("post-edit recover = %+v, want kind recover severity warning (the OLD severity)", recover.a)
+	}
+
+	rf.advance(65 * time.Second)
+	rf.tick()
+	refire := rf.lastDelivered()
+	if refire.a.Kind != "fire" || refire.a.Severity != SevCritical {
+		t.Fatalf("re-fire = %+v, want kind fire severity critical (the NEW severity)", refire.a)
+	}
+}
+
+// ---- IMPORTANT 2: `all`/`node:<glob>` include the master's own node -----
+
+func TestSelfSelectorMatching(t *testing.T) {
+	rf := newRuleFixture(t)
+	rules := rf.engine.rules
+	if !rules.selfMatches(ruleSelector{Kind: "all"}) {
+		t.Error("all must match self")
+	}
+	if !rules.selfMatches(ruleSelector{Kind: "node", Value: "master1"}) {
+		t.Error("node:<glob> must match self's own ServerName()")
+	}
+	if !rules.selfMatches(ruleSelector{Kind: "node", Value: core.SelfNodeID}) {
+		t.Error("node:self must match the exact self id")
+	}
+	if rules.selfMatches(ruleSelector{Kind: "node", Value: "someone-else"}) {
+		t.Error("node:<glob> must not match an unrelated name")
+	}
+	if rules.selfMatches(ruleSelector{Kind: "tag", Value: "web"}) {
+		t.Error("tag: must never match self")
+	}
+}
+
+func TestRuleOnlineAllIncludesSelfAndChildren(t *testing.T) {
+	rf := newRuleFixture(t)
+	web1 := rf.addNode(t, "web1", []string{"web"})
+	web2 := rf.addNode(t, "web2", []string{"web"})
+	rf.setOnline(web1.ID)
+	rf.setOnline(web2.ID)
+	// selfSnap/selfStore intentionally left unset: online() never needs them
+	// (self's state is unconditionally "online").
+	rf.setRules(t, core.AggregateRule{Name: "fleet-quorum", Expr: "online(all) < 1 for 1m"})
+
+	rf.tick()
+	st := rf.ruleState(t, "fleet-quorum")
+	if st.Value != 3 {
+		t.Fatalf("online(all) = %v, want 3 (self + 2 children)", st.Value)
+	}
+}
+
+func TestRuleAvgAllIncludesSelfSeries(t *testing.T) {
+	rf := newRuleFixture(t)
+	db1 := rf.addNode(t, "db1", []string{"db"})
+	rf.setOnline(db1.ID)
+	base := rf.now.Unix()
+	for _, ts := range []int64{base - 300, base - 240, base - 180} {
+		rf.appendSeriesPoint(t, db1.ID, "cpu", ts, 60) // db1 averages 60
+		rf.appendSelfSeriesPoint(t, "cpu", ts, 40)     // self averages 40
+	}
+	rf.setRules(t, core.AggregateRule{Name: "fleet-cpu", Expr: "avg(all, cpu) > 1000 for 5m"})
+
+	rf.tick()
+	st := rf.ruleState(t, "fleet-cpu")
+	if !st.HasValue || st.NoData {
+		t.Fatalf("avg(all, cpu) state = %+v, want a value (self's series must be included)", st)
+	}
+	if st.Value != 50 { // (60 + 40) / 2
+		t.Fatalf("avg(all, cpu) = %v, want 50 (self's own series averaged in)", st.Value)
+	}
+}
+
+func TestRuleNodeSelectorMatchesSelfByName(t *testing.T) {
+	rf := newRuleFixture(t)
+	rf.setRules(t, core.AggregateRule{Name: "self-online", Expr: "online(node:master1) < 1 for 1m"})
+	rf.tick()
+	if st := rf.ruleState(t, "self-online"); st.Value != 1 {
+		t.Fatalf("online(node:master1) = %v, want 1 (self matches its own name)", st.Value)
+	}
+}
+
+func TestRuleTagSelectorNeverMatchesSelf(t *testing.T) {
+	rf := newRuleFixture(t)
+	// No node carries "web" at all: if self were (incorrectly) matched by a
+	// tag selector, online(tag:web) would read 1 instead of 0.
+	rf.setRules(t, core.AggregateRule{Name: "web-online", Expr: "online(tag:web) < 1 for 1m"})
+	rf.tick()
+	if st := rf.ruleState(t, "web-online"); st.Value != 0 {
+		t.Fatalf("online(tag:web) = %v, want 0 (self must never match a tag selector)", st.Value)
+	}
+}
+
+// ---- MINORS ---------------------------------------------------------------
+
+func TestParseRuleExprRejectsNaNAndInf(t *testing.T) {
+	tests := []struct{ expr, at string }{
+		{"count(tag:web, cpu > NaN) >= 1 for 1m", "NaN"},
+		{"count(tag:web, cpu > Inf) >= 1 for 1m", "Inf"},
+		{"avg(tag:db, mem) > -Inf for 1m", "-Inf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			_, err := parseRuleExpr(tt.expr)
+			pe, ok := err.(*ruleParseError)
+			if !ok {
+				t.Fatalf("parseRuleExpr(%q) error = %v (%T), want *ruleParseError", tt.expr, err, err)
+			}
+			wantPos := strings.Index(tt.expr, tt.at)
+			if pe.Pos != wantPos {
+				t.Fatalf("parseRuleExpr(%q) error pos = %d, want %d (error: %v)", tt.expr, pe.Pos, wantPos, err)
+			}
+		})
+	}
+}
+
+func TestParseRuleExprNonASCIICharacterIsDecodedProperly(t *testing.T) {
+	expr := "count(€tag:web, cpu > 90) >= 1 for 1m"
+	_, err := parseRuleExpr(expr)
+	pe, ok := err.(*ruleParseError)
+	if !ok {
+		t.Fatalf("error = %v (%T), want *ruleParseError", err, err)
+	}
+	wantPos := strings.Index(expr, "€")
+	if pe.Pos != wantPos {
+		t.Fatalf("pos = %d, want %d", pe.Pos, wantPos)
+	}
+	if !strings.Contains(pe.Msg, "€") {
+		t.Fatalf("message = %q, want it to contain the properly-decoded rune '€', not a garbled byte", pe.Msg)
+	}
+}
+
+func TestRuleAbsentValueWhenLastSeenIsZero(t *testing.T) {
+	rf := newRuleFixture(t)
+	rf.addNode(t, "backup1", []string{"backup"}) // LastSeen defaults to 0: never recorded
+	rf.setRules(t, core.AggregateRule{Name: "backup-missing", Expr: "absent(tag:backup, 5m)"})
+
+	rf.advance(6 * time.Minute)
+	rf.tick()
+	st := rf.ruleState(t, "backup-missing")
+	if !st.Firing {
+		t.Fatalf("absent should fire when the only matching node has never reported: %+v", st)
+	}
+	if st.Value != 360 {
+		t.Fatalf("absent Value = %v, want 360 (seconds since master start, not now-minus-epoch-0)", st.Value)
+	}
+}
+
+// TestRuleEngineRaceSetAlertingAndTickRules interleaves SetAlerting with
+// TickRules under -race: only the ticking goroutine ever touches rf.now (so
+// the test itself introduces no race), but TickRules reads the alertingStore
+// (e.alerting.Get()) and the rule evaluator's own state concurrently with
+// the other goroutine's alerting.Set calls, exactly the real concurrency
+// masterLoop.tick and a `fleet alerting apply`/SetAlerting control-socket
+// call have in production.
+func TestRuleEngineRaceSetAlertingAndTickRules(t *testing.T) {
+	rf := newRuleFixture(t)
+	node := rf.addNode(t, "web1", []string{"web"})
+	rf.setOnline(node.ID)
+	rf.setSnapshot(t, node.ID, Snapshot{CPU: 95})
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			name := fmt.Sprintf("r%d", i%5)
+			_, _ = rf.alerting.Set(core.AlertingConfig{Rules: []core.AggregateRule{
+				{Name: name, Expr: "count(tag:web, cpu > 90) >= 1 for 1m"},
+			}}, allChannelsValid)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 40; i++ {
+			rf.advance(31 * time.Second)
+			rf.engine.TickRules(rf.now)
+			rf.waitIdle()
+		}
+		close(done)
+	}()
+	wg.Wait()
 }
