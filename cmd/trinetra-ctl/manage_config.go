@@ -12,7 +12,12 @@
 // ApplyConfig shape every other management screen already uses.
 package main
 
-import "github.com/InfoDiveLabs/trinetra/internal/config"
+import (
+	"fmt"
+
+	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
+)
 
 // settingsGroups returns the distinct groups named in config.Keys(), in the
 // catalog's own first-seen order, for the "all settings" screen's top level
@@ -50,4 +55,32 @@ func settingsGroupKeys(group string) []config.KeyInfo {
 // value or call ApplyConfig on it.
 func applyConfigKey(cfg *config.Config, key, raw string) error {
 	return cfg.Set(key, raw)
+}
+
+// managedFragmentFor reports the fragment id currently managing key on the
+// daemon api talks to (task 8): api must implement core.FleetProvider AND
+// report a non-nil Status().Link.Managed entry for key -- true only for a
+// fleet CHILD with that key currently under management (a master/solo
+// daemon's Status has no Link at all). Used by runConfig's "set" verb and
+// applyConfigKeyCmd (the TUI's "all settings" per-key edit) to refuse a
+// managed key with the same message `trinetra config set` shows locally,
+// before ever calling config.Set/ApplyConfig.
+func managedFragmentFor(api core.API, key string) (fragmentID string, managed bool) {
+	fp, ok := api.(core.FleetProvider)
+	if !ok {
+		return "", false
+	}
+	st, err := fp.Fleet().Status()
+	if err != nil || st.Link == nil {
+		return "", false
+	}
+	id, ok := st.Link.Managed[key]
+	return id, ok
+}
+
+// managedFragmentError formats the standard refusal message for a managed
+// key, matching `trinetra config set`'s own wording (internal/trinetra/
+// main.go's cmdConfig) so the CLI and the TUI never disagree.
+func managedFragmentError(key, fragmentID string) error {
+	return fmt.Errorf("%s: managed by the fleet master (fragment %s); change it on the master", key, fragmentID)
 }

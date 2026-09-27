@@ -171,12 +171,16 @@ type liveBuilder struct {
 	snap           func() Snapshot
 	alertStatePath string
 	host           func() HostInfo
-	mu             sync.Mutex
-	lastHost       time.Time
+	// managed (task 8) reports this child's managed-config state on every
+	// LiveUpdate (nil until it has ever received a "managed_config" frame
+	// -- see managedChild.Report).
+	managed  *managedChild
+	mu       sync.Mutex
+	lastHost time.Time
 }
 
-func newLiveBuilder(snap func() Snapshot, alertStatePath string, host func() HostInfo) *liveBuilder {
-	return &liveBuilder{snap: snap, alertStatePath: alertStatePath, host: host}
+func newLiveBuilder(snap func() Snapshot, alertStatePath string, host func() HostInfo, managed *managedChild) *liveBuilder {
+	return &liveBuilder{snap: snap, alertStatePath: alertStatePath, host: host, managed: managed}
 }
 
 func (l *liveBuilder) Build() (fleet.LiveUpdate, error) {
@@ -184,7 +188,7 @@ func (l *liveBuilder) Build() (fleet.LiveUpdate, error) {
 	if err != nil {
 		return fleet.LiveUpdate{}, err
 	}
-	u := fleet.LiveUpdate{Version: version.String(), Snapshot: sb}
+	u := fleet.LiveUpdate{Version: version.String(), Snapshot: sb, Managed: l.managed.Report()}
 	if b, err := os.ReadFile(l.alertStatePath); err == nil && json.Valid(b) {
 		u.AlertState = b
 	}

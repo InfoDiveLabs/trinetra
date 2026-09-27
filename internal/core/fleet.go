@@ -95,6 +95,16 @@ type LinkView struct {
 	Unacked       uint64 `json:"unacked"`
 	OldestUnacked int64  `json:"oldest_unacked"`
 	Gaps          int    `json:"gaps"`
+	// Managed is this child's own managed-config keys, from the master's
+	// last received managed_config push: config key -> the id of the
+	// fragment currently supplying it. Populated only on a child (nil on a
+	// master/solo daemon's own Status, which has no Link at all). Used by
+	// this same daemon's `trinetra config set`/`unset` and by the web
+	// config page (internal/web/handlers_config.go) to show these keys
+	// read-only and reject an edit naming one -- never grown onto core.API
+	// itself (task 8 ruling): this is the one seam that already exists for
+	// exactly this purpose.
+	Managed map[string]string `json:"managed,omitempty"`
 }
 
 // FleetStatus is the fleet-wide status projection FleetAPI.Status returns:
@@ -346,6 +356,61 @@ type Maintenance struct {
 	Author   string    `json:"author"`
 }
 
+// ManagedFragment is one master-pushed config fragment (task 8, spec 6): a
+// set of allowlisted config.Config keys/values targeted at either every
+// node (Tag "") or every node carrying Tag, merged with every other
+// applicable fragment into that node's DESIRED set (see the trinetra
+// package's managedFragmentStore.Desired) and pushed down the
+// master-to-child stream as a "managed_config" frame. Version is bumped by
+// SaveManaged on every save (the same counter used for the store's
+// desired-set generation, so a fragment's own Version also tells you which
+// generation last touched it); Author is the actor that saved it.
+//
+// Only ten keys are ever allowed in Values (thresholds.cpu_pct/mem_pct/
+// swap_pct/temp_c/disk_pct, baseline_sigma, baseline_min_pct,
+// baseline_alerts, quiet_hours, critical_overrides_quiet) -- SaveManaged
+// rejects anything else, naming the key. Pushing a fallback channel set is
+// explicitly OUT of scope for this fragment mechanism; it is deferred to a
+// later task.
+type ManagedFragment struct {
+	ID      string            `json:"id"`
+	Tag     string            `json:"tag,omitempty"` // "" = every node
+	Values  map[string]string `json:"values"`
+	Version int64             `json:"version"`
+	Author  string            `json:"author,omitempty"`
+}
+
+// ManagedConflict records that more than one applicable ManagedFragment set
+// the same key for a node: Fragments lists every fragment id that set Key,
+// in the order they were applied (so the LAST entry is the one that
+// actually won -- see managedFragmentStore.Desired's "later wins" rule).
+// Recorded, never an error: a conflict does not block the desired set from
+// being computed or pushed, it is only surfaced for an operator to notice
+// and resolve.
+type ManagedConflict struct {
+	Key       string   `json:"key"`
+	Fragments []string `json:"fragments"`
+}
+
+// ManagedStatus is one node's managed-config status, as FleetAPI.
+// ManagedStatus reports it: Version is the version the node itself last
+// reported having successfully applied (0/Applied=false if it never has, or
+// its last attempt failed -- see Error); Desired is the master's CURRENT
+// desired-set generation for this node, which may be ahead of Version if a
+// push is still in flight or the node is unreachable. Drift lists every
+// currently-desired key whose child-reported effective value does not match
+// the desired value (computed from the node's last LiveUpdate.Managed,
+// which may itself be stale if the node is unreachable).
+type ManagedStatus struct {
+	Node      string            `json:"node"`
+	Version   int64             `json:"version"`
+	Desired   int64             `json:"desired"`
+	Applied   bool              `json:"applied"`
+	Error     string            `json:"error,omitempty"`
+	Drift     []string          `json:"drift,omitempty"`
+	Conflicts []ManagedConflict `json:"conflicts,omitempty"`
+}
+
 // AuditEntry is one line in the fleet audit log: a record of who did what to
 // the fleet (rename, revoke, ack, token create, ...) and when.
 type AuditEntry struct {
@@ -538,6 +603,27 @@ type FleetAPI interface {
 	// RuleStates returns every aggregate rule's current value/firing state
 	// (task 7), in AlertingConfig.Rules order.
 	RuleStates() ([]RuleState, error)
+
+	// Managed lists every managed-config fragment (task 8), in no
+	// particular guaranteed order.
+	Managed() ([]ManagedFragment, error)
+	// SaveManaged validates and stores a fragment: a new one (fresh random
+	// id) if frag.ID is "", otherwise an in-place update of the existing
+	// fragment with that id. Every key in frag.Values must be one of the
+	// ten allowlisted managed-config keys and must itself validate against
+	// config.Config.Set on a scratch config.Default() copy -- an unknown
+	// key or a bad value is rejected with nothing saved, naming the key.
+	// Records a "fleet.managed.save" audit entry under actor and pushes the
+	// updated desired set to every affected, connected node.
+	SaveManaged(frag ManagedFragment, actor string) (ManagedFragment, error)
+	// DeleteManaged removes fragment id, records a "fleet.managed.delete"
+	// audit entry under actor, and pushes the updated desired set to every
+	// affected, connected node.
+	DeleteManaged(id, actor string) error
+	// ManagedStatus reports every node with at least one applicable
+	// fragment (or an unresolved conflict): its desired-set generation, what
+	// it last reported applying, and any drift/conflicts.
+	ManagedStatus() ([]ManagedStatus, error)
 }
 
 // FleetProvider is optional; implementations of API that know about a fleet

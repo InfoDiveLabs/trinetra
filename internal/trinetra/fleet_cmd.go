@@ -43,6 +43,9 @@ const fleetUsage = `usage:
   trinetra fleet route test --node web1 [--tag t] --rule cpu --severity critical
   trinetra fleet alerting show | apply <file.json>
   trinetra fleet rules                                      list aggregate rules and their state
+  trinetra fleet managed list | status
+  trinetra fleet managed set [--tag T] key=value [key=value ...]
+  trinetra fleet managed delete <id>
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo`
 
@@ -88,6 +91,8 @@ func cmdFleet(args []string) int {
 		return fleetAlertingCmd(args[1:])
 	case "rules":
 		return fleetRulesCmd(args[1:])
+	case "managed":
+		return fleetManagedCmd(args[1:])
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, fleetUsage)
 		return 0
@@ -279,6 +284,12 @@ func fleetLeave(args []string) int {
 		fmt.Fprintln(stderr, "fleet leave: save config:", err)
 		return 1
 	}
+	// task 8 ruling: the last managed values are kept as ordinary local
+	// config (they already are -- c above was never touched for them), only
+	// the managed-config sidecar itself is removed, so this host stops
+	// treating them as master-managed/read-only. Best-effort: a missing
+	// sidecar (never managed) is not an error.
+	_ = os.Remove(managedChildPath(stateDir))
 	ok := true
 	if *purge {
 		ok = purgeAll("left the fleet", []purgeTarget{
@@ -1195,6 +1206,179 @@ func ruleStateLabel(s core.RuleState) string {
 		return "firing"
 	}
 	return "ok"
+}
+
+// fleetManagedCmd is `trinetra fleet managed` (task 8): CRUD + status over
+// the master's managed-config fragments.
+func fleetManagedCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet managed list|set|delete|status")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		return fleetManagedList(args[1:])
+	case "set":
+		return fleetManagedSet(args[1:])
+	case "delete":
+		return fleetManagedDelete(args[1:])
+	case "status":
+		return fleetManagedStatus(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown managed command %q\n", args[0])
+	return 2
+}
+
+func fleetManagedList(args []string) int {
+	if rejectPositionals("fleet managed list", "trinetra fleet managed list", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		frags, err := c.Fleet().Managed()
+		if err != nil {
+			return err
+		}
+		printManagedFragments(stdout, frags)
+		return nil
+	})
+}
+
+func printManagedFragments(w io.Writer, frags []core.ManagedFragment) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tTAG\tVERSION\tAUTHOR\tVALUES")
+	for _, f := range frags {
+		tag := f.Tag
+		if tag == "" {
+			tag = "*"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.ID, tag, f.Version, f.Author, formatManagedValues(f.Values))
+	}
+	tw.Flush()
+}
+
+// formatManagedValues renders values as "key=value,key=value,..." in
+// managedFragmentAllowlistKeys order, so the same fragment always prints
+// identically regardless of Go's randomized map iteration.
+func formatManagedValues(values map[string]string) string {
+	var parts []string
+	for _, k := range managedFragmentAllowlistKeys {
+		if v, ok := values[k]; ok {
+			parts = append(parts, k+"="+v)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// parseManagedKV parses one or more "key=value" positional arguments into a
+// map, rejecting anything malformed (no "=") -- the value itself is
+// whatever config.Set will ultimately validate, so no parsing happens here.
+func parseManagedKV(args []string) (map[string]string, error) {
+	if len(args) == 0 {
+		return nil, errors.New("at least one key=value is required")
+	}
+	out := map[string]string{}
+	for _, a := range args {
+		k, v, ok := strings.Cut(a, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid key=value %q", a)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// fleetManagedSet is `trinetra fleet managed set [--tag T] key=value ...`:
+// creates a new fragment for --tag ("" = every node), or updates the
+// existing one for that tag if one already exists (task-8 ruling: "one
+// fragment per tag, simplest") -- entirely replacing its Values with what
+// was given here, not merging.
+func fleetManagedSet(args []string) int {
+	fs := newFlags("fleet managed set")
+	tag := fs.String("tag", "", "target only nodes carrying this tag (default: every node)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	values, err := parseManagedKV(pos)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet managed set:", err)
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		id := ""
+		existing, err := c.Fleet().Managed()
+		if err != nil {
+			return err
+		}
+		for _, f := range existing {
+			if f.Tag == *tag {
+				id = f.ID
+				break
+			}
+		}
+		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{ID: id, Tag: *tag, Values: values}, "cli")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Saved managed-config fragment %s (tag=%s, version %d): %s\n",
+			saved.ID, firstNonEmptyStr(saved.Tag, "*"), saved.Version, formatManagedValues(saved.Values))
+		return nil
+	})
+}
+
+func firstNonEmptyStr(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+func fleetManagedDelete(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet managed delete <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().DeleteManaged(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Deleted managed-config fragment %s.\n", args[0])
+		return nil
+	})
+}
+
+func fleetManagedStatus(args []string) int {
+	if rejectPositionals("fleet managed status", "trinetra fleet managed status", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		sts, err := c.Fleet().ManagedStatus()
+		if err != nil {
+			return err
+		}
+		printManagedStatuses(stdout, sts)
+		return nil
+	})
+}
+
+func printManagedStatuses(w io.Writer, sts []core.ManagedStatus) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "NODE\tAPPLIED\tDESIRED\tOK\tDRIFT\tERROR")
+	for _, s := range sts {
+		drift := strings.Join(s.Drift, ",")
+		if drift == "" {
+			drift = "-"
+		}
+		errText := s.Error
+		if errText == "" {
+			errText = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%t\t%s\t%s\n", s.Node, s.Version, s.Desired, s.Applied, drift, errText)
+		for _, c := range s.Conflicts {
+			fmt.Fprintf(tw, "  conflict\t%s\t\t\t%s\t\n", c.Key, strings.Join(c.Fragments, ","))
+		}
+	}
+	tw.Flush()
 }
 
 func printRuleStates(w io.Writer, states []core.RuleState) {

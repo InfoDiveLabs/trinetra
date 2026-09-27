@@ -98,6 +98,26 @@ type LiveUpdate struct {
 	AlertState json.RawMessage `json:"alert_state,omitempty"`
 	HostInfo   json.RawMessage `json:"hostinfo,omitempty"`
 	Outbox     OutboxStats     `json:"outbox"`
+	// Managed reports this child's managed-config state (task 8): nil until
+	// the child has received at least one "managed_config" frame from the
+	// master (an old master that never sends one, or a child that has not
+	// yet connected to a phase-2 master, leaves this nil forever -- exactly
+	// today's behaviour for everything else this task touches).
+	Managed *ManagedReport `json:"managed,omitempty"`
+}
+
+// ManagedReport is a child's report of its managed-config state, carried on
+// every LiveUpdate once it has ever received a "managed_config" frame:
+// Version is the version it last SUCCESSFULLY applied (unchanged by a
+// failed attempt -- see Applied/Error); Values are its CURRENT effective
+// values for every allowlisted managed-config key (read fresh from its live
+// config on every report, not cached), letting the master compute drift
+// without trusting the child's own idea of what it applied.
+type ManagedReport struct {
+	Version int64             `json:"version"`
+	Applied bool              `json:"applied"`
+	Error   string            `json:"error,omitempty"`
+	Values  map[string]string `json:"values,omitempty"`
 }
 
 // IngestResponse acknowledges everything up to AckedSeq as durable.

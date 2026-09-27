@@ -115,7 +115,7 @@ func TestLocalGapFillerUsesRollupThenRaw(t *testing.T) {
 }
 
 func TestLiveBuilderIncludesHostInfoPeriodically(t *testing.T) {
-	lb := newLiveBuilder(func() Snapshot { return Snapshot{CPU: 3} }, filepath.Join(t.TempDir(), "missing.json"), func() HostInfo { return HostInfo{Hostname: "h"} })
+	lb := newLiveBuilder(func() Snapshot { return Snapshot{CPU: 3} }, filepath.Join(t.TempDir(), "missing.json"), func() HostInfo { return HostInfo{Hostname: "h"} }, nil)
 	u1, _ := lb.Build()
 	u2, _ := lb.Build()
 	if len(u1.HostInfo) == 0 || len(u2.HostInfo) != 0 || !strings.Contains(string(u1.Snapshot), `"cpu":3`) {

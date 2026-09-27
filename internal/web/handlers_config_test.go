@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
 // configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like
@@ -659,6 +660,78 @@ func TestConfigRoutesAreAdminGated(t *testing.T) {
 	h.ServeHTTP(postRR, httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("disk_pct=90")))
 	if postRR.Code != http.StatusFound {
 		t.Errorf("POST /config anon status = %d, want 302 (redirect to /login)", postRR.Code)
+	}
+}
+
+// TestConfigPageManagedFieldsDisabledAndPostRejected pins task 8's read-only
+// contract on a fleet child with a managed key: GET disables that field and
+// shows the fragment id; a POST that never touches it (a real browser never
+// submits a disabled field) still saves everything ELSE normally; a POST
+// that forges the managed field anyway (bypassing the disabled attribute)
+// is rejected outright, with nothing written -- even to an unrelated field
+// in the same request.
+func TestConfigPageManagedFieldsDisabledAndPostRejected(t *testing.T) {
+	d, cfg, reloadCalled := configTestDeps(t)
+	(*cfg).Thresholds.CPUPct = 85
+	d.Fleet = func() core.FleetAPI {
+		return &fakeFleet{status: core.FleetStatus{
+			Role: config.RoleChild,
+			Link: &core.LinkView{State: "linked", Managed: map[string]string{"thresholds.cpu_pct": "abc123def456"}},
+		}}
+	}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	getReq := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/config")
+	getRR := httptest.NewRecorder()
+	h.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200, body: %s", getRR.Code, getRR.Body.String())
+	}
+	body := getRR.Body.String()
+	if !strings.Contains(body, `name="cpu_pct" value="85" disabled`) {
+		t.Errorf("config page must render cpu_pct disabled while managed:\n%s", body)
+	}
+	if !strings.Contains(body, "abc123def456") || !strings.Contains(body, "Managed by the fleet master") {
+		t.Errorf("config page must show the managing fragment id and note:\n%s", body)
+	}
+
+	// A normal save (the managed field simply absent, as a real browser
+	// would send it) must succeed and leave the managed field untouched
+	// while everything else applies.
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+	form := baseConfigForm()
+	form.Del("cpu_pct")
+	rr := postForm(h, "/config", form, cookie, csrf)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("normal save status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if (*cfg).Thresholds.CPUPct != 85 {
+		t.Errorf("CPUPct = %v, want unchanged 85 (managed field never applied)", (*cfg).Thresholds.CPUPct)
+	}
+	if (*cfg).Thresholds.MemPct != 85 {
+		t.Errorf("MemPct = %v, want 85 (an ordinary field in the same request must still save)", (*cfg).Thresholds.MemPct)
+	}
+
+	// A forged POST that includes the managed field anyway is rejected
+	// entirely -- nothing is written, not even the unrelated field.
+	*reloadCalled = false
+	forged := baseConfigForm()
+	forged.Set("cpu_pct", "999")
+	forged.Set("mem_pct", "42")
+	forgedRR := postForm(h, "/config", forged, cookie, csrf)
+	if forgedRR.Code != http.StatusBadRequest {
+		t.Fatalf("forged POST status = %d, want 400, body: %s", forgedRR.Code, forgedRR.Body.String())
+	}
+	if !strings.Contains(forgedRR.Body.String(), "managed by the fleet master") {
+		t.Errorf("forged POST body = %s, want the managed-by-master message", forgedRR.Body.String())
+	}
+	if *reloadCalled {
+		t.Error("a rejected forged POST must never apply/persist anything")
+	}
+	if (*cfg).Thresholds.MemPct != 85 {
+		t.Errorf("MemPct = %v, want unchanged 85 (the whole forged POST is rejected, not just the managed field)", (*cfg).Thresholds.MemPct)
 	}
 }
 

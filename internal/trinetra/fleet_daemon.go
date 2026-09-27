@@ -231,6 +231,10 @@ type masterLoop struct {
 	// incidents/dedup cover both producers uniformly. It also owns the lease
 	// push cadence (TickLeases, called from tick below).
 	engine *fleetAlertEngine
+	// managed (task 8) drives the periodic managed-config push cadence
+	// (TickManaged); nil-safe (a bare-bones masterLoop from an older test
+	// suite never calls it).
+	managed *managedPusher
 	// mu serializes tick's liveness/alert pass with remove, so a node
 	// removed mid-tick can never be re-tracked and paged. Guards alerter.
 	mu          sync.Mutex
@@ -332,7 +336,7 @@ func (l *masterLoop) tick(now time.Time) {
 	ev := l.tracker.Evaluate(now.Unix())
 	intents := l.alerter.Plan(ev, now.Unix(), name)
 	var nodeIDs []string
-	if l.engine != nil {
+	if l.engine != nil || l.managed != nil {
 		for _, n := range l.reg.List() {
 			if !n.Revoked {
 				nodeIDs = append(nodeIDs, n.ID)
@@ -369,6 +373,8 @@ func (l *masterLoop) tick(now time.Time) {
 		// every 5s tick exactly like the others above, cheap no-op otherwise.
 		l.engine.TickRules(now)
 	}
+	// TickManaged (task 8) self-gates to managedPushInterval (10m); nil-safe.
+	l.managed.TickManaged(now, nodeIDs)
 	if now.Sub(l.lastFlush) >= 30*time.Second {
 		l.lastFlush = now
 		if err := l.reg.FlushIfDirty(); err != nil {
@@ -576,6 +582,10 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	if err != nil {
 		return fmt.Errorf("load alerting config: %w", err)
 	}
+	managed, err := loadManagedFragmentStore(filepath.Join(dir, "managed.json"))
+	if err != nil {
+		return fmt.Errorf("load managed config: %w", err)
+	}
 	audit := newAuditLog(filepath.Join(dir, "audit.jsonl"))
 	engine := newFleetAlertEngine(time.Now, d.deliverSync, hub.Push, hub.Connected, incidents)
 	engine.SetSilences(silences, func(id string) (string, []string) {
@@ -622,13 +632,25 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		}
 		return out
 	})
-	// A freshly (re)connected node gets a lease and its current silence set
-	// immediately, rather than waiting up to one masterTickInterval /
-	// silencePushInterval for the next Tick pass.
+	// managedPusher (task 8) drives the master's managed_config push: on
+	// change (SaveManaged/DeleteManaged, fleetAPIImpl), on connect (below),
+	// and every managedPushInterval (masterLoop.tick's TickManaged).
+	managedPush := newManagedPusher(hub.Push, hub.Connected, managed, func(id string) []string {
+		if n, ok := reg.Get(id); ok {
+			return n.Tags
+		}
+		return nil
+	})
+
+	// A freshly (re)connected node gets a lease, its current silence set and
+	// its current managed-config desired set immediately, rather than
+	// waiting up to one masterTickInterval / silencePushInterval /
+	// managedPushInterval for the next Tick pass.
 	hub.OnConnect(func(id string) {
 		now := time.Now()
 		engine.PushLeaseNow(id, now)
 		engine.PushSilencesNow(id, now)
+		managedPush.PushOne(id)
 	})
 
 	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(cfg), func(nodeID string, ev AlertEvent) {
@@ -670,6 +692,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	})
 
 	loop := newMasterLoop(reg, tracker, sink, engine, d, time.Now())
+	loop.managed = managedPush
 	m := fleet.NewMaster(fleet.MasterConfig{
 		CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: sink, Hub: hub, Logf: d.logf,
 		OnSkew: loop.observeSkew,
@@ -704,6 +727,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 
 	rt.provider.master = &masterState{reg: reg, tokens: toks, sink: sink, tracker: tracker, loop: loop,
 		hub: hub, engine: engine, audit: audit, silences: silences, alerting: alerting,
+		managed: managed, managedPush: managedPush,
 		joinURL: fleetJoinURL(cfg), pin: fleet.SPKIPin(ca.Cert), listen: ln.Addr().String(), getCfg: d.getCfg}
 	loopCtx, cancel := context.WithCancel(ctx)
 	loopDone := make(chan struct{})
@@ -758,7 +782,11 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		return fmt.Errorf("open outbox: %w", err)
 	}
 	tee := newOutboxTee(ob, d.logf)
-	live := newLiveBuilder(d.latestSnapshot, d.alertStatePath, func() HostInfo { return collectHostInfoFor(d.getCfg()) })
+	// managedState (task 8) is this child's managed-config state, restored
+	// from its sidecar (fleet-child/managed.json) so a restart while the
+	// master is unreachable keeps enforcing whatever was last applied.
+	managedState := loadManagedChild(managedChildPath(d.stateDir), d.getCfg, d.self, time.Now)
+	live := newLiveBuilder(d.latestSnapshot, d.alertStatePath, func() HostInfo { return collectHostInfoFor(d.getCfg()) }, managedState)
 
 	// Lease-based alert handoff (fleet_lease.go): while the master holds a
 	// valid lease, a firing/recovering alert is routed to it instead of
@@ -810,6 +838,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		OnFrame: func(f fleet.Frame) {
 			onStreamFrame(lease, handoffState, receiptsPath, childSilences, time.Now, f)
 			applyAckFrame(d.self, f)
+			applyManagedConfigFrame(managedState, f)
 		},
 	})
 	cctx, cancel := context.WithCancel(ctx)
@@ -854,6 +883,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	rt.provider.link = sh
 	rt.provider.nodeID = id.NodeID()
 	rt.provider.masterURL = cfg.Fleet.MasterURL
+	rt.provider.managed = managedState
 	rt.stop = func() {
 		cancel()
 		restoreRoute()

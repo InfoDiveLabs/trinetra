@@ -467,6 +467,9 @@ func fetchSettingsConfigCmd(api core.API) tea.Cmd {
 // persisted.
 func applyConfigKeyCmd(api core.API, key, raw string) tea.Cmd {
 	return func() tea.Msg {
+		if id, managed := managedFragmentFor(api, key); managed {
+			return settingsAppliedMsg{key: key, err: managedFragmentError(key, id)}
+		}
 		cfg, err := api.Config()
 		if err != nil {
 			return settingsAppliedMsg{key: key, err: fmt.Errorf("fetching current config: %w", err)}

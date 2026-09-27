@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,10 +35,15 @@ type masterState struct {
 	audit    *auditLog
 	silences *silenceStore
 	alerting *alertingStore
-	joinURL  string
-	pin      string
-	listen   string
-	getCfg   func() *config.Config
+	// managed/managedPush (task 8) are the master's managed-config fragment
+	// store and its push cadence, nil-safe like silences/alerting for a
+	// bare-bones masterState built by an older test suite.
+	managed     *managedFragmentStore
+	managedPush *managedPusher
+	joinURL     string
+	pin         string
+	listen      string
+	getCfg      func() *config.Config
 }
 
 type fleetProvider struct {
@@ -48,6 +54,11 @@ type fleetProvider struct {
 	link      *fleet.Shipper
 	nodeID    string
 	masterURL string
+	// managed (task 8) is this CHILD's own managed-config state (nil for a
+	// master/solo daemon): fleetAPIImpl.Status() reads it directly (this is
+	// the live daemon process itself, not a separate CLI invocation) to
+	// populate core.LinkView.Managed.
+	managed *managedChild
 }
 
 // fleetAwareAPI is the daemon's core.API plus the optional FleetProvider.
@@ -83,7 +94,8 @@ func (f fleetAPIImpl) Status() (core.FleetStatus, error) {
 	if p.link != nil {
 		ls := p.link.Status()
 		st.Link = &core.LinkView{State: ls.State, LastAck: ls.LastAck, LastError: ls.LastError,
-			OutboxBytes: ls.Outbox.Bytes, Unacked: ls.Outbox.Unacked, OldestUnacked: ls.Outbox.OldestUnackedTS, Gaps: ls.Outbox.Gaps}
+			OutboxBytes: ls.Outbox.Bytes, Unacked: ls.Outbox.Unacked, OldestUnacked: ls.Outbox.OldestUnackedTS, Gaps: ls.Outbox.Gaps,
+			Managed: p.managed.FragmentsSnapshot()}
 	}
 	return st, nil
 }
@@ -666,4 +678,106 @@ func (f fleetAPIImpl) RuleStates() ([]core.RuleState, error) {
 		return nil, nil
 	}
 	return m.engine.RuleStates(), nil
+}
+
+// Managed lists every managed-config fragment (task 8).
+func (f fleetAPIImpl) Managed() ([]core.ManagedFragment, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	if m.managed == nil {
+		return nil, nil
+	}
+	return m.managed.List(), nil
+}
+
+// SaveManaged validates and stores frag, audits it under actor, and
+// immediately pushes the updated desired set to every non-revoked,
+// connected node.
+func (f fleetAPIImpl) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return core.ManagedFragment{}, err
+	}
+	if m.managed == nil {
+		return core.ManagedFragment{}, fmt.Errorf("managed config is not available")
+	}
+	saved, err := m.managed.Save(frag, actor)
+	if err != nil {
+		return core.ManagedFragment{}, err
+	}
+	a := actor
+	if a == "" {
+		a = "unknown"
+	}
+	m.audited(a, "fleet.managed.save", saved.ID, saved.Tag)
+	m.managedPush.PushToAll(nonRevokedNodeIDs(m.reg))
+	return saved, nil
+}
+
+// DeleteManaged removes fragment id, audits it under actor, and immediately
+// pushes the updated desired set to every non-revoked, connected node.
+func (f fleetAPIImpl) DeleteManaged(id, actor string) error {
+	m, err := f.requireMaster()
+	if err != nil {
+		return err
+	}
+	if m.managed == nil {
+		return fmt.Errorf("no such managed-config fragment %q", id)
+	}
+	if err := m.managed.Delete(id); err != nil {
+		return err
+	}
+	a := actor
+	if a == "" {
+		a = "unknown"
+	}
+	m.audited(a, "fleet.managed.delete", id, "")
+	m.managedPush.PushToAll(nonRevokedNodeIDs(m.reg))
+	return nil
+}
+
+// ManagedStatus reports every node with at least one applicable fragment (or
+// an unresolved conflict): its desired-set generation, what it last
+// reported applying (from its most recent LiveUpdate.Managed), and any
+// drift/conflicts. A node that has never reported anything managed yet
+// (never connected, or connected before ever being targeted) shows every
+// currently-desired key as drift, since nothing is confirmed applied.
+func (f fleetAPIImpl) ManagedStatus() ([]core.ManagedStatus, error) {
+	m, err := f.requireMaster()
+	if err != nil {
+		return nil, err
+	}
+	if m.managed == nil {
+		return nil, nil
+	}
+	var out []core.ManagedStatus
+	for _, n := range m.reg.List() {
+		desired, _, conflicts := m.managed.Desired(n.Tags)
+		if len(desired) == 0 && len(conflicts) == 0 {
+			continue
+		}
+		st := core.ManagedStatus{Node: n.ID, Desired: m.managed.Version(), Conflicts: conflicts}
+		var reported *fleet.ManagedReport
+		if u := m.sink.LiveOf(n.ID); u != nil {
+			reported = u.Managed
+		}
+		if reported != nil {
+			st.Version, st.Applied, st.Error = reported.Version, reported.Applied, reported.Error
+			for k, dv := range desired {
+				if cv, ok := reported.Values[k]; !ok || cv != dv {
+					st.Drift = append(st.Drift, k)
+				}
+			}
+		} else {
+			for k := range desired {
+				st.Drift = append(st.Drift, k)
+			}
+		}
+		sort.Strings(st.Drift)
+		out = append(out, st)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Node < out[j].Node })
+	return out, nil
 }

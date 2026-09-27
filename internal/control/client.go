@@ -629,3 +629,25 @@ func (f fleetClient) RuleStates() ([]core.RuleState, error) {
 func (f fleetClient) DeleteMaintenance(id, actor string) error {
 	return f.c.call("Fleet.DeleteMaintenance", map[string]any{"id": id, "actor": actor}, nil)
 }
+
+func (f fleetClient) Managed() ([]core.ManagedFragment, error) {
+	var v []core.ManagedFragment
+	err := f.c.call("Fleet.Managed", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
+	var v core.ManagedFragment
+	err := f.c.call("Fleet.SaveManaged", map[string]any{"managed_fragment": frag, "actor": actor}, &v)
+	return v, err
+}
+
+func (f fleetClient) DeleteManaged(id, actor string) error {
+	return f.c.call("Fleet.DeleteManaged", map[string]any{"id": id, "actor": actor}, nil)
+}
+
+func (f fleetClient) ManagedStatus() ([]core.ManagedStatus, error) {
+	var v []core.ManagedStatus
+	err := f.c.call("Fleet.ManagedStatus", struct{}{}, &v)
+	return v, err
+}

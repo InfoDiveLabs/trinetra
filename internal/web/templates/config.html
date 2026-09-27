@@ -27,39 +27,40 @@
     <p class="note" style="margin:-4px 0 14px">A metric triggers an alert if it crosses a fixed limit <em>or</em> deviates sharply from its own recent normal.</p>
     <div class="panel"><div class="head"><span class="eyebrow">Thresholds</span></div>
       <div class="grid g-4" style="gap:0 14px">
-        <label class="field"><span class="lb">Disk full at (%)</span><input type="number" step="any" name="disk_pct" value="{{.DiskPct}}"><span class="hint">Alert when any filesystem is this full.</span></label>
-        <label class="field"><span class="lb">Memory high at (%)</span><input type="number" step="any" name="mem_pct" value="{{.MemPct}}"></label>
-        <label class="field"><span class="lb">CPU high at (%)</span><input type="number" step="any" name="cpu_pct" value="{{.CPUPct}}"></label>
-        <label class="field"><span class="lb">Swap high at (%)</span><input type="number" step="any" name="swap_pct" value="{{.SwapPct}}"></label>
-        <label class="field"><span class="lb">Temperature high at (°C)</span><input type="number" step="any" name="temp_c" value="{{.TempC}}"></label>
+        <label class="field"><span class="lb">Disk full at (%)</span><input type="number" step="any" name="disk_pct" value="{{.DiskPct}}" {{if index .ManagedFragment "thresholds.disk_pct"}}disabled{{end}}><span class="hint">Alert when any filesystem is this full.{{with index .ManagedFragment "thresholds.disk_pct"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
+        <label class="field"><span class="lb">Memory high at (%)</span><input type="number" step="any" name="mem_pct" value="{{.MemPct}}" {{if index .ManagedFragment "thresholds.mem_pct"}}disabled{{end}}>{{with index .ManagedFragment "thresholds.mem_pct"}}<span class="hint">Managed by the fleet master (fragment {{.}}); change it on the master.</span>{{end}}</label>
+        <label class="field"><span class="lb">CPU high at (%)</span><input type="number" step="any" name="cpu_pct" value="{{.CPUPct}}" {{if index .ManagedFragment "thresholds.cpu_pct"}}disabled{{end}}>{{with index .ManagedFragment "thresholds.cpu_pct"}}<span class="hint">Managed by the fleet master (fragment {{.}}); change it on the master.</span>{{end}}</label>
+        <label class="field"><span class="lb">Swap high at (%)</span><input type="number" step="any" name="swap_pct" value="{{.SwapPct}}" {{if index .ManagedFragment "thresholds.swap_pct"}}disabled{{end}}>{{with index .ManagedFragment "thresholds.swap_pct"}}<span class="hint">Managed by the fleet master (fragment {{.}}); change it on the master.</span>{{end}}</label>
+        <label class="field"><span class="lb">Temperature high at (°C)</span><input type="number" step="any" name="temp_c" value="{{.TempC}}" {{if index .ManagedFragment "thresholds.temp_c"}}disabled{{end}}>{{with index .ManagedFragment "thresholds.temp_c"}}<span class="hint">Managed by the fleet master (fragment {{.}}); change it on the master.</span>{{end}}</label>
       </div>
     </div>
 
-    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Anomaly detection</span><input type="checkbox" class="switch" name="baseline_alerts" value="1" {{if .BaselineAlerts}}checked{{end}}></div>
-      <p class="note" style="margin:-4px 0 14px">Off by default -- flags readings that deviate from the 7-day norm. Can be noisy on spiky metrics.</p>
+    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Anomaly detection</span><input type="checkbox" class="switch" name="baseline_alerts" value="1" {{if .BaselineAlerts}}checked{{end}} {{if index .ManagedFragment "baseline_alerts"}}disabled{{end}}></div>
+      <p class="note" style="margin:-4px 0 14px">Off by default -- flags readings that deviate from the 7-day norm. Can be noisy on spiky metrics.{{with index .ManagedFragment "baseline_alerts"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</p>
       <div class="grid g-2" style="gap:0 14px">
-        <label class="field"><span class="lb">Anomaly sensitivity (σ)</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}"><span class="hint">Flag a reading this many standard deviations from its 7-day norm. Lower = more sensitive (more alerts); 3 is a good default.</span></label>
-        <label class="field"><span class="lb">Minimum deviation (fraction)</span><input type="number" step="any" name="baseline_min_pct" value="{{.BaselineMinPct}}"><span class="hint">A reading must ALSO be at least this far from the mean, as a fraction -- e.g. 0.15 = 15% -- before it counts as anomalous. Raw fraction, not a percent.</span></label>
+        <label class="field"><span class="lb">Anomaly sensitivity (σ)</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}" {{if index .ManagedFragment "baseline_sigma"}}disabled{{end}}><span class="hint">Flag a reading this many standard deviations from its 7-day norm. Lower = more sensitive (more alerts); 3 is a good default.{{with index .ManagedFragment "baseline_sigma"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
+        <label class="field"><span class="lb">Minimum deviation (fraction)</span><input type="number" step="any" name="baseline_min_pct" value="{{.BaselineMinPct}}" {{if index .ManagedFragment "baseline_min_pct"}}disabled{{end}}><span class="hint">A reading must ALSO be at least this far from the mean, as a fraction -- e.g. 0.15 = 15% -- before it counts as anomalous. Raw fraction, not a percent.{{with index .ManagedFragment "baseline_min_pct"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
       </div>
     </div>
 
     <div class="panel" id="qh" style="margin-top:14px">
-      <div class="head"><span class="eyebrow">Quiet hours</span><input type="checkbox" class="switch" id="qhOn" name="quiet_enabled" value="1" {{if .QuietEnabled}}checked{{end}}></div>
-      <p class="note" style="margin:-4px 0 14px">Mute non-critical alerts overnight. Critical alerts can still come through (set per channel). The blue line is now.</p>
+      <div class="head"><span class="eyebrow">Quiet hours</span><input type="checkbox" class="switch" id="qhOn" name="quiet_enabled" value="1" {{if .QuietEnabled}}checked{{end}} {{if index .ManagedFragment "quiet_hours"}}disabled{{end}}></div>
+      <p class="note" style="margin:-4px 0 14px">Mute non-critical alerts overnight. Critical alerts can still come through (set per channel). The blue line is now.{{with index .ManagedFragment "quiet_hours"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</p>
       <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
         <label class="field" style="margin:0"><span class="lb">From</span>
-          <select id="qhFrom" name="quiet_from" style="width:140px">
+          <select id="qhFrom" name="quiet_from" style="width:140px" {{if index .ManagedFragment "quiet_hours"}}disabled{{end}}>
             {{range .QuietHours}}<option value="{{.}}" {{if eq . $.QuietFrom}}selected{{end}}>{{printf "%02d:00" .}}</option>{{end}}
           </select></label>
         <label class="field" style="margin:0"><span class="lb">To</span>
-          <select id="qhTo" name="quiet_to" style="width:140px">
+          <select id="qhTo" name="quiet_to" style="width:140px" {{if index .ManagedFragment "quiet_hours"}}disabled{{end}}>
             {{range .QuietHours}}<option value="{{.}}" {{if eq . $.QuietTo}}selected{{end}}>{{printf "%02d:00" .}}</option>{{end}}
           </select></label>
         <div class="badge" id="qhSummary" style="margin-bottom:9px"></div>
       </div>
       <div id="qhBar" class="qh-bar" style="margin-top:16px"></div>
       <div class="note mono" style="display:flex;justify-content:space-between;margin-top:6px"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
-      <label class="field" style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;max-width:340px"><span class="lb" style="margin:0">Critical alerts bypass quiet hours</span><input type="checkbox" class="switch" name="critical_overrides_quiet" value="1" {{if .CriticalOverridesQuiet}}checked{{end}}></label>
+      <label class="field" style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;max-width:340px"><span class="lb" style="margin:0">Critical alerts bypass quiet hours</span><input type="checkbox" class="switch" name="critical_overrides_quiet" value="1" {{if .CriticalOverridesQuiet}}checked{{end}} {{if index .ManagedFragment "critical_overrides_quiet"}}disabled{{end}}></label>
+      {{with index .ManagedFragment "critical_overrides_quiet"}}<p class="note" style="margin-top:4px">Managed by the fleet master (fragment {{.}}); change it on the master.</p>{{end}}
     </div>
 
     <div class="section-label"><span class="eyebrow">How often it measures &amp; how long it keeps data</span></div>

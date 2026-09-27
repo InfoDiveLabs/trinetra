@@ -34,6 +34,13 @@ type fleetFake struct {
 	setAlertingActor string
 	routeTestAlert   core.TestAlert
 	ruleStates       []core.RuleState
+
+	managed             []core.ManagedFragment
+	savedManaged        core.ManagedFragment
+	savedManagedActor   string
+	deletedManagedID    string
+	deletedManagedActor string
+	managedStatus       []core.ManagedStatus
 }
 
 type fleetFakeAPI struct{ f *fleetFake }
@@ -134,6 +141,25 @@ func (a fleetFakeAPI) RouteTest(alert core.TestAlert) (core.RouteDecision, error
 
 func (a fleetFakeAPI) RuleStates() ([]core.RuleState, error) {
 	return a.f.ruleStates, nil
+}
+
+func (a fleetFakeAPI) Managed() ([]core.ManagedFragment, error) { return a.f.managed, nil }
+
+func (a fleetFakeAPI) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
+	a.f.savedManaged, a.f.savedManagedActor = frag, actor
+	if frag.ID == "" {
+		frag.ID = "mf2"
+	}
+	return frag, nil
+}
+
+func (a fleetFakeAPI) DeleteManaged(id, actor string) error {
+	a.f.deletedManagedID, a.f.deletedManagedActor = id, actor
+	return nil
+}
+
+func (a fleetFakeAPI) ManagedStatus() ([]core.ManagedStatus, error) {
+	return a.f.managedStatus, nil
 }
 
 func TestClientRoutesToNode(t *testing.T) {

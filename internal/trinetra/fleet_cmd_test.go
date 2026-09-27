@@ -147,6 +147,18 @@ type fleetCLIFake struct {
 
 	ruleStates    []core.RuleState
 	ruleStatesErr error
+
+	managed             []core.ManagedFragment
+	managedErr          error
+	savedManaged        core.ManagedFragment
+	savedManagedActor   string
+	saveManagedResult   core.ManagedFragment
+	saveManagedErr      error
+	deletedManagedID    string
+	deletedManagedActor string
+	deleteManagedErr    error
+	managedStatus       []core.ManagedStatus
+	managedStatusErr    error
 }
 
 func (f *fleetCLIFake) Fleet() core.FleetAPI          { return fleetCLIFakeFleetAPI{f} }
@@ -279,6 +291,33 @@ func (a fleetCLIFakeFleetAPI) RouteTest(alert core.TestAlert) (core.RouteDecisio
 
 func (a fleetCLIFakeFleetAPI) RuleStates() ([]core.RuleState, error) {
 	return a.f.ruleStates, a.f.ruleStatesErr
+}
+
+func (a fleetCLIFakeFleetAPI) Managed() ([]core.ManagedFragment, error) {
+	return a.f.managed, a.f.managedErr
+}
+
+func (a fleetCLIFakeFleetAPI) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
+	a.f.savedManaged, a.f.savedManagedActor = frag, actor
+	if a.f.saveManagedErr != nil {
+		return core.ManagedFragment{}, a.f.saveManagedErr
+	}
+	if a.f.saveManagedResult.ID != "" {
+		return a.f.saveManagedResult, nil
+	}
+	if frag.ID == "" {
+		frag.ID = "mf123"
+	}
+	return frag, nil
+}
+
+func (a fleetCLIFakeFleetAPI) DeleteManaged(id, actor string) error {
+	a.f.deletedManagedID, a.f.deletedManagedActor = id, actor
+	return a.f.deleteManagedErr
+}
+
+func (a fleetCLIFakeFleetAPI) ManagedStatus() ([]core.ManagedStatus, error) {
+	return a.f.managedStatus, a.f.managedStatusErr
 }
 
 // startFleetDaemon stands up a real control.Serve loop at
@@ -1272,5 +1311,201 @@ func TestFleetAlertingApplySurfacesValidationError(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "unknown channel") {
 		t.Fatalf("stderr = %s", errb)
+	}
+}
+
+// --- task 8: managed config CLI, read-only enforcement, fleet leave ------
+
+func TestFleetManagedList(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{managed: []core.ManagedFragment{
+		{ID: "f1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "85"}, Version: 2, Author: "cli"},
+		{ID: "f2", Values: map[string]string{"baseline_sigma": "3"}, Version: 1, Author: "alice"},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "managed", "list"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	for _, want := range []string{"f1", "web", "thresholds.cpu_pct=85", "f2", "*", "baseline_sigma=3", "alice"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFleetManagedSetCreatesWhenNoExistingTag(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "managed", "set", "--tag", "web", "thresholds.cpu_pct=85"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.savedManaged.ID != "" {
+		t.Fatalf("savedManaged.ID = %q, want empty (create) when no existing fragment carries the tag", fake.savedManaged.ID)
+	}
+	if fake.savedManaged.Tag != "web" || fake.savedManaged.Values["thresholds.cpu_pct"] != "85" || fake.savedManagedActor != "cli" {
+		t.Fatalf("savedManaged = %+v actor=%q", fake.savedManaged, fake.savedManagedActor)
+	}
+	if !strings.Contains(out.String(), "mf123") {
+		t.Fatalf("out = %s, want the assigned id", out)
+	}
+}
+
+func TestFleetManagedSetUpdatesExistingTagFragment(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{managed: []core.ManagedFragment{
+		{ID: "existing1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "70"}, Version: 1},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "managed", "set", "--tag", "web", "thresholds.cpu_pct=90"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.savedManaged.ID != "existing1" {
+		t.Fatalf("savedManaged.ID = %q, want existing1 (update, one fragment per tag)", fake.savedManaged.ID)
+	}
+}
+
+func TestFleetManagedSetRejectsMalformedKV(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	if rc := Main([]string{"fleet", "managed", "set", "not-a-kv-pair"}); rc != 2 {
+		t.Fatalf("exit %d, want 2: %s", rc, errb)
+	}
+}
+
+func TestFleetManagedDelete(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "managed", "delete", "f1"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.deletedManagedID != "f1" || fake.deletedManagedActor != "cli" {
+		t.Fatalf("deletedManagedID=%q actor=%q", fake.deletedManagedID, fake.deletedManagedActor)
+	}
+	if !strings.Contains(out.String(), "f1") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestFleetManagedStatusShowsDriftAndConflicts(t *testing.T) {
+	_, out, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{managedStatus: []core.ManagedStatus{
+		{Node: "n1", Version: 1, Desired: 2, Applied: true, Drift: []string{"thresholds.cpu_pct"},
+			Conflicts: []core.ManagedConflict{{Key: "thresholds.cpu_pct", Fragments: []string{"f1", "f2"}}}},
+	}}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "managed", "status"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	got := out.String()
+	for _, want := range []string{"n1", "thresholds.cpu_pct", "f1,f2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestConfigSetRefusedOnManagedChild pins the read-only enforcement `config
+// set`/`config unset` must show on a fleet child once a key is managed: the
+// plain one-shot CLI reads the durable sidecar directly (no running daemon
+// required), refuses with the fragment id, and never touches config.json.
+func TestConfigSetRefusedOnManagedChild(t *testing.T) {
+	dir, out, errb := fleetCLIEnv(t)
+	if rc := Main([]string{"config", "set", "thresholds.cpu_pct", "70"}); rc != 0 {
+		t.Fatalf("baseline set exit %d: %s", rc, errb)
+	}
+	before := loadTestCfg(t).Thresholds.CPUPct
+
+	childDir := filepath.Join(dir, "fleet-child")
+	if err := os.MkdirAll(childDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := managedChildFileV1{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "80"}, Fragments: map[string]string{"thresholds.cpu_pct": "frag789abc012"}}
+	b, _ := json.Marshal(sidecar)
+	if err := os.WriteFile(filepath.Join(childDir, "managed.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errb.Reset()
+	if rc := Main([]string{"config", "set", "thresholds.cpu_pct", "50"}); rc != 1 {
+		t.Fatalf("exit %d, want 1: out=%s err=%s", rc, out, errb)
+	}
+	if !strings.Contains(errb.String(), "managed by the fleet master") || !strings.Contains(errb.String(), "frag789abc012") {
+		t.Fatalf("stderr = %s, want the managed-by-master refusal naming the fragment", errb)
+	}
+	if got := loadTestCfg(t).Thresholds.CPUPct; got != before {
+		t.Fatalf("CPUPct = %v, want unchanged %v (refused before ever touching config.json)", got, before)
+	}
+
+	// config unset is refused the same way.
+	errb.Reset()
+	if rc := Main([]string{"config", "unset", "thresholds.cpu_pct"}); rc != 1 {
+		t.Fatalf("unset exit %d, want 1: %s", rc, errb)
+	}
+	if !strings.Contains(errb.String(), "managed by the fleet master") {
+		t.Fatalf("unset stderr = %s", errb)
+	}
+
+	// An unmanaged key is completely unaffected.
+	out.Reset()
+	errb.Reset()
+	if rc := Main([]string{"config", "set", "thresholds.mem_pct", "77"}); rc != 0 {
+		t.Fatalf("unmanaged key set exit %d: %s", rc, errb)
+	}
+	if got := loadTestCfg(t).Thresholds.MemPct; got != 77 {
+		t.Fatalf("MemPct = %v, want 77", got)
+	}
+}
+
+// TestFleetLeaveKeepsManagedValuesRemovesSidecar pins the task-8 ruling for
+// `fleet leave`: the last managed values stay as ordinary local config (they
+// already are -- leave never touches Thresholds/etc.), only the
+// managed-config sidecar is removed, so this host stops enforcing them as
+// read-only. Uses a plain (non --purge) leave so the rest of fleet-child
+// survives, isolating the assertion to the sidecar alone.
+func TestFleetLeaveKeepsManagedValuesRemovesSidecar(t *testing.T) {
+	dir, _, errb := fleetCLIEnv(t)
+	code := testMasterForCLI(t)
+	if rc := Main([]string{"fleet", "join", code}); rc != 0 {
+		t.Fatalf("join exit %d: %s", rc, errb)
+	}
+
+	// Simulate a managed value already applied and persisted (exactly what
+	// managedChild.setApplied does in production): an ordinary config field
+	// plus the sidecar recording it as managed.
+	c := loadTestCfg(t)
+	if err := c.Set("thresholds.cpu_pct", "77"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	childDir := filepath.Join(dir, "fleet-child")
+	sidecar := managedChildFileV1{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "77"}, Fragments: map[string]string{"thresholds.cpu_pct": "frag1"}}
+	b, _ := json.Marshal(sidecar)
+	if err := os.WriteFile(filepath.Join(childDir, "managed.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, managed := ManagedFragmentFor(dir, "thresholds.cpu_pct"); !managed {
+		t.Fatal("sanity: sidecar should mark thresholds.cpu_pct managed before leave")
+	}
+
+	if rc := Main([]string{"fleet", "leave"}); rc != 0 {
+		t.Fatalf("leave exit %d: %s", rc, errb)
+	}
+
+	if got := loadTestCfg(t).Thresholds.CPUPct; got != 77 {
+		t.Fatalf("CPUPct after leave = %v, want unchanged 77 (kept as ordinary local config)", got)
+	}
+	if _, err := os.Stat(filepath.Join(childDir, "managed.json")); !os.IsNotExist(err) {
+		t.Fatalf("managed.json sidecar should be removed by leave, stat err = %v", err)
+	}
+	if _, managed := ManagedFragmentFor(dir, "thresholds.cpu_pct"); managed {
+		t.Fatal("thresholds.cpu_pct must no longer be reported managed after leave")
+	}
+	if _, err := os.Stat(childDir); err != nil {
+		t.Fatalf("a plain (non --purge) leave must keep the rest of fleet-child: %v", err)
 	}
 }

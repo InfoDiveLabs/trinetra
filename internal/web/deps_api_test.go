@@ -258,6 +258,18 @@ func (f *fakeFleet) RouteTest(core.TestAlert) (core.RouteDecision, error) {
 // exists only so fakeFleet keeps satisfying core.FleetAPI.
 func (f *fakeFleet) RuleStates() ([]core.RuleState, error) { return nil, nil }
 
+// Managed/SaveManaged/DeleteManaged/ManagedStatus: task 8's managed-config
+// fragment CRUD has no admin web surface yet -- the read-only enforcement
+// this task DOES add to the config page goes through Status().Link.Managed
+// (see fakeFleet.status), not these; these stubs exist only so fakeFleet
+// keeps satisfying core.FleetAPI.
+func (f *fakeFleet) Managed() ([]core.ManagedFragment, error) { return nil, nil }
+func (f *fakeFleet) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
+	return frag, nil
+}
+func (f *fakeFleet) DeleteManaged(string, string) error           { return nil }
+func (f *fakeFleet) ManagedStatus() ([]core.ManagedStatus, error) { return nil, nil }
+
 var _ core.FleetAPI = (*fakeFleet)(nil)
 
 // countingAPI wraps a core.API and counts every call made through it, so a
