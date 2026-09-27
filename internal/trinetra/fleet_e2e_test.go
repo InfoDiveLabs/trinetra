@@ -30,7 +30,7 @@ type e2eMaster struct {
 
 func (m *e2eMaster) start(t *testing.T, addr string) {
 	t.Helper()
-	m.sink = newReplicaSink(filepath.Join(m.mdir, "nodes"), StoreOptions{}) // fresh sink = master restart
+	m.sink = newReplicaSink(filepath.Join(m.mdir, "nodes"), StoreOptions{}, nil) // fresh sink = master restart
 	fm := fleet.NewMaster(fleet.MasterConfig{CA: m.ca, Leaf: m.leaf, Registry: m.reg, Tokens: m.toks, Sink: m.sink})
 	srv := httptest.NewUnstartedServer(fm.Handler())
 	if addr != "" {

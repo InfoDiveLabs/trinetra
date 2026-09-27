@@ -238,6 +238,10 @@ func cmdConfig(args []string) int {
 			fmt.Fprintln(stderr, "usage: config set <key> <value>")
 			return 2
 		}
+		if id, managed := ManagedFragmentFor(stateDir, args[1]); managed {
+			fmt.Fprintf(stderr, "%s: managed by the fleet master (fragment %s); change it on the master\n", args[1], id)
+			return 1
+		}
 		if err := c.Set(args[1], args[2]); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -252,6 +256,10 @@ func cmdConfig(args []string) int {
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, "usage: config unset <key>")
 			return 2
+		}
+		if id, managed := ManagedFragmentFor(stateDir, args[1]); managed {
+			fmt.Fprintf(stderr, "%s: managed by the fleet master (fragment %s); change it on the master\n", args[1], id)
+			return 1
 		}
 		if err := c.Unset(args[1]); err != nil {
 			fmt.Fprintln(stderr, err)

@@ -24,6 +24,11 @@ type fakeSink struct {
 	recs     map[string][]Record
 	backfill map[string][]Record
 	live     map[string]LiveUpdate
+	// order records each Apply/Backfill call in arrival order, as
+	// "apply:<seqs>" / "backfill:<seqs>", so a test can assert call order
+	// (e.g. the priority lane's Backfill landing before the backlog's
+	// Ingest/Apply) without relying on timing.
+	order []string
 }
 
 func newFakeSink() *fakeSink {
@@ -39,12 +44,14 @@ func (s *fakeSink) Apply(id string, recs []Record) error {
 	defer s.mu.Unlock()
 	s.recs[id] = append(s.recs[id], recs...)
 	s.applied[id] = recs[len(recs)-1].Seq
+	s.order = append(s.order, fmt.Sprintf("apply:%s", seqRangeOf(recs)))
 	return nil
 }
 func (s *fakeSink) Backfill(id string, recs []Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.backfill[id] = append(s.backfill[id], recs...)
+	s.order = append(s.order, fmt.Sprintf("backfill:%s", seqRangeOf(recs)))
 	return nil
 }
 func (s *fakeSink) Live(id string, u LiveUpdate) error {
@@ -52,6 +59,41 @@ func (s *fakeSink) Live(id string, u LiveUpdate) error {
 	defer s.mu.Unlock()
 	s.live[id] = u
 	return nil
+}
+
+// seqRangeOf renders recs' seqs for order log entries: "a" for one record,
+// "a-b" (first-last) for more than one, regardless of whether the run is
+// contiguous -- compact enough to print in a test failure even for a
+// multi-thousand-record batch.
+func seqRangeOf(recs []Record) string {
+	if len(recs) == 0 {
+		return ""
+	}
+	if len(recs) == 1 {
+		return fmt.Sprintf("%d", recs[0].Seq)
+	}
+	return fmt.Sprintf("%d-%d", recs[0].Seq, recs[len(recs)-1].Seq)
+}
+
+func (s *fakeSink) Order() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.order...)
+}
+func (s *fakeSink) AppliedFor(id string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.applied[id]
+}
+func (s *fakeSink) AppliedRecsFor(id string) []Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Record(nil), s.recs[id]...)
+}
+func (s *fakeSink) BackfillFor(id string) []Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Record(nil), s.backfill[id]...)
 }
 
 type masterFixture struct {
@@ -148,6 +190,60 @@ func TestJoinRegistersNodeWithTokenTags(t *testing.T) {
 	n, ok := f.reg.Get(id)
 	if !ok || n.Name != "web-1" || len(n.Tags) != 1 || n.Tags[0] != "prod" || n.PubKey == "" || n.Version != "v0.5.0" {
 		t.Fatalf("registry node = %+v ok=%v", n, ok)
+	}
+}
+
+// joinNamed performs a full join with an explicit name and returns the node
+// id and the FINAL name the master's JoinResponse reports (review round 2,
+// item b: it may be suffixed if it collided).
+func joinNamed(t *testing.T, f *masterFixture, name string) (id, finalName string) {
+	t.Helper()
+	plain, _, err := f.toks.Create(time.Hour, 1, nil, "test", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, csrPEM, _ := NewKeyAndCSR("child")
+	body, _ := json.Marshal(JoinRequest{Token: plain, CSR: string(csrPEM), Name: name, Version: "v1"})
+	resp, err := clientFor(t, f.pin, nil).Post(f.srv.URL+PathJoin, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("join status %d: %s", resp.StatusCode, b)
+	}
+	var jr JoinResponse
+	if err := json.NewDecoder(resp.Body).Decode(&jr); err != nil {
+		t.Fatal(err)
+	}
+	return jr.NodeID, jr.Name
+}
+
+// TestJoinDedupesNameCaseInsensitive is the review round-2 item (b)
+// regression test at the master's HTTP surface: a join whose requested name
+// collides (case-insensitively) with an already-registered node's is
+// registered under a suffixed name, and the join RESPONSE reports that final
+// name (the child prints it, not the one it asked for).
+func TestJoinDedupesNameCaseInsensitive(t *testing.T) {
+	f := newMasterFixture(t)
+	id1, name1 := joinNamed(t, f, "Web1")
+	if name1 != "Web1" {
+		t.Fatalf("first join name = %q, want unchanged Web1", name1)
+	}
+	id2, name2 := joinNamed(t, f, "web1")
+	if name2 != "web1-2" {
+		t.Fatalf("second join name = %q, want web1-2", name2)
+	}
+	id3, name3 := joinNamed(t, f, "WEB1")
+	if name3 != "WEB1-3" {
+		t.Fatalf("third join name = %q, want WEB1-3", name3)
+	}
+	n1, _ := f.reg.Get(id1)
+	n2, _ := f.reg.Get(id2)
+	n3, _ := f.reg.Get(id3)
+	if n1.Name != "Web1" || n2.Name != "web1-2" || n3.Name != "WEB1-3" {
+		t.Fatalf("registry names = %q %q %q", n1.Name, n2.Name, n3.Name)
 	}
 }
 

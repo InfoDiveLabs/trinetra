@@ -218,6 +218,16 @@ type ConfigPageData struct {
 	WebRPID       string
 	WebListen     string
 	WebSessionTTL string
+	// ManagedFragment (task 8) maps a managed-config allowlist key (e.g.
+	// "thresholds.cpu_pct") to the id of the fleet fragment currently
+	// supplying it, for exactly the keys this node's fleet master is
+	// currently managing. Empty/nil on a master, solo daemon, or a child
+	// with nothing managed. The template disables each such field's
+	// <input> and shows the fragment id; configSaveHandler independently
+	// rejects a POST that names one of these fields regardless (a forged
+	// request bypassing the disabled attribute), never trusting the
+	// disabled attribute alone.
+	ManagedFragment map[string]string
 }
 
 // buildConfigPageData assembles ConfigPageData from the current config
@@ -235,8 +245,14 @@ func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 	for i := range hours {
 		hours[i] = i
 	}
+	pageData := newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours")
+	var managedFragment map[string]string
+	if pageData.Link != nil {
+		managedFragment = pageData.Link.Managed
+	}
 	return ConfigPageData{
-		PageData:               newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours"),
+		PageData:               pageData,
+		ManagedFragment:        managedFragment,
 		ServerNameRaw:          cfg.Name,
 		CollectPublicIP:        cfg.PublicIPEnabled(),
 		DiskPct:                trimFloatText(cfg.Thresholds.DiskPct),
@@ -314,6 +330,49 @@ func configPageHandler(d Deps) http.HandlerFunc {
 // paired up so configSaveHandler can both validate (config.Config.Set
 // itself) and, for whatever actually changed, emit an audit record.
 type scalarEdit struct{ key, val string }
+
+// managedFormFields maps each of the ten managed-config allowlist keys
+// (task 8) to the posted form field name(s) that would change it. A real
+// browser never submits a disabled <input> at all, so when a key is
+// currently managed and NONE of its fields are present in the POST body,
+// configSaveHandler simply leaves it out of the edits it applies (its
+// clone already carries the current value -- see cloneConfig) rather than
+// erroring; when ANY of its fields IS present (a forged request bypassing
+// the disabled attribute, since the real page never sends one), the whole
+// POST is rejected with the same "managed by the fleet master" message the
+// CLI/ctl show.
+var managedFormFields = map[string][]string{
+	"thresholds.disk_pct":      {"disk_pct"},
+	"thresholds.mem_pct":       {"mem_pct"},
+	"thresholds.cpu_pct":       {"cpu_pct"},
+	"thresholds.swap_pct":      {"swap_pct"},
+	"thresholds.temp_c":        {"temp_c"},
+	"baseline_sigma":           {"anomaly_sigma"},
+	"baseline_min_pct":         {"baseline_min_pct"},
+	"baseline_alerts":          {"baseline_alerts"},
+	"quiet_hours":              {"quiet_enabled", "quiet_from", "quiet_to"},
+	"critical_overrides_quiet": {"critical_overrides_quiet"},
+}
+
+// configManagedFragments returns the current key->fragment-id map for the
+// managed-config keys this node's fleet master is managing (nil on a
+// master, solo daemon, or a child with nothing managed, or if Deps has no
+// fleet support at all) -- one Fleet().Status() round trip, mirroring
+// resolveFleetPageInfo's own nil-safety chain (templates.go).
+func configManagedFragments(d Deps) map[string]string {
+	if d.Fleet == nil {
+		return nil
+	}
+	fleetAPI := d.Fleet()
+	if fleetAPI == nil {
+		return nil
+	}
+	st, err := fleetAPI.Status()
+	if err != nil || st.Link == nil {
+		return nil
+	}
+	return st.Link.Managed
+}
 
 // quietHoursFormValue composes the posted quiet-hours enabled flag + from/to
 // hour <select> values into the "H-H" string config.Set("quiet_hours", ...)
@@ -479,6 +538,35 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			{"schedule.weekly", weeklyFormValue(r)},
 			{"healthchecks.url", r.FormValue("deadman_url")},
 		}
+
+		// Managed-config read-only enforcement (task 8): a key currently
+		// managed by the fleet master is never edited from here. A real
+		// browser never submits a disabled field at all, so its absence from
+		// the POST body is the normal case (silently skipped below, leaving
+		// newCfg's cloned current value untouched); any of its fields
+		// actually being PRESENT means either a stale form or a forged
+		// request, and the whole save is rejected rather than silently
+		// dropping just that field.
+		managed := configManagedFragments(d)
+		for key, id := range managed {
+			for _, field := range managedFormFields[key] {
+				if _, present := r.PostForm[field]; present {
+					http.Error(w, fmt.Sprintf("%s is managed by the fleet master (fragment %s); change it on the master", key, id), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		if len(managed) > 0 {
+			filtered := edits[:0:0]
+			for _, e := range edits {
+				if _, isManaged := managed[e.key]; isManaged {
+					continue
+				}
+				filtered = append(filtered, e)
+			}
+			edits = filtered
+		}
+
 		for _, e := range edits {
 			if err := newCfg.Set(e.key, e.val); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)

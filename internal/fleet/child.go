@@ -22,9 +22,12 @@ import (
 // ErrRevoked means the master refused this node's certificate.
 var ErrRevoked = errors.New("fleet: this node was revoked by the master")
 
-// JoinResult is what the caller persists into config after a join.
+// JoinResult is what the caller persists into config after a join. Name is
+// the name actually stored on the master (which may differ from what was
+// requested -- see JoinResponse's doc comment), for the CLI to print.
 type JoinResult struct {
 	NodeID    string
+	Name      string
 	MasterURL string
 	Pin       string
 }
@@ -97,7 +100,7 @@ func Join(ctx context.Context, code, name, version string, hostinfo json.RawMess
 	if err := writeFileAtomic(caPath, []byte(jr.CA), 0o644); err != nil {
 		return JoinResult{}, err
 	}
-	return JoinResult{NodeID: jr.NodeID, MasterURL: info.URL, Pin: info.Pin}, nil
+	return JoinResult{NodeID: jr.NodeID, Name: jr.Name, MasterURL: info.URL, Pin: info.Pin}, nil
 }
 
 // Identity is a child's current key and cert, swappable on renewal.
@@ -256,6 +259,15 @@ type ShipperConfig struct {
 	LiveEvery time.Duration
 	Now       func() time.Time
 	Logf      func(format string, args ...any)
+	// OnFrame, if set, starts a stream client goroutine in Run that reads
+	// PathStream and hands every non-ping frame to OnFrame. A nil OnFrame
+	// keeps phase-1 behaviour: no stream client at all.
+	//
+	// OnFrame runs synchronously on the stream's read loop: it must not
+	// block or do slow work. Doing so stalls reading further frames, and
+	// eventually trips the read-idle watchdog (streamIdleTimeout), causing
+	// an unnecessary reconnect out from under it.
+	OnFrame func(Frame)
 }
 
 // Link states reported in LinkStatus.State.
@@ -283,11 +295,18 @@ const gapFillMaxAttempts = 5
 
 // Shipper moves outbox records and live updates to the master.
 type Shipper struct {
-	cfg     ShipperConfig
-	client  *http.Client
-	revoked atomic.Bool
-	mu      sync.Mutex
-	st      LinkStatus // LastAck; State and LastError are derived in Status
+	cfg    ShipperConfig
+	client *http.Client
+	// streamClient serves PathStream. It shares client's pinned-TLS,
+	// HTTP/2-forcing Transport but, unlike client, carries no Timeout: that
+	// field is a wall-clock cap on the *whole* exchange (docs: "includes ...
+	// reading the response body"), which would kill a healthy, long-lived
+	// stream at a fixed age. Liveness is instead enforced inside streamOnce
+	// via a read-idle watchdog (see streamIdleTimeout).
+	streamClient *http.Client
+	revoked      atomic.Bool
+	mu           sync.Mutex
+	st           LinkStatus // LastAck; State and LastError are derived in Status
 	// Per-lane outcome of the most recent attempt: "" before the first,
 	// laneOK after a success, otherwise the error text.
 	dataLane, liveLane string
@@ -317,14 +336,19 @@ func NewShipper(cfg ShipperConfig) *Shipper {
 	if cfg.LiveEvery <= 0 {
 		cfg.LiveEvery = 5 * time.Second
 	}
+	transport := &http.Transport{TLSClientConfig: PinnedClientTLS(cfg.Pin, cfg.Identity.Cert), ForceAttemptHTTP2: true}
 	return &Shipper{
 		cfg: cfg,
 		client: &http.Client{
 			Timeout:   60 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: PinnedClientTLS(cfg.Pin, cfg.Identity.Cert), ForceAttemptHTTP2: true},
+			Transport: transport,
+		},
+		streamClient: &http.Client{
+			// No Timeout: see the field comment on Shipper.streamClient.
+			Transport: transport,
 		},
 		st:      LinkStatus{State: LinkConnecting},
-		backoff: backoffDelay,
+		backoff: defaultBackoff,
 	}
 }
 
@@ -406,17 +430,210 @@ func (s *Shipper) Run(ctx context.Context) {
 	wg.Add(2)
 	go func() { defer wg.Done(); s.liveLoop(ctx) }()
 	go func() { defer wg.Done(); s.renewLoop(ctx) }()
+	if s.cfg.OnFrame != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.streamLoop(ctx) }()
+	}
 	s.dataLoop(ctx)
 	cancel()
 	wg.Wait()
 }
 
+// backoffBase is backoffDelay's unit: attempt 0 waits in [backoffBase,
+// 2*backoffBase), doubling per attempt up to a cap of 60*backoffBase. A
+// package-level var (not a const) so a test can scale the whole jittered
+// shape down instead of faking it away with a fixed stub.
+var backoffBase = time.Second
+
 func backoffDelay(attempt int) time.Duration {
-	ceil := time.Second << min(attempt, 6) // 1s .. 64s
-	if ceil > 60*time.Second {
-		ceil = 60 * time.Second
+	ceil := backoffBase << min(attempt, 6) // backoffBase .. 64*backoffBase
+	if ceilCap := 60 * backoffBase; ceil > ceilCap {
+		ceil = ceilCap
 	}
-	return time.Second + time.Duration(rand.Int64N(int64(ceil)))
+	return backoffBase + time.Duration(rand.Int64N(int64(ceil)))
+}
+
+// defaultBackoff is the jittered exponential backoff every new Shipper
+// starts with (Shipper.backoff, and so streamLoop's reconnect delay too,
+// since it reuses the same field). A package-level var, so tests can shorten
+// it for every Shipper built afterward instead of overriding each instance.
+var defaultBackoff = backoffDelay
+
+// maxBackoffAttempt is the attempt count backoffDelay's cap saturates at;
+// streamLoop uses it to wait "the max backoff" against an old master that
+// has no stream endpoint at all, rather than backing off further and further
+// for a condition that will never change until the master is upgraded.
+const maxBackoffAttempt = 6
+
+// errStreamNotFound means the master has no PathStream route (an old
+// master, from before phase 2).
+var errStreamNotFound = errors.New("fleet: master has no /fleet/v1/stream endpoint (old master)")
+
+// errStreamIdle means no frame -- pings included -- arrived within
+// streamIdleTimeout: the connection is presumed dead even though nothing
+// told us so explicitly (no error, no close, just silence).
+var errStreamIdle = errors.New("fleet: stream read timed out waiting for a frame (pings included)")
+
+// streamIdleTimeout is how long streamOnce will wait without reading
+// anything -- pings included -- before deciding the connection is dead and
+// reconnecting. Ping frames exist specifically to keep this from firing on a
+// healthy link that simply has nothing else to say.
+func streamIdleTimeout() time.Duration { return 3 * pingIntervalDuration() }
+
+// streamIdleCheckInterval is how often streamOnce's watchdog polls for
+// staleness. It doesn't need to be tight: streamIdleTimeout already has
+// slack (3x the ping cadence) built in.
+func streamIdleCheckInterval() time.Duration {
+	iv := pingIntervalDuration()
+	if iv <= 0 {
+		return time.Second
+	}
+	return iv
+}
+
+// streamLoop reconnects to PathStream, handing every frame to cfg.OnFrame,
+// until ctx is done or the node is revoked. It reuses the same backoff field
+// the data loop uses (Shipper.backoff), so a test that shortens sh.backoff
+// speeds up both.
+func (s *Shipper) streamLoop(ctx context.Context) {
+	attempt := 0
+	loggedOldMaster := false
+	for ctx.Err() == nil && !s.revoked.Load() {
+		established, err := s.streamOnce(ctx)
+		if ctx.Err() != nil {
+			return // clean shutdown: streamOnce only returns a nil error here
+		}
+		// Past this point err is always non-nil: streamOnce returns a nil
+		// error only when ctx was already cancelled, which the check above
+		// just caught.
+		if errors.Is(err, ErrRevoked) {
+			s.revoked.Store(true)
+			s.cfg.Logf("fleet: %v; stream stopped", err)
+			return
+		}
+		if errors.Is(err, errStreamNotFound) {
+			if !loggedOldMaster {
+				s.cfg.Logf("fleet: %v", err)
+				loggedOldMaster = true
+			}
+			if !sleepCtx(ctx, s.backoff(maxBackoffAttempt)) {
+				return
+			}
+			continue
+		}
+		// A connection that was actually established -- read at least one
+		// frame, pings included -- before it ended is not evidence the
+		// master is struggling: reconnect at the first-attempt delay, not
+		// one that kept growing from attempts before it connected.
+		if established {
+			attempt = 0
+		}
+		d := s.backoff(attempt)
+		attempt++
+		if !sleepCtx(ctx, d) {
+			return
+		}
+	}
+}
+
+// streamOnce opens PathStream and reads frames until the connection ends
+// (master drop, ctx cancellation, a read-idle timeout, or a revoked frame).
+// established reports whether at least one frame (pings included) was read
+// before it ended: callers use this to tell "the master is genuinely
+// struggling" (established == false, keep backing off) from "a healthy
+// connection that simply ended" (established == true, reconnect promptly).
+// A nil error means a clean shutdown (ctx done); any other return means
+// streamLoop should reconnect (or stop, for ErrRevoked/errStreamNotFound).
+func (s *Shipper) streamOnce(ctx context.Context) (established bool, err error) {
+	// streamCtx lets the read-idle watchdog below abort a stuck read on its
+	// own, without waiting on (or needing) ctx itself to be cancelled.
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+
+	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet, s.cfg.MasterURL+PathStream, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := s.streamClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, nil
+		}
+		return false, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusForbidden:
+		return false, ErrRevoked
+	case http.StatusNotFound:
+		return false, errStreamNotFound
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return false, fmt.Errorf("fleet: stream status %d: %s", resp.StatusCode, bytes.TrimSpace(body))
+	}
+
+	// The watchdog: if nothing (pings included) is read for
+	// streamIdleTimeout, cancel streamCtx so the blocked Decode below
+	// unblocks with an error instead of hanging on a connection that looks
+	// open but is not actually delivering anything anymore.
+	var lastRead atomic.Int64
+	lastRead.Store(time.Now().UnixNano())
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	go func() {
+		t := time.NewTicker(streamIdleCheckInterval())
+		defer t.Stop()
+		for {
+			select {
+			case <-watchdogDone:
+				return
+			case <-t.C:
+				if time.Since(time.Unix(0, lastRead.Load())) > streamIdleTimeout() {
+					cancelStream()
+					return
+				}
+			}
+		}
+	}()
+
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var f Frame
+		if err := dec.Decode(&f); err != nil {
+			if ctx.Err() != nil {
+				return established, nil
+			}
+			if streamCtx.Err() != nil {
+				// ctx itself is not done (checked above): only our own
+				// watchdog cancels streamCtx.
+				return established, errStreamIdle
+			}
+			return established, err
+		}
+		established = true
+		lastRead.Store(time.Now().UnixNano())
+		switch f.Type {
+		case "ping":
+			continue
+		case "revoked":
+			return established, ErrRevoked
+		default:
+			s.cfg.OnFrame(f)
+		}
+	}
+}
+
+// PostRPCResult reports the result of an RPC the master pushed over the
+// stream: id is the rpc frame's id, body is the raw result to record.
+func (s *Shipper) PostRPCResult(ctx context.Context, id string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.MasterURL+PathRPC+id, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	_, err = s.do(req)
+	return err
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {
@@ -513,13 +730,50 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		s.setOK(true)
 		return true, nil
 	}
-	recs, err := s.cfg.Outbox.Read(s.cfg.Outbox.Acked(), MaxBatchBytes, MaxBatchRecords)
+
+	// Priority lane: ship any still-unacked KindAlert record(s) as their own
+	// ascending batch, via Backfill (unsequenced), *before* touching the
+	// general backlog below -- so a fired alert reaches the master's replica
+	// promptly even sitting behind a huge samples backlog. Backfill never
+	// advances the master's per-node AppliedSeq (that only moves on the
+	// sequenced Ingest path; see replicaNode.apply's `sequenced` flag in
+	// package trinetra), and this call never Acks the outbox either, so the
+	// ordinary Read/Ingest batch just below is completely unaffected: it
+	// still starts at Outbox.Acked(), and once it reaches this same alert's
+	// seq (as part of the ordinary backlog, since ReadPriority never removes
+	// it from Read's view), that Ingest applies -- and genuinely Acks -- it,
+	// which is what finally drops it from the priority index (Outbox.Ack).
+	// Until then, every shipOnce call re-sends it here; the master's replica
+	// alert guard (dedup by time + line) makes that free. A record the
+	// priority lane skipped past is therefore never lost, never permanently
+	// stuck: it is sent (and durably visible) here first, then re-sent and
+	// deduped once the backlog naturally reaches it.
+	prioritySent := false
+	precs, err := s.cfg.Outbox.ReadPriority(MaxBatchBytes, MaxBatchRecords)
 	if err != nil {
 		return false, err
 	}
+	if len(precs) > 0 {
+		if _, err := s.post(ctx, PathBackfill, precs); err != nil {
+			return false, err
+		}
+		s.setOK(true)
+		prioritySent = true
+	}
+
+	recs, err := s.cfg.Outbox.Read(s.cfg.Outbox.Acked(), MaxBatchBytes, MaxBatchRecords)
+	if err != nil {
+		// The priority send already made real progress (a durable Backfill
+		// the master has, dedup-safe even if resent) even though the
+		// backlog read that follows it failed: report that truthfully
+		// rather than as "no progress," even though dataLoop's own retry
+		// loop currently ignores worked on an error return -- this is about
+		// shipOnce's contract, which a direct caller/test can rely on.
+		return prioritySent, err
+	}
 	if len(recs) == 0 {
 		// Nothing queued; a live update may still be keeping the link warm.
-		return false, nil
+		return prioritySent, nil
 	}
 	body, err := s.post(ctx, PathIngest, recs)
 	if err != nil {

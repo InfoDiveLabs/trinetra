@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -31,6 +32,20 @@ const fleetUsage = `usage:
   trinetra fleet join <code> [--name NAME]                  join a master as a child
   trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
   trinetra fleet node revoke|remove|rename|tag <node> [value]
+  trinetra fleet incidents [--state firing]                 list incidents
+  trinetra fleet incident <id>                              show one incident
+  trinetra fleet ack <id>                                   acknowledge an incident
+  trinetra fleet explain <key|id>                           print an alert's pipeline trail
+  trinetra fleet silence add --match tag=web,rule=cpu* --for 2h [--comment C]
+  trinetra fleet silence list | expire <id>
+  trinetra fleet maintenance add --name N --match ... --days mon,tue --from 22:00 --to 02:00 --tz Asia/Kolkata
+  trinetra fleet maintenance list | delete <id>
+  trinetra fleet route test --node web1 [--tag t] --rule cpu --severity critical
+  trinetra fleet alerting show | apply <file.json>
+  trinetra fleet rules                                      list aggregate rules and their state
+  trinetra fleet managed list | status
+  trinetra fleet managed set [--tag T] key=value [key=value ...]
+  trinetra fleet managed delete <id>
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo`
 
@@ -58,6 +73,26 @@ func cmdFleet(args []string) int {
 		return fleetNodeCmd(args[1:])
 	case "token":
 		return fleetTokenCmd(args[1:])
+	case "incidents":
+		return fleetIncidentsCmd(args[1:])
+	case "incident":
+		return fleetIncidentCmd(args[1:])
+	case "ack":
+		return fleetAckCmd(args[1:])
+	case "explain":
+		return fleetExplainCmd(args[1:])
+	case "silence":
+		return fleetSilenceCmd(args[1:])
+	case "maintenance":
+		return fleetMaintenanceCmd(args[1:])
+	case "route":
+		return fleetRouteCmd(args[1:])
+	case "alerting":
+		return fleetAlertingCmd(args[1:])
+	case "rules":
+		return fleetRulesCmd(args[1:])
+	case "managed":
+		return fleetManagedCmd(args[1:])
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, fleetUsage)
 		return 0
@@ -207,7 +242,20 @@ func fleetJoinCmd(args []string) int {
 		fmt.Fprintln(stderr, "fleet join: save config:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Joined fleet master %s as node %s (%s).\n%s\n", res.MasterURL, res.NodeID, n, restartHint)
+	// An older master's JoinResponse has no "name" field at all, which
+	// decodes as "" here -- that must read as "the master didn't report a
+	// final name" (fall back to what was requested), never as "the master
+	// registered this node under the empty string" (review round 3, item 1:
+	// the old code printed a false "registered as \"\" instead" note against
+	// any pre-round-2 master).
+	finalName := res.Name
+	if finalName == "" {
+		finalName = n
+	}
+	if finalName != n {
+		fmt.Fprintf(stdout, "Note: %q was already taken on this master; registered as %q instead.\n", n, finalName)
+	}
+	fmt.Fprintf(stdout, "Joined fleet master %s as node %s (%s).\n%s\n", res.MasterURL, res.NodeID, finalName, restartHint)
 	return 0
 }
 
@@ -236,6 +284,12 @@ func fleetLeave(args []string) int {
 		fmt.Fprintln(stderr, "fleet leave: save config:", err)
 		return 1
 	}
+	// task 8 ruling: the last managed values are kept as ordinary local
+	// config (they already are -- c above was never touched for them), only
+	// the managed-config sidecar itself is removed, so this host stops
+	// treating them as master-managed/read-only. Best-effort: a missing
+	// sidecar (never managed) is not an error.
+	_ = os.Remove(managedChildPath(stateDir))
 	ok := true
 	if *purge {
 		ok = purgeAll("left the fleet", []purgeTarget{
@@ -420,13 +474,13 @@ const skewWarnCLI = 30
 
 func printNodes(w io.Writer, ns []core.NodeSummary) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSTATE\tSKEW\tCPU\tMEM\tDISK\tVERSION\tLAST SEEN\tTAGS\tID")
+	fmt.Fprintln(tw, "NAME\tSTATE\tSKEW\tCPU\tMEM\tDISK\tVERSION\tLAST SEEN\tTAGS\tDEPENDS ON\tID")
 	for _, n := range ns {
 		id := n.ID
 		if len(id) > 8 {
 			id = id[:8]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%.0f%%\t%.0f%%\t%.0f%%\t%s\t%s\t%s\t%s\n", n.Name, n.State, fmtSkew(n), n.CPU, n.MemPct, n.WorstDiskPct, n.Version, ago(n.LastSeen), strings.Join(n.Tags, ","), id)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%.0f%%\t%.0f%%\t%.0f%%\t%s\t%s\t%s\t%s\t%s\n", n.Name, n.State, fmtSkew(n), n.CPU, n.MemPct, n.WorstDiskPct, n.Version, ago(n.LastSeen), strings.Join(n.Tags, ","), strings.Join(n.DependsOn, ","), id)
 	}
 	tw.Flush()
 }
@@ -476,7 +530,7 @@ func resolveNodeRef(c *control.Client, ref string) (string, error) {
 
 func fleetNodeCmd(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: trinetra fleet node revoke|remove|rename|tag <node> [value]")
+		fmt.Fprintln(stderr, "usage: trinetra fleet node revoke|remove|rename|tag|depends <node> [value]")
 		return 2
 	}
 	verb, ref := args[0], args[1]
@@ -516,8 +570,19 @@ func fleetNodeCmd(args []string) int {
 				}
 			}
 			return c.Fleet().SetNodeTags(id, tags)
+		case "depends":
+			if len(args) != 3 {
+				return errors.New("usage: fleet node depends <node> dep1,dep2,tag:t (empty string clears)")
+			}
+			var deps []string
+			for _, d := range strings.Split(args[2], ",") {
+				if d = strings.TrimSpace(d); d != "" {
+					deps = append(deps, d)
+				}
+			}
+			return c.Fleet().SetNodeDeps(id, deps, "cli")
 		default:
-			return fmt.Errorf("unknown node action %q (revoke, remove, rename, tag)", verb)
+			return fmt.Errorf("unknown node action %q (revoke, remove, rename, tag, depends)", verb)
 		}
 		return nil
 	})
@@ -581,4 +646,749 @@ func fleetTokenCmd(args []string) int {
 	}
 	fmt.Fprintf(stderr, "unknown token command %q\n", args[0])
 	return 2
+}
+
+func fleetIncidentsCmd(args []string) int {
+	fs := newFlags("fleet incidents")
+	state := fs.String("state", "", "only incidents in this state (firing, acked, resolved, suppressed)")
+	node := fs.String("node", "", "only incidents involving this node")
+	tag := fs.String("tag", "", "only incidents involving a node with this tag")
+	limit := fs.Int("limit", 0, "max incidents to show (0 = unlimited)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if rejectPositionals("fleet incidents", "trinetra fleet incidents [--state S] [--node N] [--tag T] [--limit N]", pos) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		incs, err := c.Fleet().Incidents(core.IncidentFilter{State: *state, Node: *node, Tag: *tag, Limit: *limit})
+		if err != nil {
+			return err
+		}
+		printIncidents(stdout, incs)
+		return nil
+	})
+}
+
+func printIncidents(w io.Writer, incs []core.Incident) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATE\tSEVERITY\tTITLE\tNODES\tOPENED\tUPDATED")
+	for _, inc := range incs {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inc.ID, inc.State, inc.Severity, inc.Title, strings.Join(inc.Nodes, ","), ago(inc.Opened), ago(inc.Updated))
+	}
+	tw.Flush()
+}
+
+func fleetIncidentCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet incident <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		inc, err := c.Fleet().Incident(args[0])
+		if err != nil {
+			return err
+		}
+		printIncidentDetail(stdout, inc)
+		return nil
+	})
+}
+
+func printIncidentDetail(w io.Writer, inc core.Incident) {
+	fmt.Fprintf(w, "id: %s\nstate: %s\nseverity: %s\ntitle: %s\nnodes: %s\nopened: %s\nupdated: %s\n",
+		inc.ID, inc.State, inc.Severity, inc.Title, strings.Join(inc.Nodes, ","),
+		time.Unix(inc.Opened, 0).Format(time.RFC3339), time.Unix(inc.Updated, 0).Format(time.RFC3339))
+	if inc.Resolved > 0 {
+		fmt.Fprintf(w, "resolved: %s\n", time.Unix(inc.Resolved, 0).Format(time.RFC3339))
+	}
+	if inc.AckedBy != "" {
+		fmt.Fprintf(w, "acked by: %s\n", inc.AckedBy)
+	}
+	fmt.Fprintln(w, "alerts:")
+	for _, a := range inc.Alerts {
+		fmt.Fprintf(w, "  %s %s (%s) fired %s", a.Node, a.Key, a.Severity, ago(a.FiredAt))
+		if a.ResolvedAt > 0 {
+			fmt.Fprintf(w, " resolved %s", ago(a.ResolvedAt))
+		}
+		if a.DeliveredLocally {
+			fmt.Fprint(w, " [delivered locally]")
+		}
+		fmt.Fprintln(w)
+	}
+	fmt.Fprintln(w, "timeline:")
+	printIncidentEvents(w, inc.Timeline)
+}
+
+func printIncidentEvents(w io.Writer, events []core.IncidentEvent) {
+	for _, e := range events {
+		fmt.Fprintf(w, "  %s %s", time.Unix(e.TS, 0).Format(time.RFC3339), e.Kind)
+		if e.Detail != "" {
+			fmt.Fprintf(w, ": %s", e.Detail)
+		}
+		if e.Actor != "" {
+			fmt.Fprintf(w, " (%s)", e.Actor)
+		}
+		fmt.Fprintln(w)
+	}
+}
+
+func fleetAckCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet ack <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().AckIncident(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Acknowledged incident %s.\n", args[0])
+		return nil
+	})
+}
+
+func fleetExplainCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet explain <key|id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		events, err := c.Fleet().Explain(args[0])
+		if err != nil {
+			return err
+		}
+		printIncidentEvents(stdout, events)
+		return nil
+	})
+}
+
+// --- silence / maintenance -------------------------------------------------
+
+// parseMatchSpec parses a comma-separated "key=value" matcher spec, e.g.
+// "tag=web,node=db*,rule=cpu*,severity=critical", into a single core.Matcher
+// (AND semantics across its fields; empty fields match anything).
+func parseMatchSpec(spec string) (core.Matcher, error) {
+	var m core.Matcher
+	if strings.TrimSpace(spec) == "" {
+		return m, errors.New("--match is required, e.g. --match tag=web,rule=cpu*")
+	}
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			return core.Matcher{}, fmt.Errorf("invalid --match term %q (want key=value)", part)
+		}
+		k, v := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		switch k {
+		case "tag":
+			m.Tag = v
+		case "node":
+			m.Node = v
+		case "rule":
+			m.Rule = v
+		case "severity":
+			m.Severity = v
+		default:
+			return core.Matcher{}, fmt.Errorf("unknown match key %q (want tag, node, rule or severity)", k)
+		}
+	}
+	return m, nil
+}
+
+func formatMatchers(ms []core.Matcher) string {
+	var parts []string
+	for _, m := range ms {
+		var kv []string
+		if m.Tag != "" {
+			kv = append(kv, "tag="+m.Tag)
+		}
+		if m.Node != "" {
+			kv = append(kv, "node="+m.Node)
+		}
+		if m.Rule != "" {
+			kv = append(kv, "rule="+m.Rule)
+		}
+		if m.Severity != "" {
+			kv = append(kv, "severity="+m.Severity)
+		}
+		parts = append(parts, strings.Join(kv, "&"))
+	}
+	return strings.Join(parts, " OR ")
+}
+
+func fleetSilenceCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet silence add|list|expire")
+		return 2
+	}
+	switch args[0] {
+	case "add":
+		return fleetSilenceAdd(args[1:])
+	case "list":
+		return fleetSilenceList(args[1:])
+	case "expire":
+		return fleetSilenceExpire(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown silence command %q\n", args[0])
+	return 2
+}
+
+func fleetSilenceAdd(args []string) int {
+	fs := newFlags("fleet silence add")
+	match := fs.String("match", "", "comma-separated matchers: tag=,node=,rule=,severity= "+
+		"(node= matches the node name (glob) or its exact id; renaming a node stops name-based silences from matching it)")
+	forDur := fs.Duration("for", 0, "how long the silence lasts from now")
+	until := fs.String("until", "", "RFC3339 end time (alternative to --for)")
+	comment := fs.String("comment", "", "why")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	usage := "trinetra fleet silence add --match tag=web,node=db*,rule=cpu*,severity=critical --for 2h | --until RFC3339 [--comment ...]\n" +
+		"  node= matches the node name (glob) or its exact id; renaming a node stops name-based silences from matching it."
+	if rejectPositionals("fleet silence add", usage, pos) {
+		return 2
+	}
+	m, err := parseMatchSpec(*match)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet silence add:", err)
+		return 2
+	}
+	var end int64
+	switch {
+	case *forDur > 0:
+		end = time.Now().Add(*forDur).Unix()
+	case *until != "":
+		t, err := time.Parse(time.RFC3339, *until)
+		if err != nil {
+			fmt.Fprintln(stderr, "fleet silence add: --until must be RFC3339:", err)
+			return 2
+		}
+		end = t.Unix()
+	default:
+		fmt.Fprintln(stderr, "fleet silence add: one of --for or --until is required")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		sil, err := c.Fleet().CreateSilence(core.Silence{
+			Matchers: []core.Matcher{m}, Start: time.Now().Unix(), End: end, Author: "cli", Comment: *comment,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Created silence %s, active until %s.\n", sil.ID, time.Unix(sil.End, 0).Format(time.RFC3339))
+		return nil
+	})
+}
+
+func fleetSilenceList(args []string) int {
+	if rejectPositionals("fleet silence list", "trinetra fleet silence list", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		sils, err := c.Fleet().Silences()
+		if err != nil {
+			return err
+		}
+		printSilences(stdout, sils)
+		return nil
+	})
+}
+
+func printSilences(w io.Writer, sils []core.Silence) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tMATCH\tSTART\tEND\tAUTHOR\tCOMMENT")
+	for _, s := range sils {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, formatMatchers(s.Matchers),
+			time.Unix(s.Start, 0).Format(time.RFC3339), time.Unix(s.End, 0).Format(time.RFC3339), s.Author, s.Comment)
+	}
+	tw.Flush()
+}
+
+func fleetSilenceExpire(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet silence expire <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().ExpireSilence(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Expired silence %s.\n", args[0])
+		return nil
+	})
+}
+
+var weekdayNames = map[string]int{"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
+var weekdayShort = [7]string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+
+func parseWeekdays(s string) ([]int, error) {
+	var out []int
+	for _, part := range strings.Split(s, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			continue
+		}
+		wd, ok := weekdayNames[part]
+		if !ok {
+			return nil, fmt.Errorf("invalid --days value %q (want mon,tue,wed,thu,fri,sat,sun)", part)
+		}
+		out = append(out, wd)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("--days is required, e.g. --days mon,tue")
+	}
+	return out, nil
+}
+
+func formatWeekdays(wds []int) string {
+	var out []string
+	for _, wd := range wds {
+		if wd >= 0 && wd < 7 {
+			out = append(out, weekdayShort[wd])
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+func fleetMaintenanceCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet maintenance add|list|delete")
+		return 2
+	}
+	switch args[0] {
+	case "add":
+		return fleetMaintenanceAdd(args[1:])
+	case "list":
+		return fleetMaintenanceList(args[1:])
+	case "delete":
+		return fleetMaintenanceDelete(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown maintenance command %q\n", args[0])
+	return 2
+}
+
+func fleetMaintenanceAdd(args []string) int {
+	fs := newFlags("fleet maintenance add")
+	name := fs.String("name", "", "name")
+	match := fs.String("match", "", "comma-separated matchers")
+	days := fs.String("days", "", "comma-separated weekdays: mon,tue,wed,thu,fri,sat,sun")
+	from := fs.String("from", "", "start time HH:MM (in --tz)")
+	to := fs.String("to", "", "end time HH:MM (in --tz; before --from means it crosses midnight)")
+	tz := fs.String("tz", "UTC", "IANA time zone")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	usage := "trinetra fleet maintenance add --name N --match ... --days mon,tue --from HH:MM --to HH:MM --tz TZ"
+	if rejectPositionals("fleet maintenance add", usage, pos) {
+		return 2
+	}
+	if strings.TrimSpace(*name) == "" {
+		fmt.Fprintln(stderr, "fleet maintenance add: --name is required")
+		return 2
+	}
+	m, err := parseMatchSpec(*match)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet maintenance add:", err)
+		return 2
+	}
+	wds, err := parseWeekdays(*days)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet maintenance add:", err)
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		mw, err := c.Fleet().SaveMaintenance(core.Maintenance{
+			Name: *name, Matchers: []core.Matcher{m}, Weekdays: wds, From: *from, To: *to, TZ: *tz, Author: "cli",
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Created maintenance window %s (%s).\n", mw.ID, mw.Name)
+		return nil
+	})
+}
+
+func fleetMaintenanceList(args []string) int {
+	if rejectPositionals("fleet maintenance list", "trinetra fleet maintenance list", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		ms, err := c.Fleet().Maintenances()
+		if err != nil {
+			return err
+		}
+		printMaintenances(stdout, ms)
+		return nil
+	})
+}
+
+func printMaintenances(w io.Writer, ms []core.Maintenance) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tMATCH\tDAYS\tFROM\tTO\tTZ\tAUTHOR")
+	for _, m := range ms {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.ID, m.Name, formatMatchers(m.Matchers),
+			formatWeekdays(m.Weekdays), m.From, m.To, m.TZ, m.Author)
+	}
+	tw.Flush()
+}
+
+func fleetMaintenanceDelete(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet maintenance delete <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().DeleteMaintenance(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Deleted maintenance window %s.\n", args[0])
+		return nil
+	})
+}
+
+func fleetRouteCmd(args []string) int {
+	if len(args) == 0 || args[0] != "test" {
+		fmt.Fprintln(stderr, "usage: trinetra fleet route test --node NAME [--tag t1,t2] --rule RULE --severity SEV")
+		return 2
+	}
+	return fleetRouteTest(args[1:])
+}
+
+func fleetRouteTest(args []string) int {
+	fs := newFlags("fleet route test")
+	node := fs.String("node", "", "node display name or id")
+	tag := fs.String("tag", "", "comma-separated tags")
+	rule := fs.String("rule", "", "alert key/rule")
+	severity := fs.String("severity", "", "severity (info, warning, critical)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	usage := "trinetra fleet route test --node NAME [--tag t1,t2] --rule RULE --severity SEV"
+	if rejectPositionals("fleet route test", usage, pos) {
+		return 2
+	}
+	var tags []string
+	if strings.TrimSpace(*tag) != "" {
+		tags = strings.Split(*tag, ",")
+	}
+	return withDaemon(func(c *control.Client) error {
+		d, err := c.Fleet().RouteTest(core.TestAlert{Node: *node, Tags: tags, Rule: *rule, Severity: *severity})
+		if err != nil {
+			return err
+		}
+		printRouteDecision(stdout, d)
+		return nil
+	})
+}
+
+// printRouteDecision prints d: the matched route, then EVERY matched policy
+// (more than one when Continue chained several routes together -- B5 fix
+// round 1: each escalates independently, so each gets its own steps and
+// repeat_every printed separately) and, last, whether a silence would
+// suppress this exact alert.
+func printRouteDecision(w io.Writer, d core.RouteDecision) {
+	route := d.Route
+	if route == "" {
+		route = "(no route matched; using the default policy)"
+	}
+	fmt.Fprintf(w, "route: %s\n", route)
+	for _, p := range d.Policies {
+		fmt.Fprintf(w, "policy: %s\n", p.Name)
+		for i, s := range p.Steps {
+			fmt.Fprintf(w, "  step %d: after %s -> %s\n", i, s.After, strings.Join(s.Channels, ", "))
+		}
+		if p.RepeatEvery != "" {
+			fmt.Fprintf(w, "  repeat_every: %s\n", p.RepeatEvery)
+		}
+	}
+	if d.Suppressed != "" {
+		fmt.Fprintf(w, "suppressed: %s\n", d.Suppressed)
+	} else {
+		fmt.Fprintln(w, "suppressed: no")
+	}
+}
+
+func fleetAlertingCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet alerting show|apply <file.json>")
+		return 2
+	}
+	switch args[0] {
+	case "show":
+		return fleetAlertingShow(args[1:])
+	case "apply":
+		return fleetAlertingApply(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown alerting command %q\n", args[0])
+	return 2
+}
+
+func fleetAlertingShow(args []string) int {
+	if rejectPositionals("fleet alerting show", "trinetra fleet alerting show", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		cfg, err := c.Fleet().Alerting()
+		if err != nil {
+			return err
+		}
+		b, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, string(b))
+		return nil
+	})
+}
+
+// fleetAlertingApply applies file's config with Version 0 (unconditional):
+// the CLI does not do optimistic locking (that is plan C's web editor's
+// job), so it always overwrites whatever is currently stored.
+func fleetAlertingApply(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet alerting apply <file.json>")
+		return 2
+	}
+	b, err := os.ReadFile(args[0])
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet alerting apply:", err)
+		return 1
+	}
+	var cfg core.AlertingConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		fmt.Fprintf(stderr, "fleet alerting apply: parse %s: %v\n", args[0], err)
+		return 1
+	}
+	cfg.Version = 0
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().SetAlerting(cfg, "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Applied alerting config from %s.\n", args[0])
+		return nil
+	})
+}
+
+// fleetRulesCmd is `trinetra fleet rules` (task 7): a table of every
+// configured aggregate rule's current value/firing state.
+func fleetRulesCmd(args []string) int {
+	if rejectPositionals("fleet rules", "trinetra fleet rules", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		states, err := c.Fleet().RuleStates()
+		if err != nil {
+			return err
+		}
+		printRuleStates(stdout, states)
+		return nil
+	})
+}
+
+// ruleStateLabel renders one rule's STATE column: an Error takes priority
+// (the Expr currently fails to parse -- shouldn't happen, since SetAlerting
+// validates it, but surfaced rather than hidden if it ever does), then
+// "no data" (task-7 ruling: never fires/recovers, holds the previous
+// firing/since), then firing/ok.
+func ruleStateLabel(s core.RuleState) string {
+	switch {
+	case s.Error != "":
+		return "error: " + s.Error
+	case s.NoData:
+		return "no data"
+	case s.Firing:
+		return "firing"
+	}
+	return "ok"
+}
+
+// fleetManagedCmd is `trinetra fleet managed` (task 8): CRUD + status over
+// the master's managed-config fragments.
+func fleetManagedCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet managed list|set|delete|status")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		return fleetManagedList(args[1:])
+	case "set":
+		return fleetManagedSet(args[1:])
+	case "delete":
+		return fleetManagedDelete(args[1:])
+	case "status":
+		return fleetManagedStatus(args[1:])
+	}
+	fmt.Fprintf(stderr, "unknown managed command %q\n", args[0])
+	return 2
+}
+
+func fleetManagedList(args []string) int {
+	if rejectPositionals("fleet managed list", "trinetra fleet managed list", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		frags, err := c.Fleet().Managed()
+		if err != nil {
+			return err
+		}
+		printManagedFragments(stdout, frags)
+		return nil
+	})
+}
+
+func printManagedFragments(w io.Writer, frags []core.ManagedFragment) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tTAG\tVERSION\tAUTHOR\tVALUES")
+	for _, f := range frags {
+		tag := f.Tag
+		if tag == "" {
+			tag = "*"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.ID, tag, f.Version, f.Author, formatManagedValues(f.Values))
+	}
+	tw.Flush()
+}
+
+// formatManagedValues renders values as "key=value,key=value,..." in
+// managedFragmentAllowlistKeys order, so the same fragment always prints
+// identically regardless of Go's randomized map iteration.
+func formatManagedValues(values map[string]string) string {
+	var parts []string
+	for _, k := range managedFragmentAllowlistKeys {
+		if v, ok := values[k]; ok {
+			parts = append(parts, k+"="+v)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// parseManagedKV parses one or more "key=value" positional arguments into a
+// map, rejecting anything malformed (no "=") -- the value itself is
+// whatever config.Set will ultimately validate, so no parsing happens here.
+func parseManagedKV(args []string) (map[string]string, error) {
+	if len(args) == 0 {
+		return nil, errors.New("at least one key=value is required")
+	}
+	out := map[string]string{}
+	for _, a := range args {
+		k, v, ok := strings.Cut(a, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid key=value %q", a)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// fleetManagedSet is `trinetra fleet managed set [--tag T] key=value ...`:
+// creates a new fragment for --tag ("" = every node), or updates the
+// existing one for that tag if one already exists (task-8 ruling: "one
+// fragment per tag, simplest") -- entirely replacing its Values with what
+// was given here, not merging.
+func fleetManagedSet(args []string) int {
+	fs := newFlags("fleet managed set")
+	tag := fs.String("tag", "", "target only nodes carrying this tag (default: every node)")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	values, err := parseManagedKV(pos)
+	if err != nil {
+		fmt.Fprintln(stderr, "fleet managed set:", err)
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		// Round-1 review MINOR: no list-then-decide here any more -- an
+		// empty ID is a server-side upsert-by-tag (managedFragmentStore.Save,
+		// atomic under its own lock), so this can never race a concurrent
+		// `fleet managed set --tag X` into creating two fragments for the
+		// same tag (the TOCTOU a client-side list+create/update used to
+		// have).
+		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{Tag: *tag, Values: values}, "cli")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Saved managed-config fragment %s (tag=%s, version %d): %s\n",
+			saved.ID, firstNonEmptyStr(saved.Tag, "*"), saved.Version, formatManagedValues(saved.Values))
+		return nil
+	})
+}
+
+func firstNonEmptyStr(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+func fleetManagedDelete(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: trinetra fleet managed delete <id>")
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		if err := c.Fleet().DeleteManaged(args[0], "cli"); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Deleted managed-config fragment %s.\n", args[0])
+		return nil
+	})
+}
+
+func fleetManagedStatus(args []string) int {
+	if rejectPositionals("fleet managed status", "trinetra fleet managed status", args) {
+		return 2
+	}
+	return withDaemon(func(c *control.Client) error {
+		sts, err := c.Fleet().ManagedStatus()
+		if err != nil {
+			return err
+		}
+		printManagedStatuses(stdout, sts)
+		return nil
+	})
+}
+
+func printManagedStatuses(w io.Writer, sts []core.ManagedStatus) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "NODE\tAPPLIED\tDESIRED\tOK\tDRIFT\tERROR")
+	for _, s := range sts {
+		drift := strings.Join(s.Drift, ",")
+		if drift == "" {
+			drift = "-"
+		}
+		errText := s.Error
+		if errText == "" {
+			errText = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%t\t%s\t%s\n", s.Node, s.Version, s.Desired, s.Applied, drift, errText)
+		for _, c := range s.Conflicts {
+			fmt.Fprintf(tw, "  conflict\t%s\t\t\t%s\t\n", c.Key, strings.Join(c.Fragments, ","))
+		}
+	}
+	tw.Flush()
+}
+
+func printRuleStates(w io.Writer, states []core.RuleState) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSTATE\tVALUE\tSINCE\tEXPR")
+	for _, s := range states {
+		value := "-"
+		if s.HasValue {
+			value = strconv.FormatFloat(s.Value, 'f', -1, 64)
+		}
+		since := "-"
+		if s.Since > 0 {
+			since = time.Unix(s.Since, 0).Format(time.RFC3339)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, ruleStateLabel(s), value, since, s.Expr)
+	}
+	tw.Flush()
 }

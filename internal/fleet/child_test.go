@@ -131,6 +131,161 @@ func TestShipperDrainsOutboxAndSendsLive(t *testing.T) {
 	waitFor(t, "second drain", func() bool { return ob.Acked() == 25 })
 }
 
+// TestShipperPriorityLaneShipsAlertBeforeBacklog: a large samples backlog
+// (10k records, more than one Ingest batch's worth at MaxBatchRecords) plus
+// one freshly-fired alert. The alert must reach the fake master via
+// Backfill before the backlog's first Ingest/Apply call -- proven by call
+// order at the sink, not by timing -- and the backlog must still fully
+// apply afterwards: nothing the priority lane jumped ahead of is lost.
+//
+// Because the priority lane never Acks (Backfill carries no seq
+// bookkeeping) it keeps re-offering the same still-unacked alert on every
+// shipOnce call until the backlog's own Ingest sweep naturally reaches that
+// seq and Acks it for real -- so with a backlog spanning multiple Ingest
+// batches, the alert is backfilled more than once here. That is the
+// intended "re-sent and deduped" behaviour (a real master's replica alert
+// guard, exercised elsewhere, is what makes the extra sends free); what
+// must hold is that every one of those backfills happens before the apply
+// call it precedes, that only the alert's own seq is ever backfilled, and
+// that the backlog still converges to fully applied.
+func TestShipperPriorityLaneShipsAlertBeforeBacklog(t *testing.T) {
+	f := newMasterFixture(t)
+	ob, _ := OpenOutbox(t.TempDir(), 64<<20)
+	appendN(t, ob, 1, 10000)
+	alertSeq, err := ob.Append(KindAlert, 999, []byte(`{"key":"cpu","fired_at":999}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alertSeq != 10001 {
+		t.Fatalf("test setup: alert seq = %d, want 10001", alertSeq)
+	}
+
+	startShipperWithFastBackoff(t, f, ob, nil)
+
+	waitFor(t, "backlog fully applied", func() bool { return ob.Acked() >= alertSeq })
+
+	order := f.sink.Order()
+	if len(order) == 0 {
+		t.Fatal("no calls reached the fake master")
+	}
+	wantAlertBackfill := fmt.Sprintf("backfill:%d", alertSeq)
+	if order[0] != wantAlertBackfill {
+		t.Fatalf("order[0] = %q, want %q (the priority lane first, before any backlog apply)", order[0], wantAlertBackfill)
+	}
+	for _, call := range order {
+		if strings.HasPrefix(call, "backfill:") && call != wantAlertBackfill {
+			t.Fatalf("order = %v: a backfill for something other than the alert (seq %d)", order, alertSeq)
+		}
+	}
+
+	nodeID := nodeIDFromOutbox(t, f, ob)
+	backfilled := f.sink.BackfillFor(nodeID)
+	if len(backfilled) == 0 {
+		t.Fatal("nothing was backfilled")
+	}
+	for _, r := range backfilled {
+		if r.Seq != alertSeq || r.Kind != KindAlert {
+			t.Fatalf("backfilled = %+v, want only the alert record (seq %d)", backfilled, alertSeq)
+		}
+	}
+
+	// Nothing lost: every backlog record plus the alert was eventually
+	// applied for real via the ordinary Ingest path (the fake sink's Apply
+	// just counts seqs; production content-level dedup of the alert's
+	// repeat arrival there is package trinetra's replicaNode.apply, and
+	// TestIngestIsIdempotentAndOrdered covers Ingest's own seq dedup).
+	if applied := f.sink.AppliedFor(nodeID); applied != alertSeq {
+		t.Fatalf("applied = %d, want %d", applied, alertSeq)
+	}
+	if got := len(f.sink.AppliedRecsFor(nodeID)); got != int(alertSeq) {
+		t.Fatalf("applied %d records total, want %d (10000 samples + the alert)", got, alertSeq)
+	}
+}
+
+// nodeIDFromOutbox returns the sole node id the fixture's sink has heard
+// from, for tests where the shipper (and so the node id) was started
+// directly rather than through startShipper's return value.
+func nodeIDFromOutbox(t *testing.T, f *masterFixture, ob *Outbox) string {
+	t.Helper()
+	f.sink.mu.Lock()
+	defer f.sink.mu.Unlock()
+	for id := range f.sink.applied {
+		return id
+	}
+	for id := range f.sink.backfill {
+		return id
+	}
+	t.Fatal("no node has contacted the fake master yet")
+	return ""
+}
+
+// shipOnce must report that the priority lane already made real progress
+// (a durable Backfill the master has) even when the general backlog Read
+// that follows it fails: worked must be true alongside the error, not
+// false, so a caller can tell "something happened" from "nothing did."
+func TestShipOnceReportsWorkedTrueWhenPriorityBackfillSucceedsButReadFails(t *testing.T) {
+	f := newMasterFixture(t)
+	dir := t.TempDir()
+	// A tiny segMax forces the alert and the backlog samples after it into
+	// separate segment files, so the backlog's segment(s) can be broken
+	// without touching the one the priority lane reads from.
+	ob, err := OpenOutboxSegmented(dir, 1<<20, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ob.Close()
+
+	alertSeq, err := ob.Append(KindAlert, 1, []byte(`{"key":"cpu"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, ob, 2, 5)
+
+	// Break every segment that does NOT hold the alert: replace its file
+	// with a directory, so reading it returns a real (non-ErrNotExist)
+	// error instead of silently skipping it like a cap-evicted segment
+	// would.
+	broke := 0
+	for _, s := range ob.segs {
+		if s.first <= alertSeq && alertSeq <= s.last {
+			continue // the priority lane's own segment must stay readable
+		}
+		if err := os.Remove(s.path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(s.path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		broke++
+	}
+	if broke == 0 {
+		t.Fatal("test setup invalid: expected the backlog to land in a separate, breakable segment")
+	}
+
+	childDir := filepath.Join(t.TempDir(), "fleet-child")
+	if _, err := Join(context.Background(), joinCode(f, t, 1), "box", "v1", nil, childDir); err != nil {
+		t.Fatal(err)
+	}
+	id, err := LoadIdentity(childDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := NewShipper(ShipperConfig{MasterURL: f.srv.URL, Pin: f.pin, Identity: id, Outbox: ob})
+
+	worked, err := sh.shipOnce(context.Background())
+	if err == nil {
+		t.Fatal("shipOnce returned a nil error, want the broken segment to surface as a Read error")
+	}
+	if !worked {
+		t.Fatalf("shipOnce reported worked=false (err=%v), want true: the priority Backfill already made real progress before Read failed", err)
+	}
+
+	backfilled := f.sink.BackfillFor(nodeIDFromOutbox(t, f, ob))
+	if len(backfilled) != 1 || backfilled[0].Seq != alertSeq {
+		t.Fatalf("backfilled = %+v, want exactly the alert (seq %d) to have gone through before the Read failure", backfilled, alertSeq)
+	}
+}
+
 type fakeGaps struct{ calls int }
 
 func (g *fakeGaps) Fill(gap Gap) ([]Record, error) {

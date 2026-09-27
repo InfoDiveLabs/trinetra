@@ -25,6 +25,8 @@ const (
 	PathIngest   = "/fleet/v1/ingest"
 	PathBackfill = "/fleet/v1/backfill"
 	PathLive     = "/fleet/v1/live"
+	PathStream   = "/fleet/v1/stream" // GET, master-to-child push
+	PathRPC      = "/fleet/v1/rpc/"   // POST /fleet/v1/rpc/{id}
 )
 
 // HeaderSentAt carries the child's send time (unix seconds) for skew tracking.
@@ -37,6 +39,14 @@ const (
 	maxDecodedBatch   = 16 << 20
 	maxDecodedRecords = 2 * MaxBatchRecords
 )
+
+// Frame is one push on the master-to-child stream (PathStream): the response
+// body is application/x-ndjson, one JSON-encoded Frame per line, flushed as
+// soon as it is written.
+type Frame struct {
+	Type string          `json:"type"` // lease|receipt|ack|unack|silences|managed_config|rpc|revoked|ping
+	Data json.RawMessage `json:"data,omitempty"`
+}
 
 // Record is one durable telemetry item. Seq is 0 for unsequenced backfill.
 type Record struct {
@@ -88,6 +98,26 @@ type LiveUpdate struct {
 	AlertState json.RawMessage `json:"alert_state,omitempty"`
 	HostInfo   json.RawMessage `json:"hostinfo,omitempty"`
 	Outbox     OutboxStats     `json:"outbox"`
+	// Managed reports this child's managed-config state (task 8): nil until
+	// the child has received at least one "managed_config" frame from the
+	// master (an old master that never sends one, or a child that has not
+	// yet connected to a phase-2 master, leaves this nil forever -- exactly
+	// today's behaviour for everything else this task touches).
+	Managed *ManagedReport `json:"managed,omitempty"`
+}
+
+// ManagedReport is a child's report of its managed-config state, carried on
+// every LiveUpdate once it has ever received a "managed_config" frame:
+// Version is the version it last SUCCESSFULLY applied (unchanged by a
+// failed attempt -- see Applied/Error); Values are its CURRENT effective
+// values for every allowlisted managed-config key (read fresh from its live
+// config on every report, not cached), letting the master compute drift
+// without trusting the child's own idea of what it applied.
+type ManagedReport struct {
+	Version int64             `json:"version"`
+	Applied bool              `json:"applied"`
+	Error   string            `json:"error,omitempty"`
+	Values  map[string]string `json:"values,omitempty"`
 }
 
 // IngestResponse acknowledges everything up to AckedSeq as durable.
@@ -107,9 +137,14 @@ type JoinRequest struct {
 	PrevSig    string          `json:"prev_sig,omitempty"`
 }
 
-// JoinResponse carries the new identity.
+// JoinResponse carries the new identity. Name is the name actually stored
+// in the registry, which may differ from the requested name if it collided
+// (case-insensitively) with an existing node -- Registry.Add suffixes it
+// "-2", "-3", ... to keep names unique (review round 2, item b), and the
+// child prints this one, not the one it asked for.
 type JoinResponse struct {
 	NodeID string `json:"node_id"`
+	Name   string `json:"name"`
 	Cert   string `json:"cert"`
 	CA     string `json:"ca"`
 }

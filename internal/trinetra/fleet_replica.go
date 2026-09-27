@@ -103,10 +103,38 @@ type replicaSink struct {
 	opts  StoreOptions
 	mu    sync.Mutex
 	nodes map[string]*replicaNode
+	// onAlert, if set, is called once for every genuinely new (not a
+	// byte-identical re-send) KindAlert record applied for a node -- the
+	// master alerting engine's entry point for child-shipped alerts (see
+	// fleet_engine.go's HandleChildAlert). nil is a valid no-op (a child or
+	// solo daemon never constructs a replicaSink at all; kept nil-safe here
+	// too so a replicaSink built without one, e.g. in older tests, still
+	// works).
+	onAlert func(nodeID string, ev AlertEvent)
+	// onAckSync, if set, is called whenever a node's alerts.json actually
+	// changes (see Live below): the master alerting engine's entry point
+	// for a child-side ack/unack reaching the master (fleet_engine.go's
+	// HandleChildAckSync). Unlike onAlert, it is not a constructor
+	// parameter -- it is set directly on the field by startMaster, since it
+	// is task-3-only wiring and every existing newReplicaSink call site
+	// (tests included) would otherwise need updating a second time for a
+	// hook most of them never exercise.
+	onAckSync func(nodeID string, as json.RawMessage)
+
+	// hub/rpc/incidents (task 9) wire remote ack/unack and remote container
+	// logs into NodeAPI's replicaAPI. Like onAckSync, these are set
+	// directly on the field by startMaster rather than threaded through
+	// newReplicaSink, for the same reason: most existing (and future)
+	// callers/tests never exercise them, and a nil value degrades every
+	// method that needs it to errRemoteNode/errNodeNotConnected rather than
+	// panicking.
+	hub       *fleet.Hub
+	rpc       *rpcRegistry
+	incidents *incidentStore
 }
 
-func newReplicaSink(root string, opts StoreOptions) *replicaSink {
-	return &replicaSink{root: root, opts: opts, nodes: map[string]*replicaNode{}}
+func newReplicaSink(root string, opts StoreOptions, onAlert func(nodeID string, ev AlertEvent)) *replicaSink {
+	return &replicaSink{root: root, opts: opts, nodes: map[string]*replicaNode{}, onAlert: onAlert}
 }
 
 // reseed rebuilds every in-memory ordering guard of n from what is actually
@@ -286,7 +314,7 @@ func (r *replicaSink) Apply(id string, recs []fleet.Record) error {
 	if err != nil {
 		return err
 	}
-	if err := n.apply(recs, true); err != nil {
+	if err := n.apply(id, recs, true, r.onAlert); err != nil {
 		n.reseed()
 		return err
 	}
@@ -299,7 +327,7 @@ func (r *replicaSink) Backfill(id string, recs []fleet.Record) error {
 	if err != nil {
 		return err
 	}
-	if err := n.apply(recs, false); err != nil {
+	if err := n.apply(id, recs, false, r.onAlert); err != nil {
 		n.reseed()
 		return err
 	}
@@ -341,7 +369,7 @@ func (n *replicaNode) admit(metric string, res Resolution, ts int64) (bool, erro
 	return true, nil
 }
 
-func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
+func (n *replicaNode) apply(id string, recs []fleet.Record, sequenced bool, onAlert func(nodeID string, ev AlertEvent)) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	touched := map[string]bool{}
@@ -417,33 +445,41 @@ func (n *replicaNode) apply(recs []fleet.Record, sequenced bool) error {
 			}
 			events = true
 		case fleet.KindAlert:
-			var h struct {
-				Time int64 `json:"time"`
-			}
-			if json.Unmarshal(rec.Data, &h) != nil {
+			var ev AlertEvent
+			if json.Unmarshal(rec.Data, &ev) != nil {
 				continue
 			}
 			var line bytes.Buffer
 			if json.Compact(&line, rec.Data) != nil {
 				continue
 			}
-			if h.Time == n.lastAlertTS && n.alertLines[line.String()] {
+			if ev.Time == n.lastAlertTS && n.alertLines[line.String()] {
 				n.st.DroppedDuplicate++
 				continue
 			}
 			// An older alert is skipped uncounted: the dedupe set only holds
 			// the newest timestamp's lines, so it cannot tell a re-sent copy
 			// from a genuinely late alert.
-			if h.Time < n.lastAlertTS {
+			if ev.Time < n.lastAlertTS {
 				continue
 			}
-			if h.Time > n.lastAlertTS {
-				n.lastAlertTS = h.Time
+			if ev.Time > n.lastAlertTS {
+				n.lastAlertTS = ev.Time
 				n.alertLines = map[string]bool{}
 			}
 			n.alertLines[line.String()] = true
 			alerts.Write(line.Bytes())
 			alerts.WriteByte('\n')
+			// The master alerting engine's entry point for a genuinely new
+			// (not a byte-identical re-send) alert record: see
+			// fleet_engine.go's HandleChildAlert. Called with n.mu still
+			// held, same as every other durable write in this method --
+			// HandleChildAlert must not call back into this replicaSink or
+			// it will deadlock; it doesn't (it only touches the engine's own
+			// state, the hub and the master's dispatcher).
+			if onAlert != nil {
+				onAlert(id, ev)
+			}
 		}
 	}
 	if alerts.Len() > 0 {
@@ -524,32 +560,43 @@ func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 		u.HostInfo = prev.HostInfo // hostinfo is only sent every few minutes
 	}
 	n.live.Store(&u)
-	if err := n.writeAlertState(u.AlertState); err != nil {
+	changed, err := n.writeAlertState(u.AlertState)
+	if err != nil {
 		return fmt.Errorf("write alerts.json: %w", err)
+	}
+	// onAckSync (task 3): a child's own AlertState.Ack -- via a manual
+	// `trinetra alerts ack` on that node, or the master's own AckIncident
+	// push applied there -- reaches the master purely through this same
+	// LiveUpdate.AlertState channel (nothing else ships alerts.json). Only
+	// worth re-scanning when the state actually changed: writeAlertState's
+	// own dedup already limits this to real transitions, not every few-
+	// second heartbeat.
+	if changed && r.onAckSync != nil {
+		r.onAckSync(id, u.AlertState)
 	}
 	b, _ := json.Marshal(u)
 	return writeFileAtomic(filepath.Join(n.dir, "live.json"), b, 0o600)
 }
 
 // writeAlertState rewrites alerts.json when as differs from the last
-// successfully written state.
-func (n *replicaNode) writeAlertState(as json.RawMessage) error {
+// successfully written state, reporting whether it actually wrote.
+func (n *replicaNode) writeAlertState(as json.RawMessage) (bool, error) {
 	if len(as) == 0 {
-		return nil
+		return false, nil
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.alertsWritten != nil && bytes.Equal(n.alertsWritten, as) {
-		return nil
+		return false, nil
 	}
 	if err := checkReplicaWriteFail("alerts"); err != nil {
-		return err
+		return false, err
 	}
 	if err := writeFileAtomic(filepath.Join(n.dir, "alerts.json"), as, 0o600); err != nil {
-		return err
+		return false, err
 	}
 	n.alertsWritten = bytes.Clone(as)
-	return nil
+	return true, nil
 }
 
 // RecordSkew adds one clock-skew sample (server_time - sent_at, seconds,
@@ -709,14 +756,24 @@ func (r *replicaSink) NodeAPI(id string, getCfg func() *config.Config) (core.API
 		return s
 	}
 	reload := func(*config.Config) error { return errRemoteNode }
-	return &replicaAPI{API: newInprocAPI(getSnap, getCfg, n.store, n.dir, reload, nil, nil), n: n}, nil
+	return &replicaAPI{
+		API: newInprocAPI(getSnap, getCfg, n.store, n.dir, reload, nil, nil),
+		n:   n, nodeID: id, hub: r.hub, rpc: r.rpc, incidents: r.incidents,
+	}, nil
 }
 
-// replicaAPI serves reads from a replica and refuses what needs the live
-// child (phase 1: container logs, config writes, acks, channel tests).
+// replicaAPI serves reads from a replica and refuses what still needs the
+// live child directly (config writes, channel tests): ack/unack and
+// container logs (task 9) instead go out over the master-to-child stream
+// via hub/rpc, so they work for a remote node exactly like they do locally,
+// just with a round trip.
 type replicaAPI struct {
 	core.API
-	n *replicaNode
+	n         *replicaNode
+	nodeID    string
+	hub       *fleet.Hub
+	rpc       *rpcRegistry
+	incidents *incidentStore
 }
 
 func (a *replicaAPI) HostInfo() (core.HostInfoView, error) {
@@ -734,12 +791,70 @@ func (a *replicaAPI) Version() (string, error) {
 	return "", nil
 }
 
-func (a *replicaAPI) Doctor() (core.DoctorReport, error)         { return core.DoctorReport{}, errRemoteNode }
-func (a *replicaAPI) ContainerLogs(string, int) (string, error)  { return "", errRemoteNode }
-func (a *replicaAPI) ApplyConfig(*config.Config) error           { return errRemoteNode }
-func (a *replicaAPI) AckAlert(string) error                      { return errRemoteNode }
-func (a *replicaAPI) UnackAlert(string) error                    { return errRemoteNode }
-func (a *replicaAPI) TestChannel(string) error                   { return errRemoteNode }
+func (a *replicaAPI) Doctor() (core.DoctorReport, error) { return core.DoctorReport{}, errRemoteNode }
+func (a *replicaAPI) ApplyConfig(*config.Config) error   { return errRemoteNode }
+func (a *replicaAPI) TestChannel(string) error           { return errRemoteNode }
+
+// AckAlert/UnackAlert (task 9): push an ack/unack frame down this node's
+// stream connection -- the child applies it locally via AlertState.Ack/
+// Unack (fleet_lease.go's applyAckFrame), exactly as a local `trinetra
+// alerts ack/unack` would. Neither waits for the child to actually apply
+// it: Push either lands in the node's stream queue or the node isn't
+// connected at all, and there is no receipt for ack/unack the way there is
+// for a delivered alert.
+func (a *replicaAPI) AckAlert(key string) error   { return a.remoteAck(key, false) }
+func (a *replicaAPI) UnackAlert(key string) error { return a.remoteAck(key, true) }
+
+func (a *replicaAPI) remoteAck(key string, unack bool) error {
+	if a.hub == nil || !a.hub.Connected(a.nodeID) {
+		return errNodeNotConnected
+	}
+	data, err := json.Marshal(ackFrameData{Key: key})
+	if err != nil {
+		return err
+	}
+	frameType := "ack"
+	if unack {
+		frameType = "unack"
+	}
+	a.hub.Push(a.nodeID, fleet.Frame{Type: frameType, Data: data})
+	if !unack && a.incidents != nil {
+		// Also record the ack on the master's own incident view immediately
+		// (task-9 ruling), so the UI need not wait for anything to come
+		// back over the stream. The actor isn't known at this layer -- this
+		// package has no notion of "which web user clicked ack" -- so it is
+		// recorded as "web" for now.
+		// TODO(plan C): thread the actual authenticated web user through
+		// here once the web UI wires up remote ack.
+		if inc, ok := a.incidents.OpenAlertIncident(a.nodeID, key); ok {
+			_, _ = a.incidents.Ack(inc.ID, "web", time.Now().Unix())
+		}
+	}
+	return nil
+}
+
+// ContainerLogs (task 9) runs `docker logs` on the remote node via an RPC
+// over the master-to-child stream (fleet_rpc.go): the master pushes an
+// "rpc" frame naming this call's id/method/args and waits up to 10s for the
+// child to POST a matching result. See rpcRegistry.Call for the exact error
+// wording on each failure mode.
+func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
+	if a.hub == nil || a.rpc == nil {
+		return "", errRemoteNode
+	}
+	args, err := json.Marshal(rpcContainerLogsArgs{Name: name, Lines: lines})
+	if err != nil {
+		return "", err
+	}
+	res, err := a.rpc.Call(a.hub, a.nodeID, "container_logs", args)
+	if err != nil {
+		return "", err
+	}
+	if !res.OK {
+		return "", errors.New(res.Error)
+	}
+	return res.Output, nil
+}
 func (a *replicaAPI) ValidateChannel(config.ChannelConfig) error { return errRemoteNode }
 func (a *replicaAPI) EnrollmentPIN(context.Context) (string, bool, error) {
 	return "", false, errRemoteNode

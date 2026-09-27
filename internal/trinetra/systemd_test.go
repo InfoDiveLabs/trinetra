@@ -480,3 +480,38 @@ func TestCmdUninstall_RemovesPluginManifest(t *testing.T) {
 		t.Fatalf("plugin manifest still present after uninstall: err=%v", err)
 	}
 }
+
+// TestCmdQuietHoursRefusedWhenManaged is the round-1 review's IMPORTANT-2
+// test: `trinetra quiet-hours` is a SECOND, dedicated path onto quiet_hours
+// besides `config set`/the web config page (both already guarded elsewhere)
+// -- it must refuse with the identical "managed by the fleet master"
+// message when a sidecar marks quiet_hours as managed, and never touch
+// config.json.
+func TestCmdQuietHoursRefusedWhenManaged(t *testing.T) {
+	dir, _, errb := fleetCLIEnv(t)
+	if rc := Main([]string{"quiet-hours", "22-7"}); rc != 0 {
+		t.Fatalf("baseline set exit %d: %s", rc, errb)
+	}
+	before := loadTestCfg(t).QuietHours
+
+	childDir := filepath.Join(dir, "fleet-child")
+	if err := os.MkdirAll(childDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := managedChildFileV1{Version: 1, Values: map[string]string{"quiet_hours": "23-8"}, Fragments: map[string]string{"quiet_hours": "fragqh0000001"}}
+	b, _ := json.Marshal(sidecar)
+	if err := os.WriteFile(filepath.Join(childDir, "managed.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	errb.Reset()
+	if rc := Main([]string{"quiet-hours", "1-2"}); rc != 1 {
+		t.Fatalf("exit %d, want 1: %s", rc, errb)
+	}
+	if !strings.Contains(errb.String(), "managed by the fleet master") || !strings.Contains(errb.String(), "fragqh0000001") {
+		t.Fatalf("stderr = %s, want the managed-by-master refusal naming the fragment", errb)
+	}
+	if got := loadTestCfg(t).QuietHours; got != before {
+		t.Fatalf("QuietHours = %q, want unchanged %q", got, before)
+	}
+}

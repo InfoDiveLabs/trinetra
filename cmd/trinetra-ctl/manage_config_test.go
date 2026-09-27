@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -355,6 +356,108 @@ func eqFold(a, b string) bool {
 			cb += 'a' - 'A'
 		}
 		if ca != cb {
+			return false
+		}
+	}
+	return true
+}
+
+// --- round-1 review, IMPORTANT 2: managed-key refusal across every ---------
+// --- dedicated ctl edit path (not just the generic "all settings" screen) -
+
+// stubFleetAPI satisfies core.FleetAPI by embedding a nil core.FleetAPI and
+// overriding only Status -- the one method managedFragmentFor ever calls --
+// so a test fake never has to implement the whole (large) interface.
+type stubFleetAPI struct {
+	core.FleetAPI
+	status core.FleetStatus
+}
+
+func (s stubFleetAPI) Status() (core.FleetStatus, error) { return s.status, nil }
+
+// fleetAwareFakeAPI adds core.FleetProvider to *fakeAPI (run_test.go),
+// wrapping whatever core.FleetStatus (in particular its Link.Managed map)
+// a test wants managedFragmentFor to see, without changing fakeAPI itself
+// (every other ctl test keeps using a plain *fakeAPI, which never satisfies
+// core.FleetProvider at all -- managedFragmentFor's type assertion simply
+// reports "not managed" for those, exactly the pre-existing behavior).
+type fleetAwareFakeAPI struct {
+	*fakeAPI
+	status core.FleetStatus
+}
+
+func (f fleetAwareFakeAPI) Fleet() core.FleetAPI          { return stubFleetAPI{status: f.status} }
+func (f fleetAwareFakeAPI) Node(string) (core.API, error) { return f.fakeAPI, nil }
+
+var _ core.FleetProvider = fleetAwareFakeAPI{}
+
+func managedStatus(key, fragmentID string) core.FleetStatus {
+	return core.FleetStatus{Role: "child", Link: &core.LinkView{Managed: map[string]string{key: fragmentID}}}
+}
+
+// TestApplyQuietHoursCmdRefusedWhenManaged pins the ctl Quiet Hours screen's
+// refusal (round-1 review IMPORTANT 2): identical message to `config set`/
+// the web config page, and ApplyConfig/Config are never even called.
+func TestApplyQuietHoursCmdRefusedWhenManaged(t *testing.T) {
+	base := &fakeAPI{cfg: config.Default()}
+	api := fleetAwareFakeAPI{fakeAPI: base, status: managedStatus("quiet_hours", "fragqh123456")}
+
+	msg := runCmd(t, applyQuietHoursCmd(api, "1-2"))
+	applied, ok := msg.(manageAppliedMsg)
+	if !ok {
+		t.Fatalf("cmd produced %T, want manageAppliedMsg", msg)
+	}
+	if applied.err == nil || !containsAll(applied.err.Error(), "quiet_hours", "managed by the fleet master", "fragqh123456") {
+		t.Fatalf("err = %v, want the managed-by-master refusal naming the fragment", applied.err)
+	}
+	if base.applyN != 0 {
+		t.Fatalf("ApplyConfig called %d times, want 0 (refused before ever fetching/applying config)", base.applyN)
+	}
+}
+
+// TestApplyConfigKeyCmdRefusedWhenManaged pins the generic "all settings"
+// screen's refusal for an allowlisted key it, unlike the dedicated Quiet
+// Hours screen, ALSO reaches (e.g. thresholds.cpu_pct has no dedicated
+// screen of its own).
+func TestApplyConfigKeyCmdRefusedWhenManaged(t *testing.T) {
+	base := &fakeAPI{cfg: config.Default()}
+	api := fleetAwareFakeAPI{fakeAPI: base, status: managedStatus("thresholds.cpu_pct", "fragcpu123456")}
+
+	msg := runCmd(t, applyConfigKeyCmd(api, "thresholds.cpu_pct", "50"))
+	applied, ok := msg.(settingsAppliedMsg)
+	if !ok {
+		t.Fatalf("cmd produced %T, want settingsAppliedMsg", msg)
+	}
+	if applied.err == nil || !containsAll(applied.err.Error(), "thresholds.cpu_pct", "managed by the fleet master", "fragcpu123456") {
+		t.Fatalf("err = %v, want the managed-by-master refusal naming the fragment", applied.err)
+	}
+	if base.applyN != 0 {
+		t.Fatalf("ApplyConfig called %d times, want 0", base.applyN)
+	}
+}
+
+// TestApplyQuietHoursCmdUnaffectedWhenNotManaged is the negative case: a
+// plain *fakeAPI (no fleet support at all, the pre-existing behavior of
+// every other ctl test) and a fleet-aware API reporting nothing managed
+// must both apply normally.
+func TestApplyQuietHoursCmdUnaffectedWhenNotManaged(t *testing.T) {
+	base := &fakeAPI{cfg: config.Default()}
+	msg := runCmd(t, applyQuietHoursCmd(base, "1-2"))
+	applied, ok := msg.(manageAppliedMsg)
+	if !ok {
+		t.Fatalf("cmd produced %T, want manageAppliedMsg", msg)
+	}
+	if applied.err != nil {
+		t.Fatalf("err = %v, want nil (quiet_hours not managed)", applied.err)
+	}
+	if base.applyN != 1 {
+		t.Fatalf("ApplyConfig called %d times, want 1", base.applyN)
+	}
+}
+
+func containsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if !strings.Contains(s, sub) {
 			return false
 		}
 	}

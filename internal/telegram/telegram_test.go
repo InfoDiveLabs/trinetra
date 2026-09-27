@@ -275,3 +275,153 @@ func TestGetUpdates(t *testing.T) {
 		t.Fatalf("updates = %+v", ups)
 	}
 }
+
+// TestSendMessageWithButtonsEncodesMarkup pins the exact reply_markup shape
+// (task 9): {"inline_keyboard":[[{"text":...,"callback_data":...}]]}, form
+// encoded like every other sendMessage field.
+func TestSendMessageWithButtonsEncodesMarkup(t *testing.T) {
+	var gotText, gotMarkup string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotText = r.FormValue("text")
+		gotMarkup = r.FormValue("reply_markup")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	c := New("tok", "123")
+	c.BaseURL = srv.URL
+	rows := [][]Button{{{Text: "Ack", Data: "ack:abc123abc123"}, {Text: "Silence 1h", Data: "sil1h:abc123abc123"}}}
+	if err := c.SendMessageWithButtons("node down", rows); err != nil {
+		t.Fatal(err)
+	}
+	if gotText != "node down" {
+		t.Fatalf("text = %q", gotText)
+	}
+	var markup struct {
+		InlineKeyboard [][]struct {
+			Text         string `json:"text"`
+			CallbackData string `json:"callback_data"`
+		} `json:"inline_keyboard"`
+	}
+	if err := json.Unmarshal([]byte(gotMarkup), &markup); err != nil {
+		t.Fatalf("reply_markup not valid JSON: %v (%q)", err, gotMarkup)
+	}
+	if len(markup.InlineKeyboard) != 1 || len(markup.InlineKeyboard[0]) != 2 {
+		t.Fatalf("markup = %+v", markup)
+	}
+	if markup.InlineKeyboard[0][0].Text != "Ack" || markup.InlineKeyboard[0][0].CallbackData != "ack:abc123abc123" {
+		t.Fatalf("button 0 = %+v", markup.InlineKeyboard[0][0])
+	}
+	if markup.InlineKeyboard[0][1].Text != "Silence 1h" || markup.InlineKeyboard[0][1].CallbackData != "sil1h:abc123abc123" {
+		t.Fatalf("button 1 = %+v", markup.InlineKeyboard[0][1])
+	}
+}
+
+// TestSendMessagePlainHasNoMarkup asserts the ordinary SendMessage path
+// never sets reply_markup at all (not even an empty one), so solo/child
+// messages stay byte-for-byte as before this task.
+func TestSendMessagePlainHasNoMarkup(t *testing.T) {
+	var sawMarkup bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("reply_markup") != "" {
+			sawMarkup = true
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	c := New("tok", "123")
+	c.BaseURL = srv.URL
+	if err := c.SendMessage("hi"); err != nil {
+		t.Fatal(err)
+	}
+	if sawMarkup {
+		t.Fatal("plain SendMessage set reply_markup")
+	}
+}
+
+// TestGetUpdatesDecodesCallbackQuery pins the callback_query shape (task 9):
+// id/data/from.id/message.chat.id decode into CallbackID/CallbackData/
+// CallbackChat, and a plain-message Update's callback fields stay empty.
+func TestGetUpdatesDecodesCallbackQuery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{
+			"ok": true,
+			"result": []map[string]any{
+				{"update_id": 1, "message": map[string]any{
+					"text": "/status",
+					"chat": map[string]any{"id": 42},
+				}},
+				{"update_id": 2, "callback_query": map[string]any{
+					"id":   "cbq1",
+					"data": "ack:abcdef012345",
+					"from": map[string]any{"id": 42},
+					"message": map[string]any{
+						"chat": map[string]any{"id": 42},
+					},
+				}},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	c := New("tok", "")
+	c.BaseURL = srv.URL
+	ups, err := c.GetUpdates(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ups) != 2 {
+		t.Fatalf("updates = %+v", ups)
+	}
+	if ups[0].CallbackID != "" || ups[0].Text != "/status" {
+		t.Fatalf("plain message update = %+v", ups[0])
+	}
+	cb := ups[1]
+	if cb.CallbackID != "cbq1" || cb.CallbackData != "ack:abcdef012345" || cb.CallbackChat != "42" {
+		t.Fatalf("callback update = %+v", cb)
+	}
+}
+
+// TestAnswerCallbackQuerySendsIDAndText pins AnswerCallbackQuery's request
+// shape: callback_query_id and text as form fields against
+// answerCallbackQuery.
+func TestAnswerCallbackQuerySendsIDAndText(t *testing.T) {
+	var gotPath, gotID, gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotPath = r.URL.Path
+		gotID = r.FormValue("callback_query_id")
+		gotText = r.FormValue("text")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	c := New("tok", "123")
+	c.BaseURL = srv.URL
+	if err := c.AnswerCallbackQuery(context.Background(), "cbq1", "acked"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotPath, "answerCallbackQuery") {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotID != "cbq1" || gotText != "acked" {
+		t.Fatalf("id=%q text=%q", gotID, gotText)
+	}
+}
+
+// TestAnswerCallbackQueryPropagatesError asserts a non-200 status is
+// surfaced as an error rather than silently swallowed, matching
+// sendOneContext's own error handling.
+func TestAnswerCallbackQueryPropagatesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"description":"query is too old"}`))
+	}))
+	defer srv.Close()
+	c := New("tok", "123")
+	c.BaseURL = srv.URL
+	err := c.AnswerCallbackQuery(context.Background(), "cbq1", "acked")
+	if err == nil || !strings.Contains(err.Error(), "query is too old") {
+		t.Fatalf("err = %v, want it to mention the API's description", err)
+	}
+}

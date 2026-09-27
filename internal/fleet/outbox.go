@@ -59,6 +59,17 @@ type Outbox struct {
 	oldestAck uint64
 	oldestTS  int64
 
+	// alertSeqs indexes the seq of every unacked KindAlert record this
+	// outbox currently knows about, so ReadPriority (the shipper's priority
+	// lane) can find them without scanning the whole backlog. It is built
+	// once at open (from the same segment scan openOutbox already does) and
+	// kept current by Append (add) and Ack/divergeLocked (prune everything
+	// <= the new acked seq). A seq can also go stale here without an
+	// explicit prune -- evicted by the cap into a Gap before being acked --
+	// ReadPriority cleans those up lazily when it finds them missing from
+	// every segment, so no eviction path needs its own bookkeeping.
+	alertSeqs map[uint64]struct{}
+
 	// writeFrame, when non-nil, replaces the active segment's Write so tests
 	// can inject a failed or partial append. nil in production.
 	writeFrame func(f *os.File, b []byte) (int, error)
@@ -79,7 +90,7 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	o := &Outbox{dir: dir, max: maxBytes, segMax: segMax, notify: make(chan struct{}, 1)}
+	o := &Outbox{dir: dir, max: maxBytes, segMax: segMax, notify: make(chan struct{}, 1), alertSeqs: map[uint64]struct{}{}}
 	if b, err := os.ReadFile(o.cursorPath()); err == nil {
 		o.acked, _ = strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
 	}
@@ -102,7 +113,7 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		s, err := scanSegment(name)
+		s, aseqs, err := scanSegment(name)
 		if err != nil {
 			return nil, err
 		}
@@ -111,6 +122,11 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 			continue
 		}
 		o.segs = append(o.segs, s)
+		for _, seq := range aseqs {
+			if seq > o.acked {
+				o.alertSeqs[seq] = struct{}{}
+			}
+		}
 	}
 	// A segment fully covered by the acked cursor is a leftover: either the
 	// normal case (Ack deletes fully-acked segments but always keeps one to
@@ -158,13 +174,16 @@ func (o *Outbox) reconcileAckedWithGaps() bool {
 }
 
 // scanSegment reads every valid frame in path, truncating the file at the
-// first torn or corrupt frame (a crash mid-write), and returns its metadata.
-func scanSegment(path string) (*segment, error) {
+// first torn or corrupt frame (a crash mid-write), and returns its metadata
+// plus the seq of every KindAlert frame found (for the caller to seed
+// Outbox.alertSeqs; see openOutbox).
+func scanSegment(path string) (*segment, []uint64, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s := &segment{path: path}
+	var alertSeqs []uint64
 	off := 0
 	for {
 		rec, n, ok := decodeFrame(b[off:])
@@ -182,15 +201,18 @@ func scanSegment(path string) (*segment, error) {
 			s.maxTS = rec.TS
 		}
 		s.count++
+		if rec.Kind == KindAlert {
+			alertSeqs = append(alertSeqs, rec.Seq)
+		}
 		off += n
 	}
 	if off < len(b) {
 		if err := os.Truncate(path, int64(off)); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	s.size = int64(off)
-	return s, nil
+	return s, alertSeqs, nil
 }
 
 func encodeFrame(seq uint64, kind byte, ts int64, data []byte) []byte {
@@ -273,6 +295,9 @@ func (o *Outbox) Append(kind string, ts int64, data []byte) (uint64, error) {
 	}
 	s.size += int64(len(frame))
 	s.count++
+	if kind == KindAlert {
+		o.alertSeqs[seq] = struct{}{}
+	}
 	o.next++
 	if err := o.enforceCapLocked(); err != nil {
 		return seq, err
@@ -335,6 +360,7 @@ func (o *Outbox) recordFailedAppendLocked(s *segment, seq uint64, ts int64, werr
 	o.gaps = newGaps
 	o.acked = seq
 	o.next = seq + 1
+	o.pruneAlertSeqsLocked(seq)
 	for len(o.segs) > 0 && o.segs[0].last <= o.acked {
 		_ = os.Remove(o.segs[0].path)
 		o.segs = o.segs[1:]
@@ -433,6 +459,7 @@ func (o *Outbox) enforceCapLocked() error {
 		}
 		o.gaps = newGaps
 		o.acked = newAcked
+		o.pruneAlertSeqsLocked(newAcked)
 	}
 	o.segs = remaining
 	for _, s := range drop {
@@ -504,6 +531,98 @@ func (o *Outbox) Read(after uint64, maxBytes, maxRecords int) ([]Record, error) 
 	return out, nil
 }
 
+// pruneAlertSeqsLocked drops every indexed alert seq <= upTo: it has either
+// been acked (durably applied) or folded into a Gap, so ReadPriority no
+// longer needs to consider it. Callers hold o.mu.
+func (o *Outbox) pruneAlertSeqsLocked(upTo uint64) {
+	for seq := range o.alertSeqs {
+		if seq <= upTo {
+			delete(o.alertSeqs, seq)
+		}
+	}
+}
+
+// ReadPriority returns every currently unacked KindAlert record, ascending
+// by seq, capped the same way Read is (at least one record, then maxRecords
+// and maxBytes). It uses the small in-memory alert-seq index (see
+// Outbox.alertSeqs) so shipOnce's priority lane can find the -- usually
+// tiny -- set of pending alerts without scanning a potentially huge general
+// backlog first.
+//
+// A seq the index still remembers but that turns out to be in no segment
+// (evicted by the cap and folded into a Gap since it was indexed) is simply
+// dropped from the index here; that record is not lost, it is repaired via
+// the ordinary GapFiller path, which shipOnce always tries before this.
+func (o *Outbox) ReadPriority(maxBytes, maxRecords int) ([]Record, error) {
+	o.mu.Lock()
+	if len(o.alertSeqs) == 0 {
+		o.mu.Unlock()
+		return nil, nil
+	}
+	want := make(map[uint64]bool, len(o.alertSeqs))
+	for seq := range o.alertSeqs {
+		want[seq] = true
+	}
+	segs := make([]segment, len(o.segs))
+	for i, s := range o.segs {
+		segs[i] = *s
+	}
+	o.mu.Unlock()
+
+	var out []Record
+	for _, s := range segs {
+		if len(want) == 0 {
+			break
+		}
+		f, err := os.Open(s.path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue // dropped by the cap concurrently
+			}
+			return nil, err
+		}
+		b := make([]byte, s.size)
+		_, err = io.ReadFull(f, b)
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
+		off := 0
+		for off < len(b) {
+			rec, n, ok := decodeFrame(b[off:])
+			if !ok {
+				break
+			}
+			off += n
+			if !want[rec.Seq] {
+				continue
+			}
+			delete(want, rec.Seq)
+			out = append(out, rec)
+		}
+	}
+	if len(want) > 0 {
+		// Stale entries: gone from every segment (cap-evicted into a Gap
+		// since indexed). Forget them so ReadPriority doesn't keep looking.
+		o.mu.Lock()
+		for seq := range want {
+			delete(o.alertSeqs, seq)
+		}
+		o.mu.Unlock()
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	n := 0
+	total := 0
+	for _, r := range out {
+		if n > 0 && (n >= maxRecords || total+len(r.Data) > maxBytes) {
+			break
+		}
+		total += len(r.Data)
+		n++
+	}
+	return out[:n], nil
+}
+
 // DivergenceError reports that the master acked a seq this outbox never
 // issued: the child kept its identity but its outbox was deleted or rolled
 // back (restore, rm -rf outbox/), so the master already holds a higher seq
@@ -546,6 +665,7 @@ func (o *Outbox) Ack(seq uint64) error {
 	if err := writeFileAtomic(o.cursorPath(), []byte(strconv.FormatUint(seq, 10)), 0o600); err != nil {
 		return err
 	}
+	o.pruneAlertSeqsLocked(seq)
 	for len(o.segs) > 1 && o.segs[0].last <= o.acked {
 		if err := os.Remove(o.segs[0].path); err != nil && !os.IsNotExist(err) {
 			return err

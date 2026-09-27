@@ -230,14 +230,16 @@ type Config struct {
 	// `config set` (Set refuses them), because they must change together with
 	// the PKI files those commands create.
 	Fleet struct {
-		Role          string `json:"role,omitempty"`
-		Listen        string `json:"listen,omitempty"`
-		Address       string `json:"address,omitempty"`
-		MasterURL     string `json:"master_url,omitempty"`
-		CAPin         string `json:"ca_pin,omitempty"`
-		NodeID        string `json:"node_id,omitempty"`
-		OutboxMaxMB   int    `json:"outbox_max_mb,omitempty"`
-		NodeDownAfter string `json:"node_down_after,omitempty"`
+		Role              string `json:"role,omitempty"`
+		Listen            string `json:"listen,omitempty"`
+		Address           string `json:"address,omitempty"`
+		MasterURL         string `json:"master_url,omitempty"`
+		CAPin             string `json:"ca_pin,omitempty"`
+		NodeID            string `json:"node_id,omitempty"`
+		OutboxMaxMB       int    `json:"outbox_max_mb,omitempty"`
+		NodeDownAfter     string `json:"node_down_after,omitempty"`
+		FallbackAfter     string `json:"fallback_after,omitempty"`
+		LinkDownWarnAfter string `json:"link_down_warn_after,omitempty"`
 	} `json:"fleet"`
 }
 
@@ -360,6 +362,28 @@ func (c *Config) FleetNodeDownAfter() time.Duration {
 		return d
 	}
 	return 2 * time.Minute
+}
+
+// FleetFallbackAfter is how long a child waits for the master's receipt of a
+// routed alert before delivering it locally instead ("via local fallback:
+// master unreachable"); default 2m. An unparsable stored value (never
+// written by Set, which validates) also falls back to the default.
+func (c *Config) FleetFallbackAfter() time.Duration {
+	if d, err := time.ParseDuration(c.Fleet.FallbackAfter); err == nil && d > 0 {
+		return d
+	}
+	return 2 * time.Minute
+}
+
+// FleetLinkDownWarnAfter is how long a child's link to the master must be
+// unreachable before it raises its own local "fleet link down" warning
+// alert; default 10m. An unparsable stored value (never written by Set,
+// which validates) also falls back to the default.
+func (c *Config) FleetLinkDownWarnAfter() time.Duration {
+	if d, err := time.ParseDuration(c.Fleet.LinkDownWarnAfter); err == nil && d > 0 {
+		return d
+	}
+	return 10 * time.Minute
 }
 
 // fleetManagedKeys are readable via Get but written only by the
@@ -840,6 +864,10 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatInt(c.FleetOutboxMaxBytes()>>20, 10), true
 	case "fleet.node_down_after":
 		return c.FleetNodeDownAfter().String(), true
+	case "fleet.fallback_after":
+		return c.FleetFallbackAfter().String(), true
+	case "fleet.link_down_warn_after":
+		return c.FleetLinkDownWarnAfter().String(), true
 	}
 	return "", false
 }
@@ -1096,6 +1124,18 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("fleet.node_down_after must be a duration >= 30s, e.g. 2m")
 		}
 		c.Fleet.NodeDownAfter = val
+	case "fleet.fallback_after":
+		d, err := time.ParseDuration(val)
+		if err != nil || d < 5*time.Second {
+			return fmt.Errorf("fleet.fallback_after must be a duration >= 5s, e.g. 2m")
+		}
+		c.Fleet.FallbackAfter = val
+	case "fleet.link_down_warn_after":
+		d, err := time.ParseDuration(val)
+		if err != nil || d < 30*time.Second {
+			return fmt.Errorf("fleet.link_down_warn_after must be a duration >= 30s, e.g. 10m")
+		}
+		c.Fleet.LinkDownWarnAfter = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
@@ -1197,6 +1237,8 @@ var keyCatalog = []KeyInfo{
 	{Name: "fleet.listen", Group: "Fleet", Kind: "string", Help: "Master only: fleet listener bind address as host:port. Default :9443.", RestartRequired: true},
 	{Name: "fleet.outbox_max_mb", Group: "Fleet", Kind: "int", Help: "Child only: max MiB of telemetry spooled while the master is unreachable. Default 512.", RestartRequired: true},
 	{Name: "fleet.node_down_after", Group: "Fleet", Kind: "duration", Help: "Master only: no contact for this long marks a node down and alerts. Default 2m.", RestartRequired: true},
+	{Name: "fleet.fallback_after", Group: "Fleet", Kind: "duration", Help: "Child only: how long to wait for the master's delivery receipt on a routed alert before delivering it locally instead. Default 2m."},
+	{Name: "fleet.link_down_warn_after", Group: "Fleet", Kind: "duration", Help: "Child only: how long the link to the master must be down before a local warning alert fires. Default 10m."},
 
 	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
 }

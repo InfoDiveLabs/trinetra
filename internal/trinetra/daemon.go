@@ -609,6 +609,66 @@ const alertLogRetention = 30 * 24 * time.Hour
 // the time.
 const storeMaintenanceInterval = 15 * time.Minute
 
+// alertRoute, when set, decides whether an Alert reaching enqueueAndLog is
+// delivered locally (true) or held back because the fleet master is
+// expected to deliver it instead (false, while it holds a valid delivery
+// lease -- see fleet_lease.go). It is nil for solo and for a master
+// (enqueueAndLog then behaves exactly as it always has: everything is
+// delivered locally) and is set only by a child, in startChild, to its
+// *handoff.Route. This package-level hook -- rather than threading a route
+// func through enqueueAndLog's signature or fleetDeps -- is deliberate:
+// enqueueAndLog is called from half a dozen sites across this file (the
+// anomaly sampler, boot report, digests, and fleetDeps.alert itself), most
+// of which have no fleetDeps in scope at all, and every one of them must
+// keep working byte-for-byte unchanged for solo and master. A signature or
+// fleetDeps-threading change would touch every call site just to reach the
+// one (startChild) that needs it; a hook that defaults to nil touches none
+// of them and leaves solo/master's control flow through enqueueAndLog
+// identical to before this file changed.
+//
+// A pointer-to-func (not a plain func) behind atomic.Pointer so startChild's
+// wiring (and rt.stop's teardown, and a test's cleanup) can install/clear it
+// without racing a concurrent read from the sampler goroutine.
+var alertRoute atomic.Pointer[func(Alert) bool]
+
+// setAlertRoute installs f (nil clears it) as alertRoute and returns a
+// restore func that puts back whatever was installed before -- so
+// startChild's shutdown, and a test's t.Cleanup, can undo exactly their own
+// wiring rather than unconditionally clearing a route something else in the
+// same process installed.
+func setAlertRoute(f func(Alert) bool) (restore func()) {
+	var prev *func(Alert) bool
+	if f == nil {
+		prev = alertRoute.Swap(nil)
+	} else {
+		prev = alertRoute.Swap(&f)
+	}
+	return func() { alertRoute.Store(prev) }
+}
+
+// reloadOnHUP is the SIGHUP handler's actual logic, extracted from its
+// goroutine (below, in the daemon's own startup function) so it is testable
+// without spinning the whole daemon: read cfgPath and, if that succeeds,
+// apply it via reload -- which reimposes any managed-config values before
+// persisting (round-2 review, IMPORTANT: an operator's SIGHUP after a
+// direct config.json edit, a restored backup, or an offline write must not
+// silently adopt a diverged managed key) and then applies in-process,
+// exactly as this handler always has. A Load failure is silently ignored
+// (msg == "", err == nil), matching this handler's behaviour before this
+// extraction; a reload failure (e.g. saveDaemonCfg's write failing) is
+// returned for the caller to report, which could not happen before reload
+// replaced a direct, always-succeeding applyConfig call here.
+func reloadOnHUP(cfgPath string, reload func(*config.Config) error) (msg string, err error) {
+	c, loadErr := config.Load(cfgPath)
+	if loadErr != nil {
+		return "", nil
+	}
+	if err := reload(c); err != nil {
+		return "", err
+	}
+	return "config reloaded", nil
+}
+
 // enqueueAndLog records the alert to the AlertLog and the live event bus, then
 // hands delivery to the async notifier queue. This is the single choke point
 // every alert in the daemon (anomaly fire/recover, boot report, digests) goes
@@ -621,15 +681,26 @@ const storeMaintenanceInterval = 15 * time.Minute
 // may also be nil (eventBus.Publish's own nil-guard). alertEventKind maps the
 // bus event Kind exactly as before, so control-socket subscribers see the
 // same alert_fire/alert_recover/digest shapes.
+//
+// alertRoute (see above), if set, can turn the local delivery
+// (q.Enqueue) off: AppendAlertEvent and bus.Publish always run regardless,
+// so a routed-to-master alert is still recorded and visible everywhere it
+// always was, just not queued for this host's own notifier channels.
 func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool) {
+	deliverLocally := true
+	if route := alertRoute.Load(); route != nil {
+		deliverLocally = (*route)(a)
+	}
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
-			Time:     a.Time,
-			Key:      a.Key,
-			Title:    a.Title,
-			Severity: a.Severity.String(),
-			Kind:     a.Kind,
-			Source:   a.Source,
+			Time:           a.Time,
+			Key:            a.Key,
+			Title:          a.Title,
+			Severity:       a.Severity.String(),
+			Kind:           a.Kind,
+			Source:         a.Source,
+			RoutedToMaster: !deliverLocally,
+			FiredAt:        a.Time,
 		})
 	}
 	bus.Publish(core.Event{
@@ -639,7 +710,93 @@ func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, qui
 		Title:    a.Title,
 		Time:     a.Time,
 	})
-	q.Enqueue(a, quiet)
+	if deliverLocally {
+		q.Enqueue(a, quiet)
+	}
+}
+
+// deliverSyncAndLog is enqueueAndLog's synchronous twin, used ONLY as the
+// fleet master's alerting-engine delivery hook (fleetDeps.alert,
+// fleetAlertEngine.deliver in fleet_engine.go). The engine must know
+// whether at least one channel actually accepted the alert before it pushes
+// a receipt down to a child node (B3 review round 1: a receipt must never
+// go out before delivery has actually completed) -- something
+// enqueueAndLog's fire-and-forget NotifierQueue.Enqueue cannot report. It
+// logs and publishes exactly like enqueueAndLog (so the master's own
+// alertlog.jsonl/live event bus stay a complete history for its own alerts,
+// same as before this existed), then dispatches synchronously against q's
+// CURRENT Dispatcher -- bypassing the async queue and its drop policy
+// entirely, which exists for the high-volume local anomaly path this isn't
+// -- and reports whether at least one channel succeeded.
+//
+// The engine already runs this off its own goroutine per alert (see
+// Submit), so blocking here for up to the Dispatcher's ~15s-per-channel
+// timeout does not stall the engine's caller.
+func deliverSyncAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool) bool {
+	if alog != nil {
+		_ = alog.AppendAlertEvent(AlertEvent{
+			Time: a.Time, Key: a.Key, Title: a.Title, Severity: a.Severity.String(),
+			Kind: a.Kind, Source: a.Source, FiredAt: a.Time,
+		})
+	}
+	bus.Publish(core.Event{
+		Kind: alertEventKind(a), Severity: a.Severity.String(), Source: a.Source, Title: a.Title, Time: a.Time,
+	})
+	d := q.disp.Load()
+	if d == nil {
+		return false
+	}
+	for _, r := range d.Dispatch(a, quiet) {
+		if r.Err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// deliverSyncAndLogTo is deliverSyncAndLog narrowed to a specific
+// channel-name subset (fleet routing, task 5): identical alert-log/live-bus
+// recording, but dispatches via the Dispatcher's DispatchTo rather than
+// Dispatch -- used as fleetAlertEngine.SetRouting's deliverNamed once a
+// routing config is wired (fleetDeps.deliverSyncTo below).
+func deliverSyncAndLogTo(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, channels []string) bool {
+	if alog != nil {
+		_ = alog.AppendAlertEvent(AlertEvent{
+			Time: a.Time, Key: a.Key, Title: a.Title, Severity: a.Severity.String(),
+			Kind: a.Kind, Source: a.Source, FiredAt: a.Time,
+		})
+	}
+	bus.Publish(core.Event{
+		Kind: alertEventKind(a), Severity: a.Severity.String(), Source: a.Source, Title: a.Title, Time: a.Time,
+	})
+	d := q.disp.Load()
+	if d == nil {
+		return false
+	}
+	for _, r := range d.DispatchTo(a, quiet, channels) {
+		if r.Err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// dispatchOnlyTo dispatches to a channel-name subset WITHOUT any
+// alert-log/live-bus recording (fleet routing, task 5): used as
+// fleetAlertEngine.SetRouting's dispatchOnly for escalation/repeat
+// notifications, which re-send an alert that was already recorded once (at
+// its own fire) rather than logging a new record every time.
+func dispatchOnlyTo(q *NotifierQueue, a Alert, quiet bool, channels []string) bool {
+	d := q.disp.Load()
+	if d == nil {
+		return false
+	}
+	for _, r := range d.DispatchTo(a, quiet, channels) {
+		if r.Err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // alertEventKind maps a dispatched Alert onto the Kind string its
@@ -766,9 +923,10 @@ func cmdDaemon(args []string) int {
 	go q.Run(daemonCtx)
 	// applyConfig swaps the shared cfg pointer and rebuilds the dispatcher
 	// under mu (mirroring setChatID's pointer-swap pattern below). It does
-	// NOT persist: callers that already have c on disk (the SIGHUP handler,
-	// which just re-read cfgPath) call this directly; reload (below) persists
-	// first, then applies.
+	// NOT persist and does NOT reimpose managed-config values -- reload
+	// (below) is the one path that does both, and every caller with reason
+	// to do either (including the SIGHUP handler, round 2 review) goes
+	// through it instead of calling this directly any more.
 	applyConfig := func(c *config.Config) {
 		nd := NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
 		mu.Lock()
@@ -781,16 +939,6 @@ func cmdDaemon(args []string) int {
 		// concurrent applyConfig may already be rewriting under mu.
 		q.SetDispatcher(nd)
 	}
-	hup := make(chan os.Signal, 1)
-	signal.Notify(hup, sighup)
-	go func() {
-		for range hup {
-			if c, err := config.Load(cfgPath); err == nil {
-				applyConfig(c)
-				fmt.Fprintln(stdout, "config reloaded")
-			}
-		}
-	}()
 	// SIGTERM/SIGINT: write the clean-stop marker (so the NEXT boot's downtime
 	// reconstruction knows this stop was intentional, not a crash/power loss),
 	// cancel the daemon context to unwind the background goroutines, and exit.
@@ -811,6 +959,13 @@ func cmdDaemon(args []string) int {
 		os.Exit(0)
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
+	// managedRef (task 8, round-1 review IMPORTANT 1) holds this child's
+	// managedChild once startFleet/startChild has built one (nil forever on
+	// solo/master, and briefly nil on a child too, until the Store below
+	// runs) -- reload reads it fresh on every call via an atomic pointer
+	// rather than a captured variable, since it is defined and closed over
+	// HERE, before startFleet (and so before managedChild even exists).
+	var managedRef atomic.Pointer[managedChild]
 	// reload persists newCfg to disk then applies it in-process: the closure
 	// newInprocAPI's ApplyConfig exposes to the control socket (and, through
 	// it, the web config editor, issue #66) so writes take effect
@@ -818,13 +973,53 @@ func cmdDaemon(args []string) int {
 	// saveDaemonCfg keeps the on-disk fleet identity keys: this daemon's
 	// in-memory config (or a plugin's) may predate a `trinetra fleet`
 	// command, which must be the only thing that changes them.
+	//
+	// reimposeManagedValues (round-1 review IMPORTANT 1) runs FIRST: reload
+	// is the ONE shared full-config apply path every ApplyConfig caller goes
+	// through (the web channels/public-settings pages, every ctl "manage"
+	// screen, a child's own managed-config apply) -- none of the ordinary
+	// callers know anything about managed-config, so without this a stale
+	// read (or a race with a fresh master push) could silently persist a
+	// managed key back to whatever value it happened to carry. A nil
+	// managedRef (solo, master, or nothing currently managed) is a no-op.
 	reload := func(newCfg *config.Config) error {
+		reimposeManagedValues(managedRef.Load(), newCfg)
 		if err := saveDaemonCfg(newCfg); err != nil {
 			return err
 		}
 		applyConfig(newCfg)
 		return nil
 	}
+	// SIGHUP: re-read cfgPath and apply it. Routed through reload (round-2
+	// review, IMPORTANT), not applyConfig directly as before: an external
+	// edit to config.json (a direct edit, a restored backup, an offline
+	// write) can diverge a managed key from its committed value, and SIGHUP
+	// is exactly the mechanism an operator would use to pick such an edit
+	// up -- without going through reload's reimpose, that divergence would
+	// be picked up VERBATIM (including the diverged managed key) and then
+	// PERSIST there forever, since it's now what's on disk AND in memory.
+	// reload's reimpose forces any managed key straight back and, if that
+	// actually changed anything, saveDaemonCfg writes the corrected file
+	// back out -- so a SIGHUP after an external edit self-heals instead of
+	// adopting the drift. This preserves the handler's existing observable
+	// behaviour otherwise (read cfgPath, apply in-process, print "config
+	// reloaded"; a Load error stays silent, exactly as before) -- reload
+	// adds only the reimpose-then-save step in front of the same
+	// applyConfig call it already made.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, sighup)
+	go func() {
+		for range hup {
+			msg, err := reloadOnHUP(cfgPath, reload)
+			if err != nil {
+				fmt.Fprintf(stderr, "config reload failed: %v\n", err)
+				continue
+			}
+			if msg != "" {
+				fmt.Fprintln(stdout, msg)
+			}
+		}
+	}()
 	// setChatID race-safely records an auto-captured chat id by pointer-SWAPPING
 	// the shared cfg (mirroring the SIGHUP reload above). Never mutate a field on
 	// the in-use struct: getCfg readers read fields after releasing the RLock.
@@ -919,10 +1114,26 @@ func cmdDaemon(args []string) int {
 		alert: func(a Alert) {
 			enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
 		},
+		deliverSync: func(a Alert) bool {
+			return deliverSyncAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		},
+		deliverSyncTo: func(a Alert, channels []string) bool {
+			return deliverSyncAndLogTo(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), channels)
+		},
+		dispatchOnly: func(a Alert, channels []string) bool {
+			return dispatchOnlyTo(q, a, inQuietHours(getCfg().QuietHours, time.Now()), channels)
+		},
+		alertFallback: func(a Alert, silences *pushedSilences) {
+			deliverFallback(silences, alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix())
+		},
 		logf: func(format string, args ...any) { fmt.Fprintf(stderr, format+"\n", args...) },
 	})
 	fleetStop.Store(&fleetRT.stop)
 	defer fleetRT.stop()
+	// managedRef is now live for reload's reimposeManagedValues above: nil
+	// on solo/master (fleetRT.provider.managed is only ever set for a
+	// child, fleet_daemon.go's startChild).
+	managedRef.Store(fleetRT.provider.managed)
 	if fleetRT.tee != nil {
 		if sw != nil {
 			sw.setTee(fleetRT.tee)
@@ -1093,7 +1304,7 @@ func cmdDaemon(args []string) int {
 	_ = os.Remove(cleanStopPath)
 
 	// telegram long-poller (owns its own prevCPU internally)
-	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll)
+	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll, fleetRT.provider.Fleet())
 
 	// sampler loop: ticks at fast_interval and does NO blocking subprocess or
 	// network I/O -- that all lives on the slow-collector / healthchecks /
@@ -1290,6 +1501,16 @@ func cmdDaemon(args []string) int {
 			// a stuck disk can't block the sampler here.
 			_ = baseline.Save(st.BaselinePath())
 			_ = alog.PruneAlertLog(now.Add(-alertLogRetention).Unix())
+			// A child's handoff-receipts sidecar (fleet_lease.go) needs the
+			// same periodic pruning as the alert log, not only the one-shot
+			// prune startChild does at reconciliation time -- otherwise it
+			// grows forever on a long-lived child. fleet.fallback_after is
+			// re-read live (not RestartRequired), mirroring how startChild's
+			// own prune window is computed.
+			if fleetRT.provider.role == config.RoleChild {
+				fallbackAfter := getCfg().FleetFallbackAfter()
+				_ = pruneHandoffReceipts(handoffReceiptsPath(stateDir), now.Add(-10*fallbackAfter).Unix())
+			}
 		}
 
 		<-fastTicker.C
@@ -1357,7 +1578,7 @@ func digestNow(store SampleStore, now time.Time, days int, title string, rawRete
 	return buildDigest(title, window, peakCPU, peakMem, len(countPts), downs)
 }
 
-func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess, enroll *enrollState) {
+func pollLoop(getCfg func() *config.Config, setChatID func(string), store SampleStore, x Exec, fs FileSource, da dockerAccess, enroll *enrollState, fleetAPI core.FleetAPI) {
 	// The poller owns its CPUStat; it is never shared with the sampler goroutine.
 	offset := 0
 	var prevCPU CPUStat
@@ -1409,19 +1630,47 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			setChatID(id)
 			enroll.Reset()
 		}
-		offset, c = processUpdates(ups, offset, c, enroll, time.Now, getCfg, onEnroll, reply)
+		// onCallback (task 9) answers a button tap: unlike reply, it is
+		// invoked for EVERY callback_query processUpdates sees, authorized
+		// or not, since Telegram requires an answer either way. On solo/
+		// child, fleetAPI is that role's own core.FleetAPI (never nil --
+		// fleetProvider.Fleet always returns one), whose write methods all
+		// fail closed with core.ErrNotMaster, so telegramCallbackAnswer's
+		// action branches simply never succeed there -- matching the
+		// ruling that solo/child callbacks are ignored beyond the answer.
+		onCallback := func(cc *config.Config, u telegram.Update) {
+			text := telegramCallbackAnswer(fleetAPI, cc.Telegram.ChatID, u, time.Now)
+			client := telegram.New(cc.Telegram.Token, cc.Telegram.ChatID)
+			if err := client.AnswerCallbackQuery(context.Background(), u.CallbackID, text); err != nil {
+				fmt.Fprintln(stderr, "telegram answer callback:", err)
+			}
+		}
+		offset, c = processUpdates(ups, offset, c, enroll, time.Now, getCfg, onEnroll, reply, onCallback)
 	}
 }
 
 // processUpdates handles one batch of inbound Telegram updates. It advances
 // the offset, enrolls the owner from a correct "/start <pin>" while the bot is
 // unclaimed, drops any update whose sender is not the owner chat, and invokes
-// reply for authorized commands. It returns the new offset and the (possibly
-// reloaded) config so the caller can carry both into the next GetUpdates
-// cycle.
-func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll *enrollState, now func() time.Time, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update)) (int, *config.Config) {
+// reply for authorized text commands or onCallback for a button tap (task 9;
+// onCallback runs for EVERY callback_query, authorized or not -- it decides
+// authorization itself and always answers). It returns the new offset and
+// the (possibly reloaded) config so the caller can carry both into the next
+// GetUpdates cycle.
+func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll *enrollState, now func() time.Time, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update), onCallback func(*config.Config, telegram.Update)) (int, *config.Config) {
 	for _, u := range ups {
 		offset = u.UpdateID + 1
+		if u.CallbackID != "" {
+			// A button tap is never a text command and never participates
+			// in enrollment: it carries its own authorization check (the
+			// enrolled owner chat, exactly like a text command) and must
+			// always be answered, even from a foreign chat or before
+			// anyone has ever enrolled at all.
+			if onCallback != nil {
+				onCallback(c, u)
+			}
+			continue
+		}
 		if c.Telegram.ChatID == "" {
 			// Unclaimed: ownership is granted ONLY by a correct "/start <pin>"
 			// (#78 Scenario A). Everything else is ignored, so an attacker who

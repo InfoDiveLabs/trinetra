@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/InfoDiveLabs/trinetra/internal/telegram"
 )
 
 // Severity classifies how urgent an Alert is.
@@ -57,6 +59,13 @@ type Alert struct {
 	Kind     string // "fire" | "recover"
 	Source   string
 	Time     int64
+	// Buttons (task 9), when non-nil, is an inline keyboard the telegram
+	// Notifier attaches to this Alert's message (SendMessageWithButtons):
+	// the master's alerting engine sets it on an incident's fire
+	// notification only. Every other Notifier ignores it -- this is a
+	// generic, channel-agnostic field so a future channel could use it too,
+	// not a Telegram-specific one.
+	Buttons [][]telegram.Button
 }
 
 // Notifier delivers an Alert over some channel (Telegram, email, webhook, ...).
@@ -173,7 +182,43 @@ func (d *Dispatcher) Dispatch(a Alert, quiet bool) []DeliveryResult {
 			matched = append(matched, c)
 		}
 	}
+	return d.dispatchMatched(a, matched)
+}
 
+// DispatchTo is Dispatch narrowed to a specific channel-name subset (fleet
+// routing/escalation, task 5): a channel is sent to only if it is enabled,
+// its own Route still Allows a (quiet hours/severity/kind gating is never
+// bypassed by routing), AND either names contains the literal "*" or its
+// Name() is in names. names with neither "*" nor any matching name delivers
+// to nothing (an empty result), which is a valid outcome (e.g. a policy step
+// naming a channel that was since removed from config).
+func (d *Dispatcher) DispatchTo(a Alert, quiet bool, names []string) []DeliveryResult {
+	all := false
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		if n == "*" {
+			all = true
+			continue
+		}
+		set[n] = true
+	}
+	var matched []Channel
+	for _, c := range d.channels {
+		if !c.Enabled || !c.Route.Allows(a, quiet) {
+			continue
+		}
+		if !all && !set[c.N.Name()] {
+			continue
+		}
+		matched = append(matched, c)
+	}
+	return d.dispatchMatched(a, matched)
+}
+
+// dispatchMatched fans a out to every channel in matched concurrently,
+// bounding each by d.timeout -- the shared tail of Dispatch and DispatchTo,
+// which differ only in how they build matched.
+func (d *Dispatcher) dispatchMatched(a Alert, matched []Channel) []DeliveryResult {
 	results := make([]DeliveryResult, len(matched))
 
 	var wg sync.WaitGroup

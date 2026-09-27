@@ -520,6 +520,10 @@ func (f fleetClient) SetNodeTags(id string, tags []string) error {
 	return f.c.call("Fleet.SetNodeTags", map[string]any{"id": id, "tags": tags}, nil)
 }
 
+func (f fleetClient) SetNodeDeps(id string, deps []string, actor string) error {
+	return f.c.call("Fleet.SetNodeDeps", map[string]any{"id": id, "deps": deps, "actor": actor}, nil)
+}
+
 func (f fleetClient) RevokeNode(id string) error {
 	return f.c.call("Fleet.RevokeNode", map[string]any{"id": id}, nil)
 }
@@ -542,4 +546,108 @@ func (f fleetClient) CreateToken(s core.TokenSpec) (core.CreatedToken, error) {
 
 func (f fleetClient) DeleteToken(id string) error {
 	return f.c.call("Fleet.DeleteToken", map[string]any{"id": id}, nil)
+}
+
+func (f fleetClient) Incidents(filter core.IncidentFilter) ([]core.Incident, error) {
+	var v []core.Incident
+	err := f.c.call("Fleet.Incidents", map[string]any{"inc_filter": filter}, &v)
+	return v, err
+}
+
+func (f fleetClient) Incident(id string) (core.Incident, error) {
+	var v core.Incident
+	err := f.c.call("Fleet.Incident", map[string]any{"id": id}, &v)
+	return v, err
+}
+
+func (f fleetClient) AckIncident(id, actor string) error {
+	return f.c.call("Fleet.AckIncident", map[string]any{"id": id, "actor": actor}, nil)
+}
+
+func (f fleetClient) Explain(key string) ([]core.IncidentEvent, error) {
+	var v []core.IncidentEvent
+	err := f.c.call("Fleet.Explain", map[string]any{"key": key}, &v)
+	return v, err
+}
+
+func (f fleetClient) Audit(limit int) ([]core.AuditEntry, error) {
+	var v []core.AuditEntry
+	err := f.c.call("Fleet.Audit", map[string]any{"limit": limit}, &v)
+	return v, err
+}
+
+func (f fleetClient) Silences() ([]core.Silence, error) {
+	var v []core.Silence
+	err := f.c.call("Fleet.Silences", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) CreateSilence(s core.Silence) (core.Silence, error) {
+	var v core.Silence
+	err := f.c.call("Fleet.CreateSilence", map[string]any{"silence": s}, &v)
+	return v, err
+}
+
+func (f fleetClient) ExpireSilence(id, actor string) error {
+	return f.c.call("Fleet.ExpireSilence", map[string]any{"id": id, "actor": actor}, nil)
+}
+
+func (f fleetClient) Maintenances() ([]core.Maintenance, error) {
+	var v []core.Maintenance
+	err := f.c.call("Fleet.Maintenances", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) {
+	var v core.Maintenance
+	err := f.c.call("Fleet.SaveMaintenance", map[string]any{"maintenance": m}, &v)
+	return v, err
+}
+
+func (f fleetClient) Alerting() (core.AlertingConfig, error) {
+	var v core.AlertingConfig
+	err := f.c.call("Fleet.Alerting", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) SetAlerting(cfg core.AlertingConfig, actor string) error {
+	return f.c.call("Fleet.SetAlerting", map[string]any{"alerting": cfg, "actor": actor}, nil)
+}
+
+func (f fleetClient) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
+	var v core.RouteDecision
+	err := f.c.call("Fleet.RouteTest", map[string]any{"test_alert": alert}, &v)
+	return v, err
+}
+
+func (f fleetClient) RuleStates() ([]core.RuleState, error) {
+	var v []core.RuleState
+	err := f.c.call("Fleet.RuleStates", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) DeleteMaintenance(id, actor string) error {
+	return f.c.call("Fleet.DeleteMaintenance", map[string]any{"id": id, "actor": actor}, nil)
+}
+
+func (f fleetClient) Managed() ([]core.ManagedFragment, error) {
+	var v []core.ManagedFragment
+	err := f.c.call("Fleet.Managed", struct{}{}, &v)
+	return v, err
+}
+
+func (f fleetClient) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
+	var v core.ManagedFragment
+	err := f.c.call("Fleet.SaveManaged", map[string]any{"managed_fragment": frag, "actor": actor}, &v)
+	return v, err
+}
+
+func (f fleetClient) DeleteManaged(id, actor string) error {
+	return f.c.call("Fleet.DeleteManaged", map[string]any{"id": id, "actor": actor}, nil)
+}
+
+func (f fleetClient) ManagedStatus() ([]core.ManagedStatus, error) {
+	var v []core.ManagedStatus
+	err := f.c.call("Fleet.ManagedStatus", struct{}{}, &v)
+	return v, err
 }

@@ -218,6 +218,10 @@ func (f *fakeFleet) SetNodeTags(id string, tags []string) error {
 	return nil
 }
 
+func (f *fakeFleet) SetNodeDeps(id string, deps []string, actor string) error {
+	return nil
+}
+
 func (f *fakeFleet) RevokeNode(id string) error {
 	if f.revokeErr != nil {
 		return f.revokeErr
@@ -247,6 +251,51 @@ func (f *fakeFleet) DeleteToken(id string) error {
 	f.deletedTokens = append(f.deletedTokens, id)
 	return nil
 }
+
+// Incidents/Incident/AckIncident/Explain/Audit: not yet exercised by any web
+// test (fleet phase 2's web surface for incidents lands in a later task);
+// these stubs exist only so fakeFleet keeps satisfying core.FleetAPI.
+func (f *fakeFleet) Incidents(core.IncidentFilter) ([]core.Incident, error) { return nil, nil }
+func (f *fakeFleet) Incident(string) (core.Incident, error)                 { return core.Incident{}, nil }
+func (f *fakeFleet) AckIncident(string, string) error                       { return nil }
+func (f *fakeFleet) Explain(string) ([]core.IncidentEvent, error)           { return nil, nil }
+func (f *fakeFleet) Audit(int) ([]core.AuditEntry, error)                   { return nil, nil }
+
+// Silences/CreateSilence/ExpireSilence/Maintenances/SaveMaintenance/
+// DeleteMaintenance: task 4's silences/maintenance windows have no web
+// surface yet; these stubs exist only so fakeFleet keeps satisfying
+// core.FleetAPI.
+func (f *fakeFleet) Silences() ([]core.Silence, error)                            { return nil, nil }
+func (f *fakeFleet) CreateSilence(s core.Silence) (core.Silence, error)           { return s, nil }
+func (f *fakeFleet) ExpireSilence(string, string) error                           { return nil }
+func (f *fakeFleet) Maintenances() ([]core.Maintenance, error)                    { return nil, nil }
+func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) { return m, nil }
+func (f *fakeFleet) DeleteMaintenance(string, string) error                       { return nil }
+
+// Alerting/SetAlerting/RouteTest: task 5's routing/escalation config has no
+// web surface yet (plan C); these stubs exist only so fakeFleet keeps
+// satisfying core.FleetAPI.
+func (f *fakeFleet) Alerting() (core.AlertingConfig, error)        { return core.AlertingConfig{}, nil }
+func (f *fakeFleet) SetAlerting(core.AlertingConfig, string) error { return nil }
+func (f *fakeFleet) RouteTest(core.TestAlert) (core.RouteDecision, error) {
+	return core.RouteDecision{}, nil
+}
+
+// RuleStates: task 7's aggregate rules have no web surface yet; this stub
+// exists only so fakeFleet keeps satisfying core.FleetAPI.
+func (f *fakeFleet) RuleStates() ([]core.RuleState, error) { return nil, nil }
+
+// Managed/SaveManaged/DeleteManaged/ManagedStatus: task 8's managed-config
+// fragment CRUD has no admin web surface yet -- the read-only enforcement
+// this task DOES add to the config page goes through Status().Link.Managed
+// (see fakeFleet.status), not these; these stubs exist only so fakeFleet
+// keeps satisfying core.FleetAPI.
+func (f *fakeFleet) Managed() ([]core.ManagedFragment, error) { return nil, nil }
+func (f *fakeFleet) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
+	return frag, nil
+}
+func (f *fakeFleet) DeleteManaged(string, string) error           { return nil }
+func (f *fakeFleet) ManagedStatus() ([]core.ManagedStatus, error) { return nil, nil }
 
 var _ core.FleetAPI = (*fakeFleet)(nil)
 

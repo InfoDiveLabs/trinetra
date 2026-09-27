@@ -1,7 +1,11 @@
 package fleet
 
 import (
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -63,6 +67,196 @@ func TestRegistryTouchFlushAndRevoke(t *testing.T) {
 	}
 	if !r.IsRevoked(id) {
 		t.Fatal("revoke not applied")
+	}
+}
+
+// TestRegistryAddDedupesNameCaseInsensitive is the review round-2 item (b)
+// regression test: a join whose requested name collides (case-insensitively)
+// with an existing node's is registered as "<name>-2", "-3", ... instead of
+// silently sharing the name.
+func TestRegistryAddDedupesNameCaseInsensitive(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, err := OpenRegistry(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id1, _ := NewNodeID()
+	id2, _ := NewNodeID()
+	id3, _ := NewNodeID()
+	if err := r.Add(Node{ID: id1, Name: "Web1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(Node{ID: id2, Name: "web1"}); err != nil { // case-insensitive collision
+		t.Fatal(err)
+	}
+	if err := r.Add(Node{ID: id3, Name: "WEB1"}); err != nil { // collides with both
+		t.Fatal(err)
+	}
+	n1, _ := r.Get(id1)
+	n2, _ := r.Get(id2)
+	n3, _ := r.Get(id3)
+	if n1.Name != "Web1" {
+		t.Fatalf("first join name = %q, want unchanged Web1", n1.Name)
+	}
+	if n2.Name != "web1-2" {
+		t.Fatalf("second join name = %q, want web1-2", n2.Name)
+	}
+	if n3.Name != "WEB1-3" {
+		t.Fatalf("third join name = %q, want WEB1-3", n3.Name)
+	}
+
+	// A registry unrelated to these names is untouched by the dedup logic.
+	id4, _ := NewNodeID()
+	if err := r.Add(Node{ID: id4, Name: "db1"}); err != nil {
+		t.Fatal(err)
+	}
+	if n4, _ := r.Get(id4); n4.Name != "db1" {
+		t.Fatalf("unrelated name = %q, want unchanged db1", n4.Name)
+	}
+}
+
+func TestRegistryNameConflict(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, _ := OpenRegistry(p)
+	id1, _ := NewNodeID()
+	id2, _ := NewNodeID()
+	_ = r.Add(Node{ID: id1, Name: "web1"})
+	_ = r.Add(Node{ID: id2, Name: "db1"})
+
+	if conflict, ok := r.NameConflict("WEB1", id2); !ok || conflict.ID != id1 {
+		t.Fatalf("NameConflict(WEB1, id2) = %+v, %v, want id1's node", conflict, ok)
+	}
+	if _, ok := r.NameConflict("web1", id1); ok {
+		t.Fatal("a node's own current name must not conflict with itself")
+	}
+	if _, ok := r.NameConflict("nobody-has-this", id1); ok {
+		t.Fatal("an unused name must not conflict")
+	}
+}
+
+// TestRegistryRenameConcurrentExactlyOneWinner is the review round-3 item 2
+// concurrency test: N goroutines rename N DIFFERENT existing nodes to the
+// SAME target name at once. Registry.Rename's check-then-write is atomic
+// under one lock, so exactly one of them must win; the rest must see the
+// name already taken (by whichever one got there first) and fail, leaving
+// no duplicate afterward.
+func TestRegistryRenameConcurrentExactlyOneWinner(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, err := OpenRegistry(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 20
+	ids := make([]string, n)
+	for i := range ids {
+		id, err := NewNodeID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = id
+		if err := r.Add(Node{ID: id, Name: fmt.Sprintf("node-%d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	var successes int32
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := r.Rename(id, "contended"); err == nil {
+				atomic.AddInt32(&successes, 1)
+			}
+		}(id)
+	}
+	wg.Wait()
+
+	if successes != 1 {
+		t.Fatalf("successful renames = %d, want exactly 1", successes)
+	}
+	count := 0
+	for _, node := range r.List() {
+		if strings.EqualFold(node.Name, "contended") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("nodes named %q (case-insensitive) after the race = %d, want exactly 1", "contended", count)
+	}
+}
+
+// TestRegistryRenameRacesJoinNoDuplicateNames is the review round-3 item 2
+// concurrency test's second half: a Rename racing several concurrent Adds
+// (a join) all targeting the same name. Add always succeeds (suffixing on
+// collision); Rename either wins the exact name outright or is refused --
+// either way, every write is atomic under Registry's single lock, so no
+// duplicate (case-insensitive) name can result.
+func TestRegistryRenameRacesJoinNoDuplicateNames(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, err := OpenRegistry(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingID, err := NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(Node{ID: existingID, Name: "other"}); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, err := NewNodeID()
+			if err != nil {
+				return
+			}
+			_ = r.Add(Node{ID: id, Name: "contended"})
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = r.Rename(existingID, "contended")
+	}()
+	wg.Wait()
+
+	seen := map[string]bool{}
+	for _, node := range r.List() {
+		key := strings.ToLower(node.Name)
+		if seen[key] {
+			t.Fatalf("duplicate name %q after a rename racing concurrent joins", node.Name)
+		}
+		seen[key] = true
+	}
+}
+
+func TestShortNodeID(t *testing.T) {
+	if got := ShortNodeID("abcdefgh12345678"); got != "abcdefgh" {
+		t.Fatalf("ShortNodeID = %q, want abcdefgh", got)
+	}
+	if got := ShortNodeID("short"); got != "short" {
+		t.Fatalf("ShortNodeID(short) = %q, want unchanged", got)
+	}
+}
+
+func TestDuplicateNames(t *testing.T) {
+	nodes := []Node{
+		{ID: "aaaaaaaaaaaa", Name: "web1"},
+		{ID: "bbbbbbbbbbbb", Name: "Web1"},
+		{ID: "cccccccccccc", Name: "db1"},
+	}
+	got := DuplicateNames(nodes)
+	if len(got) != 1 || !strings.Contains(got[0], "web1") || !strings.Contains(got[0], "aaaaaaaa") || !strings.Contains(got[0], "bbbbbbbb") {
+		t.Fatalf("DuplicateNames = %+v, want one entry for web1/Web1 naming both short ids", got)
+	}
+	if got := DuplicateNames([]Node{{ID: "x", Name: "unique"}}); len(got) != 0 {
+		t.Fatalf("DuplicateNames with no collisions = %+v, want none", got)
 	}
 }
 

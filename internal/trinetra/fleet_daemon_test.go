@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +20,9 @@ import (
 )
 
 func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
+	var mu sync.Mutex
 	var alerts []Alert
+	record := func(a Alert) { mu.Lock(); alerts = append(alerts, a); mu.Unlock() }
 	cfg := config.Default()
 	self := newInprocAPI(func() Snapshot { return Snapshot{CPU: 12} }, func() *config.Config { return cfg }, nil, dir, nil, nil, nil)
 	return fleetDeps{
@@ -26,9 +30,82 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 		latestSnapshot: func() Snapshot { return Snapshot{CPU: 12} },
 		alog:           NewAlertLog(filepath.Join(dir, "alertlog.jsonl")),
 		alertStatePath: filepath.Join(dir, "alerts.json"),
-		alert:          func(a Alert) { alerts = append(alerts, a) },
+		alert:          record,
+		deliverSync:    func(a Alert) bool { record(a); return true },
+		alertFallback:  func(a Alert, _ *pushedSilences) { record(a) },
 		logf:           t.Logf,
 	}, &alerts
+}
+
+// TestStartMasterWarnsOnceAboutDuplicateRegistryNames is the review round-2
+// item (b) regression test: an EXISTING registry.json (from before names
+// were unique) is loaded as-is -- no migration, no auto-rename -- but
+// startMaster logs one warning line naming the duplicates.
+func TestStartMasterWarnsOnceAboutDuplicateRegistryNames(t *testing.T) {
+	dir := t.TempDir()
+	if err := fleetInitPKI(dir, []string{"127.0.0.1"}, "test", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	regPath := filepath.Join(fleetMasterDir(dir), "registry.json")
+	if err := os.MkdirAll(filepath.Dir(regPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dupNodes := []fleet.Node{
+		{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "web1"},
+		{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Name: "Web1"},
+	}
+	b, err := json.Marshal(dupNodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regPath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	cfg := config.Default()
+	self := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, nil, dir, nil, nil, nil)
+	d := fleetDeps{
+		stateDir: dir, getCfg: func() *config.Config { return cfg }, self: self,
+		latestSnapshot: func() Snapshot { return Snapshot{} },
+		alog:           NewAlertLog(filepath.Join(dir, "alertlog.jsonl")),
+		alertStatePath: filepath.Join(dir, "alerts.json"),
+		alert:          func(Alert) {}, deliverSync: func(Alert) bool { return true },
+		alertFallback: func(Alert, *pushedSilences) {},
+		logf: func(format string, args ...any) {
+			mu.Lock()
+			lines = append(lines, fmt.Sprintf(format, args...))
+			mu.Unlock()
+		},
+	}
+	cfg.Fleet.Role = config.RoleMaster
+	cfg.Fleet.Address = "127.0.0.1"
+	cfg.Fleet.Listen = "127.0.0.1:0"
+	rt := startFleet(context.Background(), cfg, d)
+	t.Cleanup(rt.stop)
+	if rt.provider.master == nil {
+		t.Fatal("master did not start")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, l := range lines {
+		low := strings.ToLower(l)
+		if strings.Contains(l, "WARNING") && strings.Contains(low, "web1") && strings.Contains(low, "aaaaaaaa") && strings.Contains(low, "bbbbbbbb") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("log lines = %v, want one WARNING line naming both duplicate-name nodes", lines)
+	}
+	// No migration: both nodes keep their original (still-duplicate) names.
+	n1, ok1 := rt.provider.master.reg.Get(dupNodes[0].ID)
+	n2, ok2 := rt.provider.master.reg.Get(dupNodes[1].ID)
+	if !ok1 || !ok2 || n1.Name != "web1" || n2.Name != "Web1" {
+		t.Fatalf("registry nodes = %+v(%v) %+v(%v), want unchanged", n1, ok1, n2, ok2)
+	}
 }
 
 func TestStartFleetSoloCreatesNothing(t *testing.T) {
@@ -213,7 +290,7 @@ func TestFleetInitPKIRefusesToReplaceBrokenCA(t *testing.T) {
 func TestFleetAlert(t *testing.T) {
 	a := fleetAlert(fleet.AlertIntent{Key: "fleet:node:x:down", Title: "x is down", Critical: true}, 1234)
 	want := Alert{Key: "fleet:node:x:down", Title: "x is down", Severity: SevCritical, Kind: "fire", Source: "fleet", Time: 1234}
-	if a != want {
+	if !reflect.DeepEqual(a, want) {
 		t.Fatalf("fire = %+v, want %+v", a, want)
 	}
 	r := fleetAlert(fleet.AlertIntent{Key: "fleet:node:x:down", Title: "x is back", Recover: true}, 99)
@@ -317,6 +394,40 @@ func TestMasterProviderNodesAndManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// task 6 part 3: SetNodeDeps validates self-dependency and unknown
+	// node ids, accepts a mix of node ids and "tag:<t>" entries, and audits.
+	if err := fa.SetNodeDeps(live, []string{live}, "op"); err == nil {
+		t.Fatal("self-dependency accepted")
+	}
+	if err := fa.SetNodeDeps(live, []string{"no-such-node"}, "op"); err == nil {
+		t.Fatal("unknown dependency accepted")
+	}
+	if err := fa.SetNodeDeps(live, []string{quiet, "tag:eu-1"}, "op"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := m.reg.Get(live); len(n.DependsOn) != 2 || n.DependsOn[0] != quiet || n.DependsOn[1] != "tag:eu-1" {
+		t.Fatalf("deps = %v", n.DependsOn)
+	}
+	auditEntries, err := fa.Audit(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDepsAudit := false
+	for _, e := range auditEntries {
+		if e.Action == "fleet.node.deps" && e.Target == live && e.Actor == "op" {
+			foundDepsAudit = true
+		}
+	}
+	if !foundDepsAudit {
+		t.Fatalf("no fleet.node.deps audit entry in %+v", auditEntries)
+	}
+	if err := fa.SetNodeDeps(live, nil, "op"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := m.reg.Get(live); len(n.DependsOn) != 0 {
+		t.Fatalf("deps after clear = %v", n.DependsOn)
+	}
+
 	if err := fa.RevokeNode(quiet); err != nil {
 		t.Fatal(err)
 	}
@@ -374,6 +485,7 @@ func TestNonMasterProviderRefusesMasterOps(t *testing.T) {
 		errs := map[string]error{
 			"RenameNode":  fa.RenameNode("x", "y"),
 			"SetNodeTags": fa.SetNodeTags("x", nil),
+			"SetNodeDeps": fa.SetNodeDeps("x", nil, "op"),
 			"RevokeNode":  fa.RevokeNode("x"),
 			"DeleteToken": fa.DeleteToken("x"),
 		}
@@ -400,7 +512,7 @@ func TestMasterLoopAlertsNeverContactedNode(t *testing.T) {
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
 	tracker.Seed(nil, nil, time.Now().Unix()) // master start: no nodes yet
 	now := time.Now()
-	loop := newMasterLoop(reg, tracker, newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default())), d, now)
+	loop := newMasterLoop(reg, tracker, newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil), nil, d, now)
 
 	oldID, _ := fleet.NewNodeID()
 	freshID, _ := fleet.NewNodeID()
@@ -420,6 +532,112 @@ func TestMasterLoopAlertsNeverContactedNode(t *testing.T) {
 	}
 	if s := tracker.State(freshID); s != fleet.StateOnline {
 		t.Fatalf("fresh node state = %q", s)
+	}
+}
+
+// TestMasterLoopNodeDownAlertGoesThroughEngine covers task 3's "masterLoop's
+// own fleet alerts go through the same engine as a child's": with a real
+// fleetAlertEngine wired as loop.alert, a node-down fire must both reach
+// d.alert (via the engine's deliver) AND create a firing incident, keyed
+// "self:<alert key>" since a master-generated alert has no source node.
+func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
+	disableGroupWaitForTest(t)
+	dir := t.TempDir()
+	d, alerts := testDeps(t, dir)
+	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
+	tracker.Seed(nil, nil, time.Now().Unix())
+	now := time.Now()
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil)
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := newFleetAlertEngine(func() time.Time { return now }, d.deliverSync,
+		func(string, fleet.Frame) bool { return false }, func(string) bool { return false }, incidents)
+	loop := newMasterLoop(reg, tracker, sink, engine, d, now)
+
+	oldID, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: oldID, Name: "ghost", Joined: now.Unix() - 3600}); err != nil {
+		t.Fatal(err)
+	}
+	loop.tick(now)
+	// Submit's actual delivery (steps 2-4) runs off its own goroutine now
+	// (B3 review round 1); wait for it before asserting on *alerts.
+	engine.waitIdleForTest()
+
+	if len(*alerts) != 1 {
+		t.Fatalf("alerts = %+v, want one node-down (delivered via the engine)", *alerts)
+	}
+	incs := incidents.List(core.IncidentFilter{}, nil)
+	// (task 6 part 2) The default group key is (rule, severity) -- a
+	// master-own node-down alert's key already embeds the target node id,
+	// so this bucket is still unique to this one node (see ruleFromKey's doc
+	// comment), just no longer formatted as the old "self:<key>" per-alert
+	// identity.
+	wantGroupKey := "rule=fleet:node:" + oldID + ":down|severity=critical"
+	if len(incs) != 1 || incs[0].GroupKey != wantGroupKey || incs[0].State != "firing" {
+		t.Fatalf("incidents = %+v, want one firing incident with group key %q", incs, wantGroupKey)
+	}
+}
+
+// TestMasterLoopTickPushesLeasesExcludingRevoked covers the lease cadence
+// ruling: tick pushes a lease to every connected, non-revoked node; a
+// revoked node gets none.
+func TestMasterLoopTickPushesLeasesExcludingRevoked(t *testing.T) {
+	dir := t.TempDir()
+	d, _ := testDeps(t, dir)
+	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
+	now := time.Now()
+	tracker.Seed(nil, nil, now.Unix())
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil)
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	pushed := map[string]int{}
+	engine := newFleetAlertEngine(func() time.Time { return now }, d.deliverSync,
+		func(node string, f fleet.Frame) bool {
+			if f.Type != "lease" {
+				return true
+			}
+			mu.Lock()
+			pushed[node]++
+			mu.Unlock()
+			return true
+		},
+		func(string) bool { return true }, incidents)
+	loop := newMasterLoop(reg, tracker, sink, engine, d, now)
+
+	goodID, _ := fleet.NewNodeID()
+	badID, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: goodID, Name: "good", Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Add(fleet.Node{ID: badID, Name: "bad", Revoked: true, Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Seen(goodID, now.Unix(), 0)
+	tracker.Seen(badID, now.Unix(), 0)
+	tracker.SetRevoked(badID, true)
+
+	loop.tick(now)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if pushed[goodID] != 1 {
+		t.Fatalf("good node leases = %d, want 1", pushed[goodID])
+	}
+	if pushed[badID] != 0 {
+		t.Fatalf("revoked node leases = %d, want 0", pushed[badID])
 	}
 }
 
@@ -444,9 +662,9 @@ func TestFleetRemoveNodeResolvesDownAlertAndKeepsReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
-	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{})
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{}, nil)
 	now := time.Now()
-	loop := newMasterLoop(reg, tracker, sink, d, now)
+	loop := newMasterLoop(reg, tracker, sink, nil, d, now)
 	p := &fleetProvider{self: d.self, role: config.RoleMaster, selfName: func() string { return "m" },
 		master: &masterState{reg: reg, sink: sink, tracker: tracker, loop: loop, getCfg: d.getCfg}}
 	id, _ := fleet.NewNodeID()
@@ -493,9 +711,9 @@ func TestMasterSkewWarnsOnceMarksLaggingAndSurfaces(t *testing.T) {
 	d.logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
 	reg, _ := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
 	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
-	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{})
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), StoreOptions{}, nil)
 	now := time.Now()
-	loop := newMasterLoop(reg, tracker, sink, d, now)
+	loop := newMasterLoop(reg, tracker, sink, nil, d, now)
 	id, _ := fleet.NewNodeID()
 	if err := reg.Add(fleet.Node{ID: id, Name: "fast-clock", Joined: now.Unix()}); err != nil {
 		t.Fatal(err)
@@ -583,8 +801,8 @@ func newDropWarnFixture(t *testing.T) *dropWarnFixture {
 // start builds a master loop over a fresh sink on the same directory, as a
 // master (re)start does.
 func (f *dropWarnFixture) start(now time.Time) (*masterLoop, *replicaSink) {
-	sink := newReplicaSink(filepath.Join(f.dir, "nodes"), StoreOptions{})
-	return newMasterLoop(f.reg, f.tracker, sink, f.d, now), sink
+	sink := newReplicaSink(filepath.Join(f.dir, "nodes"), StoreOptions{}, nil)
+	return newMasterLoop(f.reg, f.tracker, sink, nil, f.d, now), sink
 }
 
 func (f *dropWarnFixture) warnings() int {
@@ -664,5 +882,197 @@ func TestMasterDropWarningSurvivesRestart(t *testing.T) {
 	loop.tick(now)
 	if w := f.warnings(); w != 1 {
 		t.Fatalf("already-warned drop warned again after restart: %q", *f.logs)
+	}
+}
+
+// TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch is the B3 review
+// round 2 minor: fleetDeps.alert (used by a child's own childLinkAlerts,
+// fleet_daemon.go's startChild) must stay the ordinary async enqueueAndLog
+// path -- it must never block its caller on a slow/blocked channel, unlike
+// fleetDeps.deliverSync (the master engine's synchronous path, which is
+// SUPPOSED to block until dispatch completes).
+func TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch(t *testing.T) {
+	dir := t.TempDir()
+	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
+	bus := newEventBus()
+	notifier := &fakeNotifier{name: "slow", block: 200 * time.Millisecond}
+	disp := NewDispatcher([]Channel{allowAllChannel(notifier)}, time.Second)
+	q := NewNotifierQueue(disp, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Run(ctx)
+
+	alert := func(a Alert) { enqueueAndLog(alog, bus, q, a, false) }
+	deliverSync := func(a Alert) bool { return deliverSyncAndLog(alog, bus, q, a, false) }
+
+	// alert (the child link-alert path) must return almost immediately,
+	// well before the slow notifier's 200ms -- it only enqueues.
+	start := time.Now()
+	alert(Alert{Key: "fleet:link:down", Title: "link down", Kind: "fire", Time: time.Now().Unix()})
+	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
+		t.Fatalf("alert() took %s -- it must enqueue asynchronously, not block on dispatch", elapsed)
+	}
+	// ... but the alert IS eventually actually dispatched by the queue's own
+	// worker goroutine.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(notifier.received()) != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("alert() was never actually dispatched by the async queue")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// deliverSync (the master engine's path), by contrast, blocks until the
+	// same slow notifier actually completes.
+	start = time.Now()
+	ok := deliverSync(Alert{Key: "fleet:node:x:down", Title: "x is down", Kind: "fire", Time: time.Now().Unix()})
+	if elapsed := time.Since(start); elapsed < 150*time.Millisecond {
+		t.Fatalf("deliverSync() returned after %s -- it must block for the dispatch to complete", elapsed)
+	}
+	if !ok {
+		t.Fatal("deliverSync() = false, want true (the notifier succeeds)")
+	}
+}
+
+// TestMasterLoopStillActiveVariants covers stillActive's per-key rules
+// directly (B3 review round 2 1(b)): a down node's key is active, an
+// online/revoked/removed node's key is not, fleet:connectivity follows
+// MassDown, and an unrecognized key defaults to "still active" (left alone,
+// for a future rule alert per B7 to plug in later).
+func TestMasterLoopStillActiveVariants(t *testing.T) {
+	dir := t.TempDir()
+	d, _ := testDeps(t, dir)
+	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(2 * time.Minute))
+	now := time.Now()
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil)
+	loop := newMasterLoop(reg, tracker, sink, nil, d, now)
+
+	onlineID, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: onlineID, Name: "n", Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Seen(onlineID, now.Unix(), 0)
+
+	revokedID, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: revokedID, Name: "r", Revoked: true, Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+
+	downID, _ := fleet.NewNodeID()
+	if err := reg.Add(fleet.Node{ID: downID, Name: "d", Joined: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Seen(downID, now.Unix()-1000, 0) // long enough ago to classify as down
+	tracker.Evaluate(now.Unix())             // transitions are only applied on Evaluate
+
+	goneID, _ := fleet.NewNodeID() // never added: "removed"
+
+	cases := []struct {
+		key  string
+		want bool
+	}{
+		{"fleet:node:" + onlineID + ":down", false},
+		{"fleet:node:" + revokedID + ":down", false},
+		{"fleet:node:" + goneID + ":down", false},
+		{"fleet:node:" + downID + ":down", true},
+		{"fleet:connectivity", false}, // no MassDown in the zero-value Evaluation below
+	}
+	for _, c := range cases {
+		if got := loop.stillActive(c.key, fleet.Evaluation{}); got != c.want {
+			t.Errorf("stillActive(%q) = %v, want %v", c.key, got, c.want)
+		}
+	}
+	if !loop.stillActive("fleet:connectivity", fleet.Evaluation{MassDown: []string{onlineID}}) {
+		t.Error("stillActive(fleet:connectivity) with MassDown set should be true")
+	}
+	if !loop.stillActive("some:future:rule:key", fleet.Evaluation{}) {
+		t.Error("an unrecognized key should default to 'still active' (left alone)")
+	}
+}
+
+// TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow covers B3
+// review round 2 1(b): an incident left "firing" for a node that is
+// actually online again (e.g. recorded before a restart wiped the
+// in-memory NodeAlerter/tracker state that would have noticed and emitted
+// the matching recover itself) must be reconciled -- but only once the
+// blind window (node_down_after since this masterLoop started) has passed,
+// giving the tracker a real chance to observe the node's true state first.
+func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
+	disableGroupWaitForTest(t)
+	dir := t.TempDir()
+	d, _ := testDeps(t, dir)
+	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeDownAfter := config.Default().FleetNodeDownAfter()
+	tracker := fleet.NewTracker(fleet.DefaultTrackerConfig(nodeDownAfter))
+	started := time.Now()
+	tracker.Seed(nil, nil, started.Unix())
+	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(config.Default()), nil)
+	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := newFleetAlertEngine(func() time.Time { return started }, d.deliverSync,
+		func(string, fleet.Frame) bool { return false }, func(string) bool { return false }, incidents)
+	loop := newMasterLoop(reg, tracker, sink, engine, d, started)
+
+	nodeID, err := fleet.NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Add(fleet.Node{ID: nodeID, Name: "web1", Joined: started.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	// An orphaned incident: recorded as firing, as if from before a
+	// restart, while the node itself is (and, per tracker.Seen below,
+	// always was in this test) online.
+	key := "fleet:node:" + nodeID + ":down"
+	// groupKey matches EXACTLY what a real fire through the engine would
+	// have computed (groupKeyFor's default, task 6 part 2) -- this direct
+	// Apply call is simulating "recorded before a restart", and the
+	// reconciling recover below goes through the real engine/Submit, which
+	// must find this exact incident open under that same bucket.
+	if _, err := incidents.Apply(incidentApply{
+		src: alertSource{}, alert: Alert{Key: key, Title: "🔴 web1 is down", Severity: SevCritical, Kind: "fire", Time: started.Unix()},
+		firedAt: started.Unix(), now: started.Unix(),
+		groupKey: groupKeyFor(nil, alertSource{}, Alert{Key: key, Severity: SevCritical}),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Seen(nodeID, started.Unix(), 0)
+
+	// Before the blind window elapses, tick must not touch it.
+	loop.tick(started)
+	engine.waitIdleForTest()
+	if incs := incidents.List(core.IncidentFilter{State: "firing"}, nil); len(incs) != 1 {
+		t.Fatalf("orphan check ran before the blind window elapsed: %+v", incs)
+	}
+
+	// After the blind window, the next tick reconciles it.
+	after := started.Add(nodeDownAfter + time.Second)
+	tracker.Seen(nodeID, after.Unix(), 0)
+	loop.tick(after)
+	engine.waitIdleForTest()
+
+	if incs := incidents.List(core.IncidentFilter{State: "firing"}, nil); len(incs) != 0 {
+		t.Fatalf("orphaned incident not recovered after the blind window: %+v", incs)
+	}
+	resolved := incidents.List(core.IncidentFilter{State: "resolved"}, nil)
+	wantGroupKey := groupKeyFor(nil, alertSource{}, Alert{Key: key, Severity: SevCritical})
+	if len(resolved) != 1 || resolved[0].GroupKey != wantGroupKey {
+		t.Fatalf("resolved incidents = %+v", resolved)
+	}
+
+	// A second tick must not re-run the (one-shot) orphan check.
+	loop.tick(after.Add(masterTickInterval))
+	engine.waitIdleForTest()
+	if got := incidents.List(core.IncidentFilter{}, nil); len(got) != 1 {
+		t.Fatalf("orphan check ran a second time: %+v", got)
 	}
 }

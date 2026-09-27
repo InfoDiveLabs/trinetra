@@ -379,6 +379,10 @@ func runConfig(api core.API, args []string, out io.Writer) int {
 			fmt.Fprint(out, "usage: trinetra-ctl config set <key> <value>\n")
 			return 2
 		}
+		if id, managed := managedFragmentFor(api, args[1]); managed {
+			fmt.Fprintf(out, "set %s: %v\n", args[1], managedFragmentError(args[1], id))
+			return 1
+		}
 		cfg, err := api.Config()
 		if err != nil {
 			fmt.Fprintf(out, "config: %v\n", err)

@@ -443,11 +443,21 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 	f := fp.Fleet()
 
 	var p struct {
-		ID     string          `json:"id"`
-		Name   string          `json:"name"`
-		Tags   []string        `json:"tags"`
-		Filter core.NodeFilter `json:"filter"`
-		Spec   core.TokenSpec  `json:"spec"`
+		ID              string               `json:"id"`
+		Name            string               `json:"name"`
+		Tags            []string             `json:"tags"`
+		Deps            []string             `json:"deps"`
+		Filter          core.NodeFilter      `json:"filter"`
+		Spec            core.TokenSpec       `json:"spec"`
+		IncFilter       core.IncidentFilter  `json:"inc_filter"`
+		Actor           string               `json:"actor"`
+		Key             string               `json:"key"`
+		Limit           int                  `json:"limit"`
+		Silence         core.Silence         `json:"silence"`
+		Maintenance     core.Maintenance     `json:"maintenance"`
+		Alerting        core.AlertingConfig  `json:"alerting"`
+		TestAlert       core.TestAlert       `json:"test_alert"`
+		ManagedFragment core.ManagedFragment `json:"managed_fragment"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -478,6 +488,12 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 
 	case "Fleet.SetNodeTags":
 		if err := f.SetNodeTags(p.ID, p.Tags); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.SetNodeDeps":
+		if err := f.SetNodeDeps(p.ID, p.Deps, p.Actor); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil
@@ -513,6 +529,134 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 			return nil, err
 		}
 		return emptyResult, nil
+
+	case "Fleet.Incidents":
+		v, err := f.Incidents(p.IncFilter)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.Incident":
+		v, err := f.Incident(p.ID)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.AckIncident":
+		if err := f.AckIncident(p.ID, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.Explain":
+		v, err := f.Explain(p.Key)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.Audit":
+		v, err := f.Audit(p.Limit)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.Silences":
+		v, err := f.Silences()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.CreateSilence":
+		v, err := f.CreateSilence(p.Silence)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.ExpireSilence":
+		if err := f.ExpireSilence(p.ID, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.Maintenances":
+		v, err := f.Maintenances()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.SaveMaintenance":
+		v, err := f.SaveMaintenance(p.Maintenance)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.DeleteMaintenance":
+		if err := f.DeleteMaintenance(p.ID, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.Alerting":
+		v, err := f.Alerting()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.SetAlerting":
+		if err := f.SetAlerting(p.Alerting, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.RouteTest":
+		v, err := f.RouteTest(p.TestAlert)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.RuleStates":
+		v, err := f.RuleStates()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.Managed":
+		v, err := f.Managed()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.SaveManaged":
+		v, err := f.SaveManaged(p.ManagedFragment, p.Actor)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "Fleet.DeleteManaged":
+		if err := f.DeleteManaged(p.ID, p.Actor); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "Fleet.ManagedStatus":
+		v, err := f.ManagedStatus()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
 	}
 	return nil, fmt.Errorf("control: unknown method %q", method)
 }
