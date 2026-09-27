@@ -173,6 +173,17 @@ type IncidentAlert struct {
 	// delivered as its own incident) when the dependency releases -- see
 	// fleetAlertEngine's dependency handling.
 	Suppressed string `json:"suppressed,omitempty"`
+	// SilencedBy, when non-empty, is the silence/maintenance-window reason
+	// this specific member's own fire matched (task 6 fix round 1, CRITICAL
+	// 1): kept per member, NOT as incident-wide state, so one silenced
+	// member can never starve an unsilenced sibling's delivery/escalation,
+	// and an unsilenced sibling can never mask a silenced member from ever
+	// being delivered once its silence ends. Cleared, and that member
+	// delivered alone, once no silence matches it any more -- see
+	// fleetAlertEngine.tryDeliverUnsilenced. Kept separate from Suppressed
+	// (a dependency fold): the two are independent reasons a member can be
+	// held back, and a member is never both at once in practice.
+	SilencedBy string `json:"silenced_by,omitempty"`
 }
 
 // IncidentEvent is one entry in an Incident's pipeline trail (fleet explain

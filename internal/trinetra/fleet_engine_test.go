@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -406,9 +407,13 @@ func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 	if !ok {
 		t.Fatal("incident missing after resurrection")
 	}
+	// (task 6 fix round 1, IMPORTANT 3) A fire-leg resurrection now goes
+	// through the same grouped-delivery path (tryDeliverGroup) an ordinary
+	// fire would, rather than a solo "redelivered after restart" call, so
+	// several undelivered master-own members share ONE message on restart.
 	last := inc.Timeline[len(inc.Timeline)-1]
-	if last.Kind != "delivered" || last.Detail != "fire: redelivered after restart" {
-		t.Fatalf("last timeline event = %+v, want a redelivered-after-restart delivered event labeled fire", last)
+	if last.Kind != "delivered" || !strings.HasPrefix(last.Detail, "fire: ") {
+		t.Fatalf("last timeline event = %+v, want a delivered event labeled fire", last)
 	}
 
 	// A THIRD restart, after the redelivery already succeeded, must not

@@ -95,6 +95,11 @@ func suppressedDetail(u incidentApply) string {
 	return u.suppressed.Reason
 }
 
+// memberKey identifies one (node, alert key) member slot, independent of
+// which incident/grouping-bucket it currently lives in -- see
+// incidentStore.openMember (task 6 fix round 1, CRITICAL 2).
+type memberKey struct{ node, key string }
+
 // incidentStore is the master's durable incident history: an in-memory
 // index (byID, open) kept consistent with an append-only JSONL file on disk.
 type incidentStore struct {
@@ -102,16 +107,29 @@ type incidentStore struct {
 
 	mu   sync.Mutex
 	byID map[string]core.Incident
-	// open maps a still-firing-or-acked incident's group key to its id, so a
-	// later fire/recover for the same (node, key) updates it instead of
-	// opening a duplicate.
+	// open maps a still-firing-or-acked-or-suppressed incident's group key to
+	// its id, so a later FIRE for the same bucket joins it instead of opening
+	// a duplicate.
 	open map[string]string
-	// suppressed indexes every incident currently in state "suppressed" by
-	// id (review round 1, item 3's second half): fleetAlertEngine.
+	// openMember maps a (node, key) member slot to the id of the incident
+	// CURRENTLY holding its unresolved instance (task 6 fix round 1, CRITICAL
+	// 2): a recover must find and resolve that exact member regardless of
+	// what grouping bucket ITS OWN (recover-side) key/severity would compute
+	// -- a dependency-folded member in particular lives in its parent's
+	// incident, under the parent's own bucket, never its own. Maintained by
+	// Apply (set on fire, deleted on recover) and load; a member released
+	// from a fold (ReleaseFoldedMember) also deletes its old entry, since
+	// deliverReleasedMember's fresh Apply call re-adds it under the new
+	// incident.
+	openMember map[memberKey]string
+	// suppressed indexes every incident with AT LEAST ONE open (unresolved)
+	// member whose SilencedBy is set (review round 1, item 3's second half;
+	// refined in fix round 1, CRITICAL 1, to be per-member rather than
+	// keyed off the whole incident's State): fleetAlertEngine.
 	// deliverUnsilenced runs every 5s (TickSilences) and must not do a full
-	// List() scan that often just to find the handful of incidents a
-	// silence might have ended for. Kept in lockstep with byID's State by
-	// Apply, AppendEvent (the suppressed->firing transition), Ack and load.
+	// List() scan that often just to find the handful of incidents that
+	// might have a silence worth re-checking. Kept in lockstep by
+	// recomputeState's callers via syncIndexesLocked.
 	suppressed map[string]struct{}
 }
 
@@ -119,7 +137,7 @@ type incidentStore struct {
 // every line already on disk (a missing file is not an error: a fresh
 // master has none yet).
 func loadIncidentStore(path string) (*incidentStore, error) {
-	s := &incidentStore{path: path, byID: map[string]core.Incident{}, open: map[string]string{}, suppressed: map[string]struct{}{}}
+	s := &incidentStore{path: path, byID: map[string]core.Incident{}, open: map[string]string{}, openMember: map[memberKey]string{}, suppressed: map[string]struct{}{}}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -181,16 +199,22 @@ func (s *incidentStore) load() error {
 		if isOpenState(inc.State) {
 			s.open[inc.GroupKey] = id
 		}
-		if inc.State == "suppressed" {
+		if hasSilencedOpenMember(inc) {
 			s.suppressed[id] = struct{}{}
+		}
+		for _, al := range inc.Alerts {
+			if al.ResolvedAt == 0 {
+				s.openMember[memberKey{al.Node, al.Key}] = id
+			}
 		}
 	}
 	return nil
 }
 
-// SuppressedOpen returns every currently suppressed-and-open incident, from
-// the maintained index rather than a full scan of byID -- see the
-// suppressed field's doc comment.
+// SuppressedOpen returns every incident with at least one open (unresolved)
+// silenced member, from the maintained index rather than a full scan of
+// byID (NOT the same as inc.State == "suppressed" -- see the suppressed
+// field's doc comment for the distinction).
 func (s *incidentStore) SuppressedOpen() []core.Incident {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -275,23 +299,41 @@ func nodesFor(src alertSource) []string {
 func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	gk := u.groupKey
-	if gk == "" {
-		gk = incidentGroupKey(u.src.NodeID, u.alert.Key)
-	}
 	leg := legLabel(u.alert)
+	mk := memberKey{u.src.NodeID, u.alert.Key}
 
 	if u.alert.Kind == "recover" {
-		inc, ok := s.lookupOpenLocked(gk)
+		// (task 6 fix round 1, CRITICAL 2) A recover finds its OWN member by
+		// (node, key), via openMember -- NEVER by recomputing a group key for
+		// the recover itself: a dependency-folded member lives in its
+		// PARENT's incident, under the parent's own bucket, which has nothing
+		// to do with the child's own (node, key)'s default/routed bucket.
+		// Only a recover with genuinely nothing tracked (a restart that lost
+		// openMember's in-memory state entirely -- load() rebuilds it, so
+		// this is really just "no fire ever recorded for this member")
+		// falls back to the group-key lookup, matching the historical
+		// behaviour of every pre-index caller/test.
+		id, hadOpenMember := s.openMember[mk]
+		inc, ok := core.Incident{}, false
+		if hadOpenMember {
+			inc, ok = s.byID[id]
+		}
 		if !ok {
-			// A recover with nothing open (restart lost it, or it raced a
-			// fire this process never saw): record it anyway, already
-			// resolved, rather than dropping it silently.
-			id, err := randomIncidentID()
-			if err != nil {
-				return core.Incident{}, err
+			gk := u.groupKey
+			if gk == "" {
+				gk = incidentGroupKey(u.src.NodeID, u.alert.Key)
 			}
-			inc = core.Incident{ID: id, GroupKey: gk, Title: u.alert.Title, Severity: u.alert.Severity.String(), Nodes: nodesFor(u.src), Opened: u.now}
+			inc, ok = s.lookupOpenLocked(gk)
+			if !ok {
+				// A recover with nothing open at all (restart lost it, or it
+				// raced a fire this process never saw): record it anyway,
+				// already resolved, rather than dropping it silently.
+				newID, err := randomIncidentID()
+				if err != nil {
+					return core.Incident{}, err
+				}
+				inc = core.Incident{ID: newID, GroupKey: gk, Title: u.alert.Title, Severity: u.alert.Severity.String(), Nodes: nodesFor(u.src), Opened: u.now}
+			}
 		}
 		inc.Updated = u.now
 		closed := false
@@ -307,17 +349,6 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 				Node: u.src.NodeID, NodeName: u.src.NodeName, Key: u.alert.Key, Title: u.alert.Title, Severity: u.alert.Severity.String(),
 				FiredAt: u.firedAt, ResolvedAt: u.firedAt, DeliveredLocally: u.deliveredLocally,
 			})
-		}
-		// (task 6 part 2) An incident resolves only once EVERY member alert
-		// has recovered -- a grouped incident with another still-firing
-		// member stays open (its own State: "acked" is left as-is, anything
-		// else becomes/stays "firing", never "resolved", so a still-open
-		// suppressed member does not wrongly look final either).
-		if allAlertsResolved(inc.Alerts) {
-			inc.State = "resolved"
-			inc.Resolved = u.now
-		} else if inc.State != "acked" {
-			inc.State = "firing"
 		}
 		inc.Timeline = append(inc.Timeline, core.IncidentEvent{
 			TS: u.now, Kind: "resolved", Detail: recoverDetail(u), Actor: "system",
@@ -339,17 +370,18 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 		// appended later, by AppendEvent, once delivery has actually
 		// completed (see fleetAlertEngine.deliverAndReceipt) -- never here,
 		// before delivery is even attempted.
-		if inc.State == "resolved" {
-			delete(s.open, gk)
-			delete(s.suppressed, inc.ID) // resolved: no longer suppressed-and-open
-		} else {
-			s.open[gk] = inc.ID
-		}
+		recomputeState(&inc, u.now)
+		delete(s.openMember, mk) // this member is resolved: no longer "open" anywhere.
+		s.syncIndexesLocked(inc)
 		s.byID[inc.ID] = inc
 		return inc, s.appendLine(inc)
 	}
 
 	// fire (or any other non-recover kind, treated like a fire)
+	gk := u.groupKey
+	if gk == "" {
+		gk = incidentGroupKey(u.src.NodeID, u.alert.Key)
+	}
 	inc, ok := s.lookupOpenLocked(gk)
 	if !ok {
 		id, err := randomIncidentID()
@@ -358,28 +390,17 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 		}
 		inc = core.Incident{ID: id, GroupKey: gk, Title: u.alert.Title, Severity: u.alert.Severity.String(), Opened: u.now}
 	}
-	if u.dependencyFold != "" {
-		// A dependency fold (task 6 part 3) is a silent addition to whatever
-		// incident it joins: it never reopens/un-acks it, and never flips it
-		// to "suppressed" (the incident's own severity/urgency is whatever
-		// its OTHER members already made it -- only THIS member is marked
-		// suppressed, below).
-		if !ok {
-			inc.State = "firing"
-		}
-	} else {
-		inc.State = "firing"
-		if u.suppressed != nil {
-			inc.State = "suppressed"
-		}
-	}
 	inc.Updated = u.now
 	if u.src.NodeID != "" && !slices.Contains(inc.Nodes, u.src.NodeID) {
 		inc.Nodes = append(inc.Nodes, u.src.NodeID)
 	}
+	silencedBy := ""
+	if u.suppressed != nil {
+		silencedBy = u.suppressed.Reason
+	}
 	inc.Alerts = append(inc.Alerts, core.IncidentAlert{
 		Node: u.src.NodeID, NodeName: u.src.NodeName, Key: u.alert.Key, Title: u.alert.Title, Severity: u.alert.Severity.String(),
-		FiredAt: u.firedAt, DeliveredLocally: u.deliveredLocally, Suppressed: u.dependencyFold,
+		FiredAt: u.firedAt, DeliveredLocally: u.deliveredLocally, Suppressed: u.dependencyFold, SilencedBy: silencedBy,
 	})
 	inc.Timeline = append(inc.Timeline, core.IncidentEvent{
 		TS: u.now, Kind: "fired", Detail: fireDetail(u), Actor: "system",
@@ -407,14 +428,96 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 	// appended later, by AppendEvent, once delivery has actually completed
 	// (see fleetAlertEngine.deliverAndReceipt) -- never here, before
 	// delivery is even attempted.
-	s.open[gk] = inc.ID
-	if inc.State == "suppressed" {
+	recomputeState(&inc, u.now)
+	s.openMember[mk] = inc.ID
+	s.syncIndexesLocked(inc)
+	s.byID[inc.ID] = inc
+	return inc, s.appendLine(inc)
+}
+
+// recomputeState derives inc.State from its members and ack status (task 6
+// fix round 1, CRITICAL 1). Previously each fire/recover unconditionally
+// overwrote inc.State from ONLY the record just applied, so whichever member
+// fired or recovered LAST decided the WHOLE incident's state: a silenced
+// member could be starved forever once an unsilenced sibling flipped the
+// incident back to "firing" (nothing ever re-suppressed it), and an
+// unsilenced sibling's escalation would freeze the moment a LATER silenced
+// fire flipped the whole incident to "suppressed" (TickEscalations only ever
+// considers state=="firing"). now is used only to stamp inc.Resolved the
+// FIRST time this transitions to resolved.
+//
+// Called after every mutation that can affect it: Apply, AppendEvent, Ack,
+// MarkDeliveredLocally, a per-member unsilence delivery
+// (DeliverUnsilencedMember) and a dependency release (ReleaseFoldedMember).
+// Precedence, highest first:
+//   - resolved:   every member has recovered;
+//   - acked:      AckedBy is set (an ack is sticky -- a NEW member firing
+//     after an ack does not implicitly reopen it; only a full resolve
+//     changes it again);
+//   - suppressed: every still-open (unresolved) member is silenced
+//     (SilencedBy != "") or dependency-folded (Suppressed != "");
+//   - firing:     anything else (including "no members at all", which
+//     should not happen).
+func recomputeState(inc *core.Incident, now int64) {
+	if allAlertsResolved(inc.Alerts) {
+		if inc.State != "resolved" {
+			inc.Resolved = now
+		}
+		inc.State = "resolved"
+		return
+	}
+	if inc.AckedBy != "" {
+		inc.State = "acked"
+		return
+	}
+	anyOpen, allSuppressed := false, true
+	for _, al := range inc.Alerts {
+		if al.ResolvedAt != 0 {
+			continue
+		}
+		anyOpen = true
+		if al.SilencedBy == "" && al.Suppressed == "" {
+			allSuppressed = false
+			break
+		}
+	}
+	if anyOpen && allSuppressed {
+		inc.State = "suppressed"
+		return
+	}
+	inc.State = "firing"
+}
+
+// hasSilencedOpenMember reports whether inc has any unresolved member whose
+// SilencedBy is set -- the (task 6 fix round 1) predicate behind the
+// incidentStore.suppressed index, deliberately NOT the same as
+// inc.State == "suppressed" (which requires EVERY open member to be
+// silenced/folded): an incident with one silenced member and one ordinary
+// firing member is still a "suppressed" index candidate (deliverUnsilenced
+// must keep re-checking that one member) even though its overall State is
+// "firing".
+func hasSilencedOpenMember(inc core.Incident) bool {
+	for _, al := range inc.Alerts {
+		if al.ResolvedAt == 0 && al.SilencedBy != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// syncIndexesLocked keeps s.open and s.suppressed consistent with inc's
+// freshly recomputed State/members, after ANY mutation. Caller holds s.mu.
+func (s *incidentStore) syncIndexesLocked(inc core.Incident) {
+	if inc.State == "resolved" {
+		delete(s.open, inc.GroupKey)
+	} else {
+		s.open[inc.GroupKey] = inc.ID
+	}
+	if hasSilencedOpenMember(inc) {
 		s.suppressed[inc.ID] = struct{}{}
 	} else {
 		delete(s.suppressed, inc.ID)
 	}
-	s.byID[inc.ID] = inc
-	return inc, s.appendLine(inc)
 }
 
 // allAlertsResolved reports whether every member alert has recovered --
@@ -471,17 +574,15 @@ func (s *incidentStore) AppendEvent(id string, ev core.IncidentEvent) (core.Inci
 	if !ok {
 		return core.Incident{}, fmt.Errorf("no such incident %q", id)
 	}
-	if ev.Kind == "delivered" && inc.State == "suppressed" {
-		// A "delivered" event only ever reaches a suppressed incident via
-		// fleetAlertEngine.tryDeliverUnsilenced (task 4: the silence/
-		// maintenance window that suppressed it no longer applies, and it
-		// was actually delivered just now) -- it is firing again, not
-		// suppressed, from this point on.
-		inc.State = "firing"
-		delete(s.suppressed, id)
-	}
 	inc.Timeline = append(inc.Timeline, ev)
 	inc.Updated = ev.TS
+	// (task 6 fix round 1, CRITICAL 1) State is always DERIVED from members,
+	// never set ad hoc here: an ordinary "delivered"/"escalated"/etc. event
+	// doesn't itself change any member's SilencedBy/Suppressed/ResolvedAt, so
+	// this is usually a no-op refresh -- the per-member unsilence delivery
+	// path (DeliverUnsilencedMember) is what actually clears SilencedBy.
+	recomputeState(&inc, ev.TS)
+	s.syncIndexesLocked(inc)
 	s.byID[id] = inc
 	return inc, s.appendLine(inc)
 }
@@ -510,6 +611,8 @@ func (s *incidentStore) MarkDeliveredLocally(node, key string, firedAt, now int6
 			al.DeliveredLocally = true
 			cand.Updated = now
 			cand.Timeline = append(cand.Timeline, core.IncidentEvent{TS: now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child"})
+			recomputeState(&cand, now)
+			s.syncIndexesLocked(cand)
 			s.byID[id] = cand
 			return cand, true, s.appendLine(cand)
 		}
@@ -531,11 +634,11 @@ func (s *incidentStore) Ack(id, actor string, now int64) (core.Incident, error) 
 	if inc.State == "resolved" {
 		return core.Incident{}, fmt.Errorf("incident %q is already resolved", id)
 	}
-	inc.State = "acked"
 	inc.AckedBy = actor
 	inc.Updated = now
 	inc.Timeline = append(inc.Timeline, core.IncidentEvent{TS: now, Kind: "acked", Actor: actor})
-	delete(s.suppressed, id) // acked is no longer "suppressed" (see the field's doc comment)
+	recomputeState(&inc, now) // AckedBy set: recomputeState resolves this to "acked" (see its doc comment).
+	s.syncIndexesLocked(inc)
 	s.byID[id] = inc
 	return inc, s.appendLine(inc)
 }
@@ -621,6 +724,55 @@ func (s *incidentStore) HasUnresolvedAlert(node, key string) bool {
 	return ok
 }
 
+// DeliverUnsilencedMember atomically clears one member's SilencedBy (task 6
+// fix round 1, CRITICAL 1: unsilence decides using SilencedBy, never the
+// timeline) and appends events (one per matched policy, for a routed
+// delivery, or a single event otherwise) recording that delivery, in one
+// persisted snapshot. A no-op (ok=false, nothing written) if id has no such
+// unresolved, currently-silenced (node, key, firedAt) member -- e.g. it
+// already recovered, or a racing call (or the silence matching again by the
+// time this runs) already handled it -- or if events is empty (nothing to
+// record, so nothing should be cleared either).
+func (s *incidentStore) DeliverUnsilencedMember(id, node, key string, firedAt int64, events ...core.IncidentEvent) (inc core.Incident, ok bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(events) == 0 {
+		return core.Incident{}, false, nil
+	}
+	cand, exists := s.byID[id]
+	if !exists {
+		return core.Incident{}, false, nil
+	}
+	found := false
+	for i := range cand.Alerts {
+		al := &cand.Alerts[i]
+		if al.Node != node || al.Key != key || al.FiredAt != firedAt {
+			continue
+		}
+		if al.ResolvedAt != 0 || al.SilencedBy == "" {
+			return core.Incident{}, false, nil
+		}
+		al.SilencedBy = ""
+		found = true
+		break
+	}
+	if !found {
+		return core.Incident{}, false, nil
+	}
+	var now int64
+	for _, ev := range events {
+		cand.Timeline = append(cand.Timeline, ev)
+		if ev.TS > now {
+			now = ev.TS
+		}
+	}
+	cand.Updated = now
+	recomputeState(&cand, now)
+	s.syncIndexesLocked(cand)
+	s.byID[id] = cand
+	return cand, true, s.appendLine(cand)
+}
+
 // ReleaseFoldedMember clears a dependency-suppressed member's Suppressed
 // reason (task 6 part 3: "mark the folded member as released") once none of
 // its node's dependencies are down any more, recording reason (e.g.
@@ -654,12 +806,15 @@ func (s *incidentStore) ReleaseFoldedMember(id, node, key string, firedAt, now i
 			TS: now, Kind: "released", Detail: reason, Actor: "system",
 			Leg: "fire", AlertKey: key, Node: node, FiredAt: firedAt,
 		})
-		if allAlertsResolved(cand.Alerts) && cand.State != "acked" {
-			cand.State = "resolved"
-			cand.Resolved = now
-			delete(s.open, cand.GroupKey)
-			delete(s.suppressed, cand.ID)
+		recomputeState(&cand, now)
+		// This exact (node, key) member is no longer open HERE -- its
+		// openMember entry, if it still pointed at this incident, is cleared;
+		// deliverReleasedMember's own fresh Apply call re-adds it under the
+		// brand new incident it opens.
+		if s.openMember[memberKey{node, key}] == id {
+			delete(s.openMember, memberKey{node, key})
 		}
+		s.syncIndexesLocked(cand)
 		s.byID[id] = cand
 		return cand, true, s.appendLine(cand)
 	}

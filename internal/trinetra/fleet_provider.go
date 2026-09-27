@@ -260,6 +260,14 @@ func (f fleetAPIImpl) SetNodeDeps(id string, deps []string, actor string) error 
 		return err
 	}
 	m.audited(actor, "fleet.node.deps", id, strings.Join(clean, ","))
+	// task 6 fix round 1, IMPORTANT 4: a dependency changing (in particular,
+	// a down dependency being REMOVED) may free up a node that was folded
+	// waiting on it -- releaseFoldedDependents only ever runs off that
+	// dependency's own recover, which never happens here, so this must be
+	// triggered explicitly.
+	if m.engine != nil {
+		m.engine.ReleaseIfDependenciesClear(id, time.Now().Unix())
+	}
 	return nil
 }
 

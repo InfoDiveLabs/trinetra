@@ -574,6 +574,10 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		return id, nil
 	})
 	engine.SetRouting(alerting, d.deliverSyncTo, d.dispatchOnly)
+	// SetConfig (task 6 fix round 1, IMPORTANT 5): lets tryDeliverGroup read
+	// the LIVE fleet.fallback_after (config can change at runtime via `set`)
+	// for effectiveGroupInterval's cap.
+	engine.SetConfig(d.getCfg)
 	// SetDependencies (task 6 part 3): expand a node's DependsOn ("tag:<t>"
 	// entries resolved against the registry's CURRENT tag membership, read
 	// fresh on every call so a tag added/removed after the fact takes effect

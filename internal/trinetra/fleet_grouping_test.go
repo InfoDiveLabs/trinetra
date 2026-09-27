@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
@@ -82,6 +83,16 @@ func TestGroupingTwoNodesWithinWaitProduceOneDelivery(t *testing.T) {
 func TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
+	// This test exercises groupInterval itself (5m), in isolation: task 6 fix
+	// round 1's fallback_after cap (effectiveGroupInterval) would otherwise
+	// shrink it to fallback_after/2 (1m by default) since every pending
+	// member here is child-sourced -- see TestGroupingLateChildUpdateRespectsFallbackCap
+	// for that interaction specifically.
+	ef.engine.SetConfig(func() *config.Config {
+		c := config.Default()
+		c.Fleet.FallbackAfter = "24h"
+		return c
+	})
 	ef.connect("n1")
 	ef.connect("n2")
 	ef.connect("n3")
@@ -147,6 +158,68 @@ func TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval(t *testing.T) {
 	ef.waitIdle()
 	if ef.deliveredCount() != 2 {
 		t.Fatalf("delivered after a further idle tick = %d, want still 2", ef.deliveredCount())
+	}
+}
+
+// TestGroupingLateChildUpdateRespectsFallbackCap is task 6 fix round 1's
+// IMPORTANT 5 required test: with the DEFAULT config (fleet.fallback_after
+// 2m, so effectiveGroupInterval caps at 1m for a child-sourced pending
+// member) and the spec's default group_interval (5m, which would otherwise
+// leave a late-joining child waiting far longer than its own local fallback
+// timer), a late child member's update ships within 60s of the incident's
+// last group delivery -- not up to 5 minutes later.
+func TestGroupingLateChildUpdateRespectsFallbackCap(t *testing.T) {
+	ef := newEngineFixture(t)
+	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute) // spec defaults
+	ef.engine.SetConfig(func() *config.Config { return config.Default() })
+	ef.connect("n1")
+	ef.connect("n2")
+	ef.engine.PushLeaseNow("n1", ef.now)
+	ef.engine.PushLeaseNow("n2", ef.now)
+
+	ef.engine.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: ef.now.Unix(), Key: "cpu", Title: "cpu critical", Severity: "critical", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: ef.now.Unix(),
+	})
+	ef.waitIdle()
+	ef.now = ef.now.Add(30 * time.Second) // group_wait elapses: first delivery.
+	ef.engine.TickGrouping(ef.now)
+	ef.waitIdle()
+	if ef.deliveredCount() != 1 {
+		t.Fatalf("initial delivered = %d, want 1", ef.deliveredCount())
+	}
+	lastDelivery := ef.now
+
+	// A late child member joins after the first delivery.
+	ef.now = ef.now.Add(10 * time.Second)
+	ef.engine.HandleChildAlert("n2", "box2", nil, AlertEvent{
+		Time: ef.now.Unix(), Key: "cpu", Title: "cpu critical", Severity: "critical", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: ef.now.Unix(),
+	})
+	ef.waitIdle()
+	if ef.deliveredCount() != 1 {
+		t.Fatalf("delivered right after n2 joins = %d, want still 1", ef.deliveredCount())
+	}
+
+	// Just under the 60s (fallback_after/2) cap since the last delivery: no
+	// update yet -- proves this is the ACTIVE gate, not an immediate/no-op one.
+	ef.now = lastDelivery.Add(59 * time.Second)
+	ef.engine.TickGrouping(ef.now)
+	ef.waitIdle()
+	if ef.deliveredCount() != 1 {
+		t.Fatalf("delivered at 59s since the last delivery = %d, want still 1", ef.deliveredCount())
+	}
+
+	// Just past the 60s cap: the update ships -- well before the raw 5m
+	// group_interval would otherwise have allowed.
+	ef.now = lastDelivery.Add(61 * time.Second)
+	ef.engine.TickGrouping(ef.now)
+	ef.waitIdle()
+	if ef.deliveredCount() != 2 {
+		t.Fatalf("delivered at 61s since the last delivery = %d, want 2 (the capped update shipped)", ef.deliveredCount())
+	}
+	if title := ef.lastDelivered().Title; !strings.Contains(title, "box2") {
+		t.Fatalf("update title = %q, want it to list box2", title)
 	}
 }
 
