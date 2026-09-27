@@ -179,6 +179,26 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Round-1 review MINOR: an empty ID is a server-side UPSERT by tag, not
+	// just a create -- "one fragment per tag" (task-8 ruling) is enforced
+	// HERE, atomically under this same lock, rather than by a caller
+	// (`fleet managed set`) first listing fragments and then deciding
+	// whether to create or update: that list-then-write was a TOCTOU (two
+	// concurrent `set --tag web ...` calls could both see no existing
+	// fragment and both create one, leaving two fragments for the same
+	// tag). An explicit, non-empty ID is always a plain update-by-id
+	// instead (unchanged behavior).
+	explicitID := frag.ID
+	if explicitID == "" {
+		for _, f := range s.fragments {
+			if f.Tag == frag.Tag {
+				frag.ID = f.ID
+				break
+			}
+		}
+	}
+
 	gen := s.generation + 1
 	frag.Version = gen
 
@@ -211,7 +231,10 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 		}
 		return frag, nil
 	}
-	return core.ManagedFragment{}, fmt.Errorf("no such managed-config fragment %q", frag.ID)
+	// Only reachable for an explicit, non-empty ID that names nothing (the
+	// tag-derived branch above can never produce an ID that isn't already
+	// in s.fragments).
+	return core.ManagedFragment{}, fmt.Errorf("no such managed-config fragment %q", explicitID)
 }
 
 // Delete removes fragment id, bumping the store's generation.
@@ -463,6 +486,17 @@ type managedChildFileV1 struct {
 // (updated regardless of apply success, since it describes what the master
 // intends, not whether this child accepted it) -- in-memory only, restored
 // best-effort from the sidecar (see loadManagedChild).
+//
+// values is the set of key/value pairs THIS child currently COMMITS to
+// enforcing -- i.e. the last successfully validated managed-config values
+// (round-1 review, IMPORTANT 1). It exists separately from whatever the
+// live config happens to hold right now because it is the input to
+// reimposeManagedValues, which the daemon's shared full-config reload path
+// (daemon.go) calls on EVERY ApplyConfig -- from the channels page, the
+// public-settings page, any ctl "manage" screen, none of which know
+// anything about managed-config -- to re-force these exact values onto
+// whatever config those callers are about to persist, so a stale read (or a
+// race with a fresh master push) can never silently revert a managed key.
 type managedChild struct {
 	path   string
 	getCfg func() *config.Config
@@ -475,6 +509,7 @@ type managedChild struct {
 	applied      bool
 	lastErr      string
 	fragments    map[string]string
+	values       map[string]string
 }
 
 func newManagedChild(path string, getCfg func() *config.Config, self core.API, now func() time.Time) *managedChild {
@@ -501,7 +536,22 @@ func loadManagedChild(path string, getCfg func() *config.Config, self core.API, 
 	mc.version = f.Version
 	mc.applied = true
 	mc.fragments = cloneStringMap(f.Fragments)
+	mc.values = cloneStringMap(f.Values)
 	return mc
+}
+
+// stringMapsEqual reports whether a and b hold the same key/value pairs
+// (nil and an empty, non-nil map compare equal).
+func stringMapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneStringMap(m map[string]string) map[string]string {
@@ -540,6 +590,23 @@ func cloneConfigJSON(c *config.Config) (*config.Config, error) {
 // no restart). A single invalid value rejects the whole fragment: the old
 // config is left completely untouched and the error is recorded for the
 // next report.
+//
+// Round-1 review, MINOR: an incoming frame identical to what is already
+// applied (same version AND same values) is a complete no-op -- no
+// re-validation, no ApplyConfig call, no sidecar rewrite -- so the periodic
+// (every managedPushInterval) re-push does not thrash the disk or the
+// dispatcher on every otherwise-unchanged refresh.
+//
+// Round-1 review, IMPORTANT 1: mc.values (the committed set
+// reimposeManagedValues re-forces onto every OTHER full-config apply) is
+// updated to the NEW values BEFORE self.ApplyConfig is called, not after --
+// self.ApplyConfig ultimately runs the shared reload closure (daemon.go),
+// which calls reimposeManagedValues on its way in; committing first means
+// THIS push's own new values are what get (redundantly, harmlessly)
+// re-imposed onto its own clone, not the stale ones still in mc.values.
+// Rolled back to the previous committed values if ApplyConfig itself then
+// fails (a downstream reload error unrelated to the values' own validity,
+// which already passed above).
 func (mc *managedChild) Apply(p managedConfigFrameData) {
 	if mc == nil {
 		return
@@ -547,7 +614,12 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 	mc.mu.Lock()
 	mc.everReceived = true
 	mc.fragments = cloneStringMap(p.Fragments)
+	unchanged := mc.applied && mc.version == p.Version && stringMapsEqual(mc.values, p.Values)
+	prevValues := cloneStringMap(mc.values)
 	mc.mu.Unlock()
+	if unchanged {
+		return
+	}
 
 	if len(p.Values) == 0 {
 		mc.clear(p.Version)
@@ -587,7 +659,13 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 		mc.setError(fmt.Errorf("no core API available to apply config"))
 		return
 	}
+	mc.mu.Lock()
+	mc.values = cloneStringMap(p.Values)
+	mc.mu.Unlock()
 	if err := mc.self.ApplyConfig(clone); err != nil {
+		mc.mu.Lock()
+		mc.values = prevValues
+		mc.mu.Unlock()
 		mc.setError(err)
 		return
 	}
@@ -617,7 +695,7 @@ func (mc *managedChild) setError(err error) {
 // are -- they simply stop being enforced/read-only.
 func (mc *managedChild) clear(version int64) {
 	mc.mu.Lock()
-	mc.version, mc.applied, mc.lastErr, mc.fragments = version, true, "", map[string]string{}
+	mc.version, mc.applied, mc.lastErr, mc.fragments, mc.values = version, true, "", map[string]string{}, map[string]string{}
 	mc.mu.Unlock()
 	_ = os.Remove(mc.path)
 }
@@ -631,6 +709,49 @@ func (mc *managedChild) FragmentsSnapshot() map[string]string {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	return cloneStringMap(mc.fragments)
+}
+
+// CurrentValues returns a copy of the managed-config values this child
+// currently commits to enforcing (nil if mc is nil or nothing is currently
+// managed), for reimposeManagedValues. Nil-safe.
+func (mc *managedChild) CurrentValues() map[string]string {
+	if mc == nil {
+		return nil
+	}
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return cloneStringMap(mc.values)
+}
+
+// reimposeManagedValues re-forces every one of mc's currently-committed
+// managed-config values onto c via config.Set (round-1 review, IMPORTANT 1).
+// The daemon's ONE shared full-config apply path -- the reload closure in
+// daemon.go, which inprocAPI.ApplyConfig calls for every control-socket
+// ApplyConfig (the web channels page, the public-settings page, every ctl
+// "manage" screen) -- calls this on every incoming config, right before
+// persisting/applying it: none of those callers know anything about
+// managed-config, so without this a full-config round trip built from a
+// stale read (or racing a fresh master push) could silently revert a
+// managed key back to whatever value it happened to carry.
+//
+// mc nil (solo, master, or before a child's managedChild is wired at daemon
+// startup) or nothing currently managed is a complete no-op. A Set failure
+// here should not happen (these values were already validated once by
+// managedChild.Apply), but is deliberately swallowed rather than failing
+// the whole apply: an unrelated, unmanaged edit (e.g. a channel change)
+// must never be rejected outright because of it.
+func reimposeManagedValues(mc *managedChild, c *config.Config) {
+	if c == nil {
+		return
+	}
+	values := mc.CurrentValues()
+	for _, k := range managedFragmentAllowlistKeys {
+		v, ok := values[k]
+		if !ok {
+			continue
+		}
+		_ = c.Set(k, v)
+	}
 }
 
 // Report builds this child's fleet.ManagedReport for its next LiveUpdate:

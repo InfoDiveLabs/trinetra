@@ -648,6 +648,14 @@ func cmdQuietHours(args []string) int {
 		fmt.Fprintln(stderr, "usage: quiet-hours <HH-HH> | off")
 		return 2
 	}
+	// Round-1 review, IMPORTANT 2: this dedicated command is a second,
+	// separate path onto quiet_hours besides `config set`/the web config
+	// page (both already guarded) -- it must refuse identically when a
+	// fleet master manages it.
+	if id, managed := ManagedFragmentFor(stateDir, "quiet_hours"); managed {
+		fmt.Fprintf(stderr, "quiet_hours: managed by the fleet master (fragment %s); change it on the master\n", id)
+		return 1
+	}
 	val := ""
 	if args[0] != "off" {
 		val = args[0]

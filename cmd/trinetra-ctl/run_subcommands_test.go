@@ -103,6 +103,25 @@ func TestRunConfigSetInvalidNotApplied(t *testing.T) {
 	}
 }
 
+// TestRunConfigSetRefusedWhenManaged pins `trinetra-ctl config set`'s
+// managed-key refusal (round-1 review IMPORTANT 2's audit): identical
+// message to the CLI/web/TUI, and neither Config() nor ApplyConfig is ever
+// called.
+func TestRunConfigSetRefusedWhenManaged(t *testing.T) {
+	base := &fakeAPI{cfg: config.Default()}
+	api := fleetAwareFakeAPI{fakeAPI: base, status: managedStatus("thresholds.cpu_pct", "fragcpu654321")}
+	var buf bytes.Buffer
+	if code := run(api, []string{"config", "set", "thresholds.cpu_pct", "50"}, &buf); code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, buf.String())
+	}
+	if !containsAll(buf.String(), "thresholds.cpu_pct", "managed by the fleet master", "fragcpu654321") {
+		t.Fatalf("output = %s, want the managed-by-master refusal naming the fragment", buf.String())
+	}
+	if base.applied != nil {
+		t.Errorf("ApplyConfig must not be called for a managed key")
+	}
+}
+
 // TestRunConfigUsage: `config` with no subcommand is a usage error.
 func TestRunConfigUsage(t *testing.T) {
 	api := &fakeAPI{}

@@ -341,8 +341,18 @@ func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
 // TestOutboxConcurrentAppendReadAck exercises the outbox under its documented
 // concurrent-use contract: one goroutine appends continuously (driving
 // segment rotation and cap eviction) while another concurrently reads from
-// and acks the cursor (driving segment deletion), for about a second with a
-// small cap/segment size so rotation and eviction happen throughout the run.
+// and acks the cursor (driving segment deletion), with a small cap/segment
+// size so rotation and eviction happen throughout the run.
+//
+// The appender drives a FIXED number of operations (round-1 review fix),
+// not a fixed wall-clock duration: a time-based deadline made the load
+// assertion below flaky under `-race` (whose instrumentation slows every
+// Append/Read/Ack down, sometimes past the point of reaching 1000 appends
+// within one second on a loaded machine) -- "test didn't generate enough
+// load" was a timing artifact, not a real failure. A fixed count makes the
+// achieved load deterministic and lets the final assertion below be exact
+// (appended == totalAppends) rather than a lower bound, which is strictly
+// stronger, never weaker, than what this test proved before.
 func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 	dir := t.TempDir()
 	o, err := openOutbox(dir, 4096, 512)
@@ -351,7 +361,7 @@ func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 	}
 	defer o.Close()
 
-	const runFor = 1 * time.Second
+	const totalAppends = 2000
 	appenderDone := make(chan struct{})
 	var appended atomic.Uint64
 	var appendErr error
@@ -361,16 +371,13 @@ func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		defer close(appenderDone)
-		i := int64(1)
-		deadline := time.Now().Add(runFor)
-		for time.Now().Before(deadline) {
+		for i := int64(1); i <= totalAppends; i++ {
 			seq, err := o.Append(KindSamples, i, []byte(`{"cpu":1}`))
 			if err != nil {
 				appendErr = err
 				return
 			}
 			appended.Store(seq)
-			i++
 		}
 	}()
 
@@ -414,8 +421,8 @@ func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 		t.Fatalf("read/ack: %v", readErr)
 	}
 	total := appended.Load()
-	if total < 1000 {
-		t.Fatalf("test didn't generate enough load: appended=%d", total)
+	if total != totalAppends {
+		t.Fatalf("appended=%d, want exactly %d (the appender's fixed op count)", total, totalAppends)
 	}
 
 	// Seqs delivered by Read must be strictly increasing across the whole

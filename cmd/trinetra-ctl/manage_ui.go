@@ -297,6 +297,9 @@ func applyScheduleCmd(api core.API, ans scheduleAnswers) tea.Cmd {
 // screen's single raw value (applyQuietHours, manage_quiet.go).
 func applyQuietHoursCmd(api core.API, raw string) tea.Cmd {
 	return func() tea.Msg {
+		if id, managed := managedFragmentFor(api, "quiet_hours"); managed {
+			return manageAppliedMsg{err: managedFragmentError("quiet_hours", id)}
+		}
 		cfg, err := api.Config()
 		if err != nil {
 			return manageAppliedMsg{err: fmt.Errorf("fetching current config: %w", err)}

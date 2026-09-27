@@ -1305,18 +1305,13 @@ func fleetManagedSet(args []string) int {
 		return 2
 	}
 	return withDaemon(func(c *control.Client) error {
-		id := ""
-		existing, err := c.Fleet().Managed()
-		if err != nil {
-			return err
-		}
-		for _, f := range existing {
-			if f.Tag == *tag {
-				id = f.ID
-				break
-			}
-		}
-		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{ID: id, Tag: *tag, Values: values}, "cli")
+		// Round-1 review MINOR: no list-then-decide here any more -- an
+		// empty ID is a server-side upsert-by-tag (managedFragmentStore.Save,
+		// atomic under its own lock), so this can never race a concurrent
+		// `fleet managed set --tag X` into creating two fragments for the
+		// same tag (the TOCTOU a client-side list+create/update used to
+		// have).
+		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{Tag: *tag, Values: values}, "cli")
 		if err != nil {
 			return err
 		}

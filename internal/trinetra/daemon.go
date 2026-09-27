@@ -945,6 +945,13 @@ func cmdDaemon(args []string) int {
 		os.Exit(0)
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
+	// managedRef (task 8, round-1 review IMPORTANT 1) holds this child's
+	// managedChild once startFleet/startChild has built one (nil forever on
+	// solo/master, and briefly nil on a child too, until the Store below
+	// runs) -- reload reads it fresh on every call via an atomic pointer
+	// rather than a captured variable, since it is defined and closed over
+	// HERE, before startFleet (and so before managedChild even exists).
+	var managedRef atomic.Pointer[managedChild]
 	// reload persists newCfg to disk then applies it in-process: the closure
 	// newInprocAPI's ApplyConfig exposes to the control socket (and, through
 	// it, the web config editor, issue #66) so writes take effect
@@ -952,7 +959,17 @@ func cmdDaemon(args []string) int {
 	// saveDaemonCfg keeps the on-disk fleet identity keys: this daemon's
 	// in-memory config (or a plugin's) may predate a `trinetra fleet`
 	// command, which must be the only thing that changes them.
+	//
+	// reimposeManagedValues (round-1 review IMPORTANT 1) runs FIRST: reload
+	// is the ONE shared full-config apply path every ApplyConfig caller goes
+	// through (the web channels/public-settings pages, every ctl "manage"
+	// screen, a child's own managed-config apply) -- none of the ordinary
+	// callers know anything about managed-config, so without this a stale
+	// read (or a race with a fresh master push) could silently persist a
+	// managed key back to whatever value it happened to carry. A nil
+	// managedRef (solo, master, or nothing currently managed) is a no-op.
 	reload := func(newCfg *config.Config) error {
+		reimposeManagedValues(managedRef.Load(), newCfg)
 		if err := saveDaemonCfg(newCfg); err != nil {
 			return err
 		}
@@ -1069,6 +1086,10 @@ func cmdDaemon(args []string) int {
 	})
 	fleetStop.Store(&fleetRT.stop)
 	defer fleetRT.stop()
+	// managedRef is now live for reload's reimposeManagedValues above: nil
+	// on solo/master (fleetRT.provider.managed is only ever set for a
+	// child, fleet_daemon.go's startChild).
+	managedRef.Store(fleetRT.provider.managed)
 	if fleetRT.tee != nil {
 		if sw != nil {
 			sw.setTee(fleetRT.tee)

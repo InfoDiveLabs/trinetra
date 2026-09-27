@@ -1352,7 +1352,14 @@ func TestFleetManagedSetCreatesWhenNoExistingTag(t *testing.T) {
 	}
 }
 
-func TestFleetManagedSetUpdatesExistingTagFragment(t *testing.T) {
+// TestFleetManagedSetNeverListsFirstLettingServerUpsert is the round-1
+// review MINOR fix's test: the CLI no longer calls Fleet().Managed() to
+// decide create-vs-update itself (a list-then-write TOCTOU) -- it always
+// sends an empty ID and lets the server's own atomic upsert-by-tag
+// (managedFragmentStore.Save, unit-tested directly in
+// fleet_managed_test.go) decide, even when an existing fragment for the
+// same tag is right there in fake.managed.
+func TestFleetManagedSetNeverListsFirstLettingServerUpsert(t *testing.T) {
 	_, _, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{managed: []core.ManagedFragment{
 		{ID: "existing1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "70"}, Version: 1},
@@ -1361,8 +1368,11 @@ func TestFleetManagedSetUpdatesExistingTagFragment(t *testing.T) {
 	if rc := Main([]string{"fleet", "managed", "set", "--tag", "web", "thresholds.cpu_pct=90"}); rc != 0 {
 		t.Fatalf("exit %d: %s", rc, errb)
 	}
-	if fake.savedManaged.ID != "existing1" {
-		t.Fatalf("savedManaged.ID = %q, want existing1 (update, one fragment per tag)", fake.savedManaged.ID)
+	if fake.savedManaged.ID != "" {
+		t.Fatalf("savedManaged.ID = %q, want empty -- the CLI must never look up or send an id itself", fake.savedManaged.ID)
+	}
+	if fake.savedManaged.Tag != "web" || fake.savedManaged.Values["thresholds.cpu_pct"] != "90" {
+		t.Fatalf("savedManaged = %+v", fake.savedManaged)
 	}
 }
 

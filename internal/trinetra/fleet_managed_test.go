@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -463,11 +465,13 @@ func TestFleetAPIManagedStatusComputesDriftAndConflicts(t *testing.T) {
 // downstream apply failure, e.g. a full reload error, must still surface).
 type managedApplyAPI struct {
 	fleetCLIFakeAPI
-	applied *config.Config
-	err     error
+	applied    *config.Config
+	applyCalls int
+	err        error
 }
 
 func (a *managedApplyAPI) ApplyConfig(c *config.Config) error {
+	a.applyCalls++
 	if a.err != nil {
 		return a.err
 	}
@@ -644,5 +648,259 @@ func TestManagedFragmentForReadsRestoredSidecar(t *testing.T) {
 	report := mc.Report()
 	if report == nil || report.Version != 3 || !report.Applied {
 		t.Fatalf("Report() after restore = %+v, want Version 3, Applied true", report)
+	}
+}
+
+// --- round-1 review, IMPORTANT 1: shared full-config apply path re-imposes -
+
+// TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits pins the central
+// round-1 fix: the shared full-config apply path (daemon.go's reload, which
+// calls reimposeManagedValues before persisting) must force a managed key
+// back to its committed value even when the incoming config carries a stale
+// read of it, while leaving every OTHER edit in that same config alone.
+func TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits(t *testing.T) {
+	cfg := config.Default()
+	self := &managedApplyAPI{}
+	getCfg := func() *config.Config {
+		if self.applied != nil {
+			return self.applied
+		}
+		return cfg
+	}
+	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), getCfg, self, nil)
+	mc.Apply(managedConfigFrameData{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "85"}})
+
+	// A full-config edit built from a STALE read (e.g. the channels page,
+	// which loaded the config before this push landed) that also carries a
+	// legitimate, unrelated edit of its own.
+	stale, err := cloneConfigJSON(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stale.Set("thresholds.cpu_pct", "50"); err != nil {
+		t.Fatal(err)
+	}
+	stale.Channels = append(stale.Channels, config.ChannelConfig{Name: "new-channel", Type: "webhook"})
+
+	reimposeManagedValues(mc, stale)
+
+	if v, _ := stale.Get("thresholds.cpu_pct"); v != "85" {
+		t.Fatalf("thresholds.cpu_pct = %q, want the managed value 85 re-imposed over the stale read", v)
+	}
+	if len(stale.Channels) != 1 || stale.Channels[0].Name != "new-channel" {
+		t.Fatalf("Channels = %+v, want the unrelated edit preserved", stale.Channels)
+	}
+}
+
+// TestReimposeManagedValuesNoOpWhenNilOrNothingManaged pins the ruling's
+// "no-op on solo and master, and when nothing is managed".
+func TestReimposeManagedValuesNoOpWhenNilOrNothingManaged(t *testing.T) {
+	cfg := config.Default()
+	cfg.Thresholds.CPUPct = 42
+
+	reimposeManagedValues(nil, cfg) // solo/master: no managedChild at all
+	if cfg.Thresholds.CPUPct != 42 {
+		t.Fatalf("CPUPct = %v, want unchanged 42 (nil managedChild must be a no-op)", cfg.Thresholds.CPUPct)
+	}
+
+	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), func() *config.Config { return cfg }, &managedApplyAPI{}, nil)
+	reimposeManagedValues(mc, cfg) // a managedChild that has never managed anything
+	if cfg.Thresholds.CPUPct != 42 {
+		t.Fatalf("CPUPct = %v, want unchanged 42 (nothing managed must be a no-op)", cfg.Thresholds.CPUPct)
+	}
+}
+
+// funcApplyAPI is a core.API double whose ApplyConfig runs an arbitrary
+// closure -- used to build a small harness mirroring daemon.go's reload
+// (reimpose, then persist under a lock) for the concurrency test below,
+// without needing to spin up the whole daemon.
+type funcApplyAPI struct {
+	fleetCLIFakeAPI
+	apply func(*config.Config) error
+}
+
+func (a *funcApplyAPI) ApplyConfig(c *config.Config) error { return a.apply(c) }
+
+// TestManagedValueWinsOverConcurrentFullConfigApply is the round-1 review's
+// second IMPORTANT-1 test: a push (managedChild.Apply) racing a concurrent,
+// unrelated full-config apply (mirroring the channels/public-settings
+// pages, which read-then-write-back the WHOLE config with no idea a key is
+// managed), run under -race to prove no data race on managedChild's
+// internal state while both paths hit it simultaneously.
+//
+// The concurrent phase alone would make a strict "who wrote last" assertion
+// timing-dependent (whichever goroutine's persist call physically executes
+// last determines the harness's cfg, though every persist call already
+// individually reimposes correctly) -- so the actual "managed value wins"
+// property is pinned deterministically, AFTER both goroutines have
+// finished, by a single additional stale full-config apply. It proves the
+// invariant this fix exists for is not a matter of lucky timing.
+func TestManagedValueWinsOverConcurrentFullConfigApply(t *testing.T) {
+	var mu sync.Mutex
+	cfg := config.Default()
+	getCfg := func() *config.Config {
+		mu.Lock()
+		defer mu.Unlock()
+		return cfg
+	}
+	var mc *managedChild
+	self := &funcApplyAPI{apply: func(c *config.Config) error {
+		reimposeManagedValues(mc, c) // exactly what daemon.go's reload now does first
+		mu.Lock()
+		cfg = c
+		mu.Unlock()
+		return nil
+	}}
+	mc = newManagedChild(filepath.Join(t.TempDir(), "managed.json"), getCfg, self, nil)
+
+	const n = 200
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // the pusher: n increasing managed-config pushes
+		defer wg.Done()
+		for i := 1; i <= n; i++ {
+			mc.Apply(managedConfigFrameData{Version: int64(i), Values: map[string]string{"thresholds.cpu_pct": strconv.Itoa(i)}})
+		}
+	}()
+	go func() { // an unrelated full-config editor, racing the pusher above
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			clone, err := cloneConfigJSON(getCfg())
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			clone.Name = "host-" + strconv.Itoa(i) // an edit having nothing to do with managed config
+			if err := self.ApplyConfig(clone); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	wg.Wait()
+
+	// Deterministic pin: one more full-config apply, deliberately built with
+	// a WRONG value for the managed key (simulating the worst-case stale
+	// read), must still come out re-imposed to the settled committed value.
+	stale, err := cloneConfigJSON(getCfg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stale.Set("thresholds.cpu_pct", "-999"); err != nil {
+		t.Fatal(err)
+	}
+	if err := self.ApplyConfig(stale); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := getCfg().Get("thresholds.cpu_pct")
+	want := mc.CurrentValues()["thresholds.cpu_pct"]
+	if want != strconv.Itoa(n) {
+		t.Fatalf("sanity: mc's committed value = %q, want %d (the pusher's last push)", want, n)
+	}
+	if got != want {
+		t.Fatalf("final thresholds.cpu_pct = %q, want the managed value %q -- reimpose must win over a stale/wrong full-config apply", got, want)
+	}
+}
+
+// --- round-1 review, MINOR: Apply short-circuits an unchanged push --------
+
+func TestManagedChildApplyShortCircuitsWhenUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "managed.json")
+	cfg := config.Default()
+	self := &managedApplyAPI{}
+	getCfg := func() *config.Config {
+		if self.applied != nil {
+			return self.applied
+		}
+		return cfg
+	}
+	mc := newManagedChild(path, getCfg, self, nil)
+
+	frame := managedConfigFrameData{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "80"}, Fragments: map[string]string{"thresholds.cpu_pct": "frag1"}}
+	mc.Apply(frame)
+	if self.applyCalls != 1 {
+		t.Fatalf("applyCalls = %d, want 1 after the first apply", self.applyCalls)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The identical version+values arriving again (e.g. the periodic 10m
+	// re-push, unchanged): must not re-validate, re-apply, or rewrite the
+	// sidecar.
+	mc.Apply(frame)
+	if self.applyCalls != 1 {
+		t.Fatalf("applyCalls = %d, want still 1 (an unchanged push must short-circuit)", self.applyCalls)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("sidecar rewritten on an unchanged push:\nbefore=%s\nafter=%s", before, after)
+	}
+
+	// A genuinely changed push (same version's VALUES differ, or a new
+	// version) is never short-circuited.
+	mc.Apply(managedConfigFrameData{Version: 2, Values: map[string]string{"thresholds.cpu_pct": "81"}, Fragments: map[string]string{"thresholds.cpu_pct": "frag1"}})
+	if self.applyCalls != 2 {
+		t.Fatalf("applyCalls = %d, want 2 after a genuinely changed push", self.applyCalls)
+	}
+}
+
+// --- round-1 review, MINOR: server-side upsert-by-tag ----------------------
+
+// TestManagedFragmentSaveUpsertsByTagAtomically pins the round-1 review's
+// MINOR fix: Save with an empty ID and an existing fragment for the SAME
+// tag updates that fragment in place (same id, values replaced, version
+// bumped) rather than creating a duplicate -- "one fragment per tag" is a
+// server-side, lock-held guarantee now, not something the CLI has to get
+// right itself.
+func TestManagedFragmentSaveUpsertsByTagAtomically(t *testing.T) {
+	s, err := loadManagedFragmentStore(filepath.Join(t.TempDir(), "managed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Save(core.ManagedFragment{Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "70"}}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.List()) != 1 {
+		t.Fatalf("List() = %+v, want exactly one fragment after the first save", s.List())
+	}
+
+	second, err := s.Save(core.ManagedFragment{Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "90"}}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second.ID = %q, want %q (update in place, not a new fragment)", second.ID, first.ID)
+	}
+	if second.Version != first.Version+1 {
+		t.Fatalf("second.Version = %d, want %d", second.Version, first.Version+1)
+	}
+	frags := s.List()
+	if len(frags) != 1 || frags[0].Values["thresholds.cpu_pct"] != "90" {
+		t.Fatalf("List() = %+v, want exactly one fragment updated to cpu_pct=90 (no duplicate)", frags)
+	}
+
+	// A DIFFERENT tag's empty-ID save still creates its own fragment.
+	third, err := s.Save(core.ManagedFragment{Tag: "app", Values: map[string]string{"baseline_sigma": "3"}}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.ID == first.ID {
+		t.Fatal("a different tag must never reuse another tag's fragment id")
+	}
+	if len(s.List()) != 2 {
+		t.Fatalf("List() = %+v, want 2 fragments (web, app)", s.List())
+	}
+
+	// An explicit id that happens to not exist is still a hard error -- the
+	// upsert-by-tag path never masks a genuinely bad explicit id.
+	if _, err := s.Save(core.ManagedFragment{ID: "doesnotexist", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "1"}}, "cli"); err == nil {
+		t.Fatal("an explicit, unknown id must still be rejected")
 	}
 }
