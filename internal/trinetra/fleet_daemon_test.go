@@ -652,6 +652,64 @@ func TestFleetStopIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestFleetStopClosesLiveStreamConnections is the final-review transport I2
+// regression: rt.stop must force-close every live /fleet/v1/stream
+// connection (Hub.CloseAll) BEFORE m.Shutdown's deadline wait, not rely on
+// the client disconnecting or the process exiting. masterShutdownDeadline
+// is shrunk so a pre-fix run (which would otherwise block for the full
+// deadline with the connection still open, never actually closing it) fails
+// fast rather than costing a real multi-second wait.
+func TestFleetStopClosesLiveStreamConnections(t *testing.T) {
+	old := masterShutdownDeadline
+	masterShutdownDeadline = 300 * time.Millisecond
+	t.Cleanup(func() { masterShutdownDeadline = old })
+
+	rt, _ := startTestMaster(t, "127.0.0.1")
+	m := rt.provider.master
+
+	cdir := t.TempDir()
+	plain, _, err := m.tokens.Create(time.Hour, 1, nil, "stop-test", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := fleet.EncodeJoin(fleet.JoinInfo{URL: "https://" + m.listen, Token: plain, Pin: m.pin})
+	res, err := fleet.Join(context.Background(), code, "child", "v-test", nil, filepath.Join(cdir, "fleet-child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident, err := fleet.LoadIdentity(filepath.Join(cdir, "fleet-child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ob, err := fleet.OpenOutbox(filepath.Join(cdir, "outbox"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := fleet.NewShipper(fleet.ShipperConfig{
+		MasterURL: "https://" + m.listen, Pin: m.pin, Identity: ident, Outbox: ob,
+		Live:      func() (fleet.LiveUpdate, error) { return fleet.LiveUpdate{}, nil },
+		LiveEvery: time.Hour, Logf: t.Logf,
+		OnFrame: func(fleet.Frame) {}, // non-nil: only then does streamLoop open PathStream
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	shDone := make(chan struct{})
+	go func() { defer close(shDone); sh.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-shDone; _ = ob.Close() })
+
+	waitUntil(t, "child stream connected", func() bool { return m.hub.Connected(res.NodeID) })
+
+	stopped := make(chan struct{})
+	go func() { rt.stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("rt.stop did not return within 2s of a 300ms masterShutdownDeadline -- Shutdown is blocking on a live stream connection it never closed")
+	}
+	if m.hub.Connected(res.NodeID) {
+		t.Fatal("hub still reports the child connected after rt.stop returned -- CloseAll was not called (or not called before the deadline wait)")
+	}
+}
+
 // `fleet node remove` drops a node from the registry and liveness tracking,
 // resolves its open node-down page, and keeps its replicated history.
 func TestFleetRemoveNodeResolvesDownAlertAndKeepsReplica(t *testing.T) {

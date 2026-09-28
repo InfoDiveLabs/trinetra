@@ -263,6 +263,12 @@ type masterLoop struct {
 // masterTickInterval is how often the master loop ticks.
 const masterTickInterval = 5 * time.Second
 
+// masterShutdownDeadline bounds how long rt.stop waits for m.Shutdown / the
+// master loop / the alerting engine to finish once the master is asked to
+// stop. A package var (not a const) purely so a test can shrink it and
+// still observe a bounded, deterministic stop instead of a real 5s wait.
+var masterShutdownDeadline = 5 * time.Second
+
 // newMasterLoop builds a masterLoop. A nil engine (test convenience for
 // suites that don't exercise alerting) makes l.alert fall back to d.alert
 // directly, exactly as before the alerting engine existed.
@@ -757,7 +763,14 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	}()
 	rt.stop = func() {
 		cancel()
-		deadline := time.Now().Add(5 * time.Second)
+		// Force-close every live /fleet/v1/stream connection before waiting
+		// on m.Shutdown: http.Server.Shutdown does not cancel a still-running
+		// handler's own request context, so handleStream's select loop would
+		// otherwise only end once the client disconnects -- Shutdown's
+		// deadline would silently elapse without ever closing a connected
+		// child's stream (final-review transport I2).
+		hub.CloseAll()
+		deadline := time.Now().Add(masterShutdownDeadline)
 		sctx, scancel := context.WithDeadline(context.Background(), deadline)
 		defer scancel()
 		_ = m.Shutdown(sctx)

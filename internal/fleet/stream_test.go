@@ -240,6 +240,45 @@ func TestStreamPushToDisconnectedNodeReturnsFalse(t *testing.T) {
 	}
 }
 
+// TestHubCloseAllClosesEveryConnection is the final-review transport I2
+// regression at the Hub level: CloseAll must close every currently
+// connected node's done channel (unblocking handleStream's select loop,
+// the same way Disconnect does for one node) and clear the connection map
+// so a later Connected/connect for the same id starts fresh.
+func TestHubCloseAllClosesEveryConnection(t *testing.T) {
+	hub := NewHub(nil)
+	c1 := hub.connect("n1")
+	c2 := hub.connect("n2")
+	if !hub.Connected("n1") || !hub.Connected("n2") {
+		t.Fatal("both nodes should be connected before CloseAll")
+	}
+
+	hub.CloseAll()
+
+	if hub.Connected("n1") || hub.Connected("n2") {
+		t.Fatal("CloseAll must disconnect every node")
+	}
+	select {
+	case <-c1.done:
+	default:
+		t.Fatal("n1's done channel was not closed by CloseAll")
+	}
+	select {
+	case <-c2.done:
+	default:
+		t.Fatal("n2's done channel was not closed by CloseAll")
+	}
+	// A later connect for the same id must not be shadowed by the closed
+	// connection: CloseAll must have removed it from the map, not just
+	// closed its done channel in place.
+	c3 := hub.connect("n1")
+	select {
+	case <-c3.done:
+		t.Fatal("a fresh connect after CloseAll produced an already-closed connection")
+	default:
+	}
+}
+
 func TestHubQueueOverflowDropsWithoutBlockingThePusher(t *testing.T) {
 	var mu sync.Mutex
 	var logs []string

@@ -195,6 +195,24 @@ func (h *Hub) Disconnect(nodeID string) {
 	}
 }
 
+// CloseAll closes every currently connected node's stream connection, the
+// same way Disconnect does for one. Used by the master's own graceful
+// stop: http.Server.Shutdown does not cancel a still-running handler's
+// request context on its own, so handleStream's long-lived select loop
+// would otherwise only end once the client disconnects or the process
+// exits -- Shutdown's deadline would elapse without ever actually closing
+// a live connection (final-review transport I2).
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	conns := h.conns
+	h.conns = map[string]*nodeConn{}
+	h.mu.Unlock()
+	for nodeID, c := range conns {
+		close(c.done)
+		h.pruneDrop(nodeID)
+	}
+}
+
 func (h *Hub) fireRPCResult(nodeID, id string, body []byte) {
 	h.mu.Lock()
 	f := h.onRPCResult
