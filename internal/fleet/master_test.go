@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -805,5 +806,106 @@ func TestMasterLogsLiveSinkFailure(t *testing.T) {
 	defer mu.Unlock()
 	if !strings.Contains(strings.Join(logs, "\n"), "disk full") {
 		t.Fatalf("logs = %q", logs)
+	}
+}
+
+// orderedLiveSink wraps a Sink and records the order Live calls enter/exit
+// it. The very first call to enter blocks (on release) until the test lets
+// it through, so a second, concurrent Live call for the same node can be
+// observed racing ahead of it (or not).
+type orderedLiveSink struct {
+	Sink
+	mu      sync.Mutex
+	order   []string
+	armed   bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *orderedLiveSink) Live(id string, u LiveUpdate) error {
+	s.mu.Lock()
+	s.order = append(s.order, "enter:"+u.Version)
+	first := !s.armed
+	s.armed = true
+	s.mu.Unlock()
+	if first {
+		close(s.entered)
+		<-s.release
+	}
+	err := s.Sink.Live(id, u)
+	s.mu.Lock()
+	s.order = append(s.order, "exit:"+u.Version)
+	s.mu.Unlock()
+	return err
+}
+
+// TestHandleLiveSerializesConcurrentUpdatesForSameNode reproduces
+// debug-step12-report.md's "second, separate issue": unlike
+// handleIngest/handleBackfill, handleLive took no per-node lock around
+// Sink.Live, so two concurrent Live posts for the same node could enter the
+// sink concurrently instead of being serialized.
+func TestHandleLiveSerializesConcurrentUpdatesForSameNode(t *testing.T) {
+	sink := &orderedLiveSink{entered: make(chan struct{}), release: make(chan struct{})}
+	// Always unblock the first call before this test returns, even on a
+	// failed assertion: otherwise a blocked handleLive goroutine leaks past
+	// the test and stalls the fixture's httptest.Server.Close.
+	defer func() {
+		select {
+		case <-sink.release:
+		default:
+			close(sink.release)
+		}
+	}()
+	f := newMasterFixture(t, func(c *MasterConfig) {
+		sink.Sink = c.Sink
+		c.Sink = sink
+	})
+	_, cl := f.join(t, nil)
+
+	post := func(version string) chan int {
+		ch := make(chan int, 1)
+		go func() {
+			b, _ := json.Marshal(LiveUpdate{SentAt: time.Now().Unix(), Version: version})
+			resp, err := cl.Post(f.srv.URL+PathLive, "application/json", bytes.NewReader(b))
+			if err != nil {
+				t.Error(err)
+				ch <- 0
+				return
+			}
+			resp.Body.Close()
+			ch <- resp.StatusCode
+		}()
+		return ch
+	}
+
+	firstDone := post("v-first")
+	<-sink.entered // first call is inside Sink.Live, blocked there
+
+	secondDone := post("v-second")
+
+	// Give the second call every chance to race ahead of the first if the
+	// per-node lock isn't held around Sink.Live.
+	time.Sleep(20 * time.Millisecond)
+	sink.mu.Lock()
+	soFar := append([]string(nil), sink.order...)
+	sink.mu.Unlock()
+	if len(soFar) != 1 {
+		t.Fatalf("Sink.Live call order after 20ms = %v, want exactly 1 entry (the second call must block behind the first on the per-node lock, not race into Sink.Live concurrently)", soFar)
+	}
+
+	close(sink.release)
+	if st := <-firstDone; st != 200 {
+		t.Fatalf("first status %d", st)
+	}
+	if st := <-secondDone; st != 200 {
+		t.Fatalf("second status %d", st)
+	}
+
+	want := []string{"enter:v-first", "exit:v-first", "enter:v-second", "exit:v-second"}
+	sink.mu.Lock()
+	got := append([]string(nil), sink.order...)
+	sink.mu.Unlock()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Sink.Live call order = %v, want %v", got, want)
 	}
 }

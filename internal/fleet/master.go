@@ -419,6 +419,15 @@ func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	// Same per-node lock handleIngest/handleBackfill already take: without
+	// it, two concurrent Live posts for one node can race inside the sink
+	// (replicaSink.Live ends with an unsynchronized writeFileAtomic of
+	// live.json) -- observed intermittently as "rename .../live.json.tmp
+	// .../live.json: no such file or directory" (debug-step12-report.md,
+	// "second, separate issue").
+	l := m.nodeLock(id)
+	l.Lock()
+	defer l.Unlock()
 	if err := m.cfg.Sink.Live(id, u); err != nil {
 		m.cfg.Logf("fleet: live update for %s failed: %v", id, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
