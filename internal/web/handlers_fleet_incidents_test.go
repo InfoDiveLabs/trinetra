@@ -94,6 +94,52 @@ func TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips(t *te
 	}
 }
 
+// TestFleetIncidentsListChipsCountFromTimelineWhenMemberFlagsUnset pins B5
+// (2026-09-25 UI audit): "delivered N / suppressed N" showed "0/0" even
+// though the incident's own Timeline recorded 1 delivered + 1 suppressed
+// event. Root cause -- IncidentAlert.DeliveredLocally only ever gets set for
+// a CHILD's own local delivery (fleet_incidents.go's Apply/
+// MarkDeliveredLocally); the master's own dispatch, the common case
+// (fleetAlertEngine.deliverAndReceipt), records ONLY a Timeline "delivered"
+// event via AppendEvent and never touches any IncidentAlert field. Likewise
+// a silence (as opposed to a dependency fold) sets SilencedBy, not
+// Suppressed, which the old count ignored entirely. This fixture leaves
+// every member flag unset/empty -- exactly the master-delivered,
+// silence-suppressed shape -- so the chips must still read 1/1 off the
+// Timeline.
+func TestFleetIncidentsListChipsCountFromTimelineWhenMemberFlagsUnset(t *testing.T) {
+	inc := core.Incident{
+		ID: "inc3", Title: "cpu high on api-01", Severity: "warning", State: "firing",
+		Nodes: []string{"api-01", "api-02"}, Opened: 1000, Updated: 1010,
+		Alerts: []core.IncidentAlert{
+			{Node: "api-01", NodeName: "api-01", Key: "cpu_pct", FiredAt: 1000},
+			{Node: "api-02", NodeName: "api-02", Key: "cpu_pct", FiredAt: 1005},
+		},
+		Timeline: []core.IncidentEvent{
+			{TS: 1000, Kind: "fired", Leg: "fire", AlertKey: "cpu_pct", Node: "api-01"},
+			{TS: 1002, Kind: "delivered", Leg: "fire", AlertKey: "cpu_pct", Node: "api-01", Policy: "default", Step: 0, Channels: []string{"telegram"}},
+			{TS: 1005, Kind: "fired", Leg: "fire", AlertKey: "cpu_pct", Node: "api-02"},
+			{TS: 1006, Kind: "suppressed", Leg: "fire", AlertKey: "cpu_pct", Node: "api-02", Detail: "silenced: maintenance nightly"},
+		},
+	}
+	fleet := &fakeFleet{incidents: []core.Incident{inc}}
+	d := fleetAdminDeps(t, fleet)
+	rr := fleetGetAsViewer(t, d, "/fleet/incidents")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /fleet/incidents status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "delivered 1") {
+		t.Errorf("GET /fleet/incidents: delivered chip did not count the master-dispatched Timeline event:\n%s", body)
+	}
+	if !strings.Contains(body, "suppressed 1") {
+		t.Errorf("GET /fleet/incidents: suppressed chip did not count the silence Timeline event:\n%s", body)
+	}
+	if strings.Contains(body, "delivered 0") || strings.Contains(body, "suppressed 0") {
+		t.Errorf("GET /fleet/incidents: chips still show 0/0 (B5 regression):\n%s", body)
+	}
+}
+
 // TestIncidentTimeTextUsesMasterLocalZone pins round-2 review finding I1:
 // incidentTimeText must render through the SAME master-local-zone-with-
 // abbreviation convention silenceTimeText (handlers_fleet_silences.go)

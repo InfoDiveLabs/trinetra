@@ -1054,17 +1054,44 @@ func incidentNodeNames(inc core.Incident) []string {
 	return names
 }
 
-// newIncidentRow projects one core.Incident into its list-row shape: the
-// delivered/suppressed chips count member alerts with DeliveredLocally set,
-// respectively a non-empty Suppressed reason; duration runs from Opened to
-// Resolved (a resolved incident) or to now (still open).
+// incidentMemberKey identifies one incident member (a specific alert on a
+// specific node) the same way fleet_incidents.go's own memberKey does, for
+// matching a core.IncidentAlert to its Timeline events.
+func incidentMemberKey(node, key string) string {
+	return node + "\x00" + key
+}
+
+// newIncidentRow projects one core.Incident into its list-row shape. The
+// delivered/suppressed chips count members whose OWN state (DeliveredLocally,
+// Suppressed/SilencedBy) says so, UNION'd with any matching Timeline
+// "delivered"/"suppressed" event for that (node, key) (B5, 2026-09-25 UI
+// audit fix): IncidentAlert.DeliveredLocally is only ever set for a CHILD's
+// own local delivery (fleet_incidents.go's Apply/MarkDeliveredLocally) --
+// the master's own dispatch, the common case
+// (fleetAlertEngine.deliverAndReceipt), records ONLY a Timeline event via
+// AppendEvent and never touches the member itself, so counting
+// DeliveredLocally alone silently missed most real deliveries. Likewise a
+// silence sets SilencedBy, not Suppressed (only a dependency fold does),
+// which the old count also ignored. Duration runs from Opened to Resolved (a
+// resolved incident) or to now (still open).
 func newIncidentRow(inc core.Incident) IncidentRow {
+	deliveredEv := map[string]bool{}
+	suppressedEv := map[string]bool{}
+	for _, ev := range inc.Timeline {
+		switch ev.Kind {
+		case "delivered":
+			deliveredEv[incidentMemberKey(ev.Node, ev.AlertKey)] = true
+		case "suppressed":
+			suppressedEv[incidentMemberKey(ev.Node, ev.AlertKey)] = true
+		}
+	}
 	delivered, suppressed := 0, 0
 	for _, a := range inc.Alerts {
-		if a.DeliveredLocally {
+		mk := incidentMemberKey(a.Node, a.Key)
+		if a.DeliveredLocally || deliveredEv[mk] {
 			delivered++
 		}
-		if a.Suppressed != "" {
+		if a.Suppressed != "" || a.SilencedBy != "" || suppressedEv[mk] {
 			suppressed++
 		}
 	}
