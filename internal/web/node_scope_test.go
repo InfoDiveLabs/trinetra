@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
@@ -277,16 +278,65 @@ func TestNodeRouterOldDaemonTreatedAsSolo(t *testing.T) {
 // that would try to act on a remote node. Requires a signed-in caller (see
 // TestNodeRouterRoutesToNode's doc) -- an anonymous POST here instead gets
 // redirected to /login, exactly like an anonymous GET would.
+//
+// round-1 review (task C6): the target paths here must NOT be the one
+// deliberate exception (POST /alerts/{key}/ack|unack, node_scope.go's
+// nodeScopedAlertAckPath) -- that path is asserted to reach downstream in
+// this same test, further down. A downstream mux is built with its own
+// COUNTING handlers (rather than reusing nodeAwareTestMux, which has no
+// route registered for these methods/paths at all) specifically so a 404
+// here is proven to come from withNodeRouter's own gate rejecting the
+// request before ever calling mux.ServeHTTP -- not merely from the stub
+// mux's own "no matching pattern" 404, which would look identical from the
+// response alone but prove nothing about the gate.
 func TestNodeRouterRejectsNonGetMethod(t *testing.T) {
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
-	h := withNodeRouter(d, nodeAwareTestMux(d))
 
-	rr := httptest.NewRecorder()
-	req := withFakeUser(httptest.NewRequest(http.MethodPost, "/n/child1/alerts/k/ack", nil), RoleAdmin)
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+	var reached int32
+	countingHandler := func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&reached, 1)
+		w.WriteHeader(http.StatusOK)
 	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /monitoring", countingHandler)
+	mux.HandleFunc("POST /monitoring", countingHandler)
+	mux.HandleFunc("POST /alerts/{key}/ack", countingHandler)
+	mux.HandleFunc("POST /alerts/{key}/other", countingHandler)
+	h := withNodeRouter(d, mux)
+
+	for _, target := range []string{
+		"/n/child1/monitoring",     // an ordinary node-scoped page, POST
+		"/n/child1/alerts/k/other", // shares the /alerts/{key}/ prefix but isn't ack/unack
+	} {
+		t.Run(target, func(t *testing.T) {
+			atomic.StoreInt32(&reached, 0)
+			rr := httptest.NewRecorder()
+			req := withFakeUser(httptest.NewRequest(http.MethodPost, target, nil), RoleAdmin)
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+			}
+			if got := atomic.LoadInt32(&reached); got != 0 {
+				t.Fatalf("downstream handler was reached (%d times) -- withNodeRouter's method gate must reject this request before ever dispatching to mux", got)
+			}
+		})
+	}
+
+	// The one deliberate exception (task C6) DOES reach downstream: proves
+	// the gate above is actually discriminating on path, not just eating
+	// every non-GET/HEAD method outright.
+	t.Run("/n/child1/alerts/k/ack (exception) reaches downstream", func(t *testing.T) {
+		atomic.StoreInt32(&reached, 0)
+		rr := httptest.NewRecorder()
+		req := withFakeUser(httptest.NewRequest(http.MethodPost, "/n/child1/alerts/k/ack", nil), RoleAdmin)
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (should reach the downstream counting handler), body: %s", rr.Code, rr.Body.String())
+		}
+		if got := atomic.LoadInt32(&reached); got != 1 {
+			t.Fatalf("downstream handler reached %d times, want exactly 1", got)
+		}
+	})
 }
 
 // TestNodeRouterRoutesEventsStream pins Task 4's reversal of the earlier

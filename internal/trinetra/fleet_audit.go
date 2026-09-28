@@ -51,7 +51,12 @@ func (a *auditLog) Append(actor, action, target, detail string, now int64) error
 // without ever reading the whole file, while a caller asking for a much
 // larger limit against a small file still terminates in a handful of
 // doublings rather than one read per line.
-const auditRecentChunkSize = 64 * 1024
+//
+// A package var, not a const (mirrors sse.go's sseFallbackInterval for the
+// identical reason): a test can shrink it to force Recent's multi-iteration
+// chunk-growth path against a small fixture file, rather than needing a
+// multi-megabyte file to observe more than one backward step.
+var auditRecentChunkSize int64 = 64 * 1024
 
 // auditRecentChunkGrowth is Recent's backward-read doubling factor (see
 // auditRecentChunkSize's doc).
@@ -138,7 +143,7 @@ func (a *auditLog) Recent(limit int) ([]core.AuditEntry, error) {
 	}
 
 	var out []core.AuditEntry
-	chunk := int64(auditRecentChunkSize)
+	chunk := auditRecentChunkSize
 	for {
 		start := size - chunk
 		if start < 0 {
