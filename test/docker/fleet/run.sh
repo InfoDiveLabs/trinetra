@@ -421,6 +421,9 @@ for c in child1 child2; do
   on "$c" trinetra telegram set-token "TESTTOKEN_$c" >/dev/null
   on "$c" trinetra config set telegram.chat_id 999 >/dev/null
   on "$c" trinetra config set fleet.fallback_after ${FALLBACK_AFTER}s >/dev/null
+  # A short slow tier so the disk check used below fires within seconds of
+  # its threshold dropping (the slow ticker is fixed at daemon start).
+  on "$c" trinetra config set sample_interval 10 >/dev/null
   start_daemon "$c"
 done
 wait_until 60 "child1 online on master (re-enrol)" node_is child1 online
@@ -461,32 +464,32 @@ echo "  child1 mem incident $INC1 delivered once, from the master, prefixed with
 # instead of risking the lease going stale first (which would skip
 # routing/fallback entirely and deliver instantly with no prefix).
 #
-# swap, not cpu, not a second use of mem: mem is already active (and must
-# stay that way for INC1/step 15) and cpu reads noisy/bursty near a low
-# threshold (observed flapping fire/recover repeatedly in an earlier run of
-# this harness against the real daemon, which blows the "exactly one"
-# counts below); swap sits at a small but stable non-zero percentage.
+# The root disk, not cpu/swap/a second use of mem: mem is already active
+# (and must stay that way for INC1/step 15), cpu reads noisy near a low
+# threshold, and swap can read exactly 0 in a container, so a low swap
+# threshold never fires. A per-target threshold on disk:/ (always well
+# above 1%) fires exactly one alert; other mounts keep the default.
 BASE_FALLBACK=$(msg_count "via local fallback: master unreachable")
 docker network disconnect "$NET" "$(ctr child1)"
-on child1 trinetra config set thresholds.swap_pct 0.05 >/dev/null
+on child1 trinetra monitor threshold disk:/ 1 >/dev/null || fail "monitor threshold disk:/ failed"
 wait_until 85 "child1 link retrying (handoff)" link_is child1 retrying
-wait_until $(( FALLBACK_AFTER + 60 )) "child1 delivered its swap alert via local fallback" fallback_delivered_once
+wait_until $(( FALLBACK_AFTER + 60 )) "child1 delivered its disk alert via local fallback" fallback_delivered_once
 sleep $(( 3 * FAST ))
 AFTER_FALLBACK=$(msg_count "via local fallback: master unreachable")
 [ "$AFTER_FALLBACK" -eq $(( BASE_FALLBACK + 1 )) ] || fail "expected exactly one local-fallback message, got $(( AFTER_FALLBACK - BASE_FALLBACK ))"
 mocktg_has "via local fallback: master unreachable" || fail "mock telegram never got a local-fallback message"
-[ "$(msg_count "child1: swap =")" -eq 0 ] || fail "the master delivered child1's swap alert even though child1 was partitioned"
-echo "  child1 delivered its own swap alert locally after ${FALLBACK_AFTER}s of no receipt, prefixed 'via local fallback: master unreachable'"
+[ "$(msg_count "child1: disk:/ =")" -eq 0 ] || fail "the master delivered child1's disk alert even though child1 was partitioned"
+echo "  child1 delivered its own disk alert locally after ${FALLBACK_AFTER}s of no receipt, prefixed 'via local fallback: master unreachable'"
 
 docker network connect "$NET" "$(ctr child1)"
 wait_until 60 "child1 link linked after handoff" link_is child1 linked
 wait_until 60 "child1 outbox drained after handoff" unsent_is_zero child1
 sleep $(( 3 * FAST ))
-[ "$(msg_count "via local fallback: master unreachable")" -eq "$AFTER_FALLBACK" ] || fail "the master re-sent the already-fallback-delivered swap alert after reconnecting"
-[ "$(msg_count "child1: swap =")" -eq 0 ] || fail "the master sent a duplicate child1 swap message after reconnecting"
-SWAP_INC=$(on master trinetra fleet incidents --node "$ID_child1" --state firing | awk '$0 ~ /swap/ {print $1; exit}')
-[ -n "$SWAP_INC" ] || fail "the master never recorded child1's fallback-delivered swap incident after reconnecting"
-[ "$SWAP_INC" != "$INC1" ] || fail "the swap fire reused the mem incident $INC1 instead of opening its own"
+[ "$(msg_count "via local fallback: master unreachable")" -eq "$AFTER_FALLBACK" ] || fail "the master re-sent the already-fallback-delivered disk alert after reconnecting"
+[ "$(msg_count "child1: disk:/ =")" -eq 0 ] || fail "the master sent a duplicate child1 disk message after reconnecting"
+SWAP_INC=$(on master trinetra fleet incidents --node "$ID_child1" --state firing | awk '$0 ~ /disk:/ {print $1; exit}')
+[ -n "$SWAP_INC" ] || fail "the master never recorded child1's fallback-delivered disk incident after reconnecting"
+[ "$SWAP_INC" != "$INC1" ] || fail "the disk fire reused the mem incident $INC1 instead of opening its own"
 on master trinetra fleet incident "$SWAP_INC" | grep -q "delivered locally" \
   || fail "master's swap incident for child1 is not marked delivered locally: $(on master trinetra fleet incident "$SWAP_INC")"
 pass "linked: one message from the master; partitioned: one local-fallback message after ${FALLBACK_AFTER}s; reconnect: recorded, no duplicate"
