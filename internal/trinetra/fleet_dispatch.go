@@ -77,6 +77,11 @@ func newKeyedDispatcher() *keyedDispatcher {
 // entirely, at the cost of briefly serializing Enqueue/pump against each
 // other -- never against the (semaphore-gated) job itself, which always
 // runs with neither lock held.
+// enqueueAfterUnlockHook, when set by a test, runs in Enqueue right after mu
+// is released: the window in which a running pump can already take and
+// finish the new job.
+var enqueueAfterUnlockHook func()
+
 func (d *keyedDispatcher) Enqueue(key string, job func()) {
 	d.mu.Lock()
 	if d.stopped {
@@ -93,9 +98,16 @@ func (d *keyedDispatcher) Enqueue(key string, job func()) {
 	if start {
 		l.pumping = true
 	}
-	d.mu.Unlock()
-
+	// Count the job before releasing mu: once it is on the queue a running
+	// pump can dequeue, run and Done() it immediately, so an Add after
+	// Unlock could drive the counter negative (panic). Holding mu also
+	// orders this Add before Stop's Wait, which checks stopped under mu.
 	d.wg.Add(1)
+	d.mu.Unlock()
+	if enqueueAfterUnlockHook != nil {
+		enqueueAfterUnlockHook()
+	}
+
 	if start {
 		go d.pump(key, l)
 	}

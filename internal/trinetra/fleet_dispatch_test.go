@@ -3,6 +3,7 @@ package trinetra
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -239,5 +240,55 @@ func TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait(t *testing.T) {
 	time.Sleep(20 * time.Millisecond) // let Stop's own wait-goroutine exit
 	if after := runtime.NumGoroutine(); after > before {
 		t.Fatalf("goroutines = %d, want <= %d (baseline) -- leak after Stop drained", after, before)
+	}
+}
+
+// A pump already draining a lane can take and finish a freshly appended job
+// before Enqueue returns; the WaitGroup must never go negative (it used to
+// panic with "sync: negative WaitGroup counter" under load).
+func TestKeyedDispatcherEnqueueWhilePumpRunningNeverNegative(t *testing.T) {
+	d := newKeyedDispatcher()
+	var ran atomic.Int64
+	var wg sync.WaitGroup
+	for g := 0; g < 16; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				d.Enqueue("same-key", func() { ran.Add(1) })
+			}
+		}()
+	}
+	wg.Wait()
+	if !d.Stop(10 * time.Second) {
+		t.Fatal("dispatcher did not drain")
+	}
+	if got := ran.Load(); got != 16*500 {
+		t.Fatalf("ran %d jobs, want %d", got, 16*500)
+	}
+}
+
+// Deterministic version of the race above: the pump finishes the new job
+// inside the window between Enqueue releasing mu and returning.
+func TestKeyedDispatcherJobFinishedBeforeEnqueueReturns(t *testing.T) {
+	d := newKeyedDispatcher()
+	release := make(chan struct{})
+	var ran atomic.Int64
+	d.Enqueue("k", func() { <-release; ran.Add(1) }) // keeps the pump alive
+	enqueueAfterUnlockHook = func() {
+		close(release)
+		deadline := time.Now().Add(5 * time.Second)
+		for ran.Load() < 2 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	t.Cleanup(func() { enqueueAfterUnlockHook = nil })
+	d.Enqueue("k", func() { ran.Add(1) })
+	enqueueAfterUnlockHook = nil
+	if !d.Stop(5 * time.Second) {
+		t.Fatal("dispatcher did not drain")
+	}
+	if ran.Load() != 2 {
+		t.Fatalf("ran %d jobs, want 2", ran.Load())
 	}
 }
