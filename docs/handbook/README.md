@@ -26,6 +26,7 @@ straight through and return here from any page.
 10. [Operations](10-operations.md) - managing, upgrading, uninstalling, migrating, and troubleshooting.
 11. [Command reference](11-command-reference.md) - every `trinetra` command, plus the plugin binaries.
 12. [Roadmap and status](12-roadmap-and-status.md) - what is released, what is in progress, and what is still coming.
+13. [Fleet mode](13-fleet.md) - concepts, setup, incidents, routing and policies, silences, managed config, audit, and day-to-day fleet operations.
 
 ### Plugins
 

@@ -125,6 +125,11 @@ Rolled up across the stable releases, the following is done and verified:
 - **The front-door install and safe-exec model**, with checksum-manifest
   verification before a plugin is exec'd and restart-on-upgrade of a running
   daemon.
+- **Bounded-retry alert delivery.** The async notifier queue behind every
+  channel (solo and fleet fallback alike) retries a failing channel with
+  backoff instead of delivering once and giving up, without ever
+  double-delivering to a channel that already succeeded. See [Alert
+  history](06-alerting-and-channels.md#alert-history).
 
 ### A note on Telegram enrollment
 
@@ -156,10 +161,12 @@ plain about them:
   the full fleet web UI (node scoping, switcher, `/fleet` overview with
   heatmap/top-N/compare, admin pages, incidents, alerting admin with the
   route tester, silences, managed config, audit log), and the complete
-  `trinetra fleet` CLI. See [Fleet mode](02-architecture.md#fleet-mode),
-  [Fleet alerting](06-alerting-and-channels.md#fleet-alerting), [The web
-  UI](08-web-ui.md#fleet), and the [command
-  reference](11-command-reference.md#trinetra-fleet).
+  `trinetra fleet` CLI. See the [Fleet mode](13-fleet.md) chapter for a
+  guided walkthrough, [Fleet mode](02-architecture.md#fleet-mode) for the
+  architecture, [Fleet alerting](06-alerting-and-channels.md#fleet-alerting)
+  for the alerting pipeline, [The web UI](08-web-ui.md#fleet) for the fleet
+  pages, and the [command reference](11-command-reference.md#trinetra-fleet)
+  for every `fleet` subcommand.
 
   Phase 4 (ctl + Telegram + public status) is only partially started: the
   master's Telegram channel carries **Ack** and **Silence 1h** inline
@@ -191,4 +198,4 @@ interface was designed to allow later, but it is not being built now.
 
 ---
 
-[Previous: Command reference](11-command-reference.md) | [Handbook index](README.md)
+[Previous: Command reference](11-command-reference.md) | [Handbook index](README.md) | [Next: Fleet mode](13-fleet.md)

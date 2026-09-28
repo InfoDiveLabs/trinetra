@@ -139,8 +139,11 @@ refuses to run it.
 ## trinetra fleet
 
 `trinetra fleet` manages fleet mode (see [Fleet
-mode](02-architecture.md#fleet-mode)). Run it with no arguments or `help` to
-print the usage:
+mode](02-architecture.md#fleet-mode) for the architecture, and the dedicated
+[Fleet mode](13-fleet.md) chapter for a task-oriented walkthrough of
+everything below: setting up a fleet, incidents, routing and policies,
+silences and maintenance windows, managed config, audit, and
+revoke/leave/remove). Run it with no arguments or `help` to print the usage:
 
 ```
 usage:

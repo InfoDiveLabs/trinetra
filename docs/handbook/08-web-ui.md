@@ -112,6 +112,8 @@ WebAuthn passkeys only: a platform authenticator like Touch ID or Windows
 Hello, or a hardware security key. Sessions are kept server-side, and state-
 changing requests are protected with CSRF tokens.
 
+![Passkey login](docs/assets/screenshots/login.png)
+
 Getting the first account is a one-time bootstrap. With `web.enabled true` and
 no accounts yet, you visit `/enroll` with no token and register a passkey. The
 very first passkey to register becomes the admin account. This decision is
@@ -147,20 +149,28 @@ Signed in, the UI is a handful of routes.
   includes a 24 hour availability strip built from real per-request data. See
   [Live dashboard updates](#live-dashboard-updates) below for how the push
   from the daemon reaches this page.
+
+  ![Live dashboard](docs/assets/screenshots/dashboard.png)
 - **History graphs.** Time-series charts of the metrics the daemon keeps,
   rendered client-side with uPlot. Same series the CLI and Telegram read; the
   page is just another view onto them.
+
+  ![History graphs](docs/assets/screenshots/monitoring.png)
 - **`/config`.** An admin editor for the daemon's configuration. Writes go
   through the same validate-persist-apply path the CLI uses, so a change saved
   here is a change the daemon has validated.
 - **`/channels`.** An admin editor for notification channels, with a test
   action to send through a channel and confirm it works.
+
+  ![Channels admin](docs/assets/screenshots/channels.png)
 - **`/users`.** The admin account console: issue enrollment tokens, set roles,
   remove accounts, and revoke passkeys.
 - **`/settings/public`.** The admin control for the anonymous status page:
   toggle it on and pick which panels it exposes.
 - **`/alerts`.** Recent alerts. Viewers can read it; admins can acknowledge
   from it.
+
+  ![Alerts](docs/assets/screenshots/alerts.png)
 - **`/public`.** The anonymous status page, described in its own section below.
   It is the only route an unauthenticated visitor can reach, and only when it
   is enabled.
@@ -345,6 +355,11 @@ other node, plus a set of fleet-only pages for the roster, incidents,
 alerting, silences, managed config, and audit. None of this appears on a
 solo installation or on a child's own local UI, beyond the badge described
 at the end of this section.
+
+This section is the reference for what each fleet page shows; for the
+concepts behind them and a guided, task-oriented tour (setting up a fleet,
+reading an incident, writing a route, troubleshooting a stuck node), see the
+dedicated [Fleet mode](13-fleet.md) chapter.
 
 ### Node pages under `/n/{id}/`
 
