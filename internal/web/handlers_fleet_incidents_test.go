@@ -333,19 +333,65 @@ func TestFleetIncidentDetailShowsMembersAndFullTimeline(t *testing.T) {
 		}
 	}
 
-	// Timeline: every kind, and structured-field text for the
-	// delivered/escalated/receipt/resolved events (channels/policy/leg).
+	// Timeline: every kind, and human-readable text for the
+	// delivered/escalated/receipt/resolved events (channels/policy/leg) --
+	// U1 (2026-09-25 UI audit): no more raw "leg=... key=... policy=..."
+	// dumps with a duplicated prose Detail tacked on.
 	for _, want := range []string{
 		">fired<", ">grouped<", ">suppressed<", ">delivered<", ">escalated<", ">acked<", ">receipt<", ">resolved<",
 		"grouped into inc1", // legacy Detail fallback
-		"channels=telegram", "channels=email",
-		"policy=default step=1",
-		"leg=recover",
+		"policy default, step 0 → telegram", // delivered
+		"policy default, step 1 → email",    // escalated
+		"recover · db1 · disk_pct",          // resolved: leg · node · key, no redundant Detail
 		"root", // acked event's Actor
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /fleet/incidents/inc1: missing timeline content %q\nbody:\n%s", want, body)
 		}
+	}
+	// "node=X rule=Y" is legitimate silence-matcher-preview syntax
+	// (fleet_incident.html's matcher line), not the timeline -- these
+	// checks target only the timeline's own old raw k=v dump.
+	for _, unwanted := range []string{"leg=fire", "policy=default", "channels=telegram", "step=0", "step=1"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("GET /fleet/incidents/inc1: timeline still shows raw machine text %q\nbody:\n%s", unwanted, body)
+		}
+	}
+}
+
+// TestIncidentEventTextHumanReadable pins U1 (2026-09-25 UI audit) directly:
+// incidentEventText must render a structured event as "<leg> · <node NAME>
+// · <key> · policy <p>, step <n> → <channels>" -- the node's own display
+// name (never its raw id), and no duplicated policy text (the old bug: both
+// the k=v dump AND policyStepDetail's prose "policy default step 0: *"
+// Detail were rendered, one right after the other).
+func TestIncidentEventTextHumanReadable(t *testing.T) {
+	nodeNames := map[string]string{"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4": "api-01"}
+	ev := core.IncidentEvent{
+		Leg: "fire", AlertKey: "mem", Node: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+		Policy: "default", Step: 1, Channels: []string{"*"},
+		Detail: "fire: policy default step 1: *", // the raw Detail a real event carries alongside
+	}
+	got := incidentEventText(ev, nodeNames)
+	want := "fire · api-01 · mem · policy default, step 1 → all channels"
+	if got != want {
+		t.Fatalf("incidentEventText = %q, want %q", got, want)
+	}
+	if strings.Contains(got, ev.Node) {
+		t.Errorf("incidentEventText %q still contains the raw node id, want the display name only", got)
+	}
+}
+
+// TestIncidentEventTextSuppressedNoLegDuplication pins the master-own
+// suppressed case: suppressedDetail prefixes the reason with "<leg>: " for
+// a master-own alert (fleet_incidents.go), which must not be shown twice
+// once the leg is already its own part.
+func TestIncidentEventTextSuppressedNoLegDuplication(t *testing.T) {
+	ev := core.IncidentEvent{Leg: "fire", AlertKey: "disk_pct", Detail: "fire: dependency down"}
+	got := incidentEventText(ev, nil)
+	want := "fire · disk_pct · dependency down"
+	if got != want {
+		t.Fatalf("incidentEventText = %q, want %q", got, want)
 	}
 }
 

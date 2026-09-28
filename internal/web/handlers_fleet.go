@@ -1314,15 +1314,48 @@ type IncidentTimelineRow struct {
 	Actor string
 }
 
-// incidentEventText renders ev's structured fields into one line of display
-// text: leg/key/node/policy+step/channels, space-joined, with ev.Detail
-// appended too when present (a structured event may still carry a short
-// human Detail alongside its structured fields). An event with NEITHER Leg
-// nor Policy set is a legacy event (core.IncidentEvent's own doc: "every
-// reader of these fields must fall back to parsing Detail only for such an
-// event, never for one that has them"), so it renders Detail alone (or,
-// failing that, just the Kind) instead of the structured form.
-func incidentEventText(ev core.IncidentEvent) string {
+// incidentChannelsText renders a delivery's channel list for display: "all
+// channels" for the literal wildcard ("*", meaning every enabled channel --
+// the same convention fleetAlertingChannelOptions/*'s "* (every enabled
+// channel)" checkbox uses), the channels themselves otherwise.
+func incidentChannelsText(channels []string) string {
+	if len(channels) == 1 && channels[0] == "*" {
+		return "all channels"
+	}
+	return strings.Join(channels, ", ")
+}
+
+// incidentEventLegPrefix is the "<leg>: " prefix suppressedDetail
+// (fleet_incidents.go) puts on a master-own alert's suppressed reason, so
+// legDeliveredStatusFor's restart-resurrection check can tell which leg it
+// covers -- redundant once incidentEventText already renders ev.Leg as its
+// own part, so it's stripped before Detail is shown.
+func incidentEventLegPrefix(leg, detail string) string {
+	prefix := leg + ": "
+	if strings.HasPrefix(detail, prefix) {
+		return detail[len(prefix):]
+	}
+	return detail
+}
+
+// incidentEventText renders ev into one human-readable line: "<leg> · <node
+// NAME> · <key> · policy <p>, step <n> → <channels>" (U1, 2026-09-25 UI
+// audit fix) -- nodeNames resolves ev.Node (a raw registry id) to its
+// display name, falling back to the id itself when the node isn't in the
+// map (e.g. it's since left the roster). Only ONE of the policy/channels
+// text or ev.Detail is ever shown, never both: the old rendering dumped
+// every structured field as "k=v" AND appended ev.Detail right after, even
+// though Detail (policyStepDetail/fireDetail/recoverDetail,
+// internal/trinetra) already restates the very same information in prose --
+// e.g. "leg=fire key=mem node=<id> policy=default step=0 channels=* fire:
+// policy default step 0: *".
+//
+// An event with NEITHER Leg nor Policy set is a legacy event
+// (core.IncidentEvent's own doc: "every reader of these fields must fall
+// back to parsing Detail only for such an event, never for one that has
+// them"), so it renders Detail alone (or, failing that, just the Kind)
+// exactly as before.
+func incidentEventText(ev core.IncidentEvent, nodeNames map[string]string) string {
 	if ev.Leg == "" && ev.Policy == "" {
 		if ev.Detail != "" {
 			return ev.Detail
@@ -1330,37 +1363,63 @@ func incidentEventText(ev core.IncidentEvent) string {
 		return ev.Kind
 	}
 	var parts []string
-	if ev.Leg != "" {
-		parts = append(parts, "leg="+ev.Leg)
+	parts = append(parts, ev.Leg)
+	if ev.Node != "" {
+		name := nodeNames[ev.Node]
+		if name == "" {
+			name = ev.Node
+		}
+		parts = append(parts, name)
 	}
 	if ev.AlertKey != "" {
-		parts = append(parts, "key="+ev.AlertKey)
+		parts = append(parts, ev.AlertKey)
 	}
-	if ev.Node != "" {
-		parts = append(parts, "node="+ev.Node)
+	switch {
+	case ev.Policy != "":
+		step := fmt.Sprintf("policy %s, step %d", ev.Policy, ev.Step)
+		if len(ev.Channels) > 0 {
+			step += " → " + incidentChannelsText(ev.Channels)
+		}
+		parts = append(parts, step)
+	case len(ev.Channels) > 0:
+		parts = append(parts, incidentChannelsText(ev.Channels))
+	case ev.Kind == "fired" || ev.Kind == "resolved":
+		// fireDetail/recoverDetail's ENTIRE content ("fired on X"/"recovered
+		// on X", or bare "fired"/"recovered" for a master-own alert) just
+		// restates the leg+node already rendered above -- nothing left to add.
+	case ev.Detail != "":
+		parts = append(parts, incidentEventLegPrefix(ev.Leg, ev.Detail))
 	}
-	if ev.Policy != "" {
-		parts = append(parts, fmt.Sprintf("policy=%s step=%d", ev.Policy, ev.Step))
+	return strings.Join(parts, " · ")
+}
+
+// incidentNodeNameLookup builds a node-id -> display-name map from
+// inc.Alerts (an id with no NodeName is simply omitted, so callers keep
+// falling back to the raw id), for incidentEventText to resolve a Timeline
+// event's raw Node id -- the same source incidentNodeNames (above) reads,
+// just keyed by id instead of collected into a display list.
+func incidentNodeNameLookup(inc core.Incident) map[string]string {
+	names := make(map[string]string, len(inc.Alerts))
+	for _, a := range inc.Alerts {
+		if a.Node == "" || a.NodeName == "" {
+			continue
+		}
+		names[a.Node] = a.NodeName
 	}
-	if len(ev.Channels) > 0 {
-		parts = append(parts, "channels="+strings.Join(ev.Channels, ","))
-	}
-	if ev.Detail != "" {
-		parts = append(parts, ev.Detail)
-	}
-	return strings.Join(parts, " ")
+	return names
 }
 
 // buildIncidentTimeline projects events (already chronological, per
 // core.FleetAPI.Incident/Explain's own contract) into their display rows,
-// order preserved.
-func buildIncidentTimeline(events []core.IncidentEvent) []IncidentTimelineRow {
+// order preserved. nodeNames (incidentNodeNameLookup) resolves each event's
+// raw Node id to its display name.
+func buildIncidentTimeline(events []core.IncidentEvent, nodeNames map[string]string) []IncidentTimelineRow {
 	rows := make([]IncidentTimelineRow, 0, len(events))
 	for _, ev := range events {
 		rows = append(rows, IncidentTimelineRow{
 			When:  incidentTimeText(ev.TS),
 			Kind:  ev.Kind,
-			Text:  incidentEventText(ev),
+			Text:  incidentEventText(ev, nodeNames),
 			Actor: ev.Actor,
 		})
 	}
@@ -1393,6 +1452,7 @@ type IncidentMemberRow struct {
 // exact wording ("'Explain' on an alert key reuses Explain(key) via a small
 // panel on the detail page").
 func buildIncidentMembers(inc core.Incident, explainByKey map[string][]core.IncidentEvent) []IncidentMemberRow {
+	nodeNames := incidentNodeNameLookup(inc)
 	rows := make([]IncidentMemberRow, 0, len(inc.Alerts))
 	for _, a := range inc.Alerts {
 		node := a.NodeName
@@ -1416,7 +1476,7 @@ func buildIncidentMembers(inc core.Incident, explainByKey map[string][]core.Inci
 			SilencedBy:       silencedBy,
 			Folded:           folded,
 			Open:             a.ResolvedAt == 0,
-			Explain:          buildIncidentTimeline(explainByKey[a.Key]),
+			Explain:          buildIncidentTimeline(explainByKey[a.Key], nodeNames),
 		})
 	}
 	return rows
@@ -1579,7 +1639,7 @@ func buildIncidentDetailPageData(r *http.Request, d Deps, id string, opts incide
 		ResolvedText:     incidentTimeText(inc.Resolved),
 		DurationText:     incidentDurationText(dur),
 		Members:          members,
-		Timeline:         buildIncidentTimeline(inc.Timeline),
+		Timeline:         buildIncidentTimeline(inc.Timeline, incidentNodeNameLookup(inc)),
 		CanAck:           inc.State != "resolved",
 		CanSilence:       inc.State != "resolved" && openCount > 0,
 		SilenceDurations: incidentSilenceDurationOptions(opts.ForValue),
