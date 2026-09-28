@@ -61,6 +61,43 @@ func TestNodeScopedDashboardShowsChildData(t *testing.T) {
 	}
 }
 
+// TestNodeScopedDashboardHostStripShowsNodeName pins B3 (2026-09-25 UI
+// audit): the host strip's "HOST" field on /n/child1/ must name the VIEWED
+// node (masterFleetWithChild's child1 == "child-one"), not the master's own
+// configured server.name -- the host strip's data (OS/CPU/RAM/...) already
+// comes from child1's own Snapshot via apiFor, so labeling it with the
+// master's name is misleading even though every other field is correct.
+func TestNodeScopedDashboardHostStripShowsNodeName(t *testing.T) {
+	master := fakeAPI{hostInfo: core.HostInfoView{OS: "MasterOS 1.0"}}
+	child := fakeAPI{hostInfo: core.HostInfoView{OS: "ChildOS 2.0"}}
+	d := nodeScopedDeps(t, master, child)
+	cfg := config.Default()
+	cfg.Name = "ops-master"
+	d.Cfg = func() *config.Config { return cfg }
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/n/child1/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	start := strings.Index(body, `class="hoststrip"`)
+	if start < 0 {
+		t.Fatalf("no .hoststrip in body:\n%s", body)
+	}
+	end := strings.Index(body[start:], "</div>")
+	strip := body[start : start+end]
+	if !strings.Contains(strip, "child-one") {
+		t.Errorf("dashboard host strip missing child1's own name (child-one):\n%s", strip)
+	}
+	if strings.Contains(strip, "ops-master") {
+		t.Errorf("dashboard host strip shows the master's server.name (ops-master) on a node-scoped page:\n%s", strip)
+	}
+}
+
 // TestNodeScopedMonitoringShowsChildData pins /n/child1/monitoring
 // (handlers_monitoring.go).
 func TestNodeScopedMonitoringShowsChildData(t *testing.T) {
