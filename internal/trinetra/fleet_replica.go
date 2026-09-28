@@ -73,14 +73,25 @@ const (
 )
 
 type replicaNode struct {
-	mu          sync.Mutex
-	dir         string
-	store       *tsFileStore
-	st          ingestState
-	last        map[string]int64
-	series      int
-	lastAlertTS int64
-	alertLines  map[string]bool
+	mu     sync.Mutex
+	dir    string
+	store  *tsFileStore
+	st     ingestState
+	last   map[string]int64
+	series int
+	// lastAlertTS/alertLines are the KindAlert ordering/dedupe guard, scoped
+	// PER ALERT KEY (map keyed by AlertEvent.Key) -- NOT a single value
+	// shared across every alert on the node. A single shared guard let one
+	// alert key's delayed record (a child's fallback-delivery AlertEvent
+	// carries its OWN, LATER decision time in Time -- see fleet_lease.go's
+	// deliverFallback -- not the original alert's FiredAt) silently advance
+	// the node's guard past a genuinely newer, unrelated alert on a
+	// DIFFERENT key, which the ordering check ("ev.Time < n.lastAlertTS")
+	// then silently dropped -- never calling onAlert, so the master's
+	// alerting engine never even saw it. See
+	// TestReplicaApplyCrossAlertKeyOrderingDropRepro.
+	lastAlertTS map[string]int64
+	alertLines  map[string]map[string]bool
 	// lastEventStart guards downtime events (appended in Start order); it is
 	// seeded from the store on open so the guard survives a master restart.
 	lastEventStart int64
@@ -195,23 +206,43 @@ func (n *replicaNode) seedLocked() {
 	if ms, err := n.store.Metrics(ResRaw); err == nil {
 		n.series = len(ms)
 	}
-	// Several alerts can share the newest timestamp; every one of them goes
-	// into the dedupe set, walking back from the end of the log.
-	n.lastAlertTS, n.alertLines = 0, map[string]bool{}
+	// The dedupe set is scoped PER ALERT KEY (see the struct field doc
+	// comment): several alerts, of possibly different keys, can share the
+	// newest timestamp within the tail window, so this is a full two-pass
+	// scan of it -- first the newest Time per key, then every line at that
+	// key's own newest Time -- rather than a single backward walk that stops
+	// at the first differing Time (which is what a single shared guard could
+	// do, but a per-key one cannot: an older key's newest line can sit
+	// anywhere behind a newer key's).
+	n.lastAlertTS, n.alertLines = map[string]int64{}, map[string]map[string]bool{}
 	lines := tailLines(filepath.Join(n.dir, "alertlog.jsonl"))
-	for i := len(lines) - 1; i >= 0; i-- {
+	type parsed struct {
+		key  string
+		time int64
+		line []byte
+	}
+	var evs []parsed
+	for _, l := range lines {
 		var h struct {
-			Time int64 `json:"time"`
+			Key  string `json:"key"`
+			Time int64  `json:"time"`
 		}
-		if json.Unmarshal(lines[i], &h) != nil {
+		if json.Unmarshal(l, &h) != nil {
 			continue
 		}
-		if len(n.alertLines) == 0 {
-			n.lastAlertTS = h.Time
-		} else if h.Time != n.lastAlertTS {
-			break
+		evs = append(evs, parsed{key: h.Key, time: h.Time, line: l})
+		if cur, ok := n.lastAlertTS[h.Key]; !ok || h.Time > cur {
+			n.lastAlertTS[h.Key] = h.Time
 		}
-		n.alertLines[string(lines[i])] = true
+	}
+	for _, ev := range evs {
+		if ev.time != n.lastAlertTS[ev.key] {
+			continue
+		}
+		if n.alertLines[ev.key] == nil {
+			n.alertLines[ev.key] = map[string]bool{}
+		}
+		n.alertLines[ev.key][string(ev.line)] = true
 	}
 }
 
@@ -453,21 +484,30 @@ func (n *replicaNode) apply(id string, recs []fleet.Record, sequenced bool, onAl
 			if json.Compact(&line, rec.Data) != nil {
 				continue
 			}
-			if ev.Time == n.lastAlertTS && n.alertLines[line.String()] {
+			// Scoped per ALERT KEY (never a single guard shared across every
+			// key on the node): a delayed fallback record for one key (its
+			// Time is the LATER fallback-decision moment, not the alert's
+			// own FiredAt -- see fleet_lease.go's deliverFallback) must
+			// never be able to advance the ordering guard past a genuinely
+			// newer, unrelated alert on a DIFFERENT key and cause it to be
+			// silently dropped here (see
+			// TestReplicaApplyCrossAlertKeyOrderingDropRepro).
+			lastTS := n.lastAlertTS[ev.Key]
+			if ev.Time == lastTS && n.alertLines[ev.Key][line.String()] {
 				n.st.DroppedDuplicate++
 				continue
 			}
 			// An older alert is skipped uncounted: the dedupe set only holds
 			// the newest timestamp's lines, so it cannot tell a re-sent copy
 			// from a genuinely late alert.
-			if ev.Time < n.lastAlertTS {
+			if ev.Time < lastTS {
 				continue
 			}
-			if ev.Time > n.lastAlertTS {
-				n.lastAlertTS = ev.Time
-				n.alertLines = map[string]bool{}
+			if ev.Time > lastTS {
+				n.lastAlertTS[ev.Key] = ev.Time
+				n.alertLines[ev.Key] = map[string]bool{}
 			}
-			n.alertLines[line.String()] = true
+			n.alertLines[ev.Key][line.String()] = true
 			alerts.Write(line.Bytes())
 			alerts.WriteByte('\n')
 			// The master alerting engine's entry point for a genuinely new

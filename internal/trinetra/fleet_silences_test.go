@@ -684,3 +684,64 @@ func TestSilencesForNodeWeb1DB1MultiMatcherLeak(t *testing.T) {
 		t.Fatalf("db1 Suppressed = %q, %v, want suppressed (silence everything on db1)", reason, ok)
 	}
 }
+
+// TestReplicaApplyCrossAlertKeyOrderingDropRepro demonstrates that fleet_
+// replica.go's apply() alert-ordering guard (lastAlertTS/alertLines) is
+// scoped PER NODE, not per (node, alert key): a delayed fallback record for
+// one alert key (its Time stamped at the LATER fallback-decision moment --
+// see fleet_lease.go's deliverFallback) can silently swallow a genuinely
+// later, unrelated alert on a DIFFERENT key for the SAME node, because
+// "ev.Time < n.lastAlertTS" is checked against the highest Time seen for
+// the node as a whole, never re-scoped per key. The docker fleet e2e run
+// this reproduces had child2 firing BOTH a "collector:services" alert
+// (flapping, independently of the mem test) and the "mem" alert under test
+// in the very same window (mocktg evidence: "via local fallback... collector
+// services failing" appears around the same run as the mem dance).
+func TestReplicaApplyCrossAlertKeyOrderingDropRepro(t *testing.T) {
+	var onAlertCalls []AlertEvent
+	root := t.TempDir()
+	sink := newReplicaSink(root, StoreOptions{}, func(nodeID string, ev AlertEvent) {
+		onAlertCalls = append(onAlertCalls, ev)
+	})
+
+	base := int64(1_700_000_000)
+	mk := func(seq uint64, ts int64, key, kind string, deliveredLocally bool, firedAt int64) fleet.Record {
+		b, _ := json.Marshal(AlertEvent{
+			Time: ts, Key: key, Title: key + " " + kind, Severity: "warning", Kind: kind,
+			DeliveredLocally: deliveredLocally, FiredAt: firedAt, RoutedToMaster: !deliveredLocally,
+		})
+		return fleet.Record{Seq: seq, Kind: fleet.KindAlert, TS: ts, Data: b}
+	}
+
+	// An UNRELATED alert key ("collector:services") fires and, because the
+	// master was briefly unreachable, its fallback decision is logged late
+	// (its own Time is the fallback-decision moment, well after its actual
+	// FiredAt) -- both records ship together.
+	if err := sink.Apply(testNodeID, []fleet.Record{
+		mk(1, base, "collector:services", "fire", false, base),
+		mk(2, base+200, "collector:services", "fire", true, base), // fallback resend, Time inflated
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The "mem" alert genuinely fires and recovers LATER in real time, but
+	// its own Time is EARLIER than the unrelated fallback record above.
+	if err := sink.Apply(testNodeID, []fleet.Record{
+		mk(3, base+150, "mem", "fire", false, base+150),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Apply(testNodeID, []fleet.Record{
+		mk(4, base+180, "mem", "recover", false, base+180),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var kinds []string
+	for _, ev := range onAlertCalls {
+		kinds = append(kinds, fmt.Sprintf("%s@%d(%s)", ev.Kind, ev.Time, ev.Key))
+	}
+	t.Logf("onAlert calls: %v", kinds)
+	if len(onAlertCalls) != 4 {
+		t.Fatalf("onAlert was called %d times, want 4 (collector fire, collector fallback resend, mem fire, mem recover) -- the mem alert must never be silently dropped just because an unrelated key's delayed fallback record advanced this node's shared lastAlertTS: %v", len(onAlertCalls), kinds)
+	}
+}
