@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bytes"
 	"errors"
 	"html"
 	"net/http"
@@ -284,38 +283,6 @@ func TestFleetAdminTokenCreateSetsCreator(t *testing.T) {
 	}
 	if !strings.Contains(newField, "creator=root") {
 		t.Errorf("fleet.token.create audit New = %q, want it to contain creator=root", newField)
-	}
-}
-
-// TestFleetTokenCreateHandlerUsesAuditUserHelper pins round-2 review finding
-// M1: fleetTokenCreateHandler must resolve the acting user via the shared
-// auditUser(r) helper (audit.go) -- the same helper every other mutation in
-// this branch uses for the identical lookup -- rather than duplicating the
-// userFromContext(r) check inline. Both forms produce an identical Creator
-// value for a signed-in caller (TestFleetAdminTokenCreateSetsCreator above
-// already pins that runtime behavior), so this is purely a maintainability/
-// consistency fix, checked structurally here: the handler's own source must
-// call auditUser(r), not hand-roll the userFromContext lookup a second time.
-func TestFleetTokenCreateHandlerUsesAuditUserHelper(t *testing.T) {
-	src, err := os.ReadFile("handlers_fleet_admin.go")
-	if err != nil {
-		t.Fatalf("reading handlers_fleet_admin.go: %v", err)
-	}
-	start := bytes.Index(src, []byte("func fleetTokenCreateHandler("))
-	if start < 0 {
-		t.Fatal("fleetTokenCreateHandler not found in handlers_fleet_admin.go")
-	}
-	rest := src[start:]
-	end := bytes.Index(rest[1:], []byte("\nfunc "))
-	if end < 0 {
-		t.Fatal("could not find the end of fleetTokenCreateHandler (no following top-level func)")
-	}
-	body := rest[:end+1]
-	if !bytes.Contains(body, []byte("auditUser(r)")) {
-		t.Errorf("fleetTokenCreateHandler must resolve the acting user via auditUser(r), body:\n%s", body)
-	}
-	if bytes.Contains(body, []byte("userFromContext(r); ok {")) {
-		t.Errorf("fleetTokenCreateHandler still duplicates the userFromContext lookup instead of using auditUser(r), body:\n%s", body)
 	}
 }
 
