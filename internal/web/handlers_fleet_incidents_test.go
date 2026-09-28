@@ -340,8 +340,8 @@ func TestFleetIncidentDetailShowsMembersAndFullTimeline(t *testing.T) {
 	for _, want := range []string{
 		">fired<", ">grouped<", ">suppressed<", ">delivered<", ">escalated<", ">acked<", ">receipt<", ">resolved<",
 		"grouped into inc1",                 // legacy Detail fallback
-		"policy default, step 0 → telegram", // delivered
-		"policy default, step 1 → email",    // escalated
+		"policy default, step 1 → telegram", // delivered (Step 0, shown 1-based)
+		"policy default, step 2 → email",    // escalated (Step 1, shown 1-based)
 		"recover · db1 · disk_pct",          // resolved: leg · node · key, no redundant Detail
 		"root",                              // acked event's Actor
 	} {
@@ -373,7 +373,7 @@ func TestIncidentEventTextHumanReadable(t *testing.T) {
 		Detail: "fire: policy default step 1: *", // the raw Detail a real event carries alongside
 	}
 	got := incidentEventText(ev, nodeNames)
-	want := "fire · api-01 · mem · policy default, step 1 → all channels"
+	want := "fire · api-01 · mem · policy default, step 2 → all channels" // Step 1 shown 1-based, like the policy editor
 	if got != want {
 		t.Fatalf("incidentEventText = %q, want %q", got, want)
 	}
@@ -710,5 +710,34 @@ func TestFleetIncidentSilenceUnknownID404sWithNoMutation(t *testing.T) {
 	}
 	if len(fleet.createdSilences) != 0 {
 		t.Errorf("CreateSilence must not be called for an unknown id, got %d calls", len(fleet.createdSilences))
+	}
+}
+
+// TestIncidentMasterOwnMembersNamed pins that a member alert raised by the
+// master itself (engine.Submit(alertSource{}, ...) leaves Node and NodeName
+// empty) is shown under the master's own name -- in the list's Nodes column,
+// the members table and the timeline -- instead of being silently dropped.
+func TestIncidentMasterOwnMembersNamed(t *testing.T) {
+	inc := core.Incident{
+		ID: "inc1",
+		Alerts: []core.IncidentAlert{
+			{Key: "disk:/var/log"},
+			{Node: "n1", NodeName: "api-01", Key: "disk:/var/log"},
+		},
+		Timeline: []core.IncidentEvent{
+			{Kind: "delivered", Leg: "fire", AlertKey: "disk:/var/log", Policy: "default", Channels: []string{"ops"}},
+		},
+	}
+	inc = nameSelfMembers(inc, "ops-master")
+	if got := newIncidentRow(inc).Nodes; got != "ops-master, api-01" {
+		t.Errorf("row Nodes = %q, want %q", got, "ops-master, api-01")
+	}
+	members := buildIncidentMembers(inc, nil)
+	if len(members) == 0 || members[0].Node != "ops-master" {
+		t.Errorf("first member node = %+v, want ops-master", members)
+	}
+	tl := buildIncidentTimeline(inc.Timeline, incidentNodeNameLookup(inc))
+	if want := "fire · ops-master · disk:/var/log · policy default, step 1 → ops"; len(tl) != 1 || tl[0].Text != want {
+		t.Errorf("timeline = %+v, want text %q", tl, want)
 	}
 }

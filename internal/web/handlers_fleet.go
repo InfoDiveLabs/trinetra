@@ -1075,6 +1075,41 @@ func incidentNodeNames(inc core.Incident) []string {
 	return names
 }
 
+// nameSelfMembers gives every member alert the master raised itself (the
+// engine submits those with an empty Node and NodeName) the master's own
+// display name, so the list, members table and timeline show it instead of
+// silently dropping it. inc is a copy; its Alerts slice is copied too.
+func nameSelfMembers(inc core.Incident, selfName string) core.Incident {
+	if selfName == "" {
+		return inc
+	}
+	alerts := make([]core.IncidentAlert, len(inc.Alerts))
+	copy(alerts, inc.Alerts)
+	for i := range alerts {
+		if alerts[i].Node == "" && alerts[i].NodeName == "" {
+			alerts[i].NodeName = selfName
+		}
+	}
+	inc.Alerts = alerts
+	return inc
+}
+
+// masterSelfName is this master's own display name (its NodeSummary with
+// Self set), read through the request memo; "" when the roster is
+// unavailable.
+func masterSelfName(r *http.Request, d Deps) string {
+	nodes, err := fleetMemoFrom(r).fleetNodes(d)
+	if err != nil {
+		return ""
+	}
+	for _, n := range nodes {
+		if n.Self {
+			return n.Name
+		}
+	}
+	return ""
+}
+
 // incidentMemberKey identifies one incident member (a specific alert on a
 // specific node) the same way fleet_incidents.go's own memberKey does, for
 // matching a core.IncidentAlert to its Timeline events.
@@ -1234,6 +1269,10 @@ func incidentPageHref(iq incidentQuery, page int) string {
 func buildIncidentsPageData(r *http.Request, d Deps) IncidentsPageData {
 	iq := parseIncidentQuery(r)
 	all := fetchIncidentsFiltered(d, iq)
+	self := masterSelfName(r, d)
+	for i := range all {
+		all[i] = nameSelfMembers(all[i], self)
+	}
 	rows, totalPages, page := buildIncidentRows(all, iq)
 	iq.Page = page
 	sub := fmt.Sprintf("%d incident", len(all))
@@ -1258,6 +1297,10 @@ func buildIncidentsPageData(r *http.Request, d Deps) IncidentsPageData {
 func buildIncidentsTableData(r *http.Request, d Deps) IncidentsTableData {
 	iq := parseIncidentQuery(r)
 	all := fetchIncidentsFiltered(d, iq)
+	self := masterSelfName(r, d)
+	for i := range all {
+		all[i] = nameSelfMembers(all[i], self)
+	}
 	rows, _, page := buildIncidentRows(all, iq)
 	iq.Page = page
 	return IncidentsTableData{Rows: rows, QueryString: iq.encode()}
@@ -1385,7 +1428,7 @@ func incidentEventText(ev core.IncidentEvent, nodeNames map[string]string) strin
 	}
 	var parts []string
 	parts = append(parts, ev.Leg)
-	if ev.Node != "" {
+	if ev.Node != "" || nodeNames[""] != "" {
 		name := nodeNames[ev.Node]
 		if name == "" {
 			name = ev.Node
@@ -1397,7 +1440,7 @@ func incidentEventText(ev core.IncidentEvent, nodeNames map[string]string) strin
 	}
 	switch {
 	case ev.Policy != "":
-		step := fmt.Sprintf("policy %s, step %d", ev.Policy, ev.Step)
+		step := fmt.Sprintf("policy %s, step %d", ev.Policy, ev.Step+1) // 1-based, like the policy editor
 		if len(ev.Channels) > 0 {
 			step += " → " + incidentChannelsText(ev.Channels)
 		}
@@ -1422,10 +1465,10 @@ func incidentEventText(ev core.IncidentEvent, nodeNames map[string]string) strin
 func incidentNodeNameLookup(inc core.Incident) map[string]string {
 	names := make(map[string]string, len(inc.Alerts))
 	for _, a := range inc.Alerts {
-		if a.Node == "" || a.NodeName == "" {
+		if a.NodeName == "" {
 			continue
 		}
-		names[a.Node] = a.NodeName
+		names[a.Node] = a.NodeName // "" is the master itself, see nameSelfMembers
 	}
 	return names
 }
@@ -1623,6 +1666,8 @@ func buildIncidentDetailPageData(r *http.Request, d Deps, id string, opts incide
 	if err != nil {
 		return IncidentDetailPageData{}, err
 	}
+
+	inc = nameSelfMembers(inc, masterSelfName(r, d))
 
 	explainByKey := map[string][]core.IncidentEvent{}
 	seenKeys := map[string]bool{}
