@@ -2,6 +2,14 @@
 {{$v := .View}}
 <div id="dashboard-live">
 
+  <!-- stale-stream banner (task C6): hidden by default, shown by app.js's
+       swBootSSE when a remote node's live poll (sse.go's
+       remoteNodeEventsLoop) has failed 3+ consecutive times, and cleared on
+       the next successful "snapshot" frame. Never rendered server-side
+       (there's no server-known "stale" state at page-load time) -- purely
+       an SSE-driven client toggle. -->
+  <div id="stale-banner" class="collector-warn" role="status" hidden></div>
+
   {{if $v.DegradedCollectors}}
   <div class="collector-warn" role="alert">
     <strong>Monitoring degraded:</strong>

@@ -3,6 +3,8 @@ package web
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -398,11 +400,15 @@ type nodeSnapshotAPI struct {
 	fakeAPI
 	mu   sync.Mutex
 	snap core.DashboardView
+	err  error
 }
 
 func (n *nodeSnapshotAPI) Snapshot() (core.DashboardView, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if n.err != nil {
+		return core.DashboardView{}, n.err
+	}
 	return n.snap, nil
 }
 
@@ -410,6 +416,15 @@ func (n *nodeSnapshotAPI) setSnapshot(v core.DashboardView) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.snap = v
+}
+
+// setErr makes every subsequent Snapshot() call fail with err (nil clears
+// it) -- TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery's
+// way of simulating a transient control-plane hiccup on the remote node.
+func (n *nodeSnapshotAPI) setErr(err error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.err = err
 }
 
 // nodeEventsTestDeps builds Deps for the node-scoped SSE tests: a master
@@ -490,6 +505,94 @@ func TestEventsStreamRemoteNodePollsChildSnapshot(t *testing.T) {
 
 	if subscribeCalled {
 		t.Error("a remote node's /events stream must never call Deps.Subscribe")
+	}
+}
+
+// TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery pins
+// task C6's stale-indicator ruling: a remote node's poll holds the last
+// successful snapshot across transient errors (nothing is written to the
+// wire for the first two consecutive failures), emits one "stale" SSE event
+// naming the last-success time once errors reach remoteNodeStaleThreshold
+// (3), and clears back to a normal "snapshot" frame on the very next
+// successful poll -- even though that poll's data is unchanged from what
+// was already held, which the ordinary "only write on change" dedup would
+// otherwise have suppressed.
+func TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery(t *testing.T) {
+	child := &nodeSnapshotAPI{snap: core.DashboardView{CPU: 77}}
+	d := nodeEventsTestDeps(t, child, 1)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	cookie := viewerCookie(t, users, sessions)
+
+	srv := httptest.NewServer(newHandler(d))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/n/child1/events", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.AddCookie(cookie)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /n/child1/events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	r := bufio.NewReader(resp.Body)
+	beforeErrors := time.Now()
+	event, data := readSSEFrame(t, r)
+	if event != "snapshot" || !strings.Contains(data, `"cpu":77`) {
+		t.Fatalf("initial event = %q data = %q, want snapshot with cpu=77", event, data)
+	}
+
+	child.setErr(errors.New("child unreachable"))
+	// The 3rd consecutive failed poll is the FIRST thing written to the wire
+	// after the initial frame (the 1st/2nd failures write nothing at all --
+	// the "hold" behavior) -- so this blocking read's very next frame is the
+	// stale event, not a snapshot.
+	event, data = readSSEFrame(t, r)
+	if event != "stale" {
+		t.Fatalf("event after 3 consecutive errors = %q, want stale (data: %s)", event, data)
+	}
+	var stale struct {
+		LastSuccess int64 `json:"last_success"`
+	}
+	if err := json.Unmarshal([]byte(data), &stale); err != nil {
+		t.Fatalf("decode stale event: %v (data: %s)", err, data)
+	}
+	if stale.LastSuccess < beforeErrors.Unix() || stale.LastSuccess > time.Now().Unix() {
+		t.Errorf("stale.LastSuccess = %d, want it between %d and now", stale.LastSuccess, beforeErrors.Unix())
+	}
+
+	child.setErr(nil) // recovery, same cpu=77 value as before the errors
+	event, data = readSSEFrame(t, r)
+	if event != "snapshot" || !strings.Contains(data, `"cpu":77`) {
+		t.Fatalf("event after recovery = %q data = %q, want a snapshot frame (unchanged data still emitted to clear the stale banner)", event, data)
+	}
+}
+
+// TestAppJSHandlesStaleSSEEvent is a static source test (this package's
+// established convention for app.js, e.g. templates_node_test.go's
+// TestAppJSDataFetchesGoThroughNodeURL) pinning that swBootSSE listens for
+// the "stale" SSE event, shows the exact banner text task C6's ruling
+// specifies, and clears it on the next "snapshot" event.
+func TestAppJSHandlesStaleSSEEvent(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+	if !strings.Contains(src, `addEventListener('stale'`) {
+		t.Error("app.js missing an SSE 'stale' event listener")
+	}
+	if !strings.Contains(src, "live updates paused") {
+		t.Error("app.js missing the stale banner's \"live updates paused\" text")
+	}
+	if !strings.Contains(src, "clearStaleBanner()") {
+		t.Error("app.js missing a call to clear the stale banner on the next snapshot")
 	}
 }
 

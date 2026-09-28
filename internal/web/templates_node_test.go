@@ -934,3 +934,96 @@ func TestNodePaletteOpeningClosesSwitcher(t *testing.T) {
 		t.Errorf("app.js: openPalette() must call closeSwitcher() so opening the palette closes the switcher dropdown:\n%s", window)
 	}
 }
+
+// ---- task C6: switcher polish (recent nodes + page-type jump) -------------
+
+// TestNodePaletteRecentNodesUseLocalStorageWithTryCatch pins the ruling: the
+// palette's recent-nodes list is capped at 5 and every localStorage read AND
+// write is wrapped in its own try/catch, so a private-browsing tab or a
+// blocked/full storage quota degrades to "no recent nodes" rather than
+// throwing out of the click/load handler.
+func TestNodePaletteRecentNodesUseLocalStorageWithTryCatch(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+
+	if !strings.Contains(src, "window.localStorage.getItem(RECENT_KEY)") {
+		t.Error("app.js: missing a localStorage.getItem read for the recent-nodes list")
+	}
+	if !strings.Contains(src, "window.localStorage.setItem(RECENT_KEY") {
+		t.Error("app.js: missing a localStorage.setItem write for the recent-nodes list")
+	}
+	if !strings.Contains(src, "RECENT_MAX=5") {
+		t.Error("app.js: recent-nodes list must be capped at 5")
+	}
+
+	i := strings.Index(src, "function loadRecentNodes(){")
+	if i < 0 {
+		t.Fatal("app.js: missing function loadRecentNodes(){...}")
+	}
+	if fn := src[i : i+250]; !strings.Contains(fn, "try{") || !strings.Contains(fn, "catch(e)") {
+		t.Errorf("app.js: loadRecentNodes() must wrap its localStorage read in try/catch:\n%s", fn)
+	}
+
+	j := strings.Index(src, "function recordRecentNode(id){")
+	if j < 0 {
+		t.Fatal("app.js: missing function recordRecentNode(id){...}")
+	}
+	if fn := src[j : j+400]; !strings.Contains(fn, "try{") || !strings.Contains(fn, "catch(e)") {
+		t.Errorf("app.js: recordRecentNode() must wrap its localStorage write in try/catch:\n%s", fn)
+	}
+
+	// "self" is never recorded -- it's already the switcher/palette's own
+	// fixed first-class entry.
+	if !strings.Contains(src, `if(!id || id==='self') return;`) {
+		t.Error("app.js: recordRecentNode() must skip \"self\"")
+	}
+
+	// Every page load (that has the palette at all -- master-only chrome)
+	// records its own current node.
+	if !strings.Contains(src, "recordRecentNode(currentNodeID());") {
+		t.Error("app.js: missing a call to record the CURRENT page's node as visited")
+	}
+
+	// renderResults actually consults the recent list to reorder results
+	// when no query has been typed yet.
+	k := strings.Index(src, "function renderResults(nodes){")
+	if k < 0 {
+		t.Fatal("app.js: missing function renderResults(nodes){...}")
+	}
+	if fn := src[k : k+900]; !strings.Contains(fn, "loadRecentNodes()") {
+		t.Errorf("app.js: renderResults() must consult loadRecentNodes() to surface recent nodes first:\n%s", fn)
+	}
+}
+
+// TestNodePalettePageTypeJumpParsesTrailingPageWord pins the ruling: typing
+// "<name> <pagetype>" (e.g. "web1 history") targets that specific page type
+// on the matched node(s), for exactly the five node-routable page types.
+func TestNodePalettePageTypeJumpParsesTrailingPageWord(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+
+	if !strings.Contains(src, `var PAGE_TYPES=['dashboard','monitoring','host','alerts','history'];`) {
+		t.Error("app.js: missing the exact 5-entry PAGE_TYPES list (dashboard/monitoring/host/alerts/history)")
+	}
+	if !strings.Contains(src, "function parsePaletteQuery(raw){") {
+		t.Fatal("app.js: missing function parsePaletteQuery(raw){...}")
+	}
+	if !strings.Contains(src, "function pageTypePath(t){") {
+		t.Error("app.js: missing function pageTypePath(t){...} to render a page-type's own path")
+	}
+	// hrefFor must accept and use the parsed page type, not just
+	// currentTargetPath() -- otherwise a jump would still land on whatever
+	// page the palette happened to be opened from.
+	if !strings.Contains(src, "function hrefFor(node,pageType){") {
+		t.Error("app.js: hrefFor() must take a pageType parameter")
+	}
+	if !strings.Contains(src, "row.href=hrefFor(n,parsed.pageType);") {
+		t.Error("app.js: renderResults() must pass the parsed page type through to hrefFor()")
+	}
+}

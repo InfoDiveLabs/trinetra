@@ -225,6 +225,88 @@ func TestFleetManagedSaveUpsertsByTag(t *testing.T) {
 	}
 }
 
+// TestFleetManagedSaveAuditDescribesChangeNotActor pins the C5 review
+// carry-over: the save mutation's audit record New field describes the
+// fragment's tag/keys, not the acting user -- AuditRecord.User (auditUser(r)
+// via logAudit) already carries the actor, so New repeating it told an
+// operator nothing about what actually changed.
+func TestFleetManagedSaveAuditDescribesChangeNotActor(t *testing.T) {
+	fleet := &fakeFleet{}
+	d := fleetAdminDeps(t, fleet)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	values := url.Values{
+		"csrf_token":  {csrf},
+		"tag":         {"web"},
+		"row_count":   {"1"},
+		"row_0_key":   {"thresholds.cpu_pct"},
+		"row_0_value": {"88"},
+		"op":          {"save"},
+	}
+	rr := postForm(h, "/fleet/managed", values, cookie, csrf)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303, body: %s", rr.Code, rr.Body.String())
+	}
+	recs := readAuditRecords(t, d.StateDir)
+	var found *AuditRecord
+	for i := range recs {
+		if recs[i].Action == "fleet.managed.save" {
+			found = &recs[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no fleet.managed.save audit record, got: %+v", recs)
+	}
+	if found.User != "root" {
+		t.Errorf("audit User = %q, want root", found.User)
+	}
+	if strings.Contains(found.New, "root") {
+		t.Errorf("audit New = %q, must describe the change, not repeat the actor", found.New)
+	}
+	if !strings.Contains(found.New, "tag=web") || !strings.Contains(found.New, "thresholds.cpu_pct=88") {
+		t.Errorf("audit New = %q, want it to describe tag=web and thresholds.cpu_pct=88", found.New)
+	}
+}
+
+// TestFleetManagedDeleteAuditDescribesChangeNotActor is
+// TestFleetManagedSaveAuditDescribesChangeNotActor's delete counterpart: the
+// audit record describes the DELETED fragment's tag/keys (looked up before
+// the delete goes through), not the actor.
+func TestFleetManagedDeleteAuditDescribesChangeNotActor(t *testing.T) {
+	fleet := &fakeFleet{managed: []core.ManagedFragment{
+		{ID: "f1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "80"}, Version: 1, Author: "root"},
+	}}
+	d := fleetAdminDeps(t, fleet)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	rr := postForm(h, "/fleet/managed/f1/delete", nil, cookie, csrf)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303, body: %s", rr.Code, rr.Body.String())
+	}
+	recs := readAuditRecords(t, d.StateDir)
+	var found *AuditRecord
+	for i := range recs {
+		if recs[i].Action == "fleet.managed.delete" {
+			found = &recs[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no fleet.managed.delete audit record, got: %+v", recs)
+	}
+	if strings.Contains(found.New, "root") {
+		t.Errorf("audit New = %q, must describe the change, not repeat the actor", found.New)
+	}
+	if !strings.Contains(found.New, "tag=web") || !strings.Contains(found.New, "thresholds.cpu_pct=80") {
+		t.Errorf("audit New = %q, want it to describe the deleted fragment's tag=web and thresholds.cpu_pct=80", found.New)
+	}
+}
+
 // ---- row add/remove field survival -----------------------------------------
 
 // TestFleetManagedAddRowRoundTrip pins the add/remove-row draft pattern

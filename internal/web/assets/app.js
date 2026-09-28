@@ -240,15 +240,27 @@
       body.appendChild(logBox);
       logBtn.addEventListener('click',function(){
         logBtn.disabled=true; var orig=logBtn.textContent; logBtn.textContent='Loading...';
-        logBox.style.display='block'; logBox.textContent='';
+        // Spinner (task C6): a remote node's "View logs" goes over an RPC
+        // round trip that can take up to 10s (fleet_rpc.go's fixed
+        // timeout) before resolving either way, so the drawer shows a
+        // spinner + "Loading logs…" the whole time rather than a blank box
+        // -- built with createElement/textContent, no innerHTML, matching
+        // this handler's existing untrusted-data discipline.
+        logBox.style.display='block'; logBox.innerHTML='';
+        var spin=mkEl('span','logbox-spinner');
+        spin.appendChild(mkEl('span','spinner'));
+        spin.appendChild(document.createTextNode('Loading logs…'));
+        logBox.appendChild(spin);
         fetch(nodeURL('/api/container/logs?tail=200&name='+encodeURIComponent(d.name||'')),{credentials:'same-origin'})
           .then(function(r){
-            // A remote node (409, containerLogsHandler) carries the exact
-            // reason as JSON {"error": "..."} -- show that reason text
-            // directly rather than a generic "HTTP 409".
-            if(r.status===409){
+            // A remote node's stream/RPC-level failure (containerLogsHandler,
+            // task C6: 503 node-not-connected, 504 RPC-timed-out-at-10s, 429
+            // node-busy) carries the exact reason as JSON {"error": "..."} --
+            // show that reason text directly rather than a generic "HTTP
+            // 503"/"HTTP 504"/"HTTP 429".
+            if(r.status===503||r.status===504||r.status===429){
               return r.json().catch(function(){ return {}; }).then(function(j){
-                var e=new Error((j&&j.error)||'not available for a remote node yet');
+                var e=new Error((j&&j.error)||('HTTP '+r.status));
                 e.isReason=true; throw e;
               });
             }
@@ -454,10 +466,26 @@
 
     document.addEventListener('sw-theme',rebuildCharts);
 
+    // Stale banner (task C6): sse.go's remoteNodeEventsLoop emits a "stale"
+    // event after 3 consecutive poll failures on a remote node's dashboard,
+    // naming the last-success time (Unix seconds); this shows a banner and
+    // the next "snapshot" event (below) clears it -- a remote node's poll
+    // always emits ONE snapshot frame on recovery even if the data is
+    // unchanged, specifically so there's something to clear the banner on.
+    var staleBanner=document.getElementById('stale-banner');
+    function clearStaleBanner(){ if(staleBanner){ staleBanner.hidden=true; staleBanner.textContent=''; } }
     var es=new EventSource(nodeURL('/events'));
+    es.addEventListener('stale',function(ev){
+      if(!staleBanner) return;
+      var s; try{ s=JSON.parse(ev.data); }catch(e){ s={}; }
+      var when=s.last_success?new Date(s.last_success*1000).toLocaleTimeString():'unknown';
+      staleBanner.textContent='live updates paused — last update '+when;
+      staleBanner.hidden=false;
+    });
     es.addEventListener('snapshot',function(ev){
       var s;
       try{ s=JSON.parse(ev.data); }catch(e){ return; }
+      clearStaleBanner();
 
       setText('val-cpu',Math.round(s.cpu)+'%'); setLed('led-cpu',led(s.cpu,70,90));
       setText('val-mem',Math.round(s.mem_pct)+'%'); setLed('led-mem',led(s.mem_pct,75,90));
@@ -1106,6 +1134,65 @@
     var cache=null, cacheAt=0;
     var CACHE_MS=30000; // the ruling: cache the fetched roster for 30s
 
+    // ---- recent nodes (task C6): last 5 visited, in localStorage ----------
+    // Wrapped in try/catch throughout (the ruling): a private-browsing tab,
+    // a full storage quota, or a blocked site-data setting can all make
+    // localStorage throw on read OR write, and none of that should ever
+    // break the palette -- it just falls back to "no recent nodes" silently.
+    var RECENT_KEY='sw-recent-nodes', RECENT_MAX=5;
+    function loadRecentNodes(){
+      try{
+        var raw=window.localStorage.getItem(RECENT_KEY);
+        var arr=raw?JSON.parse(raw):[];
+        return Array.isArray(arr)?arr:[];
+      }catch(e){ return []; }
+    }
+    // recordRecentNode pushes id to the front of the recent list (moving it
+    // there if already present, so the list is always MRU-first), dropping
+    // anything past RECENT_MAX. "self" is never recorded -- it's always
+    // reachable as the switcher/palette's own fixed first-class entry, not
+    // something a user needs "recent" tracking to find again.
+    function recordRecentNode(id){
+      if(!id || id==='self') return;
+      try{
+        var arr=loadRecentNodes().filter(function(x){ return x!==id; });
+        arr.unshift(id);
+        window.localStorage.setItem(RECENT_KEY, JSON.stringify(arr.slice(0,RECENT_MAX)));
+      }catch(e){ /* best-effort only, see this block's doc */ }
+    }
+    // Record THIS page's own node as visited, once per page load -- every
+    // node-scoped (or self) page a signed-in master sees this chrome on
+    // counts as a "visit", not just ones reached through the switcher/
+    // palette themselves.
+    recordRecentNode(currentNodeID());
+    function currentNodeID(){
+      var prefix=(document.body && document.body.dataset.nodePrefix)||'';
+      return prefix.indexOf('/n/')===0?prefix.slice(3):'self';
+    }
+
+    // ---- page-type jump (task C6): "web1 history" -> /n/web1/history ------
+    // The fixed, closed set of page-type words a query can end with --
+    // matching node_scope.go's node-routable pages this switcher/palette
+    // otherwise targets via currentTargetPath() (the CURRENT page's own
+    // type, preserved across a plain node switch).
+    var PAGE_TYPES=['dashboard','monitoring','host','alerts','history'];
+    function pageTypePath(t){ return t==='dashboard'?'/':'/'+t; }
+    // parsePaletteQuery splits raw input into {query, pageType}: pageType is
+    // set only when there's a name/tag query BEFORE the trailing page-type
+    // word (so a bare "history" with nothing before it is treated as an
+    // ordinary substring query against node names/tags, not a jump -- the
+    // ruling's own example is "web1 history", name first).
+    function parsePaletteQuery(raw){
+      var trimmed=(raw||'').trim();
+      if(!trimmed) return {query:'',pageType:null};
+      var parts=trimmed.split(/\s+/);
+      var last=parts[parts.length-1].toLowerCase();
+      if(parts.length>1 && PAGE_TYPES.indexOf(last)>-1){
+        return {query:parts.slice(0,-1).join(' ').toLowerCase(), pageType:last};
+      }
+      return {query:trimmed.toLowerCase(), pageType:null};
+    }
+
     // MASTER_LOCAL mirrors node_scope.go's masterLocalPrefixes: a page under
     // one of these has no per-node counterpart, so a palette result targets
     // that node's dashboard ("/") instead of a (nonexistent) node-scoped
@@ -1131,9 +1218,13 @@
     }
     // core.SelfNodeID's wire value is the literal "self" -- every
     // /api/fleet/nodes entry for this daemon's own node carries id:"self".
-    function hrefFor(node){
+    // pageType (task C6), when set, overrides currentTargetPath() with a
+    // fixed node-routable page instead of "the page I'm currently on" --
+    // see parsePaletteQuery's doc.
+    function hrefFor(node,pageType){
       var prefix=(node.id==='self')?'':('/n/'+node.id);
-      return prefix+currentTargetPath();
+      var path=pageType?pageTypePath(pageType):currentTargetPath();
+      return prefix+path;
     }
     function ledClassFor(state){
       if(state==='online') return 'ok';
@@ -1173,8 +1264,23 @@
       return hay.indexOf(q)>-1;
     }
     function renderResults(nodes){
-      var q=(input.value||'').trim().toLowerCase();
-      var filtered=(nodes||[]).filter(function(n){ return matchesQuery(n,q); });
+      var parsed=parsePaletteQuery(input.value);
+      var filtered=(nodes||[]).filter(function(n){ return matchesQuery(n,parsed.query); });
+      // Recent-first (task C6): with no name/tag query typed yet, surface
+      // the last-visited nodes at the top rather than whatever order
+      // /api/fleet/nodes happened to return them in -- a node not in the
+      // recent list keeps its relative order, stably sorted to the end.
+      if(!parsed.query){
+        var recent=loadRecentNodes();
+        if(recent.length){
+          filtered=filtered.slice().sort(function(a,b){
+            var ai=recent.indexOf(a.id), bi=recent.indexOf(b.id);
+            if(ai===-1) ai=recent.length;
+            if(bi===-1) bi=recent.length;
+            return ai-bi;
+          });
+        }
+      }
       results.innerHTML='';
       if(!filtered.length){
         results.appendChild(mkEl('div','note node-palette-empty','No nodes match.'));
@@ -1182,7 +1288,7 @@
       }
       filtered.forEach(function(n){
         var row=mkEl('a','ns-item');
-        row.href=hrefFor(n);
+        row.href=hrefFor(n,parsed.pageType);
         row.setAttribute('role','option');
         row.appendChild(mkEl('span','led '+ledClassFor(n.state)));
         row.appendChild(mkEl('span','ns-name',n.id==='self'?'this server':(n.name||n.id)));

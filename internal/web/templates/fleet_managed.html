@@ -9,10 +9,14 @@
      two-step confirm (style.css's .confirm-toggle), the same CSS-only
      pattern fleet_admin.html's revoke/remove controls use.
 
-     A viewer sees every row here read-only, in the SAME layout, with every
-     input/select disabled and no submit controls -- global-constraints.md's
-     "read-only, no forms" ruling, exactly like fleet_silences.html/
-     fleet_alerting.html's $editable convention. */}}
+     A viewer sees the Fragments and Per-node status tables exactly as an
+     admin does, but the create/edit form itself is wrapped in
+     {{if $editable}} below and does not render at all for a viewer -- there
+     is no disabled copy of it, unlike fleet_silences.html/
+     fleet_alerting.html's $editable convention, which DOES render their own
+     forms disabled for a viewer. global-constraints.md's "read-only, no
+     forms" ruling is met here by omitting the form outright rather than by
+     disabling it. */}}
 {{define "content"}}
 {{$editable := eq .Role "admin"}}
 <div id="fleet-managed-page">

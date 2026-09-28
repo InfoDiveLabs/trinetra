@@ -200,6 +200,33 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 		}
 	}
 
+	// Merge carry-over (C5 review): when the caller asked to merge (`fleet
+	// managed set --tag X k=v`'s default), fold frag.Values into the
+	// EXISTING fragment's Values -- found by whichever id resolution above
+	// landed on -- rather than replacing them wholesale. This runs under
+	// the store's own lock, so it's atomic with the write below: no other
+	// Save can interleave between reading the old Values and writing the
+	// merged result. A brand-new fragment (no existing id) has nothing to
+	// merge into, so Merge is a no-op there. frag.Merge itself is cleared
+	// so it never round-trips into the persisted fragment.
+	if frag.Merge && frag.ID != "" {
+		for _, f := range s.fragments {
+			if f.ID != frag.ID {
+				continue
+			}
+			merged := make(map[string]string, len(f.Values)+len(frag.Values))
+			for k, v := range f.Values {
+				merged[k] = v
+			}
+			for k, v := range frag.Values {
+				merged[k] = v
+			}
+			frag.Values = merged
+			break
+		}
+	}
+	frag.Merge = false
+
 	gen := s.generation + 1
 	frag.Version = gen
 

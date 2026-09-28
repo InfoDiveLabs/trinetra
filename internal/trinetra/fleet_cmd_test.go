@@ -1388,6 +1388,37 @@ func TestFleetManagedSetNeverListsFirstLettingServerUpsert(t *testing.T) {
 	}
 }
 
+// TestFleetManagedSetDefaultsToMerge pins the CLI half of the C5 review
+// carry-over: a plain `fleet managed set` (no --replace) sends
+// Merge:true, so the server merges into the tag's existing fragment by
+// default (managedFragmentStore.Save's merge logic, unit-tested directly in
+// fleet_managed_test.go).
+func TestFleetManagedSetDefaultsToMerge(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "managed", "set", "--tag", "web", "thresholds.cpu_pct=85"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if !fake.savedManaged.Merge {
+		t.Fatalf("savedManaged.Merge = false, want true by default")
+	}
+}
+
+// TestFleetManagedSetReplaceFlagDisablesMerge pins --replace: it sends
+// Merge:false, restoring the old wholesale-replace behavior.
+func TestFleetManagedSetReplaceFlagDisablesMerge(t *testing.T) {
+	_, _, errb := fleetCLIEnv(t)
+	fake := &fleetCLIFake{}
+	startFleetDaemon(t, fake)
+	if rc := Main([]string{"fleet", "managed", "set", "--tag", "web", "--replace", "thresholds.cpu_pct=85"}); rc != 0 {
+		t.Fatalf("exit %d: %s", rc, errb)
+	}
+	if fake.savedManaged.Merge {
+		t.Fatalf("savedManaged.Merge = true, want false with --replace")
+	}
+}
+
 func TestFleetManagedSetRejectsMalformedKV(t *testing.T) {
 	_, _, errb := fleetCLIEnv(t)
 	if rc := Main([]string{"fleet", "managed", "set", "not-a-kv-pair"}); rc != 2 {

@@ -180,6 +180,16 @@ a.count:hover{border-color:var(--faint)}
 /* drawer per-metric sparkline (#115) and container log viewer */
 .db canvas.spark{display:block; margin:6px 0; border:1px solid var(--border-soft); border-radius:var(--r-sm); background:var(--surface2)}
 .logbox{margin:8px 0 0; max-height:340px; overflow:auto; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm); font-family:var(--font-mono); font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; color:var(--text)}
+/* container log viewer's loading spinner (task C6): a small inline ring
+   next to "Loading logs…" while GET /api/container/logs is in flight -- a
+   remote node's RPC round trip (fleet_rpc.go) can take up to 10s, so this
+   is shown for noticeably longer than the near-instant self-scope case.
+   prefers-reduced-motion stops the spin but the note text alone still
+   communicates the pending state. */
+.logbox-spinner{display:inline-flex; align-items:center; gap:8px; color:var(--muted)}
+.logbox-spinner .spinner{display:inline-block; width:13px; height:13px; border:2px solid var(--border); border-top-color:var(--info); border-radius:50%; animation:sw-spin .7s linear infinite}
+@keyframes sw-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.logbox-spinner .spinner{animation:none}}
 
 /* fleet admin (task 7): a page-level flash after a mutation. Success uses
    the plain neutral surface; an error uses the same amber "degraded, not

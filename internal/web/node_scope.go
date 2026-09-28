@@ -135,6 +135,22 @@ func findNode(nodes []core.NodeSummary, id string) (core.NodeSummary, bool) {
 	return core.NodeSummary{}, false
 }
 
+// nodeScopedAlertAckPath reports whether p (already stripped of its
+// /n/{node} prefix, "/"-prefixed, NOT YET path.Clean'd) is EXACTLY
+// "/alerts/{key}/ack" or "/alerts/{key}/unack" for some non-empty {key} --
+// the one deliberate exception to "node-scoped routes are GET/HEAD only"
+// (task C6 ruling): remote alert ack/unack re-dispatches as a POST through
+// to POST /alerts/{key}/ack|unack (routes.go), same as every other
+// node-scoped GET re-dispatches to its own top-level route, so the handler
+// resolves apiFor(r,d) to the right node. Every OTHER node-scoped path stays
+// GET/HEAD only. Checked against the RAW (uncleaned) sub path, mirroring
+// where the ".."-segment check already runs in withNodeRouter, before
+// path.Clean could normalize away something that looked like this shape.
+func nodeScopedAlertAckPath(p string) bool {
+	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	return len(parts) == 3 && parts[0] == "alerts" && parts[1] != "" && (parts[2] == "ack" || parts[2] == "unack")
+}
+
 // containsDotDotSegment reports whether p, split on "/", has a literal ".."
 // path segment. r.URL.Path is always the percent-decoded form (verified:
 // both a literal "/a/../b" and an escaped "/a/%2e%2e/b" request target
@@ -276,12 +292,22 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 			return
 		}
 
+		rawSubPath := "/" + sub
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			renderNotFound(w, r, d, "not found")
-			return
+			// The one deliberate exception (task C6): a POST to exactly
+			// /alerts/{key}/ack or /alerts/{key}/unack re-dispatches through,
+			// same as any other node-scoped path -- see
+			// nodeScopedAlertAckPath's doc. Checked against the raw
+			// (uncleaned) sub path, before the ".."-segment check below, so
+			// nothing about this exception weakens that check for every
+			// other method/path combination.
+			if !(r.Method == http.MethodPost && nodeScopedAlertAckPath(rawSubPath)) {
+				renderNotFound(w, r, d, "not found")
+				return
+			}
 		}
 
-		subPath := "/" + sub
+		subPath := rawSubPath
 		if containsDotDotSegment(subPath) {
 			renderNotFound(w, r, d, "not found")
 			return

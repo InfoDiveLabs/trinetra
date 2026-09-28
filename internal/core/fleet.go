@@ -425,6 +425,17 @@ type ManagedFragment struct {
 	Values  map[string]string `json:"values"`
 	Version int64             `json:"version"`
 	Author  string            `json:"author,omitempty"`
+	// Merge, when true, tells SaveManaged to MERGE Values into the existing
+	// fragment's Values (this fragment's own new keys winning key-by-key)
+	// rather than replacing the fragment's Values wholesale -- the C5 review
+	// carry-over ruling for `trinetra fleet managed set --tag X k=v`
+	// (fleetManagedSet, cmd/trinetra's fleet_cmd.go), which defaults to this
+	// merge behavior unless `--replace` is given. It is never set by the web
+	// UI's save handler (fleetManagedSaveHandler, internal/web) -- that form
+	// always posts the full draft, so wholesale replacement is exactly what
+	// it means. Not persisted (the store clears it before saving), and
+	// meaningless for a brand-new fragment (nothing to merge into yet).
+	Merge bool `json:"merge,omitempty"`
 }
 
 // ManagedConflict records that more than one applicable ManagedFragment set

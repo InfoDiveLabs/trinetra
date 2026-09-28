@@ -44,7 +44,7 @@ const fleetUsage = `usage:
   trinetra fleet alerting show | apply <file.json>
   trinetra fleet rules                                      list aggregate rules and their state
   trinetra fleet managed list | status
-  trinetra fleet managed set [--tag T] key=value [key=value ...]
+  trinetra fleet managed set [--tag T] [--replace] key=value [key=value ...]
   trinetra fleet managed delete <id>
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo`
@@ -1287,14 +1287,19 @@ func parseManagedKV(args []string) (map[string]string, error) {
 	return out, nil
 }
 
-// fleetManagedSet is `trinetra fleet managed set [--tag T] key=value ...`:
-// creates a new fragment for --tag ("" = every node), or updates the
-// existing one for that tag if one already exists (task-8 ruling: "one
-// fragment per tag, simplest") -- entirely replacing its Values with what
-// was given here, not merging.
+// fleetManagedSet is `trinetra fleet managed set [--tag T] [--replace]
+// key=value ...`: creates a new fragment for --tag ("" = every node), or
+// updates the existing one for that tag if one already exists (task-8
+// ruling: "one fragment per tag, simplest"). By default (C5 review
+// carry-over ruling) it MERGES the given key=value pairs into that
+// fragment's existing Values -- so a second `set --tag web cpu=95` doesn't
+// silently drop every other key an earlier `set --tag web mem=80` put
+// there. --replace restores the old wholesale-replace behavior for anyone
+// who actually wants to drop every key not named on this call.
 func fleetManagedSet(args []string) int {
 	fs := newFlags("fleet managed set")
 	tag := fs.String("tag", "", "target only nodes carrying this tag (default: every node)")
+	replace := fs.Bool("replace", false, "replace the fragment's values wholesale instead of merging")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return 2
@@ -1310,8 +1315,10 @@ func fleetManagedSet(args []string) int {
 		// atomic under its own lock), so this can never race a concurrent
 		// `fleet managed set --tag X` into creating two fragments for the
 		// same tag (the TOCTOU a client-side list+create/update used to
-		// have).
-		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{Tag: *tag, Values: values}, "cli")
+		// have). The merge itself (Merge: !*replace) also happens under that
+		// same lock, so a concurrent set for the same tag can't interleave
+		// with it either.
+		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{Tag: *tag, Values: values, Merge: !*replace}, "cli")
 		if err != nil {
 			return err
 		}

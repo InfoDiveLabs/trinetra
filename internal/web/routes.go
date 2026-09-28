@@ -232,6 +232,16 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsAckHandler(d)).ServeHTTP(w, r)
 	}))
+	// /alerts/{key}/unack (task C6): the ack action's inverse, over
+	// core.API.UnackAlert -- same admin+CSRF gate. As of task C6,
+	// node_scope.go's withNodeRouter also allows a node-scoped POST to
+	// EXACTLY this path (and .../ack) through to here, re-dispatched with
+	// the node scope attached so apiFor(r,d) resolves to that node's own
+	// replicaAPI -- see withNodeRouter's doc for why this is the one
+	// deliberate exception to "node-scoped routes are GET/HEAD only".
+	mux.HandleFunc("POST /alerts/{key}/unack", requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
+		requireCSRF(alertsUnackHandler(d)).ServeHTTP(w, r)
+	}))
 
 	// /users (Task 7/#63): the real user-management page -- list accounts,
 	// issue/re-issue enrollment tokens, change roles, remove accounts, revoke

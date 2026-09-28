@@ -240,6 +240,21 @@ type ManagedFragmentRow struct {
 	Author  string
 }
 
+// describeManagedChange renders f's tag + keys/values as the audit log's New
+// field (C5 review carry-over): fleetManagedSaveHandler/
+// fleetManagedDeleteHandler used to pass the ACTOR as New, which just
+// duplicated AuditRecord.User (already filled by logAudit's own
+// auditUser(r) call) and never actually described the mutation. This
+// mirrors newManagedFragmentRow's own TagText/KVText computation so the
+// audit trail and the fragments table describe a fragment identically.
+func describeManagedChange(f core.ManagedFragment) string {
+	row := newManagedFragmentRow(f)
+	if row.KVText == "" {
+		return "tag=" + row.TagText
+	}
+	return "tag=" + row.TagText + " " + row.KVText
+}
+
 func newManagedFragmentRow(f core.ManagedFragment) ManagedFragmentRow {
 	tagText := f.Tag
 	if tagText == "" {
@@ -509,7 +524,7 @@ func fleetManagedSaveHandler(d Deps) http.HandlerFunc {
 			}
 			return
 		}
-		logAudit(d, r, "fleet.managed.save", saved.ID, "", actor)
+		logAudit(d, r, "fleet.managed.save", saved.ID, "", describeManagedChange(saved))
 		redirectToManaged(w, r, "fragment_saved")
 	}
 }
@@ -529,11 +544,26 @@ func fleetManagedDeleteHandler(d Deps) http.HandlerFunc {
 		}
 		id := r.PathValue("id")
 		actor := auditUser(r)
+		// Look up the fragment BEFORE deleting it so the audit record's New
+		// field can describe what was actually removed (tag + keys), not
+		// just its opaque id -- a dangling/unknown id (frags, _ finding
+		// nothing) degrades to describing just the id, matching this
+		// handler's existing tolerance for a not-found id being surfaced by
+		// DeleteManaged's own error instead.
+		desc := id
+		if frags, ferr := fleet.Managed(); ferr == nil {
+			for _, f := range frags {
+				if f.ID == id {
+					desc = describeManagedChange(f)
+					break
+				}
+			}
+		}
 		if err := fleet.DeleteManaged(id, actor); err != nil {
 			renderManagedError(w, r, d, err.Error(), fleetAPIErrStatus(err))
 			return
 		}
-		logAudit(d, r, "fleet.managed.delete", id, "", actor)
+		logAudit(d, r, "fleet.managed.delete", id, "", desc)
 		redirectToManaged(w, r, "fragment_deleted")
 	}
 }

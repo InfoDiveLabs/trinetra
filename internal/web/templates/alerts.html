@@ -1,6 +1,8 @@
 {{define "content"}}
 <div id="alerts-page">
 
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+
   <div class="grid g-4" style="margin-bottom:18px">
     <div class="count bad"><div class="n">{{.FiringCount}}</div><div class="lb">Firing now</div></div>
     <div class="count warnc"><div class="n">{{.AckedCount}}</div><div class="lb">Acknowledged</div></div>
@@ -21,15 +23,18 @@
         <td class="mono note" data-label="Since">{{$a.Since}}</td>
         {{if eq $.Role "admin"}}
         <td class="card-actions" style="text-align:right">
-          {{if not $a.Acked}}
-          {{if $.NodeRemote}}
+          {{if and $.NodeRemote (not $.NodeConnected)}}
           <button class="btn ghost" type="button" disabled title="{{$.RemoteReason}}">{{$.RemoteReason}}</button>
-          {{else}}
+          {{else if not $a.Acked}}
           <form method="post" action="{{nodeHref $.Node.Prefix (printf "/alerts/%s/ack" $a.Param)}}" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <button class="btn ghost" type="submit">Ack</button>
           </form>
-          {{end}}
+          {{else}}
+          <form method="post" action="{{nodeHref $.Node.Prefix (printf "/alerts/%s/unack" $a.Param)}}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="btn ghost" type="submit">Unack</button>
+          </form>
           {{end}}
         </td>
         {{end}}

@@ -905,6 +905,73 @@ func TestManagedFragmentSaveUpsertsByTagAtomically(t *testing.T) {
 	}
 }
 
+// TestManagedFragmentSaveMergeKeepsOtherKeys is the C5 review carry-over's
+// core obligation: Merge:true folds the posted Values into the EXISTING
+// tag's fragment rather than replacing it wholesale, so a second `set --tag
+// web mem=80` (Merge defaults to true, fleetManagedSet) doesn't drop the
+// cpu_pct an earlier `set --tag web cpu_pct=70` already set.
+func TestManagedFragmentSaveMergeKeepsOtherKeys(t *testing.T) {
+	s, err := loadManagedFragmentStore(filepath.Join(t.TempDir(), "managed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Save(core.ManagedFragment{Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "70"}}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := s.Save(core.ManagedFragment{Tag: "web", Values: map[string]string{"thresholds.mem_pct": "80"}, Merge: true}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second.ID = %q, want %q (update in place)", second.ID, first.ID)
+	}
+	if second.Values["thresholds.cpu_pct"] != "70" || second.Values["thresholds.mem_pct"] != "80" {
+		t.Fatalf("merged Values = %+v, want both cpu_pct=70 (kept) and mem_pct=80 (added)", second.Values)
+	}
+	if second.Merge {
+		t.Error("Merge must not round-trip into the returned/stored fragment")
+	}
+	frags := s.List()
+	if len(frags) != 1 || frags[0].Values["thresholds.cpu_pct"] != "70" || frags[0].Values["thresholds.mem_pct"] != "80" {
+		t.Fatalf("List() = %+v, want the single merged fragment persisted", frags)
+	}
+
+	// A later key overrides the earlier merged-in value for the SAME key.
+	third, err := s.Save(core.ManagedFragment{Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "95"}, Merge: true}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Values["thresholds.cpu_pct"] != "95" || third.Values["thresholds.mem_pct"] != "80" {
+		t.Fatalf("third merge Values = %+v, want cpu_pct=95 (overridden), mem_pct=80 (kept)", third.Values)
+	}
+}
+
+// TestManagedFragmentSaveReplaceDropsOtherKeys pins --replace's restored
+// wholesale-replace behavior: Merge:false (the zero value) replaces the
+// existing fragment's Values entirely, dropping any key not named on this
+// call -- the pre-C5-review-fix default.
+func TestManagedFragmentSaveReplaceDropsOtherKeys(t *testing.T) {
+	s, err := loadManagedFragmentStore(filepath.Join(t.TempDir(), "managed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(core.ManagedFragment{Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "70"}}, "cli"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Save(core.ManagedFragment{Tag: "web", Values: map[string]string{"thresholds.mem_pct": "80"}}, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := second.Values["thresholds.cpu_pct"]; ok {
+		t.Fatalf("Values = %+v, want cpu_pct dropped by a wholesale replace", second.Values)
+	}
+	if second.Values["thresholds.mem_pct"] != "80" {
+		t.Fatalf("Values = %+v, want mem_pct=80", second.Values)
+	}
+}
+
 // --- round-2 review: startup reconciliation + tightened short-circuit -----
 
 // TestReconcileManagedValuesAtStartFixesDivergedConfig is the round-2

@@ -207,61 +207,126 @@ func eventsHandler(d Deps) http.HandlerFunc {
 }
 
 // remoteNodeSnapshot reads apiFor(r, d).Snapshot() for
-// remoteNodeEventsLoop's polling path, collapsing a nil API or a read error
-// to the zero DashboardView -- the same degrade-quietly contract
-// buildDashboardPageData's own apiFor(r,d).Snapshot() call uses for a node
-// page's initial render (handlers_dashboard.go), so a transient
-// control-plane hiccup on the remote node shows a stale-but-present frame
-// rather than tearing the stream down.
-func remoteNodeSnapshot(r *http.Request, d Deps) DashboardView {
+// remoteNodeEventsLoop's polling path, reporting a nil API or a read error
+// as its own error rather than collapsing to the zero DashboardView -- as of
+// task C6, the caller uses that error to HOLD the last successful snapshot
+// (see remoteNodeEventsLoop's doc) instead of ever writing a zeroed-out
+// frame to the client.
+func remoteNodeSnapshot(r *http.Request, d Deps) (DashboardView, error) {
 	api := apiFor(r, d)
 	if api == nil {
-		return DashboardView{}
+		return DashboardView{}, errRemoteNodeAPIUnavailable
 	}
-	v, err := api.Snapshot()
+	return api.Snapshot()
+}
+
+// errRemoteNodeAPIUnavailable is remoteNodeSnapshot's error for "there is no
+// core.API to poll at all" (apiFor(r,d) returned nil) -- treated exactly
+// like a real Snapshot() error by remoteNodeEventsLoop's hold/stale logic.
+var errRemoteNodeAPIUnavailable = fmt.Errorf("remote node API unavailable")
+
+// remoteNodeStaleThreshold is how many CONSECUTIVE remoteNodeSnapshot
+// failures remoteNodeEventsLoop tolerates before it tells the browser the
+// stream is stale (task C6 ruling: "After 3 consecutive errors, emit an SSE
+// event `stale`"). Below this, a single transient control-plane hiccup is
+// invisible to the viewer -- the loop just keeps holding the last good
+// frame and silently retries.
+const remoteNodeStaleThreshold = 3
+
+// staleEventData is the "stale" SSE event's JSON payload: the Unix-seconds
+// time of the last successful snapshot, so assets/app.js's banner can show
+// "live updates paused -- last update <time>".
+type staleEventData struct {
+	LastSuccess int64 `json:"last_success"`
+}
+
+// writeStaleEvent JSON-encodes a "stale" SSE frame and flushes it
+// immediately -- remoteNodeEventsLoop's counterpart to writeSnapshotEvent,
+// emitted once when a remote node's poll crosses remoteNodeStaleThreshold
+// consecutive failures. Same write/flush/false-on-write-failure contract.
+func writeStaleEvent(w http.ResponseWriter, f http.Flusher, lastSuccess time.Time) bool {
+	b, err := json.Marshal(staleEventData{LastSuccess: lastSuccess.Unix()})
 	if err != nil {
-		return DashboardView{}
+		return true
 	}
-	return v
+	if _, err := fmt.Fprintf(w, "event: stale\ndata: %s\n\n", b); err != nil {
+		return false
+	}
+	f.Flush()
+	return true
 }
 
 // remoteNodeEventsLoop is eventsHandler's path for a request scoped to a
 // remote fleet node (nodeFrom(r).Self == false, Task 4/fleet-web-a): it
 // polls apiFor(r,d).Snapshot() on sseTickerInterval and writes a fresh
 // "snapshot" frame only when the polled view actually changed since the
-// last one written (reflect.DeepEqual -- DashboardView carries slice
-// fields, so a plain == comparison doesn't compile), rather than resending
-// an identical frame on every tick. It never touches Deps.Subscribe: there
-// is no per-node live push over the control socket yet (Subscribe is
-// scoped to THIS daemon's own event bus, not a remote node's), so a remote
-// alert fire/recover is never streamed here -- only snapshot polling, per
-// the brief.
+// last one successfully written (reflect.DeepEqual -- DashboardView carries
+// slice fields, so a plain == comparison doesn't compile), rather than
+// resending an identical frame on every tick. It never touches
+// Deps.Subscribe: there is no per-node live push over the control socket
+// yet (Subscribe is scoped to THIS daemon's own event bus, not a remote
+// node's), so a remote alert fire/recover is never streamed here -- only
+// snapshot polling, per the brief.
+//
+// Stale indicator (task C6, parked from plan A Task 4): a poll error HOLDS
+// the last successful snapshot -- it never overwrites it with a zero-valued
+// DashboardView the way the pre-task-C6 version did -- and after
+// remoteNodeStaleThreshold consecutive errors, emits one "stale" SSE event
+// naming the last-success time (writeStaleEvent). The very next successful
+// poll always emits a fresh "snapshot" frame, even if its content happens
+// to be identical to the held one (bypassing the usual DeepEqual
+// short-circuit) precisely so the browser has something to react to and
+// clear its stale banner on.
 //
 // The very first frame is always written immediately regardless of
-// "changed", mirroring eventsHandler's own self-scope contract (a
-// subscriber sees current data right away). Like eventsHandler's main
-// loop, it watches r.Context().Done() so a client disconnect is noticed
-// promptly rather than only on the next tick's failed write.
+// "changed" (a failed first poll still writes the zero-valued initial
+// frame, matching eventsHandler's own "subscriber sees SOMETHING right
+// away" self-scope contract, before the error-counting/holding logic below
+// has anything to hold yet). Like eventsHandler's main loop, it watches
+// r.Context().Done() so a client disconnect is noticed promptly rather than
+// only on the next tick's failed write.
 func remoteNodeEventsLoop(w http.ResponseWriter, r *http.Request, flusher http.Flusher, d Deps) {
-	last := remoteNodeSnapshot(r, d)
+	last, err := remoteNodeSnapshot(r, d)
 	if !writeSnapshotEvent(w, flusher, last) {
 		return
+	}
+	lastGoodAt := time.Now()
+	consecErrors := 0
+	if err != nil {
+		consecErrors = 1
 	}
 
 	ctx := r.Context()
 	ticker := time.NewTicker(sseTickerInterval(d.Cfg))
 	defer ticker.Stop()
 
+	wasStale := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cur := remoteNodeSnapshot(r, d)
-			if reflect.DeepEqual(cur, last) {
+			cur, err := remoteNodeSnapshot(r, d)
+			if err != nil {
+				consecErrors++
+				if consecErrors == remoteNodeStaleThreshold {
+					if !writeStaleEvent(w, flusher, lastGoodAt) {
+						return
+					}
+					wasStale = true
+				}
+				// Hold: last/lastGoodAt stay exactly as they were: never
+				// overwrite a good snapshot with a failed poll's zero value.
 				continue
 			}
+			consecErrors = 0
+			lastGoodAt = time.Now()
+			changed := !reflect.DeepEqual(cur, last)
 			last = cur
+			if !changed && !wasStale {
+				continue
+			}
+			wasStale = false
 			if !writeSnapshotEvent(w, flusher, cur) {
 				return
 			}

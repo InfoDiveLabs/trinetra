@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,10 +181,15 @@ func TestNodeScopedDowntimeAPIShowsChildData(t *testing.T) {
 }
 
 // TestNodeScopedAlertsPageShowsChildDataAndDisablesAck pins the alerts page's
-// node-scope behavior: active alerts + history come from child1, and (per
-// global-constraints.md / the plan's ruling) the Ack action for an unacked
-// active alert renders disabled with the exact reason text and no POST form
-// action, since alert ack isn't routed to a remote node.
+// node-scope behavior: active alerts + history come from child1, and (task
+// C6 ruling) the Ack action for an unacked active alert renders disabled
+// with the exact "node is not connected" reason and no POST form action
+// when the roster reports the node as anything other than "online" --
+// masterFleetWithChild's child1 fixture carries State "up" (a placeholder
+// value, not the real "online"/"down"/... vocabulary), so it's treated as
+// disconnected here. TestNodeScopedAlertsAckSucceedsWhenNodeConnected /
+// TestNodeScopedAlertsAckDisabledWhenNodeOffline (handlers_alerts_test.go)
+// cover the connected-vs-offline distinction directly.
 func TestNodeScopedAlertsPageShowsChildDataAndDisablesAck(t *testing.T) {
 	master := fakeAPI{active: []core.AlertRecord{{Key: "master-only", Time: 1, Source: "master alert"}}}
 	child := fakeAPI{
@@ -210,24 +216,24 @@ func TestNodeScopedAlertsPageShowsChildDataAndDisablesAck(t *testing.T) {
 	if strings.Contains(body, "master alert") {
 		t.Errorf("alerts page leaked master's active alert onto a node-scoped page:\n%s", body)
 	}
-	if !strings.Contains(body, "not available for a remote node yet") {
+	if !strings.Contains(body, "node is not connected") {
 		t.Errorf("alerts page missing the disabled-ack reason text:\n%s", body)
 	}
-	if strings.Contains(body, `action="/alerts/`) {
-		t.Errorf("alerts page still renders a live Ack form action on a remote-node page:\n%s", body)
+	if strings.Contains(body, `action="/alerts/`) || strings.Contains(body, `action="/n/child1/alerts/`) {
+		t.Errorf("alerts page still renders a live Ack form action on a disconnected remote-node page:\n%s", body)
 	}
 	if strings.Contains(body, ">Ack<") {
-		t.Errorf("alerts page still renders an enabled Ack button on a remote-node page:\n%s", body)
+		t.Errorf("alerts page still renders an enabled Ack button on a disconnected remote-node page:\n%s", body)
 	}
 }
 
-// TestNodeScopedContainerLogsReturns409 pins the ruling: GET
-// /n/child1/api/container/logs never reaches the daemon at all -- it
-// returns 409 with the fixed JSON body {"error":"not available for a
-// remote node yet"} regardless of what the underlying fake API would say.
-func TestNodeScopedContainerLogsReturns409(t *testing.T) {
+// TestNodeScopedContainerLogsCallsThroughToChildAPI pins task C6's ruling:
+// the 409 short-circuit for a remote node is gone -- GET
+// /n/child1/api/container/logs now goes through apiFor(r,d), reaching
+// child1's own fake API exactly like every other node-scoped GET.
+func TestNodeScopedContainerLogsCallsThroughToChildAPI(t *testing.T) {
 	master := fakeAPI{}
-	child := fakeAPI{containerLogs: "should never be returned"}
+	child := fakeAPI{containerLogs: "child1's own log output"}
 	d := nodeScopedDeps(t, master, child)
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
@@ -235,21 +241,51 @@ func TestNodeScopedContainerLogsReturns409(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/n/child1/api/container/logs?name=web"))
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409, body: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
 	}
-	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("content-type = %q, want application/json", ct)
+	if body := rr.Body.String(); body != "child1's own log output" {
+		t.Errorf("body = %q, want child1's fake API output", body)
 	}
-	var resp map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
-	}
-	if resp["error"] != "not available for a remote node yet" {
-		t.Errorf(`error = %q, want "not available for a remote node yet"`, resp["error"])
-	}
-	if strings.Contains(rr.Body.String(), "should never be returned") {
-		t.Errorf("container logs handler called through to the fake API for a remote node:\n%s", rr.Body.String())
+}
+
+// TestNodeScopedContainerLogsMapsRPCErrorsToFixedStatuses pins
+// containerLogsErrStatus's mapping end to end: each of replicaAPI.
+// ContainerLogs' three fixed stream/RPC error strings becomes the matching
+// JSON status/body on this endpoint.
+func TestNodeScopedContainerLogsMapsRPCErrorsToFixedStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		errText string
+		status  int
+	}{
+		{"node is not connected", http.StatusServiceUnavailable},
+		{"node did not answer in 10s", http.StatusGatewayTimeout},
+		{"node busy", http.StatusTooManyRequests},
+	} {
+		t.Run(tc.errText, func(t *testing.T) {
+			master := fakeAPI{}
+			child := fakeAPI{logErr: errors.New(tc.errText)}
+			d := nodeScopedDeps(t, master, child)
+			h := newHandler(d)
+			users := newUserStore(d.StateDir)
+			sessions := newSessionStore(d.StateDir)
+
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/n/child1/api/container/logs?name=web"))
+			if rr.Code != tc.status {
+				t.Fatalf("status = %d, want %d, body: %s", rr.Code, tc.status, rr.Body.String())
+			}
+			if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				t.Errorf("content-type = %q, want application/json", ct)
+			}
+			var resp map[string]string
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+			}
+			if resp["error"] != tc.errText {
+				t.Errorf("error = %q, want %q", resp["error"], tc.errText)
+			}
+		})
 	}
 }
 

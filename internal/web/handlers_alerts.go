@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -132,17 +133,57 @@ type AlertsPageData struct {
 	UptimePct30d float64
 	HasUptime    bool
 	// NodeRemote is true when this page is scoped to a non-self fleet node
-	// (node_scope.go's nodeFrom(r).Self == false): templates/alerts.html
-	// uses it to render every Ack action disabled, with no POST form
-	// action, since alert ack/unack is a per-node write action that isn't
-	// routed to a remote node (global-constraints.md).
+	// (node_scope.go's nodeFrom(r).Self == false).
 	NodeRemote bool
-	// RemoteReason is the shared "not available for a remote node yet" text
-	// (remoteNodeUnavailableReason, handlers_logs.go) templates/alerts.html
-	// renders as the disabled Ack button's label/title when NodeRemote --
-	// carried as data instead of a second hardcoded literal in the template
-	// (task 3 carry-over from the round-1 Task 2 review).
+	// NodeConnected reports whether ack/unack should render as LIVE actions:
+	// always true for the self scope, and (task C6 ruling) true for a
+	// remote scope only when the roster's own NodeSummary.State (as of the
+	// request-scoped fleetMemo, node_scope.go) is "online" -- the same
+	// state string fleet_provider.go/liveness.go's fleet.StateOnline
+	// reports for a node whose stream is currently connected. When false,
+	// templates/alerts.html renders every Ack/Unack control disabled with
+	// RemoteReason instead of a live POST form.
+	NodeConnected bool
+	// RemoteReason is the fixed "node is not connected" text
+	// (nodeNotConnectedReason, handlers_logs.go) templates/alerts.html
+	// renders as the disabled Ack/Unack button's label/title when
+	// NodeRemote && !NodeConnected -- carried as data instead of a second
+	// hardcoded literal in the template.
 	RemoteReason string
+	// Flash/FlashErr surface a fixed-code redirect flash (resolveAlertsFlash
+	// below) for a remote ack/unack's backend failure -- the ONLY case this
+	// page ever redirects rather than re-rendering directly, since a remote
+	// ack/unack is a fire-and-forget push over the fleet stream with no rich
+	// per-field validation to show inline (task C6 ruling).
+	Flash    string
+	FlashErr bool
+}
+
+// nodeConnectedFor reports whether ack/unack should be treated as a live
+// action for r's node scope: always true for self, and for a remote scope,
+// true only when its roster NodeSummary.State is "online" (see
+// AlertsPageData.NodeConnected's doc for why this exact string).
+func nodeConnectedFor(r *http.Request) bool {
+	ns := nodeFrom(r)
+	return ns.Self || ns.Summary.State == "online"
+}
+
+// resolveAlertsFlash resolves GET /alerts' (or a node-scoped .../alerts')
+// ?flash= into display text, from a FIXED set of codes only -- exactly like
+// resolveManagedFlash/resolveIncidentFlash: never render whatever ?flash=
+// literally carries as free text, since it's attacker-controlled on a GET.
+// Both codes here name a remote ack/unack failure (alertsAckOrUnackHandler
+// below); there is no success code -- a successful remote ack/unack just
+// redirects back to the same page with no flash at all, and the page's own
+// re-rendered state (the alert no longer firing/now acked) is the feedback.
+func resolveAlertsFlash(r *http.Request) (text string, isErr bool) {
+	switch r.URL.Query().Get("flash") {
+	case "remote-offline":
+		return "This node is not connected -- the action could not be sent.", true
+	case "remote-failed":
+		return "The action could not be completed on this node.", true
+	}
+	return "", false
 }
 
 // resolvedInWindow counts "recover" events within the last window (relative
@@ -219,17 +260,21 @@ func buildAlertsPageData(r *http.Request, d Deps) AlertsPageData {
 	}
 	uptime, hasUptime := uptimePct30d(r, d)
 
+	flash, flashErr := resolveAlertsFlash(r)
 	return AlertsPageData{
-		PageData:     newPageData(r, d, "Alerts & incidents", "Firing now + history"),
-		ActiveAlerts: activeAlertRows(active),
-		History:      alertHistoryRows(events),
-		FiringCount:  firing,
-		AckedCount:   acked,
-		Resolved7d:   resolvedInWindow(events, 7*24*time.Hour),
-		UptimePct30d: uptime,
-		HasUptime:    hasUptime,
-		NodeRemote:   !nodeFrom(r).Self,
-		RemoteReason: remoteNodeUnavailableReason,
+		PageData:      newPageData(r, d, "Alerts & incidents", "Firing now + history"),
+		ActiveAlerts:  activeAlertRows(active),
+		History:       alertHistoryRows(events),
+		FiringCount:   firing,
+		AckedCount:    acked,
+		Resolved7d:    resolvedInWindow(events, 7*24*time.Hour),
+		UptimePct30d:  uptime,
+		HasUptime:     hasUptime,
+		NodeRemote:    !nodeFrom(r).Self,
+		NodeConnected: nodeConnectedFor(r),
+		RemoteReason:  nodeNotConnectedReason,
+		Flash:         flash,
+		FlashErr:      flashErr,
 	}
 }
 
@@ -255,16 +300,49 @@ func alertsPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// alertsAckHandler handles POST /alerts/{key}/ack (admin-only + CSRF -- see
-// routes.go's wiring): it acks the named active alert THROUGH the control
-// socket (Deps.API.AckAlert), which runs the ack daemon-side (LoadAlertState
-// + Ack + Save in the daemon process) so the web plugin is not a second
-// writer to the daemon's alerts.json. It first reads the current active set
-// over the socket to preserve the old handler's 404 for an unknown key (a
-// socket read error there is a real 500, not a masked "not found"), then
-// calls AckAlert; the daemon reconciles the ack into its own in-memory
-// AlertState as before.
-func alertsAckHandler(d Deps) http.HandlerFunc {
+// alertsRedirectHref returns the href GET /alerts (or, for a node-scoped
+// request, GET /n/{id}/alerts) redirects back to, with an optional ?flash=
+// code appended -- shared by the remote branch of alertsAckOrUnackHandler
+// below.
+func alertsRedirectHref(r *http.Request, flashCode string) string {
+	href := nodeHref(nodeFrom(r).Prefix, "/alerts")
+	if flashCode != "" {
+		href += "?flash=" + url.QueryEscape(flashCode)
+	}
+	return href
+}
+
+// alertsAckOrUnackHandler builds POST /alerts/{key}/ack|unack's handler
+// (admin-only + CSRF -- see routes.go's wiring): it acks/unacks the named
+// active alert through core.API (apiFor(r,d)), first reading the current
+// active set to preserve the old handler's 404 for an unknown key (a read
+// error there is a real 500, not a masked "not found").
+//
+// The two scopes behave differently on from here (task C6 ruling):
+//
+//   - Self scope (the pre-existing behavior, byte-for-byte unchanged for
+//     ack): AckAlert/UnackAlert runs against THIS daemon's own in-memory
+//     AlertState (LoadAlertState + Ack/Unack + Save, daemon-side), which
+//     can't itself fail for a key ActiveAlerts() just confirmed exists, so
+//     any error here is a genuine 500. On success the page re-renders
+//     in-place at 200 -- no redirect, no flash.
+//   - Remote scope: AckAlert/UnackAlert instead pushes an ack/unack frame
+//     down the node's stream connection (replicaAPI.remoteAck,
+//     fleet_replica.go) and can fail with exactly "node is not connected"
+//     (the button is disabled client-side when the roster reports the node
+//     offline, but a race -- the node dropping between page load and this
+//     POST -- can still reach here). Because this is a fire-and-forget push
+//     with no rich per-field error to show inline, a failure redirects back
+//     to the node-scoped /alerts page with a FIXED flash code
+//     (resolveAlertsFlash) rather than rendering free-form error text.
+//     Success also redirects (so the page re-reads the roster's current
+//     Node scope/state), with no flash -- the re-rendered alert list is
+//     the feedback.
+func alertsAckOrUnackHandler(d Deps, unack bool) http.HandlerFunc {
+	auditAction := "alert.ack"
+	if unack {
+		auditAction = "alert.unack"
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		key, err := credentialFromParam(r.PathValue("key"))
 		if err != nil {
@@ -296,15 +374,45 @@ func alertsAckHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := api.AckAlert(keyStr); err != nil {
+		remote := !nodeFrom(r).Self
+		if unack {
+			err = api.UnackAlert(keyStr)
+		} else {
+			err = api.AckAlert(keyStr)
+		}
+		if err != nil {
+			if remote {
+				flashCode := "remote-failed"
+				if err.Error() == nodeNotConnectedReason {
+					flashCode = "remote-offline"
+				}
+				http.Redirect(w, r, alertsRedirectHref(r, flashCode), http.StatusSeeOther)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		logAudit(d, r, "alert.ack", keyStr, "acked=false", "acked=true")
+		oldVal, newVal := "acked=false", "acked=true"
+		if unack {
+			oldVal, newVal = "acked=true", "acked=false"
+		}
+		logAudit(d, r, auditAction, keyStr, oldVal, newVal)
 
+		if remote {
+			http.Redirect(w, r, alertsRedirectHref(r, ""), http.StatusSeeOther)
+			return
+		}
 		data := buildAlertsPageData(r, d)
 		if err := renderAlertsPage(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
 }
+
+// alertsAckHandler handles POST /alerts/{key}/ack -- see
+// alertsAckOrUnackHandler's doc for the full contract.
+func alertsAckHandler(d Deps) http.HandlerFunc { return alertsAckOrUnackHandler(d, false) }
+
+// alertsUnackHandler handles POST /alerts/{key}/unack -- see
+// alertsAckOrUnackHandler's doc for the full contract.
+func alertsUnackHandler(d Deps) http.HandlerFunc { return alertsAckOrUnackHandler(d, true) }

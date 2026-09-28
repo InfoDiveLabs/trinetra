@@ -121,6 +121,30 @@ func TestDashboardRendersRealSnapshotValues(t *testing.T) {
 	}
 }
 
+// TestDashboardRendersHiddenStaleBanner pins the markup half of task C6's
+// stale indicator: the dashboard always renders #stale-banner, hidden by
+// default -- app.js's swBootSSE is what shows/hides it, purely client-side,
+// so there is no server-rendered "stale" state to assert beyond presence.
+func TestDashboardRendersHiddenStaleBanner(t *testing.T) {
+	d := dashboardTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="stale-banner"`) {
+		t.Fatalf("dashboard missing #stale-banner:\n%s", body)
+	}
+	if !strings.Contains(body, `id="stale-banner" class="collector-warn" role="status" hidden`) {
+		t.Errorf("#stale-banner must render hidden by default:\n%s", body)
+	}
+}
+
 // TestDashboardShowsHostStrip pins the compact host strip (#100): when host
 // info is available, the dashboard renders the OS, a socket-aware CPU digest,
 // memory, uptime, and local IP, with a link through to the full /host page.
