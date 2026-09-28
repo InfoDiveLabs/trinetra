@@ -388,7 +388,7 @@ func TestFleetRoutesNotFoundOnSoloAndChild(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := tc.deps(t)
-			for _, target := range []string{"/fleet", "/fleet/table", "/api/fleet/nodes", "/fleet/compare?tag=web"} {
+			for _, target := range []string{"/fleet", "/fleet/table", "/api/fleet/nodes", "/fleet/compare?tag=web", "/fleet/incidents", "/fleet/incidents/table", "/fleet/incidents/inc1"} {
 				rr := fleetGetAsViewer(t, d, target)
 				if rr.Code != http.StatusNotFound {
 					t.Errorf("GET %s on %s = %d, want 404", target, tc.name, rr.Code)

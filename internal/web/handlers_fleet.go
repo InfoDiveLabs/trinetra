@@ -8,7 +8,9 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
@@ -904,5 +906,824 @@ func fleetNodesAPIHandler(d Deps) http.HandlerFunc {
 		if err := json.NewEncoder(w).Encode(out); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Incidents (task C2, fleet phase 2 web UI plan C): GET /fleet/incidents (the
+// filterable/paginated incident list plus its htmx poll fragment) and GET
+// /fleet/incidents/{id} (member alerts + structured timeline + ack/silence),
+// over core.FleetAPI's Incidents/Incident/AckIncident/Explain/CreateSilence
+// (internal/core/fleet.go). Master-only (fleetGateHTML, exactly like every
+// other /fleet* page); every mutation is admin + CSRF (fleetAdminMutation,
+// handlers_fleet_admin.go) and records the acting web user as actor, per the
+// ruling that AckIncident/CreateSilence must see the SIGNED-IN user's name,
+// not some daemon-side placeholder, so the fleet timeline shows that user.
+// ---------------------------------------------------------------------------
+
+// fleetIncidentsPageSize is the incidents list's fixed page size
+// (global-constraints.md: "Lists are paginated (50 per page)").
+const fleetIncidentsPageSize = 50
+
+// fleetIncidentsFiringCap bounds the nav badge's own Incidents() call
+// (fleet_memo.go's fleetIncidentsFiringCount): the badge renders on EVERY
+// page a fleet master serves, so it must never do an unbounded read even on
+// a fleet with an unusually large firing count.
+const fleetIncidentsFiringCap = 1000
+
+// incidentQuery is /fleet/incidents' resolved query string: the three
+// core.IncidentFilter criteria this page exposes plus the current page
+// number -- global-constraints.md's "filters live in the URL".
+type incidentQuery struct {
+	State, Node, Tag string
+	Page             int
+}
+
+// parseIncidentQuery reads state/node/tag/page off r's query string,
+// mirroring parseFleetQuery's convention: an absent/invalid page normalizes
+// to 1 rather than erroring.
+func parseIncidentQuery(r *http.Request) incidentQuery {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	return incidentQuery{State: q.Get("state"), Node: q.Get("node"), Tag: q.Get("tag"), Page: page}
+}
+
+// encode renders iq back to a URL query string (state/node/tag included only
+// when set, page only when > 1), used by the pager links and the htmx poll
+// fragment's "keep the current query string" requirement, exactly like
+// fleetQuery.encode() does for /fleet's own table.
+func (iq incidentQuery) encode() string {
+	v := url.Values{}
+	if iq.State != "" {
+		v.Set("state", iq.State)
+	}
+	if iq.Node != "" {
+		v.Set("node", iq.Node)
+	}
+	if iq.Tag != "" {
+		v.Set("tag", iq.Tag)
+	}
+	if iq.Page > 1 {
+		v.Set("page", strconv.Itoa(iq.Page))
+	}
+	return v.Encode()
+}
+
+// withPage returns a copy of iq with Page replaced -- used to build the
+// pager's Prev/Next hrefs without mutating the page's own query.
+func (iq incidentQuery) withPage(page int) incidentQuery {
+	next := iq
+	next.Page = page
+	return next
+}
+
+// incidentDurationText renders a duration given in seconds using the same
+// short-unit convention nodeDurText uses for a timestamp-since-now (seconds
+// below a minute, minutes/hours/days above) -- internal/web can't import the
+// CLI's own duration helpers (see nodeDurText's doc for the same layering
+// reason), so this is an independent, tiny formatter taking a duration
+// directly rather than a timestamp.
+func incidentDurationText(sec int64) string {
+	if sec < 0 {
+		sec = 0
+	}
+	switch {
+	case sec < 60:
+		return fmt.Sprintf("%ds", sec)
+	case sec < 3600:
+		return fmt.Sprintf("%dm", sec/60)
+	case sec < 86400:
+		return fmt.Sprintf("%dh", sec/3600)
+	default:
+		return fmt.Sprintf("%dd", sec/86400)
+	}
+}
+
+// incidentTimeText renders a Unix timestamp as an absolute UTC
+// "Jan 2 15:04:05" reading (alertHistoryRows' own layout, handlers_alerts.go)
+// -- "-" for an unset (<=0) timestamp, e.g. a still-open member's
+// ResolvedAt or a still-open incident's Resolved.
+func incidentTimeText(ts int64) string {
+	if ts <= 0 {
+		return "-"
+	}
+	return time.Unix(ts, 0).UTC().Format("Jan 2 15:04:05")
+}
+
+// IncidentRow is one row of the /fleet/incidents list table (task-2-brief.md:
+// "list shows state, title, severity, nodes, opened, duration, delivered/
+// suppressed chips").
+type IncidentRow struct {
+	ID              string
+	Href            string
+	State           string
+	Title           string
+	Severity        string
+	Nodes           string
+	OpenedText      string
+	DurationText    string
+	DeliveredCount  int
+	SuppressedCount int
+}
+
+// incidentNodeNames returns the distinct display names (IncidentAlert.
+// NodeName, falling back to the raw Node id when a fixture/legacy record
+// leaves NodeName empty) of every member alert in inc.Alerts, first-seen
+// order -- "Incidents group members from several nodes" (the task's own
+// incident facts), so the list/detail pages show every one of them, not
+// just the first.
+func incidentNodeNames(inc core.Incident) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, a := range inc.Alerts {
+		name := a.NodeName
+		if name == "" {
+			name = a.Node
+		}
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
+}
+
+// newIncidentRow projects one core.Incident into its list-row shape: the
+// delivered/suppressed chips count member alerts with DeliveredLocally set,
+// respectively a non-empty Suppressed reason; duration runs from Opened to
+// Resolved (a resolved incident) or to now (still open).
+func newIncidentRow(inc core.Incident) IncidentRow {
+	delivered, suppressed := 0, 0
+	for _, a := range inc.Alerts {
+		if a.DeliveredLocally {
+			delivered++
+		}
+		if a.Suppressed != "" {
+			suppressed++
+		}
+	}
+	end := time.Now().Unix()
+	if inc.Resolved > 0 {
+		end = inc.Resolved
+	}
+	dur := end - inc.Opened
+	if dur < 0 {
+		dur = 0
+	}
+	return IncidentRow{
+		ID:              inc.ID,
+		Href:            "/fleet/incidents/" + inc.ID,
+		State:           inc.State,
+		Title:           inc.Title,
+		Severity:        inc.Severity,
+		Nodes:           strings.Join(incidentNodeNames(inc), ", "),
+		OpenedText:      incidentTimeText(inc.Opened),
+		DurationText:    incidentDurationText(dur),
+		DeliveredCount:  delivered,
+		SuppressedCount: suppressed,
+	}
+}
+
+// fetchIncidentsFiltered reads every incident matching iq's state/node/tag
+// criteria straight from Fleet().Incidents (Limit 0 -- unlimited -- since
+// pagination happens in memory, paginateIncidents below). Deliberately NOT
+// read through the request-scoped fleetMemo (fleet_memo.go): the memo
+// exists to protect a value several DIFFERENT call sites in one request
+// might all ask for (the roster, fleet status); this specific, page's-own
+// filtered query has exactly one caller per request, so memoizing it would
+// just be a single-use cache. The nav badge's own, differently-filtered
+// (state=firing, capped) query is what fleetIncidentsFiringCount memoizes
+// instead. A nil Deps.Fleet, a nil FleetAPI, or a read error all degrade to
+// an empty list rather than failing the page.
+func fetchIncidentsFiltered(d Deps, iq incidentQuery) []core.Incident {
+	fleet, err := fleetAPIFor(d)
+	if err != nil {
+		return nil
+	}
+	incs, err := fleet.Incidents(core.IncidentFilter{State: iq.State, Node: iq.Node, Tag: iq.Tag})
+	if err != nil {
+		return nil
+	}
+	return incs
+}
+
+// paginateIncidents slices all (already filtered, newest-updated-first per
+// core.FleetAPI.Incidents' own contract) into page's 50-row window,
+// clamping page into [1, totalPages] first: an out-of-range ?page= (too
+// high, zero, or negative) lands on the nearest valid page rather than
+// showing an empty table or panicking on the slice bounds.
+func paginateIncidents(all []core.Incident, page int) (pageItems []core.Incident, totalPages, clampedPage int) {
+	total := len(all)
+	totalPages = (total + fleetIncidentsPageSize - 1) / fleetIncidentsPageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * fleetIncidentsPageSize
+	if start > total {
+		start = total
+	}
+	end := start + fleetIncidentsPageSize
+	if end > total {
+		end = total
+	}
+	return all[start:end], totalPages, page
+}
+
+// buildIncidentRows filters+paginates+projects all for either the full page
+// or the bare fragment -- shared so both always render identically for the
+// same query (buildFleetRows' own convention for /fleet's table).
+func buildIncidentRows(all []core.Incident, iq incidentQuery) (rows []IncidentRow, totalPages, clampedPage int) {
+	page, totalPages, clampedPage := paginateIncidents(all, iq.Page)
+	rows = make([]IncidentRow, 0, len(page))
+	for _, inc := range page {
+		rows = append(rows, newIncidentRow(inc))
+	}
+	return rows, totalPages, clampedPage
+}
+
+// IncidentsTableData is what templates/fleet_incidents.html's "incident_rows"
+// block (the bare <tbody> fragment GET /fleet/incidents/table returns)
+// renders against -- mirrors FleetTableData's shape/purpose exactly.
+type IncidentsTableData struct {
+	Rows        []IncidentRow
+	QueryString string
+}
+
+// IncidentsPageData is what templates/fleet_incidents.html's "content" block
+// renders against.
+type IncidentsPageData struct {
+	PageData
+	Rows        []IncidentRow
+	Query       incidentQuery
+	QueryString string
+	Total       int
+	Page        int
+	TotalPages  int
+	HasPrev     bool
+	HasNext     bool
+	PrevHref    string
+	NextHref    string
+}
+
+// incidentPageHref builds the pager's Prev/Next href: iq's other
+// state/node/tag criteria preserved, page replaced.
+func incidentPageHref(iq incidentQuery, page int) string {
+	return "/fleet/incidents?" + iq.withPage(page).encode()
+}
+
+func buildIncidentsPageData(r *http.Request, d Deps) IncidentsPageData {
+	iq := parseIncidentQuery(r)
+	all := fetchIncidentsFiltered(d, iq)
+	rows, totalPages, page := buildIncidentRows(all, iq)
+	iq.Page = page
+	sub := fmt.Sprintf("%d incident", len(all))
+	if len(all) != 1 {
+		sub += "s"
+	}
+	return IncidentsPageData{
+		PageData:    newPageData(r, d, "Incidents", sub),
+		Rows:        rows,
+		Query:       iq,
+		QueryString: iq.encode(),
+		Total:       len(all),
+		Page:        page,
+		TotalPages:  totalPages,
+		HasPrev:     page > 1,
+		HasNext:     page < totalPages,
+		PrevHref:    incidentPageHref(iq, page-1),
+		NextHref:    incidentPageHref(iq, page+1),
+	}
+}
+
+func buildIncidentsTableData(r *http.Request, d Deps) IncidentsTableData {
+	iq := parseIncidentQuery(r)
+	all := fetchIncidentsFiltered(d, iq)
+	rows, _, page := buildIncidentRows(all, iq)
+	iq.Page = page
+	return IncidentsTableData{Rows: rows, QueryString: iq.encode()}
+}
+
+// renderIncidentsPage renders templates/fleet_incidents.html's "content"
+// block through the full app-shell layout, the same parse/execute shape
+// renderFleetPage uses.
+func renderIncidentsPage(w http.ResponseWriter, data IncidentsPageData) error {
+	tmpl, err := template.New("base.html").Funcs(funcMap).
+		ParseFS(templatesFS, "templates/base.html", "templates/fleet_incidents.html")
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return tmpl.ExecuteTemplate(w, "base.html", data)
+}
+
+// renderIncidentsTableFragment renders templates/fleet_incidents.html's
+// "incident_rows" block alone -- no base.html, no "content" wrapper -- so
+// GET /fleet/incidents/table returns exactly the
+// <tbody id="incident-tbody">...</tbody> fragment the polling table swaps
+// in, mirroring renderFleetTableFragment exactly.
+func renderIncidentsTableFragment(w http.ResponseWriter, data IncidentsTableData) error {
+	tmpl, err := template.New("fleet_incidents.html").Funcs(funcMap).
+		ParseFS(templatesFS, "templates/fleet_incidents.html")
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return tmpl.ExecuteTemplate(w, "incident_rows", data)
+}
+
+// fleetIncidentsHandler serves GET /fleet/incidents: the filterable,
+// paginated incident list (task-2-brief.md). Viewer-gated at the route
+// (routes.go) exactly like the rest of "Monitor"; master-only-ness is
+// enforced here (fleetGateHTML), not by RBAC.
+func fleetIncidentsHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if fleetGateHTML(w, r, d) {
+			return
+		}
+		if err := renderIncidentsPage(w, buildIncidentsPageData(r, d)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// fleetIncidentsTableHandler serves GET /fleet/incidents/table: the htmx
+// poll target (task-2-brief.md: "the list polls every 10s via htmx, with
+// hx-sync='this:replace'") that keeps the list's rows fresh without
+// reloading the page shell -- the same "self-polling bare fragment" pattern
+// /fleet/table already established (fleetTableHandler, above), just on a
+// 10s cadence instead of 5s.
+func fleetIncidentsTableHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if fleetGatePlain(w, r, d) {
+			return
+		}
+		if err := renderIncidentsTableFragment(w, buildIncidentsTableData(r, d)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// IncidentTimelineRow is one line of an incident's (or one member alert's
+// own Explain) pipeline trail, rendered from IncidentEvent's STRUCTURED
+// fields (Leg/AlertKey/Node/Policy/Step/Channels/Actor) per the ruling --
+// Detail is used only as a fallback for a legacy event that predates those
+// fields (see core.IncidentEvent's own doc).
+type IncidentTimelineRow struct {
+	When  string
+	Kind  string
+	Text  string
+	Actor string
+}
+
+// incidentEventText renders ev's structured fields into one line of display
+// text: leg/key/node/policy+step/channels, space-joined, with ev.Detail
+// appended too when present (a structured event may still carry a short
+// human Detail alongside its structured fields). An event with NEITHER Leg
+// nor Policy set is a legacy event (core.IncidentEvent's own doc: "every
+// reader of these fields must fall back to parsing Detail only for such an
+// event, never for one that has them"), so it renders Detail alone (or,
+// failing that, just the Kind) instead of the structured form.
+func incidentEventText(ev core.IncidentEvent) string {
+	if ev.Leg == "" && ev.Policy == "" {
+		if ev.Detail != "" {
+			return ev.Detail
+		}
+		return ev.Kind
+	}
+	var parts []string
+	if ev.Leg != "" {
+		parts = append(parts, "leg="+ev.Leg)
+	}
+	if ev.AlertKey != "" {
+		parts = append(parts, "key="+ev.AlertKey)
+	}
+	if ev.Node != "" {
+		parts = append(parts, "node="+ev.Node)
+	}
+	if ev.Policy != "" {
+		parts = append(parts, fmt.Sprintf("policy=%s step=%d", ev.Policy, ev.Step))
+	}
+	if len(ev.Channels) > 0 {
+		parts = append(parts, "channels="+strings.Join(ev.Channels, ","))
+	}
+	if ev.Detail != "" {
+		parts = append(parts, ev.Detail)
+	}
+	return strings.Join(parts, " ")
+}
+
+// buildIncidentTimeline projects events (already chronological, per
+// core.FleetAPI.Incident/Explain's own contract) into their display rows,
+// order preserved.
+func buildIncidentTimeline(events []core.IncidentEvent) []IncidentTimelineRow {
+	rows := make([]IncidentTimelineRow, 0, len(events))
+	for _, ev := range events {
+		rows = append(rows, IncidentTimelineRow{
+			When:  incidentTimeText(ev.TS),
+			Kind:  ev.Kind,
+			Text:  incidentEventText(ev),
+			Actor: ev.Actor,
+		})
+	}
+	return rows
+}
+
+// IncidentMemberRow is one row of the detail page's member-alerts table
+// (task-2-brief.md: "node, key, fired, resolved, delivered locally,
+// silenced by, folded reason"), plus that member's own Explain(key) trail
+// for the small per-alert "Explain" panel.
+type IncidentMemberRow struct {
+	Node             string
+	Key              string
+	FiredText        string
+	ResolvedText     string
+	DeliveredLocally bool
+	SilencedBy       string
+	Folded           string
+	// Open reports whether this member is still active (ResolvedAt==0) --
+	// exactly the set openMemberMatchers silences, and what CanSilence
+	// (buildIncidentDetailPageData) checks isn't empty.
+	Open    bool
+	Explain []IncidentTimelineRow
+}
+
+// buildIncidentMembers projects inc.Alerts into their row shape.
+// explainByKey carries each distinct alert key's own Explain(key) trail
+// (fetched once per key by the caller, buildIncidentDetailPageData) for that
+// member's "Explain" panel -- reusing Explain(key)'s data is the ruling's
+// exact wording ("'Explain' on an alert key reuses Explain(key) via a small
+// panel on the detail page").
+func buildIncidentMembers(inc core.Incident, explainByKey map[string][]core.IncidentEvent) []IncidentMemberRow {
+	rows := make([]IncidentMemberRow, 0, len(inc.Alerts))
+	for _, a := range inc.Alerts {
+		node := a.NodeName
+		if node == "" {
+			node = a.Node
+		}
+		silencedBy := a.SilencedBy
+		if silencedBy == "" {
+			silencedBy = "-"
+		}
+		folded := a.Suppressed
+		if folded == "" {
+			folded = "-"
+		}
+		rows = append(rows, IncidentMemberRow{
+			Node:             node,
+			Key:              a.Key,
+			FiredText:        incidentTimeText(a.FiredAt),
+			ResolvedText:     incidentTimeText(a.ResolvedAt),
+			DeliveredLocally: a.DeliveredLocally,
+			SilencedBy:       silencedBy,
+			Folded:           folded,
+			Open:             a.ResolvedAt == 0,
+			Explain:          buildIncidentTimeline(explainByKey[a.Key]),
+		})
+	}
+	return rows
+}
+
+// openMemberMatchers builds the silence-from-incident form's matchers
+// (task-2-brief.md: "Matchers are prefilled from the incident's OPEN
+// members: node id plus rule (AlertKey). Use one matcher per member; the
+// list is ORed"), recomputed from the CURRENT incident server-side at
+// submit time -- never trusted from the client -- so a stale/tampered form
+// can't silence a member that has since resolved or one that was never part
+// of this incident. Deduplicates identical (Node, Key) pairs.
+func openMemberMatchers(inc core.Incident) []core.Matcher {
+	seen := map[string]bool{}
+	var out []core.Matcher
+	for _, a := range inc.Alerts {
+		if a.ResolvedAt != 0 {
+			continue
+		}
+		dedupKey := a.Node + "\x00" + a.Key
+		if seen[dedupKey] {
+			continue
+		}
+		seen[dedupKey] = true
+		out = append(out, core.Matcher{Node: a.Node, Rule: a.Key})
+	}
+	return out
+}
+
+// incidentSilenceDuration is one of the silence form's fixed duration
+// choices (task-2-brief.md: "Duration choices are 30m, 1h, 4h, 24h"),
+// rendered into the <select>.
+type incidentSilenceDuration struct {
+	Key      string
+	Label    string
+	Selected bool
+}
+
+// incidentSilenceDurationChoices are the brief's exact four choices, in
+// display order.
+var incidentSilenceDurationChoices = []struct {
+	key     string
+	label   string
+	seconds int64
+}{
+	{"30m", "30 minutes", 1800},
+	{"1h", "1 hour", 3600},
+	{"4h", "4 hours", 14400},
+	{"24h", "24 hours", 86400},
+}
+
+// incidentSilenceDurationSeconds resolves a posted "for" value to its
+// duration in seconds; ok is false for anything outside the four fixed
+// choices.
+func incidentSilenceDurationSeconds(key string) (int64, bool) {
+	for _, c := range incidentSilenceDurationChoices {
+		if c.key == key {
+			return c.seconds, true
+		}
+	}
+	return 0, false
+}
+
+// incidentSilenceDurationOptions renders the fixed choices for the <select>,
+// marking selected as the currently-chosen one (defaulting to the first
+// choice, 30m, when selected is empty/unrecognized).
+func incidentSilenceDurationOptions(selected string) []incidentSilenceDuration {
+	if _, ok := incidentSilenceDurationSeconds(selected); !ok {
+		selected = incidentSilenceDurationChoices[0].key
+	}
+	opts := make([]incidentSilenceDuration, 0, len(incidentSilenceDurationChoices))
+	for _, c := range incidentSilenceDurationChoices {
+		opts = append(opts, incidentSilenceDuration{Key: c.key, Label: c.label, Selected: c.key == selected})
+	}
+	return opts
+}
+
+// incidentDetailOptions is buildIncidentDetailPageData's input: the page's
+// transient, this-response-only state -- a flash message (success, via the
+// ack/silence handlers' redirect, or a validation/FleetAPI error, rendered
+// in place) and the silence form's sticky "for"/comment input on a
+// validation failure -- exactly like fleetAdminOptions backs
+// buildFleetAdminPageData.
+type incidentDetailOptions struct {
+	Flash        string
+	FlashErr     bool
+	SilenceErr   string
+	ForValue     string
+	CommentValue string
+}
+
+// IncidentDetailPageData is what templates/fleet_incident.html's "content"
+// block renders against.
+type IncidentDetailPageData struct {
+	PageData
+	Incident         core.Incident
+	OpenedText       string
+	ResolvedText     string
+	DurationText     string
+	Members          []IncidentMemberRow
+	Timeline         []IncidentTimelineRow
+	CanAck           bool
+	CanSilence       bool
+	SilenceDurations []incidentSilenceDuration
+	Flash            string
+	FlashErr         bool
+	SilenceErr       string
+	CommentValue     string
+}
+
+// buildIncidentDetailPageData assembles IncidentDetailPageData for GET
+// /fleet/incidents/{id} and every ack/silence mutation's re-render on a
+// validation failure. Returns an error (never rendered as a flash --
+// fleetIncidentHandler/renderIncidentMutationError's callers turn it into a
+// plain 404 page instead, renderIncidentNotFound) when id names no incident
+// this Fleet() recognizes.
+func buildIncidentDetailPageData(r *http.Request, d Deps, id string, opts incidentDetailOptions) (IncidentDetailPageData, error) {
+	fleet, err := fleetAPIFor(d)
+	if err != nil {
+		return IncidentDetailPageData{}, err
+	}
+	inc, err := fleet.Incident(id)
+	if err != nil {
+		return IncidentDetailPageData{}, err
+	}
+
+	explainByKey := map[string][]core.IncidentEvent{}
+	seenKeys := map[string]bool{}
+	for _, a := range inc.Alerts {
+		if a.Key == "" || seenKeys[a.Key] {
+			continue
+		}
+		seenKeys[a.Key] = true
+		if evs, eerr := fleet.Explain(a.Key); eerr == nil {
+			explainByKey[a.Key] = evs
+		}
+	}
+
+	members := buildIncidentMembers(inc, explainByKey)
+	openCount := 0
+	for _, m := range members {
+		if m.Open {
+			openCount++
+		}
+	}
+
+	end := time.Now().Unix()
+	if inc.Resolved > 0 {
+		end = inc.Resolved
+	}
+	dur := end - inc.Opened
+	if dur < 0 {
+		dur = 0
+	}
+
+	return IncidentDetailPageData{
+		PageData:         newPageData(r, d, "Incident", inc.Title),
+		Incident:         inc,
+		OpenedText:       incidentTimeText(inc.Opened),
+		ResolvedText:     incidentTimeText(inc.Resolved),
+		DurationText:     incidentDurationText(dur),
+		Members:          members,
+		Timeline:         buildIncidentTimeline(inc.Timeline),
+		CanAck:           inc.State != "resolved",
+		CanSilence:       inc.State != "resolved" && openCount > 0,
+		SilenceDurations: incidentSilenceDurationOptions(opts.ForValue),
+		Flash:            opts.Flash,
+		FlashErr:         opts.FlashErr,
+		SilenceErr:       opts.SilenceErr,
+		CommentValue:     opts.CommentValue,
+	}, nil
+}
+
+// renderIncidentDetailPage renders templates/fleet_incident.html's "content"
+// block through the full app-shell layout, at the given status (200 for a
+// normal render, a 4xx for a validation/FleetAPI error re-render -- see
+// renderIncidentMutationError).
+func renderIncidentDetailPage(w http.ResponseWriter, data IncidentDetailPageData, status int) error {
+	tmpl, err := template.New("base.html").Funcs(funcMap).
+		ParseFS(templatesFS, "templates/base.html", "templates/fleet_incident.html")
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	return tmpl.ExecuteTemplate(w, "base.html", data)
+}
+
+// renderIncidentNotFound renders the shared 404 panel for an unresolvable
+// incident id -- GET, ack, and silence all reach here identically when
+// Fleet().Incident(id) itself errors (an unknown/stale id), as opposed to a
+// validation/FleetAPI error on an incident that WAS found, which instead
+// re-renders the detail page with a flash (renderIncidentMutationError).
+func renderIncidentNotFound(w http.ResponseWriter, r *http.Request, d Deps) {
+	renderNotFound(w, r, d, "no such incident")
+}
+
+// renderIncidentMutationError re-renders the incident detail page with a
+// flash/sticky-form error at the given 4xx status -- global-constraints.md's
+// "FleetAPI errors ... render as a flash message ... Never return a 500"
+// ruling, and (for the silence form specifically) "validation errors ...
+// render inline next to the offending field", applied to this page exactly
+// like renderFleetAdminError applies it to /fleet/admin.
+func renderIncidentMutationError(w http.ResponseWriter, r *http.Request, d Deps, id string, opts incidentDetailOptions, status int) {
+	data, err := buildIncidentDetailPageData(r, d, id, opts)
+	if err != nil {
+		renderIncidentNotFound(w, r, d)
+		return
+	}
+	if rerr := renderIncidentDetailPage(w, data, status); rerr != nil {
+		http.Error(w, rerr.Error(), http.StatusInternalServerError)
+	}
+}
+
+// fleetIncidentHandler serves GET /fleet/incidents/{id}: member alerts, the
+// full structured timeline, and the ack/silence forms (task-2-brief.md).
+// ?flash= carries a one-time success message from the ack/silence handlers'
+// post-mutation redirect (the brief's "redirects back to the incident with
+// a flash" -- see fleetIncidentAckHandler/fleetIncidentSilenceHandler).
+func fleetIncidentHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if fleetGateHTML(w, r, d) {
+			return
+		}
+		id := r.PathValue("id")
+		data, err := buildIncidentDetailPageData(r, d, id, incidentDetailOptions{Flash: r.URL.Query().Get("flash")})
+		if err != nil {
+			renderIncidentNotFound(w, r, d)
+			return
+		}
+		if err := renderIncidentDetailPage(w, data, http.StatusOK); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// fleetIncidentAckHandler serves POST /fleet/incidents/{id}/ack (admin +
+// CSRF, fleetAdminMutation). actor is the signed-in web user's own name
+// (auditUser) -- the ruling that AckIncident must see who, on the web,
+// actually acked it, so the fleet timeline shows that user rather than a
+// placeholder. A resolved incident (no ack button in the UI) is also
+// rejected server-side, never trusting the hidden-control-implies-safe
+// assumption (the same convention fleetNodeRemoveHandler's CanRemove
+// re-check uses).
+func fleetIncidentAckHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if fleetGateHTML(w, r, d) {
+			return
+		}
+		id := r.PathValue("id")
+		fleet, err := fleetAPIFor(d)
+		if err != nil {
+			renderIncidentNotFound(w, r, d)
+			return
+		}
+		inc, err := fleet.Incident(id)
+		if err != nil {
+			renderIncidentNotFound(w, r, d)
+			return
+		}
+		if inc.State == "resolved" {
+			renderIncidentMutationError(w, r, d, id, incidentDetailOptions{Flash: "resolved incidents cannot be acknowledged", FlashErr: true}, http.StatusBadRequest)
+			return
+		}
+		actor := auditUser(r)
+		if err := fleet.AckIncident(id, actor); err != nil {
+			renderIncidentMutationError(w, r, d, id, incidentDetailOptions{Flash: err.Error(), FlashErr: true}, fleetAPIErrStatus(err))
+			return
+		}
+		logAudit(d, r, "fleet.incident.ack", id, "", actor)
+		http.Redirect(w, r, "/fleet/incidents/"+id+"?flash="+url.QueryEscape("acknowledged by "+actor), http.StatusSeeOther)
+	}
+}
+
+// fleetIncidentSilenceHandler serves POST /fleet/incidents/{id}/silence
+// (admin + CSRF, fleetAdminMutation): validates the posted "for" duration
+// (one of the four fixed choices) and comment, recomputes the matcher list
+// from the incident's CURRENT open members (openMemberMatchers -- never
+// trusting anything the client posted for the matchers themselves), and
+// creates the silence with Author set to the signed-in web user's own name.
+// A validation failure or a CreateSilence error re-renders the detail page
+// with the error inline (never a 500, global-constraints.md); success
+// redirects back to the incident with a flash (task-2-brief.md's exact
+// ruling).
+func fleetIncidentSilenceHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if fleetGateHTML(w, r, d) {
+			return
+		}
+		id := r.PathValue("id")
+		fleet, err := fleetAPIFor(d)
+		if err != nil {
+			renderIncidentNotFound(w, r, d)
+			return
+		}
+		inc, err := fleet.Incident(id)
+		if err != nil {
+			renderIncidentNotFound(w, r, d)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			renderIncidentMutationError(w, r, d, id, incidentDetailOptions{Flash: "invalid form", FlashErr: true}, http.StatusBadRequest)
+			return
+		}
+		forRaw := r.FormValue("for")
+		comment := r.FormValue("comment")
+		durSec, ok := incidentSilenceDurationSeconds(forRaw)
+		if !ok {
+			renderIncidentMutationError(w, r, d, id, incidentDetailOptions{
+				SilenceErr: "choose a valid duration (30m, 1h, 4h, 24h)", ForValue: forRaw, CommentValue: comment,
+			}, http.StatusBadRequest)
+			return
+		}
+		matchers := openMemberMatchers(inc)
+		if len(matchers) == 0 {
+			renderIncidentMutationError(w, r, d, id, incidentDetailOptions{
+				SilenceErr: "no open members to silence", ForValue: forRaw, CommentValue: comment,
+			}, http.StatusBadRequest)
+			return
+		}
+		actor := auditUser(r)
+		now := time.Now().Unix()
+		created, err := fleet.CreateSilence(core.Silence{
+			Matchers: matchers,
+			Start:    now,
+			End:      now + durSec,
+			Author:   actor,
+			Comment:  comment,
+		})
+		if err != nil {
+			renderIncidentMutationError(w, r, d, id, incidentDetailOptions{
+				SilenceErr: err.Error(), ForValue: forRaw, CommentValue: comment,
+			}, fleetAPIErrStatus(err))
+			return
+		}
+		logAudit(d, r, "fleet.incident.silence", id, "", fmt.Sprintf("silence=%s for=%s by=%s", created.ID, forRaw, actor))
+		http.Redirect(w, r, "/fleet/incidents/"+id+"?flash="+url.QueryEscape("silenced for "+forRaw), http.StatusSeeOther)
 	}
 }

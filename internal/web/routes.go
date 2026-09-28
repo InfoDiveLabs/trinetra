@@ -79,6 +79,20 @@ func newHandler(d Deps) http.Handler {
 	// /fleet routes above; already on node_scope.go's masterLocalPrefixes
 	// via its "/fleet" entry.
 	mux.HandleFunc("GET /fleet/compare", requireRole(RoleViewer, d, fleetCompareHandler(d)))
+	// /fleet/incidents + /fleet/incidents/{id} (+ /table poll fragment, +
+	// ack/silence mutations) -- task C2, plan C: the fleet incidents web UI
+	// over FleetAPI's Incidents/Incident/AckIncident/Explain/CreateSilence.
+	// GETs are viewer-gated and master-only (fleetGateHTML) exactly like the
+	// rest of "Monitor"; ack/silence are admin+CSRF (fleetAdminMutation),
+	// same as /fleet/admin's mutations below. Already covered by
+	// node_scope.go's masterLocalPrefixes "/fleet" entry (prefix-matches
+	// every /fleet/... path), so /n/{node}/fleet/incidents... is already a
+	// 404 via withNodeRouter.
+	mux.HandleFunc("GET /fleet/incidents", requireRole(RoleViewer, d, fleetIncidentsHandler(d)))
+	mux.HandleFunc("GET /fleet/incidents/table", requireRole(RoleViewer, d, fleetIncidentsTableHandler(d)))
+	mux.HandleFunc("GET /fleet/incidents/{id}", requireRole(RoleViewer, d, fleetIncidentHandler(d)))
+	mux.HandleFunc("POST /fleet/incidents/{id}/ack", fleetAdminMutation(d, fleetIncidentAckHandler(d)))
+	mux.HandleFunc("POST /fleet/incidents/{id}/silence", fleetAdminMutation(d, fleetIncidentSilenceHandler(d)))
 	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a):
 	// node management (rename/tags/revoke/remove) and join-token
 	// issuance/revocation, admin+CSRF-gated like /users/* below -- see

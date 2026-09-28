@@ -33,6 +33,13 @@ type NavCounts struct {
 	// every page where this daemon isn't a fleet master, since
 	// navCountsFor only computes it when fleetRole=="master" (see its doc).
 	FleetDown int
+	// IncidentsFiring (task C2, fleet incidents web UI) is how many fleet
+	// incidents are currently State=="firing", for the "Incidents" nav
+	// entry's badge -- 0 (no badge) whenever this daemon isn't a fleet
+	// master, exactly like FleetDown. Read through the request-scoped
+	// fleetMemo's fleetIncidentsFiringCount (fleet_memo.go), so this costs a
+	// real round trip only once per request.
+	IncidentsFiring int
 }
 
 // navCountsFor computes NavCounts from Deps: a handful of cheap, per-request
@@ -90,6 +97,9 @@ func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 					c.FleetDown++
 				}
 			}
+		}
+		if n, err := fleetMemoFrom(r).fleetIncidentsFiringCount(d); err == nil {
+			c.IncidentsFiring = n
 		}
 	}
 

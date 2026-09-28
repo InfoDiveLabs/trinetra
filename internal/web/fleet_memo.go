@@ -42,6 +42,17 @@ type fleetMemo struct {
 	nodesOnce sync.Once
 	nodes     []core.NodeSummary
 	nodesErr  error
+
+	// incidentsFiringOnce/incidentsFiringCount/incidentsFiringErr (task C2,
+	// fleet incidents) memoize fleetIncidentsFiringCount's own
+	// Incidents(State:"firing", Limit:fleetIncidentsFiringCap) call -- the
+	// "Incidents" nav badge's data source, computed at most once per request
+	// exactly like fleetStatus/fleetNodes above (task-2-brief.md's ruling:
+	// "Make it request-scoped cached like the fleet memo, so each page makes
+	// at most 1 call").
+	incidentsFiringOnce  sync.Once
+	incidentsFiringCount int
+	incidentsFiringErr   error
 }
 
 // fleetAPIFor resolves d's core.FleetAPI, collapsing a nil Deps.Fleet or a
@@ -91,6 +102,30 @@ func (m *fleetMemo) fleetNodes(d Deps) ([]core.NodeSummary, error) {
 		m.nodes, m.nodesErr = fleet.Nodes(core.NodeFilter{})
 	})
 	return m.nodes, m.nodesErr
+}
+
+// fleetIncidentsFiringCount returns how many fleet incidents are currently
+// State=="firing" (core.IncidentFilter{State:"firing", Limit:
+// fleetIncidentsFiringCap}, handlers_fleet.go), computed at most once for
+// this memo's lifetime -- backs the "Incidents" nav badge (nav_counts.go's
+// navCountsFor), which renders on EVERY page a fleet master serves, so this
+// must never cost more than one round trip per request no matter how many
+// times the badge (or some future caller) asks for it.
+func (m *fleetMemo) fleetIncidentsFiringCount(d Deps) (int, error) {
+	m.incidentsFiringOnce.Do(func() {
+		fleet, err := fleetAPIFor(d)
+		if err != nil {
+			m.incidentsFiringErr = err
+			return
+		}
+		incs, err := fleet.Incidents(core.IncidentFilter{State: "firing", Limit: fleetIncidentsFiringCap})
+		if err != nil {
+			m.incidentsFiringErr = err
+			return
+		}
+		m.incidentsFiringCount = len(incs)
+	})
+	return m.incidentsFiringCount, m.incidentsFiringErr
 }
 
 // fleetMemoFrom returns r's request-scoped *fleetMemo (attached by

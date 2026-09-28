@@ -1,0 +1,128 @@
+{{/* fleet_incident.html (task C2, fleet phase 2 web UI plan C): GET
+     /fleet/incidents/{id} -- member alerts, the full structured timeline,
+     and the Ack/Silence forms. Every mutation here is a plain (non-htmx)
+     form POST that redirects back to this same page with a ?flash= on
+     success (task-2-brief.md's exact ruling) -- a validation/FleetAPI error
+     instead re-renders this page in place, inline next to the offending
+     field, at a 4xx status (global-constraints.md), never a redirect and
+     never a 500.
+
+     State/severity badges follow the ember-discipline ruling for this task:
+     ember (.badge.crit) is used ONLY for a firing incident/critical
+     severity; acked is amber (.warn), resolved is verdigris (.ok),
+     suppressed stays the plain neutral badge -- state is always ALSO shown
+     as the literal text inside the badge, never color-only. */}}
+{{define "content"}}
+<div id="fleet-incident-page">
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+
+  <div class="panel" style="margin-bottom:18px">
+    <div class="head">
+      <div class="legend">
+        <span class="badge{{if eq .Incident.State "firing"}} crit{{else if eq .Incident.State "acked"}} warn{{else if eq .Incident.State "resolved"}} ok{{end}}">{{.Incident.State}}</span>
+        <span class="badge{{if eq .Incident.Severity "critical"}} crit{{else if eq .Incident.Severity "warning"}} warn{{end}}">{{.Incident.Severity}}</span>
+      </div>
+      <a class="note mono" href="/fleet/incidents">&larr; back to incidents</a>
+    </div>
+    <h2 style="margin:6px 0 4px">{{.Incident.Title}}</h2>
+    <p class="note mono">
+      opened {{.OpenedText}} &middot; duration {{.DurationText}}
+      {{if .ResolvedText}} &middot; resolved {{.ResolvedText}}{{end}}
+      {{if .Incident.AckedBy}} &middot; acked by {{.Incident.AckedBy}}{{end}}
+    </p>
+
+    <div style="margin-top:12px">
+      {{if .CanAck}}
+      <form method="post" action="/fleet/incidents/{{.Incident.ID}}/ack" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <button class="btn primary" type="submit">Ack</button>
+      </form>
+      {{else}}
+      <button class="btn ghost" type="button" disabled title="resolved incidents cannot be acknowledged">Ack</button>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Silence</span></div>
+  <div class="panel" style="margin-bottom:18px">
+    {{if .CanSilence}}
+    <form method="post" action="/fleet/incidents/{{.Incident.ID}}/silence">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <div class="grid g-3">
+        <label class="field"><span class="lb">Duration</span>
+          <select name="for">
+            {{range .SilenceDurations}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+          </select>
+        </label>
+        <label class="field" style="grid-column:span 2"><span class="lb">Comment</span>
+          <input type="text" name="comment" value="{{.CommentValue}}" placeholder="why this silence">
+        </label>
+      </div>
+      {{if .SilenceErr}}<span class="field-err">{{.SilenceErr}}</span>{{end}}
+      <p class="note" style="margin-top:10px">Matches every currently open member below (node + rule), ORed:</p>
+      <p class="mono note">{{range $i, $m := .Members}}{{if $m.Open}}{{if $i}}, {{end}}node={{$m.Node}} rule={{$m.Key}}{{end}}{{end}}</p>
+      <button class="btn primary" type="submit" style="margin-top:6px">Silence</button>
+    </form>
+    {{else}}
+    <p class="note">Silence is disabled: {{if eq .Incident.State "resolved"}}this incident is resolved{{else}}no open members to silence{{end}}.</p>
+    {{end}}
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Members</span></div>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Node</th><th>Key</th><th>Fired</th><th>Resolved</th><th>Delivered locally</th><th>Silenced by</th><th>Folded reason</th></tr></thead>
+    <tbody>
+      {{range .Members}}
+      <tr>
+        <td class="mono card-title" data-label="Node">{{.Node}}</td>
+        <td class="mono" data-label="Key">{{.Key}}</td>
+        <td class="mono note" data-label="Fired">{{.FiredText}}</td>
+        <td class="mono note" data-label="Resolved">{{.ResolvedText}}</td>
+        <td data-label="Delivered locally">{{if .DeliveredLocally}}yes{{else}}no{{end}}</td>
+        <td data-label="Silenced by">{{.SilencedBy}}</td>
+        <td data-label="Folded reason">{{.Folded}}</td>
+      </tr>
+      <tr><td colspan="7" style="border-top:0; padding-top:0">
+        <details>
+          <summary class="note mono">Explain {{.Key}}</summary>
+          <table class="cards" style="margin-top:6px">
+            <thead><tr><th>When</th><th>Kind</th><th>Detail</th><th>Actor</th></tr></thead>
+            <tbody>
+              {{range .Explain}}
+              <tr>
+                <td class="mono note" data-label="When">{{.When}}</td>
+                <td data-label="Kind"><span class="badge">{{.Kind}}</span></td>
+                <td class="mono" data-label="Detail">{{.Text}}</td>
+                <td class="mono note" data-label="Actor">{{if .Actor}}{{.Actor}}{{else}}-{{end}}</td>
+              </tr>
+              {{else}}
+              <tr><td colspan="4" class="note">no explain trail for this key</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </details>
+      </td></tr>
+      {{else}}
+      <tr><td colspan="7" class="note">no member alerts</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+
+  <div class="section-label"><span class="eyebrow">Timeline</span></div>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>When</th><th>Kind</th><th>Detail</th><th>Actor</th></tr></thead>
+    <tbody>
+      {{range .Timeline}}
+      <tr>
+        <td class="mono note" data-label="When">{{.When}}</td>
+        <td data-label="Kind"><span class="badge">{{.Kind}}</span></td>
+        <td class="mono" data-label="Detail">{{.Text}}</td>
+        <td class="mono note" data-label="Actor">{{if .Actor}}{{.Actor}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" class="note">no timeline events yet</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+</div>
+{{end}}

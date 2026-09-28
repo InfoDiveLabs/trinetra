@@ -215,6 +215,13 @@ type navEntry struct {
 var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Monitor"}},
 	{NavItem: NavItem{Href: "/fleet", Icon: "⛶", Label: "Fleet"}, MasterOnly: true},
+	// Incidents (task C2, fleet phase 2 web UI plan C): master only, visible
+	// to viewers (no AdminOnly gate -- read-only for a viewer, ack/silence
+	// are admin+CSRF-gated at the route/handler level), badged with the
+	// firing count (badgeFor's "/fleet/incidents" case, nav_counts.go). Like
+	// "/fleet" above, MasterOnly also exempts its Href from node-prefixing --
+	// it only ever means "this master's own incidents".
+	{NavItem: NavItem{Href: "/fleet/incidents", Icon: "⚠", Label: "Incidents"}, MasterOnly: true},
 	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
 	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring"}},
 	{NavItem: NavItem{Href: "/host", Icon: "▢", Label: "Host"}},
@@ -296,6 +303,8 @@ func badgeFor(href string, counts NavCounts) string {
 		return badgeText(counts.Users)
 	case "/fleet":
 		return badgeText(counts.FleetDown)
+	case "/fleet/incidents":
+		return badgeText(counts.IncidentsFiring)
 	default:
 		return ""
 	}

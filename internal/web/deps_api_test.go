@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -199,6 +200,38 @@ type fakeFleet struct {
 	lastSeriesMetric string
 	lastSeriesFilter core.NodeFilter
 	lastSeriesAgg    core.Agg
+
+	// incidents/incidentsErr (task C2, fleet incidents web UI) is Incidents'
+	// fixture -- Incidents itself applies filter (State/Node/Tag/Limit)
+	// in-memory, mirroring the real FleetAPI's own filtering contract closely
+	// enough for this package's handler tests without duplicating the whole
+	// engine. incidentsCalls/lastIncidentsFilter record every call, for the
+	// nav badge's "at most one call per request" test.
+	incidents           []core.Incident
+	incidentsErr        error
+	incidentsCalls      int
+	lastIncidentsFilter core.IncidentFilter
+
+	// incidentErr/ackIncidentErr let a test force Incident/AckIncident to
+	// fail; ackedIncidentID/ackedIncidentActor record AckIncident's last
+	// call, so a test can assert the ack recorded the SIGNED-IN web user
+	// (Review Focus 4), not some placeholder.
+	incidentErr        error
+	ackIncidentErr     error
+	ackedIncidentID    string
+	ackedIncidentActor string
+
+	// explainResults/explainErr back Explain(key): a map from alert key to
+	// its own canned pipeline trail, or a shared error.
+	explainResults map[string][]core.IncidentEvent
+	explainErr     error
+
+	// createSilenceErr lets a test force CreateSilence to fail (e.g. a
+	// validation rejection, rendered inline per global-constraints.md);
+	// createdSilences records every silence actually created, so a test can
+	// assert the silence-from-incident form's matchers/Author/window.
+	createSilenceErr error
+	createdSilences  []core.Silence
 }
 
 func (f *fakeFleet) Status() (core.FleetStatus, error) { return f.status, f.statusErr }
@@ -263,21 +296,105 @@ func (f *fakeFleet) DeleteToken(id string) error {
 	return nil
 }
 
-// Incidents/Incident/AckIncident/Explain/Audit: not yet exercised by any web
-// test (fleet phase 2's web surface for incidents lands in a later task);
-// these stubs exist only so fakeFleet keeps satisfying core.FleetAPI.
-func (f *fakeFleet) Incidents(core.IncidentFilter) ([]core.Incident, error) { return nil, nil }
-func (f *fakeFleet) Incident(string) (core.Incident, error)                 { return core.Incident{}, nil }
-func (f *fakeFleet) AckIncident(string, string) error                       { return nil }
-func (f *fakeFleet) Explain(string) ([]core.IncidentEvent, error)           { return nil, nil }
-func (f *fakeFleet) Audit(int) ([]core.AuditEntry, error)                   { return nil, nil }
+// Incidents (task C2, fleet incidents web UI) applies filter's
+// State/Node in-memory (Tag is left unfiltered -- core.Incident carries no
+// tag of its own, and no test here exercises tag filtering; the real
+// FleetAPI resolves it via each member's node, out of scope for this
+// package's fake) so handlers_fleet_incidents_test.go can exercise the
+// list's actual filtering/pagination/badge behavior, not just a canned
+// passthrough. incidentsCalls/lastIncidentsFilter record every call, for the
+// nav badge's "at most one call per request" test.
+func (f *fakeFleet) Incidents(filter core.IncidentFilter) ([]core.Incident, error) {
+	f.incidentsCalls++
+	f.lastIncidentsFilter = filter
+	if f.incidentsErr != nil {
+		return nil, f.incidentsErr
+	}
+	out := make([]core.Incident, 0, len(f.incidents))
+	for _, inc := range f.incidents {
+		if filter.State != "" && inc.State != filter.State {
+			continue
+		}
+		if filter.Node != "" {
+			matched := false
+			for _, a := range inc.Alerts {
+				if a.Node == filter.Node || a.NodeName == filter.Node {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		out = append(out, inc)
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
+}
 
-// Silences/CreateSilence/ExpireSilence/Maintenances/SaveMaintenance/
-// DeleteMaintenance: task 4's silences/maintenance windows have no web
-// surface yet; these stubs exist only so fakeFleet keeps satisfying
-// core.FleetAPI.
-func (f *fakeFleet) Silences() ([]core.Silence, error)                            { return nil, nil }
-func (f *fakeFleet) CreateSilence(s core.Silence) (core.Silence, error)           { return s, nil }
+// Incident looks id up in f.incidents by ID; an unknown id (or incidentErr)
+// mirrors the real FleetAPI's "not found" shape closely enough for this
+// package's handlers, which treat ANY Incident() error identically (a plain
+// 404 page, never a flash -- see renderIncidentNotFound).
+func (f *fakeFleet) Incident(id string) (core.Incident, error) {
+	if f.incidentErr != nil {
+		return core.Incident{}, f.incidentErr
+	}
+	for _, inc := range f.incidents {
+		if inc.ID == id {
+			return inc, nil
+		}
+	}
+	return core.Incident{}, fmt.Errorf("no such incident: %s", id)
+}
+
+// AckIncident records id/actor (ackedIncidentID/ackedIncidentActor) so a
+// test can assert the ack carried the SIGNED-IN web user's own name, not a
+// daemon-side placeholder (Review Focus 4).
+func (f *fakeFleet) AckIncident(id, actor string) error {
+	if f.ackIncidentErr != nil {
+		return f.ackIncidentErr
+	}
+	f.ackedIncidentID = id
+	f.ackedIncidentActor = actor
+	return nil
+}
+
+// Explain returns explainResults[key] (nil, not an error, for an unknown
+// key -- exactly like a genuinely empty pipeline trail), or explainErr if
+// set.
+func (f *fakeFleet) Explain(key string) ([]core.IncidentEvent, error) {
+	if f.explainErr != nil {
+		return nil, f.explainErr
+	}
+	return f.explainResults[key], nil
+}
+
+func (f *fakeFleet) Audit(int) ([]core.AuditEntry, error) { return nil, nil }
+
+// Silences/ExpireSilence/Maintenances/SaveMaintenance/DeleteMaintenance:
+// task 4's silences/maintenance windows have no LIST/admin web surface yet
+// (CreateSilence, just below, DOES have one -- the incident detail page's
+// silence-from-incident form); these stubs exist only so fakeFleet keeps
+// satisfying core.FleetAPI.
+func (f *fakeFleet) Silences() ([]core.Silence, error) { return nil, nil }
+
+// CreateSilence (task C2, silence-from-incident) mints a fake ID and records
+// every created silence (createdSilences) so a test can assert the
+// silence-from-incident form's matchers/Author/window, or fails outright
+// with createSilenceErr when a test wants to pin the "validation errors
+// render inline, never a 500" ruling.
+func (f *fakeFleet) CreateSilence(s core.Silence) (core.Silence, error) {
+	if f.createSilenceErr != nil {
+		return core.Silence{}, f.createSilenceErr
+	}
+	s.ID = fmt.Sprintf("sil%d", len(f.createdSilences)+1)
+	f.createdSilences = append(f.createdSilences, s)
+	return s, nil
+}
 func (f *fakeFleet) ExpireSilence(string, string) error                           { return nil }
 func (f *fakeFleet) Maintenances() ([]core.Maintenance, error)                    { return nil, nil }
 func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) { return m, nil }
