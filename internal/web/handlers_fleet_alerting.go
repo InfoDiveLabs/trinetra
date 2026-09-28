@@ -791,6 +791,22 @@ func decodeAlertingJSON(raw string) (core.AlertingConfig, error) {
 // 413. Either way the user's own input is preserved exactly (the JSON
 // textarea echoed verbatim, or the form's rows rebuilt from what was
 // posted) -- never a 500.
+// limitBody caps a request body before any middleware reads it: requireCSRF
+// parses the form to find a body-embedded token, so a limit applied inside the
+// final handler would come too late. An oversized declared Content-Length is
+// refused outright; a chunked body is cut off by MaxBytesReader, which then
+// fails the CSRF parse.
+func limitBody(n int64, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > n {
+			http.Error(w, "request too large (max 256 KiB)", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, n)
+		next(w, r)
+	}
+}
+
 func fleetAlertingSaveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

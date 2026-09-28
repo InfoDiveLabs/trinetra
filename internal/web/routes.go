@@ -110,7 +110,7 @@ func newHandler(d Deps) http.Handler {
 	// write anything. Already covered by node_scope.go's
 	// masterLocalPrefixes "/fleet" entry.
 	mux.HandleFunc("GET /fleet/alerting", requireRole(RoleViewer, d, fleetAlertingPageHandler(d)))
-	mux.HandleFunc("POST /fleet/alerting", fleetAdminMutation(d, fleetAlertingSaveHandler(d)))
+	mux.HandleFunc("POST /fleet/alerting", limitBody(alertingMaxBodyBytes, fleetAdminMutation(d, fleetAlertingSaveHandler(d))))
 	mux.HandleFunc("POST /fleet/alerting/test", requireRole(RoleViewer, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(fleetAlertingTestHandler(d)).ServeHTTP(w, r)
 	}))
