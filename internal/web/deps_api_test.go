@@ -232,6 +232,27 @@ type fakeFleet struct {
 	// assert the silence-from-incident form's matchers/Author/window.
 	createSilenceErr error
 	createdSilences  []core.Silence
+
+	// alertingCfg/alertingErr/setAlertingCfg/setAlertingActor/
+	// setAlertingErr/setAlertingCalls (task C3, fleet alerting admin web UI)
+	// back Alerting/SetAlerting -- see those methods' own docs.
+	alertingCfg      core.AlertingConfig
+	alertingErr      error
+	setAlertingCfg   core.AlertingConfig
+	setAlertingActor string
+	setAlertingErr   error
+	setAlertingCalls int
+
+	// routeTestResult/routeTestErr/lastRouteTest/routeTestCalls back
+	// RouteTest.
+	routeTestResult core.RouteDecision
+	routeTestErr    error
+	lastRouteTest   core.TestAlert
+	routeTestCalls  int
+
+	// ruleStates/ruleStatesErr back RuleStates.
+	ruleStates    []core.RuleState
+	ruleStatesErr error
 }
 
 func (f *fakeFleet) Status() (core.FleetStatus, error) { return f.status, f.statusErr }
@@ -400,18 +421,44 @@ func (f *fakeFleet) Maintenances() ([]core.Maintenance, error)                  
 func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) { return m, nil }
 func (f *fakeFleet) DeleteMaintenance(string, string) error                       { return nil }
 
-// Alerting/SetAlerting/RouteTest: task 5's routing/escalation config has no
-// web surface yet (plan C); these stubs exist only so fakeFleet keeps
-// satisfying core.FleetAPI.
-func (f *fakeFleet) Alerting() (core.AlertingConfig, error)        { return core.AlertingConfig{}, nil }
-func (f *fakeFleet) SetAlerting(core.AlertingConfig, string) error { return nil }
-func (f *fakeFleet) RouteTest(core.TestAlert) (core.RouteDecision, error) {
-	return core.RouteDecision{}, nil
+// Alerting/SetAlerting (task C3, fleet alerting admin web UI):
+// alertingCfg/alertingErr back Alerting() directly; SetAlerting records
+// every call (setAlertingCfg/setAlertingActor/setAlertingCalls) so a test
+// can assert the actor it received was the SIGNED-IN web user, then --
+// mirroring the real alertingStore.Set exactly (internal/trinetra/
+// fleet_routing.go) -- bumps alertingCfg's Version to alertingCfg.Version+1
+// and stores the (now-canonical) result, so a save-then-reload round trip
+// through this same fake sees the new version. setAlertingErr lets a test
+// force a rejection (a plain validation error, or core.ErrConflict for the
+// "stale Version" ruling) without touching alertingCfg at all.
+func (f *fakeFleet) Alerting() (core.AlertingConfig, error) { return f.alertingCfg, f.alertingErr }
+
+func (f *fakeFleet) SetAlerting(cfg core.AlertingConfig, actor string) error {
+	f.setAlertingCalls++
+	f.setAlertingCfg = cfg
+	f.setAlertingActor = actor
+	if f.setAlertingErr != nil {
+		return f.setAlertingErr
+	}
+	cfg.Version = f.alertingCfg.Version + 1
+	f.alertingCfg = cfg
+	return nil
 }
 
-// RuleStates: task 7's aggregate rules have no web surface yet; this stub
-// exists only so fakeFleet keeps satisfying core.FleetAPI.
-func (f *fakeFleet) RuleStates() ([]core.RuleState, error) { return nil, nil }
+// RouteTest (task C3) records every call (lastRouteTest/routeTestCalls) and
+// returns routeTestResult/routeTestErr -- a canned core.RouteDecision (with
+// as many Policies as a test wants, for the "multiple matched policies via
+// Continue fan-out" case) rather than actually resolving anything, since
+// this fake carries no routing config of its own to resolve against.
+func (f *fakeFleet) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
+	f.routeTestCalls++
+	f.lastRouteTest = alert
+	return f.routeTestResult, f.routeTestErr
+}
+
+// RuleStates (task 7/C3): ruleStates/ruleStatesErr back GET
+// /fleet/rules/state's fragment.
+func (f *fakeFleet) RuleStates() ([]core.RuleState, error) { return f.ruleStates, f.ruleStatesErr }
 
 // Managed/SaveManaged/DeleteManaged/ManagedStatus: task 8's managed-config
 // fragment CRUD has no admin web surface yet -- the read-only enforcement

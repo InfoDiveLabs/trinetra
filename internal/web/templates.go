@@ -87,6 +87,11 @@ var funcMap = template.FuncMap{
 	"nodeDur":         nodeDurText,
 	"clockTime":       nodeClockTime,
 	"linkUnreachable": linkUnreachable,
+	// dict (task C3, fleet_alerting.html) builds a map[string]any from
+	// alternating key/value arguments, for passing a small ad-hoc bundle of
+	// fields into a named template block ({{template "x" (dict "A" 1 "B"
+	// 2)}}) -- html/template has no map literal syntax of its own.
+	"dict": templateDict,
 }
 
 // nodeHref joins a node scope's URL prefix (nodeScope.Prefix, node_scope.go:
@@ -232,6 +237,18 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/settings/public", Icon: "◈", Label: "Public view"}, AdminOnly: true},
+	// Alerting (task C3, fleet phase 2 web UI plan C): the routing/
+	// escalation config editor, route tester, and rule states. AdminOnly +
+	// MasterOnly, exactly like "Fleet admin" below -- the brief's own
+	// ruling ("Alerting in the Admin group, master only, visible to
+	// admins"). A viewer gets no nav link (this entry) but the route
+	// itself stays viewer-gated read-only (routes.go), reachable by typing
+	// the URL directly -- deliberate: the brief left this an open call
+	// ("decide whether the nav should show for viewers too, and document
+	// it"), and every other Admin-group entry already hides from viewers
+	// this same way, so a lone exception here would be the surprising
+	// choice, not this one.
+	{NavItem: NavItem{Href: "/fleet/alerting", Icon: "⚡", Label: "Alerting"}, AdminOnly: true, MasterOnly: true},
 	// Fleet admin (Task 7, fleet-web-a): node management + join tokens.
 	// Admin role AND fleet master, both required (global-constraints.md/
 	// task-7-brief.md's ruling) -- AdminOnly gates on role (and, like every

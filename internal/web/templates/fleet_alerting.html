@@ -1,0 +1,331 @@
+{{/* fleet_alerting.html (task C3, fleet phase 2 web UI plan C): GET/POST
+     /fleet/alerting -- the routes/policies/rules routing config editor, an
+     "edit as JSON" textarea for power users, and the route tester. Follows
+     fleet_admin.html's conventions exactly: a plain (non-htmx) full-page
+     POST for the two save forms (structured + JSON), reusing the SAME
+     endpoint (POST /fleet/alerting) distinguished by a hidden mode=form|json
+     field, and htmx only for the two self-contained fragments (the route
+     tester's result panel, the rule-states table).
+
+     Every add/remove/move-row button is its own submit inside the
+     structured form (name="op" value="add_route"/"remove_route:2"/
+     "move_route_up:2"/...): posting one reshapes the draft in place and
+     re-renders the page at 200 WITHOUT saving anything -- see
+     applyAlertingOp's doc (handlers_fleet_alerting.go). Only the "Save
+     routing config" button (op=save) actually calls SetAlerting. This is
+     why every row's inputs must be posted every time, even just to add a
+     row: the whole draft travels on every submit, exactly like the JSON
+     textarea does for its own save.
+
+     A viewer sees every row here read-only, in the SAME layout, with
+     every input/select/textarea disabled and no submit controls -- global-
+     constraints.md's "read-only, no forms except the route tester" ruling.
+     The route tester itself stays a real (enabled) form at every role: it
+     never mutates the saved config, only dry-runs RouteTest. */}}
+{{define "content"}}
+{{$editable := eq .Role "admin"}}
+<div id="fleet-alerting-page">
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+
+  <div class="section-label"><span class="eyebrow">Routes</span></div>
+  <p class="note" style="margin-top:-6px">Evaluated in order. The first match wins, unless a route continues -- then later routes are checked too, and every match's policy escalates on its own.</p>
+  <div class="panel" style="margin-bottom:18px">
+    <form method="post" action="/fleet/alerting">
+      <input type="hidden" name="mode" value="form">
+      <input type="hidden" name="version" value="{{.Draft.Version}}">
+      <input type="hidden" name="route_count" value="{{len .Draft.Routes}}">
+      <input type="hidden" name="policy_count" value="{{len .Draft.Policies}}">
+      <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
+      {{range $i, $route := .Draft.Routes}}
+      <div class="panel" style="margin-bottom:12px">
+        <div class="head">
+          <span class="mono note">Route {{$i}}</span>
+          {{if $editable}}
+          <span style="display:flex;gap:6px">
+            <button class="btn ghost" type="submit" name="op" value="move_route_up:{{$i}}"{{if eq $i 0}} disabled{{end}}>&uarr;</button>
+            <button class="btn ghost" type="submit" name="op" value="move_route_down:{{$i}}"{{if eq (subInt (len $.Draft.Routes) 1) $i}} disabled{{end}}>&darr;</button>
+            <button class="btn danger" type="submit" name="op" value="remove_route:{{$i}}">Remove route</button>
+          </span>
+          {{end}}
+        </div>
+        {{if eq $.ErrField $route.FieldKey}}<span class="field-err">{{$.Flash}}</span>{{end}}
+        <div class="grid g-3">
+          <label class="field"><span class="lb">Name</span><input type="text" name="route_{{$i}}_name" value="{{$route.Name}}" placeholder="(optional)" {{if not $editable}}disabled{{end}}></label>
+          <label class="field"><span class="lb">Policy</span><input type="text" list="alertingPolicyNames" name="route_{{$i}}_policy" value="{{$route.Policy}}" {{if not $editable}}disabled{{end}}></label>
+          <label class="field"><span class="lb">Group by</span><input type="text" name="route_{{$i}}_group_by" value="{{$route.GroupBy}}" placeholder="node,rule,tag:web" {{if not $editable}}disabled{{end}}>
+            <span class="hint">comma-separated: node, rule, severity, tag:&lt;key&gt;</span>
+          </label>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;max-width:260px">
+          <input type="checkbox" class="switch" name="route_{{$i}}_continue" value="1" {{if $route.Continue}}checked{{end}} {{if not $editable}}disabled{{end}}>
+          <span class="note">Continue: keep evaluating later routes too</span>
+        </label>
+
+        <p class="note" style="margin:12px 0 4px">Matchers (any one matching is enough)</p>
+        <input type="hidden" name="route_{{$i}}_matcher_count" value="{{len $route.Matchers}}">
+        {{range $j, $m := $route.Matchers}}
+        <div class="grid g-4" style="align-items:end;margin-bottom:6px">
+          <label class="field"><span class="lb">Tag</span><input type="text" name="route_{{$i}}_matcher_{{$j}}_tag" value="{{$m.Tag}}" {{if not $editable}}disabled{{end}}></label>
+          <label class="field"><span class="lb">Node</span><input type="text" name="route_{{$i}}_matcher_{{$j}}_node" value="{{$m.Node}}" placeholder="glob or exact id" {{if not $editable}}disabled{{end}}></label>
+          <label class="field"><span class="lb">Rule</span><input type="text" name="route_{{$i}}_matcher_{{$j}}_rule" value="{{$m.Rule}}" placeholder="glob" {{if not $editable}}disabled{{end}}></label>
+          <label class="field"><span class="lb">Severity</span><input type="text" name="route_{{$i}}_matcher_{{$j}}_severity" value="{{$m.Severity}}" {{if not $editable}}disabled{{end}}></label>
+        </div>
+        {{if $editable}}<button class="btn ghost" type="submit" name="op" value="remove_matcher:{{$i}}:{{$j}}" {{if eq (len $route.Matchers) 1}}disabled{{end}} style="margin-bottom:6px">Remove matcher</button>{{end}}
+        {{end}}
+        {{if $editable}}<button class="btn ghost" type="submit" name="op" value="add_matcher:{{$i}}">Add matcher</button>{{end}}
+      </div>
+      {{else}}
+      <p class="note">No routes configured -- every alert uses the default policy.</p>
+      {{end}}
+      {{if $editable}}
+      <button class="btn ghost" type="submit" name="op" value="add_route">Add route</button>
+      {{end}}
+
+      <div class="grid g-3" style="margin-top:16px">
+        <label class="field"><span class="lb">Default policy</span><input type="text" list="alertingPolicyNames" name="default_policy" value="{{.Draft.DefaultPolicy}}" {{if not $editable}}disabled{{end}}>
+          <span class="hint">used when no route matches</span>
+        </label>
+      </div>
+      {{if eq .ErrField "default_policy"}}<span class="field-err">{{.Flash}}</span>{{end}}
+
+      <datalist id="alertingPolicyNames">{{range .PolicyNames}}<option value="{{.}}">{{end}}</datalist>
+
+      {{if $editable}}<button class="btn primary" type="submit" name="op" value="save" style="margin-top:14px">Save routing config</button>{{end}}
+    </form>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Policies</span></div>
+  <p class="note" style="margin-top:-6px">Each step fires After its incident's first delivery; the last step repeats on Repeat every until acked or resolved.</p>
+  <div class="panel" style="margin-bottom:18px">
+    <form method="post" action="/fleet/alerting">
+      <input type="hidden" name="mode" value="form">
+      <input type="hidden" name="version" value="{{.Draft.Version}}">
+      <input type="hidden" name="route_count" value="{{len .Draft.Routes}}">
+      <input type="hidden" name="policy_count" value="{{len .Draft.Policies}}">
+      <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
+      {{/* Routes must travel on this form too (hidden mirrors of every
+           route field) so a policy-only add/remove/save never drops the
+           routes section -- see the shared hidden-mirror partial below. */}}
+      {{range $i, $route := .Draft.Routes}}{{template "route_hidden_mirror" (dict "I" $i "Route" $route)}}{{end}}
+
+      {{range $pi, $policy := .Draft.Policies}}
+      <div class="panel" style="margin-bottom:12px">
+        <div class="head">
+          <span class="mono note">Policy {{$pi}}</span>
+          {{if $editable}}<button class="btn danger" type="submit" name="op" value="remove_policy:{{$pi}}">Remove policy</button>{{end}}
+        </div>
+        {{if eq $.ErrField $policy.FieldKey}}<span class="field-err">{{$.Flash}}</span>{{end}}
+        <div class="grid g-3">
+          <label class="field"><span class="lb">Name</span><input type="text" name="policy_{{$pi}}_name" value="{{$policy.Name}}" {{if not $editable}}disabled{{end}}></label>
+          <label class="field"><span class="lb">Repeat every</span><input type="text" name="policy_{{$pi}}_repeat_every" value="{{$policy.RepeatEvery}}" placeholder="e.g. 1h (optional)" {{if not $editable}}disabled{{end}}></label>
+          <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:22px"><input type="checkbox" class="switch" name="policy_{{$pi}}_send_resolved" value="1" {{if $policy.SendResolved}}checked{{end}} {{if not $editable}}disabled{{end}}><span class="note">Send resolved notifications</span></label>
+        </div>
+
+        <input type="hidden" name="policy_{{$pi}}_step_count" value="{{len $policy.Steps}}">
+        {{range $si, $step := $policy.Steps}}
+        <div class="panel" style="margin:10px 0">
+          <div class="head">
+            <span class="note">Step {{$si}}</span>
+            {{if eq $.ErrField (printf "%s:step:%d" $policy.FieldKey $si)}}<span class="field-err">{{$.Flash}}</span>{{end}}
+          </div>
+          <label class="field" style="max-width:220px"><span class="lb">After</span><input type="text" name="policy_{{$pi}}_step_{{$si}}_after" value="{{$step.After}}" placeholder="0s" {{if not $editable}}disabled{{end}}></label>
+          <p class="note" style="margin:8px 0 4px">Channels</p>
+          <div style="display:flex;flex-wrap:wrap;gap:14px">
+            <label style="display:flex;align-items:center;gap:6px;width:auto"><input type="checkbox" name="policy_{{$pi}}_step_{{$si}}_channels" value="*" {{if $step.HasChannel "*"}}checked{{end}} {{if not $editable}}disabled{{end}}><span class="note">* (every enabled channel)</span></label>
+            {{range $.Channels}}
+            <label style="display:flex;align-items:center;gap:6px;width:auto"><input type="checkbox" name="policy_{{$pi}}_step_{{$si}}_channels" value="{{.}}" {{if $step.HasChannel .}}checked{{end}} {{if not $editable}}disabled{{end}}><span class="note">{{.}}</span></label>
+            {{end}}
+          </div>
+          {{if $editable}}<button class="btn ghost" type="submit" name="op" value="remove_step:{{$pi}}:{{$si}}" {{if eq (len $policy.Steps) 1}}disabled{{end}} style="margin-top:8px">Remove step</button>{{end}}
+        </div>
+        {{end}}
+        {{if $editable}}<button class="btn ghost" type="submit" name="op" value="add_step:{{$pi}}">Add step</button>{{end}}
+      </div>
+      {{else}}
+      <p class="note">No policies configured -- the built-in default (immediate delivery to every channel) applies.</p>
+      {{end}}
+      {{range $ri, $rule := .Draft.Rules}}{{template "rule_hidden_mirror" (dict "I" $ri "Rule" $rule)}}{{end}}
+      <input type="hidden" name="default_policy" value="{{.Draft.DefaultPolicy}}">
+
+      {{if $editable}}
+      <button class="btn ghost" type="submit" name="op" value="add_policy">Add policy</button>
+      <button class="btn primary" type="submit" name="op" value="save" style="margin-top:14px;margin-left:8px">Save routing config</button>
+      {{end}}
+    </form>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Aggregate rules</span></div>
+  <div class="panel" style="margin-bottom:18px">
+    <form method="post" action="/fleet/alerting">
+      <input type="hidden" name="mode" value="form">
+      <input type="hidden" name="version" value="{{.Draft.Version}}">
+      <input type="hidden" name="route_count" value="{{len .Draft.Routes}}">
+      <input type="hidden" name="policy_count" value="{{len .Draft.Policies}}">
+      <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
+      {{range $i, $route := .Draft.Routes}}{{template "route_hidden_mirror" (dict "I" $i "Route" $route)}}{{end}}
+      {{range $pi, $policy := .Draft.Policies}}{{template "policy_hidden_mirror" (dict "I" $pi "Policy" $policy)}}{{end}}
+      <input type="hidden" name="default_policy" value="{{.Draft.DefaultPolicy}}">
+
+      <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+        <thead><tr><th>Name</th><th>Expression</th><th>Severity</th><th></th></tr></thead>
+        <tbody>
+          {{range $i, $rule := .Draft.Rules}}
+          <tr>
+            <td data-label="Name"><input type="text" name="rule_{{$i}}_name" value="{{$rule.Name}}" {{if not $editable}}disabled{{end}}></td>
+            <td data-label="Expression"><input type="text" class="mono" name="rule_{{$i}}_expr" value="{{$rule.Expr}}" {{if not $editable}}disabled{{end}}></td>
+            <td data-label="Severity">
+              <select name="rule_{{$i}}_severity" {{if not $editable}}disabled{{end}}>
+                <option value="warning"{{if ne $rule.Severity "critical"}} selected{{end}}>warning</option>
+                <option value="critical"{{if eq $rule.Severity "critical"}} selected{{end}}>critical</option>
+              </select>
+            </td>
+            <td class="card-actions" style="text-align:right">
+              {{if eq $.ErrField $rule.FieldKey}}<span class="field-err">{{$.Flash}}</span>{{end}}
+              {{if $editable}}<button class="btn danger" type="submit" name="op" value="remove_rule:{{$i}}">Remove</button>{{end}}
+            </td>
+          </tr>
+          {{else}}
+          <tr><td colspan="4" class="note">no aggregate rules configured</td></tr>
+          {{end}}
+        </tbody>
+      </table></div></div>
+      {{if $editable}}
+      <button class="btn ghost" type="submit" name="op" value="add_rule" style="margin-top:10px">Add rule</button>
+      <button class="btn primary" type="submit" name="op" value="save" style="margin-top:14px;margin-left:8px">Save routing config</button>
+      {{end}}
+    </form>
+  </div>
+
+  {{if $editable}}
+  <div class="section-label"><span class="eyebrow">Edit as JSON</span></div>
+  <div class="panel" style="margin-bottom:18px">
+    <form method="post" action="/fleet/alerting">
+      <input type="hidden" name="mode" value="json">
+      <label class="field"><span class="lb">Full alerting config</span>
+        <textarea name="json_config" rows="16" spellcheck="false">{{.JSONConfig}}</textarea>
+        <span class="hint">The version field must match what you loaded -- a stale version is rejected so you don't overwrite someone else's change.</span>
+      </label>
+      <button class="btn primary" type="submit" style="margin-top:10px">Save JSON</button>
+    </form>
+  </div>
+  {{else}}
+  <div class="section-label"><span class="eyebrow">Full config (read only)</span></div>
+  <div class="panel" style="margin-bottom:18px">
+    <textarea rows="16" spellcheck="false" disabled>{{.JSONConfig}}</textarea>
+  </div>
+  {{end}}
+
+  <div class="section-label"><span class="eyebrow">Route tester</span></div>
+  <div class="panel" style="margin-bottom:18px">
+    <form hx-post="/fleet/alerting/test" hx-target="#route-test-result" hx-swap="innerHTML">
+      <div class="grid g-3">
+        <label class="field"><span class="lb">Node</span>
+          <select name="node">
+            <option value="">(master itself)</option>
+            {{range .TestNodes}}<option value="{{.}}"{{if eq . $.TestNode}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+          <span class="hint">tags are resolved automatically from the node</span>
+        </label>
+        <label class="field"><span class="lb">Rule</span><input type="text" name="rule" value="{{.TestRule}}" placeholder="e.g. disk_pct"></label>
+        <label class="field"><span class="lb">Severity</span>
+          <select name="severity">
+            <option value="warning"{{if ne .TestSeverity "critical"}} selected{{end}}>warning</option>
+            <option value="critical"{{if eq .TestSeverity "critical"}} selected{{end}}>critical</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn primary" type="submit" style="margin-top:10px">Test route</button>
+    </form>
+    <div id="route-test-result" style="margin-top:14px">{{template "test_result" .}}</div>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Rules</span></div>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Name</th><th>Expression</th><th>Value</th><th>State</th><th>Since</th></tr></thead>
+    {{template "rule_rows" (dict "Rows" .Rules)}}
+  </table></div></div>
+</div>
+{{end}}
+
+{{/* route_hidden_mirror/policy_hidden_mirror/rule_hidden_mirror carry a
+     whole section's fields as hidden inputs into one of the OTHER
+     sections' own <form> -- every section posts to the same
+     POST /fleet/alerting, and every submit rebuilds the FULL draft
+     (parseAlertingDraftForm reads route_/policy_/rule_-prefixed fields
+     regardless of which form actually submitted), so a policy-only "Add
+     step" must still carry the routes section's fields along, and vice
+     versa, or that submit would silently wipe them. */}}
+{{define "route_hidden_mirror"}}
+<input type="hidden" name="route_{{.I}}_name" value="{{.Route.Name}}">
+<input type="hidden" name="route_{{.I}}_policy" value="{{.Route.Policy}}">
+<input type="hidden" name="route_{{.I}}_group_by" value="{{.Route.GroupBy}}">
+{{if .Route.Continue}}<input type="hidden" name="route_{{.I}}_continue" value="1">{{end}}
+<input type="hidden" name="route_{{.I}}_matcher_count" value="{{len .Route.Matchers}}">
+{{range $j, $m := .Route.Matchers}}
+<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_tag" value="{{$m.Tag}}">
+<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_node" value="{{$m.Node}}">
+<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_rule" value="{{$m.Rule}}">
+<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_severity" value="{{$m.Severity}}">
+{{end}}
+{{end}}
+
+{{define "policy_hidden_mirror"}}
+<input type="hidden" name="policy_{{.I}}_name" value="{{.Policy.Name}}">
+<input type="hidden" name="policy_{{.I}}_repeat_every" value="{{.Policy.RepeatEvery}}">
+{{if .Policy.SendResolved}}<input type="hidden" name="policy_{{.I}}_send_resolved" value="1">{{end}}
+<input type="hidden" name="policy_{{.I}}_step_count" value="{{len .Policy.Steps}}">
+{{range $si, $s := .Policy.Steps}}
+<input type="hidden" name="policy_{{$.I}}_step_{{$si}}_after" value="{{$s.After}}">
+{{range $s.Channels}}<input type="hidden" name="policy_{{$.I}}_step_{{$si}}_channels" value="{{.}}">{{end}}
+{{end}}
+{{end}}
+
+{{define "rule_hidden_mirror"}}
+<input type="hidden" name="rule_{{.I}}_name" value="{{.Rule.Name}}">
+<input type="hidden" name="rule_{{.I}}_expr" value="{{.Rule.Expr}}">
+<input type="hidden" name="rule_{{.I}}_severity" value="{{.Rule.Severity}}">
+{{end}}
+
+{{/* test_result: the route tester's result panel -- reached both inline
+     (a fresh GET, no test run yet: TestResult/TestErr both zero) and as
+     POST /fleet/alerting/test's own htmx fragment response. Shows the
+     matched route (or "no route matched -- used the default policy"),
+     EVERY matched policy's steps (After -> Channels), and any
+     suppression -- core.RouteDecision's own shape (task C3 ruling). */}}
+{{define "test_result"}}
+{{if .TestErr}}
+<p class="note" style="color:var(--warn)">{{.TestErr}}</p>
+{{else if .TestResult}}
+<p class="note">Matched route: <span class="mono">{{if .TestResult.Route}}{{.TestResult.Route}}{{else}}(none -- default policy){{end}}</span></p>
+{{if .TestResult.Suppressed}}<p class="note"><span class="badge warn">suppressed</span> {{.TestResult.Suppressed}}</p>{{end}}
+{{range .TestResult.Policies}}
+<div class="panel" style="margin-top:8px">
+  <div class="head"><span class="mono note">Policy: {{.Name}}</span>{{if .RepeatEvery}}<span class="note">repeats every {{.RepeatEvery}}</span>{{end}}</div>
+  <p class="note" style="margin:4px 0">Sends resolved notifications: {{if .SendResolved}}yes{{else}}no{{end}}</p>
+  <table class="cards"><thead><tr><th>After</th><th>Channels</th></tr></thead>
+    <tbody>{{range .Steps}}<tr><td data-label="After" class="mono">{{.After}}</td><td data-label="Channels">{{.Channels}}</td></tr>{{end}}</tbody>
+  </table>
+</div>
+{{else}}<p class="note">No policy matched.</p>{{end}}
+{{else}}
+<p class="note">Choose a node, rule, and severity, then test the route.</p>
+{{end}}
+{{end}}
+
+{{/* rule_rows: the /fleet/rules/state fragment -- self-polls every 10s
+     with hx-sync="this:replace", exactly like every other self-polling
+     tbody in this package (fleet.html's fleet_rows, fleet_incidents.html's
+     incident_rows). */}}
+{{define "rule_rows"}}<tbody id="rule-tbody" hx-get="/fleet/rules/state" hx-trigger="every 10s" hx-swap="outerHTML" hx-sync="this:replace">
+{{range .Rows}}
+<tr>
+  <td class="mono card-title" data-label="Name">{{.Name}}</td>
+  <td class="mono" data-label="Expression">{{.Expr}}</td>
+  <td class="mono" data-label="Value">{{.ValueText}}</td>
+  <td data-label="State"><span class="badge{{if eq .StateText "firing"}} crit{{else if eq .StateText "error"}} warn{{end}}">{{.StateText}}</span>{{if .Error}} <span class="note">{{.Error}}</span>{{end}}</td>
+  <td class="mono note" data-label="Since">{{.SinceText}}</td>
+</tr>
+{{else}}
+<tr><td colspan="5" class="note">no aggregate rules configured</td></tr>
+{{end}}
+</tbody>{{end}}

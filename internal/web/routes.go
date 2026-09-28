@@ -93,6 +93,22 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /fleet/incidents/{id}", requireRole(RoleViewer, d, fleetIncidentHandler(d)))
 	mux.HandleFunc("POST /fleet/incidents/{id}/ack", fleetAdminMutation(d, fleetIncidentAckHandler(d)))
 	mux.HandleFunc("POST /fleet/incidents/{id}/silence", fleetAdminMutation(d, fleetIncidentSilenceHandler(d)))
+	// /fleet/alerting (+ /test, + /fleet/rules/state) -- task C3, plan C:
+	// the routing/escalation config editor (routes/policies/rules, "edit as
+	// JSON"), the route tester, and the rule-state fragment, over
+	// FleetAPI's Alerting/SetAlerting/RouteTest/RuleStates. GET is
+	// viewer-gated (read-only for a viewer -- the page renders no <form>
+	// for anything but the tester at that role) and master-only
+	// (fleetGateHTML, handlers_fleet_alerting.go); the save POST is
+	// admin+CSRF (fleetAdminMutation), exactly like /fleet/admin's
+	// mutations; the route tester POST stays viewer-gated with no CSRF
+	// requirement -- it only ever dry-runs RouteTest, it never mutates the
+	// saved config. Already covered by node_scope.go's masterLocalPrefixes
+	// "/fleet" entry.
+	mux.HandleFunc("GET /fleet/alerting", requireRole(RoleViewer, d, fleetAlertingPageHandler(d)))
+	mux.HandleFunc("POST /fleet/alerting", fleetAdminMutation(d, fleetAlertingSaveHandler(d)))
+	mux.HandleFunc("POST /fleet/alerting/test", requireRole(RoleViewer, d, fleetAlertingTestHandler(d)))
+	mux.HandleFunc("GET /fleet/rules/state", requireRole(RoleViewer, d, fleetRulesStateHandler(d)))
 	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a):
 	// node management (rename/tags/revoke/remove) and join-token
 	// issuance/revocation, admin+CSRF-gated like /users/* below -- see
