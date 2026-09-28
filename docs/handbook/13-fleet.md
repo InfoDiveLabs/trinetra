@@ -83,7 +83,7 @@ haven't set that up yet). `/fleet` is the overview: a health strip you can
 click to filter, a heatmap and top-N panels for whichever metric you pick,
 and a node table that is sortable, filterable, and pollable in place.
 
-![Fleet overview](docs/assets/screenshots/fleet-overview.png)
+![Fleet overview](../assets/screenshots/fleet-overview.webp)
 
 A dropdown in the top bar (or **Ctrl/Cmd-K** for a fuzzy palette) switches
 you to the same page type on a different node -- from one node's history
@@ -91,14 +91,14 @@ page to the next node's history page, not its dashboard. Every per-server
 page you already know is mounted a second time under `/n/<id>/...` for
 whichever node you land on, with a small banner naming its replica state.
 
-![A node's dashboard, reached through the switcher](docs/assets/screenshots/node-dashboard.png)
+![A node's dashboard, reached through the switcher](../assets/screenshots/node-dashboard.webp)
 
 Tick two or more nodes in the `/fleet` table (or follow a tag link) and open
 **Compare** to overlay one metric across up to 10 nodes, or view an
 aggregated series across a whole filtered set, on the same chart the rest of
 the UI uses.
 
-![Fleet compare](docs/assets/screenshots/fleet-compare.png)
+![Fleet compare](../assets/screenshots/fleet-compare.webp)
 
 The rest of this chapter walks the fleet-only pages in the order you would
 actually use them; see [The web UI: Fleet](08-web-ui.md#fleet) for the
@@ -143,9 +143,9 @@ every member alert (with its own delivery/silence state) and the complete
 timeline (fired, grouped, delivered, escalated, acked, resolved -- who and
 when).
 
-![Fleet incidents](docs/assets/screenshots/fleet-incidents.png)
+![Fleet incidents](../assets/screenshots/fleet-incidents.webp)
 
-![Incident detail](docs/assets/screenshots/incident-detail.png)
+![Incident detail](../assets/screenshots/incident-detail.webp)
 
 Any signed-in role can read both pages; an admin (or the master's Telegram
 chat, via the **Ack** / **Silence 1h** buttons on the fire message) can
@@ -187,9 +187,9 @@ it, and the same route tester as a form. Saves carry the config's version,
 so a concurrent edit is caught as a conflict rather than silently
 overwritten.
 
-![Routes](docs/assets/screenshots/alerting-routes.png)
+![Routes](../assets/screenshots/alerting-routes.webp)
 
-![Policies](docs/assets/screenshots/alerting-policies.png)
+![Policies](../assets/screenshots/alerting-policies.webp)
 
 See [Fleet alerting: Routes and escalation
 policies](06-alerting-and-channels.md#routes-and-escalation-policies) for
@@ -216,7 +216,7 @@ either from the same matcher fields as the CLI's `--match`. Every time on
 that page is shown in the master's own local time zone with its
 abbreviation, never bare UTC.
 
-![Silences](docs/assets/screenshots/silences.png)
+![Silences](../assets/screenshots/silences.webp)
 
 The one rule worth memorizing: `node=` in a matcher matches the node's
 current display **name as a glob**, or its exact id -- never anything else.
@@ -248,6 +248,9 @@ rules](06-alerting-and-channels.md#aggregate-rules) for the full grammar,
 including the known `storage.backend=memory` limitation for disk-metric
 rules against the master's own node.
 
+
+![Aggregate rules editor](../assets/screenshots/alerting-rules.webp)
+
 ## Managed config
 
 The master can push a small, closed set of config keys down to children by
@@ -266,7 +269,7 @@ create/edit form for admins. A managed key is read-only everywhere else on
 that child (CLI, web `/config`, `trinetra-ctl`) until it's unset from the
 master's fragments.
 
-![Managed config](docs/assets/screenshots/managed-config.png)
+![Managed config](../assets/screenshots/managed-config.webp)
 
 See [Fleet alerting: Managed
 config](06-alerting-and-channels.md#managed-config) for the exact 10-key
@@ -279,7 +282,7 @@ retagging/revoking/removing nodes, and a link-health table (skew, outbox
 depth, oldest unacked age, replica drop counts) per node. Destructive node
 actions require a two-step confirm.
 
-![Fleet admin](docs/assets/screenshots/fleet-admin.png)
+![Fleet admin](../assets/screenshots/fleet-admin.webp)
 
 Tokens and node rename/tag/revoke/remove all have CLI equivalents -- see
 [Command reference: trinetra fleet](11-command-reference.md#trinetra-fleet)
@@ -296,7 +299,7 @@ silence/maintenance create, alerting config saves, managed-config changes,
 and incident acks, each with actor, action, target, and time. There is no
 CLI equivalent today; the web page is the only way to read it.
 
-![Audit log](docs/assets/screenshots/audit-log.png)
+![Audit log](../assets/screenshots/audit-log.webp)
 
 ## Revoke, leave, remove, and disable
 

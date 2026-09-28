@@ -112,7 +112,7 @@ WebAuthn passkeys only: a platform authenticator like Touch ID or Windows
 Hello, or a hardware security key. Sessions are kept server-side, and state-
 changing requests are protected with CSRF tokens.
 
-![Passkey login](docs/assets/screenshots/login.png)
+![Passkey login](../assets/screenshots/login.webp)
 
 Getting the first account is a one-time bootstrap. With `web.enabled true` and
 no accounts yet, you visit `/enroll` with no token and register a passkey. The
@@ -150,19 +150,24 @@ Signed in, the UI is a handful of routes.
   [Live dashboard updates](#live-dashboard-updates) below for how the push
   from the daemon reaches this page.
 
-  ![Live dashboard](docs/assets/screenshots/dashboard.png)
+  ![Live dashboard](../assets/screenshots/dashboard.webp)
+
+  The **Monitoring** page drills into every container, systemd unit,
+  filesystem and process:
+
+  ![Monitoring](../assets/screenshots/monitoring.webp)
 - **History graphs.** Time-series charts of the metrics the daemon keeps,
   rendered client-side with uPlot. Same series the CLI and Telegram read; the
   page is just another view onto them.
 
-  ![History graphs](docs/assets/screenshots/monitoring.png)
+  ![History graphs](../assets/screenshots/history.webp)
 - **`/config`.** An admin editor for the daemon's configuration. Writes go
   through the same validate-persist-apply path the CLI uses, so a change saved
   here is a change the daemon has validated.
 - **`/channels`.** An admin editor for notification channels, with a test
   action to send through a channel and confirm it works.
 
-  ![Channels admin](docs/assets/screenshots/channels.png)
+  ![Channels admin](../assets/screenshots/channels.webp)
 - **`/users`.** The admin account console: issue enrollment tokens, set roles,
   remove accounts, and revoke passkeys.
 - **`/settings/public`.** The admin control for the anonymous status page:
@@ -170,10 +175,25 @@ Signed in, the UI is a handful of routes.
 - **`/alerts`.** Recent alerts. Viewers can read it; admins can acknowledge
   from it.
 
-  ![Alerts](docs/assets/screenshots/alerts.png)
+  ![Alerts](../assets/screenshots/alerts.webp)
 - **`/public`.** The anonymous status page, described in its own section below.
   It is the only route an unauthenticated visitor can reach, and only when it
   is enabled.
+
+## Layouts and themes
+
+The UI follows the screen it is on. Above 1024 px the sidebar shows every
+page with its label. Between 641 and 1024 px it collapses to an icon rail
+(hover or focus an icon for its name). At 640 px and below it becomes a
+bottom tab bar with the rest of the pages in a **More** sheet. On a short
+window the sidebar's page list scrolls while your account and the version
+stay pinned at the bottom. The theme button in the top bar switches between
+dark and light; the choice is remembered per browser, and the first visit
+follows the system setting.
+
+| Light theme | Tablet | Phone |
+|---|---|---|
+| ![Dashboard, light theme](../assets/screenshots/dashboard-light.webp) | ![Fleet on a tablet](../assets/screenshots/tablet-fleet.webp) | ![Fleet on a phone](../assets/screenshots/mobile-fleet.webp) |
 
 ## Live dashboard updates
 

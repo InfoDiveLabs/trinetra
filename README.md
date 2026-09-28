@@ -8,17 +8,24 @@
 
 <p align="center"><strong>Sees what you can't.</strong></p>
 
-**A home server monitor that fits in your head.** One small Go daemon watches a
-Linux/systemd box, decides when something is wrong using rules you can actually
-read, and tells you over Telegram. No agent, no cloud, no Prometheus, no
-external metrics database. The core is standard library only.
+<p align="center">
+One small Go daemon per server. Live dashboards, readable alert rules, Telegram in your pocket,<br>
+and, when you have more than one box, a whole fleet with incidents, routing and escalation.<br>
+No agent zoo, no cloud, no Prometheus, no external database.
+</p>
 
-![status: stable](https://img.shields.io/badge/status-stable-brightgreen)
-![version: v0.4.1](https://img.shields.io/badge/version-v0.4.1-blue)
-![core: stdlib only](https://img.shields.io/badge/core-stdlib%20only-00ADD8)
-![Go 1.22](https://img.shields.io/badge/Go-1.22-00ADD8)
-![platform: Linux + systemd](https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333)
-![license: MIT](https://img.shields.io/badge/license-MIT-green)
+<p align="center">
+  <img src="https://img.shields.io/badge/status-stable-brightgreen" alt="status: stable">
+  <img src="https://img.shields.io/badge/version-v0.4.1-blue" alt="version: v0.4.1">
+  <img src="https://img.shields.io/badge/core-stdlib%20only-00ADD8" alt="core: stdlib only">
+  <img src="https://img.shields.io/badge/RAM-~12%20MB-6f42c1" alt="RAM: about 12 MB">
+  <img src="https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333" alt="platform: Linux + systemd">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license: MIT">
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/fleet-hero.webp" alt="Fleet overview: node counts, a CPU heatmap across twelve servers, top-5 CPU, memory and disk, and a down-now list" width="100%">
+</p>
 
 ```bash
 sudo trinetra install                      # one systemd service
@@ -26,62 +33,230 @@ sudo trinetra telegram set-token <token>   # the only required setting
 # then, from your phone:  /start <pin>  ->  /stats
 ```
 
-Upgrading an existing `serverwatch` install? Same command — see
-[Upgrading from serverwatch](#upgrading-from-serverwatch) below.
-
 ---
 
-## Why Trinetra
+## Contents
 
-Most monitoring stacks are built for fleets: a scraper, a time-series database,
-a dashboard service, an alertmanager, and a pile of YAML to wire them together.
-That is a lot of moving parts to babysit for one machine on a shelf.
-Trinetra is the opposite bet.
+- [Small by design](#small-by-design)
+- [Feature tour](#feature-tour): [dashboard](#live-dashboard) ·
+  [monitoring](#containers-services-filesystems-processes) ·
+  [history](#history) · [alerts](#alerts-and-channels) ·
+  [fleet](#fleet-overview) · [incidents](#incidents) ·
+  [routing](#routing-and-escalation) · [rules](#fleet-wide-rules) ·
+  [silences](#silences-and-maintenance-windows) ·
+  [managed config](#managed-config) · [admin and audit](#fleet-admin-and-audit) ·
+  [security](#security) · [any screen](#any-screen-any-theme)
+- [How it works](#how-it-works)
+- [Quick start](#quick-start) · [Build a fleet](#build-a-fleet) ·
+  [Upgrading from serverwatch](#upgrading-from-serverwatch)
+- [Documentation](#documentation)
+
+## Small by design
+
+Most monitoring stacks are built for data centres: a scraper, a time-series
+database, a dashboard service, an alert manager, and a pile of YAML to wire
+them together. Trinetra is the opposite bet. Each server runs one daemon that
+collects, stores, decides and notifies on its own. The same daemon becomes a
+fleet master with one command.
+
+| | Measured |
+|---|---|
+| **Core daemon binary** | 10.9 MB (arm64) / 11.8 MB (amd64) static, **4.3 to 4.7 MB gzipped** |
+| **Memory (RSS)** | **11.6 MB** standalone · 12.4 MB as a fleet child · 14.0 MB as a master with two children |
+| **CPU** | **~0.4% of one core** standalone, ~0.6% as a child, ~1.2% as a master with two children |
+| **Disk** | ~0.3 MB of history per host after the first hour, in a compact binary store with tiered retention |
+| **Web UI plugin** | 7.7 MB RSS, ~0.07% CPU, and it only runs if you enable it |
+| **Third-party code in the core** | **none**: the `trinetra` daemon is Go standard library only, enforced by a test |
+
+<sub>Measured on Linux containers with 8 vCPUs over about 72 minutes, sampling
+every 10 s. That is six times the default 60 s interval, so a default install
+is lighter still. Binaries are built with `-trimpath -ldflags "-s -w"`.</sub>
 
 - **One binary, one service.** Drop it on the box, run `install`, set a token.
-  It runs as a single systemd unit and stores what it needs locally.
-- **No AI in the decision path.** It alerts two ways you can reason about:
-  static thresholds you set, and a rolling per-metric baseline that flags "this
-  is not normal for this box." Both are ordinary arithmetic. You can read the
-  rule and predict when it fires.
-- **The core is stdlib only.** No third-party modules in the default
-  `trinetra` daemon: no scraping exporter, no cloud account, nothing to keep
-  patched but Go itself. Heavier features live in optional plugin binaries, not
-  in the core.
+- **Rules you can read.** Alerts come from static thresholds and a rolling
+  per-metric baseline ("not normal for this box"). Both are plain arithmetic:
+  you can read the rule and predict when it fires. No AI in the decision path.
 - **Configured by command, not by hand.** Every setting goes through the CLI,
-  which writes an atomic, validated, private config store. There is no file you
-  are meant to hand-edit, so the config on disk always came from a command that
-  checked it.
-- **Answers in about a second.** Message the Telegram bot and it replies fast,
-  with live stats, history, and controls.
+  which writes an atomic, validated, private config store.
+- **Heavy features are optional plugins.** The web UI and the terminal UI are
+  separate binaries that talk to the core over a local socket, so their
+  dependencies never touch the daemon.
+- **Keeps working when the network doesn't.** Every host alerts on its own.
+  In a fleet, a child hands alerts to the master, and falls back to
+  delivering them itself if the master is unreachable.
 
-## What it watches
+## Feature tour
 
-| Area | What you get |
-|------|--------------|
-| **Live metrics** | CPU, memory, swap, load, temperature on a fast tier that drives detection and live status |
-| **Slow tier** | Disk usage and SMART, docker containers, systemd services, network throughput |
-| **Alerting** | Static thresholds plus a rolling baseline, with boot and recovery reports, a daily digest, and a weekly rollup |
-| **Channels** | Telegram by default, plus email, webhook, Slack, Discord, ntfy, and Gotify |
-| **Downtime** | Heartbeats, power-down reconstruction across reboots, and reachability checks |
-| **History** | A compact binary time-series store with tiered retention, queryable from the CLI and the web UI |
-| **Web UI** | An optional live dashboard, history charts, a config editor, and a curated public status page |
-| **Fleet mode** | One Trinetra master can collect the history of many children, while every host keeps monitoring and alerting on its own |
-| **Fleet alerting** | Master-side routing, escalation, silences, maintenance windows, grouping, dependencies, and aggregate rules across the whole fleet, with a fallback to local delivery if the master is unreachable |
-| **Fleet web UI** | A `/fleet` overview (heatmap, top-N, compare), per-node pages, and admin screens for nodes, incidents, alerting, silences, managed config, and the audit log |
+Screens below are the real web UI (`trinetra-web`) with a demo fleet of twelve
+servers.
 
-See [Monitoring](docs/handbook/05-monitoring.md),
-[Alerting and channels](docs/handbook/06-alerting-and-channels.md), and
-[Downtime and liveness](docs/handbook/07-downtime-and-liveness.md) for the
-details.
+### Live dashboard
 
-## Architecture at a glance
+The whole box on one screen, streamed live: containers, systemd units,
+filesystems, reachability, a 24-hour availability strip, CPU, memory, swap,
+load, temperature, network and processes, plus whatever is firing right now.
+
+<img src="docs/assets/screenshots/dashboard-hero.webp" alt="Dashboard: host strip, container and systemd counts, availability blocks, live resource tiles and active alerts" width="100%">
+
+### Containers, services, filesystems, processes
+
+Drill into every Docker container, systemd unit, mount and process, with
+live charts and actions from the row detail.
+
+<img src="docs/assets/screenshots/monitoring.webp" alt="Monitoring: container table with state, CPU, memory and network I/O" width="100%">
+
+### History
+
+Every metric is kept locally in a compact time-series store with tiered
+retention, from 1 hour to 30 days, plus a downtime record that survives
+reboots and power cuts.
+
+<img src="docs/assets/screenshots/history.webp" alt="History: CPU, memory, load and temperature charts over 24 hours, disk usage per filesystem and a 30-day downtime bar" width="100%">
+
+### Alerts and channels
+
+Static thresholds and baselines, with boot and recovery reports, a daily
+digest and a weekly rollup. Deliver to **Telegram** (with a full bot: `/stats`,
+history, controls), **email, webhook, Slack, Discord, ntfy and Gotify**, each
+with its own severity floor and quiet-hours behaviour.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screenshots/alerts.webp" alt="Alerts: firing now with ack, recent history with sources and notified channels"></td>
+<td width="50%"><img src="docs/assets/screenshots/channels.webp" alt="Channels: Telegram, Slack and webhook channels with severity and routing"></td>
+</tr>
+</table>
+
+### Fleet overview
+
+Turn one host into a master and enroll the rest with a join code. The
+`/fleet` page shows every node at a glance: online, lagging, down and revoked
+counts, a heatmap you can switch between CPU, memory, disk and load, top-5
+lists, what is down right now, and link health with clock skew and outbox
+depth.
+
+<img src="docs/assets/screenshots/fleet-overview.webp" alt="Fleet overview: counts, heatmap, top-5 CPU, memory and disk, down-now list and the node table with state, version, tags and link health" width="100%">
+
+**Every node is one click away.** The node switcher (or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd>)
+opens any child's full dashboard, monitoring and history, served from the
+master's replica of its data. **Compare** overlays any metric across the
+nodes you tick.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screenshots/node-dashboard.webp" alt="A child's dashboard viewed through the master: db-01 with a filesystem at 93 percent"></td>
+<td width="50%"><img src="docs/assets/screenshots/fleet-compare.webp" alt="Compare: CPU of four nodes overlaid on one chart"></td>
+</tr>
+</table>
+
+### Incidents
+
+Alerts from across the fleet are grouped into incidents, so ten web servers
+with the same problem page you once, not ten times. A dependency map folds
+downstream noise under its cause (api nodes under a database outage). Each
+incident has a timeline that shows exactly what fired, who was notified,
+what was suppressed and why. Ack or silence it from the page, or straight
+from Telegram with the **Ack** and **Silence 1h** buttons.
+
+<img src="docs/assets/screenshots/fleet-incidents.webp" alt="Incidents list: firing, acked, resolved and suppressed incidents with severity, nodes, duration and delivered/suppressed counts" width="100%">
+
+<img src="docs/assets/screenshots/incident-detail.webp" alt="Incident detail: ack and silence controls, members per node, and a timeline of fire, grouped, delivered and escalated events" width="100%">
+
+### Routing and escalation
+
+Routes match on tag, node, rule and severity and send each incident to a
+policy. A policy is a list of escalation steps (Telegram ops now, on-call
+after 5 minutes, everyone after 15), with repeat and resolved notifications.
+Routes can continue to fan out to several policies, and every one escalates
+on its own. Edit in the form or as JSON, and check any path with the route
+tester before you save.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screenshots/alerting-routes.webp" alt="Routes: ordered routes with tag, node, rule and severity matchers and a continue toggle"></td>
+<td width="50%"><img src="docs/assets/screenshots/alerting-policies.webp" alt="Policies: escalation steps with delays and channel checkboxes"></td>
+</tr>
+</table>
+
+### Fleet-wide rules
+
+Alert on the fleet as a whole with a small, readable expression language:
+
+```text
+avg(tag:api, cpu) > 75 for 5m            # the api tier is running hot
+online(tag:prod) < 8 for 2m              # lost production capacity
+absent(tag:staging, 10m)                 # staging went quiet
+count(tag:web, disk > 90) >= 1 for 5m    # any web node nearly full
+```
+
+<img src="docs/assets/screenshots/alerting-rules.webp" alt="Aggregate rules editor with four rules, and the full alerting config as JSON" width="100%">
+
+### Silences and maintenance windows
+
+One-off silences for a node, tag, rule or severity, and recurring
+maintenance windows by weekday and time zone, so planned work never pages
+anyone.
+
+<img src="docs/assets/screenshots/silences.webp" alt="Silences: active silence for edge-01, new-silence form, and two recurring maintenance windows" width="100%">
+
+### Managed config
+
+Push settings from the master to every node, or to all nodes with a tag:
+thresholds, quiet hours, baseline alerts. Each node reports what it applied,
+and drift or conflicts show up per node.
+
+<img src="docs/assets/screenshots/managed-config.webp" alt="Managed config: fragments by tag and per-node applied, drift and conflict status" width="100%">
+
+### Fleet admin and audit
+
+Mint join tokens (TTL, uses, tags), rename, re-tag, revoke or remove nodes,
+and watch link health. Every change to the fleet, from the web, the CLI or
+Telegram, lands in the audit log with who did it.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screenshots/fleet-admin.webp" alt="Fleet admin: join tokens, node rename, tag and revoke, and link health"></td>
+<td width="50%"><img src="docs/assets/screenshots/audit-log.webp" alt="Audit log: time, actor, action, target and detail"></td>
+</tr>
+</table>
+
+### Security
+
+- **Passkey sign-in** for the web UI (Touch ID, Windows Hello or a security
+  key), with admin and viewer roles; after the first admin, new accounts need
+  an invite link. No passwords.
+- **Mutual TLS for the fleet.** `fleet init` creates a private CA; join codes
+  pin the CA's key, so a child never trusts on first use, and every child
+  gets its own certificate. Revoking a node cuts it off at once.
+- **Verified plugins.** The daemon runs a plugin only after it checks the
+  file's owner, its permissions and a SHA-256 hash recorded at install.
+- **Local only by default.** The control socket is a token-authenticated
+  unix socket; nothing phones home.
+
+<img src="docs/assets/screenshots/login.webp" alt="Passkey sign-in screen" width="100%">
+
+### Any screen, any theme
+
+Light and dark themes, a tablet layout with an icon rail, and a phone layout
+with a bottom tab bar.
+
+<table>
+<tr>
+<td width="46%"><img src="docs/assets/screenshots/dashboard-light.webp" alt="Dashboard in the light theme"></td>
+<td width="32%"><img src="docs/assets/screenshots/tablet-fleet.webp" alt="Fleet page on a tablet with the icon rail"></td>
+<td width="22%"><img src="docs/assets/screenshots/mobile-fleet.webp" alt="Fleet page on a phone with the bottom tab bar"></td>
+</tr>
+</table>
+
+## How it works
+
+<img src="docs/assets/art/how-it-works.webp" alt="Collectors for CPU, memory, disk, Docker and services feed the core daemon, which keeps a local store and alert state and serves Telegram, the web UI and the terminal UI" width="100%">
 
 Trinetra is a lean **core** daemon with optional **plugins** around it. The
-core runs the sampler, keeps the live picture and the history, answers Telegram,
-and exposes its whole internal API over a local control socket (newline-JSON on
-a unix socket, token-authenticated). Plugins are separate processes that dial
-that socket, so the core stays small and their dependencies never touch it.
+core runs the sampler, keeps the live picture and the history, decides and
+sends alerts, answers Telegram, and exposes its whole internal API over a
+local control socket (newline-delimited JSON on a unix socket, with a
+token). Plugins are separate processes that dial that socket.
 
 ```mermaid
 flowchart TD
@@ -99,20 +274,18 @@ flowchart TD
     user -->|browser| web
 ```
 
-Two front-door subcommands launch the plugins for you, so you never need to know
-their binary names:
+**In a fleet**, each child keeps monitoring and alerting on its own and
+ships its data to the master over mutual TLS through a durable outbox, so a
+network outage only delays delivery and loses nothing. The child hands each
+alert to the master, which groups, routes and escalates it. If the master
+doesn't take it in time, the child delivers the alert itself.
 
-```bash
-sudo trinetra cli   # launches trinetra-ctl, the management TUI
-sudo trinetra web   # launches trinetra-web, the web UI
-```
-
-Because those run as root, the core never execs a plugin blindly. It first
-proves the binary next to it is the exact one it installed: an absolute path
-from the core's own directory (never `$PATH`), a root-owner and non-writable
-check on the file and its directory, and a SHA-256 match against a root-only
-manifest recorded at install. Any mismatch is refused, not run. The full trust
-model is in [Architecture](docs/handbook/02-architecture.md).
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/art/fleet.webp" alt="A master connected to four children over mTLS; one child is cut off and buffers in its outbox"></td>
+<td width="50%"><img src="docs/assets/art/alert-flow.webp" alt="Alert lifecycle: detect, route, deliver, ack, recover, with a local fallback path from detect"></td>
+</tr>
+</table>
 
 ## Quick start
 
@@ -128,76 +301,60 @@ sudo ./trinetra install     # installs the daemon AND both plugins, enables the 
 sudo trinetra cli           # guided first-run setup: bot token, enrollment PIN, web UI
 ```
 
-`trinetra install` copies all three binaries to `/usr/local/bin` and starts
-the service; `trinetra cli` opens the interactive
+`trinetra install` copies the binaries to `/usr/local/bin` and starts the
+service. `trinetra cli` opens the
 [trinetra-ctl](docs/handbook/plugins/trinetra-ctl.md#managing-with-trinetra-ctl)
-TUI, which walks you through the Telegram bot token, the `/start <pin>`
-enrollment, and (optionally) the web UI. Prefer the command line? The one
-required setting is the bot token, which prints the enrollment PIN right in the
-terminal:
+terminal UI, which walks you through the Telegram bot token, `/start <pin>`
+enrollment and, optionally, the web UI. Prefer plain commands? The one
+required setting is the bot token:
 
 ```bash
 sudo trinetra telegram set-token <token>   # token from @BotFather
+sudo trinetra web                          # optional: the browser UI
 ```
 
-From there, `/stats` or `/help` in Telegram, or `sudo trinetra web` for the
-browser dashboard. The two plugins are optional: drop them from the download
-loop if you only want the Telegram daemon. Full steps are in [Installation and
-first run](docs/handbook/03-installation.md).
+The two plugins are optional: leave them out of the download loop if you only
+want the Telegram daemon. Full steps are in [Installation and first
+run](docs/handbook/03-installation.md).
+
+## Build a fleet
+
+```bash
+# On the host that will be the master
+sudo trinetra fleet init --address monitor.example.com,203.0.113.7
+sudo systemctl restart trinetra
+sudo trinetra fleet token create --tags prod --uses 3
+
+# On each server you want to enroll, with the code the master printed
+sudo trinetra fleet join swj1_...
+sudo systemctl restart trinetra
+
+# Back on the master
+sudo trinetra fleet nodes --tag prod
+```
+
+From there, set up routing, silences, rules and managed config from the web
+UI or with `trinetra fleet ...`. The whole story is in the
+[Fleet chapter](docs/handbook/13-fleet.md).
 
 ## Upgrading from serverwatch
 
-Trinetra is the rename of what used to be called serverwatch: same daemon,
-same data, new name. If this host already runs a `serverwatch` install, the
-exact same install command migrates it in place. There is no separate
-migration tool.
-
-First download `trinetra` and the plugins you use (`trinetra-ctl` for the
-terminal UI, `trinetra-web` for the web UI) into one directory, with the same
-loop as a fresh install above. `trinetra install` installs only the plugins
-it finds next to the `trinetra` binary, and the migration removes the old
-`serverwatch-ctl` / `serverwatch-web`. If you upgrade with the core binary
-alone, the web UI and terminal UI stay down until you add the plugins and
-re-run install. The migration summary prints a `WARNING:` line when this
-happens.
+Trinetra is the new name for serverwatch: same daemon, same data. On a host
+that runs `serverwatch`, download `trinetra` and the plugins you use into one
+directory and run the same install:
 
 ```bash
 sudo ./trinetra install     # run from the directory holding trinetra, trinetra-ctl, trinetra-web
 ```
 
-That one command stops and disables `serverwatch.service`, moves
-`/etc/serverwatch` → `/etc/trinetra` and `/var/lib/serverwatch` →
-`/var/lib/trinetra` (an atomic rename, or a verified copy when the two are on
-different filesystems), rewrites any config paths that pointed inside the old
-directories, then runs the normal install and removes the old unit and plugin
-binaries (a drop-in override directory for the old unit, if you had one, is
-left in place with a note instead of being deleted). Nothing is deleted
-before its replacement is proven in place, so config, history, alert state,
-Telegram enrollment, web users/passkeys, and fleet identity/PKI all carry over
-untouched. `/usr/local/bin/serverwatch` becomes a compat symlink to
-`trinetra`, and `/usr/bin/serverwatch` is deliberately left pointing at it
-rather than redirected or removed, so `/usr/bin/serverwatch` →
-`/usr/local/bin/serverwatch` → `/usr/local/bin/trinetra` and `sudo
-serverwatch ...` keeps resolving on distros whose `secure_path` omits
-`/usr/local/bin`. Both compat names are kept for one release (with a
-one-line deprecation notice on use) and removed in the next. A marker at
-`/var/lib/trinetra/migrated-from-serverwatch` records when a host was
-migrated.
-
-It refuses rather than guesses: if both a `serverwatch` install and existing
-`trinetra` data are present, or a legacy directory exists but is unexpectedly
-empty (usually an unmounted volume), install stops without touching anything
-and tells you exactly what to check. `--state-already-at-new-path` adopts a
-state volume you moved yourself ahead of time, and `--force` proceeds past a
-`serverwatch.service` systemd could not confirm was stopped, or past a
-`serverwatch daemon` still running outside the service. Until you have run
-install, `trinetra daemon` and the commands that change settings refuse on
-such a host and point you at `sudo trinetra install`. The whole
-migration is idempotent and resumable, and every stop point explains both how
-to finish it and how to roll back by hand.
-
-Full behavior, every refusal case, and the manual rollback steps are in
-[Upgrading from a serverwatch install](docs/handbook/03-installation.md#upgrading-from-a-serverwatch-install).
+It stops the old service, moves `/etc/serverwatch` and `/var/lib/serverwatch`
+to their `trinetra` paths, and carries over config, history, alert state,
+Telegram enrollment, web passkeys and fleet identity untouched. Nothing is
+deleted before its replacement is proven in place. The old `serverwatch`
+command keeps working for one release as a compatibility link. When anything
+looks unexpected, it refuses rather than guesses, and tells you what to check.
+Every case and the manual rollback steps are in [Upgrading from a
+serverwatch install](docs/handbook/03-installation.md#upgrading-from-a-serverwatch-install).
 
 ## Documentation
 
@@ -219,16 +376,13 @@ Everything is in the handbook, one concern per chapter.
 | [Operations](docs/handbook/10-operations.md) | Day-to-day running and troubleshooting |
 | [Command reference](docs/handbook/11-command-reference.md) | Every CLI subcommand |
 | [Roadmap and status](docs/handbook/12-roadmap-and-status.md) | Where it is and what is planned |
+| [Fleet](docs/handbook/13-fleet.md) | Master and children: incidents, routing, silences, rules, managed config |
 
 ## Status
 
-The current stable release is **v0.4.1**, which hardens the core-plus-plugin
-architecture introduced in v0.4.0 with the server-identity feature set, a
-security-hardening pass, and a round of live-host reliability fixes. See the
-[changelog](CHANGELOG.md) for the Trinetra rename and fleet mode, both in
-progress on top of it. The handbook marks any feature that is still
-experimental where it appears; see [Roadmap and status](docs/handbook/12-roadmap-and-status.md)
-for the current line.
+The current stable release is **v0.4.1**. The Trinetra rename and fleet mode
+are on top of it and heading for the next release; see the
+[changelog](CHANGELOG.md) and [Roadmap and status](docs/handbook/12-roadmap-and-status.md).
 
 ## License
 
