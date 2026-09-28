@@ -35,6 +35,48 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   replica through the same methods, plus new `Fleet.*` methods for fleet
   management. Both are backward compatible: requests without `node` behave as
   before.
+- **Fleet mode, phases 2 and 3: fleet alerting and the fleet web UI.** The
+  master now decides delivery for the whole fleet instead of just relaying
+  node-down alerts. A child holding a valid lease routes its firing alerts to
+  the master instead of delivering them itself, and falls back to local
+  delivery (prefixed "via local fallback") if no receipt arrives within
+  `fleet.fallback_after` or the lease expires -- at-least-once, deduplicated
+  by `(node, alert key, fired_at)`, never doubled up. On the master, every
+  alert runs through a full pipeline -- silence, dependency fold, grouping,
+  routing, escalation, delivery, receipt -- all recorded and explainable with
+  `fleet explain`. New: ordered routes with matchers and `continue` fan-out
+  to several escalation policies at once; multi-step escalation policies with
+  `repeat_every`; silences and recurring maintenance windows (matched by tag,
+  node name-glob-or-id, rule, and severity, and pushed to children so local
+  fallback honours them too); incident grouping and dependency folding;
+  fixed-grammar aggregate rules (`count`, `avg`/`max`/`min`, `online`,
+  `absent`) evaluated fleet-wide on the master; and managed config, a closed
+  10-key allowlist a master can push to children by tag, read-only locally
+  and re-imposed on every apply. The master's Telegram messages gain Ack and
+  Silence-1h inline buttons on incident fire notifications. New `trinetra
+  fleet` subcommands: `incidents`, `incident`, `ack`, `explain`, `silence
+  add|list|expire`, `maintenance add|list|delete`, `route test`, `alerting
+  show|apply`, `rules`, `managed list|set|delete|status`, and `node depends`.
+  New config keys `fleet.fallback_after` (default `2m`) and
+  `fleet.link_down_warn_after` (default `10m`), both child-only and
+  live-applied. See [Fleet
+  alerting](docs/handbook/06-alerting-and-channels.md#fleet-alerting).
+- **The fleet web UI.** Every existing page is now also reachable per node
+  under `/n/{id}/...`, with a replica banner and a stale-data indicator for
+  remote pages, a top-bar node switcher, and a Ctrl/Cmd-K fuzzy palette
+  (recent nodes, and a "web1 history"-style page-type jump). `/fleet` gains a
+  health strip, a heatmap, top-N panels, a sortable/filterable live node
+  table, and a compare view (up to 10 nodes, or an aggregate, one metric
+  overlaid). New admin pages: `/fleet/admin` (tokens, node rename/tags/
+  dependencies/revoke/remove, link health), `/fleet/incidents` (list and
+  timeline, with ack/silence), `/fleet/alerting` (routes/policies/rules
+  editor plus a route tester), `/fleet/silences` (silences and maintenance
+  windows, times shown in the master's own local zone), `/fleet/managed`
+  (managed-config fragments and per-node drift), and `/fleet/audit` (every
+  fleet mutation, who and when). Remote-node actions (ack/unack, container
+  logs) work whenever that node is currently connected, and are disabled
+  with a reason when it isn't. See [The web
+  UI](docs/handbook/08-web-ui.md#fleet).
 
 ### Changed
 

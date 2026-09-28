@@ -67,6 +67,8 @@ Trinetra is the opposite bet.
 | **History** | A compact binary time-series store with tiered retention, queryable from the CLI and the web UI |
 | **Web UI** | An optional live dashboard, history charts, a config editor, and a curated public status page |
 | **Fleet mode** | One Trinetra master can collect the history of many children, while every host keeps monitoring and alerting on its own |
+| **Fleet alerting** | Master-side routing, escalation, silences, maintenance windows, grouping, dependencies, and aggregate rules across the whole fleet, with a fallback to local delivery if the master is unreachable |
+| **Fleet web UI** | A `/fleet` overview (heatmap, top-N, compare), per-node pages, and admin screens for nodes, incidents, alerting, silences, managed config, and the audit log |
 
 See [Monitoring](docs/handbook/05-monitoring.md),
 [Alerting and channels](docs/handbook/06-alerting-and-channels.md), and

@@ -150,6 +150,20 @@ usage:
   trinetra fleet join <code> [--name NAME]                  join a master as a child
   trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
   trinetra fleet node revoke|remove|rename|tag <node> [value]
+  trinetra fleet incidents [--state firing]                 list incidents
+  trinetra fleet incident <id>                              show one incident
+  trinetra fleet ack <id>                                   acknowledge an incident
+  trinetra fleet explain <key|id>                           print an alert's pipeline trail
+  trinetra fleet silence add --match tag=web,rule=cpu* --for 2h [--comment C]
+  trinetra fleet silence list | expire <id>
+  trinetra fleet maintenance add --name N --match ... --days mon,tue --from 22:00 --to 02:00 --tz Asia/Kolkata
+  trinetra fleet maintenance list | delete <id>
+  trinetra fleet route test --node web1 [--tag t] --rule cpu --severity critical
+  trinetra fleet alerting show | apply <file.json>
+  trinetra fleet rules                                      list aggregate rules and their state
+  trinetra fleet managed list | status
+  trinetra fleet managed set [--tag T] [--replace] key=value [key=value ...]
+  trinetra fleet managed delete <id>
   trinetra fleet leave [--purge]                            child -> solo
   trinetra fleet disable [--purge]                          master -> solo
 ```
@@ -159,7 +173,8 @@ this host's role: they write the fleet keys in the config file and the
 certificate files on disk, and do not signal the daemon; each prints `Restart
 to apply: sudo systemctl restart trinetra`. Everything else asks the running
 daemon over the control socket, so it needs the daemon up (on the master, for
-the node and token commands) and changes take effect immediately.
+every subcommand from `node` through `managed` below) and changes take effect
+immediately.
 
 | Command | Flags | What it does |
 | --- | --- | --- |
@@ -167,14 +182,33 @@ the node and token commands) and changes take effect immediately.
 | `fleet token create` | `--tags a,b` (tags every node that joins with it), `--ttl` (default `1h`), `--uses` (default `1`) | Master only. Prints a join code (`swj1_...`) and the exact `fleet join` line to run on each server. |
 | `fleet token list` | none | Master only. Lists unexpired join tokens: id, uses left, expiry, tags. |
 | `fleet token delete <id>` | none | Master only. Deletes a join token so it can no longer be used. |
-| `fleet join <code>` | `--name NAME` (default `server.name`) | Makes a solo host a child of the master in the code. Verifies the master against the CA pin in the code before sending anything, stores the node's key and certificate, and sets `fleet.role` to child. |
+| `fleet join <code>` | `--name NAME` (default `server.name`) | Makes a solo host a child of the master in the code. Verifies the master against the CA pin in the code before sending anything, stores the node's key and certificate, and sets `fleet.role` to child. If the requested name is already taken (case-insensitively) on that master, it registers as `<name>-2`, `-3`, and so on instead, and prints a note saying so. |
 | `fleet status` | none | This host's role. On a master: listen address, join URL, CA fingerprint, node count, a `replica drops` line with the cumulative counts for every node whose replica has refused points (out of order, over the 5000-series limit, or duplicates, which are harmless re-sends), and a warning line for every node whose clock is more than 30 s off. The master's log carries a warning when a node's out-of-order or over-limit count grows. On a child: node id, master, link state (`connecting`; `linked`; `catching up` when the master is reachable but unsent data is still being retried; `retrying` when the master is unreachable or refusing requests; `revoked`), last ack, outbox size, unsent records and gaps, last error. |
-| `fleet nodes` | `--tag T`, `--state S` (`online`, `lagging`, `stale`, `down`, `revoked`), `--q TEXT` (search name, id or address) | Table of nodes: on a master every enrolled node plus this host as `self`, elsewhere only `self`. Columns: state, clock skew, CPU, memory, worst disk, version, last seen, tags, short id. SKEW is the master's filtered `master time - node send time` (the sample closest to zero among the last ten); a negative value means the node's clock is ahead. |
+| `fleet nodes` | `--tag T`, `--state S` (`online`, `lagging`, `stale`, `down`, `revoked`), `--q TEXT` (search name, id or address) | Table of nodes: on a master every enrolled node plus this host as `self`, elsewhere only `self`. Columns: state, clock skew, CPU, memory, worst disk, version, last seen, tags, depends-on, short id. SKEW is the master's filtered `master time - node send time` (the sample closest to zero among the last ten); a negative value means the node's clock is ahead. |
 | `fleet node revoke <node>` | none | Master only. Refuses the node's certificate from now on; its history is kept. `<node>` is a node id, an id prefix of at least 6 characters, or an exact name. |
 | `fleet node remove <node>` | none | Master only. Deletes the node from the registry and from liveness tracking and resolves its open node-down alert, if any. Its certificate is refused from then on (an unknown node counts as revoked). Its replicated history stays on disk under `fleet/nodes/<id>/`. Use it for a server that is gone for good. |
-| `fleet node rename <node> <name>` | none | Master only. Changes the node's display name. |
+| `fleet node rename <node> <name>` | none | Master only. Changes the node's display name. Node names are unique case-insensitively: renaming to a name already used by another node is refused outright (unlike a fresh join, which silently suffixes instead). Renaming a node whose name is matched by a name-based silence stops that silence from matching it -- see [Fleet alerting](06-alerting-and-channels.md#silences-and-maintenance-windows). |
 | `fleet node tag <node> <a,b>` | none | Master only. Replaces the node's tags; an empty string clears them. |
-| `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. Leaving is local only: the master is not told, and it will report the node as down (and page for it) until you run the command `leave` prints, `sudo trinetra fleet node revoke <node-id>`, on the master (or `fleet node remove <node-id>` to drop it from the list as well). |
+| `fleet node depends <node> <dep1,dep2,tag:t>` | none | Master only. Sets the node's dependency list (another node id/name, or `tag:<t>`); an empty string clears it. When a dependency is down, this node's own node-down/reachability alerts fold into the dependency's incident instead of paging separately. See [Fleet alerting](06-alerting-and-channels.md#dependencies). |
+| `fleet incidents` | `--state S` (`firing`, `acked`, `resolved`, `suppressed`), `--node N`, `--tag T`, `--limit N` (default unlimited) | Master only. Table of incidents: id, state, severity, title, nodes, opened, updated. |
+| `fleet incident <id>` | none | Master only. Full detail for one incident: its alerts (with fire/resolve times and whether each was delivered locally) and its complete timeline. |
+| `fleet ack <id>` | none | Master only. Acknowledges an incident (actor `cli`). Refused if it is already resolved. |
+| `fleet explain <key|id>` | none | Master only. Prints the pipeline trail (record, silence, dependency, group, route, escalate, deliver, receipt) for an alert key or an incident id -- see [Fleet alerting](06-alerting-and-channels.md#the-pipeline). |
+| `fleet silence add` | `--match tag=,node=,rule=,severity=` (required; `node=` matches the node's display name as a glob OR its exact id), `--for <dur>` or `--until <RFC3339>` (one required), `--comment` | Master only. Creates a silence, printing its id and end time. |
+| `fleet silence list` | none | Master only. Table of silences: id, match, start, end, author, comment. |
+| `fleet silence expire <id>` | none | Master only. Ends a silence immediately. |
+| `fleet maintenance add` | `--name` (required), `--match` (required), `--days` (required, comma list of `mon`..`sun`), `--from`/`--to` (`HH:MM`, `--to` before `--from` crosses midnight), `--tz` (default `UTC`) | Master only. Creates a recurring maintenance-window silence. |
+| `fleet maintenance list` | none | Master only. Table of maintenance windows: id, name, match, days, from, to, tz, author. |
+| `fleet maintenance delete <id>` | none | Master only. Deletes a maintenance window. |
+| `fleet route test` | `--node NAME` (name or id), `--tag t1,t2`, `--rule RULE`, `--severity SEV` | Master only. Dry-runs routing for a hypothetical alert: prints the matched route, every matched policy's steps (more than one when a `continue: true` route fanned out) and `repeat_every`, and whether a silence would suppress it. |
+| `fleet alerting show` | none | Master only. Prints the current `AlertingConfig` (routes, policies, rules) as JSON. |
+| `fleet alerting apply <file.json>` | none | Master only. Replaces the alerting config wholesale from a JSON file, unconditionally (no optimistic-concurrency check, unlike the web editor). |
+| `fleet rules` | none | Master only. Table of every aggregate rule: name, state (`ok`, `firing`, `no data`, or `error: ...`), current value, since, and its expression. |
+| `fleet managed list` | none | Master only. Table of managed-config fragments: id, tag (`*` for every node), version, author, values. |
+| `fleet managed set [key=value ...]` | `--tag T` (default: every node), `--replace` (replace the fragment's values wholesale instead of merging) | Master only. Creates or updates the fragment for `--tag`, merging the given keys into its existing values by default. Only the 10 allowlisted keys are accepted -- see [Fleet alerting](06-alerting-and-channels.md#managed-config). |
+| `fleet managed delete <id>` | none | Master only. Deletes a managed-config fragment. |
+| `fleet managed status` | none | Master only. Table of every node with an applicable fragment: node, applied/desired version, whether applied, drift, error, and any cross-fragment key conflicts. |
+| `fleet leave` | `--purge`: also delete this node's fleet identity and unsent outbox | Child only. Returns the host to solo. Local history is always kept. Leaving is local only: the master is not told, and it will report the node as down (and page for it) until you run the command `leave` prints, `sudo trinetra fleet node revoke <node-id>`, on the master (or `fleet node remove <node-id>` to drop it from the list as well). Any managed-config values already applied are kept as ordinary local config, no longer read-only. |
 | `fleet disable` | `--purge`: also delete the CA, node registry and every node's replicated history | Master only. Returns the host to solo. Without `--purge`, running `fleet init` again reuses the same CA, so children need not re-join. `fleet disable` then `fleet init` (and a restart) is also how you re-issue the master's 2-year server certificate, which the master warns about from 90 days before it expires. |
 
 Children must reach the master's fleet port directly, or through TCP-level
@@ -183,11 +217,16 @@ TLS-terminating reverse proxy in front of it breaks both the CA pin check and
 node authentication (see [Fleet mode](02-architecture.md#fleet-mode)).
 
 The tunable fleet keys are ordinary config keys, set with `config set` and
-applied on restart: `fleet.listen` (master listen address, default `:9443`),
-`fleet.outbox_max_mb` (child outbox cap, default `512`, minimum `16`) and
-`fleet.node_down_after` (how long the master waits before calling a silent node
-down, default `2m`, minimum `30s`). The role, address, master URL, CA pin and
-node id are written only by the commands above; `config set` refuses them.
+applied on restart unless noted otherwise: `fleet.listen` (master listen
+address, default `:9443`), `fleet.outbox_max_mb` (child outbox cap, default
+`512`, minimum `16`), `fleet.node_down_after` (how long the master waits
+before calling a silent node down, default `2m`, minimum `30s`), and two
+child-only keys that apply live with no restart, `fleet.fallback_after`
+(default `2m`, minimum `5s`) and `fleet.link_down_warn_after` (default
+`10m`, minimum `30s`) -- see
+[Configuration](04-configuration.md#fleet-child-timing-keys) for what each
+one governs. The role, address, master URL, CA pin and node id are written
+only by the commands above; `config set` refuses them.
 
 A typical enrollment:
 

@@ -350,6 +350,328 @@ alert fires, e.g. `collector docker failing: 3 consecutive collection failures
 carry the last-known values forward silently; only a sustained failure alerts.
 The alert recovers automatically on the first successful collection.
 
+## Fleet alerting
+
+Everything above this section is what a single host does on its own, and it
+keeps doing exactly that in fleet mode: a child always detects and can always
+alert locally. What fleet mode (see [Fleet mode](02-architecture.md#fleet-mode))
+adds on top is a second decision-maker, the master, which re-evaluates the
+child's alert against fleet-wide routing, silences, grouping, dependencies and
+escalation before it reaches a channel, and a set of master-only aggregate
+rules that have no single-host equivalent at all (`count(...) for ...` across
+a whole tag). None of this exists outside fleet mode.
+
+### The pipeline
+
+Every alert the master handles, whether it arrived from a child or was raised
+by a master-side aggregate rule, walks the same pipeline, in order:
+
+```mermaid
+flowchart LR
+  fire[fire] --> record[record]
+  record --> silence{silenced?}
+  silence -->|yes| suppressed[suppressed<br/>recorded, visible, not delivered]
+  silence -->|no| dependency{dependency down?}
+  dependency -->|yes| fold[folded into parent's incident]
+  dependency -->|no| group[group]
+  group --> route[route]
+  route --> escalate[escalate]
+  escalate --> deliver[deliver]
+  deliver --> receipt[receipt to child]
+```
+
+A suppressed alert (silenced, or folded into a dependency's incident) is
+never simply dropped: it is recorded and visible in `fleet incidents`/`fleet
+explain` and on the incidents page, it is just not delivered to a channel on
+its own. `trinetra fleet explain <key|id>` prints the exact trail an alert
+took through this pipeline -- which silence matched, which route and policy,
+whether it was grouped or folded, and every delivery/receipt event -- so a
+"why didn't I get paged" question always has a concrete answer:
+
+```bash
+trinetra fleet explain cpu:high        # by alert key
+trinetra fleet explain 4f2a9c1b0d3e    # by incident id
+```
+
+### Lease, receipt, and local fallback
+
+Detection always stays on the child; only delivery ownership moves. While
+the child holds a valid lease from the master (sent every 30s, valid 90s), a
+firing alert is not delivered locally -- it is recorded `routed_to_master`
+and shipped to the master on the priority lane. The master runs the alert
+through the rest of the pipeline, delivers it, and sends the child a
+`receipt{alert_key, fired_at}` once at least one channel accepted it.
+
+If no receipt arrives within `fleet.fallback_after` (child config, default
+`2m`, minimum `5s`) or the lease has expired, the child delivers the alert
+itself, with the message prefixed `via local fallback: master unreachable`,
+and ships the record with `delivered_locally=true`. The master records this
+but never redelivers it: the dedup key is `(node, alert key, fired_at)`, so
+the alert reaches a channel exactly once by design, whichever side sends it
+first -- at-least-once delivery, never duplicated by the retry itself. If the
+child's link stays down past `fleet.link_down_warn_after` (default `10m`,
+minimum `30s`), the child raises its own local "fleet link down" warning, so
+a prolonged outage is itself alertable even before any monitored condition
+fires. See [Configuration](04-configuration.md#fleet-child-timing-keys) for
+both keys.
+
+Silences and maintenance windows are pushed to every child they could apply
+to, so an alert that falls back locally during a master outage still honours
+whatever was silenced before the link dropped.
+
+### Silences and maintenance windows
+
+A silence mutes matching alerts between a start and end time; a maintenance
+window is a recurring silence on a weekday set and a daily time range in a
+named IANA time zone. Both share the same matcher shape: `tag`, `node`,
+`rule` (glob), and `severity`, ANDed within one matcher, ORed across several
+matchers on the same silence.
+
+**The node matcher is worth calling out precisely, because it changed from
+the original design:** `node=` matches the node's current display **name as
+a glob**, OR its exact node id -- never anything else. There is no separate
+"match by id" syntax; a bare id string simply matches because it equals the
+node's id exactly, while any other value is matched against the name with
+shell-glob rules (`db*`, `web-??`). The practical consequence: **renaming a
+node stops a name-based silence from matching it.** A silence written against
+`node=old-name` keeps its literal text after a rename; if you want a silence
+that survives a rename, match on the node's id or on a tag instead.
+
+```bash
+trinetra fleet silence add --match tag=web,rule=cpu* --for 2h --comment "known noisy deploy"
+trinetra fleet silence add --match node=db-primary --for 30m
+trinetra fleet silence list
+trinetra fleet silence expire <id>
+
+trinetra fleet maintenance add --name "weekly backup window" \
+  --match tag=backup --days sat,sun --from 22:00 --to 02:00 --tz Asia/Kolkata
+trinetra fleet maintenance list
+trinetra fleet maintenance delete <id>
+```
+
+`--to` before `--from` means the window crosses midnight (as in the example
+above: Saturday and Sunday 22:00 through 02:00 the next day). When a silence
+or maintenance window ends and the alert it was suppressing is still firing,
+it is delivered then, exactly as if it had just fired.
+
+The web equivalent is the Silences admin page (see [The web
+UI](08-web-ui.md#silences-and-maintenance)); every silence/maintenance time
+there is shown in the master's own local time zone with its abbreviation,
+never UTC, so what you type back matches what you meant.
+
+### Routes and escalation policies
+
+A **route** picks a **policy** for an alert. Routes are an ordered list;
+`node` is a glob against name/tags/rule/severity fields, matched top to
+bottom, and the first matching route wins -- unless it has `continue: true`,
+in which case evaluation keeps going into later routes too, and *every*
+route matched this way contributes its policy: the alert fans out to each
+matched policy, and each one escalates on its own independent timeline (a
+15-minute repeat on one policy never resets or delays another's). There is
+always an implicit default route/policy so an alert with no explicit match
+still gets delivered. **Route names are required and must be unique** --
+duplicating a name, or leaving one blank, is rejected when the config is
+saved.
+
+A **policy** is a named escalation schedule: an ordered list of steps, each
+`{after, channels}`, where `after` is measured from the incident's first
+delivery (`after: "0s"` is immediate) and `channels` names channels from your
+notification config, or the literal `"*"` for every enabled channel (still
+gated by that channel's own quiet-hours/severity/kind filters). Once the last
+step has fired, `repeat_every` (if set) re-notifies that last step's channels
+on that cadence until the incident is acknowledged or resolved.
+`send_resolved` (default true) gates whether a recover is actually delivered
+for incidents on that policy.
+
+A worked example -- two routes, the first with `continue: true` so a
+critical alert on a tagged production database node fans out to both an
+on-call pager policy and a database-team policy:
+
+```json
+{
+  "version": 3,
+  "default_policy": "default",
+  "routes": [
+    {
+      "name": "prod-critical",
+      "matchers": [{"tag": "prod", "severity": "critical"}],
+      "policy": "page",
+      "continue": true
+    },
+    {
+      "name": "db-nodes",
+      "matchers": [{"node": "db*"}],
+      "policy": "db-oncall"
+    }
+  ],
+  "policies": [
+    {
+      "name": "default",
+      "steps": [{"after": "0s", "channels": ["*"]}],
+      "send_resolved": true
+    },
+    {
+      "name": "page",
+      "steps": [
+        {"after": "0s", "channels": ["telegram-ops"]},
+        {"after": "5m", "channels": ["telegram-ops", "ops-email"]}
+      ],
+      "repeat_every": "15m",
+      "send_resolved": true
+    },
+    {
+      "name": "db-oncall",
+      "steps": [{"after": "0s", "channels": ["pager-db"]}]
+    }
+  ]
+}
+```
+
+Manage this either from the web UI's [Alerting admin
+page](08-web-ui.md#alerting-admin-and-the-route-tester) (a structured form
+plus a raw-JSON editor with optimistic-concurrency conflict detection via
+`version`), or from the CLI:
+
+```bash
+trinetra fleet alerting show               # print the current config as JSON
+trinetra fleet alerting apply routes.json  # replace it wholesale (no version check)
+```
+
+`fleet route test` dry-runs the routing/escalation/silence decision for a
+hypothetical alert without actually firing one, printing the matched route,
+every matched policy's steps, and whether a silence would suppress it:
+
+```bash
+trinetra fleet route test --node web1 --tag prod --rule cpu --severity critical
+```
+
+### Grouping
+
+Alerts sharing a **group key** are collapsed into one incident instead of
+paging separately. The default group key is `(rule, severity)`; a route's
+`group_by` can override it with `node`, `rule`, `tag:<key>`, or a combination.
+**Node-down alerts are not grouped by default**, because their key already
+identifies the specific node (`fleet:node:<id>:down`) -- grouping several
+different nodes' down alerts into one incident happens only through the
+explicit dependency fold below, never through the default group key.
+
+An incident waits `group_wait` (30s) after it opens before its first
+delivery, collecting whatever else joins the same group key in that window,
+then delivers again on further members at `group_interval` (5m) -- except
+that while any member of the group is still a **child-pending** delivery
+(routed to the master but not yet delivered/received), the effective delay
+is capped at `min(group_interval, fleet.fallback_after / 2)`, so a grouped
+update can never arrive so late that a member's own local fallback would
+have beaten it. Silences apply **per member**: silencing one node's alert
+inside a grouped incident does not silence the others in the same group, and
+an incident's overall state reflects only its still-open, unsilenced
+members.
+
+### Dependencies
+
+`depends_on` lets a node name its upstream (another node, or a tag): when the
+parent is down, a dependent's own node-down or reachability alert folds into
+the parent's already-open incident instead of raising a separate one, so a
+switch or router outage does not page once per host behind it. `trinetra
+fleet node depends <node> dep1,dep2,tag:t` sets the list (empty string
+clears it); `trinetra fleet nodes` prints each node's `DEPENDS ON` column.
+
+### Aggregate rules
+
+Aggregate rules run only on the master, evaluated every 30s against the
+latest snapshot and 1-minute series from every node's replica -- there is no
+per-host equivalent of these. The grammar is fixed and hand-written, not
+PromQL:
+
+```
+count(<sel>, <metric> <op> <num>) <op> <int> for <dur>
+avg|max|min(<sel>, <metric>) <op> <num> for <dur>
+online(<sel>) <op> <int> for <dur>
+absent(<sel>, <dur>)
+```
+
+`<sel>` is one of `tag:<t>`, `node:<glob>`, or `all`. Metrics are `cpu`,
+`mem`, `swap`, `disk` (worst mount), `load1`, and `temp`. Operators are `>
+>= < <= == !=`. `for` is required on every form except `absent`, and its
+duration has a **1 minute minimum** -- shorter values are rejected when the
+rule is saved. **`all` and `node:<glob>` both include the master's own node**
+in the selection (a rule like `online(all) < 2 for 2m` counts the master
+itself as one of the online nodes); `tag:<t>` only matches the master if the
+master itself carries that tag. When a rule's inputs have **no data** to
+evaluate (every matched node's data is currently missing), the rule **holds
+its current state** rather than firing or recovering -- it neither
+extinguishes a real problem nor invents a new one just because data is
+temporarily absent.
+
+```bash
+trinetra fleet alerting apply rules.json   # rules live inside AlertingConfig.rules
+trinetra fleet rules                       # table: name, state, value, since, expr
+```
+
+A rule saved with an invalid expression is rejected up front (`fleet
+explain`-style error naming the exact position in the string), never stored
+half-broken. The web UI's Alerting admin page shows the same table live,
+next to the routes/policies editor.
+
+> **Known limitation:** a master configured with `storage.backend=memory`
+> excludes its own node from `disk`-metric aggregate rules, because the
+> in-memory backend keeps no queryable 1-minute series for the master's own
+> disk to aggregate over. Use the default `tsfile` backend on a master if
+> disk aggregate rules need to see it.
+
+### Managed config
+
+The master can push small configuration fragments down to children by tag,
+so a fleet-wide tuning change does not mean editing every host by hand. The
+allowlist is a **closed set of exactly 10 keys** -- nothing else can be
+pushed through this mechanism:
+
+`thresholds.cpu_pct`, `thresholds.mem_pct`, `thresholds.swap_pct`,
+`thresholds.temp_c`, `thresholds.disk_pct`, `baseline_sigma`,
+`baseline_min_pct`, `baseline_alerts`, `quiet_hours`,
+`critical_overrides_quiet`.
+
+A fragment targets either every node (no `--tag`) or every node carrying a
+given tag; a node's desired values are the merge of every fragment that
+applies to it. `fleet managed set` **merges** the given `key=value` pairs
+into that tag's existing fragment by default, so a later `set --tag web
+cpu=95` never silently drops keys an earlier `set --tag web mem=80` put
+there; pass `--replace` to replace the fragment's values wholesale instead.
+
+```bash
+trinetra fleet managed list                                  # every fragment
+trinetra fleet managed set --tag web thresholds.cpu_pct=90    # merge into web's fragment
+trinetra fleet managed set --replace thresholds.disk_pct=85   # replace the fleet-wide fragment
+trinetra fleet managed delete <id>
+trinetra fleet managed status                                 # per-node applied/desired/drift
+```
+
+A managed value is **re-imposed on every local apply**: on child startup, on
+every SIGHUP, and every time any other config write goes through the child's
+shared apply path, so a stray direct edit of `config.json`, an offline
+config restore, or an unrelated channel/config change made through the CLI
+or web UI can never leave a managed key quietly reverted -- it is forced back
+to the master's last-pushed value every time. The CLI's `config set`, the web
+config editor, and `trinetra-ctl` all refuse to write a key that is
+currently under management; unset it from the master's managed fragments
+first if you need to change it locally. `fleet leave` keeps the last managed
+values as ordinary local config once the node is solo again -- they stop
+being read-only, but nothing about their value changes at that instant.
+
+### Telegram buttons
+
+On the master, an incident's fire notification carries two inline buttons,
+**Ack** and **Silence 1h** -- a recover notification never does, and neither
+button appears on a child's own local-fallback delivery, only on the
+master's own incident messages. Authorization is **per chat, not per
+Telegram user id**: any member of the enrolled owner chat can tap either
+button, exactly as any member of that chat can already run text commands;
+a callback from any other chat is answered "not authorized" and nothing
+happens. "Silence 1h" creates a one-hour silence covering the incident's
+still-open members only -- an already-resolved incident, or a stale button
+on an old message for an incident every member of which has since recovered,
+creates no silence at all.
+
 ---
 
 [Previous: Monitoring: what gets collected](05-monitoring.md) | [Handbook index](README.md) | [Next: Downtime and liveness](07-downtime-and-liveness.md)

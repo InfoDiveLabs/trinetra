@@ -149,10 +149,38 @@ plain about them:
   this on.
 - **Per-interface throughput alerting.** Throughput is collected as a series,
   but alerting on a specific interface crossing a threshold is not wired up.
-- **Fleet mode (master/child).** Phase 1 (enrollment, store-and-forward
-  telemetry, replicas, node-down alerts, `trinetra fleet` CLI) is in; the
-  fleet web UI, alert routing/escalation/silences, and managed config follow.
-  See [Fleet mode](02-architecture.md#fleet-mode).
+- **Fleet mode (master/child).** Phases 1 through 3 are done: enrollment,
+  store-and-forward telemetry and replicas, master/child alert handoff with
+  lease/receipt/local-fallback, fleet-wide routing/escalation/silences/
+  maintenance windows/grouping/dependencies/aggregate rules, managed config,
+  the full fleet web UI (node scoping, switcher, `/fleet` overview with
+  heatmap/top-N/compare, admin pages, incidents, alerting admin with the
+  route tester, silences, managed config, audit log), and the complete
+  `trinetra fleet` CLI. See [Fleet mode](02-architecture.md#fleet-mode),
+  [Fleet alerting](06-alerting-and-channels.md#fleet-alerting), [The web
+  UI](08-web-ui.md#fleet), and the [command
+  reference](11-command-reference.md#trinetra-fleet).
+
+  Phase 4 (ctl + Telegram + public status) is only partially started: the
+  master's Telegram channel carries **Ack** and **Silence 1h** inline
+  buttons on its own incident fire messages, authorized per enrolled chat
+  (see [Fleet alerting](06-alerting-and-channels.md#telegram-buttons)), but
+  the rest of phase 4 is still open --
+  `trinetra-ctl` has no fleet status/nodes/link-health screens yet, the
+  Telegram bot has no `/fleet`, `/node <name>`, or `/incidents` text
+  commands, and the public status page has no fleet-level view.
+
+  A few edges are known and parked rather than silently absent:
+
+  - A master with `storage.backend=memory` excludes its own node from
+    `disk`-metric aggregate rules (that backend keeps no queryable 1-minute
+    series for the master's own disk).
+  - The escalation dispatcher's `Stop()` has a narrow enqueue/wait-group race
+    where it can report "drained" one tick early; safety is intact regardless,
+    because any leftover delivery is resurrected on the next start.
+  - Telegram inline-button authorization is per enrolled chat, not per
+    Telegram user id: anyone in that chat can tap Ack/Silence 1h, same as
+    anyone in it can already run text commands.
 
 ## Not planned, for now
 

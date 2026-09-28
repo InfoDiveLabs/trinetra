@@ -64,6 +64,29 @@ sudo trinetra config unset server.name   # back to the system hostname
 Setting it to an empty value is the same as unsetting it: the effective name
 falls back to the hostname, so you never have to hardcode one.
 
+## Fleet child timing keys
+
+Two child-only keys tune the alert-handoff timing described in [Fleet
+alerting](06-alerting-and-channels.md#lease-receipt-and-local-fallback). Both
+live under the trinetra-ctl All settings screen's Fleet group; there is no
+dedicated wizard for them, since they are only worth touching if the
+defaults do not fit your network:
+
+| Key | Default | Minimum | Meaning |
+| --- | --- | --- | --- |
+| `fleet.fallback_after` | `2m` | `5s` | How long a child waits for the master's delivery receipt on a routed alert before delivering it locally instead ("via local fallback: master unreachable"). |
+| `fleet.link_down_warn_after` | `10m` | `30s` | How long the link to the master must be down before the child raises its own local "fleet link down" warning alert. |
+
+```bash
+sudo trinetra config set fleet.fallback_after 90s
+sudo trinetra config set fleet.link_down_warn_after 5m
+```
+
+Both apply live: no restart or SIGHUP special-case is needed beyond the
+usual persist-and-reload every `config set` already does. See [Fleet
+mode](02-architecture.md#fleet-mode) for where these two keys sit among the
+rest of the fleet configuration.
+
 ## Where to go next
 
 Everything below the trinetra-ctl screens -- the config file model, `config

@@ -336,6 +336,176 @@ strip to appear. Older copies of the reference documentation omit it from the
 allowlist; the panel is real and allowlistable, and the table above is the
 authoritative list.
 
+## Fleet
+
+Everything above this section describes the web UI for one host. In [fleet
+mode](02-architecture.md#fleet-mode), signed in on the **master**, the same
+UI grows a fleet layer on top: every existing page is also reachable for any
+other node, plus a set of fleet-only pages for the roster, incidents,
+alerting, silences, managed config, and audit. None of this appears on a
+solo installation or on a child's own local UI, beyond the badge described
+at the end of this section.
+
+### Node pages under `/n/{id}/`
+
+Every existing per-server page -- the dashboard, history, monitoring, host
+detail, alerts -- is mounted a second time under `/n/{node-id}/...`, resolved
+through middleware into that node's replica. The bare, unprefixed routes
+still mean "this host" exactly as before; nothing changes for a solo
+install or for the master's own view of itself. A page under `/n/<id>/`
+carries a **replica banner** at the top naming the node and its state:
+"replica, catching up, N behind" while its backlog drains, or "is down
+since HH:MM -- showing the last data received" once it has gone stale or
+down. Live-only data that has no meaning without an active connection, such
+as container logs, is served through the master-to-child stream's on-demand
+RPC and greys out with the reason ("node is not connected") when the node
+isn't currently linked.
+
+### The switcher and Ctrl/Cmd-K
+
+A dropdown in the top bar lists every fleet node (name, live state) and
+jumps to the same page type on the node you pick -- switching from a node's
+history page takes you to the next node's history page, not its dashboard.
+Pressing **Ctrl-K** (or **Cmd-K** on macOS) opens a fuzzy palette over the
+same roster, searching name and tag for any signed-in role, and additionally
+by remote address for an admin. Two extras live only in the palette:
+
+- **Recent nodes.** The last five nodes you visited are remembered
+  client-side (`localStorage`, best-effort -- a private window or blocked
+  site data just means no recent list, never a broken palette) and offered
+  before you type anything.
+- **Page-type jump.** Typing a node query followed by one of `dashboard`,
+  `monitoring`, `host`, `alerts`, or `history` -- for example `web1
+  history` -- jumps straight to that page type on the matched node, instead
+  of that node's default dashboard.
+
+A page with no per-node equivalent (the fleet pages themselves) always
+targets the picked node's dashboard rather than a nonexistent node-scoped
+copy of the current page.
+
+### `/fleet`: the overview
+
+The fleet landing page, reachable by any signed-in role:
+
+- A **health strip** of four clickable counts -- Online, Behind (lagging +
+  stale), Down, Revoked -- each a filter link into the table below.
+- A **heatmap** of every matching node, tiled by a metric you pick (CPU,
+  memory, disk, load), colour-banded, each tile linking to that node.
+- **Top-N panels**: the five highest nodes by CPU, by memory, and by worst
+  disk, plus a "Down now" panel listing every currently-down node with how
+  long ago it was last seen.
+- A **node table** (name, tags, state, CPU, memory, worst disk, load,
+  version, last seen, and a link-health column showing skew/outbox
+  warnings), sortable, filterable by tag/state/free-text search, all three
+  living in the URL so a filtered/sorted view is a shareable link. The
+  table body polls every 5 seconds and only ever shows the latest response
+  even if an earlier poll is still in flight.
+- A **compare view**: tick 2 or more node checkboxes in the table (or link
+  in a tag) and open Compare to overlay one metric across up to 10 nodes at
+  once, or view an aggregated avg/max/min series across a whole filtered
+  set, on the same uPlot chart the rest of the UI uses. An invalid selection
+  (an unknown node, more than 10 nodes) is shown as an inline message, never
+  a blank chart or a 500.
+
+### `/fleet/admin`
+
+Admin-only. Three sections: **join tokens** (issue one with a TTL, use
+count, and tags; the resulting join command is shown once, meant to be
+copied straight into `trinetra fleet join`), **nodes** (rename, replace
+tags, revoke, or remove -- destructive actions require a two-step confirm
+with no JavaScript `confirm()` dialog; **Remove** only appears for a node
+that is already revoked or down, since removing a live node would just have
+it immediately re-report as unrecognized), and **link health** (per node:
+state, last seen, clock skew, outbox depth and oldest un-acked age, replica
+drop counts, and the node's remote address -- visible here because this page
+is already admin-only).
+
+### Incidents
+
+`/fleet/incidents` lists incidents (state, title, severity, nodes involved,
+opened, duration), filterable by state/node/tag via the URL and
+self-polling every 10 seconds. `/fleet/incidents/{id}` shows one incident in
+full: its members (with per-member silence/delivery state), and its full
+timeline (fired, grouped, delivered, escalated, acked, resolved, each with
+who and when). Any signed-in role can read both; an admin can acknowledge
+the incident or silence it from the detail page.
+
+### Alerting admin and the route tester
+
+`/fleet/alerting` (readable by any role, editable by admins only) is three
+things in one page:
+
+- A structured **routes and policies** editor, mirroring `fleet alerting
+  show`/`apply`'s shape one to one -- route matchers, policy steps,
+  `repeat_every`, `send_resolved` -- plus a raw JSON editor for the whole
+  `AlertingConfig` for anyone who would rather paste a document (see the
+  worked example in [Fleet alerting](06-alerting-and-channels.md#routes-and-escalation-policies)).
+  Saving carries the config's `version`, so a concurrent edit from another
+  session or the CLI is caught as a conflict rather than silently
+  overwritten.
+- A read-only **aggregate rules** table showing each rule's expression,
+  current value, and firing/no-data state live, next to the same rules the
+  CLI's `fleet rules` prints.
+- A **route tester**: fill in a hypothetical node/tags/rule/severity and see
+  exactly which route and policy would fire and whether a silence would
+  suppress it, without sending a real alert -- the web form of `fleet route
+  test`.
+
+### Silences and maintenance
+
+`/fleet/silences` lists active, upcoming, and expired silences and recurring
+maintenance windows, and lets an admin create either from a form (the same
+matcher fields the CLI's `--match` takes: tag, node, rule, severity).
+**Every time shown or entered on this page is the master's own local time
+zone, labelled with its abbreviation** (e.g. "2030-06-01 12:00 IST"), never
+bare UTC, so a time you type back matches what you meant. See [Fleet
+alerting](06-alerting-and-channels.md#silences-and-maintenance-windows) for
+the node matcher's exact glob-or-id semantics, which apply identically here.
+
+### Managed config
+
+`/fleet/managed` shows every managed-config fragment (tag, keys/values,
+version, author), a per-node status table (applied vs. desired version,
+whether it's applied, any drift, and any cross-fragment key conflicts), and,
+for admins, a create/edit form restricted to the same closed 10-key
+allowlist described in [Fleet alerting](06-alerting-and-channels.md#managed-config).
+Unlike the CLI's `fleet managed set`, which merges by default, the web
+form always edits and saves that fragment's **complete** set of key/value
+rows -- there is no separate merge/replace choice here, because the form
+already shows and submits every row at once. A viewer sees both tables but
+not the create/edit form at all.
+
+### Audit log
+
+`/fleet/audit`, admin-only: every fleet mutation (node rename/tag/revoke/
+remove, token issuance, silence/maintenance create, alerting config saves,
+managed-config changes, incident acks) as a filterable (actor, action),
+paginated table of time, actor, action, target, and detail.
+
+### Remote-node actions and the stale banner
+
+From a node-scoped page, acknowledging or unacknowledging an alert and
+viewing container logs work exactly as they do locally **when that node is
+currently connected** to the master's stream; when it isn't, the action is
+disabled with a reason ("node is not connected") rather than silently doing
+nothing or erroring. A remote node's live view (its SSE-driven dashboard
+push) also has its own staleness detector, separate from the replica
+banner's own state: after three consecutive failures polling that node, the
+page shows a "live updates paused -- last update <time>" banner, cleared
+automatically the moment a poll succeeds again.
+
+### The child's link badge
+
+Signed in on a **child**, the top bar shows a small status pill instead of
+the switcher: **"Linked to master &middot; ack &lt;time&gt; ago"** while the
+link is healthy, **"Connecting to master"** before the first ack, or
+**"Master unreachable &lt;time&gt; &middot; alerting locally"** once the
+lease has lapsed and the child has fallen back to delivering its own
+alerts. Managed-config keys
+are read-only on a child's own `/config` page while under management,
+matching the CLI/control-socket refusal described in [Fleet
+alerting](06-alerting-and-channels.md#managed-config).
+
 ---
 
 [Previous: Downtime and liveness](07-downtime-and-liveness.md) | [Handbook index](README.md) | [Next: Storage and the data model](09-storage-and-data-model.md)
