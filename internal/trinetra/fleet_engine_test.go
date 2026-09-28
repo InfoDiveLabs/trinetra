@@ -196,6 +196,87 @@ func TestEngineChildFireEnrichesDeliversAndReceipts(t *testing.T) {
 	}
 }
 
+// TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident reproduces
+// the docker fleet e2e's step 12 failure end to end: n1's cpu incident is
+// opened, delivered once, and left open forever (mirroring the real run's
+// step 10, which deliberately never recovers child1's mem incident). n2's
+// cpu alert shares the SAME incident (groupKeyFor's default bucket is
+// "rule=<key>|severity=<severity>", computed WITHOUT the node whenever no
+// route's GroupBy overrides it -- see fleet_engine.go's groupKeyFor/
+// groupKeyForRouted). n2 then fires once (T_A) and, before this fix, that
+// alert's SECOND, byte-identical-by-dedup-key resend (a child's own
+// fallback-delivery record -- see fleet_lease.go's deliverFallback --
+// hitting Submit's "alreadySeen" branch, which calls MarkDeliveredLocally)
+// poisons legDeliveredStatusFor for the WHOLE incident: MarkDeliveredLocally
+// appended a "delivered" timeline event with no Leg/Node/AlertKey/FiredAt,
+// so legDeliveredStatusFor's Leg=="" legacy-event fallback (pre-dating
+// per-member grouping) treated it as "the incident's fire leg is delivered"
+// full stop -- not just T_A's own member. T_A then recovers, and n2 fires
+// again (T_B, a genuinely new, unresolved, never-delivered member) -- which
+// tryDeliverGroup's `pending` computation must still deliver, but before
+// the fix silently treated as already covered by T_A's poisoned event and
+// never delivered at all (only ever reaching anyone, in the real system,
+// via that member's own local-fallback timer ~90s later).
+func TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident(t *testing.T) {
+	ef := newEngineFixture(t)
+	ef.connect("n1")
+	ef.connect("n2")
+	ef.engine.PushLeaseNow("n1", time.Unix(500, 0))
+	ef.engine.PushLeaseNow("n2", time.Unix(500, 0))
+
+	// n1's cpu fires, delivers once, and is left open forever.
+	ef.engine.HandleChildAlert("n1", "box1", []string{"web"}, AlertEvent{
+		Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning",
+		Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000,
+	})
+	ef.waitIdle()
+	incs := ef.incidents.List(core.IncidentFilter{}, nil)
+	if len(incs) != 1 {
+		t.Fatalf("incidents after n1 fire = %d, want 1", len(incs))
+	}
+	if got := incs[0].GroupKey; got != "rule=cpu|severity=warning" {
+		t.Fatalf("group key = %q, want the default node-less bucket", got)
+	}
+
+	// n2's cpu fires (T_A) -- delivered normally via the shared incident's
+	// group delivery, THEN a second, byte-identical-dedup-key record for
+	// the SAME (n2, cpu, 2000) arrives marked DeliveredLocally (the child's
+	// own fallback resend for this exact alert): Submit's alreadySeen
+	// branch calls MarkDeliveredLocally, which is the buggy call site.
+	tAFire := AlertEvent{Time: 2000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 2000}
+	ef.engine.HandleChildAlert("n2", "box2", []string{"web"}, tAFire)
+	ef.waitIdle()
+	tAFireDeliveredLocally := tAFire
+	tAFireDeliveredLocally.DeliveredLocally = true
+	ef.engine.HandleChildAlert("n2", "box2", []string{"web"}, tAFireDeliveredLocally)
+	ef.waitIdle()
+
+	// T_A recovers.
+	ef.engine.HandleChildAlert("n2", "box2", []string{"web"}, AlertEvent{
+		Time: 2030, Key: "cpu", Title: "cpu back to normal", Severity: "warning",
+		Kind: "recover", Source: "anomaly", RoutedToMaster: true, FiredAt: 2030,
+	})
+	ef.waitIdle()
+
+	beforeCount := ef.deliveredCount()
+
+	// T_B: n2's cpu fires again (a genuinely new, unresolved member) --
+	// must still be delivered by the shared incident's group delivery.
+	ef.engine.HandleChildAlert("n2", "box2", []string{"web"}, AlertEvent{
+		Time: 3000, Key: "cpu", Title: "cpu high again", Severity: "warning",
+		Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 3000,
+	})
+	ef.waitIdle()
+
+	if got := ef.deliveredCount(); got != beforeCount+1 {
+		t.Fatalf("delivered count after T_B's fire = %d, want %d (T_B must still be delivered, not silently swallowed by T_A's MarkDeliveredLocally event): all delivered=%+v",
+			got, beforeCount+1, ef.delivered)
+	}
+	if got := ef.lastDelivered().Title; got != "box2: cpu high again" {
+		t.Fatalf("last delivered title = %q, want T_B's own title", got)
+	}
+}
+
 // TestEngineFireCarriesIncidentButtons pins task 9's wiring: a delivered
 // fire Alert carries Ack/Silence-1h buttons naming its own incident's id.
 func TestEngineFireCarriesIncidentButtons(t *testing.T) {

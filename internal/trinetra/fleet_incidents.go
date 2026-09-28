@@ -610,7 +610,24 @@ func (s *incidentStore) MarkDeliveredLocally(node, key string, firedAt, now int6
 			}
 			al.DeliveredLocally = true
 			cand.Updated = now
-			cand.Timeline = append(cand.Timeline, core.IncidentEvent{TS: now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child"})
+			// Leg/AlertKey/Node/FiredAt (task 6 part 1's structured fields)
+			// MUST be set here, exactly like every other "delivered" event
+			// Apply/deliverGroup/deliverUnsilencedMember append: without
+			// them, legDeliveredStatusFor's Leg=="" legacy-event branch
+			// treats this AS IF it recorded "fire delivered" for the WHOLE
+			// incident, not just this one member -- silently poisoning
+			// tryDeliverGroup's `pending` computation for every OTHER
+			// member of a shared/grouped incident (e.g. two nodes' alerts
+			// sharing one incident's default, node-less group key) sharing
+			// this incident, forever after: a later member's own genuine
+			// fire looks "already delivered" and tryDeliverGroup silently
+			// skips it, so it is never delivered by the master at all and
+			// only ever reaches anyone via that member's OWN local-fallback
+			// timer. See TestMarkDeliveredLocallyScopesToItsOwnMember.
+			cand.Timeline = append(cand.Timeline, core.IncidentEvent{
+				TS: now, Kind: "delivered", Detail: "delivered locally by the node", Actor: "child",
+				Leg: "fire", AlertKey: key, Node: node, FiredAt: firedAt,
+			})
 			recomputeState(&cand, now)
 			s.syncIndexesLocked(cand)
 			s.byID[id] = cand
