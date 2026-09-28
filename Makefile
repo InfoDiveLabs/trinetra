@@ -2,7 +2,7 @@ BIN=trinetra
 CTL_BIN=trinetra-ctl
 WEB_BIN=trinetra-web
 
-.PHONY: test vet build linux cross release release-prod validate fleet-e2e migration-e2e fmt
+.PHONY: test vet build linux cross release release-prod validate fleet-e2e migration-e2e test-all fmt
 
 # Build flags, per release channel:
 #   Beta/dev builds keep the symbol table and DWARF so stack traces, delve, and
@@ -109,3 +109,9 @@ fleet-e2e:
 # privileged containers; about 1 min after the image build.
 migration-e2e:
 	bash test/docker/migration/run.sh
+
+# test-all runs every check unattended (gofmt, vet, race tests, build, then
+# the fleet and migration docker suites) and writes per-stage logs plus a
+# summary under .test-results/. ARGS=--quick skips docker.
+test-all:
+	bash scripts/test-all.sh $(ARGS)
