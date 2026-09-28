@@ -254,7 +254,8 @@ The rendered reply lists each event with its start, end, and human-readable
 duration, or a cheerful "no downtime recorded in window" when the window is
 clean. Note that this is a different log from the one `trinetra alerts`
 prints. That command reads `alertlog.jsonl`, the record of threshold alert
-fires and recoveries with their per-channel delivery outcomes, which is an
+fires and recoveries (see [Alert
+history](06-alerting-and-channels.md#alert-history)), which is an
 adjacent event log but not the downtime log. If you want the power and network
 outage history specifically, `/history` and `/down` are the way in.
 
