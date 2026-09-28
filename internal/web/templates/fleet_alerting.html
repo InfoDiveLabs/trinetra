@@ -106,7 +106,7 @@
     </div>
 
     <div class="section-label"><span class="eyebrow">Policies</span></div>
-    <p class="note" style="margin-top:-6px">Each step fires After its incident's first delivery; the last step repeats on Repeat every until acked or resolved.</p>
+    <p class="note" style="margin-top:-6px">Each step's own "After" delay counts from the incident's first delivery, not from the previous step; once the last step has fired, it repeats on the policy's own "Repeat every" interval until the incident is acked or resolved.</p>
     <div class="panel" style="margin-bottom:18px">
       {{range $pi, $policy := .Draft.Policies}}
       <div class="panel" style="margin-bottom:12px">

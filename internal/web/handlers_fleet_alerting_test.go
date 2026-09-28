@@ -140,6 +140,26 @@ func TestFleetAlertingPageRendersDefaultConfig(t *testing.T) {
 	}
 }
 
+// TestFleetAlertingPolicyIntroReadsGrammatically pins U5 (2026-09-25 UI
+// audit): the Policies section's intro used to read "Each step fires After
+// its incident's first delivery; the last step repeats on Repeat every
+// until acked or resolved" -- the "After"/"Repeat every" field labels
+// dropped straight into the sentence rather than referenced grammatically.
+func TestFleetAlertingPolicyIntroReadsGrammatically(t *testing.T) {
+	d := fleetAdminDeps(t, &fakeFleet{})
+	rr := fleetAdminGetAsRole(t, d, RoleAdmin, "/fleet/alerting")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /fleet/alerting status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "fires After its incident's first delivery") || strings.Contains(body, "repeats on Repeat every") {
+		t.Errorf("GET /fleet/alerting: policies intro still reads as the broken sentence\nbody:\n%s", body)
+	}
+	if !strings.Contains(body, "the incident's first delivery") || !strings.Contains(body, "acked or resolved") {
+		t.Errorf("GET /fleet/alerting: policies intro missing its own content\nbody:\n%s", body)
+	}
+}
+
 // TestFleetAlertingViewerReadOnly pins the viewer floor: GET succeeds
 // (read-only), but no edit forms render (no "Add route"/"Save routing
 // config"/"Save JSON" controls) -- only the route tester stays a live form.
