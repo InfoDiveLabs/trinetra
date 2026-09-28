@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"errors"
 	"html"
 	"net/http"
@@ -283,6 +284,56 @@ func TestFleetAdminTokenCreateSetsCreator(t *testing.T) {
 	}
 	if !strings.Contains(newField, "creator=root") {
 		t.Errorf("fleet.token.create audit New = %q, want it to contain creator=root", newField)
+	}
+}
+
+// TestFleetTokenCreateHandlerUsesAuditUserHelper pins round-2 review finding
+// M1: fleetTokenCreateHandler must resolve the acting user via the shared
+// auditUser(r) helper (audit.go) -- the same helper every other mutation in
+// this branch uses for the identical lookup -- rather than duplicating the
+// userFromContext(r) check inline. Both forms produce an identical Creator
+// value for a signed-in caller (TestFleetAdminTokenCreateSetsCreator above
+// already pins that runtime behavior), so this is purely a maintainability/
+// consistency fix, checked structurally here: the handler's own source must
+// call auditUser(r), not hand-roll the userFromContext lookup a second time.
+func TestFleetTokenCreateHandlerUsesAuditUserHelper(t *testing.T) {
+	src, err := os.ReadFile("handlers_fleet_admin.go")
+	if err != nil {
+		t.Fatalf("reading handlers_fleet_admin.go: %v", err)
+	}
+	start := bytes.Index(src, []byte("func fleetTokenCreateHandler("))
+	if start < 0 {
+		t.Fatal("fleetTokenCreateHandler not found in handlers_fleet_admin.go")
+	}
+	rest := src[start:]
+	end := bytes.Index(rest[1:], []byte("\nfunc "))
+	if end < 0 {
+		t.Fatal("could not find the end of fleetTokenCreateHandler (no following top-level func)")
+	}
+	body := rest[:end+1]
+	if !bytes.Contains(body, []byte("auditUser(r)")) {
+		t.Errorf("fleetTokenCreateHandler must resolve the acting user via auditUser(r), body:\n%s", body)
+	}
+	if bytes.Contains(body, []byte("userFromContext(r); ok {")) {
+		t.Errorf("fleetTokenCreateHandler still duplicates the userFromContext lookup instead of using auditUser(r), body:\n%s", body)
+	}
+}
+
+// TestNewTokenRowExpiresInMasterLocalZone pins round-2 review finding M2:
+// a join-token's Expires must render through the same master-local-zone-
+// with-abbreviation convention (silenceTimeText) as every other absolute
+// timestamp on the fleet surface, rather than its own RFC3339/UTC
+// convention -- a third distinct format the review flagged as worth folding
+// into the same cleanup as finding I1.
+func TestNewTokenRowExpiresInMasterLocalZone(t *testing.T) {
+	withLocalTZ(t, "Asia/Kolkata")
+	row := newTokenRow(core.TokenView{ID: "tok1", Expires: 1893456000})
+	want := silenceTimeText(1893456000)
+	if row.Expires != want {
+		t.Errorf("newTokenRow Expires = %q, want %q (silenceTimeText's own output)", row.Expires, want)
+	}
+	if !strings.Contains(row.Expires, "IST") {
+		t.Errorf("newTokenRow Expires missing IST zone abbreviation, got %q", row.Expires)
 	}
 }
 

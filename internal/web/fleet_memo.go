@@ -17,6 +17,13 @@ import (
 // needs to be distinguished from a genuine backend error.
 var errNoFleetSupport = errors.New("web: no fleet support")
 
+// errNoAPI is fleetMemo's internal stand-in for "apiFor(r,d) returned nil"
+// (no core.API wired for this request's node scope at all) -- snapshot's
+// own caller (buildDashboardPageData) distinguishes this from a genuine
+// Snapshot() error (it doesn't log for the former, the same tolerance the
+// pre-memo inline `if api := apiFor(r, d); api != nil` check already had).
+var errNoAPI = errors.New("web: no api support")
+
 // fleetMemoCtxKey is the unexported context key withFleetMemo stores this
 // request's *fleetMemo under.
 type fleetMemoCtxKey struct{}
@@ -53,6 +60,29 @@ type fleetMemo struct {
 	incidentsFiringOnce  sync.Once
 	incidentsFiringCount int
 	incidentsFiringErr   error
+
+	// activeAlertsOnce/activeAlertsCache (round-2 review finding I2) memoize
+	// activeAlertsViaAPI's own apiFor(r,d).ActiveAlerts() call, computed at
+	// most once per request no matter how many call sites ask for it --
+	// topbarStatus (newPageData), the sidebar's Alerts badge (navCountsFor),
+	// and every page's own data-builder (buildDashboardPageData,
+	// buildAlertsPageData) used to each make their own independent round
+	// trip; GET /alerts alone made three. Exactly the same "compute once,
+	// share everywhere" fix fleetStatus/fleetNodes already got, extended
+	// beyond FleetAPI to core.API.
+	activeAlertsOnce  sync.Once
+	activeAlertsCache []activeAlertView
+
+	// snapshotOnce/snapshotCache/snapshotErr memoize apiFor(r,d).Snapshot()
+	// the same way -- the dashboard page's own live view and the sidebar's
+	// Monitoring badge (nav_counts.go's node-scope branch) used to each poll
+	// a remote node's Snapshot() independently on every request scoped to
+	// it. NOT used by remoteNodeSnapshot (sse.go)'s polling loop, which must
+	// keep reading live rather than caching a snapshot for an SSE
+	// connection's whole lifetime.
+	snapshotOnce  sync.Once
+	snapshotCache DashboardView
+	snapshotErr   error
 }
 
 // fleetAPIFor resolves d's core.FleetAPI, collapsing a nil Deps.Fleet or a
@@ -126,6 +156,34 @@ func (m *fleetMemo) fleetIncidentsFiringCount(d Deps) (int, error) {
 		m.incidentsFiringCount = len(incs)
 	})
 	return m.incidentsFiringCount, m.incidentsFiringErr
+}
+
+// activeAlerts returns apiFor(r,d).ActiveAlerts(), projected the same way
+// activeAlertsViaAPI (handlers_dashboard.go) always has, computed at most
+// once for this memo's lifetime -- see the struct field's own doc.
+// activeAlertsViaAPI itself now just calls this.
+func (m *fleetMemo) activeAlerts(r *http.Request, d Deps) []activeAlertView {
+	m.activeAlertsOnce.Do(func() {
+		m.activeAlertsCache = fetchActiveAlertsViaAPI(r, d)
+	})
+	return m.activeAlertsCache
+}
+
+// snapshot returns apiFor(r,d).Snapshot(), computed at most once for this
+// memo's lifetime -- see the struct field's own doc. A nil apiFor(r,d)
+// reports errNoAPI rather than the zero DashboardView silently, so a caller
+// that cares (buildDashboardPageData) can still tell "nothing to poll" apart
+// from a genuine read error.
+func (m *fleetMemo) snapshot(r *http.Request, d Deps) (DashboardView, error) {
+	m.snapshotOnce.Do(func() {
+		api := apiFor(r, d)
+		if api == nil {
+			m.snapshotErr = errNoAPI
+			return
+		}
+		m.snapshotCache, m.snapshotErr = api.Snapshot()
+	})
+	return m.snapshotCache, m.snapshotErr
 }
 
 // fleetMemoFrom returns r's request-scoped *fleetMemo (attached by

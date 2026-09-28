@@ -39,6 +39,51 @@ func TestAlertsPageListsLogEvents(t *testing.T) {
 	}
 }
 
+// TestAlertHistoryRowsUsesMasterLocalZone pins round-2 review finding I1's
+// second half: alertHistoryRows' "When" column must render through the same
+// master-local-zone-with-abbreviation convention silenceTimeText
+// (handlers_fleet_silences.go) established for Silences/Audit/Incidents,
+// not its own unlabeled-UTC format -- see TestIncidentTimeTextUsesMasterLocalZone
+// (handlers_fleet_incidents_test.go) for the sibling pin on incidentTimeText.
+func TestAlertHistoryRowsUsesMasterLocalZone(t *testing.T) {
+	withLocalTZ(t, "Asia/Kolkata")
+	rows := alertHistoryRows([]core.AlertRecord{{Time: 1893456000, Key: "disk:/"}})
+	if len(rows) != 1 {
+		t.Fatalf("alertHistoryRows returned %d rows, want 1", len(rows))
+	}
+	want := silenceTimeText(1893456000)
+	if rows[0].When != want {
+		t.Errorf("alertHistoryRows When = %q, want %q (silenceTimeText's own output)", rows[0].When, want)
+	}
+	if !strings.Contains(rows[0].When, "IST") {
+		t.Errorf("alertHistoryRows When missing IST zone abbreviation, got %q", rows[0].When)
+	}
+}
+
+// TestAlertsPageMemoizesActiveAlerts pins round-2 review finding I2: GET
+// /alerts must call apiFor(r,d).ActiveAlerts() at most ONCE per request --
+// the review found it called three separate times (topbarStatus's
+// newPageData, navCountsFor's sidebar badge, and buildAlertsPageData's own
+// read), each a redundant control-socket round trip on a fleet node.
+func TestAlertsPageMemoizesActiveAlerts(t *testing.T) {
+	d, _, _ := configTestDeps(t)
+	counting := newCountingAPI(fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1700000000}}})
+	d.API = counting
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/alerts")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if got := counting.activeAlertsCallCount(); got != 1 {
+		t.Errorf("ActiveAlerts() calls while rendering /alerts = %d, want 1 (topbarStatus/navCountsFor/buildAlertsPageData must share the request memo)", got)
+	}
+}
+
 // TestAlertsPageMissingLogRendersEmptyNot500 pins the "no history -> empty,
 // never 500" requirement when the control socket reports an empty history.
 func TestAlertsPageMissingLogRendersEmptyNot500(t *testing.T) {

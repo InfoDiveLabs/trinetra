@@ -513,6 +513,37 @@ func TestNewHandlerNodeRouterAuthFlow(t *testing.T) {
 	})
 }
 
+// TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts pins round-2 review
+// finding I2's remote-node case: rendering GET /n/child1/ (the dashboard,
+// node-scoped) must call the child node's apiFor(r,d).Snapshot() and
+// ActiveAlerts() at most ONCE each per request. The review found
+// buildDashboardPageData's own Snapshot() read duplicated by
+// navCountsFor's node-scope branch (nav_counts.go:87-90) -- a fresh
+// control-socket round trip THIS task's own nav-count code added -- and
+// ActiveAlerts() read by both topbarStatus (newPageData) and navCountsFor's
+// sidebar badge.
+func TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts(t *testing.T) {
+	childCounting := newCountingAPI(childFakeAPI("child1-svc"))
+	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": childCounting}))
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/n/child1/")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if got := childCounting.snapshotCallCount(); got != 1 {
+		t.Errorf("child node Snapshot() calls while rendering GET /n/child1/ = %d, want 1 (buildDashboardPageData/navCountsFor must share the request memo)", got)
+	}
+	if got := childCounting.activeAlertsCallCount(); got != 1 {
+		t.Errorf("child node ActiveAlerts() calls while rendering GET /n/child1/ = %d, want 1 (topbarStatus/navCountsFor must share the request memo)", got)
+	}
+}
+
 // errNodeScopeTestOldDaemon is a canned error standing in for the control
 // package's real "control: daemon does not support fleet node routing
 // (upgrade trinetra)"-shaped failure an old daemon's Fleet().Status() would

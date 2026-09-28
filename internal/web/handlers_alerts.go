@@ -67,11 +67,16 @@ func alertHistoryRows(events []core.AlertRecord) []alertHistoryRow {
 	out := make([]alertHistoryRow, 0, len(events))
 	for _, ev := range events {
 		out = append(out, alertHistoryRow{
-			Severity:  ev.Severity,
-			Title:     ev.Title,
-			Source:    ev.Source,
-			Kind:      ev.Kind,
-			When:      time.Unix(ev.Time, 0).UTC().Format("Jan 2 15:04"),
+			Severity: ev.Severity,
+			Title:    ev.Title,
+			Source:   ev.Source,
+			Kind:     ev.Kind,
+			// When routes through silenceTimeText (handlers_fleet_silences.go,
+			// master-local zone with abbreviation) rather than its own
+			// unlabeled-UTC format -- round-2 review finding I1, matching
+			// incidentTimeText's own fix (handlers_fleet.go) so every absolute
+			// timestamp on the fleet surface uses the one convention.
+			When:      silenceTimeText(ev.Time),
 			Delivered: deliveredNames(ev),
 		})
 	}

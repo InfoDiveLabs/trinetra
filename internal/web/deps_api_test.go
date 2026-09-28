@@ -781,20 +781,37 @@ var _ core.FleetAPI = (*fakeFleet)(nil)
 type countingAPI struct {
 	api   core.API
 	calls *int
+	// snapshotCalls/activeAlertsCalls (round-2 review finding I2) are
+	// per-method counters alongside the aggregate calls above, so a test can
+	// pin "at most one Snapshot()/ActiveAlerts() round trip per request" --
+	// the exact redundancy the request-memo extension fixes -- without that
+	// assertion being diluted by every OTHER core.API call a page also
+	// happens to make (e.g. coreVersionViaAPI's Version()).
+	snapshotCalls     *int
+	activeAlertsCalls *int
 }
 
 // newCountingAPI wraps api with a fresh, zeroed call counter.
 func newCountingAPI(api core.API) *countingAPI {
-	n := 0
-	return &countingAPI{api: api, calls: &n}
+	n, s, a := 0, 0, 0
+	return &countingAPI{api: api, calls: &n, snapshotCalls: &s, activeAlertsCalls: &a}
 }
 
 // count returns how many core.API calls have gone through this wrapper so
 // far.
 func (c *countingAPI) count() int { return *c.calls }
 
+// snapshotCallCount returns how many Snapshot() calls have gone through this
+// wrapper so far.
+func (c *countingAPI) snapshotCallCount() int { return *c.snapshotCalls }
+
+// activeAlertsCallCount returns how many ActiveAlerts() calls have gone
+// through this wrapper so far.
+func (c *countingAPI) activeAlertsCallCount() int { return *c.activeAlertsCalls }
+
 func (c *countingAPI) Snapshot() (core.DashboardView, error) {
 	*c.calls++
+	*c.snapshotCalls++
 	return c.api.Snapshot()
 }
 
@@ -815,6 +832,7 @@ func (c *countingAPI) Events(from, to int64) ([]core.DownEventView, error) {
 
 func (c *countingAPI) ActiveAlerts() ([]core.AlertRecord, error) {
 	*c.calls++
+	*c.activeAlertsCalls++
 	return c.api.ActiveAlerts()
 }
 

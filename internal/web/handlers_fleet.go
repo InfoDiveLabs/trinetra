@@ -1002,15 +1002,17 @@ func incidentDurationText(sec int64) string {
 	}
 }
 
-// incidentTimeText renders a Unix timestamp as an absolute UTC
-// "Jan 2 15:04:05" reading (alertHistoryRows' own layout, handlers_alerts.go)
-// -- "-" for an unset (<=0) timestamp, e.g. a still-open member's
-// ResolvedAt or a still-open incident's Resolved.
+// incidentTimeText renders a Unix timestamp through silenceTimeText
+// (handlers_fleet_silences.go) -- the master's own local zone with its
+// abbreviation, e.g. "2030-06-01 12:00 IST" -- "-" for an unset (<=0)
+// timestamp, e.g. a still-open member's ResolvedAt or a still-open
+// incident's Resolved. Round-2 review finding I1: this used to render its
+// own unlabeled-UTC format, an inconsistency with the master-local-zone
+// convention Silences/Audit already established -- routing through the
+// same helper here (and alertHistoryRows, handlers_alerts.go) makes every
+// absolute timestamp on the fleet surface use the one convention.
 func incidentTimeText(ts int64) string {
-	if ts <= 0 {
-		return "-"
-	}
-	return time.Unix(ts, 0).UTC().Format("Jan 2 15:04:05")
+	return silenceTimeText(ts)
 }
 
 // IncidentRow is one row of the /fleet/incidents list table (task-2-brief.md:

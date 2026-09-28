@@ -61,7 +61,12 @@ func sampleFiringIncident() core.Incident {
 // nodes, opened, duration, delivered/suppressed chips. Uses a RESOLVED
 // incident (fixed Opened/Resolved) so DurationText is deterministic --
 // unlike a still-firing incident, whose duration depends on time.Now().
+// Pins time.Local (withLocalTZ) since round-2 review finding I1 moved
+// incidentTimeText's Opened rendering to the master-local-zone convention
+// (silenceTimeText) -- see TestIncidentTimeTextUsesMasterLocalZone below for
+// the focused pin of that convention itself.
 func TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips(t *testing.T) {
+	withLocalTZ(t, "Asia/Kolkata")
 	resolved := core.Incident{
 		ID: "inc2", Title: "swap high on web1", Severity: "warning", State: "resolved",
 		Opened: 1000, Resolved: 1000 + 5400, // 5400s = bucketed to "1h" by incidentDurationText
@@ -79,13 +84,33 @@ func TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips(t *te
 	body := rr.Body.String()
 	for _, want := range []string{
 		">resolved<", "swap high on web1", ">warning<", "web1", "web2",
-		"00:16:40", // incidentTimeText(1000) UTC
-		">1h<",     // incidentDurationText(5400)
+		silenceTimeText(1000), // incidentTimeText(1000) in master-local zone
+		">1h<",                // incidentDurationText(5400)
 		"delivered 1", "suppressed 1",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /fleet/incidents: missing %q\nbody:\n%s", want, body)
 		}
+	}
+}
+
+// TestIncidentTimeTextUsesMasterLocalZone pins round-2 review finding I1:
+// incidentTimeText must render through the SAME master-local-zone-with-
+// abbreviation convention silenceTimeText (handlers_fleet_silences.go)
+// already established for Silences/Audit, rather than its own unlabeled-UTC
+// format -- a user who just learned "times on this fleet UI carry my
+// server's zone" from Silences/Audit must not then misread an Incidents
+// timestamp as local when it was actually bare UTC (the same string either
+// way, since neither format carried a zone marker).
+func TestIncidentTimeTextUsesMasterLocalZone(t *testing.T) {
+	withLocalTZ(t, "Asia/Kolkata")
+	got := incidentTimeText(1893456000)
+	want := silenceTimeText(1893456000)
+	if got != want {
+		t.Errorf("incidentTimeText(1893456000) = %q, want %q (silenceTimeText's own output)", got, want)
+	}
+	if !strings.Contains(got, "IST") {
+		t.Errorf("incidentTimeText missing IST zone abbreviation, got %q", got)
 	}
 }
 

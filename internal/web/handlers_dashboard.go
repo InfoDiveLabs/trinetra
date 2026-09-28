@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -26,13 +27,38 @@ type activeAlertView struct {
 	Critical bool
 }
 
-// activeAlertsViaAPI reads the daemon's current active alerts over the
+// activeAlertsViaAPI returns this request's active alerts, memoized via the
+// request-scoped fleetMemo (fleet_memo.go) so every call site in the same
+// request -- the topbar status pill, the sidebar alert badge, the dashboard
+// panel, and the alerts page -- shares one control-socket round trip rather
+// than each making its own (round-2 review finding I2: GET /alerts alone
+// used to call this three times). The actual read/projection is
+// fetchActiveAlertsViaAPI, below; this is just the memoized front door every
+// caller already used before the memo existed, unchanged.
+func activeAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
+	return fleetMemoFrom(r).activeAlerts(r, d)
+}
+
+// snapshotViaAPI returns this request's apiFor(r,d).Snapshot(), memoized the
+// same way as activeAlertsViaAPI above -- the dashboard page's own live view
+// and the sidebar's Monitoring badge (nav_counts.go's node-scope branch)
+// used to each poll a remote node's Snapshot() independently (round-2
+// review finding I2). NOT used by remoteNodeSnapshot (sse.go)'s polling
+// loop, which must keep reading live for the SSE connection's whole
+// lifetime rather than caching one snapshot forever.
+func snapshotViaAPI(r *http.Request, d Deps) (DashboardView, error) {
+	return fleetMemoFrom(r).snapshot(r, d)
+}
+
+// fetchActiveAlertsViaAPI reads the daemon's current active alerts over the
 // control socket (Deps.API.ActiveAlerts) and projects each core.AlertRecord
 // into an activeAlertView for the dashboard panel, the sidebar badge, the
 // topbar status pill, and the alerts page. It is the channel-only replacement
 // for the old loadActiveAlerts, which decoded the daemon's alerts.json
 // directly off disk: a plugin must not read daemon-owned state from disk, so
-// all four callers now go through core.API.
+// all four callers now go through core.API. Called at most once per request
+// -- see activeAlertsViaAPI's own doc, above, which every caller uses
+// instead of this directly.
 //
 // The AlertRecord shape comes from trinetra's activeAlertRecords mapping:
 // the human reason text is carried in Source, and Critical is encoded as
@@ -50,7 +76,7 @@ type activeAlertView struct {
 // master's -- the topbar status pill, the sidebar alert badge, and every
 // page's alert panel all follow the request's node scope through this one
 // call site.
-func activeAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
+func fetchActiveAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
 	api := apiFor(r, d)
 	if api == nil {
 		return nil
@@ -141,13 +167,20 @@ type DashboardPageData struct {
 // disk/unit state.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
-	if api := apiFor(r, d); api != nil {
-		v, err := api.Snapshot()
-		if err != nil {
+	// snapshotViaAPI (round-2 review finding I2) is memoized per request, so
+	// this read is shared with navCountsFor's node-scope branch
+	// (nav_counts.go) instead of each making its own apiFor(r,d).Snapshot()
+	// round trip -- errNoAPI (fleet_memo.go) is "no core.API to poll at
+	// all", the same case the old `if api := apiFor(r, d); api != nil` guard
+	// silently skipped without logging; any other error still logs exactly
+	// as before.
+	v, err := snapshotViaAPI(r, d)
+	if err != nil {
+		if !errors.Is(err, errNoAPI) {
 			log.Printf("web: dashboard API.Snapshot: %v", err)
-		} else {
-			view = v
 		}
+	} else {
+		view = v
 	}
 	alerts := activeAlertsViaAPI(r, d)
 	return DashboardPageData{

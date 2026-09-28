@@ -181,9 +181,14 @@ func newTokenRow(t core.TokenView) TokenRow {
 	return TokenRow{
 		ID:       t.ID,
 		UsesLeft: t.Uses,
-		Expires:  time.Unix(t.Expires, 0).UTC().Format(time.RFC3339),
-		Tags:     strings.Join(t.Tags, ","),
-		Creator:  t.Creator,
+		// Expires routes through silenceTimeText (handlers_fleet_silences.go,
+		// master-local zone with abbreviation) rather than its own RFC3339/
+		// UTC convention -- round-2 review finding M2, folded into the same
+		// cleanup as finding I1 so every absolute timestamp on the fleet
+		// surface uses the one convention.
+		Expires: silenceTimeText(t.Expires),
+		Tags:    strings.Join(t.Tags, ","),
+		Creator: t.Creator,
 	}
 }
 
@@ -493,10 +498,7 @@ func fleetTokenCreateHandler(d Deps) http.HandlerFunc {
 			renderFleetAdminError(w, r, d, "fleet not available", http.StatusNotFound)
 			return
 		}
-		creator := ""
-		if u, ok := userFromContext(r); ok {
-			creator = u.Name
-		}
+		creator := auditUser(r)
 		created, err := fleet.CreateToken(core.TokenSpec{TTLSeconds: int64(ttl.Seconds()), Uses: uses, Tags: tags, Creator: creator})
 		if err != nil {
 			renderFleetAdminError(w, r, d, err.Error(), fleetAPIErrStatus(err))

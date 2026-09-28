@@ -84,10 +84,12 @@ func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 		if d.Snapshot != nil {
 			c.Monitoring = d.Snapshot().ContainersTotal
 		}
-	} else if api := apiFor(r, d); api != nil {
-		if v, err := api.Snapshot(); err == nil {
-			c.Monitoring = v.ContainersTotal
-		}
+	} else if v, err := snapshotViaAPI(r, d); err == nil {
+		// snapshotViaAPI (round-2 review finding I2) is memoized per
+		// request, shared with buildDashboardPageData's own Snapshot read
+		// (handlers_dashboard.go) instead of this costing a second
+		// apiFor(r,d).Snapshot() round trip on every remote-node page load.
+		c.Monitoring = v.ContainersTotal
 	}
 
 	if fleetRole == config.RoleMaster {
