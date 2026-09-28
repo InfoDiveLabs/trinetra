@@ -3,6 +3,7 @@ package trinetra
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 )
@@ -39,10 +40,29 @@ func pidFile() string { return stateDir + "/trinetra.pid" }
 
 func sortStrings(s []string) { sort.Strings(s) }
 
+// writeFileAtomic replaces path with b via a temp file in the same directory
+// and a rename. The temp name is unique per call, so concurrent writers of
+// the same path (e.g. two live updates from one node) cannot rename each
+// other's half-written file or find it already gone.
 func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, perm); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	_, werr := f.Write(b)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, perm)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, path)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+	}
+	return werr
 }
