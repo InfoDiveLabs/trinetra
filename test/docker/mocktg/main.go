@@ -1,18 +1,30 @@
 // Command mocktg is a stdlib-only stand-in for the Telegram Bot API, used by
 // the containerized validation harness. It records outbound sendMessage calls
-// (and their reply_markup, if any) and serves injected updates -- plain
-// messages or callback queries -- back to the daemon's long poller.
+// (text, chat_id and reply_markup, if any) and serves injected updates --
+// plain messages or callback queries -- back to the daemon's long poller.
+//
+// getUpdates queues are scoped by bot token (the "<tok>" segment of the
+// path), mirroring the real API: each bot only ever sees its own updates.
+// This matters once more than one daemon polls the same mock (fleet-e2e's
+// master and children each carry their own token): an update injected for
+// one token is never stolen by another token's poller. /_inject and
+// /_inject_callback both take an optional "token" query parameter for this;
+// omitting it files the update in a shared/legacy bucket that ANY
+// getUpdates call drains (first poller wins) -- the original, single-queue
+// behavior, kept as the default so existing callers need no changes.
 //
 // Endpoints:
 //
-//	POST /bot<tok>/sendMessage         -- records the "text"/"reply_markup" form values
+//	POST /bot<tok>/sendMessage         -- records the "text"/"chat_id"/"reply_markup" form values
 //	POST /bot<tok>/answerCallbackQuery -- records the "callback_query_id"/"text" form values
-//	GET  /bot<tok>/getUpdates          -- returns (and drains) injected updates
-//	POST /_inject?text=...             -- test-only: queue an inbound message (chat 999)
-//	POST /_inject_callback?data=...&chat=...&id=...  -- test-only: queue an inbound
+//	GET  /bot<tok>/getUpdates          -- returns (and drains) <tok>'s queued updates, plus the shared bucket
+//	POST /_inject?text=...[&token=...]            -- test-only: queue an inbound message (chat 999)
+//	POST /_inject_callback?data=...&chat=...&id=...[&token=...]  -- test-only: queue an inbound
 //	                                       callback_query (chat/id default to 999/an
 //	                                       auto-incrementing "cbN")
 //	GET  /_messages  -- test-only: dump recorded sendMessage texts as a JSON array
+//	GET  /_chats     -- test-only: dump recorded sendMessage chat_id values (same index as
+//	                    /_messages) as a JSON array
 //	GET  /_markups   -- test-only: dump recorded reply_markup values (same index as
 //	                    /_messages; "" for a message sent without one) as a JSON array
 //	GET  /_answers   -- test-only: dump recorded answerCallbackQuery calls, each
@@ -29,6 +41,23 @@ import (
 	"time"
 )
 
+// botToken extracts the "<tok>" segment from a "/bot<tok>/<method>" path, or
+// "" if the path does not have that shape (should not happen for any real
+// request this mux handles, since every registered method path contains
+// "/bot").
+func botToken(path string) string {
+	const marker = "/bot"
+	i := strings.Index(path, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := path[i+len(marker):]
+	if j := strings.Index(rest, "/"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
 // newMux builds the mock Telegram API's handler. Split out from main so a
 // Go test can exercise it directly (over httptest) without spawning a
 // subprocess or binding a real port.
@@ -36,13 +65,16 @@ func newMux() http.Handler {
 	var mu sync.Mutex
 	var sent []string
 	var sentMarkup []string
+	var sentChat []string
 	var answers []string
-	var pending []map[string]any
+	// pending is keyed by bot token; "" is the shared/legacy bucket that
+	// every getUpdates call also drains (see the package doc comment).
+	pending := map[string][]map[string]any{}
 	nextID := 1
 	nextCallbackID := 1
 
 	mux := http.NewServeMux()
-	// Telegram-compatible endpoints (token is in the path, ignored here).
+	// Telegram-compatible endpoints (token is in the path).
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "sendMessage"):
@@ -50,6 +82,7 @@ func newMux() http.Handler {
 			mu.Lock()
 			sent = append(sent, r.FormValue("text"))
 			sentMarkup = append(sentMarkup, r.FormValue("reply_markup"))
+			sentChat = append(sentChat, r.FormValue("chat_id"))
 			mu.Unlock()
 			w.Write([]byte(`{"ok":true}`))
 		case strings.Contains(r.URL.Path, "answerCallbackQuery"):
@@ -59,9 +92,17 @@ func newMux() http.Handler {
 			mu.Unlock()
 			w.Write([]byte(`{"ok":true}`))
 		case strings.Contains(r.URL.Path, "getUpdates"):
+			token := botToken(r.URL.Path)
 			mu.Lock()
-			out := pending
-			pending = nil
+			var out []map[string]any
+			if token == "" {
+				out = pending[""]
+				pending[""] = nil
+			} else {
+				out = append(append([]map[string]any(nil), pending[token]...), pending[""]...)
+				pending[token] = nil
+				pending[""] = nil
+			}
 			mu.Unlock()
 			// Emulate a short long-poll so the daemon's poller does not spin in
 			// a tight loop when there is nothing to deliver, while staying
@@ -76,8 +117,9 @@ func newMux() http.Handler {
 	})
 	mux.HandleFunc("/_inject", func(w http.ResponseWriter, r *http.Request) {
 		text := r.URL.Query().Get("text")
+		token := r.URL.Query().Get("token")
 		mu.Lock()
-		pending = append(pending, map[string]any{
+		pending[token] = append(pending[token], map[string]any{
 			"update_id": nextID,
 			"message":   map[string]any{"text": text, "chat": map[string]any{"id": 999}},
 		})
@@ -87,6 +129,7 @@ func newMux() http.Handler {
 	})
 	mux.HandleFunc("/_inject_callback", func(w http.ResponseWriter, r *http.Request) {
 		data := r.URL.Query().Get("data")
+		token := r.URL.Query().Get("token")
 		chat := r.URL.Query().Get("chat")
 		if chat == "" {
 			chat = "999"
@@ -102,7 +145,7 @@ func newMux() http.Handler {
 			id = "cb" + strconv.Itoa(nextCallbackID)
 			nextCallbackID++
 		}
-		pending = append(pending, map[string]any{
+		pending[token] = append(pending[token], map[string]any{
 			"update_id": nextID,
 			"callback_query": map[string]any{
 				"id":      id,
@@ -119,6 +162,11 @@ func newMux() http.Handler {
 		mu.Lock()
 		defer mu.Unlock()
 		_ = json.NewEncoder(w).Encode(sent)
+	})
+	mux.HandleFunc("/_chats", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		_ = json.NewEncoder(w).Encode(sentChat)
 	})
 	mux.HandleFunc("/_markups", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()

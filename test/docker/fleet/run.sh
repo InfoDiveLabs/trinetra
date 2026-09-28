@@ -17,6 +17,23 @@ cd "$(dirname "$0")"
 
 FAST=5               # fast_interval (default) in seconds
 DOWN_AFTER=30        # master fleet.node_down_after (the minimum)
+FALLBACK_AFTER=90    # child fleet.fallback_after -- MUST clear groupWait (fleet_engine.go's
+                     # 30s incident-grouping delivery gate: even a lone, ungrouped incident's
+                     # first notification waits for it) by a wide margin, or the master's
+                     # grouped delivery and the child's own local-fallback timer race, and
+                     # the child usually wins (its clock starts the instant it fires; the
+                     # master's is gated behind a 5s masterTickInterval poll of groupWait
+                     # PLUS actual dispatch PLUS the receipt frame's own round trip back to
+                     # the child). Setting this equal to (or too near) groupWait was diagnosed
+                     # live against the real daemon two different ways: at 30-60s, Submit's
+                     # own hadLeaseBefore/deliveredLocally decision was fine (delivery was
+                     # simply never attempted before the child gave up); even at 60s, one busy
+                     # run (several other incidents in flight at once, competing for the
+                     # keyed dispatcher) still delivered successfully but the receipt lagged
+                     # past the fallback deadline, so the child ALSO fired its own local
+                     # fallback for the exact same (node, key, fired_at) -- a genuine second
+                     # message, not a counting bug in this script. 90s leaves real headroom
+                     # above both.
 NET=swfleet_fleetnet # network name pinned in compose.yml
 T_START=$(date +%s)
 STEP=""
@@ -113,6 +130,30 @@ link_is() { [ "$(link_state "$1")" = "$2" ]; }
 unsent() { on "$1" trinetra fleet status | sed -n 's/^outbox: .* MB, \([0-9]*\) unsent.*/\1/p'; }
 unsent_is_zero() { [ "$(unsent "$1")" = "0" ]; }
 mocktg_has() { on mocktg curl -s http://localhost:8080/_messages | grep -qF "$1"; }
+mocktg_has_answer() { on mocktg curl -s http://localhost:8080/_answers | grep -qF "$1"; }
+# msg_count <substring>: how many times substring occurs across every
+# sendMessage text mocktg has recorded so far (steps 10-15 assert on the
+# DELTA around a specific action, since mocktg accumulates for the whole run).
+# grep -o exits 1 on zero matches, which -- under this script's `set -eo
+# pipefail` -- would otherwise silently kill the whole run the first time a
+# BASE_* count is legitimately 0 (no "FAIL" line, just a bare exit: exactly
+# the trap alert_count already dodges with its own inline `|| true`).
+# `{ ...; }` groups the grep so `|| true` absorbs only its exit code, not
+# wc/tr's.
+msg_count() { on mocktg curl -s http://localhost:8080/_messages | { grep -o -F "$1" || true; } | wc -l | tr -d ' \r'; }
+chat_count() { on mocktg curl -s http://localhost:8080/_chats | { grep -o -F "\"$1\"" || true; } | wc -l | tr -d ' \r'; }
+incident_acked() { on master trinetra fleet incident "$1" | grep -q "^acked by: "; }
+# The following compare against a BASE_* snapshot a step takes just before
+# triggering the action being waited on (set as a plain global right before
+# each wait_until call; bash resolves it at call time, not definition time).
+mem_delivered_once() { [ "$(msg_count "child1: mem =")" -gt "$BASE_MEM" ]; }
+fallback_delivered_once() { [ "$(msg_count "via local fallback: master unreachable")" -gt "$BASE_FALLBACK" ]; }
+mem_routed_once() { [ "$(msg_count "child2: mem =")" -gt "$BASE_C2MEM3" ]; }
+rule_state() { on master trinetra fleet rules | awk '$1=="lab-online"{print $2}'; }
+rule_is_firing() { [ "$(rule_state)" = "firing" ]; }
+rule_is_ok() { [ "$(rule_state)" = "ok" ]; }
+child_cfg_is() { [ "$(on "$1" trinetra config get "$2")" = "$3" ]; } # <svc> <key> <want>
+managed_applied_no_drift() { on master trinetra fleet managed status | awk -v n="$1" '$1==n && $4=="true" && $5=="-"' | grep -q .; }
 
 # fidelity <child-svc> <node-id> <metric> [tscmp flags...]: the master's
 # replica must be a byte prefix of the child's series, trailing it by at most
@@ -178,6 +219,14 @@ for c in child1 child2; do
   id=$(sed -n 's/^Joined fleet master https:\/\/master:9443 as node \([0-9a-f]*\) .*/\1/p' <<<"$J")
   [ -n "$id" ] || fail "$c: no node id in join output: $J"
   eval "ID_$c=$id"
+  # Each child gets its own working Telegram bot (steps 10/11/12/14 need real
+  # outbound delivery to prove local-fallback/silence/routing rather than
+  # just "no telegram configured"): a distinct token keeps its getUpdates
+  # poller in its own mocktg queue, never stealing an update injected for
+  # the master (step 15) -- see test/docker/mocktg's per-token queues.
+  on "$c" trinetra telegram set-token "TESTTOKEN_$c" >/dev/null
+  on "$c" trinetra config set telegram.chat_id 999 >/dev/null
+  on "$c" trinetra config set fleet.fallback_after ${FALLBACK_AFTER}s >/dev/null
   start_daemon "$c"
 done
 T_CHILDREN=$(date +%s)
@@ -343,6 +392,292 @@ NODES_AFTER=$(on master trinetra fleet nodes | tail -n +2 | wc -l | tr -d ' ')
 [ "$NODES_AFTER" -eq "$NODES_BEFORE" ] || fail "node count changed $NODES_BEFORE -> $NODES_AFTER"
 on master trinetra fleet nodes | awk '$1=="bogus" || $1=="reused"' | grep -q . && fail "refused join registered a node"
 pass "401 without cert; garbage and spent codes refused, no node registered"
+
+# ---------------------------------------------------------------------------
+# Steps 6-7 revoked child2 and left+removed child1 -- neither is a working,
+# online, lab-tagged fleet member any more (child1 is plain solo; child2 is
+# still fleet-child but blocked). Steps 10+ need both back, so re-enrol them
+# fresh here, exactly as an operator recovering a fleet would: purge
+# child2's stale local identity (child1's was already purged in step 7),
+# drop its now-orphaned revoked registry entry (fleet node remove allows
+# this for a revoked or down node), and join both in with a new token.
+step "10 handoff"
+on child2 trinetra fleet leave --purge >/dev/null 2>&1 || true
+RM2=$(on master trinetra fleet node remove child2) || fail "remove child2 (re-enrol): $RM2"
+grep -q "^Removed $ID_child2" <<<"$RM2" || fail "unexpected remove output for child2: $RM2"
+stop_daemon child1
+stop_daemon child2
+TOK2=$(on master trinetra fleet token create --uses 2 --tags lab) || fail "token create (re-enrol): $TOK2"
+CODE2=$(grep -o 'swj1_[A-Za-z0-9_=-]*' <<<"$TOK2" | head -1)
+[ -n "$CODE2" ] || fail "no swj1_ code in: $TOK2"
+for c in child1 child2; do
+  J=$(on "$c" trinetra fleet join "$CODE2" --name "$c") || fail "$c re-join: $J"
+  id=$(sed -n 's/^Joined fleet master https:\/\/master:9443 as node \([0-9a-f]*\) .*/\1/p' <<<"$J")
+  [ -n "$id" ] || fail "$c: no node id in re-join output: $J"
+  eval "ID_$c=$id"
+  # Belt and suspenders: leave --purge only removes fleet-child/outbox, so
+  # these ordinary config keys likely survived from step 2, but set them
+  # again in case a future change ever widens the purge.
+  on "$c" trinetra telegram set-token "TESTTOKEN_$c" >/dev/null
+  on "$c" trinetra config set telegram.chat_id 999 >/dev/null
+  on "$c" trinetra config set fleet.fallback_after ${FALLBACK_AFTER}s >/dev/null
+  start_daemon "$c"
+done
+wait_until 60 "child1 online on master (re-enrol)" node_is child1 online
+wait_until 60 "child2 online on master (re-enrol)" node_is child2 online
+# "online" (ingest/heartbeat-driven) can go true slightly before the
+# separate master<->child stream has delivered this node's first lease
+# (fleet_engine.go's PushLeaseNow on Hub.OnConnect): an alert fired in that
+# window sees hadLeaseBefore==false and the master silently treats it as
+# already delivered (no dispatch, no receipt -- see Submit's doc comment),
+# so it only ever reaches Telegram via the child's OWN fallback_after
+# timer, never "from the master". Waiting past one lease push cycle here
+# avoids racing that window before step 10 fires anything.
+sleep $(( DOWN_AFTER + 5 ))
+echo "  re-enrolled child1=$ID_child1 child2=$ID_child2 (fresh identities, tag lab)"
+
+BASE_MEM=$(msg_count "child1: mem =")
+on child1 trinetra config set thresholds.mem_pct 1 >/dev/null
+wait_until 240 "master delivered child1's mem alert" mem_delivered_once # generous: this host observed dispatcher/liveness jitter under load, occasionally pushing delivery past 100s
+sleep $(( 3 * FAST ))
+AFTER_LINKED=$(msg_count "child1: mem =")
+[ "$AFTER_LINKED" -eq $(( BASE_MEM + 1 )) ] || fail "expected exactly one child1 mem message while linked (master -> mocktg), got $(( AFTER_LINKED - BASE_MEM ))"
+INC1=$(on master trinetra fleet incidents --node "$ID_child1" --state firing | awk '$0 ~ /mem/ {print $1; exit}')
+[ -n "$INC1" ] || fail "master never recorded a firing mem incident for child1: $(on master trinetra fleet incidents --node "$ID_child1")"
+echo "  child1 mem incident $INC1 delivered once, from the master, prefixed with its node name"
+# INC1 is left OPEN (never recovered): step 15 needs a still-firing,
+# master-delivered incident to ack (only a master-delivered fire ever
+# carries Ack/Silence-1h buttons -- deliverFallback never sets any).
+
+# Fire a SECOND alert right after disconnecting, not after waiting for the
+# "retrying" display state: the child's lease handoff only prefixes a
+# delivery "via local fallback" when the alert was successfully routed to
+# the master FIRST (Route() sees a still-valid lease) and only later times
+# out waiting for a receipt (fleet_lease.go's handoff.Tick, gated on
+# fleet.fallback_after). A lease is valid up to 90s past its last push
+# (leaseInterval 30s + leaseValidFor 90s) and renews every 30s while
+# linked, so firing immediately -- rather than after however long
+# "retrying" takes to display -- keeps this comfortably inside that window
+# instead of risking the lease going stale first (which would skip
+# routing/fallback entirely and deliver instantly with no prefix).
+#
+# swap, not cpu, not a second use of mem: mem is already active (and must
+# stay that way for INC1/step 15) and cpu reads noisy/bursty near a low
+# threshold (observed flapping fire/recover repeatedly in an earlier run of
+# this harness against the real daemon, which blows the "exactly one"
+# counts below); swap sits at a small but stable non-zero percentage.
+BASE_FALLBACK=$(msg_count "via local fallback: master unreachable")
+docker network disconnect "$NET" "$(ctr child1)"
+on child1 trinetra config set thresholds.swap_pct 0.05 >/dev/null
+wait_until 85 "child1 link retrying (handoff)" link_is child1 retrying
+wait_until $(( FALLBACK_AFTER + 60 )) "child1 delivered its swap alert via local fallback" fallback_delivered_once
+sleep $(( 3 * FAST ))
+AFTER_FALLBACK=$(msg_count "via local fallback: master unreachable")
+[ "$AFTER_FALLBACK" -eq $(( BASE_FALLBACK + 1 )) ] || fail "expected exactly one local-fallback message, got $(( AFTER_FALLBACK - BASE_FALLBACK ))"
+mocktg_has "via local fallback: master unreachable" || fail "mock telegram never got a local-fallback message"
+[ "$(msg_count "child1: swap =")" -eq 0 ] || fail "the master delivered child1's swap alert even though child1 was partitioned"
+echo "  child1 delivered its own swap alert locally after ${FALLBACK_AFTER}s of no receipt, prefixed 'via local fallback: master unreachable'"
+
+docker network connect "$NET" "$(ctr child1)"
+wait_until 60 "child1 link linked after handoff" link_is child1 linked
+wait_until 60 "child1 outbox drained after handoff" unsent_is_zero child1
+sleep $(( 3 * FAST ))
+[ "$(msg_count "via local fallback: master unreachable")" -eq "$AFTER_FALLBACK" ] || fail "the master re-sent the already-fallback-delivered swap alert after reconnecting"
+[ "$(msg_count "child1: swap =")" -eq 0 ] || fail "the master sent a duplicate child1 swap message after reconnecting"
+SWAP_INC=$(on master trinetra fleet incidents --node "$ID_child1" --state firing | awk '$0 ~ /swap/ {print $1; exit}')
+[ -n "$SWAP_INC" ] || fail "the master never recorded child1's fallback-delivered swap incident after reconnecting"
+[ "$SWAP_INC" != "$INC1" ] || fail "the swap fire reused the mem incident $INC1 instead of opening its own"
+on master trinetra fleet incident "$SWAP_INC" | grep -q "delivered locally" \
+  || fail "master's swap incident for child1 is not marked delivered locally: $(on master trinetra fleet incident "$SWAP_INC")"
+pass "linked: one message from the master; partitioned: one local-fallback message after ${FALLBACK_AFTER}s; reconnect: recorded, no duplicate"
+
+# ---------------------------------------------------------------------------
+step "11 silence"
+# Only mem is touched on child2 throughout steps 11/12 (see step 10's note
+# on why cpu is avoided) -- the recover/refire dance below gets a second,
+# distinctly-timestamped mem fire without needing a second metric.
+SIL=$(on master trinetra fleet silence add --match node=child2 --for 10m --comment "e2e step 11") || fail "silence add: $SIL"
+SIL_ID=$(sed -n 's/^Created silence \([^,]*\),.*/\1/p' <<<"$SIL")
+[ -n "$SIL_ID" ] || fail "no silence id in: $SIL"
+sleep $(( 2 * FAST )) # let the silence reach child2 over the stream before it's partitioned
+BASE_C2MEM=$(msg_count "child2: mem =")
+on child2 trinetra config set thresholds.mem_pct 1 >/dev/null
+sleep $(( 6 * FAST ))
+[ "$(msg_count "child2: mem =")" -eq "$BASE_C2MEM" ] || fail "child2's mem alert was delivered by the master despite the active silence"
+INC2=$(on master trinetra fleet incidents --node "$ID_child2" | awk '$0 ~ /mem/ {print $1; exit}')
+[ -n "$INC2" ] || fail "master never recorded child2's suppressed mem incident: $(on master trinetra fleet incidents --node "$ID_child2")"
+on master trinetra fleet explain "$INC2" | grep -q suppressed \
+  || fail "fleet explain $INC2 does not show a suppression: $(on master trinetra fleet explain "$INC2")"
+echo "  silence $SIL_ID suppressed child2's mem alert while linked (fleet explain $INC2 shows it)"
+
+# Recover it (raise the threshold back above real usage) so "fire again"
+# below is a genuinely new, distinctly-timestamped alert, not a no-op re-eval
+# of the still-active one -- the daemon only emits fire/recover on a state
+# TRANSITION, never every tick.
+on child2 trinetra config set thresholds.mem_pct 90 >/dev/null
+sleep $(( 4 * FAST ))
+
+# "Fire again" right after partitioning, immediately (same reasoning as step
+# 10: stays inside the still-valid lease window, so this is genuinely
+# routed-then-fallen-back, the one path that consults the pushed silence --
+# see deliverFallback/pushedSilences in fleet_lease.go/fleet_silences.go).
+BASE_FALLBACK2=$(msg_count "via local fallback")
+docker network disconnect "$NET" "$(ctr child2)"
+on child2 trinetra config set thresholds.mem_pct 1 >/dev/null
+wait_until 85 "child2 link retrying (silence)" link_is child2 retrying
+sleep $(( FALLBACK_AFTER + 20 )) # give the fallback timer a chance to fire (and be suppressed)
+[ "$(msg_count "via local fallback")" -eq "$BASE_FALLBACK2" ] || fail "child2 delivered its silenced mem alert locally despite the pushed silence"
+[ "$(msg_count "child2: mem =")" -eq "$BASE_C2MEM" ] || fail "child2's mem alert leaked a message while partitioned and silenced"
+docker network connect "$NET" "$(ctr child2)"
+wait_until 60 "child2 link linked after silence test" link_is child2 linked
+wait_until 60 "child2 outbox drained after silence test" unsent_is_zero child2
+[ "$(msg_count "via local fallback")" -eq "$BASE_FALLBACK2" ] || fail "the silenced mem alert was delivered after reconnecting"
+[ "$(msg_count "child2: mem =")" -eq "$BASE_C2MEM" ] || fail "the master delivered child2's silenced mem alert after reconnecting"
+# Expire it now (it was created --for 10m, which would otherwise still be
+# active and covering ALL of child2's alerts, no rule filter, straight
+# through step 14): step 12 needs a real, undelivered-by-silence mem alert
+# on child2 next.
+EXP=$(on master trinetra fleet silence expire "$SIL_ID") || fail "silence expire: $EXP"
+grep -q "^Expired silence $SIL_ID\.$" <<<"$EXP" || fail "unexpected silence expire output: $EXP"
+# Settle: docker network disconnect/connect on this same container twice now
+# (step 10 did it to child1, this step to child2) was observed, live against
+# this host, to sometimes leave the veth/bridge path re-established but not
+# fully stable for another 1-2 minutes -- the master would eventually mark
+# the node down again with no docker-level disconnect in sight, well after
+# link_is already reported "linked". Give it real time to settle before
+# step 12 depends on prompt master<->child2 delivery again.
+sleep 45
+pass "silence $SIL_ID suppressed child2's mem alert both while linked and while partitioned and falling back"
+
+# ---------------------------------------------------------------------------
+step "12 routing"
+# child2's mem is still active (threshold 1, never raised back after step
+# 11's partition fire) -- recover it so the routed fire below is genuinely
+# new. cpu is avoided here too, same flapping reason as step 10.
+on child2 trinetra config set thresholds.mem_pct 90 >/dev/null
+sleep $(( 4 * FAST ))
+
+on master trinetra channel add tgsecond --type telegram --set chat_id=222 >/dev/null || fail "channel add tgsecond failed"
+cat >"$SCRATCH/alerting-12.json" <<'JSON'
+{
+  "version": 0,
+  "routes": [
+    {"name": "child2-mem-to-second", "matchers": [{"node": "child2", "rule": "mem"}], "policy": "second"}
+  ],
+  "policies": [
+    {"name": "default", "steps": [{"after": "0s", "channels": ["*"]}], "send_resolved": true},
+    {"name": "second", "steps": [{"after": "0s", "channels": ["tgsecond"]}], "send_resolved": true}
+  ],
+  "default_policy": "default"
+}
+JSON
+cpq "$SCRATCH/alerting-12.json" master:/tmp/alerting-12.json
+APPLY=$(on master trinetra fleet alerting apply /tmp/alerting-12.json) || fail "alerting apply: $APPLY"
+RT=$(on master trinetra fleet route test --node child2 --rule mem --severity warning) || fail "route test: $RT"
+grep -q "^route: child2-mem-to-second$" <<<"$RT" || fail "route test did not select the new route: $RT"
+grep -q "^policy: second$" <<<"$RT" || fail "route test did not select policy 'second': $RT"
+echo "  fleet route test shows: $(tr '\n' ' ' <<<"$RT")"
+
+BASE_C2MEM3=$(msg_count "child2: mem =")
+on child2 trinetra config set thresholds.mem_pct 1 >/dev/null
+wait_until 240 "child2's mem alert routed to the second channel" mem_routed_once # generous: this host observed dispatcher/liveness jitter under load, occasionally pushing delivery past 100s
+sleep $(( 3 * FAST ))
+AFTER_C2MEM3=$(msg_count "child2: mem =")
+[ "$AFTER_C2MEM3" -eq $(( BASE_C2MEM3 + 1 )) ] || fail "child2's routed mem alert was delivered $(( AFTER_C2MEM3 - BASE_C2MEM3 )) times, want exactly 1 (only the 'second' policy, not '*', so only chat 222)"
+[ "$(chat_count 222)" -eq 1 ] || fail "expected exactly one sendMessage recorded against chat 222, got $(chat_count 222): $(on mocktg curl -s http://localhost:8080/_chats)"
+pass "policy 'second' (chat 222) confirmed by fleet route test, and child2's mem alert landed there and only there"
+
+# ---------------------------------------------------------------------------
+step "13 managed config"
+NN=7
+MSET=$(on master trinetra fleet managed set --tag lab thresholds.mem_pct=$NN) || fail "managed set: $MSET"
+FRAG_ID=$(sed -n 's/^Saved managed-config fragment \([^ ]*\).*/\1/p' <<<"$MSET")
+[ -n "$FRAG_ID" ] || fail "no fragment id in: $MSET"
+wait_until 30 "child1 config reflects the pushed thresholds.mem_pct" child_cfg_is child1 thresholds.mem_pct "$NN"
+wait_until 30 "child2 config reflects the pushed thresholds.mem_pct" child_cfg_is child2 thresholds.mem_pct "$NN"
+if OUT=$(on child1 trinetra config set thresholds.mem_pct 50 2>&1); then
+  fail "child1 accepted a local override of a managed key: $OUT"
+fi
+grep -q "managed by the fleet master" <<<"$OUT" || fail "unexpected refusal wording: $OUT"
+grep -qF "$FRAG_ID" <<<"$OUT" || fail "refusal did not name the owning fragment: $OUT"
+echo "  child1 config set refused: $OUT"
+wait_until 30 "fleet managed status shows child1 applied, no drift" managed_applied_no_drift "$ID_child1"
+wait_until 30 "fleet managed status shows child2 applied, no drift" managed_applied_no_drift "$ID_child2"
+pass "managed thresholds.mem_pct=$NN pushed to tag lab (fragment $FRAG_ID); child set refused; status shows applied with no drift"
+
+# ---------------------------------------------------------------------------
+step "14 aggregate rule"
+cat >"$SCRATCH/alerting-14.json" <<'JSON'
+{
+  "version": 0,
+  "routes": [
+    {"name": "child2-mem-to-second", "matchers": [{"node": "child2", "rule": "mem"}], "policy": "second"}
+  ],
+  "policies": [
+    {"name": "default", "steps": [{"after": "0s", "channels": ["*"]}], "send_resolved": true},
+    {"name": "second", "steps": [{"after": "0s", "channels": ["tgsecond"]}], "send_resolved": true}
+  ],
+  "default_policy": "default",
+  "rules": [
+    {"name": "lab-online", "expr": "online(tag:lab) < 2 for 1m", "severity": "critical"}
+  ]
+}
+JSON
+cpq "$SCRATCH/alerting-14.json" master:/tmp/alerting-14.json
+APPLY=$(on master trinetra fleet alerting apply /tmp/alerting-14.json) || fail "alerting apply (rule): $APPLY"
+on master trinetra fleet rules | grep -q "^lab-online" || fail "fleet rules does not list lab-online: $(on master trinetra fleet rules)"
+
+docker network disconnect "$NET" "$(ctr child2)"
+wait_until 85 "child2 link retrying (rule)" link_is child2 retrying
+wait_until 240 "rule lab-online fires (online(tag:lab) < 2 for 1m)" rule_is_firing
+docker network connect "$NET" "$(ctr child2)"
+wait_until 60 "child2 link linked after rule test" link_is child2 linked
+wait_until 60 "child2 outbox drained after rule test" unsent_is_zero child2
+wait_until 90 "rule lab-online recovers" rule_is_ok
+pass "online(tag:lab) < 2 for 1m fired while child2 was partitioned, and recovered after reconnect"
+
+# ---------------------------------------------------------------------------
+step "15 telegram buttons"
+MARKUPS=$(on mocktg curl -s http://localhost:8080/_markups)
+grep -qF "ack:$INC1" <<<"$MARKUPS" || fail "no Ack button recorded for incident $INC1: $MARKUPS"
+grep -qF "sil1h:$INC1" <<<"$MARKUPS" || fail "no Silence-1h button recorded for incident $INC1: $MARKUPS"
+echo "  incident $INC1's fire message carries Ack/Silence-1h buttons"
+
+# Foreign chat (555, never enrolled): answered "not authorized", nothing changes.
+on mocktg curl -s "http://localhost:8080/_inject_callback?data=ack%3A$INC1&chat=555&id=cb-foreign&token=TESTTOKEN" >/dev/null
+wait_until 20 "foreign callback answered 'not authorized'" mocktg_has_answer "cb-foreign:not authorized"
+incident_acked "$INC1" && fail "a callback from a foreign chat acked incident $INC1: $(on master trinetra fleet incident "$INC1")"
+echo "  callback from foreign chat 555 answered 'not authorized'; incident $INC1 untouched"
+
+# Enrolled chat (999): ack succeeds.
+on mocktg curl -s "http://localhost:8080/_inject_callback?data=ack%3A$INC1&chat=999&id=cb-owner&token=TESTTOKEN" >/dev/null
+wait_until 20 "owner callback answered 'acked'" mocktg_has_answer "cb-owner:acked"
+wait_until 20 "incident $INC1 shows acked" incident_acked "$INC1"
+on master trinetra fleet incident "$INC1" | grep -q "^acked by: telegram$" \
+  || fail "incident $INC1 not acked by 'telegram': $(on master trinetra fleet incident "$INC1")"
+pass "Ack button from the enrolled chat acked incident $INC1; the same callback from a foreign chat was refused"
+
+# ---------------------------------------------------------------------------
+step "16 web smoke"
+CTLSHA=$(on master sha256sum /usr/local/bin/trinetra-ctl | awk '{print $1}' | tr -d '\r')
+WEBSHA=$(on master sha256sum /usr/local/bin/trinetra-web | awk '{print $1}' | tr -d '\r')
+[ -n "$CTLSHA" ] && [ -n "$WEBSHA" ] || fail "could not compute plugin checksums (ctl=$CTLSHA web=$WEBSHA)"
+printf '{"ctl":"%s","web":"%s"}' "$CTLSHA" "$WEBSHA" >"$SCRATCH/plugins.json"
+cpq "$SCRATCH/plugins.json" master:/var/lib/trinetra/plugins.json
+on master trinetra config set web.enabled true >/dev/null
+on master trinetra config set web.listen 0.0.0.0:8088 >/dev/null
+# web.enabled is only read at daemon startup (shouldStartWeb(cfgAtStart, ...)
+# in web_supervisor.go), so the master's daemon needs a restart to pick it
+# up and spawn the verified trinetra-web plugin.
+stop_daemon master
+start_daemon master
+wait_until 30 "trinetra-web listening on master:8088" on solo curl -sf -o /dev/null http://master:8088/login
+for path in /fleet /fleet/incidents /fleet/alerting /fleet/silences /fleet/managed /fleet/audit "/n/$ID_child1/monitoring" /api/fleet/nodes; do
+  CODE=$(on solo curl -s -o /dev/null -w '%{http_code}' "http://master:8088${path}")
+  [ "$CODE" = "302" ] || fail "GET $path without a session returned $CODE, want 302 to /login"
+done
+echo "  every fleet page 302'd an unauthenticated request to /login: /fleet /fleet/incidents /fleet/alerting /fleet/silences /fleet/managed /fleet/audit /n/<id>/monitoring /api/fleet/nodes"
+pass "trinetra-web verified and launched via plugins.json; unauthenticated fleet pages redirect to /login"
 
 STEP=""
 echo "ALL PASS ($(( $(date +%s) - T_START ))s)"

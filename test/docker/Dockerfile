@@ -4,6 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 RUN go build -o /usr/local/bin/trinetra ./cmd/trinetra \
+ && go build -o /usr/local/bin/trinetra-ctl ./cmd/trinetra-ctl \
+ && go build -o /usr/local/bin/trinetra-web ./cmd/trinetra-web \
  && go build -o /usr/local/bin/mocktg ./test/docker/mocktg
 # The telegram client is redirected to the mock via TELEGRAM_BASE_URL (set in compose).
 ENV SW_STATE=/var/lib/trinetra

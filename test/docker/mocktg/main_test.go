@@ -100,6 +100,71 @@ func TestMocktgCallbackInjectionRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMocktgRecordsChatID pins the /_chats extension: chat_id is recorded
+// index-aligned with /_messages, same as /_markups.
+func TestMocktgRecordsChatID(t *testing.T) {
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	post(t, srv.URL+"/bot123/sendMessage", url.Values{"text": {"to 999"}, "chat_id": {"999"}})
+	post(t, srv.URL+"/bot123/sendMessage", url.Values{"text": {"to 222"}, "chat_id": {"222"}})
+
+	var chats []string
+	getJSON(t, srv.URL+"/_chats", &chats)
+	if len(chats) != 2 || chats[0] != "999" || chats[1] != "222" {
+		t.Fatalf("/_chats = %+v", chats)
+	}
+}
+
+// TestMocktgGetUpdatesScopedByToken pins the fleet-e2e requirement that an
+// update injected for one bot token is never delivered to a different
+// token's getUpdates poller (each daemon in the fleet harness carries its
+// own token), while an update injected with no token (the legacy/shared
+// bucket) still reaches whichever token polls first.
+func TestMocktgGetUpdatesScopedByToken(t *testing.T) {
+	srv := httptest.NewServer(newMux())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/_inject_callback?data=ack%3Aabc&chat=999&id=cb-a&token=tokA", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// A different token's poller must see nothing.
+	var otherResult struct {
+		Result []map[string]any `json:"result"`
+	}
+	getJSONInto(t, srv.URL+"/botTokB/getUpdates", &otherResult)
+	if len(otherResult.Result) != 0 {
+		t.Fatalf("token B saw token A's update: %+v", otherResult.Result)
+	}
+
+	// The owning token's poller sees exactly one, and it is drained after.
+	var mineResult struct {
+		Result []map[string]any `json:"result"`
+	}
+	getJSONInto(t, srv.URL+"/bottokA/getUpdates", &mineResult)
+	if len(mineResult.Result) != 1 {
+		t.Fatalf("token A getUpdates = %+v, want 1", mineResult.Result)
+	}
+	getJSONInto(t, srv.URL+"/bottokA/getUpdates", &mineResult)
+	if len(mineResult.Result) != 0 {
+		t.Fatalf("token A: update redelivered: %+v", mineResult.Result)
+	}
+
+	// No token specified (legacy/shared bucket): any poller drains it.
+	resp2, err := http.Post(srv.URL+"/_inject?text=hello", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	getJSONInto(t, srv.URL+"/botAnyToken/getUpdates", &otherResult)
+	if len(otherResult.Result) != 1 {
+		t.Fatalf("shared-bucket update not delivered: %+v", otherResult.Result)
+	}
+}
+
 func post(t *testing.T, u string, form url.Values) {
 	t.Helper()
 	resp, err := http.PostForm(u, form)

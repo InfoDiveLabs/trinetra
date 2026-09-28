@@ -168,6 +168,85 @@ func TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval(t *testing.T) {
 	}
 }
 
+// TestGroupingAckedIncidentStillDeliversNewMemberUpdate pins a B6 review
+// regression: acking a grouped incident must not suppress a member that
+// fires LATER from getting its own update notification. tryDeliverGroup
+// only ever excludes inc.State == "suppressed" (every open member silenced
+// or dependency-folded) -- "acked" only stops future ESCALATION
+// (tryEscalate gates on inc.State != "firing"), never a fresh member's
+// first delivery through the group. This test fails if that ever regresses
+// (e.g. tryDeliverGroup grows an "acked" exclusion mirroring tryEscalate's).
+func TestGroupingAckedIncidentStillDeliversNewMemberUpdate(t *testing.T) {
+	ef := newEngineFixture(t)
+	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
+	// Same rationale as TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval:
+	// isolate group_interval itself from the fallback_after cap.
+	ef.engine.SetConfig(func() *config.Config {
+		c := config.Default()
+		c.Fleet.FallbackAfter = "24h"
+		return c
+	})
+	ef.connect("n1")
+	ef.connect("n2")
+	ef.engine.PushLeaseNow("n1", ef.now)
+	ef.engine.PushLeaseNow("n2", ef.now)
+
+	ef.engine.HandleChildAlert("n1", "box1", nil, AlertEvent{
+		Time: ef.now.Unix(), Key: "cpu", Title: "cpu critical", Severity: "critical", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: ef.now.Unix(),
+	})
+	ef.waitIdle()
+	ef.now = ef.now.Add(30 * time.Second)
+	ef.engine.TickGrouping(ef.now)
+	ef.waitIdle()
+	if ef.deliveredCount() != 1 {
+		t.Fatalf("initial delivered = %d, want 1", ef.deliveredCount())
+	}
+
+	incs := ef.incidents.List(core.IncidentFilter{}, nil)
+	if len(incs) != 1 {
+		t.Fatalf("incidents = %+v, want 1", incs)
+	}
+	incID := incs[0].ID
+	if _, err := ef.incidents.Ack(incID, "operator", ef.now.Unix()); err != nil {
+		t.Fatalf("Ack: %v", err)
+	}
+	if inc, ok := ef.incidents.Get(incID); !ok || inc.State != "acked" {
+		t.Fatalf("incident state after ack = %+v, want acked", inc)
+	}
+
+	// A second member fires AFTER the incident was acked.
+	ef.now = ef.now.Add(time.Minute)
+	ef.engine.HandleChildAlert("n2", "box2", nil, AlertEvent{
+		Time: ef.now.Unix(), Key: "cpu", Title: "cpu critical", Severity: "critical", Kind: "fire", Source: "anomaly",
+		RoutedToMaster: true, FiredAt: ef.now.Unix(),
+	})
+	ef.waitIdle()
+	if ef.deliveredCount() != 1 {
+		t.Fatalf("delivered right after the new member joined an acked incident = %d, want still 1 (group_interval hasn't elapsed yet)", ef.deliveredCount())
+	}
+
+	// group_interval (5m) elapses since the first (only) delivery: box2's
+	// update must still go out even though the incident is acked.
+	ef.now = ef.now.Add(5 * time.Minute)
+	ef.engine.TickGrouping(ef.now)
+	ef.waitIdle()
+
+	if ef.deliveredCount() != 2 {
+		t.Fatalf("delivered after an acked incident gained a new member = %d, want 2 (initial fire + the new member's update)", ef.deliveredCount())
+	}
+	update := ef.lastDelivered().Title
+	if !strings.Contains(update, "box2") {
+		t.Fatalf("update title = %q, want it to list box2", update)
+	}
+	if strings.Contains(update, "box1") {
+		t.Fatalf("update title = %q, must list only the NEW member, not box1 again", update)
+	}
+	if inc, ok := ef.incidents.Get(incID); !ok || inc.State != "acked" {
+		t.Fatalf("incident state after delivering the new member's update = %+v, want still acked (delivering must not un-ack it)", inc)
+	}
+}
+
 // TestGroupingLateChildUpdateRespectsFallbackCap is task 6 fix round 1's
 // IMPORTANT 5 required test: with the DEFAULT config (fleet.fallback_after
 // 2m, so effectiveGroupInterval caps at 1m for a child-sourced pending
