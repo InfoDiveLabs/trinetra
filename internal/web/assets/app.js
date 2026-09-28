@@ -862,7 +862,7 @@
       return table.querySelectorAll('.fleet-compare-check');
     }
     function refresh(){
-      var ids=Array.prototype.slice.call(selectedNodeIds);
+      var ids=Array.from(selectedNodeIds);
       if(count) count.textContent=ids.length+' selected'+(ids.length>CAP?' (max '+CAP+')':'');
       if(btn) btn.disabled=ids.length===0||ids.length>CAP;
     }
@@ -888,7 +888,7 @@
     });
     if(btn){
       btn.addEventListener('click',function(){
-        var ids=Array.prototype.slice.call(selectedNodeIds);
+        var ids=Array.from(selectedNodeIds);
         if(!ids.length||ids.length>CAP) return;
         window.location.href='/fleet/compare?nodes='+ids.map(encodeURIComponent).join(',');
       });
