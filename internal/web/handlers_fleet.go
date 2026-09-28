@@ -1602,18 +1602,51 @@ func renderIncidentMutationError(w http.ResponseWriter, r *http.Request, d Deps,
 	}
 }
 
+// resolveIncidentFlash resolves GET /fleet/incidents/{id}'s ?flash= into
+// display text, from a FIXED set of codes only -- round-1 review (SECURITY):
+// the original implementation rendered ?flash= itself as free text into the
+// trusted flash banner, which let a crafted link impersonate the app ("your
+// account has been compromised, call ...") to anyone who clicked it, no
+// authentication bypass needed. Every value this function can produce is
+// composed here, server-side, from trusted inputs:
+//   - "ack": the acting user is ALWAYS recomputed from the CURRENT request's
+//     own session (auditUser(r)), never from the URL -- a viewer only ever
+//     sees their OWN name here, never one an attacker embedded in a link.
+//   - "silenced": the "for" duration is validated against the same fixed
+//     allowlist incidentSilenceDurationSeconds enforces for the mutation
+//     itself (30m/1h/4h/24h) -- anything else renders no flash.
+//
+// Any other/unknown code, or a "silenced" with a bad/missing "for", renders
+// "" (no flash) -- never falls back to echoing the raw query value.
+func resolveIncidentFlash(r *http.Request) string {
+	q := r.URL.Query()
+	switch q.Get("flash") {
+	case "ack":
+		return "Incident acknowledged by " + auditUser(r)
+	case "silenced":
+		forVal := q.Get("for")
+		if _, ok := incidentSilenceDurationSeconds(forVal); ok {
+			return "Silenced for " + forVal
+		}
+	}
+	return ""
+}
+
 // fleetIncidentHandler serves GET /fleet/incidents/{id}: member alerts, the
 // full structured timeline, and the ack/silence forms (task-2-brief.md).
-// ?flash= carries a one-time success message from the ack/silence handlers'
+// ?flash= carries a one-time success code from the ack/silence handlers'
 // post-mutation redirect (the brief's "redirects back to the incident with
-// a flash" -- see fleetIncidentAckHandler/fleetIncidentSilenceHandler).
+// a flash" -- see fleetIncidentAckHandler/fleetIncidentSilenceHandler),
+// resolved to display text ONLY through the fixed-code allowlist
+// (resolveIncidentFlash) -- never rendered as raw query text (round-1
+// review, SECURITY: message-spoofing via a crafted link).
 func fleetIncidentHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
 			return
 		}
 		id := r.PathValue("id")
-		data, err := buildIncidentDetailPageData(r, d, id, incidentDetailOptions{Flash: r.URL.Query().Get("flash")})
+		data, err := buildIncidentDetailPageData(r, d, id, incidentDetailOptions{Flash: resolveIncidentFlash(r)})
 		if err != nil {
 			renderIncidentNotFound(w, r, d)
 			return
@@ -1658,7 +1691,10 @@ func fleetIncidentAckHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		logAudit(d, r, "fleet.incident.ack", id, "", actor)
-		http.Redirect(w, r, "/fleet/incidents/"+id+"?flash="+url.QueryEscape("acknowledged by "+actor), http.StatusSeeOther)
+		// ?flash=ack is a fixed code, not the actor's name -- the GET handler
+		// (resolveIncidentFlash) recomputes "by <you>" from the CURRENT
+		// session on render, never from this URL (round-1 review, SECURITY).
+		http.Redirect(w, r, "/fleet/incidents/"+id+"?flash=ack", http.StatusSeeOther)
 	}
 }
 
@@ -1724,6 +1760,10 @@ func fleetIncidentSilenceHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		logAudit(d, r, "fleet.incident.silence", id, "", fmt.Sprintf("silence=%s for=%s by=%s", created.ID, forRaw, actor))
-		http.Redirect(w, r, "/fleet/incidents/"+id+"?flash="+url.QueryEscape("silenced for "+forRaw), http.StatusSeeOther)
+		// ?flash=silenced&for=<forRaw> -- forRaw is already validated above
+		// against the fixed duration allowlist, and resolveIncidentFlash
+		// re-validates it independently on render (round-1 review, SECURITY:
+		// never trust a query value just because this handler produced it).
+		http.Redirect(w, r, "/fleet/incidents/"+id+"?flash=silenced&for="+url.QueryEscape(forRaw), http.StatusSeeOther)
 	}
 }

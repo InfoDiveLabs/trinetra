@@ -325,8 +325,8 @@ func TestFleetIncidentAckRecordsWebUser(t *testing.T) {
 		t.Errorf("AckIncident actor = %q, want the signed-in admin's name (root)", fleet.ackedIncidentActor)
 	}
 	loc := rr.Header().Get("Location")
-	if !strings.HasPrefix(loc, "/fleet/incidents/inc1?flash=") {
-		t.Errorf("ack redirect Location = %q, want /fleet/incidents/inc1?flash=...", loc)
+	if loc != "/fleet/incidents/inc1?flash=ack" {
+		t.Errorf("ack redirect Location = %q, want /fleet/incidents/inc1?flash=ack (a fixed code, never the actor's name in the URL)", loc)
 	}
 }
 
@@ -420,8 +420,8 @@ func TestFleetIncidentSilencePrefillsMatchersFromOpenMembers(t *testing.T) {
 	}
 
 	loc := rr.Header().Get("Location")
-	if !strings.HasPrefix(loc, "/fleet/incidents/inc1?flash=") {
-		t.Errorf("silence redirect Location = %q, want /fleet/incidents/inc1?flash=...", loc)
+	if loc != "/fleet/incidents/inc1?flash=silenced&for=1h" {
+		t.Errorf("silence redirect Location = %q, want /fleet/incidents/inc1?flash=silenced&for=1h", loc)
 	}
 }
 
@@ -485,3 +485,113 @@ var errTestSilenceRejected = &testError{"silence: rejected"}
 type testError struct{ msg string }
 
 func (e *testError) Error() string { return e.msg }
+
+// ---- round 1 review fix: ?flash= must be a fixed code, never free text ---
+
+// TestFleetIncidentFlashArbitraryTextRendersNothing pins the round-1 review
+// SECURITY fix: a crafted ?flash=<arbitrary text> link must never render
+// that text in the trusted flash banner (message-spoofing via a link) --
+// only the two fixed codes ("ack", "silenced") ever produce a flash.
+func TestFleetIncidentFlashArbitraryTextRendersNothing(t *testing.T) {
+	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
+	d := fleetAdminDeps(t, fleet)
+	for _, raw := range []string{
+		"your+account+has+been+compromised%2C+call+555-0100",
+		"<script>alert(1)</script>",
+		"acked", // close to, but not, the real code
+		"silenced",
+	} {
+		rr := fleetGetAsViewer(t, d, "/fleet/incidents/inc1?flash="+raw)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET /fleet/incidents/inc1?flash=%s status = %d, want 200", raw, rr.Code)
+		}
+		body := rr.Body.String()
+		if strings.Contains(body, `class="flash"`) || strings.Contains(body, `class="flash err"`) {
+			t.Errorf("GET /fleet/incidents/inc1?flash=%s: rendered a flash banner for a non-fixed code, body:\n%s", raw, body)
+		}
+	}
+}
+
+// TestFleetIncidentFlashFixedCodesRenderExpectedText pins that each of the
+// two fixed codes still renders its own text: "ack" recomputes the acting
+// user from the CURRENT session (never from the URL -- there is no name in
+// this URL at all), and "silenced" requires a "for" from the fixed duration
+// allowlist.
+func TestFleetIncidentFlashFixedCodesRenderExpectedText(t *testing.T) {
+	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
+	d := fleetAdminDeps(t, fleet)
+
+	rr := fleetGetAsViewer(t, d, "/fleet/incidents/inc1?flash=ack")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Incident acknowledged by viewer-user") {
+		t.Errorf("?flash=ack: missing expected text (current session's own name), body:\n%s", rr.Body.String())
+	}
+
+	rr2 := fleetGetAsViewer(t, d, "/fleet/incidents/inc1?flash=silenced&for=4h")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr2.Code)
+	}
+	if !strings.Contains(rr2.Body.String(), "Silenced for 4h") {
+		t.Errorf("?flash=silenced&for=4h: missing expected text, body:\n%s", rr2.Body.String())
+	}
+
+	// An unrecognized "for" alongside the real "silenced" code still renders
+	// nothing -- the allowlist check applies to the parameter, not just the
+	// code.
+	rr3 := fleetGetAsViewer(t, d, "/fleet/incidents/inc1?flash=silenced&for=3d")
+	if strings.Contains(rr3.Body.String(), "Silenced for") {
+		t.Errorf("?flash=silenced&for=3d: must render nothing (3d is not an allowlisted duration), body:\n%s", rr3.Body.String())
+	}
+}
+
+// ---- round 1 review fix: anonymous requests must redirect to /login ------
+
+// TestFleetIncidentsAnonymousRedirectsToLogin pins the RBAC floor for every
+// GET route on this page: no session at all redirects to /login (302), the
+// same as every other requireRole(RoleViewer, ...)-gated route.
+func TestFleetIncidentsAnonymousRedirectsToLogin(t *testing.T) {
+	d := fleetAdminDeps(t, &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}})
+	for _, target := range []string{"/fleet/incidents", "/fleet/incidents/table", "/fleet/incidents/inc1"} {
+		rr := fleetGetAnonymous(d, target)
+		if rr.Code != http.StatusFound {
+			t.Errorf("GET %s anonymous status = %d, want 302", target, rr.Code)
+			continue
+		}
+		if loc := rr.Header().Get("Location"); loc != "/login" {
+			t.Errorf("GET %s anonymous Location = %q, want /login", target, loc)
+		}
+	}
+}
+
+// ---- round 1 review fix: mutation on an unknown incident id --------------
+
+// TestFleetIncidentAckUnknownID404sWithNoMutation pins that a POST ack for
+// an id Fleet() doesn't recognize 404s and never calls AckIncident.
+func TestFleetIncidentAckUnknownID404sWithNoMutation(t *testing.T) {
+	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
+	d := fleetAdminDeps(t, fleet)
+	rr := fleetAdminPost(t, d, "/fleet/incidents/ghost/ack", url.Values{})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("ack unknown id status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+	}
+	if fleet.ackedIncidentID != "" {
+		t.Errorf("AckIncident must not be called for an unknown id, got id=%q", fleet.ackedIncidentID)
+	}
+}
+
+// TestFleetIncidentSilenceUnknownID404sWithNoMutation pins that a POST
+// silence for an id Fleet() doesn't recognize 404s and never calls
+// CreateSilence.
+func TestFleetIncidentSilenceUnknownID404sWithNoMutation(t *testing.T) {
+	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
+	d := fleetAdminDeps(t, fleet)
+	rr := fleetAdminPost(t, d, "/fleet/incidents/ghost/silence", url.Values{"for": {"1h"}})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("silence unknown id status = %d, want 404, body: %s", rr.Code, rr.Body.String())
+	}
+	if len(fleet.createdSilences) != 0 {
+		t.Errorf("CreateSilence must not be called for an unknown id, got %d calls", len(fleet.createdSilences))
+	}
+}
