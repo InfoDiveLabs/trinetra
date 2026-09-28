@@ -131,9 +131,9 @@
           <label class="field" style="max-width:220px"><span class="lb">After</span><input type="text" name="policy_{{$pi}}_step_{{$si}}_after" value="{{$step.After}}" placeholder="0s" {{if not $editable}}disabled{{end}}></label>
           <p class="note" style="margin:8px 0 4px">Channels</p>
           <div style="display:flex;flex-wrap:wrap;gap:14px">
-            <label style="display:flex;align-items:center;gap:6px;width:auto"><input type="checkbox" name="policy_{{$pi}}_step_{{$si}}_channels" value="*" {{if $step.HasChannel "*"}}checked{{end}} {{if not $editable}}disabled{{end}}><span class="note">* (every enabled channel)</span></label>
+            <label style="display:flex;align-items:center;gap:6px;width:auto;white-space:nowrap"><input type="checkbox" name="policy_{{$pi}}_step_{{$si}}_channels" value="*" {{if $step.HasChannel "*"}}checked{{end}} {{if not $editable}}disabled{{end}}><span class="note">* (every enabled channel)</span></label>
             {{range $.Channels}}
-            <label style="display:flex;align-items:center;gap:6px;width:auto"><input type="checkbox" name="policy_{{$pi}}_step_{{$si}}_channels" value="{{.}}" {{if $step.HasChannel .}}checked{{end}} {{if not $editable}}disabled{{end}}><span class="note">{{.}}</span></label>
+            <label style="display:flex;align-items:center;gap:6px;width:auto;white-space:nowrap"><input type="checkbox" name="policy_{{$pi}}_step_{{$si}}_channels" value="{{.}}" {{if $step.HasChannel .}}checked{{end}} {{if not $editable}}disabled{{end}}><span class="note">{{.}}</span></label>
             {{end}}
           </div>
           {{if $editable}}<button class="btn ghost" type="submit" name="op" value="remove_step:{{$pi}}:{{$si}}" {{if eq (len $policy.Steps) 1}}disabled{{end}} style="margin-top:8px">Remove step</button>{{end}}
