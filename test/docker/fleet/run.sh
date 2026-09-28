@@ -129,8 +129,11 @@ link_state() { on "$1" trinetra fleet status | sed -n 's/^link: \([a-z][a-z ]*[a
 link_is() { [ "$(link_state "$1")" = "$2" ]; }
 unsent() { on "$1" trinetra fleet status | sed -n 's/^outbox: .* MB, \([0-9]*\) unsent.*/\1/p'; }
 unsent_is_zero() { [ "$(unsent "$1")" = "0" ]; }
-mocktg_has() { on mocktg curl -s http://localhost:8080/_messages | grep -qF "$1"; }
-mocktg_has_answer() { on mocktg curl -s http://localhost:8080/_answers | grep -qF "$1"; }
+# Pipes below end in `grep ... >/dev/null`, never `grep -q`: -q exits on the
+# first match, the writer then dies of SIGPIPE, and pipefail turns a match
+# into a failure once the output is long enough.
+mocktg_has() { on mocktg curl -s http://localhost:8080/_messages | grep -F "$1" >/dev/null; }
+mocktg_has_answer() { on mocktg curl -s http://localhost:8080/_answers | grep -F "$1" >/dev/null; }
 # msg_count <substring>: how many times substring occurs across every
 # sendMessage text mocktg has recorded so far (steps 10-15 assert on the
 # DELTA around a specific action, since mocktg accumulates for the whole run).
@@ -142,7 +145,7 @@ mocktg_has_answer() { on mocktg curl -s http://localhost:8080/_answers | grep -q
 # wc/tr's.
 msg_count() { on mocktg curl -s http://localhost:8080/_messages | { grep -o -F "$1" || true; } | wc -l | tr -d ' \r'; }
 chat_count() { on mocktg curl -s http://localhost:8080/_chats | { grep -o -F "\"$1\"" || true; } | wc -l | tr -d ' \r'; }
-incident_acked() { on master trinetra fleet incident "$1" | grep -q "^acked by: "; }
+incident_acked() { on master trinetra fleet incident "$1" | grep "^acked by: " >/dev/null; }
 # The following compare against a BASE_* snapshot a step takes just before
 # triggering the action being waited on (set as a plain global right before
 # each wait_until call; bash resolves it at call time, not definition time).
@@ -153,7 +156,7 @@ rule_state() { on master trinetra fleet rules | awk '$1=="lab-online"{print $2}'
 rule_is_firing() { [ "$(rule_state)" = "firing" ]; }
 rule_is_ok() { [ "$(rule_state)" = "ok" ]; }
 child_cfg_is() { [ "$(on "$1" trinetra config get "$2")" = "$3" ]; } # <svc> <key> <want>
-managed_applied_no_drift() { on master trinetra fleet managed status | awk -v n="$1" '$1==n && $4=="true" && $5=="-"' | grep -q .; }
+managed_applied_no_drift() { on master trinetra fleet managed status | awk -v n="$1" '$1==n && $4=="true" && $5=="-"' | grep . >/dev/null; }
 
 # fidelity <child-svc> <node-id> <metric> [tscmp flags...]: the master's
 # replica must be a byte prefix of the child's series, trailing it by at most
@@ -234,9 +237,9 @@ wait_until 60 "child1 online on master" node_is child1 online
 wait_until 60 "child2 online on master" node_is child2 online
 NODES=$(on master trinetra fleet nodes)
 echo "$NODES"
-awk '$1=="master" && $NF=="self"' <<<"$NODES" | grep -q . || fail "master does not list itself as self"
+awk '$1=="master" && $NF=="self"' <<<"$NODES" | grep . >/dev/null || fail "master does not list itself as self"
 for c in child1 child2; do
-  awk -v n="$c" '$1==n' <<<"$NODES" | grep -qw lab || fail "$c lacks tag lab"
+  awk -v n="$c" '$1==n' <<<"$NODES" | grep -w lab >/dev/null || fail "$c lacks tag lab"
 done
 pass "child1=$ID_child1 child2=$ID_child2 online"
 
@@ -353,10 +356,10 @@ RM=$(on master trinetra fleet node remove child1) || fail "remove: $RM"
 grep -q "^Removed $C1" <<<"$RM" || fail "unexpected remove output: $RM"
 T_RM=$(now_in master)
 DOWN_AT_RM=$(alert_count master "fleet:node:$C1:down" fire)
-on master trinetra fleet nodes | awk '$1=="child1"' | grep -q . && fail "master still lists child1: $(on master trinetra fleet nodes)"
+on master trinetra fleet nodes | awk '$1=="child1"' | grep . >/dev/null && fail "master still lists child1: $(on master trinetra fleet nodes)"
 while [ $(( $(now_in master) - T_RM )) -lt $(( DOWN_AFTER + 15 )) ]; do sleep 2; done
 [ "$(alert_count master "fleet:node:$C1:down" fire)" -eq "$DOWN_AT_RM" ] || fail "master paged removed child1 as down"
-on master trinetra fleet nodes | awk '$1=="child1"' | grep -q . && fail "child1 reappeared in fleet nodes"
+on master trinetra fleet nodes | awk '$1=="child1"' | grep . >/dev/null && fail "child1 reappeared in fleet nodes"
 # child2 has been revoked (and silent) for longer than node_down_after by now.
 [ "$(alert_count master "fleet:node:$C2:down" fire)" -eq 0 ] || fail "master paged revoked child2 as down"
 pass "child1 solo with identity purged; removed on master, no down page for it (or revoked child2) after $(( DOWN_AFTER + 15 ))s"
@@ -390,7 +393,7 @@ ST=$(on solo trinetra fleet status)
 grep -qx "role: solo" <<<"$ST" || fail "solo changed role after refused joins: $ST"
 NODES_AFTER=$(on master trinetra fleet nodes | tail -n +2 | wc -l | tr -d ' ')
 [ "$NODES_AFTER" -eq "$NODES_BEFORE" ] || fail "node count changed $NODES_BEFORE -> $NODES_AFTER"
-on master trinetra fleet nodes | awk '$1=="bogus" || $1=="reused"' | grep -q . && fail "refused join registered a node"
+on master trinetra fleet nodes | awk '$1=="bogus" || $1=="reused"' | grep . >/dev/null && fail "refused join registered a node"
 pass "401 without cert; garbage and spent codes refused, no node registered"
 
 # ---------------------------------------------------------------------------
@@ -506,7 +509,7 @@ sleep $(( 3 * FAST ))
 SWAP_INC=$(on master trinetra fleet incidents --node "$ID_child1" --state firing | awk '$0 ~ /disk:/ {print $1; exit}')
 [ -n "$SWAP_INC" ] || fail "the master never recorded child1's fallback-delivered disk incident after reconnecting"
 [ "$SWAP_INC" != "$INC1" ] || fail "the disk fire reused the mem incident $INC1 instead of opening its own"
-on master trinetra fleet incident "$SWAP_INC" | grep -q "delivered locally" \
+on master trinetra fleet incident "$SWAP_INC" | grep "delivered locally" >/dev/null \
   || fail "master's swap incident for child1 is not marked delivered locally: $(on master trinetra fleet incident "$SWAP_INC")"
 pass "linked: one message from the master; partitioned: one local-fallback message after ${FALLBACK_AFTER}s; reconnect: recorded, no duplicate"
 
@@ -525,7 +528,7 @@ sleep $(( 6 * FAST ))
 [ "$(msg_count "child2: mem =")" -eq "$BASE_C2MEM" ] || fail "child2's mem alert was delivered by the master despite the active silence"
 INC2=$(on master trinetra fleet incidents --node "$ID_child2" | awk '$0 ~ /mem/ {print $1; exit}')
 [ -n "$INC2" ] || fail "master never recorded child2's suppressed mem incident: $(on master trinetra fleet incidents --node "$ID_child2")"
-on master trinetra fleet explain "$INC2" | grep -q suppressed \
+on master trinetra fleet explain "$INC2" | grep suppressed >/dev/null \
   || fail "fleet explain $INC2 does not show a suppression: $(on master trinetra fleet explain "$INC2")"
 echo "  silence $SIL_ID suppressed child2's mem alert while linked (fleet explain $INC2 shows it)"
 
@@ -644,7 +647,7 @@ cat >"$SCRATCH/alerting-14.json" <<'JSON'
 JSON
 cpq "$SCRATCH/alerting-14.json" master:/tmp/alerting-14.json
 APPLY=$(on master trinetra fleet alerting apply /tmp/alerting-14.json) || fail "alerting apply (rule): $APPLY"
-on master trinetra fleet rules | grep -q "^lab-online" || fail "fleet rules does not list lab-online: $(on master trinetra fleet rules)"
+on master trinetra fleet rules | grep "^lab-online" >/dev/null || fail "fleet rules does not list lab-online: $(on master trinetra fleet rules)"
 
 docker network disconnect "$NET" "$(ctr child2)"
 wait_until 85 "child2 link retrying (rule)" link_is child2 retrying
@@ -672,7 +675,7 @@ echo "  callback from foreign chat 555 answered 'not authorized'; incident $INC1
 on mocktg curl -s "http://localhost:8080/_inject_callback?data=ack%3A$INC1&chat=999&id=cb-owner&token=TESTTOKEN" >/dev/null
 wait_until 20 "owner callback answered 'acked'" mocktg_has_answer "cb-owner:acked"
 wait_until 20 "incident $INC1 shows acked" incident_acked "$INC1"
-on master trinetra fleet incident "$INC1" | grep -q "^acked by: telegram$" \
+on master trinetra fleet incident "$INC1" | grep "^acked by: telegram$" >/dev/null \
   || fail "incident $INC1 not acked by 'telegram': $(on master trinetra fleet incident "$INC1")"
 pass "Ack button from the enrolled chat acked incident $INC1; the same callback from a foreign chat was refused"
 
