@@ -1123,8 +1123,8 @@ func cmdDaemon(args []string) int {
 		dispatchOnly: func(a Alert, channels []string) bool {
 			return dispatchOnlyTo(q, a, inQuietHours(getCfg().QuietHours, time.Now()), channels)
 		},
-		alertFallback: func(a Alert, silences *pushedSilences) {
-			deliverFallback(silences, alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix())
+		alertFallback: func(a Alert, silences *pushedSilences, prefix string) {
+			deliverFallback(silences, alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()), time.Now().Unix(), prefix)
 		},
 		logf: func(format string, args ...any) { fmt.Fprintf(stderr, format+"\n", args...) },
 	})

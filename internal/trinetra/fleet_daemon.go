@@ -70,7 +70,10 @@ type fleetDeps struct {
 	// through opaquely here since daemon.go builds this closure once, before
 	// any child-specific state exists, and forwarded to deliverFallback so a
 	// fallback delivery still covered by a pushed silence is suppressed.
-	alertFallback func(a Alert, silences *pushedSilences)
+	// prefix is forwarded to deliverFallback verbatim (fallbackPrefix for an
+	// ordinary Tick-driven fallback, revokedFallbackPrefix for
+	// handleLinkRevocation's drain-on-revoke).
+	alertFallback func(a Alert, silences *pushedSilences, prefix string)
 	logf          func(string, ...any)
 }
 
@@ -890,8 +893,10 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 			case <-cctx.Done():
 				return
 			case now := <-t.C:
+				st := sh.Status()
+				handleLinkRevocation(st, lease, handoffState, childSilences, d.alertFallback)
 				warnAfter := int64(d.getCfg().FleetLinkDownWarnAfter() / time.Second)
-				for _, a := range la.Plan(sh.Status(), cfg.Fleet.MasterURL, started, now.Unix(), warnAfter) {
+				for _, a := range la.Plan(st, cfg.Fleet.MasterURL, started, now.Unix(), warnAfter) {
 					d.alert(a)
 				}
 			}
@@ -909,7 +914,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 				return
 			case <-t.C:
 				for _, a := range handoffState.Tick() {
-					d.alertFallback(a, childSilences)
+					d.alertFallback(a, childSilences, fallbackPrefix)
 				}
 			}
 		}

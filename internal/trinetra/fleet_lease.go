@@ -25,6 +25,14 @@ import (
 // master never got the chance to."
 const fallbackPrefix = "via local fallback: master unreachable — "
 
+// revokedFallbackPrefix is used instead of fallbackPrefix when draining
+// handoff.pending because the node was revoked (handleLinkRevocation),
+// never because the master was merely unreachable: fallbackPrefix's wording
+// would be actively misleading here -- the node wasn't unreachable, it was
+// deliberately cut off, and the alert's own title (for fleet:link:revoked
+// itself) already says so.
+const revokedFallbackPrefix = "node revoked, delivering locally — "
+
 // leaseMaxDuration caps how far into the future a granted lease may reach,
 // regardless of what the master's lease frame claims. The lease's valid
 // duration is the master's call (it sends `until`, a unix time, in every
@@ -67,6 +75,18 @@ func (l *leaseHolder) Valid() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.until > l.now().Unix()
+}
+
+// Revoke marks the lease permanently invalid: Valid() returns false from
+// this call onward. Revocation is terminal per spec §3.4 -- re-enrollment
+// requires a fresh `fleet join`, which restarts the daemon and builds a
+// brand-new leaseHolder from scratch -- so there is no corresponding
+// "un-revoke", and this is safe to call every tick once the link is seen as
+// revoked (idempotent).
+func (l *leaseHolder) Revoke() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.until = 0
 }
 
 // handoffKey identifies one routed alert the same way the master's
@@ -206,6 +226,29 @@ func (h *handoff) Tick() []Alert {
 			out = append(out, p.alert)
 			delete(h.pending, k)
 		}
+	}
+	return out
+}
+
+// Drain unconditionally clears and returns every pending alert, regardless
+// of fallbackAfter/lease timing -- unlike Tick, which only returns entries
+// whose own wait has actually expired. Used the instant the node is seen as
+// revoked (handleLinkRevocation): every alert still routed to a now-revoked
+// master is owed local delivery right now, not after its own individual
+// fallback countdown. Like Tick, each entry is removed as it is returned,
+// so calling Drain again (every tick after the first, since revocation is
+// permanent) is a cheap no-op on an already-empty map -- no
+// double-delivery.
+func (h *handoff) Drain() []Alert {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.pending) == 0 {
+		return nil
+	}
+	out := make([]Alert, 0, len(h.pending))
+	for k, p := range h.pending {
+		out = append(out, p.alert)
+		delete(h.pending, k)
 	}
 	return out
 }
@@ -500,13 +543,20 @@ func reconcilePendingFromLog(alog *AlertLog, receiptsPath string, fallbackAfter 
 // either) but the title notes the suppression and neither bus.Publish nor
 // q.Enqueue is called, so nothing actually fires. A nil silences (no push
 // ever received) behaves exactly as before task 4.
-func deliverFallback(silences *pushedSilences, alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, nowUnix int64) {
+//
+// prefix is prepended to the title instead of the unconditional
+// fallbackPrefix (final-review engine ruling (b)): every existing caller
+// passes fallbackPrefix ("via local fallback: master unreachable — "), but
+// handleLinkRevocation's drain-on-revoke call site passes
+// revokedFallbackPrefix instead, since "master unreachable" is simply false
+// for a node that was deliberately revoked.
+func deliverFallback(silences *pushedSilences, alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, nowUnix int64, prefix string) {
 	firedAt := a.Time
 	reason, suppressed := silences.Suppressed(nowUnix, a.Key, a.Severity.String())
 	if suppressed {
 		a.Title = "silenced (" + reason + "): " + a.Title
 	} else {
-		a.Title = fallbackPrefix + a.Title
+		a.Title = prefix + a.Title
 	}
 	a.Time = nowUnix
 	if alog != nil {

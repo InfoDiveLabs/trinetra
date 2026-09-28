@@ -32,7 +32,7 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 		alertStatePath: filepath.Join(dir, "alerts.json"),
 		alert:          record,
 		deliverSync:    func(a Alert) bool { record(a); return true },
-		alertFallback:  func(a Alert, _ *pushedSilences) { record(a) },
+		alertFallback:  func(a Alert, _ *pushedSilences, _ string) { record(a) },
 		logf:           t.Logf,
 	}, &alerts
 }
@@ -72,7 +72,7 @@ func TestStartMasterWarnsOnceAboutDuplicateRegistryNames(t *testing.T) {
 		alog:           NewAlertLog(filepath.Join(dir, "alertlog.jsonl")),
 		alertStatePath: filepath.Join(dir, "alerts.json"),
 		alert:          func(Alert) {}, deliverSync: func(Alert) bool { return true },
-		alertFallback: func(Alert, *pushedSilences) {},
+		alertFallback: func(Alert, *pushedSilences, string) {},
 		logf: func(format string, args ...any) {
 			mu.Lock()
 			lines = append(lines, fmt.Sprintf(format, args...))

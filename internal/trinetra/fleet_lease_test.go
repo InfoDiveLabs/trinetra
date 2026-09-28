@@ -47,6 +47,149 @@ func TestLeaseHolderGrantCapsAtMax(t *testing.T) {
 	}
 }
 
+// TestLeaseHolderRevokeInvalidatesImmediately is the final-review engine
+// ruling (b) regression: a valid lease must become (and stay) invalid the
+// instant Revoke is called, with no grace window.
+func TestLeaseHolderRevokeInvalidatesImmediately(t *testing.T) {
+	now := time.Unix(1000, 0)
+	l := newLeaseHolder(func() time.Time { return now })
+	l.Grant(1090)
+	if !l.Valid() {
+		t.Fatal("want valid before Revoke")
+	}
+	l.Revoke()
+	if l.Valid() {
+		t.Fatal("want invalid immediately after Revoke")
+	}
+}
+
+// TestHandoffDrainReturnsAllPendingRegardlessOfTiming is the final-review
+// engine ruling (b) regression for handoff.Drain: unlike Tick, it must
+// return every pending alert right away, even when neither the lease has
+// expired nor fallbackAfter has elapsed -- and it must be idempotent (a
+// second call returns nothing once pending is already empty).
+func TestHandoffDrainReturnsAllPendingRegardlessOfTiming(t *testing.T) {
+	now := time.Unix(1000, 0)
+	nowFn := func() time.Time { return now }
+	lease := newLeaseHolder(nowFn)
+	lease.Grant(1_000_000) // stays valid for the whole test
+	h := newHandoff(nowFn, func() time.Duration { return time.Hour }, lease)
+
+	a1 := Alert{Key: "cpu", Title: "CPU high", Kind: "fire", Time: 1000}
+	a2 := Alert{Key: "mem", Title: "mem high", Kind: "fire", Time: 1000}
+	if h.Route(a1) || h.Route(a2) {
+		t.Fatal("Route while lease valid must return false")
+	}
+	if got := h.Tick(); len(got) != 0 {
+		t.Fatalf("Tick immediately after Route = %v, want none (fallbackAfter is an hour away)", got)
+	}
+
+	drained := h.Drain()
+	if len(drained) != 2 {
+		t.Fatalf("Drain = %v, want both pending alerts returned immediately", drained)
+	}
+	if len(h.Tick()) != 0 {
+		t.Fatal("nothing should remain pending after Drain")
+	}
+	if got := h.Drain(); len(got) != 0 {
+		t.Fatalf("second Drain = %v, want none (idempotent, no double-delivery)", got)
+	}
+}
+
+// TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix is the
+// final-review engine ruling (b) regression at handleLinkRevocation's own
+// level: it must (1) revoke the lease, (2) deliver every pending alert
+// exactly once via the given fallback func with revokedFallbackPrefix (not
+// fallbackPrefix -- "master unreachable" would be false for a node that was
+// deliberately revoked), and (3) be a no-op on a second call (no
+// double-delivery).
+func TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix(t *testing.T) {
+	now := time.Unix(1000, 0)
+	nowFn := func() time.Time { return now }
+	lease := newLeaseHolder(nowFn)
+	lease.Grant(1_000_000)
+	h := newHandoff(nowFn, func() time.Duration { return time.Hour }, lease)
+	pending := Alert{Key: "cpu", Title: "CPU high", Kind: "fire", Time: 1000}
+	if h.Route(pending) {
+		t.Fatal("Route while lease valid must return false")
+	}
+
+	var delivered []Alert
+	var prefixes []string
+	fallback := func(a Alert, _ *pushedSilences, prefix string) {
+		delivered = append(delivered, a)
+		prefixes = append(prefixes, prefix)
+	}
+
+	handleLinkRevocation(fleet.LinkStatus{State: fleet.LinkRevoked}, lease, h, nil, fallback)
+
+	if lease.Valid() {
+		t.Fatal("want lease invalid after handleLinkRevocation")
+	}
+	if len(delivered) != 1 || delivered[0].Key != "cpu" {
+		t.Fatalf("delivered = %+v, want the one pending alert", delivered)
+	}
+	if prefixes[0] != revokedFallbackPrefix {
+		t.Fatalf("prefix = %q, want revokedFallbackPrefix %q", prefixes[0], revokedFallbackPrefix)
+	}
+
+	// A second call (every subsequent tick, while still revoked) must not
+	// redeliver anything.
+	handleLinkRevocation(fleet.LinkStatus{State: fleet.LinkRevoked}, lease, h, nil, fallback)
+	if len(delivered) != 1 {
+		t.Fatalf("delivered after second call = %+v, want still just 1 (no double-delivery)", delivered)
+	}
+
+	// Not revoked: a no-op, even with something pending.
+	lease2 := newLeaseHolder(nowFn)
+	lease2.Grant(1_000_000)
+	h2 := newHandoff(nowFn, func() time.Duration { return time.Hour }, lease2)
+	h2.Route(Alert{Key: "disk", Kind: "fire", Time: 1000})
+	var calls int
+	handleLinkRevocation(fleet.LinkStatus{State: fleet.LinkLinked}, lease2, h2, nil, func(Alert, *pushedSilences, string) { calls++ })
+	if calls != 0 || !lease2.Valid() {
+		t.Fatal("handleLinkRevocation must be a no-op when the link is not revoked")
+	}
+}
+
+// TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix is the
+// final-review engine ruling (b) regression covering both "the revoked
+// notice itself carries no 'master unreachable' prefix" and "every alert
+// AFTER revocation delivers with no prefix at all": once lease.Revoke has
+// run, Route must return true unconditionally, and fallbackPrefix/
+// revokedFallbackPrefix are only ever applied inside deliverFallback -- a
+// path Route()==true (direct/local delivery) never goes through -- so an
+// alert's title is never touched by either prefix once the node is
+// revoked.
+func TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix(t *testing.T) {
+	now := time.Unix(1000, 0)
+	nowFn := func() time.Time { return now }
+	lease := newLeaseHolder(nowFn)
+	lease.Grant(1_000_000)
+	h := newHandoff(nowFn, func() time.Duration { return time.Hour }, lease)
+
+	lease.Revoke()
+
+	revokedNotice := Alert{Key: "fleet:link:revoked", Title: "⛔ This node was revoked by the fleet master.", Kind: "fire", Time: 1001}
+	if !h.Route(revokedNotice) {
+		t.Fatal("Route for the revoked node's own notice must return true once the lease is revoked")
+	}
+	if revokedNotice.Title != "⛔ This node was revoked by the fleet master." {
+		t.Fatalf("title = %q, want unchanged -- Route never touches the title, only deliverFallback does", revokedNotice.Title)
+	}
+
+	later := Alert{Key: "cpu", Title: "CPU high", Kind: "fire", Time: 2000}
+	if !h.Route(later) {
+		t.Fatal("Route for a later alert must also return true: revocation is terminal")
+	}
+	if later.Title != "CPU high" {
+		t.Fatalf("title = %q, want unchanged", later.Title)
+	}
+	if got := h.Tick(); len(got) != 0 {
+		t.Fatalf("Tick = %v, want none pending -- both alerts were delivered directly, never routed", got)
+	}
+}
+
 func TestHandoffRouteWhileLeaseValidHoldsBackLocalDelivery(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -250,7 +393,7 @@ func TestDeliverFallbackPrefixesTitleAndRecordsSecondEvent(t *testing.T) {
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1000}
-	deliverFallback(nil, alog, nil, q, a, false, 1200)
+	deliverFallback(nil, alog, nil, q, a, false, 1200, fallbackPrefix)
 
 	events, err := alog.AlertEventsSince(0)
 	if err != nil {
@@ -373,7 +516,7 @@ func TestDeliverFallbackDoesNotMutateCallersAlert(t *testing.T) {
 
 	a := Alert{Key: "cpu", Title: "CPU high", Kind: "fire", Time: 1000}
 	orig := a
-	deliverFallback(nil, alog, nil, q, a, false, 1200)
+	deliverFallback(nil, alog, nil, q, a, false, 1200, fallbackPrefix)
 	if !reflect.DeepEqual(a, orig) {
 		t.Fatalf("caller's Alert mutated: got %+v, want unchanged %+v", a, orig)
 	}
@@ -689,7 +832,7 @@ func TestRestartWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.T) {
 	}
 
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
-	deliverFallback(nil, alog, nil, q, got[0], false, now.Unix())
+	deliverFallback(nil, alog, nil, q, got[0], false, now.Unix(), fallbackPrefix)
 
 	wantTitle := fallbackPrefix + "CPU high"
 	events, err := alog.AlertEventsSince(0)
@@ -825,7 +968,7 @@ func TestRestartRecoverWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.
 	}
 
 	q := NewNotifierQueue(NewDispatcher(nil, time.Second), 8)
-	deliverFallback(nil, alog, nil, q, got[0], false, now.Unix())
+	deliverFallback(nil, alog, nil, q, got[0], false, now.Unix(), fallbackPrefix)
 
 	wantTitle := fallbackPrefix + "CPU back to normal"
 	events, err := alog.AlertEventsSince(0)
@@ -1077,7 +1220,7 @@ func TestDeliverFallbackHonoursPushedSilenceSuppressesLocalDelivery(t *testing.T
 	}
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1000}
-	deliverFallback(silences, alog, nil, q, a, false, 1200)
+	deliverFallback(silences, alog, nil, q, a, false, 1200, fallbackPrefix)
 
 	events, err := alog.AlertEventsSince(0)
 	if err != nil {
@@ -1111,7 +1254,7 @@ func TestDeliverFallbackWithoutMatchingSilenceStillDelivers(t *testing.T) {
 	}
 
 	a := Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Source: "anomaly", Time: 1000}
-	deliverFallback(silences, alog, nil, q, a, false, 1200)
+	deliverFallback(silences, alog, nil, q, a, false, 1200, fallbackPrefix)
 
 	if keys := q.snapshotKeysForTest(); len(keys) != 1 || keys[0] != "cpu" {
 		t.Fatalf("queue = %v, want the alert delivered locally (no matching silence)", keys)
