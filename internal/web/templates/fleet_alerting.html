@@ -46,7 +46,7 @@
     <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
 
     <div class="section-label"><span class="eyebrow">Routes</span></div>
-    <p class="note" style="margin-top:-6px">Evaluated in order. The first match wins, unless a route continues -- then later routes are checked too, and every match's policy escalates on its own.</p>
+    <p class="note" style="margin-top:-6px">Evaluated in order. The first match wins, unless a route continues — then later routes are checked too, and every match's policy escalates on its own.</p>
     <div class="panel" style="margin-bottom:18px">
       {{range $i, $route := .Draft.Routes}}
       <div class="panel" style="margin-bottom:12px">
@@ -87,7 +87,7 @@
         {{if $editable}}<button class="btn ghost" type="submit" name="op" value="add_matcher:{{$i}}">Add matcher</button>{{end}}
       </div>
       {{else}}
-      <p class="note">No routes configured -- every alert uses the default policy.</p>
+      <p class="note">No routes configured — every alert uses the default policy.</p>
       {{end}}
       {{if $editable}}
       <button class="btn ghost" type="submit" name="op" value="add_route">Add route</button>
@@ -142,7 +142,7 @@
         {{if $editable}}<button class="btn ghost" type="submit" name="op" value="add_step:{{$pi}}">Add step</button>{{end}}
       </div>
       {{else}}
-      <p class="note">No policies configured -- the built-in default (immediate delivery to every channel) applies.</p>
+      <p class="note">No policies configured — the built-in default (immediate delivery to every channel) applies.</p>
       {{end}}
       {{if $editable}}
       <button class="btn ghost" type="submit" name="op" value="add_policy">Add policy</button>
@@ -190,7 +190,7 @@
       <input type="hidden" name="mode" value="json">
       <label class="field"><span class="lb">Full alerting config</span>
         <textarea name="json_config" rows="16" spellcheck="false">{{.JSONConfig}}</textarea>
-        <span class="hint">The version field must match what you loaded -- a stale version is rejected so you don't overwrite someone else's change. Unknown fields are rejected by name.</span>
+        <span class="hint">The version field must match what you loaded — a stale version is rejected so you don't overwrite someone else's change. Unknown fields are rejected by name.</span>
       </label>
       {{if .JSONErr}}<span class="field-err">{{.JSONErr}}</span>{{end}}
       <button class="btn primary" type="submit" name="save" value="json" style="margin-top:10px">Save JSON</button>
@@ -246,7 +246,7 @@
 {{if .TestErr}}
 <p class="note" style="color:var(--warn)">{{.TestErr}}</p>
 {{else if .TestResult}}
-<p class="note">Matched route: <span class="mono">{{if .TestResult.Route}}{{.TestResult.Route}}{{else}}(none -- default policy){{end}}</span></p>
+<p class="note">Matched route: <span class="mono">{{if .TestResult.Route}}{{.TestResult.Route}}{{else}}(none — default policy){{end}}</span></p>
 {{if .TestResult.Suppressed}}<p class="note"><span class="badge warn">suppressed</span> {{.TestResult.Suppressed}}</p>{{end}}
 {{range .TestResult.Policies}}
 <div class="panel" style="margin-top:8px">

@@ -339,11 +339,11 @@ func TestFleetIncidentDetailShowsMembersAndFullTimeline(t *testing.T) {
 	// dumps with a duplicated prose Detail tacked on.
 	for _, want := range []string{
 		">fired<", ">grouped<", ">suppressed<", ">delivered<", ">escalated<", ">acked<", ">receipt<", ">resolved<",
-		"grouped into inc1", // legacy Detail fallback
+		"grouped into inc1",                 // legacy Detail fallback
 		"policy default, step 0 → telegram", // delivered
 		"policy default, step 1 → email",    // escalated
 		"recover · db1 · disk_pct",          // resolved: leg · node · key, no redundant Detail
-		"root", // acked event's Actor
+		"root",                              // acked event's Actor
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /fleet/incidents/inc1: missing timeline content %q\nbody:\n%s", want, body)
