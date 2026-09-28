@@ -572,7 +572,7 @@ func (s *incidentStore) AppendEvent(id string, ev core.IncidentEvent) (core.Inci
 	defer s.mu.Unlock()
 	inc, ok := s.byID[id]
 	if !ok {
-		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+		return core.Incident{}, fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
 	inc.Timeline = append(inc.Timeline, ev)
 	inc.Updated = ev.TS
@@ -629,7 +629,7 @@ func (s *incidentStore) Ack(id, actor string, now int64) (core.Incident, error) 
 	defer s.mu.Unlock()
 	inc, ok := s.byID[id]
 	if !ok {
-		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+		return core.Incident{}, fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
 	if inc.State == "resolved" {
 		return core.Incident{}, fmt.Errorf("incident %q is already resolved", id)

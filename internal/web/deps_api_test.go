@@ -404,7 +404,7 @@ func (f *fakeFleet) Incident(id string) (core.Incident, error) {
 			return inc, nil
 		}
 	}
-	return core.Incident{}, fmt.Errorf("no such incident: %s", id)
+	return core.Incident{}, fmt.Errorf("no such incident: %s: %w", id, core.ErrNotFound)
 }
 
 // AckIncident records id/actor (ackedIncidentID/ackedIncidentActor) so a
@@ -479,7 +479,7 @@ func (f *fakeFleet) ExpireSilence(id, actor string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("no such silence %q", id)
+	return fmt.Errorf("no such silence %q: %w", id, core.ErrNotFound)
 }
 
 // Maintenances (task C4) returns the settable f.maintenances fixture
@@ -512,7 +512,7 @@ func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error
 			return m, nil
 		}
 	}
-	return core.Maintenance{}, fmt.Errorf("no such maintenance %q", m.ID)
+	return core.Maintenance{}, fmt.Errorf("no such maintenance %q: %w", m.ID, core.ErrNotFound)
 }
 
 // DeleteMaintenance (task C4) removes id and records actor, or fails with
@@ -529,7 +529,7 @@ func (f *fakeFleet) DeleteMaintenance(id, actor string) error {
 		f.maintenances = append(f.maintenances[:i], f.maintenances[i+1:]...)
 		return nil
 	}
-	return fmt.Errorf("no such maintenance %q", id)
+	return fmt.Errorf("no such maintenance %q: %w", id, core.ErrNotFound)
 }
 
 // fakeValidateMatchers mirrors internal/trinetra/fleet_silences.go's own

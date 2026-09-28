@@ -291,13 +291,42 @@ func filterSilencesByTab(all []core.Silence, tab silenceTab, now int64) []core.S
 	return out
 }
 
-// silenceTimeText renders a unix timestamp as an absolute UTC
-// "Jan 2 15:04:05" reading, mirroring incidentTimeText -- "-" for <= 0.
+// silenceTimeText renders a unix timestamp in the MASTER's own local zone
+// (time.Local) with its abbreviation appended -- e.g. "2030-06-01 12:00
+// IST" -- "-" for <= 0. This is the ONE helper every silence time on this
+// page (the list's Start/End) renders through (fix round 1 review: a
+// silence's Start/End datetime-local inputs are parsed in time.Local
+// (parseDatetimeLocal), but this used to render them back in UTC with no
+// zone label at all -- an admin typing "12:00" meaning noon their own time
+// would see some UTC-shifted reading with nothing telling them why it
+// didn't match what they typed). See silenceTimeZoneNote for the form-side
+// half of this fix (the visible "Times are in ..." note next to Start/End).
 func silenceTimeText(ts int64) string {
 	if ts <= 0 {
 		return "-"
 	}
-	return time.Unix(ts, 0).UTC().Format("Jan 2 15:04:05")
+	t := time.Unix(ts, 0).In(time.Local)
+	abbr, _ := t.Zone()
+	return t.Format("2006-01-02 15:04") + " " + abbr
+}
+
+// silenceTimeZoneNote is the "Times are in <IANA name> (<abbrev>)" note
+// rendered next to the create-silence form's Start/Duration/End fields --
+// fix round 1 review's ruling, telling the admin which zone silenceTimeText
+// (above) and parseDatetimeLocal/formatDatetimeLocal (below) both use.
+// time.Local's own String() is the IANA name when the host has one
+// configured (e.g. via the TZ environment variable or /etc/localtime); on a
+// host with no such name configured it's the literal placeholder "Local",
+// which is never shown verbatim -- falling back to just the abbreviation
+// instead, per the ruling.
+func silenceTimeZoneNote() string {
+	now := time.Now()
+	name := now.Location().String()
+	abbr, _ := now.Zone()
+	if name == "" || name == "Local" {
+		return fmt.Sprintf("Times are in %s", abbr)
+	}
+	return fmt.Sprintf("Times are in %s (%s)", name, abbr)
 }
 
 // SilenceRow is one row of the silences list table.
@@ -717,8 +746,13 @@ type SilencesPageData struct {
 
 	SilenceDraft           silenceDraft
 	SilenceDurationOptions []SilenceDurationOption
-	SilenceErr             string
-	SilenceErrField        string
+	// TZNote is the "Times are in <IANA name> (<abbrev>)" note rendered next
+	// to the Start/Duration/End fields (fix round 1 review), so an admin
+	// knows which zone every silence time on this page (silenceTimeText) and
+	// the datetime-local inputs (parseDatetimeLocal) both use.
+	TZNote          string
+	SilenceErr      string
+	SilenceErrField string
 
 	Maintenances []MaintenanceRow
 
@@ -774,6 +808,8 @@ func buildSilencesPageData(r *http.Request, d Deps, opts silencesPageOptions) Si
 		return "/fleet/silences?tab=" + string(opts.Tab) + "&page=" + strconv.Itoa(p)
 	}
 
+	// Maintenance windows are NOT paginated (accepted by the controller, fix
+	// round 1 review) -- see paginateSilences' doc for the rationale.
 	mrows := make([]MaintenanceRow, 0, len(allMaint))
 	for _, m := range allMaint {
 		mrows = append(mrows, newMaintenanceRow(m))
@@ -807,6 +843,7 @@ func buildSilencesPageData(r *http.Request, d Deps, opts silencesPageOptions) Si
 		NextHref:               pageHref(page + 1),
 		SilenceDraft:           sDraft,
 		SilenceDurationOptions: silenceDurationOptions(sDraft.Duration),
+		TZNote:                 silenceTimeZoneNote(),
 		SilenceErr:             opts.SilenceErr,
 		SilenceErrField:        opts.SilenceErrField,
 		Maintenances:           mrows,

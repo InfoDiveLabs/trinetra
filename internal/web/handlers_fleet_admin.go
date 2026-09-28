@@ -147,13 +147,21 @@ func validateNodeName(raw string) (string, error) {
 
 // fleetAPIErrStatus maps a core.FleetAPI error to the 4xx status the brief
 // calls for ("FleetAPI errors ... render as a flash message ... with a 4xx
-// status where it fits. Never return a 500."): core.ErrNoSuchNode and
-// core.ErrNotMaster both mean "the thing this request named isn't there
-// (any more)", so 404; anything else (a validation error the daemon itself
+// status where it fits. Never return a 500."): core.ErrNoSuchNode,
+// core.ErrNotMaster, and core.ErrNotFound (task C4 fix round 1 -- every
+// incident/silence/maintenance-window/managed-fragment "no such X" lookup
+// now wraps this) all mean "the thing this request named isn't there (any
+// more)", so 404; anything else (a validation error the daemon itself
 // rejected, e.g. registry.Update's "fleet: no node %s" for a stale id, or
 // fleet.TokenStore's "no such token") is treated as a bad request, 400.
+//
+// This errors.Is check works identically whether Deps.Fleet() is backed
+// in-process or by a control-socket control.Client: the latter's Client.call
+// reconstructs each of these sentinels from the wire's plain-text error
+// (internal/control/client.go's reconstructWireErr) precisely so this check
+// keeps working across that hop too -- see that function's own doc.
 func fleetAPIErrStatus(err error) int {
-	if errors.Is(err, core.ErrNoSuchNode) || errors.Is(err, core.ErrNotMaster) {
+	if errors.Is(err, core.ErrNoSuchNode) || errors.Is(err, core.ErrNotMaster) || errors.Is(err, core.ErrNotFound) {
 		return http.StatusNotFound
 	}
 	return http.StatusBadRequest

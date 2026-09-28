@@ -12,6 +12,25 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
+// withLocalTZ temporarily replaces time.Local with the named IANA zone for
+// the duration of the calling test, restoring the original afterward
+// (t.Cleanup) -- fix round 1 review's own ruling ("pin time.Local in the
+// test via a helper that swaps and restores it"), so a test asserting the
+// silence page's zone-labeled time rendering (silenceTimeText/
+// silenceTimeZoneNote, handlers_fleet_silences.go) gets a deterministic
+// zone/abbreviation instead of depending on whatever zone the test machine
+// happens to run in.
+func withLocalTZ(t *testing.T, name string) {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("time.LoadLocation(%q): %v", name, err)
+	}
+	orig := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = orig })
+}
+
 // ---- RBAC / CSRF / gating -------------------------------------------------
 
 // TestFleetSilencesSoloDaemon404s pins "master only, else 404" for the page.
@@ -150,6 +169,54 @@ func TestFleetSilencesCreateRoundTripsWithSessionUserAsAuthor(t *testing.T) {
 	}
 }
 
+// TestFleetSilencesDisplayedStartMatchesTypedWallClockPlusZone pins fix
+// round 1 review's IMPORTANT finding: a silence's Start/End datetime-local
+// inputs are parsed in time.Local, so the list must render them back in
+// THAT SAME zone, with its abbreviation, rather than UTC with no zone label
+// at all -- an admin typing "12:00" must see "12:00" (plus the zone) back,
+// never some UTC-shifted reading. Asia/Kolkata (IST, no DST) gives a fixed,
+// deterministic abbreviation for the assertion.
+func TestFleetSilencesDisplayedStartMatchesTypedWallClockPlusZone(t *testing.T) {
+	withLocalTZ(t, "Asia/Kolkata")
+	fleet := &fakeFleet{}
+	d := fleetAdminDeps(t, fleet)
+	body, h, cookie := fleetAdminSessionGet(t, d, "/fleet/silences")
+
+	values := formValuesForButton(t, body, "op", "save")
+	values.Set("matcher_0_tag", "web")
+	values.Set("start_at", "2030-06-01T12:00")
+	rr := postForm(h, "/fleet/silences", values, cookie, "")
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST /fleet/silences status = %d, want 303, body: %s", rr.Code, rr.Body.String())
+	}
+
+	// 2030-06-01 is far in the future relative to whenever this test runs,
+	// so the created silence lands on the Upcoming tab, not Active.
+	rr2 := fleetGetAsViewer(t, d, "/fleet/silences?tab=upcoming")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("GET /fleet/silences?tab=upcoming status = %d, want 200, body: %s", rr2.Code, rr2.Body.String())
+	}
+	got := rr2.Body.String()
+	if !strings.Contains(got, "2030-06-01 12:00 IST") {
+		t.Errorf("displayed start missing the typed wall-clock value plus zone label 'IST', body:\n%s", got)
+	}
+}
+
+// TestFleetSilencesTimeZoneNotePresent pins the other half of fix round 1's
+// ruling: a visible note next to the create-silence form's Start/End inputs
+// naming the zone. Driven as admin -- the note lives inside the create
+// form itself, which (like every mutation control on this page) a viewer
+// never sees at all.
+func TestFleetSilencesTimeZoneNotePresent(t *testing.T) {
+	withLocalTZ(t, "Asia/Kolkata")
+	fleet := &fakeFleet{}
+	d := fleetAdminDeps(t, fleet)
+	body, _, _ := fleetAdminSessionGet(t, d, "/fleet/silences")
+	if !strings.Contains(body, "Times are in Asia/Kolkata (IST)") {
+		t.Errorf("missing the 'Times are in ...' zone note, body:\n%s", body)
+	}
+}
+
 // TestFleetSilencesCreateFutureStartLandsOnUpcoming pins task-4-brief.md's
 // exact ruling: "allow a future start, which lands on the Upcoming tab".
 func TestFleetSilencesCreateFutureStartLandsOnUpcoming(t *testing.T) {
@@ -241,6 +308,110 @@ func TestFleetSilencesCreateAddMatcherRowRoundTrip(t *testing.T) {
 	}
 	if strings.Count(rr.Body.String(), `name="matcher_0_tag"`) != 1 || !strings.Contains(rr.Body.String(), `name="matcher_1_tag"`) {
 		t.Errorf("add_matcher did not add a second matcher row, body:\n%s", rr.Body.String())
+	}
+}
+
+// TestFleetSilencesAddThenRemoveMatcherPreservesOtherFields is fix round 1
+// review's requested browser-faithful test: fill Start/Duration/Comment,
+// click "Add matcher" (reshaping the draft, re-rendering at 200), then click
+// "Remove matcher" on the newly-added row -- every OTHER field (the first
+// matcher's own tag, Start, Duration, Comment) must survive both round
+// trips unchanged.
+func TestFleetSilencesAddThenRemoveMatcherPreservesOtherFields(t *testing.T) {
+	fleet := &fakeFleet{}
+	d := fleetAdminDeps(t, fleet)
+	body, h, cookie := fleetAdminSessionGet(t, d, "/fleet/silences")
+
+	values := formValuesForButton(t, body, "op", "add_matcher")
+	values.Set("matcher_0_tag", "web")
+	values.Set("start_at", "2030-01-01T08:00")
+	values.Set("duration", "4h")
+	values.Set("comment", "keep me")
+	rr := postForm(h, "/fleet/silences", values, cookie, "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("op=add_matcher status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body = rr.Body.String()
+	for _, want := range []string{`value="2030-01-01T08:00"`, `value="keep me"`, `value="web"`, `value="4h" selected`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("after add_matcher, missing %q, body:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, `name="matcher_1_tag"`) {
+		t.Fatalf("add_matcher did not add a second row, body:\n%s", body)
+	}
+
+	values2 := formValuesForButton(t, body, "op", "remove_matcher:1")
+	rr2 := postForm(h, "/fleet/silences", values2, cookie, "")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("op=remove_matcher status = %d, want 200, body: %s", rr2.Code, rr2.Body.String())
+	}
+	body2 := rr2.Body.String()
+	for _, want := range []string{`value="2030-01-01T08:00"`, `value="keep me"`, `value="web"`, `value="4h" selected`} {
+		if !strings.Contains(body2, want) {
+			t.Errorf("after remove_matcher, missing %q -- another field did not survive, body:\n%s", want, body2)
+		}
+	}
+	if strings.Contains(body2, `name="matcher_1_tag"`) {
+		t.Errorf("remove_matcher did not remove the second row, body:\n%s", body2)
+	}
+	if len(fleet.silences) != 0 {
+		t.Errorf("add/remove ops must never call CreateSilence, got %d silences", len(fleet.silences))
+	}
+}
+
+// TestFleetMaintenanceAddThenRemoveMatcherPreservesOtherFields is the same
+// browser-faithful add-then-remove test for the maintenance form: name,
+// weekdays, From/To, and a custom TZ must all survive both round trips.
+func TestFleetMaintenanceAddThenRemoveMatcherPreservesOtherFields(t *testing.T) {
+	fleet := &fakeFleet{}
+	d := fleetAdminDeps(t, fleet)
+	body, h, cookie := fleetAdminSessionGet(t, d, "/fleet/silences")
+
+	values := formValuesForButton(t, body, "op", "add_mnt_matcher")
+	values.Set("mnt_matcher_0_tag", "web")
+	values.Set("name", "keep-me-too")
+	values.Add("weekday", "2")
+	values.Add("weekday", "4")
+	values.Set("from", "01:00")
+	values.Set("to", "02:00")
+	values.Set("tz_custom", "Asia/Kathmandu")
+	rr := postForm(h, "/fleet/maintenance", values, cookie, "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("op=add_mnt_matcher status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body = rr.Body.String()
+	for _, want := range []string{
+		`value="keep-me-too"`, `value="Asia/Kathmandu"`, `value="web"`, `value="01:00"`, `value="02:00"`,
+		`name="weekday" value="2" checked`, `name="weekday" value="4" checked`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("after add_mnt_matcher, missing %q, body:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, `name="mnt_matcher_1_tag"`) {
+		t.Fatalf("add_mnt_matcher did not add a second row, body:\n%s", body)
+	}
+
+	values2 := formValuesForButton(t, body, "op", "remove_mnt_matcher:1")
+	rr2 := postForm(h, "/fleet/maintenance", values2, cookie, "")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("op=remove_mnt_matcher status = %d, want 200, body: %s", rr2.Code, rr2.Body.String())
+	}
+	body2 := rr2.Body.String()
+	for _, want := range []string{
+		`value="keep-me-too"`, `value="Asia/Kathmandu"`, `value="web"`, `value="01:00"`, `value="02:00"`,
+		`name="weekday" value="2" checked`, `name="weekday" value="4" checked`,
+	} {
+		if !strings.Contains(body2, want) {
+			t.Errorf("after remove_mnt_matcher, missing %q -- another field did not survive, body:\n%s", want, body2)
+		}
+	}
+	if strings.Contains(body2, `name="mnt_matcher_1_tag"`) {
+		t.Errorf("remove_mnt_matcher did not remove the second row, body:\n%s", body2)
+	}
+	if len(fleet.maintenances) != 0 {
+		t.Errorf("add/remove ops must never call SaveMaintenance, got %d maintenances", len(fleet.maintenances))
 	}
 }
 
@@ -467,17 +638,20 @@ func TestFleetMaintenanceDeleteWithConfirm(t *testing.T) {
 // ---- 404 / escaping ---------------------------------------------------------
 
 // TestFleetSilencesUnknownIDsAre404 pins that expiring/deleting an id this
-// fake doesn't recognize surfaces as a 4xx flash, never a 500.
+// fake doesn't recognize surfaces as EXACTLY 404 (core.ErrNotFound,
+// fleetAPIErrStatus), never a 500 -- fix round 1: the fake's "no such X"
+// errors now wrap core.ErrNotFound (deps_api_test.go), matching the real
+// backend, so this asserts the precise status rather than "any 4xx".
 func TestFleetSilencesUnknownIDsAre404(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
 	rr := fleetAdminPost(t, d, "/fleet/silences/nosuch/expire", url.Values{})
-	if rr.Code == http.StatusOK || rr.Code >= 500 {
-		t.Errorf("expire unknown id status = %d, want a 4xx, never 200 or 500", rr.Code)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expire unknown id status = %d, want 404", rr.Code)
 	}
 	rr2 := fleetAdminPost(t, d, "/fleet/maintenance/nosuch/delete", url.Values{})
-	if rr2.Code == http.StatusOK || rr2.Code >= 500 {
-		t.Errorf("delete unknown maintenance id status = %d, want a 4xx, never 200 or 500", rr2.Code)
+	if rr2.Code != http.StatusNotFound {
+		t.Errorf("delete unknown maintenance id status = %d, want 404", rr2.Code)
 	}
 }
 

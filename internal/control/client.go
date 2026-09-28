@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -185,6 +186,50 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+// wireErrSentinels lists every core.FleetAPI/core.API sentinel error whose
+// identity a control-socket caller may need to recover via errors.Is --
+// checked by reconstructWireErr in this order (harmless: none of these
+// texts are a suffix of another). Adding a new sentinel a Fleet.*/node
+// method wraps via fmt.Errorf("...: %w", sentinel) means adding it here too,
+// or callers on this side of the socket silently lose errors.Is against it
+// (fix round 1 review of task C4, fleet phase 2 web UI plan C: this is
+// exactly the gap that review caught for core.ErrNoSuchNode/ErrNotMaster,
+// which -- before this fix -- never actually survived a real control-socket
+// round trip, only an in-process one).
+var wireErrSentinels = []error{core.ErrNoSuchNode, core.ErrNotMaster, core.ErrConflict, core.ErrNotFound}
+
+// wireErr is a control-socket method error whose exact original text (msg)
+// is preserved for display/logging, while still unwrapping (Unwrap) to the
+// core sentinel its text ended with -- see reconstructWireErr.
+type wireErr struct {
+	msg    string
+	target error
+}
+
+func (e *wireErr) Error() string { return e.msg }
+func (e *wireErr) Unwrap() error { return e.target }
+
+// reconstructWireErr rebuilds a Fleet.*/node method's error from resp.Error
+// (protocol.go's response carries only plain text -- no separate error
+// code): a plain errors.New for an ordinary message, or a *wireErr
+// unwrapping to the matching sentinel when the message ENDS WITH that
+// sentinel's own Error() text -- exactly the shape fmt.Errorf("...: %w",
+// sentinel) produces on the daemon side. This lets a caller on the far side
+// of the control socket keep using errors.Is(err, core.ErrNoSuchNode) (etc.)
+// exactly as if no socket hop had happened, which is what internal/web's
+// fleetAPIErrStatus (and any future caller) relies on for its 404 mapping.
+func reconstructWireErr(msg string) error {
+	if msg == "" {
+		return nil
+	}
+	for _, sentinel := range wireErrSentinels {
+		if strings.HasSuffix(msg, sentinel.Error()) {
+			return &wireErr{msg: msg, target: sentinel}
+		}
+	}
+	return errors.New(msg)
+}
+
 // call sends one request frame for method with params, waits for the
 // matching response, and unmarshals its result into result (skipped if
 // result is nil). It holds mu for the duration of the round trip so ids and
@@ -253,7 +298,7 @@ func (c *Client) call(method string, params any, result any) error {
 		return errors.New("control: daemon does not support fleet node routing (upgrade trinetra)")
 	}
 	if !resp.OK {
-		return errors.New(resp.Error)
+		return reconstructWireErr(resp.Error)
 	}
 	if result == nil {
 		return nil

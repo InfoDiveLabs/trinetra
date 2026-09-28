@@ -234,7 +234,7 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 	// Only reachable for an explicit, non-empty ID that names nothing (the
 	// tag-derived branch above can never produce an ID that isn't already
 	// in s.fragments).
-	return core.ManagedFragment{}, fmt.Errorf("no such managed-config fragment %q", explicitID)
+	return core.ManagedFragment{}, fmt.Errorf("no such managed-config fragment %q: %w", explicitID, core.ErrNotFound)
 }
 
 // Delete removes fragment id, bumping the store's generation.
@@ -256,7 +256,7 @@ func (s *managedFragmentStore) Delete(id string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("no such managed-config fragment %q", id)
+	return fmt.Errorf("no such managed-config fragment %q: %w", id, core.ErrNotFound)
 }
 
 // ByTag returns the fragment with the given tag ("" for the all-nodes

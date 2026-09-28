@@ -24,6 +24,24 @@ var ErrNotMaster = errors.New("this trinetra is not a fleet master")
 // fleet node.
 var ErrNoSuchNode = errors.New("no such fleet node")
 
+// ErrNotFound is a generic "no such thing" sentinel (fleet phase 2 web UI
+// plan C, task C4 fix round 1): wrapped via fmt.Errorf("...: %w",
+// ErrNotFound) by every FleetAPI lookup/mutation that fails because id names
+// nothing this master knows about -- an incident, a silence, a maintenance
+// window, or a managed-config fragment (ErrNoSuchNode stays its own,
+// earlier, more specific sentinel for a fleet NODE id, unchanged). Callers
+// (internal/web's fleetAPIErrStatus) use errors.Is against this to map any
+// of those rejections to 404 uniformly, without needing to know or guess
+// which specific "no such X" message produced it.
+//
+// A caller on the OTHER side of the control socket (internal/control's
+// Client) still sees this correctly via errors.Is too: the wire only ever
+// carries the error's plain text (control/protocol.go's response.Error has
+// no separate code field), so Client.call reconstructs it by matching that
+// text's suffix against ErrNotFound.Error() (and every other FleetAPI
+// sentinel) -- see internal/control/client.go's reconstructWireErr.
+var ErrNotFound = errors.New("not found")
+
 // NodeSummary is a fleet master's projection of one node (itself included,
 // with Self true) for the fleet nodes list.
 type NodeSummary struct {

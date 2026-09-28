@@ -93,7 +93,8 @@
       <button class="btn ghost" type="submit" name="op" value="add_matcher">Add matcher</button>
       {{if eq $.SilenceErrField "matchers"}}<p class="field-err">{{$.SilenceErr}}</p>{{end}}
 
-      <div class="grid g-3" style="margin-top:14px">
+      <p class="note" style="margin:14px 0 4px">{{.TZNote}}</p>
+      <div class="grid g-3">
         <label class="field"><span class="lb">Start</span><input type="datetime-local" name="start_at" value="{{.SilenceDraft.StartAt}}">
           <span class="hint">defaults to now; a future start lands on the Upcoming tab</span>
           {{if eq .SilenceErrField "start"}}<span class="field-err">{{.SilenceErr}}</span>{{end}}

@@ -402,11 +402,11 @@ func (f fleetAPIImpl) Incident(id string) (core.Incident, error) {
 		return core.Incident{}, err
 	}
 	if m.engine == nil || m.engine.incidents == nil {
-		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+		return core.Incident{}, fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
 	inc, ok := m.engine.incidents.Get(id)
 	if !ok {
-		return core.Incident{}, fmt.Errorf("no such incident %q", id)
+		return core.Incident{}, fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
 	return inc, nil
 }
@@ -420,11 +420,11 @@ func (f fleetAPIImpl) AckIncident(id, actor string) error {
 		return err
 	}
 	if m.engine == nil || m.engine.incidents == nil {
-		return fmt.Errorf("no such incident %q", id)
+		return fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
 	inc, ok := m.engine.incidents.Get(id)
 	if !ok {
-		return fmt.Errorf("no such incident %q", id)
+		return fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
 	if actor == "" {
 		actor = "unknown"
@@ -509,7 +509,7 @@ func (f fleetAPIImpl) ExpireSilence(id, actor string) error {
 		return err
 	}
 	if m.silences == nil {
-		return fmt.Errorf("no such silence %q", id)
+		return fmt.Errorf("no such silence %q: %w", id, core.ErrNotFound)
 	}
 	if err := m.silences.Expire(id, time.Now().Unix()); err != nil {
 		return err
@@ -560,7 +560,7 @@ func (f fleetAPIImpl) DeleteMaintenance(id, actor string) error {
 		return err
 	}
 	if m.silences == nil {
-		return fmt.Errorf("no such maintenance %q", id)
+		return fmt.Errorf("no such maintenance %q: %w", id, core.ErrNotFound)
 	}
 	if err := m.silences.DeleteMaintenance(id); err != nil {
 		return err
@@ -724,7 +724,7 @@ func (f fleetAPIImpl) DeleteManaged(id, actor string) error {
 		return err
 	}
 	if m.managed == nil {
-		return fmt.Errorf("no such managed-config fragment %q", id)
+		return fmt.Errorf("no such managed-config fragment %q: %w", id, core.ErrNotFound)
 	}
 	if err := m.managed.Delete(id); err != nil {
 		return err

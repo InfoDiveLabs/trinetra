@@ -2,6 +2,7 @@ package control
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -26,6 +27,7 @@ type fleetFake struct {
 	createdSilence    core.Silence
 	expiredSilenceID  string
 	expiredActor      string
+	expireSilenceErr  error
 	savedMaintenance  core.Maintenance
 	deletedMaintID    string
 	deletedMaintActor string
@@ -118,7 +120,7 @@ func (a fleetFakeAPI) CreateSilence(s core.Silence) (core.Silence, error) {
 }
 func (a fleetFakeAPI) ExpireSilence(id, actor string) error {
 	a.f.expiredSilenceID, a.f.expiredActor = id, actor
-	return nil
+	return a.f.expireSilenceErr
 }
 func (a fleetFakeAPI) Maintenances() ([]core.Maintenance, error) {
 	return []core.Maintenance{{ID: "m1", Name: "patch window"}}, nil
@@ -196,8 +198,15 @@ func TestClientRoutesToNode(t *testing.T) {
 	if local.CPU != 11 || rv.CPU != 77 {
 		t.Fatalf("local=%v remote=%v", local.CPU, rv.CPU)
 	}
+	// fix round 1 (task C4): before reconstructWireErr existed, errors.Is
+	// against core.ErrNoSuchNode was dead code for any caller on THIS side
+	// of the control socket -- Client.call returned a bare errors.New(text),
+	// so only the message text (checked below) survived the wire, never the
+	// sentinel's identity. Both are pinned here now.
 	if _, err := c.ForNode("nope").Snapshot(); err == nil || !strings.Contains(err.Error(), "no such fleet node") {
 		t.Fatalf("unknown node err = %v", err)
+	} else if !errors.Is(err, core.ErrNoSuchNode) {
+		t.Errorf("unknown node err = %v, want errors.Is(err, core.ErrNoSuchNode) after a real control-socket round trip", err)
 	}
 	self, _ := c.ForNode(core.SelfNodeID).Snapshot()
 	if self.CPU != 11 {
@@ -276,6 +285,30 @@ func TestClientFleetMethods(t *testing.T) {
 		f.fleetSeriesFrom != 500 || f.fleetSeriesTo != 1500 || f.fleetSeriesRes != core.ResRaw {
 		t.Fatalf("fleet series args not carried over the wire: metric=%q filter=%+v agg=%q from=%d to=%d res=%v",
 			f.fleetSeriesMetric, f.fleetSeriesFilter, f.fleetSeriesAgg, f.fleetSeriesFrom, f.fleetSeriesTo, f.fleetSeriesRes)
+	}
+}
+
+// TestClientPreservesErrNotFoundOverTheWire pins fix round 1 (task C4, fleet
+// phase 2 web UI plan C): a Fleet.* method error wrapping core.ErrNotFound
+// (e.g. ExpireSilence/DeleteMaintenance/Incident/DeleteManaged on the daemon
+// side, internal/trinetra) must still satisfy errors.Is(err,
+// core.ErrNotFound) for a caller on the OTHER side of a REAL control-socket
+// round trip -- not just in-process -- since internal/web's fleetAPIErrStatus
+// relies on exactly that to map it to 404.
+func TestClientPreservesErrNotFoundOverTheWire(t *testing.T) {
+	f := &fleetFake{fakeAPI: &fakeAPI{}, expireSilenceErr: fmt.Errorf("no such silence %q: %w", "sil1", core.ErrNotFound)}
+	c, _ := Dial(startTestServer(t, f, "tok"), "tok")
+	defer c.Close()
+
+	err := c.Fleet().ExpireSilence("sil1", "root")
+	if err == nil {
+		t.Fatal("want an error expiring an unknown silence")
+	}
+	if !strings.Contains(err.Error(), "no such silence") {
+		t.Errorf("err = %v, want the original message text preserved verbatim", err)
+	}
+	if !errors.Is(err, core.ErrNotFound) {
+		t.Errorf("err = %v, want errors.Is(err, core.ErrNotFound) after a real control-socket round trip", err)
 	}
 }
 

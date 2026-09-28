@@ -291,7 +291,7 @@ func (s *silenceStore) Expire(id string, now int64) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("no such silence %q", id)
+	return fmt.Errorf("no such silence %q: %w", id, core.ErrNotFound)
 }
 
 // Maintenances returns every maintenance window, in creation order.
@@ -334,7 +334,7 @@ func (s *silenceStore) SaveMaintenance(m core.Maintenance) (core.Maintenance, er
 		}
 		return m, nil
 	}
-	return core.Maintenance{}, fmt.Errorf("no such maintenance %q", m.ID)
+	return core.Maintenance{}, fmt.Errorf("no such maintenance %q: %w", m.ID, core.ErrNotFound)
 }
 
 // DeleteMaintenance removes maintenance window id.
@@ -353,7 +353,7 @@ func (s *silenceStore) DeleteMaintenance(id string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("no such maintenance %q", id)
+	return fmt.Errorf("no such maintenance %q: %w", id, core.ErrNotFound)
 }
 
 // Prune drops every silence expired for more than silenceExpiredPruneAfter,
