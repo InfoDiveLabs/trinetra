@@ -276,9 +276,13 @@ func newManagedFragmentRow(f core.ManagedFragment) ManagedFragmentRow {
 // Per-node status
 // ---------------------------------------------------------------------------
 
-// ManagedStatusRow is one row of the per-node status table.
+// ManagedStatusRow is one row of the per-node status table. Node is the
+// roster's display name (U2, 2026-09-25 UI audit fix); NodeID is the raw
+// registry id, kept only for the template's title/tooltip -- core.
+// ManagedStatus itself carries no display name, just the id.
 type ManagedStatusRow struct {
 	Node        string
+	NodeID      string
 	VersionText string // "<applied> / <desired>"
 	AppliedText string // "yes" / "no"
 	Error       string
@@ -286,7 +290,11 @@ type ManagedStatusRow struct {
 	Conflicts   []string // "key (frag1, frag2)" -- last fragment listed is the one that won
 }
 
-func newManagedStatusRow(s core.ManagedStatus) ManagedStatusRow {
+// newManagedStatusRow projects s into its row shape. nodeNames resolves
+// s.Node (a raw registry id) to its roster display name, falling back to
+// the id itself when the node isn't in the map (e.g. it's since left the
+// roster).
+func newManagedStatusRow(s core.ManagedStatus, nodeNames map[string]string) ManagedStatusRow {
 	applied := "no"
 	if s.Applied {
 		applied = "yes"
@@ -295,8 +303,13 @@ func newManagedStatusRow(s core.ManagedStatus) ManagedStatusRow {
 	for _, c := range s.Conflicts {
 		conflicts = append(conflicts, c.Key+" ("+strings.Join(c.Fragments, ", ")+")")
 	}
+	name := nodeNames[s.Node]
+	if name == "" {
+		name = s.Node
+	}
 	return ManagedStatusRow{
-		Node:        s.Node,
+		Node:        name,
+		NodeID:      s.Node,
 		VersionText: fmt.Sprintf("%d / %d", s.Version, s.Desired),
 		AppliedText: applied,
 		Error:       s.Error,
@@ -367,9 +380,10 @@ func buildManagedPageData(r *http.Request, d Deps, opts managedPageOptions) Mana
 		rows = append(rows, newManagedFragmentRow(f))
 	}
 	sort.SliceStable(statuses, func(i, j int) bool { return statuses[i].Node < statuses[j].Node })
+	nodeNames := fleetNodeNameLookup(r, d)
 	srows := make([]ManagedStatusRow, 0, len(statuses))
 	for _, s := range statuses {
-		srows = append(srows, newManagedStatusRow(s))
+		srows = append(srows, newManagedStatusRow(s, nodeNames))
 	}
 
 	draft := opts.Draft

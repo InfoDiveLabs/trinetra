@@ -312,6 +312,20 @@ func fetchFleetNodes(r *http.Request, d Deps) []core.NodeSummary {
 	return nodes
 }
 
+// fleetNodeNameLookup builds a node-id -> display-name map off r's request-
+// scoped roster (fetchFleetNodes), for a page that has only raw ids to show
+// (e.g. handlers_fleet_managed.go's per-node status table, U2's fix) and
+// needs to resolve them to names the same way the rest of /fleet already
+// does.
+func fleetNodeNameLookup(r *http.Request, d Deps) map[string]string {
+	nodes := fetchFleetNodes(r, d)
+	names := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		names[n.ID] = n.Name
+	}
+	return names
+}
+
 // fleetMetric is the heatmap's metric selector (?metric=cpu|mem|disk|load,
 // task-1a-brief.md), defaulting to cpu.
 type fleetMetric string

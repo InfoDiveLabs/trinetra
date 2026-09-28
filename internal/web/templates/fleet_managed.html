@@ -101,7 +101,7 @@
     <tbody>
       {{range .Statuses}}
       <tr>
-        <td class="mono card-title" data-label="Node">{{.Node}}</td>
+        <td class="mono card-title" data-label="Node" title="{{.NodeID}}">{{.Node}}</td>
         <td class="mono note" data-label="Applied / desired">{{.VersionText}}</td>
         <td data-label="Applied"><span class="badge{{if eq .AppliedText "yes"}} ok{{else}} warn{{end}}">{{.AppliedText}}</span></td>
         <td class="note" data-label="Error">{{if .Error}}{{.Error}}{{else}}<span class="note">-</span>{{end}}</td>

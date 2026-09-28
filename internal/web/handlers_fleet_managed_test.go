@@ -439,3 +439,37 @@ func TestFleetManagedStatusRendersDriftAndConflicts(t *testing.T) {
 		t.Errorf("missing db1's fully-applied row, body:\n%s", body)
 	}
 }
+
+// TestFleetManagedStatusShowsNodeNameNotID pins U2 (2026-09-25 UI audit):
+// the per-node status table's Node column must show the roster's display
+// name, with the raw id only as a title/tooltip -- not the raw id as the
+// visible text.
+func TestFleetManagedStatusShowsNodeNameNotID(t *testing.T) {
+	const rawID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	fleet := &fakeFleet{
+		nodes: []core.NodeSummary{
+			{ID: core.SelfNodeID, Name: "self", Self: true, State: "online"},
+			{ID: rawID, Name: "api-01", State: "online"},
+		},
+		managedStatus: []core.ManagedStatus{{Node: rawID, Version: 1, Desired: 1, Applied: true}},
+	}
+	d := fleetAdminDeps(t, fleet)
+	rr := fleetGetAsViewer(t, d, "/fleet/managed")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "api-01") {
+		t.Errorf("missing node display name api-01, body:\n%s", body)
+	}
+	if !strings.Contains(body, `title="`+rawID+`"`) {
+		t.Errorf("missing raw id as a title/tooltip, body:\n%s", body)
+	}
+	start := strings.Index(body, "Per-node status")
+	if start < 0 {
+		t.Fatalf("no Per-node status section, body:\n%s", body)
+	}
+	if strings.Contains(body[start:], ">"+rawID+"<") {
+		t.Errorf("Node column still shows the raw id as visible text, body:\n%s", body[start:])
+	}
+}
