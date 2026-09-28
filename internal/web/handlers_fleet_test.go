@@ -178,6 +178,33 @@ func TestFleetSkewWarnTextVerbatim(t *testing.T) {
 	}
 }
 
+// TestFleetDropsWarnTextIgnoresDuplicatesAlone pins U3 (2026-09-25 UI
+// audit): duplicates are explicitly "harmless re-sends" per this very
+// sentence's own wording, so they alone must never earn the amber
+// .fleet-link-warn styling on /fleet or /fleet/admin -- only an actual
+// out-of-order or over-the-series-limit drop does.
+func TestFleetDropsWarnTextIgnoresDuplicatesAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		n    core.NodeSummary
+		want string
+	}{
+		{"duplicates only", core.NodeSummary{DroppedDuplicate: 5}, ""},
+		{"none at all", core.NodeSummary{}, ""},
+		{"self always exempt", core.NodeSummary{Self: true, DroppedOutOfOrder: 9}, ""},
+		{"out of order", core.NodeSummary{DroppedOutOfOrder: 1},
+			"replica drops: 1 out of order, 0 over the series limit, 0 duplicates (harmless re-sends)"},
+		{"over the series limit", core.NodeSummary{DroppedCardinality: 1},
+			"replica drops: 0 out of order, 1 over the series limit, 0 duplicates (harmless re-sends)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fleetDropsWarnText(tc.n); got != tc.want {
+				t.Errorf("fleetDropsWarnText(%+v) = %q, want %q", tc.n, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestFleetOverviewFilters pins core.NodeFilter semantics applied through
 // the query string: ?tag=web&state=online&q=we narrows the 5-node roster
 // to exactly web1 (web2 is tagged "web" too but is state=lagging, not

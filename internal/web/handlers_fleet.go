@@ -151,8 +151,11 @@ type FleetRow struct {
 	// DropsWarn is the CLI's replica-drops warning sentence ("replica
 	// drops: N out of order, N over the series limit, N duplicates
 	// (harmless re-sends)", task-5-brief.md's exact wording), non-empty
-	// only when any of the three drop counters is nonzero and the node
-	// isn't self.
+	// only when out-of-order or over-the-series-limit drops are nonzero and
+	// the node isn't self. Duplicates ALONE never set this (U3, 2026-09-25
+	// UI audit fix): they're explicitly "harmless re-sends" per this same
+	// sentence's own wording, so they don't earn the amber warning chip
+	// either -- see fleetDropsWarnText's doc.
 	DropsWarn string
 	// OutboxText is humanBytes(OutboxBytes), empty when nothing is queued
 	// (OutboxBytes<=0) so the Link column doesn't render a bare "0 B" for
@@ -184,9 +187,13 @@ func fleetSkewWarnText(n core.NodeSummary) string {
 }
 
 // fleetDropsWarnText renders the CLI's replica-drops warning sentence (see
-// FleetRow.DropsWarn's doc) for n, or "" when it doesn't apply.
+// FleetRow.DropsWarn's doc) for n, or "" when it doesn't apply. U3
+// (2026-09-25 UI audit fix): only DroppedOutOfOrder/DroppedCardinality gate
+// this -- DroppedDuplicate on its own (a resend the replica stream already
+// dedups) is never worth the amber warning chip, even though its count is
+// still reported IN the sentence once one of the other two triggers it.
 func fleetDropsWarnText(n core.NodeSummary) string {
-	if n.Self || (n.DroppedOutOfOrder == 0 && n.DroppedCardinality == 0 && n.DroppedDuplicate == 0) {
+	if n.Self || (n.DroppedOutOfOrder == 0 && n.DroppedCardinality == 0) {
 		return ""
 	}
 	return fmt.Sprintf("replica drops: %d out of order, %d over the series limit, %d duplicates (harmless re-sends)",
