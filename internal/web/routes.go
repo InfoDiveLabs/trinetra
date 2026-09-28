@@ -356,9 +356,25 @@ func contentTypeByExt(name string) string {
 // does not consume/validate the token (that's enrollBeginHandler's job, via
 // resolveEnrollRole/tokenStore.Redeem); a page load must stay side-effect
 // free (a token is single-use and shouldn't burn on a mere GET or refresh).
+//
+// U8 (2026-09-25 UI audit fix): when there's no token AND the user store
+// already has at least one account, resolveEnrollRole will refuse any
+// POST /enroll/begin this page's form could possibly submit -- so rather
+// than render the form and let the operator discover that only after
+// filling it in and clicking "Create passkey", BarePageData.EnrollClosed is
+// set here and enroll.html renders a "you need an invite" message (with a
+// link to /login) instead. This is a read-only IsEmpty() check, same
+// fail-closed direction as resolveEnrollRole's own: a store that can't be
+// read is treated as closed too, never as if it were empty.
 func enrollPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := newBarePageData(r, "Set up passkey")
+		if data.EnrollToken == "" {
+			empty, err := newUserStore(d.StateDir).IsEmpty()
+			if err != nil || !empty {
+				data.EnrollClosed = true
+			}
+		}
 		if err := renderBarePage(w, "enroll.html", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

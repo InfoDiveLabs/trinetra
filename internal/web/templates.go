@@ -866,6 +866,17 @@ type BarePageData struct {
 	// just carrying the value from the GET's URL to the POST's body).
 	// login.html doesn't reference this field; harmless there either way.
 	EnrollToken string
+	// EnrollClosed (U8, 2026-09-25 UI audit fix) is true when GET /enroll
+	// carries no ?token= AND the user store already has at least one
+	// account: resolveEnrollRole (enroll_tokens.go) will unconditionally
+	// refuse a POST /enroll/begin for exactly this request, so enroll.html
+	// renders a "you need an invite" message and a link to /login instead
+	// of a form that can only ever fail. Only enrollPageHandler sets this;
+	// every other bare page leaves it false. An unreadable user store also
+	// sets this (fail closed, same direction as resolveEnrollRole's own
+	// IsEmpty error handling) rather than showing a form that would only
+	// fail with a different, more confusing error.
+	EnrollClosed bool
 }
 
 // newBarePageData builds the BarePageData a bare-layout page handler needs.

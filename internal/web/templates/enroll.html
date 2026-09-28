@@ -1,11 +1,16 @@
 {{define "content"}}
 <div class="center"><div class="card">
   <div class="logo"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="144" height="39"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="144" height="39"></div>
+  {{if .EnrollClosed}}
+  <h2>Invite required</h2>
+  <p class="sub">Sign-up needs an invite link from an admin — ask one for a link, or <a href="/login">sign in</a> if you already have a passkey.</p>
+  {{else}}
   <h2>Create your passkey</h2>
   <p class="sub" id="enrollStatus">Choose a name, then create a passkey on this device.</p>
   <label class="field"><span class="lb">Your name</span><input type="text" id="enrollName" value="on-call"></label>
   <input type="hidden" id="enrollToken" value="{{.EnrollToken}}">
   <button class="btn primary" id="enrollBtn" style="width:100%;justify-content:center;padding:12px">Create passkey</button>
   <p class="note" style="text-align:center;margin-top:16px">Your device makes a key bound to this site. Only the public half is stored.</p>
+  {{end}}
 </div></div>
 {{end}}

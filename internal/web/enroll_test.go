@@ -45,6 +45,60 @@ func TestEnrollPageRendersBareLayout(t *testing.T) {
 	}
 }
 
+// TestEnrollPageClosedWithoutTokenShowsInviteMessage pins U8 (2026-09-25 UI
+// audit): once an account exists, loading /enroll with no ?token= used to
+// show the ordinary signup form, which only failed AFTER the user filled it
+// in and clicked "Create passkey" (a POST /enroll/begin 403, "enrollment is
+// closed"). GET /enroll must instead render a message that sign-up needs an
+// admin invite link, with a link to /login -- never the form, since
+// resolveEnrollRole (enroll_tokens.go) will refuse this exact request
+// unconditionally.
+func TestEnrollPageClosedWithoutTokenShowsInviteMessage(t *testing.T) {
+	d := enrollTestDeps(t)
+	store := newUserStore(d.StateDir)
+	if err := store.Put(&User{ID: mustNewUserID(t), Name: "admin", Role: RoleAdmin, Created: 1}); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	h := newHandler(d)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/enroll", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /enroll status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `id="enrollBtn"`) || strings.Contains(body, `id="enrollName"`) {
+		t.Errorf("GET /enroll (closed, no token) still rendered the signup form:\n%s", body)
+	}
+	if !strings.Contains(body, `href="/login"`) {
+		t.Errorf("GET /enroll (closed, no token) missing a link to /login:\n%s", body)
+	}
+	if !strings.Contains(body, "invite") {
+		t.Errorf("GET /enroll (closed, no token) missing an explanation that sign-up needs an invite:\n%s", body)
+	}
+}
+
+// TestEnrollPageWithTokenStillShowsFormAfterBootstrap pins the positive
+// case alongside the above: a genuine ?token= (an admin-issued invite)
+// still renders the ordinary signup form even once accounts exist --
+// only the TOKENLESS, post-bootstrap case is closed.
+func TestEnrollPageWithTokenStillShowsFormAfterBootstrap(t *testing.T) {
+	d := enrollTestDeps(t)
+	store := newUserStore(d.StateDir)
+	if err := store.Put(&User{ID: mustNewUserID(t), Name: "admin", Role: RoleAdmin, Created: 1}); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	h := newHandler(d)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/enroll?token=sometoken", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /enroll?token=... status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="enrollBtn"`) {
+		t.Errorf("GET /enroll?token=... (post-bootstrap) should still show the signup form:\n%s", body)
+	}
+}
+
 // TestEnrollBeginHandlerReturnsCreationOptionsAndCookie pins the HTTP
 // surface of enrollBeginHandler: given a JSON {"name":...} body, it must
 // respond with WebAuthn creation options (a "publicKey" object carrying a

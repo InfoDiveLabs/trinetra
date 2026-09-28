@@ -948,6 +948,21 @@
     return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   }
 
+  // enrollBeginSafeErrors (U8, 2026-09-25 UI audit fix): the exact,
+  // plain-text response bodies POST /enroll/begin can fail with that are
+  // safe to show verbatim -- enrollBeginHandler's own two http.Error calls
+  // (routes.go) plus resolveEnrollRole/tokenStore.Redeem's errors
+  // (enroll_tokens.go). Anything else (a webauthn-library error, a wrapped
+  // filesystem error) falls back to the generic message below rather than
+  // leaking internal detail to an unauthenticated caller.
+  var enrollBeginSafeErrors=[
+    'name is required',
+    'an account with that name already exists; adding a passkey to an existing account will require an admin invite',
+    'web: enrollment is closed; an admin-issued invite token is required',
+    'web: enrollment token already used',
+    'web: enrollment token expired',
+    'web: unknown enrollment token'
+  ];
   var enrollBtn=document.getElementById('enrollBtn');
   if(enrollBtn){
     enrollBtn.addEventListener('click',function(){
@@ -958,7 +973,13 @@
       if(!name){ if(statusEl) statusEl.textContent='Enter a name first.'; return; }
       if(statusEl) statusEl.textContent='Waiting for your device…';
       fetch('/enroll/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,token:token})})
-        .then(function(r){ if(!r.ok) throw new Error('could not start enrollment'); return r.json(); })
+        .then(function(r){
+          if(r.ok) return r.json();
+          return r.text().then(function(t){
+            t=(t||'').trim();
+            throw new Error(enrollBeginSafeErrors.indexOf(t)>=0?t:'could not start enrollment');
+          });
+        })
         .then(function(opts){
           var pk=opts.publicKey;
           pk.challenge=b64urlToBuf(pk.challenge);
