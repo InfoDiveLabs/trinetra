@@ -51,7 +51,7 @@
       {{range $i, $route := .Draft.Routes}}
       <div class="panel" style="margin-bottom:12px">
         <div class="head">
-          <span class="mono note">Route {{$i}}</span>
+          <span class="mono note">Route {{oneIndexed $i}}</span>
           {{if $editable}}
           <span style="display:flex;gap:6px">
             <button class="btn ghost" type="submit" name="op" value="move_route_up:{{$i}}"{{if eq $i 0}} disabled{{end}}>&uarr;</button>
@@ -111,7 +111,7 @@
       {{range $pi, $policy := .Draft.Policies}}
       <div class="panel" style="margin-bottom:12px">
         <div class="head">
-          <span class="mono note">Policy {{$pi}}</span>
+          <span class="mono note">Policy {{oneIndexed $pi}}</span>
           {{if $editable}}<button class="btn danger" type="submit" name="op" value="remove_policy:{{$pi}}">Remove policy</button>{{end}}
         </div>
         {{if eq $.ErrField $policy.FieldKey}}<span class="field-err">{{$.Flash}}</span>{{end}}
@@ -125,7 +125,7 @@
         {{range $si, $step := $policy.Steps}}
         <div class="panel" style="margin:10px 0">
           <div class="head">
-            <span class="note">Step {{$si}}</span>
+            <span class="note">Step {{oneIndexed $si}}</span>
             {{if eq $.ErrField (printf "%s:step:%d" $policy.FieldKey $si)}}<span class="field-err">{{$.Flash}}</span>{{end}}
           </div>
           <label class="field" style="max-width:220px"><span class="lb">After</span><input type="text" name="policy_{{$pi}}_step_{{$si}}_after" value="{{$step.After}}" placeholder="0s" {{if not $editable}}disabled{{end}}></label>

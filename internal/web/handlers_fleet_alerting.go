@@ -27,6 +27,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
+// oneIndexed renders a zero-based loop index (route/policy/step) as its
+// 1-based display label (U6, 2026-09-25 UI audit fix): "Route 0"/"Policy 0"/
+// "Step 0" read as bugs to an operator, even though the SAME index is still
+// used 0-based everywhere it matters functionally -- the row's own form
+// field names (route_0_name, policy_0_step_0_after, ...), which
+// parseAlertingDraftForm indexes off verbatim, and every add/remove/move-row
+// button's op value (e.g. "remove_route:0"). Only the visible label changes.
+func oneIndexed(i int) int { return i + 1 }
+
 // templateDict builds a map[string]any from alternating key/value
 // arguments -- fleet_alerting.html's own funcMap entry ("dict",
 // templates.go), used to pass a small ad-hoc bundle of fields into a named

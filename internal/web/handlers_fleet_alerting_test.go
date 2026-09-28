@@ -140,6 +140,38 @@ func TestFleetAlertingPageRendersDefaultConfig(t *testing.T) {
 	}
 }
 
+// TestFleetAlertingRowLabelsAreOneIndexed pins U6 (2026-09-25 UI audit):
+// the Route/Policy/Step display labels must read 1, 2, 3, ... for an
+// operator, not the raw zero-based loop index they used to render directly.
+// The underlying form field names (route_0_name, policy_0_step_0_after,
+// ...) stay 0-based -- parseAlertingDraftForm indexes off them verbatim --
+// so this only touches the label TEXT, never the input name= attributes.
+func TestFleetAlertingRowLabelsAreOneIndexed(t *testing.T) {
+	fleet := &fakeFleet{alertingCfg: fleetAlertingFixtureCfg()}
+	d := fleetAdminDeps(t, fleet)
+	rr := fleetAdminGetAsRole(t, d, RoleAdmin, "/fleet/alerting")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /fleet/alerting status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{">Route 1<", ">Policy 1<", ">Policy 2<", ">Step 1<"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /fleet/alerting: missing 1-based label %q\nbody:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{">Route 0<", ">Policy 0<", ">Step 0<"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("GET /fleet/alerting: still shows zero-based label %q\nbody:\n%s", unwanted, body)
+		}
+	}
+	// The underlying field names must stay 0-based.
+	for _, want := range []string{`name="route_0_name"`, `name="policy_0_name"`, `name="policy_0_step_0_after"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /fleet/alerting: field name %q must stay 0-based\nbody:\n%s", want, body)
+		}
+	}
+}
+
 // TestFleetAlertingPolicyIntroReadsGrammatically pins U5 (2026-09-25 UI
 // audit): the Policies section's intro used to read "Each step fires After
 // its incident's first delivery; the last step repeats on Repeat every
@@ -263,7 +295,10 @@ func TestFleetAlertingAddRoutePreservesPoliciesAndRules(t *testing.T) {
 		t.Errorf("SetAlerting calls = %d, want 0 (add_route must not save)", fleet.setAlertingCalls)
 	}
 	got := rr.Body.String()
-	for _, want := range []string{"p1", "p2", "rule1", ">Route 0<", ">Route 1<"} {
+	// U6 (2026-09-25 UI audit): row labels are 1-based, not the raw
+	// zero-based loop index -- r0 (the fixture's one existing route) is
+	// row 1, the freshly-added route is row 2.
+	for _, want := range []string{"p1", "p2", "rule1", ">Route 1<", ">Route 2<"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("POST /fleet/alerting op=add_route: missing %q (policies/rule must survive a route-only op)\nbody:\n%s", want, got)
 		}

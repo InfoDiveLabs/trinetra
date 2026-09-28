@@ -87,6 +87,11 @@ var funcMap = template.FuncMap{
 	"nodeDur":         nodeDurText,
 	"clockTime":       nodeClockTime,
 	"linkUnreachable": linkUnreachable,
+	// oneIndexed (U6, 2026-09-25 UI audit fix) renders a zero-based loop
+	// index as its 1-based display label -- fleet_alerting.html's Route/
+	// Policy/Step row headings only; the underlying 0-based index still
+	// backs every field name/op value.
+	"oneIndexed": oneIndexed,
 	// dict (task C3, fleet_alerting.html) builds a map[string]any from
 	// alternating key/value arguments, for passing a small ad-hoc bundle of
 	// fields into a named template block ({{template "x" (dict "A" 1 "B"
