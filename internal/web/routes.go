@@ -115,6 +115,20 @@ func newHandler(d Deps) http.Handler {
 		requireCSRF(fleetAlertingTestHandler(d)).ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("GET /fleet/rules/state", requireRole(RoleViewer, d, fleetRulesStateHandler(d)))
+	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete) --
+	// task C4, plan C: the fleet silences and maintenance-windows web UI over
+	// core.FleetAPI's Silences/CreateSilence/ExpireSilence/Maintenances/
+	// SaveMaintenance/DeleteMaintenance (internal/core/fleet.go,
+	// handlers_fleet_silences.go). GET is viewer-gated and master-only
+	// (fleetGateHTML) exactly like the rest of "Monitor"; every mutation is
+	// admin+CSRF (fleetAdminMutation), same as /fleet/admin's and
+	// /fleet/alerting's mutations above. Already covered by
+	// node_scope.go's masterLocalPrefixes "/fleet" entry.
+	mux.HandleFunc("GET /fleet/silences", requireRole(RoleViewer, d, fleetSilencesPageHandler(d)))
+	mux.HandleFunc("POST /fleet/silences", fleetAdminMutation(d, fleetSilenceCreateHandler(d)))
+	mux.HandleFunc("POST /fleet/silences/{id}/expire", fleetAdminMutation(d, fleetSilenceExpireHandler(d)))
+	mux.HandleFunc("POST /fleet/maintenance", fleetAdminMutation(d, fleetMaintenanceCreateHandler(d)))
+	mux.HandleFunc("POST /fleet/maintenance/{id}/delete", fleetAdminMutation(d, fleetMaintenanceDeleteHandler(d)))
 	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a):
 	// node management (rename/tags/revoke/remove) and join-token
 	// issuance/revocation, admin+CSRF-gated like /users/* below -- see

@@ -280,6 +280,19 @@ func TestSilenceStoreCreateValidatesAndPersists(t *testing.T) {
 	}
 }
 
+// TestSilenceStoreCreateRejectsBadGlob pins task C4's brief: a silence's
+// Node/Rule glob must parse (validGlob, same check a Route's own matchers
+// already get), not just be non-empty.
+func TestSilenceStoreCreateRejectsBadGlob(t *testing.T) {
+	s := newTestSilenceStore(t)
+	if _, err := s.Create(core.Silence{Matchers: []core.Matcher{{Node: "["}}, Start: 1000, End: 2000, Author: "cli"}); err == nil {
+		t.Fatal("want error creating a silence with an invalid node glob")
+	}
+	if _, err := s.Create(core.Silence{Matchers: []core.Matcher{{Rule: "["}}, Start: 1000, End: 2000, Author: "cli"}); err == nil {
+		t.Fatal("want error creating a silence with an invalid rule glob")
+	}
+}
+
 func TestSilenceStoreExpirePullsEndBack(t *testing.T) {
 	s := newTestSilenceStore(t)
 	sil, err := s.Create(core.Silence{Matchers: []core.Matcher{{Tag: "web"}}, Start: 1000, End: 1_000_000, Author: "cli"})

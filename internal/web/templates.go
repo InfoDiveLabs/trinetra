@@ -227,6 +227,13 @@ var navItems = []navEntry{
 	// "/fleet" above, MasterOnly also exempts its Href from node-prefixing --
 	// it only ever means "this master's own incidents".
 	{NavItem: NavItem{Href: "/fleet/incidents", Icon: "⚠", Label: "Incidents"}, MasterOnly: true},
+	// Silences (task C4, fleet phase 2 web UI plan C): master only, visible
+	// to viewers -- the brief's own ruling ("'Silences' in the Monitor
+	// group, master only, visible to viewers"). Read-only for a viewer
+	// (every create/expire/delete mutation is admin+CSRF-gated at the
+	// route/handler level, handlers_fleet_silences.go), exactly like
+	// "Incidents" above.
+	{NavItem: NavItem{Href: "/fleet/silences", Icon: "☾", Label: "Silences"}, MasterOnly: true},
 	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
 	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring"}},
 	{NavItem: NavItem{Href: "/host", Icon: "▢", Label: "Host"}},

@@ -2,11 +2,14 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
@@ -233,6 +236,38 @@ type fakeFleet struct {
 	createSilenceErr error
 	createdSilences  []core.Silence
 
+	// silences/maintenances (task C4, fleet silences + maintenance windows
+	// web UI) back Silences()/Maintenances() as settable list fixtures --
+	// CreateSilence/SaveMaintenance/ExpireSilence/DeleteMaintenance mutate
+	// these SAME slices (mirroring the real silenceStore, fleet_silences.go)
+	// so a create/expire/delete-then-list round trip through this fake
+	// behaves like the real backend, not just a canned passthrough.
+	// fakeValidateMatchers/fakeValidateMaintenance (below, same file) replicate
+	// the real validateMatchers/validateMaintenance checks (empty matcher, bad
+	// glob, missing name/weekday, bad HH:MM/TZ) closely enough for this
+	// package's handler tests without duplicating the whole engine -- the same
+	// convention Incidents' in-memory filtering above already uses.
+	silences        []core.Silence
+	maintenances    []core.Maintenance
+	silencesErr     error
+	maintenancesErr error
+
+	// expireSilenceErr/saveMaintenanceErr/deleteMaintenanceErr let a test
+	// force those three mutations to fail outright (a FleetAPI-level
+	// rejection, as opposed to fakeValidateMatchers/fakeValidateMaintenance's
+	// own validation, which CreateSilence/SaveMaintenance always apply).
+	// expiredSilenceID/expiredSilenceActor and
+	// deletedMaintenanceID/deletedMaintenanceActor record the last such call
+	// so a test can assert the actor was the SIGNED-IN web user
+	// (auditUser(r)), never a placeholder -- same ruling as AckIncident.
+	expireSilenceErr        error
+	expiredSilenceID        string
+	expiredSilenceActor     string
+	saveMaintenanceErr      error
+	deleteMaintenanceErr    error
+	deletedMaintenanceID    string
+	deletedMaintenanceActor string
+
 	// alertingCfg/alertingErr/setAlertingCfg/setAlertingActor/
 	// setAlertingErr/setAlertingCalls (task C3, fleet alerting admin web UI)
 	// back Alerting/SetAlerting -- see those methods' own docs.
@@ -396,30 +431,175 @@ func (f *fakeFleet) Explain(key string) ([]core.IncidentEvent, error) {
 
 func (f *fakeFleet) Audit(int) ([]core.AuditEntry, error) { return nil, nil }
 
-// Silences/ExpireSilence/Maintenances/SaveMaintenance/DeleteMaintenance:
-// task 4's silences/maintenance windows have no LIST/admin web surface yet
-// (CreateSilence, just below, DOES have one -- the incident detail page's
-// silence-from-incident form); these stubs exist only so fakeFleet keeps
-// satisfying core.FleetAPI.
-func (f *fakeFleet) Silences() ([]core.Silence, error) { return nil, nil }
+// Silences (task C4) returns the settable f.silences fixture verbatim -- a
+// test that wants active/upcoming/expired tab coverage sets it directly
+// (each entry's own Start/End decides which tab it lands on), exactly like
+// f.incidents backs Incidents().
+func (f *fakeFleet) Silences() ([]core.Silence, error) { return f.silences, f.silencesErr }
 
-// CreateSilence (task C2, silence-from-incident) mints a fake ID and records
-// every created silence (createdSilences) so a test can assert the
-// silence-from-incident form's matchers/Author/window, or fails outright
-// with createSilenceErr when a test wants to pin the "validation errors
-// render inline, never a 500" ruling.
+// CreateSilence (task C2, silence-from-incident; task C4, the silences page's
+// own create form) validates via fakeValidateMatchers (empty matcher/bad
+// glob) and end-after-start, mints a fake ID, and records the created
+// silence into BOTH createdSilences (task C2's own assertions) and
+// f.silences (task C4's list/tabs), so a create-then-list round trip through
+// this fake behaves like the real backend. Fails outright with
+// createSilenceErr when a test wants to pin the "validation errors render
+// inline, never a 500" ruling without exercising fakeValidateMatchers itself.
 func (f *fakeFleet) CreateSilence(s core.Silence) (core.Silence, error) {
 	if f.createSilenceErr != nil {
 		return core.Silence{}, f.createSilenceErr
 	}
+	if err := fakeValidateMatchers(s.Matchers); err != nil {
+		return core.Silence{}, err
+	}
+	if s.End <= s.Start {
+		return core.Silence{}, errors.New("a silence's end must be after its start")
+	}
 	s.ID = fmt.Sprintf("sil%d", len(f.createdSilences)+1)
 	f.createdSilences = append(f.createdSilences, s)
+	f.silences = append(f.silences, s)
 	return s, nil
 }
-func (f *fakeFleet) ExpireSilence(string, string) error                           { return nil }
-func (f *fakeFleet) Maintenances() ([]core.Maintenance, error)                    { return nil, nil }
-func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) { return m, nil }
-func (f *fakeFleet) DeleteMaintenance(string, string) error                       { return nil }
+
+// ExpireSilence (task C4) pulls id's End back to now (mirroring the real
+// silenceStore.Expire) and records actor/id, or fails with expireSilenceErr /
+// "no such silence" for an unknown id.
+func (f *fakeFleet) ExpireSilence(id, actor string) error {
+	if f.expireSilenceErr != nil {
+		return f.expireSilenceErr
+	}
+	for i := range f.silences {
+		if f.silences[i].ID != id {
+			continue
+		}
+		f.expiredSilenceID, f.expiredSilenceActor = id, actor
+		now := time.Now().Unix()
+		if f.silences[i].End > now {
+			f.silences[i].End = now
+		}
+		return nil
+	}
+	return fmt.Errorf("no such silence %q", id)
+}
+
+// Maintenances (task C4) returns the settable f.maintenances fixture
+// verbatim.
+func (f *fakeFleet) Maintenances() ([]core.Maintenance, error) {
+	return f.maintenances, f.maintenancesErr
+}
+
+// SaveMaintenance (task C4) validates via fakeValidateMaintenance (name,
+// weekdays, From/To HH:MM, TZ, plus fakeValidateMatchers' own matcher
+// checks), then mints a fake ID (m.ID == "") or updates the existing window
+// in place, mirroring the real silenceStore.SaveMaintenance. Fails outright
+// with saveMaintenanceErr when a test wants to bypass fakeValidateMaintenance
+// itself.
+func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) {
+	if f.saveMaintenanceErr != nil {
+		return core.Maintenance{}, f.saveMaintenanceErr
+	}
+	if err := fakeValidateMaintenance(m); err != nil {
+		return core.Maintenance{}, err
+	}
+	if m.ID == "" {
+		m.ID = fmt.Sprintf("mnt%d", len(f.maintenances)+1)
+		f.maintenances = append(f.maintenances, m)
+		return m, nil
+	}
+	for i, mm := range f.maintenances {
+		if mm.ID == m.ID {
+			f.maintenances[i] = m
+			return m, nil
+		}
+	}
+	return core.Maintenance{}, fmt.Errorf("no such maintenance %q", m.ID)
+}
+
+// DeleteMaintenance (task C4) removes id and records actor, or fails with
+// deleteMaintenanceErr / "no such maintenance" for an unknown id.
+func (f *fakeFleet) DeleteMaintenance(id, actor string) error {
+	if f.deleteMaintenanceErr != nil {
+		return f.deleteMaintenanceErr
+	}
+	for i, m := range f.maintenances {
+		if m.ID != id {
+			continue
+		}
+		f.deletedMaintenanceID, f.deletedMaintenanceActor = id, actor
+		f.maintenances = append(f.maintenances[:i], f.maintenances[i+1:]...)
+		return nil
+	}
+	return fmt.Errorf("no such maintenance %q", id)
+}
+
+// fakeValidateMatchers mirrors internal/trinetra/fleet_silences.go's own
+// validateMatchers (same checks: an empty list or an entirely-empty Matcher
+// is rejected, and -- task C4's brief -- a non-empty Node/Rule must be a
+// syntactically valid path.Match glob) closely enough for this package's
+// handler tests without importing that package (module graph is one-way,
+// internal/trinetra -> internal/web, never back -- server.go's Deps doc).
+func fakeValidateMatchers(ms []core.Matcher) error {
+	if len(ms) == 0 {
+		return errors.New("a silence must match something")
+	}
+	for _, m := range ms {
+		if m.Empty() {
+			return errors.New("a silence must match something")
+		}
+		if m.Node != "" {
+			if _, err := path.Match(m.Node, ""); err != nil {
+				return fmt.Errorf("invalid node glob %q", m.Node)
+			}
+		}
+		if m.Rule != "" {
+			if _, err := path.Match(m.Rule, ""); err != nil {
+				return fmt.Errorf("invalid rule glob %q", m.Rule)
+			}
+		}
+	}
+	return nil
+}
+
+// fakeValidHHMM mirrors internal/trinetra's validHHMM/parseHHMM (same
+// permissive Sscanf shape plus the 0-23/0-59 range check).
+func fakeValidHHMM(s string) bool {
+	var h, m int
+	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil {
+		return false
+	}
+	return h >= 0 && h <= 23 && m >= 0 && m <= 59
+}
+
+// fakeValidateMaintenance mirrors internal/trinetra/fleet_silences.go's own
+// validateMaintenance (name required, at least one weekday in 0..6, From/To
+// valid HH:MM, TZ loadable) -- see fakeValidateMatchers' doc for why this is
+// duplicated here rather than imported.
+func fakeValidateMaintenance(m core.Maintenance) error {
+	if err := fakeValidateMatchers(m.Matchers); err != nil {
+		return err
+	}
+	if strings.TrimSpace(m.Name) == "" {
+		return errors.New("a maintenance window needs a name")
+	}
+	if len(m.Weekdays) == 0 {
+		return errors.New("a maintenance window needs at least one weekday")
+	}
+	for _, wd := range m.Weekdays {
+		if wd < 0 || wd > 6 {
+			return fmt.Errorf("invalid weekday %d (want 0=Sunday..6=Saturday)", wd)
+		}
+	}
+	if !fakeValidHHMM(m.From) {
+		return fmt.Errorf("invalid --from %q (want HH:MM)", m.From)
+	}
+	if !fakeValidHHMM(m.To) {
+		return fmt.Errorf("invalid --to %q (want HH:MM)", m.To)
+	}
+	if _, err := time.LoadLocation(m.TZ); err != nil {
+		return fmt.Errorf("invalid --tz %q: %w", m.TZ, err)
+	}
+	return nil
+}
 
 // Alerting/SetAlerting (task C3, fleet alerting admin web UI):
 // alertingCfg/alertingErr back Alerting() directly; SetAlerting records

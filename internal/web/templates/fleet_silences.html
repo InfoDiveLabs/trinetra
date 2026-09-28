@@ -1,0 +1,218 @@
+{{/* fleet_silences.html (task C4, fleet phase 2 web UI plan C): GET
+     /fleet/silences -- silences (Active/Upcoming/Expired tabs, a
+     create-silence form) and maintenance windows (a list showing each
+     window's next occurrence, a create form). Follows fleet_alerting.html's
+     conventions exactly: PLAIN (non-htmx) <form>s for the two create
+     panels, each an add/remove-matcher-row draft editor where every row
+     button is its own submit (name="op") that reshapes the draft and
+     re-renders this SAME page at 200 without saving -- see
+     handlers_fleet_silences.go's applyMatcherRowOp. Expire/delete use the
+     in-page two-step confirm (style.css's .confirm-toggle), the same
+     CSS-only pattern fleet_admin.html's revoke/remove controls use.
+
+     A viewer sees every row here read-only, in the SAME layout, with every
+     input/select/textarea disabled and no submit controls -- global-
+     constraints.md's "read-only, no forms" ruling, exactly like
+     fleet_alerting.html's $editable convention. */}}
+{{define "content"}}
+{{$editable := eq .Role "admin"}}
+{{$tab := .Tab}}
+<div id="fleet-silences-page">
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+
+  <datalist id="silenceNodeNames">{{range .NodeNames}}<option value="{{.}}">{{end}}</datalist>
+
+  <div class="section-label"><span class="eyebrow">Silences</span></div>
+  <div class="toolbar" style="margin-bottom:12px">
+    {{range .TabLinks}}<a class="chip{{if .Active}} on{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}
+  </div>
+
+  <div class="panel pad0 cardpanel" style="margin-bottom:18px"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Matchers</th><th>Start</th><th>End</th><th>Author</th><th>Comment</th><th></th></tr></thead>
+    <tbody>
+      {{range .Silences}}
+      <tr>
+        <td class="mono card-title" data-label="Matchers">{{.MatchersText}}</td>
+        <td class="mono note" data-label="Start">{{.StartText}}</td>
+        <td class="mono note" data-label="End">{{.EndText}}</td>
+        <td class="mono note" data-label="Author">{{if .Author}}{{.Author}}{{else}}-{{end}}</td>
+        <td data-label="Comment">{{if .Comment}}{{.Comment}}{{else}}<span class="note">-</span>{{end}}</td>
+        <td class="card-actions" style="text-align:right">
+          {{if and $editable .CanExpire}}
+          <span class="confirm-toggle">
+            <input type="checkbox" id="expire-{{.ID}}" class="confirm-check">
+            <label for="expire-{{.ID}}" class="btn ghost confirm-ask">Expire</label>
+            <span class="confirm-armed">
+              <form method="post" action="/fleet/silences/{{.ID}}/expire?tab={{$tab}}" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn danger" type="submit">Confirm expire</button>
+              </form>
+              <label for="expire-{{.ID}}" class="btn ghost">Cancel</label>
+            </span>
+          </span>
+          {{end}}
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" class="note">no {{$tab}} silences</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+
+  {{if gt .TotalPages 1}}
+  <div class="toolbar" style="margin:-8px 0 18px">
+    <p class="note" style="margin:0">page {{.Page}} of {{.TotalPages}}</p>
+    <span class="spacer"></span>
+    {{if .HasPrev}}<a class="btn ghost" href="{{.PrevHref}}">&larr; Prev</a>{{end}}
+    {{if .HasNext}}<a class="btn ghost" href="{{.NextHref}}">Next &rarr;</a>{{end}}
+  </div>
+  {{end}}
+
+  {{if $editable}}
+  <div class="panel" style="margin-bottom:18px">
+    <div class="head"><span class="eyebrow">New silence</span></div>
+    <form method="post" action="/fleet/silences?tab={{$tab}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <p class="note" style="margin:0 0 8px">Matchers (any one matching is enough)</p>
+      <input type="hidden" name="matcher_count" value="{{len .SilenceDraft.Matchers}}">
+      {{range $j, $m := .SilenceDraft.Matchers}}
+      <div class="grid g-4" style="align-items:end;margin-bottom:6px">
+        <label class="field"><span class="lb">Tag</span><input type="text" name="matcher_{{$j}}_tag" value="{{$m.Tag}}"></label>
+        <label class="field"><span class="lb">Node</span><input type="text" list="silenceNodeNames" name="matcher_{{$j}}_node" value="{{$m.Node}}" placeholder="glob or exact id"></label>
+        <label class="field"><span class="lb">Rule</span><input type="text" name="matcher_{{$j}}_rule" value="{{$m.Rule}}" placeholder="glob"></label>
+        <label class="field"><span class="lb">Severity</span>
+          <select name="matcher_{{$j}}_severity">
+            <option value=""{{if eq $m.Severity ""}} selected{{end}}>any</option>
+            <option value="warning"{{if eq $m.Severity "warning"}} selected{{end}}>warning</option>
+            <option value="critical"{{if eq $m.Severity "critical"}} selected{{end}}>critical</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn ghost" type="submit" name="op" value="remove_matcher:{{$j}}" {{if eq (len $.SilenceDraft.Matchers) 1}}disabled{{end}} style="margin-bottom:6px">Remove matcher</button>
+      {{end}}
+      <button class="btn ghost" type="submit" name="op" value="add_matcher">Add matcher</button>
+      {{if eq $.SilenceErrField "matchers"}}<p class="field-err">{{$.SilenceErr}}</p>{{end}}
+
+      <div class="grid g-3" style="margin-top:14px">
+        <label class="field"><span class="lb">Start</span><input type="datetime-local" name="start_at" value="{{.SilenceDraft.StartAt}}">
+          <span class="hint">defaults to now; a future start lands on the Upcoming tab</span>
+          {{if eq .SilenceErrField "start"}}<span class="field-err">{{.SilenceErr}}</span>{{end}}
+        </label>
+        <label class="field"><span class="lb">Duration</span>
+          <select name="duration">
+            {{range .SilenceDurationOptions}}<option value="{{.Key}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+          </select>
+          {{if eq .SilenceErrField "duration"}}<span class="field-err">{{.SilenceErr}}</span>{{end}}
+        </label>
+        <label class="field"><span class="lb">Or an explicit end</span><input type="datetime-local" name="end_at" value="{{.SilenceDraft.EndAt}}">
+          {{if eq .SilenceErrField "end"}}<span class="field-err">{{.SilenceErr}}</span>{{end}}
+        </label>
+      </div>
+      <label class="field" style="margin-top:10px"><span class="lb">Comment</span>
+        <input type="text" name="comment" value="{{.SilenceDraft.Comment}}" placeholder="why this silence">
+      </label>
+
+      <button class="btn primary" type="submit" name="op" value="save" style="margin-top:12px">Create silence</button>
+    </form>
+  </div>
+  {{end}}
+
+  <div class="section-label"><span class="eyebrow">Maintenance windows</span></div>
+  <div class="panel pad0 cardpanel" style="margin-bottom:18px"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Name</th><th>Matchers</th><th>Weekdays</th><th>Window</th><th>TZ</th><th>Next occurrence</th><th>Author</th><th></th></tr></thead>
+    <tbody>
+      {{range .Maintenances}}
+      <tr>
+        <td class="mono card-title" data-label="Name">{{.Name}}</td>
+        <td class="mono" data-label="Matchers">{{.MatchersText}}</td>
+        <td class="mono note" data-label="Weekdays">{{.WeekdaysText}}</td>
+        <td class="mono note" data-label="Window">{{.From}}-{{.To}}</td>
+        <td class="mono note" data-label="TZ">{{.TZ}}</td>
+        <td class="mono note" data-label="Next occurrence">{{.NextText}}</td>
+        <td class="mono note" data-label="Author">{{if .Author}}{{.Author}}{{else}}-{{end}}</td>
+        <td class="card-actions" style="text-align:right">
+          {{if $editable}}
+          <span class="confirm-toggle">
+            <input type="checkbox" id="delmnt-{{.ID}}" class="confirm-check">
+            <label for="delmnt-{{.ID}}" class="btn ghost confirm-ask">Delete</label>
+            <span class="confirm-armed">
+              <form method="post" action="/fleet/maintenance/{{.ID}}/delete?tab={{$tab}}" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn danger" type="submit">Confirm delete</button>
+              </form>
+              <label for="delmnt-{{.ID}}" class="btn ghost">Cancel</label>
+            </span>
+          </span>
+          {{end}}
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="8" class="note">no maintenance windows configured</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+
+  {{if $editable}}
+  <div class="panel" style="margin-bottom:18px">
+    <div class="head"><span class="eyebrow">New maintenance window</span></div>
+    <form method="post" action="/fleet/maintenance?tab={{$tab}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field"><span class="lb">Name</span><input type="text" name="name" value="{{.MaintenanceDraft.Name}}" placeholder="e.g. nightly backups"></label>
+      {{if eq .MaintenanceErrField "name"}}<span class="field-err">{{.MaintenanceErr}}</span>{{end}}
+
+      <p class="note" style="margin:12px 0 8px">Matchers (any one matching is enough)</p>
+      <input type="hidden" name="mnt_matcher_count" value="{{len .MaintenanceDraft.Matchers}}">
+      {{range $j, $m := .MaintenanceDraft.Matchers}}
+      <div class="grid g-4" style="align-items:end;margin-bottom:6px">
+        <label class="field"><span class="lb">Tag</span><input type="text" name="mnt_matcher_{{$j}}_tag" value="{{$m.Tag}}"></label>
+        <label class="field"><span class="lb">Node</span><input type="text" list="silenceNodeNames" name="mnt_matcher_{{$j}}_node" value="{{$m.Node}}" placeholder="glob or exact id"></label>
+        <label class="field"><span class="lb">Rule</span><input type="text" name="mnt_matcher_{{$j}}_rule" value="{{$m.Rule}}" placeholder="glob"></label>
+        <label class="field"><span class="lb">Severity</span>
+          <select name="mnt_matcher_{{$j}}_severity">
+            <option value=""{{if eq $m.Severity ""}} selected{{end}}>any</option>
+            <option value="warning"{{if eq $m.Severity "warning"}} selected{{end}}>warning</option>
+            <option value="critical"{{if eq $m.Severity "critical"}} selected{{end}}>critical</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn ghost" type="submit" name="op" value="remove_mnt_matcher:{{$j}}" {{if eq (len $.MaintenanceDraft.Matchers) 1}}disabled{{end}} style="margin-bottom:6px">Remove matcher</button>
+      {{end}}
+      <button class="btn ghost" type="submit" name="op" value="add_mnt_matcher">Add matcher</button>
+      {{if eq .MaintenanceErrField "matchers"}}<p class="field-err">{{.MaintenanceErr}}</p>{{end}}
+
+      <p class="note" style="margin:14px 0 6px">Weekdays</p>
+      <div style="display:flex;flex-wrap:wrap;gap:14px">
+        {{range .WeekdayOptions}}
+        <label style="display:flex;align-items:center;gap:6px;width:auto">
+          <input type="checkbox" name="weekday" value="{{.Day}}"{{if .Checked}} checked{{end}}>
+          <span class="note">{{.Label}}</span>
+        </label>
+        {{end}}
+      </div>
+      {{if eq .MaintenanceErrField "weekdays"}}<span class="field-err">{{.MaintenanceErr}}</span>{{end}}
+
+      <div class="grid g-3" style="margin-top:14px">
+        <label class="field"><span class="lb">From</span><input type="time" name="from" value="{{.MaintenanceDraft.From}}">
+          {{if eq .MaintenanceErrField "from"}}<span class="field-err">{{.MaintenanceErr}}</span>{{end}}
+        </label>
+        <label class="field"><span class="lb">To</span><input type="time" name="to" value="{{.MaintenanceDraft.To}}">
+          <span class="hint">from &gt; to crosses midnight</span>
+          {{if eq .MaintenanceErrField "to"}}<span class="field-err">{{.MaintenanceErr}}</span>{{end}}
+        </label>
+        <label class="field"><span class="lb">Timezone</span>
+          <select name="tz_select">
+            {{range $.TZOptions}}<option value="{{.}}"{{if eq . $.MaintenanceDraft.TZSelect}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        </label>
+      </div>
+      <label class="field" style="margin-top:8px;max-width:320px"><span class="lb">Or a custom IANA zone</span>
+        <input type="text" name="tz_custom" value="{{.MaintenanceDraft.TZCustom}}" placeholder="e.g. Asia/Kathmandu">
+        {{if eq .MaintenanceErrField "tz"}}<span class="field-err">{{.MaintenanceErr}}</span>{{end}}
+      </label>
+
+      <button class="btn primary" type="submit" name="op" value="save_maintenance" style="margin-top:12px">Create maintenance window</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+{{end}}

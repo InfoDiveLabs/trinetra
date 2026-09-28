@@ -44,9 +44,14 @@ func randomSilenceID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// validateMatchers rejects an empty matcher list or one containing a
-// completely empty Matcher: either would let the silence/maintenance window
-// match every alert on every node, which is never intentional.
+// validateMatchers rejects an empty matcher list, one containing a
+// completely empty Matcher (either would let the silence/maintenance window
+// match every alert on every node, which is never intentional), or one whose
+// Node/Rule glob doesn't even parse -- task C4 (fleet phase 2 web UI plan C):
+// the web silences/maintenance page's own brief documents "a bad glob" as
+// one of the backend rejections its inline-error UI surfaces, mirroring
+// validGlob's identical check for a Route's own matchers
+// (validateAlertingConfig, fleet_routing.go, same package, same wording).
 func validateMatchers(ms []core.Matcher) error {
 	if len(ms) == 0 {
 		return errors.New("a silence must match something")
@@ -54,6 +59,12 @@ func validateMatchers(ms []core.Matcher) error {
 	for _, m := range ms {
 		if m.Empty() {
 			return errors.New("a silence must match something")
+		}
+		if m.Node != "" && !validGlob(m.Node) {
+			return fmt.Errorf("invalid node glob %q", m.Node)
+		}
+		if m.Rule != "" && !validGlob(m.Rule) {
+			return fmt.Errorf("invalid rule glob %q", m.Rule)
 		}
 	}
 	return nil
@@ -134,85 +145,24 @@ func validateSilence(s core.Silence) error {
 }
 
 // occurrence is one concrete [Start,End) instant a maintenance window's
-// recurring definition expands to.
-type occurrence struct{ Start, End int64 }
-
-// wallDuration returns the elapsed clock time from fromH:fromM to toH:toM,
-// wrapping past midnight (adding 24h) when crosses is true. This is a plain
-// duration derived from the two wall-clock readings, deliberately NOT tied
-// to any specific calendar day or timezone offset.
-func wallDuration(fromH, fromM, toH, toM int, crosses bool) time.Duration {
-	diff := (toH*60 + toM) - (fromH*60 + fromM)
-	if crosses {
-		diff += 24 * 60
-	}
-	return time.Duration(diff) * time.Minute
-}
+// recurring definition expands to -- an alias for core.Occurrence (task C4,
+// fleet phase 2 web UI plan C), so this package's own field access
+// (occ.Start/occ.End) and its tests are unaffected by the underlying type
+// living in internal/core now.
+type occurrence = core.Occurrence
 
 // maintenanceOccurrencesInRange returns every occurrence of m that overlaps
-// [from, until), expanded in m's own TZ. From > To (lexicographically, which
-// works for zero-padded HH:MM) means the window crosses midnight, so the
-// occurrence's END is computed as start.Add(wallDuration) -- NOT via a
-// second time.Date call on the following calendar day.
-//
-// This matters across a DST transition (review round 1, item 2): building
-// both ends independently with time.Date, then adding a calendar day for a
-// midnight crossing, lets a fall-back transition (clocks set back an hour)
-// silently double the occurrence's real elapsed duration -- e.g. a
-// 01:00-02:00 window in America/New_York on 2024-11-03 would otherwise last
-// 2 real hours, not 1, because "01:00" and "02:00" that day straddle the
-// point where the clock repeats an hour. Adding a plain, timezone-agnostic
-// wallDuration to an absolute start Time is immune to that: the occurrence
-// always lasts exactly as long as its configured HH:MM difference says,
-// regardless of any DST transition inside it. The trade-off (deliberate,
-// see the tests) is that the occurrence's END may land on a different local
-// wall-clock reading than its own To field would suggest when a transition
-// falls inside the window (e.g. a window crossing a spring-forward gap ends
-// one hour later on the wall clock than From+wallDuration would look like
-// on a normal day, because that hour never existed locally).
-//
-// An unparsable From/To/TZ (should not happen -- validated at creation)
-// yields no occurrences rather than an error, since this is also called
-// from the alert-suppression hot path, which must never fail loudly on bad
-// data.
+// [from, until), expanded in m's own TZ -- a thin wrapper over
+// core.MaintenanceOccurrences (task C4): that function now holds the one
+// real implementation (moved out of this package so internal/web's fleet
+// silences page can compute the SAME "next occurrence" this engine uses,
+// without internal/web ever importing internal/trinetra -- server.go's Deps
+// doc: the module graph is deliberately one-way). See
+// core.MaintenanceOccurrences' own doc for the full DST-safety rationale
+// (review round 1, item 2) and the crossing-midnight ownership rule (review
+// round 1, item 2 also covers this).
 func maintenanceOccurrencesInRange(m core.Maintenance, from, until time.Time) []occurrence {
-	loc, err := time.LoadLocation(m.TZ)
-	if err != nil {
-		return nil
-	}
-	fromH, fromM, ok1 := parseHHMM(m.From)
-	toH, toM, ok2 := parseHHMM(m.To)
-	if !ok1 || !ok2 {
-		return nil
-	}
-	crosses := m.From > m.To
-	dur := wallDuration(fromH, fromM, toH, toM, crosses)
-	if dur <= 0 {
-		return nil
-	}
-
-	var out []occurrence
-	// Scan a day either side of the range too, so an occurrence that starts
-	// the day before `from` (crossing midnight into the range) or starts
-	// just before `until` is never missed.
-	d := from.In(loc).AddDate(0, 0, -1)
-	end := until.In(loc).AddDate(0, 0, 1)
-	for !d.After(end) {
-		// The occurrence's weekday is the weekday of its START (review round
-		// 1, item 2): a Sunday 22:00 -> Monday 02:00 window is owned by
-		// Sunday, the day being scanned here, never by the Monday its End
-		// happens to land on.
-		if slices.Contains(m.Weekdays, int(d.Weekday())) {
-			y, mo, day := d.Date()
-			occStart := time.Date(y, mo, day, fromH, fromM, 0, 0, loc)
-			occEnd := occStart.Add(dur)
-			if occEnd.After(from) && occStart.Before(until) {
-				out = append(out, occurrence{Start: occStart.Unix(), End: occEnd.Unix()})
-			}
-		}
-		d = d.AddDate(0, 0, 1)
-	}
-	return out
+	return core.MaintenanceOccurrences(m, from, until)
 }
 
 // maintenanceActiveAt reports whether m is active at t (in m's own TZ).
