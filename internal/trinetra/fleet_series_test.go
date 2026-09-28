@@ -65,6 +65,20 @@ func (f *fleetSeriesFixture) appendPoint(t *testing.T, id, metric string, ts int
 	}
 }
 
+// appendRawPoint writes one raw (unrolled-up) sample directly to id's
+// replicated store, the same call the real ingest path (fleet_replica.go)
+// uses for a fast-tier metric.
+func (f *fleetSeriesFixture) appendRawPoint(t *testing.T, id, metric string, ts int64, v float64) {
+	t.Helper()
+	n, err := f.m.sink.node(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := n.store.Append(ts, MetricSet{metric: v}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func fleetSeriesValues(pts []core.FleetSeriesPoint, node string) map[int64]float64 {
 	out := map[int64]float64{}
 	for _, p := range pts {
@@ -111,16 +125,20 @@ func TestFleetSeriesAggAvgAndMax(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	web1 := f.addNode(t, "web1", []string{"web"})
 	web2 := f.addNode(t, "web2", []string{"web"})
-	f.appendPoint(t, web1.ID, "cpu", 1000, 10)
-	f.appendPoint(t, web1.ID, "cpu", 1060, 20)
-	f.appendPoint(t, web2.ID, "cpu", 1000, 30)
-	f.appendPoint(t, web2.ID, "cpu", 1060, 40)
+	// 960/1020 are 60s-bucket-aligned (real 1m rollups always are); using
+	// aligned timestamps here keeps this test about avg/max/min itself, not
+	// about the bucketing floor (see TestFleetSeriesAggBucketsMisalignedRawTimestamps
+	// for that).
+	f.appendPoint(t, web1.ID, "cpu", 960, 10)
+	f.appendPoint(t, web1.ID, "cpu", 1020, 20)
+	f.appendPoint(t, web2.ID, "cpu", 960, 30)
+	f.appendPoint(t, web2.ID, "cpu", 1020, 40)
 
 	avg, err := f.api.FleetSeries("cpu", core.NodeFilter{Tag: "web"}, core.AggAvg, 900, 1200, core.Res1m)
 	if err != nil {
 		t.Fatalf("FleetSeries avg: %v", err)
 	}
-	if len(avg) != 2 || avg[0].Node != "" || avg[0].TS != 1000 || avg[0].Value != 20 || avg[1].Value != 30 {
+	if len(avg) != 2 || avg[0].Node != "" || avg[0].TS != 960 || avg[0].Value != 20 || avg[1].Value != 30 {
 		t.Fatalf("avg series = %+v", avg)
 	}
 
@@ -200,5 +218,112 @@ func TestFleetSeriesRequiresMaster(t *testing.T) {
 	api := fleetAPIImpl{p}
 	if _, err := api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 0, 100, core.Res1m); err != core.ErrNotMaster {
 		t.Fatalf("FleetSeries on a non-master = %v, want core.ErrNotMaster", err)
+	}
+}
+
+// TestFleetSeriesAggBucketsMisalignedRawTimestamps pins task-1b review round
+// 1's bucketing ruling at raw resolution: two nodes whose raw samples are
+// NOT taken at the same instants (a realistic scenario -- nothing
+// synchronizes two independent daemons' sample clocks) still land in the
+// same shared bucket and aggregate together, each node contributing only
+// its LAST value within that bucket. newTestMasterState's getCfg is
+// config.Default (FastInterval 5), so the raw bucket width here is 5s.
+func TestFleetSeriesAggBucketsMisalignedRawTimestamps(t *testing.T) {
+	f := newFleetSeriesFixture(t)
+	web1 := f.addNode(t, "web1", []string{"web"})
+	web2 := f.addNode(t, "web2", []string{"web"})
+
+	// Bucket [1000,1005): web1 has two samples in it (1000, 1002) -- only
+	// the later one (1002 -> 14) should count; web2 has one (1001 -> 20).
+	f.appendRawPoint(t, web1.ID, "cpu", 1000, 10)
+	f.appendRawPoint(t, web1.ID, "cpu", 1002, 14)
+	f.appendRawPoint(t, web2.ID, "cpu", 1001, 20)
+	// Bucket [1005,1010): web1 at 1008 -> 30, web2 at 1009 -> 40.
+	f.appendRawPoint(t, web1.ID, "cpu", 1008, 30)
+	f.appendRawPoint(t, web2.ID, "cpu", 1009, 40)
+
+	avg, err := f.api.FleetSeries("cpu", core.NodeFilter{Tag: "web"}, core.AggAvg, 990, 1020, core.ResRaw)
+	if err != nil {
+		t.Fatalf("FleetSeries avg: %v", err)
+	}
+	if len(avg) != 2 || avg[0].TS != 1000 || avg[0].Value != 17 || avg[1].TS != 1005 || avg[1].Value != 35 {
+		t.Fatalf("avg series = %+v, want [{TS:1000 Value:17} {TS:1005 Value:35}]", avg)
+	}
+
+	max, err := f.api.FleetSeries("cpu", core.NodeFilter{Tag: "web"}, core.AggMax, 990, 1020, core.ResRaw)
+	if err != nil {
+		t.Fatalf("FleetSeries max: %v", err)
+	}
+	if len(max) != 2 || max[0].Value != 20 || max[1].Value != 40 {
+		t.Fatalf("max series = %+v, want values [20 40]", max)
+	}
+
+	min, err := f.api.FleetSeries("cpu", core.NodeFilter{Tag: "web"}, core.AggMin, 990, 1020, core.ResRaw)
+	if err != nil {
+		t.Fatalf("FleetSeries min: %v", err)
+	}
+	if len(min) != 2 || min[0].Value != 14 || min[1].Value != 30 {
+		t.Fatalf("min series = %+v, want values [14 30]", min)
+	}
+}
+
+// TestFleetSeriesDiskMetricUsesWorstMountPerBucket pins that FleetSeries'
+// "disk" metric reports, at each bucket, the WORST of a node's several
+// mounts -- not just one mount's own series -- exactly like
+// NodeSummary.WorstDiskPct/the aggregate rules' own "disk (worst)" framing.
+func TestFleetSeriesDiskMetricUsesWorstMountPerBucket(t *testing.T) {
+	f := newFleetSeriesFixture(t)
+	web1 := f.addNode(t, "web1", []string{"web"})
+	// At ts=960, "/data" (70) is worse than "/" (40); at ts=1020, "/" (55)
+	// is worse than "/data" (50) -- the worst mount flips between buckets,
+	// so a correct implementation can't just pick one mount's series.
+	f.appendPoint(t, web1.ID, "disk:/", 960, 40)
+	f.appendPoint(t, web1.ID, "disk:/data", 960, 70)
+	f.appendPoint(t, web1.ID, "disk:/", 1020, 55)
+	f.appendPoint(t, web1.ID, "disk:/data", 1020, 50)
+
+	pts, err := f.api.FleetSeries("disk", core.NodeFilter{Nodes: []string{web1.ID}}, core.AggNone, 900, 1200, core.Res1m)
+	if err != nil {
+		t.Fatalf("FleetSeries: %v", err)
+	}
+	got := fleetSeriesValues(pts, "web1")
+	if got[960] != 70 || got[1020] != 55 {
+		t.Fatalf("disk series = %+v, want {960:70, 1020:55}", got)
+	}
+}
+
+// TestFleetSeriesRejectsUnknownAgg pins the minor validation ruling: an agg
+// value other than none/avg/max/min is rejected, naming it verbatim.
+func TestFleetSeriesRejectsUnknownAgg(t *testing.T) {
+	f := newFleetSeriesFixture(t)
+	_, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.Agg("bogus"), 900, 1200, core.Res1m)
+	if err == nil || err.Error() != "unknown aggregation" {
+		t.Fatalf("FleetSeries with agg=bogus: err = %v, want %q", err, "unknown aggregation")
+	}
+}
+
+// TestFleetSeriesRejectsToNotAfterFrom pins the minor validation ruling:
+// to<=from is rejected rather than silently returning nothing/garbage.
+func TestFleetSeriesRejectsToNotAfterFrom(t *testing.T) {
+	f := newFleetSeriesFixture(t)
+	if _, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 1000, 1000, core.Res1m); err == nil {
+		t.Fatal("FleetSeries with to==from: want an error")
+	}
+	if _, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 1000, 500, core.Res1m); err == nil {
+		t.Fatal("FleetSeries with to<from: want an error")
+	}
+}
+
+// TestFleetSeriesRejectsRawWindowOverCap pins the minor validation ruling:
+// a raw-resolution window wider than 24h is rejected.
+func TestFleetSeriesRejectsRawWindowOverCap(t *testing.T) {
+	f := newFleetSeriesFixture(t)
+	_, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 0, 25*3600, core.ResRaw)
+	if err == nil || err.Error() != "raw resolution is limited to a 24h window" {
+		t.Fatalf("FleetSeries over the raw window cap: err = %v, want %q", err, "raw resolution is limited to a 24h window")
+	}
+	// Exactly at the cap is still allowed.
+	if _, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 0, 24*3600, core.ResRaw); err != nil {
+		t.Fatalf("FleetSeries at exactly the raw window cap: %v, want no error", err)
 	}
 }

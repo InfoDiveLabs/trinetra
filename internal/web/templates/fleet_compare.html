@@ -14,6 +14,8 @@
   <div class="panel"><div class="note">Select nodes from the <a href="/fleet">fleet table</a> and choose Compare, or add <span class="mono">?tag=</span> to this page's URL.</div></div>
   {{else if .ErrorMsg}}
   <div class="flash err" role="status">{{.ErrorMsg}}</div>
+  {{else if .EmptyMsg}}
+  <div class="panel"><div class="note">{{.EmptyMsg}}</div></div>
   {{else}}
   <div class="panel">
     <div class="head">
@@ -22,7 +24,7 @@
         {{range .Legend}}<span><i style="background:{{.Color}}"></i>{{.Name}}</span>{{end}}
       </div>
     </div>
-    <div id="chart-fleet-compare" class="u-chart" data-series="{{.DataJSON}}" style="height:320px"></div>
+    <div id="chart-fleet-compare" class="u-chart" data-series="{{.DataJSON}}" aria-label="{{.ChartSummary}}" style="height:320px"></div>
   </div>
   {{end}}
 </div>

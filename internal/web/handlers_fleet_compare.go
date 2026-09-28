@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"sort"
@@ -131,14 +132,26 @@ type FleetComparePageData struct {
 	Selected bool
 	// ErrorMsg is a validation/cap error rendered inline (task-1b-brief.md:
 	// "the cap error is shown inline"), e.g. FleetSeries' "compare at most
-	// 10 nodes" -- never a 500.
+	// 10 nodes" or an unknown ?nodes= id -- never a 500.
 	ErrorMsg string
+	// EmptyMsg (round 1 review fix) is set instead of ErrorMsg when the
+	// selection and request were both valid but FleetSeries simply returned
+	// no points (e.g. a brand new node with no data yet in the requested
+	// range) -- a distinct, non-alarming message rather than a silent blank
+	// chart panel or the same red "error" styling a real validation failure
+	// gets.
+	EmptyMsg string
 	Legend   []FleetCompareLegendEntry
 	// DataJSON is the chart's data, JSON-encoded and embedded as a data
 	// attribute (assets/app.js's swBootFleetCompare reads and JSON.parses
 	// it) rather than fetched separately, so the whole page -- including
 	// its one FleetSeries call -- renders from a single request.
 	DataJSON string
+	// ChartSummary is the chart mount's aria-label (round 1 review fix): a
+	// canvas-drawn uPlot chart is otherwise silent to a screen reader, so
+	// this gives a short text equivalent -- the metric and each compared
+	// node's latest value.
+	ChartSummary string
 }
 
 // fleetCompareData is DataJSON's shape: uPlot's own parallel-array data
@@ -250,6 +263,57 @@ func buildFleetCompareChart(metric string, pts []core.FleetSeriesPoint) (string,
 	return string(b), legend, nil
 }
 
+// fleetCompareSummary builds a short text summary of pts for the chart
+// mount's aria-label (round 1 review fix): "<metric>: <node> <latest
+// value>, ..." -- a canvas-drawn uPlot chart otherwise offers a screen
+// reader nothing at all. "Latest" is each node's own point with the
+// greatest TS (ties keep the first one seen, i.e. pts' own order).
+func fleetCompareSummary(metric string, pts []core.FleetSeriesPoint) string {
+	type latest struct {
+		ts  int64
+		val float64
+	}
+	byNode := map[string]latest{}
+	var order []string
+	for _, p := range pts {
+		cur, ok := byNode[p.Node]
+		if !ok {
+			order = append(order, p.Node)
+			byNode[p.Node] = latest{ts: p.TS, val: p.Value}
+		} else if p.TS > cur.ts {
+			byNode[p.Node] = latest{ts: p.TS, val: p.Value}
+		}
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		parts = append(parts, fmt.Sprintf("%s %.1f", name, byNode[name].val))
+	}
+	return metric + " comparison: " + strings.Join(parts, ", ")
+}
+
+// fleetCompareUnknownNodes returns every id in ids that names no node in the
+// current roster, by id or display name -- the same "id-or-name" matching
+// core.NodeFilter.Nodes itself uses, so "known" here means exactly what
+// FleetSeries would actually match. Checked BEFORE ever calling FleetSeries
+// (round 1 review fix), off the same request-scoped fleet memo the rest of
+// /fleet already reads through (fetchFleetNodes), so validating costs no
+// extra round trip and a typo'd/stale node id never reaches the daemon.
+func fleetCompareUnknownNodes(r *http.Request, d Deps, ids []string) []string {
+	roster := fetchFleetNodes(r, d)
+	known := make(map[string]bool, len(roster)*2)
+	for _, n := range roster {
+		known[n.ID] = true
+		known[n.Name] = true
+	}
+	var unknown []string
+	for _, id := range ids {
+		if !known[id] {
+			unknown = append(unknown, id)
+		}
+	}
+	return unknown
+}
+
 // fleetCompareHandler serves GET /fleet/compare (task C1b): a single uPlot
 // overlay comparing metric across the nodes named by ?nodes=a,b,c or
 // ?tag=web, over one of four fixed ranges. Viewer-gated (routes.go) and
@@ -273,7 +337,13 @@ func fleetCompareHandler(d Deps) http.HandlerFunc {
 			Selected:      selected,
 		}
 
-		if selected {
+		if selected && len(filter.Nodes) > 0 {
+			if unknown := fleetCompareUnknownNodes(r, d, filter.Nodes); len(unknown) > 0 {
+				data.ErrorMsg = "no such node: " + strings.Join(unknown, ", ")
+			}
+		}
+
+		if selected && data.ErrorMsg == "" {
 			var api core.FleetAPI
 			if d.Fleet != nil {
 				api = d.Fleet()
@@ -284,15 +354,19 @@ func fleetCompareHandler(d Deps) http.HandlerFunc {
 				to := time.Now().Unix()
 				from := to - fleetCompareRangeWindow(rangeKey)
 				pts, err := api.FleetSeries(string(metric), filter, core.AggNone, from, to, fleetCompareResolution(rangeKey))
-				if err != nil {
+				switch {
+				case err != nil:
 					data.ErrorMsg = err.Error()
-				} else {
+				case len(pts) == 0:
+					data.EmptyMsg = "no data for the selected nodes in this range"
+				default:
 					dataJSON, legend, err := buildFleetCompareChart(string(metric), pts)
 					if err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
 					data.DataJSON, data.Legend = dataJSON, legend
+					data.ChartSummary = fleetCompareSummary(string(metric), pts)
 				}
 			}
 		}

@@ -10,6 +10,57 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
+// ---- round 1 review fix: the /fleet checkbox selection must survive the
+// table's 5s htmx poll -----------------------------------------------------
+
+// TestAppJSFleetCompareSurvivesTablePoll is a static source scan (same
+// convention as templates_node_test.go's TestAppJSDataFetchesGoThroughNodeURL:
+// read assets/app.js's embedded source, assert the expected code shapes are
+// present) pinning the round-1 review fix: a persisted selection Set that
+// survives #fleet-tbody's every-5s outerHTML swap (which replaces every
+// checkbox with a fresh, unchecked one), re-applied onto the fresh
+// checkboxes on htmx:afterSwap before the counter/button are refreshed.
+func TestAppJSFleetCompareSurvivesTablePoll(t *testing.T) {
+	b, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	src := string(b)
+
+	if !strings.Contains(src, "selectedNodeIds") {
+		t.Fatal("app.js: missing a persisted fleet-compare selection set (selectedNodeIds)")
+	}
+	if !strings.Contains(src, "new Set()") {
+		t.Fatal("app.js: selectedNodeIds must be a Set, not re-derived from the (about to be replaced) checkboxes")
+	}
+	if !strings.Contains(src, "function reapplySelection") {
+		t.Fatal("app.js: missing a reapplySelection() function to re-check fresh checkboxes after a poll")
+	}
+	if !strings.Contains(src, "cb.checked=selectedNodeIds.has(cb.value)") {
+		t.Fatal("app.js: reapplySelection must set each fresh checkbox's .checked from selectedNodeIds")
+	}
+
+	// The htmx:afterSwap handler for #fleet-tbody must call reapplySelection
+	// before refreshing the counter/button -- extract that handler's body
+	// and check both calls appear in it, in order.
+	swapIdx := strings.Index(src, "'htmx:afterSwap'")
+	if swapIdx < 0 {
+		t.Fatal("app.js: missing an htmx:afterSwap listener")
+	}
+	body := src[swapIdx:]
+	if end := strings.Index(body, "});"); end >= 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, "fleet-tbody") {
+		t.Fatal("app.js: htmx:afterSwap handler doesn't gate on #fleet-tbody")
+	}
+	reapplyAt := strings.Index(body, "reapplySelection()")
+	refreshAt := strings.Index(body, "refresh()")
+	if reapplyAt < 0 || refreshAt < 0 || reapplyAt > refreshAt {
+		t.Fatalf("app.js: htmx:afterSwap must call reapplySelection() before refresh() (reapplyAt=%d refreshAt=%d)", reapplyAt, refreshAt)
+	}
+}
+
 // fleetCompareMasterDeps builds a master Deps whose Fleet().FleetSeries
 // returns pts (or seriesErr, if set) -- fleetMasterDeps's own fakeFleet
 // doesn't let a caller control FleetSeries, so this builds its own.
@@ -73,6 +124,55 @@ func TestFleetCompareCapErrorShownInline(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "compare at most 10 nodes") {
 		t.Errorf("GET /fleet/compare: cap error not rendered inline, body:\n%s", rr.Body.String())
+	}
+}
+
+// TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall pins the round 1
+// review fix: an unknown ?nodes= id is validated against the roster BEFORE
+// FleetSeries is ever called, and shows every unknown id inline.
+func TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall(t *testing.T) {
+	d, fk := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), []core.FleetSeriesPoint{{Node: "web1", TS: 1000, Value: 1}}, nil)
+	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=web1,ghost1,ghost2&metric=cpu&range=6h")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (validation error shown inline, not a 500)", rr.Code)
+	}
+	if fk.seriesCalls != 0 {
+		t.Fatalf("FleetSeries calls = %d, want 0 -- unknown nodes must be rejected before ever calling FleetSeries", fk.seriesCalls)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "no such node: ghost1, ghost2") {
+		t.Errorf("GET /fleet/compare: missing/wrong unknown-node error, body:\n%s", body)
+	}
+}
+
+// TestFleetCompareUnknownNodeAcceptsDisplayName pins that validation, like
+// core.NodeFilter.Nodes itself, accepts either a node's id or its exact
+// display name.
+func TestFleetCompareUnknownNodeAcceptsDisplayName(t *testing.T) {
+	d, fk := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), []core.FleetSeriesPoint{{Node: "self", TS: 1000, Value: 1}}, nil)
+	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=self&metric=cpu&range=6h")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if fk.seriesCalls != 1 {
+		t.Fatalf("FleetSeries calls = %d, want 1 -- self's display name/id must validate", fk.seriesCalls)
+	}
+	if strings.Contains(rr.Body.String(), "no such node") {
+		t.Errorf("GET /fleet/compare: self wrongly rejected as unknown, body:\n%s", rr.Body.String())
+	}
+}
+
+// TestFleetCompareZeroPointsShowsEmptyMessage pins the round 1 review fix: a
+// successful FleetSeries call returning no points shows a specific message,
+// not a blank/empty panel.
+func TestFleetCompareZeroPointsShowsEmptyMessage(t *testing.T) {
+	d, _ := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), nil, nil)
+	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=web1&metric=cpu&range=6h")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "no data for the selected nodes in this range") {
+		t.Errorf("GET /fleet/compare: missing empty-result message, body:\n%s", rr.Body.String())
 	}
 }
 

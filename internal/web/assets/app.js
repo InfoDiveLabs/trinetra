@@ -811,6 +811,14 @@
   // itself, never replaced) rather than bound per-checkbox, so it keeps
   // working after every poll without re-binding anything.
   //
+  // Round 1 review fix: htmx's every-5s outerHTML swap of #fleet-tbody
+  // replaces every checkbox with a fresh, unchecked one, silently wiping
+  // whatever an operator had selected mid-comparison. selectedNodeIds (a
+  // Set, persisted across swaps) is the source of truth for "what's
+  // selected" now, not the checkboxes' own DOM state: a change event
+  // updates the Set, and an htmx:afterSwap re-applies the Set onto the
+  // fresh checkboxes' .checked before refreshing the counter/button.
+  //
   // /fleet/compare is master-local (routes.go, node_scope.go's
   // masterLocalPrefixes), never a per-node view, so this deliberately uses
   // a plain relative URL -- NOT nodeURL() -- exactly like the rest of
@@ -821,23 +829,38 @@
     var btn=document.getElementById('fleetCompareBtn');
     var count=document.getElementById('fleetCompareCount');
     var CAP=10;
-    function selectedIds(){
-      return Array.prototype.map.call(table.querySelectorAll('.fleet-compare-check:checked'),function(cb){return cb.value;});
+    var selectedNodeIds=new Set();
+    function checkboxes(){
+      return table.querySelectorAll('.fleet-compare-check');
     }
     function refresh(){
-      var ids=selectedIds();
+      var ids=Array.prototype.slice.call(selectedNodeIds);
       if(count) count.textContent=ids.length+' selected'+(ids.length>CAP?' (max '+CAP+')':'');
       if(btn) btn.disabled=ids.length===0||ids.length>CAP;
     }
+    // reapplySelection re-checks every fresh checkbox htmx just swapped in
+    // whose value is still in selectedNodeIds (a node removed from the
+    // roster since simply drops out of the Set the next time it's touched
+    // -- an id with no matching checkbox anywhere is harmless, just unused).
+    function reapplySelection(){
+      Array.prototype.forEach.call(checkboxes(),function(cb){
+        cb.checked=selectedNodeIds.has(cb.value);
+      });
+    }
     table.addEventListener('change',function(e){
-      if(e.target&&e.target.classList&&e.target.classList.contains('fleet-compare-check')) refresh();
+      if(!e.target||!e.target.classList||!e.target.classList.contains('fleet-compare-check')) return;
+      if(e.target.checked) selectedNodeIds.add(e.target.value);
+      else selectedNodeIds.delete(e.target.value);
+      refresh();
     });
     document.body.addEventListener('htmx:afterSwap',function(e){
-      if(e.detail&&e.detail.target&&e.detail.target.id==='fleet-tbody') refresh();
+      if(!e.detail||!e.detail.target||e.detail.target.id!=='fleet-tbody') return;
+      reapplySelection();
+      refresh();
     });
     if(btn){
       btn.addEventListener('click',function(){
-        var ids=selectedIds();
+        var ids=Array.prototype.slice.call(selectedNodeIds);
         if(!ids.length||ids.length>CAP) return;
         window.location.href='/fleet/compare?nodes='+ids.map(encodeURIComponent).join(',');
       });

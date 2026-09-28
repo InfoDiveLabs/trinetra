@@ -787,6 +787,14 @@ func (f fleetAPIImpl) ManagedStatus() ([]core.ManagedStatus, error) {
 // selection.
 const fleetSeriesCap = 10
 
+// fleetSeriesRawWindowCapSeconds bounds how wide a [from, to] window
+// FleetSeries will serve at raw resolution (task-1b review round 1, minors:
+// "cap the raw window at 24h with an error") -- a raw query over a much
+// wider span would mean reading (and returning) a huge number of points for
+// no real benefit over 1m; a caller wanting a wider view should ask for
+// core.Res1m instead.
+const fleetSeriesRawWindowCapSeconds int64 = 24 * 3600
+
 // toSeriesResolution maps a core.Resolution onto this package's own
 // Resolution (mirroring coreapi_inproc.go's Series conversion): core.ResRaw
 // is raw, everything else (core.Res1m, and core.ResAuto -- FleetSeries has
@@ -851,6 +859,58 @@ func querySeriesPoints(store SampleStore, metric string, from, to int64, res Res
 	return store.Query(metric, from, to, res)
 }
 
+// fleetSeriesBucketSeconds picks the fixed bucket width FleetSeries'
+// avg/max/min aggregation groups every source's points into (task-1b review
+// round 1): 60s at 1m resolution (matching the underlying rollup's own
+// granularity exactly), or at raw resolution the master's own configured
+// raw ("fast tier") sample interval when known (getCfg non-nil and
+// Config.FastInterval > 0 -- the cadence cpu/mem/... are actually collected
+// at, config.go's FastInterval), otherwise a 10s default. Exactly ONE bucket
+// width is used for the whole request, computed once (never re-derived per
+// node): every node's points must land on the SAME shared grid for the
+// across-node aggregation step to combine them meaningfully.
+func fleetSeriesBucketSeconds(res Resolution, getCfg func() *config.Config) int64 {
+	if res == Res1m {
+		return 60
+	}
+	if getCfg != nil {
+		if cfg := getCfg(); cfg != nil && cfg.FastInterval > 0 {
+			return int64(cfg.FastInterval)
+		}
+	}
+	return 10
+}
+
+// floorToBucket floors ts down to the start of its bucketSeconds-wide
+// bucket; bucketSeconds<=0 (shouldn't happen -- fleetSeriesBucketSeconds
+// always returns a positive value) degrades to "no bucketing" rather than a
+// divide-by-zero.
+func floorToBucket(ts, bucketSeconds int64) int64 {
+	if bucketSeconds <= 0 {
+		return ts
+	}
+	return (ts / bucketSeconds) * bucketSeconds
+}
+
+// bucketNodeSeries floors every point in pts into its bucketSeconds-wide
+// bucket and, for a bucket more than one point lands in, keeps only the
+// LAST one by actual (unfloored) TS (task-1b review round 1: "Per node,
+// take the last value in the bucket") -- e.g. raw resolution can pack
+// several samples into one bucket when bucketSeconds is coarser than the
+// data's real cadence. Returns one value per bucket this node actually has
+// data in.
+func bucketNodeSeries(pts []Point, bucketSeconds int64) map[int64]float64 {
+	lastTS := map[int64]int64{}
+	out := map[int64]float64{}
+	for _, p := range pts {
+		b := floorToBucket(p.TS, bucketSeconds)
+		if prev, ok := lastTS[b]; !ok || p.TS >= prev {
+			lastTS[b], out[b] = p.TS, p.Avg
+		}
+	}
+	return out
+}
+
 // fleetSeriesAggregate combines vals (one value per contributing node at a
 // shared timestamp bucket) per agg; avg is the default for any value other
 // than max/min (including AggNone, which never reaches here -- see
@@ -896,7 +956,18 @@ func (f fleetAPIImpl) FleetSeries(metric string, filter core.NodeFilter, agg cor
 	if err != nil {
 		return nil, err
 	}
+	switch agg {
+	case core.AggNone, core.AggAvg, core.AggMax, core.AggMin, "":
+	default:
+		return nil, fmt.Errorf("unknown aggregation")
+	}
+	if to <= from {
+		return nil, fmt.Errorf("to must be after from")
+	}
 	storeRes := toSeriesResolution(res)
+	if storeRes == ResRaw && to-from > fleetSeriesRawWindowCapSeconds {
+		return nil, fmt.Errorf("raw resolution is limited to a 24h window")
+	}
 
 	type nodeSource struct {
 		name  string
@@ -947,14 +1018,20 @@ func (f fleetAPIImpl) FleetSeries(metric string, filter core.NodeFilter, agg cor
 		return out, nil
 	}
 
+	// avg/max/min (task-1b review round 1, item 3): every source's points
+	// are floored onto ONE shared bucket grid (fleetSeriesBucketSeconds) --
+	// 60s at 1m resolution, the master's configured raw sample interval (or
+	// 10s) at raw resolution -- taking each node's LAST value within a
+	// bucket (bucketNodeSeries), before combining across nodes with agg.
+	bucketSeconds := fleetSeriesBucketSeconds(storeRes, m.getCfg)
 	buckets := map[int64][]float64{}
 	for _, s := range sources {
 		pts, err := querySeriesPoints(s.store, metric, from, to, storeRes)
 		if err != nil {
 			continue
 		}
-		for _, p := range pts {
-			buckets[p.TS] = append(buckets[p.TS], p.Avg)
+		for b, v := range bucketNodeSeries(pts, bucketSeconds) {
+			buckets[b] = append(buckets[b], v)
 		}
 	}
 	tsList := make([]int64, 0, len(buckets))
