@@ -138,17 +138,34 @@ the data is gathered and graphable but nothing fires on it.
 ## Alert history
 
 Every fire and every recover is appended to `alertlog.jsonl` in the data
-directory, and each entry records not just the transition but the per-channel
-delivery outcome, so the log tells you both that an alert happened and whether
-each channel actually received it. The file is pruned to roughly 30 days.
+directory the moment it happens: timestamp, kind (`fire`/`recover`), key,
+severity, title, and (routed alerts only) whether it was handed off to a
+fleet master. The file is pruned to roughly 30 days.
 
 Read it with the `alerts` command. Bare `alerts` is the same as `alerts list`
 and prints two sections. The first, ACTIVE ALERTS, lists each key currently
 firing, how long ago it fired, its reason, and an `[acked ... ago]` marker if
 you acknowledged it. The second, HISTORY, replays recent log entries, each
 showing the timestamp, the kind (`fire` or `recover`), the key, the severity,
-the title, and beneath it a per-channel delivery line reading `ok` or
-`FAILED: <err>`.
+and the title.
+
+Delivery itself happens off the sampler loop, on an async notifier queue, so
+the log entry above is written the instant the alert transitions, before
+delivery has necessarily finished (or even started); it does not carry a
+per-channel outcome. A channel that fails is retried automatically with
+exponential backoff (10s, doubling, capped at 5 minutes) for up to 6 attempts
+over 30 minutes; a critical alert or a recover gets a longer budget, 10
+attempts over 2 hours, since those are never dropped for capacity either (see
+below). A channel that already succeeded for a given alert is never retried
+for it, so no channel is ever delivered to twice. If every attempt in the
+budget still fails, the daemon logs `notifier: alert <key> permanently
+undelivered to [<channels>] after N attempts over <duration>` and moves on;
+that log line, or `channel test` against the suspect channel, is how you
+confirm delivery actually failed rather than just being slow. On a very slow
+or backed-up channel, the queue also bounds its own memory: it drops the
+oldest **non-critical** queued alert to make room for a new one past its
+capacity; critical alerts and recovers are never dropped this way, only
+retried.
 
 ```bash
 trinetra alerts                               # active alerts + recent history
@@ -363,6 +380,10 @@ a whole tag). None of this exists outside fleet mode.
 
 ### The pipeline
 
+See [Fleet mode](13-fleet.md) for the concepts (roles, enrollment, incidents)
+and a task-oriented walkthrough; this section is the reference for exactly
+how the pipeline below makes its decisions.
+
 Every alert the master handles, whether it arrived from a child or was raised
 by a master-side aggregate rule, walks the same pipeline, in order:
 
@@ -418,6 +439,17 @@ both keys.
 Silences and maintenance windows are pushed to every child they could apply
 to, so an alert that falls back locally during a master outage still honours
 whatever was silenced before the link dropped.
+
+A **revoked** child is a different case from an unreachable one, and its
+messages say so. The moment a child sees its own link report as revoked, its
+lease is permanently invalidated and every alert still waiting on the master
+(including the child's own "this node was revoked" notice) is delivered
+locally right away, without waiting out `fleet.fallback_after`. The revoked
+notice itself carries no fallback prefix at all -- it is delivered directly,
+since there is no ambiguity about why. Everything else drains with
+`node revoked, delivering locally — ` instead of the usual `via local
+fallback: master unreachable — `, because "unreachable" would be actively
+misleading for a node the master deliberately cut off.
 
 ### Silences and maintenance windows
 

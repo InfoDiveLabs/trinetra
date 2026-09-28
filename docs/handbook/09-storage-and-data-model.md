@@ -290,12 +290,15 @@ in time, as opposed to a sampled value or a live reading. There are two event
 streams.
 
 **`alertlog.jsonl`** is an append-only JSON-lines file recording every alert
-notification the daemon has dispatched: every fire and every recover, along with
-the per-channel delivery outcome for each. It is written by every anomaly
-transition, by the boot report, and by the daily and weekly digests. It is
-pruned to roughly 30 days on each slow tick. Read it with `trinetra alerts`
-rather than parsing the file, which prints the currently active alerts followed
-by recent history and per-channel delivery status.
+transition the daemon has raised: every fire and every recover, written the
+instant the transition happens, by every anomaly check, the boot report, and
+the daily and weekly digests. Delivery itself is asynchronous (see [Alert
+history](06-alerting-and-channels.md#alert-history)), so an entry here is not
+a delivery receipt, just a record that the alert happened; its outcome, if a
+channel keeps failing after retries, only ever reaches the daemon's own
+journal. It is pruned to roughly 30 days on each slow tick. Read it with
+`trinetra alerts` rather than parsing the file, which prints the currently
+active alerts followed by recent history.
 
 **`ts/events.tsd`** holds downtime events, specifically `power_down` and
 `net_down`. These are event-shaped, not sampled values, but they live *inside*
