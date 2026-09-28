@@ -64,7 +64,7 @@ build it from source, the same way you did originally:
 
 ```bash
 curl -fsSL -o /tmp/trinetra \
-  https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/trinetra-linux-arm64
+  https://github.com/InfoDiveLabs/trinetra/releases/latest/download/trinetra-linux-arm64
 chmod +x /tmp/trinetra
 ```
 

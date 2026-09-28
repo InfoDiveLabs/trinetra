@@ -73,7 +73,7 @@ drops its arch suffix so `trinetra install` finds the plugins by name.
 ```bash
 cd /tmp && arch=linux-arm64
 for b in trinetra trinetra-ctl trinetra-web; do
-  curl -fsSL -o "$b" "https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/$b-$arch"
+  curl -fsSL -o "$b" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$b-$arch"
 done
 chmod +x trinetra trinetra-ctl trinetra-web
 ```
@@ -101,8 +101,8 @@ If you would rather build it yourself, clone the repository and cross-compile
 the Linux binaries. This needs Go 1.22 or newer.
 
 ```bash
-git clone git@github.com:Suraj-Tiwari/server-monitor.git
-cd server-monitor
+git clone git@github.com:InfoDiveLabs/trinetra.git
+cd trinetra
 make linux
 ```
 
@@ -268,7 +268,7 @@ plugin that has no new counterpart.
 ```bash
 cd /tmp && arch=linux-arm64     # the same loop as step 2
 for b in trinetra trinetra-ctl trinetra-web; do
-  curl -fsSL -o "$b" "https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/$b-$arch"
+  curl -fsSL -o "$b" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$b-$arch"
 done
 chmod +x trinetra trinetra-ctl trinetra-web
 sudo /tmp/trinetra install

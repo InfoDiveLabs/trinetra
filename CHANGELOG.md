@@ -84,8 +84,9 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   can't."): module `github.com/InfoDiveLabs/trinetra`, binaries `trinetra`,
   `trinetra-ctl`, `trinetra-web`, paths `/etc/trinetra`, `/var/lib/trinetra`,
   `/run/trinetra`, and the `trinetra.service` unit. The web UI, TUI, and
-  notifications carry the new Trinetra visual identity. The GitHub repo stays
-  at `Suraj-Tiwari/server-monitor` for now; only the product name changes.
+  notifications carry the new Trinetra visual identity. The GitHub repo moves
+  to `InfoDiveLabs/trinetra` (the old `Suraj-Tiwari/server-monitor` URLs
+  redirect).
   - **Upgrade:** download `trinetra` and the plugins you use
     (`trinetra-ctl`, `trinetra-web`) into one directory, then run the one
     command you already know, `sudo trinetra install`. On a host with an existing serverwatch install it detects it
@@ -466,9 +467,9 @@ and management tooling move out of process.
 - Initial release: the stdlib-only `serverwatch` daemon with core metric
   collection, threshold and anomaly detection, and Telegram alerting.
 
-[0.4.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.4.0
-[0.3.2]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.2
-[0.3.1]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.1
-[0.3.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.3.0
-[0.2.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.2.0
-[0.1.0]: https://github.com/Suraj-Tiwari/server-monitor/releases/tag/v0.1.0
+[0.4.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.4.0
+[0.3.2]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.3.2
+[0.3.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.3.1
+[0.3.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.3.0
+[0.2.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.2.0
+[0.1.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.1.0

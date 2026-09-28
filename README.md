@@ -293,7 +293,7 @@ doesn't take it in time, the child delivers the alert itself.
 # On the server, pick your arch: linux-amd64 / linux-arm64 / linux-arm (older Pis)
 cd /tmp && arch=linux-amd64
 for b in trinetra trinetra-ctl trinetra-web; do
-  curl -fsSL -o "$b" "https://github.com/Suraj-Tiwari/server-monitor/releases/latest/download/$b-$arch"
+  curl -fsSL -o "$b" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$b-$arch"
 done
 chmod +x trinetra trinetra-ctl trinetra-web
 

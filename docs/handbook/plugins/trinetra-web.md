@@ -13,7 +13,7 @@ direct invocation.
 
 `trinetra-web` installs alongside the daemon. The recommended path is to
 download the `trinetra-web-<arch>` asset from the [releases
-page](https://github.com/Suraj-Tiwari/server-monitor/releases) into the same
+page](https://github.com/InfoDiveLabs/trinetra/releases) into the same
 directory as the `trinetra` binary (renamed to `trinetra-web`, dropping
 the arch suffix), then run `sudo trinetra install`: it copies the plugin
 into `/usr/local/bin` next to the daemon and records its checksum in the
