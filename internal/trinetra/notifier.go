@@ -3,6 +3,7 @@ package trinetra
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -265,15 +266,72 @@ func sendSafely(n Notifier, a Alert, timeout time.Duration) (err error) {
 	return n.Send(ctx, a)
 }
 
+// notifierMaxAttempts/notifierUndroppableMaxAttempts and
+// notifierRetryWindow/notifierUndroppableRetryWindow bound how many times,
+// and for how long, NotifierQueue.Run retries a channel that failed to
+// deliver an alert before giving up and counting it permanently failed
+// (final-review engine I1/ruling (a)). Undroppable alerts (critical, or a
+// recover -- see undroppable) get the longer budget, since they already
+// bypass the capacity-drop path in Enqueue and so are the ones this
+// guarantee matters most for. Package vars, not consts, so a test can
+// shrink them instead of actually waiting out a real 30 minutes.
+var (
+	notifierMaxAttempts            = 6
+	notifierUndroppableMaxAttempts = 10
+	notifierRetryWindow            = 30 * time.Minute
+	notifierUndroppableRetryWindow = 2 * time.Hour
+	// notifierBaseDelay/notifierMaxDelay set notifierBackoff's shape: delay
+	// doubles from notifierBaseDelay each attempt, capped at
+	// notifierMaxDelay. Package vars for the same test-speed reason as
+	// above.
+	notifierBaseDelay = 10 * time.Second
+	notifierMaxDelay  = 5 * time.Minute
+)
+
+// notifierBackoff returns the delay before retrying a channel for the
+// (1-based) attempt'th time it has failed: notifierBaseDelay * 2^(attempt-1),
+// capped at notifierMaxDelay.
+func notifierBackoff(attempt int) time.Duration {
+	d := notifierBaseDelay
+	for i := 1; i < attempt; i++ {
+		if d >= notifierMaxDelay {
+			return notifierMaxDelay
+		}
+		d *= 2
+	}
+	if d > notifierMaxDelay {
+		d = notifierMaxDelay
+	}
+	return d
+}
+
 type queuedAlert struct {
 	a     Alert
 	quiet bool
+	// attempt counts how many delivery attempts this alert has already had
+	// (0 before the first). firstEnqueued is fixed at Enqueue time and never
+	// changes across retries -- it anchors the retry window
+	// (notifierRetryWindow/notifierUndroppableRetryWindow).
+	attempt       int
+	firstEnqueued time.Time
+	// retryAt gates when popDue will hand this item back out again: the
+	// zero value (a brand-new item from Enqueue) is always due immediately.
+	retryAt time.Time
+	// targetChannels is nil for a first attempt (deliver to every
+	// enabled+routed channel, i.e. Dispatch's normal behavior) or the exact
+	// set of channels that failed last time (DispatchTo) -- a channel that
+	// already succeeded is structurally excluded from every later attempt,
+	// so no channel ever receives the same alert twice.
+	targetChannels []string
 }
 
 // NotifierQueue decouples alert delivery from the caller: Enqueue is
 // non-blocking and Run drains to the Dispatcher on its own goroutine. On a
 // slow uplink the queue bounds memory by dropping the OLDEST non-critical
-// alert; critical and recover alerts are never dropped.
+// alert; critical and recover alerts are never dropped. A channel that
+// fails is retried with backoff (see notifierBackoff) for up to
+// notifierMaxAttempts/notifierRetryWindow (longer for an undroppable
+// alert), rather than being attempted exactly once and then forgotten.
 type NotifierQueue struct {
 	mu      sync.Mutex
 	items   []queuedAlert
@@ -281,19 +339,34 @@ type NotifierQueue struct {
 	dropped atomic.Int64
 	wake    chan struct{}
 	disp    atomic.Pointer[Dispatcher]
+	now     func() time.Time
+	// permanentlyFailed counts alerts that exhausted their retry budget
+	// with at least one channel still failing (Dropped, by contrast, counts
+	// alerts evicted by the capacity cap before any delivery attempt at
+	// all -- a different failure mode with a different counter).
+	permanentlyFailed atomic.Int64
 }
 
 func NewNotifierQueue(d *Dispatcher, capacity int) *NotifierQueue {
 	if capacity < 1 {
 		capacity = 1
 	}
-	q := &NotifierQueue{cap: capacity, wake: make(chan struct{}, 1)}
+	q := &NotifierQueue{cap: capacity, wake: make(chan struct{}, 1), now: time.Now}
 	q.disp.Store(d)
 	return q
 }
 
 func (q *NotifierQueue) SetDispatcher(d *Dispatcher) { q.disp.Store(d) }
 func (q *NotifierQueue) Dropped() int64              { return q.dropped.Load() }
+
+// PermanentlyFailed returns how many alerts have exhausted their retry
+// budget (notifierMaxAttempts/notifierRetryWindow, or the undroppable
+// variants) with at least one channel still failing.
+func (q *NotifierQueue) PermanentlyFailed() int64 { return q.permanentlyFailed.Load() }
+
+// setNowForTest overrides q's clock; tests use it to drive retry/exhaustion
+// decisions deterministically without waiting on real time.
+func (q *NotifierQueue) setNowForTest(now func() time.Time) { q.now = now }
 
 func undroppable(a Alert) bool { return a.Severity >= SevCritical || a.Kind == "recover" }
 
@@ -313,7 +386,7 @@ func (q *NotifierQueue) Enqueue(a Alert, quiet bool) {
 		// else: newcomer is undroppable and queue is all-undroppable -> allow
 		// growth past cap (bounded by reality: critical bursts are rare).
 	}
-	q.items = append(q.items, queuedAlert{a: a, quiet: quiet})
+	q.items = append(q.items, queuedAlert{a: a, quiet: quiet, firstEnqueued: q.now()})
 	q.mu.Unlock()
 	select {
 	case q.wake <- struct{}{}:
@@ -330,31 +403,140 @@ func (q *NotifierQueue) indexOfOldestDroppable() int {
 	return -1
 }
 
-func (q *NotifierQueue) pop() (queuedAlert, bool) {
+// popDue returns the first item (in slice order) whose retryAt is due
+// (<= now), removing it from the queue. If the queue has items but none are
+// due yet, it reports ok=false along with wait, the duration until the
+// earliest one becomes due, so Run knows how long it can sleep instead of
+// busy-polling. At this queue's scale (bounded by cap, plus a handful of
+// in-flight retries) a linear scan for the earliest retryAt is fine -- no
+// heap needed.
+func (q *NotifierQueue) popDue() (it queuedAlert, wait time.Duration, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.items) == 0 {
-		return queuedAlert{}, false
+		return queuedAlert{}, 0, false
 	}
-	it := q.items[0]
-	q.items = q.items[1:]
-	return it, true
+	now := q.now()
+	for i, cand := range q.items {
+		if !cand.retryAt.After(now) {
+			q.items = append(q.items[:i], q.items[i+1:]...)
+			return cand, 0, true
+		}
+	}
+	earliest := q.items[0].retryAt
+	for _, cand := range q.items[1:] {
+		if cand.retryAt.Before(earliest) {
+			earliest = cand.retryAt
+		}
+	}
+	wait = earliest.Sub(now)
+	if wait < 0 {
+		wait = 0
+	}
+	return queuedAlert{}, wait, false
 }
 
 func (q *NotifierQueue) Run(ctx context.Context) {
 	for {
-		it, ok := q.pop()
+		it, wait, ok := q.popDue()
 		if !ok {
+			if wait <= 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-q.wake:
+					continue
+				}
+			}
+			timer := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
 			case <-q.wake:
+				timer.Stop()
 				continue
+			case <-timer.C:
 			}
+			continue
 		}
-		if d := q.disp.Load(); d != nil {
-			d.Dispatch(it.a, it.quiet)
+		q.attemptDelivery(it)
+	}
+}
+
+// deliverOnce runs one delivery attempt for it: the full matched set
+// (Dispatch) on a first attempt (it.targetChannels is nil/empty), or just
+// the channels that failed last time (DispatchTo) on a retry. A nil
+// dispatcher (SetDispatcher never called, or startup race) is a silent
+// no-op, exactly as before this change.
+func (q *NotifierQueue) deliverOnce(it queuedAlert) []DeliveryResult {
+	d := q.disp.Load()
+	if d == nil {
+		return nil
+	}
+	if len(it.targetChannels) == 0 {
+		return d.Dispatch(it.a, it.quiet)
+	}
+	return d.DispatchTo(it.a, it.quiet, it.targetChannels)
+}
+
+// nextRetry inspects results (from deliverOnce(it)) and decides whether to
+// retry: nil/no error results in no retry (retry=false, nothing to do --
+// either every channel succeeded, or there was no dispatcher to try).
+// Otherwise, if it has budget left (notifierMaxAttempts/notifierRetryWindow,
+// or the undroppable variants), it returns the updated item -- attempt
+// incremented, targetChannels narrowed to just the channels that failed
+// (never one that already succeeded, so no channel is ever double-delivered
+// across the whole retry sequence), retryAt set via notifierBackoff -- for
+// the caller to requeue. If the budget is exhausted, it logs and counts
+// permanentlyFailed instead.
+//
+// A separate method (not inlined into Run) so a test can drive the
+// retry/exhaustion decision directly against q's injected clock, without
+// waiting on Run's own timers.
+func (q *NotifierQueue) nextRetry(it queuedAlert, results []DeliveryResult) (next queuedAlert, retry bool) {
+	var failed []string
+	for _, r := range results {
+		if r.Err != nil {
+			failed = append(failed, r.Channel)
 		}
+	}
+	if len(failed) == 0 {
+		return queuedAlert{}, false
+	}
+	maxAttempts, window := notifierMaxAttempts, notifierRetryWindow
+	if undroppable(it.a) {
+		maxAttempts, window = notifierUndroppableMaxAttempts, notifierUndroppableRetryWindow
+	}
+	now := q.now()
+	attempt := it.attempt + 1
+	if attempt >= maxAttempts || now.Sub(it.firstEnqueued) >= window {
+		q.permanentlyFailed.Add(1)
+		log.Printf("notifier: alert %s permanently undelivered to %v after %d attempts over %s",
+			it.a.Key, failed, attempt, now.Sub(it.firstEnqueued).Round(time.Second))
+		return queuedAlert{}, false
+	}
+	it.attempt = attempt
+	it.targetChannels = failed
+	it.retryAt = now.Add(notifierBackoff(attempt))
+	return it, true
+}
+
+// attemptDelivery runs one delivery attempt for it and, if nextRetry says
+// to, requeues the updated item and wakes Run's loop so it can recompute
+// how long to wait for the new retryAt.
+func (q *NotifierQueue) attemptDelivery(it queuedAlert) {
+	results := q.deliverOnce(it)
+	next, retry := q.nextRetry(it, results)
+	if !retry {
+		return
+	}
+	q.mu.Lock()
+	q.items = append(q.items, next)
+	q.mu.Unlock()
+	select {
+	case q.wake <- struct{}{}:
+	default:
 	}
 }
 

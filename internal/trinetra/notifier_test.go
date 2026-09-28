@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -423,5 +424,259 @@ func TestNotifierQueueSetDispatcherReroutesDelivery(t *testing.T) {
 	}
 	if got := len(oldN.received()); got != 0 {
 		t.Fatalf("stale dispatcher received %d alerts, want 0: delivery still using the pre-swap dispatcher", got)
+	}
+}
+
+// --- bounded retry (final-review engine I1 / ruling (a)) --------------------
+
+// withShortNotifierRetryTuning shrinks every retry knob for the duration of
+// one test, so an integration-style test exercising real backoff through
+// NotifierQueue.Run never waits real minutes -- only a few milliseconds.
+func withShortNotifierRetryTuning(t *testing.T) {
+	t.Helper()
+	oldMax, oldUndroppableMax := notifierMaxAttempts, notifierUndroppableMaxAttempts
+	oldWindow, oldUndroppableWindow := notifierRetryWindow, notifierUndroppableRetryWindow
+	oldBase, oldCap := notifierBaseDelay, notifierMaxDelay
+	notifierMaxAttempts, notifierUndroppableMaxAttempts = 3, 4
+	notifierRetryWindow, notifierUndroppableRetryWindow = time.Hour, 2*time.Hour
+	notifierBaseDelay, notifierMaxDelay = 2*time.Millisecond, 8*time.Millisecond
+	t.Cleanup(func() {
+		notifierMaxAttempts, notifierUndroppableMaxAttempts = oldMax, oldUndroppableMax
+		notifierRetryWindow, notifierUndroppableRetryWindow = oldWindow, oldUndroppableWindow
+		notifierBaseDelay, notifierMaxDelay = oldBase, oldCap
+	})
+}
+
+// flakyNotifier fails its first failUntil sends, then succeeds forever
+// after. Thread-safe: attemptDelivery's own channels can run concurrently
+// with other channels in the same Dispatch/DispatchTo call.
+type flakyNotifier struct {
+	name      string
+	failUntil int32
+	calls     atomic.Int32
+	oks       atomic.Int32
+}
+
+func (f *flakyNotifier) Name() string { return f.name }
+func (f *flakyNotifier) Send(ctx context.Context, a Alert) error {
+	n := f.calls.Add(1)
+	if n <= f.failUntil {
+		return fmt.Errorf("%s: transient failure %d", f.name, n)
+	}
+	f.oks.Add(1)
+	return nil
+}
+
+func TestNotifierBackoffDoublesAndCapsAtNotifierMaxDelay(t *testing.T) {
+	oldBase, oldCap := notifierBaseDelay, notifierMaxDelay
+	notifierBaseDelay, notifierMaxDelay = 10*time.Second, 5*time.Minute
+	t.Cleanup(func() { notifierBaseDelay, notifierMaxDelay = oldBase, oldCap })
+
+	want := map[int]time.Duration{
+		1: 10 * time.Second,
+		2: 20 * time.Second,
+		3: 40 * time.Second,
+		4: 80 * time.Second,
+		5: 160 * time.Second,
+		6: 300 * time.Second, // capped at notifierMaxDelay (5m), not 320s
+		7: 300 * time.Second,
+	}
+	for attempt, w := range want {
+		if got := notifierBackoff(attempt); got != w {
+			t.Errorf("notifierBackoff(%d) = %s, want %s", attempt, got, w)
+		}
+	}
+}
+
+// TestNextRetryNarrowsToFailedChannelsOnly is the ruling's own
+// double-delivery guard, made concrete: a channel that already succeeded
+// must never appear in the next attempt's targetChannels.
+func TestNextRetryNarrowsToFailedChannelsOnly(t *testing.T) {
+	q := NewNotifierQueue(nil, 8)
+	now := time.Unix(1000, 0)
+	q.setNowForTest(func() time.Time { return now })
+
+	it := queuedAlert{a: Alert{Key: "cpu", Severity: SevWarning, Kind: "fire"}, firstEnqueued: now}
+	results := []DeliveryResult{
+		{Channel: "slack", Err: nil},
+		{Channel: "pager", Err: errors.New("boom")},
+	}
+	next, retry := q.nextRetry(it, results)
+	if !retry {
+		t.Fatal("want retry=true: pager still failed")
+	}
+	if len(next.targetChannels) != 1 || next.targetChannels[0] != "pager" {
+		t.Fatalf("targetChannels = %v, want just [pager] (slack already succeeded)", next.targetChannels)
+	}
+	if next.attempt != 1 {
+		t.Fatalf("attempt = %d, want 1", next.attempt)
+	}
+	if !next.retryAt.After(now) {
+		t.Fatalf("retryAt = %v, want after now (%v)", next.retryAt, now)
+	}
+}
+
+// TestNextRetryNoFailuresNeverRetries covers the "every channel succeeded"
+// (or nothing to dispatch to at all) case: no retry, nothing counted.
+func TestNextRetryNoFailuresNeverRetries(t *testing.T) {
+	q := NewNotifierQueue(nil, 8)
+	it := queuedAlert{a: Alert{Key: "cpu"}, firstEnqueued: time.Unix(1000, 0)}
+	if _, retry := q.nextRetry(it, []DeliveryResult{{Channel: "slack", Err: nil}}); retry {
+		t.Fatal("want retry=false when every channel succeeded")
+	}
+	if _, retry := q.nextRetry(it, nil); retry {
+		t.Fatal("want retry=false with no results at all")
+	}
+	if q.PermanentlyFailed() != 0 {
+		t.Fatalf("PermanentlyFailed = %d, want 0", q.PermanentlyFailed())
+	}
+}
+
+// TestNextRetryGivesUpAfterMaxAttempts is the exhaustion path: once attempt
+// count would reach notifierMaxAttempts, nextRetry gives up (retry=false)
+// and counts permanentlyFailed, rather than retrying forever.
+func TestNextRetryGivesUpAfterMaxAttempts(t *testing.T) {
+	old := notifierMaxAttempts
+	notifierMaxAttempts = 3
+	t.Cleanup(func() { notifierMaxAttempts = old })
+
+	q := NewNotifierQueue(nil, 8)
+	now := time.Unix(1000, 0)
+	q.setNowForTest(func() time.Time { return now })
+	failed := []DeliveryResult{{Channel: "pager", Err: errors.New("boom")}}
+
+	it := queuedAlert{a: Alert{Key: "cpu", Severity: SevWarning, Kind: "fire"}, firstEnqueued: now, attempt: 0}
+	it, retry := q.nextRetry(it, failed)
+	if !retry || it.attempt != 1 {
+		t.Fatalf("attempt 1: retry=%v attempt=%d, want retry=true attempt=1", retry, it.attempt)
+	}
+	it, retry = q.nextRetry(it, failed)
+	if !retry || it.attempt != 2 {
+		t.Fatalf("attempt 2: retry=%v attempt=%d, want retry=true attempt=2", retry, it.attempt)
+	}
+	// A 3rd failure reaches notifierMaxAttempts (3): give up.
+	_, retry = q.nextRetry(it, failed)
+	if retry {
+		t.Fatal("want retry=false once notifierMaxAttempts is reached")
+	}
+	if q.PermanentlyFailed() != 1 {
+		t.Fatalf("PermanentlyFailed = %d, want 1", q.PermanentlyFailed())
+	}
+}
+
+// TestNextRetryGivesUpAfterRetryWindowEvenWithAttemptsLeft: the time-window
+// budget is independent of the attempt-count budget -- either one
+// exhausting is enough to give up.
+func TestNextRetryGivesUpAfterRetryWindowEvenWithAttemptsLeft(t *testing.T) {
+	old := notifierRetryWindow
+	notifierRetryWindow = 10 * time.Minute
+	t.Cleanup(func() { notifierRetryWindow = old })
+
+	q := NewNotifierQueue(nil, 8)
+	firstEnqueued := time.Unix(1000, 0)
+	now := firstEnqueued.Add(11 * time.Minute) // past notifierRetryWindow
+	q.setNowForTest(func() time.Time { return now })
+
+	it := queuedAlert{a: Alert{Key: "cpu", Severity: SevWarning, Kind: "fire"}, firstEnqueued: firstEnqueued, attempt: 1}
+	_, retry := q.nextRetry(it, []DeliveryResult{{Channel: "pager", Err: errors.New("boom")}})
+	if retry {
+		t.Fatal("want retry=false once notifierRetryWindow has elapsed, even with attempts left")
+	}
+	if q.PermanentlyFailed() != 1 {
+		t.Fatalf("PermanentlyFailed = %d, want 1", q.PermanentlyFailed())
+	}
+}
+
+// TestNextRetryUndroppableGetsLongerBudget: a critical/recover alert must
+// still be retrying at an attempt count and elapsed time that would already
+// have exhausted an ordinary alert's budget.
+func TestNextRetryUndroppableGetsLongerBudget(t *testing.T) {
+	oldMax, oldUndroppableMax := notifierMaxAttempts, notifierUndroppableMaxAttempts
+	oldWindow, oldUndroppableWindow := notifierRetryWindow, notifierUndroppableRetryWindow
+	notifierMaxAttempts, notifierUndroppableMaxAttempts = 2, 10
+	notifierRetryWindow, notifierUndroppableRetryWindow = 10*time.Minute, 2*time.Hour
+	t.Cleanup(func() {
+		notifierMaxAttempts, notifierUndroppableMaxAttempts = oldMax, oldUndroppableMax
+		notifierRetryWindow, notifierUndroppableRetryWindow = oldWindow, oldUndroppableWindow
+	})
+
+	q := NewNotifierQueue(nil, 8)
+	firstEnqueued := time.Unix(1000, 0)
+	now := firstEnqueued.Add(20 * time.Minute) // past the ORDINARY window, not the undroppable one
+	q.setNowForTest(func() time.Time { return now })
+
+	// attempt=1 would already be >= the ordinary notifierMaxAttempts (2).
+	it := queuedAlert{a: Alert{Key: "cpu", Severity: SevCritical, Kind: "fire"}, firstEnqueued: firstEnqueued, attempt: 1}
+	next, retry := q.nextRetry(it, []DeliveryResult{{Channel: "pager", Err: errors.New("boom")}})
+	if !retry {
+		t.Fatal("want retry=true: a critical alert gets the longer undroppable budget")
+	}
+	if next.attempt != 2 {
+		t.Fatalf("attempt = %d, want 2", next.attempt)
+	}
+	if q.PermanentlyFailed() != 0 {
+		t.Fatalf("PermanentlyFailed = %d, want 0", q.PermanentlyFailed())
+	}
+}
+
+// TestNotifierQueueRunRetriesFailedChannelThenSucceeds is the end-to-end
+// wiring test: a channel that fails once must be retried (with real, but
+// shrunk, backoff) and eventually deliver -- exactly once, not zero times
+// (I1's genuine gap) and not more than the actual number of attempts it
+// took.
+func TestNotifierQueueRunRetriesFailedChannelThenSucceeds(t *testing.T) {
+	withShortNotifierRetryTuning(t)
+	n := &flakyNotifier{name: "flaky", failUntil: 1}
+	q := NewNotifierQueue(NewDispatcher([]Channel{allowAllChannel(n)}, dispatcherTimeout), 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Run(ctx)
+
+	q.Enqueue(Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Time: 1}, false)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && n.oks.Load() == 0 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if n.oks.Load() != 1 {
+		t.Fatalf("oks = %d, want 1 (delivered exactly once after the transient failure)", n.oks.Load())
+	}
+	// Give any errant extra retry a moment to show up before asserting the
+	// call count is exactly right.
+	time.Sleep(20 * time.Millisecond)
+	if got := n.calls.Load(); got != 2 {
+		t.Fatalf("calls = %d, want exactly 2 (1 failure + 1 success, no double-delivery after success)", got)
+	}
+	if q.PermanentlyFailed() != 0 {
+		t.Fatalf("PermanentlyFailed = %d, want 0", q.PermanentlyFailed())
+	}
+}
+
+// TestNotifierQueueRunGivesUpAfterMaxAttemptsAndStopsRetrying is the other
+// end-to-end half: a channel that never succeeds is retried up to
+// notifierMaxAttempts times, counted permanentlyFailed, and then left
+// alone -- not retried forever.
+func TestNotifierQueueRunGivesUpAfterMaxAttemptsAndStopsRetrying(t *testing.T) {
+	withShortNotifierRetryTuning(t)
+	n := &flakyNotifier{name: "always-fails", failUntil: 1 << 30}
+	q := NewNotifierQueue(NewDispatcher([]Channel{allowAllChannel(n)}, dispatcherTimeout), 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Run(ctx)
+
+	q.Enqueue(Alert{Key: "cpu", Title: "CPU high", Severity: SevWarning, Kind: "fire", Time: 1}, false)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && q.PermanentlyFailed() == 0 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if q.PermanentlyFailed() != 1 {
+		t.Fatalf("PermanentlyFailed = %d, want 1", q.PermanentlyFailed())
+	}
+	// notifierMaxAttempts (via withShortNotifierRetryTuning) is 3: exactly 3
+	// calls, then no more, ever.
+	time.Sleep(30 * time.Millisecond)
+	if got := n.calls.Load(); got != int32(notifierMaxAttempts) {
+		t.Fatalf("calls = %d, want exactly notifierMaxAttempts (%d): must stop retrying once exhausted", got, notifierMaxAttempts)
 	}
 }
