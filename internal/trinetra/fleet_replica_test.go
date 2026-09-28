@@ -714,11 +714,13 @@ func TestReplicaAPIContainerLogsTimeout(t *testing.T) {
 }
 
 // TestReplicaAPIContainerLogsChildErrorPassesThrough pins "the child's own
-// error, passed through" (task-9 ruling).
+// error, passed through" (task-9 ruling) -- wrapped (final-review transport
+// I1) so its text can never come out as a bare sentinel suffix, but still
+// containing the child's original message for display/logging.
 func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 	m := newRPCTestMaster(t)
 	var sh *fleet.Shipper
-	self := fakeLogsAPI{err: errors.New("no such container \"web\"")}
+	self := fakeLogsAPI{err: errors.New("no such container: web")}
 	nodeID, childSh, stop := m.connect("err-logs", func(f fleet.Frame) {
 		handleRPCFrame(self, sh, t.Logf, f)
 	})
@@ -730,7 +732,71 @@ func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := api.ContainerLogs("web", 50); err == nil || err.Error() != `no such container "web"` {
-		t.Fatalf("err = %v", err)
+	out, err := api.ContainerLogs("web", 50)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "no such container: web") {
+		t.Fatalf("err = %v, want it to still contain the child's own message", err)
+	}
+	if out != "" {
+		t.Fatalf("out = %q, want empty on error", out)
+	}
+}
+
+// TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix is the
+// final-review transport I1 regression: a compromised or buggy child can
+// POST back any error text it likes in its RPC result body (Hub.handleRPC
+// only authenticates the node, it never validates the body's content), and
+// that text used to flow to the control-socket caller as a bare
+// errors.New(res.Error). If it happened to end in one of
+// control.wireErrSentinels' exact texts (e.g. a generic, plausible docker
+// error ending in "not found"), a caller doing
+// errors.Is(err, core.ErrNotFound) over the wire would misreport a real
+// RPC/docker error as a 404. ContainerLogs must wrap the child's text so it
+// can never come out as a bare sentinel suffix, for every sentinel
+// control.wireErrSentinels lists.
+func TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix(t *testing.T) {
+	// Mirrors internal/control/client.go's wireErrSentinels list -- kept as
+	// literal texts here (not an import of internal/control, to stay out of
+	// this slice's scope) so this test still catches the regression even if
+	// this package never imports internal/control.
+	sentinels := []string{
+		core.ErrNoSuchNode.Error(),
+		core.ErrNotMaster.Error(),
+		core.ErrConflict.Error(),
+		core.ErrNotFound.Error(),
+	}
+	for _, sentinel := range sentinels {
+		t.Run(sentinel, func(t *testing.T) {
+			m := newRPCTestMaster(t)
+			var sh *fleet.Shipper
+			// A child error text that legitimately, innocently ends in the
+			// sentinel's own text -- e.g. a generic docker/tool error whose
+			// wording happens to coincide, not deliberate malice.
+			childText := "container inspect failed: " + sentinel
+			self := fakeLogsAPI{err: errors.New(childText)}
+			nodeID, childSh, stop := m.connect("sentinel-logs-"+sentinel, func(f fleet.Frame) {
+				handleRPCFrame(self, sh, t.Logf, f)
+			})
+			sh = childSh
+			defer stop()
+			defer drainRPCSemForTest(t)
+
+			api, err := m.sink.NodeAPI(nodeID, config.Default)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = api.ContainerLogs("web", 50)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if strings.HasSuffix(err.Error(), sentinel) {
+				t.Fatalf("ContainerLogs error %q ends with sentinel text %q -- a control-socket caller's errors.Is would misclassify this as the sentinel", err.Error(), sentinel)
+			}
+			if !strings.Contains(err.Error(), childText) {
+				t.Fatalf("ContainerLogs error %q must still contain the child's own message %q", err.Error(), childText)
+			}
+		})
 	}
 }

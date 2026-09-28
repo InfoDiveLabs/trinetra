@@ -891,7 +891,21 @@ func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
 		return "", err
 	}
 	if !res.OK {
-		return "", errors.New(res.Error)
+		// res.Error is authored end-to-end by the remote child (Hub.handleRPC
+		// only authenticates the node, it never validates the RPC result
+		// body's content -- a buggy or compromised child can POST back any
+		// text it likes). A plain prefix ("container_logs: "+res.Error) would
+		// NOT be enough: control.wireErrSentinels is matched by SUFFIX, and
+		// res.Error still ends the resulting string, so a child error that
+		// happens to end in, say, "not found" would still let a
+		// control-socket caller's errors.Is(err, core.ErrNotFound)
+		// misclassify a real RPC/docker error as a 404 (final-review
+		// transport I1). %q instead, like the local docker-error paths in
+		// this same function already do, always ends the message in a
+		// literal '"' -- none of the sentinels' texts end in one, so this
+		// can never coincide with a bare sentinel suffix, while still
+		// keeping the child's own text visible for display/logging.
+		return "", fmt.Errorf("container_logs: child reported %q", res.Error)
 	}
 	return res.Output, nil
 }
