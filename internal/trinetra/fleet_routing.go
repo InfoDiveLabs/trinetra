@@ -121,35 +121,43 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 
 	routeNames := map[string]bool{}
 	for _, r := range cfg.Routes {
-		if r.Name != "" {
-			if routeNames[r.Name] {
-				return fmt.Errorf("duplicate route name %q", r.Name)
-			}
-			routeNames[r.Name] = true
+		// Route names are REQUIRED and unique (fleet-ui-c task C3 fix round
+		// 1): the web editor's inline field-error matching needs a stable,
+		// unambiguous key per row, and an unnamed route's daemon-side
+		// messages used to all collapse onto the same synthetic
+		// "(unnamed)" label (routeLabel's old fallback), which made two
+		// unnamed routes indistinguishable. Nothing has shipped a routing
+		// config yet, so this is not a breaking migration.
+		if strings.TrimSpace(r.Name) == "" {
+			return errors.New("every route needs a name")
 		}
+		if routeNames[r.Name] {
+			return fmt.Errorf("duplicate route name %q", r.Name)
+		}
+		routeNames[r.Name] = true
 		if strings.TrimSpace(r.Policy) == "" {
-			return fmt.Errorf("route %q: policy is required", routeLabel(r))
+			return fmt.Errorf("route %q: policy is required", r.Name)
 		}
 		if !policyNames[r.Policy] {
-			return fmt.Errorf("route %q: unknown policy %q", routeLabel(r), r.Policy)
+			return fmt.Errorf("route %q: unknown policy %q", r.Name, r.Policy)
 		}
 		if len(r.Matchers) == 0 {
-			return fmt.Errorf("route %q: must match something", routeLabel(r))
+			return fmt.Errorf("route %q: must match something", r.Name)
 		}
 		for _, m := range r.Matchers {
 			if m.Empty() {
-				return fmt.Errorf("route %q: must match something", routeLabel(r))
+				return fmt.Errorf("route %q: must match something", r.Name)
 			}
 			if m.Node != "" && !validGlob(m.Node) {
-				return fmt.Errorf("route %q: invalid node glob %q", routeLabel(r), m.Node)
+				return fmt.Errorf("route %q: invalid node glob %q", r.Name, m.Node)
 			}
 			if m.Rule != "" && !validGlob(m.Rule) {
-				return fmt.Errorf("route %q: invalid rule glob %q", routeLabel(r), m.Rule)
+				return fmt.Errorf("route %q: invalid rule glob %q", r.Name, m.Rule)
 			}
 		}
 		for _, g := range r.GroupBy {
 			if !validGroupByField(g) {
-				return fmt.Errorf("route %q: invalid group_by field %q", routeLabel(r), g)
+				return fmt.Errorf("route %q: invalid group_by field %q", r.Name, g)
 			}
 		}
 	}
@@ -166,13 +174,6 @@ func validGroupByField(g string) bool {
 	}
 	tag, ok := strings.CutPrefix(g, "tag:")
 	return ok && tag != ""
-}
-
-func routeLabel(r core.Route) string {
-	if r.Name != "" {
-		return r.Name
-	}
-	return "(unnamed)"
 }
 
 // --- store -----------------------------------------------------------------

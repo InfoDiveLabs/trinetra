@@ -2,40 +2,52 @@
      /fleet/alerting -- the routes/policies/rules routing config editor, an
      "edit as JSON" textarea for power users, and the route tester. Follows
      fleet_admin.html's conventions exactly: a plain (non-htmx) full-page
-     POST for the two save forms (structured + JSON), reusing the SAME
-     endpoint (POST /fleet/alerting) distinguished by a hidden mode=form|json
-     field, and htmx only for the two self-contained fragments (the route
-     tester's result panel, the rule-states table).
+     POST for the two save forms, and htmx only for the two self-contained
+     fragments (the route tester's result panel, the rule-states table).
 
-     Every add/remove/move-row button is its own submit inside the
-     structured form (name="op" value="add_route"/"remove_route:2"/
-     "move_route_up:2"/...): posting one reshapes the draft in place and
-     re-renders the page at 200 WITHOUT saving anything -- see
-     applyAlertingOp's doc (handlers_fleet_alerting.go). Only the "Save
-     routing config" button (op=save) actually calls SetAlerting. This is
-     why every row's inputs must be posted every time, even just to add a
-     row: the whole draft travels on every submit, exactly like the JSON
-     textarea does for its own save.
+     ONE <form> wraps the ENTIRE structured editor -- routes, policies AND
+     rules together (fix round 1 CRITICAL: three separate <form>s, one per
+     section, each posting only ITS OWN section's fields, meant every
+     button in any one section silently fabricated blank rows for the
+     other two sections on submit -- parseAlertingDraftForm has no way to
+     tell "this section's fields are absent because there are none" from
+     "this section's fields are absent because a different form posted").
+     Every add/remove/move-row button (name="op" value="add_route"/
+     "remove_route:2"/"move_route_up:2"/...) is its own submit inside that
+     ONE form: posting one reshapes the draft in place and re-renders the
+     page at 200 WITHOUT saving anything -- see applyAlertingOp's doc
+     (handlers_fleet_alerting.go). Only a "Save routing config" button
+     (op=save) actually calls SetAlerting; several are rendered (one per
+     section) purely so saving doesn't require scrolling back to the top,
+     but they all submit the exact same one form.
+
+     The "edit as JSON" textarea stays its OWN separate <form> (mode=json):
+     it always submits the full config as one opaque blob, so it never
+     needs the structured form's per-row fields at all.
 
      A viewer sees every row here read-only, in the SAME layout, with
      every input/select/textarea disabled and no submit controls -- global-
      constraints.md's "read-only, no forms except the route tester" ruling.
      The route tester itself stays a real (enabled) form at every role: it
-     never mutates the saved config, only dry-runs RouteTest. */}}
+     never mutates the saved config, only dry-runs RouteTest -- though it
+     still carries a CSRF token like any other signed-in POST (fix round 1
+     IMPORTANT 1). */}}
 {{define "content"}}
 {{$editable := eq .Role "admin"}}
 <div id="fleet-alerting-page">
   {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
 
-  <div class="section-label"><span class="eyebrow">Routes</span></div>
-  <p class="note" style="margin-top:-6px">Evaluated in order. The first match wins, unless a route continues -- then later routes are checked too, and every match's policy escalates on its own.</p>
-  <div class="panel" style="margin-bottom:18px">
-    <form method="post" action="/fleet/alerting">
-      <input type="hidden" name="mode" value="form">
-      <input type="hidden" name="version" value="{{.Draft.Version}}">
-      <input type="hidden" name="route_count" value="{{len .Draft.Routes}}">
-      <input type="hidden" name="policy_count" value="{{len .Draft.Policies}}">
-      <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
+  <form method="post" action="/fleet/alerting">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="mode" value="form">
+    <input type="hidden" name="version" value="{{.Draft.Version}}">
+    <input type="hidden" name="route_count" value="{{len .Draft.Routes}}">
+    <input type="hidden" name="policy_count" value="{{len .Draft.Policies}}">
+    <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
+
+    <div class="section-label"><span class="eyebrow">Routes</span></div>
+    <p class="note" style="margin-top:-6px">Evaluated in order. The first match wins, unless a route continues -- then later routes are checked too, and every match's policy escalates on its own.</p>
+    <div class="panel" style="margin-bottom:18px">
       {{range $i, $route := .Draft.Routes}}
       <div class="panel" style="margin-bottom:12px">
         <div class="head">
@@ -50,7 +62,7 @@
         </div>
         {{if eq $.ErrField $route.FieldKey}}<span class="field-err">{{$.Flash}}</span>{{end}}
         <div class="grid g-3">
-          <label class="field"><span class="lb">Name</span><input type="text" name="route_{{$i}}_name" value="{{$route.Name}}" placeholder="(optional)" {{if not $editable}}disabled{{end}}></label>
+          <label class="field"><span class="lb">Name</span><input type="text" name="route_{{$i}}_name" value="{{$route.Name}}" {{if not $editable}}disabled{{end}}></label>
           <label class="field"><span class="lb">Policy</span><input type="text" list="alertingPolicyNames" name="route_{{$i}}_policy" value="{{$route.Policy}}" {{if not $editable}}disabled{{end}}></label>
           <label class="field"><span class="lb">Group by</span><input type="text" name="route_{{$i}}_group_by" value="{{$route.GroupBy}}" placeholder="node,rule,tag:web" {{if not $editable}}disabled{{end}}>
             <span class="hint">comma-separated: node, rule, severity, tag:&lt;key&gt;</span>
@@ -91,23 +103,11 @@
       <datalist id="alertingPolicyNames">{{range .PolicyNames}}<option value="{{.}}">{{end}}</datalist>
 
       {{if $editable}}<button class="btn primary" type="submit" name="op" value="save" style="margin-top:14px">Save routing config</button>{{end}}
-    </form>
-  </div>
+    </div>
 
-  <div class="section-label"><span class="eyebrow">Policies</span></div>
-  <p class="note" style="margin-top:-6px">Each step fires After its incident's first delivery; the last step repeats on Repeat every until acked or resolved.</p>
-  <div class="panel" style="margin-bottom:18px">
-    <form method="post" action="/fleet/alerting">
-      <input type="hidden" name="mode" value="form">
-      <input type="hidden" name="version" value="{{.Draft.Version}}">
-      <input type="hidden" name="route_count" value="{{len .Draft.Routes}}">
-      <input type="hidden" name="policy_count" value="{{len .Draft.Policies}}">
-      <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
-      {{/* Routes must travel on this form too (hidden mirrors of every
-           route field) so a policy-only add/remove/save never drops the
-           routes section -- see the shared hidden-mirror partial below. */}}
-      {{range $i, $route := .Draft.Routes}}{{template "route_hidden_mirror" (dict "I" $i "Route" $route)}}{{end}}
-
+    <div class="section-label"><span class="eyebrow">Policies</span></div>
+    <p class="note" style="margin-top:-6px">Each step fires After its incident's first delivery; the last step repeats on Repeat every until acked or resolved.</p>
+    <div class="panel" style="margin-bottom:18px">
       {{range $pi, $policy := .Draft.Policies}}
       <div class="panel" style="margin-bottom:12px">
         <div class="head">
@@ -144,28 +144,14 @@
       {{else}}
       <p class="note">No policies configured -- the built-in default (immediate delivery to every channel) applies.</p>
       {{end}}
-      {{range $ri, $rule := .Draft.Rules}}{{template "rule_hidden_mirror" (dict "I" $ri "Rule" $rule)}}{{end}}
-      <input type="hidden" name="default_policy" value="{{.Draft.DefaultPolicy}}">
-
       {{if $editable}}
       <button class="btn ghost" type="submit" name="op" value="add_policy">Add policy</button>
       <button class="btn primary" type="submit" name="op" value="save" style="margin-top:14px;margin-left:8px">Save routing config</button>
       {{end}}
-    </form>
-  </div>
+    </div>
 
-  <div class="section-label"><span class="eyebrow">Aggregate rules</span></div>
-  <div class="panel" style="margin-bottom:18px">
-    <form method="post" action="/fleet/alerting">
-      <input type="hidden" name="mode" value="form">
-      <input type="hidden" name="version" value="{{.Draft.Version}}">
-      <input type="hidden" name="route_count" value="{{len .Draft.Routes}}">
-      <input type="hidden" name="policy_count" value="{{len .Draft.Policies}}">
-      <input type="hidden" name="rule_count" value="{{len .Draft.Rules}}">
-      {{range $i, $route := .Draft.Routes}}{{template "route_hidden_mirror" (dict "I" $i "Route" $route)}}{{end}}
-      {{range $pi, $policy := .Draft.Policies}}{{template "policy_hidden_mirror" (dict "I" $pi "Policy" $policy)}}{{end}}
-      <input type="hidden" name="default_policy" value="{{.Draft.DefaultPolicy}}">
-
+    <div class="section-label"><span class="eyebrow">Aggregate rules</span></div>
+    <div class="panel" style="margin-bottom:18px">
       <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
         <thead><tr><th>Name</th><th>Expression</th><th>Severity</th><th></th></tr></thead>
         <tbody>
@@ -193,19 +179,21 @@
       <button class="btn ghost" type="submit" name="op" value="add_rule" style="margin-top:10px">Add rule</button>
       <button class="btn primary" type="submit" name="op" value="save" style="margin-top:14px;margin-left:8px">Save routing config</button>
       {{end}}
-    </form>
-  </div>
+    </div>
+  </form>
 
   {{if $editable}}
   <div class="section-label"><span class="eyebrow">Edit as JSON</span></div>
   <div class="panel" style="margin-bottom:18px">
     <form method="post" action="/fleet/alerting">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="mode" value="json">
       <label class="field"><span class="lb">Full alerting config</span>
         <textarea name="json_config" rows="16" spellcheck="false">{{.JSONConfig}}</textarea>
-        <span class="hint">The version field must match what you loaded -- a stale version is rejected so you don't overwrite someone else's change.</span>
+        <span class="hint">The version field must match what you loaded -- a stale version is rejected so you don't overwrite someone else's change. Unknown fields are rejected by name.</span>
       </label>
-      <button class="btn primary" type="submit" style="margin-top:10px">Save JSON</button>
+      {{if .JSONErr}}<span class="field-err">{{.JSONErr}}</span>{{end}}
+      <button class="btn primary" type="submit" name="save" value="json" style="margin-top:10px">Save JSON</button>
     </form>
   </div>
   {{else}}
@@ -218,6 +206,7 @@
   <div class="section-label"><span class="eyebrow">Route tester</span></div>
   <div class="panel" style="margin-bottom:18px">
     <form hx-post="/fleet/alerting/test" hx-target="#route-test-result" hx-swap="innerHTML">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <div class="grid g-3">
         <label class="field"><span class="lb">Node</span>
           <select name="node">
@@ -234,7 +223,7 @@
           </select>
         </label>
       </div>
-      <button class="btn primary" type="submit" style="margin-top:10px">Test route</button>
+      <button class="btn primary" type="submit" name="test" value="route" style="margin-top:10px">Test route</button>
     </form>
     <div id="route-test-result" style="margin-top:14px">{{template "test_result" .}}</div>
   </div>
@@ -245,45 +234,6 @@
     {{template "rule_rows" (dict "Rows" .Rules)}}
   </table></div></div>
 </div>
-{{end}}
-
-{{/* route_hidden_mirror/policy_hidden_mirror/rule_hidden_mirror carry a
-     whole section's fields as hidden inputs into one of the OTHER
-     sections' own <form> -- every section posts to the same
-     POST /fleet/alerting, and every submit rebuilds the FULL draft
-     (parseAlertingDraftForm reads route_/policy_/rule_-prefixed fields
-     regardless of which form actually submitted), so a policy-only "Add
-     step" must still carry the routes section's fields along, and vice
-     versa, or that submit would silently wipe them. */}}
-{{define "route_hidden_mirror"}}
-<input type="hidden" name="route_{{.I}}_name" value="{{.Route.Name}}">
-<input type="hidden" name="route_{{.I}}_policy" value="{{.Route.Policy}}">
-<input type="hidden" name="route_{{.I}}_group_by" value="{{.Route.GroupBy}}">
-{{if .Route.Continue}}<input type="hidden" name="route_{{.I}}_continue" value="1">{{end}}
-<input type="hidden" name="route_{{.I}}_matcher_count" value="{{len .Route.Matchers}}">
-{{range $j, $m := .Route.Matchers}}
-<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_tag" value="{{$m.Tag}}">
-<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_node" value="{{$m.Node}}">
-<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_rule" value="{{$m.Rule}}">
-<input type="hidden" name="route_{{$.I}}_matcher_{{$j}}_severity" value="{{$m.Severity}}">
-{{end}}
-{{end}}
-
-{{define "policy_hidden_mirror"}}
-<input type="hidden" name="policy_{{.I}}_name" value="{{.Policy.Name}}">
-<input type="hidden" name="policy_{{.I}}_repeat_every" value="{{.Policy.RepeatEvery}}">
-{{if .Policy.SendResolved}}<input type="hidden" name="policy_{{.I}}_send_resolved" value="1">{{end}}
-<input type="hidden" name="policy_{{.I}}_step_count" value="{{len .Policy.Steps}}">
-{{range $si, $s := .Policy.Steps}}
-<input type="hidden" name="policy_{{$.I}}_step_{{$si}}_after" value="{{$s.After}}">
-{{range $s.Channels}}<input type="hidden" name="policy_{{$.I}}_step_{{$si}}_channels" value="{{.}}">{{end}}
-{{end}}
-{{end}}
-
-{{define "rule_hidden_mirror"}}
-<input type="hidden" name="rule_{{.I}}_name" value="{{.Rule.Name}}">
-<input type="hidden" name="rule_{{.I}}_expr" value="{{.Rule.Expr}}">
-<input type="hidden" name="rule_{{.I}}_severity" value="{{.Rule.Severity}}">
 {{end}}
 
 {{/* test_result: the route tester's result panel -- reached both inline

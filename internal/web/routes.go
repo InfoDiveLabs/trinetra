@@ -101,13 +101,19 @@ func newHandler(d Deps) http.Handler {
 	// for anything but the tester at that role) and master-only
 	// (fleetGateHTML, handlers_fleet_alerting.go); the save POST is
 	// admin+CSRF (fleetAdminMutation), exactly like /fleet/admin's
-	// mutations; the route tester POST stays viewer-gated with no CSRF
-	// requirement -- it only ever dry-runs RouteTest, it never mutates the
-	// saved config. Already covered by node_scope.go's masterLocalPrefixes
-	// "/fleet" entry.
+	// mutations. The route tester POST stays viewer-gated (it only ever
+	// dry-runs RouteTest, it never mutates the saved config) but still
+	// requires CSRF (fix round 1 IMPORTANT 1) -- the same precedent
+	// POST /channels/{name}/test sets for a non-mutating-but-still-
+	// session-triggered action: any signed-in POST that could be forged
+	// cross-site gets a CSRF check regardless of whether it happens to
+	// write anything. Already covered by node_scope.go's
+	// masterLocalPrefixes "/fleet" entry.
 	mux.HandleFunc("GET /fleet/alerting", requireRole(RoleViewer, d, fleetAlertingPageHandler(d)))
 	mux.HandleFunc("POST /fleet/alerting", fleetAdminMutation(d, fleetAlertingSaveHandler(d)))
-	mux.HandleFunc("POST /fleet/alerting/test", requireRole(RoleViewer, d, fleetAlertingTestHandler(d)))
+	mux.HandleFunc("POST /fleet/alerting/test", requireRole(RoleViewer, d, func(w http.ResponseWriter, r *http.Request) {
+		requireCSRF(fleetAlertingTestHandler(d)).ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("GET /fleet/rules/state", requireRole(RoleViewer, d, fleetRulesStateHandler(d)))
 	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a):
 	// node management (rename/tags/revoke/remove) and join-token

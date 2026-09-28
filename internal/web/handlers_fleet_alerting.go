@@ -6,9 +6,10 @@
 // SetAlerting/RouteTest/RuleStates (internal/core/fleet.go). Master-only
 // (fleetGateHTML/fleetGatePlain, exactly like every other /fleet* page);
 // GET is viewer+ (read-only for a viewer, per the brief), the save POST is
-// admin+CSRF (fleetAdminMutation), and the route tester POST is viewer+
-// (it never mutates the saved config, so it carries no CSRF requirement --
-// the same floor its GET sibling has).
+// admin+CSRF (fleetAdminMutation), and the route tester POST is viewer+CSRF
+// (routes.go) -- it never mutates the saved config, but still requires a
+// valid CSRF token like any other signed-in POST (fix round 1 IMPORTANT 1,
+// the /channels/{name}/test precedent).
 package web
 
 import (
@@ -16,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"regexp"
 	"sort"
@@ -52,18 +54,30 @@ func templateDict(pairs ...any) (map[string]any, error) {
 // and an add/remove/reorder op's in-place reshape (never itself saved).
 // ---------------------------------------------------------------------------
 
+// alertingRowLabel is the display/match label for a row's name: "(unnamed)"
+// for a blank one. Route names are REQUIRED and unique as of the C3 fix
+// round 1 (validateAlertingConfig, internal/trinetra/fleet_routing.go), so
+// this only ever matters for a route mid-edit (before the user has typed a
+// name in, pre-save) -- a SAVED route's own field-path errors always carry
+// its real name. Policy/rule names stay optional in the backend's own
+// vocabulary ("every policy needs a name" is a top-level message naming no
+// row; a blank rule name's own error is `rule "": ...` -- see
+// alertingErrField's rule patterns, which run a name through this same
+// function so both sides of the match agree).
+func alertingRowLabel(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "(unnamed)"
+	}
+	return name
+}
+
 // alertingFieldKey builds the field-path key a validation error's field name
 // (route/policy/rule) resolves to, and that AlertingRouteRow/AlertingPolicyRow/
 // AlertingRuleRow.FieldKey stores for the template's inline-error match
 // (AlertingPageData.ErrField) -- see alertingErrField's doc for where the
-// other half of this comes from. "(unnamed)" mirrors internal/trinetra's own
-// routeLabel exactly, so a blank-named row matches its own daemon-side
-// validation message.
+// other half of this comes from.
 func alertingFieldKey(kind, name string) string {
-	if strings.TrimSpace(name) == "" {
-		return kind + ":(unnamed)"
-	}
-	return kind + ":" + name
+	return kind + ":" + alertingRowLabel(name)
 }
 
 // AlertingMatcherRow is one OR'd matcher row within a route (core.Matcher's
@@ -393,27 +407,33 @@ func applyAlertingOp(d *AlertingDraft, op string) {
 // ---------------------------------------------------------------------------
 // Field-path error mapping: internal/trinetra's validateAlertingConfig
 // returns plain English errors naming a route/policy/rule by its own name
-// ("route %q: ...", "policy %q step %d: ...", "default_policy: ...", ...,
-// routeLabel's "(unnamed)" for a blank name) -- never a machine field path.
-// alertingErrField parses those known shapes back into the SAME "kind:name"
-// (or "kind:name:step:N") key alertingFieldKey computes for each row, so
-// the template can highlight the one row/step a message names; anything
-// that doesn't match a known shape (e.g. "every policy needs a name", which
-// names no specific row) renders at the top only (ErrField=="").
+// ("route %q: ...", "policy %q step %d: ...", "default_policy: ...", "rule
+// %q: ...") -- never a machine field path. alertingErrField parses those
+// known shapes back into the SAME "kind:name" (or "kind:name:step:N") key
+// alertingFieldKey computes for each row, so the template can highlight the
+// one row/step a message names; anything that doesn't match a known shape
+// (e.g. "every policy needs a name" or "every route needs a name", which
+// name no specific row) renders at the top only (ErrField==""). A route's
+// own name is required and unique (C3 fix round 1), so a route field-path
+// error's captured name is never blank in practice; a policy's/rule's can
+// still be blank pre-save, and each capture is run through alertingRowLabel
+// so both sides of the match agree on "(unnamed)" for a blank name (fix
+// round 1 MINOR: `rule "": ...` -- validateRules names a blank rule
+// literally as "" via r.Name, unlike the old routeLabel convention).
 // ---------------------------------------------------------------------------
 
 var alertingErrPatterns = []struct {
 	re    *regexp.Regexp
 	field func(m []string) string
 }{
-	{regexp.MustCompile(`^policy "([^"]*)" step (\d+):`), func(m []string) string { return "policy:" + m[1] + ":step:" + m[2] }},
-	{regexp.MustCompile(`^policy "([^"]*)":`), func(m []string) string { return "policy:" + m[1] }},
-	{regexp.MustCompile(`^duplicate policy name "([^"]*)"$`), func(m []string) string { return "policy:" + m[1] }},
-	{regexp.MustCompile(`^route "([^"]*)":`), func(m []string) string { return "route:" + m[1] }},
-	{regexp.MustCompile(`^duplicate route name "([^"]*)"$`), func(m []string) string { return "route:" + m[1] }},
+	{regexp.MustCompile(`^policy "([^"]*)" step (\d+):`), func(m []string) string { return "policy:" + alertingRowLabel(m[1]) + ":step:" + m[2] }},
+	{regexp.MustCompile(`^policy "([^"]*)":`), func(m []string) string { return "policy:" + alertingRowLabel(m[1]) }},
+	{regexp.MustCompile(`^duplicate policy name "([^"]*)"$`), func(m []string) string { return "policy:" + alertingRowLabel(m[1]) }},
+	{regexp.MustCompile(`^route "([^"]*)":`), func(m []string) string { return "route:" + alertingRowLabel(m[1]) }},
+	{regexp.MustCompile(`^duplicate route name "([^"]*)"$`), func(m []string) string { return "route:" + alertingRowLabel(m[1]) }},
 	{regexp.MustCompile(`^default_policy:`), func(m []string) string { return "default_policy" }},
-	{regexp.MustCompile(`^rule "([^"]*)":`), func(m []string) string { return "rule:" + m[1] }},
-	{regexp.MustCompile(`^duplicate rule name "([^"]*)"$`), func(m []string) string { return "rule:" + m[1] }},
+	{regexp.MustCompile(`^rule "([^"]*)":`), func(m []string) string { return "rule:" + alertingRowLabel(m[1]) }},
+	{regexp.MustCompile(`^duplicate rule name "([^"]*)"$`), func(m []string) string { return "rule:" + alertingRowLabel(m[1]) }},
 }
 
 func alertingErrField(err error) string {
@@ -526,6 +546,11 @@ type AlertingPageData struct {
 
 	Draft      AlertingDraft
 	JSONConfig string
+	// JSONErr is a "edit as JSON" mode-specific error (a JSON parse failure,
+	// an unknown field, trailing data, or a SetAlerting rejection while in
+	// JSON mode) rendered right next to the textarea, in addition to the
+	// generic top Flash banner every rejection also gets.
+	JSONErr string
 
 	// Channels are the master's configured channel names (d.Cfg().Channels),
 	// offered alongside the literal "*" in every step's channel checkboxes.
@@ -727,6 +752,32 @@ func fleetAlertingPageHandler(d Deps) http.HandlerFunc {
 // SetAlerting rejection (core.ErrConflict).
 const alertingConflictMessage = "the alerting config changed since you loaded it — reload to see the latest"
 
+// alertingMaxBodyBytes caps POST /fleet/alerting's request body (fix round 1
+// MINOR): the JSON textarea in particular could otherwise post an
+// arbitrarily large body. 256 KiB comfortably fits even a large structured
+// config or its JSON mirror; anything past it is rejected with 413 before
+// r.ParseForm ever buffers it into memory.
+const alertingMaxBodyBytes = 256 * 1024
+
+// decodeAlertingJSON decodes raw as exactly one core.AlertingConfig JSON
+// value (fix round 1 IMPORTANT 2): DisallowUnknownFields rejects an unknown
+// field by name (e.g. a typo'd "send_resolve"), and the second Decode call
+// (expecting io.EOF) rejects any trailing data after that one value -- the
+// standard idiom for "this body must contain exactly one JSON value", since
+// a bare json.Decoder.Decode call alone happily ignores trailing garbage.
+func decodeAlertingJSON(raw string) (core.AlertingConfig, error) {
+	var cfg core.AlertingConfig
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return core.AlertingConfig{}, err
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return core.AlertingConfig{}, errors.New("must contain exactly one JSON value (no trailing data)")
+	}
+	return cfg, nil
+}
+
 // fleetAlertingSaveHandler serves POST /fleet/alerting (admin+CSRF,
 // fleetAdminMutation): mode=json submits the "edit as JSON" textarea
 // verbatim as a full AlertingConfig; mode=form (the default) submits the
@@ -736,15 +787,22 @@ const alertingConflictMessage = "the alerting config changed since you loaded it
 // core.AlertingConfig and calling SetAlerting. A validation error re-renders
 // at 400 with the error inline next to the field it names (alertingErrField)
 // where possible, else at the top; core.ErrConflict re-renders at 409 with
-// the fixed reload message. Either way the user's own input is preserved
-// exactly (the JSON textarea echoed verbatim, or the form's rows rebuilt
-// from what was posted) -- never a 500.
+// the fixed reload message; a body over alertingMaxBodyBytes re-renders at
+// 413. Either way the user's own input is preserved exactly (the JSON
+// textarea echoed verbatim, or the form's rows rebuilt from what was
+// posted) -- never a 500.
 func fleetAlertingSaveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, alertingMaxBodyBytes)
 		if err := r.ParseForm(); err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				renderAlertingError(w, r, d, "request too large (max 256 KiB)", http.StatusRequestEntityTooLarge)
+				return
+			}
 			renderAlertingError(w, r, d, "invalid form", http.StatusBadRequest)
 			return
 		}
@@ -757,21 +815,24 @@ func fleetAlertingSaveHandler(d Deps) http.HandlerFunc {
 
 		if r.FormValue("mode") == "json" {
 			raw := r.FormValue("json_config")
-			var cfg core.AlertingConfig
-			if jerr := json.Unmarshal([]byte(raw), &cfg); jerr != nil {
-				data := buildAlertingPageData(r, d, alertingPageOptions{
-					Loaded: true, Draft: draftFromConfig(cfg), JSONConfig: raw,
-					Flash: "invalid JSON: " + jerr.Error(), FlashErr: true,
-				})
+			cfg, jerr := decodeAlertingJSON(raw)
+			if jerr != nil {
+				msg := "invalid JSON: " + jerr.Error()
+				// The structured panel reloads the untouched canonical
+				// config (nothing was saved) -- only the JSON textarea and
+				// its own inline error reflect what was actually posted.
+				data := buildAlertingPageData(r, d, alertingPageOptions{})
+				data.JSONConfig, data.JSONErr = raw, msg
+				data.Flash, data.FlashErr = msg, true
 				renderAlertingPage(w, data, http.StatusBadRequest)
 				return
 			}
 			if serr := fleet.SetAlerting(cfg, actor); serr != nil {
 				status, flash := alertingSaveErrorStatus(serr)
-				data := buildAlertingPageData(r, d, alertingPageOptions{
-					Loaded: true, Draft: draftFromConfig(cfg), JSONConfig: raw,
-					Flash: flash, FlashErr: true, ErrField: alertingErrField(serr),
-				})
+				data := buildAlertingPageData(r, d, alertingPageOptions{})
+				data.JSONConfig, data.JSONErr = raw, flash
+				data.Flash, data.FlashErr = flash, true
+				data.ErrField = alertingErrField(serr)
 				renderAlertingPage(w, data, status)
 				return
 			}
@@ -816,9 +877,10 @@ func alertingSaveErrorStatus(err error) (status int, flash string) {
 }
 
 // fleetAlertingTestHandler serves POST /fleet/alerting/test: the route
-// tester (viewer+, no CSRF -- it never mutates the saved config, only dry-
-// runs RouteTest). Renders just the "test_result" fragment, so the page's
-// own tester form can htmx-swap it in place without a full reload.
+// tester (viewer+CSRF, routes.go -- it never mutates the saved config, only
+// dry-runs RouteTest, but is still CSRF-gated like any other signed-in
+// POST). Renders just the "test_result" fragment, so the page's own tester
+// form can htmx-swap it in place without a full reload.
 func fleetAlertingTestHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGatePlain(w, r, d) {

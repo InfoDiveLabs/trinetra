@@ -239,6 +239,22 @@ func TestValidateAlertingConfigDuplicateNames(t *testing.T) {
 	}
 }
 
+// TestValidateAlertingConfigRouteNameRequired pins the C3 fix round 1
+// ruling: a blank route name is rejected outright ("every route needs a
+// name"), removing the old "(unnamed)" ambiguity the web editor's inline
+// field-error matching used to have to live with.
+func TestValidateAlertingConfigRouteNameRequired(t *testing.T) {
+	cfg := core.AlertingConfig{
+		Routes:        []core.Route{{Matchers: []core.Matcher{{Rule: "*"}}, Policy: "p"}},
+		Policies:      []core.Policy{{Name: "p", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"*"}}}}},
+		DefaultPolicy: "p",
+	}
+	err := validateAlertingConfig(cfg, allChannelsValid)
+	if err == nil || err.Error() != "every route needs a name" {
+		t.Fatalf("err = %v, want %q", err, "every route needs a name")
+	}
+}
+
 // TestValidateAlertingConfigRejectsZeroStepPolicy is the B5 fix round 1
 // minor: a policy with no steps at all is rejected (it would silently
 // deliver nowhere, forever, for every incident routed to it).
