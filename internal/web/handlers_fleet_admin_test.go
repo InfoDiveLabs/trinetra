@@ -358,6 +358,14 @@ func TestFleetAdminNodeRename(t *testing.T) {
 	if fleet.renamed["web1"] != "web-1" {
 		t.Errorf("renamed[web1] = %q, want web-1", fleet.renamed["web1"])
 	}
+	// Actor plumbing (plan C task C5): RenameNode used to have no actor
+	// parameter at all -- every caller (in-process and over the control
+	// socket) recorded the literal placeholder "unknown" on the FleetAPI's
+	// own audit log. A web rename must now pass the SIGNED-IN user's own
+	// name (auditUser(r), seedAdmin's "root" here), never that placeholder.
+	if fleet.renamedActor != "root" {
+		t.Errorf("RenameNode actor = %q, want the signed-in admin's name (root), not a placeholder", fleet.renamedActor)
+	}
 	recs := readAuditRecords(t, d.StateDir)
 	var got *AuditRecord
 	for i, r := range recs {

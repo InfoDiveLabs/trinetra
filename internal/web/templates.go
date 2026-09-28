@@ -92,6 +92,22 @@ var funcMap = template.FuncMap{
 	// fields into a named template block ({{template "x" (dict "A" 1 "B"
 	// 2)}}) -- html/template has no map literal syntax of its own.
 	"dict": templateDict,
+	// managedKeyKnown (task C5, fleet_managed.html) reports whether key is
+	// one of core.ManagedKeys -- the create/edit form's key <select> uses it
+	// to add a visible, selected fallback option for a row whose Key came
+	// from a rejected raw POST naming something OUTSIDE the allowlist
+	// (bypassing the select entirely, as any raw HTTP client could): without
+	// this, that row's own <select> would silently show nothing selected on
+	// re-render, losing the very input the error message is about
+	// (global-constraints.md: "a validation error ... preserves ALL input").
+	"managedKeyKnown": func(key string) bool {
+		for _, k := range core.ManagedKeys {
+			if k == key {
+				return true
+			}
+		}
+		return false
+	},
 }
 
 // nodeHref joins a node scope's URL prefix (nodeScope.Prefix, node_scope.go:
@@ -265,6 +281,20 @@ var navItems = []navEntry{
 	// also exempts this entry's Href from node-prefixing -- "/fleet/admin"
 	// only ever means "this master's own admin page".
 	{NavItem: NavItem{Href: "/fleet/admin", Icon: "⚑", Label: "Fleet admin"}, AdminOnly: true, MasterOnly: true},
+	// Managed config (task C5, fleet phase 2 web UI plan C): the managed-
+	// config fragment editor + per-node status. AdminOnly + MasterOnly,
+	// exactly like "Fleet admin" above -- task-5-brief.md's ruling ("Managed
+	// config in the Admin group, master only, admin only"). GET itself stays
+	// viewer-gated read-only (routes.go), reachable by typing the URL
+	// directly, matching "Alerting"'s precedent above.
+	{NavItem: NavItem{Href: "/fleet/managed", Icon: "▥", Label: "Managed config"}, AdminOnly: true, MasterOnly: true},
+	// Audit (task C5): the fleet audit log. AdminOnly + MasterOnly, per the
+	// same ruling ("'Audit' in the Admin group, master only, admin only") --
+	// unlike Managed config/Alerting, the audit log itself is admin-only
+	// end to end (task-5-brief.md's route list has no viewer-readable GET
+	// here), so there is no "hidden from viewers but still reachable by
+	// URL" nuance to document.
+	{NavItem: NavItem{Href: "/fleet/audit", Icon: "▦", Label: "Audit"}, AdminOnly: true, MasterOnly: true},
 }
 
 // navForRole returns navItems filtered to what role may see (viewers get

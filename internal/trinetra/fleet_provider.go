@@ -158,12 +158,15 @@ func (f fleetAPIImpl) requireMaster() (*masterState, error) {
 }
 
 // audit appends an entry to m's audit log (nil-safe: see auditLog.Append).
-// actor is "unknown" for every mutation whose FleetAPI signature has no
-// actor parameter today (Rename/SetNodeTags/Revoke/Remove/DeleteToken) --
-// TODO(plan C): thread a real actor (CLI user / web session) through those
-// signatures; changing them now would break plan A's already-compiling web
-// code, which this task must not touch.
+// actor is normalized to "unknown" when the caller passed "" (a request
+// this daemon could not resolve any acting identity for at all -- should
+// not happen for a live web/CLI caller, both of which always resolve to
+// something (auditUser(r), "cli"), but keeps the audit log's Actor column
+// never blank for an older wire client or a defensive future caller).
 func (m *masterState) audited(actor, action, target, detail string) {
+	if actor == "" {
+		actor = "unknown"
+	}
 	_ = m.audit.Append(actor, action, target, detail, time.Now().Unix())
 }
 
@@ -188,7 +191,7 @@ func (m *masterState) pushSilencesToAll(now time.Time) {
 	m.engine.PushSilencesToAll(now, nonRevokedNodeIDs(m.reg))
 }
 
-func (f fleetAPIImpl) RenameNode(id, name string) error {
+func (f fleetAPIImpl) RenameNode(id, name, actor string) error {
 	m, err := f.requireMaster()
 	if err != nil {
 		return err
@@ -207,11 +210,11 @@ func (f fleetAPIImpl) RenameNode(id, name string) error {
 	if err := m.reg.Rename(id, name); err != nil {
 		return err
 	}
-	m.audited("unknown", "rename_node", id, name)
+	m.audited(actor, "rename_node", id, name)
 	return nil
 }
 
-func (f fleetAPIImpl) SetNodeTags(id string, tags []string) error {
+func (f fleetAPIImpl) SetNodeTags(id string, tags []string, actor string) error {
 	m, err := f.requireMaster()
 	if err != nil {
 		return err
@@ -224,7 +227,7 @@ func (f fleetAPIImpl) SetNodeTags(id string, tags []string) error {
 	if err := m.reg.Update(id, func(n *fleet.Node) error { n.Tags = tags; return nil }); err != nil {
 		return err
 	}
-	m.audited("unknown", "set_node_tags", id, strings.Join(tags, ","))
+	m.audited(actor, "set_node_tags", id, strings.Join(tags, ","))
 	return nil
 }
 
@@ -283,7 +286,7 @@ func (f fleetAPIImpl) SetNodeDeps(id string, deps []string, actor string) error 
 	return nil
 }
 
-func (f fleetAPIImpl) RevokeNode(id string) error {
+func (f fleetAPIImpl) RevokeNode(id, actor string) error {
 	m, err := f.requireMaster()
 	if err != nil {
 		return err
@@ -300,11 +303,11 @@ func (f fleetAPIImpl) RevokeNode(id string) error {
 	if m.hub != nil {
 		m.hub.Disconnect(id) // a revoked node keeps no lease, no open stream
 	}
-	m.audited("unknown", "revoke_node", id, "")
+	m.audited(actor, "revoke_node", id, "")
 	return nil
 }
 
-func (f fleetAPIImpl) RemoveNode(id string) error {
+func (f fleetAPIImpl) RemoveNode(id, actor string) error {
 	m, err := f.requireMaster()
 	if err != nil {
 		return err
@@ -318,7 +321,7 @@ func (f fleetAPIImpl) RemoveNode(id string) error {
 	if m.hub != nil {
 		m.hub.Disconnect(id)
 	}
-	m.audited("unknown", "remove_node", id, "")
+	m.audited(actor, "remove_node", id, "")
 	return nil
 }
 
@@ -367,7 +370,7 @@ func (f fleetAPIImpl) CreateToken(spec core.TokenSpec) (core.CreatedToken, error
 	return core.CreatedToken{Token: tokenView(tok), JoinCode: code}, nil
 }
 
-func (f fleetAPIImpl) DeleteToken(id string) error {
+func (f fleetAPIImpl) DeleteToken(id, actor string) error {
 	m, err := f.requireMaster()
 	if err != nil {
 		return err
@@ -375,7 +378,7 @@ func (f fleetAPIImpl) DeleteToken(id string) error {
 	if err := m.tokens.Delete(id); err != nil {
 		return err
 	}
-	m.audited("unknown", "delete_token", id, "")
+	m.audited(actor, "delete_token", id, "")
 	return nil
 }
 

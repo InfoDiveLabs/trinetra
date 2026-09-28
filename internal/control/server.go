@@ -486,13 +486,13 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 		return json.Marshal(v)
 
 	case "Fleet.RenameNode":
-		if err := f.RenameNode(p.ID, p.Name); err != nil {
+		if err := f.RenameNode(p.ID, p.Name, p.Actor); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil
 
 	case "Fleet.SetNodeTags":
-		if err := f.SetNodeTags(p.ID, p.Tags); err != nil {
+		if err := f.SetNodeTags(p.ID, p.Tags, p.Actor); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil
@@ -504,13 +504,13 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 		return emptyResult, nil
 
 	case "Fleet.RevokeNode":
-		if err := f.RevokeNode(p.ID); err != nil {
+		if err := f.RevokeNode(p.ID, p.Actor); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil
 
 	case "Fleet.RemoveNode":
-		if err := f.RemoveNode(p.ID); err != nil {
+		if err := f.RemoveNode(p.ID, p.Actor); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil
@@ -530,7 +530,7 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 		return json.Marshal(v)
 
 	case "Fleet.DeleteToken":
-		if err := f.DeleteToken(p.ID); err != nil {
+		if err := f.DeleteToken(p.ID, p.Actor); err != nil {
 			return nil, err
 		}
 		return emptyResult, nil

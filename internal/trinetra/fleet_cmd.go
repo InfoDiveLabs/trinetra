@@ -545,12 +545,12 @@ func fleetNodeCmd(args []string) int {
 		}
 		switch verb {
 		case "revoke":
-			if err := c.Fleet().RevokeNode(id); err != nil {
+			if err := c.Fleet().RevokeNode(id, "cli"); err != nil {
 				return err
 			}
 			fmt.Fprintf(stdout, "Revoked %s; it can no longer send data. Its history is kept.\n", id)
 		case "remove":
-			if err := c.Fleet().RemoveNode(id); err != nil {
+			if err := c.Fleet().RemoveNode(id, "cli"); err != nil {
 				return err
 			}
 			fmt.Fprintf(stdout, "Removed %s from the fleet; it can no longer send data and is no longer monitored. Its history is kept on disk.\n", id)
@@ -558,7 +558,7 @@ func fleetNodeCmd(args []string) int {
 			if len(args) != 3 {
 				return errors.New("usage: fleet node rename <node> <new-name>")
 			}
-			return c.Fleet().RenameNode(id, args[2])
+			return c.Fleet().RenameNode(id, args[2], "cli")
 		case "tag":
 			if len(args) != 3 {
 				return errors.New("usage: fleet node tag <node> tag1,tag2 (empty string clears)")
@@ -569,7 +569,7 @@ func fleetNodeCmd(args []string) int {
 					tags = append(tags, t)
 				}
 			}
-			return c.Fleet().SetNodeTags(id, tags)
+			return c.Fleet().SetNodeTags(id, tags, "cli")
 		case "depends":
 			if len(args) != 3 {
 				return errors.New("usage: fleet node depends <node> dep1,dep2,tag:t (empty string clears)")
@@ -642,7 +642,7 @@ func fleetTokenCmd(args []string) int {
 			fmt.Fprintln(stderr, "usage: trinetra fleet token delete <id>")
 			return 2
 		}
-		return withDaemon(func(c *control.Client) error { return c.Fleet().DeleteToken(args[1]) })
+		return withDaemon(func(c *control.Client) error { return c.Fleet().DeleteToken(args[1], "cli") })
 	}
 	fmt.Fprintf(stderr, "unknown token command %q\n", args[0])
 	return 2

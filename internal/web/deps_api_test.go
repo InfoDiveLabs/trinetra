@@ -181,6 +181,19 @@ type fakeFleet struct {
 	createTokenErr error
 	deletedTokens  []string
 
+	// renamedActor/taggedActor/revokedActor/removedActor/deletedTokenActor
+	// (plan C task C5, actor plumbing) record the actor the LAST
+	// RenameNode/SetNodeTags/RevokeNode/RemoveNode/DeleteToken call was
+	// made with, so a test can assert it was the signed-in web user's own
+	// name (auditUser(r)), never a placeholder -- the same convention
+	// ackedIncidentActor/expiredSilenceActor/deletedMaintenanceActor
+	// already use for their own mutations.
+	renamedActor      string
+	taggedActor       string
+	revokedActor      string
+	removedActor      string
+	deletedTokenActor string
+
 	// renameErr/tagsErr/revokeErr/removeErr/deleteTokenErr (Task 7, fleet
 	// admin) let a test force a mutation method to fail -- e.g. a bogus
 	// node id or a daemon that stopped being a master mid-request -- so
@@ -228,6 +241,13 @@ type fakeFleet struct {
 	// its own canned pipeline trail, or a shared error.
 	explainResults map[string][]core.IncidentEvent
 	explainErr     error
+
+	// auditEntries/auditErr (task C5, fleet audit page) back Audit(limit) as
+	// a settable fixture; lastAuditLimit records the limit the page passed,
+	// so a test can pin task-5-brief.md's "Audit(limit=5000)" call.
+	auditEntries   []core.AuditEntry
+	auditErr       error
+	lastAuditLimit int
 
 	// createSilenceErr lets a test force CreateSilence to fail (e.g. a
 	// validation rejection, rendered inline per global-constraints.md);
@@ -288,6 +308,22 @@ type fakeFleet struct {
 	// ruleStates/ruleStatesErr back RuleStates.
 	ruleStates    []core.RuleState
 	ruleStatesErr error
+
+	// managed/managedErr (task C5, fleet managed-config web page) back
+	// Managed() as a settable fixture SaveManaged/DeleteManaged also mutate
+	// in place (see those methods' own doc, above); managedStatus/
+	// managedStatusErr back ManagedStatus(). saveManagedErr/deleteManagedErr
+	// let a test force a rejection; savedManagedActor/deletedManagedID/
+	// deletedManagedActor record the last successful call.
+	managed             []core.ManagedFragment
+	managedErr          error
+	saveManagedErr      error
+	savedManagedActor   string
+	deleteManagedErr    error
+	deletedManagedID    string
+	deletedManagedActor string
+	managedStatus       []core.ManagedStatus
+	managedStatusErr    error
 }
 
 func (f *fakeFleet) Status() (core.FleetStatus, error) { return f.status, f.statusErr }
@@ -296,7 +332,8 @@ func (f *fakeFleet) Nodes(core.NodeFilter) ([]core.NodeSummary, error) {
 	return f.nodes, f.nodesErr
 }
 
-func (f *fakeFleet) RenameNode(id, name string) error {
+func (f *fakeFleet) RenameNode(id, name, actor string) error {
+	f.renamedActor = actor
 	if f.renameErr != nil {
 		return f.renameErr
 	}
@@ -307,7 +344,8 @@ func (f *fakeFleet) RenameNode(id, name string) error {
 	return nil
 }
 
-func (f *fakeFleet) SetNodeTags(id string, tags []string) error {
+func (f *fakeFleet) SetNodeTags(id string, tags []string, actor string) error {
+	f.taggedActor = actor
 	if f.tagsErr != nil {
 		return f.tagsErr
 	}
@@ -322,7 +360,8 @@ func (f *fakeFleet) SetNodeDeps(id string, deps []string, actor string) error {
 	return nil
 }
 
-func (f *fakeFleet) RevokeNode(id string) error {
+func (f *fakeFleet) RevokeNode(id, actor string) error {
+	f.revokedActor = actor
 	if f.revokeErr != nil {
 		return f.revokeErr
 	}
@@ -330,7 +369,8 @@ func (f *fakeFleet) RevokeNode(id string) error {
 	return nil
 }
 
-func (f *fakeFleet) RemoveNode(id string) error {
+func (f *fakeFleet) RemoveNode(id, actor string) error {
+	f.removedActor = actor
 	if f.removeErr != nil {
 		return f.removeErr
 	}
@@ -344,7 +384,8 @@ func (f *fakeFleet) CreateToken(core.TokenSpec) (core.CreatedToken, error) {
 	return f.createdToken, f.createTokenErr
 }
 
-func (f *fakeFleet) DeleteToken(id string) error {
+func (f *fakeFleet) DeleteToken(id, actor string) error {
+	f.deletedTokenActor = actor
 	if f.deleteTokenErr != nil {
 		return f.deleteTokenErr
 	}
@@ -429,7 +470,10 @@ func (f *fakeFleet) Explain(key string) ([]core.IncidentEvent, error) {
 	return f.explainResults[key], nil
 }
 
-func (f *fakeFleet) Audit(int) ([]core.AuditEntry, error) { return nil, nil }
+func (f *fakeFleet) Audit(limit int) ([]core.AuditEntry, error) {
+	f.lastAuditLimit = limit
+	return f.auditEntries, f.auditErr
+}
 
 // Silences (task C4) returns the settable f.silences fixture verbatim -- a
 // test that wants active/upcoming/expired tab coverage sets it directly
@@ -640,17 +684,80 @@ func (f *fakeFleet) RouteTest(alert core.TestAlert) (core.RouteDecision, error) 
 // /fleet/rules/state's fragment.
 func (f *fakeFleet) RuleStates() ([]core.RuleState, error) { return f.ruleStates, f.ruleStatesErr }
 
-// Managed/SaveManaged/DeleteManaged/ManagedStatus: task 8's managed-config
-// fragment CRUD has no admin web surface yet -- the read-only enforcement
-// this task DOES add to the config page goes through Status().Link.Managed
-// (see fakeFleet.status), not these; these stubs exist only so fakeFleet
-// keeps satisfying core.FleetAPI.
-func (f *fakeFleet) Managed() ([]core.ManagedFragment, error) { return nil, nil }
+// Managed/SaveManaged/DeleteManaged/ManagedStatus (task 8's fragment CRUD;
+// plan C task C5's managed-config web page over it): f.managed is the
+// settable fragment-list fixture; SaveManaged mimics the real
+// managedFragmentStore.Save closely enough for handlers_fleet_managed_test.go
+// to exercise the real behavior this package's handler builds on, not just a
+// canned passthrough -- reject any key outside core.ManagedKeys (naming it,
+// in the SAME wording the real backend uses, fleet_managed.go's
+// validateManagedFragmentValues, so a test can't tell the two apart), then
+// upsert by TAG when frag.ID is "" (an existing fragment with that same tag
+// is updated in place, matching the real "upsert by tag" contract) or by ID
+// otherwise, bumping Version and setting Author to actor. managedErr/
+// saveManagedErr/deleteManagedErr let a test force a lookup/mutation
+// rejection; savedManagedActor/deletedManagedID/deletedManagedActor record
+// the last successful call so a test can assert the actor was the
+// SIGNED-IN web user, never a placeholder -- the same convention this
+// file's other mutation fakes use.
+func (f *fakeFleet) Managed() ([]core.ManagedFragment, error) { return f.managed, f.managedErr }
+
 func (f *fakeFleet) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
-	return frag, nil
+	if f.saveManagedErr != nil {
+		return core.ManagedFragment{}, f.saveManagedErr
+	}
+	allowed := map[string]bool{}
+	for _, k := range core.ManagedKeys {
+		allowed[k] = true
+	}
+	for k := range frag.Values {
+		if !allowed[k] {
+			return core.ManagedFragment{}, fmt.Errorf("%q is not a managed-config key (allowed: %s)", k, strings.Join(core.ManagedKeys, ", "))
+		}
+	}
+	f.savedManagedActor = actor
+	frag.Author = actor
+	if frag.ID == "" {
+		for i, existing := range f.managed {
+			if existing.Tag == frag.Tag {
+				frag.ID = existing.ID
+				frag.Version = existing.Version + 1
+				f.managed[i] = frag
+				return frag, nil
+			}
+		}
+		frag.ID = fmt.Sprintf("frag%d", len(f.managed)+1)
+		frag.Version = 1
+		f.managed = append(f.managed, frag)
+		return frag, nil
+	}
+	for i, existing := range f.managed {
+		if existing.ID == frag.ID {
+			frag.Version = existing.Version + 1
+			f.managed[i] = frag
+			return frag, nil
+		}
+	}
+	return core.ManagedFragment{}, fmt.Errorf("no such managed-config fragment %q: %w", frag.ID, core.ErrNotFound)
 }
-func (f *fakeFleet) DeleteManaged(string, string) error           { return nil }
-func (f *fakeFleet) ManagedStatus() ([]core.ManagedStatus, error) { return nil, nil }
+
+func (f *fakeFleet) DeleteManaged(id, actor string) error {
+	if f.deleteManagedErr != nil {
+		return f.deleteManagedErr
+	}
+	for i, existing := range f.managed {
+		if existing.ID == id {
+			f.managed = append(f.managed[:i], f.managed[i+1:]...)
+			f.deletedManagedID, f.deletedManagedActor = id, actor
+			return nil
+		}
+	}
+	return fmt.Errorf("no such managed-config fragment %q: %w", id, core.ErrNotFound)
+}
+
+func (f *fakeFleet) ManagedStatus() ([]core.ManagedStatus, error) {
+	return f.managedStatus, f.managedStatusErr
+}
 
 // FleetSeries (task C1b, fleet compare) records every call for
 // handlers_fleet_compare_test.go's "single FleetSeries call" assertions.

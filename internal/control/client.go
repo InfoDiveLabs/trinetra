@@ -557,24 +557,24 @@ func (f fleetClient) Nodes(filter core.NodeFilter) ([]core.NodeSummary, error) {
 	return v, err
 }
 
-func (f fleetClient) RenameNode(id, name string) error {
-	return f.c.call("Fleet.RenameNode", map[string]any{"id": id, "name": name}, nil)
+func (f fleetClient) RenameNode(id, name, actor string) error {
+	return f.c.call("Fleet.RenameNode", map[string]any{"id": id, "name": name, "actor": actor}, nil)
 }
 
-func (f fleetClient) SetNodeTags(id string, tags []string) error {
-	return f.c.call("Fleet.SetNodeTags", map[string]any{"id": id, "tags": tags}, nil)
+func (f fleetClient) SetNodeTags(id string, tags []string, actor string) error {
+	return f.c.call("Fleet.SetNodeTags", map[string]any{"id": id, "tags": tags, "actor": actor}, nil)
 }
 
 func (f fleetClient) SetNodeDeps(id string, deps []string, actor string) error {
 	return f.c.call("Fleet.SetNodeDeps", map[string]any{"id": id, "deps": deps, "actor": actor}, nil)
 }
 
-func (f fleetClient) RevokeNode(id string) error {
-	return f.c.call("Fleet.RevokeNode", map[string]any{"id": id}, nil)
+func (f fleetClient) RevokeNode(id, actor string) error {
+	return f.c.call("Fleet.RevokeNode", map[string]any{"id": id, "actor": actor}, nil)
 }
 
-func (f fleetClient) RemoveNode(id string) error {
-	return f.c.call("Fleet.RemoveNode", map[string]any{"id": id}, nil)
+func (f fleetClient) RemoveNode(id, actor string) error {
+	return f.c.call("Fleet.RemoveNode", map[string]any{"id": id, "actor": actor}, nil)
 }
 
 func (f fleetClient) Tokens() ([]core.TokenView, error) {
@@ -589,8 +589,8 @@ func (f fleetClient) CreateToken(s core.TokenSpec) (core.CreatedToken, error) {
 	return v, err
 }
 
-func (f fleetClient) DeleteToken(id string) error {
-	return f.c.call("Fleet.DeleteToken", map[string]any{"id": id}, nil)
+func (f fleetClient) DeleteToken(id, actor string) error {
+	return f.c.call("Fleet.DeleteToken", map[string]any{"id": id, "actor": actor}, nil)
 }
 
 func (f fleetClient) Incidents(filter core.IncidentFilter) ([]core.Incident, error) {

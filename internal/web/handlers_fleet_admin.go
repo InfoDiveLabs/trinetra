@@ -532,7 +532,7 @@ func fleetTokenDeleteHandler(d Deps) http.HandlerFunc {
 			renderFleetAdminError(w, r, d, "fleet not available", http.StatusNotFound)
 			return
 		}
-		if err := fleet.DeleteToken(id); err != nil {
+		if err := fleet.DeleteToken(id, auditUser(r)); err != nil {
 			renderFleetAdminError(w, r, d, err.Error(), fleetAPIErrStatus(err))
 			return
 		}
@@ -585,7 +585,7 @@ func fleetNodeRenameHandler(d Deps) http.HandlerFunc {
 				oldName = n.Name
 			}
 		}
-		if err := fleet.RenameNode(id, name); err != nil {
+		if err := fleet.RenameNode(id, name, auditUser(r)); err != nil {
 			renderFleetAdminError(w, r, d, err.Error(), fleetAPIErrStatus(err))
 			return
 		}
@@ -635,7 +635,7 @@ func fleetNodeTagsHandler(d Deps) http.HandlerFunc {
 				oldTags = strings.Join(n.Tags, ",")
 			}
 		}
-		if err := fleet.SetNodeTags(id, tags); err != nil {
+		if err := fleet.SetNodeTags(id, tags, auditUser(r)); err != nil {
 			renderFleetAdminError(w, r, d, err.Error(), fleetAPIErrStatus(err))
 			return
 		}
@@ -666,7 +666,7 @@ func fleetNodeRevokeHandler(d Deps) http.HandlerFunc {
 			renderFleetAdminError(w, r, d, "fleet not available", http.StatusNotFound)
 			return
 		}
-		if err := fleet.RevokeNode(id); err != nil {
+		if err := fleet.RevokeNode(id, auditUser(r)); err != nil {
 			renderFleetAdminError(w, r, d, err.Error(), fleetAPIErrStatus(err))
 			return
 		}
@@ -710,7 +710,7 @@ func fleetNodeRemoveHandler(d Deps) http.HandlerFunc {
 				oldSummary = fmt.Sprintf("name=%s state=%s", n.Name, n.State)
 			}
 		}
-		if err := fleet.RemoveNode(id); err != nil {
+		if err := fleet.RemoveNode(id, auditUser(r)); err != nil {
 			renderFleetAdminError(w, r, d, err.Error(), fleetAPIErrStatus(err))
 			return
 		}

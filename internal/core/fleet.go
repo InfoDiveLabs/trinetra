@@ -383,6 +383,26 @@ type Maintenance struct {
 	Author   string    `json:"author"`
 }
 
+// ManagedKeys is the exact, closed set of config.Config keys a managed-
+// config fragment (ManagedFragment.Values) may set (task 8 ruling): five
+// thresholds, the three baseline/anomaly-tuning keys, quiet_hours and
+// critical_overrides_quiet. internal/core cannot import internal/config (it
+// would be a dependency cycle -- config imports nothing from core, but
+// core.ManagedFragment/ManagedKeys must be usable from internal/web, which
+// cannot import internal/trinetra at all), so this is a plain string slice
+// mirroring config.Config's dotted key names, not a typed reference to
+// them. internal/trinetra's own managedFragmentAllowlistKeys (fleet_managed.
+// go) is this SAME slice (it delegates here rather than defining a second,
+// possibly-drifting copy); internal/web's managed-config page (task C5) uses
+// it directly to build the fragment editor's key <select> options, so the
+// allowlist is defined exactly once.
+var ManagedKeys = []string{
+	"thresholds.cpu_pct", "thresholds.mem_pct", "thresholds.swap_pct",
+	"thresholds.temp_c", "thresholds.disk_pct",
+	"baseline_sigma", "baseline_min_pct", "baseline_alerts",
+	"quiet_hours", "critical_overrides_quiet",
+}
+
 // ManagedFragment is one master-pushed config fragment (task 8, spec 6): a
 // set of allowlisted config.Config keys/values targeted at either every
 // node (Tag "") or every node carrying Tag, merged with every other
@@ -568,20 +588,42 @@ type RouteDecision struct {
 type FleetAPI interface {
 	Status() (FleetStatus, error)
 	Nodes(NodeFilter) ([]NodeSummary, error)
-	RenameNode(id, name string) error
-	SetNodeTags(id string, tags []string) error
-	RevokeNode(id string) error
+	// RenameNode renames id, recording a "rename_node" audit entry under
+	// actor (plan C task C5: this used to have no actor parameter at all --
+	// every caller, in-process and over the control socket, recorded the
+	// literal placeholder "unknown". Every caller now threads through the
+	// real acting identity: the CLI's "cli", or the signed-in web user's own
+	// name, auditUser(r)).
+	RenameNode(id, name, actor string) error
+	// SetNodeTags replaces id's tag set, recording a "set_node_tags" audit
+	// entry under actor (see RenameNode's doc for why this gained an actor
+	// parameter).
+	SetNodeTags(id string, tags []string, actor string) error
+	// RevokeNode revokes id, recording a "revoke_node" audit entry under
+	// actor (see RenameNode's doc).
+	RevokeNode(id, actor string) error
 	// RemoveNode deletes id from the fleet (registry and liveness), resolving
 	// any open node-down alert; its replicated history stays on disk.
-	RemoveNode(id string) error
+	// Records a "remove_node" audit entry under actor (see RenameNode's
+	// doc).
+	RemoveNode(id, actor string) error
 	// SetNodeDeps replaces id's dependency list (node ids or "tag:<t>"
 	// entries): every referenced node id must exist and id may not depend on
 	// itself, directly. An empty deps clears the list. Records a
 	// "fleet.node.deps" audit entry naming actor.
 	SetNodeDeps(id string, deps []string, actor string) error
 	Tokens() ([]TokenView, error)
+	// CreateToken mints a join token. Unlike RenameNode/SetNodeTags/
+	// RevokeNode/RemoveNode/DeleteToken, this does NOT gain a separate actor
+	// parameter (plan C task C5 ruling): TokenSpec.Creator already carries
+	// the acting identity end to end (it is what's recorded as the token's
+	// own Creator AND, via CreatedToken.Token.Creator, audited), so adding a
+	// second, redundant actor parameter here would just be two names for the
+	// same value.
 	CreateToken(TokenSpec) (CreatedToken, error)
-	DeleteToken(id string) error
+	// DeleteToken removes join token id, recording a "delete_token" audit
+	// entry under actor (see RenameNode's doc).
+	DeleteToken(id, actor string) error
 
 	// Incidents lists incidents matching filter, newest-updated first.
 	Incidents(IncidentFilter) ([]Incident, error)

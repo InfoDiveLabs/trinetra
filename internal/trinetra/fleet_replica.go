@@ -822,10 +822,30 @@ func (a *replicaAPI) remoteAck(key string, unack bool) error {
 		// Also record the ack on the master's own incident view immediately
 		// (task-9 ruling), so the UI need not wait for anything to come
 		// back over the stream. The actor isn't known at this layer -- this
-		// package has no notion of "which web user clicked ack" -- so it is
-		// recorded as "web" for now.
-		// TODO(plan C): thread the actual authenticated web user through
-		// here once the web UI wires up remote ack.
+		// package has no notion of "which web user clicked ack", and
+		// core.API.AckAlert(key) (the interface replicaAPI implements here)
+		// has no actor parameter to carry one, on purpose: it's shared by
+		// every core.API backend (file/inproc/replica), and adding one would
+		// mean touching every implementation and every existing caller for a
+		// path this method is not the primary one for.
+		//
+		// Deliberately kept as "web" (plan C task C5 ruling -- the smaller of
+		// the two options the brief offered, the other being a new
+		// FleetAPI.AckNodeAlert(node, key, actor) plus rewiring the web's
+		// alertsAckHandler to call it for a remote node instead of going
+		// through this apiFor(r,d)-resolved core.API): the AUTHORITATIVE path
+		// for a web user's ack, with the real signed-in actor
+		// (auditUser(r)), is already POST /fleet/incidents/{id}/ack ->
+		// FleetAPI.AckIncident(id, actor) (task C2), which updates this same
+		// incident and pushes the ack frame itself. This remoteAck path only
+		// runs as a SECONDARY sync when a remote node's alert is acked from
+		// the plain /alerts page instead (apiFor(r,d) resolving to this
+		// replicaAPI) -- a narrower, legacy surface that predates the
+		// incidents page. Threading a real actor through it would need a
+		// second FleetAPI method and a web-side special case for a cosmetic
+		// improvement to a path AckIncident's own audit trail already covers
+		// for the common case, so it's left as "web" and documented here
+		// instead.
 		if inc, ok := a.incidents.OpenAlertIncident(a.nodeID, key); ok {
 			_, _ = a.incidents.Ack(inc.ID, "web", time.Now().Unix())
 		}

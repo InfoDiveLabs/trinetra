@@ -11,12 +11,17 @@ import (
 
 type fleetFake struct {
 	*fakeAPI
-	nodes     map[string]core.API
-	renamed   string
-	removed   string
-	depsID    string
-	depsSet   []string
-	depsActor string
+	nodes             map[string]core.API
+	renamed           string
+	renamedActor      string
+	removed           string
+	removedActor      string
+	revokedActor      string
+	deletedTokenActor string
+	taggedActor       string
+	depsID            string
+	depsSet           []string
+	depsActor         string
 
 	incidentsFilter core.IncidentFilter
 	ackedID         string
@@ -76,21 +81,36 @@ func (a fleetFakeAPI) Nodes(f core.NodeFilter) ([]core.NodeSummary, error) {
 	}
 	return out, nil
 }
-func (a fleetFakeAPI) RenameNode(id, name string) error   { a.f.renamed = id + "=" + name; return nil }
-func (a fleetFakeAPI) SetNodeTags(string, []string) error { return nil }
+func (a fleetFakeAPI) RenameNode(id, name, actor string) error {
+	a.f.renamed, a.f.renamedActor = id+"="+name, actor
+	return nil
+}
+func (a fleetFakeAPI) SetNodeTags(id string, tags []string, actor string) error {
+	a.f.taggedActor = actor
+	return nil
+}
 func (a fleetFakeAPI) SetNodeDeps(id string, deps []string, actor string) error {
 	a.f.depsID, a.f.depsSet, a.f.depsActor = id, deps, actor
 	return nil
 }
-func (a fleetFakeAPI) RevokeNode(string) error    { return errors.New("nope") }
-func (a fleetFakeAPI) RemoveNode(id string) error { a.f.removed = id; return nil }
+func (a fleetFakeAPI) RevokeNode(id, actor string) error {
+	a.f.revokedActor = actor
+	return errors.New("nope")
+}
+func (a fleetFakeAPI) RemoveNode(id, actor string) error {
+	a.f.removed, a.f.removedActor = id, actor
+	return nil
+}
 func (a fleetFakeAPI) Tokens() ([]core.TokenView, error) {
 	return []core.TokenView{{ID: "t1", Uses: 1}}, nil
 }
 func (a fleetFakeAPI) CreateToken(s core.TokenSpec) (core.CreatedToken, error) {
 	return core.CreatedToken{Token: core.TokenView{ID: "t2", Tags: s.Tags}, JoinCode: "swj1_x"}, nil
 }
-func (a fleetFakeAPI) DeleteToken(string) error { return nil }
+func (a fleetFakeAPI) DeleteToken(id, actor string) error {
+	a.f.deletedTokenActor = actor
+	return nil
+}
 func (a fleetFakeAPI) Incidents(f core.IncidentFilter) ([]core.Incident, error) {
 	a.f.incidentsFilter = f
 	return []core.Incident{{ID: "abc123def456", State: f.State, Title: "cpu high"}}, nil
@@ -234,22 +254,25 @@ func TestClientFleetMethods(t *testing.T) {
 	if len(ns) != 1 || ns[0].ID != "n1" {
 		t.Fatalf("nodes = %+v", ns)
 	}
-	if err := fl.RenameNode("n1", "web-01"); err != nil || f.renamed != "n1=web-01" {
-		t.Fatalf("rename err %v renamed %q", err, f.renamed)
+	if err := fl.RenameNode("n1", "web-01", "root"); err != nil || f.renamed != "n1=web-01" || f.renamedActor != "root" {
+		t.Fatalf("rename err %v renamed %q actor %q", err, f.renamed, f.renamedActor)
 	}
 	if err := fl.SetNodeDeps("n1", []string{"n2", "tag:db"}, "cli"); err != nil ||
 		f.depsID != "n1" || strings.Join(f.depsSet, ",") != "n2,tag:db" || f.depsActor != "cli" {
 		t.Fatalf("set node deps err %v id %q deps %v actor %q", err, f.depsID, f.depsSet, f.depsActor)
 	}
-	if err := fl.RevokeNode("n1"); err == nil || err.Error() != "nope" {
-		t.Fatalf("revoke err = %v", err)
+	if err := fl.RevokeNode("n1", "root"); err == nil || err.Error() != "nope" || f.revokedActor != "root" {
+		t.Fatalf("revoke err = %v actor %q", err, f.revokedActor)
 	}
-	if err := fl.RemoveNode("n1"); err != nil || f.removed != "n1" {
-		t.Fatalf("remove err %v removed %q", err, f.removed)
+	if err := fl.RemoveNode("n1", "root"); err != nil || f.removed != "n1" || f.removedActor != "root" {
+		t.Fatalf("remove err %v removed %q actor %q", err, f.removed, f.removedActor)
 	}
 	ct, err := fl.CreateToken(core.TokenSpec{Tags: []string{"lab"}})
 	if err != nil || ct.JoinCode != "swj1_x" || ct.Token.Tags[0] != "lab" {
 		t.Fatalf("create token %+v err %v", ct, err)
+	}
+	if err := fl.DeleteToken("t2", "root"); err != nil || f.deletedTokenActor != "root" {
+		t.Fatalf("delete token err %v actor %q", err, f.deletedTokenActor)
 	}
 
 	incs, err := fl.Incidents(core.IncidentFilter{State: "firing"})

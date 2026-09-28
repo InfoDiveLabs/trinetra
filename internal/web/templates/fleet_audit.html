@@ -1,0 +1,44 @@
+{{/* fleet_audit.html (task C5, fleet phase 2 web UI plan C): GET
+     /fleet/audit -- the fleet audit log: a GET filter form (actor/action)
+     plus a paginated table. Admin-only end to end (routes.go), so there is
+     no $editable/read-only split here -- every viewer of this page may
+     already act on the fleet, this is just its own history. Detail is
+     rendered through html/template's ordinary auto-escaping like every
+     other field on this page (no template.HTML anywhere for it), so a
+     detail string containing markup shows as literal text, never runs. */}}
+{{define "content"}}
+<div id="fleet-audit-page">
+  <form method="get" action="/fleet/audit" class="toolbar">
+    <input type="text" name="actor" value="{{.Actor}}" placeholder="actor" style="max-width:200px">
+    <input type="text" name="action" value="{{.Action}}" placeholder="action, e.g. fleet.node.rename" style="max-width:260px">
+    <button class="btn" type="submit">Filter</button>
+    {{if or .Actor .Action}}<a class="btn ghost" href="/fleet/audit">Clear</a>{{end}}
+  </form>
+
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td class="mono note" data-label="Time">{{.TimeText}}</td>
+        <td class="mono card-title" data-label="Actor">{{.Actor}}</td>
+        <td class="mono" data-label="Action">{{.Action}}</td>
+        <td class="mono note" data-label="Target">{{if .Target}}{{.Target}}{{else}}<span class="note">-</span>{{end}}</td>
+        <td data-label="Detail">{{if .Detail}}{{.Detail}}{{else}}<span class="note">-</span>{{end}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" class="note">no audit entries{{if or .Actor .Action}} match this filter{{end}}</td></tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+
+  {{if gt .TotalPages 1}}
+  <div class="toolbar" style="margin:12px 0 0">
+    <p class="note" style="margin:0">page {{.Page}} of {{.TotalPages}}</p>
+    <span class="spacer"></span>
+    {{if .HasPrev}}<a class="btn ghost" href="{{.PrevHref}}">&larr; Prev</a>{{end}}
+    {{if .HasNext}}<a class="btn ghost" href="{{.NextHref}}">Next &rarr;</a>{{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -98,16 +98,21 @@ type fleetCLIFake struct {
 	tokens []core.TokenView
 
 	renamedID, renamedTo string
+	renamedActor         string
 	taggedID             string
 	taggedTags           []string
+	taggedActor          string
 	depsID               string
 	depsSet              []string
 	depsActor            string
 	depsErr              error
 	revokedID            string
+	revokedActor         string
 	revokeErr            error
 	removedID            string
+	removedActor         string
 	deletedTokenID       string
+	deletedTokenActor    string
 	createSpec           core.TokenSpec
 	createResult         core.CreatedToken
 
@@ -178,13 +183,13 @@ func (a fleetCLIFakeFleetAPI) Nodes(filter core.NodeFilter) ([]core.NodeSummary,
 	return out, nil
 }
 
-func (a fleetCLIFakeFleetAPI) RenameNode(id, name string) error {
-	a.f.renamedID, a.f.renamedTo = id, name
+func (a fleetCLIFakeFleetAPI) RenameNode(id, name, actor string) error {
+	a.f.renamedID, a.f.renamedTo, a.f.renamedActor = id, name, actor
 	return nil
 }
 
-func (a fleetCLIFakeFleetAPI) SetNodeTags(id string, tags []string) error {
-	a.f.taggedID, a.f.taggedTags = id, tags
+func (a fleetCLIFakeFleetAPI) SetNodeTags(id string, tags []string, actor string) error {
+	a.f.taggedID, a.f.taggedTags, a.f.taggedActor = id, tags, actor
 	return nil
 }
 
@@ -193,13 +198,13 @@ func (a fleetCLIFakeFleetAPI) SetNodeDeps(id string, deps []string, actor string
 	return a.f.depsErr
 }
 
-func (a fleetCLIFakeFleetAPI) RevokeNode(id string) error {
-	a.f.revokedID = id
+func (a fleetCLIFakeFleetAPI) RevokeNode(id, actor string) error {
+	a.f.revokedID, a.f.revokedActor = id, actor
 	return a.f.revokeErr
 }
 
-func (a fleetCLIFakeFleetAPI) RemoveNode(id string) error {
-	a.f.removedID = id
+func (a fleetCLIFakeFleetAPI) RemoveNode(id, actor string) error {
+	a.f.removedID, a.f.removedActor = id, actor
 	return nil
 }
 
@@ -210,8 +215,8 @@ func (a fleetCLIFakeFleetAPI) CreateToken(spec core.TokenSpec) (core.CreatedToke
 	return a.f.createResult, nil
 }
 
-func (a fleetCLIFakeFleetAPI) DeleteToken(id string) error {
-	a.f.deletedTokenID = id
+func (a fleetCLIFakeFleetAPI) DeleteToken(id, actor string) error {
+	a.f.deletedTokenID, a.f.deletedTokenActor = id, actor
 	return nil
 }
 
@@ -664,8 +669,8 @@ func TestFleetNodeRenameByPrefix(t *testing.T) {
 	if rc := Main([]string{"fleet", "node", "rename", "abcdef", "web-01"}); rc != 0 {
 		t.Fatalf("exit %d: %s", rc, errb)
 	}
-	if fake.renamedID != "abcdef1234567890" || fake.renamedTo != "web-01" {
-		t.Fatalf("renamed = %q -> %q", fake.renamedID, fake.renamedTo)
+	if fake.renamedID != "abcdef1234567890" || fake.renamedTo != "web-01" || fake.renamedActor != "cli" {
+		t.Fatalf("renamed = %q -> %q actor %q, want actor \"cli\"", fake.renamedID, fake.renamedTo, fake.renamedActor)
 	}
 }
 
@@ -709,8 +714,8 @@ func TestFleetNodeRevoke(t *testing.T) {
 	if rc := Main([]string{"fleet", "node", "revoke", "node-1"}); rc != 0 {
 		t.Fatalf("exit %d: %s", rc, errb)
 	}
-	if fake.revokedID != "node-1" {
-		t.Fatalf("revokedID = %q", fake.revokedID)
+	if fake.revokedID != "node-1" || fake.revokedActor != "cli" {
+		t.Fatalf("revokedID = %q actor %q, want actor \"cli\"", fake.revokedID, fake.revokedActor)
 	}
 	if !strings.Contains(out.String(), "Revoked node-1") {
 		t.Fatalf("out = %s", out)
@@ -792,8 +797,8 @@ func TestFleetTokenDelete(t *testing.T) {
 	if rc := Main([]string{"fleet", "token", "delete", "tok-9"}); rc != 0 {
 		t.Fatalf("exit %d: %s", rc, errb)
 	}
-	if fake.deletedTokenID != "tok-9" {
-		t.Fatalf("deletedTokenID = %q", fake.deletedTokenID)
+	if fake.deletedTokenID != "tok-9" || fake.deletedTokenActor != "cli" {
+		t.Fatalf("deletedTokenID = %q actor %q, want actor \"cli\"", fake.deletedTokenID, fake.deletedTokenActor)
 	}
 }
 
@@ -858,8 +863,8 @@ func TestFleetNodeRemove(t *testing.T) {
 	if rc := Main([]string{"fleet", "node", "remove", "web-1"}); rc != 0 {
 		t.Fatalf("exit %d: %s", rc, errb)
 	}
-	if fake.removedID != "node-1" {
-		t.Fatalf("removedID = %q", fake.removedID)
+	if fake.removedID != "node-1" || fake.removedActor != "cli" {
+		t.Fatalf("removedID = %q actor %q, want actor \"cli\"", fake.removedID, fake.removedActor)
 	}
 	if !strings.Contains(out.String(), "Removed node-1") {
 		t.Fatalf("out = %s", out)

@@ -145,6 +145,21 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /fleet/nodes/{id}/tags", fleetAdminMutation(d, fleetNodeTagsHandler(d)))
 	mux.HandleFunc("POST /fleet/nodes/{id}/revoke", fleetAdminMutation(d, fleetNodeRevokeHandler(d)))
 	mux.HandleFunc("POST /fleet/nodes/{id}/remove", fleetAdminMutation(d, fleetNodeRemoveHandler(d)))
+	// /fleet/managed (+ /{id}/delete) + /fleet/audit -- task C5, plan C: the
+	// managed-config fragment editor + per-node status, and the fleet audit
+	// log, over core.FleetAPI's Managed/SaveManaged/DeleteManaged/
+	// ManagedStatus/Audit (internal/core/fleet.go, handlers_fleet_managed.go/
+	// handlers_fleet_audit.go). GET /fleet/managed is viewer-gated and
+	// master-only (fleetGateHTML) like the rest of "Monitor"/"Admin"; its
+	// mutations are admin+CSRF (fleetAdminMutation), same as /fleet/admin's
+	// above. GET /fleet/audit is admin-only end to end (RoleAdmin here,
+	// task-5-brief.md's own ruling -- unlike Managed config, this page has
+	// no viewer-facing read at all). Already covered by node_scope.go's
+	// masterLocalPrefixes "/fleet" entry.
+	mux.HandleFunc("GET /fleet/managed", requireRole(RoleViewer, d, fleetManagedPageHandler(d)))
+	mux.HandleFunc("POST /fleet/managed", fleetAdminMutation(d, fleetManagedSaveHandler(d)))
+	mux.HandleFunc("POST /fleet/managed/{id}/delete", fleetAdminMutation(d, fleetManagedDeleteHandler(d)))
+	mux.HandleFunc("GET /fleet/audit", requireRole(RoleAdmin, d, fleetAuditPageHandler(d)))
 	// beginLimiter caps the unauthenticated ceremony-begin rate per client so an
 	// anonymous caller can't hammer the shared ceremonies.json lock (#95). Both
 	// begins share ONE limiter since they contend the same lock. finish is not

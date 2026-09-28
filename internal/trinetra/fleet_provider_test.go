@@ -156,20 +156,26 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 	m.joinURL = "https://master.example:9443" // required for CreateToken
 	api := fleetAPIFor(m)
 
-	if err := api.RenameNode(nodeID, "web1-renamed"); err != nil {
+	// Actor plumbing (plan C task C5): every one of these used to have no
+	// actor parameter at all and always audited the literal placeholder
+	// "unknown", regardless of who actually made the call. Each now records
+	// whatever the caller passes -- exercised here with a real per-call
+	// actor (mirroring a signed-in web user's own name) so this test itself
+	// pins the fix, not just the plumbing.
+	if err := api.RenameNode(nodeID, "web1-renamed", "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.SetNodeTags(nodeID, []string{"prod"}); err != nil {
+	if err := api.SetNodeTags(nodeID, []string{"prod"}, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.RevokeNode(nodeID); err != nil {
+	if err := api.RevokeNode(nodeID, "alice"); err != nil {
 		t.Fatal(err)
 	}
 	tok, err := api.CreateToken(core.TokenSpec{Creator: "cli"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := api.DeleteToken(tok.Token.ID); err != nil {
+	if err := api.DeleteToken(tok.Token.ID, "alice"); err != nil {
 		t.Fatal(err)
 	}
 	secondNode, err := fleet.NewNodeID()
@@ -179,7 +185,7 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 	if err := m.reg.Add(fleet.Node{ID: secondNode, Name: "gone", Joined: time.Now().Unix()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.RemoveNode(secondNode); err != nil {
+	if err := api.RemoveNode(secondNode, "alice"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,8 +194,8 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantActions := map[string]string{
-		"rename_node": "unknown", "set_node_tags": "unknown", "revoke_node": "unknown",
-		"create_token": "cli", "delete_token": "unknown", "remove_node": "unknown",
+		"rename_node": "alice", "set_node_tags": "alice", "revoke_node": "alice",
+		"create_token": "cli", "delete_token": "alice", "remove_node": "alice",
 	}
 	seen := map[string]bool{}
 	for _, e := range entries {
@@ -229,7 +235,7 @@ func TestRenameNodeRejectsNameAlreadyUsed(t *testing.T) {
 	}
 	api := fleetAPIFor(m)
 
-	err = api.RenameNode(id2, "WEB1")
+	err = api.RenameNode(id2, "WEB1", "alice")
 	if err == nil {
 		t.Fatal("rename to an already-used name (case-insensitive) must be refused")
 	}
@@ -243,7 +249,7 @@ func TestRenameNodeRejectsNameAlreadyUsed(t *testing.T) {
 
 	// Renaming a node to ITS OWN current name (even different case) is not a
 	// conflict with itself.
-	if err := api.RenameNode(id1, "WEB1"); err != nil {
+	if err := api.RenameNode(id1, "WEB1", "alice"); err != nil {
 		t.Fatalf("renaming to a case-variant of its own current name should succeed: %v", err)
 	}
 }
@@ -270,13 +276,13 @@ func TestFleetAPIMutationsNilSafeWithoutOptionalFields(t *testing.T) {
 	m := &masterState{reg: reg, tracker: tracker, sink: sink, loop: loop}
 	api := fleetAPIFor(m)
 
-	if err := api.RevokeNode(nodeID); err != nil {
+	if err := api.RevokeNode(nodeID, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.RenameNode(nodeID, "x"); err != nil {
+	if err := api.RenameNode(nodeID, "x", "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.RemoveNode(nodeID); err != nil {
+	if err := api.RemoveNode(nodeID, "alice"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := api.Alerting(); err != nil {

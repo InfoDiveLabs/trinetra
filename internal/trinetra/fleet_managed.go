@@ -34,12 +34,13 @@ import (
 // path with no restart. Pushing a fallback CHANNEL set (spec 5.4) is
 // explicitly OUT of scope for this fragment mechanism -- deferred to a
 // later task.
-var managedFragmentAllowlistKeys = []string{
-	"thresholds.cpu_pct", "thresholds.mem_pct", "thresholds.swap_pct",
-	"thresholds.temp_c", "thresholds.disk_pct",
-	"baseline_sigma", "baseline_min_pct", "baseline_alerts",
-	"quiet_hours", "critical_overrides_quiet",
-}
+//
+// This delegates to core.ManagedKeys (plan C task C5) rather than defining
+// its own literal copy: internal/web's managed-config page needs this exact
+// allowlist too (to build the fragment editor's key <select>), and
+// internal/web cannot import internal/trinetra, so the one true copy lives
+// in internal/core, which both packages can see.
+var managedFragmentAllowlistKeys = core.ManagedKeys
 
 // managedFragmentAllowlist is managedFragmentAllowlistKeys as a set, for O(1)
 // membership checks.

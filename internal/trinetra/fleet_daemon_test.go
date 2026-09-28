@@ -375,22 +375,22 @@ func TestMasterProviderNodesAndManagement(t *testing.T) {
 		t.Fatalf("Node(live) err = %v", err)
 	}
 
-	if err := fa.RenameNode(live, "   "); err == nil {
+	if err := fa.RenameNode(live, "   ", "op"); err == nil {
 		t.Fatal("blank rename accepted")
 	}
-	if err := fa.RenameNode(live, strings.Repeat("x", 65)); err == nil {
+	if err := fa.RenameNode(live, strings.Repeat("x", 65), "op"); err == nil {
 		t.Fatal("65-char rename accepted")
 	}
-	if err := fa.RenameNode(live, "  web-one "); err != nil {
+	if err := fa.RenameNode(live, "  web-one ", "op"); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := m.reg.Get(live); n.Name != "web-one" {
 		t.Fatalf("renamed = %q", n.Name)
 	}
-	if err := fa.SetNodeTags(live, []string{"Bad Tag"}); err == nil {
+	if err := fa.SetNodeTags(live, []string{"Bad Tag"}, "op"); err == nil {
 		t.Fatal("invalid tag accepted")
 	}
-	if err := fa.SetNodeTags(live, []string{"prod", "eu-1"}); err != nil {
+	if err := fa.SetNodeTags(live, []string{"prod", "eu-1"}, "op"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -428,7 +428,7 @@ func TestMasterProviderNodesAndManagement(t *testing.T) {
 		t.Fatalf("deps after clear = %v", n.DependsOn)
 	}
 
-	if err := fa.RevokeNode(quiet); err != nil {
+	if err := fa.RevokeNode(quiet, "op"); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := m.reg.Get(quiet); !n.Revoked {
@@ -463,7 +463,7 @@ func TestMasterCreateTokenDefaults(t *testing.T) {
 	if len(toks) != 1 || toks[0].ID != ct.Token.ID {
 		t.Fatalf("tokens = %+v", toks)
 	}
-	if err := fa.DeleteToken(ct.Token.ID); err != nil {
+	if err := fa.DeleteToken(ct.Token.ID, "op"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -483,11 +483,11 @@ func TestNonMasterProviderRefusesMasterOps(t *testing.T) {
 		p := &fleetProvider{self: d.self, role: role, selfName: func() string { return "h" }}
 		fa := p.Fleet()
 		errs := map[string]error{
-			"RenameNode":  fa.RenameNode("x", "y"),
-			"SetNodeTags": fa.SetNodeTags("x", nil),
+			"RenameNode":  fa.RenameNode("x", "y", "op"),
+			"SetNodeTags": fa.SetNodeTags("x", nil, "op"),
 			"SetNodeDeps": fa.SetNodeDeps("x", nil, "op"),
-			"RevokeNode":  fa.RevokeNode("x"),
-			"DeleteToken": fa.DeleteToken("x"),
+			"RevokeNode":  fa.RevokeNode("x", "op"),
+			"DeleteToken": fa.DeleteToken("x", "op"),
 		}
 		_, errs["Tokens"] = fa.Tokens()
 		_, errs["CreateToken"] = fa.CreateToken(core.TokenSpec{})
@@ -678,7 +678,7 @@ func TestFleetRemoveNodeResolvesDownAlertAndKeepsReplica(t *testing.T) {
 	if len(*alerts) != 1 || (*alerts)[0].Kind != "fire" {
 		t.Fatalf("setup alerts = %+v", *alerts)
 	}
-	if err := p.Fleet().RemoveNode(id); err != nil {
+	if err := p.Fleet().RemoveNode(id, "op"); err != nil {
 		t.Fatal(err)
 	}
 	if len(*alerts) != 2 || (*alerts)[1].Kind != "recover" || (*alerts)[1].Key != "fleet:node:"+id+":down" {
@@ -697,7 +697,7 @@ func TestFleetRemoveNodeResolvesDownAlertAndKeepsReplica(t *testing.T) {
 	if len(*alerts) != 2 {
 		t.Fatalf("removed node paged again: %+v", *alerts)
 	}
-	if err := p.Fleet().RemoveNode(id); err != core.ErrNoSuchNode {
+	if err := p.Fleet().RemoveNode(id, "op"); err != core.ErrNoSuchNode {
 		t.Fatalf("second remove err = %v", err)
 	}
 }
