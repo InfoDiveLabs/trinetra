@@ -467,18 +467,34 @@ echo "  child1 mem incident $INC1 delivered once, from the master, prefixed with
 # The root disk, not cpu/swap/a second use of mem: mem is already active
 # (and must stay that way for INC1/step 15), cpu reads noisy near a low
 # threshold, and swap can read exactly 0 in a container, so a low swap
-# threshold never fires. A per-target threshold on disk:/ (always well
-# above 1%) fires exactly one alert; other mounts keep the default.
+# threshold never fires. A per-target threshold on the real root-disk
+# target (always well above 1%) fires exactly one alert; other mounts keep
+# the default.
+#
+# The target id is discovered, not hardcoded as "disk:/": inside a
+# container the root filesystem is always an overlay mount, which
+# Discover()'s isRealMount/isRealFsType gate deliberately excludes (a root
+# daemon on a docker host would otherwise see one disk:<overlay> target per
+# container -- see internal/trinetra/discover.go). The real, monitorable
+# disk target here is whichever real filesystem is actually bind-mounted
+# into the container (typically /etc/hosts, /etc/hostname or
+# /etc/resolv.conf, all backed by the same underlying device) -- `monitor
+# threshold disk:/ 1` saves an override for a key buildSlowChecks never
+# evaluates (it only ever walks keys present in the live snapshot), so the
+# alert silently never fires.
+DISK_TARGET=$(on child1 trinetra monitor list | awk '$1 ~ /^disk:/ {print $1; exit}')
+[ -n "$DISK_TARGET" ] || fail "child1 has no discovered disk:* target to threshold (monitor list): $(on child1 trinetra monitor list)"
+echo "  using child1's discovered disk target: $DISK_TARGET"
 BASE_FALLBACK=$(msg_count "via local fallback: master unreachable")
 docker network disconnect "$NET" "$(ctr child1)"
-on child1 trinetra monitor threshold disk:/ 1 >/dev/null || fail "monitor threshold disk:/ failed"
+on child1 trinetra monitor threshold "$DISK_TARGET" 1 >/dev/null || fail "monitor threshold $DISK_TARGET failed"
 wait_until 85 "child1 link retrying (handoff)" link_is child1 retrying
 wait_until $(( FALLBACK_AFTER + 60 )) "child1 delivered its disk alert via local fallback" fallback_delivered_once
 sleep $(( 3 * FAST ))
 AFTER_FALLBACK=$(msg_count "via local fallback: master unreachable")
 [ "$AFTER_FALLBACK" -eq $(( BASE_FALLBACK + 1 )) ] || fail "expected exactly one local-fallback message, got $(( AFTER_FALLBACK - BASE_FALLBACK ))"
 mocktg_has "via local fallback: master unreachable" || fail "mock telegram never got a local-fallback message"
-[ "$(msg_count "child1: disk:/ =")" -eq 0 ] || fail "the master delivered child1's disk alert even though child1 was partitioned"
+[ "$(msg_count "child1: $DISK_TARGET =")" -eq 0 ] || fail "the master delivered child1's disk alert even though child1 was partitioned"
 echo "  child1 delivered its own disk alert locally after ${FALLBACK_AFTER}s of no receipt, prefixed 'via local fallback: master unreachable'"
 
 docker network connect "$NET" "$(ctr child1)"
@@ -486,7 +502,7 @@ wait_until 60 "child1 link linked after handoff" link_is child1 linked
 wait_until 60 "child1 outbox drained after handoff" unsent_is_zero child1
 sleep $(( 3 * FAST ))
 [ "$(msg_count "via local fallback: master unreachable")" -eq "$AFTER_FALLBACK" ] || fail "the master re-sent the already-fallback-delivered disk alert after reconnecting"
-[ "$(msg_count "child1: disk:/ =")" -eq 0 ] || fail "the master sent a duplicate child1 disk message after reconnecting"
+[ "$(msg_count "child1: $DISK_TARGET =")" -eq 0 ] || fail "the master sent a duplicate child1 disk message after reconnecting"
 SWAP_INC=$(on master trinetra fleet incidents --node "$ID_child1" --state firing | awk '$0 ~ /disk:/ {print $1; exit}')
 [ -n "$SWAP_INC" ] || fail "the master never recorded child1's fallback-delivered disk incident after reconnecting"
 [ "$SWAP_INC" != "$INC1" ] || fail "the disk fire reused the mem incident $INC1 instead of opening its own"
