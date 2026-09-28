@@ -356,7 +356,7 @@ func TestNodeScopedTopbarAndAlertBadgeReflectNode(t *testing.T) {
 	if strings.Contains(body, "All systems normal") {
 		t.Errorf("node-scoped topbar shows master's ok status instead of child1's firing alert:\n%s", body)
 	}
-	if !strings.Contains(body, `Alerts<span class="ct">1</span>`) {
+	if !strings.Contains(body, `<span class="lb">Alerts</span><span class="ct">1</span>`) {
 		t.Errorf("node-scoped sidebar Alerts badge missing child1's count of 1:\n%s", body)
 	}
 	if !strings.Contains(body, "core child1-v2") {
@@ -403,10 +403,10 @@ func TestNodeScopedChannelsAndUsersBadgesStayMasterLocal(t *testing.T) {
 	if strings.Contains(body, "Channels") {
 		t.Errorf("node-scoped nav should hide the master-local Channels entry entirely:\n%s", body)
 	}
-	if !strings.Contains(body, `Monitoring<span class="ct">9</span>`) {
+	if !strings.Contains(body, `<span class="lb">Monitoring</span><span class="ct">9</span>`) {
 		t.Errorf("node-scoped Monitoring badge should reflect child1's container count of 9:\n%s", body)
 	}
-	if strings.Contains(body, `Monitoring<span class="ct">3</span>`) {
+	if strings.Contains(body, `<span class="lb">Monitoring</span><span class="ct">3</span>`) {
 		t.Errorf("node-scoped Monitoring badge leaked master's container count:\n%s", body)
 	}
 }

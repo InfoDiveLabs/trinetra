@@ -77,16 +77,24 @@ a:hover{text-decoration-color:var(--text)}
 /* shell */
 .app{display:grid; grid-template-columns:240px 1fr; min-height:100vh}
 .side{border-right:1px solid var(--border); background:linear-gradient(180deg,var(--surface),var(--bg)); padding:18px 14px; position:sticky; top:0; height:100vh; display:flex; flex-direction:column; gap:5px}
-.brand{display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:6px 8px 16px}
+.brand{display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:6px 8px 16px; flex:none}
 .brand .wordmark{width:120px}
 .brand small{color:var(--faint); font-family:var(--font-mono); font-size:10px; display:block; letter-spacing:.13em}
+/* U10a (2026-09-25 UI audit fix): .side is a fixed-height (100vh) flex
+   column with no scroll of its own, so a short window with ~17 nav items
+   plus the footer simply overflowed the viewport, cutting items off and
+   letting the footer overlap the nav. .nav is the ONLY flexible region --
+   it grows to fill whatever space brand/foot don't need and scrolls
+   internally past that, while brand stays pinned at the top and .foot
+   (already margin-top:auto) stays pinned at the bottom, never overlapping. */
+.nav{flex:1 1 auto; min-height:0; overflow-y:auto}
 .nav a{display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:var(--r-sm); color:var(--muted); font-weight:500; font-size:13.5px}
 .nav a .ic{width:16px; text-align:center; opacity:.85} .nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
 .nav a:hover{background:var(--surface2); color:var(--text)}
 .nav a.active{background:var(--elev); color:var(--text); box-shadow:inset 2px 0 0 var(--text)}
 .nav a.active .ic{color:var(--text); opacity:1}
 .nav .grp{margin-top:14px; padding:4px 11px}
-.side .foot{margin-top:auto; padding:10px 8px 2px; border-top:1px solid var(--border-soft)}
+.side .foot{margin-top:auto; padding:10px 8px 2px; border-top:1px solid var(--border-soft); flex:none}
 .avatar{width:26px;height:26px;border-radius:50%;background:var(--elev);border:1px solid var(--border);display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:700}
 .who{display:flex; align-items:center; gap:9px}
 .side .foot .ver{min-width:0; max-width:100%; display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:10.5px; color:var(--faint)}
@@ -433,8 +441,38 @@ tr[data-detail]{cursor:pointer}
 
 @media (max-width:1000px){.g-hero,.g-32{grid-template-columns:1fr}.g-4{grid-template-columns:1fr 1fr}}
 @media (max-width:860px){
-  .app{grid-template-columns:1fr} .side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center} .side .foot{display:none} .brand{padding:6px 8px}
-  .nav{display:flex;flex-wrap:wrap} .nav .grp{display:none} .g-2,.g-3{grid-template-columns:1fr} .wrap{padding:16px 14px 40px} .topbar{padding:12px 14px}
+  .g-2,.g-3{grid-template-columns:1fr} .wrap{padding:16px 14px 40px} .topbar{padding:12px 14px}
+}
+/* U10b (2026-09-25 UI audit fix): 641-1024px collapses the sidebar to a
+   compact icon rail instead of the old .side{flex-direction:row;flex-wrap:
+   wrap}/.nav{flex-wrap:wrap} layout, which turned every nav link (icon AND
+   label) into a wrapped row across the top of the page -- ugly, and it ate
+   half the screen. Icons only: each link's own title/aria-label
+   (base.html) still carries its name as a native tooltip/accessible name.
+   A badge's count text is hidden in favor of a small dot in the same
+   corner, so "something needs attention" stays visible without room for a
+   number. >1024px is untouched (no rule here applies above it); <=640px
+   still switches to the bottom tab bar + "More" sheet (below, unchanged). */
+@media (min-width:641px) and (max-width:1024px){
+  .app{grid-template-columns:64px 1fr}
+  .side{width:64px; padding:16px 8px}
+  .brand{align-items:center; padding:6px 0 14px}
+  /* .brand img (not .wordmark -- brand_test.go's TestWordmarkThemeSwap
+     exhaustively scans every display rule touching .wordmark/.wm-* to
+     prove the dark/light swap is correct in every theme state; this is a
+     WIDTH toggle, unrelated to theme, so it deliberately avoids that
+     selector) hides the two wordmark images at rail width; small hides the
+     server-name subtitle underneath them -- neither fits in 64px. */
+  .brand img,.brand small{display:none}
+  .nav .grp{display:none}
+  .nav a{position:relative; justify-content:center; gap:0; padding:11px 0}
+  .nav a .lb{display:none}
+  .nav a .ct{position:absolute; top:4px; right:10px; margin-left:0; width:8px; height:8px;
+    min-width:0; padding:0; border-radius:50%; background:var(--text); color:transparent; font-size:0}
+  .side .foot{padding:10px 0 2px}
+  .side .foot .ver{display:none}
+  .side .who{flex-direction:column; gap:8px}
+  .side .who>div{display:none}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none !important}}
 /* app pages already clear the fixed bar via .wrap padding-bottom; bare pages stay exactly 100vh (no scroll) */
@@ -498,21 +536,27 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   .sheet-scrim{display:block; position:fixed; inset:0; background:var(--scrim); z-index:98;
     opacity:0; pointer-events:none; transition:opacity .2s ease}
   .sheet-scrim.on{opacity:1; pointer-events:auto}
-  .sheet{display:block; position:fixed; left:0; right:0; bottom:0; z-index:99;
+  /* U10c (2026-09-25 UI audit fix): .sheet used to be the ONE scroll
+     container (overflow:auto on the whole sheet), so a nav list taller
+     than 82vh scrolled the footer away with it. .sheet is now a flex
+     column instead: the grip and footer stay fixed size (flex:none) and
+     ONLY .sheet-nav scrolls internally within whatever space is left under
+     the 82vh cap, so the footer (account/sign-out) is always visible. */
+  .sheet{display:flex; flex-direction:column; position:fixed; left:0; right:0; bottom:0; z-index:99;
     background:var(--surface); border-top:1px solid var(--border);
     border-radius:var(--r-lg) var(--r-lg) 0 0; box-shadow:var(--shadow);
     padding:6px 14px calc(18px + env(safe-area-inset-bottom));
-    transform:translateY(100%); transition:transform .22s ease; max-height:82vh; overflow:auto}
+    transform:translateY(100%); transition:transform .22s ease; max-height:82vh}
   .sheet.on{transform:none}
-  .sheet-grip{width:38px; height:4px; border-radius:999px; background:var(--border); margin:8px auto 10px}
-  .sheet-nav{display:flex; flex-direction:column; gap:2px}
+  .sheet-grip{width:38px; height:4px; border-radius:999px; background:var(--border); margin:8px auto 10px; flex:none}
+  .sheet-nav{display:flex; flex-direction:column; gap:2px; min-height:0; overflow-y:auto; flex:1 1 auto}
   .sheet-nav a{display:flex; align-items:center; gap:12px; min-height:48px; padding:12px 10px;
     border-radius:var(--r-sm); color:var(--text); font-size:15px; font-weight:500}
   .sheet-nav a .ic{width:18px; text-align:center; color:var(--muted); opacity:.9}
   .sheet-nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
   .sheet-nav a.active{background:var(--elev)}
   .sheet-nav a.active .ic{color:var(--text); opacity:1}
-  .sheet-foot{border-top:1px solid var(--border-soft); margin-top:8px; padding:12px 6px 2px}
+  .sheet-foot{border-top:1px solid var(--border-soft); margin-top:8px; padding:12px 6px 2px; flex:none}
   .sheet-foot #logoutBtnSheet{min-height:40px}
 
   /* --- grids stack; big numbers stay legible --- */

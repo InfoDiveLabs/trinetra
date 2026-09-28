@@ -48,17 +48,17 @@ func TestNavBadgesRenderRealCounts(t *testing.T) {
 	body := rr.Body.String()
 
 	for _, want := range []string{
-		`Alerts<span class="ct">2</span>`,
-		`Channels<span class="ct">3</span>`,
-		`Users<span class="ct">2</span>`,
-		`Monitoring<span class="ct">9</span>`,
+		`<span class="lb">Alerts</span><span class="ct">2</span>`,
+		`<span class="lb">Channels</span><span class="ct">3</span>`,
+		`<span class="lb">Users</span><span class="ct">2</span>`,
+		`<span class="lb">Monitoring</span><span class="ct">9</span>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("nav body missing real badge %q:\n%s", want, body)
 		}
 	}
 
-	if strings.Contains(body, `Monitoring<span class="ct">220</span>`) {
+	if strings.Contains(body, `<span class="lb">Monitoring</span><span class="ct">220</span>`) {
 		t.Errorf("nav still renders the mockup's hardcoded Monitoring 220 demo badge:\n%s", body)
 	}
 }
@@ -86,13 +86,13 @@ func TestNavBadgeHiddenWhenZero(t *testing.T) {
 	body := rr.Body.String()
 
 	for _, label := range []string{"Alerts", "Channels", "Monitoring"} {
-		if strings.Contains(body, label+`<span class="ct">`) {
+		if strings.Contains(body, `<span class="lb">`+label+`</span><span class="ct">`) {
 			t.Errorf("nav still renders a badge next to %q with a zero count:\n%s", label, body)
 		}
 	}
 	// Users has exactly one seeded account (the signed-in admin) -- its
 	// badge must show "1", not be hidden and not show "0".
-	if !strings.Contains(body, `Users<span class="ct">1</span>`) {
+	if !strings.Contains(body, `<span class="lb">Users</span><span class="ct">1</span>`) {
 		t.Errorf("nav Users badge should show 1 for the single seeded user:\n%s", body)
 	}
 }
@@ -114,7 +114,7 @@ func TestNavCountsAlertStateMissingFileIsZeroNoPanic(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200 (no panic), body: %s", rr.Code, rr.Body.String())
 	}
-	if strings.Contains(rr.Body.String(), `Alerts<span class="ct">`) {
+	if strings.Contains(rr.Body.String(), `<span class="lb">Alerts</span><span class="ct">`) {
 		t.Errorf("nav should show no Alerts badge when AlertStatePath is missing:\n%s", rr.Body.String())
 	}
 }

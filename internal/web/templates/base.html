@@ -16,7 +16,7 @@
   <aside class="side">{{block "nav" .}}
     <div class="brand"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="120" height="32"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="120" height="32"><small>{{.ServerName}}</small></div>
     <nav class="nav">
-      {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
+      {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}} title="{{.Label}}" aria-label="{{.Label}}"><span class="ic">{{.Icon}}</span><span class="lb">{{.Label}}</span>{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
       {{end}}
     </nav>
     <div class="foot">

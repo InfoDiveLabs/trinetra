@@ -448,7 +448,7 @@ func TestFleetOverviewNavItemOnMaster(t *testing.T) {
 	if !strings.Contains(body, `href="/fleet"`) {
 		t.Errorf("GET / on master: expected nav to link to /fleet, body:\n%s", body)
 	}
-	if !strings.Contains(body, `<span class="ic">⛶</span> Fleet<span class="ct">1</span>`) {
+	if !strings.Contains(body, `<span class="ic">⛶</span><span class="lb">Fleet</span><span class="ct">1</span>`) {
 		t.Errorf("GET / on master: expected the Fleet nav badge to show 1 (one down node), body:\n%s", body)
 	}
 }

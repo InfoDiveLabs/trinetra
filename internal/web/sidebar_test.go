@@ -41,6 +41,33 @@ func TestSidebarShowsSignedInUserNotHardcodedName(t *testing.T) {
 	}
 }
 
+// TestSidebarNavLinksCarryTitleAndLabelSpan pins U10b (2026-09-25 UI audit):
+// the icon-rail breakpoint (641-1024px, style.css) hides each nav link's
+// label text via CSS and relies on title/aria-label for its accessible
+// name/tooltip, and on a dedicated .lb span to target the label text with
+// CSS (a bare text node can't be display:none'd). Both must be present at
+// every width, not just the rail's -- they're harmless (a native tooltip,
+// a wrapping span) above and below it.
+func TestSidebarNavLinksCarryTitleAndLabelSpan(t *testing.T) {
+	d, _, _ := configTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	req := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/config")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `title="Dashboard" aria-label="Dashboard"`) {
+		t.Errorf("sidebar Dashboard link missing title/aria-label:\n%s", body)
+	}
+	if !strings.Contains(body, `<span class="lb">Dashboard</span>`) {
+		t.Errorf("sidebar Dashboard link missing its .lb label span:\n%s", body)
+	}
+}
+
 func TestFirstInitial(t *testing.T) {
 	cases := map[string]string{"admin-user": "A", "bob": "B", "": ""}
 	for in, want := range cases {
