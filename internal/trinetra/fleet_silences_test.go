@@ -745,3 +745,56 @@ func TestReplicaApplyCrossAlertKeyOrderingDropRepro(t *testing.T) {
 		t.Fatalf("onAlert was called %d times, want 4 (collector fire, collector fallback resend, mem fire, mem recover) -- the mem alert must never be silently dropped just because an unrelated key's delayed fallback record advanced this node's shared lastAlertTS: %v", len(onAlertCalls), kinds)
 	}
 }
+
+// TestPushedSilencesSetHoldsMutexThroughWrite reproduces final-review
+// engine I2's second half: pushedSilences.Set released its mutex before
+// marshaling and writing to disk, so two concurrent Set calls could
+// complete their writes out of order, leaving the on-disk sidecar stale
+// relative to p.silences. Set must hold its mutex for the entire call,
+// including the write, so a slower, earlier Set can never land on disk
+// after a faster, later one.
+func TestPushedSilencesSetHoldsMutexThroughWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pushed-silences.json")
+	p := newPushedSilences(path)
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var hookCalls int
+	pushedSilencesWriteHook = func() {
+		hookCalls++
+		if hookCalls == 1 {
+			close(firstEntered)
+			<-releaseFirst
+		}
+	}
+	defer func() { pushedSilencesWriteHook = nil }()
+
+	first := []pushedSilence{{ID: "first"}}
+	second := []pushedSilence{{ID: "second"}}
+
+	done := make(chan error, 1)
+	go func() { done <- p.Set(first) }()
+	<-firstEntered // first Set is blocked mid-write, holding p.mu (if fixed)
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- p.Set(second) }()
+
+	// Give the second call every chance to race ahead of the first if the
+	// mutex is NOT held through the write -- it would be able to acquire
+	// p.mu (released before the write, pre-fix) and complete its own write
+	// before the first call's (delayed) write ever reaches disk.
+	time.Sleep(20 * time.Millisecond)
+	close(releaseFirst)
+
+	if err := <-done; err != nil {
+		t.Fatalf("first Set: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second Set: %v", err)
+	}
+
+	loaded := loadPushedSilences(path)
+	if len(loaded.silences) != 1 || loaded.silences[0].ID != "second" {
+		t.Fatalf("on-disk sidecar = %+v, want just {ID: second} -- the first call's write must not land after the second's (mutex must be held through the write)", loaded.silences)
+	}
+}

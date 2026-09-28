@@ -107,7 +107,7 @@ type managedFragmentsFileV1 struct {
 }
 
 // managedFragmentStore is the master's managed-config fragment store,
-// persisted atomically (temp + rename + fsync, via writeFileSynced) to one
+// persisted atomically (temp + rename + fsync, via writeFileAtomicSynced) to one
 // JSON file, 0600 (global-constraints: fleet/managed.json). generation is a
 // single monotonically increasing counter, bumped on every successful
 // save/delete: it is both a saved fragment's own Version (task-8 ruling:
@@ -146,7 +146,7 @@ func (s *managedFragmentStore) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeFileSynced(s.path, b)
+	return writeFileAtomicSynced(s.path, b, 0o600)
 }
 
 // List returns every fragment, in creation order.
@@ -709,16 +709,29 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 	mc.setApplied(p.Version, p.Values)
 }
 
+// managedChildWriteHook, when set by a test, runs synchronously immediately
+// before setApplied's disk write -- used to prove the write happens while
+// mc.mu is still held (final-review engine I2), the same way
+// pushedSilencesWriteHook proves it for pushedSilences.Set.
+var managedChildWriteHook func()
+
+// setApplied holds mc.mu for the entire call, including the disk write:
+// otherwise two concurrent Apply calls (a stacked "managed_config" push
+// arriving before the previous one's write lands) can complete their writes
+// out of order, leaving the sidecar stale relative to mc's in-memory state.
 func (mc *managedChild) setApplied(version int64, values map[string]string) {
 	mc.mu.Lock()
+	defer mc.mu.Unlock()
 	mc.version, mc.applied, mc.lastErr = version, true, ""
 	fragments := cloneStringMap(mc.fragments)
-	mc.mu.Unlock()
 	b, err := json.Marshal(managedChildFileV1{Version: version, Values: values, Fragments: fragments, AppliedAt: mc.now().Unix()})
 	if err != nil {
 		return
 	}
-	_ = writeFileSynced(mc.path, b)
+	if managedChildWriteHook != nil {
+		managedChildWriteHook()
+	}
+	_ = writeFileAtomicSynced(mc.path, b, 0o600)
 }
 
 func (mc *managedChild) setError(err error) {

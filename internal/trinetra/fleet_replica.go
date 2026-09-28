@@ -542,7 +542,7 @@ func (n *replicaNode) apply(id string, recs []fleet.Record, sequenced bool, onAl
 		n.st.AppliedSeq = recs[len(recs)-1].Seq
 	}
 	b, _ := json.Marshal(n.st)
-	return writeFileSynced(filepath.Join(n.dir, "ingest.state"), b)
+	return writeFileAtomicSynced(filepath.Join(n.dir, "ingest.state"), b, 0o600)
 }
 
 func appendSynced(path string, b []byte) error {
@@ -559,26 +559,6 @@ func appendSynced(path string, b []byte) error {
 		return err
 	}
 	return f.Close()
-}
-
-func writeFileSynced(path string, b []byte) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }
 
 // Live implements fleet.Sink. Every node posts one of these every few
@@ -695,7 +675,7 @@ func (r *replicaSink) MarkDropsChecked(id string, outOfOrder, cardinality int64)
 	}
 	n.st.WarnedOutOfOrder, n.st.WarnedCardinality = outOfOrder, cardinality
 	b, _ := json.Marshal(n.st)
-	return writeFileSynced(filepath.Join(n.dir, "ingest.state"), b)
+	return writeFileAtomicSynced(filepath.Join(n.dir, "ingest.state"), b, 0o600)
 }
 
 // Stats returns a copy of id's ingest counters (zero for an unknown id).

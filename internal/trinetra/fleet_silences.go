@@ -208,7 +208,7 @@ type silencesFileV1 struct {
 }
 
 // silenceStore is the master's silence/maintenance-window store, persisted
-// atomically (temp + rename + fsync, via writeFileSynced) to one JSON file,
+// atomically (temp + rename + fsync, via writeFileAtomicSynced) to one JSON file,
 // 0600.
 type silenceStore struct {
 	path string
@@ -242,7 +242,7 @@ func (s *silenceStore) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeFileSynced(s.path, b)
+	return writeFileAtomicSynced(s.path, b, 0o600)
 }
 
 // List returns every silence, in creation order.
@@ -510,21 +510,34 @@ func loadPushedSilences(path string) *pushedSilences {
 	return p
 }
 
+// pushedSilencesWriteHook, when set by a test, runs synchronously
+// immediately before Set's disk write -- used to prove the write happens
+// while p.mu is still held (final-review engine I2), by blocking one
+// caller mid-write and observing whether a second, concurrent Set can
+// still race ahead of it.
+var pushedSilencesWriteHook func()
+
 // Set replaces the pushed silence set and persists it (0600, fsync'd). A nil
 // receiver is a no-op (mirrors AlertLog/auditLog's nil-degrades-gracefully
-// convention).
+// convention). p.mu is held for the entire call, including the disk write:
+// otherwise two concurrent Set calls can complete out of order (the write
+// for an earlier Set landing on disk after a later Set's write), leaving
+// the file stale relative to p.silences.
 func (p *pushedSilences) Set(silences []pushedSilence) error {
 	if p == nil {
 		return nil
 	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.silences = silences
-	p.mu.Unlock()
 	b, err := json.Marshal(silencesFrameData{Silences: silences})
 	if err != nil {
 		return err
 	}
-	return writeFileSynced(p.path, b)
+	if pushedSilencesWriteHook != nil {
+		pushedSilencesWriteHook()
+	}
+	return writeFileAtomicSynced(p.path, b, 0o600)
 }
 
 // Suppressed reports whether a fallback delivery for an alert with the given

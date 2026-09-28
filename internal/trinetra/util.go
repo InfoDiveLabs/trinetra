@@ -45,12 +45,30 @@ func sortStrings(s []string) { sort.Strings(s) }
 // the same path (e.g. two live updates from one node) cannot rename each
 // other's half-written file or find it already gone.
 func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
+	return writeFileAtomicImpl(path, b, perm, false)
+}
+
+// writeFileAtomicSynced is writeFileAtomic plus an fsync of the temp file's
+// contents before the rename, for callers that need the write to survive a
+// crash immediately after it returns (private keys, silences/managed/
+// routing config, ingest state). It replaces the old, independent
+// writeFileSynced helper, which used a fixed (non-unique) temp filename and
+// reintroduced the exact concurrent-rename race writeFileAtomic was fixed
+// for (final-review engine I2).
+func writeFileAtomicSynced(path string, b []byte, perm os.FileMode) error {
+	return writeFileAtomicImpl(path, b, perm, true)
+}
+
+func writeFileAtomicImpl(path string, b []byte, perm os.FileMode, sync bool) error {
 	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
 	_, werr := f.Write(b)
+	if werr == nil && sync {
+		werr = f.Sync()
+	}
 	cerr := f.Close()
 	if werr == nil {
 		werr = cerr

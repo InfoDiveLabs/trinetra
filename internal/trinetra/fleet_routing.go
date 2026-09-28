@@ -184,7 +184,7 @@ func validGroupByField(g string) bool {
 type alertingFileV1 = core.AlertingConfig
 
 // alertingStore is the master's routing/escalation config store, persisted
-// atomically (temp + rename + fsync, via writeFileSynced) to one JSON file,
+// atomically (temp + rename + fsync, via writeFileAtomicSynced) to one JSON file,
 // 0600. A missing file behaves exactly like defaultAlertingConfig -- see
 // Get.
 type alertingStore struct {
@@ -255,7 +255,7 @@ func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name stri
 	if err != nil {
 		return core.AlertingConfig{}, err
 	}
-	if err := writeFileSynced(s.path, b); err != nil {
+	if err := writeFileAtomicSynced(s.path, b, 0o600); err != nil {
 		return core.AlertingConfig{}, err
 	}
 	s.cfg, s.set = cfg, true

@@ -1138,3 +1138,55 @@ func TestManagedChildApplyShortCircuitsWhenNoDivergence(t *testing.T) {
 		t.Fatalf("sidecar rewritten despite no divergence:\nbefore=%s\nafter=%s", before, after)
 	}
 }
+
+// TestManagedChildSetAppliedHoldsMutexThroughWrite reproduces final-review
+// engine I2's second half for managedChild: setApplied released its mutex
+// before marshaling and writing the sidecar, so two concurrent setApplied
+// calls (stacked managed_config pushes) could complete their writes out of
+// order, leaving the sidecar stale relative to mc's in-memory version. The
+// mutex must be held for the entire call, including the write.
+func TestManagedChildSetAppliedHoldsMutexThroughWrite(t *testing.T) {
+	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), func() *config.Config { return config.Default() }, &managedApplyAPI{}, nil)
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var hookCalls int
+	managedChildWriteHook = func() {
+		hookCalls++
+		if hookCalls == 1 {
+			close(firstEntered)
+			<-releaseFirst
+		}
+	}
+	defer func() { managedChildWriteHook = nil }()
+
+	done := make(chan struct{})
+	go func() {
+		mc.setApplied(1, map[string]string{"thresholds.cpu_pct": "11"})
+		close(done)
+	}()
+	<-firstEntered // first setApplied is blocked mid-write, holding mc.mu (if fixed)
+
+	secondDone := make(chan struct{})
+	go func() {
+		mc.setApplied(2, map[string]string{"thresholds.cpu_pct": "22"})
+		close(secondDone)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	close(releaseFirst)
+	<-done
+	<-secondDone
+
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(mc.path), "managed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk managedChildFileV1
+	if err := json.Unmarshal(b, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk.Version != 2 || onDisk.Values["thresholds.cpu_pct"] != "22" {
+		t.Fatalf("on-disk sidecar = %+v, want version 2 (the first call's write must not land after the second's)", onDisk)
+	}
+}

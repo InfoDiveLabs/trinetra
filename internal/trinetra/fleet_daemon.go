@@ -126,7 +126,7 @@ func fleetInitPKI(stateDir string, hosts []string, caName string, now time.Time)
 	if err != nil {
 		return err
 	}
-	if err := writeFileSynced(filepath.Join(dir, "server.key"), key); err != nil {
+	if err := writeFileAtomicSynced(filepath.Join(dir, "server.key"), key, 0o600); err != nil {
 		return err
 	}
 	chain := append(append([]byte{}, leaf...), ca.CertPEM...)
