@@ -17,6 +17,13 @@ import "fmt"
 // an acked alert is still an active condition, just a silenced notification
 // (see AlertState.Ack's doc, internal/trinetra/anomaly.go) -- the /alerts
 // page's own firing/acked breakdown is a separate, more detailed view.
+//
+// The crit branch's count is the TOTAL active-alert count (B4, 2026-09-25 UI
+// audit), not just the critical ones: /alerts' "N firing now", the
+// dashboard's active-alerts panel and the sidebar's Alerts badge
+// (NavCounts.Alerts) all count len(alerts) regardless of severity, so the
+// pill must report the same number rather than silently dropping the
+// warnings whenever a critical alert is also active.
 func topbarStatus(alerts []activeAlertView) (status, text string) {
 	var crit, warn int
 	for _, a := range alerts {
@@ -28,7 +35,8 @@ func topbarStatus(alerts []activeAlertView) (status, text string) {
 	}
 	switch {
 	case crit > 0:
-		return "crit", fmt.Sprintf("%d alert%s firing", crit, plural(crit))
+		n := crit + warn
+		return "crit", fmt.Sprintf("%d alert%s firing", n, plural(n))
 	case warn > 0:
 		return "warn", fmt.Sprintf("%d warning%s", warn, plural(warn))
 	default:

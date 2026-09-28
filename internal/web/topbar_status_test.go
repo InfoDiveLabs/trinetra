@@ -12,7 +12,11 @@ import (
 // TestTopbarStatusCriticalAlertsFiring pins Part 3 of the field-feedback fix:
 // N active CRITICAL alerts must drive the topbar to "crit" with real-count
 // text, not the old hardcoded "2 alerts firing" regardless of how many were
-// actually active.
+// actually active. The count is the TOTAL active-alert count (B4, 2026-09-25
+// UI audit), not just the critical ones: /alerts, the dashboard's active
+// alerts panel and the sidebar Alerts badge all count every active alert
+// regardless of severity (NavCounts.Alerts, navCountsFor's doc), so the pill
+// must agree with them rather than silently dropping the warnings.
 func TestTopbarStatusCriticalAlertsFiring(t *testing.T) {
 	alerts := []activeAlertView{
 		{Key: "disk:/", Critical: true},
@@ -23,8 +27,8 @@ func TestTopbarStatusCriticalAlertsFiring(t *testing.T) {
 	if status != "crit" {
 		t.Fatalf("status = %q, want crit", status)
 	}
-	if text != "2 alerts firing" {
-		t.Fatalf("text = %q, want %q", text, "2 alerts firing")
+	if text != "3 alerts firing" {
+		t.Fatalf("text = %q, want %q", text, "3 alerts firing")
 	}
 }
 
@@ -115,6 +119,35 @@ func TestConfigPageTopbarReflectsRealActiveCriticalAlert(t *testing.T) {
 	}
 	if strings.Contains(body, "All systems normal") {
 		t.Errorf("config page topbar still shows the stale hardcoded ok text despite an active critical alert:\n%s", body)
+	}
+}
+
+// TestConfigPageTopbarCountMatchesNavBadge pins B4 (2026-09-25 UI audit)
+// end to end: with 1 critical + 1 warning alert active, the topbar pill's
+// count must equal navCountsFor's Alerts badge (both from the same
+// activeAlertsViaAPI read) -- "2 alerts firing", not "1 alert firing" from
+// counting only the critical one.
+func TestConfigPageTopbarCountMatchesNavBadge(t *testing.T) {
+	d, _, _ := configTestDeps(t)
+	d.API = fakeAPI{active: []core.AlertRecord{
+		{Key: "disk:/", Time: 1, Source: "disk full", Severity: "critical"},
+		{Key: "cpu", Time: 2, Source: "hot", Severity: "warning"},
+	}}
+
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/config"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /config status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "2 alerts firing") {
+		t.Errorf("config page topbar count doesn't match total active alerts:\n%s", body)
+	}
+	if strings.Contains(body, "1 alert firing") {
+		t.Errorf("config page topbar still undercounts to the critical-only count:\n%s", body)
 	}
 }
 
