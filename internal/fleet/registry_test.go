@@ -115,6 +115,49 @@ func TestRegistryAddDedupesNameCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestRegistryAddBoundsUniqueNameLoop is the final-review transport minor 3
+// regression: uniqueNameLocked's "-2", "-3", ... collision loop had no
+// upper bound. uniqueNameCap is shrunk for the test so it doesn't need to
+// actually register 1000 real nodes to exercise the bound.
+func TestRegistryAddBoundsUniqueNameLoop(t *testing.T) {
+	old := uniqueNameCap
+	uniqueNameCap = 5
+	t.Cleanup(func() { uniqueNameCap = old })
+
+	p := filepath.Join(t.TempDir(), "registry.json")
+	r, err := OpenRegistry(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Occupy "web" and every "web-2".."web-5" (uniqueNameCap slots), so a
+	// further Add("web") can never find a free name within the cap.
+	if err := r.Add(Node{ID: mustNodeID(t), Name: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i <= uniqueNameCap; i++ {
+		if err := r.Add(Node{ID: mustNodeID(t), Name: fmt.Sprintf("web-%d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := r.Add(Node{ID: mustNodeID(t), Name: "web"}); err == nil {
+		t.Fatal("want an error once every web/web-2..web-N slot within uniqueNameCap is taken, not an unbounded loop")
+	}
+	// The rejected node must not have been registered.
+	if n := len(r.List()); n != uniqueNameCap {
+		t.Fatalf("registry has %d nodes, want %d (the failed Add must not have partially registered)", n, uniqueNameCap)
+	}
+}
+
+func mustNodeID(t *testing.T) string {
+	t.Helper()
+	id, err := NewNodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestRegistryNameConflict(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "registry.json")
 	r, _ := OpenRegistry(p)

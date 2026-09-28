@@ -120,7 +120,11 @@ func (r *Registry) Add(n Node) error {
 	if _, ok := r.nodes[n.ID]; ok {
 		return fmt.Errorf("fleet: node %s already registered", n.ID)
 	}
-	n.Name = r.uniqueNameLocked(n.Name, "")
+	name, err := r.uniqueNameLocked(n.Name, "")
+	if err != nil {
+		return err
+	}
+	n.Name = name
 	r.nodes[n.ID] = &n
 	if err := r.saveLocked(); err != nil {
 		delete(r.nodes, n.ID)
@@ -129,17 +133,27 @@ func (r *Registry) Add(n Node) error {
 	return nil
 }
 
+// uniqueNameCap bounds how many "-N" suffixes uniqueNameLocked will try
+// before giving up. Not exploitable today (bounded in practice by how many
+// nodes could plausibly share a name), but worth a sanity cap as defense in
+// depth against a pathological join flow that races many joins under the
+// same base name (final-review transport minor 3). A package var, not a
+// const, so a test can shrink it instead of actually registering
+// uniqueNameCap nodes to exercise the bound.
+var uniqueNameCap = 1000
+
 // uniqueNameLocked returns a name that does not collide (case-insensitively)
 // with any node other than excludeID, appending "-2", "-3", ... to base as
-// needed. Caller holds r.mu.
-func (r *Registry) uniqueNameLocked(base, excludeID string) string {
+// needed, up to uniqueNameCap attempts. Caller holds r.mu.
+func (r *Registry) uniqueNameLocked(base, excludeID string) (string, error) {
 	name := base
-	for i := 2; ; i++ {
+	for i := 2; i <= uniqueNameCap; i++ {
 		if _, taken := r.nameConflictLocked(name, excludeID); !taken {
-			return name
+			return name, nil
 		}
 		name = fmt.Sprintf("%s-%d", base, i)
 	}
+	return "", fmt.Errorf("fleet: could not find a unique name for %q after %d attempts", base, uniqueNameCap)
 }
 
 // nameConflictLocked returns the id of a node other than excludeID whose

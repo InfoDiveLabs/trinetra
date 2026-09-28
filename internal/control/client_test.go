@@ -5,10 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -631,5 +636,95 @@ func TestClientReconnectsAfterTransportFailure(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Snapshot() after reconnect = %+v, want %+v", got, want)
+	}
+}
+
+// coreErrSentinelTexts parses every non-test .go file in internal/core and
+// extracts the exact message of every top-level exported
+// "var ErrXxx = errors.New("...")" declaration, so
+// TestWireErrSentinelsCoverEveryCoreSentinel checks wireErrSentinels
+// against core's actual sentinel declarations rather than a second,
+// hand-maintained list that could drift right alongside it (final-review
+// transport minor 4: "reconstructWireErr's sentinel list is a manually
+// maintained parallel structure to core's sentinel definitions").
+func coreErrSentinelTexts(t *testing.T) map[string]string {
+	t.Helper()
+	files, err := filepath.Glob("../core/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no files matched ../core/*.go -- wrong working directory for this test?")
+	}
+	texts := map[string]string{}
+	fset := token.NewFileSet()
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", path, err)
+		}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok || len(vs.Names) != len(vs.Values) {
+					continue
+				}
+				for i, name := range vs.Names {
+					if !name.IsExported() || !strings.HasPrefix(name.Name, "Err") {
+						continue
+					}
+					call, ok := vs.Values[i].(*ast.CallExpr)
+					if !ok || len(call.Args) != 1 {
+						continue
+					}
+					sel, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok || sel.Sel.Name != "New" {
+						continue
+					}
+					if pkgIdent, ok := sel.X.(*ast.Ident); !ok || pkgIdent.Name != "errors" {
+						continue
+					}
+					lit, ok := call.Args[0].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					s, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						continue
+					}
+					texts[name.Name] = s
+				}
+			}
+		}
+	}
+	return texts
+}
+
+// TestWireErrSentinelsCoverEveryCoreSentinel is the final-review transport
+// minor 4 regression: every exported core.Err* sentinel declared as a plain
+// errors.New(...) must have its exact text present in wireErrSentinels, so
+// a future Fleet.*/node method that wraps a new one via
+// fmt.Errorf("...: %w", sentinel) doesn't silently lose errors.Is over the
+// control socket just because nobody remembered to add it here too.
+func TestWireErrSentinelsCoverEveryCoreSentinel(t *testing.T) {
+	want := coreErrSentinelTexts(t)
+	if len(want) == 0 {
+		t.Fatal("found no core.Err* sentinel declarations to check -- coreErrSentinelTexts's AST scan is probably broken")
+	}
+	have := map[string]bool{}
+	for _, s := range wireErrSentinels {
+		have[s.Error()] = true
+	}
+	for name, text := range want {
+		if !have[text] {
+			t.Errorf("core.%s (%q) is not in wireErrSentinels -- a control-socket caller's errors.Is(err, core.%s) would silently stop working for a %%w-wrapped instance of it", name, text, name)
+		}
 	}
 }
