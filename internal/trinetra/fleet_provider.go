@@ -210,7 +210,7 @@ func (f fleetAPIImpl) RenameNode(id, name, actor string) error {
 	if err := m.reg.Rename(id, name); err != nil {
 		return err
 	}
-	m.audited(actor, "rename_node", id, name)
+	m.audited(actor, "fleet.node.rename", id, name)
 	return nil
 }
 
@@ -227,7 +227,7 @@ func (f fleetAPIImpl) SetNodeTags(id string, tags []string, actor string) error 
 	if err := m.reg.Update(id, func(n *fleet.Node) error { n.Tags = tags; return nil }); err != nil {
 		return err
 	}
-	m.audited(actor, "set_node_tags", id, strings.Join(tags, ","))
+	m.audited(actor, "fleet.node.tags", id, strings.Join(tags, ","))
 	return nil
 }
 
@@ -303,7 +303,7 @@ func (f fleetAPIImpl) RevokeNode(id, actor string) error {
 	if m.hub != nil {
 		m.hub.Disconnect(id) // a revoked node keeps no lease, no open stream
 	}
-	m.audited(actor, "revoke_node", id, "")
+	m.audited(actor, "fleet.node.revoke", id, "")
 	return nil
 }
 
@@ -321,7 +321,7 @@ func (f fleetAPIImpl) RemoveNode(id, actor string) error {
 	if m.hub != nil {
 		m.hub.Disconnect(id)
 	}
-	m.audited(actor, "remove_node", id, "")
+	m.audited(actor, "fleet.node.remove", id, "")
 	return nil
 }
 
@@ -366,7 +366,7 @@ func (f fleetAPIImpl) CreateToken(spec core.TokenSpec) (core.CreatedToken, error
 	if actor == "" {
 		actor = "unknown"
 	}
-	m.audited(actor, "create_token", tok.ID, strings.Join(spec.Tags, ","))
+	m.audited(actor, "fleet.token.create", tok.ID, strings.Join(spec.Tags, ","))
 	return core.CreatedToken{Token: tokenView(tok), JoinCode: code}, nil
 }
 
@@ -378,7 +378,7 @@ func (f fleetAPIImpl) DeleteToken(id, actor string) error {
 	if err := m.tokens.Delete(id); err != nil {
 		return err
 	}
-	m.audited(actor, "delete_token", id, "")
+	m.audited(actor, "fleet.token.delete", id, "")
 	return nil
 }
 
@@ -441,7 +441,7 @@ func (f fleetAPIImpl) AckIncident(id, actor string) error {
 	if _, err := m.engine.incidents.Ack(id, actor, time.Now().Unix()); err != nil {
 		return err
 	}
-	m.audited(actor, "ack_incident", id, "")
+	m.audited(actor, "fleet.incident.ack", id, "")
 	return nil
 }
 
@@ -501,7 +501,7 @@ func (f fleetAPIImpl) CreateSilence(s core.Silence) (core.Silence, error) {
 	if actor == "" {
 		actor = "unknown"
 	}
-	m.audited(actor, "create_silence", created.ID, formatMatchers(created.Matchers))
+	m.audited(actor, "fleet.silence.create", created.ID, formatMatchers(created.Matchers))
 	m.pushSilencesToAll(time.Now())
 	return created, nil
 }
@@ -517,7 +517,7 @@ func (f fleetAPIImpl) ExpireSilence(id, actor string) error {
 	if err := m.silences.Expire(id, time.Now().Unix()); err != nil {
 		return err
 	}
-	m.audited(actor, "expire_silence", id, "")
+	m.audited(actor, "fleet.silence.expire", id, "")
 	m.pushSilencesToAll(time.Now())
 	return nil
 }
@@ -552,7 +552,7 @@ func (f fleetAPIImpl) SaveMaintenance(mw core.Maintenance) (core.Maintenance, er
 	if actor == "" {
 		actor = "unknown"
 	}
-	m.audited(actor, "save_maintenance", saved.ID, saved.Name)
+	m.audited(actor, "fleet.maintenance.save", saved.ID, saved.Name)
 	m.pushSilencesToAll(time.Now())
 	return saved, nil
 }
@@ -568,7 +568,7 @@ func (f fleetAPIImpl) DeleteMaintenance(id, actor string) error {
 	if err := m.silences.DeleteMaintenance(id); err != nil {
 		return err
 	}
-	m.audited(actor, "delete_maintenance", id, "")
+	m.audited(actor, "fleet.maintenance.delete", id, "")
 	m.pushSilencesToAll(time.Now())
 	return nil
 }

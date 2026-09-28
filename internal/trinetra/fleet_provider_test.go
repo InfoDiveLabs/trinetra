@@ -75,12 +75,12 @@ func TestFleetAPIAckIncidentAndAudit(t *testing.T) {
 	}
 	found := false
 	for _, e := range entries {
-		if e.Action == "ack_incident" && e.Actor == "cli" && e.Target == id {
+		if e.Action == "fleet.incident.ack" && e.Actor == "cli" && e.Target == id {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("audit missing ack_incident entry: %+v", entries)
+		t.Fatalf("audit missing fleet.incident.ack entry: %+v", entries)
 	}
 
 	if err := api.AckIncident("no-such-id", "cli"); err == nil {
@@ -194,8 +194,8 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantActions := map[string]string{
-		"rename_node": "alice", "set_node_tags": "alice", "revoke_node": "alice",
-		"create_token": "cli", "delete_token": "alice", "remove_node": "alice",
+		"fleet.node.rename": "alice", "fleet.node.tags": "alice", "fleet.node.revoke": "alice",
+		"fleet.token.create": "cli", "fleet.token.delete": "alice", "fleet.node.remove": "alice",
 	}
 	seen := map[string]bool{}
 	for _, e := range entries {

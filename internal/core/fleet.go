@@ -599,23 +599,23 @@ type RouteDecision struct {
 type FleetAPI interface {
 	Status() (FleetStatus, error)
 	Nodes(NodeFilter) ([]NodeSummary, error)
-	// RenameNode renames id, recording a "rename_node" audit entry under
+	// RenameNode renames id, recording a "fleet.node.rename" audit entry under
 	// actor (plan C task C5: this used to have no actor parameter at all --
 	// every caller, in-process and over the control socket, recorded the
 	// literal placeholder "unknown". Every caller now threads through the
 	// real acting identity: the CLI's "cli", or the signed-in web user's own
 	// name, auditUser(r)).
 	RenameNode(id, name, actor string) error
-	// SetNodeTags replaces id's tag set, recording a "set_node_tags" audit
+	// SetNodeTags replaces id's tag set, recording a "fleet.node.tags" audit
 	// entry under actor (see RenameNode's doc for why this gained an actor
 	// parameter).
 	SetNodeTags(id string, tags []string, actor string) error
-	// RevokeNode revokes id, recording a "revoke_node" audit entry under
+	// RevokeNode revokes id, recording a "fleet.node.revoke" audit entry under
 	// actor (see RenameNode's doc).
 	RevokeNode(id, actor string) error
 	// RemoveNode deletes id from the fleet (registry and liveness), resolving
 	// any open node-down alert; its replicated history stays on disk.
-	// Records a "remove_node" audit entry under actor (see RenameNode's
+	// Records a "fleet.node.remove" audit entry under actor (see RenameNode's
 	// doc).
 	RemoveNode(id, actor string) error
 	// SetNodeDeps replaces id's dependency list (node ids or "tag:<t>"
@@ -632,7 +632,7 @@ type FleetAPI interface {
 	// second, redundant actor parameter here would just be two names for the
 	// same value.
 	CreateToken(TokenSpec) (CreatedToken, error)
-	// DeleteToken removes join token id, recording a "delete_token" audit
+	// DeleteToken removes join token id, recording a "fleet.token.delete" audit
 	// entry under actor (see RenameNode's doc).
 	DeleteToken(id, actor string) error
 
