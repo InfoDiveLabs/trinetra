@@ -1,5 +1,8 @@
 # Multi-host fleet topology for run.sh: one master, two children, one solo
-# host and the mock Telegram API, each its own container on one network.
+# host and the mock Telegram API, each its own container. fleetnet is the
+# master<->child link that run.sh partitions; tgnet stands in for a child's
+# own internet path to Telegram, which a real partition from the master does
+# not cut, so a child's local-fallback delivery can still reach mocktg.
 # Daemons are started by run.sh (docker compose exec -d), not by systemd.
 name: swfleet
 
@@ -19,6 +22,7 @@ services:
   mocktg:
     <<: *sw
     hostname: mocktg
+    networks: [fleetnet, tgnet]
     command: ["mocktg"]
     environment:
       ADDR: ":8080"
@@ -28,9 +32,11 @@ services:
   child1:
     <<: *sw
     hostname: child1
+    networks: [fleetnet, tgnet]
   child2:
     <<: *sw
     hostname: child2
+    networks: [fleetnet, tgnet]
   solo:
     <<: *sw
     hostname: solo
@@ -38,3 +44,5 @@ services:
 networks:
   fleetnet:
     name: swfleet_fleetnet
+  tgnet:
+    name: swfleet_tgnet
