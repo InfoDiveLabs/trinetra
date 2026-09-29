@@ -2,7 +2,9 @@ package update
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -47,6 +49,38 @@ type KeySet struct {
 }
 
 func (k KeySet) empty() bool { return len(k.CI) == 0 || len(k.Maint) == 0 || len(k.Pointer) == 0 }
+
+// mustKeySet decodes compiled-in base64 keys; a malformed constant is a
+// programming error caught by TestProductionKeysDecode.
+func mustKeySet(ci, maint, ptr []string) KeySet {
+	dec := func(in []string) []ed25519.PublicKey {
+		var out []ed25519.PublicKey
+		for _, s := range in {
+			b, err := base64.StdEncoding.DecodeString(s)
+			if err != nil || len(b) != ed25519.PublicKeySize {
+				panic("update: bad compiled-in public key " + s)
+			}
+			out = append(out, ed25519.PublicKey(b))
+		}
+		return out
+	}
+	return KeySet{CI: dec(ci), Maint: dec(maint), Pointer: dec(ptr)}
+}
+
+// Fingerprints lists "role:hex(sha256(pubkey))" for every key, CI first.
+func Fingerprints(k KeySet) []string {
+	var out []string
+	add := func(role string, keys []ed25519.PublicKey) {
+		for _, pk := range keys {
+			sum := sha256.Sum256(pk)
+			out = append(out, role+":"+hex.EncodeToString(sum[:]))
+		}
+	}
+	add("ci", k.CI)
+	add("maint", k.Maint)
+	add("pointer", k.Pointer)
+	return out
+}
 
 // decodeSig reads a .sig file: base64 of a 64-byte signature, optional
 // trailing whitespace.
