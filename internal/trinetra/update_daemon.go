@@ -158,12 +158,15 @@ func notifyPendingResult(p updatePaths, notify func(Alert)) {
 		return
 	}
 	notify(a)
-	st2, err := update.LoadState(p.dir())
-	if err != nil || st2.Last == nil {
-		return
-	}
-	st2.Last.Notified = true
-	if err := update.SaveState(p.dir(), st2); err != nil {
+	err = update.WithState(p.dir(), func(st2 *update.State) error {
+		// Mark only the result just delivered, not a newer one a guard may
+		// have written meanwhile.
+		if st2.Last != nil && st2.Last.At == st.Last.At && st2.Last.Version == st.Last.Version {
+			st2.Last.Notified = true
+		}
+		return nil
+	})
+	if err != nil {
 		log.Printf("update: mark result notified: %v", err)
 	}
 }
@@ -203,22 +206,25 @@ func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(A
 	if checkErr != nil {
 		log.Printf("update: check: %v", checkErr)
 	}
-	st2, err := update.LoadState(u.paths.dir())
+	var alert *Alert
+	err = update.WithState(u.paths.dir(), func(st2 *update.State) error {
+		stale, reason := freezeVerdict(checkErr, st2.LastPointerIssued, u.clock())
+		switch {
+		case stale && !st2.StaleNotified:
+			a := updateStaleAlert(channel, reason, u.clock())
+			alert = &a
+			st2.StaleNotified = true
+		case !stale && st2.StaleNotified && checkRefreshedState(checkErr):
+			st2.StaleNotified = false
+		}
+		return nil
+	})
 	if err != nil {
-		return
-	}
-	stale, reason := freezeVerdict(checkErr, st2.LastPointerIssued, u.clock())
-	switch {
-	case stale && !st2.StaleNotified:
-		notify(updateStaleAlert(channel, reason, u.clock()))
-		st2.StaleNotified = true
-	case !stale && st2.StaleNotified && checkRefreshedState(checkErr):
-		st2.StaleNotified = false
-	default:
-		return
-	}
-	if err := update.SaveState(u.paths.dir(), st2); err != nil {
 		log.Printf("update: save stale-alert state: %v", err)
+		return
+	}
+	if alert != nil {
+		notify(*alert)
 	}
 }
 
@@ -234,12 +240,11 @@ func notifyAvailable(p updatePaths, notify func(Alert)) {
 		return
 	}
 	notify(a)
-	st2, err := update.LoadState(p.dir())
+	err = update.WithState(p.dir(), func(st2 *update.State) error {
+		st2.AvailableNotified = st.Available
+		return nil
+	})
 	if err != nil {
-		return
-	}
-	st2.AvailableNotified = st.Available
-	if err := update.SaveState(p.dir(), st2); err != nil {
 		log.Printf("update: mark available notified: %v", err)
 	}
 }

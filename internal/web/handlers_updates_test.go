@@ -354,3 +354,31 @@ func (f *fakeUpdateAPI) UpdateRollback() error {
 }
 
 var _ core.API = (*fakeUpdateAPI)(nil)
+
+// TestUpdatesApplyAndRollbackBusyFlash is R16: when another apply/rollback/
+// install already holds the host's update lock (from the CLI, the socket or
+// another browser), the web actions say so plainly with the fixed
+// "update-busy" code instead of a generic failure.
+func TestUpdatesApplyAndRollbackBusyFlash(t *testing.T) {
+	busy := errors.New("update: an update is already in progress (see trinetra update status)")
+	d := enrollTestDeps(t)
+	d.API = &fakeUpdateAPI{
+		fakeAPI:     fakeAPI{updateApply: func(context.Context, string) error { return busy }},
+		status:      core.UpdateStatusView{Running: "0.5.0", Available: "0.5.1", Previous: "0.4.9"},
+		rollbackErr: busy,
+	}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+	for _, path := range []string{"/updates/apply", "/updates/rollback"} {
+		rr := postForm(h, path, url.Values{"version": {"0.5.1"}}, cookie, csrf)
+		if loc := rr.Header().Get("Location"); loc != "/updates?flash=update-busy" {
+			t.Errorf("%s: Location = %q, want /updates?flash=update-busy", path, loc)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/updates?flash=update-busy", nil)
+	if text, isErr := resolveUpdatesFlash(req); !isErr || !strings.Contains(text, "already in progress") {
+		t.Fatalf("update-busy flash = %q, %v", text, isErr)
+	}
+}

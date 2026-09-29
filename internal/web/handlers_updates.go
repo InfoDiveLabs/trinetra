@@ -65,6 +65,8 @@ func resolveUpdatesFlash(r *http.Request) (text string, isErr bool) {
 		return "Rollback started; the health guard will confirm it shortly.", false
 	case "update-error":
 		return "The update action failed. See the daemon log for details.", true
+	case "update-busy":
+		return "Another update is already in progress on this host. Wait for it to be confirmed or rolled back, then try again.", true
 	}
 	return "", false
 }
@@ -112,6 +114,17 @@ func renderUpdatesPage(w http.ResponseWriter, data UpdatesPageData) error {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return tmpl.ExecuteTemplate(w, "base.html", data)
+}
+
+// updateErrorFlash picks the fixed flash code for a failed apply/rollback:
+// "update-busy" when the host refused because another update holds its lock
+// or is pending (R16; the error crosses the control socket as text, so this
+// matches the daemon's fixed message), otherwise "update-error".
+func updateErrorFlash(err error) string {
+	if strings.Contains(err.Error(), "already in progress") {
+		return "update-busy"
+	}
+	return "update-error"
 }
 
 // redirectToUpdates redirects to GET /updates with a fixed ?flash= code (or
@@ -184,7 +197,7 @@ func updatesApplyHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		if err := d.API.UpdateApply(r.Context(), version); err != nil {
-			redirectToUpdates(w, r, "update-error")
+			redirectToUpdates(w, r, updateErrorFlash(err))
 			return
 		}
 		logAudit(d, r, "update.apply", "version", "", version)
@@ -206,7 +219,7 @@ func updatesRollbackHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		if err := d.API.UpdateRollback(); err != nil {
-			redirectToUpdates(w, r, "update-error")
+			redirectToUpdates(w, r, updateErrorFlash(err))
 			return
 		}
 		logAudit(d, r, "update.rollback", "version", "", "")

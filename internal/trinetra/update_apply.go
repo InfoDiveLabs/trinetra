@@ -14,10 +14,37 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
-// errUpdateInProgress is returned by swapIn when a Pending update is already
-// recorded: a second `trinetra update apply` (or a concurrent one) must not
+// errUpdateInProgress is returned when another apply/rollback/install holds
+// update/apply.lock, or a Pending update is already recorded: a second
+// `trinetra update apply` (CLI, socket or web, or a concurrent one) must not
 // stage a new build over a host that has not yet confirmed the last one.
-var errUpdateInProgress = errors.New("update: another update is in progress (see trinetra update status)")
+var errUpdateInProgress = errors.New("update: an update is already in progress (see trinetra update status)")
+
+// takeApplyLock claims update/apply.lock without blocking (R16): one apply,
+// rollback or install at a time per host, across processes. A held lock is
+// errUpdateInProgress. The kernel drops the lock if the holder dies.
+func takeApplyLock(p updatePaths) (unlock func(), err error) {
+	unlock, ok, err := update.TryLock(p.applyLock())
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errUpdateInProgress
+	}
+	return unlock, nil
+}
+
+// probeApplyLock reports errUpdateInProgress when another operation holds
+// the apply lock right now, without keeping it (the socket preflights use
+// it to refuse fast; the operation itself takes the lock for real).
+func probeApplyLock(p updatePaths) error {
+	unlock, err := takeApplyLock(p)
+	if err != nil {
+		return err
+	}
+	unlock()
+	return nil
+}
 
 // updateHealthDeadline is how long a freshly-swapped-in build has to prove
 // itself healthy (see the Pending.Deadline this package sets) before
@@ -39,6 +66,7 @@ func (p updatePaths) dir() string             { return filepath.Join(p.StateDir,
 func (p updatePaths) staging(v string) string { return filepath.Join(p.dir(), "staging", v) }
 func (p updatePaths) previous() string        { return filepath.Join(p.dir(), "previous") }
 func (p updatePaths) cache() string           { return filepath.Join(p.dir(), "cache") }
+func (p updatePaths) applyLock() string       { return filepath.Join(p.dir(), "apply.lock") }
 
 // applyPlan is what a release manifest resolves to for THIS host: the
 // manifest itself (plus its raw bytes, for caching), the arch to install
@@ -251,13 +279,15 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 		return restoreOrJoin(p, fmt.Errorf("update: rewrite plugin manifest: %w", err))
 	}
 
-	st.Pending = &update.Pending{
-		Version:  plan.Manifest.Version,
-		From:     strings.TrimPrefix(version.String(), "v"),
-		Deadline: now.Add(updateHealthDeadline).Unix(),
-		Files:    plan.Names,
-	}
-	return update.SaveState(p.dir(), st)
+	return update.WithState(p.dir(), func(st *update.State) error {
+		st.Pending = &update.Pending{
+			Version:  plan.Manifest.Version,
+			From:     strings.TrimPrefix(version.String(), "v"),
+			Deadline: now.Add(updateHealthDeadline).Unix(),
+			Files:    plan.Names,
+		}
+		return nil
+	})
 }
 
 // restoreOrJoin attempts to roll back to the previous build after cause (a

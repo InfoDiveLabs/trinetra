@@ -126,28 +126,26 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 		return update.Manifest{}, err
 	}
 
-	st, err := update.LoadState(u.paths.dir())
+	var policyErr error
+	err = update.WithState(u.paths.dir(), func(st *update.State) error {
+		floor := st.FloorVersion(u.running)
+		policyErr = update.CheckPolicy(m, update.Policy{Channel: channel, Floor: floor, Running: u.running})
+		if policyErr == nil && st.IsBad(m.Version) {
+			policyErr = fmt.Errorf("%w: %s", errKnownBad, m.Version)
+		}
+		st.LastCheck = now.Unix()
+		st.LastPointerIssued = ptr.Issued
+		// R18: Available drives the "update available" alert, the web Apply
+		// button and Telegram /version, so it names only a release this host
+		// would actually accept (channel, floor, min_upgrade_from, not known
+		// bad); anything else clears it.
+		st.Available = ""
+		if policyErr == nil {
+			st.Available = m.Version
+		}
+		return nil
+	})
 	if err != nil {
-		return update.Manifest{}, err
-	}
-	floor := st.FloorVersion(u.running)
-	policyErr := update.CheckPolicy(m, update.Policy{Channel: channel, Floor: floor, Running: u.running})
-
-	if policyErr == nil && st.IsBad(m.Version) {
-		policyErr = fmt.Errorf("%w: %s", errKnownBad, m.Version)
-	}
-
-	st.LastCheck = now.Unix()
-	st.LastPointerIssued = ptr.Issued
-	// R18: Available drives the "update available" alert, the web Apply
-	// button and Telegram /version, so it names only a release this host
-	// would actually accept (channel, floor, min_upgrade_from, not known
-	// bad); anything else clears it.
-	st.Available = ""
-	if policyErr == nil {
-		st.Available = m.Version
-	}
-	if err := update.SaveState(u.paths.dir(), st); err != nil {
 		return update.Manifest{}, err
 	}
 	return m, policyErr
@@ -182,6 +180,9 @@ func (u updater) preflightApply(c *config.Config, opts applyOptions) error {
 	if u.resolveSource(c, opts.Bundle) == nil {
 		return fmt.Errorf("update.source is none; use --bundle DIR")
 	}
+	if err := probeApplyLock(u.paths); err != nil {
+		return err
+	}
 	st, err := update.LoadState(u.paths.dir())
 	if err != nil {
 		return err
@@ -202,6 +203,9 @@ func (u updater) preflightApply(c *config.Config, opts applyOptions) error {
 // (coreapi_inproc.go) can run it synchronously before backgrounding the rest
 // (restorePrevious + launching the guard).
 func (u updater) preflightRollback() error {
+	if err := probeApplyLock(u.paths); err != nil {
+		return err
+	}
 	prevCore := filepath.Join(u.paths.previous(), "trinetra")
 	fi, err := os.Stat(prevCore)
 	if err != nil || !fi.Mode().IsRegular() {
@@ -212,7 +216,7 @@ func (u updater) preflightRollback() error {
 		return err
 	}
 	if st.Pending != nil {
-		return fmt.Errorf("update: an update is already pending (see trinetra update status)")
+		return errUpdateInProgress
 	}
 	return nil
 }
@@ -235,6 +239,19 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 	src := u.resolveSource(c, opts.Bundle)
 	if src == nil {
 		return update.Manifest{}, fmt.Errorf("update.source is none; use --bundle DIR")
+	}
+
+	// R16: one apply/rollback/install at a time per host, held until the
+	// swap is recorded and the guard launched (or this apply failed).
+	unlock, err := takeApplyLock(u.paths)
+	if err != nil {
+		return update.Manifest{}, err
+	}
+	defer unlock()
+	if st, err := update.LoadState(u.paths.dir()); err != nil {
+		return update.Manifest{}, err
+	} else if st.Pending != nil {
+		return update.Manifest{}, errUpdateInProgress
 	}
 
 	// version resolution: an explicit --version wins; otherwise a network
@@ -303,10 +320,7 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 
 	if err := u.launchGuard(); err != nil {
 		restorePrevious(u.paths)
-		if st2, lerr := update.LoadState(u.paths.dir()); lerr == nil {
-			st2.Pending = nil
-			update.SaveState(u.paths.dir(), st2)
-		}
+		update.WithState(u.paths.dir(), func(st *update.State) error { st.Pending = nil; return nil })
 		return update.Manifest{}, fmt.Errorf("update: health guard failed to start, rolled back: %w", err)
 	}
 
@@ -320,6 +334,11 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 // or rollback) and when there is nothing to roll back to. It never lowers
 // the version floor.
 func (u updater) rollback() error {
+	unlock, err := takeApplyLock(u.paths)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	prevCore := filepath.Join(u.paths.previous(), "trinetra")
 	fi, err := os.Stat(prevCore)
 	if err != nil || !fi.Mode().IsRegular() {
@@ -331,7 +350,7 @@ func (u updater) rollback() error {
 		return err
 	}
 	if st.Pending != nil {
-		return fmt.Errorf("update: an update is already pending (see trinetra update status)")
+		return errUpdateInProgress
 	}
 
 	prevVersion := "unknown"

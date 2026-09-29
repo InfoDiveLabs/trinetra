@@ -168,6 +168,11 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	// MkdirAll+Chmod(0700) landed on stateDir itself (normally 0755) instead
 	// of its "update" subdirectory.
 	paths := defaultUpdatePaths()
+	unlock, err := installPreflight(paths)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if verified {
 		if err := checkInstallPolicy(paths, m, currentInstalledVersion()); err != nil {
 			return err
@@ -240,6 +245,27 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 		raiseInstallFloor(paths, m.Version)
 	}
 	return nil
+}
+
+// installPreflight claims the self-update apply lock for the whole install
+// (R16) and refuses while an update is pending: install replacing the
+// binaries under a live health guard would have the guard roll the
+// operator's install back and mark the pending version bad.
+func installPreflight(paths updatePaths) (unlock func(), err error) {
+	unlock, err = takeApplyLock(paths)
+	if err != nil {
+		return nil, fmt.Errorf("install: %w", err)
+	}
+	st, err := update.LoadState(paths.dir())
+	if err != nil {
+		unlock()
+		return nil, fmt.Errorf("install: %w", err)
+	}
+	if st.Pending != nil {
+		unlock()
+		return nil, fmt.Errorf("install: an update to %s is pending; wait until it is confirmed or rolled back (trinetra update status), then install again", st.Pending.Version)
+	}
+	return unlock, nil
 }
 
 // errNoSignedManifest is returned by verifyInstallBundle when manifest.json
@@ -426,12 +452,10 @@ func raiseInstallFloor(paths updatePaths, version string) {
 	if err != nil {
 		return
 	}
-	st, err := update.LoadState(paths.dir())
-	if err != nil {
-		return
-	}
-	st.RaiseFloor(v)
-	_ = update.SaveState(paths.dir(), st)
+	_ = update.WithState(paths.dir(), func(st *update.State) error {
+		st.RaiseFloor(v)
+		return nil
+	})
 }
 
 // telegramInstallHint returns the install success line's Telegram clause: a

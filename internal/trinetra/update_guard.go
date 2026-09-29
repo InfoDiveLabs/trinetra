@@ -151,19 +151,18 @@ func checkGuardHealth(h guardHealth, wantVersion string, restartedAt time.Time) 
 // floor), clears Pending, removes the now-consumed staged download, and
 // records Last.
 func commitPending(p updatePaths, pending update.Pending, now time.Time) (update.Result, error) {
-	st, err := update.LoadState(p.dir())
-	if err != nil {
-		return update.Result{}, err
-	}
-	if !pending.Rollback {
-		if v, verr := update.ParseVersion(pending.Version); verr == nil {
-			st.RaiseFloor(v)
-		}
-	}
 	result := update.Result{Version: pending.Version, From: pending.From, Outcome: "committed", At: now.Unix()}
-	st.Last = &result
-	st.Pending = nil
-	if err := update.SaveState(p.dir(), st); err != nil {
+	err := update.WithState(p.dir(), func(st *update.State) error {
+		if !pending.Rollback {
+			if v, verr := update.ParseVersion(pending.Version); verr == nil {
+				st.RaiseFloor(v)
+			}
+		}
+		st.Last = &result
+		st.Pending = nil
+		return nil
+	})
+	if err != nil {
 		return update.Result{}, err
 	}
 	_ = os.RemoveAll(p.staging(pending.Version))
@@ -197,17 +196,16 @@ func rollbackPending(p updatePaths, pending update.Pending, detail string, resta
 		}
 	}
 
-	st, err := update.LoadState(p.dir())
-	if err != nil {
-		return update.Result{}, err
-	}
-	if !pending.Rollback {
-		st.Bad = append(st.Bad, pending.Version)
-	}
 	result := update.Result{Version: pending.Version, From: pending.From, Outcome: "rolled_back", Detail: detail, At: now.Unix()}
-	st.Last = &result
-	st.Pending = nil
-	if err := update.SaveState(p.dir(), st); err != nil {
+	err := update.WithState(p.dir(), func(st *update.State) error {
+		if !pending.Rollback {
+			st.Bad = append(st.Bad, pending.Version)
+		}
+		st.Last = &result
+		st.Pending = nil
+		return nil
+	})
+	if err != nil {
 		return update.Result{}, err
 	}
 	return result, nil
