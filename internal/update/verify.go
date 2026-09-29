@@ -96,6 +96,17 @@ func decodeSig(b []byte) ([]byte, error) {
 	return sig, nil
 }
 
+// VerifySignature checks a single detached signature file against a set of
+// trusted keys for one domain-separated role (ReleasePrefix or
+// ChannelPrefix), without requiring a second, paired signature the way
+// VerifyRelease does. It exists for tooling that must verify one signature
+// before its counterpart exists yet — for example cmd/trinetra-release
+// cosign checking a release's CI signature before the maintainer signature
+// has been produced.
+func VerifySignature(keys []PublicKey, prefix string, msg, sigFile []byte) error {
+	return verifyAny(keys, prefix, msg, sigFile)
+}
+
 func verifyAny(keys []ed25519.PublicKey, prefix string, msg, sigFile []byte) error {
 	sig, err := decodeSig(sigFile)
 	if err != nil {

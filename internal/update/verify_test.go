@@ -69,6 +69,31 @@ func TestVerifyReleaseDomainSeparation(t *testing.T) {
 	}
 }
 
+func TestVerifySignature(t *testing.T) {
+	ci, other := NewTestSigner(1), NewTestSigner(9)
+	keys := []PublicKey{ci.Public()}
+	msg := []byte("manifest bytes")
+	sig := ci.SignRelease(msg)
+
+	if err := VerifySignature(keys, ReleasePrefix, msg, sig); err != nil {
+		t.Fatalf("valid signature refused: %v", err)
+	}
+	if err := VerifySignature(keys, ReleasePrefix, msg, nil); !errors.Is(err, ErrMissingSignature) {
+		t.Errorf("missing sig: err = %v, want ErrMissingSignature", err)
+	}
+	if err := VerifySignature(keys, ReleasePrefix, msg, other.SignRelease(msg)); !errors.Is(err, ErrBadSignature) {
+		t.Errorf("wrong key: err = %v, want ErrBadSignature", err)
+	}
+	if err := VerifySignature(keys, ChannelPrefix, msg, sig); !errors.Is(err, ErrBadSignature) {
+		t.Errorf("wrong prefix: err = %v, want ErrBadSignature", err)
+	}
+	tampered := append([]byte{}, msg...)
+	tampered[0] ^= 0xff
+	if err := VerifySignature(keys, ReleasePrefix, tampered, sig); !errors.Is(err, ErrBadSignature) {
+		t.Errorf("tampered message: err = %v, want ErrBadSignature", err)
+	}
+}
+
 func TestDecodeManifestStrict(t *testing.T) {
 	good, _ := json.Marshal(testManifest())
 	if _, err := DecodeManifest(good); err != nil {

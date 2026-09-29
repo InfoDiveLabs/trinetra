@@ -8,9 +8,5 @@ package update
 // the e2e image is built with this tag; the release workflow refuses to ship
 // a binary whose Fingerprints() match these.
 func ProductionKeys() KeySet {
-	return KeySet{
-		CI:      []PublicKey{NewTestSigner(1).Public(), NewTestSigner(4).Public()},
-		Maint:   []PublicKey{NewTestSigner(2).Public(), NewTestSigner(5).Public()},
-		Pointer: []PublicKey{NewTestSigner(3).Public(), NewTestSigner(6).Public()},
-	}
+	return TestKeySet()
 }

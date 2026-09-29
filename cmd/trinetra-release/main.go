@@ -124,20 +124,46 @@ func writeSeedKey(path string) (ed25519.PublicKey, error) {
 		return nil, err
 	}
 	line := base64.StdEncoding.EncodeToString(priv.Seed()) + "\n"
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(line); err != nil {
+	if err := writeKeyFile(path, []byte(line)); err != nil {
 		return nil, err
 	}
 	return pub, nil
 }
 
+// releaseStems and releaseArches define the exact release set: three
+// binaries times three linux architectures, nine files total. This is the
+// single source of truth for both what cmdManifest requires present and
+// what it refuses as an unexpected trinetra*-linux-* file (review F4).
+var (
+	releaseStems  = []string{"trinetra", "trinetra-ctl", "trinetra-web"}
+	releaseArches = []string{"amd64", "arm64", "arm"}
+)
+
+// expectedReleaseFiles returns the exact set of "stem-linux-arch" names a
+// release must contain, mapped to (os, arch) for building each File entry.
+func expectedReleaseFiles() map[string][2]string {
+	want := make(map[string][2]string, len(releaseStems)*len(releaseArches))
+	for _, stem := range releaseStems {
+		for _, arch := range releaseArches {
+			want[stem+"-linux-"+arch] = [2]string{"linux", arch}
+		}
+	}
+	return want
+}
+
 // cmdManifest implements: manifest --dir DIR --version V --channel C
 // --min-upgrade-from V --published RFC3339 [--keys-ci ... --keys-maint ...
 // --keys-pointer ...]
+//
+// It requires the exact 9-file release set (3 binaries x 3 linux
+// architectures): any missing file is an error, and any trinetra*-linux-*
+// file that is not one of those 9 exact names is also an error rather than
+// silently skipped (a stray "trinetra-linux-amd64.sha256" or a leftover
+// "trinetra-old-linux-amd64" must never get CI-signed). Files that are not
+// named "trinetra*-linux-*" at all (checksums.txt, darwin binaries, ...)
+// are simply not considered. The generated manifest is run through
+// update.DecodeManifest before it is written, so a malformed manifest is
+// caught here rather than at cosign time or on a host.
 func cmdManifest(args []string) error {
 	fs := newFlagSet("manifest")
 	dir := fs.String("dir", "", "directory containing the release files")
@@ -158,27 +184,37 @@ func cmdManifest(args []string) error {
 	if err != nil {
 		return err
 	}
+	expected := expectedReleaseFiles()
+	seen := make(map[string]bool, len(expected))
 	var files []update.File
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		name := e.Name()
-		if !strings.HasPrefix(name, "trinetra") {
-			continue
+		if !strings.HasPrefix(name, "trinetra") || !strings.Contains(name, "-linux-") {
+			continue // not a release file at all: not considered, per brief.
 		}
-		osName, arch, ok := parsePlatform(name)
+		osArch, ok := expected[name]
 		if !ok {
-			continue
+			return fmt.Errorf("manifest: unexpected release file %q in %s (want one of %v)", name, *dir, sortedKeys(expected))
 		}
 		size, sum, err := hashFile(filepath.Join(*dir, name))
 		if err != nil {
 			return err
 		}
-		files = append(files, update.File{Name: name, OS: osName, Arch: arch, Size: size, SHA256: sum})
+		files = append(files, update.File{Name: name, OS: osArch[0], Arch: osArch[1], Size: size, SHA256: sum})
+		seen[name] = true
 	}
-	if len(files) == 0 {
-		return fmt.Errorf("manifest: no trinetra*-linux-* files found in %s", *dir)
+	if len(seen) != len(expected) {
+		var missing []string
+		for name := range expected {
+			if !seen[name] {
+				missing = append(missing, name)
+			}
+		}
+		sort.Strings(missing)
+		return fmt.Errorf("manifest: missing release file(s) in %s: %s", *dir, strings.Join(missing, ", "))
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
 
@@ -201,22 +237,19 @@ func cmdManifest(args []string) error {
 		return err
 	}
 	b = append(b, '\n')
+	if _, err := update.DecodeManifest(b); err != nil {
+		return fmt.Errorf("manifest: generated manifest is invalid: %w", err)
+	}
 	return os.WriteFile(filepath.Join(*dir, "manifest.json"), b, 0o644)
 }
 
-// parsePlatform extracts (os, arch) from a "trinetra*-linux-<arch>" file
-// name; only the linux platform is currently shipped.
-func parsePlatform(name string) (osName, arch string, ok bool) {
-	const marker = "-linux-"
-	i := strings.LastIndex(name, marker)
-	if i < 0 {
-		return "", "", false
+func sortedKeys(m map[string][2]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
 	}
-	arch = name[i+len(marker):]
-	if arch == "" || strings.Contains(arch, "/") {
-		return "", "", false
-	}
-	return "linux", arch, true
+	sort.Strings(out)
+	return out
 }
 
 func splitCSV(s string) []string {
@@ -362,25 +395,20 @@ func cmdVerify(args []string) error {
 	}
 	keys := update.ProductionKeys()
 	if testkeys {
-		keys = testKeySet()
+		keys = update.TestKeySet()
 	}
 	m, err := verifyDir(dirs[0], keys)
 	if err != nil {
 		return fmt.Errorf("verify: %w", err)
 	}
+	if testkeys {
+		// Loud and impossible to mistake for a production result (review
+		// M6): a workflow or operator glancing at the last line must not
+		// read this as "the real release keys checked out".
+		fmt.Println("WARNING: verified against TEST keys, not production keys")
+	}
 	fmt.Printf("verified %s %s (published %s) - %d files ok\n", m.Version, m.Channel, m.Published, len(m.Files))
 	return nil
-}
-
-// testKeySet mirrors internal/update's trinetra_testkeys ProductionKeys()
-// build, so verify --testkeys and cosign fakes can be exercised without
-// building this tool with that tag.
-func testKeySet() update.KeySet {
-	return update.KeySet{
-		CI:      []update.PublicKey{update.NewTestSigner(1).Public(), update.NewTestSigner(4).Public()},
-		Maint:   []update.PublicKey{update.NewTestSigner(2).Public(), update.NewTestSigner(5).Public()},
-		Pointer: []update.PublicKey{update.NewTestSigner(3).Public(), update.NewTestSigner(6).Public()},
-	}
 }
 
 // verifyDir verifies DIR's manifest.json against manifest.ci.sig and

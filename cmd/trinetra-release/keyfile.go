@@ -13,7 +13,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/scrypt"
@@ -31,7 +33,18 @@ type envelope struct {
 	CT    string `json:"ct"`
 }
 
-const maintKeyAAD = "trinetra-maint-key-v1"
+const (
+	maintKeyAAD = "trinetra-maint-key-v1"
+
+	// envelopeN/R/P are the only scrypt parameters this tool ever writes.
+	// readEncryptedKey requires an exact match rather than trusting
+	// attacker-controlled N/r/p from the file: a huge N is an OOM vector and
+	// a tiny N silently weakens the KDF (review M3).
+	envelopeN       = 1 << 15
+	envelopeR       = 8
+	envelopeP       = 1
+	envelopeSaltLen = 16
+)
 
 func deriveKey(pass, salt []byte, n, r, p int) ([]byte, error) {
 	return scrypt.Key(pass, salt, n, r, p, chacha20poly1305.KeySize)
@@ -42,11 +55,14 @@ func deriveKey(pass, salt []byte, n, r, p int) ([]byte, error) {
 // envelope to path (0600, refusing to overwrite an existing file). It
 // returns the public key; the private key never touches stdout/stderr.
 func writeEncryptedKey(path string, pass []byte) (ed25519.PublicKey, error) {
+	if len(pass) == 0 {
+		return nil, errors.New("writeEncryptedKey: empty passphrase")
+	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	salt := make([]byte, 16)
+	salt := make([]byte, envelopeSaltLen)
 	nonce := make([]byte, chacha20poly1305.NonceSizeX)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, err
@@ -54,8 +70,7 @@ func writeEncryptedKey(path string, pass []byte) (ed25519.PublicKey, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	const n, r, p = 1 << 15, 8, 1
-	k, err := deriveKey(pass, salt, n, r, p)
+	k, err := deriveKey(pass, salt, envelopeN, envelopeR, envelopeP)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +80,7 @@ func writeEncryptedKey(path string, pass []byte) (ed25519.PublicKey, error) {
 	}
 	ct := aead.Seal(nil, nonce, priv.Seed(), []byte(maintKeyAAD))
 	b, err := json.MarshalIndent(envelope{
-		KDF: "scrypt", N: n, R: r, P: p,
+		KDF: "scrypt", N: envelopeN, R: envelopeR, P: envelopeP,
 		Salt:  base64.StdEncoding.EncodeToString(salt),
 		Nonce: base64.StdEncoding.EncodeToString(nonce),
 		CT:    base64.StdEncoding.EncodeToString(ct),
@@ -73,34 +88,34 @@ func writeEncryptedKey(path string, pass []byte) (ed25519.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	if _, err := f.Write(b); err != nil {
+	if err := writeKeyFile(path, b); err != nil {
 		return nil, err
 	}
 	return pub, nil
 }
 
 // readEncryptedKey decrypts a maintainer key envelope written by
-// writeEncryptedKey. A wrong passphrase or corrupted file fails closed.
+// writeEncryptedKey. A wrong passphrase or corrupted file fails closed, and
+// every field read from the file is bounds-checked before use so a
+// malformed file can only be rejected, never cause a panic (review M3).
 func readEncryptedKey(path string, pass []byte) (ed25519.PrivateKey, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var e envelope
-	if err := json.Unmarshal(b, &e); err != nil || e.KDF != "scrypt" {
+	if err := json.Unmarshal(b, &e); err != nil {
 		return nil, errors.New("not a trinetra maintainer key file")
 	}
+	if e.KDF != "scrypt" || e.N != envelopeN || e.R != envelopeR || e.P != envelopeP {
+		return nil, errors.New("not a trinetra maintainer key file (unexpected kdf parameters)")
+	}
 	salt, err := base64.StdEncoding.DecodeString(e.Salt)
-	if err != nil {
+	if err != nil || len(salt) != envelopeSaltLen {
 		return nil, errors.New("not a trinetra maintainer key file")
 	}
 	nonce, err := base64.StdEncoding.DecodeString(e.Nonce)
-	if err != nil {
+	if err != nil || len(nonce) != chacha20poly1305.NonceSizeX {
 		return nil, errors.New("not a trinetra maintainer key file")
 	}
 	ct, err := base64.StdEncoding.DecodeString(e.CT)
@@ -119,13 +134,53 @@ func readEncryptedKey(path string, pass []byte) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, errors.New("wrong passphrase or corrupted key file")
 	}
+	if len(seed) != ed25519.SeedSize {
+		return nil, errors.New("not a trinetra maintainer key file (bad seed length)")
+	}
 	return ed25519.NewKeyFromSeed(seed), nil
+}
+
+// writeKeyFile writes data to a new file at path (0600, O_EXCL — refuses to
+// overwrite an existing key file), fsyncs it, and checks every error
+// including Close. Any failure removes the partial file rather than leaving
+// a key file on disk that was never durably (or fully) written (review M2).
+func writeKeyFile(path string, data []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+			os.Remove(path)
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// openTTY opens the controlling terminal for interactive prompts. It is a
+// variable so tests can substitute a fake without touching a real terminal.
+var openTTY = func() (*os.File, error) {
+	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
 }
 
 // readPassphrase returns a maintainer key passphrase, either from the file
 // named by TRINETRA_MAINT_PASSPHRASE_FILE (mode 0600, for automation) or by
 // prompting on /dev/tty with echo disabled. It never reads argv and never
-// echoes the passphrase to any log.
+// echoes the passphrase to any log. Terminal echo is restored both when the
+// read completes and, via a signal handler installed only for the duration
+// of the prompt, if the process is killed by SIGINT/SIGTERM while the
+// passphrase is being typed (review M4 — a plain `defer` does not run when a
+// signal kills the process).
 func readPassphrase(prompt string) ([]byte, error) {
 	if p := os.Getenv("TRINETRA_MAINT_PASSPHRASE_FILE"); p != "" {
 		fi, err := os.Stat(p)
@@ -142,7 +197,7 @@ func readPassphrase(prompt string) ([]byte, error) {
 		return bytes.TrimRight(b, "\r\n"), nil
 	}
 
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	tty, err := openTTY()
 	if err != nil {
 		return nil, errors.New("no terminal available for passphrase entry; set TRINETRA_MAINT_PASSPHRASE_FILE for automation")
 	}
@@ -152,7 +207,24 @@ func readPassphrase(prompt string) ([]byte, error) {
 	if err := sttyEcho(tty, false); err != nil {
 		return nil, err
 	}
-	defer sttyEcho(tty, true)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	restored := make(chan struct{})
+	go func() {
+		select {
+		case <-sigCh:
+			sttyEcho(tty, true)
+			fmt.Fprintln(tty)
+			os.Exit(130)
+		case <-restored:
+		}
+	}()
+	defer func() {
+		close(restored)
+		signal.Stop(sigCh)
+		sttyEcho(tty, true)
+	}()
 
 	line, err := bufio.NewReader(tty).ReadString('\n')
 	fmt.Fprintln(tty)
@@ -164,23 +236,35 @@ func readPassphrase(prompt string) ([]byte, error) {
 
 // readNewPassphrase asks for a new passphrase twice on the terminal and
 // requires the two entries to match; when TRINETRA_MAINT_PASSPHRASE_FILE is
-// set it is read once (the file is already the single source of truth).
+// set it is read once (the file is already the single source of truth). An
+// empty passphrase is always rejected (review M1): this protects a
+// production maintainer signing key, not a convenience credential.
 func readNewPassphrase() ([]byte, error) {
+	var pass []byte
 	if os.Getenv("TRINETRA_MAINT_PASSPHRASE_FILE") != "" {
-		return readPassphrase("")
+		p, err := readPassphrase("")
+		if err != nil {
+			return nil, err
+		}
+		pass = p
+	} else {
+		p1, err := readPassphrase("Passphrase: ")
+		if err != nil {
+			return nil, err
+		}
+		p2, err := readPassphrase("Confirm passphrase: ")
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(p1, p2) {
+			return nil, errors.New("passphrases did not match")
+		}
+		pass = p1
 	}
-	p1, err := readPassphrase("Passphrase: ")
-	if err != nil {
-		return nil, err
+	if len(pass) == 0 {
+		return nil, errors.New("passphrase must not be empty")
 	}
-	p2, err := readPassphrase("Confirm passphrase: ")
-	if err != nil {
-		return nil, err
-	}
-	if !bytes.Equal(p1, p2) {
-		return nil, errors.New("passphrases did not match")
-	}
-	return p1, nil
+	return pass, nil
 }
 
 func sttyEcho(tty *os.File, on bool) error {

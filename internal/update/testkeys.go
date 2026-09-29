@@ -28,3 +28,18 @@ func (t TestSigner) sign(prefix string, b []byte) []byte {
 func (t TestSigner) SignRelease(b []byte) []byte { return t.sign(ReleasePrefix, b) }
 func (t TestSigner) SignPointer(b []byte) []byte { return t.sign(ChannelPrefix, b) }
 func (t TestSigner) signRaw(b []byte) []byte     { return t.sign("", b) }
+
+// TestKeySet returns the deterministic test key set (signers 1/4 = CI,
+// 2/5 = maint, 3/6 = pointer). It is available in every build, unlike
+// ProductionKeys(), which only returns these keys when built with the
+// trinetra_testkeys tag (keys_testkeys.go). Tooling that needs to verify
+// against the same test trust anchor without that build tag — such as
+// cmd/trinetra-release's `verify --testkeys` and `cosign --testkeys` — calls
+// this directly; nothing in the host update path does.
+func TestKeySet() KeySet {
+	return KeySet{
+		CI:      []PublicKey{NewTestSigner(1).Public(), NewTestSigner(4).Public()},
+		Maint:   []PublicKey{NewTestSigner(2).Public(), NewTestSigner(5).Public()},
+		Pointer: []PublicKey{NewTestSigner(3).Public(), NewTestSigner(6).Public()},
+	}
+}
