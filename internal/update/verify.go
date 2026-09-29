@@ -15,6 +15,16 @@ type PublicKey = ed25519.PublicKey
 const (
 	ReleasePrefix = "trinetra-release-v1\n"
 	ChannelPrefix = "trinetra-channel-v1\n"
+
+	// MaxPointerLifetime is the longest span a channel pointer's Expires may
+	// be set beyond its Issued time. A compromised pointer key must not be
+	// able to freeze a host on a stale release by self-declaring a far-future
+	// expiry.
+	MaxPointerLifetime = 14 * 24 * time.Hour
+
+	// pointerClockSkew is the slack allowed for clock drift between the
+	// signer and the host when checking pointer lifetime and issue time.
+	pointerClockSkew = time.Hour
 )
 
 var (
@@ -82,7 +92,12 @@ func VerifyRelease(keys KeySet, manifest, ciSig, maintSig []byte) (Manifest, err
 	return DecodeManifest(manifest)
 }
 
-// VerifyPointer checks a channel pointer's signature and expiry.
+// VerifyPointer checks a channel pointer's signature, then its lifetime: a
+// pointer must not have been issued in the future (past clock-skew slack),
+// must not claim a lifetime longer than MaxPointerLifetime (plus slack), and
+// must not have expired. All three protect against a compromised pointer
+// key self-declaring an expiry far enough out to freeze a host on a stale
+// release (Ruling R4).
 func VerifyPointer(keys KeySet, pointer, sig []byte, now time.Time) (Pointer, error) {
 	if keys.empty() {
 		return Pointer{}, ErrNoKeys
@@ -94,7 +109,14 @@ func VerifyPointer(keys KeySet, pointer, sig []byte, now time.Time) (Pointer, er
 	if err != nil {
 		return Pointer{}, err
 	}
+	issued, _ := time.Parse(time.RFC3339, p.Issued)
 	exp, _ := time.Parse(time.RFC3339, p.Expires)
+	if issued.After(now.Add(pointerClockSkew)) {
+		return Pointer{}, fmt.Errorf("%w: pointer issued %s is in the future", ErrMalformed, p.Issued)
+	}
+	if lifetime := exp.Sub(issued); lifetime > MaxPointerLifetime+pointerClockSkew {
+		return Pointer{}, fmt.Errorf("%w: pointer lifetime %s exceeds max %s", ErrMalformed, lifetime, MaxPointerLifetime)
+	}
 	if !now.Before(exp) {
 		return Pointer{}, fmt.Errorf("%w (expired %s)", ErrExpired, p.Expires)
 	}

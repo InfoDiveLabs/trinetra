@@ -137,4 +137,29 @@ func TestVerifyPointer(t *testing.T) {
 	if _, err := VerifyPointer(keys, pb, ptr.SignRelease(pb), issued.Add(time.Hour)); !errors.Is(err, ErrBadSignature) {
 		t.Errorf("release-prefixed sig accepted as pointer sig: %v", err)
 	}
+
+	// Ruling R4: a pointer's own lifetime must not exceed MaxPointerLifetime
+	// (plus clock-skew slack), regardless of what it self-declares.
+	longLived := Pointer{Schema: 1, Product: "trinetra", Channel: "stable", Version: "0.5.0",
+		Issued: issued.Format(time.RFC3339), Expires: issued.Add(30 * 24 * time.Hour).Format(time.RFC3339)}
+	llb, _ := json.Marshal(longLived)
+	if _, err := VerifyPointer(keys, llb, ptr.SignPointer(llb), issued.Add(time.Hour)); !errors.Is(err, ErrMalformed) {
+		t.Errorf("30-day lifetime pointer accepted: err = %v, want ErrMalformed", err)
+	}
+
+	// A pointer issued more than 1h in the future (relative to now) is rejected.
+	futureIssued := Pointer{Schema: 1, Product: "trinetra", Channel: "stable", Version: "0.5.0",
+		Issued: issued.Add(2 * time.Hour).Format(time.RFC3339), Expires: issued.Add(2*time.Hour + 14*24*time.Hour).Format(time.RFC3339)}
+	fib, _ := json.Marshal(futureIssued)
+	if _, err := VerifyPointer(keys, fib, ptr.SignPointer(fib), issued); !errors.Is(err, ErrMalformed) {
+		t.Errorf("pointer issued 2h in the future accepted: err = %v, want ErrMalformed", err)
+	}
+
+	// Exactly MaxPointerLifetime (14 days) is still accepted.
+	exact14d := Pointer{Schema: 1, Product: "trinetra", Channel: "stable", Version: "0.5.0",
+		Issued: issued.Format(time.RFC3339), Expires: issued.Add(MaxPointerLifetime).Format(time.RFC3339)}
+	e14b, _ := json.Marshal(exact14d)
+	if _, err := VerifyPointer(keys, e14b, ptr.SignPointer(e14b), issued.Add(time.Hour)); err != nil {
+		t.Errorf("exactly-14-day pointer refused: %v", err)
+	}
 }
