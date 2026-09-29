@@ -2,7 +2,7 @@ BIN=trinetra
 CTL_BIN=trinetra-ctl
 WEB_BIN=trinetra-web
 
-.PHONY: test vet build linux cross release release-prod validate fleet-e2e migration-e2e test-all fmt
+.PHONY: test vet build linux cross release release-prod validate fleet-e2e migration-e2e update-e2e test-all fmt
 
 # Build flags, per release channel:
 #   Beta/dev builds keep the symbol table and DWARF so stack traces, delve, and
@@ -53,8 +53,9 @@ linux:
 
 # cross builds the full release matrix: all three binaries (trinetra,
 # trinetra-ctl, trinetra-web), each from its own ./cmd directory with
-# no build tag, for linux amd64/arm64/arm, plus darwin amd64/arm64
-# (dev/homelab convenience, not part of the linux release set). The
+# no build tag, for linux amd64/arm64/arm. Linux is the only supported
+# release target; darwin builds are dev/homelab convenience only and use
+# plain `make build` on the host GOOS/GOARCH instead. The
 # GO_TRIMPATH/GO_LDFLAGS vars are empty by default (beta channel) and set by
 # release-prod for the optimized main channel.
 cross:
@@ -67,22 +68,16 @@ cross:
 	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-linux-arm ./cmd/trinetra
 	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-linux-arm ./cmd/trinetra-ctl
 	GOOS=linux GOARCH=arm GOARM=7 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-linux-arm ./cmd/trinetra-web
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-amd64 ./cmd/trinetra
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-amd64 ./cmd/trinetra-ctl
-	GOOS=darwin GOARCH=amd64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-amd64 ./cmd/trinetra-web
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(BIN)-darwin-arm64 ./cmd/trinetra
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(CTL_BIN)-darwin-arm64 ./cmd/trinetra-ctl
-	GOOS=darwin GOARCH=arm64 go build $(GO_TRIMPATH) -ldflags "$(ALL_LDFLAGS)" -o dist/$(WEB_BIN)-darwin-arm64 ./cmd/trinetra-web
 
-# release is the BETA/preview cut (unstripped, debuggable): cross's whole
-# matrix plus a dist/checksums.txt covering every artifact, so
+# release is the BETA/preview cut (unstripped, debuggable): the 9 linux
+# release binaries plus a dist/checksums.txt covering every artifact, so
 # sha256sum -c checksums.txt verifies a downloaded binary against the same
 # file the release page links. Used for the develop-branch vX.Y.Z-beta.N
 # prereleases. rm -f first so a re-run never appends onto (or hashes) a stale
 # checksums.txt from a previous invocation.
 release: cross
 	rm -f dist/checksums.txt
-	cd dist && sha256sum $(BIN)-* > checksums.txt
+	cd dist && sha256sum trinetra*-linux-* > checksums.txt
 
 # release-prod is the PRODUCTION (main) cut: identical artifact set and
 # checksums as release, but every binary is fully optimized (stripped with
@@ -93,7 +88,7 @@ release-prod: GO_LDFLAGS := -s -w
 release-prod: GO_TRIMPATH := -trimpath
 release-prod: cross
 	rm -f dist/checksums.txt
-	cd dist && sha256sum $(BIN)-* > checksums.txt
+	cd dist && sha256sum trinetra*-linux-* > checksums.txt
 
 validate:
 	bash test/docker/scenarios.sh
@@ -109,6 +104,12 @@ fleet-e2e:
 # privileged containers; about 1 min after the image build.
 migration-e2e:
 	bash test/docker/migration/run.sh
+
+# update-e2e exercises the signed self-update path end to end against a
+# systemd container (see test/docker/update/run.sh). Needs Docker with
+# privileged containers.
+update-e2e:
+	bash test/docker/update/run.sh
 
 # test-all runs every check unattended (gofmt, vet, race tests, build, then
 # the fleet and migration docker suites) and writes per-stage logs plus a

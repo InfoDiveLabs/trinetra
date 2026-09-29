@@ -1,0 +1,41 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go test -race -count=1 ./...
+      - name: Build linux binaries
+        run: |
+          V="${GITHUB_REF_NAME}"
+          make release-prod VERSION="$V"
+      - name: Check embedded release keys
+        run: bash scripts/release-check-keys.sh dist/trinetra-linux-amd64
+      - name: Manifest and CI signature
+        env:
+          TRINETRA_SIGNING_KEY: ${{ secrets.TRINETRA_CI_SIGNING_KEY }}
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          CH=stable; case "$V" in *-*) CH=beta;; esac
+          go run ./cmd/trinetra-release manifest --dir dist --version "$V" --channel "$CH" \
+            --min-upgrade-from "$(cat .release/min-upgrade-from)" --published "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go run ./cmd/trinetra-release sign --role ci --in dist/manifest.json --out dist/manifest.ci.sig
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "dist/trinetra*-linux-*"
+      - name: Draft release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          PRE=""; case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease";; esac
+          gh release create "$GITHUB_REF_NAME" --draft $PRE --title "$GITHUB_REF_NAME" --notes "Awaiting maintainer co-signature." \
+            dist/trinetra*-linux-* dist/manifest.json dist/manifest.ci.sig dist/checksums.txt
