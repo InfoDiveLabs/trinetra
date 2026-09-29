@@ -265,6 +265,13 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/settings/public", Icon: "◈", Label: "Public view"}, AdminOnly: true},
+	// Updates (task 8): signed self-update status + manual actions
+	// (check/apply/rollback). Admin-only like Configuration/Channels/Users/
+	// Public view above -- self-update is a per-node action, so unlike
+	// Alerting/Fleet admin/Managed config/Audit below it is NOT MasterOnly
+	// and stays reachable (and node-prefixed, navForRole's default) from any
+	// daemon's own nav, solo, master, or child.
+	{NavItem: NavItem{Href: "/updates", Icon: "⬆", Label: "Updates"}, AdminOnly: true},
 	// Alerting (task C3, fleet phase 2 web UI plan C): the routing/
 	// escalation config editor, route tester, and rule states. AdminOnly +
 	// MasterOnly, exactly like "Fleet admin" below -- the brief's own

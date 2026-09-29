@@ -237,6 +237,31 @@ func (a *fileAPI) ContainerLogs(name string, lines int) (string, error) {
 // Version implements core.API: this process's own build-stamped version (#107).
 func (a *fileAPI) Version() (string, error) { return version.String(), nil }
 
+// UpdateStatus implements core.API (task 8): this host's persisted
+// self-update posture, via the shared coreUpdateStatus helper
+// (update_cmd.go) built from this fileAPI's own cfg.
+func (a *fileAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	return coreUpdateStatus(a.cfg)
+}
+
+// UpdateCheck implements core.API via the shared coreUpdateCheck helper.
+func (a *fileAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	return coreUpdateCheck(ctx, a.cfg)
+}
+
+// UpdateApply implements core.API: delegates to newUpdater(a.cfg).apply,
+// exactly like `trinetra update apply` itself.
+func (a *fileAPI) UpdateApply(ctx context.Context, version string) error {
+	_, err := newUpdater(a.cfg).apply(ctx, a.cfg, applyOptions{Version: version})
+	return err
+}
+
+// UpdateRollback implements core.API: delegates to
+// newUpdater(a.cfg).rollback, exactly like `trinetra update rollback`.
+func (a *fileAPI) UpdateRollback() error {
+	return newUpdater(a.cfg).rollback()
+}
+
 // EnrollmentPIN implements core.API: this CLI process has no live daemon
 // state (unlike inprocAPI, which reads through its own enrollState), so it
 // always returns errEnrollNeedsDaemon rather than a stale or fabricated

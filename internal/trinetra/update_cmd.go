@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
@@ -332,6 +333,79 @@ func (u updater) status() (updateStatus, error) {
 		KeysLoaded:   keySetLoaded(u.keys),
 		Fingerprints: update.Fingerprints(u.keys),
 	}, nil
+}
+
+// toUpdateStatusView projects this package's own updateStatus (the
+// CLI/socket-agnostic `trinetra update status` shape, built by updater.status
+// plus the Channel/Source cmdUpdateStatus/core.API implementations both fill
+// in from config) into core.UpdateStatusView -- the DTO core.API.UpdateStatus/
+// UpdateCheck return, crossing the same trinetra->core boundary
+// buildDashboardView/buildMonitoringView already establish for the
+// dashboard/monitoring pages. Fingerprints is deliberately dropped: it isn't
+// part of core.UpdateStatusView's contract (task-8-brief.md's interface
+// list), and exposing raw key fingerprints over the control socket/web UI
+// wasn't asked for.
+func toUpdateStatusView(st updateStatus) core.UpdateStatusView {
+	v := core.UpdateStatusView{
+		Running:    st.Running,
+		Channel:    st.Channel,
+		Floor:      st.Floor,
+		Available:  st.Available,
+		Previous:   st.Previous,
+		Source:     st.Source,
+		KeysLoaded: st.KeysLoaded,
+	}
+	if st.Pending != nil {
+		v.Pending = &core.UpdatePendingView{
+			Version:  st.Pending.Version,
+			From:     st.Pending.From,
+			Deadline: st.Pending.Deadline,
+			Rollback: st.Pending.Rollback,
+		}
+	}
+	if st.Last != nil {
+		v.Last = &core.UpdateResultView{
+			Version: st.Last.Version,
+			From:    st.Last.From,
+			Outcome: st.Last.Outcome,
+			Detail:  st.Last.Detail,
+			At:      st.Last.At,
+		}
+	}
+	return v
+}
+
+// coreUpdateStatus builds a core.UpdateStatusView for cfg's daemon/CLI
+// process: updater.status() plus the Channel/Source cmdUpdateStatus itself
+// always fills in from cfg (status() has no config of its own to read those
+// from -- see its doc). Shared by inprocAPI.UpdateStatus and
+// fileAPI.UpdateStatus so the two core.API backends build the exact same
+// view the exact same way.
+func coreUpdateStatus(c *config.Config) (core.UpdateStatusView, error) {
+	st, err := newUpdater(c).status()
+	if err != nil {
+		return core.UpdateStatusView{}, err
+	}
+	st.Channel = c.UpdateChannel()
+	st.Source = c.UpdateSource()
+	return toUpdateStatusView(st), nil
+}
+
+// coreUpdateCheck runs `trinetra update check`'s underlying updater.check for
+// cfg, then rebuilds the status view via coreUpdateStatus regardless of
+// whether check itself errored (an error like ErrAlreadyInstalled or a
+// verification failure still leaves a meaningful status to show -- see
+// updater.check's own doc: "it returns the fetched manifest even when the
+// policy check fails ... so a caller can still report what's on the
+// channel"). The check error itself (if any) is still returned as this
+// function's own error, unmodified.
+func coreUpdateCheck(ctx context.Context, c *config.Config) (core.UpdateStatusView, error) {
+	_, checkErr := newUpdater(c).check(ctx, c)
+	view, statusErr := coreUpdateStatus(c)
+	if statusErr != nil {
+		return core.UpdateStatusView{}, statusErr
+	}
+	return view, checkErr
 }
 
 // keySetLoaded mirrors update.KeySet.empty() (unexported in that package)

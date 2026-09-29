@@ -1,0 +1,66 @@
+{{/* updates.html (task 8): the admin-only self-update status + actions page.
+     Status is core.UpdateStatusView (Deps.API.UpdateStatus). Three plain
+     (non-htmx) single-purpose forms -- Check now / Apply <available> / Roll
+     back -- each carries the CSRF hidden field and its own confirmation
+     line; every submit redirects back here with a fixed ?flash= code
+     (handlers_updates.go's resolveUpdatesFlash), never free text. */}}
+{{define "content"}}
+<div id="updates-page">
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+
+  <div class="section-label"><span class="eyebrow">Self-update</span></div>
+  <div class="grid g-2">
+    <div class="panel"><div class="head"><span class="eyebrow">Status</span></div>
+      <label class="field"><span class="lb">Running</span><span class="mono">{{.Status.Running}}</span></label>
+      <label class="field"><span class="lb">Channel</span><span class="mono">{{.Status.Channel}}</span></label>
+      <label class="field"><span class="lb">Source</span><span class="mono">{{.Status.Source}}</span></label>
+      <label class="field"><span class="lb">Floor</span><span class="mono">{{.Status.Floor}}</span></label>
+      <label class="field"><span class="lb">Release keys</span><span class="mono">{{if .Status.KeysLoaded}}loaded{{else}}not loaded{{end}}</span></label>
+    </div>
+    <div class="panel"><div class="head"><span class="eyebrow">Versions</span></div>
+      <label class="field"><span class="lb">Available</span><span class="mono">{{if .Status.Available}}{{.Status.Available}}{{else}}none{{end}}</span></label>
+      <label class="field"><span class="lb">Previous</span><span class="mono">{{if .Status.Previous}}{{.Status.Previous}}{{else}}none{{end}}</span></label>
+      {{with .Status.Pending}}
+      <label class="field"><span class="lb">Pending</span><span class="mono">{{.Version}} (from {{.From}}{{if .Rollback}}, rollback{{end}}) &middot; confirms by {{nodeAgo .Deadline}}</span></label>
+      {{end}}
+      {{with .Status.Last}}
+      <label class="field"><span class="lb">Last outcome</span><span class="mono">{{.Version}} &middot; {{.Outcome}}{{if .Detail}} ({{.Detail}}){{end}} &middot; {{nodeAgo .At}}</span></label>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Actions</span></div>
+  <div class="grid g-2">
+    <div class="panel"><div class="head"><span class="eyebrow">Check now</span></div>
+      <p class="note" style="margin:-4px 0 14px">Fetch and verify the channel's latest signed release, and record what's available.</p>
+      <form method="post" action="/updates/check">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <button class="btn" type="submit" name="do" value="check">Check now</button>
+      </form>
+    </div>
+
+    <div class="panel"><div class="head"><span class="eyebrow">Apply update</span></div>
+      {{if .Status.Available}}
+      <p class="note" style="margin:-4px 0 14px">Installs {{.Status.Available}}: verifies the signed release, stages it, smoke-tests it, then swaps it in and starts the health guard. The daemon restarts once the guard confirms the new build is healthy.</p>
+      <form method="post" action="/updates/apply">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <input type="hidden" name="version" value="{{.Status.Available}}">
+        <button class="btn primary" type="submit" name="do" value="apply">Apply {{.Status.Available}}</button>
+      </form>
+      {{else}}
+      <p class="note" style="margin:-4px 0">No update available. Check now to look for one.</p>
+      {{end}}
+    </div>
+  </div>
+
+  {{if .Status.Previous}}
+  <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Roll back</span></div>
+    <p class="note" style="margin:-4px 0 14px">Restores the previous build ({{.Status.Previous}}) and starts the health guard to confirm it. Use this if the current build is unhealthy.</p>
+    <form method="post" action="/updates/rollback">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn ghost" type="submit" name="do" value="rollback">Roll back to {{.Status.Previous}}</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+{{end}}

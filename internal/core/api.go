@@ -57,8 +57,32 @@ type API interface {
 	// implementations only call it when a caller (ctl's monitor-thresholds
 	// screen) deliberately asks, never as part of another read's hot path.
 	MonitorTargets(ctx context.Context) ([]TargetView, error)
+	// UpdateStatus reports this host's current self-update posture (channel,
+	// floor, available/previous versions, any pending update, the last
+	// apply/rollback outcome, and whether release keys are compiled in) from
+	// persisted state -- it never fetches over the network, so it is cheap
+	// enough for the web Updates page to call on every render.
+	UpdateStatus() (UpdateStatusView, error)
 
 	// writes
+	// UpdateCheck fetches and verifies the channel pointer and the release it
+	// names (network I/O, hence ctx), records the outcome in persisted state,
+	// and returns the resulting UpdateStatus view. An error here (a fetch/
+	// verify failure, updates being off, or the release already being
+	// installed) still returns whatever status view could be built.
+	UpdateCheck(ctx context.Context) (UpdateStatusView, error)
+	// UpdateApply installs the given version (or, when version is "", the
+	// channel's latest) synchronously: fetch, verify, policy-check, stage,
+	// smoke-test, and swap the build in, then launch the health guard. It
+	// returns once the swap has happened and the guard has been asked to
+	// start (or once staging/verification/the swap itself failed) -- the
+	// guard, not this call, is what restarts the daemon and confirms or
+	// rolls back the new build.
+	UpdateApply(ctx context.Context, version string) error
+	// UpdateRollback restores the previously installed build (kept by the
+	// last successful UpdateApply) and starts the health guard to confirm it,
+	// mirroring `trinetra update rollback`.
+	UpdateRollback() error
 	ApplyConfig(*config.Config) error
 	AckAlert(key string) error
 	UnackAlert(key string) error

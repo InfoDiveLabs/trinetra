@@ -87,6 +87,13 @@
       <label class="field" style="margin-top:10px;max-width:260px"><span class="lb">SMART scan interval (seconds)</span><input type="number" step="1" name="smart_interval" value="{{.SmartInterval}}"><span class="hint">Minimum seconds between SMART scans (smartctl -A), the heaviest per-device call. Default 1800 (30 min).</span></label>
     </div>
 
+    <div class="section-label"><span class="eyebrow">Self-update</span></div>
+    <p class="note" style="margin:-4px 0 14px">The signed release channel, floor, and manual actions live on the <a href="/updates">Updates</a> page. This is the one credential it needs.</p>
+    <div class="panel"><div class="head"><span class="eyebrow">GitHub token</span></div>
+      <label class="field"><span class="lb">Read-only GitHub token</span><input type="password" name="update_github_token" placeholder="{{if .UpdateGitHubTokenSet}}(set){{else}}(not set){{end}}" autocomplete="off"><span class="hint">Needed while the release repo is private. Leave blank to keep the current value.</span></label>
+      <label class="field"><span class="lb">Clear stored token</span><input type="checkbox" class="switch" name="update_github_token_clear" value="1"></label>
+    </div>
+
     <div class="section-label"><span class="eyebrow">What to monitor</span></div>
     <p class="note" style="margin:-4px 0 14px">Turn any target off, or set a per-target limit that overrides the global threshold above. Leave "Alert at" blank to use the global threshold.</p>
     <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">

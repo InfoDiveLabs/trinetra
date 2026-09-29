@@ -153,9 +153,11 @@ usage:
   trinetra config get [key]
   trinetra config set <key> <value>
   trinetra config unset <key>
-  trinetra install [--force] [--state-already-at-new-path]
+  trinetra install [--force] [--require-signed] [--state-already-at-new-path]
                                         # --force: migrate even if systemctl cannot confirm the old serverwatch service stopped,
                                         #          or a serverwatch daemon is running outside it
+                                        # --require-signed: refuse to install unless a signed manifest.json (+ manifest.ci.sig,
+                                        #          manifest.maint.sig) sits next to the binary being installed
                                         # --state-already-at-new-path: adopt a serverwatch state volume you remounted at /var/lib/trinetra
   trinetra uninstall [--purge]
   trinetra daemon

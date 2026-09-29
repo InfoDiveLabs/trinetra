@@ -193,6 +193,14 @@ func newHandler(d Deps) http.Handler {
 	// config-wide mutation exactly like the /users/* mutations below.
 	mux.HandleFunc("GET /config", requireRole(RoleAdmin, d, configPageHandler(d)))
 	mux.HandleFunc("POST /config", configMutation(d, configSaveHandler(d)))
+	// /updates (task 8): self-update status + manual actions over
+	// core.API.UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback.
+	// Admin-only like /config; every mutation additionally needs
+	// requireCSRF (updatesMutation, handlers_updates.go).
+	mux.HandleFunc("GET /updates", requireRole(RoleAdmin, d, updatesPageHandler(d)))
+	mux.HandleFunc("POST /updates/check", updatesMutation(d, updatesCheckHandler(d)))
+	mux.HandleFunc("POST /updates/apply", updatesMutation(d, updatesApplyHandler(d)))
+	mux.HandleFunc("POST /updates/rollback", updatesMutation(d, updatesRollbackHandler(d)))
 	// /channels (Task 10/#66): CRUD over config.Channels, ported from
 	// ui-mockup/channels.html's table + add/edit modal. GET is
 	// requireRole(RoleAdmin, ...) like /config; every mutation additionally

@@ -533,6 +533,38 @@ func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
 // Version implements core.API: the daemon's own build-stamped version (#107).
 func (a *inprocAPI) Version() (string, error) { return version.String(), nil }
 
+// UpdateStatus implements core.API (task 8): this host's persisted
+// self-update posture, via the shared coreUpdateStatus helper
+// (update_cmd.go) built from a.getCfg() -- the same race-safe config
+// accessor every other method here reads through.
+func (a *inprocAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	return coreUpdateStatus(a.getCfg())
+}
+
+// UpdateCheck implements core.API: fetch/verify the channel's latest
+// release, record the outcome, and return the resulting status view, via the
+// shared coreUpdateCheck helper.
+func (a *inprocAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	return coreUpdateCheck(ctx, a.getCfg())
+}
+
+// UpdateApply implements core.API: delegates to newUpdater(cfg).apply, the
+// exact same fetch/verify/stage/smoke-test/swap/launch-guard sequence
+// `trinetra update apply` runs, synchronously -- see core.API.UpdateApply's
+// doc for why this returns once the guard has been asked to start rather
+// than once it confirms.
+func (a *inprocAPI) UpdateApply(ctx context.Context, version string) error {
+	c := a.getCfg()
+	_, err := newUpdater(c).apply(ctx, c, applyOptions{Version: version})
+	return err
+}
+
+// UpdateRollback implements core.API: delegates to newUpdater(cfg).rollback,
+// the exact same sequence `trinetra update rollback` runs.
+func (a *inprocAPI) UpdateRollback() error {
+	return newUpdater(a.getCfg()).rollback()
+}
+
 // ContainerLogs implements core.API: it snapshots the last `lines` log lines of
 // a live docker container. Like HostInfo/Doctor it runs on demand against the
 // real host (osExec{}/osFS{}).

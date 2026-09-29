@@ -349,6 +349,38 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 		}
 		return json.Marshal(v)
 
+	case "UpdateStatus":
+		v, err := api.UpdateStatus()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "UpdateCheck":
+		v, err := api.UpdateCheck(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+
+	case "UpdateApply":
+		var p struct {
+			Version string `json:"version"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		if err := api.UpdateApply(context.Background(), p.Version); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
+	case "UpdateRollback":
+		if err := api.UpdateRollback(); err != nil {
+			return nil, err
+		}
+		return emptyResult, nil
+
 	case "ApplyConfig":
 		var p struct {
 			Config config.Config `json:"config"`

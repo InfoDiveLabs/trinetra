@@ -46,6 +46,19 @@ type fakeAPI struct {
 	logErr        error
 	version       string
 
+	// updateStatus/updateStatusErr back UpdateStatus (task 8); updateCheck/
+	// updateCheckErr do the same for UpdateCheck (defaulting to updateStatus/
+	// nil when unset, mirroring how a real check re-reports the same status
+	// view it just refreshed).
+	updateStatus    core.UpdateStatusView
+	updateStatusErr error
+	updateCheckErr  error
+	// updateApply/updateRollback let a test capture the call (mirroring
+	// applyConfig/testChannel's optional-func-field shape below); nil means a
+	// harmless no-op (nil error).
+	updateApply    func(ctx context.Context, version string) error
+	updateRollback func() error
+
 	applyConfig func(*config.Config) error
 	testChannel func(name string) error
 	ackAlert    func(key string) error
@@ -92,6 +105,28 @@ func (f fakeAPI) Version() (string, error)                                { retu
 func (f fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) { return "", false, nil }
 func (f fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return nil, nil
+}
+
+func (f fakeAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	return f.updateStatus, f.updateStatusErr
+}
+
+func (f fakeAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	return f.updateStatus, f.updateCheckErr
+}
+
+func (f fakeAPI) UpdateApply(ctx context.Context, version string) error {
+	if f.updateApply != nil {
+		return f.updateApply(ctx, version)
+	}
+	return nil
+}
+
+func (f fakeAPI) UpdateRollback() error {
+	if f.updateRollback != nil {
+		return f.updateRollback()
+	}
+	return nil
 }
 
 func (f fakeAPI) ApplyConfig(c *config.Config) error {
@@ -874,6 +909,26 @@ func (c *countingAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 func (c *countingAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	*c.calls++
 	return c.api.MonitorTargets(ctx)
+}
+
+func (c *countingAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	*c.calls++
+	return c.api.UpdateStatus()
+}
+
+func (c *countingAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	*c.calls++
+	return c.api.UpdateCheck(ctx)
+}
+
+func (c *countingAPI) UpdateApply(ctx context.Context, version string) error {
+	*c.calls++
+	return c.api.UpdateApply(ctx, version)
+}
+
+func (c *countingAPI) UpdateRollback() error {
+	*c.calls++
+	return c.api.UpdateRollback()
 }
 
 func (c *countingAPI) ApplyConfig(cfg *config.Config) error {

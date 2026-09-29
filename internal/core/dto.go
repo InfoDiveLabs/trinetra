@@ -448,6 +448,54 @@ type HostInfoView struct {
 	Disks         []HostDiskView `json:"disks,omitempty"`
 }
 
+// UpdateStatusView is core's projection of a host's self-update posture
+// (internal/trinetra/update_cmd.go's updateStatus, itself built from
+// internal/update's State/KeySet), for the control-socket UpdateStatus/
+// UpdateCheck methods and the web Updates page: Running is this host's
+// current build version, Channel/Source mirror config.Config's
+// update.channel/update.source, Floor is the version floor that never
+// lowers, Available is the newest release the last check found (empty if
+// none/not checked yet), Previous is the build kept for rollback (empty if
+// there isn't one), Pending is set while an update is staged and awaiting
+// its health-guard confirmation, Last is the most recent apply/rollback
+// outcome, and KeysLoaded reports whether this build has release keys
+// compiled in at all (ProductionKeys() non-empty).
+type UpdateStatusView struct {
+	Running    string             `json:"running"`
+	Channel    string             `json:"channel"`
+	Floor      string             `json:"floor"`
+	Available  string             `json:"available"`
+	Previous   string             `json:"previous"`
+	Source     string             `json:"source"`
+	Pending    *UpdatePendingView `json:"pending,omitempty"`
+	Last       *UpdateResultView  `json:"last,omitempty"`
+	KeysLoaded bool               `json:"keys_loaded"`
+}
+
+// UpdatePendingView is core's projection of update.Pending: an update
+// currently staged and awaiting its health-guard deadline. Rollback mirrors
+// update.Pending.Rollback -- true while a `trinetra update rollback` (or the
+// web "Roll back" action) is itself pending confirmation, not a forward
+// update.
+type UpdatePendingView struct {
+	Version  string `json:"version"`
+	From     string `json:"from"`
+	Deadline int64  `json:"deadline"`
+	Rollback bool   `json:"rollback"`
+}
+
+// UpdateResultView is core's projection of update.Result: the outcome of the
+// most recently confirmed or rolled-back update attempt. Outcome is
+// "committed" or "rolled_back"; Detail carries the guard's reason for a
+// rollback (empty on a clean commit).
+type UpdateResultView struct {
+	Version string `json:"version"`
+	From    string `json:"from"`
+	Outcome string `json:"outcome"`
+	Detail  string `json:"detail,omitempty"`
+	At      int64  `json:"at"`
+}
+
 // HostDiskView is one physical/block disk backing a mounted filesystem.
 type HostDiskView struct {
 	Device     string `json:"device"`

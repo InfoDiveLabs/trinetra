@@ -910,6 +910,20 @@ func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
 	return res.Output, nil
 }
 func (a *replicaAPI) ValidateChannel(config.ChannelConfig) error { return errRemoteNode }
+
+// UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback (task 8) are not
+// available for a remote fleet node yet -- self-update is a per-node
+// operation with no RPC plumbing (fleet_rpc.go) built for it, unlike
+// ContainerLogs above. Mirrors ValidateChannel/EnrollmentPIN/MonitorTargets/
+// Subscribe's identical "not yet" degrade.
+func (a *replicaAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	return core.UpdateStatusView{}, errRemoteNode
+}
+func (a *replicaAPI) UpdateCheck(context.Context) (core.UpdateStatusView, error) {
+	return core.UpdateStatusView{}, errRemoteNode
+}
+func (a *replicaAPI) UpdateApply(context.Context, string) error { return errRemoteNode }
+func (a *replicaAPI) UpdateRollback() error                     { return errRemoteNode }
 func (a *replicaAPI) EnrollmentPIN(context.Context) (string, bool, error) {
 	return "", false, errRemoteNode
 }

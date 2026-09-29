@@ -415,6 +415,38 @@ func (c *Client) MonitorTargets(ctx context.Context) ([]core.TargetView, error) 
 	return result, err
 }
 
+// UpdateStatus implements core.API: fetches this host's persisted self-update
+// posture over the socket.
+func (c *Client) UpdateStatus() (core.UpdateStatusView, error) {
+	var result core.UpdateStatusView
+	err := c.call("UpdateStatus", struct{}{}, &result)
+	return result, err
+}
+
+// UpdateCheck implements core.API: asks the daemon to fetch/verify the
+// channel's latest release and record the outcome, returning the resulting
+// status view.
+func (c *Client) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	var result core.UpdateStatusView
+	err := c.call("UpdateCheck", struct{}{}, &result)
+	return result, err
+}
+
+// UpdateApply implements core.API: asks the daemon to install version (or,
+// if empty, the channel's latest) synchronously over the socket.
+func (c *Client) UpdateApply(ctx context.Context, version string) error {
+	params := struct {
+		Version string `json:"version"`
+	}{Version: version}
+	return c.call("UpdateApply", params, nil)
+}
+
+// UpdateRollback implements core.API: asks the daemon to restore its
+// previous build and start the health guard.
+func (c *Client) UpdateRollback() error {
+	return c.call("UpdateRollback", struct{}{}, nil)
+}
+
 func (c *Client) ApplyConfig(cfg *config.Config) error {
 	params := struct {
 		Config config.Config `json:"config"`

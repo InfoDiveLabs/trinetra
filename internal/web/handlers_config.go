@@ -12,6 +12,18 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
+// secretPlaceholder renders the placeholder text a secret <input> shows
+// instead of its real value (config.IsSecretKey keys, e.g.
+// update.github_token): "(set)" when a value is currently stored, "(not
+// set)" otherwise. Mirrors `config get`'s own "(set)"/"(not set)" redaction
+// (config.IsSecretKey's doc) for the web config page.
+func secretPlaceholder(isSet bool) string {
+	if isSet {
+		return "(set)"
+	}
+	return "(not set)"
+}
+
 // configMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
 // mirroring usersMutation (handlers_users.go): only an admin session may
 // POST /config, and only with a valid CSRF token.
@@ -228,6 +240,11 @@ type ConfigPageData struct {
 	// request bypassing the disabled attribute), never trusting the
 	// disabled attribute alone.
 	ManagedFragment map[string]string
+	// UpdateGitHubTokenSet is whether update.github_token (config.IsSecretKey)
+	// currently holds a value -- the input itself never renders the real
+	// token (secretPlaceholder), so the placeholder text ("(set)"/"(not
+	// set)") is this page's only way to show whether one is stored.
+	UpdateGitHubTokenSet bool
 }
 
 // buildConfigPageData assembles ConfigPageData from the current config
@@ -293,6 +310,7 @@ func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 		WebRPID:                cfg.Web.RPID,
 		WebListen:              cfg.Web.Listen,
 		WebSessionTTL:          cfg.Web.SessionTTL,
+		UpdateGitHubTokenSet:   cfg.Update.GitHubToken != "",
 	}
 }
 
@@ -586,6 +604,26 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 		if err := applyTargetEdits(newCfg, r); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+
+		// update.github_token (config.IsSecretKey): newCfg is already a clone
+		// of oldCfg (cloneConfig), so simply never setting it here is what
+		// keeps the stored value on a blank submit -- the "empty submit keeps
+		// what's stored" contract task-8-brief.md asks for. Only an explicit,
+		// non-blank token OR the clear checkbox change it, and either change
+		// is audited with "(set)"/"(not set)" in place of the raw secret
+		// value (never the token itself, in either Old or New).
+		oldTokenSet := oldCfg.Update.GitHubToken != ""
+		switch tok := strings.TrimSpace(r.FormValue("update_github_token")); {
+		case tok != "":
+			if err := newCfg.Set("update.github_token", tok); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			logAudit(d, r, "config.set", "update.github_token", secretPlaceholder(oldTokenSet), secretPlaceholder(true))
+		case r.FormValue("update_github_token_clear") != "":
+			newCfg.Set("update.github_token", "")
+			logAudit(d, r, "config.set", "update.github_token", secretPlaceholder(oldTokenSet), secretPlaceholder(false))
 		}
 
 		if err := d.API.ApplyConfig(newCfg); err != nil {

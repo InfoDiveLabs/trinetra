@@ -83,6 +83,14 @@ func (fleetCLIFakeAPI) EnrollmentPIN(context.Context) (string, bool, error) { re
 func (fleetCLIFakeAPI) MonitorTargets(context.Context) ([]core.TargetView, error) {
 	return nil, nil
 }
+func (fleetCLIFakeAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	return core.UpdateStatusView{}, nil
+}
+func (fleetCLIFakeAPI) UpdateCheck(context.Context) (core.UpdateStatusView, error) {
+	return core.UpdateStatusView{}, nil
+}
+func (fleetCLIFakeAPI) UpdateApply(context.Context, string) error { return nil }
+func (fleetCLIFakeAPI) UpdateRollback() error                     { return nil }
 func (fleetCLIFakeAPI) Subscribe(context.Context) (<-chan core.Event, error) {
 	return nil, errors.New("not implemented")
 }

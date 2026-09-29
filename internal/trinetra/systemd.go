@@ -3,10 +3,12 @@ package trinetra
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/control"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
 const unitPath = "/etc/systemd/system/trinetra.service"
@@ -77,6 +80,7 @@ WantedBy=multi-user.target
 
 func cmdInstall(args []string) int {
 	force := false
+	requireSigned := false
 	var opts planOptions
 	for _, a := range args {
 		switch a {
@@ -89,8 +93,14 @@ func cmdInstall(args []string) int {
 			// The operator moved the serverwatch state volume to the
 			// trinetra state path; adopt it instead of refusing.
 			opts.stateAtNewPath = true
+		case "--require-signed":
+			// Refuse an unsigned install outright instead of warning and
+			// continuing (see installBinaryAndUnit/verifyInstallBundle):
+			// manifest.json/manifest.ci.sig/manifest.maint.sig must sit next
+			// to the binary being installed.
+			requireSigned = true
 		default:
-			fmt.Fprintf(stderr, "unknown install flag %q\nusage: install [--force] [--state-already-at-new-path]\n", a)
+			fmt.Fprintf(stderr, "unknown install flag %q\nusage: install [--force] [--require-signed] [--state-already-at-new-path]\n", a)
 			return 2
 		}
 	}
@@ -106,7 +116,7 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	install := func() error { return installBinaryAndUnit(self) }
+	install := func() error { return installBinaryAndUnit(self, requireSigned) }
 	var summary *migrationSummary
 	if plan != nil {
 		plan.force = force
@@ -133,10 +143,25 @@ func cmdInstall(args []string) int {
 	return 0
 }
 
-// installBinaryAndUnit is the normal install: copy the running binary (and
-// companion plugins) into /usr/local/bin, record the plugin manifest, write
-// the unit, seed the config and (re)start trinetra.service.
-func installBinaryAndUnit(self string) error {
+// installBinaryAndUnit is the normal install: verify a signed release
+// manifest (if present) against self and any companion plugins sitting next
+// to it, copy the running binary (and companion plugins) into
+// /usr/local/bin, record the plugin manifest, write the unit, seed the
+// config and (re)start trinetra.service. requireSigned mirrors `install
+// --require-signed`: refuse outright when no manifest sits next to self,
+// rather than warning and continuing unsigned.
+func installBinaryAndUnit(self string, requireSigned bool) error {
+	names := companionInstallNames(self)
+	m, verified, err := verifyInstallSignature(self, names, requireSigned)
+	if err != nil {
+		return err
+	}
+	if verified {
+		if err := checkInstallPolicy(m); err != nil {
+			return err
+		}
+	}
+
 	dst := "/usr/local/bin/trinetra"
 	if err := copyFile(self, dst, 0o755); err != nil {
 		return fmt.Errorf("copy binary: %w", err)
@@ -196,7 +221,186 @@ func installBinaryAndUnit(self string) error {
 			return fmt.Errorf("%v: %v\n%s", a, err, out)
 		}
 	}
+	if verified {
+		// Best-effort: a floor-raise failure must not undo an otherwise
+		// successful install (the binaries are already copied and the unit
+		// already (re)started above).
+		raiseInstallFloor(m.Version)
+	}
 	return nil
+}
+
+// errNoSignedManifest is returned by verifyInstallBundle when manifest.json
+// is absent from filepath.Dir(self) -- cmdInstall/verifyInstallSignature
+// decide whether that means "warn and install unsigned" or "refuse"
+// (--require-signed), not verifyInstallBundle itself.
+var errNoSignedManifest = errors.New("trinetra: no signed manifest found next to the binary")
+
+// companionInstallNames lists the binary names verifyInstallSignature should
+// verify: "trinetra" (self) always, plus each companion plugin
+// ("trinetra-<name>" for every name in pluginManifestNames) that is actually
+// present as a regular file next to self -- mirroring copyPluginsAlongside's
+// own presence check, so install verifies exactly the binaries it is about
+// to copy, no more and no less.
+func companionInstallNames(self string) []string {
+	names := []string{"trinetra"}
+	dir := filepath.Dir(self)
+	for _, n := range pluginManifestNames {
+		p := filepath.Join(dir, "trinetra-"+n)
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
+			names = append(names, "trinetra-"+n)
+		}
+	}
+	return names
+}
+
+// verifyInstallBundle looks for manifest.json/manifest.ci.sig/
+// manifest.maint.sig next to self (filepath.Dir(self)), verifies both
+// signatures via update.VerifyRelease, then checks that every binary named
+// in names -- self itself for "trinetra", filepath.Dir(self)/<name>
+// otherwise -- hashes to exactly the manifest's "<name>-linux-<GOARCH>"
+// entry. Any mismatch refuses with a message naming the file and both
+// checksums, before the caller has copied anything. Returns
+// errNoSignedManifest (not wrapped) when manifest.json itself is absent, so
+// callers can tell "no manifest" apart from "manifest present but invalid".
+func verifyInstallBundle(keys update.KeySet, self string, names []string) (update.Manifest, error) {
+	dir := filepath.Dir(self)
+	mb, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return update.Manifest{}, errNoSignedManifest
+		}
+		return update.Manifest{}, fmt.Errorf("install: read manifest.json: %w", err)
+	}
+	ciSig, err := os.ReadFile(filepath.Join(dir, "manifest.ci.sig"))
+	if err != nil {
+		return update.Manifest{}, fmt.Errorf("install: read manifest.ci.sig: %w", err)
+	}
+	maintSig, err := os.ReadFile(filepath.Join(dir, "manifest.maint.sig"))
+	if err != nil {
+		return update.Manifest{}, fmt.Errorf("install: read manifest.maint.sig: %w", err)
+	}
+	m, err := update.VerifyRelease(keys, mb, ciSig, maintSig)
+	if err != nil {
+		return update.Manifest{}, fmt.Errorf("install: %w", err)
+	}
+
+	arch := runtime.GOARCH
+	for _, name := range names {
+		path := self
+		if name != "trinetra" {
+			path = filepath.Join(dir, name)
+		}
+		want := name + "-linux-" + arch
+		var file *update.File
+		for i := range m.Files {
+			if m.Files[i].Name == want && m.Files[i].Arch == arch {
+				file = &m.Files[i]
+				break
+			}
+		}
+		if file == nil {
+			return update.Manifest{}, fmt.Errorf("install: manifest has no entry for %s", want)
+		}
+		got, herr := update.HashFile(path)
+		if herr != nil {
+			return update.Manifest{}, fmt.Errorf("install: %s: %w", path, herr)
+		}
+		if got != file.SHA256 {
+			return update.Manifest{}, fmt.Errorf("install: %s does not match the signed manifest (sha256 %s, expected %s); refusing", path, got, file.SHA256)
+		}
+	}
+	return m, nil
+}
+
+// verifyInstallSignature wraps verifyInstallBundle with cmdInstall's
+// present/absent/require-signed policy: a present-and-valid manifest returns
+// (m, true, nil); an absent manifest returns (Manifest{}, false, nil) after
+// printing the unsigned-install warning, unless requireSigned is set, in
+// which case it refuses with the exact wording task-8-brief.md specifies;
+// any other verification failure (tampered file, bad/missing signature)
+// always refuses, requireSigned or not.
+func verifyInstallSignature(self string, names []string, requireSigned bool) (update.Manifest, bool, error) {
+	m, err := verifyInstallBundle(update.ProductionKeys(), self, names)
+	switch {
+	case err == nil:
+		return m, true, nil
+	case errors.Is(err, errNoSignedManifest):
+		if requireSigned {
+			return update.Manifest{}, false, fmt.Errorf("install: no signed manifest next to %s; download manifest.json, manifest.ci.sig and manifest.maint.sig with the binaries", self)
+		}
+		fmt.Fprintln(stderr, "warning: installing an unsigned build (no manifest.json next to the binary)")
+		return update.Manifest{}, false, nil
+	default:
+		return update.Manifest{}, false, err
+	}
+}
+
+// checkInstallPolicy applies update.CheckPolicy to a verified install
+// manifest: AllowEqual true (reinstalling the currently installed version is
+// a legitimate repair), Channel set to the manifest's own channel (an
+// install is not read against the host's configured update.channel -- it
+// installs whatever signed release it was handed, mirroring apply()'s own
+// --bundle-with-updates-off ruling R7), Floor from persisted update state,
+// and Running from the currently installed binary's own reported version
+// (zero on a fresh install, when there is nothing installed yet).
+func checkInstallPolicy(m update.Manifest) error {
+	st, err := update.LoadState(stateDir)
+	if err != nil {
+		return err
+	}
+	running := currentInstalledVersion()
+	floor := st.FloorVersion(running)
+	if err := update.CheckPolicy(m, update.Policy{Channel: m.Channel, Floor: floor, Running: running, AllowEqual: true}); err != nil {
+		return fmt.Errorf("install: %w", err)
+	}
+	return nil
+}
+
+// currentInstalledVersion reports the version of whatever binary is
+// currently at /usr/local/bin/trinetra (queried the same way
+// updater.rollback/updater.status do, via `version --json`), or a zero
+// Version when nothing is installed there yet or it can't be queried -- a
+// fresh install must never be blocked by a policy check with nothing real to
+// compare against.
+func currentInstalledVersion() update.Version {
+	const dst = "/usr/local/bin/trinetra"
+	fi, err := os.Stat(dst)
+	if err != nil || !fi.Mode().IsRegular() {
+		return update.Version{}
+	}
+	out, err := osExec{}.Run(dst, "version", "--json")
+	if err != nil {
+		return update.Version{}
+	}
+	var v struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(out, &v) != nil {
+		return update.Version{}
+	}
+	ver, _ := update.ParseVersion(strings.TrimPrefix(v.Version, "v"))
+	return ver
+}
+
+// raiseInstallFloor records m's version as the new update floor after a
+// successful signed install, mirroring what a successful `trinetra update
+// apply` does at the end of swapIn -- a floor-raise or state-save failure is
+// swallowed (best-effort, matching cmdInstall's other post-copy warnings):
+// the binaries and unit are already in place by the time this runs, and a
+// missed floor raise only means a future `update apply`/`install` could
+// re-verify a version this host already has, not a safety regression.
+func raiseInstallFloor(version string) {
+	v, err := update.ParseVersion(version)
+	if err != nil {
+		return
+	}
+	st, err := update.LoadState(stateDir)
+	if err != nil {
+		return
+	}
+	st.RaiseFloor(v)
+	_ = update.SaveState(stateDir, st)
 }
 
 // telegramInstallHint returns the install success line's Telegram clause: a

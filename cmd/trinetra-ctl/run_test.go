@@ -103,6 +103,14 @@ func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return f.monitorTargets, f.monitorTargetsErr
 }
+func (f *fakeAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	return core.UpdateStatusView{}, nil
+}
+func (f *fakeAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	return core.UpdateStatusView{}, nil
+}
+func (f *fakeAPI) UpdateApply(ctx context.Context, version string) error { return nil }
+func (f *fakeAPI) UpdateRollback() error                                 { return nil }
 func (f *fakeAPI) ApplyConfig(c *config.Config) error {
 	f.applyN++
 	f.applied = c

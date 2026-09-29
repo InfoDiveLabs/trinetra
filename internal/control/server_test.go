@@ -41,6 +41,22 @@ type fakeAPI struct {
 	// error-propagation proof as enrollErr.
 	monitorTargetsErr error
 
+	// updateStatus/updateStatusErr back UpdateStatus/UpdateCheck (task 8):
+	// updateStatus is returned by both on success; updateCheckErr, when set,
+	// is what UpdateCheck returns (proving a check failure still surfaces
+	// over the wire), and updateStatusErr does the same for UpdateStatus.
+	updateStatus    core.UpdateStatusView
+	updateStatusErr error
+	updateCheckErr  error
+	// appliedUpdateVersion records the version UpdateApply was called with;
+	// updateApplyErr, when set, is what UpdateApply returns.
+	appliedUpdateVersion string
+	updateApplyErr       error
+	// updateRollbackCalled/updateRollbackErr mirror the above for
+	// UpdateRollback, which takes no argument.
+	updateRollbackCalled bool
+	updateRollbackErr    error
+
 	appliedConfig    *config.Config
 	ackedKey         string
 	unackedKey       string
@@ -98,6 +114,24 @@ func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 
 func (f *fakeAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return f.monitorTargets, f.monitorTargetsErr
+}
+
+func (f *fakeAPI) UpdateStatus() (core.UpdateStatusView, error) {
+	return f.updateStatus, f.updateStatusErr
+}
+
+func (f *fakeAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	return f.updateStatus, f.updateCheckErr
+}
+
+func (f *fakeAPI) UpdateApply(ctx context.Context, version string) error {
+	f.appliedUpdateVersion = version
+	return f.updateApplyErr
+}
+
+func (f *fakeAPI) UpdateRollback() error {
+	f.updateRollbackCalled = true
+	return f.updateRollbackErr
 }
 
 func (f *fakeAPI) ApplyConfig(c *config.Config) error {

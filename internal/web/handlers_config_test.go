@@ -735,6 +735,91 @@ func TestConfigPageManagedFieldsDisabledAndPostRejected(t *testing.T) {
 	}
 }
 
+// TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt pins task 8's
+// secret-key contract for update.github_token (config.IsSecretKey): GET
+// /config never puts the raw secret in the page, and a POST that saves other
+// fields with the token input left blank keeps the stored value (rather than
+// clearing it, which a naive "always apply the posted value" edit would do).
+func TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	(*cfg).Update.GitHubToken = "ghp_SECRET"
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	getReq := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/config")
+	getRR := httptest.NewRecorder()
+	h.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200, body: %s", getRR.Code, getRR.Body.String())
+	}
+	if strings.Contains(getRR.Body.String(), "ghp_SECRET") {
+		t.Errorf("config page must never render the raw secret token:\n%s", getRR.Body.String())
+	}
+	if !strings.Contains(getRR.Body.String(), `placeholder="(set)"`) {
+		t.Errorf("config page must show the \"(set)\" placeholder for a stored token:\n%s", getRR.Body.String())
+	}
+
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+	form := baseConfigForm()
+	// update_github_token deliberately left unset/blank, matching a real
+	// browser submitting the field with nothing typed into it.
+	rr := postForm(h, "/config", form, cookie, csrf)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if (*cfg).Update.GitHubToken != "ghp_SECRET" {
+		t.Errorf("Update.GitHubToken = %q, want unchanged %q (blank submit must keep the stored value)", (*cfg).Update.GitHubToken, "ghp_SECRET")
+	}
+}
+
+// TestConfigSecretTokenSetAndClear pins the other two paths: posting a
+// non-blank token sets it, and the explicit clear checkbox clears it -- both
+// audited with "(set)"/"(not set)" rather than the raw token value.
+func TestConfigSecretTokenSetAndClear(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	form := baseConfigForm()
+	form.Set("update_github_token", "ghp_NEWTOKEN")
+	rr := postForm(h, "/config", form, cookie, csrf)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	if (*cfg).Update.GitHubToken != "ghp_NEWTOKEN" {
+		t.Errorf("Update.GitHubToken = %q, want %q", (*cfg).Update.GitHubToken, "ghp_NEWTOKEN")
+	}
+	recs := readAuditRecords(t, d.StateDir)
+	found := false
+	for _, r := range recs {
+		if r.Action == "config.set" && r.Key == "update.github_token" {
+			found = true
+			if strings.Contains(r.New, "ghp_NEWTOKEN") || strings.Contains(r.Old, "ghp_NEWTOKEN") {
+				t.Errorf("audit record leaked the raw token: %+v", r)
+			}
+			if r.New != "(set)" {
+				t.Errorf("audit New = %q, want (set)", r.New)
+			}
+		}
+	}
+	if !found {
+		t.Error("no audit record for update.github_token set")
+	}
+
+	form2 := baseConfigForm()
+	form2.Set("update_github_token_clear", "1")
+	rr2 := postForm(h, "/config", form2, cookie, csrf)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200, body: %s", rr2.Code, rr2.Body.String())
+	}
+	if (*cfg).Update.GitHubToken != "" {
+		t.Errorf("Update.GitHubToken = %q, want cleared", (*cfg).Update.GitHubToken)
+	}
+}
+
 // TestConfigSaveRequiresCSRF pins that a signed-in admin POST without a valid
 // CSRF token is rejected, matching every other mutation route.
 func TestConfigSaveRequiresCSRF(t *testing.T) {
