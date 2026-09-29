@@ -318,10 +318,13 @@ func TestWatchdogUnits(t *testing.T) {
 		}
 	}
 	tmr := renderWatchdogTimer()
-	for _, want := range []string{"OnBootSec=2min", "OnUnitActiveSec=1min", "Persistent=true", "WantedBy=timers.target"} {
+	for _, want := range []string{"OnBootSec=2min", "OnUnitActiveSec=1min", "OnActiveSec=1min", "WantedBy=timers.target"} {
 		if !strings.Contains(tmr, want) {
 			t.Errorf("timer missing %q:\n%s", want, tmr)
 		}
+	}
+	if strings.Contains(tmr, "Persistent=") {
+		t.Errorf("timer should not set Persistent= (only meaningful for OnCalendar= timers; OnActiveSec= makes it fire shortly after every (re)start instead):\n%s", tmr)
 	}
 
 	x := &recExec{}
