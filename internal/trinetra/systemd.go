@@ -410,7 +410,10 @@ func checkInstallPolicy(paths updatePaths, m update.Manifest, running update.Ver
 	if err != nil {
 		return err
 	}
-	floor, hasFloor := st.FloorVersion(running)
+	floor, hasFloor, err := st.FloorVersion(running)
+	if err != nil {
+		return fmt.Errorf("install: %w", err)
+	}
 	pol := update.Policy{Channel: m.Channel, Floor: floor, HasFloor: hasFloor, Running: running, AllowEqual: true}
 	if running == (update.Version{}) {
 		pol.Running, _ = update.ParseVersion(m.MinUpgradeFrom)

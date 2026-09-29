@@ -141,7 +141,10 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 
 	var policyErr error
 	err = update.WithState(u.paths.dir(), func(st *update.State) error {
-		floor, hasFloor := st.FloorVersion(u.running)
+		floor, hasFloor, ferr := st.FloorVersion(u.running)
+		if ferr != nil {
+			return ferr
+		}
 		policyErr = update.CheckPolicy(m, update.Policy{Channel: channel, Floor: floor, HasFloor: hasFloor, Running: u.running})
 		if policyErr == nil && st.IsBad(m.Version) {
 			policyErr = fmt.Errorf("%w: %s", errKnownBad, m.Version)
@@ -301,7 +304,10 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 	if err != nil {
 		return update.Manifest{}, err
 	}
-	floor, hasFloor := st.FloorVersion(u.running)
+	floor, hasFloor, err := st.FloorVersion(u.running)
+	if err != nil {
+		return update.Manifest{}, err
+	}
 	if err := update.CheckPolicy(m, update.Policy{Channel: policyChannel, Floor: floor, HasFloor: hasFloor, Running: u.running}); err != nil {
 		return update.Manifest{}, err
 	}
@@ -501,9 +507,14 @@ func (u updater) status() (updateStatus, error) {
 
 	// floorStr is "" when no floor applies (fresh host, nothing persisted,
 	// running unknown) -- showing "0.0.0" there would misreport the zero
-	// Version placeholder as a real, enforced floor.
+	// Version placeholder as a real, enforced floor. An unparsable persisted
+	// floor is shown as its own error text rather than failing status
+	// outright: status is read-only and must still display everything else
+	// (unlike check/apply/install, which refuse the operation).
 	floorStr := ""
-	if floor, hasFloor := st.FloorVersion(u.running); hasFloor {
+	if floor, hasFloor, ferr := st.FloorVersion(u.running); ferr != nil {
+		floorStr = ferr.Error()
+	} else if hasFloor {
 		floorStr = floor.String()
 	}
 

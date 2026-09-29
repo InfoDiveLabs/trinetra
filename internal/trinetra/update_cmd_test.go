@@ -100,6 +100,61 @@ func TestUpdaterApplyLaunchesGuardAndRefusesDowngrade(t *testing.T) {
 	}
 }
 
+// TestUpdaterApplyNoFloorFallsBackToRunning pins #138 truth-table case (b):
+// with nothing persisted in state.json, FloorVersion falls back to the
+// running version as the floor, so a pre-release of that same version
+// (0.5.0-rc.1 sorts below 0.5.0 by semver precedence) is refused as a
+// downgrade even though no floor was ever written.
+func TestUpdaterApplyNoFloorFallsBackToRunning(t *testing.T) {
+	p := testUpdatePaths(t)
+	src := signedRelease(t, "0.5.0-rc.1", map[string][]byte{
+		"trinetra-linux-amd64":     []byte("NEW-core"),
+		"trinetra-web-linux-amd64": []byte("NEW-web"),
+	})
+	var m update.Manifest
+	if err := json.Unmarshal(src["manifest.json"], &m); err != nil {
+		t.Fatal(err)
+	}
+	m.Channel = "beta" // a pre-release version must not be on the stable channel
+	mb, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src["manifest.json"] = mb
+	src["manifest.ci.sig"] = updatetest.NewTestSigner(1).SignRelease(mb)
+	src["manifest.maint.sig"] = updatetest.NewTestSigner(2).SignRelease(mb)
+
+	u := updater{paths: p, keys: testKeys(), x: fakeVersionExec("0.5.0-rc.1"), now: time.Now,
+		arch: "amd64", running: mustVer("0.5.0"), launchGuard: func() error { return nil }, src: src}
+	c := config.Default()
+	if err := c.Set("update.channel", "beta"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.apply(context.Background(), c, applyOptions{Version: "0.5.0-rc.1"}); !errors.Is(err, update.ErrDowngrade) {
+		t.Fatalf("apply(0.5.0-rc.1, no floor, running 0.5.0) = %v, want update.ErrDowngrade", err)
+	}
+}
+
+// TestUpdaterApplyUnparsableFloorFailsClosed is #138 truth-table case (d)'s
+// apply half: a persisted floor that is valid JSON but not a valid version
+// must refuse `trinetra update apply` with a clear error, never silently act
+// as "no floor".
+func TestUpdaterApplyUnparsableFloorFailsClosed(t *testing.T) {
+	p := testUpdatePaths(t)
+	src := signedRelease(t, "0.7.0", map[string][]byte{
+		"trinetra-linux-amd64":     []byte("NEW-core"),
+		"trinetra-web-linux-amd64": []byte("NEW-web"),
+	})
+	if err := update.SaveState(p.dir(), update.State{Floor: "not-a-version"}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	u := updater{paths: p, keys: testKeys(), x: fakeVersionExec("0.7.0"), now: time.Now,
+		arch: "amd64", running: mustVer("0.4.1"), launchGuard: func() error { return nil }, src: src}
+	if _, err := u.apply(context.Background(), config.Default(), applyOptions{Version: "0.7.0"}); err == nil || !strings.Contains(err.Error(), "not-a-version") {
+		t.Fatalf("apply() = %v, want an error naming the bad floor value", err)
+	}
+}
+
 func TestUpdaterApplyRefusesBadVersionWithoutForce(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.5.0", map[string][]byte{"trinetra-linux-amd64": []byte("NEW-core")})
@@ -244,5 +299,24 @@ func TestUpdateStatusJSONWorksWithNoStateDir(t *testing.T) {
 	wantFP := update.Fingerprints(update.ProductionKeys())
 	if len(st.Fingerprints) != len(wantFP) {
 		t.Fatalf("fingerprints = %v, want %v", st.Fingerprints, wantFP)
+	}
+}
+
+// TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing is #138: `trinetra
+// update status` must still display when the persisted floor is unparsable
+// -- showing the error rather than refusing to run entirely, unlike
+// check/apply/install which refuse the operation outright.
+func TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing(t *testing.T) {
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Floor: "not-a-version"}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	u := updater{paths: p, running: mustVer("0.4.1")}
+	st, err := u.status()
+	if err != nil {
+		t.Fatalf("status() = %v, want nil (must still display, not crash)", err)
+	}
+	if !strings.Contains(st.Floor, "not-a-version") {
+		t.Fatalf("Floor = %q, want it to show the bad floor value", st.Floor)
 	}
 }

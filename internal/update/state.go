@@ -131,7 +131,7 @@ func SaveState(dir string, s State) error {
 
 // FloorVersion returns the effective floor version -- the persisted Floor,
 // or fallback (typically the running version) if that's higher, or fallback
-// if Floor is unset or unparsable -- and whether a floor actually applies.
+// if Floor is unset -- and whether a floor actually applies.
 //
 // No floor applies (hasFloor false) only when both are true: nothing is
 // persisted in Floor, and fallback is the zero Version (no known running
@@ -139,15 +139,27 @@ func SaveState(dir string, s State) error {
 // couldn't report one). A persisted Floor is always enforced once set, even
 // if that happens to be "0.0.0" (a real committed release): only the
 // "nothing recorded at all" case means no lower bound. See Policy.HasFloor.
-func (s State) FloorVersion(fallback Version) (v Version, hasFloor bool) {
+//
+// A persisted Floor that is not a valid version is an error, never "no
+// floor": LoadState already fails closed on unreadable/corrupt state.json,
+// and a floor that parses as JSON but not as a version is the same kind of
+// corruption -- silently treating it as unset would re-open downgrades on a
+// host with an unknown running version. Every caller must refuse its
+// operation on this error rather than proceed as if nothing were persisted.
+func (s State) FloorVersion(fallback Version) (v Version, hasFloor bool, err error) {
 	v, hasFloor = fallback, fallback != (Version{})
-	if pv, err := ParseVersion(s.Floor); err == nil {
-		hasFloor = true
-		if CompareVersions(pv, v) > 0 {
-			v = pv
-		}
+	if s.Floor == "" {
+		return v, hasFloor, nil
 	}
-	return v, hasFloor
+	pv, perr := ParseVersion(s.Floor)
+	if perr != nil {
+		return Version{}, false, fmt.Errorf("update: state.json floor %q is not a valid version", s.Floor)
+	}
+	hasFloor = true
+	if CompareVersions(pv, v) > 0 {
+		v = pv
+	}
+	return v, hasFloor, nil
 }
 
 // RaiseFloor sets the floor to v, unless the current floor is already >= v.
