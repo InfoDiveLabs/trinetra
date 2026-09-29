@@ -105,7 +105,7 @@ func (g GitHubSource) ChannelAsset(ctx context.Context, name string) (io.ReadClo
 type DirSource struct{ Dir string }
 
 func (d DirSource) ReleaseAsset(_ context.Context, _ string, name string) (io.ReadCloser, error) {
-	if strings.ContainsAny(name, `/\`) {
+	if !validAssetName(name) {
 		return nil, fmt.Errorf("update: bad asset name %q", name)
 	}
 	return os.Open(filepath.Join(d.Dir, name))
