@@ -161,16 +161,6 @@ replica_has_min() {
   [ "$size" -ge $(( 16 + 32 * $3 )) ]
 }
 unsent_above() { [ "$(unsent "$1")" -gt "$2" ]; } # <svc> <count>
-# pushed_silences_since <svc> <unix-s>: the child has stored a "silences"
-# frame from the master (fleet-child/silences.json) at or after that time.
-# On (re)connect the master pushes the node's lease and THEN its silence set
-# over the same ordered stream (Hub.OnConnect: PushLeaseNow, PushSilencesNow),
-# so a fresh silences.json also proves the lease has been applied.
-pushed_silences_since() {
-  local m
-  m=$(on "$1" sh -c 'stat -c %Y /var/lib/trinetra/fleet-child/silences.json 2>/dev/null || echo 0' | tr -d '\r')
-  [ "$m" -ge "$2" ]
-}
 pushed_silence_has() { on "$1" grep -F "\"$2\"" /var/lib/trinetra/fleet-child/silences.json >/dev/null; } # <svc> <silence-id>
 # silenced_fallbacks <svc>: fallback deliveries of the mem alert that the
 # child's pushed silences suppressed (deliverFallback records them in its
@@ -451,7 +441,6 @@ stop_daemon child2
 TOK2=$(on master trinetra fleet token create --uses 2 --tags lab) || fail "token create (re-enrol): $TOK2"
 CODE2=$(grep -o 'swj1_[A-Za-z0-9_=-]*' <<<"$TOK2" | head -1)
 [ -n "$CODE2" ] || fail "no swj1_ code in: $TOK2"
-T_REJOIN=$(now_in master)
 for c in child1 child2; do
   J=$(on "$c" trinetra fleet join "$CODE2" --name "$c") || fail "$c re-join: $J"
   id=$(sed -n 's/^Joined fleet master https:\/\/master:9443 as node \([0-9a-f]*\) .*/\1/p' <<<"$J")
@@ -476,19 +465,16 @@ wait_until 60 "child2 online on master (re-enrol)" node_is child2 online
 # window sees hadLeaseBefore==false and the master silently treats it as
 # already delivered (no dispatch, no receipt -- see Submit's doc comment),
 # so it only ever reaches Telegram via the child's OWN fallback_after
-# timer, never "from the master". Wait until each child has applied its
-# first lease before step 10 fires anything: the master pushes the lease and
-# then the silence set on connect, in order, so a silences.json written since
-# the re-join (the purge removed any older one) means the lease is in. Never
-# wait longer than the one lease push cycle (DOWN_AFTER + 5 s) this used to
-# sleep unconditionally.
-T_ONLINE=$(date +%s)
-leases_in_or_cycle_passed() {
-  { pushed_silences_since child1 "$T_REJOIN" && pushed_silences_since child2 "$T_REJOIN"; } ||
-    [ $(( $(date +%s) - T_ONLINE )) -ge $(( DOWN_AFTER + 5 )) ]
-}
-wait_until $(( DOWN_AFTER + 30 )) "both children applied their first lease" leases_in_or_cycle_passed
-echo "  first leases in $(( $(date +%s) - T_ONLINE ))s after both were online"
+# timer, never "from the master". Waiting past one lease push cycle here
+# avoids racing that window before step 10 fires anything.
+#
+# Keep this a fixed wait, not a poll for the first lease (tried: the lease is
+# in within a second, via fleet-child/silences.json): the children's own
+# start-up alerts -- collector:services fires after 3 failed slow-tier runs,
+# ~30 s at sample_interval 10 -- must also be delivered and receipted before
+# the partition below, or one of them falls back locally too and the
+# "exactly one local-fallback message" count sees 2.
+sleep $(( DOWN_AFTER + 5 ))
 echo "  re-enrolled child1=$ID_child1 child2=$ID_child2 (fresh identities, tag lab)"
 
 BASE_MEM=$(msg_count "child1: mem =")
