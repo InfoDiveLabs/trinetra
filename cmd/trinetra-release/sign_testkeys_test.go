@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
@@ -75,5 +76,29 @@ func TestVerifyTestKeysPrintsWarningBanner(t *testing.T) {
 	}
 	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "TEST keys") {
 		t.Fatalf("missing test-keys warning banner in output: %q", out)
+	}
+}
+
+// TestManifestKeysFromBinary is R19: manifest --keys-from-binary fills
+// manifest.keys with exactly the compiled-in key set (base64), so cosign's
+// rotation review compares like with like.
+func TestManifestKeysFromBinary(t *testing.T) {
+	dir := t.TempDir()
+	writeAllReleaseFiles(t, dir)
+	if code := run([]string{"manifest", "--dir", dir, "--version", "0.5.0", "--channel", "stable",
+		"--min-upgrade-from", "0.4.1", "--published", "2026-10-01T10:00:00Z", "--keys-from-binary"}); code != 0 {
+		t.Fatalf("manifest --keys-from-binary exit %d", code)
+	}
+	mb, _ := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	m, err := update.DecodeManifest(mb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := diffManifestKeys(m.Keys, update.ProductionKeys()); len(d) != 0 || len(m.Keys.CI) != 2 {
+		t.Fatalf("manifest keys %+v differ from ProductionKeys: %v", m.Keys, d)
+	}
+	if code := run([]string{"manifest", "--dir", dir, "--version", "0.5.0", "--channel", "stable",
+		"--min-upgrade-from", "0.4.1", "--published", "2026-10-01T10:00:00Z", "--keys-from-binary", "--keys-ci", "x"}); code == 0 {
+		t.Fatal("--keys-from-binary combined with --keys-ci accepted")
 	}
 }

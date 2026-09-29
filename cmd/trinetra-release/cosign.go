@@ -85,12 +85,7 @@ func cmdCosign(args []string) error {
 	}
 
 	fmt.Print(summarizeManifest(m))
-	if diffs := diffManifestKeys(m.Keys, prod); len(diffs) > 0 {
-		fmt.Println("key differences from this tool's trust anchor:")
-		for _, d := range diffs {
-			fmt.Println("  " + d)
-		}
-	}
+	fmt.Print(keyReview(m.Keys, prod))
 
 	if err := requireInteractiveConfirmation(version); err != nil {
 		return fmt.Errorf("cosign: %w", err)
@@ -251,6 +246,27 @@ func diffManifestKeys(mk update.ManifestKeys, prod update.KeySet) []string {
 	check("maint", mk.Maint, prod.Maint)
 	check("pointer", mk.Pointer, prod.Pointer)
 	return out
+}
+
+// keyReview is what cosign shows about manifest.keys (R19): one quiet line
+// when the key set the new binary compiles in equals this tool's trust
+// anchor, and a prominent rotation block naming each changed role otherwise
+// -- the one warning meant to catch a malicious keys.go change, so it must
+// not fire on every release.
+func keyReview(mk update.ManifestKeys, prod update.KeySet) string {
+	diffs := diffManifestKeys(mk, prod)
+	if len(diffs) == 0 {
+		return "keys: unchanged (the new build trusts the same keys as this tool)\n"
+	}
+	var b strings.Builder
+	b.WriteString("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+	b.WriteString("KEY ROTATION: this release changes the keys hosts will trust.\n")
+	b.WriteString("Co-sign only if you made this change deliberately.\n")
+	for _, d := range diffs {
+		b.WriteString("  " + d + "\n")
+	}
+	b.WriteString("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n")
+	return b.String()
 }
 
 // summarizeManifest formats the fields a maintainer must review before

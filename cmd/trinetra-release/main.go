@@ -165,8 +165,14 @@ func expectedReleaseFiles() map[string][2]string {
 }
 
 // cmdManifest implements: manifest --dir DIR --version V --channel C
-// --min-upgrade-from V --published RFC3339 [--keys-ci ... --keys-maint ...
-// --keys-pointer ...]
+// --min-upgrade-from V --published RFC3339 [--keys-from-binary |
+// --keys-ci ... --keys-maint ... --keys-pointer ...]
+//
+// --keys-from-binary (what the release workflow passes, R19) fills
+// manifest.keys with this tool's own update.ProductionKeys() -- built from
+// the same commit as the release binaries -- so the key set the manifest
+// declares equals the one the new binary compiles in, and cosign's rotation
+// review is empty unless keys really changed.
 //
 // It requires the exact 9-file release set (3 binaries x 3 linux
 // architectures): any missing file is an error, and any trinetra*-linux-*
@@ -187,8 +193,20 @@ func cmdManifest(args []string) error {
 	keysCI := fs.String("keys-ci", "", "comma-separated base64 CI public keys")
 	keysMaint := fs.String("keys-maint", "", "comma-separated base64 maintainer public keys")
 	keysPointer := fs.String("keys-pointer", "", "comma-separated base64 pointer public keys")
+	keysFromBinary := fs.Bool("keys-from-binary", false, "fill keys with this tool's compiled-in production key set (same commit as the binaries)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	manifestKeys := update.ManifestKeys{CI: splitCSV(*keysCI), Maint: splitCSV(*keysMaint), Pointer: splitCSV(*keysPointer)}
+	if *keysFromBinary {
+		if *keysCI != "" || *keysMaint != "" || *keysPointer != "" {
+			return errors.New("manifest: --keys-from-binary cannot be combined with --keys-ci/--keys-maint/--keys-pointer")
+		}
+		k := update.ProductionKeys()
+		if len(k.CI) == 0 || len(k.Maint) == 0 || len(k.Pointer) == 0 {
+			return errors.New("manifest: --keys-from-binary: this build has no release keys compiled in")
+		}
+		manifestKeys = keysToB64(k)
 	}
 	if *dir == "" || *version == "" || *channel == "" || *minUpgradeFrom == "" || *published == "" {
 		return errors.New("manifest: --dir, --version, --channel, --min-upgrade-from, and --published are required")
@@ -238,12 +256,8 @@ func cmdManifest(args []string) error {
 		Channel:        *channel,
 		Published:      *published,
 		MinUpgradeFrom: *minUpgradeFrom,
-		Keys: update.ManifestKeys{
-			CI:      splitCSV(*keysCI),
-			Maint:   splitCSV(*keysMaint),
-			Pointer: splitCSV(*keysPointer),
-		},
-		Files: files,
+		Keys:           manifestKeys,
+		Files:          files,
 	}
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -254,6 +268,18 @@ func cmdManifest(args []string) error {
 		return fmt.Errorf("manifest: generated manifest is invalid: %w", err)
 	}
 	return os.WriteFile(filepath.Join(*dir, "manifest.json"), b, 0o644)
+}
+
+// keysToB64 renders a key set the way manifest.keys carries it.
+func keysToB64(k update.KeySet) update.ManifestKeys {
+	enc := func(in []update.PublicKey) []string {
+		out := make([]string, len(in))
+		for i, pk := range in {
+			out[i] = base64.StdEncoding.EncodeToString(pk)
+		}
+		return out
+	}
+	return update.ManifestKeys{CI: enc(k.CI), Maint: enc(k.Maint), Pointer: enc(k.Pointer)}
 }
 
 func sortedKeys(m map[string][2]string) []string {

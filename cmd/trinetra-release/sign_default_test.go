@@ -34,3 +34,16 @@ func TestTestKeysFlagsRefusedInDefaultBuild(t *testing.T) {
 		t.Fatal("cosign --testkeys succeeded in a default build")
 	}
 }
+
+// TestManifestKeysFromBinaryRefusesEmptyKeys is R19: --keys-from-binary
+// copies this tool's compiled-in ProductionKeys into manifest.keys; with no
+// keys compiled in (default build before the key ceremony) it refuses
+// rather than writing an empty key set.
+func TestManifestKeysFromBinaryRefusesEmptyKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeAllReleaseFiles(t, dir)
+	if code := run([]string{"manifest", "--dir", dir, "--version", "0.5.0", "--channel", "stable",
+		"--min-upgrade-from", "0.4.1", "--published", "2026-10-01T10:00:00Z", "--keys-from-binary"}); code == 0 {
+		t.Fatal("manifest --keys-from-binary accepted an empty compiled-in key set")
+	}
+}

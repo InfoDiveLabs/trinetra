@@ -258,3 +258,23 @@ func TestRequireInteractiveConfirmation(t *testing.T) {
 		}
 	})
 }
+
+// TestKeyReview is R19: cosign states plainly whether the manifest's key
+// set is unchanged, and shows a prominent rotation block otherwise.
+func TestKeyReview(t *testing.T) {
+	prod := update.KeySet{
+		CI:      []update.PublicKey{updatetest.NewTestSigner(1).Public()},
+		Maint:   []update.PublicKey{updatetest.NewTestSigner(2).Public()},
+		Pointer: []update.PublicKey{updatetest.NewTestSigner(3).Public()},
+	}
+	b64 := func(s byte) string { return base64.StdEncoding.EncodeToString(updatetest.NewTestSigner(s).Public()) }
+	same := update.ManifestKeys{CI: []string{b64(1)}, Maint: []string{b64(2)}, Pointer: []string{b64(3)}}
+	if got := keyReview(same, prod); !strings.Contains(got, "keys: unchanged") || strings.Contains(got, "ROTATION") {
+		t.Fatalf("unchanged review = %q", got)
+	}
+	rot := same
+	rot.CI = []string{b64(1), b64(9)}
+	if got := keyReview(rot, prod); !strings.Contains(got, "KEY ROTATION") || !strings.Contains(got, "ci:") {
+		t.Fatalf("rotation review = %q", got)
+	}
+}

@@ -43,8 +43,14 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           CH=stable; case "$V" in *-*) CH=beta;; esac
+          # --keys-from-binary: manifest.keys = the production key set compiled
+          # into trinetra-release from this same commit, which the previous
+          # step already proved equals the key set in the built binary. The
+          # maintainer's cosign then shows "keys: unchanged" unless this
+          # release really rotates keys.
           go run ./cmd/trinetra-release manifest --dir dist --version "$V" --channel "$CH" \
-            --min-upgrade-from "$(cat .release/min-upgrade-from)" --published "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --min-upgrade-from "$(cat .release/min-upgrade-from)" --published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --keys-from-binary
           go run ./cmd/trinetra-release sign --role ci --in dist/manifest.json --out dist/manifest.ci.sig
       - uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1.4.4
         with:
