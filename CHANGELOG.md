@@ -8,6 +8,13 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
+- **License change:** from this release on, Trinetra is licensed under the
+  Functional Source License 1.1, ALv2 Future License (FSL-1.1-ALv2),
+  © 2026 InfoDive Labs Pvt Ltd: free to use, self-host and modify for any purpose
+  except a competing commercial product or service, and each release becomes
+  Apache-2.0 two years after it is published. Releases up to v0.4.1 (published as
+  serverwatch) stay MIT.
+
 Fleet mode, phase 1: one trinetra can now collect the history of many,
 while every host keeps monitoring and alerting on its own exactly as before.
 See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).

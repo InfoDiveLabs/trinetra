@@ -20,7 +20,7 @@ No agent zoo, no cloud, no Prometheus, no external database.
   <img src="https://img.shields.io/badge/core-stdlib%20only-00ADD8" alt="core: stdlib only">
   <img src="https://img.shields.io/badge/RAM-~12%20MB-6f42c1" alt="RAM: about 12 MB">
   <img src="https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333" alt="platform: Linux + systemd">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="license: MIT">
+  <img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-orange" alt="license: FSL-1.1-ALv2">
 </p>
 
 <p align="center">
@@ -415,4 +415,17 @@ are on top of it and heading for the next release; see the
 
 ## License
 
-MIT.
+Trinetra is source-available under the [Functional Source License, Version 1.1,
+ALv2 Future License](LICENSE) (FSL-1.1-ALv2), © 2026 InfoDive Labs Pvt Ltd.
+
+- **Free to use, self-host and modify**, for yourself or inside your company,
+  including commercially, as long as you are not offering a competing product
+  or service. Education, research, and professional services (e.g. setting it
+  up for a client) are explicitly allowed.
+- **Not allowed:** selling or hosting Trinetra, or a product built on it, as a
+  competing commercial offering.
+- **Becomes Apache-2.0 after two years.** Each release converts to the Apache
+  License 2.0 on the second anniversary of its release.
+
+Releases up to and including v0.4.1 (published as serverwatch) remain under the
+MIT License they were released with.
