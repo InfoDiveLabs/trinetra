@@ -8,16 +8,15 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
-- **License change:** from this release on, Trinetra is licensed under the
-  Functional Source License 1.1, ALv2 Future License (FSL-1.1-ALv2),
-  © 2026 InfoDive Labs Pvt Ltd: free to use, self-host and modify for any purpose
-  except a competing commercial product or service, and each release becomes
-  Apache-2.0 two years after it is published. Releases up to v0.4.1 (published as
-  serverwatch) stay MIT.
+## [0.5.0] - 2026-09-30
 
-Fleet mode, phase 1: one trinetra can now collect the history of many,
-while every host keeps monitoring and alerting on its own exactly as before.
-See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
+The first release since the serverwatch rename, and the biggest yet: fleet
+mode (master/child, phases 1-3 -- replication and local fallback, a full
+alerting/incidents/routing engine, and a fleet web UI), signed releases with
+a maintainer-verified, self-rolling-back update path, and a round of web UI
+polish, all documented in a new [security chapter](docs/handbook/14-security.md).
+Releases are Linux-only from this version on; v0.4.1 was the last to also
+ship macOS (darwin) binaries. The license also changes, see below.
 
 ### Added
 
@@ -94,9 +93,10 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   `update.source` (default `github`), `update.github_token`, and
   `update.check_interval` (default `24h`); the daemon checks on that cadence
   and alerts when an update becomes available, commits, or rolls back.
-  Releases are Linux-only. Maintainer tooling (`cmd/trinetra-release`) and
-  the key ceremony/release process are documented in [Operations: Release
-  keys and releasing](docs/handbook/10-operations.md#release-keys-and-releasing-maintainers-only).
+  Releases are Linux-only: from this release on, macOS (darwin) binaries
+  are dropped (v0.4.1, as serverwatch, was the last release to ship them).
+  Maintainer tooling (`cmd/trinetra-release`) and the key ceremony/release
+  process are documented in [Operations: Release keys and releasing](docs/handbook/10-operations.md#release-keys-and-releasing-maintainers-only).
   See [Operations: Updating](docs/handbook/10-operations.md#updating).
 
 ### Changed
@@ -153,6 +153,15 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
     `"serverwatch fleet"` and the master certificate's CN `"serverwatch fleet
     master"` (cosmetic, nothing verifies them, left as is). Newly issued ones
     use `"trinetra fleet"` and `"trinetra fleet master"`.
+
+### License
+
+- **License change:** from this release on, Trinetra is licensed under the
+  Functional Source License 1.1, ALv2 Future License (FSL-1.1-ALv2),
+  © 2026 InfoDive Labs Pvt Ltd: free to use, self-host and modify for any purpose
+  except a competing commercial product or service, and each release becomes
+  Apache-2.0 two years after it is published. Releases up to v0.4.1 (published as
+  serverwatch) stay MIT.
 
 ### Unchanged
 
@@ -488,6 +497,9 @@ and management tooling move out of process.
 - Initial release: the stdlib-only `serverwatch` daemon with core metric
   collection, threshold and anomaly detection, and Telegram alerting.
 
+[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.5.0
+[0.4.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.4.1
 [0.4.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.4.0
 [0.3.2]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.3.2
 [0.3.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.3.1

@@ -409,9 +409,11 @@ Everything is in the handbook, one concern per chapter.
 
 ## Status
 
-The current stable release is **v0.4.1**. The Trinetra rename and fleet mode
-are on top of it and heading for the next release; see the
-[changelog](CHANGELOG.md) and [Roadmap and status](docs/handbook/12-roadmap-and-status.md).
+The current stable release is **v0.5.0**: the Trinetra rename (from
+serverwatch, with an automatic in-place migration), fleet mode (master/child,
+phases 1-3), and signed releases with a self-verifying, self-rolling-back
+update path. See the [changelog](CHANGELOG.md) and [Roadmap and
+status](docs/handbook/12-roadmap-and-status.md).
 
 ## License
 
