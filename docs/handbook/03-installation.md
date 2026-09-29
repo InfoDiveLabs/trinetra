@@ -165,9 +165,19 @@ install outright unless both signatures verify:
 sudo /tmp/trinetra install --require-signed
 ```
 
-That single command does seven things. It is worth knowing each one, because
+That single command does nine things. It is worth knowing each one, because
 this is the moment your host goes from "has a binary in /tmp" to "runs a
 monitored service."
+
+0. **Verifies the release, when a manifest is present.** If `manifest.json`
+   sits next to the binary, install checks both signatures against the
+   release keys compiled into the binary you are running, and that
+   `trinetra` and each plugin beside it hashes to its entry in the signed
+   manifest. Any mismatch refuses before anything is copied. It also refuses
+   a signed release older than one this host has already run (the version
+   floor), and refuses while a self-update is still pending. With no
+   manifest it only warns, unless you passed `--require-signed`. See
+   [Security](14-security.md#signed-releases).
 
 1. **Copies the binary to `/usr/local/bin/trinetra`.** This is the real,
    permanent home of the executable. The systemd unit points at this absolute
@@ -223,7 +233,9 @@ monitored service."
 
 5. **Writes and enables the systemd unit** at
    `/etc/systemd/system/trinetra.service`, then runs `systemctl
-   daemon-reload` followed by `systemctl enable --now trinetra`. The unit it
+   daemon-reload`, `systemctl enable trinetra` and `systemctl restart
+   trinetra` (restart, so an upgrade of a running daemon ends on the new
+   binary too). The unit it
    writes looks like this:
 
    ```ini
@@ -265,8 +277,15 @@ monitored service."
    of `install` (for example, to upgrade the binary) never overwrites your
    settings.
 
-7. **Starts the service.** By the time the command returns, the daemon is
-   already running.
+7. **Installs the self-update safety net.** It copies the binary to the
+   pinned guard path `/usr/local/lib/trinetra/guard/trinetra` and enables
+   `trinetra-update-watchdog.timer`, which confirms or rolls back any pending
+   update even if a new build fails to start (see
+   [Operations: The update watchdog](10-operations.md#the-update-watchdog)).
+
+8. **Starts the service.** By the time the command returns, the daemon is
+   already running. A verified install also raises the version floor to the
+   installed version.
 
 You will see a confirmation line naming which plugins were installed (or
 noting that none were found next to the source binary), followed by a

@@ -22,6 +22,9 @@ at are where the mechanism lives:
   field.
 - [Command reference: trinetra fleet](11-command-reference.md#trinetra-fleet)
   -- every flag on every `fleet` subcommand.
+- [Security: Fleet](14-security.md#fleet) -- the fleet's trust model in one
+  place: the pinned CA in the join code, mutual TLS, revocation, and why a
+  child never takes an update from the master on trust.
 
 ## Concepts
 
@@ -313,6 +316,10 @@ or throws away history you meant to keep.
 | Also stop tracking it and drop the open node-down alert | `fleet node remove <node>` on the **master** | Everything `revoke` does, plus the node is deleted from the registry and liveness tracking. Its replicated history stays on disk under `fleet/nodes/<id>/`. |
 | Turn a child back into a solo host | `fleet leave [--purge]` on the **child** | Local history is always kept. This is local only -- the master is not told, and keeps expecting the node (and paging for it) until you `revoke` or `remove` it there; `leave` prints the exact command. `--purge` also deletes the node's fleet identity and unsent outbox. |
 | Turn the master back into a solo host | `fleet disable [--purge]` on the **master** | Without `--purge`, the CA/registry/replicas are kept, so `fleet init` again reuses the same CA and children never have to re-join -- this is also how you re-issue the master's certificate before it expires (see [Operations and troubleshooting](#operations-and-troubleshooting) below). `--purge` deletes all of it. |
+
+Revocation is enforced by the master at every request, from the registry; there is
+no certificate revocation list to distribute. The trust model behind it is in
+[Security: Fleet](14-security.md#fleet).
 
 A child that has been `leave`-d but not yet `revoke`-d/`remove`-d on the
 master will keep showing up as `down` there and keep paging: the two ends

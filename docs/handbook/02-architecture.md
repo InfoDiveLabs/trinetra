@@ -331,6 +331,13 @@ binary by hand, whether that is a fresh build or a manual copy, must
 entry for that exact file, the front-door has nothing to verify it against and
 refuses to run it.
 
+The plugin checksum manifest is one layer of a wider trust model. How the
+binaries themselves are trusted in the first place -- two independent
+signatures on every release, keys compiled into the running binary, the
+version floor, and the guarded self-update that rewrites `plugins.json` for the
+new build -- is set out in [Security](14-security.md), along with the trust
+boundaries of the web UI, the fleet and the control socket.
+
 ## Web supervisor
 
 `web.enabled` does not start a goroutine inside the daemon: it tells the

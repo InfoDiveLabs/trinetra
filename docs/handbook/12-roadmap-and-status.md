@@ -140,6 +140,33 @@ claims that chat as owner only when the pin matches. If you have seen the old
 first-message capture described as a delivered feature, the current and correct
 behavior is the `/start <pin>` handshake.
 
+### Signed releases and safe self-update
+
+Done on the development line and heading for the next release: every release
+is signed 2-of-2 (CI plus an offline maintainer co-signature) over a manifest
+of exact file hashes; hosts verify it themselves against keys compiled into
+the running binary, keep a version floor against downgrades, watch signed
+channel pointers for a withheld update, and apply updates under a guard that
+rolls back automatically if the new build is not healthy (`trinetra update`,
+`install --require-signed`, the web UI's admin Updates page). The production
+keys are in place. See [Security](14-security.md) and
+[Operations: Updating](10-operations.md#updating).
+
+Follow-ups, before or at the first public release:
+
+- **Reproducible-rebuild check in `trinetra-release cosign`**, so the
+  maintainer's co-signature also proves the CI binaries match the tagged
+  source, not only that they are the ones the maintainer was shown.
+- **A required reviewer on the `release` environment** once the repository
+  is public (GitHub does not offer it for the private repository today; the
+  offline co-signature is the approval gate meanwhile).
+- **Automatic fleet-wide rollout** (the second half of the design): applying
+  updates by channel with maintenance windows, the master caching builds for
+  every architecture and serving them to children over mTLS, staged canary and
+  batch rollout with health reporting, pause and pin, and a web Updates page
+  for the fleet. The master stays transport only: every child still verifies
+  every release itself.
+
 ## In progress and not done yet
 
 Several pieces that would round out the architecture are still open. Being
@@ -191,8 +218,10 @@ plain about them:
 
 ## Not planned, for now
 
-A couple of directions are deliberately out of scope at this stage. Continuous
-integration and delivery is intentionally deferred. External metrics export,
+A couple of directions are deliberately out of scope at this stage. General
+continuous integration on every push is intentionally deferred; the one
+pipeline that exists is the signed release workflow, which runs the full test
+suite on every release tag. External metrics export,
 such as Prometheus or remote-write, is the kind of thing the `SampleStore`
 interface was designed to allow later, but it is not being built now.
 

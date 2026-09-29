@@ -278,6 +278,30 @@ finish any update a killed guard, a crash mid-swap or a reboot left pending
 It is listed here only so it is recognizable in a process list or the
 journal, not as a documented entry point.
 
+What `update` verifies, and why each check exists, is in
+[Security](14-security.md); to verify a release by hand with standard tools
+instead, see [Security: Verify a download yourself](14-security.md#verify-a-download-yourself).
+
+### `trinetra-release` (maintainers only)
+
+`cmd/trinetra-release` is the release-signing tool. It is not shipped to
+hosts, and it is the one place outside the plugins allowed a non-stdlib
+dependency (`golang.org/x/crypto`, for the passphrase-encrypted maintainer
+key). Run it from a checkout with `go run ./cmd/trinetra-release <command>`.
+The procedure that uses it is in
+[Operations: Release keys and releasing](10-operations.md#release-keys-and-releasing-maintainers-only).
+
+| Command | What it does |
+| --- | --- |
+| `keygen --role ci\|maint\|pointer --out FILE` | Generates a key pair. `ci`/`pointer` write a base64 seed (for a GitHub secret); `maint` asks for a passphrase and writes an encrypted key. Prints only the public key and its fingerprint. |
+| `manifest --dir DIR --version V --channel C --min-upgrade-from V --published RFC3339 [--keys-from-binary]` | Writes `DIR/manifest.json` for exactly the nine release binaries; any missing or unexpected `trinetra*-linux-*` file is an error. `--keys-from-binary` fills `keys` with this build's compiled-in key set. |
+| `sign --role ci\|pointer --in FILE --out FILE` | Signs with the seed in `TRINETRA_SIGNING_KEY`, using the role's domain prefix. |
+| `pointer --channel C --version V --issued RFC3339 --out FILE` | Writes a channel pointer that expires exactly 14 days after `--issued`. |
+| `latest --channel stable\|beta` | Reads `gh release list --json tagName,isPrerelease,isDraft` on stdin and prints the highest version for the channel. |
+| `verify DIR` | Runs the host verification (both signatures, then every file's size and hash) on a release directory. |
+| `fingerprints` | Prints the compiled-in production key fingerprints. |
+| `cosign vX.Y.Z --key FILE [--repo OWNER/REPO]` | Co-signs a draft release: verifies the CI signature, shows the manifest and any key change, asks you to retype the version and enter the passphrase, uploads `manifest.maint.sig`, re-verifies the whole draft, then publishes it. |
+
 ## 2. Plugin binaries
 
 The two out-of-process plugin binaries now have their own dedicated pages.

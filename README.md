@@ -230,13 +230,27 @@ Telegram, lands in the audit log with who did it.
   gets its own certificate. Revoking a node cuts it off at once.
 - **Verified plugins.** The daemon runs a plugin only after it checks the
   file's owner, its permissions and a SHA-256 hash recorded at install.
-- **Signed updates (CI + maintainer co-signature).** Every release ships a
-  manifest of exact file hashes, signed independently by the build pipeline
-  and by a maintainer; `trinetra update`/`install --require-signed` verify
-  both before trusting anything, and a self-update that fails its post-install
-  health check rolls back automatically.
+- **Signed updates, 2-of-2.** Every release ships a manifest of exact file
+  sizes and SHA-256 hashes, signed by the build pipeline **and** co-signed
+  offline by a maintainer. A host installs nothing unless both signatures
+  verify against keys compiled into the binary it is already running; GitHub
+  and the network are treated as untrusted transport. A version floor blocks
+  downgrades, and signed channel pointers expire after 14 days so withheld
+  updates raise an alert.
+- **Automatic rollback.** `trinetra update apply` restarts onto the new build
+  under a guard that runs the previous, known-good binary; if the new daemon
+  is not healthy within 90 seconds it is rolled back, and a watchdog timer
+  finishes the job even across a crash or reboot.
+- **Check it yourself.** The release keys and fingerprints are published, and
+  any download can be [verified by hand](docs/handbook/14-security.md#verify-a-download-yourself)
+  with `sha256sum` and OpenSSL, without trusting trinetra at all.
 - **Local only by default.** The control socket is a token-authenticated
-  unix socket; nothing phones home.
+  unix socket, and there is no telemetry. The one outbound call you did not
+  configure is the daily signed-update check against GitHub releases (it only
+  checks and notifies; turn it off with
+  `sudo trinetra config set update.channel off`).
+
+The whole model, key by key, is in the [Security chapter](docs/handbook/14-security.md).
 
 <img src="docs/assets/screenshots/login.webp" alt="Passkey sign-in screen" width="100%">
 
@@ -302,8 +316,8 @@ for b in trinetra trinetra-ctl trinetra-web; do
 done
 chmod +x trinetra trinetra-ctl trinetra-web
 
-# Optional but recommended: the signed release manifest and its two
-# detached signatures, so install can verify what it's about to run.
+# The signed release manifest and its two detached signatures (CI +
+# maintainer), so install can verify what it's about to run.
 for f in manifest.json manifest.ci.sig manifest.maint.sig; do
   curl -fsSL -o "$f" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$f"
 done
@@ -312,8 +326,11 @@ sudo ./trinetra install --require-signed   # installs the daemon AND both plugin
 sudo trinetra cli                          # guided first-run setup: bot token, enrollment PIN, web UI
 ```
 
-`trinetra install` verifies the signed manifest, copies the binaries to
-`/usr/local/bin`, and starts the service. `trinetra cli` opens the
+`trinetra install --require-signed` verifies both signatures on the manifest
+and every binary's hash (and refuses on any mismatch), copies the binaries to
+`/usr/local/bin`, and starts the service. To check a download without trusting
+trinetra itself, see [Verify a download
+yourself](docs/handbook/14-security.md#verify-a-download-yourself). `trinetra cli` opens the
 [trinetra-ctl](docs/handbook/plugins/trinetra-ctl.md#managing-with-trinetra-ctl)
 terminal UI, which walks you through the Telegram bot token, `/start <pin>`
 enrollment and, optionally, the web UI. Prefer plain commands? The one
@@ -388,6 +405,7 @@ Everything is in the handbook, one concern per chapter.
 | [Command reference](docs/handbook/11-command-reference.md) | Every CLI subcommand |
 | [Roadmap and status](docs/handbook/12-roadmap-and-status.md) | Where it is and what is planned |
 | [Fleet](docs/handbook/13-fleet.md) | Master and children: incidents, routing, silences, rules, managed config |
+| [Security](docs/handbook/14-security.md) | Trust model, signed releases and keys, safe self-update, manual verification |
 
 ## Status
 

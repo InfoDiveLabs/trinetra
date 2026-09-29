@@ -87,9 +87,9 @@ flowchart LR
   gh --> verify
   net --> verify
   bundle --> verify
-  kci -->|"1 of 2 required"| verify
-  kmaint -->|"2 of 2 required"| verify
-  kptr -->|"names a version only"| verify
+  kci -->|"release signature 1 of 2"| verify
+  kmaint -->|"release signature 2 of 2"| verify
+  kptr -->|"pointer: names a version only"| verify
   verify --> floor
   floor --> guard
 ```
@@ -616,23 +616,15 @@ Details: [The web UI: Authentication and roles](08-web-ui.md#authentication-and-
 ### Fleet
 
 ```mermaid
-flowchart LR
-  subgraph master["Master"]
-    ca["private fleet CA<br/>ECDSA P-256"]
-    reg["node registry<br/>revoked flag"]
-    listen["fleet listener :9443<br/>TLS 1.2+"]
-  end
-  subgraph child["Child"]
-    key["private key<br/>generated locally"]
-    cert["client certificate<br/>90 days, renewed at 2/3 of life"]
-  end
-  admin(["operator"]) -->|"fleet token create"| code["join code swj1_...<br/>master URL + token + CA pin"]
-  code -->|"copied by hand"| child
-  child -->|"join: refuses a master whose chain<br/>does not match the CA pin"| listen
-  ca -->|"signs"| cert
-  child -->|"mutual TLS on every request"| listen
-  listen -->|"node identity from the<br/>verified client certificate"| reg
-  reg -->|"revoked: refused"| listen
+flowchart TD
+  op(["operator on the master"]) -->|"fleet token create"| code["join code swj1_...<br/>master URL + join token + CA pin"]
+  code -->|"copied by hand"| join["child: fleet join<br/>generates its private key locally"]
+  join -->|"master's chain must match the CA pin, else refuse"| enroll["master spends the token<br/>its CA signs a 90-day client certificate"]
+  enroll --> mtls["every later request: mutual TLS, TLS 1.2+<br/>client certificate from the fleet CA"]
+  mtls --> ident{"node known from the verified certificate,<br/>and revoked in the registry?"}
+  ident -->|"not revoked"| served["request served"]
+  ident -->|"revoked or unknown"| deny["refused"]
+  mtls -.->|"at 2/3 of its life"| renew["child renews its certificate<br/>over the same connection"]
 ```
 
 - **Pinned CA, no trust on first use.** The join code carries a SHA-256 pin

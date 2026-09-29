@@ -281,8 +281,9 @@ sizes and SHA-256 hashes, plus two detached signatures over that manifest --
 one from CI (automatic), one from a maintainer (a deliberate human step) --
 which is what `trinetra update`/`install --require-signed` verify before
 trusting anything. See [internal/update](../../internal/update) for the
-verification code and [cmd/trinetra-release](../../cmd/trinetra-release) for
-the tooling below.
+verification code, [cmd/trinetra-release](../../cmd/trinetra-release) for
+the tooling below, and [Security](14-security.md) for the trust model, the
+published public keys and what each key's compromise would give an attacker.
 
 ### One-time key ceremony
 
@@ -298,19 +299,33 @@ trinetra-release keygen --role maint   --out maint.key    # passphrase-encrypted
 never touch stdout. `--role ci` and `--role pointer` write a plain base64
 seed, meant to live only as a GitHub Actions secret; `--role maint` prompts
 for a passphrase and writes a scrypt+XChaCha20-Poly1305-encrypted envelope,
-meant to live on a maintainer's own machine (or a hardware token), never in
-CI.
+meant to live on a maintainer's own machine, never in CI.
 
-Wire the three public keys into this repo's `internal/update/keys.go`
-(`productionKeyB64`, empty until this ceremony has run -- every build until
-then fails closed with "no release keys compiled in", by design) and into two
-GitHub Actions **environments**, each requiring review before a job using it
-runs:
+Each role has a **current** and a **next** key, so the ceremony makes six
+key pairs (run `keygen` twice per role). Wire the six public keys into this
+repo's `internal/update/keys.go` (`productionKeyB64`, current first). A build
+with no keys fails closed with "no release keys compiled in", by design. The
+production keys are in place (see
+[Security: The published release keys](14-security.md#the-published-release-keys));
+`go run ./cmd/trinetra-release fingerprints` prints their fingerprints. Only
+the **current** CI and pointer seeds go into GitHub; the next seeds are not
+stored there until a rotation needs them.
 
-| Environment | Secret | Used by |
-| --- | --- | --- |
-| `release` | `TRINETRA_CI_SIGNING_KEY` (the ci key's seed) | `.github/workflows/release.yml`, on every `vX.Y.Z` tag push: builds, embeds the production keys (`scripts/release-check-keys.sh` fails the build if they are missing or still the test keys), signs the manifest, and opens a draft release |
-| `channels` | `TRINETRA_POINTER_SIGNING_KEY` (the pointer key's seed) | `.github/workflows/channels.yml`, weekly and on every publish: signs `stable.json`/`beta.json`, the pointers `trinetra update check` reads |
+The two seeds live in two GitHub Actions **environments**, each limited in
+what may deploy to it:
+
+| Environment | Deployment restricted to | Secret | Used by |
+| --- | --- | --- | --- |
+| `release` | tags matching `v*` | `TRINETRA_CI_SIGNING_KEY` (the current ci key's seed) | `.github/workflows/release.yml`, on every `vX.Y.Z` tag push: builds, embeds the production keys (`scripts/release-check-keys.sh` fails the build if they are missing or still the test keys), signs the manifest, and opens a draft release |
+| `channels` | the `main` branch | `TRINETRA_POINTER_SIGNING_KEY` (the current pointer key's seed) | `.github/workflows/channels.yml`, weekly and on every publish: signs `stable.json`/`beta.json`, the pointers `trinetra update check` reads |
+
+Neither environment has a required reviewer while the repository is private
+(GitHub does not offer environment reviewers for it on the current plan), so
+the maintainer's offline co-signature in step 2 below is the human approval
+gate. Add the maintainer as a required reviewer on `release` when the
+repository goes public. The deployment restrictions already mean a run from
+any other ref -- a feature branch, or a `workflow_dispatch` from one -- can
+never reach either signing key.
 
 ### Publishing a release
 
@@ -334,12 +349,21 @@ runs:
    terminal, asks for the maintainer key's passphrase, signs, uploads
    `manifest.maint.sig`, re-verifies the complete signed release, and only
    then publishes it.
-3. `channels.yml` picks up the newly published release (or runs on its
-   Monday schedule) and signs fresh `stable.json`/`beta.json` pointers naming
+3. `channels.yml` runs on every published release, every Monday, and on
+   demand, and signs fresh `stable.json`/`beta.json` pointers naming
    the highest version on each channel, uploaded to the `channels` release.
    Hosts on that channel see it on their next `update check`. `beta.json`
    names the newest release of either kind, so beta hosts also move to each
-   final release.
+   final release. Pointers expire 14 days after they are issued, so the
+   weekly run is what keeps a quiet channel from looking frozen.
+
+   A run triggered by the publish event runs against the release's tag, not
+   `main`; if the `channels` environment's main-only rule holds that run
+   back, refresh the pointers by hand right after publishing:
+
+   ```bash
+   gh workflow run channels.yml --ref main
+   ```
 
 Nothing here ever needs a repo secret on a maintainer's own machine: the CI
 key lives only in the `release` environment, the pointer key only in
