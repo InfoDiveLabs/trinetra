@@ -15,12 +15,17 @@
 //     replaces `systemd-run --unit trinetra-update-guard ... <pinned guard>
 //     update guard`; the command gets the unit name and the pinned guard
 //     binary's path as $1 and $2.
+//   - TRINETRA_E2E_SWAP_PAUSE_FILE, honoured by e2eAfterFirstRename
+//     (swapIn), pauses an apply right after its first rename.
 //   - TRINETRA_E2E_GITHUB_BASE_URL, honoured by updateSource (update_cmd.go),
 //     points GitHubSource at the harness's fake GitHub API (relsrv) instead
 //     of the real api.github.com.
 package trinetra
 
-import "os"
+import (
+	"os"
+	"time"
+)
 
 // e2eHooksEnabled is true only in a trinetra_testkeys build.
 const e2eHooksEnabled = true
@@ -54,4 +59,17 @@ func shCmd(v string) (cmd string, args []string, ok bool) {
 		return "", nil, false
 	}
 	return "sh", []string{"-c", v}, true
+}
+
+// e2eAfterFirstRename, when TRINETRA_E2E_SWAP_PAUSE_FILE names a path,
+// creates that file right after swapIn's first binary rename and then waits
+// (up to two minutes) so the harness can SIGKILL the apply mid-swap -- the
+// "kill mid-swap, then resume" scenario.
+func e2eAfterFirstRename() {
+	path := os.Getenv("TRINETRA_E2E_SWAP_PAUSE_FILE")
+	if path == "" {
+		return
+	}
+	_ = os.WriteFile(path, []byte("paused\n"), 0o644)
+	time.Sleep(2 * time.Minute)
 }

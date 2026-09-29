@@ -334,6 +334,9 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 		if err := replaceFileFn(filepath.Join(stagingDir, f.Name), dst); err != nil {
 			return restoreAfterFailedSwap(p, fmt.Errorf("update: install %s: %w", plan.Names[i], err))
 		}
+		if i == 0 {
+			e2eAfterFirstRename()
+		}
 	}
 
 	if err := writePluginManifest(p.BinDir); err != nil {

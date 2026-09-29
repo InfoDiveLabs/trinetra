@@ -31,3 +31,8 @@ func e2eGuardCmd() (cmd string, args []string, ok bool) { return "", nil, false 
 // e2eGitHubBaseURL always returns "" in a default build: updateSource
 // (update_cmd.go) always talks to the real GitHub API.
 func e2eGitHubBaseURL() string { return "" }
+
+// e2eAfterFirstRename is a no-op in a default build. In a trinetra_testkeys
+// build it lets the update-e2e harness freeze an apply right after its first
+// binary rename, so it can kill the process mid-swap.
+func e2eAfterFirstRename() {}

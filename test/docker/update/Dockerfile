@@ -35,13 +35,16 @@ COPY --from=builder /usr/local/bin/mocktg /usr/local/bin/mocktg
 COPY test/docker/update/fake-systemctl.sh /usr/local/bin/systemctl
 COPY test/docker/update/e2e-restart.sh /usr/local/libexec/e2e-restart.sh
 COPY test/docker/update/e2e-guard.sh /usr/local/libexec/e2e-guard.sh
-RUN chmod +x /usr/local/bin/systemctl /usr/local/libexec/e2e-restart.sh /usr/local/libexec/e2e-guard.sh
+COPY test/docker/update/fake-timer.sh /usr/local/libexec/fake-timer.sh
+RUN chmod +x /usr/local/bin/systemctl /usr/local/libexec/e2e-restart.sh /usr/local/libexec/e2e-guard.sh /usr/local/libexec/fake-timer.sh \
+ && mkdir -p /etc/systemd/system
 # The e2e-only hooks (internal/trinetra/update_e2e_hooks_testkeys.go), read
 # only by a trinetra_testkeys build: point self-update at relsrv instead of
 # the real GitHub API, and replace the guard's systemctl/systemd-run calls
-# with the scripts above.
+# with the scripts above (the guard launcher gets the unit name and the
+# pinned guard path as "$@").
 ENV TRINETRA_E2E_GITHUB_BASE_URL="http://relsrv:8080"
 ENV TRINETRA_E2E_RESTART_CMD="/usr/local/libexec/e2e-restart.sh"
-ENV TRINETRA_E2E_GUARD_CMD="/usr/local/libexec/e2e-guard.sh"
+ENV TRINETRA_E2E_GUARD_CMD='/usr/local/libexec/e2e-guard.sh "$@"'
 ENV TELEGRAM_BASE_URL="http://mocktg:8080"
 CMD ["sleep", "infinity"]

@@ -2,7 +2,11 @@
 
 package trinetra
 
-import "testing"
+import (
+	"os"
+	"testing"
+	"time"
+)
 
 // TestE2EHooksIgnoredInReleaseBuild pins that a default (non-testkeys) build
 // never honours the update-e2e harness's environment hooks, even when they
@@ -16,6 +20,7 @@ func TestE2EHooksIgnoredInReleaseBuild(t *testing.T) {
 	t.Setenv("TRINETRA_E2E_RESTART_CMD", "pkill -f 'trinetra daemon'")
 	t.Setenv("TRINETRA_E2E_GUARD_CMD", "trinetra update guard &")
 	t.Setenv("TRINETRA_E2E_GITHUB_BASE_URL", "http://relsrv:8080")
+	t.Setenv("TRINETRA_E2E_SWAP_PAUSE_FILE", t.TempDir()+"/paused")
 
 	if e2eHooksEnabled {
 		t.Fatal("e2eHooksEnabled is true in a default (non-testkeys) build")
@@ -28,6 +33,11 @@ func TestE2EHooksIgnoredInReleaseBuild(t *testing.T) {
 	}
 	if u := e2eGitHubBaseURL(); u != "" {
 		t.Fatalf("e2eGitHubBaseURL honoured TRINETRA_E2E_GITHUB_BASE_URL in a default build: %q", u)
+	}
+	start := time.Now()
+	e2eAfterFirstRename()
+	if _, err := os.Stat(os.Getenv("TRINETRA_E2E_SWAP_PAUSE_FILE")); err == nil || time.Since(start) > time.Second {
+		t.Fatal("e2eAfterFirstRename honoured TRINETRA_E2E_SWAP_PAUSE_FILE in a default build")
 	}
 }
 

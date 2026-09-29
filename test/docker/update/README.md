@@ -14,8 +14,9 @@ make update-e2e          # or: bash test/docker/update/run.sh
 Needs Docker with Compose v2+. Budget up to 30 minutes: scenarios 2 and 6
 each wait for a Telegram notification that only goes out on the self-update
 daemon loop's real 5-minute cadence (`updateLoopInterval`,
-`internal/trinetra/update_daemon.go`) -- not a harness shortcut, the same
-cadence a real host runs on. Containers, the network and volumes are removed
+`internal/trinetra/update_daemon.go`), and the watchdog scenarios (7-9) wait
+for the real 1-minute watchdog timer plus a full 90-second health window --
+not harness shortcuts, the same cadences a real host runs on. Containers, the network and volumes are removed
 on exit, pass or fail.
 
 ## Why this needs its own build tag and its own fakes
@@ -35,15 +36,30 @@ same build tag is also what gates three test-only environment hooks
   (below) instead of the real GitHub API.
 - `TRINETRA_E2E_RESTART_CMD` replaces the self-update guard's
   `systemctl restart trinetra`.
-- `TRINETRA_E2E_GUARD_CMD` replaces `realLaunchGuard`'s
-  `systemd-run ... trinetra update guard`.
+- `TRINETRA_E2E_GUARD_CMD` replaces `launchGuardUnit`'s
+  `systemd-run --unit trinetra-update-guard ... <pinned guard> update guard`;
+  the script gets the unit name and the pinned guard path as `$1`/`$2`.
+- `TRINETRA_E2E_SWAP_PAUSE_FILE`, set only on one `apply` in scenario 9,
+  freezes that apply right after its first binary rename so the harness can
+  kill it mid-swap.
 
-The host container has no real systemd at all: `/usr/local/bin/systemctl` is
-a small shell shim (`fake-systemctl.sh`) that `trinetra install` drives for
-`daemon-reload`/`enable`/`restart`, and the two env hooks above point the
-guard at the same non-systemd restart/launch scripts
-(`e2e-restart.sh`/`e2e-guard.sh`), both `setsid`-detached so they survive the
-CLI process that started them.
+The host container has no real systemd at all. `/usr/local/bin/systemctl` is
+a shell shim (`fake-systemctl.sh`) that `trinetra install` and `update apply`
+drive for `daemon-reload`/`enable`/`restart`/`is-active`, and that emulates
+the two units trinetra installs, like systemd does:
+
+- `trinetra-update-watchdog.timer`: `enable --now` starts `fake-timer.sh`
+  (once -- a flock marks it active), which runs the installed
+  `trinetra-update-watchdog.service`'s `ExecStart` (the pinned guard with
+  `update guard --if-pending`) right away, then `OnUnitActiveSec` (1 minute)
+  after each run finishes, never overlapping.
+- the transient `trinetra-update-guard` unit: `e2e-guard.sh` refuses a second
+  start while one is active (a flock held for the guard's lifetime), like
+  `systemd-run --unit` does.
+
+Everything is `setsid`-detached so it survives the CLI process that started
+it. The guard's own `update/guard.lock` is what keeps the launched guard and
+the watchdog's guard from ever working on the same update at once.
 
 ## Topology (`compose.yml`, image from `Dockerfile`)
 
@@ -63,11 +79,12 @@ before.
 |---|---|---|
 | `v0.5.0` | good | scenario 1 (installed from `/releases/v0.5.0` as a local bundle) |
 | `v0.5.1` | good | scenario 2 (the beta channel pointer names it) |
-| `v0.5.2` | good signatures, but the core binary was built with `e2eCrashOnStart=1` (`internal/trinetra/update_e2e_hooks_testkeys.go`; a constant in release builds) and exits immediately instead of starting the daemon | scenario 6 (rollback) |
+| `v0.5.2` | good signatures, but the core binary was built with `e2eCrashOnStart=1` (`internal/trinetra/update_e2e_hooks_testkeys.go`; a constant in release builds) and exits immediately instead of starting the daemon | scenarios 6 and 7 (rollback) |
 | `v0.5.3-badci` | maintainer signature good, CI signature from an untrusted test key | scenario 3 |
 | `v0.5.4-badmaint` | CI signature good, no `manifest.maint.sig` at all | scenario 4 |
 | `v0.5.5-tampered` | good signatures over the original bytes, then one byte flipped in the binary afterwards | scenario 5 |
-| `v0.5.6` | good | scenario 7 |
+| `v0.5.6` | good | scenario 8 |
+| `v0.5.7` | good | scenario 9 |
 | `channels/beta` | signed pointer naming `v0.5.1` | scenario 2 |
 
 Every "good" release's 9-file manifest (3 binaries x 3 linux architectures --
@@ -78,17 +95,20 @@ native-arch file is ever actually installed or executed here.
 
 ## Scenarios
 
-1. **Install `0.5.0` `--require-signed` from a signed bundle**: `trinetra install --require-signed`, run straight out of `/releases/v0.5.0`, verifies the bundle's manifest and both signatures, installs, and raises the version floor. Floor and running both end up `0.5.0`.
+1. **Install `0.5.0` `--require-signed` from a signed bundle**: `trinetra install --require-signed`, run straight out of `/releases/v0.5.0`, verifies the bundle's manifest and both signatures, installs, raises the version floor, writes the pinned guard `/usr/local/lib/trinetra/guard/trinetra` and enables the update watchdog timer.
 2. **Check and apply**: `trinetra update check` reports `0.5.1` available on the beta channel; `trinetra update apply` fetches, stages, smoke-tests, swaps in, and the guard confirms it healthy. Running and floor both become `0.5.1`, and mocktg eventually gets the `updated 0.5.0 → 0.5.1` notification.
 3. **Bad CI signature**: `apply --version 0.5.3-badci` is refused before anything is staged; running stays `0.5.1`.
 4. **Missing maintainer signature**: `apply --version 0.5.4-badmaint` is refused the same way.
 5. **Tampered binary**: `apply --version 0.5.5-tampered` is refused on the SHA-256 mismatch during staging; the installed `/usr/local/bin/trinetra` is byte-for-byte unchanged.
 6. **Crash-on-start rollback**: `apply --version 0.5.2` stages and swaps in cleanly (only `trinetra daemon` itself crashes, not `version --json`), but the guard's restarted daemon never comes up healthy, so it rolls back to `0.5.1` within 90s, marks `0.5.2` bad in `state.json`, and a critical "rolled back" alert reaches mocktg. A second `apply --version 0.5.2` without `--force` is refused.
-7. **Guard killed mid health-check**: `apply --version 0.5.6` stages and restarts the daemon onto it; the harness waits for the new daemon PID (proving the guard already restarted it) and then kills the guard process before it can commit. The pending update is left stuck. The harness then restarts the daemon itself (simulating the next real start), whose `resumePendingOnStart` hook launches a fresh guard that finds the already-healthy `0.5.6` build and commits it, leaving no pending update.
-8. **Downgrade refused**: `apply --version 0.5.0` is refused (floor is now well above `0.5.0`); running and floor are unchanged.
-9. **No token leakage**: `trinetra config get` (both the full dump and the single `update.github_token` key) and `trinetra dump --metric cpu` never print the raw `e2etoken` value -- `update.github_token` is a secret key, always shown as `(set)`.
+7. **Guard killed while a crash-on-start build is pending** (the real-systemd rehearsal's failing scenario 10): `apply --version 0.5.2 --force`; once the new daemon has crashed, the guard is killed. Nothing started from the new build can recover, but the watchdog runs the pinned guard, which restarts, waits out the health window and rolls back to `0.5.1` with no manual step.
+8. **Guard killed mid health-check**: `apply --version 0.5.6` stages and restarts the daemon onto it; the harness kills the guard before it can commit. With no restart or other help, the watchdog's next run resumes the health check and commits `0.5.6`.
+9. **Apply killed mid-swap**: `apply --version 0.5.7` is paused right after its first binary rename (`TRINETRA_E2E_SWAP_PAUSE_FILE`) and SIGKILLed there. The pending update is recorded as `swapping`; once the dead apply's lock is gone, the watchdog restores the previous build (core binary byte-identical to `0.5.6` again), records a rollback naming the interrupted swap, and does not mark `0.5.7` bad -- a clean re-apply of `0.5.7` then commits.
+10. **Downgrade refused**: `apply --version 0.5.0` is refused (floor is now well above `0.5.0`); running and floor are unchanged.
+11. **No token leakage**: `trinetra config get` (both the full dump and the single `update.github_token` key) and `trinetra dump --metric cpu` never print the raw `e2etoken` value -- `update.github_token` is a secret key, always shown as `(set)`.
+12. **Audit and steady state**: `/var/lib/trinetra/update/audit.jsonl` holds apply, commit and rollback entries (the guard's with actor `guard`), the watchdog timer is still active, and no guard is left running.
 
 Output is one `PASS <n> <name>` / `FAIL <n> <name>: <why>` line per scenario;
-the first failure exits non-zero after dumping the daemon and guard log
-tails, `trinetra update status --json`, the raw `state.json`, and mocktg's
+the first failure exits non-zero after dumping the daemon, guard and
+watchdog log tails, `trinetra update status --json`, the raw `state.json`, and mocktg's
 recorded messages.

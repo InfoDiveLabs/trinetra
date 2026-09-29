@@ -23,7 +23,10 @@
 #                    one byte flipped in trinetra-linux-$GOARCH afterwards,
 #                    so the file no longer matches the signed manifest
 #                    (scenario 5).
-#   v0.5.6/          good release, applied and confirmed in scenario 7.
+#   v0.5.6/          good release, applied and confirmed after its guard is
+#                    killed (scenario 8: the watchdog resumes it).
+#   v0.5.7/          good release, whose first apply is killed mid-swap
+#                    (scenario 9) and which is then applied cleanly.
 #   channels/        beta.json + beta.json.sig, naming v0.5.1 (scenario 2).
 #
 # Every "good" release is signed with the deterministic test keys
@@ -83,6 +86,7 @@ build_core 0.5.3-badci
 build_core 0.5.4-badmaint
 build_core 0.5.5-tampered
 build_core 0.5.6
+build_core 0.5.7
 
 # assemble_files VERSION: copies this version's core + the shared plugin
 # binaries into $RELEASES_DIR/v<VERSION>/, under the release asset names
@@ -158,6 +162,10 @@ printf '\0' | dd of="$RELEASES_DIR/v0.5.5-tampered/trinetra-linux-$GOARCH" bs=1 
 echo "== v0.5.6 (guard-kill target) =="
 assemble_files 0.5.6
 sign_good 0.5.6 beta
+
+echo "== v0.5.7 (kill-mid-swap target) =="
+assemble_files 0.5.7
+sign_good 0.5.7 beta
 
 echo "== channels/beta (points at v0.5.1) =="
 trinetra-release pointer --channel beta --version 0.5.1 --issued "$PUBLISHED" --out "$RELEASES_DIR/channels/beta.json"

@@ -603,10 +603,11 @@ func guardLaunchCommand(p updatePaths) (name string, args []string) {
 // launchGuardUnit is production launchGuard. TRINETRA_E2E_GUARD_CMD
 // (trinetra_testkeys builds only -- see update_e2e_hooks_testkeys.go)
 // replaces systemd-run for the docker e2e harness's systemd-less host; it
-// receives the guard unit name and the pinned guard path as $1 and $2.
+// runs under `sh -c` and receives the guard unit name and the pinned guard
+// path as $1 and $2.
 func launchGuardUnit(p updatePaths) error {
 	if cmd, args, ok := e2eGuardCmd(); ok {
-		_, err := osExec{}.Run(cmd, append(args, guardUnitName, p.guardBin())...)
+		_, err := osExec{}.Run(cmd, append(args, "e2e-guard", guardUnitName, p.guardBin())...)
 		return err
 	}
 	name, args := guardLaunchCommand(p)
