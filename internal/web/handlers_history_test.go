@@ -559,6 +559,226 @@ func TestNodeScopedDowntimeAPIPagination(t *testing.T) {
 	}
 }
 
+// TestDowntimeAPITimelineHasFixedBucketCount pins that the response's
+// Timeline always has exactly downtimeTimelineBuckets entries covering the
+// full requested range, whether there are zero events, a nil API, or many
+// -- the timeline bar's payload size is bounded independent of incident
+// count, unlike (pre-117) drawing one SVG segment per event.
+func TestDowntimeAPITimelineHasFixedBucketCount(t *testing.T) {
+	cases := []struct {
+		name string
+		api  core.API
+	}{
+		{"nil API", nil},
+		{"no events", fakeAPI{}},
+		{"many events", fakeAPI{events: downtimeEventsFixture(40, 1000, 60)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := historyTestDeps(t, tc.api)
+			h := newHandler(d)
+			users := newUserStore(d.StateDir)
+			sessions := newSessionStore(d.StateDir)
+
+			req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000")
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+			}
+			var resp downtimeResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+			}
+			if len(resp.Timeline) != downtimeTimelineBuckets {
+				t.Fatalf("len(timeline) = %d, want %d", len(resp.Timeline), downtimeTimelineBuckets)
+			}
+			if resp.Timeline[0].Start != 0 {
+				t.Errorf("timeline[0].Start = %d, want 0 (=from)", resp.Timeline[0].Start)
+			}
+			if last := resp.Timeline[len(resp.Timeline)-1].End; last != 100000 {
+				t.Errorf("timeline[last].End = %d, want 100000 (=to)", last)
+			}
+		})
+	}
+}
+
+// TestDowntimeAPITimelineClipsAtRangeAndBucketEdges pins the clipping
+// contract: an event that starts before `from`, an event that's still open
+// (End 0, clipped through `to`), and an event that spans a bucket boundary
+// all only contribute the portion of their duration that actually falls
+// inside [from,to] and inside each bucket -- not their raw duration_sec.
+// Uses from=0,to=1200 with the real downtimeTimelineBuckets(=120) so each
+// bucket is exactly 10s wide and the math is exact.
+func TestDowntimeAPITimelineClipsAtRangeAndBucketEdges(t *testing.T) {
+	if 1200%downtimeTimelineBuckets != 0 {
+		t.Fatalf("test assumes 1200 divides evenly by downtimeTimelineBuckets(=%d)", downtimeTimelineBuckets)
+	}
+	bucketWidth := int64(1200 / downtimeTimelineBuckets)
+
+	events := []DownEventView{
+		// Starts before `from`(0): only [0,50) should count (clipped from
+		// [-100,50)), spread across the first 5 buckets (10s each).
+		{Type: "net_down", Start: -100, End: 50, DurationSec: 150},
+		// Crosses a bucket boundary at t=10: [5,25) contributes 5s to
+		// bucket 0 ([0,10)), 10s to bucket 1 ([10,20)), 5s to bucket 2
+		// ([20,30)).
+		{Type: "power_down", Start: 5, End: 25, DurationSec: 20},
+		// Still open (End 0): clipped through `to`(1200), landing entirely
+		// in the last bucket ([1190,1200)).
+		{Type: "net_down", Start: 1190, End: 0, DurationSec: 999999},
+	}
+	d := historyTestDeps(t, fakeAPI{events: events})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=1200")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	if len(resp.Timeline) != downtimeTimelineBuckets {
+		t.Fatalf("len(timeline) = %d, want %d", len(resp.Timeline), downtimeTimelineBuckets)
+	}
+
+	// bucket 0 ([0,10)): 10s from the range-clipped first event, + 5s from
+	// the boundary-crossing second event = 15s.
+	if got := resp.Timeline[0].DownSeconds; got != bucketWidth+5 {
+		t.Errorf("timeline[0].DownSeconds = %d, want %d", got, bucketWidth+5)
+	}
+	// bucket 1 ([10,20)): 10s from the first event + 10s from the second
+	// event = 20s.
+	if got := resp.Timeline[1].DownSeconds; got != 2*bucketWidth {
+		t.Errorf("timeline[1].DownSeconds = %d, want %d", got, 2*bucketWidth)
+	}
+	// bucket 2 ([20,30)): 10s from the first event + 5s from the second
+	// event (which ends at 25) = 15s.
+	if got := resp.Timeline[2].DownSeconds; got != bucketWidth+5 {
+		t.Errorf("timeline[2].DownSeconds = %d, want %d", got, bucketWidth+5)
+	}
+	// buckets 3,4 ([30,50)): 10s each from the range-clipped first event
+	// only.
+	for _, i := range []int{3, 4} {
+		if got := resp.Timeline[i].DownSeconds; got != bucketWidth {
+			t.Errorf("timeline[%d].DownSeconds = %d, want %d", i, got, bucketWidth)
+		}
+	}
+	// bucket 5 ([50,60)): nothing -- the first event ended exactly at 50.
+	if got := resp.Timeline[5].DownSeconds; got != 0 {
+		t.Errorf("timeline[5].DownSeconds = %d, want 0", got)
+	}
+	// last bucket ([1190,1200)): the open event, clipped through `to`.
+	last := downtimeTimelineBuckets - 1
+	if got := resp.Timeline[last].DownSeconds; got != bucketWidth {
+		t.Errorf("timeline[%d].DownSeconds = %d, want %d", last, got, bucketWidth)
+	}
+	if resp.Timeline[last].Type != "net_down" {
+		t.Errorf("timeline[%d].Type = %q, want net_down", last, resp.Timeline[last].Type)
+	}
+	// bucket 1 overlaps both a net_down (bucket 0's first event, spilling
+	// in) and the power_down boundary-crosser -- power_down must win.
+	if resp.Timeline[1].Type != "power_down" {
+		t.Errorf("timeline[1].Type = %q, want power_down (crit wins over warn)", resp.Timeline[1].Type)
+	}
+
+	// The event(s) fully or partly outside [from,to] must still be clipped
+	// the same way in TotalSeconds, not counted at raw duration_sec: total
+	// clipped seconds = 50 (event 1) + 20 (event 2) + 10 (event 3) = 80,
+	// NOT 150+20+999999.
+	if resp.TotalSeconds != 80 {
+		t.Errorf("total_seconds = %d, want 80 (clipped, not raw duration_sec)", resp.TotalSeconds)
+	}
+}
+
+// TestDowntimeAPITimelineSumMatchesTotalSeconds pins the invariant the
+// controller asked for explicitly: summing every bucket's DownSeconds must
+// equal TotalSeconds, for an arbitrary (non-trivial) event set.
+func TestDowntimeAPITimelineSumMatchesTotalSeconds(t *testing.T) {
+	events := downtimeEventsFixture(37, 500, 42) // arbitrary, not aligned to bucket width
+	d := historyTestDeps(t, fakeAPI{events: events})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	var sum int64
+	for _, b := range resp.Timeline {
+		sum += b.DownSeconds
+	}
+	if sum != resp.TotalSeconds {
+		t.Errorf("sum(timeline.down_seconds) = %d, total_seconds = %d, want equal", sum, resp.TotalSeconds)
+	}
+	if resp.TotalSeconds == 0 {
+		t.Fatal("total_seconds = 0, test fixture should produce nonzero downtime")
+	}
+}
+
+// TestDowntimeAPITimelineIndependentOfLimitOffset pins that Timeline (and
+// TotalSeconds/Total) never changes with limit/offset -- the whole point of
+// computing it over every in-range event before any page slicing, so
+// paging can't hide part of the downtime picture from the timeline bar.
+func TestDowntimeAPITimelineIndependentOfLimitOffset(t *testing.T) {
+	events := downtimeEventsFixture(40, 1000, 60)
+	d := historyTestDeps(t, fakeAPI{events: events})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	fetch := func(query string) downtimeResponse {
+		t.Helper()
+		req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000&"+query)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("query %q status = %d, want 200, body: %s", query, rr.Code, rr.Body.String())
+		}
+		var resp downtimeResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("query %q decode: %v", query, err)
+		}
+		return resp
+	}
+
+	small := fetch("limit=2&offset=0")
+	big := fetch("limit=500&offset=0")
+	offsetted := fetch("limit=2&offset=30")
+
+	for _, pair := range []struct {
+		name string
+		got  downtimeResponse
+	}{{"limit=500", big}, {"offset=30", offsetted}} {
+		if len(pair.got.Timeline) != len(small.Timeline) {
+			t.Fatalf("%s: len(timeline) = %d, want %d (same as limit=2)", pair.name, len(pair.got.Timeline), len(small.Timeline))
+		}
+		for i := range small.Timeline {
+			if pair.got.Timeline[i] != small.Timeline[i] {
+				t.Errorf("%s: timeline[%d] = %+v, want %+v (identical to limit=2's)", pair.name, i, pair.got.Timeline[i], small.Timeline[i])
+			}
+		}
+		if pair.got.TotalSeconds != small.TotalSeconds {
+			t.Errorf("%s: total_seconds = %d, want %d", pair.name, pair.got.TotalSeconds, small.TotalSeconds)
+		}
+		if pair.got.Total != small.Total {
+			t.Errorf("%s: total = %d, want %d", pair.name, pair.got.Total, small.Total)
+		}
+	}
+}
+
 // TestHistoryPageRendersDiskAndDowntimeSections pins that the restored
 // mockup sections are present: a per-mount disk panel driven off the current
 // snapshot's mounts, and a downtime panel the client fills from
