@@ -13,8 +13,13 @@
 # host port, so they cannot collide. --serial runs them one after another
 # (the old behaviour); --pair runs fleet-e2e alongside migration-e2e then
 # update-e2e (half the peak load, about the same wall time, since fleet-e2e
-# is the longest). validate always runs on its own afterwards (it loads the
-# CPU with stress-ng and drives the host Docker daemon directly).
+# is the longest). Before the concurrent suites start, an "images" stage
+# builds the fleet and update images (concurrently): their Go compiles are
+# the heavy part, and fleet-e2e's timing-sensitive steps should not run
+# while the update image is still compiling ten binaries. Each suite's own
+# build step is then a cache hit. validate always runs on its own afterwards
+# (it loads the CPU with stress-ng and drives the host Docker daemon
+# directly).
 #
 # Every stage runs even if an earlier one failed, so one run gives the whole
 # picture. Each stage's output goes to <out>/<stage>.log; <out>/summary.txt
@@ -34,7 +39,7 @@ while [ $# -gt 0 ]; do
 	--serial) MODE=serial ;;
 	--pair) MODE=pair ;;
 	--out) OUT="$2"; shift ;;
-	-h | --help) sed -n '2,22p' "$0"; exit 0 ;;
+	-h | --help) sed -n '2,27p' "$0"; exit 0 ;;
 	*) echo "unknown flag: $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -104,11 +109,26 @@ gofmt_check() {
 	[ -z "$bad" ] || { echo "unformatted files:"; echo "$bad"; return 1; }
 }
 
+# build_images: the fleet and update e2e images, built concurrently (each
+# suite rebuilds its own image first anyway, so if this fails the suites
+# still run and report their own build error).
+build_images() {
+	local rc=0 p1 p2
+	docker compose -f test/docker/fleet/compose.yml build --quiet &
+	p1=$!
+	docker compose -f test/docker/update/compose.yml build --quiet &
+	p2=$!
+	wait "$p1" || rc=1
+	wait "$p2" || rc=1
+	return "$rc"
+}
+
 run gofmt 120 gofmt_check
 run vet 600 go vet ./...
 run unit 1800 go test -race -count=1 ./...
 run build 600 make build
 if [ "$QUICK" -eq 0 ]; then
+	[ "$MODE" = serial ] || run images 1800 build_images
 	case "$MODE" in
 	serial)
 		run fleet-e2e 3600 make fleet-e2e
