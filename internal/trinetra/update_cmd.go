@@ -259,8 +259,14 @@ func (u updater) rollback() error {
 		var v struct {
 			Version string `json:"version"`
 		}
+		// Normalise a leading "v" here, same as smokeTest and
+		// checkGuardHealth (update_guard.go): the guard's health check
+		// compares this Pending.Version against a daemon-reported version
+		// that is itself normalised, so storing it un-normalised here made
+		// every rollback's health gate misreport a version mismatch and roll
+		// back a perfectly healthy restart (fix-round-1 F1).
 		if jerr := json.Unmarshal(out, &v); jerr == nil && v.Version != "" {
-			prevVersion = v.Version
+			prevVersion = strings.TrimPrefix(v.Version, "v")
 		}
 	}
 

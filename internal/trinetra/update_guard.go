@@ -81,8 +81,19 @@ func runGuard(d guardDeps) (update.Result, error) {
 	pending := *st.Pending
 
 	restartedAt := d.now()
+	// A restart() error is recorded as a failure detail but is NOT fatal:
+	// osExec's own timeout (60s, execTimeout) is shorter than systemd's
+	// default TimeoutStopSec (90s), so `systemctl restart trinetra` can
+	// return an error purely because the command itself timed out waiting,
+	// while systemd goes on to finish the restart successfully a few
+	// seconds later. Bailing out here would leave an unverified binary
+	// installed with Pending set and no guard watching it -- instead, keep
+	// polling: a genuinely healthy restart still commits, and a genuinely
+	// broken one still rolls back once the deadline passes, exactly as if
+	// restart() had returned nil and the daemon just never came up.
+	var lastDetail string
 	if err := d.restart(); err != nil {
-		return update.Result{}, fmt.Errorf("update: guard restart: %w", err)
+		lastDetail = "restart: " + err.Error()
 	}
 
 	deadline := pending.Deadline
@@ -90,7 +101,6 @@ func runGuard(d guardDeps) (update.Result, error) {
 		deadline = min
 	}
 
-	var lastDetail string
 	for {
 		if ok, detail := checkGuardHealth(d.health, pending.Version, restartedAt); ok {
 			return commitPending(d.paths, pending, d.now())
@@ -116,8 +126,15 @@ func checkGuardHealth(h guardHealth, wantVersion string, restartedAt time.Time) 
 	if err != nil {
 		return false, "could not reach the control socket: " + err.Error()
 	}
-	if got := strings.TrimPrefix(v, "v"); got != wantVersion {
-		return false, fmt.Sprintf("reported %s, want %s", got, wantVersion)
+	// Normalise "v" on BOTH sides before comparing, the same way smokeTest
+	// does (update_apply.go): wantVersion is Pending.Version, whose producers
+	// are not all guaranteed to have stripped a leading "v" (fix-round-1 F1 --
+	// updater.rollback() used to store `version --json`'s raw, v-prefixed
+	// output verbatim, which made every rollback's health gate misreport a
+	// version mismatch and roll back a perfectly healthy restart).
+	want := strings.TrimPrefix(wantVersion, "v")
+	if got := strings.TrimPrefix(v, "v"); got != want {
+		return false, fmt.Sprintf("reported %s, want %s", got, want)
 	}
 	ts, err := h.SampleTS()
 	if err != nil {

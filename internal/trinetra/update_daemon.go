@@ -7,6 +7,7 @@ package trinetra
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -148,11 +149,35 @@ func notifyPendingResult(p updatePaths, notify func(Alert)) {
 	}
 }
 
+// checkRefreshedState reports whether a u.check(ctx, c) call that returned
+// err actually reached and persisted a fresh LastCheck/LastPointerIssued
+// (fix-round-1 F4): updater.check (update_cmd.go) only ever returns an error
+// BEFORE touching state at all (channel off, no source, FetchLatest/
+// FetchRelease/LoadState failed) -- UNLESS that error is one of
+// update.CheckPolicy's sentinel errors (ErrAlreadyInstalled, ErrDowngrade,
+// ErrTooOld, ErrWrongChannel), which check returns only AFTER it has already
+// loaded, updated and saved state; a policy verdict is not a fetch/verify
+// failure. A nil error is of course also success. Everything else (a
+// network error, a bad signature, an expired/malformed pointer, an
+// unreadable/unwritable state file) is a real failure: state was not
+// refreshed this cycle, so the stale-pointer rule below must not evaluate
+// against it as if it had been.
+func checkRefreshedState(err error) bool {
+	return err == nil ||
+		errors.Is(err, update.ErrAlreadyInstalled) ||
+		errors.Is(err, update.ErrDowngrade) ||
+		errors.Is(err, update.ErrTooOld) ||
+		errors.Is(err, update.ErrWrongChannel)
+}
+
 // runDueCheck runs u.check when update.channel is on, the source is github,
 // and CheckInterval has elapsed since LastCheck, then evaluates the
-// stale-pointer rule against the resulting (possibly unchanged, on error)
-// state. A check error is logged only; the stale-pointer alert is the one
-// exception, since it can matter even while individual checks keep failing.
+// stale-pointer rule -- but ONLY when that check actually succeeded in
+// talking to the source (checkRefreshedState; fix-round-1 F4): a check that
+// truly failed (network error, bad signature, etc.) is logged only, exactly
+// like any other check error, and must never itself trigger the
+// stale-pointer alert just because state already looked stale from some
+// earlier successful check.
 func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(Alert), staleNotified *bool) {
 	channel := c.UpdateChannel()
 	if channel == "off" || c.UpdateSource() != "github" {
@@ -165,8 +190,12 @@ func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(A
 	if st.LastCheck != 0 && time.Since(time.Unix(st.LastCheck, 0)) < c.UpdateCheckInterval() {
 		return
 	}
-	if _, err := u.check(ctx, c); err != nil {
-		log.Printf("update: check: %v", err)
+	_, checkErr := u.check(ctx, c)
+	if checkErr != nil {
+		log.Printf("update: check: %v", checkErr)
+	}
+	if !checkRefreshedState(checkErr) {
+		return
 	}
 
 	st2, err := update.LoadState(u.paths.dir())

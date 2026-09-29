@@ -180,6 +180,33 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 	}
 }
 
+// TestUpdaterRollbackNormalizesVersion is fix-round-1 F1: `version --json`
+// against the previous binary can report a "v"-prefixed version (git
+// describe-style tags, e.g. "v0.4.1" -- see internal/version's Makefile
+// stamping), and rollback() used to store that raw string as
+// Pending.Version verbatim. The guard's health check compares Pending.Version
+// against the RUNNING daemon's reported version (also normalised), so an
+// un-normalised Pending.Version made every `trinetra update rollback`
+// misreport a version mismatch and roll back a perfectly healthy restart.
+func TestUpdaterRollbackNormalizesVersion(t *testing.T) {
+	p := testUpdatePaths(t)
+	os.MkdirAll(p.previous(), 0o700)
+	os.WriteFile(filepath.Join(p.previous(), "trinetra"), []byte("OLD-core"), 0o755)
+	guarded := 0
+	u := updater{paths: p, x: fakeVersionExec("v0.4.1"), now: func() time.Time { return time.Unix(1000, 0) },
+		running: mustVer("0.5.0"), launchGuard: func() error { guarded++; return nil }}
+	if err := u.rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if guarded != 1 {
+		t.Fatalf("guard launched %d times", guarded)
+	}
+	st, _ := update.LoadState(p.dir())
+	if st.Pending == nil || st.Pending.Version != "0.4.1" {
+		t.Fatalf("pending version not normalised: %+v", st.Pending)
+	}
+}
+
 type fakeVersionExec string
 
 func (f fakeVersionExec) Run(name string, args ...string) ([]byte, error) {

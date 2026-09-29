@@ -1312,8 +1312,14 @@ func cmdDaemon(args []string) int {
 	if err := resumePendingOnStart(defaultUpdatePaths(), realLaunchGuard); err != nil {
 		log.Printf("update: resume: %v", err)
 	}
+	// Update results/availability bypass quiet hours (task-7 brief), same as
+	// the boot report and scheduled digests above: an operator waiting on a
+	// pending update -- or one that just rolled back -- needs to know
+	// regardless of the clock (fix-round-1 F3: this used to route through
+	// inQuietHours like an ordinary anomaly alert, which could silently
+	// suppress it).
 	go startUpdateLoop(daemonCtx, getCfg, newUpdater(getCfg()), func(a Alert) {
-		enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		enqueueAndLog(alog, bus, q, a, false)
 	})
 
 	// telegram long-poller (owns its own prevCPU internally)
