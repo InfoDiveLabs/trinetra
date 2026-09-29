@@ -161,6 +161,7 @@ func startUpdateLoop(ctx context.Context, getCfg func() *config.Config, u update
 // future test could drive a single tick directly.
 func updateLoopTick(ctx context.Context, u updater, c *config.Config, notify func(Alert)) {
 	notifyPendingResult(u.paths, notify)
+	notifyRestoreFailed(u.paths, u.clock(), notify)
 	runDueCheck(ctx, u, c, notify)
 	notifyAvailable(u.paths, notify)
 }
@@ -187,6 +188,43 @@ func notifyPendingResult(p updatePaths, notify func(Alert)) {
 	})
 	if err != nil {
 		log.Printf("update: mark result notified: %v", err)
+	}
+}
+
+// notifyRestoreFailed delivers and marks RestoreFailedNotified the current
+// Pending's restore failure, if any and not already notified (#136).
+// rollbackPending keeps Pending set -- rather than clearing it -- when
+// restoring the previous build after a failed health gate itself fails, so
+// the watchdog retries; since the guard that detects this is a separate,
+// short-lived process (a fresh one for every retry) it cannot notify
+// directly or remember having already alerted, so this periodic check is
+// the only place the critical alert can be raised, and the only place that
+// can dedup it across retries. Once a retry finally restores successfully,
+// rollbackPending clears Pending (RestoreFailed included) entirely, so this
+// stops finding anything to alert on for that episode.
+func notifyRestoreFailed(p updatePaths, now time.Time, notify func(Alert)) {
+	st, err := update.LoadState(p.dir())
+	if err != nil || st.Pending == nil || st.Pending.RestoreFailed == "" || st.Pending.RestoreFailedNotified {
+		return
+	}
+	pending := *st.Pending
+	notify(Alert{
+		Key:      "update:restore_failed",
+		Title:    "trinetra update to " + pending.Version + " failed its health check, and restoring " + pending.From + " also failed",
+		Body:     pending.RestoreFailed + "; the update watchdog will keep retrying",
+		Severity: SevCritical,
+		Kind:     "fire",
+		Source:   "update",
+		Time:     now.Unix(),
+	})
+	err = update.WithState(p.dir(), func(st2 *update.State) error {
+		if st2.Pending != nil && st2.Pending.RestoreFailed != "" {
+			st2.Pending.RestoreFailedNotified = true
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("update: mark restore-failed notified: %v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,6 +165,119 @@ func TestGuardRollbackFailedGateDoesNotLoop(t *testing.T) {
 	}
 	if st.Floor != "" {
 		t.Fatalf("failed rollback gate raised the floor: %+v", st)
+	}
+}
+
+// TestGuardKeepsPendingWhenRestoreFails is issue #136: when a Pending fails
+// its health gate AND restoring the previous build itself then fails (e.g. a
+// write error in BinDir), rollbackPending must NOT clear Pending the way
+// every other outcome does -- otherwise the persistent watchdog timer never
+// retries and the host can be left half-updated. Pending must stay, with the
+// failure recorded on it (Pending.RestoreFailed), and the version must not
+// be marked bad or the outcome recorded as rolled_back: this update has not
+// actually finished rolling back yet. A second guard run (as the watchdog
+// would trigger a minute later), with the restore now possible, must behave
+// like a normal rollback: Pending cleared, the version marked bad, outcome
+// rolled_back.
+func TestGuardKeepsPendingWhenRestoreFails(t *testing.T) {
+	p, clk := guardFixture(t, update.Pending{Version: "0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}, Phase: pendingSwapped})
+	h := &fakeHealth{active: false, version: "0.5.0", ts: 1002} // never healthy -> rolls back
+	chmodUnwritable(t, p.BinDir)                                // restorePrevious can't write into BinDir
+
+	restarts := 0
+	r, err := runGuard(guardDeps{paths: p, health: h, now: clk.now, sleep: clk.sleep, restart: func() error { restarts++; return nil }})
+	if err == nil {
+		t.Fatal("runGuard succeeded despite a failed restore")
+	}
+	if !strings.Contains(err.Error(), "watchdog will retry") {
+		t.Fatalf("error does not say the watchdog will retry: %v", err)
+	}
+	if r.Outcome != "" {
+		t.Fatalf("r=%+v, want a zero Result while the restore keeps failing", r)
+	}
+	if restarts != 2 {
+		t.Fatalf("restarts=%d, want 2 (the initial restart onto the pending build, plus the rollback's own restart attempt)", restarts)
+	}
+
+	st, err := update.LoadState(p.dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending == nil {
+		t.Fatal("Pending cleared despite a failed restore; the watchdog will never retry (#136)")
+	}
+	if st.Pending.Version != "0.5.0" || st.Pending.From != "0.4.1" {
+		t.Fatalf("Pending mangled: %+v", st.Pending)
+	}
+	if st.Pending.RestoreFailed == "" {
+		t.Fatal("Pending.RestoreFailed not recorded")
+	}
+	if !strings.Contains(st.Pending.RestoreFailed, "restoring the previous build also failed") {
+		t.Fatalf("Pending.RestoreFailed = %q, missing the restore failure", st.Pending.RestoreFailed)
+	}
+	if st.IsBad("0.5.0") {
+		t.Fatal("version marked bad before the restore ever actually succeeded")
+	}
+	if st.Floor != "0.4.1" {
+		t.Fatalf("floor changed: %+v", st)
+	}
+	if st.Last != nil {
+		t.Fatalf("Last recorded before the rollback actually finished: %+v", st.Last)
+	}
+
+	// Second guard run: fix the write error (as a real retry would find
+	// BinDir writable again once whatever blocked it clears) and confirm the
+	// watchdog's next tick finishes the job normally.
+	if err := os.Chmod(p.BinDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r2, err2 := runGuard(guardDeps{paths: p, health: h, now: clk.now, sleep: clk.sleep, restart: func() error { return nil }})
+	if err2 != nil || r2.Outcome != "rolled_back" {
+		t.Fatalf("retry: r=%+v err=%v", r2, err2)
+	}
+	b, _ := os.ReadFile(filepath.Join(p.BinDir, "trinetra"))
+	if string(b) != "OLD-core" {
+		t.Fatalf("bin not restored after the retry: %q", b)
+	}
+	st2, err := update.LoadState(p.dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st2.Pending != nil {
+		t.Fatalf("Pending not cleared after a successful retry: %+v", st2.Pending)
+	}
+	if !st2.IsBad("0.5.0") {
+		t.Fatal("version not marked bad once the retry finally rolled back")
+	}
+	if st2.Last == nil || st2.Last.Outcome != "rolled_back" {
+		t.Fatalf("Last not recorded as rolled_back: %+v", st2.Last)
+	}
+}
+
+// TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation is a
+// guard-rail alongside TestGuardKeepsPendingWhenRestoreFails: a rollback
+// confirmation (Rollback: true) never attempts restorePrevious at all (there
+// is no older build to fall back to -- see rollbackPending's doc), so it
+// must never set Pending.RestoreFailed even when BinDir is unwritable.
+func TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation(t *testing.T) {
+	p := testUpdatePaths(t)
+	os.MkdirAll(p.previous(), 0o700)
+	os.WriteFile(filepath.Join(p.previous(), "trinetra"), []byte("OLD-core"), 0o755)
+	os.WriteFile(filepath.Join(p.BinDir, "trinetra"), []byte("OLD-core"), 0o755)
+	pending := update.Pending{Version: "0.4.1", From: "0.5.0", Deadline: 1090, Files: []string{"trinetra"}, Rollback: true}
+	if err := update.SaveState(p.dir(), update.State{Pending: &pending}); err != nil {
+		t.Fatal(err)
+	}
+	chmodUnwritable(t, p.BinDir)
+	clk := &fakeClock{t: time.Unix(1000, 0)}
+	h := &fakeHealth{active: false, version: "0.4.1", ts: 1002} // never healthy
+	r, err := runGuard(guardDeps{paths: p, health: h, now: clk.now, sleep: clk.sleep, restart: func() error { return nil }})
+	if err != nil || r.Outcome != "rolled_back" {
+		t.Fatalf("r=%+v err=%v", r, err)
+	}
+	st, _ := update.LoadState(p.dir())
+	if st.Pending != nil {
+		t.Fatalf("pending not cleared: %+v", st)
 	}
 }
 

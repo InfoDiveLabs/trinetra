@@ -735,6 +735,9 @@ func renderUpdateStatus(w io.Writer, st updateStatus) {
 	}
 	if st.Pending != nil {
 		fmt.Fprintf(w, "pending:    %s (from %s, rollback=%v)\n", st.Pending.Version, st.Pending.From, st.Pending.Rollback)
+		if st.Pending.RestoreFailed != "" {
+			fmt.Fprintf(w, "            restoring the previous build failed, the watchdog is retrying: %s\n", st.Pending.RestoreFailed)
+		}
 	}
 	if st.Last != nil {
 		fmt.Fprintf(w, "last:       %s (%s)\n", st.Last.Version, st.Last.Outcome)

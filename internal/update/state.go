@@ -25,6 +25,19 @@ type Pending struct {
 	// until every binary and plugins.json are in place, then "swapped"
 	// (empty in state written before phases existed: treat as swapped).
 	Phase string `json:"phase,omitempty"`
+	// RestoreFailed is set by the guard's rollbackPending when a Pending
+	// has failed its health gate AND restoring the previous build itself
+	// then fails: the failure detail. Pending is kept (not cleared) while
+	// this is set, so the next watchdog tick retries the restore; a
+	// successful retry clears Pending (and this field) entirely. Only ever
+	// set for a forward update (Rollback == false) -- a failed rollback
+	// confirmation has no older build to retry against and never sets it.
+	RestoreFailed string `json:"restore_failed,omitempty"`
+	// RestoreFailedNotified dedups the critical alert for RestoreFailed:
+	// the daemon's update loop (notifyRestoreFailed) sets it once the alert
+	// has been delivered, so repeated failing watchdog retries (every
+	// minute, each a fresh guard process) do not re-alert on every tick.
+	RestoreFailedNotified bool `json:"restore_failed_notified,omitempty"`
 }
 
 // Result records the outcome of the most recent update attempt.

@@ -31,6 +31,77 @@ func TestUpdateResultAlert(t *testing.T) {
 	}
 }
 
+// TestNotifyRestoreFailedAlertsOnce is issue #136's alerting half:
+// rollbackPending keeps Pending set (with RestoreFailed recorded) when
+// restoring the previous build fails, since the guard is a separate,
+// short-lived process that cannot notify directly. notifyRestoreFailed is
+// the daemon's periodic-loop chance to raise the critical alert exactly
+// once for that failure episode, deduped via the persisted
+// RestoreFailedNotified flag -- repeated failing watchdog retries (each a
+// fresh guard run that rewrites RestoreFailed) must not re-alert every
+// tick.
+func TestNotifyRestoreFailedAlertsOnce(t *testing.T) {
+	p := testUpdatePaths(t)
+	now := time.Unix(5000, 0)
+	pending := update.Pending{Version: "0.5.0", From: "0.4.1", RestoreFailed: "restoring the previous build also failed: permission denied"}
+	if err := update.SaveState(p.dir(), update.State{Pending: &pending}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []Alert
+	notifyRestoreFailed(p, now, func(a Alert) { got = append(got, a) })
+	if len(got) != 1 {
+		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Severity != SevCritical {
+		t.Fatalf("severity = %v, want critical: %+v", got[0].Severity, got[0])
+	}
+	if !strings.Contains(got[0].Title, "0.5.0") || !strings.Contains(got[0].Body, "permission denied") {
+		t.Fatalf("alert does not explain the failure: %+v", got[0])
+	}
+
+	st, err := update.LoadState(p.dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending == nil || !st.Pending.RestoreFailedNotified {
+		t.Fatalf("RestoreFailedNotified not persisted: %+v", st.Pending)
+	}
+
+	// A repeated failing retry: the guard reran, restorePrevious failed
+	// again, and rewrote Pending.RestoreFailed -- but left
+	// RestoreFailedNotified as it was (true). No second alert.
+	st.Pending.RestoreFailed = "restoring the previous build also failed: permission denied (retry)"
+	if err := update.SaveState(p.dir(), st); err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	notifyRestoreFailed(p, now, func(a Alert) { got = append(got, a) })
+	if len(got) != 0 {
+		t.Fatalf("re-alerted a still-failing retry: %+v", got)
+	}
+}
+
+// TestNotifyRestoreFailedNoPending covers the common case (nothing to do):
+// no Pending, or a Pending with no restore failure, must not alert.
+func TestNotifyRestoreFailedNoPending(t *testing.T) {
+	p := testUpdatePaths(t)
+	var got []Alert
+	notifyRestoreFailed(p, time.Unix(1, 0), func(a Alert) { got = append(got, a) })
+	if len(got) != 0 {
+		t.Fatalf("alerted with no state at all: %+v", got)
+	}
+
+	pending := update.Pending{Version: "0.5.0", From: "0.4.1"}
+	if err := update.SaveState(p.dir(), update.State{Pending: &pending}); err != nil {
+		t.Fatal(err)
+	}
+	notifyRestoreFailed(p, time.Unix(1, 0), func(a Alert) { got = append(got, a) })
+	if len(got) != 0 {
+		t.Fatalf("alerted for a Pending with no restore failure: %+v", got)
+	}
+}
+
 func TestUpdateAvailableAlertOncePerVersion(t *testing.T) {
 	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0"}); !ok {
 		t.Fatal("no alert for a new available version")

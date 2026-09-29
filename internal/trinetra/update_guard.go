@@ -265,6 +265,18 @@ func commitPending(p updatePaths, pending update.Pending, now time.Time) (update
 //
 // For a forward update (pending.Rollback == false): restore the previous
 // build, restart onto it, mark the version bad, and never raise the floor.
+// If restoring the previous build itself fails (#136), Pending is kept --
+// not cleared like every other outcome here -- with the failure recorded in
+// Pending.RestoreFailed, so the next watchdog tick re-enters this same state
+// machine and retries the restore; nothing is marked bad and no Last/audit
+// entry is written, because this update has not actually finished rolling
+// back yet. The critical alert for that failure is raised once by the
+// daemon's update loop (notifyRestoreFailed), deduped via
+// Pending.RestoreFailedNotified -- the guard itself is a separate,
+// short-lived process launched fresh for each retry and cannot notify
+// directly or remember across runs. A later retry whose restore succeeds
+// falls through to the normal rollback below (Pending cleared entirely,
+// version marked bad, outcome rolled_back).
 //
 // For a rollback confirmation (pending.Rollback == true): there is no older
 // build to fall back to -- previous/ holds exactly the build that is
@@ -274,17 +286,25 @@ func commitPending(p updatePaths, pending update.Pending, now time.Time) (update
 // bad), just record the failure.
 func rollbackPending(p updatePaths, pending update.Pending, detail string, restart func() error, now time.Time) (update.Result, error) {
 	if !pending.Rollback {
-		if err := restorePrevious(p); err != nil {
+		restoreErr := restorePrevious(p)
+		if restoreErr != nil {
 			if detail != "" {
 				detail += "; "
 			}
-			detail += "restoring the previous build also failed: " + err.Error()
+			detail += "restoring the previous build also failed: " + restoreErr.Error()
 		}
 		if err := restart(); err != nil {
 			if detail != "" {
 				detail += "; "
 			}
 			detail += "restart after rollback also failed: " + err.Error()
+		}
+		if restoreErr != nil {
+			pending.RestoreFailed = detail
+			if err := setPending(p, &pending); err != nil {
+				return update.Result{}, err
+			}
+			return update.Result{}, fmt.Errorf("update guard: restoring the previous build failed (the watchdog will retry): %w", restoreErr)
 		}
 	}
 
