@@ -170,8 +170,18 @@ func VerifyPointer(keys KeySet, pointer, sig []byte, now time.Time) (Pointer, er
 
 // Policy is the host-side context a verified manifest is checked against.
 type Policy struct {
-	Channel    string
-	Floor      Version // highest version ever committed on this host
+	Channel string
+	// Floor is the highest version ever committed on this host; only
+	// consulted when HasFloor is true.
+	Floor Version
+	// HasFloor reports whether Floor should be enforced. False means "no
+	// floor recorded and no known running version" -- a fresh host, or one
+	// where the running binary's version could not be determined -- and
+	// therefore no lower bound at all: CheckPolicy skips the floor
+	// comparison entirely rather than comparing against the zero Version,
+	// which would wrongly read as "already at 0.0.0" and refuse any
+	// pre-release of 0.0.0 (e.g. 0.0.0-rc.1) as a downgrade.
+	HasFloor   bool
 	Running    Version
 	AllowEqual bool // re-apply the installed version (repair)
 }
@@ -197,11 +207,13 @@ func CheckPolicy(m Manifest, p Policy) error {
 		return fmt.Errorf("%w: release %s, host %s", ErrWrongChannel, m.Channel, p.Channel)
 	}
 	v, _ := ParseVersion(m.Version)
-	switch c := CompareVersions(v, p.Floor); {
-	case c < 0:
-		return fmt.Errorf("%w: %s < %s", ErrDowngrade, v, p.Floor)
-	case c == 0 && !p.AllowEqual:
-		return fmt.Errorf("%w: %s", ErrAlreadyInstalled, v)
+	if p.HasFloor {
+		switch c := CompareVersions(v, p.Floor); {
+		case c < 0:
+			return fmt.Errorf("%w: %s < %s", ErrDowngrade, v, p.Floor)
+		case c == 0 && !p.AllowEqual:
+			return fmt.Errorf("%w: %s", ErrAlreadyInstalled, v)
+		}
 	}
 	min, _ := ParseVersion(m.MinUpgradeFrom)
 	if CompareVersions(p.Running, min) < 0 {

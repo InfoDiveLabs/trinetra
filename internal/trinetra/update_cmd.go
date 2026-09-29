@@ -141,8 +141,8 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 
 	var policyErr error
 	err = update.WithState(u.paths.dir(), func(st *update.State) error {
-		floor := st.FloorVersion(u.running)
-		policyErr = update.CheckPolicy(m, update.Policy{Channel: channel, Floor: floor, Running: u.running})
+		floor, hasFloor := st.FloorVersion(u.running)
+		policyErr = update.CheckPolicy(m, update.Policy{Channel: channel, Floor: floor, HasFloor: hasFloor, Running: u.running})
 		if policyErr == nil && st.IsBad(m.Version) {
 			policyErr = fmt.Errorf("%w: %s", errKnownBad, m.Version)
 		}
@@ -301,8 +301,8 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 	if err != nil {
 		return update.Manifest{}, err
 	}
-	floor := st.FloorVersion(u.running)
-	if err := update.CheckPolicy(m, update.Policy{Channel: policyChannel, Floor: floor, Running: u.running}); err != nil {
+	floor, hasFloor := st.FloorVersion(u.running)
+	if err := update.CheckPolicy(m, update.Policy{Channel: policyChannel, Floor: floor, HasFloor: hasFloor, Running: u.running}); err != nil {
 		return update.Manifest{}, err
 	}
 	if st.IsBad(m.Version) && !opts.Force {
@@ -499,9 +499,17 @@ func (u updater) status() (updateStatus, error) {
 		}
 	}
 
+	// floorStr is "" when no floor applies (fresh host, nothing persisted,
+	// running unknown) -- showing "0.0.0" there would misreport the zero
+	// Version placeholder as a real, enforced floor.
+	floorStr := ""
+	if floor, hasFloor := st.FloorVersion(u.running); hasFloor {
+		floorStr = floor.String()
+	}
+
 	return updateStatus{
 		Running:        u.running.String(),
-		Floor:          st.FloorVersion(u.running).String(),
+		Floor:          floorStr,
 		Available:      st.Available,
 		Previous:       previous,
 		Pending:        st.Pending,

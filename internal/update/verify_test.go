@@ -119,7 +119,7 @@ func TestDecodeManifestStrict(t *testing.T) {
 func TestCheckPolicy(t *testing.T) {
 	m := testManifest()
 	v := func(s string) Version { x, _ := ParseVersion(s); return x }
-	ok := Policy{Channel: "stable", Floor: v("0.4.1"), Running: v("0.4.1")}
+	ok := Policy{Channel: "stable", Floor: v("0.4.1"), HasFloor: true, Running: v("0.4.1")}
 	if err := CheckPolicy(m, ok); err != nil {
 		t.Fatalf("ok policy: %v", err)
 	}
@@ -127,18 +127,56 @@ func TestCheckPolicy(t *testing.T) {
 		p    Policy
 		want error
 	}{
-		{Policy{Channel: "stable", Floor: v("0.6.0"), Running: v("0.4.1")}, ErrDowngrade},
-		{Policy{Channel: "stable", Floor: v("0.5.0"), Running: v("0.5.0")}, ErrAlreadyInstalled},
-		{Policy{Channel: "stable", Floor: v("0.3.0"), Running: v("0.3.0")}, ErrTooOld},
+		{Policy{Channel: "stable", Floor: v("0.6.0"), HasFloor: true, Running: v("0.4.1")}, ErrDowngrade},
+		{Policy{Channel: "stable", Floor: v("0.5.0"), HasFloor: true, Running: v("0.5.0")}, ErrAlreadyInstalled},
+		{Policy{Channel: "stable", Floor: v("0.3.0"), HasFloor: true, Running: v("0.3.0")}, ErrTooOld},
 	}
 	for _, c := range cases {
 		if err := CheckPolicy(m, c.p); !errors.Is(err, c.want) {
 			t.Errorf("policy %+v: err = %v, want %v", c.p, err, c.want)
 		}
 	}
-	eq := Policy{Channel: "stable", Floor: v("0.5.0"), Running: v("0.5.0"), AllowEqual: true}
+	eq := Policy{Channel: "stable", Floor: v("0.5.0"), HasFloor: true, Running: v("0.5.0"), AllowEqual: true}
 	if err := CheckPolicy(m, eq); err != nil {
 		t.Errorf("AllowEqual: %v", err)
+	}
+}
+
+// TestCheckPolicyNoFloorAcceptsAnyVersion pins "no floor recorded and no
+// known running version must mean no lower bound": a Policy that never sets
+// a floor (the zero-value HasFloor false, Floor left as the zero Version)
+// must accept both a pre-release of 0.0.0 and an ordinary later release --
+// the zero Version standing in for "nothing recorded" must never be compared
+// against as if it were a real, already-installed version. MinUpgradeFrom is
+// pinned at 0.0.0 here (Running 0.0.0 satisfies it) so only the floor logic
+// is under test.
+func TestCheckPolicyNoFloorAcceptsAnyVersion(t *testing.T) {
+	v := func(s string) Version { x, _ := ParseVersion(s); return x }
+	for _, ver := range []string{"0.0.0-rc.1", "0.5.0"} {
+		m := testManifest()
+		m.Version = ver
+		m.MinUpgradeFrom = "0.0.0"
+		p := Policy{Channel: "stable", Running: v("0.0.0")}
+		if err := CheckPolicy(m, p); err != nil {
+			t.Errorf("no floor, version %s: %v", ver, err)
+		}
+	}
+}
+
+// TestCheckPolicyFloorStillEnforcedWhenSet is the flip side of
+// TestCheckPolicyNoFloorAcceptsAnyVersion: once a floor IS recorded
+// (HasFloor true), it must still refuse anything below it, pre-release or
+// not.
+func TestCheckPolicyFloorStillEnforcedWhenSet(t *testing.T) {
+	v := func(s string) Version { x, _ := ParseVersion(s); return x }
+	for _, ver := range []string{"0.4.9", "0.5.0-rc.1"} {
+		m := testManifest()
+		m.Version = ver
+		m.MinUpgradeFrom = "0.0.0"
+		p := Policy{Channel: "stable", Floor: v("0.5.0"), HasFloor: true, Running: v("0.5.0")}
+		if err := CheckPolicy(m, p); !errors.Is(err, ErrDowngrade) {
+			t.Errorf("floor 0.5.0, version %s: err = %v, want ErrDowngrade", ver, err)
+		}
 	}
 }
 
@@ -160,7 +198,7 @@ func TestCheckPolicyChannelRule(t *testing.T) {
 	} {
 		m := testManifest()
 		m.Channel = c.release
-		err := CheckPolicy(m, Policy{Channel: c.host, Floor: v("0.4.1"), Running: v("0.4.1")})
+		err := CheckPolicy(m, Policy{Channel: c.host, Floor: v("0.4.1"), HasFloor: true, Running: v("0.4.1")})
 		if c.ok && err != nil {
 			t.Errorf("host %s, release %s: %v", c.host, c.release, err)
 		}

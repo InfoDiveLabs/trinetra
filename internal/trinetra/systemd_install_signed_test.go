@@ -54,6 +54,46 @@ func TestVerifyInstallBundleNoManifest(t *testing.T) {
 	}
 }
 
+// TestInstallAcceptsSignedPrereleaseZeroOnFreshHost pins the real-world
+// rehearsal bug: a fresh host with nothing installed (running is the zero
+// Version) and no persisted floor (a brand-new state dir, no state.json at
+// all) must accept a signed 0.0.0-rc.1 release. Before the fix, "no floor"
+// was represented as the zero Version itself, and 0.0.0-rc.1 sorts below
+// 0.0.0 by semver precedence, so the install was wrongly refused as a
+// downgrade.
+func TestInstallAcceptsSignedPrereleaseZeroOnFreshHost(t *testing.T) {
+	dir := t.TempDir()
+	core := []byte("CORE")
+	os.WriteFile(filepath.Join(dir, "trinetra"), core, 0o755)
+	// Channel beta: a pre-release version must not be on the stable channel
+	// (manifest.go's own decode rule) -- unrelated to the floor bug this test
+	// pins, so pick a channel that lets a pre-release version through at all.
+	m := update.Manifest{Schema: 1, Product: "trinetra", Version: "0.0.0-rc.1", Channel: "beta",
+		Published: "2026-10-01T10:00:00Z", MinUpgradeFrom: "0.0.0",
+		Files: []update.File{mf("trinetra-linux-"+runtime.GOARCH, core)}}
+	m.Files[0].Arch = runtime.GOARCH
+	mb, _ := json.Marshal(m)
+	os.WriteFile(filepath.Join(dir, "manifest.json"), mb, 0o644)
+	os.WriteFile(filepath.Join(dir, "manifest.ci.sig"), updatetest.NewTestSigner(1).SignRelease(mb), 0o644)
+	os.WriteFile(filepath.Join(dir, "manifest.maint.sig"), updatetest.NewTestSigner(2).SignRelease(mb), 0o644)
+
+	verified, err := verifyInstallBundle(testKeys(), filepath.Join(dir, "trinetra"), []string{"trinetra"})
+	if err != nil {
+		t.Fatalf("signed 0.0.0-rc.1 bundle refused: %v", err)
+	}
+
+	root := t.TempDir()
+	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
+	if err := os.MkdirAll(paths.StateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Fresh state dir: no state.json at all (no persisted floor), and running
+	// is the zero Version (nothing installed yet).
+	if err := checkInstallPolicy(paths, verified, update.Version{}); err != nil {
+		t.Fatalf("checkInstallPolicy(0.0.0-rc.1, no floor, fresh host) refused: %v", err)
+	}
+}
+
 // freshInstallManifest returns a minimal valid manifest for
 // checkInstallPolicy/raiseInstallFloor tests -- these exercise state
 // plumbing, not signature verification (verifyInstallBundle already covers

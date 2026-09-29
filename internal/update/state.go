@@ -129,15 +129,25 @@ func SaveState(dir string, s State) error {
 	return SyncDir(dir)
 }
 
-// FloorVersion returns the parsed Floor, or fallback if Floor is unset or
-// unparsable, or lower than fallback.
-func (s State) FloorVersion(fallback Version) Version {
-	if v, err := ParseVersion(s.Floor); err == nil {
-		if CompareVersions(v, fallback) > 0 {
-			return v
+// FloorVersion returns the effective floor version -- the persisted Floor,
+// or fallback (typically the running version) if that's higher, or fallback
+// if Floor is unset or unparsable -- and whether a floor actually applies.
+//
+// No floor applies (hasFloor false) only when both are true: nothing is
+// persisted in Floor, and fallback is the zero Version (no known running
+// version -- a fresh host, or a serverwatch migration/old binary that
+// couldn't report one). A persisted Floor is always enforced once set, even
+// if that happens to be "0.0.0" (a real committed release): only the
+// "nothing recorded at all" case means no lower bound. See Policy.HasFloor.
+func (s State) FloorVersion(fallback Version) (v Version, hasFloor bool) {
+	v, hasFloor = fallback, fallback != (Version{})
+	if pv, err := ParseVersion(s.Floor); err == nil {
+		hasFloor = true
+		if CompareVersions(pv, v) > 0 {
+			v = pv
 		}
 	}
-	return fallback
+	return v, hasFloor
 }
 
 // RaiseFloor sets the floor to v, unless the current floor is already >= v.
