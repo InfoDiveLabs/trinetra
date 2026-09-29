@@ -133,9 +133,18 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 	floor := st.FloorVersion(u.running)
 	policyErr := update.CheckPolicy(m, update.Policy{Channel: channel, Floor: floor, Running: u.running})
 
+	if policyErr == nil && st.IsBad(m.Version) {
+		policyErr = fmt.Errorf("%w: %s", errKnownBad, m.Version)
+	}
+
 	st.LastCheck = now.Unix()
 	st.LastPointerIssued = ptr.Issued
-	if v, verr := update.ParseVersion(m.Version); verr == nil && update.CompareVersions(v, floor) > 0 {
+	// R18: Available drives the "update available" alert, the web Apply
+	// button and Telegram /version, so it names only a release this host
+	// would actually accept (channel, floor, min_upgrade_from, not known
+	// bad); anything else clears it.
+	st.Available = ""
+	if policyErr == nil {
 		st.Available = m.Version
 	}
 	if err := update.SaveState(u.paths.dir(), st); err != nil {
@@ -143,6 +152,11 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 	}
 	return m, policyErr
 }
+
+// errKnownBad is check's verdict for a release that verifies and passes
+// policy but already failed its health check on this host: it is not
+// offered as available (apply --force can still install it).
+var errKnownBad = errors.New("update: release failed its health check here before")
 
 // preflightApply runs apply's fast, synchronous-only checks (fix round 1,
 // Ruling R10): the channel/source settings apply itself would otherwise only
@@ -596,6 +610,10 @@ func cmdUpdateCheck(args []string) int {
 	if err != nil {
 		if errors.Is(err, update.ErrAlreadyInstalled) {
 			fmt.Fprintf(stdout, "up to date: %s\n", m.Version)
+			return 0
+		}
+		if errors.Is(err, errKnownBad) {
+			fmt.Fprintf(stdout, "%s is on the channel but failed its health check here before; not offered (apply --version %s --force to retry)\n", m.Version, m.Version)
 			return 0
 		}
 		fmt.Fprintln(stderr, err)

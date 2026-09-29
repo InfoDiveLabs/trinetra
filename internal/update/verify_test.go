@@ -127,7 +127,6 @@ func TestCheckPolicy(t *testing.T) {
 		p    Policy
 		want error
 	}{
-		{Policy{Channel: "beta", Floor: v("0.4.1"), Running: v("0.4.1")}, ErrWrongChannel},
 		{Policy{Channel: "stable", Floor: v("0.6.0"), Running: v("0.4.1")}, ErrDowngrade},
 		{Policy{Channel: "stable", Floor: v("0.5.0"), Running: v("0.5.0")}, ErrAlreadyInstalled},
 		{Policy{Channel: "stable", Floor: v("0.3.0"), Running: v("0.3.0")}, ErrTooOld},
@@ -140,6 +139,34 @@ func TestCheckPolicy(t *testing.T) {
 	eq := Policy{Channel: "stable", Floor: v("0.5.0"), Running: v("0.5.0"), AllowEqual: true}
 	if err := CheckPolicy(m, eq); err != nil {
 		t.Errorf("AllowEqual: %v", err)
+	}
+}
+
+// TestCheckPolicyChannelRule is R18 (spec §2 Verification step 3): a beta
+// host accepts beta and stable manifests (beta = newest of either); a stable
+// host accepts only stable; anything else is refused.
+func TestCheckPolicyChannelRule(t *testing.T) {
+	v := func(s string) Version { x, _ := ParseVersion(s); return x }
+	for _, c := range []struct {
+		host, release string
+		ok            bool
+	}{
+		{"stable", "stable", true},
+		{"stable", "beta", false},
+		{"beta", "beta", true},
+		{"beta", "stable", true},
+		{"beta", "nightly", false},
+		{"off", "stable", false},
+	} {
+		m := testManifest()
+		m.Channel = c.release
+		err := CheckPolicy(m, Policy{Channel: c.host, Floor: v("0.4.1"), Running: v("0.4.1")})
+		if c.ok && err != nil {
+			t.Errorf("host %s, release %s: %v", c.host, c.release, err)
+		}
+		if !c.ok && !errors.Is(err, ErrWrongChannel) {
+			t.Errorf("host %s, release %s: err = %v, want ErrWrongChannel", c.host, c.release, err)
+		}
 	}
 }
 

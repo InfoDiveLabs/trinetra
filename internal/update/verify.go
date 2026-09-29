@@ -176,9 +176,24 @@ type Policy struct {
 	AllowEqual bool // re-apply the installed version (repair)
 }
 
+// ChannelAccepts reports whether a host on channel host accepts a release
+// published on channel release (spec §2 Verification step 3, R18): a stable
+// host accepts only stable; a beta host accepts beta and stable, so beta
+// hosts also move on to final releases (beta = newest of either).
+func ChannelAccepts(host, release string) bool {
+	switch host {
+	case "stable":
+		return release == "stable"
+	case "beta":
+		return release == "beta" || release == "stable"
+	default:
+		return false
+	}
+}
+
 // CheckPolicy applies the host rules to an already verified manifest.
 func CheckPolicy(m Manifest, p Policy) error {
-	if m.Channel != p.Channel {
+	if !ChannelAccepts(p.Channel, m.Channel) {
 		return fmt.Errorf("%w: release %s, host %s", ErrWrongChannel, m.Channel, p.Channel)
 	}
 	v, _ := ParseVersion(m.Version)
