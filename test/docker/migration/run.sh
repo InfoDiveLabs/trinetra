@@ -264,10 +264,15 @@ grep -qF 'found a serverwatch install; migrating it to trinetra' <<<"$OUT" || fa
 sh_on '! test -e /etc/serverwatch && ! test -e /var/lib/serverwatch' || fail "old dirs still present"
 sh_on 'test -d /etc/trinetra && test -d /var/lib/trinetra' || fail "new dirs missing"
 echo "  ok: /etc/serverwatch, /var/lib/serverwatch gone; /etc/trinetra, /var/lib/trinetra present"
-# byte-identical files (config.json is rewritten, plugins.json re-recorded by install)
+# byte-identical files (config.json is rewritten, plugins.json re-recorded by
+# install; ./update and everything under it -- e.g. ./update/apply.lock --
+# is legitimately created by install's preflight apply-lock take
+# (installPreflight/takeApplyLock in internal/trinetra/systemd.go and
+# update_apply.go) and was never present before migration, so it can't be
+# byte-identical across the snapshots)
 snapshot /var/lib/trinetra /root/state.after
 snapshot /etc/trinetra /root/etc.after
-sh_on 'grep -v " ./plugins.json$" /root/state.before > /root/sb; grep -v -e " ./plugins.json$" -e " ./migrated-from-serverwatch$" /root/state.after > /root/sa; cmp -s /root/sb /root/sa' \
+sh_on 'grep -v " ./plugins.json$" /root/state.before > /root/sb; grep -v -e " ./plugins.json$" -e " ./migrated-from-serverwatch$" -e " ./update$" -e " ./update/" /root/state.after > /root/sa; cmp -s /root/sb /root/sa' \
   || fail "state files differ: $(sh_on 'diff /root/sb /root/sa')"
 sh_on 'grep -v " ./config.json$" /root/etc.before > /root/eb; grep -v " ./config.json$" /root/etc.after > /root/ea; cmp -s /root/eb /root/ea' \
   || fail "config dir files differ: $(sh_on 'diff /root/eb /root/ea')"
