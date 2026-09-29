@@ -94,6 +94,8 @@ func Main(args []string) int {
 		return cmdAlerts(args[1:])
 	case "fleet":
 		return cmdFleet(args[1:])
+	case "update":
+		return cmdUpdate(args[1:])
 	case "cli":
 		return cmdFrontDoor("cli", "ctl", args[1:])
 	case "web":
@@ -140,6 +142,8 @@ func writesConfigOrState(args []string) bool {
 		return true
 	case "fleet":
 		return in("init", "join", "leave", "disable")
+	case "update":
+		return in("apply", "rollback", "guard")
 	}
 	return false
 }
@@ -175,6 +179,7 @@ usage:
   trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
   trinetra fleet node revoke|remove|rename|tag <node> [value]
   trinetra fleet token create [--tags a,b] [--ttl 1h] [--uses 1] | list | delete <id>
+  trinetra update status [--json] | check | apply [--version V] [--bundle DIR] [--channel C] [--force] | rollback
   trinetra cli                       # interactive management (trinetra-ctl)
   trinetra web                       # web UI (trinetra-web)`
 
@@ -204,6 +209,15 @@ func configForDisplay(c *config.Config) *config.Config {
 	d.Collect.Processes = &processes
 	d.Collect.SmartAttrs = &smartAttrs
 	d.Collect.SmartInterval = c.SmartIntervalSec()
+	// Secrets never appear in the clear in a full-config display (CLI dump,
+	// eventually the web config page): "(set)"/"(not set)" instead, matching
+	// how a single-key `config get <secret key>` redacts (see cmdConfig).
+	if d.Update.GitHubToken != "" {
+		d.Update.GitHubToken = "(set)"
+	}
+	if d.Telegram.Token != "" {
+		d.Telegram.Token = "(set)"
+	}
 	return &d
 }
 
@@ -241,6 +255,13 @@ func cmdConfig(args []string) int {
 		if !ok {
 			fmt.Fprintf(stderr, "unknown key %q\n", args[1])
 			return 1
+		}
+		if config.IsSecretKey(args[1]) {
+			if v != "" {
+				v = "(set)"
+			} else {
+				v = "(not set)"
+			}
 		}
 		fmt.Fprintln(stdout, v)
 		return 0

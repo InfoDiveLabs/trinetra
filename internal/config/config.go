@@ -241,6 +241,13 @@ type Config struct {
 		FallbackAfter     string `json:"fallback_after,omitempty"`
 		LinkDownWarnAfter string `json:"link_down_warn_after,omitempty"`
 	} `json:"fleet"`
+	// Update configures signed self-update (docs/handbook/10-operations.md).
+	Update struct {
+		Channel       string `json:"channel,omitempty"`        // stable | beta | off; "" = stable
+		Source        string `json:"source,omitempty"`         // github | none; "" = github
+		GitHubToken   string `json:"github_token,omitempty"`   // read-only token for a private repo
+		CheckInterval string `json:"check_interval,omitempty"` // Go duration >= 1h; "" = 24h
+	} `json:"update"`
 }
 
 // KeepFleetIdentity copies the fleet identity keys (role, address, master
@@ -384,6 +391,35 @@ func (c *Config) FleetLinkDownWarnAfter() time.Duration {
 		return d
 	}
 	return 10 * time.Minute
+}
+
+// UpdateChannel is the effective release channel for signed self-update:
+// unset ("") defaults to "stable". Set validates against stable|beta|off.
+func (c *Config) UpdateChannel() string {
+	if c.Update.Channel == "" {
+		return "stable"
+	}
+	return c.Update.Channel
+}
+
+// UpdateSource is the effective self-update source: unset ("") defaults to
+// "github". Set validates against github|none.
+func (c *Config) UpdateSource() string {
+	if c.Update.Source == "" {
+		return "github"
+	}
+	return c.Update.Source
+}
+
+// UpdateCheckInterval is the effective interval between self-update checks:
+// unset, unparsable, or below the 1h floor all default to 24h (Set never
+// persists such a value, but a zero-value Config built without Default()/
+// Load() must still return something sane).
+func (c *Config) UpdateCheckInterval() time.Duration {
+	if d, err := time.ParseDuration(c.Update.CheckInterval); err == nil && d >= time.Hour {
+		return d
+	}
+	return 24 * time.Hour
 }
 
 // fleetManagedKeys are readable via Get but written only by the
@@ -868,6 +904,18 @@ func (c *Config) Get(key string) (string, bool) {
 		return c.FleetFallbackAfter().String(), true
 	case "fleet.link_down_warn_after":
 		return c.FleetLinkDownWarnAfter().String(), true
+	case "update.channel":
+		return c.UpdateChannel(), true
+	case "update.source":
+		return c.UpdateSource(), true
+	case "update.github_token":
+		// Raw value: callers (cmdConfig) redact via IsSecretKey before printing.
+		return c.Update.GitHubToken, true
+	case "update.check_interval":
+		if c.Update.CheckInterval == "" {
+			return "24h", true
+		}
+		return c.Update.CheckInterval, true
 	}
 	return "", false
 }
@@ -1136,6 +1184,24 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("fleet.link_down_warn_after must be a duration >= 30s, e.g. 10m")
 		}
 		c.Fleet.LinkDownWarnAfter = val
+	case "update.channel":
+		if val != "stable" && val != "beta" && val != "off" {
+			return fmt.Errorf("update.channel %q invalid: want one of stable|beta|off", val)
+		}
+		c.Update.Channel = val
+	case "update.source":
+		if val != "github" && val != "none" {
+			return fmt.Errorf("update.source %q invalid: want one of github|none", val)
+		}
+		c.Update.Source = val
+	case "update.github_token":
+		c.Update.GitHubToken = val
+	case "update.check_interval":
+		d, err := time.ParseDuration(val)
+		if err != nil || d < time.Hour {
+			return fmt.Errorf("update.check_interval %q invalid: want a duration >= 1h, e.g. 24h", val)
+		}
+		c.Update.CheckInterval = val
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
@@ -1160,6 +1226,22 @@ type KeyInfo struct {
 	Kind            string
 	Help            string
 	RestartRequired bool
+	// Secret marks a key that holds a credential that must never be printed
+	// in the clear: `config get` (full dump and single key) and any other
+	// display of the config show "(set)"/"(not set)" instead. See
+	// IsSecretKey.
+	Secret bool
+}
+
+// IsSecretKey reports whether a key holds a credential that must never be
+// printed (CLI get, dumps, the web config page show "(set)" instead).
+func IsSecretKey(name string) bool {
+	for _, k := range Keys() {
+		if k.Name == name {
+			return k.Secret
+		}
+	}
+	return false
 }
 
 // Keys returns the full catalog of flat, settable config keys, grouped for
@@ -1199,7 +1281,7 @@ var keyCatalog = []KeyInfo{
 	{Name: "critical_overrides_quiet", Group: "Alerting", Kind: "bool", Help: "Let disk-full-imminent style critical alerts bypass quiet hours."},
 	{Name: "quiet_hours", Group: "Alerting", Kind: "string", Help: "Quiet hours window as H-H, e.g. 22-6, or empty to disable."},
 
-	{Name: "telegram.token", Group: "Notifications", Kind: "string", Help: "Telegram bot token from @BotFather."},
+	{Name: "telegram.token", Group: "Notifications", Kind: "string", Secret: true, Help: "Telegram bot token from @BotFather."},
 	{Name: "telegram.chat_id", Group: "Notifications", Kind: "string", Help: "Telegram chat id enrolled to receive alerts."},
 	{Name: "telegram.enroll_max_attempts", Group: "Notifications", Kind: "int", Help: "Wrong /start <pin> guesses tolerated before the enrollment PIN cools down and rotates (brute-force bound). Default 5."},
 	{Name: "telegram.enroll_cooldown", Group: "Notifications", Kind: "int", Help: "Seconds /start attempts are ignored after the attempt limit is hit (the PIN also rotates then). Default 60."},
@@ -1241,6 +1323,11 @@ var keyCatalog = []KeyInfo{
 	{Name: "fleet.link_down_warn_after", Group: "Fleet", Kind: "duration", Help: "Child only: how long the link to the master must be down before a local warning alert fires. Default 10m."},
 
 	{Name: "server.name", Group: "Identity", Kind: "string", Help: "Display name/id for this host. Defaults to the system hostname."},
+
+	{Name: "update.channel", Group: "Updates", Kind: "enum", Help: "Release channel for signed updates: stable, beta, or off."},
+	{Name: "update.source", Group: "Updates", Kind: "enum", Help: "Where to look for releases: github, or none (bundle directories only)."},
+	{Name: "update.github_token", Group: "Updates", Kind: "string", Secret: true, Help: "Read-only GitHub token, needed while the release repo is private."},
+	{Name: "update.check_interval", Group: "Updates", Kind: "duration", Help: "How often to check for a newer signed release (>= 1h). Default 24h."},
 }
 
 // effectiveFastInterval returns c.FastInterval, or the baked-in default (5)
