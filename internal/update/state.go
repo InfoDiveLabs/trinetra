@@ -50,7 +50,14 @@ type State struct {
 	// StaleNotified dedups the freeze ("no fresh signed pointer") alert:
 	// set when it fires, cleared once a fresh pointer verifies, so one
 	// episode alerts once even across daemon restarts.
-	StaleNotified     bool    `json:"stale_notified,omitempty"`
+	StaleNotified bool `json:"stale_notified,omitempty"`
+	// LastCheckError is the reason the most recent channel check failed to
+	// verify a pointer (e.g. a 404 with no update.github_token configured),
+	// cleared once a check verifies one. It is what `update status` shows
+	// and what the daemon's periodic loop compares against to log a
+	// changed cause only once (R25) rather than every tick, which matters
+	// most before LastPointerIssued is ever set: see freezeVerdict.
+	LastCheckError    string  `json:"last_check_error,omitempty"`
 	AvailableNotified string  `json:"available_notified,omitempty"`
 	Last              *Result `json:"last,omitempty"`
 }

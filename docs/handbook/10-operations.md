@@ -166,11 +166,21 @@ last successful check ran, and the Telegram `/version` command replies with
 the running version plus "update available: X" when there is one.
 
 It also warns when the channel looks **frozen** -- the signal that someone
-may be withholding updates: at once if the signed channel pointer has
-expired or is missing, and otherwise once the newest pointer it has seen is
-more than 14 days old, whatever the reason. A plain network outage alone
-does not warn until those 14 days have passed. The warning is sent once per
-episode and resets when a fresh pointer arrives.
+may be withholding updates -- but only once this host has verified a signed
+channel pointer at least once; freeze detection has nothing to compare
+against before that. Once it has: the warning fires at once if the signed
+channel pointer has expired or is missing (including a pointer this host
+used to see going missing later, e.g. `update.github_token` is removed from
+a private repo), and otherwise once the newest pointer it has seen is more
+than 14 days old, whatever the reason. A plain network outage alone does not
+warn until those 14 days have passed. The warning is sent once per episode
+and resets when a fresh pointer arrives.
+
+Before the first pointer ever verifies -- a fresh install still pointed at
+`update.source=github` with a private release repo and no
+`update.github_token`, say -- a failing check is logged once per distinct
+cause instead of warning, and `trinetra update status` shows it as the
+check error, so an unconfigured host is diagnosable without paging anyone.
 
 ### Coming from an unsigned/manual binary
 

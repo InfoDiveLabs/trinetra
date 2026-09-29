@@ -80,24 +80,33 @@ func updateAvailableAlert(st update.State) (Alert, bool) {
 	}, true
 }
 
-// freezeVerdict decides whether the channel looks frozen (R17), given the
-// error (if any) of the check that just ran and the Issued time of the last
-// pointer that verified (State.LastPointerIssued, RFC3339 or ""):
+// freezeVerdict decides whether the channel looks frozen (R17/R25), given
+// the error (if any) of the check that just ran and the Issued time of the
+// last pointer that verified (State.LastPointerIssued, RFC3339 or ""):
 //
-//   - an expired or missing pointer (or pointer signature) is the freeze
-//     signature itself and counts at once;
+//   - a host that has never verified a pointer (lastPointerIssued == "")
+//     never freezes: freeze detection only makes sense once there has been
+//     a good pointer to go stale, so a fresh, unconfigured install (e.g.
+//     update.source=github against a private repo with no
+//     update.github_token, which 404s) does not alert (R25). runDueCheck
+//     logs the cause instead -- see its doc;
+//   - once a pointer has verified once, an expired or missing pointer (or
+//     pointer signature) is the freeze signature itself and counts at once
+//     -- including a 404 that reappears afterward (e.g. the token is
+//     removed), which is a real freeze signal from the host's point of
+//     view;
 //   - otherwise, a last good pointer issued more than stalePointerAfter ago
 //     counts whatever the check's outcome, so an attacker who replays the
 //     last valid pointer or blocks the channel is noticed within 14 days;
-//   - a plain transport error with a recent (or no) last pointer does not.
+//   - a plain transport error with a recent last pointer does not.
 //
 // reason is the operator-facing explanation when stale is true.
 func freezeVerdict(checkErr error, lastPointerIssued string, now time.Time) (stale bool, reason string) {
-	if errors.Is(checkErr, update.ErrExpired) || errors.Is(checkErr, update.ErrNoPointer) {
-		return true, checkErr.Error()
-	}
 	if lastPointerIssued == "" {
 		return false, ""
+	}
+	if errors.Is(checkErr, update.ErrExpired) || errors.Is(checkErr, update.ErrNoPointer) {
+		return true, checkErr.Error()
 	}
 	issued, err := time.Parse(time.RFC3339, lastPointerIssued)
 	if err != nil || now.Sub(issued) <= stalePointerAfter {
@@ -196,10 +205,19 @@ func checkRefreshedState(err error) bool {
 
 // runDueCheck runs u.check when update.channel is on, the source is github,
 // and CheckInterval has elapsed since LastCheck, then applies the freeze
-// rule (freezeVerdict, R17): a stale verdict alerts once per episode (the
-// dedup, State.StaleNotified, is persisted so a restart does not re-page),
-// and a check that verified a fresh pointer ends the episode. Other check
-// errors are only logged.
+// rule (freezeVerdict, R17/R25): a stale verdict alerts once per episode
+// (the dedup, State.StaleNotified, is persisted so a restart does not
+// re-page), and a check that verified a fresh pointer ends the episode.
+//
+// Before any pointer has ever verified (State.LastPointerIssued == ""),
+// freezeVerdict never returns stale, so a failing check (404, missing
+// pointer, network error, no keys, ...) is not alerted; it is logged once
+// per distinct cause, not every tick, as "update: updates not configured:
+// <reason>" (R25 -- a fresh, unconfigured install must not page on its
+// first tick). The cause is also kept in State.LastCheckError, which
+// `update status` reports, and is cleared once a check verifies a pointer.
+// Once a pointer has verified once, other check errors are logged every
+// tick as before ("update: check: <err>"), unchanged from R17.
 func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(Alert)) {
 	channel := c.UpdateChannel()
 	if channel == "off" || c.UpdateSource() != "github" {
@@ -212,12 +230,29 @@ func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(A
 	if st.LastCheck != 0 && u.clock().Sub(time.Unix(st.LastCheck, 0)) < c.UpdateCheckInterval() {
 		return
 	}
+	everVerified := st.LastPointerIssued != ""
 	_, checkErr := u.check(ctx, c)
-	if checkErr != nil {
+	switch {
+	case checkErr == nil:
+		// nothing to log
+	case checkRefreshedState(checkErr) || everVerified:
+		// Either a fresh pointer just verified fine (checkErr is only a
+		// policy verdict -- already installed, downgrade, wrong channel,
+		// known bad -- not a freeze/configuration problem), or a pointer
+		// has verified at some point before: log every tick, as before R25.
 		log.Printf("update: check: %v", checkErr)
+	case checkErr.Error() != st.LastCheckError:
+		// R25: never verified a pointer yet, and this check didn't either
+		// -- log the cause once, not every tick, until it changes.
+		log.Printf("update: updates not configured: %v", checkErr)
 	}
 	var alert *Alert
 	err = update.WithState(u.paths.dir(), func(st2 *update.State) error {
+		if checkRefreshedState(checkErr) {
+			st2.LastCheckError = ""
+		} else if checkErr != nil {
+			st2.LastCheckError = checkErr.Error()
+		}
 		stale, reason := freezeVerdict(checkErr, st2.LastPointerIssued, u.clock())
 		switch {
 		case stale && !st2.StaleNotified:

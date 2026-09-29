@@ -482,8 +482,14 @@ type UpdateStatusView struct {
 	Last       *UpdateResultView  `json:"last,omitempty"`
 	KeysLoaded bool               `json:"keys_loaded"`
 	LastCheck  int64              `json:"last_check,omitempty"` // unix seconds of the last successful channel check; 0 = never
-	InProgress bool               `json:"in_progress"`
-	LastError  string             `json:"last_error,omitempty"`
+	// LastCheckError is the reason the most recent channel check failed to
+	// verify a pointer, cleared once one verifies. Before any pointer has
+	// ever verified, R25 raises no freeze/stale alert, so this is the only
+	// visible trace of a misconfigured or unreachable update source (e.g.
+	// a private repo with no update.github_token).
+	LastCheckError string `json:"last_check_error,omitempty"`
+	InProgress     bool   `json:"in_progress"`
+	LastError      string `json:"last_error,omitempty"`
 }
 
 // UpdatePendingView is core's projection of update.Pending: an update

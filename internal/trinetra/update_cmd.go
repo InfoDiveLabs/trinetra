@@ -56,17 +56,22 @@ type applyOptions struct {
 
 // updateStatus is `trinetra update status`'s JSON/table shape.
 type updateStatus struct {
-	Running      string          `json:"running"`
-	Channel      string          `json:"channel"`
-	Source       string          `json:"source"`
-	Floor        string          `json:"floor"`
-	Available    string          `json:"available"`
-	Previous     string          `json:"previous"`
-	Pending      *update.Pending `json:"pending"`
-	Last         *update.Result  `json:"last"`
-	LastCheck    int64           `json:"last_check"`
-	KeysLoaded   bool            `json:"keys_loaded"`
-	Fingerprints []string        `json:"fingerprints"`
+	Running   string          `json:"running"`
+	Channel   string          `json:"channel"`
+	Source    string          `json:"source"`
+	Floor     string          `json:"floor"`
+	Available string          `json:"available"`
+	Previous  string          `json:"previous"`
+	Pending   *update.Pending `json:"pending"`
+	Last      *update.Result  `json:"last"`
+	LastCheck int64           `json:"last_check"`
+	// LastCheckError is the reason the most recent channel check failed to
+	// verify a pointer ("" once one has verified). Before any pointer has
+	// ever verified (R25), this is the only operator-facing trace of a
+	// misconfigured or unreachable update source -- no alert fires yet.
+	LastCheckError string   `json:"last_check_error,omitempty"`
+	KeysLoaded     bool     `json:"keys_loaded"`
+	Fingerprints   []string `json:"fingerprints"`
 }
 
 // clock returns u.now, or time.Now if it was left nil.
@@ -495,15 +500,16 @@ func (u updater) status() (updateStatus, error) {
 	}
 
 	return updateStatus{
-		Running:      u.running.String(),
-		Floor:        st.FloorVersion(u.running).String(),
-		Available:    st.Available,
-		Previous:     previous,
-		Pending:      st.Pending,
-		Last:         st.Last,
-		LastCheck:    st.LastCheck,
-		KeysLoaded:   keySetLoaded(u.keys),
-		Fingerprints: update.Fingerprints(u.keys),
+		Running:        u.running.String(),
+		Floor:          st.FloorVersion(u.running).String(),
+		Available:      st.Available,
+		Previous:       previous,
+		Pending:        st.Pending,
+		Last:           st.Last,
+		LastCheck:      st.LastCheck,
+		LastCheckError: st.LastCheckError,
+		KeysLoaded:     keySetLoaded(u.keys),
+		Fingerprints:   update.Fingerprints(u.keys),
 	}, nil
 }
 
@@ -519,14 +525,15 @@ func (u updater) status() (updateStatus, error) {
 // wasn't asked for.
 func toUpdateStatusView(st updateStatus) core.UpdateStatusView {
 	v := core.UpdateStatusView{
-		Running:    st.Running,
-		Channel:    st.Channel,
-		Floor:      st.Floor,
-		Available:  st.Available,
-		Previous:   st.Previous,
-		Source:     st.Source,
-		KeysLoaded: st.KeysLoaded,
-		LastCheck:  st.LastCheck,
+		Running:        st.Running,
+		Channel:        st.Channel,
+		Floor:          st.Floor,
+		Available:      st.Available,
+		Previous:       st.Previous,
+		Source:         st.Source,
+		KeysLoaded:     st.KeysLoaded,
+		LastCheck:      st.LastCheck,
+		LastCheckError: st.LastCheckError,
 	}
 	if st.Pending != nil {
 		v.Pending = &core.UpdatePendingView{
@@ -700,6 +707,9 @@ func renderUpdateStatus(w io.Writer, st updateStatus) {
 		fmt.Fprintf(w, "last check: %s\n", time.Unix(st.LastCheck, 0).UTC().Format(time.RFC3339))
 	} else {
 		fmt.Fprintln(w, "last check: never")
+	}
+	if st.LastCheckError != "" {
+		fmt.Fprintf(w, "check error: %s\n", st.LastCheckError)
 	}
 	if st.Previous != "" {
 		fmt.Fprintf(w, "previous:   %s\n", st.Previous)

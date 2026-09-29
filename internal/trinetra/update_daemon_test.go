@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"testing"
@@ -169,5 +170,92 @@ func TestRunDueCheckFreshPointerEndsEpisode(t *testing.T) {
 	runDueCheck(context.Background(), u, config.Default(), func(Alert) {})
 	if st, _ := update.LoadState(p.dir()); st.StaleNotified {
 		t.Fatalf("fresh pointer did not end the stale episode: %+v", st)
+	}
+}
+
+// captureLog redirects the standard logger's output to a buffer for the rest
+// of the test, restoring it on cleanup.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(orig) })
+	return &buf
+}
+
+// TestRunDueCheckNeverVerifiedPointer is R25: freeze detection only makes
+// sense once a host has verified a channel pointer at least once
+// (State.LastPointerIssued). A fresh, unconfigured install (update.source=
+// github, private release repo, no update.github_token) 404s on every
+// check; before any pointer has ever verified, that must not raise the
+// stale/freeze alert on tick one, and must not spam a log line every tick --
+// just one line per distinct failure cause, and the cause surfaces via
+// State.LastCheckError (what `update status` reads).
+func TestRunDueCheckNeverVerifiedPointer(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	p := testUpdatePaths(t)
+	u := updater{paths: p, keys: testKeys(), src: channelSource{channel: map[string][]byte{}}, now: func() time.Time { return now },
+		arch: "amd64", running: mustVer("0.4.1")}
+
+	logs := captureLog(t)
+	for i := 0; i < 3; i++ {
+		var got []Alert
+		runDueCheck(context.Background(), u, config.Default(), func(a Alert) { got = append(got, a) })
+		if n := staleAlerts(got); n != 0 {
+			t.Fatalf("loop %d: alerted before any pointer was ever verified: %+v", i, got)
+		}
+	}
+
+	st, err := update.LoadState(p.dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.StaleNotified {
+		t.Fatalf("StaleNotified set though no pointer has ever verified: %+v", st)
+	}
+	if st.LastCheckError == "" {
+		t.Fatalf("no reason recorded for `update status` to show: %+v", st)
+	}
+	if n := strings.Count(logs.String(), "updates not configured:"); n != 1 {
+		t.Fatalf(`logged "updates not configured:" %d times across 3 loops with the same cause, want 1: %s`, n, logs.String())
+	}
+}
+
+// TestRunDueCheckSeenOnceThenExpired: once a pointer has verified once
+// (State.LastPointerIssued set), R17 applies unchanged -- an expired pointer
+// is the freeze signature and alerts at once, unlike
+// TestRunDueCheckNeverVerifiedPointer's silence before that.
+func TestRunDueCheckSeenOnceThenExpired(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	p := testUpdatePaths(t)
+	update.SaveState(p.dir(), update.State{LastPointerIssued: now.Add(-2 * 24 * time.Hour).Format(time.RFC3339)})
+	release := signedRelease(t, "0.4.1", map[string][]byte{"trinetra-linux-amd64": []byte("x"), "trinetra-web-linux-amd64": []byte("y")})
+	expiredPB, expiredSig := signedPointer(t, now.Add(-15*24*time.Hour), now.Add(-24*time.Hour))
+	u := updater{paths: p, keys: testKeys(), now: func() time.Time { return now }, arch: "amd64", running: mustVer("0.4.1"),
+		src: channelSource{channel: map[string][]byte{"stable.json": expiredPB, "stable.json.sig": expiredSig}, release: release}}
+
+	var got []Alert
+	runDueCheck(context.Background(), u, config.Default(), func(a Alert) { got = append(got, a) })
+	if n := staleAlerts(got); n != 1 {
+		t.Fatalf("stale alerts = %d, want 1: %+v", n, got)
+	}
+}
+
+// TestRunDueCheckSeenOnceThenMissing: once a pointer has verified once, a
+// 404/missing pointer (e.g. the token was removed afterward) still counts as
+// a real freeze signal and alerts, same as TestRunDueCheckFreezeDetection's
+// "missing pointer alerts at once" case.
+func TestRunDueCheckSeenOnceThenMissing(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	p := testUpdatePaths(t)
+	update.SaveState(p.dir(), update.State{LastPointerIssued: now.Add(-2 * 24 * time.Hour).Format(time.RFC3339)})
+	u := updater{paths: p, keys: testKeys(), now: func() time.Time { return now }, arch: "amd64", running: mustVer("0.4.1"),
+		src: channelSource{channel: map[string][]byte{}}}
+
+	var got []Alert
+	runDueCheck(context.Background(), u, config.Default(), func(a Alert) { got = append(got, a) })
+	if n := staleAlerts(got); n != 1 {
+		t.Fatalf("stale alerts = %d, want 1 (token removed after a pointer was once seen must still alert): %+v", n, got)
 	}
 }
