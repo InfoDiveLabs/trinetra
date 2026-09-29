@@ -714,11 +714,12 @@ the core.
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a security problem. Contact the
-maintainers privately with a description, the affected version
-(`trinetra version`), and steps to reproduce if you have them. You will get an
-acknowledgement, and a fix will ship as a normal signed release; the advisory
-follows once hosts can update.
+Please do not open a public issue for a security problem. See
+[SECURITY.md](../../SECURITY.md) for how to report one privately (GitHub's
+["Report a vulnerability"](https://github.com/InfoDiveLabs/trinetra/security/advisories/new)
+under this repository's Security tab), what to include, and what to expect.
+A confirmed fix ships as a normal signed release; the advisory follows once
+hosts can update.
 
 ---
 
