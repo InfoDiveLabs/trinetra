@@ -186,7 +186,20 @@ func resolveInterruptedSwap(d guardDeps, pending update.Pending) (update.Result,
 	if err != nil {
 		return update.Result{}, err
 	}
+	auditUpdate(d.paths, guardActor, "update.rolled_back", pending.Version, guardAuditDetail(pending, detail), d.now())
 	return result, nil
+}
+
+// guardAuditDetail is the detail of the guard's audit entries.
+func guardAuditDetail(pending update.Pending, detail string) string {
+	out := "from " + pending.From
+	if pending.Rollback {
+		out += " (manual rollback)"
+	}
+	if detail != "" {
+		out += ": " + detail
+	}
+	return out
 }
 
 // checkGuardHealth reports whether h looks healthy for a Pending targeting
@@ -243,6 +256,7 @@ func commitPending(p updatePaths, pending update.Pending, now time.Time) (update
 	if err != nil {
 		return update.Result{}, err
 	}
+	auditUpdate(p, guardActor, "update.commit", pending.Version, guardAuditDetail(pending, ""), now)
 	_ = os.RemoveAll(p.staging(pending.Version))
 	return result, nil
 }
@@ -286,6 +300,7 @@ func rollbackPending(p updatePaths, pending update.Pending, detail string, resta
 	if err != nil {
 		return update.Result{}, err
 	}
+	auditUpdate(p, guardActor, "update.rolled_back", pending.Version, guardAuditDetail(pending, detail), now)
 	return result, nil
 }
 

@@ -481,6 +481,7 @@ type UpdateStatusView struct {
 	Pending    *UpdatePendingView `json:"pending,omitempty"`
 	Last       *UpdateResultView  `json:"last,omitempty"`
 	KeysLoaded bool               `json:"keys_loaded"`
+	LastCheck  int64              `json:"last_check,omitempty"` // unix seconds of the last successful channel check; 0 = never
 	InProgress bool               `json:"in_progress"`
 	LastError  string             `json:"last_error,omitempty"`
 }

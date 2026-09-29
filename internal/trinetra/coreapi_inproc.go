@@ -415,10 +415,12 @@ type inprocAPI struct {
 // newUpdaterFor returns a.newUpdaterFn(c) if set (test seam, see the field's
 // doc), otherwise the real package-level newUpdater(c).
 func (a *inprocAPI) newUpdaterFor(c *config.Config) updater {
+	u := newUpdater(c)
 	if a.newUpdaterFn != nil {
-		return a.newUpdaterFn(c)
+		u = a.newUpdaterFn(c)
 	}
-	return newUpdater(c)
+	u.actor = socketActor
+	return u
 }
 
 // errUpdateAlreadyRunning is returned by UpdateApply/UpdateRollback when a

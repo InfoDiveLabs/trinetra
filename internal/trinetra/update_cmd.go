@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,6 +36,9 @@ type updater struct {
 	// sys runs systemctl for ensureWatchdog before a swap; nil (tests that
 	// do not exercise it) skips that step.
 	sys Exec
+	// actor names who asked for this apply/rollback in the audit log
+	// (cliActor() for the CLI, socketActor over the control socket).
+	actor string
 	// src overrides the source an operation fetches from; nil means "build
 	// it from config" (updateSource(c)) -- see Ruling R1 in
 	// .superpowers/sdd/2026-09-29-signed-releases-self-update/progress.md.
@@ -60,6 +64,7 @@ type updateStatus struct {
 	Previous     string          `json:"previous"`
 	Pending      *update.Pending `json:"pending"`
 	Last         *update.Result  `json:"last"`
+	LastCheck    int64           `json:"last_check"`
 	KeysLoaded   bool            `json:"keys_loaded"`
 	Fingerprints []string        `json:"fingerprints"`
 }
@@ -326,6 +331,7 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 		}
 	}
 
+	auditUpdate(u.paths, u.actor, "update.apply", m.Version, "from "+strings.TrimPrefix(u.running.String(), "v"), u.clock())
 	if err := swapIn(u.paths, plan, u.clock()); err != nil {
 		return update.Manifest{}, err
 	}
@@ -434,6 +440,7 @@ func (u updater) rollback() error {
 	if err := setPending(u.paths, &pending); err != nil {
 		return err
 	}
+	auditUpdate(u.paths, u.actor, "update.rollback", prevVersion, "from "+pending.From, u.clock())
 
 	// R16 (I9): a failed restore may leave the binaries half-restored, so
 	// Pending stays (phase swapping) and the watchdog's guard finishes the
@@ -494,6 +501,7 @@ func (u updater) status() (updateStatus, error) {
 		Previous:     previous,
 		Pending:      st.Pending,
 		Last:         st.Last,
+		LastCheck:    st.LastCheck,
 		KeysLoaded:   keySetLoaded(u.keys),
 		Fingerprints: update.Fingerprints(u.keys),
 	}, nil
@@ -518,6 +526,7 @@ func toUpdateStatusView(st updateStatus) core.UpdateStatusView {
 		Previous:   st.Previous,
 		Source:     st.Source,
 		KeysLoaded: st.KeysLoaded,
+		LastCheck:  st.LastCheck,
 	}
 	if st.Pending != nil {
 		v.Pending = &core.UpdatePendingView{
@@ -620,6 +629,7 @@ func newUpdater(c *config.Config) updater {
 		running:     running,
 		launchGuard: func() error { return launchGuardUnit(defaultUpdatePaths()) },
 		sys:         osExec{},
+		actor:       cliActor(),
 	}
 }
 
@@ -674,22 +684,32 @@ func cmdUpdateStatus(args []string) int {
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
-	fmt.Fprintf(stdout, "running:   %s\n", st.Running)
-	fmt.Fprintf(stdout, "channel:   %s\n", st.Channel)
-	fmt.Fprintf(stdout, "source:    %s\n", st.Source)
-	fmt.Fprintf(stdout, "floor:     %s\n", st.Floor)
-	fmt.Fprintf(stdout, "available: %s\n", st.Available)
+	renderUpdateStatus(stdout, st)
+	return 0
+}
+
+// renderUpdateStatus is `trinetra update status`'s text form.
+func renderUpdateStatus(w io.Writer, st updateStatus) {
+	fmt.Fprintf(w, "running:    %s\n", st.Running)
+	fmt.Fprintf(w, "channel:    %s\n", st.Channel)
+	fmt.Fprintf(w, "source:     %s\n", st.Source)
+	fmt.Fprintf(w, "floor:      %s\n", st.Floor)
+	fmt.Fprintf(w, "available:  %s\n", st.Available)
+	if st.LastCheck > 0 {
+		fmt.Fprintf(w, "last check: %s\n", time.Unix(st.LastCheck, 0).UTC().Format(time.RFC3339))
+	} else {
+		fmt.Fprintln(w, "last check: never")
+	}
 	if st.Previous != "" {
-		fmt.Fprintf(stdout, "previous:  %s\n", st.Previous)
+		fmt.Fprintf(w, "previous:   %s\n", st.Previous)
 	}
 	if st.Pending != nil {
-		fmt.Fprintf(stdout, "pending:   %s (from %s, rollback=%v)\n", st.Pending.Version, st.Pending.From, st.Pending.Rollback)
+		fmt.Fprintf(w, "pending:    %s (from %s, rollback=%v)\n", st.Pending.Version, st.Pending.From, st.Pending.Rollback)
 	}
 	if st.Last != nil {
-		fmt.Fprintf(stdout, "last:      %s (%s)\n", st.Last.Version, st.Last.Outcome)
+		fmt.Fprintf(w, "last:       %s (%s)\n", st.Last.Version, st.Last.Outcome)
 	}
-	fmt.Fprintf(stdout, "keys loaded: %v\n", st.KeysLoaded)
-	return 0
+	fmt.Fprintf(w, "keys loaded: %v\n", st.KeysLoaded)
 }
 
 func cmdUpdateCheck(args []string) int {

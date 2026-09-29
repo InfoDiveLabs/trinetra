@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/update"
+	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
 const helpText = `commands:
@@ -17,6 +19,7 @@ const helpText = `commands:
 /down -- recent downtime events
 /docker -- container states
 /services -- failed systemd units
+/version -- running version and any available update
 /help -- this message`
 
 // handleCommand dispatches an inbound Telegram command to its renderer. c is
@@ -57,6 +60,8 @@ func handleCommand(text string, store SampleStore, snap Snapshot, c *config.Conf
 		return renderDocker(snap.Containers)
 	case "/services":
 		return renderServices(snap.FailedUnits)
+	case "/version":
+		return renderVersionReply(defaultUpdatePaths())
 	case "/help":
 		return helpText
 	default:
@@ -83,4 +88,15 @@ func inQuietHours(spec string, now time.Time) bool {
 		return h >= start && h < end
 	}
 	return h >= start || h < end // wraps midnight
+}
+
+// renderVersionReply is Telegram /version (spec §2 Commands, R23): the
+// running version and, when the last check found a newer release this host
+// accepts (update.State.Available), "update available: X".
+func renderVersionReply(p updatePaths) string {
+	out := "trinetra " + version.String()
+	if st, err := update.LoadState(p.dir()); err == nil && st.Available != "" {
+		out += "\nupdate available: " + st.Available + " (sudo trinetra update apply)"
+	}
+	return out
 }
