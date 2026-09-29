@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"html"
+	"log"
 	"math/big"
 	"os"
 	"os/signal"
@@ -1302,6 +1303,18 @@ func cmdDaemon(args []string) int {
 	// clear any stale clean-stop marker now that we've started, so an unclean
 	// stop after this point IS reported on the next boot.
 	_ = os.Remove(cleanStopPath)
+
+	// self-update: resume a guard for a Pending update left over from a
+	// crash mid-apply/mid-guard (update_guard.go), then start the
+	// background loop that checks for a new release on the configured
+	// cadence and turns update.State transitions into Alerts
+	// (update_daemon.go). alog/bus/q all exist by this point.
+	if err := resumePendingOnStart(defaultUpdatePaths(), realLaunchGuard); err != nil {
+		log.Printf("update: resume: %v", err)
+	}
+	go startUpdateLoop(daemonCtx, getCfg, newUpdater(getCfg()), func(a Alert) {
+		enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+	})
 
 	// telegram long-poller (owns its own prevCPU internally)
 	go pollLoop(getCfg, setChatID, store, x, fs, da, enroll, fleetRT.provider.Fleet())

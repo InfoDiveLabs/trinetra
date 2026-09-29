@@ -335,6 +335,18 @@ func keySetLoaded(k update.KeySet) bool {
 	return len(k.CI) > 0 && len(k.Maint) > 0 && len(k.Pointer) > 0
 }
 
+// realLaunchGuard is production launchGuard: systemd-run a detached
+// `trinetra update guard` unit. Shared by newUpdater (apply/rollback launch
+// the guard right after swapping a build in) and the daemon's own start hook
+// (resumePendingOnStart, daemon.go: resuming a guard for a Pending update
+// left over from a crash mid-apply/mid-guard), so both paths launch the
+// guard identically.
+func realLaunchGuard() error {
+	_, err := osExec{}.Run("systemd-run", "--unit", "trinetra-update-guard", "--collect", "--quiet",
+		"/usr/local/bin/trinetra", "update", "guard")
+	return err
+}
+
 // newUpdater builds the production updater: real paths, the compiled-in
 // production keys, the real (timeout-bounded) Exec, the running version
 // parsed from the build stamp, and the real launchGuard (systemd-run into
@@ -342,17 +354,13 @@ func keySetLoaded(k update.KeySet) bool {
 func newUpdater(c *config.Config) updater {
 	running, _ := update.ParseVersion(version.String()) // unparsable (e.g. "dev") -> zero Version; tolerated for a dev build
 	return updater{
-		paths:   defaultUpdatePaths(),
-		keys:    update.ProductionKeys(),
-		x:       timeoutExec{smokeTestTimeout},
-		now:     time.Now,
-		arch:    runtime.GOARCH,
-		running: running,
-		launchGuard: func() error {
-			_, err := osExec{}.Run("systemd-run", "--unit", "trinetra-update-guard", "--collect", "--quiet",
-				"/usr/local/bin/trinetra", "update", "guard")
-			return err
-		},
+		paths:       defaultUpdatePaths(),
+		keys:        update.ProductionKeys(),
+		x:           timeoutExec{smokeTestTimeout},
+		now:         time.Now,
+		arch:        runtime.GOARCH,
+		running:     running,
+		launchGuard: realLaunchGuard,
 	}
 }
 
@@ -489,16 +497,8 @@ func cmdUpdateRollback(args []string) int {
 	return 0
 }
 
-// cmdUpdateGuard is `trinetra update guard`: what launchGuard starts via
-// systemd-run right after apply/rollback swap a build in. Its job is the
-// health-gate state machine (wait out the pending update's deadline,
-// confirm or roll back, resume across a crash) -- owned by a later task
-// (Ruling R6); this is a root-gated placeholder until that lands.
-func cmdUpdateGuard(args []string) int {
-	if !isRoot() {
-		fmt.Fprintln(stderr, "must run as root")
-		return 1
-	}
-	fmt.Fprintln(stderr, "update guard: not implemented yet")
-	return 1
-}
+// cmdUpdateGuard ("trinetra update guard") is implemented in
+// update_guard.go: the health-gate state machine (wait out the pending
+// update's deadline, confirm or roll back, resume across a crash) that
+// launchGuard starts via systemd-run right after apply/rollback swap a
+// build in.
