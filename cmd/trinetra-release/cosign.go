@@ -136,6 +136,7 @@ func cmdCosign(args []string) error {
 // the brief's own documented usage "cosign vX.Y.Z --key FILE").
 func parseCosignArgs(args []string) (version, repo, keyFile string, testkeys bool, err error) {
 	repo = "InfoDiveLabs/trinetra"
+	repoSet := false
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -147,11 +148,11 @@ func parseCosignArgs(args []string) (version, repo, keyFile string, testkeys boo
 			if i >= len(args) {
 				return "", "", "", false, fmt.Errorf("cosign: %s requires a value", a)
 			}
-			repo = args[i]
+			repo, repoSet = args[i], true
 		case strings.HasPrefix(a, "--repo="):
-			repo = strings.TrimPrefix(a, "--repo=")
+			repo, repoSet = strings.TrimPrefix(a, "--repo="), true
 		case strings.HasPrefix(a, "-repo="):
-			repo = strings.TrimPrefix(a, "-repo=")
+			repo, repoSet = strings.TrimPrefix(a, "-repo="), true
 		case a == "--key" || a == "-key":
 			i++
 			if i >= len(args) {
@@ -170,6 +171,10 @@ func parseCosignArgs(args []string) (version, repo, keyFile string, testkeys boo
 	}
 	if len(positional) != 1 {
 		return "", "", "", false, errors.New("cosign: expected exactly one version argument, e.g. v1.2.3")
+	}
+	if testkeys && !repoSet {
+		// R24: never let a test-key co-sign default to the real repository.
+		return "", "", "", false, errors.New("cosign: --testkeys requires an explicit --repo (a test repository, never the real one by default)")
 	}
 	return positional[0], repo, keyFile, testkeys, nil
 }

@@ -221,8 +221,12 @@ func readPassphrase(prompt string) ([]byte, error) {
 		}
 	}()
 	defer func() {
-		close(restored)
+		// Stop signal delivery BEFORE releasing the watcher goroutine: in
+		// the other order a SIGINT landing between the two would be
+		// swallowed by the (now unwatched) channel instead of killing the
+		// process (R24).
 		signal.Stop(sigCh)
+		close(restored)
 		sttyEcho(tty, true)
 	}()
 

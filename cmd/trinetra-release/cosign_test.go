@@ -126,6 +126,15 @@ func TestParseCosignArgs(t *testing.T) {
 	}
 }
 
+// TestParseCosignArgsTestkeysRequiresRepo is R24: a --testkeys co-sign must
+// name its (test) repository explicitly, so it can never default to the real
+// InfoDiveLabs/trinetra and publish a test-signed draft there.
+func TestParseCosignArgsTestkeysRequiresRepo(t *testing.T) {
+	if _, _, _, _, err := parseCosignArgs([]string{"v1.2.3", "--testkeys", "--key", "k.pem"}); err == nil || !strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("--testkeys without --repo: %v", err)
+	}
+}
+
 func TestParseCosignArgsRequiresExactlyOneVersion(t *testing.T) {
 	if _, _, _, _, err := parseCosignArgs([]string{"--key", "k.pem"}); err == nil {
 		t.Fatal("no version argument accepted")
