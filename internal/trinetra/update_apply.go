@@ -131,11 +131,27 @@ func stage(ctx context.Context, p updatePaths, src update.Source, plan applyPlan
 	return nil
 }
 
+// smokeTestTimeout bounds how long the freshly staged core binary gets to
+// answer `version --json` in smokeTest. It is deliberately far tighter than
+// the shared execTimeout collectors get for legitimately slow host commands:
+// a binary that cannot report its own version within this window is not
+// healthy enough to trust with a swap. Callers pass timeoutExec{smokeTestTimeout}.
+const smokeTestTimeout = 5 * time.Second
+
+// timeoutExec is an Exec bound by a fixed timeout of its own rather than the
+// package-level execTimeout osExec uses -- so a caller like smokeTest is not
+// stuck sharing the 60s budget a slow df/docker/smartctl legitimately needs.
+type timeoutExec struct{ d time.Duration }
+
+func (t timeoutExec) Run(name string, args ...string) ([]byte, error) {
+	return runWithTimeout(t.d, name, args...)
+}
+
 // smokeTest runs the freshly staged core binary (`path version --json`) and
 // checks it reports the version we just staged, before it is ever trusted to
-// run as the daemon. The subprocess timeout is bounded by Exec's own
-// execTimeout (osExec's real implementation), since the Exec interface takes
-// no per-call deadline; smokeTest itself adds no extra bound.
+// run as the daemon. x is expected to be timeoutExec{smokeTestTimeout} in
+// production (Task 6 wires this up); smokeTest itself applies no timeout of
+// its own, so the bound comes entirely from x.
 func smokeTest(x Exec, path, want string) error {
 	out, err := x.Run(path, "version", "--json")
 	if err != nil {
@@ -169,7 +185,11 @@ func pluginManifestBase() string { return filepath.Base(pluginManifestPath()) }
 // swapIn is the only step that touches BinDir. Nothing on disk changes
 // before every staged file re-hashes to its manifest SHA-256 (step 3 below);
 // any failure at or after the first rename (steps 4-5) restores the previous
-// build before returning, so a host is never left half-upgraded.
+// build before returning, so a host is never left half-upgraded -- and if
+// that restore attempt itself fails, the returned error joins both failures
+// (via errors.Join) rather than silently discarding the restore error, since
+// a host that failed BOTH the swap and the rollback is a materially
+// different, more urgent situation than one that cleanly rolled back.
 //
 //  1. Refuse if an update is already Pending.
 //  2. Snapshot the current binaries (and plugins.json, if any) into
@@ -223,14 +243,12 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 	for i, f := range plan.Files {
 		dst := filepath.Join(p.BinDir, plan.Names[i])
 		if err := replaceFile(filepath.Join(stagingDir, f.Name), dst); err != nil {
-			_ = restorePrevious(p)
-			return err
+			return restoreOrJoin(p, fmt.Errorf("update: install %s: %w", plan.Names[i], err))
 		}
 	}
 
 	if err := writePluginManifest(p.BinDir); err != nil {
-		_ = restorePrevious(p)
-		return err
+		return restoreOrJoin(p, fmt.Errorf("update: rewrite plugin manifest: %w", err))
 	}
 
 	st.Pending = &update.Pending{
@@ -240,6 +258,20 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 		Files:    plan.Names,
 	}
 	return update.SaveState(p.dir(), st)
+}
+
+// restoreOrJoin attempts to roll back to the previous build after cause (a
+// failure in swapIn's replace-and-rewrite phase) and returns an error that
+// always surfaces cause. If the rollback itself also fails, the two errors
+// are combined with errors.Join (so errors.Is/errors.As still see both) and
+// the message says plainly that the host may now be left half-updated --
+// this is a strictly worse outcome than a clean rollback and must not be
+// silently swallowed the way a bare `_ = restorePrevious(p)` would.
+func restoreOrJoin(p updatePaths, cause error) error {
+	if rerr := restorePrevious(p); rerr != nil {
+		return errors.Join(cause, fmt.Errorf("update: restoring the previous build also failed (host may be half-updated): %w", rerr))
+	}
+	return cause
 }
 
 // restorePrevious puts back everything swapIn snapshotted into previous/:

@@ -35,11 +35,20 @@ var execTimeout = 60 * time.Second
 
 func (osExec) Run(name string, args ...string) ([]byte, error) {
 	// Bound external commands: a hung df/docker/systemctl/smartctl would
-	// otherwise block the caller forever. Put the child in its own process
-	// group (Setpgid) and, on timeout, kill the WHOLE group -- otherwise a
-	// grandchild (e.g. smartctl under sudo) keeps the stdout pipe open and
-	// CombinedOutput blocks past the deadline.
-	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	// otherwise block the caller forever.
+	return runWithTimeout(execTimeout, name, args...)
+}
+
+// runWithTimeout runs name with args under a hard deadline, killing the
+// whole process group on expiry -- otherwise a grandchild (e.g. smartctl
+// under sudo) keeps the stdout pipe open and CombinedOutput blocks past the
+// deadline. Shared by osExec, bound by the package-level execTimeout (a
+// generous, operator-tunable ceiling for legitimately slow host commands),
+// and timeoutExec (update_apply.go), bound by its own fixed duration for
+// callers -- like a self-update smoke test -- that need a much tighter,
+// non-configurable bound.
+func runWithTimeout(d time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

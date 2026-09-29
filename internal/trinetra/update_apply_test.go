@@ -7,8 +7,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,5 +123,110 @@ func TestSwapInRefusesStagedFileChangedAfterVerify(t *testing.T) {
 	}
 	if st, _ := update.LoadState(p.dir()); st.Pending != nil {
 		t.Fatal("pending recorded for a refused swap")
+	}
+}
+
+// --- fix round 1 ---
+
+// TestTimeoutExecKillsSlowCommand pins F1: smokeTest must be bounded by its
+// own fixed timeout, not the shared 60s execTimeout. timeoutExec is what
+// gives it that bound; a command that outlives the timeout must be killed
+// (and Run must return an error) well before the command would finish on
+// its own.
+func TestTimeoutExecKillsSlowCommand(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep not on PATH")
+	}
+	start := time.Now()
+	_, err := timeoutExec{200 * time.Millisecond}.Run("sleep", "5")
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("timeoutExec.Run did not error on a command that outlived its timeout")
+	}
+	if elapsed >= 3*time.Second {
+		t.Fatalf("timeoutExec.Run took %v to return, want well under the 5s sleep", elapsed)
+	}
+}
+
+// TestSmokeTest pins smokeTest's own logic (version match, mismatch,
+// non-JSON output, exec failure) independent of any real timeout, using the
+// package's existing fakeExec (docker_test.go) fake.
+func TestSmokeTest(t *testing.T) {
+	cases := []struct {
+		name    string
+		x       Exec
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "version matches, v-prefix stripped both sides",
+			x:       fakeExec{fn: func(string, ...string) ([]byte, error) { return []byte(`{"version":"0.5.0"}`), nil }},
+			want:    "v0.5.0",
+			wantErr: false,
+		},
+		{
+			name:    "version mismatch",
+			x:       fakeExec{fn: func(string, ...string) ([]byte, error) { return []byte(`{"version":"0.4.0"}`), nil }},
+			want:    "0.5.0",
+			wantErr: true,
+		},
+		{
+			name:    "non-JSON output",
+			x:       fakeExec{fn: func(string, ...string) ([]byte, error) { return []byte("not json"), nil }},
+			want:    "0.5.0",
+			wantErr: true,
+		},
+		{
+			name:    "exec error",
+			x:       fakeExec{fn: func(string, ...string) ([]byte, error) { return nil, errors.New("boom") }},
+			want:    "0.5.0",
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := smokeTest(tc.x, "/path/to/trinetra", tc.want)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("smokeTest() err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestSwapInJoinsRestoreFailureWithOriginalError pins F2: when a failure in
+// swapIn's replace phase triggers restorePrevious, and restorePrevious ALSO
+// fails, the error swapIn returns must surface both failures (not silently
+// discard the restore error), with wording that makes clear the host may be
+// left half-updated. Making BinDir unwritable after staging forces exactly
+// this: the first replaceFile call fails (can't create the temp file), and
+// the restorePrevious it triggers fails for the same reason (still can't
+// write into BinDir).
+func TestSwapInJoinsRestoreFailureWithOriginalError(t *testing.T) {
+	p := testUpdatePaths(t)
+	newCore, newWeb := []byte("NEW-core"), []byte("NEW-web")
+	plan := applyPlan{Manifest: update.Manifest{Version: "0.5.0"}, Arch: "amd64",
+		Files: []update.File{mf("trinetra-linux-amd64", newCore), mf("trinetra-web-linux-amd64", newWeb)},
+		Names: []string{"trinetra", "trinetra-web"}}
+	src := mapSource{"trinetra-linux-amd64": newCore, "trinetra-web-linux-amd64": newWeb}
+	if err := stage(context.Background(), p, src, plan); err != nil {
+		t.Fatal(err)
+	}
+	chmodUnwritable(t, p.BinDir)
+
+	err := swapIn(p, plan, time.Unix(1, 0))
+	if err == nil {
+		t.Fatal("swapIn succeeded despite an unwritable BinDir")
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("errors.Is(err, fs.ErrPermission) = false: %v", err)
+	}
+	if !strings.Contains(err.Error(), "update: install trinetra:") {
+		t.Fatalf("original swap failure not present: %v", err)
+	}
+	if !strings.Contains(err.Error(), "restoring the previous build also failed") {
+		t.Fatalf("restore failure not present: %v", err)
+	}
+	if !strings.Contains(err.Error(), "half-updated") {
+		t.Fatalf("missing half-updated warning: %v", err)
 	}
 }
