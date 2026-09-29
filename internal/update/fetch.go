@@ -128,6 +128,10 @@ func FetchVerified(ctx context.Context, src Source, version string, f File, dstD
 		return "", err
 	}
 	ok = true
+	if err := SyncDir(dstDir); err != nil {
+		os.Remove(final)
+		return "", err
+	}
 	return final, nil
 }
 

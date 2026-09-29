@@ -599,18 +599,13 @@ func writePluginManifest(binDir string) error {
 	if err != nil {
 		return fmt.Errorf("marshal plugin manifest: %w", err)
 	}
-	if err := os.WriteFile(pluginManifestPath(), b, 0o600); err != nil {
+	// update.WriteFileAtomic writes a fresh temp file at exactly 0600, fsyncs
+	// it, renames it over plugins.json and fsyncs the directory, so a
+	// pre-existing manifest with looser perms never keeps them (the
+	// "root-only trust anchor" guarantee holds on every install) and a crash
+	// mid-swap never leaves a truncated manifest (R20).
+	if err := update.WriteFileAtomic(pluginManifestPath(), b, 0o600); err != nil {
 		return fmt.Errorf("write plugin manifest %s: %w", pluginManifestPath(), err)
-	}
-	// os.WriteFile only applies the mode argument when CREATING the file; if
-	// plugins.json already existed (a re-install / upgrade) it is truncated
-	// and rewritten WITHOUT its permissions being touched, so a pre-existing
-	// manifest with looser perms would silently keep them. Force 0600 here,
-	// the same way copyFile (above) force-chmods dst after os.WriteFile for
-	// the identical reason, so the "root-only trust anchor" guarantee holds
-	// on every install, not just the first one.
-	if err := os.Chmod(pluginManifestPath(), 0o600); err != nil {
-		return fmt.Errorf("chmod plugin manifest %s: %w", pluginManifestPath(), err)
 	}
 	return nil
 }
@@ -658,32 +653,16 @@ func cmdUninstall(args []string) int {
 	return 0
 }
 
-// copyFile copies src to dst atomically: it writes a temp file in dst's
-// directory then renames it into place. rename(2) swaps the directory entry
-// without truncating the existing file, so this succeeds even when dst is a
-// currently-running executable -- a plain truncating write (os.WriteFile over
-// dst) fails there with ETXTBSY "text file busy". This is what lets
-// `trinetra install` upgrade the binary of a live daemon in place.
+// copyFile copies src to dst atomically and durably (update.CopyFile): a
+// random same-directory temp file, fsync, rename, then an fsync of dst's
+// directory. rename(2) swaps the directory entry without truncating the
+// existing file, so this succeeds even when dst is a currently-running
+// executable -- a plain truncating write (os.WriteFile over dst) fails there
+// with ETXTBSY "text file busy". This is what lets `trinetra install` and
+// self-update replace the binary of a live daemon in place, and the fsyncs
+// mean a power loss never leaves a zero-length binary behind (R20).
 func copyFile(src, dst string, perm os.FileMode) error {
-	b, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	tmp := dst + ".tmp-install"
-	if err := os.WriteFile(tmp, b, perm); err != nil {
-		return err
-	}
-	// os.WriteFile honors perm only when creating; force it in case tmp
-	// pre-existed with different bits, so the renamed dst is executable.
-	if err := os.Chmod(tmp, perm); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return update.CopyFile(src, dst, perm)
 }
 
 func cmdTelegram(args []string) int {

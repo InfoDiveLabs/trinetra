@@ -107,11 +107,10 @@ func SaveState(dir string, s State) error {
 		os.Remove(tmp)
 		return err
 	}
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		d.Close()
-	}
-	return nil
+	// The directory fsync is what makes the rename durable; a failure here
+	// is returned so a caller never believes Pending/floor were persisted
+	// when they may not survive a power loss.
+	return SyncDir(dir)
 }
 
 // FloorVersion returns the parsed Floor, or fallback if Floor is unset or
