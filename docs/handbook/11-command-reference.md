@@ -263,17 +263,20 @@ usage: update status [--json] | check | apply [--version V] [--bundle DIR] [--ch
 
 | Command | Flags | What it does |
 | --- | --- | --- |
-| `update status` | `--json` | Read-only, no root needed. Prints running version, channel, source, floor, any available/pending version, the outcome of the last apply/rollback, whether release keys are compiled in, and their fingerprints. |
+| `update status` | `--json` | Read-only, no root needed. Prints running version, channel, source, floor, any available/pending version, when the channel was last checked, the outcome of the last apply/rollback, whether release keys are compiled in, and their fingerprints. |
 | `update check` | none | Fetches and verifies the configured channel's newest release pointer and manifest, and reports whether it is newer than this host's floor. Does not install anything. |
 | `update apply` | `--version V` (an exact version instead of the channel's latest), `--bundle DIR` (install from a local release directory instead of the network source), `--channel C` (override `update.channel` for this one apply), `--force` (retry a version this host previously marked bad) | Root only. Fetches, verifies both signatures, checks policy (channel, floor, `min_upgrade_from`, known-bad), stages and re-verifies every file, smoke-tests the staged core binary, swaps it in, and launches the health guard (restart, poll for up to 90s, commit or roll back). See [Operations: Updating](10-operations.md#what-apply-actually-does) for the full sequence. |
-| `update rollback` | none | Root only. Restores the previously installed build (the one `apply` last replaced) and runs it through the same guarded restart-and-confirm as `apply`. Refused if there is nothing to roll back to, or another update is already pending. |
+| `update rollback` | none | Root only. Restores the previously installed build (the one `apply` last replaced) and runs it through the same guarded restart-and-confirm as `apply`. Refused if there is nothing to roll back to, or another update is already pending or in progress. |
 
-`update guard` also exists (`trinetra update guard`), but it is not a
-command an operator runs directly: `apply`/`rollback` launch it themselves
-as a detached process right after swapping a build in, and the daemon
-relaunches it on its own next start if one was left pending by a crash. It is
-listed here only so `trinetra update guard` in a process list or the journal
-is recognizable, not as a documented entry point.
+`update guard [--if-pending]` also exists, but it is not a command an
+operator runs directly. It always runs from the pinned guard binary
+`/usr/local/lib/trinetra/guard/trinetra`: `apply`/`rollback` launch it as the
+transient `trinetra-update-guard` unit right after swapping a build in, and
+`trinetra-update-watchdog.timer` runs it with `--if-pending` every minute to
+finish any update a killed guard, a crash mid-swap or a reboot left pending
+(see [Operations: The update watchdog](10-operations.md#the-update-watchdog)).
+It is listed here only so it is recognizable in a process list or the
+journal, not as a documented entry point.
 
 ## 2. Plugin binaries
 

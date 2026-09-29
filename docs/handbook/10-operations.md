@@ -84,18 +84,26 @@ sudo trinetra update rollback           # go back to the previously installed bu
    reviewed and co-signed it. Either signature missing, wrong, or not
    matching a trusted key refuses the update outright, before anything is
    staged.
-3. **Checks policy**: the release's channel must match yours, its version
+3. **Checks policy**: the release's channel must be one yours accepts (a
+   `stable` host takes only `stable` releases; a `beta` host takes `beta`
+   and `stable` ones, so it moves on to each final release too), its version
    must not be lower than this host's floor (the highest version it has ever
    successfully run -- the floor never goes down, even across a rollback),
    and it must not be a version this host already tried and marked bad.
 4. **Stages and re-verifies** every binary file's size and SHA-256 against
    the signed manifest as it downloads, then **smoke-tests** the staged core
    binary (`trinetra version --json`) before touching anything installed.
-5. **Swaps it in** atomically -- the same rename-based, live-file-safe swap
-   `install` uses -- records a pending update, and launches a background
-   **health guard**: it restarts the daemon onto the new build and polls, for
-   up to 90 seconds, whether the unit is active, reports the expected
-   version, and has produced a fresh sample.
+5. **Swaps it in** atomically -- the same rename-based, live-file-safe,
+   fsynced swap `install` uses. Before the first binary is replaced it keeps
+   a copy of the current build in `update/previous/`, copies the binary
+   doing the apply to the **pinned guard** path
+   `/usr/local/lib/trinetra/guard/trinetra`, and records the pending update
+   on disk, so a crash at any point of the swap is recoverable. It then
+   launches a background **health guard** (a transient
+   `trinetra-update-guard` unit running the pinned guard, never the new
+   build): it restarts the daemon onto the new build and polls, for up to 90
+   seconds, whether the unit is active, reports the expected version, and
+   has produced a fresh sample.
    - **Healthy**: the guard raises the floor to the new version and clears
      the pending marker. Nothing else to do.
    - **Not healthy in time**: the guard restores the previous build,
@@ -103,9 +111,44 @@ sudo trinetra update rollback           # go back to the previously installed bu
      is then refused; `--force` overrides that), and sends a critical alert.
      Your data, config, and the floor are untouched.
 
-If the daemon itself gets killed or the host reboots mid-guard, the next
-daemon start resumes the interrupted guard automatically; a pending update is
-never silently abandoned.
+#### The update watchdog
+
+`install` also sets up a small persistent safety net:
+`trinetra-update-watchdog.timer` fires 2 minutes after boot and then every
+minute, running `trinetra-update-watchdog.service`, a oneshot that executes
+the pinned guard with `update guard --if-pending`. When nothing is pending,
+or a guard is already at work (it holds `update/guard.lock`), it exits at
+once and does nothing. Otherwise it finishes the job:
+
+- a guard that was killed, or a host that rebooted or lost power inside the
+  90-second window: it restarts onto the pending build and runs the health
+  check again (commit if healthy, roll back if not);
+- an `apply` that died half-way through the swap (the pending update is
+  recorded as `swapping` and no apply holds `update/apply.lock` any more):
+  it restores the previous build and restarts onto it;
+- a `rollback` whose restore was interrupted: it finishes the restore and
+  confirms it through the same health check.
+
+Because the watchdog runs the pinned guard, recovery never depends on the new
+build being able to start -- a release whose daemon exits at once is rolled
+back even if its guard was killed. `update apply` re-creates the timer if it
+is missing before it swaps anything. Check it with:
+
+```bash
+systemctl status trinetra-update-watchdog.timer
+journalctl -u trinetra-update-watchdog -u 'trinetra-update-guard*'
+```
+
+Only one apply, rollback or `install` runs at a time on a host
+(`update/apply.lock`); a second one -- from the CLI, the web UI or another
+shell -- is refused with "an update is already in progress". `install` also
+refuses while an update is pending: wait until `trinetra update status`
+shows it confirmed or rolled back.
+
+Apply and rollback starts, and the guard's commit or rollback, are recorded
+in `/var/lib/trinetra/update/audit.jsonl` (or, on a fleet master, in the
+fleet audit log) with who asked: `cli:<user>`, `socket` (web UI or
+`trinetra-ctl`) or `guard`.
 
 `update apply --version X.Y.Z` installs an exact version instead of the
 channel's latest (still gated by the floor and the release's own minimum
@@ -115,9 +158,19 @@ previously marked bad.
 
 The daemon also checks the configured channel on its own, every
 `update.check_interval` (default 24h), and alerts when a new version becomes
-available and when a background `apply` (yours, or a scripted one) commits or
-rolls back -- so `update check` is for "right now", not something you need to
-run on a timer yourself.
+available (only one this host would accept: right channel, above the floor,
+not marked bad) and when a background `apply` (yours, or a scripted one)
+commits or rolls back -- so `update check` is for "right now", not something
+you need to run on a timer yourself. `trinetra update status` shows when the
+last successful check ran, and the Telegram `/version` command replies with
+the running version plus "update available: X" when there is one.
+
+It also warns when the channel looks **frozen** -- the signal that someone
+may be withholding updates: at once if the signed channel pointer has
+expired or is missing, and otherwise once the newest pointer it has seen is
+more than 14 days old, whatever the reason. A plain network outage alone
+does not warn until those 14 days have passed. The warning is sent once per
+episode and resets when a fresh pointer arrives.
 
 ### Coming from an unsigned/manual binary
 
@@ -153,8 +206,10 @@ sudo trinetra uninstall
 ```
 
 This disables and stops the unit (`systemctl disable --now trinetra`),
-removes `/etc/systemd/system/trinetra.service`, reloads systemd, and deletes
-the `/usr/bin/trinetra` symlink. It removes that symlink only when it is
+removes `/etc/systemd/system/trinetra.service`, disables and removes the
+update watchdog timer and service and the pinned guard under
+`/usr/local/lib/trinetra/guard`, reloads systemd, and deletes the
+`/usr/bin/trinetra` symlink. It removes that symlink only when it is
 still the one `install` created pointing back into `/usr/local/bin`, so it will
 never delete a real distro-provided binary that happened to share the name.
 
@@ -261,14 +316,20 @@ runs:
 
    This downloads the draft's manifest and CI signature, verifies the CI
    signature, shows exactly what is about to be signed (version, channel,
-   every file's size and hash), requires retyping the version on the actual
+   every file's size and hash, and `keys: unchanged` -- or a prominent
+   **KEY ROTATION** block if the release changes the keys hosts will trust:
+   `release.yml` fills the manifest's `keys` from the key set compiled into
+   the release, so this only appears when keys really changed), requires
+   retyping the version on the actual
    terminal, asks for the maintainer key's passphrase, signs, uploads
    `manifest.maint.sig`, re-verifies the complete signed release, and only
    then publishes it.
 3. `channels.yml` picks up the newly published release (or runs on its
    Monday schedule) and signs fresh `stable.json`/`beta.json` pointers naming
    the highest version on each channel, uploaded to the `channels` release.
-   Hosts on that channel see it on their next `update check`.
+   Hosts on that channel see it on their next `update check`. `beta.json`
+   names the newest release of either kind, so beta hosts also move to each
+   final release.
 
 Nothing here ever needs a repo secret on a maintainer's own machine: the CI
 key lives only in the `release` environment, the pointer key only in

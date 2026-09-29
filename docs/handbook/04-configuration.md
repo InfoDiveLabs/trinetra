@@ -96,7 +96,7 @@ dedicated wizard screen, since most hosts never need to touch them:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `update.channel` | `stable` | `stable`, `beta`, or `off`. `off` refuses `update check`/`update apply` against the network; an explicit `--bundle DIR` install still works. |
+| `update.channel` | `stable` | `stable`, `beta`, or `off`. A `stable` host installs only stable releases; a `beta` host installs beta and stable releases (whichever is newest). `off` refuses `update check`/`update apply` against the network; an explicit `--bundle DIR` install still works. |
 | `update.source` | `github` | `github` or `none`. `none` disables the network source entirely; only `--bundle DIR` installs are possible. |
 | `update.github_token` | (unset) | Read-only token for the release repo, only needed while it is private. A secret key: `config get` always shows `(set)` / `(not set)`, never the raw value. |
 | `update.check_interval` | `24h` | How often the daemon checks the configured channel for a new release. Minimum `1h`; anything lower is rejected. |
