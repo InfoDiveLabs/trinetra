@@ -825,7 +825,21 @@ func alertEventKind(a Alert) string {
 	}
 }
 
+// e2eCrashOnStart is empty in every normal build. The test/docker/update
+// e2e harness's "crashes on start" fixture (a release meant to fail its
+// self-update health check) is built with
+// -ldflags "-X github.com/InfoDiveLabs/trinetra/internal/trinetra.e2eCrashOnStart=1"
+// so that one specific build exits immediately instead of starting the
+// daemon, without any other code path or build differing from a real
+// release. No build tag guards this var itself (an -X stamp works on any
+// build), but nothing outside the e2e harness ever sets it.
+var e2eCrashOnStart string
+
 func cmdDaemon(args []string) int {
+	if e2eCrashOnStart == "1" {
+		fmt.Fprintln(stderr, "e2e crash")
+		return 1
+	}
 	// Never start empty next to an unmigrated serverwatch install: that would
 	// silently begin a fresh history (and a fresh Telegram enrollment) while
 	// the real data sits in the old paths. Exit non-zero so systemd shows it.

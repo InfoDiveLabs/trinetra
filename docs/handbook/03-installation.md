@@ -89,6 +89,29 @@ sha256sum trinetra trinetra-ctl trinetra-web
 Compare each printed hash against the matching line in `checksums.txt`. If any
 differ, do not install; re-download and try again.
 
+**Stronger: verify with the signed manifest instead.** Every release also
+publishes `manifest.json` plus two detached signatures over it --
+`manifest.ci.sig` from the build pipeline, `manifest.maint.sig` from a
+maintainer who reviewed and co-signed it -- covering exact file sizes and
+SHA-256 hashes, cryptographically rather than by a hash you compare by eye.
+Download those three files into the same directory as the binaries:
+
+```bash
+for f in manifest.json manifest.ci.sig manifest.maint.sig; do
+  curl -fsSL -o "$f" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$f"
+done
+```
+
+then pass `--require-signed` in step 3 below: `trinetra install
+--require-signed` refuses outright, before touching anything, unless both
+signatures verify against the release keys compiled into the binary you are
+running and every downloaded file's SHA-256 matches the signed manifest.
+Without the flag, a manifest present next to the binaries is still verified
+the same way, but its absence is only a warning, not a refusal -- see
+[Command reference: `install`](11-command-reference.md#1-trinetra-daemon--cli).
+This is the same verification `trinetra update apply` runs on every
+subsequent upgrade -- see [Operations: Updating](10-operations.md#updating).
+
 The two plugins are optional. Drop `trinetra-ctl` / `trinetra-web` from
 the loop if you only want the Telegram daemon; `trinetra install` (step 3)
 installs whichever of the three it finds beside the daemon binary. You can
@@ -136,6 +159,14 @@ One command turns that loose binary into a managed, boot-persistent service:
 
 ```bash
 sudo /tmp/trinetra install
+```
+
+If you downloaded `manifest.json`/`manifest.ci.sig`/`manifest.maint.sig`
+alongside the binaries in step 2, add `--require-signed` to refuse the
+install outright unless both signatures verify:
+
+```bash
+sudo /tmp/trinetra install --require-signed
 ```
 
 That single command does seven things. It is worth knowing each one, because

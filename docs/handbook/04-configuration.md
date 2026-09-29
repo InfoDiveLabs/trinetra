@@ -87,6 +87,26 @@ usual persist-and-reload every `config set` already does. See [Fleet
 mode](02-architecture.md#fleet-mode) for where these two keys sit among the
 rest of the fleet configuration.
 
+## Self-update settings
+
+`sudo trinetra update check` / `apply` (see [Operations: Updating](10-operations.md#updating))
+look for and install new signed releases. Four keys, all under the
+trinetra-ctl All settings screen's Updates group, control it; there is no
+dedicated wizard screen, since most hosts never need to touch them:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `update.channel` | `stable` | `stable`, `beta`, or `off`. `off` refuses `update check`/`update apply` against the network; an explicit `--bundle DIR` install still works. |
+| `update.source` | `github` | `github` or `none`. `none` disables the network source entirely; only `--bundle DIR` installs are possible. |
+| `update.github_token` | (unset) | Read-only token for the release repo, only needed while it is private. A secret key: `config get` always shows `(set)` / `(not set)`, never the raw value. |
+| `update.check_interval` | `24h` | How often the daemon checks the configured channel for a new release. Minimum `1h`; anything lower is rejected. |
+
+```bash
+sudo trinetra config set update.channel beta
+sudo trinetra config set update.github_token ghp_xxxxxxxxxxxx
+sudo trinetra config set update.check_interval 6h
+```
+
 ## Where to go next
 
 Everything below the trinetra-ctl screens -- the config file model, `config

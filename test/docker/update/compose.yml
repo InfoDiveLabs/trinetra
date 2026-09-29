@@ -1,0 +1,47 @@
+# Topology for run.sh: a systemd-less "host" that runs the real trinetra
+# binaries against a fake GitHub API (relsrv, serving pre-signed release
+# fixtures baked into the image at build time) and the mock Telegram API
+# (mocktg, shared with the other docker harnesses). One shared image
+# (Dockerfile) with three different commands, same pattern as
+# test/docker/fleet/compose.yml's x-sw anchor.
+#
+# Own compose project name (swupdate) and own network name (swupdate_net):
+# a name shared with another harness caused a real cross-harness test
+# failure before (see test/docker/fleet/run.sh's history).
+name: swupdate
+
+x-sw: &sw
+  build:
+    context: ../../..
+    dockerfile: test/docker/update/Dockerfile
+  image: swupdate-e2e:latest
+  init: true
+  networks: [swupdatenet]
+
+services:
+  relsrv:
+    <<: *sw
+    hostname: relsrv
+    command: ["relsrv"]
+    environment:
+      RELEASES_DIR: /releases
+      ADDR: ":8080"
+      BASE_URL: "http://relsrv:8080"
+      TOKEN: "e2etoken"
+
+  mocktg:
+    <<: *sw
+    hostname: mocktg
+    command: ["mocktg"]
+    environment:
+      ADDR: ":8080"
+
+  host:
+    <<: *sw
+    hostname: host
+    command: ["sleep", "infinity"]
+    depends_on: [relsrv, mocktg]
+
+networks:
+  swupdatenet:
+    name: swupdate_net

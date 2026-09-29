@@ -4,8 +4,8 @@
 #   scripts/test-all.sh [--quick] [--with-validate] [--out DIR]
 #
 # Stages (in order): gofmt, vet, unit (go test -race), build, fleet-e2e,
-# migration-e2e, and optionally validate (the older single-host Docker
-# scenarios; off by default while issue #135 keeps scenario 3 red).
+# migration-e2e, update-e2e, and optionally validate (the older single-host
+# Docker scenarios; off by default while issue #135 keeps scenario 3 red).
 # --quick stops after build (no Docker).
 #
 # Every stage runs even if an earlier one failed, so one run gives the whole
@@ -79,6 +79,7 @@ run build 600 make build
 if [ "$QUICK" -eq 0 ]; then
 	run fleet-e2e 3600 make fleet-e2e
 	run migration-e2e 1800 make migration-e2e
+	run update-e2e 1800 make update-e2e
 	[ "$VALIDATE" -eq 1 ] && run validate 1800 make validate
 fi
 

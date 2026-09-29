@@ -53,48 +53,91 @@ trinetra status                 # current snapshot, no root needed to read
 sudo trinetra config get        # effective config
 ```
 
-## Upgrading in place
+## Updating
 
-Upgrading is a re-install. You do not stop the service, edit the unit, or touch
-your config and history; all of that is preserved. You simply get the newer
-binary onto the box and run its `install` command.
-
-First, get the new binary. Download the release asset for your architecture, or
-build it from source, the same way you did originally:
-
-```bash
-curl -fsSL -o /tmp/trinetra \
-  https://github.com/InfoDiveLabs/trinetra/releases/latest/download/trinetra-linux-arm64
-chmod +x /tmp/trinetra
-```
-
-Then run `install` from the new binary:
+The recommended way to upgrade is `trinetra update`: it fetches a release,
+verifies it against two independent signatures, and only ever swaps it in
+once a health check has confirmed the newly restarted daemon actually works
+-- automatically rolling back otherwise. You do not stop the service, edit
+the unit, or touch your config and history; all of that is preserved. See
+[Configuration: Self-update settings](04-configuration.md#self-update-settings)
+for the `update.*` keys that control where it looks and how often.
 
 ```bash
-sudo /tmp/trinetra install
+sudo trinetra update check              # is a newer release available?
+sudo trinetra update apply              # fetch, verify, install, and guard it
+trinetra update status                  # what's running, pending, and what happened last
+sudo trinetra update rollback           # go back to the previously installed build
 ```
 
-This is safe even though the old daemon is still running from the very file it
-is about to replace. `install` does not truncate and overwrite
-`/usr/local/bin/trinetra` in place. It writes the new bytes to a temporary
-file in the same directory and then does an atomic `rename` over the existing
-path. A `rename` swaps the directory entry without touching the running file's
-inode, so it succeeds against a live executable. A plain overwrite would fail
-here with the classic `ETXTBSY` "text file busy" error, which is exactly the
-trap this design avoids.
+### What `apply` actually does
 
-Because the swap does not disturb the process that is currently running, the
-daemon keeps monitoring uninterrupted on the old binary. It only starts running
-the new code on its next restart. When you are ready to cut over, restart the
-unit:
+1. **Fetches** the target release: the configured channel's newest release
+   (`update.source=github`, the default) or, with `--bundle DIR`, a release
+   bundle already on disk -- a directory holding `manifest.json`,
+   `manifest.ci.sig`, `manifest.maint.sig` and the binaries, exactly what a
+   release's assets look like downloaded into one folder.
+2. **Verifies both signatures** in the manifest against the release keys
+   compiled into this binary (`trinetra update status --json`'s
+   `keys_loaded`/`fingerprints` say whether any are loaded, and which): one
+   from the CI pipeline that built the release, one from a maintainer who
+   reviewed and co-signed it. Either signature missing, wrong, or not
+   matching a trusted key refuses the update outright, before anything is
+   staged.
+3. **Checks policy**: the release's channel must match yours, its version
+   must not be lower than this host's floor (the highest version it has ever
+   successfully run -- the floor never goes down, even across a rollback),
+   and it must not be a version this host already tried and marked bad.
+4. **Stages and re-verifies** every binary file's size and SHA-256 against
+   the signed manifest as it downloads, then **smoke-tests** the staged core
+   binary (`trinetra version --json`) before touching anything installed.
+5. **Swaps it in** atomically -- the same rename-based, live-file-safe swap
+   `install` uses -- records a pending update, and launches a background
+   **health guard**: it restarts the daemon onto the new build and polls, for
+   up to 90 seconds, whether the unit is active, reports the expected
+   version, and has produced a fresh sample.
+   - **Healthy**: the guard raises the floor to the new version and clears
+     the pending marker. Nothing else to do.
+   - **Not healthy in time**: the guard restores the previous build,
+     restarts onto it, marks the failed version bad (a plain re-`apply` of it
+     is then refused; `--force` overrides that), and sends a critical alert.
+     Your data, config, and the floor are untouched.
+
+If the daemon itself gets killed or the host reboots mid-guard, the next
+daemon start resumes the interrupted guard automatically; a pending update is
+never silently abandoned.
+
+`update apply --version X.Y.Z` installs an exact version instead of the
+channel's latest (still gated by the floor and the release's own minimum
+upgrade version); `--channel beta` tries the beta channel for this one apply
+without changing `update.channel`; `--force` retries a version this host
+previously marked bad.
+
+The daemon also checks the configured channel on its own, every
+`update.check_interval` (default 24h), and alerts when a new version becomes
+available and when a background `apply` (yours, or a scripted one) commits or
+rolls back -- so `update check` is for "right now", not something you need to
+run on a timer yourself.
+
+### Coming from an unsigned/manual binary
+
+If you would rather not rely on `update.source=github` -- an air-gapped host,
+or a release you built yourself -- download or build the three binaries plus
+`manifest.json`/`manifest.ci.sig`/`manifest.maint.sig` into one directory and
+point `apply` at it:
 
 ```bash
-sudo systemctl restart trinetra
+sudo trinetra update apply --bundle /tmp/trinetra-0.6.0
 ```
 
-If you are coming from a pre-storage version that stored history as JSONL files,
-run the one-time migration described below after the upgrade to pull that old
-history into the new store.
+This runs the exact same verify/stage/smoke-test/swap/guard pipeline as a
+network `apply`; only where the bytes came from differs. `trinetra install`
+(no `update` prefix) remains the lower-level, unguarded path -- an atomic
+binary swap plus a plain `systemctl restart`, no health check or automatic
+rollback -- used for the very first install and for the one-time
+`serverwatch` migration described below; add `--require-signed` to make it
+refuse an unsigned bundle the same way `update apply` always does (see
+[Installation: verify what you downloaded](03-installation.md#option-a-prebuilt-release-asset)).
 
 Coming from a `serverwatch` install for the first time is a different,
 one-time path — the same `install` command detects it and migrates config,
@@ -164,6 +207,72 @@ past the marker:
 ```bash
 sudo trinetra migrate --force
 ```
+
+## Release keys and releasing (maintainers only)
+
+This section is for whoever cuts trinetra releases, not for operators
+running it. Every release ships a `manifest.json` naming its files' exact
+sizes and SHA-256 hashes, plus two detached signatures over that manifest --
+one from CI (automatic), one from a maintainer (a deliberate human step) --
+which is what `trinetra update`/`install --require-signed` verify before
+trusting anything. See [internal/update](../../internal/update) for the
+verification code and [cmd/trinetra-release](../../cmd/trinetra-release) for
+the tooling below.
+
+### One-time key ceremony
+
+Three ed25519 key pairs, each a distinct role:
+
+```bash
+trinetra-release keygen --role ci      --out ci.key       # seed file, paste into a secret
+trinetra-release keygen --role pointer --out pointer.key  # seed file, paste into a secret
+trinetra-release keygen --role maint   --out maint.key    # passphrase-encrypted; keep this one offline
+```
+
+`keygen` prints each key's public half and fingerprint; the private halves
+never touch stdout. `--role ci` and `--role pointer` write a plain base64
+seed, meant to live only as a GitHub Actions secret; `--role maint` prompts
+for a passphrase and writes a scrypt+XChaCha20-Poly1305-encrypted envelope,
+meant to live on a maintainer's own machine (or a hardware token), never in
+CI.
+
+Wire the three public keys into this repo's `internal/update/keys.go`
+(`productionKeyB64`, empty until this ceremony has run -- every build until
+then fails closed with "no release keys compiled in", by design) and into two
+GitHub Actions **environments**, each requiring review before a job using it
+runs:
+
+| Environment | Secret | Used by |
+| --- | --- | --- |
+| `release` | `TRINETRA_CI_SIGNING_KEY` (the ci key's seed) | `.github/workflows/release.yml`, on every `vX.Y.Z` tag push: builds, embeds the production keys (`scripts/release-check-keys.sh` fails the build if they are missing or still the test keys), signs the manifest, and opens a draft release |
+| `channels` | `TRINETRA_POINTER_SIGNING_KEY` (the pointer key's seed) | `.github/workflows/channels.yml`, weekly and on every publish: signs `stable.json`/`beta.json`, the pointers `trinetra update check` reads |
+
+### Publishing a release
+
+1. Push a tag `vX.Y.Z` (or `vX.Y.Z-beta.N` for a beta prerelease).
+   `release.yml` builds the linux release matrix, generates and CI-signs
+   `manifest.json`, and opens a **draft** GitHub release -- unpublished, so
+   nothing downloads it yet.
+2. A maintainer reviews the draft and co-signs it:
+
+   ```bash
+   trinetra-release cosign vX.Y.Z --key maint.key
+   ```
+
+   This downloads the draft's manifest and CI signature, verifies the CI
+   signature, shows exactly what is about to be signed (version, channel,
+   every file's size and hash), requires retyping the version on the actual
+   terminal, asks for the maintainer key's passphrase, signs, uploads
+   `manifest.maint.sig`, re-verifies the complete signed release, and only
+   then publishes it.
+3. `channels.yml` picks up the newly published release (or runs on its
+   Monday schedule) and signs fresh `stable.json`/`beta.json` pointers naming
+   the highest version on each channel, uploaded to the `channels` release.
+   Hosts on that channel see it on their next `update check`.
+
+Nothing here ever needs a repo secret on a maintainer's own machine: the CI
+key lives only in the `release` environment, the pointer key only in
+`channels`, and the maintainer key never leaves whoever holds it.
 
 ## Troubleshooting
 

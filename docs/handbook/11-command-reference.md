@@ -42,12 +42,13 @@ column.
 | `config get [key]` | Print the full effective config, or one key. | read-only |
 | `config set <key> <value>` | Set one config key. | persists + SIGHUP |
 | `config unset <key>` | Reset one config key to its default. | persists + SIGHUP |
-| `install` | Write the systemd unit and enable/start the service. | persists (see Notes) |
+| `install [--force] [--require-signed] [--state-already-at-new-path]` | Write the systemd unit and enable/start the service. `--require-signed` refuses an install unless a signed manifest (`manifest.json` + both `.sig` files) sits next to the binary. | persists (see Notes) |
 | `uninstall [--purge]` | Remove the systemd unit; `--purge` also removes config and state. | persists (see Notes) |
 | `daemon` | Run the sampler/notifier loop in the foreground. | long-running |
 | `cli` | Front-door: verify and exec `trinetra-ctl`, the management TUI. | see Notes |
 | `web` | Front-door: verify and exec `trinetra-web`, the web UI. | see Notes |
 | `status` | Print the last status snapshot. | read-only |
+| `version [--json]` | Print the build-stamped version this binary was compiled with. | read-only |
 | `doctor` | Print a diagnostic report (collectors, tools, targets). | read-only |
 | `migrate [--force]` | Import legacy data into the time-series store. | persists (see Notes) |
 | `dump --metric <id> [...]` | Export one metric's series to stdout. | read-only |
@@ -55,6 +56,7 @@ column.
 | `alerts ack <key>` | Acknowledge an active alert. | persists (see Notes) |
 | `alerts unack <key>` | Un-acknowledge an alert. | persists (see Notes) |
 | `fleet <subcommand>` | Fleet mode: make this host a master, join or leave one, manage nodes and join codes. | see [`trinetra fleet`](#trinetra-fleet) |
+| `update <subcommand>` | Signed self-update: check, apply, roll back, and report status. | see [`trinetra update`](#trinetra-update) |
 
 This section covers the daemon, lifecycle, and low-level scriptable commands.
 The day-to-day management verbs (`monitor`, `schedule`, `quiet-hours`,
@@ -72,6 +74,7 @@ management](#3-daemon-only-config-management).
 | `install` / `uninstall` | These write or remove systemd unit files and toggle the service; they do not send a config SIGHUP. `uninstall --purge` additionally deletes the config file and state directory. |
 | `migrate` | Writes into the time-series store, not the config file; no SIGHUP is sent. `--force` proceeds past guards. |
 | `alerts ack` / `alerts unack` | Writes the alert ack-state file and then sends a best-effort SIGHUP so a running daemon re-reads it. |
+| `update apply` / `update rollback` | Write self-update state (staged files, the pending marker, the version floor) under the state directory, not the config file; no SIGHUP is sent. They restart the daemon themselves, via the launched health guard, once the new build is confirmed or rolled back. |
 | `cli` / `web` | Neither writes config nor sends a SIGHUP. Each resolves and verifies the matching plugin binary next to the core binary, then hands off to it; see the front-door detail below. |
 
 ### `dump` flags
@@ -246,6 +249,31 @@ sudo systemctl restart trinetra
 # back on the master
 sudo trinetra fleet nodes --tag prod
 ```
+
+## trinetra update
+
+`trinetra update` manages signed self-update (see [Operations:
+Updating](10-operations.md#updating) for the guided walkthrough, and
+[Configuration: Self-update settings](04-configuration.md#self-update-settings)
+for the `update.*` config keys). Run it with no arguments to print the usage:
+
+```
+usage: update status [--json] | check | apply [--version V] [--bundle DIR] [--channel C] [--force] | rollback
+```
+
+| Command | Flags | What it does |
+| --- | --- | --- |
+| `update status` | `--json` | Read-only, no root needed. Prints running version, channel, source, floor, any available/pending version, the outcome of the last apply/rollback, whether release keys are compiled in, and their fingerprints. |
+| `update check` | none | Fetches and verifies the configured channel's newest release pointer and manifest, and reports whether it is newer than this host's floor. Does not install anything. |
+| `update apply` | `--version V` (an exact version instead of the channel's latest), `--bundle DIR` (install from a local release directory instead of the network source), `--channel C` (override `update.channel` for this one apply), `--force` (retry a version this host previously marked bad) | Root only. Fetches, verifies both signatures, checks policy (channel, floor, `min_upgrade_from`, known-bad), stages and re-verifies every file, smoke-tests the staged core binary, swaps it in, and launches the health guard (restart, poll for up to 90s, commit or roll back). See [Operations: Updating](10-operations.md#what-apply-actually-does) for the full sequence. |
+| `update rollback` | none | Root only. Restores the previously installed build (the one `apply` last replaced) and runs it through the same guarded restart-and-confirm as `apply`. Refused if there is nothing to roll back to, or another update is already pending. |
+
+`update guard` also exists (`trinetra update guard`), but it is not a
+command an operator runs directly: `apply`/`rollback` launch it themselves
+as a detached process right after swapping a build in, and the daemon
+relaunches it on its own next start if one was left pending by a crash. It is
+listed here only so `trinetra update guard` in a process list or the journal
+is recognizable, not as a documented entry point.
 
 ## 2. Plugin binaries
 

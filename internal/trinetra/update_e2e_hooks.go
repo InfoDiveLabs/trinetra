@@ -1,0 +1,27 @@
+//go:build !trinetra_testkeys
+
+// Package trinetra: update_e2e_hooks.go is the default (production) side of
+// the self-update e2e test hooks. See update_e2e_hooks_testkeys.go for what
+// these do in a trinetra_testkeys build; here every hook is a hard-coded
+// no-op that never reads its environment variable, so a production binary
+// cannot be steered by TRINETRA_E2E_RESTART_CMD, TRINETRA_E2E_GUARD_CMD or
+// TRINETRA_E2E_GITHUB_BASE_URL under any circumstances -- see
+// TestE2EHooksIgnoredInReleaseBuild (update_e2e_hooks_test.go), which pins
+// exactly this in a default build.
+package trinetra
+
+// e2eHooksEnabled is false in every production build.
+const e2eHooksEnabled = false
+
+// e2eRestartCmd always reports "not set" in a default build: the guard's
+// restart (update_guard.go's realGuardDeps) always shells out to `systemctl
+// restart trinetra`.
+func e2eRestartCmd() (cmd string, args []string, ok bool) { return "", nil, false }
+
+// e2eGuardCmd always reports "not set" in a default build: launchGuard
+// (update_cmd.go's realLaunchGuard) always shells out to `systemd-run`.
+func e2eGuardCmd() (cmd string, args []string, ok bool) { return "", nil, false }
+
+// e2eGitHubBaseURL always returns "" in a default build: updateSource
+// (update_cmd.go) always talks to the real GitHub API.
+func e2eGitHubBaseURL() string { return "" }

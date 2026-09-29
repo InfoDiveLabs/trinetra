@@ -75,7 +75,13 @@ func (u updater) clock() time.Time {
 func updateSource(c *config.Config) update.Source {
 	switch c.UpdateSource() {
 	case "github":
-		return update.GitHubSource{Repo: "InfoDiveLabs/trinetra", Token: c.Update.GitHubToken}
+		// BaseURL is "" (the real GitHub API) in every build except
+		// trinetra_testkeys with TRINETRA_E2E_GITHUB_BASE_URL set -- see
+		// update_e2e_hooks.go/update_e2e_hooks_testkeys.go. That is how the
+		// test/docker/update e2e harness points a real `update.source=github`
+		// host at its fake GitHub API (relsrv) without any config setting a
+		// production host could accidentally point at an attacker's server.
+		return update.GitHubSource{Repo: "InfoDiveLabs/trinetra", Token: c.Update.GitHubToken, BaseURL: e2eGitHubBaseURL()}
 	default:
 		return nil
 	}
@@ -481,6 +487,14 @@ func keySetLoaded(k update.KeySet) bool {
 // left over from a crash mid-apply/mid-guard), so both paths launch the
 // guard identically.
 func realLaunchGuard() error {
+	// TRINETRA_E2E_GUARD_CMD (trinetra_testkeys builds only -- see
+	// update_e2e_hooks.go/update_e2e_hooks_testkeys.go) replaces systemd-run
+	// for the docker e2e harness's systemd-less host, which has no
+	// systemd-run to launch a detached unit with.
+	if cmd, args, ok := e2eGuardCmd(); ok {
+		_, err := osExec{}.Run(cmd, args...)
+		return err
+	}
 	_, err := osExec{}.Run("systemd-run", "--unit", "trinetra-update-guard", "--collect", "--quiet",
 		"/usr/local/bin/trinetra", "update", "guard")
 	return err

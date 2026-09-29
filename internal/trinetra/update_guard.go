@@ -280,6 +280,14 @@ func realGuardDeps() guardDeps {
 		now:    time.Now,
 		sleep:  time.Sleep,
 		restart: func() error {
+			// TRINETRA_E2E_RESTART_CMD (trinetra_testkeys builds only -- see
+			// update_e2e_hooks.go/update_e2e_hooks_testkeys.go) replaces
+			// `systemctl restart trinetra` for the docker e2e harness's
+			// systemd-less host.
+			if cmd, args, ok := e2eRestartCmd(); ok {
+				_, err := x.Run(cmd, args...)
+				return err
+			}
 			_, err := x.Run("systemctl", "restart", "trinetra")
 			return err
 		},

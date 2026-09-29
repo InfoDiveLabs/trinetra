@@ -230,6 +230,11 @@ Telegram, lands in the audit log with who did it.
   gets its own certificate. Revoking a node cuts it off at once.
 - **Verified plugins.** The daemon runs a plugin only after it checks the
   file's owner, its permissions and a SHA-256 hash recorded at install.
+- **Signed updates (CI + maintainer co-signature).** Every release ships a
+  manifest of exact file hashes, signed independently by the build pipeline
+  and by a maintainer; `trinetra update`/`install --require-signed` verify
+  both before trusting anything, and a self-update that fails its post-install
+  health check rolls back automatically.
 - **Local only by default.** The control socket is a token-authenticated
   unix socket; nothing phones home.
 
@@ -297,12 +302,18 @@ for b in trinetra trinetra-ctl trinetra-web; do
 done
 chmod +x trinetra trinetra-ctl trinetra-web
 
-sudo ./trinetra install     # installs the daemon AND both plugins, enables the systemd service
-sudo trinetra cli           # guided first-run setup: bot token, enrollment PIN, web UI
+# Optional but recommended: the signed release manifest and its two
+# detached signatures, so install can verify what it's about to run.
+for f in manifest.json manifest.ci.sig manifest.maint.sig; do
+  curl -fsSL -o "$f" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$f"
+done
+
+sudo ./trinetra install --require-signed   # installs the daemon AND both plugins, enables the systemd service
+sudo trinetra cli                          # guided first-run setup: bot token, enrollment PIN, web UI
 ```
 
-`trinetra install` copies the binaries to `/usr/local/bin` and starts the
-service. `trinetra cli` opens the
+`trinetra install` verifies the signed manifest, copies the binaries to
+`/usr/local/bin`, and starts the service. `trinetra cli` opens the
 [trinetra-ctl](docs/handbook/plugins/trinetra-ctl.md#managing-with-trinetra-ctl)
 terminal UI, which walks you through the Telegram bot token, `/start <pin>`
 enrollment and, optionally, the web UI. Prefer plain commands? The one

@@ -77,6 +77,20 @@ See [Fleet mode](docs/handbook/02-architecture.md#fleet-mode).
   logs) work whenever that node is currently connected, and are disabled
   with a reason when it isn't. See [The web
   UI](docs/handbook/08-web-ui.md#fleet).
+- **Signed self-update.** `trinetra update status|check|apply|rollback`
+  fetches, independently verifies (CI signature + maintainer co-signature
+  over a manifest of exact file hashes), stages, smoke-tests and swaps in a
+  new release, then launches a guarded restart that confirms the new build
+  is healthy within 90s or automatically rolls back and marks the version
+  bad. `trinetra install --require-signed` runs the same signature check for
+  the initial install. New config keys `update.channel` (default `stable`),
+  `update.source` (default `github`), `update.github_token`, and
+  `update.check_interval` (default `24h`); the daemon checks on that cadence
+  and alerts when an update becomes available, commits, or rolls back.
+  Releases are Linux-only. Maintainer tooling (`cmd/trinetra-release`) and
+  the key ceremony/release process are documented in [Operations: Release
+  keys and releasing](docs/handbook/10-operations.md#release-keys-and-releasing-maintainers-only).
+  See [Operations: Updating](docs/handbook/10-operations.md#updating).
 
 ### Changed
 
