@@ -502,6 +502,12 @@ type UpdatePendingView struct {
 	From     string `json:"from"`
 	Deadline int64  `json:"deadline"`
 	Rollback bool   `json:"rollback"`
+	// RestoreFailed mirrors update.Pending.RestoreFailed: set once the
+	// guard's health-gate rollback itself failed to restore the previous
+	// build, so this Pending is being kept (not cleared) for the update
+	// watchdog to retry (#136). "" the rest of the time, including for a
+	// rollback confirmation, which never retries a restore.
+	RestoreFailed string `json:"restore_failed,omitempty"`
 }
 
 // UpdateResultView is core's projection of update.Result: the outcome of the

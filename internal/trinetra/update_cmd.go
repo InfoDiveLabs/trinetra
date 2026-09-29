@@ -556,10 +556,11 @@ func toUpdateStatusView(st updateStatus) core.UpdateStatusView {
 	}
 	if st.Pending != nil {
 		v.Pending = &core.UpdatePendingView{
-			Version:  st.Pending.Version,
-			From:     st.Pending.From,
-			Deadline: st.Pending.Deadline,
-			Rollback: st.Pending.Rollback,
+			Version:       st.Pending.Version,
+			From:          st.Pending.From,
+			Deadline:      st.Pending.Deadline,
+			Rollback:      st.Pending.Rollback,
+			RestoreFailed: st.Pending.RestoreFailed,
 		}
 	}
 	if st.Last != nil {

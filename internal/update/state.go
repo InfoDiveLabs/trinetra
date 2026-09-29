@@ -27,12 +27,23 @@ type Pending struct {
 	Phase string `json:"phase,omitempty"`
 	// RestoreFailed is set by the guard's rollbackPending when a Pending
 	// has failed its health gate AND restoring the previous build itself
-	// then fails: the failure detail. Pending is kept (not cleared) while
-	// this is set, so the next watchdog tick retries the restore; a
+	// then fails: the failure detail (for display -- see RestoreFailedReason
+	// for the original cause alone). Pending is kept (not cleared) while
+	// this is set, so the next watchdog tick retries the restore
+	// (retryFailedRestore) instead of re-running the health gate; a
 	// successful retry clears Pending (and this field) entirely. Only ever
 	// set for a forward update (Rollback == false) -- a failed rollback
 	// confirmation has no older build to retry against and never sets it.
 	RestoreFailed string `json:"restore_failed,omitempty"`
+	// RestoreFailedReason is the health-gate failure that started this
+	// RestoreFailed episode (e.g. "trinetra.service is not active"), kept
+	// separately from RestoreFailed so a later successful retry's
+	// Result.Detail explains the real reason the update rolled back rather
+	// than an ever-growing chain of "restoring also failed" text
+	// accumulated across retries. Set once, alongside RestoreFailed, and
+	// never recomputed by a retry (there is no health gate to re-derive it
+	// from -- see retryFailedRestore).
+	RestoreFailedReason string `json:"restore_failed_reason,omitempty"`
 	// RestoreFailedNotified dedups the critical alert for RestoreFailed:
 	// the daemon's update loop (notifyRestoreFailed) sets it once the alert
 	// has been delivered, so repeated failing watchdog retries (every
