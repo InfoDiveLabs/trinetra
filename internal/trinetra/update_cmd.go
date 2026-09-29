@@ -176,12 +176,23 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 		return update.Manifest{}, err
 	}
 
+	// Ruling R7: update.channel=off only ever refuses the network source
+	// (checked above, before src is even resolved); an explicit --bundle
+	// install must still go through even with updates off. Once the bundle
+	// manifest is signature-verified (FetchRelease, just above), gate it on
+	// its own channel rather than refusing on "off" -- floor,
+	// min_upgrade_from and the bad-version check below are unaffected.
+	policyChannel := channel
+	if channel == "off" && opts.Bundle != "" {
+		policyChannel = m.Channel
+	}
+
 	st, err := update.LoadState(u.paths.dir())
 	if err != nil {
 		return update.Manifest{}, err
 	}
 	floor := st.FloorVersion(u.running)
-	if err := update.CheckPolicy(m, update.Policy{Channel: channel, Floor: floor, Running: u.running}); err != nil {
+	if err := update.CheckPolicy(m, update.Policy{Channel: policyChannel, Floor: floor, Running: u.running}); err != nil {
 		return update.Manifest{}, err
 	}
 	if st.IsBad(m.Version) && !opts.Force {
@@ -479,76 +490,15 @@ func cmdUpdateRollback(args []string) int {
 }
 
 // cmdUpdateGuard is `trinetra update guard`: what launchGuard starts via
-// systemd-run right after apply/rollback swap a build in. It waits out the
-// pending update's health deadline, then re-runs the same smoke test apply
-// used before install; a healthy core commits (raises the floor unless this
-// was itself confirming a rollback, which never raises it) and a failing
-// one restores the previous build. If nothing is pending (e.g. a stray
-// invocation, or another guard already resolved it) it is a no-op.
+// systemd-run right after apply/rollback swap a build in. Its job is the
+// health-gate state machine (wait out the pending update's deadline,
+// confirm or roll back, resume across a crash) -- owned by a later task
+// (Ruling R6); this is a root-gated placeholder until that lands.
 func cmdUpdateGuard(args []string) int {
 	if !isRoot() {
 		fmt.Fprintln(stderr, "must run as root")
 		return 1
 	}
-	c, err := loadCfg()
-	if err != nil {
-		c = config.Default()
-	}
-	return runGuard(newUpdater(c))
-}
-
-func runGuard(u updater) int {
-	st, err := update.LoadState(u.paths.dir())
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	p := st.Pending
-	if p == nil {
-		return 0
-	}
-
-	if wait := time.Unix(p.Deadline, 0).Sub(u.clock()); wait > 0 {
-		time.Sleep(wait)
-	}
-
-	corePath := filepath.Join(u.paths.BinDir, "trinetra")
-	healthy := smokeTest(u.x, corePath, p.Version) == nil
-
-	// Re-read state: it may have changed (e.g. a manual rollback) while we
-	// waited out the deadline.
-	st, err = update.LoadState(u.paths.dir())
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if st.Pending == nil {
-		return 0
-	}
-
-	result := update.Result{Version: st.Pending.Version, From: st.Pending.From, At: u.clock().Unix()}
-	switch {
-	case healthy:
-		if !st.Pending.Rollback {
-			if v, verr := update.ParseVersion(st.Pending.Version); verr == nil {
-				st.RaiseFloor(v)
-			}
-		}
-		result.Outcome = "committed"
-	default:
-		if rerr := restorePrevious(u.paths); rerr != nil {
-			result.Detail = fmt.Sprintf("post-update smoke test failed, and restoring the previous build also failed: %v", rerr)
-		} else {
-			result.Detail = "post-update smoke test failed"
-		}
-		result.Outcome = "rolled_back"
-	}
-
-	st.Pending = nil
-	st.Last = &result
-	if err := update.SaveState(u.paths.dir(), st); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	return 0
+	fmt.Fprintln(stderr, "update guard: not implemented yet")
+	return 1
 }
