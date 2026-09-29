@@ -218,8 +218,8 @@ compose down -v -t 1 >/dev/null 2>&1 || true
 compose build --quiet
 UP=$(compose up -d 2>&1) || fail "compose up: $UP"
 wait_until 30 "mock telegram" on mocktg curl -sf http://localhost:8080/_messages
-# tscmp is part of the image's /src copy; build it once on the master.
-on master sh -c 'cd /src && go build -o /usr/local/bin/tscmp ./test/docker/fleet/tscmp'
+# tscmp (./tscmp) is built into the image (test/docker/Dockerfile).
+on master test -x /usr/local/bin/tscmp || fail "the image has no /usr/local/bin/tscmp"
 
 # Master: telegram against the mock, fast node-down, then a normal solo start
 # followed by `fleet init` and a restart, as an operator would do it.

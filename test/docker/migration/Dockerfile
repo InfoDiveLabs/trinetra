@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Image for the serverwatch -> trinetra migration scenario (run.sh).
 #
 # Build context: the repository root (the current, trinetra-named tree).
@@ -7,12 +8,17 @@
 #   docker build -f test/docker/migration/Dockerfile \
 #     --build-context legacysrc=<dir> -t trmig-e2e:latest .
 
+# Both Go stages use BuildKit cache mounts for the module and build caches,
+# so a rebuild after a repo change (COPY . . invalidates the layer) does not
+# recompile every dependency from scratch.
+
 # Legacy serverwatch build (module "serverwatch", cmd/serverwatch*), the way a
 # v0.4.x user has it installed.
 FROM golang:1.24-bookworm AS legacy
 WORKDIR /legacy
 COPY --from=legacysrc . .
-RUN go build -o /out/serverwatch ./cmd/serverwatch \
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go build -o /out/serverwatch ./cmd/serverwatch \
  && go build -o /out/serverwatch-ctl ./cmd/serverwatch-ctl \
  && go build -o /out/serverwatch-web ./cmd/serverwatch-web
 
@@ -20,7 +26,8 @@ RUN go build -o /out/serverwatch ./cmd/serverwatch \
 FROM golang:1.24-bookworm AS current
 WORKDIR /src
 COPY . .
-RUN go build -o /out/trinetra ./cmd/trinetra \
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go build -o /out/trinetra ./cmd/trinetra \
  && go build -o /out/trinetra-ctl ./cmd/trinetra-ctl \
  && go build -o /out/trinetra-web ./cmd/trinetra-web \
  && go build -o /mocktg ./test/docker/mocktg
