@@ -8,6 +8,7 @@ package trinetra
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -69,29 +70,48 @@ func updateAvailableAlert(st update.State) (Alert, bool) {
 	}, true
 }
 
-// updateStaleAlert reports the "no fresh signed release pointer" warning
-// when lastPointerIssued (an RFC3339 timestamp, update.State.LastPointerIssued)
-// is more than stalePointerAfter old, or reports false when it is unset
-// (never fetched yet -- not evidence of staleness) or unparsable or fresh.
-func updateStaleAlert(channel, lastPointerIssued string, now time.Time) (Alert, bool) {
+// freezeVerdict decides whether the channel looks frozen (R17), given the
+// error (if any) of the check that just ran and the Issued time of the last
+// pointer that verified (State.LastPointerIssued, RFC3339 or ""):
+//
+//   - an expired or missing pointer (or pointer signature) is the freeze
+//     signature itself and counts at once;
+//   - otherwise, a last good pointer issued more than stalePointerAfter ago
+//     counts whatever the check's outcome, so an attacker who replays the
+//     last valid pointer or blocks the channel is noticed within 14 days;
+//   - a plain transport error with a recent (or no) last pointer does not.
+//
+// reason is the operator-facing explanation when stale is true.
+func freezeVerdict(checkErr error, lastPointerIssued string, now time.Time) (stale bool, reason string) {
+	if errors.Is(checkErr, update.ErrExpired) || errors.Is(checkErr, update.ErrNoPointer) {
+		return true, checkErr.Error()
+	}
 	if lastPointerIssued == "" {
-		return Alert{}, false
+		return false, ""
 	}
 	issued, err := time.Parse(time.RFC3339, lastPointerIssued)
-	if err != nil {
-		return Alert{}, false
+	if err != nil || now.Sub(issued) <= stalePointerAfter {
+		return false, ""
 	}
-	if now.Sub(issued) <= stalePointerAfter {
-		return Alert{}, false
+	days := int(now.Sub(issued) / (24 * time.Hour))
+	reason = fmt.Sprintf("the last signed pointer was issued %d days ago", days)
+	if checkErr != nil {
+		reason += " (last check: " + checkErr.Error() + ")"
 	}
+	return true, reason
+}
+
+// updateStaleAlert is the freeze warning for channel with reason.
+func updateStaleAlert(channel, reason string, now time.Time) Alert {
 	return Alert{
 		Key:      "update:stale",
-		Title:    "no fresh signed release pointer for " + channel + " in over 14 days",
+		Title:    "no fresh signed release pointer for the " + channel + " channel: updates may be withheld",
+		Body:     reason,
 		Severity: SevWarning,
 		Kind:     "fire",
 		Source:   "update",
 		Time:     now.Unix(),
-	}, true
+	}
 }
 
 // startUpdateLoop is the daemon's self-update background loop (daemon.go):
@@ -107,23 +127,22 @@ func updateStaleAlert(channel, lastPointerIssued string, now time.Time) (Alert, 
 func startUpdateLoop(ctx context.Context, getCfg func() *config.Config, u updater, notify func(Alert)) {
 	ticker := time.NewTicker(updateLoopInterval)
 	defer ticker.Stop()
-	staleNotified := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
-		updateLoopTick(ctx, u, getCfg(), notify, &staleNotified)
+		updateLoopTick(ctx, u, getCfg(), notify)
 	}
 }
 
 // updateLoopTick runs one iteration of startUpdateLoop's body, split out so
 // the three steps (each its own load/mutate/save) read clearly and so a
 // future test could drive a single tick directly.
-func updateLoopTick(ctx context.Context, u updater, c *config.Config, notify func(Alert), staleNotified *bool) {
+func updateLoopTick(ctx context.Context, u updater, c *config.Config, notify func(Alert)) {
 	notifyPendingResult(u.paths, notify)
-	runDueCheck(ctx, u, c, notify, staleNotified)
+	runDueCheck(ctx, u, c, notify)
 	notifyAvailable(u.paths, notify)
 }
 
@@ -150,35 +169,25 @@ func notifyPendingResult(p updatePaths, notify func(Alert)) {
 }
 
 // checkRefreshedState reports whether a u.check(ctx, c) call that returned
-// err actually reached and persisted a fresh LastCheck/LastPointerIssued
-// (fix-round-1 F4): updater.check (update_cmd.go) only ever returns an error
-// BEFORE touching state at all (channel off, no source, FetchLatest/
-// FetchRelease/LoadState failed) -- UNLESS that error is one of
-// update.CheckPolicy's sentinel errors (ErrAlreadyInstalled, ErrDowngrade,
-// ErrTooOld, ErrWrongChannel), which check returns only AFTER it has already
-// loaded, updated and saved state; a policy verdict is not a fetch/verify
-// failure. A nil error is of course also success. Everything else (a
-// network error, a bad signature, an expired/malformed pointer, an
-// unreadable/unwritable state file) is a real failure: state was not
-// refreshed this cycle, so the stale-pointer rule below must not evaluate
-// against it as if it had been.
+// err actually verified a fresh pointer: nil, or one of update.CheckPolicy's
+// verdicts (or errKnownBad), which check returns only after it has fetched,
+// verified and saved the pointer. Only such a check ends a stale episode.
 func checkRefreshedState(err error) bool {
 	return err == nil ||
 		errors.Is(err, update.ErrAlreadyInstalled) ||
 		errors.Is(err, update.ErrDowngrade) ||
 		errors.Is(err, update.ErrTooOld) ||
-		errors.Is(err, update.ErrWrongChannel)
+		errors.Is(err, update.ErrWrongChannel) ||
+		errors.Is(err, errKnownBad)
 }
 
 // runDueCheck runs u.check when update.channel is on, the source is github,
-// and CheckInterval has elapsed since LastCheck, then evaluates the
-// stale-pointer rule -- but ONLY when that check actually succeeded in
-// talking to the source (checkRefreshedState; fix-round-1 F4): a check that
-// truly failed (network error, bad signature, etc.) is logged only, exactly
-// like any other check error, and must never itself trigger the
-// stale-pointer alert just because state already looked stale from some
-// earlier successful check.
-func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(Alert), staleNotified *bool) {
+// and CheckInterval has elapsed since LastCheck, then applies the freeze
+// rule (freezeVerdict, R17): a stale verdict alerts once per episode (the
+// dedup, State.StaleNotified, is persisted so a restart does not re-page),
+// and a check that verified a fresh pointer ends the episode. Other check
+// errors are only logged.
+func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(Alert)) {
 	channel := c.UpdateChannel()
 	if channel == "off" || c.UpdateSource() != "github" {
 		return
@@ -187,28 +196,29 @@ func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(A
 	if err != nil {
 		return
 	}
-	if st.LastCheck != 0 && time.Since(time.Unix(st.LastCheck, 0)) < c.UpdateCheckInterval() {
+	if st.LastCheck != 0 && u.clock().Sub(time.Unix(st.LastCheck, 0)) < c.UpdateCheckInterval() {
 		return
 	}
 	_, checkErr := u.check(ctx, c)
 	if checkErr != nil {
 		log.Printf("update: check: %v", checkErr)
 	}
-	if !checkRefreshedState(checkErr) {
-		return
-	}
-
 	st2, err := update.LoadState(u.paths.dir())
 	if err != nil {
 		return
 	}
-	if a, ok := updateStaleAlert(channel, st2.LastPointerIssued, u.clock()); ok {
-		if !*staleNotified {
-			notify(a)
-			*staleNotified = true
-		}
-	} else {
-		*staleNotified = false
+	stale, reason := freezeVerdict(checkErr, st2.LastPointerIssued, u.clock())
+	switch {
+	case stale && !st2.StaleNotified:
+		notify(updateStaleAlert(channel, reason, u.clock()))
+		st2.StaleNotified = true
+	case !stale && st2.StaleNotified && checkRefreshedState(checkErr):
+		st2.StaleNotified = false
+	default:
+		return
+	}
+	if err := update.SaveState(u.paths.dir(), st2); err != nil {
+		log.Printf("update: save stale-alert state: %v", err)
 	}
 }
 

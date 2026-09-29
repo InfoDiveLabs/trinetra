@@ -42,8 +42,12 @@ type State struct {
 	LastCheck         int64    `json:"last_check,omitempty"`
 	LastPointerIssued string   `json:"last_pointer_issued,omitempty"`
 	Available         string   `json:"available,omitempty"`
-	AvailableNotified string   `json:"available_notified,omitempty"`
-	Last              *Result  `json:"last,omitempty"`
+	// StaleNotified dedups the freeze ("no fresh signed pointer") alert:
+	// set when it fires, cleared once a fresh pointer verifies, so one
+	// episode alerts once even across daemon restarts.
+	StaleNotified     bool    `json:"stale_notified,omitempty"`
+	AvailableNotified string  `json:"available_notified,omitempty"`
+	Last              *Result `json:"last,omitempty"`
 }
 
 const stateFile = "state.json"

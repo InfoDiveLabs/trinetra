@@ -20,6 +20,11 @@ type Source interface {
 
 var ErrNoChannel = errors.New("update: source has no channel pointers")
 
+// ErrNotFound marks a source answer that the asset (or its release) does not
+// exist, as opposed to a transport failure: FetchLatest turns it into
+// ErrNoPointer, which the freeze alert treats as a withheld pointer.
+var ErrNotFound = errors.New("update: not found")
+
 // GitHubSource reads release assets through the GitHub REST API, so it works
 // for a private repo with a read-only token and for a public one without.
 // Authenticity never comes from here: every byte is verified by the caller.
@@ -58,6 +63,10 @@ func (g GitHubSource) get(ctx context.Context, url, accept string) (*http.Respon
 	if err != nil {
 		return nil, fmt.Errorf("update: GET %s: %w", url, err)
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		resp.Body.Close()
+		return nil, fmt.Errorf("update: GET %s: %s: %w", url, resp.Status, ErrNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
 		return nil, fmt.Errorf("update: GET %s: %s", url, resp.Status)
@@ -88,7 +97,7 @@ func (g GitHubSource) asset(ctx context.Context, tag, name string) (io.ReadClose
 			return r.Body, nil
 		}
 	}
-	return nil, fmt.Errorf("update: release %s has no asset %q", tag, name)
+	return nil, fmt.Errorf("update: release %s has no asset %q: %w", tag, name, ErrNotFound)
 }
 
 func (g GitHubSource) ReleaseAsset(ctx context.Context, version, name string) (io.ReadCloser, error) {

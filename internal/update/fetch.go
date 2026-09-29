@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -55,11 +57,21 @@ func FetchRelease(ctx context.Context, src Source, keys KeySet, version string) 
 	return m, mb, nil
 }
 
+// ErrNoPointer means the source answered but has no <channel>.json or no
+// signature for it: together with ErrExpired, the signature of a withheld
+// (frozen) channel rather than an offline host.
+var ErrNoPointer = errors.New("update: channel pointer or its signature is missing")
+
 // FetchLatest reads and verifies <channel>.json from the source's channel
-// pointers.
+// pointers. A pointer or signature the source reports as absent is
+// ErrNoPointer; a transport error is returned as is.
 func FetchLatest(ctx context.Context, src Source, keys KeySet, channel string, now time.Time) (Pointer, error) {
 	get := func(name string) ([]byte, error) {
-		return readSmall(ctx, func() (io.ReadCloser, error) { return src.ChannelAsset(ctx, name) })
+		b, err := readSmall(ctx, func() (io.ReadCloser, error) { return src.ChannelAsset(ctx, name) })
+		if err != nil && (errors.Is(err, ErrNotFound) || errors.Is(err, fs.ErrNotExist)) {
+			return nil, fmt.Errorf("%w: %s: %v", ErrNoPointer, name, err)
+		}
+		return b, err
 	}
 	pb, err := get(channel + ".json")
 	if err != nil {
@@ -67,7 +79,7 @@ func FetchLatest(ctx context.Context, src Source, keys KeySet, channel string, n
 	}
 	sig, err := get(channel + ".json.sig")
 	if err != nil {
-		sig = nil
+		return Pointer{}, err
 	}
 	p, err := VerifyPointer(keys, pb, sig, now)
 	if err != nil {

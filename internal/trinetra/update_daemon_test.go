@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -59,90 +60,114 @@ func (s channelSource) ChannelAsset(ctx context.Context, name string) (io.ReadCl
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
-// TestRunDueCheckAlertsStaleOnceWhenCheckSucceeds is fix-round-1 F4: the
-// stale-pointer rule must fire when the pointer really is stale (>14 days
-// since LastPointerIssued) as long as the check that observed it actually
-// succeeded talking to the source -- here, a channel pointer whose signed
-// Expires is right at its 14-day-since-Issued ceiling (VerifyPointer,
-// internal/update/verify.go) but not yet past it, so FetchLatest verifies it
-// cleanly even though it is already stale by this package's own
-// stalePointerAfter threshold. The release itself resolves to
-// update.ErrAlreadyInstalled (Version == Floor == Running): an everyday,
-// non-fatal CheckPolicy outcome that must still count as "the check
-// succeeded" for the stale-pointer rule (this is in fact the realistic
-// steady-state case: a healthy host that is already up to date, whose
-// upstream channel has simply stopped publishing fresh pointers).
-func TestRunDueCheckAlertsStaleOnceWhenCheckSucceeds(t *testing.T) {
-	p := testUpdatePaths(t)
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	issued := now.Add(-14*24*time.Hour - 30*time.Minute)
-	expires := issued.Add(14*24*time.Hour + time.Hour) // now + 30min: not yet expired
+// errSource fails every fetch with err (a network outage, say).
+type errSource struct{ err error }
+
+func (e errSource) ReleaseAsset(context.Context, string, string) (io.ReadCloser, error) {
+	return nil, e.err
+}
+func (e errSource) ChannelAsset(context.Context, string) (io.ReadCloser, error) { return nil, e.err }
+
+// signedPointer builds a stable pointer naming 0.4.1 with the given
+// issued/expires, signed by the trusted test pointer key.
+func signedPointer(t *testing.T, issued, expires time.Time) (pb, sig []byte) {
+	t.Helper()
 	ptr := update.Pointer{Schema: 1, Product: "trinetra", Channel: "stable", Version: "0.4.1",
 		Issued: issued.Format(time.RFC3339), Expires: expires.Format(time.RFC3339)}
 	pb, err := json.Marshal(ptr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := channelSource{
-		channel: map[string][]byte{
-			"stable.json":     pb,
-			"stable.json.sig": updatetest.NewTestSigner(3).SignPointer(pb),
-		},
-		release: signedRelease(t, "0.4.1", map[string][]byte{"trinetra-linux-amd64": []byte("x")}),
-	}
-	u := updater{paths: p, keys: testKeys(), src: src, now: func() time.Time { return now },
-		arch: "amd64", running: mustVer("0.4.1")}
-	c := config.Default()
+	return pb, updatetest.NewTestSigner(3).SignPointer(pb)
+}
 
-	var notified []Alert
-	staleNotified := false
-	runDueCheck(context.Background(), u, c, func(a Alert) { notified = append(notified, a) }, &staleNotified)
+func staleAlerts(as []Alert) int {
+	n := 0
+	for _, a := range as {
+		if a.Key == "update:stale" {
+			n++
+		}
+	}
+	return n
+}
 
-	if len(notified) != 1 || notified[0].Key != "update:stale" {
-		t.Fatalf("notified=%+v", notified)
-	}
-	if !staleNotified {
-		t.Fatal("staleNotified not set")
-	}
-	st, _ := update.LoadState(p.dir())
-	if st.LastPointerIssued != issued.Format(time.RFC3339) {
-		t.Fatalf("state not refreshed by the successful check: %+v", st)
-	}
+// TestRunDueCheckFreezeDetection is R17: the freeze alert must actually be
+// able to fire. An expired or missing pointer is the freeze signature and
+// alerts at once; a LastPointerIssued older than 14 days alerts whatever the
+// check's outcome; a plain network error alerts only once the last good
+// pointer is more than 14 days old. Each episode alerts once, and the dedup
+// is persisted in State so a daemon restart does not re-page.
+func TestRunDueCheckFreezeDetection(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	fresh := now.Add(-2 * 24 * time.Hour).Format(time.RFC3339)
+	old := now.Add(-20 * 24 * time.Hour).Format(time.RFC3339)
+	release := signedRelease(t, "0.4.1", map[string][]byte{"trinetra-linux-amd64": []byte("x"), "trinetra-web-linux-amd64": []byte("y")})
 
-	// A second due check with the same (still stale) pointer must not
-	// re-alert.
-	notified = nil
-	runDueCheck(context.Background(), u, c, func(a Alert) { notified = append(notified, a) }, &staleNotified)
-	if len(notified) != 0 {
-		t.Fatalf("re-alerted an unchanged stale pointer: %+v", notified)
+	expiredPB, expiredSig := signedPointer(t, now.Add(-15*24*time.Hour), now.Add(-24*time.Hour))
+	nearPB, nearSig := signedPointer(t, now.Add(-14*24*time.Hour-30*time.Minute), now.Add(30*time.Minute))
+	okPB, okSig := signedPointer(t, now.Add(-time.Hour), now.Add(13*24*time.Hour))
+
+	for _, c := range []struct {
+		name      string
+		lastIssue string
+		src       update.Source
+		want      int
+	}{
+		{"expired pointer alerts at once", fresh,
+			channelSource{channel: map[string][]byte{"stable.json": expiredPB, "stable.json.sig": expiredSig}, release: release}, 1},
+		{"missing pointer alerts at once", fresh, channelSource{channel: map[string][]byte{}, release: release}, 1},
+		{"missing pointer signature alerts at once", fresh,
+			channelSource{channel: map[string][]byte{"stable.json": okPB}, release: release}, 1},
+		{"valid pointer issued over 14 days ago alerts", "",
+			channelSource{channel: map[string][]byte{"stable.json": nearPB, "stable.json.sig": nearSig}, release: release}, 1},
+		{"network error with a fresh last pointer does not alert", fresh, errSource{errors.New("dial tcp: connection refused")}, 0},
+		{"network error with no pointer ever seen does not alert", "", errSource{errors.New("dial tcp: connection refused")}, 0},
+		{"network error 14+ days after the last good pointer alerts", old, errSource{errors.New("dial tcp: connection refused")}, 1},
+		{"fresh valid pointer does not alert", old,
+			channelSource{channel: map[string][]byte{"stable.json": okPB, "stable.json.sig": okSig}, release: release}, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := testUpdatePaths(t)
+			update.SaveState(p.dir(), update.State{LastPointerIssued: c.lastIssue})
+			u := updater{paths: p, keys: testKeys(), src: c.src, now: func() time.Time { return now },
+				arch: "amd64", running: mustVer("0.4.1")}
+			var got []Alert
+			runDueCheck(context.Background(), u, config.Default(), func(a Alert) { got = append(got, a) })
+			if n := staleAlerts(got); n != c.want {
+				t.Fatalf("stale alerts = %d, want %d (%+v)", n, c.want, got)
+			}
+			if c.want == 0 {
+				return
+			}
+			// Same episode, next due check (and, since the dedup lives in
+			// State, as if after a daemon restart): no second alert.
+			st, _ := update.LoadState(p.dir())
+			if !st.StaleNotified {
+				t.Fatalf("dedup not persisted: %+v", st)
+			}
+			st.LastCheck = 0
+			update.SaveState(p.dir(), st)
+			got = nil
+			runDueCheck(context.Background(), u, config.Default(), func(a Alert) { got = append(got, a) })
+			if n := staleAlerts(got); n != 0 {
+				t.Fatalf("re-alerted the same episode: %+v", got)
+			}
+		})
 	}
 }
 
-// TestRunDueCheckDoesNotAlertStaleOnCheckFailure is fix-round-1 F4's other
-// half: a check that fails outright (network error, bad signature, no
-// channel pointer at all -- here, mapSource.ChannelAsset's unconditional
-// update.ErrNoChannel) must never trigger the stale-pointer alert, even
-// when the state it leaves behind already looks stale from a much earlier
-// successful check. Checks are logged, not alerted, on failure; the
-// exception is a STALE pointer observed by a SUCCEEDING check, not a
-// failing one.
-func TestRunDueCheckDoesNotAlertStaleOnCheckFailure(t *testing.T) {
+// TestRunDueCheckFreshPointerEndsEpisode: once a fresh pointer verifies, the
+// persisted dedup resets, so the next freeze alerts again.
+func TestRunDueCheckFreshPointerEndsEpisode(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	p := testUpdatePaths(t)
-	stale := time.Now().Add(-20 * 24 * time.Hour).Format(time.RFC3339)
-	if err := update.SaveState(p.dir(), update.State{LastPointerIssued: stale}); err != nil {
-		t.Fatal(err)
-	}
-	u := updater{paths: p, keys: testKeys(), src: mapSource{}, now: time.Now}
-	c := config.Default()
-
-	var notified []Alert
-	staleNotified := false
-	runDueCheck(context.Background(), u, c, func(a Alert) { notified = append(notified, a) }, &staleNotified)
-
-	if len(notified) != 0 {
-		t.Fatalf("alerted stale on a failed check: %+v", notified)
-	}
-	if staleNotified {
-		t.Fatal("staleNotified set on a failed check")
+	update.SaveState(p.dir(), update.State{StaleNotified: true})
+	okPB, okSig := signedPointer(t, now.Add(-time.Hour), now.Add(13*24*time.Hour))
+	release := signedRelease(t, "0.4.1", map[string][]byte{"trinetra-linux-amd64": []byte("x"), "trinetra-web-linux-amd64": []byte("y")})
+	u := updater{paths: p, keys: testKeys(), now: func() time.Time { return now }, arch: "amd64", running: mustVer("0.4.1"),
+		src: channelSource{channel: map[string][]byte{"stable.json": okPB, "stable.json.sig": okSig}, release: release}}
+	runDueCheck(context.Background(), u, config.Default(), func(Alert) {})
+	if st, _ := update.LoadState(p.dir()); st.StaleNotified {
+		t.Fatalf("fresh pointer did not end the stale episode: %+v", st)
 	}
 }
