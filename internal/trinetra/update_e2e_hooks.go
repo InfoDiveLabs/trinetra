@@ -25,7 +25,7 @@ const e2eCrashOnStart = ""
 func e2eRestartCmd() (cmd string, args []string, ok bool) { return "", nil, false }
 
 // e2eGuardCmd always reports "not set" in a default build: launchGuard
-// (update_cmd.go's realLaunchGuard) always shells out to `systemd-run`.
+// (update_cmd.go's launchGuardUnit) always shells out to `systemd-run`.
 func e2eGuardCmd() (cmd string, args []string, ok bool) { return "", nil, false }
 
 // e2eGitHubBaseURL always returns "" in a default build: updateSource

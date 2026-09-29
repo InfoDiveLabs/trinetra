@@ -52,14 +52,22 @@ func probeApplyLock(p updatePaths) error {
 const updateHealthDeadline = 90 * time.Second
 
 // updatePaths locates everything a self-update touches: the binaries in
-// BinDir, and this package's scratch space under StateDir/update (staged
-// downloads, the previous build kept for rollback, and cached manifest/sigs).
-type updatePaths struct{ BinDir, StateDir string }
+// BinDir, this package's scratch space under StateDir/update (staged
+// downloads, the previous build kept for rollback, cached manifests, state
+// and locks), the pinned guard binary in GuardDir, and the watchdog units in
+// UnitDir.
+type updatePaths struct{ BinDir, StateDir, GuardDir, UnitDir string }
+
+// defaultGuardDir holds the pinned guard binary (R14): a copy of the binary
+// that performed the last apply (or install), on an exec-friendly root path
+// (not /var/lib, which is often noexec or labelled non-executable), so the
+// guard and the watchdog never execute the new, unproven build.
+const defaultGuardDir = "/usr/local/lib/trinetra/guard"
 
 // defaultUpdatePaths is what production callers use: the real install
 // location and the package-level stateDir (itself overridable in tests).
 func defaultUpdatePaths() updatePaths {
-	return updatePaths{BinDir: "/usr/local/bin", StateDir: stateDir}
+	return updatePaths{BinDir: "/usr/local/bin", StateDir: stateDir, GuardDir: defaultGuardDir, UnitDir: "/etc/systemd/system"}
 }
 
 func (p updatePaths) dir() string             { return filepath.Join(p.StateDir, "update") }
@@ -67,6 +75,53 @@ func (p updatePaths) staging(v string) string { return filepath.Join(p.dir(), "s
 func (p updatePaths) previous() string        { return filepath.Join(p.dir(), "previous") }
 func (p updatePaths) cache() string           { return filepath.Join(p.dir(), "cache") }
 func (p updatePaths) applyLock() string       { return filepath.Join(p.dir(), "apply.lock") }
+func (p updatePaths) guardLock() string       { return filepath.Join(p.dir(), "guard.lock") }
+func (p updatePaths) guardBin() string        { return filepath.Join(p.GuardDir, "trinetra") }
+
+// Pending phases (R15): swapIn records Pending in phase pendingSwapping
+// before its first rename and moves it to pendingSwapped once every binary
+// and plugins.json are in place. A guard that finds pendingSwapping with no
+// live apply holding apply.lock knows the swap was interrupted. A Pending
+// with no phase (written before phases existed) counts as swapped.
+const (
+	pendingSwapping = "swapping"
+	pendingSwapped  = "swapped"
+)
+
+// selfExecutable is the file the pinned guard is copied from: the running
+// binary. /proc/self/exe is preferred on Linux because it still opens after
+// the file on disk has been replaced (a daemon serving a socket apply after
+// an install); os.Executable would then name a "(deleted)" path. A variable
+// so tests can point it at a small fixture.
+var selfExecutable = func() (string, error) {
+	if _, err := os.Stat("/proc/self/exe"); err == nil {
+		return "/proc/self/exe", nil
+	}
+	return os.Executable()
+}
+
+// writePinnedGuard copies the running binary to p.guardBin() (dir and file
+// 0755, same-directory temp file, fsync, rename, directory fsync): the code
+// that writes a Pending is the code that resolves it (R14).
+func writePinnedGuard(p updatePaths) error {
+	if p.GuardDir == "" {
+		return errors.New("update: no guard directory configured")
+	}
+	self, err := selfExecutable()
+	if err != nil {
+		return fmt.Errorf("update: locate the running binary: %w", err)
+	}
+	if err := os.MkdirAll(p.GuardDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(p.GuardDir, 0o755); err != nil {
+		return err
+	}
+	if err := copyFile(self, p.guardBin(), 0o755); err != nil {
+		return fmt.Errorf("update: write the pinned guard binary: %w", err)
+	}
+	return nil
+}
 
 // applyPlan is what a release manifest resolves to for THIS host: the
 // manifest itself (plus its raw bytes, for caching), the arch to install
@@ -205,27 +260,34 @@ func replaceFile(src, dst string) error {
 	return copyFile(src, dst, 0o755)
 }
 
+// replaceFileFn is what swapIn replaces each binary with; a variable only so
+// tests can observe the state at, or crash, a given rename.
+var replaceFileFn = replaceFile
+
 // pluginManifestBase is the bare file name copyFile/restorePrevious use for
 // the plugin checksum manifest inside previous/, matching
 // filepath.Base(pluginManifestPath()).
 func pluginManifestBase() string { return filepath.Base(pluginManifestPath()) }
 
-// swapIn is the only step that touches BinDir. Nothing on disk changes
-// before every staged file re-hashes to its manifest SHA-256 (step 3 below);
-// any failure at or after the first rename (steps 4-5) restores the previous
-// build before returning, so a host is never left half-upgraded -- and if
-// that restore attempt itself fails, the returned error joins both failures
-// (via errors.Join) rather than silently discarding the restore error, since
-// a host that failed BOTH the swap and the rollback is a materially
-// different, more urgent situation than one that cleanly rolled back.
+// swapIn is the only step that touches BinDir. The caller holds
+// update/apply.lock. Order matters for crash safety (R15): everything a
+// recovery needs is durable before the first rename, so a crash at any
+// point after that is resolved by the update watchdog's guard.
 //
-//  1. Refuse if an update is already Pending.
+//  1. Refuse if an update is already Pending, or if there is no installed
+//     core binary to keep for rollback.
 //  2. Snapshot the current binaries (and plugins.json, if any) into
-//     previous/, replacing whatever was kept from an earlier update.
-//  3. Re-hash every staged file against the manifest.
-//  4. Atomically replace each installed binary with its staged file.
-//  5. Rewrite plugins.json for the new binaries.
-//  6. Record a Pending marker so a health check can confirm or roll back.
+//     previous.new/, fsync, then swap it into place as previous/.
+//  3. Write the pinned guard binary (a copy of this binary).
+//  4. Re-hash every staged file against the manifest.
+//  5. Record Pending{phase: swapping, version, from, files} (fsynced).
+//  6. Atomically replace each installed binary with its staged file.
+//  7. Rewrite plugins.json for the new binaries.
+//  8. Move Pending to phase swapped, with a fresh health deadline.
+//
+// A failure in steps 6-7 restores the previous build and clears Pending; if
+// that restore also fails, the error joins both and Pending is kept so the
+// watchdog finishes the job.
 func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 	st, err := update.LoadState(p.dir())
 	if err != nil {
@@ -234,27 +296,15 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 	if st.Pending != nil {
 		return errUpdateInProgress
 	}
+	if fi, err := os.Lstat(filepath.Join(p.BinDir, "trinetra")); err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("update: %s is missing or not a regular file; nothing to keep for rollback (reinstall with trinetra install)", filepath.Join(p.BinDir, "trinetra"))
+	}
 
-	prev := p.previous()
-	if err := os.RemoveAll(prev); err != nil {
+	if err := snapshotPrevious(p, plan.Names); err != nil {
+		return fmt.Errorf("update: snapshot the current build: %w", err)
+	}
+	if err := writePinnedGuard(p); err != nil {
 		return err
-	}
-	if err := os.MkdirAll(prev, 0o700); err != nil {
-		return err
-	}
-	for _, name := range plan.Names {
-		src := filepath.Join(p.BinDir, name)
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-		if err := copyFile(src, filepath.Join(prev, name), 0o755); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(pluginManifestPath()); err == nil {
-		if err := copyFile(pluginManifestPath(), filepath.Join(prev, pluginManifestBase()), 0o600); err != nil {
-			return err
-		}
 	}
 
 	stagingDir := p.staging(plan.Manifest.Version)
@@ -268,38 +318,87 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 		}
 	}
 
+	pending := update.Pending{
+		Version:  plan.Manifest.Version,
+		From:     strings.TrimPrefix(version.String(), "v"),
+		Deadline: now.Add(updateHealthDeadline).Unix(),
+		Files:    plan.Names,
+		Phase:    pendingSwapping,
+	}
+	if err := setPending(p, &pending); err != nil {
+		return err
+	}
+
 	for i, f := range plan.Files {
 		dst := filepath.Join(p.BinDir, plan.Names[i])
-		if err := replaceFile(filepath.Join(stagingDir, f.Name), dst); err != nil {
-			return restoreOrJoin(p, fmt.Errorf("update: install %s: %w", plan.Names[i], err))
+		if err := replaceFileFn(filepath.Join(stagingDir, f.Name), dst); err != nil {
+			return restoreAfterFailedSwap(p, fmt.Errorf("update: install %s: %w", plan.Names[i], err))
 		}
 	}
 
 	if err := writePluginManifest(p.BinDir); err != nil {
-		return restoreOrJoin(p, fmt.Errorf("update: rewrite plugin manifest: %w", err))
+		return restoreAfterFailedSwap(p, fmt.Errorf("update: rewrite plugin manifest: %w", err))
 	}
 
+	pending.Phase = pendingSwapped
+	pending.Deadline = now.Add(updateHealthDeadline).Unix()
+	return setPending(p, &pending)
+}
+
+// setPending records (or, with nil, clears) Pending under the state lock.
+func setPending(p updatePaths, pending *update.Pending) error {
 	return update.WithState(p.dir(), func(st *update.State) error {
-		st.Pending = &update.Pending{
-			Version:  plan.Manifest.Version,
-			From:     strings.TrimPrefix(version.String(), "v"),
-			Deadline: now.Add(updateHealthDeadline).Unix(),
-			Files:    plan.Names,
-		}
+		st.Pending = pending
 		return nil
 	})
 }
 
-// restoreOrJoin attempts to roll back to the previous build after cause (a
-// failure in swapIn's replace-and-rewrite phase) and returns an error that
-// always surfaces cause. If the rollback itself also fails, the two errors
-// are combined with errors.Join (so errors.Is/errors.As still see both) and
-// the message says plainly that the host may now be left half-updated --
-// this is a strictly worse outcome than a clean rollback and must not be
-// silently swallowed the way a bare `_ = restorePrevious(p)` would.
-func restoreOrJoin(p updatePaths, cause error) error {
+// snapshotPrevious copies the named binaries (those present) and
+// plugins.json into previous.new/, fsyncs it, and only then replaces
+// previous/ with it, so a failure or crash part-way never destroys the last
+// complete rollback copy.
+func snapshotPrevious(p updatePaths, names []string) error {
+	prev := p.previous()
+	next := prev + ".new"
+	if err := os.RemoveAll(next); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(next, 0o700); err != nil {
+		return err
+	}
+	for _, name := range names {
+		src := filepath.Join(p.BinDir, name)
+		if fi, err := os.Lstat(src); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		if err := copyFile(src, filepath.Join(next, name), 0o755); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(pluginManifestPath()); err == nil {
+		if err := copyFile(pluginManifestPath(), filepath.Join(next, pluginManifestBase()), 0o600); err != nil {
+			return err
+		}
+	}
+	if err := os.RemoveAll(prev); err != nil {
+		return err
+	}
+	if err := os.Rename(next, prev); err != nil {
+		return err
+	}
+	return update.SyncDir(p.dir())
+}
+
+// restoreAfterFailedSwap is swapIn's failure path once renames may have
+// started: restore the previous build and clear Pending. If the restore
+// fails too, Pending is kept (phase swapping) so the watchdog's guard
+// retries it, and the error says so.
+func restoreAfterFailedSwap(p updatePaths, cause error) error {
 	if rerr := restorePrevious(p); rerr != nil {
-		return errors.Join(cause, fmt.Errorf("update: restoring the previous build also failed (host may be half-updated): %w", rerr))
+		return errors.Join(cause, fmt.Errorf("update: restoring the previous build also failed (host may be half-updated; the update watchdog will retry within a minute): %w", rerr))
+	}
+	if err := setPending(p, nil); err != nil {
+		return errors.Join(cause, err)
 	}
 	return cause
 }

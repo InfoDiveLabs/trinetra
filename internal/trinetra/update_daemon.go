@@ -1,6 +1,5 @@
 // Package trinetra: update_daemon.go wires self-update into the running
-// daemon: resuming a pending update at start (via resumePendingOnStart,
-// update_guard.go) and the periodic loop that checks for a new release and
+// daemon: the periodic loop that checks for a new release and
 // turns update.State transitions into operator-facing Alerts ("update
 // available", "updated"/"rolled back", and a stale-pointer warning).
 package trinetra

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Pending describes an update install that is in progress or awaiting
@@ -20,6 +21,10 @@ type Pending struct {
 	Deadline int64    `json:"deadline"`
 	Files    []string `json:"files"`
 	Rollback bool     `json:"rollback,omitempty"`
+	// Phase is "swapping" from just before the first binary is replaced
+	// until every binary and plugins.json are in place, then "swapped"
+	// (empty in state written before phases existed: treat as swapped).
+	Phase string `json:"phase,omitempty"`
 }
 
 // Result records the outcome of the most recent update attempt.
@@ -136,12 +141,21 @@ func (s *State) RaiseFloor(v Version) {
 	s.Floor = v.String()
 }
 
-// IsBad reports whether v is listed as a known-bad version.
+// IsBad reports whether v is listed as a known-bad version ("v" prefix
+// ignored on both sides).
 func (s State) IsBad(v string) bool {
+	v = strings.TrimPrefix(v, "v")
 	for _, b := range s.Bad {
-		if b == v {
+		if strings.TrimPrefix(b, "v") == v {
 			return true
 		}
 	}
 	return false
+}
+
+// MarkBad records v as known-bad once ("v" prefix stripped).
+func (s *State) MarkBad(v string) {
+	if !s.IsBad(v) {
+		s.Bad = append(s.Bad, strings.TrimPrefix(v, "v"))
+	}
 }

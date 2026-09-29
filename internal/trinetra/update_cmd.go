@@ -32,6 +32,9 @@ type updater struct {
 	arch        string
 	running     update.Version
 	launchGuard func() error
+	// sys runs systemctl for ensureWatchdog before a swap; nil (tests that
+	// do not exercise it) skips that step.
+	sys Exec
 	// src overrides the source an operation fetches from; nil means "build
 	// it from config" (updateSource(c)) -- see Ruling R1 in
 	// .superpowers/sdd/2026-09-29-signed-releases-self-update/progress.md.
@@ -314,17 +317,49 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 		return update.Manifest{}, err
 	}
 
+	// R14: the watchdog timer is the safety net for everything after the
+	// first rename (killed guard, crash mid-swap, reboot); never swap
+	// without it.
+	if u.sys != nil {
+		if err := ensureWatchdog(u.paths, u.sys); err != nil {
+			return update.Manifest{}, fmt.Errorf("update: refusing to swap without the update watchdog: %w", err)
+		}
+	}
+
 	if err := swapIn(u.paths, plan, u.clock()); err != nil {
 		return update.Manifest{}, err
 	}
 
 	if err := u.launchGuard(); err != nil {
-		restorePrevious(u.paths)
-		update.WithState(u.paths.dir(), func(st *update.State) error { st.Pending = nil; return nil })
-		return update.Manifest{}, fmt.Errorf("update: health guard failed to start, rolled back: %w", err)
+		return update.Manifest{}, undoUnguardedSwap(u.paths, err)
 	}
 
 	return m, nil
+}
+
+// undoUnguardedSwap is apply's path when the health guard could not be
+// launched after a successful swap (R16/M19). The daemon was never
+// restarted, so it still runs the old build: restore previous/ and clear
+// Pending, under guard.lock so it cannot race a guard the watchdog may have
+// started meanwhile -- if one holds the lock, that guard owns the update. A
+// failed restore keeps Pending for the watchdog to finish.
+func undoUnguardedSwap(p updatePaths, launchErr error) error {
+	unlock, ok, err := update.TryLock(p.guardLock())
+	if err != nil {
+		return errors.Join(fmt.Errorf("update: health guard failed to start: %w", launchErr), err)
+	}
+	if !ok {
+		return fmt.Errorf("update: could not launch the health guard (%v), but a guard from the update watchdog is already confirming or rolling back this update (see trinetra update status)", launchErr)
+	}
+	defer unlock()
+	if rerr := restorePrevious(p); rerr != nil {
+		return errors.Join(fmt.Errorf("update: health guard failed to start: %w", launchErr),
+			fmt.Errorf("update: restoring the previous build also failed; the update watchdog will confirm or roll back within a minute: %w", rerr))
+	}
+	if err := setPending(p, nil); err != nil {
+		return errors.Join(fmt.Errorf("update: health guard failed to start: %w", launchErr), err)
+	}
+	return fmt.Errorf("update: health guard failed to start, restored the previous build: %w", launchErr)
 }
 
 // rollback restores the previously installed build (kept by the last
@@ -380,21 +415,52 @@ func (u updater) rollback() error {
 		}
 	}
 
-	st.Pending = &update.Pending{
+	// The pinned guard normally exists from the last apply or install; if
+	// it does not, pin this binary so the guard has something to run.
+	if _, err := os.Stat(u.paths.guardBin()); err != nil {
+		if err := writePinnedGuard(u.paths); err != nil {
+			return err
+		}
+	}
+
+	pending := update.Pending{
 		Version:  prevVersion,
 		From:     strings.TrimPrefix(u.running.String(), "v"),
 		Deadline: u.clock().Add(updateHealthDeadline).Unix(),
 		Files:    files,
 		Rollback: true,
+		Phase:    pendingSwapping,
 	}
-	if err := update.SaveState(u.paths.dir(), st); err != nil {
+	if err := setPending(u.paths, &pending); err != nil {
 		return err
 	}
 
+	// R16 (I9): a failed restore may leave the binaries half-restored, so
+	// Pending stays (phase swapping) and the watchdog's guard finishes the
+	// restore once this command has exited and released apply.lock.
 	if err := restorePrevious(u.paths); err != nil {
+		return fmt.Errorf("update: restoring the previous build failed (%w); the update watchdog will retry within a minute (see trinetra update status)", err)
+	}
+	pending.Phase = pendingSwapped
+	pending.Deadline = u.clock().Add(updateHealthDeadline).Unix()
+	if err := setPending(u.paths, &pending); err != nil {
 		return err
 	}
-	return u.launchGuard()
+
+	if err := u.launchGuard(); err != nil {
+		// The previous build is fully restored on disk; without a guard
+		// nothing will restart onto it, so clear Pending (unless the
+		// watchdog's guard already took it) and say what to do.
+		unlockGuard, ok, lerr := update.TryLock(u.paths.guardLock())
+		if lerr == nil && ok {
+			defer unlockGuard()
+			if cerr := setPending(u.paths, nil); cerr != nil {
+				return errors.Join(err, cerr)
+			}
+		}
+		return fmt.Errorf("update: the previous build is restored but the health guard failed to start (%v); restart trinetra to run it: systemctl restart trinetra", err)
+	}
+	return nil
 }
 
 // status reports the host's current self-update posture from persisted
@@ -513,23 +579,29 @@ func keySetLoaded(k update.KeySet) bool {
 	return len(k.CI) > 0 && len(k.Maint) > 0 && len(k.Pointer) > 0
 }
 
-// realLaunchGuard is production launchGuard: systemd-run a detached
-// `trinetra update guard` unit. Shared by newUpdater (apply/rollback launch
-// the guard right after swapping a build in) and the daemon's own start hook
-// (resumePendingOnStart, daemon.go: resuming a guard for a Pending update
-// left over from a crash mid-apply/mid-guard), so both paths launch the
-// guard identically.
-func realLaunchGuard() error {
-	// TRINETRA_E2E_GUARD_CMD (trinetra_testkeys builds only -- see
-	// update_e2e_hooks.go/update_e2e_hooks_testkeys.go) replaces systemd-run
-	// for the docker e2e harness's systemd-less host, which has no
-	// systemd-run to launch a detached unit with.
+// guardUnitName is the transient unit the guard runs as after an
+// apply/rollback. systemd refuses a second unit of the same name while one
+// is active; guard.lock is what actually keeps a second guard from working.
+const guardUnitName = "trinetra-update-guard"
+
+// guardLaunchCommand is how launchGuard starts the guard (R14): a detached
+// transient unit executing the PINNED guard binary -- never the new build in
+// BinDir and never update/previous/ (which may be on a noexec /var).
+func guardLaunchCommand(p updatePaths) (name string, args []string) {
+	return "systemd-run", []string{"--unit", guardUnitName, "--collect", "--quiet", p.guardBin(), "update", "guard"}
+}
+
+// launchGuardUnit is production launchGuard. TRINETRA_E2E_GUARD_CMD
+// (trinetra_testkeys builds only -- see update_e2e_hooks_testkeys.go)
+// replaces systemd-run for the docker e2e harness's systemd-less host; it
+// receives the guard unit name and the pinned guard path as $1 and $2.
+func launchGuardUnit(p updatePaths) error {
 	if cmd, args, ok := e2eGuardCmd(); ok {
-		_, err := osExec{}.Run(cmd, args...)
+		_, err := osExec{}.Run(cmd, append(args, guardUnitName, p.guardBin())...)
 		return err
 	}
-	_, err := osExec{}.Run("systemd-run", "--unit", "trinetra-update-guard", "--collect", "--quiet",
-		"/usr/local/bin/trinetra", "update", "guard")
+	name, args := guardLaunchCommand(p)
+	_, err := osExec{}.Run(name, args...)
 	return err
 }
 
@@ -546,7 +618,8 @@ func newUpdater(c *config.Config) updater {
 		now:         time.Now,
 		arch:        runtime.GOARCH,
 		running:     running,
-		launchGuard: realLaunchGuard,
+		launchGuard: func() error { return launchGuardUnit(defaultUpdatePaths()) },
+		sys:         osExec{},
 	}
 }
 

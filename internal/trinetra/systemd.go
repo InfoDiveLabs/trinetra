@@ -216,6 +216,15 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err := os.WriteFile(unitPath, []byte(renderUnit(dst)), 0o644); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
+	// The self-update safety net (R14): the pinned guard binary (a copy of
+	// this binary) and the watchdog timer that runs it every minute to
+	// resolve any pending update, whatever state the new build is in.
+	if err := writePinnedGuard(paths); err != nil {
+		return err
+	}
+	if err := ensureWatchdog(paths, osExec{}); err != nil {
+		return err
+	}
 	// seed config if absent
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		if c, _ := loadCfg(); c != nil {
@@ -650,6 +659,7 @@ func cmdUninstall(args []string) int {
 	x := osExec{}
 	_, _ = x.Run("systemctl", "disable", "--now", "trinetra")
 	_ = os.Remove(unitPath)
+	removeWatchdog(defaultUpdatePaths(), x)
 	// Remove the /usr/bin shortcut, but only if it is still OUR symlink into
 	// /usr/local/bin (never a distro-provided real binary).
 	unlinkOnPath("/usr/local/bin/trinetra", secondaryBinPath)

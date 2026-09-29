@@ -43,15 +43,25 @@ func mf(name string, b []byte) update.File {
 // /var/lib/trinetra.
 func testUpdatePaths(t *testing.T) updatePaths {
 	root := t.TempDir()
-	p := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
+	p := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state"),
+		GuardDir: filepath.Join(root, "lib", "guard"), UnitDir: filepath.Join(root, "units")}
 	os.MkdirAll(p.BinDir, 0o755)
 	os.MkdirAll(p.StateDir, 0o755)
+	os.MkdirAll(p.UnitDir, 0o755)
 	os.WriteFile(filepath.Join(p.BinDir, "trinetra"), []byte("OLD-core"), 0o755)
 	os.WriteFile(filepath.Join(p.BinDir, "trinetra-web"), []byte("OLD-web"), 0o755)
 
 	prevStateDir := stateDir
 	stateDir = p.StateDir
 	t.Cleanup(func() { stateDir = prevStateDir })
+
+	// The pinned guard is a copy of the running binary; point that at a
+	// small fixture instead of the test binary.
+	self := filepath.Join(root, "self")
+	os.WriteFile(self, []byte("SELF-bin"), 0o755)
+	prevSelf := selfExecutable
+	selfExecutable = func() (string, error) { return self, nil }
+	t.Cleanup(func() { selfExecutable = prevSelf })
 
 	return p
 }

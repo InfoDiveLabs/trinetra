@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"html"
-	"log"
 	"math/big"
 	"os"
 	"os/signal"
@@ -1308,14 +1307,13 @@ func cmdDaemon(args []string) int {
 	// stop after this point IS reported on the next boot.
 	_ = os.Remove(cleanStopPath)
 
-	// self-update: resume a guard for a Pending update left over from a
-	// crash mid-apply/mid-guard (update_guard.go), then start the
-	// background loop that checks for a new release on the configured
-	// cadence and turns update.State transitions into Alerts
-	// (update_daemon.go). alog/bus/q all exist by this point.
-	if err := resumePendingOnStart(defaultUpdatePaths(), realLaunchGuard); err != nil {
-		log.Printf("update: resume: %v", err)
-	}
+	// self-update: start the background loop that checks for a new release
+	// on the configured cadence and turns update.State transitions into
+	// Alerts (update_daemon.go). alog/bus/q all exist by this point. A
+	// Pending update left by a killed guard, a crash mid-swap or a reboot is
+	// NOT resumed from here: this may be the new, broken build. The
+	// persistent trinetra-update-watchdog.timer runs the pinned guard for
+	// that (update_watchdog.go, R14).
 	// Update results/availability bypass quiet hours (task-7 brief), same as
 	// the boot report and scheduled digests above: an operator waiting on a
 	// pending update -- or one that just rolled back -- needs to know

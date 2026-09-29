@@ -11,8 +11,10 @@
 //
 //   - TRINETRA_E2E_RESTART_CMD, honoured by realGuardDeps().restart
 //     (update_guard.go), replaces `systemctl restart trinetra`.
-//   - TRINETRA_E2E_GUARD_CMD, honoured by realLaunchGuard (update_cmd.go),
-//     replaces `systemd-run ... trinetra update guard`.
+//   - TRINETRA_E2E_GUARD_CMD, honoured by launchGuardUnit (update_cmd.go),
+//     replaces `systemd-run --unit trinetra-update-guard ... <pinned guard>
+//     update guard`; the command gets the unit name and the pinned guard
+//     binary's path as $1 and $2.
 //   - TRINETRA_E2E_GITHUB_BASE_URL, honoured by updateSource (update_cmd.go),
 //     points GitHubSource at the harness's fake GitHub API (relsrv) instead
 //     of the real api.github.com.

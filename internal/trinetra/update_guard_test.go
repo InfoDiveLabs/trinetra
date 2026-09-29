@@ -201,17 +201,3 @@ func TestGuardRollsBackWhenRestartErrorsAndNeverHealthy(t *testing.T) {
 		t.Fatalf("state %+v", st)
 	}
 }
-
-func TestResumePendingOnStartLaunchesGuardOnce(t *testing.T) {
-	p, _ := guardFixture(t, update.Pending{Version: "0.5.0", Deadline: 1090})
-	n := 0
-	if err := resumePendingOnStart(p, func() error { n++; return nil }); err != nil || n != 1 {
-		t.Fatalf("n=%d err=%v", n, err)
-	}
-	update.SaveState(p.dir(), update.State{})
-	n = 0
-	resumePendingOnStart(p, func() error { n++; return nil })
-	if n != 0 {
-		t.Fatal("guard launched with nothing pending")
-	}
-}
