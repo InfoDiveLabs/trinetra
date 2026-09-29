@@ -85,7 +85,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step() { STEP="$1"; echo "== $1 =="; }
+step() { STEP="$1"; echo "== $1 == (+$(( $(date +%s) - T_START ))s)"; }
 pass() { echo "PASS $STEP${1:+: $1}"; }
 fail() { echo "FAIL $STEP: $*"; exit 1; }
 
@@ -152,6 +152,33 @@ incident_acked() { on master trinetra fleet incident "$1" | grep "^acked by: " >
 mem_delivered_once() { [ "$(msg_count "child1: mem =")" -gt "$BASE_MEM" ]; }
 fallback_delivered_once() { [ "$(msg_count "via local fallback: master unreachable")" -gt "$BASE_FALLBACK" ]; }
 mem_routed_once() { [ "$(msg_count "child2: mem =")" -gt "$BASE_C2MEM3" ]; }
+# replica_has_min <node-id> <metric> <n>: the master's replica of that node's
+# raw series already holds at least n whole records (tscmp's .tsd layout: a
+# 16-byte header, then 32-byte records).
+replica_has_min() {
+  local size
+  size=$(on master sh -c "stat -c %s /var/lib/trinetra/fleet/nodes/$1/ts/raw/$2.tsd 2>/dev/null || echo 0" | tr -d '\r')
+  [ "$size" -ge $(( 16 + 32 * $3 )) ]
+}
+unsent_above() { [ "$(unsent "$1")" -gt "$2" ]; } # <svc> <count>
+# pushed_silences_since <svc> <unix-s>: the child has stored a "silences"
+# frame from the master (fleet-child/silences.json) at or after that time.
+# On (re)connect the master pushes the node's lease and THEN its silence set
+# over the same ordered stream (Hub.OnConnect: PushLeaseNow, PushSilencesNow),
+# so a fresh silences.json also proves the lease has been applied.
+pushed_silences_since() {
+  local m
+  m=$(on "$1" sh -c 'stat -c %Y /var/lib/trinetra/fleet-child/silences.json 2>/dev/null || echo 0' | tr -d '\r')
+  [ "$m" -ge "$2" ]
+}
+pushed_silence_has() { on "$1" grep -F "\"$2\"" /var/lib/trinetra/fleet-child/silences.json >/dev/null; } # <svc> <silence-id>
+# silenced_fallbacks <svc>: fallback deliveries of the mem alert that the
+# child's pushed silences suppressed (deliverFallback records them in its
+# alert log with a "silenced (" title and never delivers them).
+silenced_fallbacks() {
+  on "$1" sh -c "grep -F '\"key\":\"mem\"' /var/lib/trinetra/alertlog.jsonl 2>/dev/null | grep -cF '\"title\":\"silenced (' || true" | tr -d '\r'
+}
+silenced_fallback_since() { [ "$(silenced_fallbacks "$1")" -gt "$2" ]; } # <svc> <previous count>
 rule_state() { on master trinetra fleet rules | awk '$1=="lab-online"{print $2}'; }
 rule_is_firing() { [ "$(rule_state)" = "firing" ]; }
 rule_is_ok() { [ "$(rule_state)" = "ok" ]; }
@@ -245,8 +272,13 @@ pass "child1=$ID_child1 child2=$ID_child2 online"
 
 # ---------------------------------------------------------------------------
 step "3 replication fidelity"
-# Let at least 60 s of samples accumulate (a wait, not an assertion).
-while [ $(( $(date +%s) - T_CHILDREN )) -lt 60 ]; do sleep 2; done
+# Let at least 10 records per series reach the master's replica (the -min
+# below; a wait, not an assertion -- ~50 s at FAST=5).
+for c in child1 child2; do
+  for m in cpu mem; do
+    wait_until 120 "$c $m replica holds 10 records" replica_has_min "$(id_of "$c")" "$m" 10
+  done
+done
 for c in child1 child2; do
   for m in cpu mem; do fidelity "$c" "$(id_of "$c")" "$m" -min 10; done
 done
@@ -262,10 +294,16 @@ wait_until 75 "master down alert for child1" alert_more_than master "fleet:node:
 echo "  master raised fleet:node:$C1:down after $(( $(now_in master) - P_FROM ))s"
 wait_until 85 "child1 link retrying" link_is child1 retrying
 U1=$(unsent child1)
-while [ $(( $(now_in master) - P_FROM )) -lt 90 ]; do sleep 2; done
+# The outbox grows by a batch every few FAST intervals while partitioned; a
+# bounded poll instead of a fixed 90 s partition.
+wait_until 60 "child1 outbox growing while partitioned" unsent_above child1 "$U1"
 U2=$(unsent child1)
 [ "$U2" -gt "$U1" ] || fail "child1 outbox did not grow while partitioned ($U1 -> $U2 unsent)"
 echo "  child1 link retrying, outbox grew $U1 -> $U2 unsent"
+# The down page itself goes out only after groupWait (30 s past the fire,
+# fleet_engine.go), so stay partitioned until it has: reconnecting first
+# would let the recover race the first notification.
+wait_until 90 "mock telegram got the child1 down message" mocktg_has "child1 is down"
 P_TO=$(now_in master)
 docker network connect "$NET" "$(ctr child1)"
 wait_until 60 "master recover alert for child1" alert_seen master "fleet:node:$C1:down" recover
@@ -413,6 +451,7 @@ stop_daemon child2
 TOK2=$(on master trinetra fleet token create --uses 2 --tags lab) || fail "token create (re-enrol): $TOK2"
 CODE2=$(grep -o 'swj1_[A-Za-z0-9_=-]*' <<<"$TOK2" | head -1)
 [ -n "$CODE2" ] || fail "no swj1_ code in: $TOK2"
+T_REJOIN=$(now_in master)
 for c in child1 child2; do
   J=$(on "$c" trinetra fleet join "$CODE2" --name "$c") || fail "$c re-join: $J"
   id=$(sed -n 's/^Joined fleet master https:\/\/master:9443 as node \([0-9a-f]*\) .*/\1/p' <<<"$J")
@@ -437,9 +476,19 @@ wait_until 60 "child2 online on master (re-enrol)" node_is child2 online
 # window sees hadLeaseBefore==false and the master silently treats it as
 # already delivered (no dispatch, no receipt -- see Submit's doc comment),
 # so it only ever reaches Telegram via the child's OWN fallback_after
-# timer, never "from the master". Waiting past one lease push cycle here
-# avoids racing that window before step 10 fires anything.
-sleep $(( DOWN_AFTER + 5 ))
+# timer, never "from the master". Wait until each child has applied its
+# first lease before step 10 fires anything: the master pushes the lease and
+# then the silence set on connect, in order, so a silences.json written since
+# the re-join (the purge removed any older one) means the lease is in. Never
+# wait longer than the one lease push cycle (DOWN_AFTER + 5 s) this used to
+# sleep unconditionally.
+T_ONLINE=$(date +%s)
+leases_in_or_cycle_passed() {
+  { pushed_silences_since child1 "$T_REJOIN" && pushed_silences_since child2 "$T_REJOIN"; } ||
+    [ $(( $(date +%s) - T_ONLINE )) -ge $(( DOWN_AFTER + 5 )) ]
+}
+wait_until $(( DOWN_AFTER + 30 )) "both children applied their first lease" leases_in_or_cycle_passed
+echo "  first leases in $(( $(date +%s) - T_ONLINE ))s after both were online"
 echo "  re-enrolled child1=$ID_child1 child2=$ID_child2 (fresh identities, tag lab)"
 
 BASE_MEM=$(msg_count "child1: mem =")
@@ -521,7 +570,7 @@ step "11 silence"
 SIL=$(on master trinetra fleet silence add --match node=child2 --for 10m --comment "e2e step 11") || fail "silence add: $SIL"
 SIL_ID=$(sed -n 's/^Created silence \([^,]*\),.*/\1/p' <<<"$SIL")
 [ -n "$SIL_ID" ] || fail "no silence id in: $SIL"
-sleep $(( 2 * FAST )) # let the silence reach child2 over the stream before it's partitioned
+wait_until 30 "silence $SIL_ID pushed to child2" pushed_silence_has child2 "$SIL_ID" # it must reach child2 over the stream before it's partitioned
 BASE_C2MEM=$(msg_count "child2: mem =")
 on child2 trinetra config set thresholds.mem_pct 1 >/dev/null
 sleep $(( 6 * FAST ))
@@ -544,10 +593,24 @@ sleep $(( 4 * FAST ))
 # routed-then-fallen-back, the one path that consults the pushed silence --
 # see deliverFallback/pushedSilences in fleet_lease.go/fleet_silences.go).
 BASE_FALLBACK2=$(msg_count "via local fallback")
+BASE_SILENCED=$(silenced_fallbacks child2)
 docker network disconnect "$NET" "$(ctr child2)"
 on child2 trinetra config set thresholds.mem_pct 1 >/dev/null
 wait_until 85 "child2 link retrying (silence)" link_is child2 retrying
-sleep $(( FALLBACK_AFTER + 20 )) # give the fallback timer a chance to fire (and be suppressed)
+# Give the fallback timer (FALLBACK_AFTER, or the lease running out first)
+# its chance to fire and be suppressed: done as soon as the child's own
+# alert log records the suppressed fallback, plus a few FAST intervals for
+# any (wrong) delivery to show up -- and never longer than the fixed
+# FALLBACK_AFTER + 20 s this used to sleep.
+T_RETRY=$(date +%s)
+fallback_suppressed_or_waited() {
+  silenced_fallback_since child2 "$BASE_SILENCED" || [ $(( $(date +%s) - T_RETRY )) -ge $(( FALLBACK_AFTER + 20 )) ]
+}
+wait_until $(( FALLBACK_AFTER + 40 )) "child2's fallback timer to fire (and be suppressed)" fallback_suppressed_or_waited
+if silenced_fallback_since child2 "$BASE_SILENCED"; then
+  echo "  child2 recorded its suppressed fallback $(( $(date +%s) - T_RETRY ))s after its link went retrying"
+  sleep $(( 3 * FAST ))
+fi
 [ "$(msg_count "via local fallback")" -eq "$BASE_FALLBACK2" ] || fail "child2 delivered its silenced mem alert locally despite the pushed silence"
 [ "$(msg_count "child2: mem =")" -eq "$BASE_C2MEM" ] || fail "child2's mem alert leaked a message while partitioned and silenced"
 docker network connect "$NET" "$(ctr child2)"
