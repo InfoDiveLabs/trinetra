@@ -1,0 +1,4 @@
+# Build context for the test/docker harnesses (context: the repo root).
+# .test-results/ is written by scripts/test-all.sh while the Docker suites
+# build concurrently; keep those live log files out of every build context.
+/.test-results/

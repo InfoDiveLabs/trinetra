@@ -112,7 +112,8 @@ update-e2e:
 	bash test/docker/update/run.sh
 
 # test-all runs every check unattended (gofmt, vet, race tests, build, then
-# the fleet and migration docker suites) and writes per-stage logs plus a
-# summary under .test-results/. ARGS=--quick skips docker.
+# the fleet, migration and update docker suites, concurrently) and writes
+# per-stage logs plus a summary under .test-results/. ARGS=--quick skips
+# docker; ARGS=--serial runs the docker suites one at a time.
 test-all:
 	bash scripts/test-all.sh $(ARGS)
