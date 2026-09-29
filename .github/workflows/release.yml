@@ -53,6 +53,7 @@ jobs:
             --keys-from-binary
           go run ./cmd/trinetra-release sign --role ci --in dist/manifest.json --out dist/manifest.ci.sig
       - uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1.4.4
+        if: ${{ !github.event.repository.private }}
         with:
           subject-path: "dist/trinetra*-linux-*"
       - name: Draft release

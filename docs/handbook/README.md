@@ -48,6 +48,6 @@ reachable through its screens, including a generic all-settings screen, and its
 web-setup wizard is functional in every serving mode.
 [trinetra-web](plugins/trinetra-web.md) is a supervised, separate binary
 with no build tag, and the daemon runs it whenever `web.enabled` is set. The
-overall v0.4.0 core-plus-plugin release line is the current stable release (see
+overall v0.4.1 core-plus-plugin release line is the current stable release (see
 [Roadmap and status](12-roadmap-and-status.md)), and both plugins are
 feature-complete for what they do.

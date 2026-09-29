@@ -310,7 +310,7 @@ doesn't take it in time, the child delivers the alert itself.
 
 ```bash
 # On the server, pick your arch: linux-amd64 / linux-arm64 / linux-arm (older Pis)
-cd /tmp && arch=linux-amd64
+mkdir -p ~/trinetra-download && cd ~/trinetra-download && arch=linux-amd64
 for b in trinetra trinetra-ctl trinetra-web; do
   curl -fsSL -o "$b" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$b-$arch"
 done

@@ -5,9 +5,9 @@ in production right now, and what is still unfinished. It is meant to be read
 as a status page, so it stays honest about the gaps rather than promising them
 away.
 
-## Current stable release: v0.4.0
+## Current stable release: v0.4.1
 
-The current stable release is v0.4.0, and it is the version to install if you
+The current stable release is v0.4.1, and it is the version to install if you
 want something that works today. It reshapes trinetra from the single
 monolithic daemon of the v0.3.x line into a lean, stdlib-only `trinetra`
 core with plugin binaries layered around it over a local control socket. The
@@ -34,7 +34,7 @@ The core daemon carries the full monitoring stack the v0.3.x line established:
   through `collect.*` toggles, with a `doctor` guardrail to keep cardinality and
   disk use in check.
 
-On top of that core, v0.4.0 ships the core-plus-plugin architecture the rest of
+On top of that core, v0.4.1 ships the core-plus-plugin architecture the rest of
 this handbook describes as current:
 
 - **A single `core.API` contract.** One internal interface describes everything

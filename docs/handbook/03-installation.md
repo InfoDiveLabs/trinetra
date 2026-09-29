@@ -71,7 +71,7 @@ value (`linux-amd64` / `linux-arm64` / `linux-arm`) for your host. Each file
 drops its arch suffix so `trinetra install` finds the plugins by name.
 
 ```bash
-cd /tmp && arch=linux-arm64
+mkdir -p ~/trinetra-download && cd ~/trinetra-download && arch=linux-arm64
 for b in trinetra trinetra-ctl trinetra-web; do
   curl -fsSL -o "$b" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$b-$arch"
 done
@@ -129,7 +129,8 @@ make linux
 `dist/trinetra-linux-arm64`. Copy the one you need to the server:
 
 ```bash
-scp dist/trinetra-linux-arm64 myserver:/tmp/trinetra
+ssh myserver mkdir -p ~/trinetra-download
+scp dist/trinetra-linux-arm64 myserver:~/trinetra-download/trinetra
 ```
 
 The two plugin binaries build the same way, with no build tag, from their own
@@ -142,19 +143,19 @@ GOOS=linux GOARCH=arm64 go build -o dist/trinetra-web-linux-arm64 ./cmd/trinetra
 
 (`make cross` builds this whole matrix, plus `trinetra`, for every
 supported platform in one pass.) Copy whichever of them you want next to
-`/tmp/trinetra` on the server; `trinetra install` picks up whatever it
-finds beside the SOURCE binary it is installing and installs it too (see
-step 3 below).
+`~/trinetra-download/trinetra` on the server; `trinetra install` picks up
+whatever it finds beside the SOURCE binary it is installing and installs it
+too (see step 3 below).
 
-Either way, you now have an executable at `/tmp/trinetra` on the host, ready
-to install.
+Either way, you now have an executable at `~/trinetra-download/trinetra` on
+the host, ready to install.
 
 ## 3. Install as a systemd service
 
 One command turns that loose binary into a managed, boot-persistent service:
 
 ```bash
-sudo /tmp/trinetra install
+sudo ~/trinetra-download/trinetra install
 ```
 
 If you downloaded `manifest.json`/`manifest.ci.sig`/`manifest.maint.sig`
@@ -162,12 +163,12 @@ alongside the binaries in step 2, add `--require-signed` to refuse the
 install outright unless both signatures verify:
 
 ```bash
-sudo /tmp/trinetra install --require-signed
+sudo ~/trinetra-download/trinetra install --require-signed
 ```
 
 That single command does nine things. It is worth knowing each one, because
-this is the moment your host goes from "has a binary in /tmp" to "runs a
-monitored service."
+this is the moment your host goes from "has a binary in a download directory"
+to "runs a monitored service."
 
 0. **Verifies the release, when a manifest is present.** If `manifest.json`
    sits next to the binary, install checks both signatures against the
@@ -312,12 +313,12 @@ install`; the migration summary ends with a `WARNING:` line for each old
 plugin that has no new counterpart.
 
 ```bash
-cd /tmp && arch=linux-arm64     # the same loop as step 2
+mkdir -p ~/trinetra-download && cd ~/trinetra-download && arch=linux-arm64     # the same loop as step 2
 for b in trinetra trinetra-ctl trinetra-web; do
   curl -fsSL -o "$b" "https://github.com/InfoDiveLabs/trinetra/releases/latest/download/$b-$arch"
 done
 chmod +x trinetra trinetra-ctl trinetra-web
-sudo /tmp/trinetra install
+sudo ./trinetra install
 ```
 
 Before the normal install steps run, this:

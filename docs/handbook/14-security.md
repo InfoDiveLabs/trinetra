@@ -427,12 +427,21 @@ binary compiles in a key set without it.
   the first public release. GitHub build provenance
   ([below](#optional-github-build-provenance)) records which workflow run
   built each binary, but it is issued by the same CI.
+- **No build provenance attestation yet, either.** GitHub artifact
+  attestations aren't available for private repositories on this org's
+  current plan, so `release.yml`'s `actions/attest-build-provenance` step is
+  conditioned on the repo being public
+  (`if: ${{ !github.event.repository.private }}`) and is simply skipped for
+  now -- it does not fail the release. It starts producing attestations
+  automatically the moment the repository goes public, with no workflow
+  change needed.
 - **No required reviewer on the `release` environment yet.** GitHub does not
   offer environment reviewers for this private repository, so the
   maintainer's offline co-signature is the approval gate today. The
   environment is still restricted to `v*` tags (and `channels` to `main`), so
   a branch cannot reach either signing key. A required reviewer is added
-  when the repository goes public.
+  when the repository goes public -- the same launch moment build-provenance
+  attestations switch on above.
 - **A host that never verified a pointer is never freeze-alerted** (see
   above). Its `update status` shows why.
 - **A pointer-key compromise can hold hosts back** without an alert, as in the
@@ -559,8 +568,12 @@ sudo ./trinetra install --require-signed
 ### Optional: GitHub build provenance
 
 The release workflow also records a GitHub build-provenance attestation for
-each binary. With the GitHub CLI and access to the repository you can check
-which workflow run produced a file:
+each binary -- **once the repository is public.** GitHub doesn't offer
+artifact attestations for private repositories on this org's current plan,
+so `release.yml` skips that step entirely while the repo is private (see
+[Honest limits](#honest-limits)); there is nothing to verify here until then.
+With the GitHub CLI and access to the repository you can check which
+workflow run produced a file:
 
 ```bash
 gh attestation verify trinetra-linux-amd64 --repo InfoDiveLabs/trinetra

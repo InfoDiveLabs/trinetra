@@ -327,6 +327,13 @@ repository goes public. The deployment restrictions already mean a run from
 any other ref -- a feature branch, or a `workflow_dispatch` from one -- can
 never reach either signing key.
 
+For the same private-repo-plan reason, `release.yml`'s
+`actions/attest-build-provenance` step (build-provenance attestations) is
+conditioned on the repo being public and is skipped, not failed, until then.
+Both the required-reviewer gate above and build-provenance attestations turn
+on at the same launch moment, when the repository goes public -- see
+[Security: Honest limits](14-security.md#honest-limits).
+
 ### Publishing a release
 
 1. Push a tag `vX.Y.Z` (or `vX.Y.Z-beta.N` for a beta prerelease).
@@ -357,9 +364,11 @@ never reach either signing key.
    final release. Pointers expire 14 days after they are issued, so the
    weekly run is what keeps a quiet channel from looking frozen.
 
-   A run triggered by the publish event runs against the release's tag, not
-   `main`; if the `channels` environment's main-only rule holds that run
-   back, refresh the pointers by hand right after publishing:
+   A run triggered by the publish event runs against the release's tag, and
+   the `channels` environment allows both the `main` branch and `v*` tags, so
+   this run goes through automatically right after publishing -- no manual
+   step required. If you want to refresh the pointers sooner (or re-run after
+   a failure) you can always trigger it by hand:
 
    ```bash
    gh workflow run channels.yml --ref main
