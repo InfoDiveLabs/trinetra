@@ -3,9 +3,12 @@
 package main
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
 // TestSignRoleMaintTestAbsentInDefaultBuild only applies to the default
@@ -35,15 +38,31 @@ func TestTestKeysFlagsRefusedInDefaultBuild(t *testing.T) {
 	}
 }
 
-// TestManifestKeysFromBinaryRefusesEmptyKeys is R19: --keys-from-binary
-// copies this tool's compiled-in ProductionKeys into manifest.keys; with no
-// keys compiled in (default build before the key ceremony) it refuses
-// rather than writing an empty key set.
-func TestManifestKeysFromBinaryRefusesEmptyKeys(t *testing.T) {
+// TestManifestKeysFromBinaryFillsProductionKeys is R19: --keys-from-binary
+// copies this tool's compiled-in ProductionKeys into manifest.keys, so the
+// maintainer's cosign sees "keys: unchanged" unless a rotation ships.
+func TestManifestKeysFromBinaryFillsProductionKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeAllReleaseFiles(t, dir)
 	if code := run([]string{"manifest", "--dir", dir, "--version", "0.5.0", "--channel", "stable",
-		"--min-upgrade-from", "0.4.1", "--published", "2026-10-01T10:00:00Z", "--keys-from-binary"}); code == 0 {
-		t.Fatal("manifest --keys-from-binary accepted an empty compiled-in key set")
+		"--min-upgrade-from", "0.4.1", "--published", "2026-10-01T10:00:00Z", "--keys-from-binary"}); code != 0 {
+		t.Fatalf("manifest --keys-from-binary exit %d", code)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := update.DecodeManifest(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := update.ProductionKeys()
+	if len(m.Keys.CI) != len(k.CI) || len(m.Keys.Maint) != len(k.Maint) || len(m.Keys.Pointer) != len(k.Pointer) {
+		t.Fatalf("manifest keys %+v do not match the compiled-in key set sizes", m.Keys)
+	}
+	for i, pk := range k.Maint {
+		if m.Keys.Maint[i] != base64.StdEncoding.EncodeToString(pk) {
+			t.Fatalf("manifest maint key %d = %s, want the compiled-in key", i, m.Keys.Maint[i])
+		}
 	}
 }
