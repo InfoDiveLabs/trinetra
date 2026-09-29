@@ -8,6 +8,9 @@ able to forge one, what happens when an update goes wrong, and what each of
 the other layers (web UI, fleet, plugins, control socket, secrets, audit)
 protects against. It also says plainly what these defences do **not** cover.
 
+If you only want to check a download by hand, jump to
+[Verify a download yourself](#verify-a-download-yourself).
+
 - [Trust boundaries](#trust-boundaries)
 - [Signed releases](#signed-releases)
   - [Keys and roles](#keys-and-roles)
@@ -19,6 +22,7 @@ protects against. It also says plainly what these defences do **not** cover.
   - [The guard, the watchdog and automatic rollback](#the-guard-the-watchdog-and-automatic-rollback)
 - [If a key is compromised](#if-a-key-is-compromised)
 - [Honest limits](#honest-limits)
+- [Verify a download yourself](#verify-a-download-yourself)
 - [Other security layers](#other-security-layers)
 - [Reporting a vulnerability](#reporting-a-vulnerability)
 
@@ -420,7 +424,8 @@ binary compiles in a key set without it.
   backdoored binary from clean source, and the maintainer would co-sign its
   hash. A **reproducible-rebuild check** inside `trinetra-release cosign`
   (rebuild from the tag, compare hashes, refuse on mismatch) is planned before
-  the first public release. GitHub build provenance records which workflow run
+  the first public release. GitHub build provenance
+  ([below](#optional-github-build-provenance)) records which workflow run
   built each binary, but it is issued by the same CI.
 - **No required reviewer on the `release` environment yet.** GitHub does not
   offer environment reviewers for this private repository, so the
@@ -439,6 +444,146 @@ binary compiles in a key set without it.
   through the fleet master is planned (see
   [Roadmap and status](12-roadmap-and-status.md)), with the same rule that
   the master is transport only.
+
+## Verify a download yourself
+
+You do not have to take trinetra's word that a release is genuine. With
+standard tools you can check the same two things a host checks: that each
+binary matches `manifest.json`, and that `manifest.json` carries a valid CI
+signature **and** a valid maintainer signature from the
+[published keys](#the-published-release-keys).
+
+**You need** `sha256sum` (Linux; on macOS use `shasum -a 256`), and **OpenSSL
+3.0 or newer** for the signatures. macOS ships LibreSSL as `/usr/bin/openssl`,
+which cannot verify raw Ed25519 signatures (it fails with "unsupported
+algorithm"); install OpenSSL 3 with `brew install openssl@3` and call it as
+`"$(brew --prefix openssl@3)/bin/openssl"`. `openssl version` must print
+`OpenSSL 3.x`. `jq` is optional.
+
+### Download a release into one directory
+
+Keep the release's own file names (with the `-linux-<arch>` suffix) while you
+verify. Download the binaries you want plus the manifest and both signatures:
+
+```bash
+mkdir trinetra-release && cd trinetra-release
+arch=linux-amd64     # or linux-arm64, linux-arm
+base=https://github.com/InfoDiveLabs/trinetra/releases/latest/download
+for f in trinetra-$arch trinetra-ctl-$arch trinetra-web-$arch \
+         manifest.json manifest.ci.sig manifest.maint.sig; do
+  curl -fsSL -o "$f" "$base/$f"
+done
+```
+
+### Step 1: check the binaries against the manifest
+
+With `jq`:
+
+```bash
+jq -r '.files[] | "\(.sha256)  \(.name)"' manifest.json | sha256sum -c --ignore-missing
+```
+
+Without `jq` (the manifest has one field per line, `name` before `sha256`):
+
+```bash
+awk -F'"' '/"name":/ {n=$4} /"sha256":/ {print $4 "  " n}' manifest.json | sha256sum -c --ignore-missing
+```
+
+On macOS, replace `sha256sum` with `shasum -a 256` in either line. Every file
+you downloaded must print `OK` and the command must exit 0. `--ignore-missing`
+skips the architectures you did not download; with no matching file at all it
+fails ("no file was verified").
+
+This step alone only proves the files match *a* manifest. Step 2 proves the
+manifest is genuine. Do both.
+
+### Step 2: verify both signatures with OpenSSL 3
+
+Build the exact message both signatures cover: the line
+`trinetra-release-v1` plus one newline, then `manifest.json` byte for byte.
+Use `printf` (not `echo`) so there is exactly one newline, and `cat` so the
+manifest is not altered:
+
+```bash
+{ printf 'trinetra-release-v1\n'; cat manifest.json; } > signed-message.bin
+```
+
+Decode the two signature files (one line of base64 each) into raw 64-byte
+signatures:
+
+```bash
+openssl base64 -d -A -in manifest.ci.sig    -out ci.sig.bin
+openssl base64 -d -A -in manifest.maint.sig -out maint.sig.bin
+```
+
+Turn the published keys into PEM public keys. An Ed25519 public key in PEM
+form is the fixed 12-byte DER header `302a300506032b6570032100` followed by
+the 32 raw key bytes, base64-encoded. Because the header is a multiple of
+three bytes long, its base64 (`MCowBQYDK2VwAyEA`) simply goes in front of the
+key's own base64, so no binary tools are needed:
+
+```bash
+pem() { printf '%s\n' '-----BEGIN PUBLIC KEY-----' "MCowBQYDK2VwAyEA$1" '-----END PUBLIC KEY-----'; }
+pem 'qYrzYRct8xy9iJR6Xm8ow+u33GMc8fAoqaX9GZh4+N4=' > ci-current.pem
+pem 'UMoRKBR5eR908Tu+9wQ6les9m6Aa4pZBbITaJ3QSJuI=' > ci-next.pem
+pem 'CCoIiySogUWY6OFBHGFfRTGFDOnUp+teJKY/Dxh1uaQ=' > maint-current.pem
+pem '/GzPC6QaaouUzZCnnQODcpU07ZStPHIjZ5I1A4fGiAE=' > maint-next.pem
+```
+
+Verify the CI signature with the CI key and the maintainer signature with the
+maintainer key:
+
+```bash
+openssl pkeyutl -verify -pubin -inkey ci-current.pem    -rawin -in signed-message.bin -sigfile ci.sig.bin
+openssl pkeyutl -verify -pubin -inkey maint-current.pem -rawin -in signed-message.bin -sigfile maint.sig.bin
+```
+
+Each must print `Signature Verified Successfully` and exit 0. A release made
+after a key rotation may be signed with a role's **next** key instead: if a
+`current` check prints `Signature Verification Failure`, repeat it with
+`ci-next.pem` or `maint-next.pem`. The release is genuine only when **both**
+roles pass, each with one of its own two keys. A CI signature checked against
+a maintainer key, or either signature checked against a modified manifest,
+fails.
+
+If both steps pass, the binaries are exactly what CI built and the maintainer
+approved. Drop the architecture suffix and install as usual; keep the
+manifest and signatures next to the binaries so `install` checks them again:
+
+```bash
+for b in trinetra trinetra-ctl trinetra-web; do mv "$b-$arch" "$b"; done
+chmod +x trinetra trinetra-ctl trinetra-web
+sudo ./trinetra install --require-signed
+```
+
+### Optional: GitHub build provenance
+
+The release workflow also records a GitHub build-provenance attestation for
+each binary. With the GitHub CLI and access to the repository you can check
+which workflow run produced a file:
+
+```bash
+gh attestation verify trinetra-linux-amd64 --repo InfoDiveLabs/trinetra
+```
+
+This is a useful extra, not a substitute for step 2: it is issued by the same
+CI that makes the first signature, and it says nothing about the maintainer's
+approval.
+
+### The easy path
+
+Everything above is what trinetra does for you on every install and update:
+
+- `sudo ./trinetra install --require-signed`, run from a directory holding
+  `manifest.json`, both `.sig` files and the binaries, verifies both
+  signatures and every binary's hash, and refuses before copying anything
+  on any mismatch (without the flag, a missing manifest is only a warning;
+  a present one is always verified).
+- `sudo trinetra update apply --bundle DIR` does the same for an upgrade from
+  a directory laid out like the one above (release file names kept), then
+  runs the guarded, rolled-back-on-failure swap.
+- `sudo trinetra update apply` does it against GitHub, via the signed
+  channel pointer.
 
 ## Other security layers
 

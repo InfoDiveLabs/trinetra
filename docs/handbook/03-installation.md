@@ -78,23 +78,10 @@ done
 chmod +x trinetra trinetra-ctl trinetra-web
 ```
 
-Verify what you downloaded before trusting it. Each release includes a
-`checksums.txt` file; compute the SHA-256 of each binary and confirm it matches
-the line for that asset:
-
-```bash
-sha256sum trinetra trinetra-ctl trinetra-web
-```
-
-Compare each printed hash against the matching line in `checksums.txt`. If any
-differ, do not install; re-download and try again.
-
-**Stronger: verify with the signed manifest instead.** Every release also
-publishes `manifest.json` plus two detached signatures over it --
-`manifest.ci.sig` from the build pipeline, `manifest.maint.sig` from a
-maintainer who reviewed and co-signed it -- covering exact file sizes and
-SHA-256 hashes, cryptographically rather than by a hash you compare by eye.
-Download those three files into the same directory as the binaries:
+Now fetch the signed release manifest and its two detached signatures into
+the same directory. `manifest.json` lists every release file's exact size and
+SHA-256; `manifest.ci.sig` is the build pipeline's signature over it and
+`manifest.maint.sig` a maintainer's independent co-signature:
 
 ```bash
 for f in manifest.json manifest.ci.sig manifest.maint.sig; do
@@ -102,15 +89,24 @@ for f in manifest.json manifest.ci.sig manifest.maint.sig; do
 done
 ```
 
-then pass `--require-signed` in step 3 below: `trinetra install
+Then pass `--require-signed` in step 3 below: `trinetra install
 --require-signed` refuses outright, before touching anything, unless both
 signatures verify against the release keys compiled into the binary you are
-running and every downloaded file's SHA-256 matches the signed manifest.
-Without the flag, a manifest present next to the binaries is still verified
-the same way, but its absence is only a warning, not a refusal -- see
+running and every binary's SHA-256 matches the signed manifest. Without the
+flag, a manifest present next to the binaries is still verified the same way,
+but its absence is only a warning, not a refusal -- see
 [Command reference: `install`](11-command-reference.md#1-trinetra-daemon--cli).
 This is the same verification `trinetra update apply` runs on every
 subsequent upgrade -- see [Operations: Updating](10-operations.md#updating).
+
+**Want to check it without trusting trinetra itself?** Follow
+[Security: Verify a download yourself](14-security.md#verify-a-download-yourself):
+a `sha256sum -c` of each binary against `manifest.json`, then both ed25519
+signatures checked with OpenSSL 3 against the
+[published release keys](14-security.md#the-published-release-keys). It uses
+only standard tools. (The release also has a `checksums.txt`; it is
+unsigned, lists the files under their `-linux-<arch>` names, and is never
+read by trinetra. The signed manifest supersedes it.)
 
 The two plugins are optional. Drop `trinetra-ctl` / `trinetra-web` from
 the loop if you only want the Telegram daemon; `trinetra install` (step 3)
@@ -202,8 +198,8 @@ monitored service."
    > `trinetra-ctl` / `trinetra-web` sit beside the `trinetra` binary
    > and records *their* checksums as the trust anchor (step 4), it trusts the
    > contents of that directory. Only run `sudo trinetra install` from a
-   > directory you control and whose binaries you verified (for example the
-   > release assets you checksummed against `checksums.txt` in step 2). Do not
+   > directory you control and whose binaries you verified (for example with
+   > `--require-signed` and the signed manifest from step 2). Do not
    > run it from a world-writable or shared location like `/tmp` where another
    > user could have dropped a look-alike `trinetra-ctl`/`trinetra-web`
    > beside your binary. This is operator responsibility: install runs as root
