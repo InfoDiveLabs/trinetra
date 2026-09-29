@@ -37,7 +37,7 @@ var signMaintTest func(in, out string) error
 
 func run(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: trinetra-release <keygen|manifest|sign|pointer|verify|fingerprints|cosign> [args]")
+		fmt.Fprintln(os.Stderr, "usage: trinetra-release <keygen|manifest|sign|pointer|latest|verify|fingerprints|cosign> [args]")
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
@@ -51,6 +51,8 @@ func run(args []string) int {
 		err = cmdSign(rest)
 	case "pointer":
 		err = cmdPointer(rest)
+	case "latest":
+		err = cmdLatest(rest)
 	case "verify":
 		err = cmdVerify(rest)
 	case "fingerprints":

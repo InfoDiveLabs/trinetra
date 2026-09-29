@@ -11,8 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: channels
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with: { go-version-file: go.mod }
       - name: Sign channel pointers
         env:
@@ -22,10 +24,16 @@ jobs:
           set -euo pipefail
           mkdir -p ch
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          STABLE=$(gh release list --exclude-drafts --exclude-pre-releases --limit 50 --json tagName -q '[.[] | select(.tagName|startswith("v"))][0].tagName')
-          BETA=$(gh release list --exclude-drafts --limit 50 --json tagName -q '[.[] | select(.tagName|startswith("v"))][0].tagName')
+          # `gh release list` orders by creation date, not version, so the
+          # highest version is picked in Go (trinetra-release latest) using
+          # update.ParseVersion/CompareVersions ordering, not `[0]` off this
+          # list (review F2/I2). One release listing is reused for both
+          # channels.
+          RELEASES=$(gh release list --exclude-drafts --limit 100 --json tagName,isPrerelease,isDraft)
+          STABLE=$(echo "$RELEASES" | go run ./cmd/trinetra-release latest --channel stable)
+          BETA=$(echo "$RELEASES" | go run ./cmd/trinetra-release latest --channel beta)
           for pair in "stable:$STABLE" "beta:$BETA"; do
-            ch=${pair%%:*}; v=${pair#*:}; v=${v#v}
+            ch=${pair%%:*}; v=${pair#*:}
             [ -n "$v" ] || continue
             go run ./cmd/trinetra-release pointer --channel "$ch" --version "$v" --issued "$NOW" --out "ch/$ch.json"
             go run ./cmd/trinetra-release sign --role pointer --in "ch/$ch.json" --out "ch/$ch.json.sig"
