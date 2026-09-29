@@ -51,6 +51,21 @@
 {{range .EditModals}}{{template "chanModalBody" .}}{{end}}
 {{end}}
 
+{{/* chanSecretClear renders the one-line "leave blank to keep / clear it"
+     row a secret settings field shows under its input once it holds a
+     value -- takes (dict "Key" "<settings key>" "Set" <bool>) since
+     html/template block args are a single pipeline. Sits OUTSIDE the
+     field's own <label class="field">...</label> (never nested inside it)
+     so the checkbox gets its own real <label>, both on one line, left-
+     aligned, in the same muted small text as the rest of a field's hints
+     (.note -- the class the other checkbox+label rows in this template,
+     e.g. critical_overrides_quiet/enabled below, and the policy-step
+     channel checkboxes (fleet_alerting.html) already use). #139 follow-up:
+     the original version nested a full <label> inside the field's own
+     <label>, which both floated the checkbox onto its own centered line
+     and wasn't valid HTML (label-in-label). */}}
+{{define "chanSecretClear"}}{{if .Set}}<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;grid-column:1/-1;margin:-8px 0 14px"><span class="note">Leave blank to keep the current value.</span><label style="display:flex;align-items:center;gap:6px;width:auto;white-space:nowrap"><input type="checkbox" name="settings.{{.Key}}.clear" value="1"><span class="note">Clear the stored value</span></label></div>{{end}}{{end}}
+
 {{define "chanModalBody"}}
 <div class="modal" id="{{.ID}}"><div class="box">
   <form method="post" action="{{.Action}}">
@@ -68,7 +83,8 @@
         </select></label>
 
       <div data-cond="telegram" class="cond{{if eq .Type "telegram"}} on{{end}}">
-        <label class="field"><span class="lb">Bot token</span><input type="text" name="settings.token" value="{{index .SettingsMasked "token"}}" autocomplete="off" placeholder="{{if index .SettingsSet "token"}}(set){{else}}(not set) from @BotFather (or leave blank to use telegram.token){{end}}">{{if index .SettingsSet "token"}}<span class="hint">Currently set &mdash; leave blank to keep it, or <label><input type="checkbox" name="settings.token.clear" value="1"> clear it</label>.</span>{{end}}</label>
+        <label class="field"><span class="lb">Bot token</span><input type="text" name="settings.token" value="{{index .SettingsMasked "token"}}" autocomplete="off" placeholder="{{if index .SettingsSet "token"}}(set){{else}}(not set) from @BotFather (or leave blank to use telegram.token){{end}}"></label>
+        {{template "chanSecretClear" (dict "Key" "token" "Set" (index .SettingsSet "token"))}}
         <label class="field"><span class="lb">Chat ID</span><input type="text" name="settings.chat_id" value="{{index .SettingsMasked "chat_id"}}" placeholder="your numeric chat id (required unless telegram.chat_id is set)"></label>
       </div>
       <div data-cond="email" class="cond{{if eq .Type "email"}} on{{end}}">
@@ -76,7 +92,8 @@
           <label class="field"><span class="lb">SMTP host</span><input type="text" name="settings.host" value="{{index .SettingsMasked "host"}}"></label>
           <label class="field"><span class="lb">Port</span><input type="number" name="settings.port" value="{{index .SettingsMasked "port"}}" placeholder="587"></label>
           <label class="field"><span class="lb">Username</span><input type="text" name="settings.username" value="{{index .SettingsMasked "username"}}"></label>
-          <label class="field"><span class="lb">Password</span><input type="password" name="settings.password" value="{{index .SettingsMasked "password"}}" autocomplete="off" placeholder="{{if index .SettingsSet "password"}}(set){{else}}(not set) app password{{end}}">{{if index .SettingsSet "password"}}<span class="hint">Currently set &mdash; leave blank to keep it, or <label><input type="checkbox" name="settings.password.clear" value="1"> clear it</label>.</span>{{end}}</label>
+          <label class="field"><span class="lb">Password</span><input type="password" name="settings.password" value="{{index .SettingsMasked "password"}}" autocomplete="off" placeholder="{{if index .SettingsSet "password"}}(set){{else}}(not set) app password{{end}}"></label>
+          {{template "chanSecretClear" (dict "Key" "password" "Set" (index .SettingsSet "password"))}}
           <label class="field"><span class="lb">From</span><input type="text" name="settings.from" value="{{index .SettingsMasked "from"}}"></label>
           <label class="field"><span class="lb">To</span><input type="text" name="settings.to" value="{{index .SettingsMasked "to"}}"></label>
         </div>
@@ -84,13 +101,16 @@
       <div data-cond="ntfy" class="cond{{if eq .Type "ntfy"}} on{{end}}">
         <label class="field"><span class="lb">Server</span><input type="text" name="settings.server" value="{{index .SettingsMasked "server"}}" placeholder="https://ntfy.sh"></label>
         <label class="field"><span class="lb">Topic</span><input type="text" name="settings.topic" value="{{index .SettingsMasked "topic"}}"></label>
-        <label class="field"><span class="lb">Access token (optional)</span><input type="text" name="settings.token" value="{{index .SettingsMasked "token"}}" autocomplete="off" placeholder="{{if index .SettingsSet "token"}}(set){{else}}(not set) for a protected topic, or a Gotify application token{{end}}">{{if index .SettingsSet "token"}}<span class="hint">Currently set &mdash; leave blank to keep it, or <label><input type="checkbox" name="settings.token.clear" value="1"> clear it</label>.</span>{{end}}</label>
+        <label class="field"><span class="lb">Access token (optional)</span><input type="text" name="settings.token" value="{{index .SettingsMasked "token"}}" autocomplete="off" placeholder="{{if index .SettingsSet "token"}}(set){{else}}(not set) for a protected topic, or a Gotify application token{{end}}"></label>
+        {{template "chanSecretClear" (dict "Key" "token" "Set" (index .SettingsSet "token"))}}
       </div>
       <div data-cond="slack" class="cond{{if eq .Type "slack"}} on{{end}}">
-        <label class="field"><span class="lb">Webhook URL</span><input type="text" name="settings.url" value="{{if eq .Type "slack"}}{{index .SettingsMasked "url"}}{{end}}" autocomplete="off" placeholder="{{if and (eq .Type "slack") (index .SettingsSet "url")}}(set){{else}}(not set) https://hooks.slack.com/services/…{{end}}">{{if and (eq .Type "slack") (index .SettingsSet "url")}}<span class="hint">Currently set &mdash; leave blank to keep it, or <label><input type="checkbox" name="settings.url.clear" value="1"> clear it</label>.</span>{{end}}</label>
+        <label class="field"><span class="lb">Webhook URL</span><input type="text" name="settings.url" value="{{if eq .Type "slack"}}{{index .SettingsMasked "url"}}{{end}}" autocomplete="off" placeholder="{{if and (eq .Type "slack") (index .SettingsSet "url")}}(set){{else}}(not set) https://hooks.slack.com/services/…{{end}}"></label>
+        {{template "chanSecretClear" (dict "Key" "url" "Set" (and (eq .Type "slack") (index .SettingsSet "url")))}}
       </div>
       <div data-cond="webhook" class="cond{{if eq .Type "webhook"}} on{{end}}">
-        <label class="field"><span class="lb">URL</span><input type="text" name="settings.url" value="{{if eq .Type "webhook"}}{{index .SettingsMasked "url"}}{{end}}" autocomplete="off" placeholder="{{if and (eq .Type "webhook") (index .SettingsSet "url")}}(set){{else}}(not set) https://…{{end}}">{{if and (eq .Type "webhook") (index .SettingsSet "url")}}<span class="hint">Currently set &mdash; leave blank to keep it, or <label><input type="checkbox" name="settings.url.clear" value="1"> clear it</label>.</span>{{end}}</label>
+        <label class="field"><span class="lb">URL</span><input type="text" name="settings.url" value="{{if eq .Type "webhook"}}{{index .SettingsMasked "url"}}{{end}}" autocomplete="off" placeholder="{{if and (eq .Type "webhook") (index .SettingsSet "url")}}(set){{else}}(not set) https://…{{end}}"></label>
+        {{template "chanSecretClear" (dict "Key" "url" "Set" (and (eq .Type "webhook") (index .SettingsSet "url")))}}
         <label class="field"><span class="lb">Method</span>
           <select name="settings.method">
             <option value="POST" {{if ne (index .SettingsMasked "method") "PUT"}}selected{{end}}>POST</option>
