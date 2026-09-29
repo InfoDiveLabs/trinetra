@@ -23,6 +23,14 @@ import "os"
 // e2eHooksEnabled is true only in a trinetra_testkeys build.
 const e2eHooksEnabled = true
 
+// e2eCrashOnStart is empty unless the e2e harness's "crashes on start"
+// fixture stamps it with
+// -ldflags "-X github.com/InfoDiveLabs/trinetra/internal/trinetra.e2eCrashOnStart=1",
+// in which case `trinetra daemon` exits immediately (a release that must
+// fail its self-update health check). Default builds make it a constant ""
+// (update_e2e_hooks.go), so this exists only in trinetra_testkeys builds.
+var e2eCrashOnStart string
+
 // e2eRestartCmd reports the shell command TRINETRA_E2E_RESTART_CMD names, if
 // set, run via `sh -c`.
 func e2eRestartCmd() (cmd string, args []string, ok bool) {

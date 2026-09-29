@@ -27,7 +27,7 @@
 #   channels/        beta.json + beta.json.sig, naming v0.5.1 (scenario 2).
 #
 # Every "good" release is signed with the deterministic test keys
-# (update.TestKeySet(): CI seed 1, maintainer seed 2 via `sign --role
+# (updatetest.TestKeySet(): CI seed 1, maintainer seed 2 via `sign --role
 # maint-test`, channel-pointer seed 3), which is exactly what a
 # trinetra_testkeys build's ProductionKeys() trusts (internal/update/keys_testkeys.go).
 set -euo pipefail
@@ -39,7 +39,7 @@ GOARCH=$(go env GOARCH)
 PUBLISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Deterministic test-signer seeds (base64 of 32 bytes, all equal to the seed
-# byte -- see update.NewTestSigner). Seed 9 is NOT in update.TestKeySet(), so
+# byte -- see updatetest.NewTestSigner). Seed 9 is NOT in updatetest.TestKeySet(), so
 # signing with it produces a signature that fails verification against every
 # trusted CI key: exactly the "bad CI signature" fixture.
 SEED_CI=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=

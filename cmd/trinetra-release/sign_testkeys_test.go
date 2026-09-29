@@ -5,9 +5,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/InfoDiveLabs/trinetra/internal/update"
+	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
 // TestSignRoleMaintTestSignsWithTestSigner2 only applies to the
@@ -28,8 +29,51 @@ func TestSignRoleMaintTestSignsWithTestSigner2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := update.NewTestSigner(2).SignRelease(body)
+	want := updatetest.NewTestSigner(2).SignRelease(body)
 	if string(got) != string(want) {
 		t.Fatalf("signature mismatch:\n got  %q\n want %q", got, want)
+	}
+}
+
+func TestVerifyCommandWithTestKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeAllReleaseFiles(t, dir)
+	if code := run([]string{"manifest", "--dir", dir, "--version", "0.5.0", "--channel", "stable", "--min-upgrade-from", "0.4.1", "--published", "2026-10-01T10:00:00Z"}); code != 0 {
+		t.Fatalf("manifest exit %d", code)
+	}
+	mb, _ := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	os.WriteFile(filepath.Join(dir, "manifest.ci.sig"), updatetest.NewTestSigner(1).SignRelease(mb), 0o644)
+	os.WriteFile(filepath.Join(dir, "manifest.maint.sig"), updatetest.NewTestSigner(2).SignRelease(mb), 0o644)
+	if code := run([]string{"verify", dir, "--testkeys"}); code != 0 {
+		t.Fatalf("verify exit %d", code)
+	}
+	// Tampering with a release file must fail verification.
+	os.WriteFile(filepath.Join(dir, "trinetra-linux-amd64"), []byte("tampered"), 0o755)
+	if code := run([]string{"verify", dir, "--testkeys"}); code == 0 {
+		t.Fatal("verify accepted a tampered file")
+	}
+}
+
+// TestVerifyTestKeysPrintsWarningBanner covers review M6: a --testkeys
+// verification must be impossible to mistake for a real one.
+func TestVerifyTestKeysPrintsWarningBanner(t *testing.T) {
+	dir := t.TempDir()
+	writeAllReleaseFiles(t, dir)
+	if code := run([]string{"manifest", "--dir", dir, "--version", "0.5.0", "--channel", "stable", "--min-upgrade-from", "0.4.1", "--published", "2026-10-01T10:00:00Z"}); code != 0 {
+		t.Fatalf("manifest exit %d", code)
+	}
+	mb, _ := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	os.WriteFile(filepath.Join(dir, "manifest.ci.sig"), updatetest.NewTestSigner(1).SignRelease(mb), 0o644)
+	os.WriteFile(filepath.Join(dir, "manifest.maint.sig"), updatetest.NewTestSigner(2).SignRelease(mb), 0o644)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = run([]string{"verify", dir, "--testkeys"})
+	})
+	if code != 0 {
+		t.Fatalf("verify exit %d", code)
+	}
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "TEST keys") {
+		t.Fatalf("missing test-keys warning banner in output: %q", out)
 	}
 }

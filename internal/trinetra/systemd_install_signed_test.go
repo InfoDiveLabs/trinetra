@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/InfoDiveLabs/trinetra/internal/update"
+	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
 func TestVerifyInstallBundle(t *testing.T) {
@@ -22,8 +23,8 @@ func TestVerifyInstallBundle(t *testing.T) {
 	m.Files[0].Arch = runtime.GOARCH
 	mb, _ := json.Marshal(m)
 	os.WriteFile(filepath.Join(dir, "manifest.json"), mb, 0o644)
-	os.WriteFile(filepath.Join(dir, "manifest.ci.sig"), update.NewTestSigner(1).SignRelease(mb), 0o644)
-	os.WriteFile(filepath.Join(dir, "manifest.maint.sig"), update.NewTestSigner(2).SignRelease(mb), 0o644)
+	os.WriteFile(filepath.Join(dir, "manifest.ci.sig"), updatetest.NewTestSigner(1).SignRelease(mb), 0o644)
+	os.WriteFile(filepath.Join(dir, "manifest.maint.sig"), updatetest.NewTestSigner(2).SignRelease(mb), 0o644)
 
 	if _, err := verifyInstallBundle(testKeys(), filepath.Join(dir, "trinetra"), []string{"trinetra"}); err != nil {
 		t.Fatalf("valid bundle refused: %v", err)

@@ -28,10 +28,9 @@ import (
 // maintainer key passphrase, signs, uploads the maintainer signature,
 // re-verifies the full draft, and publishes it.
 //
-// --testkeys switches the trust anchor to update.TestKeySet() instead of
-// update.ProductionKeys() (for the e2e harness — this tool is never built
-// with the trinetra_testkeys tag, so ProductionKeys() alone can't do this)
-// and skips the decrypted-key-is-a-known-maintainer-key check, which would
+// --testkeys (trinetra_testkeys builds only, R22) switches the trust anchor
+// to the deterministic test key set instead of update.ProductionKeys() and
+// skips the decrypted-key-is-a-known-maintainer-key check, which would
 // otherwise reject every test key.
 func cmdCosign(args []string) error {
 	version, repo, keyFile, testkeys, err := parseCosignArgs(args)
@@ -44,7 +43,10 @@ func cmdCosign(args []string) error {
 
 	prod := update.ProductionKeys()
 	if testkeys {
-		prod = update.TestKeySet()
+		if testKeySet == nil {
+			return fmt.Errorf("cosign: %w", errTestKeysUnavailable)
+		}
+		prod = testKeySet()
 	}
 
 	tmp, err := os.MkdirTemp("", "trinetra-cosign-")

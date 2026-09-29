@@ -12,6 +12,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/update"
+	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
 func TestUpdateResultAlert(t *testing.T) {
@@ -85,7 +86,7 @@ func TestRunDueCheckAlertsStaleOnceWhenCheckSucceeds(t *testing.T) {
 	src := channelSource{
 		channel: map[string][]byte{
 			"stable.json":     pb,
-			"stable.json.sig": update.NewTestSigner(3).SignPointer(pb),
+			"stable.json.sig": updatetest.NewTestSigner(3).SignPointer(pb),
 		},
 		release: signedRelease(t, "0.4.1", map[string][]byte{"trinetra-linux-amd64": []byte("x")}),
 	}

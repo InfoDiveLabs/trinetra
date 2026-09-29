@@ -20,3 +20,17 @@ func TestSignRoleMaintTestAbsentInDefaultBuild(t *testing.T) {
 		t.Fatal("sign --role maint-test succeeded in a default build")
 	}
 }
+
+// TestTestKeysFlagsRefusedInDefaultBuild is R22: a release build of this
+// tool carries no test trust anchor, so verify/cosign --testkeys refuse.
+func TestTestKeysFlagsRefusedInDefaultBuild(t *testing.T) {
+	if testKeySet != nil {
+		t.Fatal("testKeySet is set in a default build")
+	}
+	if code := run([]string{"verify", t.TempDir(), "--testkeys"}); code == 0 {
+		t.Fatal("verify --testkeys succeeded in a default build")
+	}
+	if code := run([]string{"cosign", "v1.2.3", "--testkeys", "--repo", "o/r", "--key", "k"}); code == 0 {
+		t.Fatal("cosign --testkeys succeeded in a default build")
+	}
+}

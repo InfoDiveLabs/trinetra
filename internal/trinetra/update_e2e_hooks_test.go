@@ -30,3 +30,8 @@ func TestE2EHooksIgnoredInReleaseBuild(t *testing.T) {
 		t.Fatalf("e2eGitHubBaseURL honoured TRINETRA_E2E_GITHUB_BASE_URL in a default build: %q", u)
 	}
 }
+
+// e2eCrashOnStart must be a compile-time constant in a default build (R22):
+// this declaration only compiles if it is one, so no -X stamp can enable the
+// crash-on-start hook in a release binary.
+const _ = e2eCrashOnStart

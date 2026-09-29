@@ -13,6 +13,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/update"
+	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
 func signedRelease(t *testing.T, version string, files map[string][]byte) mapSource {
@@ -26,13 +27,13 @@ func signedRelease(t *testing.T, version string, files map[string][]byte) mapSou
 	}
 	mb, _ := json.Marshal(m)
 	src["manifest.json"] = mb
-	src["manifest.ci.sig"] = update.NewTestSigner(1).SignRelease(mb)
-	src["manifest.maint.sig"] = update.NewTestSigner(2).SignRelease(mb)
+	src["manifest.ci.sig"] = updatetest.NewTestSigner(1).SignRelease(mb)
+	src["manifest.maint.sig"] = updatetest.NewTestSigner(2).SignRelease(mb)
 	return src
 }
 
 func testKeys() update.KeySet {
-	return update.KeySet{CI: []update.PublicKey{update.NewTestSigner(1).Public()}, Maint: []update.PublicKey{update.NewTestSigner(2).Public()}, Pointer: []update.PublicKey{update.NewTestSigner(3).Public()}}
+	return update.KeySet{CI: []update.PublicKey{updatetest.NewTestSigner(1).Public()}, Maint: []update.PublicKey{updatetest.NewTestSigner(2).Public()}, Pointer: []update.PublicKey{updatetest.NewTestSigner(3).Public()}}
 }
 
 // writeBundle writes a signed release bundle directory to disk (manifest,
@@ -60,8 +61,8 @@ func writeBundle(t *testing.T, version string, files map[string][]byte) string {
 		}
 	}
 	writeFile("manifest.json", mb)
-	writeFile("manifest.ci.sig", update.NewTestSigner(1).SignRelease(mb))
-	writeFile("manifest.maint.sig", update.NewTestSigner(2).SignRelease(mb))
+	writeFile("manifest.ci.sig", updatetest.NewTestSigner(1).SignRelease(mb))
+	writeFile("manifest.maint.sig", updatetest.NewTestSigner(2).SignRelease(mb))
 	return dir
 }
 

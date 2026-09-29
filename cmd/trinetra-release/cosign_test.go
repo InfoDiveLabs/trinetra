@@ -10,9 +10,10 @@ import (
 	"testing"
 
 	"github.com/InfoDiveLabs/trinetra/internal/update"
+	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
-// testPrivFromSeed builds the same ed25519.PrivateKey update.NewTestSigner
+// testPrivFromSeed builds the same ed25519.PrivateKey updatetest.NewTestSigner
 // would (a 32-byte seed filled with b), without needing access to
 // TestSigner's unexported private key field.
 func testPrivFromSeed(b byte) ed25519.PrivateKey {
@@ -38,21 +39,21 @@ func TestConfirmVersionRequiresExactMatch(t *testing.T) {
 
 func TestDiffManifestKeysReportsMismatch(t *testing.T) {
 	prod := update.KeySet{
-		CI:      []update.PublicKey{update.NewTestSigner(1).Public()},
-		Maint:   []update.PublicKey{update.NewTestSigner(2).Public()},
-		Pointer: []update.PublicKey{update.NewTestSigner(3).Public()},
+		CI:      []update.PublicKey{updatetest.NewTestSigner(1).Public()},
+		Maint:   []update.PublicKey{updatetest.NewTestSigner(2).Public()},
+		Pointer: []update.PublicKey{updatetest.NewTestSigner(3).Public()},
 	}
 	matching := update.ManifestKeys{
-		CI:      []string{base64.StdEncoding.EncodeToString(update.NewTestSigner(1).Public())},
-		Maint:   []string{base64.StdEncoding.EncodeToString(update.NewTestSigner(2).Public())},
-		Pointer: []string{base64.StdEncoding.EncodeToString(update.NewTestSigner(3).Public())},
+		CI:      []string{base64.StdEncoding.EncodeToString(updatetest.NewTestSigner(1).Public())},
+		Maint:   []string{base64.StdEncoding.EncodeToString(updatetest.NewTestSigner(2).Public())},
+		Pointer: []string{base64.StdEncoding.EncodeToString(updatetest.NewTestSigner(3).Public())},
 	}
 	if diffs := diffManifestKeys(matching, prod); len(diffs) != 0 {
 		t.Fatalf("expected no diffs for matching keys, got %v", diffs)
 	}
 
 	mismatched := update.ManifestKeys{
-		CI:      []string{base64.StdEncoding.EncodeToString(update.NewTestSigner(9).Public())},
+		CI:      []string{base64.StdEncoding.EncodeToString(updatetest.NewTestSigner(9).Public())},
 		Maint:   matching.Maint,
 		Pointer: matching.Pointer,
 	}
@@ -185,7 +186,7 @@ func TestCheckManifestVersionMatchesTag(t *testing.T) {
 
 // TestCheckMaintKeyTrusted covers review M5.
 func TestCheckMaintKeyTrusted(t *testing.T) {
-	prod := update.KeySet{Maint: []update.PublicKey{update.NewTestSigner(2).Public()}}
+	prod := update.KeySet{Maint: []update.PublicKey{updatetest.NewTestSigner(2).Public()}}
 	trusted := testPrivFromSeed(2)
 	untrusted := testPrivFromSeed(9)
 

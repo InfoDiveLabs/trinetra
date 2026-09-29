@@ -22,7 +22,7 @@ on exit, pass or fail.
 
 Every binary in this harness is built with `-tags trinetra_testkeys`
 (`internal/update/keys_testkeys.go`): `ProductionKeys()` then trusts the
-deterministic `update.TestKeySet()` (CI seed 1, maintainer seed 2, channel-pointer
+deterministic `updatetest.TestKeySet()` (CI seed 1, maintainer seed 2, channel-pointer
 seed 3) instead of this repo's real production keys, which start out empty
 (`internal/update/keys.go`) until the real key ceremony
 (docs/handbook/10-operations.md, "Release keys and releasing") has run. That
@@ -63,7 +63,7 @@ before.
 |---|---|---|
 | `v0.5.0` | good | scenario 1 (installed from `/releases/v0.5.0` as a local bundle) |
 | `v0.5.1` | good | scenario 2 (the beta channel pointer names it) |
-| `v0.5.2` | good signatures, but the core binary was built with `e2eCrashOnStart=1` (`internal/trinetra/daemon.go`) and exits immediately instead of starting the daemon | scenario 6 (rollback) |
+| `v0.5.2` | good signatures, but the core binary was built with `e2eCrashOnStart=1` (`internal/trinetra/update_e2e_hooks_testkeys.go`; a constant in release builds) and exits immediately instead of starting the daemon | scenario 6 (rollback) |
 | `v0.5.3-badci` | maintainer signature good, CI signature from an untrusted test key | scenario 3 |
 | `v0.5.4-badmaint` | CI signature good, no `manifest.maint.sig` at all | scenario 4 |
 | `v0.5.5-tampered` | good signatures over the original bytes, then one byte flipped in the binary afterwards | scenario 5 |

@@ -30,10 +30,21 @@ func main() {
 }
 
 // signMaintTest signs with the e2e-fixture maintainer test key
-// (update.NewTestSigner(2)). It is nil in a default build and set by
+// (updatetest.NewTestSigner(2)). It is nil in a default build and set by
 // sign_testkeys.go's init() only when built with the trinetra_testkeys tag,
 // so the "maint-test" sign role does not exist outside that build.
 var signMaintTest func(in, out string) error
+
+// testKeySet returns the deterministic test trust anchor
+// (updatetest.TestKeySet) for `verify --testkeys` and `cosign --testkeys`.
+// Like signMaintTest it is nil in a default build and set by
+// sign_testkeys.go only in a trinetra_testkeys build, so a release build of
+// this tool carries no test keys at all (R22).
+var testKeySet func() update.KeySet
+
+// errTestKeysUnavailable is returned by every --testkeys path in a default
+// build.
+var errTestKeysUnavailable = errors.New("--testkeys is only available in a trinetra_testkeys build")
 
 func run(args []string) int {
 	if len(args) == 0 {
@@ -326,7 +337,7 @@ func cmdSign(args []string) error {
 	return os.WriteFile(*out, sig, 0o644)
 }
 
-// signWithPrefix matches the wire format produced by update.TestSigner:
+// signWithPrefix matches the wire format produced by updatetest.TestSigner:
 // base64(ed25519.Sign(priv, prefix||msg)) followed by a newline.
 func signWithPrefix(priv ed25519.PrivateKey, prefix string, msg []byte) []byte {
 	sig := ed25519.Sign(priv, append([]byte(prefix), msg...))
@@ -397,7 +408,10 @@ func cmdVerify(args []string) error {
 	}
 	keys := update.ProductionKeys()
 	if testkeys {
-		keys = update.TestKeySet()
+		if testKeySet == nil {
+			return fmt.Errorf("verify: %w", errTestKeysUnavailable)
+		}
+		keys = testKeySet()
 	}
 	m, err := verifyDir(dirs[0], keys)
 	if err != nil {

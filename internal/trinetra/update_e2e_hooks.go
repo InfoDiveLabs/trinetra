@@ -13,6 +13,12 @@ package trinetra
 // e2eHooksEnabled is false in every production build.
 const e2eHooksEnabled = false
 
+// e2eCrashOnStart is a constant "" in a default build, so cmdDaemon's
+// crash-on-start branch is compiled out and no -ldflags -X stamp can turn it
+// on in a release binary (R22). The trinetra_testkeys build makes it a
+// stampable variable (update_e2e_hooks_testkeys.go).
+const e2eCrashOnStart = ""
+
 // e2eRestartCmd always reports "not set" in a default build: the guard's
 // restart (update_guard.go's realGuardDeps) always shells out to `systemctl
 // restart trinetra`.

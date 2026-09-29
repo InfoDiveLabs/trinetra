@@ -2,7 +2,7 @@
 # Image for the signed self-update e2e scenarios (run.sh): a systemd-less
 # "host" container that runs the real trinetra binaries -- every one of them
 # built with -tags trinetra_testkeys, so ProductionKeys() trusts the
-# deterministic test key set (update.TestKeySet()) instead of this repo's
+# deterministic test key set (updatetest.TestKeySet()) instead of this repo's
 # (currently empty) real production keys -- against a fake GitHub API
 # (relsrv) serving pre-built, pre-signed release fixtures, and a mock
 # Telegram API (mocktg, shared with the other docker harnesses).
