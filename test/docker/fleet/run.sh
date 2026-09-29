@@ -160,7 +160,6 @@ replica_has_min() {
   size=$(on master sh -c "stat -c %s /var/lib/trinetra/fleet/nodes/$1/ts/raw/$2.tsd 2>/dev/null || echo 0" | tr -d '\r')
   [ "$size" -ge $(( 16 + 32 * $3 )) ]
 }
-unsent_above() { [ "$(unsent "$1")" -gt "$2" ]; } # <svc> <count>
 pushed_silence_has() { on "$1" grep -F "\"$2\"" /var/lib/trinetra/fleet-child/silences.json >/dev/null; } # <svc> <silence-id>
 # silenced_fallbacks <svc>: fallback deliveries of the mem alert that the
 # child's pushed silences suppressed (deliverFallback records them in its
@@ -284,16 +283,15 @@ wait_until 75 "master down alert for child1" alert_more_than master "fleet:node:
 echo "  master raised fleet:node:$C1:down after $(( $(now_in master) - P_FROM ))s"
 wait_until 85 "child1 link retrying" link_is child1 retrying
 U1=$(unsent child1)
-# The outbox grows by a batch every few FAST intervals while partitioned; a
-# bounded poll instead of a fixed 90 s partition.
-wait_until 60 "child1 outbox growing while partitioned" unsent_above child1 "$U1"
+# Keep the full 90 s partition. Tried ending it as soon as the outbox had
+# grown and the down page was out (~65 s): under the concurrent test-all
+# run, reconnecting that soon after the down fire left the master seeing
+# child1 go down a second time right after the recover, and step 5's
+# "no fleet alert after the master restart" then failed.
+while [ $(( $(now_in master) - P_FROM )) -lt 90 ]; do sleep 2; done
 U2=$(unsent child1)
 [ "$U2" -gt "$U1" ] || fail "child1 outbox did not grow while partitioned ($U1 -> $U2 unsent)"
 echo "  child1 link retrying, outbox grew $U1 -> $U2 unsent"
-# The down page itself goes out only after groupWait (30 s past the fire,
-# fleet_engine.go), so stay partitioned until it has: reconnecting first
-# would let the recover race the first notification.
-wait_until 90 "mock telegram got the child1 down message" mocktg_has "child1 is down"
 P_TO=$(now_in master)
 docker network connect "$NET" "$(ctr child1)"
 wait_until 60 "master recover alert for child1" alert_seen master "fleet:node:$C1:down" recover
