@@ -24,12 +24,16 @@ jobs:
           set -euo pipefail
           mkdir -p ch
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          # `gh release list` orders by creation date, not version, so the
-          # highest version is picked in Go (trinetra-release latest) using
-          # update.ParseVersion/CompareVersions ordering, not `[0]` off this
-          # list (review F2/I2). One release listing is reused for both
-          # channels.
-          RELEASES=$(gh release list --exclude-drafts --limit 100 --json tagName,isPrerelease,isDraft)
+          # `gh api .../releases` (not `gh release list`) because it's the
+          # only projection that reports each release's assets, which lets
+          # trinetra-release latest require a signed manifest and refuse to
+          # pick a release that has none (review B1). It orders by creation
+          # date, not version, so the highest version is picked in Go
+          # (trinetra-release latest) using update.ParseVersion/
+          # CompareVersions ordering, not `[0]` off this list (review F2/I2).
+          # --paginate combines every page into one JSON array. One release
+          # listing is reused for both channels.
+          RELEASES=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate)
           STABLE=$(echo "$RELEASES" | go run ./cmd/trinetra-release latest --channel stable)
           BETA=$(echo "$RELEASES" | go run ./cmd/trinetra-release latest --channel beta)
           for pair in "stable:$STABLE" "beta:$BETA"; do

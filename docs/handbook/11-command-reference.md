@@ -297,7 +297,7 @@ The procedure that uses it is in
 | `manifest --dir DIR --version V --channel C --min-upgrade-from V --published RFC3339 [--keys-from-binary]` | Writes `DIR/manifest.json` for exactly the nine release binaries; any missing or unexpected `trinetra*-linux-*` file is an error. `--keys-from-binary` fills `keys` with this build's compiled-in key set. |
 | `sign --role ci\|pointer --in FILE --out FILE` | Signs with the seed in `TRINETRA_SIGNING_KEY`, using the role's domain prefix. |
 | `pointer --channel C --version V --issued RFC3339 --out FILE` | Writes a channel pointer that expires exactly 14 days after `--issued`. |
-| `latest --channel stable\|beta` | Reads `gh release list --json tagName,isPrerelease,isDraft` on stdin and prints the highest version for the channel. |
+| `latest --channel stable\|beta` | Reads `gh api repos/{owner}/{repo}/releases --paginate` on stdin and prints the highest version for the channel among releases that carry a signed manifest (`manifest.json`, `manifest.ci.sig` and `manifest.maint.sig` all present as assets); prints nothing if none qualify. |
 | `verify DIR` | Runs the host verification (both signatures, then every file's size and hash) on a release directory. |
 | `fingerprints` | Prints the compiled-in production key fingerprints. |
 | `cosign vX.Y.Z --key FILE [--repo OWNER/REPO]` | Co-signs a draft release: verifies the CI signature, shows the manifest and any key change, asks you to retype the version and enter the passphrase, uploads `manifest.maint.sig`, re-verifies the whole draft, then publishes it. |
