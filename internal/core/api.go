@@ -72,16 +72,29 @@ type API interface {
 	// installed) still returns whatever status view could be built.
 	UpdateCheck(ctx context.Context) (UpdateStatusView, error)
 	// UpdateApply installs the given version (or, when version is "", the
-	// channel's latest) synchronously: fetch, verify, policy-check, stage,
-	// smoke-test, and swap the build in, then launch the health guard. It
-	// returns once the swap has happened and the guard has been asked to
-	// start (or once staging/verification/the swap itself failed) -- the
-	// guard, not this call, is what restarts the daemon and confirms or
-	// rolls back the new build.
+	// channel's latest): fetch, verify, policy-check, stage, smoke-test, and
+	// swap the build in, then launch the health guard -- the guard, not this
+	// call, is what restarts the daemon and confirms or rolls back the new
+	// build. A synchronous implementation (the CLI's direct path) returns
+	// once the swap has happened and the guard has been asked to start (or
+	// once staging/verification/the swap itself failed). The control-socket-
+	// facing implementation (fix round 1, Ruling R10) instead runs only its
+	// fast checks (settings, no update already pending or already running)
+	// synchronously, then continues the rest in a background goroutine and
+	// returns immediately -- a caller on that path must poll UpdateStatus's
+	// InProgress/LastError to observe the outcome. Either way, a returned
+	// error here means the operation never started (or refused outright,
+	// e.g. a second call while one is already running); it never means the
+	// swap itself failed once started asynchronously -- that surfaces via
+	// UpdateStatus.LastError instead.
 	UpdateApply(ctx context.Context, version string) error
 	// UpdateRollback restores the previously installed build (kept by the
 	// last successful UpdateApply) and starts the health guard to confirm it,
-	// mirroring `trinetra update rollback`.
+	// mirroring `trinetra update rollback`. Same synchronous-vs-background
+	// split as UpdateApply (fix round 1, Ruling R10): a returned error means
+	// the rollback never started; once started asynchronously, its outcome
+	// surfaces via UpdateStatus's InProgress/LastError, not this call's
+	// return value.
 	UpdateRollback() error
 	ApplyConfig(*config.Config) error
 	AckAlert(key string) error

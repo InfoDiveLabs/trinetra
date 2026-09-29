@@ -156,8 +156,20 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err != nil {
 		return err
 	}
+	// updatePaths -- NOT the bare package-level stateDir -- is where install's
+	// floor check/raise must read and write (fix round 1, Ruling R8): the
+	// update state (floor, pending, last outcome) lives at
+	// defaultUpdatePaths().dir() == StateDir/update, exactly where
+	// `trinetra update`/the guard/status already read and write it
+	// (update_apply.go/update_cmd.go). Using bare stateDir here previously
+	// meant the floor was read from (and written to) a state.json that
+	// `trinetra update` never looks at, so a persisted floor was silently
+	// ignored and never actually raised -- and update.SaveState's
+	// MkdirAll+Chmod(0700) landed on stateDir itself (normally 0755) instead
+	// of its "update" subdirectory.
+	paths := defaultUpdatePaths()
 	if verified {
-		if err := checkInstallPolicy(m); err != nil {
+		if err := checkInstallPolicy(paths, m, currentInstalledVersion()); err != nil {
 			return err
 		}
 	}
@@ -225,7 +237,7 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 		// Best-effort: a floor-raise failure must not undo an otherwise
 		// successful install (the binaries are already copied and the unit
 		// already (re)started above).
-		raiseInstallFloor(m.Version)
+		raiseInstallFloor(paths, m.Version)
 	}
 	return nil
 }
@@ -341,17 +353,34 @@ func verifyInstallSignature(self string, names []string, requireSigned bool) (up
 // a legitimate repair), Channel set to the manifest's own channel (an
 // install is not read against the host's configured update.channel -- it
 // installs whatever signed release it was handed, mirroring apply()'s own
-// --bundle-with-updates-off ruling R7), Floor from persisted update state,
-// and Running from the currently installed binary's own reported version
-// (zero on a fresh install, when there is nothing installed yet).
-func checkInstallPolicy(m update.Manifest) error {
-	st, err := update.LoadState(stateDir)
+// --bundle-with-updates-off ruling R7), and Floor from persisted update
+// state (paths.dir(), the SAME state.json `trinetra update`/the guard/status
+// already share -- see installBinaryAndUnit's doc, fix round 1 Ruling R8).
+//
+// running is the currently installed binary's own reported version, or the
+// zero Version when nothing is installed yet (a fresh host), a serverwatch
+// migration hasn't placed /usr/local/bin/trinetra yet, or the old binary
+// didn't answer `version --json`. Ruling R9 (fix round 1, Important #1):
+// when running is the zero Version, MinUpgradeFrom is deliberately NOT
+// enforced against it -- CheckPolicy's Running field is instead set to the
+// manifest's own MinUpgradeFrom, which trivially satisfies that sub-check --
+// because there is nothing real to compare against and refusing every real
+// release with ErrTooOld on a fresh/migrated host would be wrong. The floor
+// check (independent of Running) and both signature/hash checks
+// (verifyInstallBundle, already run before this is ever called) still fully
+// apply regardless: only the min-upgrade-from gate is skipped, and only when
+// running is genuinely unknown.
+func checkInstallPolicy(paths updatePaths, m update.Manifest, running update.Version) error {
+	st, err := update.LoadState(paths.dir())
 	if err != nil {
 		return err
 	}
-	running := currentInstalledVersion()
 	floor := st.FloorVersion(running)
-	if err := update.CheckPolicy(m, update.Policy{Channel: m.Channel, Floor: floor, Running: running, AllowEqual: true}); err != nil {
+	pol := update.Policy{Channel: m.Channel, Floor: floor, Running: running, AllowEqual: true}
+	if running == (update.Version{}) {
+		pol.Running, _ = update.ParseVersion(m.MinUpgradeFrom)
+	}
+	if err := update.CheckPolicy(m, pol); err != nil {
 		return fmt.Errorf("install: %w", err)
 	}
 	return nil
@@ -383,24 +412,26 @@ func currentInstalledVersion() update.Version {
 	return ver
 }
 
-// raiseInstallFloor records m's version as the new update floor after a
+// raiseInstallFloor records m's version as the new update floor (in
+// paths.dir()'s state.json -- the same file checkInstallPolicy reads and
+// `trinetra update`/the guard/status share, fix round 1 Ruling R8) after a
 // successful signed install, mirroring what a successful `trinetra update
 // apply` does at the end of swapIn -- a floor-raise or state-save failure is
 // swallowed (best-effort, matching cmdInstall's other post-copy warnings):
 // the binaries and unit are already in place by the time this runs, and a
 // missed floor raise only means a future `update apply`/`install` could
 // re-verify a version this host already has, not a safety regression.
-func raiseInstallFloor(version string) {
+func raiseInstallFloor(paths updatePaths, version string) {
 	v, err := update.ParseVersion(version)
 	if err != nil {
 		return
 	}
-	st, err := update.LoadState(stateDir)
+	st, err := update.LoadState(paths.dir())
 	if err != nil {
 		return
 	}
 	st.RaiseFloor(v)
-	_ = update.SaveState(stateDir, st)
+	_ = update.SaveState(paths.dir(), st)
 }
 
 // telegramInstallHint returns the install success line's Telegram clause: a

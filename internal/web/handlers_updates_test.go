@@ -48,6 +48,63 @@ func TestUpdatesPageAdminGated(t *testing.T) {
 	}
 }
 
+// TestUpdatesPageRendersInProgressAndLastError pins fix round 1's Ruling
+// R10 web-side requirement: /updates must show a banner while a background
+// apply/rollback is running (Status.InProgress) and, once it's finished, the
+// daemon's own last-error text (Status.LastError) -- rendered through
+// html/template's normal auto-escaping (never inserted unescaped), and
+// suppressed while InProgress is still true (a stale error from a PREVIOUS
+// attempt must not be shown as if it were this one's outcome).
+func TestUpdatesPageRendersInProgressAndLastError(t *testing.T) {
+	d := enrollTestDeps(t)
+	d.API = fakeAPI{updateStatus: core.UpdateStatusView{
+		Running:    "0.5.0",
+		InProgress: true,
+		LastError:  "update: <script>alert(1)</script> boom",
+	}}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/updates")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Update in progress") {
+		t.Errorf("updates page must show an in-progress banner while Status.InProgress is true:\n%s", body)
+	}
+	if strings.Contains(body, "Last update error") {
+		t.Errorf("updates page must not show LastError while InProgress is still true (stale error from a previous attempt):\n%s", body)
+	}
+
+	d2 := enrollTestDeps(t)
+	d2.StateDir = d.StateDir
+	d2.API = fakeAPI{updateStatus: core.UpdateStatusView{
+		Running:   "0.5.0",
+		LastError: "update: <script>alert(1)</script> boom",
+	}}
+	h2 := newHandler(d2)
+	req2 := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/updates")
+	rr2 := httptest.NewRecorder()
+	h2.ServeHTTP(rr2, req2)
+	body2 := rr2.Body.String()
+	if strings.Contains(body2, "Update in progress") {
+		t.Errorf("updates page must not show the in-progress banner once InProgress is false:\n%s", body2)
+	}
+	if !strings.Contains(body2, "Last update error") {
+		t.Errorf("updates page must show LastError once the background operation has finished:\n%s", body2)
+	}
+	if strings.Contains(body2, "<script>alert(1)</script>") {
+		t.Errorf("LastError must be HTML-escaped, not inserted raw:\n%s", body2)
+	}
+	if !strings.Contains(body2, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("LastError's escaped form not found in the page:\n%s", body2)
+	}
+}
+
 // TestUpdatesPageAnonRedirectsToLogin mirrors the anon half of
 // TestConfigRoutesAreAdminGated for /updates.
 func TestUpdatesPageAnonRedirectsToLogin(t *testing.T) {

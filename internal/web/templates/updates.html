@@ -3,10 +3,21 @@
      (non-htmx) single-purpose forms -- Check now / Apply <available> / Roll
      back -- each carries the CSRF hidden field and its own confirmation
      line; every submit redirects back here with a fixed ?flash= code
-     (handlers_updates.go's resolveUpdatesFlash), never free text. */}}
+     (handlers_updates.go's resolveUpdatesFlash), never free text.
+
+     Status.InProgress/Status.LastError (fix round 1, Ruling R10) reflect a
+     background apply/rollback goroutine on the daemon serving this page over
+     the control socket: InProgress renders a banner while it's still
+     running; LastError, once it finishes, renders the daemon's own error
+     text -- unlike Flash (a closed set of literals this page chose), this IS
+     free text from the daemon, so it is rendered as an ordinary dynamic
+     template value (html/template auto-escapes it -- never inserted via a
+     raw/unescaped helper). */}}
 {{define "content"}}
 <div id="updates-page">
   {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+  {{if .Status.InProgress}}<div class="flash" role="status" id="update-in-progress">Update in progress&hellip;</div>{{end}}
+  {{if and .Status.LastError (not .Status.InProgress)}}<div class="flash err" role="status" id="update-last-error">Last update error: {{.Status.LastError}}</div>{{end}}
 
   <div class="section-label"><span class="eyebrow">Self-update</span></div>
   <div class="grid g-2">

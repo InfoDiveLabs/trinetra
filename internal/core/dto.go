@@ -460,6 +460,17 @@ type HostInfoView struct {
 // its health-guard confirmation, Last is the most recent apply/rollback
 // outcome, and KeysLoaded reports whether this build has release keys
 // compiled in at all (ProductionKeys() non-empty).
+//
+// InProgress/LastError (fix round 1, Ruling R10) reflect the control-socket
+// implementation's background apply/rollback: UpdateApply/UpdateRollback
+// over the socket run their fast checks synchronously then continue in a
+// daemon goroutine and return immediately, so a caller must poll
+// UpdateStatus to see whether that goroutine is still running (InProgress)
+// and, once it finishes, whether it failed (LastError, cleared to "" on a
+// clean finish -- checked before Last, which only updates on an apply that
+// got far enough to swap a build in). Always false/"" for an implementation
+// that runs synchronously (the CLI path, and the file-backed core.API used
+// outside a live daemon), since there is nothing async to report.
 type UpdateStatusView struct {
 	Running    string             `json:"running"`
 	Channel    string             `json:"channel"`
@@ -470,6 +481,8 @@ type UpdateStatusView struct {
 	Pending    *UpdatePendingView `json:"pending,omitempty"`
 	Last       *UpdateResultView  `json:"last,omitempty"`
 	KeysLoaded bool               `json:"keys_loaded"`
+	InProgress bool               `json:"in_progress"`
+	LastError  string             `json:"last_error,omitempty"`
 }
 
 // UpdatePendingView is core's projection of update.Pending: an update

@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
@@ -385,6 +386,106 @@ type inprocAPI struct {
 	// reads through it, so a socket caller sees the exact pin the poll loop
 	// is matching /start <pin> against, not a separately generated one.
 	enroll *enrollState
+	// updateMu/updateInProgress/updateLastErr (fix round 1, Ruling R10) track
+	// a background UpdateApply/UpdateRollback goroutine: UpdateApply and
+	// UpdateRollback below run their fast checks synchronously, then hand the
+	// slow work (fetch/stage/smoke-test/swap or restore+launch-guard) to a
+	// goroutine and return immediately, so a control-socket caller (and every
+	// OTHER request sharing that same connection's mutex-serialized Client)
+	// is never blocked for the whole operation. updateMu guards both fields;
+	// beginUpdateWork/endUpdateWork/updateProgress (below) are the only
+	// accessors. Zero-valued correctly (not running, no error) on a fresh
+	// *inprocAPI -- no constructor wiring needed.
+	updateMu         sync.Mutex
+	updateInProgress bool
+	updateLastErr    string
+	// newUpdaterFn is a test seam (fix round 1, Ruling R10): it lets a test
+	// substitute a fully-controlled updater -- e.g. one whose Source blocks
+	// until the test releases it, or one pointed at isolated test paths --
+	// for what UpdateApply/UpdateRollback below build and run in their
+	// background goroutine. nil (every production *inprocAPI, built via
+	// newInprocAPI) means "use the real package-level newUpdater(c)".
+	// UpdateStatus/UpdateCheck deliberately do NOT go through this seam: they
+	// call the shared coreUpdateStatus/coreUpdateCheck helpers (update_cmd.go),
+	// which fileAPI also calls, and stay on the real newUpdater so the two
+	// core.API backends keep building that view identically.
+	newUpdaterFn func(*config.Config) updater
+}
+
+// newUpdaterFor returns a.newUpdaterFn(c) if set (test seam, see the field's
+// doc), otherwise the real package-level newUpdater(c).
+func (a *inprocAPI) newUpdaterFor(c *config.Config) updater {
+	if a.newUpdaterFn != nil {
+		return a.newUpdaterFn(c)
+	}
+	return newUpdater(c)
+}
+
+// errUpdateAlreadyRunning is returned by UpdateApply/UpdateRollback when a
+// previous call's background goroutine (beginUpdateWork below) hasn't
+// finished yet -- fix round 1, Ruling R10's "only one apply/rollback may run
+// at a time" requirement. Distinct from update_apply.go's errUpdateInProgress
+// (which reports a PERSISTED Pending marker -- an update already staged and
+// awaiting its health-guard deadline, possibly from a previous process or
+// even `trinetra update apply` run directly): this one is purely in-memory,
+// catching two socket callers racing each other before either has gotten far
+// enough to write that persisted marker.
+var errUpdateAlreadyRunning = errors.New("update: an update is already in progress")
+
+// beginUpdateWork claims the single in-flight apply/rollback slot, refusing
+// with errUpdateAlreadyRunning if one is already running. Deliberately
+// called FIRST in UpdateApply/UpdateRollback below, before either method's
+// own operation-specific preflight (settings/pending for apply, previous-
+// build/pending for rollback): claiming the slot first guarantees a second,
+// genuinely concurrent caller always sees errUpdateAlreadyRunning, rather
+// than racing to see whichever check happens to run first -- e.g. a
+// concurrent UpdateRollback on a host with no previous build must still be
+// refused as "already running", not as "nothing to roll back to" (which
+// would also be true, but isn't the reason this particular call is being
+// refused). On success it returns a done func the caller's background
+// goroutine must call exactly once when the operation finishes (nil on a
+// clean finish), which releases the slot and records the outcome for
+// updateProgress/UpdateStatus to report. A caller whose own preflight then
+// fails must call abortUpdateWork instead, NOT done -- see that func's doc.
+func (a *inprocAPI) beginUpdateWork() (done func(error), err error) {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	if a.updateInProgress {
+		return nil, errUpdateAlreadyRunning
+	}
+	a.updateInProgress = true
+	return func(opErr error) {
+		a.updateMu.Lock()
+		defer a.updateMu.Unlock()
+		a.updateInProgress = false
+		if opErr != nil {
+			a.updateLastErr = opErr.Error()
+		} else {
+			a.updateLastErr = ""
+		}
+	}, nil
+}
+
+// abortUpdateWork releases the slot beginUpdateWork claimed WITHOUT
+// recording anything in LastError: used when a synchronous preflight check
+// (run after the slot was already claimed, see beginUpdateWork's doc) fails
+// before any background goroutine was ever started. LastError is reserved
+// for an operation that actually ran and failed asynchronously; a preflight
+// rejection is already returned directly to the caller as this call's own
+// error, so stashing it in LastError too would be redundant and would
+// needlessly clobber whatever a PREVIOUS async attempt's LastError said.
+func (a *inprocAPI) abortUpdateWork() {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	a.updateInProgress = false
+}
+
+// updateProgress reads the current InProgress/LastError pair for
+// UpdateStatus, under the same mutex beginUpdateWork/its done func use.
+func (a *inprocAPI) updateProgress() (inProgress bool, lastErr string) {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	return a.updateInProgress, a.updateLastErr
 }
 
 // newInprocAPI builds a core.API backed directly by the running daemon's
@@ -533,36 +634,102 @@ func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
 // Version implements core.API: the daemon's own build-stamped version (#107).
 func (a *inprocAPI) Version() (string, error) { return version.String(), nil }
 
+// updateCheckTimeout bounds UpdateCheck over the control socket (fix round
+// 1, Ruling R10): strictly below control.Client's 30s callTimeout, so a slow
+// channel-pointer/release fetch times out server-side and returns a normal
+// error instead of running past the client's read deadline -- which would
+// otherwise poison that Client's shared connection (every other request
+// sharing it, e.g. the dashboard, nav counts, SSE refreshes) while the
+// daemon kept fetching regardless.
+const updateCheckTimeout = 20 * time.Second
+
 // UpdateStatus implements core.API (task 8): this host's persisted
 // self-update posture, via the shared coreUpdateStatus helper
 // (update_cmd.go) built from a.getCfg() -- the same race-safe config
-// accessor every other method here reads through.
+// accessor every other method here reads through -- plus (fix round 1,
+// Ruling R10) this instance's own in-memory InProgress/LastError from any
+// background UpdateApply/UpdateRollback goroutine (updateProgress above).
 func (a *inprocAPI) UpdateStatus() (core.UpdateStatusView, error) {
-	return coreUpdateStatus(a.getCfg())
+	view, err := coreUpdateStatus(a.getCfg())
+	if err != nil {
+		return view, err
+	}
+	view.InProgress, view.LastError = a.updateProgress()
+	return view, nil
 }
 
 // UpdateCheck implements core.API: fetch/verify the channel's latest
 // release, record the outcome, and return the resulting status view, via the
-// shared coreUpdateCheck helper.
+// shared coreUpdateCheck helper -- bounded by updateCheckTimeout (fix round
+// 1, Ruling R10) rather than whatever ctx the caller passed (dispatch,
+// server.go, always passes context.Background(), which never times out on
+// its own).
 func (a *inprocAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
+	ctx, cancel := context.WithTimeout(ctx, updateCheckTimeout)
+	defer cancel()
 	return coreUpdateCheck(ctx, a.getCfg())
 }
 
-// UpdateApply implements core.API: delegates to newUpdater(cfg).apply, the
-// exact same fetch/verify/stage/smoke-test/swap/launch-guard sequence
-// `trinetra update apply` runs, synchronously -- see core.API.UpdateApply's
-// doc for why this returns once the guard has been asked to start rather
-// than once it confirms.
+// UpdateApply implements core.API over the control socket (fix round 1,
+// Ruling R10): it FIRST claims the single in-flight slot (beginUpdateWork --
+// see that func's doc for why this runs before, not after, the checks
+// below), then runs updater.preflightApply synchronously -- the same
+// settings/pending checks apply itself would otherwise only discover after a
+// network fetch -- releasing the slot again (abortUpdateWork) without
+// starting anything if that fails. Once both pass, it hands the rest of
+// apply's work (fetch, verify, policy-check, stage, smoke-test, swap, launch
+// the guard) to a background goroutine using a fresh context.Background()
+// (NOT ctx, which is tied to nothing longer-lived than this one dispatch
+// call and must not cancel work that is meant to keep running after
+// UpdateApply itself has already returned). It returns as soon as EITHER
+// check refuses, or once the goroutine has been started -- never once the
+// goroutine finishes. A caller polls UpdateStatus's InProgress/LastError to
+// observe the outcome. See core.API.UpdateApply's doc for the
+// synchronous-CLI-vs-background-socket contract this implements one half of;
+// fileAPI.UpdateApply (coreapi_file.go) implements the other, synchronous,
+// half.
 func (a *inprocAPI) UpdateApply(ctx context.Context, version string) error {
 	c := a.getCfg()
-	_, err := newUpdater(c).apply(ctx, c, applyOptions{Version: version})
-	return err
+	u := a.newUpdaterFor(c)
+	opts := applyOptions{Version: version}
+
+	done, err := a.beginUpdateWork()
+	if err != nil {
+		return err
+	}
+	if err := u.preflightApply(c, opts); err != nil {
+		a.abortUpdateWork()
+		return err
+	}
+	go func() {
+		_, applyErr := u.apply(context.Background(), c, opts)
+		done(applyErr)
+	}()
+	return nil
 }
 
-// UpdateRollback implements core.API: delegates to newUpdater(cfg).rollback,
-// the exact same sequence `trinetra update rollback` runs.
+// UpdateRollback implements core.API over the control socket, the same
+// claim-the-slot-first-then-preflight split as UpdateApply above (see
+// beginUpdateWork's doc for why): updater.preflightRollback runs
+// synchronously (is there a previous build, is an update already pending),
+// then rollback's own work (restore the previous build, launch the guard)
+// runs in a background goroutine.
 func (a *inprocAPI) UpdateRollback() error {
-	return newUpdater(a.getCfg()).rollback()
+	c := a.getCfg()
+	u := a.newUpdaterFor(c)
+
+	done, err := a.beginUpdateWork()
+	if err != nil {
+		return err
+	}
+	if err := u.preflightRollback(); err != nil {
+		a.abortUpdateWork()
+		return err
+	}
+	go func() {
+		done(u.rollback())
+	}()
+	return nil
 }
 
 // ContainerLogs implements core.API: it snapshots the last `lines` log lines of

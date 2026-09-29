@@ -250,14 +250,23 @@ func (a *fileAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error
 }
 
 // UpdateApply implements core.API: delegates to newUpdater(a.cfg).apply,
-// exactly like `trinetra update apply` itself.
+// exactly like `trinetra update apply` itself -- synchronously, blocking
+// until the swap (or a failure) happens. This is the "synchronous CLI path"
+// core.API.UpdateApply's doc contrasts with inprocAPI.UpdateApply's
+// background-goroutine behavior (fix round 1, Ruling R10): fileAPI is never
+// served over the control socket (see coreapi_file.go's own top doc -- it is
+// the separate CLI process' file-backed reader), so there is no shared
+// connection/mutex for a long call to block, and nothing else needs this
+// process for anything else while it runs.
 func (a *fileAPI) UpdateApply(ctx context.Context, version string) error {
 	_, err := newUpdater(a.cfg).apply(ctx, a.cfg, applyOptions{Version: version})
 	return err
 }
 
 // UpdateRollback implements core.API: delegates to
-// newUpdater(a.cfg).rollback, exactly like `trinetra update rollback`.
+// newUpdater(a.cfg).rollback, exactly like `trinetra update rollback` --
+// synchronously, for the same reason UpdateApply above is (this CLI process
+// has no shared socket connection to avoid blocking).
 func (a *fileAPI) UpdateRollback() error {
 	return newUpdater(a.cfg).rollback()
 }

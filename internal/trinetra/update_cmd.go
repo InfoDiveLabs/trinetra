@@ -138,6 +138,65 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 	return m, policyErr
 }
 
+// preflightApply runs apply's fast, synchronous-only checks (fix round 1,
+// Ruling R10): the channel/source settings apply itself would otherwise only
+// refuse on after resolving them again, and persisted state being both
+// readable and free of an already-pending update -- the same
+// already-pending refusal swapIn (update_apply.go) would otherwise only
+// discover AFTER a network fetch and local staging/smoke-test have already
+// run. The control-socket-facing UpdateApply (coreapi_inproc.go) calls this
+// synchronously before handing the rest of apply's work to a background
+// goroutine, so a caller that has no hope of succeeding (updates off, no
+// source configured, another update already pending) gets a fast, accurate
+// error instead of a false "started". It deliberately does NOT duplicate
+// apply's version-resolution/fetch/policy/plan/stage/smoke-test/swap steps --
+// those still only run inside apply itself, synchronously or not.
+func (u updater) preflightApply(c *config.Config, opts applyOptions) error {
+	channel := opts.Channel
+	if channel == "" {
+		channel = c.UpdateChannel()
+	}
+	if channel == "off" && opts.Bundle == "" {
+		return fmt.Errorf("updates are off (update.channel=off)")
+	}
+	if u.resolveSource(c, opts.Bundle) == nil {
+		return fmt.Errorf("update.source is none; use --bundle DIR")
+	}
+	st, err := update.LoadState(u.paths.dir())
+	if err != nil {
+		return err
+	}
+	if st.Pending != nil {
+		return errUpdateInProgress
+	}
+	return nil
+}
+
+// preflightRollback runs rollback's fast, synchronous-only checks (fix
+// round 1, Ruling R10): the exact same "is there a previous build" and
+// "is an update already pending" checks rollback itself runs first (see
+// rollback's own doc below) -- duplicated here (rather than factored out)
+// because rollback's version stays the single source of truth callers that
+// invoke it directly (the CLI's `trinetra update rollback`) rely on; this
+// copy exists purely so the control-socket-facing UpdateRollback
+// (coreapi_inproc.go) can run it synchronously before backgrounding the rest
+// (restorePrevious + launching the guard).
+func (u updater) preflightRollback() error {
+	prevCore := filepath.Join(u.paths.previous(), "trinetra")
+	fi, err := os.Stat(prevCore)
+	if err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("update: no previous build to roll back to")
+	}
+	st, err := update.LoadState(u.paths.dir())
+	if err != nil {
+		return err
+	}
+	if st.Pending != nil {
+		return fmt.Errorf("update: an update is already pending (see trinetra update status)")
+	}
+	return nil
+}
+
 // apply installs a signed release: resolve channel/source/version, fetch
 // and verify the release, check policy and the known-bad list, plan which
 // binaries to install, stage and smoke-test them, swap them in, then start
