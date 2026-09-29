@@ -1,0 +1,129 @@
+package update
+
+import (
+	"crypto/ed25519"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// PublicKey lets other packages build a KeySet without importing crypto/ed25519.
+type PublicKey = ed25519.PublicKey
+
+const (
+	ReleasePrefix = "trinetra-release-v1\n"
+	ChannelPrefix = "trinetra-channel-v1\n"
+)
+
+var (
+	ErrMalformed        = errors.New("update: malformed release data")
+	ErrMissingSignature = errors.New("update: signature missing")
+	ErrBadSignature     = errors.New("update: signature does not verify against any trusted key")
+	ErrWrongProduct     = errors.New("update: not a trinetra release")
+	ErrWrongChannel     = errors.New("update: release is for a different channel")
+	ErrDowngrade        = errors.New("update: version is lower than the highest version already installed")
+	ErrAlreadyInstalled = errors.New("update: this version is already installed")
+	ErrTooOld           = errors.New("update: running version is too old to upgrade directly to this release")
+	ErrExpired          = errors.New("update: channel pointer has expired")
+	ErrNoKeys           = errors.New("update: this build has no release keys compiled in")
+)
+
+// KeySet is the trust anchor: public keys compiled into the running binary.
+// Each role holds its current and next key.
+type KeySet struct {
+	CI, Maint, Pointer []ed25519.PublicKey
+}
+
+func (k KeySet) empty() bool { return len(k.CI) == 0 || len(k.Maint) == 0 || len(k.Pointer) == 0 }
+
+// decodeSig reads a .sig file: base64 of a 64-byte signature, optional
+// trailing whitespace.
+func decodeSig(b []byte) ([]byte, error) {
+	s := strings.TrimSpace(string(b))
+	if s == "" {
+		return nil, ErrMissingSignature
+	}
+	sig, err := base64.StdEncoding.DecodeString(s)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return nil, ErrBadSignature
+	}
+	return sig, nil
+}
+
+func verifyAny(keys []ed25519.PublicKey, prefix string, msg, sigFile []byte) error {
+	sig, err := decodeSig(sigFile)
+	if err != nil {
+		return err
+	}
+	full := append([]byte(prefix), msg...)
+	for _, k := range keys {
+		if len(k) == ed25519.PublicKeySize && ed25519.Verify(k, full, sig) {
+			return nil
+		}
+	}
+	return ErrBadSignature
+}
+
+// VerifyRelease checks both signatures over the exact manifest bytes, then
+// decodes and validates the manifest. Signatures are checked first, so a
+// malformed-but-unsigned manifest reports a signature error.
+func VerifyRelease(keys KeySet, manifest, ciSig, maintSig []byte) (Manifest, error) {
+	if keys.empty() {
+		return Manifest{}, ErrNoKeys
+	}
+	if err := verifyAny(keys.CI, ReleasePrefix, manifest, ciSig); err != nil {
+		return Manifest{}, fmt.Errorf("CI signature: %w", err)
+	}
+	if err := verifyAny(keys.Maint, ReleasePrefix, manifest, maintSig); err != nil {
+		return Manifest{}, fmt.Errorf("maintainer signature: %w", err)
+	}
+	return DecodeManifest(manifest)
+}
+
+// VerifyPointer checks a channel pointer's signature and expiry.
+func VerifyPointer(keys KeySet, pointer, sig []byte, now time.Time) (Pointer, error) {
+	if keys.empty() {
+		return Pointer{}, ErrNoKeys
+	}
+	if err := verifyAny(keys.Pointer, ChannelPrefix, pointer, sig); err != nil {
+		return Pointer{}, fmt.Errorf("pointer signature: %w", err)
+	}
+	p, err := DecodePointer(pointer)
+	if err != nil {
+		return Pointer{}, err
+	}
+	exp, _ := time.Parse(time.RFC3339, p.Expires)
+	if !now.Before(exp) {
+		return Pointer{}, fmt.Errorf("%w (expired %s)", ErrExpired, p.Expires)
+	}
+	return p, nil
+}
+
+// Policy is the host-side context a verified manifest is checked against.
+type Policy struct {
+	Channel    string
+	Floor      Version // highest version ever committed on this host
+	Running    Version
+	AllowEqual bool // re-apply the installed version (repair)
+}
+
+// CheckPolicy applies the host rules to an already verified manifest.
+func CheckPolicy(m Manifest, p Policy) error {
+	if m.Channel != p.Channel {
+		return fmt.Errorf("%w: release %s, host %s", ErrWrongChannel, m.Channel, p.Channel)
+	}
+	v, _ := ParseVersion(m.Version)
+	switch c := CompareVersions(v, p.Floor); {
+	case c < 0:
+		return fmt.Errorf("%w: %s < %s", ErrDowngrade, v, p.Floor)
+	case c == 0 && !p.AllowEqual:
+		return fmt.Errorf("%w: %s", ErrAlreadyInstalled, v)
+	}
+	min, _ := ParseVersion(m.MinUpgradeFrom)
+	if CompareVersions(p.Running, min) < 0 {
+		return fmt.Errorf("%w: running %s, needs at least %s", ErrTooOld, p.Running, min)
+	}
+	return nil
+}
