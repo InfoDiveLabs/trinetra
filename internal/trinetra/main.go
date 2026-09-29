@@ -1,12 +1,14 @@
 package trinetra
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
 // Default paths. Exported so other packages (install scripts, docs) can
@@ -72,6 +74,14 @@ func Main(args []string) int {
 		return cmdChannel(args[1:])
 	case "status":
 		return cmdStatus(args[1:])
+	case "version":
+		if len(args) > 1 && args[1] == "--json" {
+			b, _ := json.Marshal(map[string]string{"version": version.String()})
+			fmt.Fprintln(stdout, string(b))
+			return 0
+		}
+		fmt.Fprintln(stdout, version.String())
+		return 0
 	case "doctor":
 		return cmdDoctor(args[1:])
 	case "migrate":
@@ -152,6 +162,7 @@ usage:
   trinetra healthchecks set <url> | off
   trinetra channel list|add|remove|set|test
   trinetra status
+  trinetra version [--json]
   trinetra doctor
   trinetra migrate [--force]
   trinetra dump --metric <id> [--since 24h] [--res raw|1m] [--format csv|json]
