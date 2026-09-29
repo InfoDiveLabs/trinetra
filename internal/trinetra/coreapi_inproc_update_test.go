@@ -105,8 +105,18 @@ func TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes(t *testing.T) {
 // is ever running).
 func TestInprocUpdateApplyRefusesConcurrentSecondCall(t *testing.T) {
 	release := make(chan struct{})
-	defer close(release) // let the first (blocked) goroutine finish before the test exits
 	api := newBlockingUpdateAPI(t, release)
+	// Release the blocked goroutine and wait for it before the TempDirs that
+	// newBlockingUpdateAPI registered are removed (cleanups run LIFO, so this
+	// one runs first); otherwise its late state write races the RemoveAll.
+	t.Cleanup(func() {
+		close(release)
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if v, err := api.UpdateStatus(); err == nil && !v.InProgress {
+				return
+			}
+		}
+	})
 
 	if err := api.UpdateApply(context.Background(), "9.9.9"); err != nil {
 		t.Fatalf("first UpdateApply: %v", err)
@@ -165,7 +175,6 @@ func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 	// The slot is free again: a fresh call must be accepted (not refused as
 	// still-running).
 	release2 := make(chan struct{})
-	defer close(release2)
 	api.newUpdaterFn = func(c *config.Config) updater {
 		return updater{
 			paths:       updatePaths{BinDir: t.TempDir(), StateDir: t.TempDir()},
@@ -181,4 +190,15 @@ func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 	if err := api.UpdateApply(context.Background(), "9.9.9"); err != nil {
 		t.Fatalf("UpdateApply after the previous one finished: %v", err)
 	}
+
+	// Let the second apply finish before returning: its goroutine writes
+	// update state into this test's TempDirs, and t.TempDir's cleanup fails
+	// ("directory not empty") if that write races the RemoveAll.
+	close(release2)
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if v, err := api.UpdateStatus(); err == nil && !v.InProgress {
+			return
+		}
+	}
+	t.Fatal("second apply never finished after its Source was released")
 }

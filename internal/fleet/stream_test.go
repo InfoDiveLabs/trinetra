@@ -147,7 +147,10 @@ func TestStreamOnConnectFiresBeforeHandlerDrains(t *testing.T) {
 }
 
 func TestStreamPingKeepsConnectionAliveAndIsNotExposed(t *testing.T) {
-	old := setPingInterval(20 * time.Millisecond)
+	// 100ms pings => 300ms idle timeout (3x): long enough that a loaded CI
+	// runner's scheduling pause can't drop the stream, short enough to
+	// exchange several pings in the wait below.
+	old := setPingInterval(100 * time.Millisecond)
 	t.Cleanup(func() { setPingInterval(old) })
 
 	hub := NewHub(nil)
@@ -161,7 +164,7 @@ func TestStreamPingKeepsConnectionAliveAndIsNotExposed(t *testing.T) {
 	}, false)
 
 	waitFor(t, "connected", func() bool { return hub.Connected(id) })
-	time.Sleep(200 * time.Millisecond) // several ping intervals
+	time.Sleep(600 * time.Millisecond) // several ping intervals
 	if !hub.Connected(id) {
 		t.Fatal("connection dropped while only pings were flowing")
 	}
