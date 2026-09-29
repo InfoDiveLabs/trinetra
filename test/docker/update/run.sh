@@ -27,18 +27,26 @@
 # note): a match's writer would die of SIGPIPE and, under `pipefail`, a long
 # enough match turns success into a reported failure.
 #
-# The self-update loop that turns a commit/rollback into a Telegram alert
-# only ticks every 5 minutes (updateLoopInterval, update_daemon.go) -- by
-# design, not a harness shortcut -- so scenarios 2 and 6 each wait up to
-# that long for their mocktg message, and the watchdog scenarios (7-9) wait
-# for the real 1-minute timer plus a full 90s health window. Budget
-# accordingly (make update-e2e / scripts/test-all.sh's update-e2e stage
-# allow 30 minutes).
+# Timing: on a real host the self-update loop that turns a commit/rollback
+# into a Telegram alert ticks every 5 minutes (updateLoopInterval,
+# update_daemon.go), a pending update gets a 90s health window
+# (updateHealthDeadline) and the watchdog timer fires every minute. The
+# image shortens all three for this harness (Dockerfile: loop 5s, health
+# window 30s -- TRINETRA_E2E_UPDATE_LOOP_INTERVAL/TRINETRA_E2E_HEALTH_DEADLINE,
+# honoured only by a trinetra_testkeys build -- and watchdog 10s,
+# TRINETRA_E2E_WATCHDOG_INTERVAL, read only by fake-timer.sh). The
+# scenarios' logic and assertions do not depend on the values; every wait
+# below is a bounded poll sized from them (LOOP/HEALTH/WATCHDOG) with
+# generous slack for a loaded machine.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 T_START=$(date +%s)
 STEP=""
+# The image's shortened cadences (Dockerfile), in seconds, to size waits.
+LOOP=5
+HEALTH=30
+WATCHDOG=10
 
 compose() { docker compose -f compose.yml "$@"; }
 on() { local svc=$1; shift; compose exec -T "$svc" "$@"; }
@@ -81,7 +89,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step() { STEP="$1"; echo "== $1 =="; }
+step() { STEP="$1"; echo "== $1 == (+$(($(date +%s) - T_START))s)"; }
 pass() { echo "PASS $STEP${1:+: $1}"; }
 fail() { echo "FAIL $STEP: $*"; exit 1; }
 
@@ -123,6 +131,17 @@ GUARD_RE="^$GUARD_BIN update guard"
 # contains the pattern text too, and never report "gone".
 guard_gone() { ! on host pgrep -f "$GUARD_RE" >/dev/null 2>&1; }
 guard_running() { on host pgrep -f "$GUARD_RE" >/dev/null 2>&1; }
+# kill_guard: SIGKILLs every running guard and, in the same container exec
+# (so no watchdog run can slip in between), prints the killed PIDs on the
+# first line and the pending update as it stood right after the kill on the
+# second. The ^-anchored pattern cannot match the wrapping sh itself.
+kill_guard() {
+	on host sh -c "pids=\$(pgrep -f '$GUARD_RE' | tr '\n' ' '); [ -n \"\$pids\" ] || exit 1; kill -9 \$pids; echo \"\$pids\"; trinetra update status --json | jq -c .pending"
+}
+# pids_gone <pids>: none of these processes exists any more. With the
+# watchdog firing every WATCHDOG seconds a NEW guard may legitimately be
+# running by now; what matters is that the killed ones are gone.
+pids_gone() { on host sh -c "for p in $1; do kill -0 \$p 2>/dev/null && exit 1; done; exit 0"; }
 watchdog_active() { on host systemctl is-active --quiet trinetra-update-watchdog.timer; }
 last_at() { status_field '.last.at // 0'; }
 last_newer_than() { [ "$(last_at)" -gt "$1" ]; } # <unix seconds>
@@ -176,13 +195,13 @@ CHECK=$(on host trinetra update check 2>&1) || fail "update check: $CHECK"
 grep -q "^update available: 0.5.1 (channel beta)$" <<<"$CHECK" || fail "update check output: $CHECK"
 APPLY=$(on host trinetra update apply 2>&1) || fail "update apply: $APPLY"
 echo "  $APPLY"
-wait_until 90 "guard commits 0.5.1" last_outcome_is committed
+wait_until $((HEALTH + 60)) "guard commits 0.5.1" last_outcome_is committed
 running_is 0.5.1 || fail "running after apply: $(status_field .running)"
 floor_is 0.5.1 || fail "floor after apply: $(status_field .floor)"
 pending_is_null || fail "pending left over after commit: $(status_field .pending)"
-# updateLoopInterval is 5 minutes (update_daemon.go) -- this is the harness's
-# one genuinely slow wait, by design (see this file's header note).
-wait_until 330 "mocktg got the 'updated 0.5.0 -> 0.5.1' message" mocktg_has "updated 0.5.0 → 0.5.1"
+# Delivered on the self-update loop's next tick (LOOP here, 5 minutes on a
+# real host -- see this file's header note).
+wait_until $((LOOP * 6 + 30)) "mocktg got the 'updated 0.5.0 -> 0.5.1' message" mocktg_has "updated 0.5.0 → 0.5.1"
 pass "0.5.0 -> 0.5.1: running, floor, and the mocktg notification all confirm"
 
 # ---------------------------------------------------------------------------
@@ -215,19 +234,20 @@ pass "refused ($OUT), installed binary unchanged ($BEFORE)"
 step "6 apply 0.5.2 (crashes on start) rolls back"
 APPLY=$(on host trinetra update apply --version 0.5.2 2>&1) || fail "apply 0.5.2: $APPLY"
 echo "  $APPLY"
-# The guard's own deadline is 90s from ITS restart (update_guard.go), which
-# starts a few seconds after this apply call returns; wait a bit past that
-# so a slow poll cycle right at the boundary is not a false failure.
-wait_until 120 "guard rolls back 0.5.2" last_outcome_is rolled_back
+# The guard's own deadline is HEALTH seconds from ITS restart
+# (update_guard.go), which starts a few seconds after this apply call
+# returns; wait well past that so a slow poll cycle right at the boundary is
+# not a false failure.
+wait_until $((HEALTH + 60)) "guard rolls back 0.5.2" last_outcome_is rolled_back
 running_is 0.5.1 || fail "running after rollback: $(status_field .running)"
 floor_is 0.5.1 || fail "floor moved after a rolled-back update: $(status_field .floor)"
 pending_is_null || fail "pending left over after rollback: $(status_field .pending)"
 bad_versions_has 0.5.2 || fail "0.5.2 not recorded in bad_versions: $(on host cat /var/lib/trinetra/update/state.json)"
-wait_until 330 "mocktg got the critical rollback alert" mocktg_has "rolled back to 0.5.1"
+wait_until $((LOOP * 6 + 30)) "mocktg got the critical rollback alert" mocktg_has "rolled back to 0.5.1"
 mocktg_has "0.5.2" || fail "rollback alert does not name 0.5.2"
 OUT=$(refused 0.5.2)
 grep -qi "failed its health check here before" <<<"$OUT" || fail "re-apply of a known-bad version without --force: $OUT"
-pass "0.5.2 rolled back to 0.5.1 within 90s, critical alert sent, bad_versions recorded, re-apply refused without --force"
+pass "0.5.2 rolled back to 0.5.1 once its ${HEALTH}s health window ran out, critical alert sent, bad_versions recorded, re-apply refused without --force"
 
 # ---------------------------------------------------------------------------
 step "7 guard killed while a crash-on-start build is pending: the watchdog rolls back"
@@ -239,12 +259,14 @@ CRASHES=$(crash_count)
 APPLY=$(on host trinetra update apply --version 0.5.2 --force 2>&1) || fail "apply 0.5.2 --force: $APPLY"
 echo "  $APPLY"
 wait_until 30 "guard restarted onto the crashing 0.5.2" crashed_since "$CRASHES"
-on host pkill -9 -f "$GUARD_RE" || fail "no running guard process to kill"
-wait_until 10 "guard process gone" guard_gone
-pending_is_null && fail "pending already cleared before the guard was killed"
-echo "  pending stuck after killing the guard: $(status_field .pending)"
-# Next watchdog run (<= 60s) + a full 90s window from its own restart.
-wait_until 200 "the watchdog's guard rolls back 0.5.2" last_newer_than "$BEFORE_AT"
+KILLED=$(kill_guard) || fail "no running guard process to kill"
+KILLED_PIDS=$(head -n 1 <<<"$KILLED")
+PENDING_AT_KILL=$(sed -n 2p <<<"$KILLED")
+wait_until 10 "killed guard process ($KILLED_PIDS) gone" pids_gone "$KILLED_PIDS"
+[ "$PENDING_AT_KILL" != "null" ] || fail "pending already cleared before the guard was killed"
+echo "  pending stuck after killing the guard: $PENDING_AT_KILL"
+# Next watchdog run (<= WATCHDOG) + a full HEALTH window from its own restart.
+wait_until $((WATCHDOG + HEALTH + 60)) "the watchdog's guard rolls back 0.5.2" last_newer_than "$BEFORE_AT"
 last_outcome_is rolled_back || fail "watchdog did not roll back: $(status_field '.last')"
 pending_is_null || fail "pending left over: $(status_field .pending)"
 running_is 0.5.1 || fail "running after watchdog rollback: $(status_field .running)"
@@ -261,12 +283,14 @@ echo "  $APPLY"
 # sample can exist (fast_interval defaults to 5s), so it never commits.
 wait_until 15 "guard restarted the daemon onto 0.5.6" \
 	on host sh -c "pgrep -f '^/usr/local/bin/trinetra daemon\$' | grep -vxF '$OLD_PID' >/dev/null"
-on host pkill -9 -f "$GUARD_RE" || fail "no running guard process to kill"
-wait_until 10 "guard process gone" guard_gone
-pending_is_null && fail "pending was already cleared before the guard could be killed (race: the health check committed first)"
-echo "  pending stuck after killing the guard: $(status_field .pending)"
+KILLED=$(kill_guard) || fail "no running guard process to kill"
+KILLED_PIDS=$(head -n 1 <<<"$KILLED")
+PENDING_AT_KILL=$(sed -n 2p <<<"$KILLED")
+wait_until 10 "killed guard process ($KILLED_PIDS) gone" pids_gone "$KILLED_PIDS"
+[ "$PENDING_AT_KILL" != "null" ] || fail "pending was already cleared before the guard could be killed (race: the health check committed first)"
+echo "  pending stuck after killing the guard: $PENDING_AT_KILL"
 # No manual restart: the watchdog timer alone must resolve it.
-wait_until 200 "the watchdog's guard resolves the pending update" pending_is_null
+wait_until $((WATCHDOG + HEALTH + 60)) "the watchdog's guard resolves the pending update" pending_is_null
 last_outcome_is committed || fail "watchdog did not commit a healthy 0.5.6: $(status_field '.last')"
 running_is 0.5.6 || fail "running after resume: $(status_field .running)"
 floor_is 0.5.6 || fail "floor after resume: $(status_field .floor)"
@@ -284,7 +308,7 @@ wait_until 60 "apply paused after its first rename" on host test -f /tmp/swap-pa
 [ "$(status_field '.pending.phase')" = "swapping" ] || fail "pending not recorded as swapping before the renames: $(status_field .pending)"
 [ "$(sha_of /usr/local/bin/trinetra)" != "$BEFORE_SHA" ] || fail "core binary not yet replaced at the pause point"
 on host pkill -9 -f '^trinetra update apply --version 0.5.7' || on host pkill -9 -f 'update apply --version 0.5.7' || fail "no apply process to kill"
-wait_until 200 "the watchdog resolves the interrupted swap" last_newer_than "$BEFORE_AT"
+wait_until $((WATCHDOG + 60)) "the watchdog resolves the interrupted swap" last_newer_than "$BEFORE_AT"
 last_outcome_is rolled_back || fail "interrupted swap not rolled back: $(status_field '.last')"
 status_field '.last.detail' | grep -F "interrupted" >/dev/null || fail "rollback detail does not mention the interrupted swap: $(status_field '.last.detail')"
 pending_is_null || fail "pending left over: $(status_field .pending)"
@@ -296,7 +320,7 @@ BEFORE_AT=$(last_at)
 APPLY=$(on host trinetra update apply --version 0.5.7 2>&1) || fail "re-apply 0.5.7: $APPLY"
 # Wait for the commit itself: while an update is pending, `status`'s floor
 # already shows max(persisted floor, running binary) (review M18).
-wait_until 120 "guard commits 0.5.7" last_newer_than "$BEFORE_AT"
+wait_until $((HEALTH + 60)) "guard commits 0.5.7" last_newer_than "$BEFORE_AT"
 last_outcome_is committed || fail "re-apply of 0.5.7 not committed: $(status_field '.last')"
 pending_is_null || fail "pending left over after re-apply: $(status_field .pending)"
 running_is 0.5.7 || fail "running after re-apply: $(status_field .running)"
@@ -329,7 +353,9 @@ for want in '"action":"update.apply"' '"action":"update.commit"' '"action":"upda
 	grep -F "$want" <<<"$AUDIT" >/dev/null || fail "audit log lacks $want: $AUDIT"
 done
 watchdog_active || fail "watchdog timer not active at the end"
-guard_gone || fail "a guard is still running with nothing pending"
+# The watchdog's own `--if-pending` guard runs every WATCHDOG seconds and
+# exits at once with nothing pending; a stray guard never exits.
+wait_until 15 "no guard left running with nothing pending" guard_gone
 pass "apply/commit/rollback audited with actors; watchdog armed; no stray guard"
 
 STEP=""

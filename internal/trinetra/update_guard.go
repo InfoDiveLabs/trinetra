@@ -145,7 +145,7 @@ func runGuard(d guardDeps) (update.Result, error) {
 	}
 
 	deadline := pending.Deadline
-	if min := restartedAt.Add(updateHealthDeadline).Unix(); min > deadline {
+	if min := restartedAt.Add(healthDeadline()).Unix(); min > deadline {
 		deadline = min
 	}
 	expired := func() bool { return d.now().Unix() > deadline }

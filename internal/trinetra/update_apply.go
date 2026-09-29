@@ -51,6 +51,18 @@ func probeApplyLock(p updatePaths) error {
 // whatever watches it rolls back.
 const updateHealthDeadline = 90 * time.Second
 
+// healthDeadline is the health window every Pending and guard uses:
+// updateHealthDeadline, except in a trinetra_testkeys build whose
+// update-e2e harness shortens it via TRINETRA_E2E_HEALTH_DEADLINE
+// (update_e2e_hooks_testkeys.go). A default build never reads that
+// variable (update_e2e_hooks.go).
+func healthDeadline() time.Duration {
+	if d, ok := e2eHealthDeadline(); ok {
+		return d
+	}
+	return updateHealthDeadline
+}
+
 // updatePaths locates everything a self-update touches: the binaries in
 // BinDir, this package's scratch space under StateDir/update (staged
 // downloads, the previous build kept for rollback, cached manifests, state
@@ -321,7 +333,7 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 	pending := update.Pending{
 		Version:  plan.Manifest.Version,
 		From:     strings.TrimPrefix(version.String(), "v"),
-		Deadline: now.Add(updateHealthDeadline).Unix(),
+		Deadline: now.Add(healthDeadline()).Unix(),
 		Files:    plan.Names,
 		Phase:    pendingSwapping,
 	}
@@ -344,7 +356,7 @@ func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 	}
 
 	pending.Phase = pendingSwapped
-	pending.Deadline = now.Add(updateHealthDeadline).Unix()
+	pending.Deadline = now.Add(healthDeadline()).Unix()
 	return setPending(p, &pending)
 }
 

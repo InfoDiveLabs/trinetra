@@ -33,5 +33,8 @@ while :; do
 		$exec_start || echo "$(date -u +%FT%TZ) watchdog: exit $?"
 	fi
 	period=$(sed -n 's/^OnUnitActiveSec=//p' "$TIMER" 2>/dev/null | head -n 1)
-	sleep "$(seconds "${period:-1min}")"
+	# TRINETRA_E2E_WATCHDOG_INTERVAL (set in the image) shortens the unit's
+	# own 1-minute cadence for the harness; nothing in trinetra reads it.
+	period=${TRINETRA_E2E_WATCHDOG_INTERVAL:-${period:-1min}}
+	sleep "$(seconds "$period")"
 done

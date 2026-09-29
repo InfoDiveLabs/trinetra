@@ -47,4 +47,13 @@ ENV TRINETRA_E2E_GITHUB_BASE_URL="http://relsrv:8080"
 ENV TRINETRA_E2E_RESTART_CMD="/usr/local/libexec/e2e-restart.sh"
 ENV TRINETRA_E2E_GUARD_CMD='/usr/local/libexec/e2e-guard.sh "$@"'
 ENV TELEGRAM_BASE_URL="http://mocktg:8080"
+# Shortened cadences, harness only: the self-update loop's 5-minute tick and
+# the 90s health window (both read only by a trinetra_testkeys build -- a
+# default build ignores them, see TestE2EHooksIgnoredInReleaseBuild), and the
+# emulated watchdog timer's 1-minute OnUnitActiveSec (read only by
+# fake-timer.sh). The health window stays several fast_interval (5s) samples
+# long so a healthy build still commits well inside it on a loaded machine.
+ENV TRINETRA_E2E_UPDATE_LOOP_INTERVAL="5s"
+ENV TRINETRA_E2E_HEALTH_DEADLINE="30s"
+ENV TRINETRA_E2E_WATCHDOG_INTERVAL="10s"
 CMD ["sleep", "infinity"]

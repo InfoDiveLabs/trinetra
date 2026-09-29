@@ -20,6 +20,16 @@
 //   - TRINETRA_E2E_GITHUB_BASE_URL, honoured by updateSource (update_cmd.go),
 //     points GitHubSource at the harness's fake GitHub API (relsrv) instead
 //     of the real api.github.com.
+//   - TRINETRA_E2E_UPDATE_LOOP_INTERVAL, honoured by updateLoopEvery
+//     (update_daemon.go), replaces the self-update loop's 5-minute tick.
+//   - TRINETRA_E2E_HEALTH_DEADLINE, honoured by healthDeadline
+//     (update_apply.go), replaces the 90s window a pending update gets to
+//     prove itself healthy.
+//
+// Both timer overrides take a positive Go duration ("5s", "20s"); anything
+// else leaves the production value in place. They only shorten the waits the
+// harness would otherwise sit through -- the guard's and loop's logic is
+// unchanged.
 package trinetra
 
 import (
@@ -53,6 +63,26 @@ func e2eGuardCmd() (cmd string, args []string, ok bool) {
 // e2eGitHubBaseURL reports TRINETRA_E2E_GITHUB_BASE_URL, or "" (meaning
 // "use the real GitHub API") when it is unset.
 func e2eGitHubBaseURL() string { return os.Getenv("TRINETRA_E2E_GITHUB_BASE_URL") }
+
+// e2eUpdateLoopInterval reports TRINETRA_E2E_UPDATE_LOOP_INTERVAL when it
+// is a positive duration.
+func e2eUpdateLoopInterval() (time.Duration, bool) {
+	return envDuration("TRINETRA_E2E_UPDATE_LOOP_INTERVAL")
+}
+
+// e2eHealthDeadline reports TRINETRA_E2E_HEALTH_DEADLINE when it is a
+// positive duration.
+func e2eHealthDeadline() (time.Duration, bool) {
+	return envDuration("TRINETRA_E2E_HEALTH_DEADLINE")
+}
+
+func envDuration(name string) (time.Duration, bool) {
+	d, err := time.ParseDuration(os.Getenv(name))
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+	return d, true
+}
 
 func shCmd(v string) (cmd string, args []string, ok bool) {
 	if v == "" {

@@ -432,7 +432,7 @@ func (u updater) rollback() error {
 	pending := update.Pending{
 		Version:  prevVersion,
 		From:     strings.TrimPrefix(u.running.String(), "v"),
-		Deadline: u.clock().Add(updateHealthDeadline).Unix(),
+		Deadline: u.clock().Add(healthDeadline()).Unix(),
 		Files:    files,
 		Rollback: true,
 		Phase:    pendingSwapping,
@@ -449,7 +449,7 @@ func (u updater) rollback() error {
 		return fmt.Errorf("update: restoring the previous build failed (%w); the update watchdog will retry within a minute (see trinetra update status)", err)
 	}
 	pending.Phase = pendingSwapped
-	pending.Deadline = u.clock().Add(updateHealthDeadline).Unix()
+	pending.Deadline = u.clock().Add(healthDeadline()).Unix()
 	if err := setPending(u.paths, &pending); err != nil {
 		return err
 	}
@@ -760,7 +760,7 @@ func cmdUpdateApply(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "staged and installed %s; health guard launched (confirms within %s)\n", m.Version, updateHealthDeadline)
+	fmt.Fprintf(stdout, "staged and installed %s; health guard launched (confirms within %s)\n", m.Version, healthDeadline())
 	return 0
 }
 

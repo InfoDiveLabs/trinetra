@@ -20,6 +20,17 @@ import (
 // newly available version.
 const updateLoopInterval = 5 * time.Minute
 
+// updateLoopEvery is startUpdateLoop's tick: updateLoopInterval, except in a
+// trinetra_testkeys build whose update-e2e harness shortens it via
+// TRINETRA_E2E_UPDATE_LOOP_INTERVAL (update_e2e_hooks_testkeys.go). A
+// default build never reads that variable (update_e2e_hooks.go).
+func updateLoopEvery() time.Duration {
+	if d, ok := e2eUpdateLoopInterval(); ok {
+		return d
+	}
+	return updateLoopInterval
+}
+
 // stalePointerAfter is how long with no fresh channel pointer (State's
 // LastPointerIssued) is considered stale enough to warn about, even though
 // ordinary check() errors are otherwise only logged.
@@ -124,7 +135,7 @@ func updateStaleAlert(channel, reason string, now time.Time) Alert {
 // re-reads state first (LoadState -> modify one field -> SaveState) so the
 // CLI and the daemon never clobber each other's fields.
 func startUpdateLoop(ctx context.Context, getCfg func() *config.Config, u updater, notify func(Alert)) {
-	ticker := time.NewTicker(updateLoopInterval)
+	ticker := time.NewTicker(updateLoopEvery())
 	defer ticker.Stop()
 	for {
 		select {
