@@ -38,8 +38,14 @@ StandardError=journal
 `, guardBin)
 }
 
-// renderWatchdogTimer fires the watchdog 2 minutes after boot and every
-// minute after the previous run finished.
+// renderWatchdogTimer fires the watchdog 2 minutes after boot, every minute
+// after the previous run finished, and shortly (1 minute) after the timer
+// itself is (re)started -- e.g. by an uninstall+reinstall within the same
+// boot, when OnBootSec has already elapsed and would otherwise wait a full
+// boot cycle to fire again. Persistent= is deliberately not set: it only
+// applies to OnCalendar= timers and is a no-op (some systemd versions warn
+// about it) on a monotonic timer like this one; OnActiveSec= covers the
+// same "don't miss a run" concern here.
 func renderWatchdogTimer() string {
 	return `[Unit]
 Description=Run the Trinetra self-update watchdog every minute
@@ -47,8 +53,8 @@ Description=Run the Trinetra self-update watchdog every minute
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=1min
+OnActiveSec=1min
 AccuracySec=5s
-Persistent=true
 
 [Install]
 WantedBy=timers.target
