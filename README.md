@@ -16,7 +16,7 @@ No agent zoo, no cloud, no Prometheus, no external database.
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-stable-brightgreen" alt="status: stable">
-  <img src="https://img.shields.io/badge/version-v0.4.1-blue" alt="version: v0.4.1">
+  <img src="https://img.shields.io/badge/version-v0.5.0-blue" alt="version: v0.5.0">
   <img src="https://img.shields.io/badge/core-stdlib%20only-00ADD8" alt="core: stdlib only">
   <img src="https://img.shields.io/badge/RAM-~12%20MB-6f42c1" alt="RAM: about 12 MB">
   <img src="https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333" alt="platform: Linux + systemd">
