@@ -224,7 +224,9 @@ func TestHistoryAndSeriesRoutesAreViewerGated(t *testing.T) {
 
 // TestDowntimeAPIReturnsEventsForValidRange pins the /api/downtime endpoint:
 // a valid range against a populated fake EventsStore returns the downtime
-// events as JSON for the mockup's "Downtime · 30d" timeline/rows.
+// events as JSON for the mockup's "Downtime · 30d" timeline/rows, newest
+// (largest Start) first -- net_down (2000) sorts ahead of power_down (1000)
+// even though power_down is listed first in the fake store.
 func TestDowntimeAPIReturnsEventsForValidRange(t *testing.T) {
 	d := historyTestDeps(t, fakeAPI{events: []DownEventView{
 		{Type: "power_down", Start: 1000, End: 1600, DurationSec: 600},
@@ -248,8 +250,17 @@ func TestDowntimeAPIReturnsEventsForValidRange(t *testing.T) {
 	if len(resp.Events) != 2 {
 		t.Fatalf("events = %+v, want 2", resp.Events)
 	}
-	if resp.Events[0].Type != "power_down" || resp.Events[0].Start != 1000 || resp.Events[0].DurationSec != 600 {
-		t.Errorf("events[0] = %+v, want power_down 1000..1600 600s", resp.Events[0])
+	if resp.Events[0].Type != "net_down" || resp.Events[0].Start != 2000 || resp.Events[0].DurationSec != 60 {
+		t.Errorf("events[0] = %+v, want net_down 2000..2060 60s (newest first)", resp.Events[0])
+	}
+	if resp.Events[1].Type != "power_down" || resp.Events[1].Start != 1000 {
+		t.Errorf("events[1] = %+v, want power_down 1000..1600 (oldest last)", resp.Events[1])
+	}
+	if resp.Total != 2 {
+		t.Errorf("total = %d, want 2", resp.Total)
+	}
+	if resp.TotalSeconds != 660 {
+		t.Errorf("total_seconds = %d, want 660", resp.TotalSeconds)
 	}
 }
 
@@ -314,6 +325,457 @@ func TestDowntimeRouteIsViewerGated(t *testing.T) {
 	}
 	if loc := rr.Header().Get("Location"); loc != "/login" {
 		t.Errorf("Location = %q, want /login", loc)
+	}
+}
+
+// downtimeEventsFixture builds n synthetic downtime events spaced 100s
+// apart starting at base, each lasting durSec, for the pagination tests
+// below. Returned in ascending-start order (callers that need to assert
+// newest-first ordering shuffle or reverse as needed) -- store.Events has
+// no documented ordering guarantee, so tests feed the handler events out of
+// order to confirm it does its own newest-first sort rather than trusting
+// the store.
+func downtimeEventsFixture(n int, base int64, durSec int64) []DownEventView {
+	evs := make([]DownEventView, n)
+	for i := 0; i < n; i++ {
+		start := base + int64(i)*100
+		evs[i] = DownEventView{Type: "net_down", Start: start, End: start + durSec, DurationSec: durSec}
+	}
+	return evs
+}
+
+// TestDowntimeAPIDefaultsLimitAndOffset pins the paging defaults: no
+// limit/offset given -> limit=50, offset=0, and (since 5 < 50) every event
+// comes back on the one page, echoed as total=5.
+func TestDowntimeAPIDefaultsLimitAndOffset(t *testing.T) {
+	evs := downtimeEventsFixture(5, 1000, 60)
+	d := historyTestDeps(t, fakeAPI{events: evs})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	if resp.Limit != 50 {
+		t.Errorf("limit = %d, want default 50", resp.Limit)
+	}
+	if resp.Offset != 0 {
+		t.Errorf("offset = %d, want default 0", resp.Offset)
+	}
+	if resp.Total != 5 {
+		t.Errorf("total = %d, want 5", resp.Total)
+	}
+	if len(resp.Events) != 5 {
+		t.Errorf("events = %d, want all 5 on the one page", len(resp.Events))
+	}
+}
+
+// TestDowntimeAPILimitOffsetSlicesNewestFirst pins the core paging
+// contract: events are sorted newest-first (by Start descending) and then
+// sliced by offset/limit, regardless of the order the store returned them
+// in.
+func TestDowntimeAPILimitOffsetSlicesNewestFirst(t *testing.T) {
+	evs := downtimeEventsFixture(10, 1000, 60) // starts 1000,1100,...,1900
+	// Feed the fake store in reverse (oldest-last-in-store) to prove the
+	// handler sorts rather than trusting store order.
+	reversed := make([]DownEventView, len(evs))
+	for i, e := range evs {
+		reversed[len(evs)-1-i] = e
+	}
+	d := historyTestDeps(t, fakeAPI{events: reversed})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000&limit=3&offset=2")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	if resp.Limit != 3 || resp.Offset != 2 {
+		t.Errorf("limit/offset = %d/%d, want 3/2", resp.Limit, resp.Offset)
+	}
+	if resp.Total != 10 {
+		t.Errorf("total = %d, want 10 (full range count, not page size)", resp.Total)
+	}
+	// Newest-first full order is starts 1900,1800,...,1000; offset=2,limit=3
+	// -> starts 1700,1600,1500.
+	wantStarts := []int64{1700, 1600, 1500}
+	if len(resp.Events) != len(wantStarts) {
+		t.Fatalf("events = %+v, want %d events", resp.Events, len(wantStarts))
+	}
+	for i, want := range wantStarts {
+		if resp.Events[i].Start != want {
+			t.Errorf("events[%d].Start = %d, want %d", i, resp.Events[i].Start, want)
+		}
+	}
+}
+
+// TestDowntimeAPITotalSecondsCoversFullRangeNotJustPage pins that
+// total_seconds (the "total Xs · YY.YY%" summary's basis) is computed over
+// every event in [from,to], not just the returned page -- so paging can't
+// change the summary the way it would if the client derived it from the
+// page alone.
+func TestDowntimeAPITotalSecondsCoversFullRangeNotJustPage(t *testing.T) {
+	evs := downtimeEventsFixture(10, 1000, 60) // 10 events * 60s = 600s total
+	d := historyTestDeps(t, fakeAPI{events: evs})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000&limit=2&offset=0")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	if resp.TotalSeconds != 600 {
+		t.Errorf("total_seconds = %d, want 600 (10 events * 60s, independent of limit=2)", resp.TotalSeconds)
+	}
+}
+
+// TestDowntimeAPIOffsetBeyondTotalReturnsEmptyPage pins that an offset past
+// the end of the range is a normal empty page (200), not an error.
+func TestDowntimeAPIOffsetBeyondTotalReturnsEmptyPage(t *testing.T) {
+	evs := downtimeEventsFixture(3, 1000, 60)
+	d := historyTestDeps(t, fakeAPI{events: evs})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000&limit=10&offset=50")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	if len(resp.Events) != 0 {
+		t.Errorf("events = %+v, want empty page", resp.Events)
+	}
+	if resp.Total != 3 {
+		t.Errorf("total = %d, want 3", resp.Total)
+	}
+}
+
+// TestDowntimeAPIInvalidLimitOffsetRejected pins the limit/offset
+// validation contract: non-numeric, out-of-bounds (limit<1, limit>500,
+// offset<0) all reject with 400 before reaching the store.
+func TestDowntimeAPIInvalidLimitOffsetRejected(t *testing.T) {
+	d := historyTestDeps(t, fakeAPI{events: downtimeEventsFixture(3, 1000, 60)})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"limit not a number", "from=0&to=100000&limit=abc"},
+		{"limit zero", "from=0&to=100000&limit=0"},
+		{"limit negative", "from=0&to=100000&limit=-1"},
+		{"limit over max", "from=0&to=100000&limit=501"},
+		{"offset not a number", "from=0&to=100000&offset=abc"},
+		{"offset negative", "from=0&to=100000&offset=-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?"+tc.query)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("query %q status = %d, want 400, body: %s", tc.query, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// TestDowntimeAPIMaxLimitAccepted pins that limit=500 (the documented max)
+// is accepted, not rejected as "over max".
+func TestDowntimeAPIMaxLimitAccepted(t *testing.T) {
+	d := historyTestDeps(t, fakeAPI{events: downtimeEventsFixture(1, 1000, 60)})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000&limit=500")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestNodeScopedDowntimeAPIPagination pins that the node-scoped route
+// (/n/<id>/api/downtime, fleet routing) honors limit/offset exactly like
+// the master route, since it shares downtimeAPIHandler via apiFor.
+func TestNodeScopedDowntimeAPIPagination(t *testing.T) {
+	child := fakeAPI{events: downtimeEventsFixture(5, 1000, 60)}
+	master := fakeAPI{events: downtimeEventsFixture(1, 1, 1)}
+	d := nodeScopedDeps(t, master, child)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/n/child1/api/downtime?from=0&to=100000&limit=2&offset=1")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	if resp.Total != 5 {
+		t.Errorf("total = %d, want 5 (child1's count)", resp.Total)
+	}
+	if len(resp.Events) != 2 {
+		t.Errorf("events = %+v, want 2 (limit=2)", resp.Events)
+	}
+}
+
+// TestDowntimeAPITimelineHasFixedBucketCount pins that the response's
+// Timeline always has exactly downtimeTimelineBuckets entries covering the
+// full requested range, whether there are zero events, a nil API, or many
+// -- the timeline bar's payload size is bounded independent of incident
+// count, unlike (pre-117) drawing one SVG segment per event.
+func TestDowntimeAPITimelineHasFixedBucketCount(t *testing.T) {
+	cases := []struct {
+		name string
+		api  core.API
+	}{
+		{"nil API", nil},
+		{"no events", fakeAPI{}},
+		{"many events", fakeAPI{events: downtimeEventsFixture(40, 1000, 60)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := historyTestDeps(t, tc.api)
+			h := newHandler(d)
+			users := newUserStore(d.StateDir)
+			sessions := newSessionStore(d.StateDir)
+
+			req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000")
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+			}
+			var resp downtimeResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+			}
+			if len(resp.Timeline) != downtimeTimelineBuckets {
+				t.Fatalf("len(timeline) = %d, want %d", len(resp.Timeline), downtimeTimelineBuckets)
+			}
+			if resp.Timeline[0].Start != 0 {
+				t.Errorf("timeline[0].Start = %d, want 0 (=from)", resp.Timeline[0].Start)
+			}
+			if last := resp.Timeline[len(resp.Timeline)-1].End; last != 100000 {
+				t.Errorf("timeline[last].End = %d, want 100000 (=to)", last)
+			}
+		})
+	}
+}
+
+// TestDowntimeAPITimelineClipsAtRangeAndBucketEdges pins the clipping
+// contract: an event that starts before `from`, an event that's still open
+// (End 0, clipped through `to`), and an event that spans a bucket boundary
+// all only contribute the portion of their duration that actually falls
+// inside [from,to] and inside each bucket -- not their raw duration_sec.
+// Uses from=0,to=1200 with the real downtimeTimelineBuckets(=120) so each
+// bucket is exactly 10s wide and the math is exact.
+func TestDowntimeAPITimelineClipsAtRangeAndBucketEdges(t *testing.T) {
+	if 1200%downtimeTimelineBuckets != 0 {
+		t.Fatalf("test assumes 1200 divides evenly by downtimeTimelineBuckets(=%d)", downtimeTimelineBuckets)
+	}
+	bucketWidth := int64(1200 / downtimeTimelineBuckets)
+
+	events := []DownEventView{
+		// Starts before `from`(0): only [0,50) should count (clipped from
+		// [-100,50)), spread across the first 5 buckets (10s each).
+		{Type: "net_down", Start: -100, End: 50, DurationSec: 150},
+		// Crosses a bucket boundary at t=10: [5,25) contributes 5s to
+		// bucket 0 ([0,10)), 10s to bucket 1 ([10,20)), 5s to bucket 2
+		// ([20,30)).
+		{Type: "power_down", Start: 5, End: 25, DurationSec: 20},
+		// Still open (End 0): clipped through `to`(1200), landing entirely
+		// in the last bucket ([1190,1200)).
+		{Type: "net_down", Start: 1190, End: 0, DurationSec: 999999},
+	}
+	d := historyTestDeps(t, fakeAPI{events: events})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=1200")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	if len(resp.Timeline) != downtimeTimelineBuckets {
+		t.Fatalf("len(timeline) = %d, want %d", len(resp.Timeline), downtimeTimelineBuckets)
+	}
+
+	// bucket 0 ([0,10)): 10s from the range-clipped first event, + 5s from
+	// the boundary-crossing second event = 15s.
+	if got := resp.Timeline[0].DownSeconds; got != bucketWidth+5 {
+		t.Errorf("timeline[0].DownSeconds = %d, want %d", got, bucketWidth+5)
+	}
+	// bucket 1 ([10,20)): 10s from the first event + 10s from the second
+	// event = 20s.
+	if got := resp.Timeline[1].DownSeconds; got != 2*bucketWidth {
+		t.Errorf("timeline[1].DownSeconds = %d, want %d", got, 2*bucketWidth)
+	}
+	// bucket 2 ([20,30)): 10s from the first event + 5s from the second
+	// event (which ends at 25) = 15s.
+	if got := resp.Timeline[2].DownSeconds; got != bucketWidth+5 {
+		t.Errorf("timeline[2].DownSeconds = %d, want %d", got, bucketWidth+5)
+	}
+	// buckets 3,4 ([30,50)): 10s each from the range-clipped first event
+	// only.
+	for _, i := range []int{3, 4} {
+		if got := resp.Timeline[i].DownSeconds; got != bucketWidth {
+			t.Errorf("timeline[%d].DownSeconds = %d, want %d", i, got, bucketWidth)
+		}
+	}
+	// bucket 5 ([50,60)): nothing -- the first event ended exactly at 50.
+	if got := resp.Timeline[5].DownSeconds; got != 0 {
+		t.Errorf("timeline[5].DownSeconds = %d, want 0", got)
+	}
+	// last bucket ([1190,1200)): the open event, clipped through `to`.
+	last := downtimeTimelineBuckets - 1
+	if got := resp.Timeline[last].DownSeconds; got != bucketWidth {
+		t.Errorf("timeline[%d].DownSeconds = %d, want %d", last, got, bucketWidth)
+	}
+	if resp.Timeline[last].Type != "net_down" {
+		t.Errorf("timeline[%d].Type = %q, want net_down", last, resp.Timeline[last].Type)
+	}
+	// bucket 1 overlaps both a net_down (bucket 0's first event, spilling
+	// in) and the power_down boundary-crosser -- power_down must win.
+	if resp.Timeline[1].Type != "power_down" {
+		t.Errorf("timeline[1].Type = %q, want power_down (crit wins over warn)", resp.Timeline[1].Type)
+	}
+
+	// The event(s) fully or partly outside [from,to] must still be clipped
+	// the same way in TotalSeconds, not counted at raw duration_sec: total
+	// clipped seconds = 50 (event 1) + 20 (event 2) + 10 (event 3) = 80,
+	// NOT 150+20+999999.
+	if resp.TotalSeconds != 80 {
+		t.Errorf("total_seconds = %d, want 80 (clipped, not raw duration_sec)", resp.TotalSeconds)
+	}
+}
+
+// TestDowntimeAPITimelineSumMatchesTotalSeconds pins the invariant the
+// controller asked for explicitly: summing every bucket's DownSeconds must
+// equal TotalSeconds, for an arbitrary (non-trivial) event set.
+func TestDowntimeAPITimelineSumMatchesTotalSeconds(t *testing.T) {
+	events := downtimeEventsFixture(37, 500, 42) // arbitrary, not aligned to bucket width
+	d := historyTestDeps(t, fakeAPI{events: events})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	var resp downtimeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
+	}
+	var sum int64
+	for _, b := range resp.Timeline {
+		sum += b.DownSeconds
+	}
+	if sum != resp.TotalSeconds {
+		t.Errorf("sum(timeline.down_seconds) = %d, total_seconds = %d, want equal", sum, resp.TotalSeconds)
+	}
+	if resp.TotalSeconds == 0 {
+		t.Fatal("total_seconds = 0, test fixture should produce nonzero downtime")
+	}
+}
+
+// TestDowntimeAPITimelineIndependentOfLimitOffset pins that Timeline (and
+// TotalSeconds/Total) never changes with limit/offset -- the whole point of
+// computing it over every in-range event before any page slicing, so
+// paging can't hide part of the downtime picture from the timeline bar.
+func TestDowntimeAPITimelineIndependentOfLimitOffset(t *testing.T) {
+	events := downtimeEventsFixture(40, 1000, 60)
+	d := historyTestDeps(t, fakeAPI{events: events})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	fetch := func(query string) downtimeResponse {
+		t.Helper()
+		req := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodGet, "/api/downtime?from=0&to=100000&"+query)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("query %q status = %d, want 200, body: %s", query, rr.Code, rr.Body.String())
+		}
+		var resp downtimeResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("query %q decode: %v", query, err)
+		}
+		return resp
+	}
+
+	small := fetch("limit=2&offset=0")
+	big := fetch("limit=500&offset=0")
+	offsetted := fetch("limit=2&offset=30")
+
+	for _, pair := range []struct {
+		name string
+		got  downtimeResponse
+	}{{"limit=500", big}, {"offset=30", offsetted}} {
+		if len(pair.got.Timeline) != len(small.Timeline) {
+			t.Fatalf("%s: len(timeline) = %d, want %d (same as limit=2)", pair.name, len(pair.got.Timeline), len(small.Timeline))
+		}
+		for i := range small.Timeline {
+			if pair.got.Timeline[i] != small.Timeline[i] {
+				t.Errorf("%s: timeline[%d] = %+v, want %+v (identical to limit=2's)", pair.name, i, pair.got.Timeline[i], small.Timeline[i])
+			}
+		}
+		if pair.got.TotalSeconds != small.TotalSeconds {
+			t.Errorf("%s: total_seconds = %d, want %d", pair.name, pair.got.TotalSeconds, small.TotalSeconds)
+		}
+		if pair.got.Total != small.Total {
+			t.Errorf("%s: total = %d, want %d", pair.name, pair.got.Total, small.Total)
+		}
 	}
 }
 

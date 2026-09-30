@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -131,18 +132,174 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// downtimeResponse is GET /api/downtime's JSON body: the downtime events
-// overlapping the requested range, for templates/history.html's
-// "Downtime · 30d" timeline/rows (assets/app.js's swBootHistoryCharts).
+// downtimeDefaultLimit and downtimeMaxLimit bound GET /api/downtime's
+// `limit` query parameter (parseDowntimePagination): unset defaults to
+// downtimeDefaultLimit, and anything above downtimeMaxLimit is rejected as
+// a 400 rather than silently clamped -- a caller asking for more than this
+// gets an explicit error, not a truncated page it doesn't know is short.
+const (
+	downtimeDefaultLimit = 50
+	downtimeMaxLimit     = 500
+)
+
+// downtimeResponse is GET /api/downtime's JSON body: one page of the
+// downtime events overlapping the requested range (newest-first, sliced by
+// Limit/Offset), plus Total (the full in-range event count, for the
+// "Show all N" / "Show more" expander), TotalSeconds (the summed, range-
+// clipped duration of every in-range event, not just this page, so the
+// "total Xs · YY.YY%" summary stays correct however the client pages), and
+// Timeline (downtimeTimelineBuckets fixed-size buckets covering the whole
+// requested range, computed the same page-independent way, so the
+// "Downtime · 30d" timeline bar can render the full picture from the first
+// response instead of only whatever page happens to be loaded) -- for
+// templates/history.html's panel (assets/app.js's renderDowntime).
 type downtimeResponse struct {
-	Events []DownEventView `json:"events"`
+	Events       []DownEventView          `json:"events"`
+	Total        int                      `json:"total"`
+	TotalSeconds int64                    `json:"total_seconds"`
+	Timeline     []DowntimeTimelineBucket `json:"timeline"`
+	Limit        int                      `json:"limit"`
+	Offset       int                      `json:"offset"`
 }
 
-// downtimeAPIHandler serves GET /api/downtime?from=&to=: the downtime-event
-// feed the history page's "Downtime · 30d" panel fetches. Same validation
-// and graceful-degradation contract as seriesAPIHandler -- from/to validated
-// as a hard 400 (parseSeriesRange), a nil Deps.API or an Events error both
-// render as an empty 200 (the latter logged server-side) rather than a 500.
+// downtimeTimelineBuckets is the fixed number of equal-width buckets GET
+// /api/downtime's Timeline field divides [from,to] into (buildDowntimeTimeline).
+// 120 matches the client's timeline SVG viewBox width of 1200 (assets/
+// app.js's renderDowntime), so each bucket is a comfortable 10px wide --
+// at least as smooth as the old per-event rendering it replaces, but now a
+// fixed, bounded payload size regardless of how many incidents are in
+// range.
+const downtimeTimelineBuckets = 120
+
+// DowntimeTimelineBucket is one equal-width slice of GET /api/downtime's
+// requested [from,to] range: Start/End are its Unix-second boundaries
+// (buckets tile [from,to] exactly, no gaps or overlaps), DownSeconds is the
+// total downtime inside this bucket summed across every in-range event
+// (each one clipped to both [from,to] and the bucket itself -- an event
+// that starts before `from`, ends after `to`, or spans a bucket edge only
+// contributes the portion actually inside this bucket), and Type is
+// whichever event type contributed to this bucket, with "power_down"
+// preferred over any other type when more than one overlaps -- the same
+// crit-wins-over-warn precedence the client's per-event color mapping used
+// pre-117. Type is "" when DownSeconds is 0.
+type DowntimeTimelineBucket struct {
+	Start       int64  `json:"start"`
+	End         int64  `json:"end"`
+	DownSeconds int64  `json:"down_seconds"`
+	Type        string `json:"type,omitempty"`
+}
+
+// buildDowntimeTimeline buckets evs (the caller passes every in-range
+// event, never just one page) into downtimeTimelineBuckets equal-width
+// buckets spanning exactly [from,to], so paging /api/downtime can never
+// hide part of the range's downtime picture from the timeline bar. Returns
+// the buckets plus their DownSeconds total; downtimeAPIHandler uses that
+// total for the response's TotalSeconds, so the timeline bar and the "total
+// Xs · YY.YY%" summary can never disagree -- they're computed from the
+// exact same clipped-per-bucket pass, not two separate summations.
+//
+// An open event (End == 0, still ongoing) is treated as running through
+// `to` for bucketing purposes, the widest reasonable reading of "still down
+// as of this query".
+func buildDowntimeTimeline(evs []DownEventView, from, to int64) ([]DowntimeTimelineBucket, int64) {
+	n := downtimeTimelineBuckets
+	buckets := make([]DowntimeTimelineBucket, n)
+	span := to - from
+	for i := 0; i < n; i++ {
+		buckets[i].Start = from + span*int64(i)/int64(n)
+		buckets[i].End = from + span*int64(i+1)/int64(n)
+	}
+
+	var total int64
+	for _, e := range evs {
+		s, en := e.Start, e.End
+		if en == 0 {
+			en = to
+		}
+		if s < from {
+			s = from
+		}
+		if en > to {
+			en = to
+		}
+		if en <= s {
+			continue
+		}
+		for i := range buckets {
+			os, oe := s, en
+			if buckets[i].Start > os {
+				os = buckets[i].Start
+			}
+			if buckets[i].End < oe {
+				oe = buckets[i].End
+			}
+			if oe <= os {
+				continue
+			}
+			overlap := oe - os
+			buckets[i].DownSeconds += overlap
+			total += overlap
+			if e.Type == "power_down" {
+				buckets[i].Type = "power_down"
+			} else if buckets[i].Type == "" {
+				buckets[i].Type = e.Type
+			}
+		}
+	}
+	return buckets, total
+}
+
+// parseDowntimePagination validates GET /api/downtime's optional limit/
+// offset query parameters: limit defaults to downtimeDefaultLimit and must
+// parse as an integer in [1, downtimeMaxLimit]; offset defaults to 0 and
+// must parse as an integer >= 0. Returns ok=false (caller responds 400) on
+// any malformed or out-of-bounds value -- an empty string (parameter
+// omitted) is the only value that falls back to the default rather than
+// failing.
+func parseDowntimePagination(r *http.Request) (limit, offset int, ok bool) {
+	q := r.URL.Query()
+
+	limit = downtimeDefaultLimit
+	if s := q.Get("limit"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 || v > downtimeMaxLimit {
+			return 0, 0, false
+		}
+		limit = v
+	}
+
+	offset = 0
+	if s := q.Get("offset"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 {
+			return 0, 0, false
+		}
+		offset = v
+	}
+
+	return limit, offset, true
+}
+
+// downtimeAPIHandler serves GET /api/downtime?from=&to=&limit=&offset=: the
+// downtime-event feed the history page's "Downtime · 30d" panel fetches.
+// Same from/to validation and graceful-degradation contract as
+// seriesAPIHandler -- from/to validated as a hard 400 (parseSeriesRange), a
+// nil Deps.API or an Events error both render as an empty 200 (the latter
+// logged server-side) rather than a 500 -- plus limit/offset validated by
+// parseDowntimePagination (also a hard 400).
+//
+// Pagination happens here, not in the store: api.Events(from, to) still
+// returns every event in the range (the store has no offset/limit concept
+// of its own), and this handler sorts that full set newest-first (by
+// Start descending -- store.Events makes no ordering guarantee) before
+// slicing out the [offset, offset+limit) page that goes in Events. Total,
+// TotalSeconds and Timeline are all computed from buildDowntimeTimeline
+// over the COMPLETE set, before that slicing happens, so the client's
+// "Show all N" expander, its "total Xs · YY.YY%" summary, and the timeline
+// bar itself all stay correct and mutually consistent (TotalSeconds is
+// literally the sum of Timeline's buckets) regardless of which page is
+// currently loaded.
+//
 // requireRole(RoleViewer, ...) (routes.go) has already gated it.
 func downtimeAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -151,15 +308,38 @@ func downtimeAPIHandler(d Deps) http.HandlerFunc {
 			http.Error(w, "invalid from/to range", http.StatusBadRequest)
 			return
 		}
+		limit, offset, ok := parseDowntimePagination(r)
+		if !ok {
+			http.Error(w, "invalid limit/offset", http.StatusBadRequest)
+			return
+		}
 
-		resp := downtimeResponse{Events: []DownEventView{}}
+		resp := downtimeResponse{Events: []DownEventView{}, Limit: limit, Offset: offset}
+		var sorted []DownEventView
 		if api := apiFor(r, d); api != nil {
 			evs, err := api.Events(from, to)
 			if err != nil {
 				log.Printf("web: /api/downtime query from=%d to=%d: %v", from, to, err)
 			} else if len(evs) > 0 {
-				resp.Events = evs
+				sorted = make([]DownEventView, len(evs))
+				copy(sorted, evs)
+				sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
 			}
+		}
+
+		resp.Total = len(sorted)
+		resp.Timeline, resp.TotalSeconds = buildDowntimeTimeline(sorted, from, to)
+
+		if len(sorted) > 0 {
+			start := offset
+			if start > len(sorted) {
+				start = len(sorted)
+			}
+			end := start + limit
+			if end > len(sorted) {
+				end = len(sorted)
+			}
+			resp.Events = sorted[start:end]
 		}
 
 		w.Header().Set("Content-Type", "application/json")

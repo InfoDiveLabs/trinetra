@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,5 +80,24 @@ func TestCheckSetsAvailableOnlyWhenPolicyPasses(t *testing.T) {
 				t.Fatalf("Available = %q, want %q", got.Available, c.want)
 			}
 		})
+	}
+}
+
+// TestUpdaterCheckUnparsableFloorFailsClosed is #138: a persisted floor that
+// is valid JSON but not a valid version must refuse `trinetra update check`
+// with a clear error instead of silently acting as "no floor" (which, with
+// an unknown running version, would enforce no lower bound at all).
+func TestUpdaterCheckUnparsableFloorFailsClosed(t *testing.T) {
+	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	issued := now.Add(-time.Hour)
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Floor: "not-a-version"}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	cfg := config.Default()
+	u := updater{paths: p, keys: testKeys(), src: pointerSource(t, "stable", "0.5.0", "stable", issued),
+		now: func() time.Time { return now }, arch: "amd64", running: mustVer("0.4.1")}
+	if _, err := u.check(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "not-a-version") {
+		t.Fatalf("check() = %v, want an error naming the bad floor value", err)
 	}
 }

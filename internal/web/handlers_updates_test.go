@@ -105,6 +105,63 @@ func TestUpdatesPageRendersInProgressAndLastError(t *testing.T) {
 	}
 }
 
+// TestUpdatesPageRendersRestoreFailed is #136 fix round 1's web-facing half:
+// when the guard's health-gate rollback itself failed to restore the
+// previous build, Pending.RestoreFailed (core.UpdatePendingView.RestoreFailed)
+// must show on the page -- explaining that the watchdog will retry -- and,
+// like Status.LastError, be rendered through html/template's normal
+// auto-escaping rather than inserted raw. Absent entirely when Pending has
+// no restore failure (the ordinary pending-update case).
+func TestUpdatesPageRendersRestoreFailed(t *testing.T) {
+	d := enrollTestDeps(t)
+	d.API = fakeAPI{updateStatus: core.UpdateStatusView{
+		Running: "0.4.1",
+		Pending: &core.UpdatePendingView{
+			Version:       "0.5.0",
+			From:          "0.4.1",
+			RestoreFailed: "restoring the previous build also failed: <script>alert(1)</script> permission denied",
+		},
+	}}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+
+	req := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/updates")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Restore of the previous build failed") {
+		t.Errorf("updates page must explain a failed restore:\n%s", body)
+	}
+	if !strings.Contains(body, "the watchdog will retry") {
+		t.Errorf("updates page must say the watchdog will retry:\n%s", body)
+	}
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Errorf("RestoreFailed must be HTML-escaped, not inserted raw:\n%s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("RestoreFailed's escaped form not found in the page:\n%s", body)
+	}
+
+	// No restore failure: nothing about it renders at all.
+	d2 := enrollTestDeps(t)
+	d2.StateDir = d.StateDir
+	d2.API = fakeAPI{updateStatus: core.UpdateStatusView{
+		Running: "0.4.1",
+		Pending: &core.UpdatePendingView{Version: "0.5.0", From: "0.4.1"},
+	}}
+	h2 := newHandler(d2)
+	req2 := seedSignedInRequest(t, users, sessions, RoleAdmin, http.MethodGet, "/updates")
+	rr2 := httptest.NewRecorder()
+	h2.ServeHTTP(rr2, req2)
+	if strings.Contains(rr2.Body.String(), "Restore of the previous build failed") {
+		t.Errorf("updates page must not mention a restore failure when there isn't one:\n%s", rr2.Body.String())
+	}
+}
+
 // TestUpdatesPageAnonRedirectsToLogin mirrors the anon half of
 // TestConfigRoutesAreAdminGated for /updates.
 func TestUpdatesPageAnonRedirectsToLogin(t *testing.T) {

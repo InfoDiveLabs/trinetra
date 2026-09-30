@@ -33,6 +33,9 @@
       <label class="field"><span class="lb">Previous</span><span class="mono">{{if .Status.Previous}}{{.Status.Previous}}{{else}}none{{end}}</span></label>
       {{with .Status.Pending}}
       <label class="field"><span class="lb">Pending</span><span class="mono">{{.Version}} (from {{.From}}{{if .Rollback}}, rollback{{end}}) &middot; confirms by {{nodeAgo .Deadline}}</span></label>
+      {{if .RestoreFailed}}
+      <div class="flash err" role="status" id="update-restore-failed">Restore of the previous build failed: {{.RestoreFailed}} &mdash; the watchdog will retry.</div>
+      {{end}}
       {{end}}
       {{with .Status.Last}}
       <label class="field"><span class="lb">Last outcome</span><span class="mono">{{.Version}} &middot; {{.Outcome}}{{if .Detail}} ({{.Detail}}){{end}} &middot; {{nodeAgo .At}}</span></label>

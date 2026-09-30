@@ -743,68 +743,134 @@
 
     // renderDowntime fills the "Downtime · 30d" panel from /api/downtime: a
     // proportional timeline bar (green "up" base + a colored segment per
-    // event) and one row per event, mirroring ui-mockup/history.html.
+    // bucket with downtime) and one row per event, mirroring
+    // ui-mockup/history.html -- now paged server-side (Task 117) instead of
+    // fetching every event in the range up front:
+    //   - The first request only asks for CAP events (limit=CAP,offset=0),
+    //     exactly enough to fill the always-visible 8-row view, so a long
+    //     history's /api/downtime payload stays small by default.
+    //   - "Show all N incidents" fetches the rest of the range in one more
+    //     request (bounded to at most 500 events, the server's max limit)
+    //     and reveals everything loaded so far; if that still leaves more
+    //     (a truly enormous history), the button relabels to "Show more" and
+    //     repeats for the next chunk -- so no single request is ever
+    //     unbounded, however large the history gets.
+    //   - The "total Xs · YY.YY%" summary uses the response's total/
+    //     total_seconds (computed server-side over the WHOLE range), not a
+    //     sum over whatever's currently loaded, so it reads the same
+    //     whether zero, one, or every page has been fetched.
+    //   - The timeline bar is drawn once, from the FIRST response's
+    //     `timeline` field (handlers_history.go's buildDowntimeTimeline: a
+    //     fixed downtimeTimelineBuckets-length array of {start,end,
+    //     down_seconds,type} buckets covering the whole range, computed
+    //     server-side over every in-range event regardless of paging) --
+    //     never from `loaded`, so the bar always shows the full 30-day
+    //     picture even before "Show all"/"Show more" is clicked. Only the
+    //     row LIST is paged; the bar isn't.
     function renderDowntime(){
       var panel=document.querySelector('[data-downtime]');
       if(!panel) return;
       var span=HISTORY_RANGE_SECONDS['30d'];
       var to=Math.floor(Date.now()/1000), from=to-span;
-      fetch(nodeURL('/api/downtime?from='+from+'&to='+to),{credentials:'same-origin'})
-        .then(function(r){ if(!r.ok) throw new Error('downtime fetch failed'); return r.json(); })
-        .then(function(data){
-          var events=(data&&data.events)||[];
-          var rows=document.getElementById('downtimeRows');
-          var timeline=document.getElementById('downtimeTimeline');
-          var summary=document.getElementById('downtimeSummary');
+      var rows=document.getElementById('downtimeRows');
+      var timeline=document.getElementById('downtimeTimeline');
+      var summary=document.getElementById('downtimeSummary');
 
-          var W=1200, total=0, segs='';
-          events.forEach(function(e){
-            total+=e.duration_sec||Math.max(0,(e.end-e.start));
-            var x=Math.max(0,Math.min(W,(e.start-from)/span*W));
-            var w=Math.max(2,((e.end-e.start)/span)*W);
-            var color=e.type==='power_down'?'var(--crit)':'var(--warn)';
-            segs+='<rect x="'+x.toFixed(1)+'" y="14" width="'+w.toFixed(1)+'" height="16" fill="'+color+'"/>';
+      var CAP=8, MAX_CHUNK=500;
+      var loaded=[], total=0, totalSeconds=0, loading=false;
+
+      function fetchPage(offset,limit){
+        var url=nodeURL('/api/downtime?from='+from+'&to='+to+'&limit='+limit+'&offset='+offset);
+        return fetch(url,{credentials:'same-origin'})
+          .then(function(r){ if(!r.ok) throw new Error('downtime fetch failed'); return r.json(); });
+      }
+
+      // drawTimeline renders the bar from the server-computed bucket array
+      // (one rect per bucket with any down_seconds -- an empty/all-zero
+      // bucket leaves the base "up" bar showing through), not from any
+      // paged event list. A <title> gives each colored bucket a basic
+      // hover tooltip in place of the old per-incident segments.
+      function drawTimeline(buckets){
+        if(!timeline) return;
+        if(!buckets||!buckets.length){ timeline.innerHTML=''; return; }
+        var W=1200, bw=W/buckets.length, segs='';
+        buckets.forEach(function(b,i){
+          if(!b.down_seconds) return;
+          var x=i*bw;
+          var color=b.type==='power_down'?'var(--crit)':'var(--warn)';
+          segs+='<rect x="'+x.toFixed(2)+'" y="14" width="'+Math.max(1,bw).toFixed(2)+'" height="16" fill="'+color+'">'+
+            '<title>'+historyFmtDur(b.down_seconds)+' down in '+historyFmtTs(b.start)+' → '+historyFmtTs(b.end)+'</title></rect>';
+        });
+        timeline.innerHTML='<svg width="100%" height="46" viewBox="0 0 '+W+' 46" preserveAspectRatio="none">'+
+          '<rect x="0" y="14" width="'+W+'" height="16" rx="3" fill="var(--ok)" opacity=".65"/>'+segs+'</svg>';
+      }
+
+      function drawSummary(){
+        if(!summary) return;
+        var pct=(100*(1-totalSeconds/span));
+        summary.textContent='total '+historyFmtDur(totalSeconds)+' · '+pct.toFixed(2)+'%';
+      }
+
+      function rowHTML(e){
+        var led=e.type==='power_down'?'crit':'warn';
+        var dur=historyFmtDur(e.duration_sec||Math.max(0,(e.end-e.start)));
+        return '<div class="row"><span class="led '+led+'"></span>'+
+          '<div class="name">'+e.type+' · '+historyFmtTs(e.start)+' → '+historyFmtTs(e.end)+'</div>'+
+          '<span class="mono note">'+dur+'</span></div>';
+      }
+
+      function paint(showAll){
+        if(!rows) return;
+        if(!total){
+          rows.innerHTML='<div class="row"><span class="led ok"></span><div class="name"><b>No downtime recorded</b><div class="note">100% uptime over the last 30 days</div></div></div>';
+          return;
+        }
+        var shown=showAll?loaded:loaded.slice(0,CAP);
+        var html=shown.map(rowHTML).join('');
+        if(!showAll && total>CAP){
+          html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show all '+total+' incidents</button>';
+        } else if(showAll && loaded.length<total){
+          html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show more ('+(total-loaded.length)+' remaining)</button>';
+        }
+        rows.innerHTML=html;
+        var more=document.getElementById('dtMore');
+        if(more) more.addEventListener('click',loadMore);
+      }
+
+      // loadMore fetches the next chunk (bounded to MAX_CHUNK) starting
+      // right after what's already loaded, appends it (loaded stays
+      // newest-first since every page from the server already is), and
+      // repaints fully expanded -- driving both "Show all" (the first
+      // click, usually satisfied in one request) and "Show more" (a later
+      // click, only shown once a single MAX_CHUNK-sized fetch still wasn't
+      // the whole range). Doesn't touch the timeline bar -- it was already
+      // complete from the first response.
+      function loadMore(){
+        if(loading || loaded.length>=total) return;
+        loading=true;
+        var limit=Math.min(total-loaded.length,MAX_CHUNK);
+        fetchPage(loaded.length,limit)
+          .then(function(data){
+            loaded=loaded.concat((data&&data.events)||[]);
+            loading=false;
+            paint(true);
+          })
+          .catch(function(){
+            loading=false;
+            paint(true);
           });
-          if(timeline){
-            timeline.innerHTML='<svg width="100%" height="46" viewBox="0 0 '+W+' 46" preserveAspectRatio="none">'+
-              '<rect x="0" y="14" width="'+W+'" height="16" rx="3" fill="var(--ok)" opacity=".65"/>'+segs+'</svg>';
-          }
-          if(summary){
-            var pct=(100*(1-total/span));
-            summary.textContent='total '+historyFmtDur(total)+' · '+pct.toFixed(2)+'%';
-          }
-          if(rows){
-            if(!events.length){
-              rows.innerHTML='<div class="row"><span class="led ok"></span><div class="name"><b>No downtime recorded</b><div class="note">100% uptime over the last 30 days</div></div></div>';
-              return;
-            }
-            // Paginate: the list can run to dozens of incidents (e.g. after a
-            // crash loop), so show the most recent CAP and reveal the rest on
-            // demand rather than dumping an unbounded wall of rows.
-            var CAP=8;
-            var sorted=events.slice().sort(function(a,b){return b.start-a.start;});
-            function rowHTML(e){
-              var led=e.type==='power_down'?'crit':'warn';
-              var dur=historyFmtDur(e.duration_sec||Math.max(0,(e.end-e.start)));
-              return '<div class="row"><span class="led '+led+'"></span>'+
-                '<div class="name">'+e.type+' · '+historyFmtTs(e.start)+' → '+historyFmtTs(e.end)+'</div>'+
-                '<span class="mono note">'+dur+'</span></div>';
-            }
-            function paint(showAll){
-              var shown=showAll?sorted:sorted.slice(0,CAP);
-              var html=shown.map(rowHTML).join('');
-              if(!showAll && sorted.length>CAP){
-                html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show all '+sorted.length+' incidents</button>';
-              }
-              rows.innerHTML=html;
-              var more=document.getElementById('dtMore');
-              if(more) more.addEventListener('click',function(){paint(true);});
-            }
-            paint(false);
-          }
+      }
+
+      fetchPage(0,CAP)
+        .then(function(data){
+          loaded=(data&&data.events)||[];
+          total=(data&&data.total)||0;
+          totalSeconds=(data&&data.total_seconds)||0;
+          drawTimeline((data&&data.timeline)||[]);
+          drawSummary();
+          paint(false);
         })
         .catch(function(){
-          var rows=document.getElementById('downtimeRows');
           if(rows) rows.innerHTML='<div class="note">could not load downtime</div>';
         });
     }

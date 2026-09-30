@@ -134,6 +134,26 @@ func TestCheckInstallPolicyUsesUpdateStateDir(t *testing.T) {
 	}
 }
 
+// TestCheckInstallPolicyUnparsableFloorFailsClosed is #138 truth-table case
+// (d)'s install half: a persisted floor that is valid JSON but not a valid
+// version must refuse the install with a clear error, never silently act as
+// "no floor" (which, with an unknown running version on a fresh host, would
+// enforce no lower bound at all).
+func TestCheckInstallPolicyUnparsableFloorFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
+	if err := os.MkdirAll(paths.StateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := update.SaveState(paths.dir(), update.State{Floor: "not-a-version"}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	m := freshInstallManifest("0.7.0", "0.4.1")
+	if err := checkInstallPolicy(paths, m, update.Version{}); err == nil || !strings.Contains(err.Error(), "not-a-version") {
+		t.Fatalf("checkInstallPolicy() = %v, want an error naming the bad floor value", err)
+	}
+}
+
 // TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir pins the other half of
 // Ruling R8: raiseInstallFloor must write state.json under paths.dir()
 // (StateDir/update), never directly in StateDir -- and must never touch

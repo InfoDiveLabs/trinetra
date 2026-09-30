@@ -131,6 +131,16 @@ func runGuard(d guardDeps) (update.Result, error) {
 		}
 	}
 
+	// #136 fix round 1: once this Pending has already failed its health
+	// gate AND a restore attempt, the rollback decision is final. Retry
+	// ONLY the restore -- never restart the still-pending (already
+	// condemned) build and re-run the health gate again, or a retry whose
+	// restart happens to look healthy would commit a build the guard
+	// already decided to roll back.
+	if !pending.Rollback && pending.RestoreFailed != "" {
+		return retryFailedRestore(d, pending)
+	}
+
 	restartedAt := d.now()
 	// A restart() error is recorded as a failure detail but is NOT fatal:
 	// osExec's own timeout (60s, execTimeout) is shorter than systemd's
@@ -261,10 +271,24 @@ func commitPending(p updatePaths, pending update.Pending, now time.Time) (update
 	return result, nil
 }
 
-// rollbackPending handles a Pending that failed its health gate.
+// rollbackPending handles a Pending that just failed its health gate (the
+// restart-and-poll loop above has just run).
 //
 // For a forward update (pending.Rollback == false): restore the previous
 // build, restart onto it, mark the version bad, and never raise the floor.
+// If restoring the previous build itself fails (#136), Pending is kept --
+// not cleared like every other outcome here -- with the failure recorded in
+// Pending.RestoreFailed (the display detail) and Pending.RestoreFailedReason
+// (the original health-gate failure, kept separate so a later retry's
+// Detail explains the real reason rather than an ever-growing chain of
+// "restoring also failed" text), so the next watchdog tick retries the
+// restore via retryFailedRestore below rather than re-entering this
+// restart-and-poll path; nothing is marked bad and no Last/audit entry is
+// written, because this update has not actually finished rolling back yet.
+// The critical alert for that failure is raised once by the daemon's update
+// loop (notifyRestoreFailed), deduped via Pending.RestoreFailedNotified --
+// the guard itself is a separate, short-lived process launched fresh for
+// each retry and cannot notify directly or remember across runs.
 //
 // For a rollback confirmation (pending.Rollback == true): there is no older
 // build to fall back to -- previous/ holds exactly the build that is
@@ -274,11 +298,13 @@ func commitPending(p updatePaths, pending update.Pending, now time.Time) (update
 // bad), just record the failure.
 func rollbackPending(p updatePaths, pending update.Pending, detail string, restart func() error, now time.Time) (update.Result, error) {
 	if !pending.Rollback {
-		if err := restorePrevious(p); err != nil {
+		reason := detail
+		restoreErr := restorePrevious(p)
+		if restoreErr != nil {
 			if detail != "" {
 				detail += "; "
 			}
-			detail += "restoring the previous build also failed: " + err.Error()
+			detail += "restoring the previous build also failed: " + restoreErr.Error()
 		}
 		if err := restart(); err != nil {
 			if detail != "" {
@@ -286,8 +312,65 @@ func rollbackPending(p updatePaths, pending update.Pending, detail string, resta
 			}
 			detail += "restart after rollback also failed: " + err.Error()
 		}
+		if restoreErr != nil {
+			pending.RestoreFailed = detail
+			pending.RestoreFailedReason = reason
+			if err := setPending(p, &pending); err != nil {
+				return update.Result{}, err
+			}
+			return update.Result{}, fmt.Errorf("update guard: restoring the previous build failed (the watchdog will retry): %w", restoreErr)
+		}
 	}
+	return finishRollback(p, pending, detail, now)
+}
 
+// retryFailedRestore is runGuard's path for a Pending whose restore has
+// already failed once (#136 fix round 1): the guard's decision to roll back
+// is final, so this retries ONLY restorePrevious -- it deliberately never
+// restarts the still-pending, already-condemned build and re-polls its
+// health the way rollbackPending's caller does, because a retry whose
+// restart happens to come up looking healthy must not resurrect and commit
+// a build the guard already decided to roll back.
+//
+// Success proceeds exactly like an ordinary rollback: restart onto the
+// now-restored build, mark the version bad, clear Pending, audit -- using
+// pending.RestoreFailedReason (the ORIGINAL health-gate failure recorded
+// when this episode began) as the Result's Detail, not the restore-failure
+// text layered onto it since. Failure refreshes Pending.RestoreFailed with
+// the latest error (RestoreFailedReason and RestoreFailedNotified are left
+// as they are) and keeps Pending; no restart is attempted, since there is
+// nothing new to restart onto.
+func retryFailedRestore(d guardDeps, pending update.Pending) (update.Result, error) {
+	reason := pending.RestoreFailedReason
+	if err := restorePrevious(d.paths); err != nil {
+		detail := reason
+		if detail != "" {
+			detail += "; "
+		}
+		detail += "restoring the previous build also failed: " + err.Error()
+		pending.RestoreFailed = detail
+		if err := setPending(d.paths, &pending); err != nil {
+			return update.Result{}, err
+		}
+		return update.Result{}, fmt.Errorf("update guard: retrying the previous-build restore failed (the watchdog will retry): %w", err)
+	}
+	detail := reason
+	if err := d.restart(); err != nil {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += "restart after rollback also failed: " + err.Error()
+	}
+	return finishRollback(d.paths, pending, detail, d.now())
+}
+
+// finishRollback records a Pending as rolled back once its restore has
+// actually succeeded (whether on the first attempt, inside rollbackPending,
+// or on a later watchdog retry, inside retryFailedRestore): marks the
+// version bad (unless it is a rollback confirmation -- rollback semantics
+// never mark a version bad), clears Pending entirely (RestoreFailed and
+// RestoreFailedReason go with it), records Last, and audits.
+func finishRollback(p updatePaths, pending update.Pending, detail string, now time.Time) (update.Result, error) {
 	result := update.Result{Version: pending.Version, From: pending.From, Outcome: "rolled_back", Detail: detail, At: now.Unix()}
 	err := update.WithState(p.dir(), func(st *update.State) error {
 		if !pending.Rollback {

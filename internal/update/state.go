@@ -25,6 +25,30 @@ type Pending struct {
 	// until every binary and plugins.json are in place, then "swapped"
 	// (empty in state written before phases existed: treat as swapped).
 	Phase string `json:"phase,omitempty"`
+	// RestoreFailed is set by the guard's rollbackPending when a Pending
+	// has failed its health gate AND restoring the previous build itself
+	// then fails: the failure detail (for display -- see RestoreFailedReason
+	// for the original cause alone). Pending is kept (not cleared) while
+	// this is set, so the next watchdog tick retries the restore
+	// (retryFailedRestore) instead of re-running the health gate; a
+	// successful retry clears Pending (and this field) entirely. Only ever
+	// set for a forward update (Rollback == false) -- a failed rollback
+	// confirmation has no older build to retry against and never sets it.
+	RestoreFailed string `json:"restore_failed,omitempty"`
+	// RestoreFailedReason is the health-gate failure that started this
+	// RestoreFailed episode (e.g. "trinetra.service is not active"), kept
+	// separately from RestoreFailed so a later successful retry's
+	// Result.Detail explains the real reason the update rolled back rather
+	// than an ever-growing chain of "restoring also failed" text
+	// accumulated across retries. Set once, alongside RestoreFailed, and
+	// never recomputed by a retry (there is no health gate to re-derive it
+	// from -- see retryFailedRestore).
+	RestoreFailedReason string `json:"restore_failed_reason,omitempty"`
+	// RestoreFailedNotified dedups the critical alert for RestoreFailed:
+	// the daemon's update loop (notifyRestoreFailed) sets it once the alert
+	// has been delivered, so repeated failing watchdog retries (every
+	// minute, each a fresh guard process) do not re-alert on every tick.
+	RestoreFailedNotified bool `json:"restore_failed_notified,omitempty"`
 }
 
 // Result records the outcome of the most recent update attempt.
@@ -131,7 +155,7 @@ func SaveState(dir string, s State) error {
 
 // FloorVersion returns the effective floor version -- the persisted Floor,
 // or fallback (typically the running version) if that's higher, or fallback
-// if Floor is unset or unparsable -- and whether a floor actually applies.
+// if Floor is unset -- and whether a floor actually applies.
 //
 // No floor applies (hasFloor false) only when both are true: nothing is
 // persisted in Floor, and fallback is the zero Version (no known running
@@ -139,15 +163,27 @@ func SaveState(dir string, s State) error {
 // couldn't report one). A persisted Floor is always enforced once set, even
 // if that happens to be "0.0.0" (a real committed release): only the
 // "nothing recorded at all" case means no lower bound. See Policy.HasFloor.
-func (s State) FloorVersion(fallback Version) (v Version, hasFloor bool) {
+//
+// A persisted Floor that is not a valid version is an error, never "no
+// floor": LoadState already fails closed on unreadable/corrupt state.json,
+// and a floor that parses as JSON but not as a version is the same kind of
+// corruption -- silently treating it as unset would re-open downgrades on a
+// host with an unknown running version. Every caller must refuse its
+// operation on this error rather than proceed as if nothing were persisted.
+func (s State) FloorVersion(fallback Version) (v Version, hasFloor bool, err error) {
 	v, hasFloor = fallback, fallback != (Version{})
-	if pv, err := ParseVersion(s.Floor); err == nil {
-		hasFloor = true
-		if CompareVersions(pv, v) > 0 {
-			v = pv
-		}
+	if s.Floor == "" {
+		return v, hasFloor, nil
 	}
-	return v, hasFloor
+	pv, perr := ParseVersion(s.Floor)
+	if perr != nil {
+		return Version{}, false, fmt.Errorf("update: state.json floor %q is not a valid version", s.Floor)
+	}
+	hasFloor = true
+	if CompareVersions(pv, v) > 0 {
+		v = pv
+	}
+	return v, hasFloor, nil
 }
 
 // RaiseFloor sets the floor to v, unless the current floor is already >= v.
