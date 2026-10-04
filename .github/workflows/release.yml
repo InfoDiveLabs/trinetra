@@ -60,5 +60,8 @@ jobs:
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           PRE=""; case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease";; esac
-          gh release create "$GITHUB_REF_NAME" --draft $PRE --title "$GITHUB_REF_NAME" --notes "Awaiting maintainer co-signature." \
+          # Final notes from CHANGELOG.md: cosign only flips --draft=false, so
+          # whatever is set here is what the published release shows.
+          bash scripts/release-notes.sh "$GITHUB_REF_NAME" > dist/release-notes.md
+          gh release create "$GITHUB_REF_NAME" --draft $PRE --title "$GITHUB_REF_NAME" --notes-file dist/release-notes.md \
             dist/trinetra*-linux-* dist/manifest.json dist/manifest.ci.sig dist/checksums.txt
