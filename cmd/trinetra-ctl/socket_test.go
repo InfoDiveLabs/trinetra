@@ -166,10 +166,6 @@ func TestEndToEndStatusOverRealSocket(t *testing.T) {
 	}
 }
 
-// Right after `trinetra install` the daemon may not have created its socket
-// or token yet (#162): realMain waits for both instead of failing on the
-// first dial, says it is waiting, and authenticates with the token the
-// daemon writes once it is up.
 func TestRealMainWaitsForStartingDaemon(t *testing.T) {
 	dir := t.TempDir()
 	prevWD, err := os.Getwd()

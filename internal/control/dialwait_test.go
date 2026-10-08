@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// A daemon that is still starting has not created its socket yet: DialWait
-// keeps retrying, says once that it is waiting, and connects as soon as the
-// socket appears (#162).
 func TestDialWaitConnectsOnceSocketAppears(t *testing.T) {
 	path := shortSocketPath(t)
 	go func() {
@@ -43,8 +40,6 @@ func TestDialWaitConnectsOnceSocketAppears(t *testing.T) {
 	}
 }
 
-// A socket that is already up connects on the first try, with no waiting
-// notice.
 func TestDialWaitImmediateWhenUp(t *testing.T) {
 	path := startTestServer(t, &fakeAPI{}, "")
 	waited := false
@@ -58,8 +53,6 @@ func TestDialWaitImmediateWhenUp(t *testing.T) {
 	}
 }
 
-// When the daemon never comes up, DialWait gives up after the grace period
-// with the underlying "no such file" error.
 func TestDialWaitGivesUpAfterGrace(t *testing.T) {
 	path := shortSocketPath(t)
 	start := time.Now()
@@ -75,8 +68,6 @@ func TestDialWaitGivesUpAfterGrace(t *testing.T) {
 	}
 }
 
-// Errors that waiting cannot fix (a rejected token, an unreadable token
-// file) fail immediately rather than burning the grace period.
 func TestDialWaitDoesNotRetryAuthFailure(t *testing.T) {
 	path := startTestServer(t, &fakeAPI{}, "right")
 	start := time.Now()

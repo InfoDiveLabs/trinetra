@@ -25,8 +25,6 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/control"
 )
 
-// daemonStartWait is how long realMain waits for a daemon that is still
-// starting before giving up on the control socket.
 const daemonStartWait = 30 * time.Second
 
 func main() {
@@ -61,8 +59,6 @@ func realMain(args []string, out, errOut io.Writer) int {
 		tokenErr = err
 		return tok, err
 	}
-	// Wait out a daemon that is still starting (#162): `trinetra install`
-	// returns before the socket exists, and `trinetra cli` usually follows.
 	client, err := control.DialWait(sock, token, daemonStartWait, func() {
 		fmt.Fprintln(errOut, "trinetra-ctl: waiting for the trinetra daemon to start...")
 	})

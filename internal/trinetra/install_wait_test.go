@@ -21,8 +21,6 @@ func installWaitSock(t *testing.T) string {
 	return filepath.Join(dir, "c.sock")
 }
 
-// install must not report "started" before the daemon can be reached
-// (#162): waitForDaemon returns once the control socket accepts.
 func TestWaitForDaemonReturnsWhenSocketAccepts(t *testing.T) {
 	sock := installWaitSock(t)
 	go func() {
@@ -46,8 +44,6 @@ func TestWaitForDaemonReturnsWhenSocketAccepts(t *testing.T) {
 	}
 }
 
-// A service that crashed (systemd is auto-restarting it, or gave up) is
-// reported at once instead of waiting out the whole timeout.
 func TestWaitForDaemonReportsCrashedService(t *testing.T) {
 	sock := installWaitSock(t)
 	start := time.Now()
@@ -60,8 +56,6 @@ func TestWaitForDaemonReportsCrashedService(t *testing.T) {
 	}
 }
 
-// A daemon that is alive but slow to open its socket ends in
-// errServiceSlow after the timeout, not a failure.
 func TestWaitForDaemonSlowStart(t *testing.T) {
 	sock := installWaitSock(t)
 	err := waitForDaemon(sock, func() serviceState { return serviceStarting }, 300*time.Millisecond)

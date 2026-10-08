@@ -7,23 +7,12 @@ import (
 	"time"
 )
 
-// dialRetryInterval is how often DialWait retries while the daemon starts.
 const dialRetryInterval = 200 * time.Millisecond
 
-// DialWait is Dial with a grace period for a daemon that is still starting
-// (#162). `trinetra install` restarts a Type=simple unit, so systemctl
-// returns before the daemon has created its socket, and an operator who
-// runs `trinetra cli` straight away would otherwise see a bare "no such
-// file or directory". While the socket is missing or refusing connections
-// and wait has not elapsed, DialWait retries, calling waiting (if non-nil)
-// once before the first retry so the caller can say what is happening.
-//
-// token is re-read on every attempt: the daemon writes a fresh per-launch
-// token at startup, so a token read before the socket existed is stale. A
-// failure waiting cannot fix (a token read error, or the server rejecting
-// the token it was just given) returns at once, except when the token has
-// changed since the attempt, which means the daemon finished starting
-// between the read and the handshake.
+// DialWait is Dial that keeps retrying, for up to wait, while the daemon is
+// still starting (#162). waiting, if non-nil, runs once before the first
+// retry. token is re-read per attempt because the daemon writes a fresh one
+// at startup; other errors return at once unless the token changed meanwhile.
 func DialWait(path string, token func() (string, error), wait time.Duration, waiting func()) (*Client, error) {
 	deadline := time.Now().Add(wait)
 	notified := false
@@ -54,8 +43,6 @@ func DialWait(path string, token func() (string, error), wait time.Duration, wai
 	}
 }
 
-// daemonStarting reports whether a dial error is what a daemon that has not
-// yet created (or begun accepting on) its socket produces.
 func daemonStarting(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)
 }

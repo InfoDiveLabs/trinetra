@@ -44,8 +44,6 @@ const defaultRuntimeDir = "/run/trinetra"
 // defaultRuntimeDir above.
 const defaultStateDir = "/var/lib/trinetra"
 
-// daemonStartWait is how long run waits for a daemon that is still starting
-// before giving up on the control socket.
 const daemonStartWait = 30 * time.Second
 
 // connConfig holds this binary's own settings, resolved from flags and
@@ -276,8 +274,6 @@ func run(args []string, getenv func(string) string, stderr *os.File) int {
 		return 2
 	}
 
-	// Wait out a daemon that is still starting (#162), re-resolving the
-	// token on each attempt: the daemon writes a fresh one at startup.
 	token := func() (string, error) {
 		again, err := resolveConnConfig(args, getenv)
 		return again.token, err

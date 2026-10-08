@@ -135,9 +135,6 @@ func cmdInstall(args []string) int {
 	// configured (and possibly enrolled), re-printing the set-token line
 	// wrongly implies setup is needed again (#106), so report the existing
 	// state instead.
-	//
-	// "started" is only claimed once the daemon answers on its control
-	// socket (#162): the restart above returns before that.
 	waitErr := waitForDaemonFn()
 	switch {
 	case waitErr == nil:
