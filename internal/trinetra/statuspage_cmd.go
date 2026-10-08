@@ -62,6 +62,17 @@ func parseStatusTarget(s string) (core.StatusTarget, error) {
 	return t, nil
 }
 
+// spFail prints err with the status-page prefix and returns exit code 1.
+func spFail(err error) int {
+	fmt.Fprintln(stderr, "status-page:", err)
+	return 1
+}
+
+func spUsage() int {
+	fmt.Fprintln(stderr, statusPageUsage)
+	return 2
+}
+
 func cmdStatusPage(args []string) int {
 	if len(args) < 2 {
 		fmt.Fprintln(stderr, statusPageUsage)
@@ -70,6 +81,9 @@ func cmdStatusPage(args []string) int {
 	var err error
 	switch args[0] + " " + args[1] {
 	case "service list":
+		if len(args) != 2 {
+			return spUsage()
+		}
 		err = statusPageServiceList()
 	case "service add":
 		return statusPageServiceAdd(args[2:])
@@ -83,14 +97,7 @@ func cmdStatusPage(args []string) int {
 			fmt.Fprintf(stdout, "Removed service %s.\n", args[2])
 		}
 	case "incident list":
-		all := len(args) == 3 && args[2] == "--all"
-		err = statusPageWithClient(func(sp core.StatusPageAPI) error {
-			incs, err := sp.Incidents(all)
-			for _, inc := range incs {
-				fmt.Fprintf(stdout, "%s  %-13s %-11s %s\n", inc.ID, inc.Status, inc.Impact, inc.Title)
-			}
-			return err
-		})
+		return statusPageIncidentList(args[2:])
 	case "incident show":
 		if len(args) != 3 {
 			fmt.Fprintln(stderr, statusPageUsage)
@@ -116,8 +123,7 @@ func cmdStatusPage(args []string) int {
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "status-page:", err)
-		return 1
+		return spFail(err)
 	}
 	return 0
 }
@@ -128,7 +134,10 @@ func statusPageServiceList() error {
 		if err != nil {
 			return err
 		}
-		evals, _ := sp.Evaluation()
+		evals, eerr := sp.Evaluation()
+		if eerr != nil {
+			fmt.Fprintln(stderr, "status-page: warning: live state unavailable:", eerr)
+		}
 		state := map[string]core.ServiceEvaluation{}
 		for _, e := range evals {
 			state[e.ServiceID] = e
@@ -155,6 +164,10 @@ func statusPageServiceAdd(args []string) int {
 		fmt.Fprintln(stderr, statusPageUsage)
 		return 2
 	}
+	if *hold != 0 && *hold < time.Second {
+		fmt.Fprintf(stderr, "status-page: --hold %s is below 1s (use 0 for immediate)\n", *hold)
+		return 2
+	}
 	svc := core.StatusService{ID: pos[0], Name: *name, Group: *group, Description: *desc, Order: *order, HoldDownSec: int(hold.Seconds())}
 	for _, raw := range targets {
 		t, err := parseStatusTarget(raw)
@@ -172,8 +185,7 @@ func statusPageServiceAdd(args []string) int {
 		return err
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, "status-page:", err)
-		return 1
+		return spFail(err)
 	}
 	return 0
 }
@@ -199,8 +211,7 @@ func statusPageIncidentOpen(args []string) int {
 		return err
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, "status-page:", err)
-		return 1
+		return spFail(err)
 	}
 	return 0
 }
@@ -229,8 +240,30 @@ func statusPageIncidentUpdate(verb string, args []string) int {
 		return err
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, "status-page:", err)
-		return 1
+		return spFail(err)
+	}
+	return 0
+}
+
+func statusPageIncidentList(args []string) int {
+	fs := newFlags("status-page incident list")
+	all := fs.Bool("all", false, "include resolved incidents")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil || rejectPositionals("status-page incident list", statusPageUsage, pos) {
+		return 2
+	}
+	err = statusPageWithClient(func(sp core.StatusPageAPI) error {
+		incs, err := sp.Incidents(*all)
+		if err != nil {
+			return err
+		}
+		for _, inc := range incs {
+			fmt.Fprintf(stdout, "%s  %-13s %-11s %s\n", inc.ID, inc.Status, inc.Impact, inc.Title)
+		}
+		return nil
+	})
+	if err != nil {
+		return spFail(err)
 	}
 	return 0
 }
