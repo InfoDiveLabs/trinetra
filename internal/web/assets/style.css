@@ -70,7 +70,7 @@ a:hover{text-decoration-color:var(--text)}
 .nav a,.botnav a,.sheet-nav a,a.btn,a.pill{text-decoration:none}
 a.pill{color:inherit} a.pill:hover{border-color:var(--faint)}
 :focus-visible{outline:2px solid var(--text); outline-offset:2px; border-radius:4px}
-.eyebrow{font-family:var(--font-mono); font-size:10.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint)}
+.eyebrow{font-family:var(--font-mono); font-size:11px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint)}
 .spacer{flex:1}
 .note{color:var(--muted); font-size:12.5px}
 .small{font-size:12px}
@@ -90,7 +90,7 @@ a.pill{color:inherit} a.pill:hover{border-color:var(--faint)}
    (already margin-top:auto) stays pinned at the bottom, never overlapping. */
 .nav{flex:1 1 auto; min-height:0; overflow-y:auto; padding-bottom:18px; -webkit-mask-image:linear-gradient(#000 calc(100% - 18px),transparent); mask-image:linear-gradient(#000 calc(100% - 18px),transparent)}
 .nav a{display:flex; align-items:center; gap:11px; padding:7px 11px; border-radius:var(--r-sm); color:var(--muted); font-weight:500; font-size:13.5px}
-.nav a .ic{width:16px; display:inline-flex; align-items:center; justify-content:center; flex:none; opacity:.85} .nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
+.nav a .ic{width:16px; display:inline-flex; align-items:center; justify-content:center; flex:none; opacity:.85} .nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--faint)}
 .nav a:hover{background:var(--surface2); color:var(--text)}
 .nav a.active{background:var(--elev); color:var(--text); box-shadow:inset 2px 0 0 var(--text)}
 .nav a.active .ic{color:var(--text); opacity:1}
@@ -100,7 +100,7 @@ a.pill{color:inherit} a.pill:hover{border-color:var(--faint)}
 .side .foot{margin-top:auto; padding:10px 8px 2px; border-top:1px solid var(--border-soft); flex:none}
 .avatar{width:26px;height:26px;border-radius:50%;background:var(--elev);border:1px solid var(--border);display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:700}
 .who{display:flex; align-items:center; gap:9px}
-.side .foot .ver{min-width:0; max-width:100%; display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:10.5px; color:var(--faint)}
+.side .foot .ver{min-width:0; max-width:100%; display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:11px; color:var(--faint)}
 .side .foot .ver span{max-width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .side .foot .ver .ver-warn{color:var(--warn)}
 .main{min-width:0}
@@ -162,7 +162,8 @@ a.count:hover{border-color:var(--faint)}
 
 /* stat tile */
 .tile{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:14px 15px; position:relative; overflow:hidden}
-.tile .k{display:flex; align-items:center; justify-content:space-between}
+.tile .k{display:flex; align-items:center; justify-content:space-between; gap:10px}
+.tile .k>span{min-width:0; overflow-wrap:anywhere}
 .tile .val{font-family:var(--font-mono); font-size:27px; font-weight:600; letter-spacing:-.02em; margin-top:7px; line-height:1}
 .tile .val .u{font-size:13px; color:var(--muted); font-weight:500; margin-left:3px}
 .tile .sub{color:var(--muted); font-size:11px; margin-top:5px; font-family:var(--font-mono)}
@@ -245,7 +246,7 @@ a.count:hover{border-color:var(--faint)}
 .led.ok{background:var(--ok);box-shadow:0 0 7px color-mix(in oklab,var(--ok) 70%,transparent)}
 .led.warn{background:var(--warn);box-shadow:0 0 7px color-mix(in oklab,var(--warn) 70%,transparent)}
 .led.crit{background:var(--crit);box-shadow:0 0 7px color-mix(in oklab,var(--crit) 70%,transparent)}
-.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:11px;font-family:var(--font-mono);border:1px solid var(--border);color:var(--muted)}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:11.5px;font-family:var(--font-mono);border:1px solid var(--border);color:var(--muted)}
 .badge.ok{color:var(--ok);border-color:color-mix(in oklab,var(--ok) 40%,var(--border))}
 .badge.warn{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--border))}
 .badge.crit{color:var(--crit);border-color:color-mix(in oklab,var(--crit) 45%,var(--border))}
@@ -257,7 +258,7 @@ a.count:hover{border-color:var(--faint)}
 
 /* tables */
 table{width:100%; border-collapse:collapse; font-size:13px}
-th{text-align:left; padding:10px 14px; font-family:var(--font-mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--surface); cursor:pointer}
+th{text-align:left; padding:10px 14px; font-family:var(--font-mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--surface); cursor:pointer}
 th:hover{color:var(--text)}
 /* fleet overview (task 5): sortable column headers are plain links
    (server-rendered ?sort=&dir=, no client JS) -- inherit th's own color/
