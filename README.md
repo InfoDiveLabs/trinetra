@@ -28,10 +28,22 @@ No agent zoo, no cloud, no Prometheus, no external database.
 </p>
 
 ```bash
-sudo trinetra install                      # one systemd service
-sudo trinetra telegram set-token <token>   # the only required setting
+# 1. Download the latest release (arch: linux-amd64 / linux-arm64 / linux-arm)
+mkdir -p ~/trinetra-download && cd ~/trinetra-download && arch=linux-amd64
+base=https://github.com/InfoDiveLabs/trinetra/releases/latest/download
+for b in trinetra trinetra-ctl trinetra-web; do curl -fsSL -o "$b" "$base/$b-$arch"; done
+for f in manifest.json manifest.ci.sig manifest.maint.sig; do curl -fsSL -o "$f" "$base/$f"; done
+chmod +x trinetra trinetra-ctl trinetra-web
+
+# 2. Verify the signatures and install: one systemd service
+sudo ./trinetra install --require-signed
+
+# 3. Set up the Telegram bot (or: sudo trinetra telegram set-token <token>)
+sudo trinetra cli
 # then, from your phone:  /start <pin>  ->  /stats
 ```
+
+Details in [Quick start](#quick-start).
 
 ---
 
