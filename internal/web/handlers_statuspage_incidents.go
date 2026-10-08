@@ -2,7 +2,6 @@ package web
 
 import (
 	"errors"
-	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -14,12 +13,22 @@ var incidentStatuses = []string{core.IncidentInvestigating, core.IncidentIdentif
 
 type StatusIncidentsPageData struct {
 	PageData
-	Active, Resolved []core.StatusIncident
-	Services         []core.StatusService
-	Statuses         []string
-	Unavailable      string
-	Error            string
+	OpenIncidents, ResolvedIncidents []core.StatusIncident
+	Services                         []core.StatusService
+	Statuses                         []string
+	Unavailable                      string
+	Error                            string
+	Draft                            StatusIncidentForm // sticky create form
 }
+
+// StatusIncidentForm is the create form's submitted values, re-shown on a 400.
+type StatusIncidentForm struct {
+	Title, Impact, Status, Message string
+	Services                       map[string]bool
+}
+
+// StatusUpdateDraft is a submitted status+message pair, re-shown on a 400.
+type StatusUpdateDraft struct{ Status, Message string }
 
 type StatusIncidentPageData struct {
 	PageData
@@ -28,6 +37,10 @@ type StatusIncidentPageData struct {
 	Statuses    []string
 	IsAdmin     bool
 	Error       string
+	PostDraft   StatusUpdateDraft // sticky "Post an update" form
+	EditUID     string            // update id whose edit form failed ("" if none)
+	EditDraft   StatusUpdateDraft // that edit form's submitted values
+	TitleDraft  string            // sticky edit-title value ("" = use current)
 }
 
 func buildIncidentsPage(r *http.Request, d Deps) StatusIncidentsPageData {
@@ -44,9 +57,9 @@ func buildIncidentsPage(r *http.Request, d Deps) StatusIncidentsPageData {
 	}
 	for _, inc := range incs {
 		if inc.Status == core.IncidentResolved {
-			data.Resolved = append(data.Resolved, inc)
+			data.ResolvedIncidents = append(data.ResolvedIncidents, inc)
 		} else {
-			data.Active = append(data.Active, inc)
+			data.OpenIncidents = append(data.OpenIncidents, inc)
 		}
 	}
 	data.Services, _ = sp.Services()
@@ -70,13 +83,21 @@ func statusIncidentCreateHandler(d Deps) http.HandlerFunc {
 		in := core.NewIncident{Title: r.FormValue("title"), Services: r.Form["services"], Impact: core.ServiceState(r.FormValue("impact")),
 			Update: core.NewUpdate{Status: r.FormValue("status"), Message: r.FormValue("message")}}
 		inc, err := sp.CreateIncident(in, auditUser(r))
-		if errors.Is(err, core.ErrNotFound) {
-			// No URL id here: the daemon's not-found means an unknown service id.
-			err = fmt.Errorf("unknown service: %s", err)
-		}
 		if err != nil {
+			msg := err.Error()
+			switch {
+			case errors.Is(err, core.ErrNotFound):
+				// No URL id here: the daemon's not-found means an unknown service id.
+				msg = "unknown service"
+			case errors.Is(err, core.ErrStatusPageOnChild):
+				msg = statusUnavailableText(err)
+			}
 			data := buildIncidentsPage(r, d)
-			data.Error = err.Error()
+			data.Error = msg
+			data.Draft = StatusIncidentForm{Title: in.Title, Impact: string(in.Impact), Status: in.Update.Status, Message: in.Update.Message, Services: map[string]bool{}}
+			for _, sid := range in.Services {
+				data.Draft.Services[sid] = true
+			}
 			renderStatusTemplate(w, "statuspage_incidents.html", data, http.StatusBadRequest)
 			return
 		}
@@ -137,7 +158,20 @@ func incidentMutation(d Deps, action string, op func(sp core.StatusPageAPI, r *h
 		}
 		if err != nil {
 			data, _ := buildIncidentPage(r, d, id)
-			data.Error = err.Error()
+			if errors.Is(err, core.ErrStatusPageOnChild) {
+				data.Error = statusUnavailableText(err)
+			} else {
+				data.Error = err.Error()
+			}
+			draft := StatusUpdateDraft{Status: r.FormValue("status"), Message: r.FormValue("message")}
+			switch action {
+			case "status_page.update.post":
+				data.PostDraft = draft
+			case "status_page.update.edit":
+				data.EditUID, data.EditDraft = r.PathValue("uid"), draft
+			case "status_page.incident.edit":
+				data.TitleDraft = r.FormValue("title")
+			}
 			renderStatusTemplate(w, "statuspage_incident.html", data, http.StatusBadRequest)
 			return
 		}
@@ -168,7 +202,7 @@ func statusIncidentEditHandler(d Deps) http.HandlerFunc {
 		}
 		inc, err := sp.EditIncident(id, r.FormValue("title"), r.Form["services"], auditUser(r))
 		if errors.Is(err, core.ErrNotFound) {
-			err = fmt.Errorf("unknown service: %s", err)
+			err = errors.New("unknown service")
 		}
 		return inc, err
 	})

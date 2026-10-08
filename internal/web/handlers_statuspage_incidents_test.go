@@ -2,9 +2,11 @@ package web
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
@@ -101,5 +103,76 @@ func TestResponderCreateUnknownServiceIs400(t *testing.T) {
 	form := url.Values{"title": {"X"}, "services": {"ghost"}, "impact": {"degraded"}, "status": {"investigating"}, "message": {"m"}}
 	if code := postAsRole(t, d, RoleResponder, "/status-page/incidents", form); code != http.StatusBadRequest {
 		t.Fatalf("create with unknown service: %d want 400", code)
+	}
+}
+
+func TestIncidentFailedPostKeepsDraft(t *testing.T) {
+	d := statusPageDeps(t, incidentFixture())
+	h := func(form url.Values) (int, string) {
+		rr := postBodyAsRole(t, d, RoleResponder, "/status-page/incidents/i1/updates", form)
+		return rr.Code, rr.Body.String()
+	}
+	code, body := h(url.Values{"status": {"monitoring"}, "message": {""}})
+	if code != 400 || !strings.Contains(body, `<option selected>monitoring</option>`) {
+		t.Fatalf("status not kept: %d %s", code, body)
+	}
+	long := "keep<me> " + strings.Repeat("x", core.MaxUpdateBytes)
+	code, body = h(url.Values{"status": {"identified"}, "message": {long}})
+	if code != 400 || !strings.Contains(body, "keep&lt;me&gt; xxxx") {
+		t.Fatalf("long message not kept: %d", code)
+	}
+}
+
+func TestIncidentFailedCreateKeepsForm(t *testing.T) {
+	d := statusPageDeps(t, incidentFixture())
+	rr := postBodyAsRole(t, d, RoleResponder, "/status-page/incidents", url.Values{"title": {"My title"}, "services": {"api"},
+		"impact": {"outage"}, "status": {"monitoring"}, "message": {"   "}})
+	body := rr.Body.String()
+	if rr.Code != 400 {
+		t.Fatalf("%d", rr.Code)
+	}
+	for _, want := range []string{`value="My title"`, `value="api" checked`, `<option selected>outage</option>`, `<option selected>monitoring</option>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in %s", want, body)
+		}
+	}
+}
+
+func TestIncidentDetailOnChildShowsNoticeNoForms(t *testing.T) {
+	sp := incidentFixture()
+	sp.err = core.ErrStatusPageOnChild
+	_, body := getAsRole(t, statusPageDeps(t, sp), RoleResponder, "/status-page/incidents/i1")
+	if !strings.Contains(body, "runs on the fleet master") {
+		t.Fatalf("no notice: %s", body)
+	}
+	if strings.Contains(body, "action=\"/status-page/incidents//") {
+		t.Fatal("dead forms rendered")
+	}
+}
+
+// postBodyAsRole is postAsRole but returns the whole recorder.
+func postBodyAsRole(t *testing.T, d Deps, role Role, path string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	u := &User{ID: mustNewUserID(t), Name: string(role) + "-user", Role: role, Created: 1}
+	if err := newUserStore(d.StateDir).Put(u); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := newSessionStore(d.StateDir).New(u.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return postForm(newHandler(d), path, form, &http.Cookie{Name: sessionCookieName, Value: sess.ID}, sess.CSRF)
+}
+
+func TestIncidentPagesRenderCompletely(t *testing.T) {
+	d := statusPageDeps(t, incidentFixture())
+	for _, path := range []string{"/status-page/incidents", "/status-page/incidents/i1"} {
+		_, body := getAsRole(t, d, RoleAdmin, path)
+		if !strings.Contains(body, "</html>") {
+			t.Errorf("%s truncated (template exec error)", path)
+		}
+	}
+	if !strings.Contains(func() string { _, b := getAsRole(t, d, RoleAdmin, "/status-page/incidents"); return b }(), "Outage: API") {
+		t.Error("list missing incident")
 	}
 }
