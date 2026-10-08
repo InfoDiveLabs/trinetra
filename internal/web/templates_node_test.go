@@ -113,7 +113,7 @@ func TestNodeScopedNavHidesAdminGroup(t *testing.T) {
 		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{">Configuration<", ">Channels<", ">Users<", ">Public view<", `class="grp eyebrow">Admin<`} {
+	for _, want := range []string{">Server settings<", ">Notifications<", ">Users<", ">Public view<", `class="grp eyebrow">Settings<`} {
 		if strings.Contains(body, want) {
 			t.Errorf("remote node page nav should hide %q:\n%s", want, body)
 		}

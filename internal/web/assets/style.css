@@ -726,3 +726,9 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   .ns-trigger{min-height:44px}
   input[type=checkbox],input[type=radio]{width:20px; height:20px}
 }
+
+/* Settings pages: tabbed sections with one save bar for all of them. */
+.settings-tabs{flex-wrap:wrap}
+.pane-intro{margin:0 0 14px}
+.save-bar{position:sticky; bottom:0; z-index:4; display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:20px; padding:14px 0; border-top:1px solid var(--border-soft); background:var(--bg)}
+@media (max-width:640px){.save-bar{bottom:calc(56px + env(safe-area-inset-bottom))} .save-bar .btn{flex:1 1 auto}}

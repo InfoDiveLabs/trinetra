@@ -249,8 +249,8 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/status-page/services", Icon: "status", Label: "Services"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/settings/public", Icon: "globe", Label: "Public view"}, AdminOnly: true},
 	{NavItem: NavItem{Heading: "Settings"}},
-	{NavItem: NavItem{Href: "/config", Icon: "sliders", Label: "Configuration"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/channels", Icon: "send", Label: "Channels"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/config", Icon: "sliders", Label: "Server settings"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/channels", Icon: "send", Label: "Notifications"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "users", Label: "Users"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/updates", Icon: "update", Label: "Updates"}, AdminOnly: true},
 }

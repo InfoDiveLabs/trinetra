@@ -193,7 +193,7 @@ type ChannelsPageData struct {
 
 func buildChannelsPageData(r *http.Request, d Deps, testResult string) ChannelsPageData {
 	cfg := d.Cfg()
-	page := newPageData(r, d, "Notification channels", "Where alerts are delivered")
+	page := newPageData(r, d, "Notifications", "Where alerts are sent")
 
 	newModal := newChannelModalData
 	newModal.CSRF = page.CSRF

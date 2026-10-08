@@ -305,7 +305,22 @@
   document.addEventListener('change',function(e){ if(e.target.matches('[data-autosubmit]')&&e.target.form){ e.target.form.submit(); } });
 
   // ---- tabs / filter / chips / switches ----
-  document.addEventListener('click',function(e){var b=e.target.closest('.tabs button');if(!b)return;var w=b.closest('[data-tabs]');w.querySelectorAll('.tabs button').forEach(function(x){x.classList.toggle('on',x===b)});w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===b.dataset.tab)});});
+  function swShowTab(w,name){
+    var found=false;
+    w.querySelectorAll('.tabs button[data-tab]').forEach(function(x){var on=x.dataset.tab===name; if(on) found=true; x.classList.toggle('on',on); x.setAttribute('aria-selected',on?'true':'false');});
+    if(!found) return false;
+    w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===name)});
+    return true;
+  }
+  document.addEventListener('click',function(e){var b=e.target.closest('.tabs button[data-tab]');if(!b)return;var w=b.closest('[data-tabs]');if(!w)return;swShowTab(w,b.dataset.tab);if(w.hasAttribute('data-tabs-hash')) history.replaceState(null,'','#'+b.dataset.tab);});
+  // Settings-style tabs live in the URL (#alerts), and a field that fails
+  // validation on save brings its tab forward so the browser can show why.
+  function swRestoreTabs(root){ (root||document).querySelectorAll('[data-tabs-hash]').forEach(function(w){ if(location.hash) swShowTab(w,location.hash.slice(1)); }); }
+  swRestoreTabs();
+  // htmx re-renders a whole tabbed page after an action; keep the open tab.
+  document.addEventListener("htmx:afterSwap",function(){ swRestoreTabs(); });
+  window.addEventListener('hashchange',function(){ swRestoreTabs(); });
+  document.addEventListener('invalid',function(e){var p=e.target.closest&&e.target.closest('.tabpane');if(!p||p.classList.contains('on'))return;var w=p.closest('[data-tabs]');if(w) swShowTab(w,p.dataset.pane);},true);
   document.querySelectorAll('[data-filter]').forEach(function(inp){inp.addEventListener('input',function(){var q=inp.value.toLowerCase();document.querySelectorAll(inp.dataset.filter).forEach(function(tbl){tbl.querySelectorAll('tbody tr').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>-1?'':'none';});});});});
   document.addEventListener('click',function(e){var c=e.target.closest('.chip');if(c&&c.parentElement&&c.parentElement.classList.contains('chips')){c.parentElement.querySelectorAll('.chip').forEach(function(x){x.classList.remove('on')});c.classList.add('on');}});
   // fleet admin (task 7): a generic "copy this element's text" button --
