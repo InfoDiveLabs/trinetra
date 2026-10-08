@@ -20,9 +20,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/control"
 )
+
+// daemonStartWait is how long realMain waits for a daemon that is still
+// starting before giving up on the control socket.
+const daemonStartWait = 30 * time.Second
 
 func main() {
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
@@ -50,15 +55,24 @@ func realMain(args []string, out, errOut io.Writer) int {
 	}
 
 	sock := resolveSocketPath(*socketFlag)
-	token, err := resolveToken(*tokenFlag, sock)
-	if err != nil {
-		fmt.Fprintf(errOut, "trinetra-ctl: reading control token: %v\n", err)
-		return 1
+	var tokenErr error
+	token := func() (string, error) {
+		tok, err := resolveToken(*tokenFlag, sock)
+		tokenErr = err
+		return tok, err
 	}
-
-	client, err := control.Dial(sock, token)
+	// Wait out a daemon that is still starting (#162): `trinetra install`
+	// returns before the socket exists, and `trinetra cli` usually follows.
+	client, err := control.DialWait(sock, token, daemonStartWait, func() {
+		fmt.Fprintln(errOut, "trinetra-ctl: waiting for the trinetra daemon to start...")
+	})
 	if err != nil {
+		if tokenErr != nil {
+			fmt.Fprintf(errOut, "trinetra-ctl: reading control token: %v\n", err)
+			return 1
+		}
 		fmt.Fprintf(errOut, "trinetra-ctl: dialing control socket %s: %v\n", sock, err)
+		fmt.Fprintln(errOut, "is the daemon running? check: systemctl status trinetra; journalctl -u trinetra -n 50")
 		return 1
 	}
 	defer client.Close()

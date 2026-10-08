@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/control"
@@ -42,6 +43,10 @@ const defaultRuntimeDir = "/run/trinetra"
 // daemon's default on-disk state directory. Same duplication rationale as
 // defaultRuntimeDir above.
 const defaultStateDir = "/var/lib/trinetra"
+
+// daemonStartWait is how long run waits for a daemon that is still starting
+// before giving up on the control socket.
+const daemonStartWait = 30 * time.Second
 
 // connConfig holds this binary's own settings, resolved from flags and
 // environment (resolveConnConfig) before anything is dialed.
@@ -271,7 +276,15 @@ func run(args []string, getenv func(string) string, stderr *os.File) int {
 		return 2
 	}
 
-	client, err := control.Dial(cc.socketPath, cc.token)
+	// Wait out a daemon that is still starting (#162), re-resolving the
+	// token on each attempt: the daemon writes a fresh one at startup.
+	token := func() (string, error) {
+		again, err := resolveConnConfig(args, getenv)
+		return again.token, err
+	}
+	client, err := control.DialWait(cc.socketPath, token, daemonStartWait, func() {
+		fmt.Fprintln(stderr, "trinetra-web: waiting for the trinetra daemon to start...")
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "trinetra-web: dialing control socket %s: %v\n", cc.socketPath, err)
 		return 1
