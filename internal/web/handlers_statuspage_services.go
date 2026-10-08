@@ -41,7 +41,16 @@ type StatusServicesPageData struct {
 	Rows        []statusServiceRow
 	Unavailable string // non-empty: show this notice instead of the editor
 	Error       string
+	Notice      string // non-fatal notice shown above the table
 	Default     int
+	Form        StatusServiceForm
+}
+
+// StatusServiceForm is the add/edit form's field values (sticky on error,
+// prefilled on edit).
+type StatusServiceForm struct {
+	ID, Name, Group, Order, Hold, Description, Targets string
+	Edit                                               bool
 }
 
 func formatStatusTarget(t core.StatusTarget) string {
@@ -93,6 +102,7 @@ func statusUnavailableText(err error) string {
 
 func buildStatusServicesPage(r *http.Request, d Deps) StatusServicesPageData {
 	data := StatusServicesPageData{PageData: newPageData(r, d, "Status page", "Public services and their live state"), Default: core.DefaultHoldDownSec}
+	data.Form = StatusServiceForm{Order: "0", Hold: strconv.Itoa(core.DefaultHoldDownSec)}
 	sp := statusPageAPI(d)
 	if sp == nil {
 		data.Unavailable = "The status page is not available from this daemon."
@@ -103,7 +113,10 @@ func buildStatusServicesPage(r *http.Request, d Deps) StatusServicesPageData {
 		data.Unavailable = statusUnavailableText(err)
 		return data
 	}
-	evals, _ := sp.Evaluation()
+	evals, evalErr := sp.Evaluation()
+	if evalErr != nil {
+		data.Notice = "Live status unavailable: " + evalErr.Error()
+	}
 	byID := map[string]core.ServiceEvaluation{}
 	for _, e := range evals {
 		byID[e.ServiceID] = e
@@ -114,6 +127,10 @@ func buildStatusServicesPage(r *http.Request, d Deps) StatusServicesPageData {
 			lines[i] = formatStatusTarget(t)
 		}
 		data.Rows = append(data.Rows, statusServiceRow{StatusService: s, Eval: byID[s.ID], TargetsText: strings.Join(lines, "\n")})
+		if id := r.URL.Query().Get("edit"); id != "" && id == s.ID && r.Method == http.MethodGet {
+			data.Form = StatusServiceForm{ID: s.ID, Name: s.Name, Group: s.Group, Order: strconv.Itoa(s.Order),
+				Hold: strconv.Itoa(s.HoldDownSec), Description: s.Description, Targets: strings.Join(lines, "\n"), Edit: true}
+		}
 	}
 	return data
 }
@@ -131,24 +148,36 @@ func statusServiceSaveHandler(d Deps) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		form := StatusServiceForm{ID: strings.TrimSpace(r.FormValue("id")), Name: strings.TrimSpace(r.FormValue("name")),
+			Group: strings.TrimSpace(r.FormValue("group")), Order: strings.TrimSpace(r.FormValue("order")),
+			Hold: strings.TrimSpace(r.FormValue("hold")), Description: strings.TrimSpace(r.FormValue("description")),
+			Targets: r.FormValue("targets")}
 		fail := func(msg string) {
 			data := buildStatusServicesPage(r, d)
+			data.Form = form
+			data.Form.Edit = r.FormValue("edit") == "1"
 			data.Error = msg
 			renderStatusTemplate(w, "statuspage_services.html", data, http.StatusBadRequest)
 		}
-		hold, err := strconv.Atoi(strings.TrimSpace(r.FormValue("hold")))
+		hold, err := strconv.Atoi(form.Hold)
 		if err != nil {
 			fail("hold-down must be a number of seconds")
 			return
 		}
-		order, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("order")))
+		order := 0
+		if form.Order != "" {
+			if order, err = strconv.Atoi(form.Order); err != nil {
+				fail("order must be a whole number")
+				return
+			}
+		}
 		targets, err := parseStatusTargetText(r.FormValue("targets"))
 		if err != nil {
 			fail(err.Error())
 			return
 		}
-		svc := core.StatusService{ID: strings.TrimSpace(r.FormValue("id")), Name: r.FormValue("name"), Group: r.FormValue("group"),
-			Description: r.FormValue("description"), Order: order, HoldDownSec: hold, Targets: targets}
+		svc := core.StatusService{ID: form.ID, Name: form.Name, Group: form.Group,
+			Description: form.Description, Order: order, HoldDownSec: hold, Targets: targets}
 		saved, err := sp.SetService(svc, auditUser(r))
 		if err != nil {
 			fail(err.Error())

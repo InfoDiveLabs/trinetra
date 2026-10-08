@@ -1,7 +1,9 @@
 package web
 
 import (
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -109,4 +111,97 @@ func TestStatusServicesUnwiredIsUnavailable(t *testing.T) {
 	if code != 200 || !strings.Contains(body, "not available") {
 		t.Fatalf("%d %s", code, body)
 	}
+}
+
+func TestStatusServiceStickyFormOn400(t *testing.T) {
+	d := statusPageDeps(t, &fakeStatusPage{})
+	form := url.Values{"id": {"API!"}, "name": {"My Name"}, "group": {"G1"}, "hold": {"180"}, "description": {"desc here"}, "targets": {"tag:keepme\nhost"}}
+	rr := postFormAsRole(t, d, RoleAdmin, "/status-page/services", form)
+	body := rr.Body.String()
+	if rr.Code != 400 {
+		t.Fatalf("%d", rr.Code)
+	}
+	for _, want := range []string{"My Name", "tag:keepme", "G1", "desc here", "API!"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sticky form missing %q", want)
+		}
+	}
+	if !strings.Contains(body, `role="alert"`) {
+		t.Error("no error message")
+	}
+}
+
+func TestStatusServiceEditPrefill(t *testing.T) {
+	sp := &fakeStatusPage{svcs: []core.StatusService{{ID: "api", Name: "Public API", HoldDownSec: 90,
+		Targets: []core.StatusTarget{{Kind: core.TargetTag, Value: "web"}, {Kind: core.TargetContainer, Value: "pg", Node: "n1"}}}}}
+	d := statusPageDeps(t, sp)
+	_, body := getAsRole(t, d, RoleAdmin, "/status-page/services?edit=api")
+	for _, want := range []string{"Edit service Public API", "readonly", "tag:web\ncontainer:pg@n1", `value="90"`, "/status-page/services?edit=api"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("edit page missing %q", want)
+		}
+	}
+	_, body = getAsRole(t, d, RoleAdmin, "/status-page/services?edit=nope")
+	if strings.Contains(body, "Edit service") || strings.Contains(body, "readonly") {
+		t.Error("unknown edit id should show the empty add form")
+	}
+}
+
+func TestStatusServiceSaveRejections(t *testing.T) {
+	d := statusPageDeps(t, &fakeStatusPage{})
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	_, cookie, _ := seedAdmin(t, "root", users, sessions)
+	good := url.Values{"id": {"api"}, "name": {"API"}, "hold": {"60"}, "targets": {"host"}}
+	if rr := postForm(h, "/status-page/services", good, cookie, ""); rr.Code != http.StatusForbidden {
+		t.Errorf("no CSRF: %d", rr.Code)
+	}
+	badKind := url.Values{"id": {"api"}, "name": {"API"}, "hold": {"60"}, "targets": {"foo:bar"}}
+	if c := postAsRole(t, d, RoleAdmin, "/status-page/services", badKind); c != 400 {
+		t.Errorf("unknown kind: %d", c)
+	}
+	badOrder := url.Values{"id": {"api"}, "name": {"API"}, "hold": {"60"}, "order": {"x"}, "targets": {"host"}}
+	if c := postAsRole(t, d, RoleAdmin, "/status-page/services", badOrder); c != 400 {
+		t.Errorf("bad order: %d", c)
+	}
+}
+
+func TestStatusServicesEvaluationErrorShowsNotice(t *testing.T) {
+	sp := &evalErrStatusPage{fakeStatusPage: &fakeStatusPage{svcs: []core.StatusService{{ID: "api", Name: "API"}}}}
+	d := enrollTestDeps(t)
+	d.StatusPage = func() core.StatusPageAPI { return sp }
+	_, body := getAsRole(t, d, RoleAdmin, "/status-page/services")
+	if !strings.Contains(body, "Live status unavailable") {
+		t.Error("no notice")
+	}
+}
+
+type evalErrStatusPage struct{ *fakeStatusPage }
+
+func (e *evalErrStatusPage) Evaluation() ([]core.ServiceEvaluation, error) {
+	return nil, errors.New("boom")
+}
+
+func TestStatusServicesNodeScoped404(t *testing.T) {
+	d := statusPageDeps(t, &fakeStatusPage{})
+	if code, _ := getAsRole(t, d, RoleAdmin, "/n/x/status-page/services"); code != 404 {
+		t.Errorf("node-scoped: %d", code)
+	}
+}
+
+func postFormAsRole(t *testing.T, d Deps, role Role, path string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	u := &User{ID: mustNewUserID(t), Name: string(role) + "-user", Role: role, Created: 1}
+	if err := users.Put(u); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := sessions.New(u.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return postForm(h, path, form, &http.Cookie{Name: sessionCookieName, Value: sess.ID}, sess.CSRF)
 }
