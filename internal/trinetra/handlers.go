@@ -95,8 +95,10 @@ func inQuietHours(spec string, now time.Time) bool {
 // accepts (update.State.Available), "update available: X".
 func renderVersionReply(p updatePaths) string {
 	out := "trinetra " + version.String()
-	if st, err := update.LoadState(p.dir()); err == nil && st.Available != "" {
-		out += "\nupdate available: " + st.Available + " (sudo trinetra update apply)"
+	if st, err := update.LoadState(p.dir()); err == nil {
+		if avail := st.AvailableOver(runningVersion()); avail != "" {
+			out += "\nupdate available: " + avail + " (sudo trinetra update apply)"
+		}
 	}
 	return out
 }

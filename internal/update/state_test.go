@@ -121,3 +121,27 @@ func TestFloorVersionTruthTable(t *testing.T) {
 		}
 	})
 }
+
+func TestAvailableOver(t *testing.T) {
+	v := func(s string) Version {
+		x, err := ParseVersion(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	for _, tc := range []struct {
+		avail, running, want string
+	}{
+		{"0.6.0-beta.1", "0.6.0-beta.1", ""},
+		{"0.6.0-beta.1", "0.6.0", ""},
+		{"0.6.0-beta.2", "0.6.0-beta.1", "0.6.0-beta.2"},
+		{"0.6.0", "0.5.0", "0.6.0"},
+		{"", "0.5.0", ""},
+		{"garbage", "0.5.0", ""},
+	} {
+		if got := (State{Available: tc.avail}).AvailableOver(v(tc.running)); got != tc.want {
+			t.Errorf("Available %q over running %s = %q, want %q", tc.avail, tc.running, got, tc.want)
+		}
+	}
+}

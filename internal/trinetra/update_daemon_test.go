@@ -103,10 +103,10 @@ func TestNotifyRestoreFailedNoPending(t *testing.T) {
 }
 
 func TestUpdateAvailableAlertOncePerVersion(t *testing.T) {
-	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0"}); !ok {
+	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0"}, mustVer("0.4.1")); !ok {
 		t.Fatal("no alert for a new available version")
 	}
-	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0", AvailableNotified: "0.5.0"}); ok {
+	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0", AvailableNotified: "0.5.0"}, mustVer("0.4.1")); ok {
 		t.Fatal("re-alerted the same available version")
 	}
 }
@@ -328,5 +328,12 @@ func TestRunDueCheckSeenOnceThenMissing(t *testing.T) {
 	runDueCheck(context.Background(), u, config.Default(), func(a Alert) { got = append(got, a) })
 	if n := staleAlerts(got); n != 1 {
 		t.Fatalf("stale alerts = %d, want 1 (token removed after a pointer was once seen must still alert): %+v", n, got)
+	}
+}
+
+func TestUpdateAvailableAlertSkipsInstalledVersion(t *testing.T) {
+	st := update.State{Available: "0.6.0-beta.1"}
+	if _, ok := updateAvailableAlert(st, mustVer("0.6.0-beta.1")); ok {
+		t.Fatal("alerted that the running version is available")
 	}
 }
