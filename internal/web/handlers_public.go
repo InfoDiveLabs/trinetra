@@ -208,6 +208,12 @@ func publicPageHandler(d Deps) http.HandlerFunc {
 			ShowAvailability: publicPanelsContain(cfg.Public.Panels, "availability"),
 			Availability:     snap.Availability,
 		}
+		if pub, ok := publicStatusData(d); ok {
+			sdata := StatusPublicPageData{PublicPageData: data, Status: pub, OverallLabel: overallLabel[pub.Overall], Groups: groupPublicServices(pub.Services)}
+			sdata.Title = pub.Title
+			renderBareStatusPage(w, "status_public.html", sdata)
+			return
+		}
 		if err := renderPublicPage(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

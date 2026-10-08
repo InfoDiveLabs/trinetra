@@ -1,0 +1,16 @@
+{{define "head_extra"}}<link rel="alternate" type="application/atom+xml" title="{{.Status.Title}}" href="/status/feed.atom">{{end}}
+{{define "content"}}
+<div class="status-page">
+  <header class="pub-head"><a href="/">← {{.Status.Title}}</a></header>
+  <h1>Incident history</h1>
+  {{range .Status.Active}}{{template "incident" .}}{{end}}
+  {{range .Status.Recent}}{{template "incident" .}}{{else}}{{if not .Status.Active}}<p class="note">No incidents in the last 90 days.</p>{{end}}{{end}}
+</div>
+{{end}}
+{{define "incident"}}
+<article class="status-incident impact-{{.Impact}}" id="{{.ID}}">
+  <h2>{{.Title}} <span class="pill">{{.Status}}</span></h2>
+  <p class="note">{{range $i, $s := .Services}}{{if $i}}, {{end}}{{$s}}{{end}}</p>
+  <ol class="status-updates">{{range .Updates}}<li><strong class="cap">{{.Status}}</strong> <time>{{timeText .TS}}</time><div>{{multiline .Message}}</div></li>{{end}}</ol>
+</article>
+{{end}}

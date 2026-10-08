@@ -1,0 +1,57 @@
+{{define "head_extra"}}<link rel="alternate" type="application/atom+xml" title="{{.Status.Title}}" href="/status/feed.atom">{{end}}
+{{define "content"}}
+<div class="status-page" id="public-live">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px">
+    <div style="display:flex;align-items:center;gap:16px"><span style="width:128px"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="128" height="34"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="128" height="34"></span><h2 style="margin:0">{{.Status.Title}}</h2></div>
+    <a href="/login" class="btn">Login</a>
+  </div>
+  <p class="note" style="margin:0 0 22px">Public read-only view</p>
+
+  <section class="status-banner status-{{.Status.Overall}}" role="status"><strong>{{.OverallLabel}}</strong></section>
+
+  {{range .Status.Active}}
+  <article class="status-incident impact-{{.Impact}}" id="{{.ID}}">
+    <h2>{{.Title}}</h2>
+    <p class="note">{{range $i, $s := .Services}}{{if $i}}, {{end}}{{$s}}{{end}}</p>
+    <ol class="status-updates">
+      {{range .Updates}}<li><strong class="cap">{{.Status}}</strong> <time>{{timeText .TS}}</time><div>{{multiline .Message}}</div></li>{{end}}
+    </ol>
+  </article>
+  {{end}}
+
+  {{range .Groups}}
+  <section class="status-group">
+    {{if .Name}}<h3>{{.Name}}</h3>{{end}}
+    {{range .Services}}
+    <div class="status-service">
+      <div class="status-service-head"><span>{{.Name}}</span><span class="pill pill-{{.State}}">{{.State}}</span></div>
+      {{if .Description}}<p class="note">{{.Description}}</p>{{end}}
+      <div class="status-bar" aria-label="90 day history">{{range .History}}<span class="day day-{{or .State "nodata"}}" title="{{.Date}}: {{or .State "no data"}}"></span>{{end}}</div>
+      <div class="status-bar-legend note"><span>90 days ago</span><span>today</span></div>
+    </div>
+    {{end}}
+  </section>
+  {{end}}
+
+  {{if or .Panels .ShowAvailability}}<section class="status-metrics">
+  {{if .ShowAvailability}}
+  {{$av := .Availability}}
+  <div class="panel" id="pub-avail" style="margin-bottom:16px">
+    <div class="head" style="margin-bottom:10px"><span class="eyebrow">Availability · 24h · 15-min blocks</span><span class="mono small" id="pub-avail-summary"><span style="color:var(--ok)">{{printf "%.2f" $av.UptimePct}}% up</span> · {{$av.IncidentsLabel}} · {{$av.DowntimeStr}}</span></div>
+    <div class="avail" id="pub-avail-blocks">{{range $av.Blocks}}<div class="seg{{if .Down}} down{{end}}" title="{{.Label}} · {{if .Down}}down{{else}}up{{end}}"></div>{{end}}</div>
+    <div class="note mono" style="display:flex;justify-content:space-between;margin-top:8px"><span>24h ago</span><span>18h</span><span>12h</span><span>6h</span><span>now</span></div>
+    <div class="legend" style="margin-top:10px"><span><i style="background:var(--ok)"></i>up</span><span><i style="background:var(--crit)"></i>down</span><span class="note">hover a block for the time</span></div>
+  </div>
+  {{end}}
+
+  <div class="section-label"><span class="eyebrow">Resources · live</span></div>
+  <div class="grid g-tiles" id="pub-panels">
+    {{range .Panels}}<div class="tile" data-panel="{{.ID}}"><div class="k"><span class="eyebrow">{{.Label}}</span></div><div class="val" data-field="value">{{.Value}}</div>{{if .Sub}}<div class="sub" data-field="sub">{{.Sub}}</div>{{end}}</div>
+    {{else}}<p class="note">Nothing is published yet.</p>
+    {{end}}
+  </div>
+  </section>{{end}}
+
+  <p class="note" style="text-align:center;margin-top:26px"><a href="/status/history">Incident history</a> · <a href="/status/feed.atom">Atom feed</a> · <a href="/status/api.json">JSON</a> · powered by trinetra</p>
+</div>
+{{end}}
