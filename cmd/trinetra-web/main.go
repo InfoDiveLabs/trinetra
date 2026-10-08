@@ -249,7 +249,8 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 		// only errors once a method is called through it, which is exactly
 		// why internal/web's node router validates {node} against
 		// Fleet().Nodes(...) itself before ever calling NodeAPI.
-		Fleet: client.Fleet,
+		Fleet:      client.Fleet,
+		StatusPage: client.StatusPage,
 		NodeAPI: func(id string) core.API {
 			return client.ForNode(id)
 		},

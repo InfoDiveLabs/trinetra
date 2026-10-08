@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -983,3 +984,89 @@ func TestDashboardReadsFromAPI(t *testing.T) {
 		t.Errorf("dashboard body missing fake API CPU value 77:\n%s", rr.Body.String())
 	}
 }
+
+// fakeStatusPage is an in-memory core.StatusPageAPI for web tests. It does
+// not evaluate anything; tests set svcs/evals/incs/pub directly.
+type fakeStatusPage struct {
+	mu      sync.Mutex
+	svcs    []core.StatusService
+	evals   []core.ServiceEvaluation
+	incs    []core.StatusIncident
+	pub     core.PublicStatus
+	err     error // returned by every call when set (e.g. core.ErrStatusPageOnChild)
+	actions []string
+}
+
+var _ core.StatusPageAPI = (*fakeStatusPage)(nil)
+
+func (f *fakeStatusPage) Services() ([]core.StatusService, error) { return f.svcs, f.err }
+func (f *fakeStatusPage) SetService(s core.StatusService, actor string) (core.StatusService, error) {
+	if f.err != nil {
+		return s, f.err
+	}
+	if err := core.ValidateStatusService(s); err != nil {
+		return s, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.actions = append(f.actions, "set:"+s.ID+":"+actor)
+	for i := range f.svcs {
+		if f.svcs[i].ID == s.ID {
+			f.svcs[i] = s
+			return s, nil
+		}
+	}
+	f.svcs = append(f.svcs, s)
+	return s, nil
+}
+func (f *fakeStatusPage) DeleteService(id, actor string) error {
+	f.actions = append(f.actions, "delsvc:"+id+":"+actor)
+	return f.err
+}
+func (f *fakeStatusPage) Evaluation() ([]core.ServiceEvaluation, error)     { return f.evals, f.err }
+func (f *fakeStatusPage) Incidents(all bool) ([]core.StatusIncident, error) { return f.incs, f.err }
+func (f *fakeStatusPage) Incident(id string) (core.StatusIncident, error) {
+	for _, inc := range f.incs {
+		if inc.ID == id {
+			return inc, f.err
+		}
+	}
+	return core.StatusIncident{}, fmt.Errorf("no such incident: %w", core.ErrNotFound)
+}
+func (f *fakeStatusPage) CreateIncident(in core.NewIncident, actor string) (core.StatusIncident, error) {
+	if err := core.ValidateNewIncident(in); err != nil {
+		return core.StatusIncident{}, err
+	}
+	inc := core.StatusIncident{ID: fmt.Sprintf("inc%d", len(f.incs)+1), Title: in.Title, Impact: in.Impact, Services: in.Services, Status: in.Update.Status,
+		Updates: []core.IncidentUpdate{{ID: "u1", Status: in.Update.Status, Message: in.Update.Message, Author: actor}}}
+	f.incs = append(f.incs, inc)
+	f.actions = append(f.actions, "create:"+actor)
+	return inc, f.err
+}
+func (f *fakeStatusPage) PostUpdate(id string, u core.NewUpdate, actor string) (core.StatusIncident, error) {
+	if err := core.ValidateUpdate(u); err != nil {
+		return core.StatusIncident{}, err
+	}
+	for i := range f.incs {
+		if f.incs[i].ID == id {
+			f.incs[i].Status = u.Status
+			f.incs[i].Updates = append(f.incs[i].Updates, core.IncidentUpdate{ID: fmt.Sprintf("u%d", len(f.incs[i].Updates)+1), Status: u.Status, Message: u.Message, Author: actor})
+			f.actions = append(f.actions, "post:"+id+":"+actor)
+			return f.incs[i], f.err
+		}
+	}
+	return core.StatusIncident{}, fmt.Errorf("no such incident: %w", core.ErrNotFound)
+}
+func (f *fakeStatusPage) EditUpdate(id, uid string, u core.NewUpdate, actor string) (core.StatusIncident, error) {
+	f.actions = append(f.actions, "edit:"+id+":"+uid+":"+actor)
+	return f.Incident(id)
+}
+func (f *fakeStatusPage) EditIncident(id, title string, svcs []string, actor string) (core.StatusIncident, error) {
+	f.actions = append(f.actions, "editinc:"+id+":"+actor)
+	return f.Incident(id)
+}
+func (f *fakeStatusPage) DeleteIncident(id, actor string) error {
+	f.actions = append(f.actions, "delinc:"+id+":"+actor)
+	return f.err
+}
+func (f *fakeStatusPage) Public() (core.PublicStatus, error) { return f.pub, f.err }

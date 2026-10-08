@@ -267,6 +267,7 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/settings/public", Icon: "◈", Label: "Public view"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/status-page/services", Icon: "◉", Label: "Status page"}, AdminOnly: true},
 	// Updates (task 8): signed self-update status + manual actions
 	// (check/apply/rollback). Admin-only like Configuration/Channels/Users/
 	// Public view above -- self-update is a per-node action, so unlike

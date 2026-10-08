@@ -137,6 +137,9 @@ type Deps struct {
 	// "solo") once wired -- see fleetRole's doc for why every failure mode
 	// collapses to that same answer rather than needing separate handling.
 	Fleet func() core.FleetAPI
+	// StatusPage is the daemon's public status page API (issue #157). Nil, or
+	// a nil result, means unavailable (older daemon / not wired).
+	StatusPage func() core.StatusPageAPI
 	// NodeAPI returns a core.API view routed to fleet node id (the
 	// trinetra-web binary's buildDeps wires this to
 	// func(id string) core.API { return client.ForNode(id) }, internal/

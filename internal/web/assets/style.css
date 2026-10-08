@@ -651,3 +651,10 @@ input.switch:checked::after{left:19px;background:var(--bg)}
 @media (prefers-reduced-motion:reduce){
   .sheet,.sheet-scrim,.drawer{transition:none}
 }
+
+/* Public status page states (#157): same severity tokens as .badge.ok/.warn/.crit,
+   so both themes work; maintenance keeps neutral text (--info is a data-series token, barred as text colour by brand_test) with an info-tinted border. */
+.pill-operational{color:var(--ok);border-color:color-mix(in oklab,var(--ok) 40%,var(--border))}
+.pill-degraded{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--border))}
+.pill-outage{color:var(--crit);border-color:color-mix(in oklab,var(--crit) 45%,var(--border))}
+.pill-maintenance{color:var(--text);border-color:color-mix(in oklab,var(--info) 40%,var(--border))}

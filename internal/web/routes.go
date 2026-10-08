@@ -115,6 +115,10 @@ func newHandler(d Deps) http.Handler {
 		requireCSRF(fleetAlertingTestHandler(d)).ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("GET /fleet/rules/state", requireRole(RoleViewer, d, fleetRulesStateHandler(d)))
+	// Public status page services admin (#157, handlers_statuspage_services.go).
+	mux.HandleFunc("GET /status-page/services", requireRole(RoleAdmin, d, statusServicesPageHandler(d)))
+	mux.HandleFunc("POST /status-page/services", fleetAdminMutation(d, statusServiceSaveHandler(d)))
+	mux.HandleFunc("POST /status-page/services/{id}/delete", fleetAdminMutation(d, statusServiceDeleteHandler(d)))
 	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete) --
 	// task C4, plan C: the fleet silences and maintenance-windows web UI over
 	// core.FleetAPI's Silences/CreateSilence/ExpireSilence/Maintenances/
