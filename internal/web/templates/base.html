@@ -40,7 +40,7 @@
       <div><h1>{{.Title}}</h1><p>{{.Sub}}</p></div>
       {{if .Switcher}}
       <div class="node-switcher" id="nodeSwitcher">
-        <button type="button" class="ns-trigger" id="nodeSwitcherBtn" aria-haspopup="listbox" aria-expanded="false" aria-controls="nodeSwitcherList">
+        <button type="button" class="ns-trigger" id="nodeSwitcherBtn" title="Switch which server you are viewing (Ctrl-K)" aria-haspopup="listbox" aria-expanded="false" aria-controls="nodeSwitcherList">
           <span class="ns-label">{{.NodeLabel}}</span>
           <span class="ns-car" aria-hidden="true">⌄</span>
         </button>
@@ -54,9 +54,9 @@
       <div class="spacer"></div>
       {{if eq .Role "viewer"}}<span class="pill ro-pill">read-only</span>{{end}}
       {{if eq .FleetRole "child"}}{{if .Link}}{{if linkUnreachable .Link}}<span class="pill" title="{{.MasterURL}}{{if .Link.LastError}} · {{.Link.LastError}}{{end}}"><span class="led warn"></span> Master unreachable {{nodeDur .Link.LastAck}} · alerting locally</span>{{else if le .Link.LastAck 0}}<span class="pill" title="{{.MasterURL}}"><span class="led"></span> Connecting to master</span>{{else}}<span class="pill" title="{{.MasterURL}}"><span class="led ok"></span> Linked to master · ack {{nodeAgo .Link.LastAck}}</span>{{end}}{{end}}{{end}}
-      <span class="hb hb-gen" title="heartbeat"></span>
+      <span class="hb hb-gen" title="Live: this page updates on its own"></span>
       <a class="pill st" href="{{nodeHref .Node.Prefix "/alerts"}}" title="{{.StatusText}}" aria-label="{{.StatusText}}"><span class="led {{.Status}}"></span><span class="st-t">{{.StatusText}}</span></a>
-      <button class="icon-btn" id="themeBtn" title="Toggle theme (T)">◑</button>
+      <button class="icon-btn" id="themeBtn" title="Switch light / dark theme (T)" aria-label="Switch light or dark theme">◑</button>
     </header>
     {{template "nodebanner" .}}
     <div class="wrap">

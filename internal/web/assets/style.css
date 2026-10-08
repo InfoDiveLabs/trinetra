@@ -710,3 +710,18 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   td.card-actions{white-space:nowrap}
   td.card-actions select{width:auto; display:inline-block; vertical-align:middle}
 }
+
+/* Touch screens get 44px targets regardless of width. */
+@media (pointer:coarse){
+  .btn,select,input:not([type=checkbox]):not([type=radio]):not(.switch),.chip{min-height:44px}
+  .nav a{min-height:44px}
+  .icon-btn{width:44px; height:44px}
+  input[type=checkbox],input[type=radio]{width:20px; height:20px}
+  #logoutBtn{min-width:44px; min-height:44px}
+}
+@media (max-width:640px){
+  .icon-btn{width:44px; height:44px}
+  .topbar .pill.st{width:44px; height:44px; justify-content:center; padding:0}
+  .ns-trigger{min-height:44px}
+  input[type=checkbox],input[type=radio]{width:20px; height:20px}
+}

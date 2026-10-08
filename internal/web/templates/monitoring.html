@@ -32,7 +32,7 @@
 
   <!-- CONTAINERS -->
   <div class="tabpane on" data-pane="containers"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-containers" class="cards">
-    <thead><tr><th>State</th><th>Container</th><th style="width:150px">CPU</th><th style="width:150px">Mem</th><th>Net I/O</th></tr></thead>
+    <thead><tr><th>State</th><th>Container</th><th style="width:150px">CPU</th><th style="width:150px">Mem</th><th title="Network received ↓ / sent ↑, KB/s">Net I/O</th></tr></thead>
     <tbody>
       {{range $v.Containers}}
       <tr data-detail data-kind="container" data-name="{{.Name}}" data-state="{{.State}}"{{if .HasStats}} data-cpu="{{printf "%.0f" .CPUPct}}%" data-mem="{{printf "%.0f" .MemMiB}}M" data-net="↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}} MB/s"{{end}}>
@@ -49,7 +49,7 @@
 
   <!-- SERVICES -->
   <div class="tabpane" data-pane="services"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-services" class="cards">
-    <thead><tr><th>State</th><th>Unit</th><th>Description</th><th>Load</th></tr></thead>
+    <thead><tr><th>State</th><th>Unit</th><th>Description</th><th title="systemd load state">Load</th></tr></thead>
     <tbody>
       {{if $v.UnitsEnabled}}
         {{range $v.Units}}
@@ -68,7 +68,7 @@
 
   <!-- FILESYSTEMS -->
   <div class="tabpane" data-pane="fs"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-fs" class="cards">
-    <thead><tr><th>Mount</th><th>Device</th><th>FS</th><th style="width:220px">Usage</th><th>Size</th><th>Free</th><th>Inodes</th><th>Trend</th></tr></thead>
+    <thead><tr><th>Mount</th><th>Device</th><th>FS</th><th style="width:220px">Usage</th><th>Size</th><th>Free</th><th title="Inode use: running out blocks new files even with free space">Inodes</th><th title="Projected time until full at the recent growth rate">Trend</th></tr></thead>
     <tbody>
       {{range $v.Disks}}
       <tr data-detail data-kind="disk" data-name="{{.Mount}}" data-metric="disk:{{.Mount}}" data-device="{{.Device}}" data-fs="{{.FSType}}" data-size="{{humanBytes .SizeBytes}}" data-free="{{humanBytes .FreeBytes}}" data-inodes="{{printf "%.0f" .InodePct}}%" data-projection="{{diskTrendText .DaysToFull .DaysToFullKnown}}">
