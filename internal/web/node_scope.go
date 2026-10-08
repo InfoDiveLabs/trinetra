@@ -184,6 +184,8 @@ var masterLocalPrefixes = []string{
 	"/assets",
 	"/public",
 	"/fleet",
+	"/status-page",
+	"/status",
 }
 
 // isMasterLocalPath reports whether p (already stripped of its /n/{node}

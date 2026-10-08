@@ -651,3 +651,31 @@ input.switch:checked::after{left:19px;background:var(--bg)}
 @media (prefers-reduced-motion:reduce){
   .sheet,.sheet-scrim,.drawer{transition:none}
 }
+
+/* Public status page states (#157): same severity tokens as .badge.ok/.warn/.crit,
+   so both themes work; maintenance keeps neutral text (--info is a data-series token, barred as text colour by brand_test) with an info-tinted border. */
+.pill-operational{color:var(--ok);border-color:color-mix(in oklab,var(--ok) 40%,var(--border))}
+.pill-degraded{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--border))}
+.pill-outage{color:var(--crit);border-color:color-mix(in oklab,var(--crit) 45%,var(--border))}
+.pill-maintenance{color:var(--text);border-color:color-mix(in oklab,var(--info) 40%,var(--border))}
+
+/* Public status page (#157): banner/incident/90-day bars. --info only as border/background. */
+.status-page{max-width:880px;margin:0 auto;padding:40px 24px}
+.status-banner{border-radius:var(--r-lg);padding:16px 20px;margin:16px 0;font-size:1.1rem;color:var(--on-crit)}
+.status-operational{background:var(--ok)} .status-partial_outage{background:var(--warn)}
+.status-major_outage{background:var(--crit)} .status-maintenance{background:#245E8F;color:#fff}
+.status-incident{border-left:4px solid var(--warn);padding:8px 16px;margin:16px 0;background:var(--surface)}
+.status-incident.impact-outage{border-color:var(--crit)} .status-incident.impact-maintenance{border-color:var(--info)}
+.status-updates{list-style:none;padding:0} .status-updates li{margin:10px 0}
+.cap{text-transform:capitalize}
+.status-service{padding:12px 0;border-bottom:1px solid var(--border)}
+.status-service-head{display:flex;justify-content:space-between;align-items:center}
+.status-bar{display:grid;grid-template-columns:repeat(90,1fr);gap:2px;height:28px;margin-top:8px}
+.status-bar .day{border-radius:2px;background:var(--track)}
+.status-bar .day-operational{background:var(--ok)} .status-bar .day-degraded{background:var(--warn)}
+.status-bar .day-outage{background:var(--crit)} .status-bar .day-maintenance{background:var(--info)}
+.status-bar-legend{display:flex;justify-content:space-between;font-size:.75rem}
+.status-metrics{margin-top:24px}
+@media (max-width:600px){.status-page{padding:24px 16px}.status-bar{gap:1px;height:22px}}
+.status-title{margin:0;font-size:1.5rem}
+.status-title,.status-incident h2,.status-updates li div,.status-service-head span,.status-service p,.status-group h3{overflow-wrap:anywhere;min-width:0}

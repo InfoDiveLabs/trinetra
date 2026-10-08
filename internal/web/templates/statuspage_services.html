@@ -1,0 +1,61 @@
+{{/* statuspage_services.html (#157): admin editor for the public status page's
+     services, with each service's live evaluated state. */}}
+{{define "content"}}
+<div id="status-services-page">
+  <div class="section-label"><span class="eyebrow">Public services</span></div>
+  <p class="note" style="margin:0 0 12px">Each service's public status is computed from the alerts on its targets: a down node or a critical alert is an outage, a warning is degraded, an active maintenance window is maintenance. Changes wait for the hold-down. Silenced alerts never count.</p>
+  {{if .Unavailable}}<div class="flash err" role="status">{{.Unavailable}}</div>{{else}}
+  {{if .Notice}}<div class="flash err" role="status">{{.Notice}}</div>{{end}}
+  {{if .Error}}<div class="flash err" role="alert">{{.Error}}</div>{{end}}
+  <div class="panel pad0 cardpanel" style="margin-bottom:18px"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Service</th><th>Group</th><th>Now</th><th>Why</th><th>Targets</th><th></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr>
+        <td class="card-title" data-label="Service"><strong>{{.Name}}</strong><div class="note mono">{{.ID}}</div></td>
+        <td data-label="Group">{{.Group}}</td>
+        <td data-label="Now"><span class="badge pill-{{or .Eval.State "operational"}}">{{or .Eval.State "operational"}}</span>{{if .Eval.PendingSince}} <span class="note">&rarr; {{.Eval.Computed}} pending</span>{{end}}</td>
+        <td class="note" data-label="Why">{{.Eval.Reason}}{{range .Eval.Missing}}<div class="field-err">target not found: {{.}}</div>{{end}}</td>
+        <td data-label="Targets"><pre class="mono" style="margin:0">{{.TargetsText}}</pre></td>
+        <td class="card-actions" style="text-align:right">
+          <a class="btn ghost" href="/status-page/services?edit={{.ID}}">Edit</a>
+          <span class="confirm-toggle">
+            <input type="checkbox" id="del-{{.ID}}" class="confirm-check">
+            <label for="del-{{.ID}}" class="btn ghost confirm-ask">Delete</label>
+            <span class="confirm-armed">
+              <form method="post" action="/status-page/services/{{.ID}}/delete" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn danger" type="submit">Confirm delete</button>
+              </form>
+              <label for="del-{{.ID}}" class="btn ghost">Cancel</label>
+            </span>
+          </span>
+        </td>
+      </tr>
+    {{else}}<tr><td colspan="6" class="note">No services yet. Until you add one, the public page shows only metric panels.</td></tr>{{end}}
+    </tbody>
+  </table></div></div>
+
+  <div class="panel" style="margin-bottom:18px">
+    <div class="head"><span class="eyebrow">{{if .Form.Edit}}Edit service {{.Form.Name}}{{else}}Add a service{{end}}</span></div>
+    <form method="post" action="/status-page/services">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      {{if .Form.Edit}}<input type="hidden" name="edit" value="1">{{end}}
+      <div class="grid g-3">
+        <label class="field"><span class="lb">ID</span><input name="id" value="{{.Form.ID}}"{{if .Form.Edit}} readonly{{end}} required pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="api"></label>
+        <label class="field"><span class="lb">Name</span><input name="name" value="{{.Form.Name}}" required maxlength="60" placeholder="API"></label>
+        <label class="field"><span class="lb">Group</span><input name="group" value="{{.Form.Group}}" maxlength="60" placeholder="Core platform"></label>
+        <label class="field"><span class="lb">Order</span><input name="order" type="number" value="{{.Form.Order}}"></label>
+        <label class="field"><span class="lb">Hold-down (s)</span><input name="hold" type="number" min="0" max="3600" value="{{.Form.Hold}}"></label>
+        <label class="field"><span class="lb">Description</span><input name="description" value="{{.Form.Description}}" maxlength="200"></label>
+      </div>
+      <label class="field" style="margin-top:8px"><span class="lb">Targets, one per line</span>
+        <textarea name="targets" rows="4" required placeholder="tag:api&#10;container:postgres@db-01-node-id&#10;host">{{.Form.Targets}}</textarea>
+        <span class="hint">host &middot; node:&lt;id&gt; &middot; tag:&lt;tag&gt; &middot; container:&lt;name&gt;[@node] &middot; unit:&lt;unit&gt;[@node] &middot; mount:&lt;path&gt;[@node]</span>
+      </label>
+      <button class="btn primary" type="submit" style="margin-top:10px">Save service</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+{{end}}

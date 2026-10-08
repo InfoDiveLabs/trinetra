@@ -115,6 +115,18 @@ func newHandler(d Deps) http.Handler {
 		requireCSRF(fleetAlertingTestHandler(d)).ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("GET /fleet/rules/state", requireRole(RoleViewer, d, fleetRulesStateHandler(d)))
+	// Public status page services admin (#157, handlers_statuspage_services.go).
+	mux.HandleFunc("GET /status-page/services", requireRole(RoleAdmin, d, statusServicesPageHandler(d)))
+	mux.HandleFunc("POST /status-page/services", fleetAdminMutation(d, statusServiceSaveHandler(d)))
+	mux.HandleFunc("POST /status-page/services/{id}/delete", fleetAdminMutation(d, statusServiceDeleteHandler(d)))
+	// Status-page incidents (#157, handlers_statuspage_incidents.go): responder+.
+	mux.HandleFunc("GET /status-page/incidents", requireRole(RoleResponder, d, statusIncidentsPageHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents", fleetResponderMutation(d, statusIncidentCreateHandler(d)))
+	mux.HandleFunc("GET /status-page/incidents/{id}", requireRole(RoleResponder, d, statusIncidentPageHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/updates", fleetResponderMutation(d, statusUpdatePostHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/updates/{uid}", fleetResponderMutation(d, statusUpdateEditHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/edit", fleetResponderMutation(d, statusIncidentEditHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/delete", fleetAdminMutation(d, statusIncidentDeleteHandler(d)))
 	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete) --
 	// task C4, plan C: the fleet silences and maintenance-windows web UI over
 	// core.FleetAPI's Silences/CreateSilence/ExpireSilence/Maintenances/
@@ -229,6 +241,12 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /settings/public", publicSettingsMutation(d, publicSettingsSaveHandler(d)))
 	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
 	mux.HandleFunc("GET /public/events", publicEventsHandler(d))
+	// Public status page extras (#157): anonymous like /public/events (no
+	// requireRole); each handler 404s itself when public.enabled is false or
+	// no services are configured.
+	mux.HandleFunc("GET /status/history", statusHistoryHandler(d))
+	mux.HandleFunc("GET /status/feed.atom", statusFeedHandler(d))
+	mux.HandleFunc("GET /status/api.json", statusAPIHandler(d))
 
 	// /alerts (Task 10/#66): alert history + active alerts, both read over
 	// the control socket (Deps.API.AlertHistory/ActiveAlerts), viewer+ per

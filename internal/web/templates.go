@@ -63,7 +63,11 @@ var funcMap = template.FuncMap{
 	// loadLedClass/diskWarnPct/diskCriticalPct/subInt (handlers_dashboard.go)
 	// are templates/dashboard.html's formatting helpers for the live
 	// DashboardView.
-	"ledClass":        ledClass,
+	"ledClass": ledClass,
+	// multiline/timeText (handlers_statuspage_incidents.go, handlers_fleet.go)
+	// render status-page update text and unix timestamps.
+	"multiline":       multiline,
+	"timeText":        incidentTimeText,
 	"humanBytes":      humanBytes,
 	"humanRate":       humanRate,
 	"diskTrendText":   diskTrendText,
@@ -250,6 +254,8 @@ var navItems = []navEntry{
 	// "/fleet" above, MasterOnly also exempts its Href from node-prefixing --
 	// it only ever means "this master's own incidents".
 	{NavItem: NavItem{Href: "/fleet/incidents", Icon: "⚠", Label: "Incidents"}, MasterOnly: true},
+	// Status updates (#157): public status-page incidents, responder+.
+	{NavItem: NavItem{Href: "/status-page/incidents", Icon: "📣", Label: "Status updates"}, MinRole: RoleResponder},
 	// Silences (task C4, fleet phase 2 web UI plan C): master only, visible
 	// to viewers -- the brief's own ruling ("'Silences' in the Monitor
 	// group, master only, visible to viewers"). Read-only for a viewer
@@ -267,6 +273,7 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/settings/public", Icon: "◈", Label: "Public view"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/status-page/services", Icon: "◉", Label: "Status page"}, AdminOnly: true},
 	// Updates (task 8): signed self-update status + manual actions
 	// (check/apply/rollback). Admin-only like Configuration/Channels/Users/
 	// Public view above -- self-update is a per-node action, so unlike
