@@ -8,6 +8,11 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
+## [0.6.0-beta.1] - 2026-10-08
+
+Beta of the public status page. Install it on a beta-channel host
+(`sudo trinetra config set update.channel beta`) to try it before 0.6.0.
+
 ### Added
 
 - **Public status page and incidents.** Admins define public services mapped to
@@ -21,6 +26,26 @@ branch; stable releases are tagged on `main`.
   [handbook](docs/handbook/08-web-ui.md#public-status-page).
 - **`responder` web role** (viewer < responder < admin): can ack alerts and fleet
   incidents and run status-page incidents, without admin rights.
+
+### Fixed
+
+- **Self-update rollback** keeps the pending update when restoring the previous
+  build fails, so the watchdog retries the restore (without re-running the
+  health gate), and the web UI shows the failed restore (#136).
+- **Update floor**: an unreadable persisted floor version now fails closed
+  instead of being treated as "no floor" (#138).
+- **Update watchdog** timer fires shortly after it is (re)installed (#140).
+- **Channel secrets** are no longer shown on `/channels`: leaving a secret blank
+  keeps it, and a separate clear control removes it (#139).
+- **Downtime history** pages `/api/downtime` with `limit`/`offset`, and the
+  downtime bar is drawn from a server-side timeline, so paging can't hide
+  incidents (#117).
+- **Release notes** now come from this changelog instead of a placeholder.
+
+### Changed
+
+- Release and channel workflows use `actions/checkout` v7, `actions/setup-go` v7
+  and `actions/attest-build-provenance` v4 (Node 24 runtime).
 
 ## [0.5.0] - 2026-09-30
 
