@@ -222,6 +222,8 @@ type NavItem struct {
 type navEntry struct {
 	NavItem
 	AdminOnly bool
+	// MinRole gates the entry on a minimum role rank (zero = viewer).
+	MinRole Role
 	// MasterOnly entries are ALSO exempt from node-prefixing (see
 	// navForRole): unlike Dashboard/Monitoring/etc, "/fleet" is a
 	// master-local URL (node_scope.go's masterLocalPrefixes) that's
@@ -339,6 +341,9 @@ func navForRole(role string, counts NavCounts, node nodeScope, fleetRole string)
 		if n.AdminOnly && (role != "admin" || !node.Self) {
 			continue
 		}
+		if n.MinRole != "" && roleRank(Role(role)) < roleRank(n.MinRole) {
+			continue
+		}
 		if n.MasterOnly && fleetRole != config.RoleMaster {
 			continue
 		}
@@ -376,7 +381,7 @@ func badgeFor(href string, counts NavCounts) string {
 	}
 }
 
-// currentRole returns the signed-in request's role ("admin"/"viewer"), or
+// currentRole returns the signed-in request's role ("admin"/"responder"/"viewer"), or
 // "" for an anonymous one. userMiddleware (middleware.go) is what actually
 // resolves the session into a *User this reads back via userFromContext;
 // this is purely the cosmetic input to nav filtering (navForRole) and the
@@ -410,9 +415,11 @@ type PageData struct {
 	// old statusText helper mapped "crit"/"warn" to hardcoded text like "2
 	// alerts firing" no matter the real count).
 	Status, StatusText string
-	// Role is the current user's role ("admin" or "viewer"), from
+	// Role is the current user's role ("admin", "responder" or "viewer"), from
 	// currentRole. Drives both nav filtering and the read-only pill/footer.
 	Role string
+	// CanRespond is true for responder and admin: gates ack/unack UI.
+	CanRespond bool
 	// Name/Initial are the signed-in user's display name (User.Name) and its
 	// uppercased first letter, rendered in the sidebar footer's identity block
 	// (#80). Empty for an anonymous request. Previously the footer showed a
@@ -685,6 +692,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		Status:          status,
 		StatusText:      statusText,
 		Role:            role,
+		CanRespond:      roleRank(Role(role)) >= roleRank(RoleResponder),
 		Name:            name,
 		Initial:         firstInitial(name),
 		Active:          nodeHref(node.Prefix, r.URL.Path),
@@ -827,7 +835,7 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
-// renderDenied renders the mockup's "Admin only" denied panel (templates/
+// renderDenied renders the mockup's "Higher role needed" denied panel (templates/
 // denied.html, ported from ui-mockup/assets/app.js's `.panel.denied` markup)
 // through the full app-shell layout with a 403 status -- requireRole
 // (middleware.go) calls this when a signed-in user's role falls short of a
@@ -835,7 +843,7 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 // nav (the visitor IS signed in, so the shell should look like it does
 // everywhere else), just with the content block replaced.
 func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
-	data := newPageData(r, d, "Admin only", "Access denied")
+	data := newPageData(r, d, "Higher role needed", "Access denied")
 	if err := renderPageStatus(w, "denied.html", data, http.StatusForbidden); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

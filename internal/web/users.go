@@ -19,9 +19,26 @@ import (
 type Role string
 
 const (
-	RoleAdmin  Role = "admin"
-	RoleViewer Role = "viewer"
+	RoleAdmin     Role = "admin"
+	RoleResponder Role = "responder" // posts status-page updates, acks alerts; no config/users/channels (issue #157)
+	RoleViewer    Role = "viewer"
 )
+
+// roleRank orders roles for requireRole: viewer < responder < admin; an
+// unknown or empty role ranks 0 and satisfies nothing.
+func roleRank(r Role) int {
+	switch r {
+	case RoleViewer:
+		return 1
+	case RoleResponder:
+		return 2
+	case RoleAdmin:
+		return 3
+	}
+	return 0
+}
+
+func validRole(r Role) bool { return roleRank(r) > 0 }
 
 // Credential is one registered passkey, in the flattened shape the design
 // doc's "Users store" section specifies (users.json: id, name, role,
@@ -59,7 +76,7 @@ type User struct {
 	// are the same value here; the mockup/design doc doesn't distinguish
 	// them for this app).
 	Name string `json:"name"`
-	// Role is this account's access level (RoleAdmin/RoleViewer), assigned by
+	// Role is this account's access level (RoleAdmin/RoleResponder/RoleViewer, ranked viewer < responder < admin), assigned by
 	// resolveEnrollRole (enroll_tokens.go) at enrollment time: first-run
 	// bootstrap or an admin-issued enrollment token's Role.
 	Role Role `json:"role"`

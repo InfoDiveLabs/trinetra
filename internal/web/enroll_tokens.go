@@ -246,6 +246,9 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role Role, bootstrap bool, err error) {
 	if token != "" {
 		r, err := tokens.Redeem(token)
+		if err == nil && !validRole(r) {
+			return "", false, fmt.Errorf("web: enrollment token carries unknown role %q", r)
+		}
 		return r, false, err
 	}
 	// Fail CLOSED on an unreadable store (#105 secondary hardening): IsEmpty

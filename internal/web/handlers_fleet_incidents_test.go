@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
@@ -739,5 +740,52 @@ func TestIncidentMasterOwnMembersNamed(t *testing.T) {
 	tl := buildIncidentTimeline(inc.Timeline, incidentNodeNameLookup(inc))
 	if want := "fire · ops-master · disk:/var/log · policy default, step 1 → ops"; len(tl) != 1 || tl[0].Text != want {
 		t.Errorf("timeline = %+v, want text %q", tl, want)
+	}
+}
+
+// A responder may ack a fleet incident (actor recorded); a viewer may not and
+// sees no Ack button.
+func TestFleetIncidentAckResponderAllowedViewerDenied(t *testing.T) {
+	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
+	d := fleetAdminDeps(t, fleet)
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	u := &User{ID: mustNewUserID(t), Name: "rita", Role: RoleResponder, Created: 1}
+	if err := users.Put(u); err != nil {
+		t.Fatal(err)
+	}
+	s, err := sessions.New(u.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: sessionCookieName, Value: s.ID}
+
+	// responder sees the Ack form
+	req := httptest.NewRequest(http.MethodGet, "/fleet/incidents/inc1", nil)
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), `action="/fleet/incidents/inc1/ack"`) {
+		t.Errorf("responder should see the ack form")
+	}
+	// viewer does not
+	if body := fleetGetAsViewer(t, d, "/fleet/incidents/inc1").Body.String(); strings.Contains(body, `action="/fleet/incidents/inc1/ack"`) || strings.Contains(body, ">Ack</button>") {
+		t.Errorf("viewer must not see an Ack button")
+	}
+
+	rr = postForm(h, "/fleet/incidents/inc1/ack", url.Values{}, cookie, s.CSRF)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("responder ack = %d, want 303: %s", rr.Code, rr.Body.String())
+	}
+	if fleet.ackedIncidentID != "inc1" {
+		t.Errorf("AckIncident id = %q", fleet.ackedIncidentID)
+	}
+	if !strings.Contains(readAuditFileRaw(t, d.StateDir), "rita") {
+		t.Errorf("audit log must record the responder as actor")
+	}
+	// silence stays admin-only
+	if rr := postForm(h, "/fleet/incidents/inc1/silence", url.Values{"for": {"1h"}}, cookie, s.CSRF); rr.Code != http.StatusForbidden {
+		t.Errorf("responder silence = %d, want 403", rr.Code)
 	}
 }

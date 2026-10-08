@@ -229,7 +229,7 @@
       }
       staticInto(actionRow,'<button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>');
     } else {
-      staticInto(actionRow,'<span class="note">viewer -- read-only</span>');
+      staticInto(actionRow,'<span class="note">'+role+' -- read-only</span>');
     }
     body.appendChild(actionRow);
     // Log output area, filled on demand when "View logs" is clicked. Built with

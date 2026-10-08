@@ -76,3 +76,29 @@ func TestFirstInitial(t *testing.T) {
 		}
 	}
 }
+
+func TestSidebarMinRoleResponder(t *testing.T) {
+	saved := navItems
+	defer func() { navItems = saved }()
+	navItems = []navEntry{
+		{NavItem: NavItem{Href: "/resp", Label: "RespOnly"}, MinRole: RoleResponder},
+		{NavItem: NavItem{Href: "/adm", Label: "AdmOnly"}, AdminOnly: true},
+	}
+	has := func(role, label string) bool {
+		for _, n := range navForRole(role, NavCounts{}, nodeScope{Self: true}, "solo") {
+			if n.Label == label {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("responder", "RespOnly") || has("responder", "AdmOnly") {
+		t.Error("responder should see MinRole item but not AdminOnly")
+	}
+	if has("viewer", "RespOnly") || has("viewer", "AdmOnly") {
+		t.Error("viewer should see neither")
+	}
+	if !has("admin", "RespOnly") || !has("admin", "AdmOnly") {
+		t.Error("admin should see both")
+	}
+}
