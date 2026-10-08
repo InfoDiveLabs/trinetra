@@ -65,19 +65,50 @@ func (m *incidentManager) openAutoFor(svc string) (int, bool) {
 	return -1, false
 }
 
+const maxTriggers = 20
+
+// cloneStatusIncident deep-copies an incident so callers can use it after the
+// manager's lock is released.
+func cloneStatusIncident(inc core.StatusIncident) core.StatusIncident {
+	out := inc
+	out.Services = slices.Clone(inc.Services)
+	out.Triggers = slices.Clone(inc.Triggers)
+	if inc.Updates != nil {
+		out.Updates = make([]core.IncidentUpdate, len(inc.Updates))
+		for i, u := range inc.Updates {
+			u.Edits = slices.Clone(u.Edits)
+			out.Updates[i] = u
+		}
+	}
+	return out
+}
+
+func addTrigger(inc *core.StatusIncident, t string) {
+	inc.Triggers = append(inc.Triggers, t)
+	if n := len(inc.Triggers) - maxTriggers; n > 0 {
+		inc.Triggers = slices.Clone(inc.Triggers[n:])
+	}
+}
+
 func (m *incidentManager) addUpdate(i int, status, msg, author string) {
 	inc := &m.data.Incidents[i]
 	now := m.now().Unix()
+	wasResolved := inc.Status == core.IncidentResolved
 	u := core.IncidentUpdate{ID: m.newID(), TS: now, Status: status, Message: msg, Author: author}
 	inc.Updates = append(inc.Updates, u)
 	inc.Status, inc.Updated = status, now
 	if status == core.IncidentResolved {
-		inc.Resolved = now
+		if !wasResolved || inc.Resolved == 0 {
+			inc.Resolved = now
+		}
 	} else {
 		inc.Resolved = 0
+		if wasResolved { // reopened: auto-resolve must not fire on the stale recovery
+			inc.RecoveredAt = 0
+		}
 	}
 	if m.echo != nil {
-		m.echo(*inc, u)
+		m.echo(cloneStatusIncident(*inc), u)
 	}
 }
 
@@ -118,7 +149,7 @@ func (m *incidentManager) applyChanges(changes []stateChange) bool {
 				continue
 			}
 			inc := &m.data.Incidents[i]
-			inc.Triggers = append(inc.Triggers, c.ServiceID+": "+c.Reason)
+			addTrigger(inc, c.ServiceID+": "+c.Reason)
 			name := m.serviceName(c.ServiceID)
 			switch {
 			case inc.RecoveredAt != 0:
@@ -152,6 +183,9 @@ func (m *incidentManager) applyChanges(changes []stateChange) bool {
 			ids = append(ids, c.ServiceID)
 			triggers = append(triggers, c.ServiceID+": "+c.Reason)
 			impact = core.WorseState(impact, c.To)
+		}
+		if n := len(triggers) - maxTriggers; n > 0 {
+			triggers = triggers[n:]
 		}
 		names := m.names(ids)
 		now := m.now().Unix()
@@ -206,7 +240,7 @@ func (m *incidentManager) create(in core.NewIncident, actor string) (core.Status
 	})
 	i := len(m.data.Incidents) - 1
 	m.addUpdate(i, in.Update.Status, in.Update.Message, actor)
-	return m.data.Incidents[i], nil
+	return cloneStatusIncident(m.data.Incidents[i]), nil
 }
 
 func (m *incidentManager) post(id string, u core.NewUpdate, actor string) (core.StatusIncident, error) {
@@ -218,7 +252,7 @@ func (m *incidentManager) post(id string, u core.NewUpdate, actor string) (core.
 		return core.StatusIncident{}, fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
 	m.addUpdate(i, u.Status, u.Message, actor)
-	return m.data.Incidents[i], nil
+	return cloneStatusIncident(m.data.Incidents[i]), nil
 }
 
 func (m *incidentManager) editUpdate(id, updateID string, u core.NewUpdate, actor string) (core.StatusIncident, error) {
@@ -242,11 +276,14 @@ func (m *incidentManager) editUpdate(id, updateID string, u core.NewUpdate, acto
 			if u.Status == core.IncidentResolved && inc.Resolved == 0 {
 				inc.Resolved = m.now().Unix()
 			} else if u.Status != core.IncidentResolved {
+				if inc.Resolved != 0 {
+					inc.RecoveredAt = 0
+				}
 				inc.Resolved = 0
 			}
 		}
 		inc.Updated = m.now().Unix()
-		return *inc, nil
+		return cloneStatusIncident(*inc), nil
 	}
 	return core.StatusIncident{}, fmt.Errorf("no such update %q: %w", updateID, core.ErrNotFound)
 }
@@ -269,7 +306,7 @@ func (m *incidentManager) editIncident(id, title string, services []string, acto
 	}
 	inc.Updated = m.now().Unix()
 	_ = actor // recorded by the caller's audit log
-	return *inc, nil
+	return cloneStatusIncident(*inc), nil
 }
 
 func (m *incidentManager) delete(id string) error {

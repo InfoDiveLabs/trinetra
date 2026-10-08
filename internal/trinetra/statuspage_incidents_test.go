@@ -85,6 +85,9 @@ func TestAutoOpenReusesOpenIncidentAndRaisesImpact(t *testing.T) {
 	if inc.Impact != core.StateOutage || len(inc.Updates) != 2 {
 		t.Fatalf("impact %q updates %d", inc.Impact, len(inc.Updates))
 	}
+	if u := inc.Updates[1]; u.Status != core.IncidentInvestigating || u.Message != "We're now seeing an outage affecting API." {
+		t.Fatalf("update %+v", u)
+	}
 }
 
 func TestRecoveryMovesToMonitoringThenAutoResolves(t *testing.T) {
@@ -155,6 +158,9 @@ func TestRefailWhileMonitoringReopensSameIncident(t *testing.T) {
 	if inc.Status != core.IncidentInvestigating || inc.RecoveredAt != 0 {
 		t.Fatalf("%+v", inc)
 	}
+	if u := inc.Updates[len(inc.Updates)-1]; len(inc.Updates) != 3 || u.Status != core.IncidentInvestigating || u.Message != "API is affected again. We're investigating." {
+		t.Fatalf("updates %+v", inc.Updates)
+	}
 }
 
 func TestMaintenanceTransitionsOpenNoIncident(t *testing.T) {
@@ -205,5 +211,197 @@ func TestPostToUnknownIncidentIsNotFound(t *testing.T) {
 	_, err := h.m.post("nope", core.NewUpdate{Status: core.IncidentIdentified, Message: "x"}, "a")
 	if !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func openAuto(h *imHarness, ids ...string) {
+	var ch []stateChange
+	for _, id := range ids {
+		h.setState(id, core.StateOutage)
+		ch = append(ch, stateChange{ServiceID: id, From: core.StateOperational, To: core.StateOutage, Reason: "r"})
+	}
+	h.m.applyChanges(ch)
+}
+
+func recover1(h *imHarness, id string) bool {
+	h.setState(id, core.StateOperational)
+	return h.m.applyChanges([]stateChange{{ServiceID: id, From: core.StateOutage, To: core.StateOperational}})
+}
+
+func TestIncidentMonitoringOnlyWhenAllServicesRecover(t *testing.T) {
+	h := newIMHarness(t, "api", "web")
+	openAuto(h, "api", "web")
+	recover1(h, "api")
+	inc := h.m.data.Incidents[0]
+	if inc.Status != core.IncidentInvestigating || inc.RecoveredAt != 0 || len(inc.Updates) != 1 {
+		t.Fatalf("posted monitoring after partial recovery: %+v", inc)
+	}
+	recover1(h, "web")
+	inc = h.m.data.Incidents[0]
+	if inc.Status != core.IncidentMonitoring || inc.RecoveredAt == 0 || len(inc.Updates) != 2 {
+		t.Fatalf("no monitoring after full recovery: %+v", inc)
+	}
+	if got := inc.Updates[1].Message; got != "API, WEB have recovered. We're monitoring." {
+		t.Errorf("message %q", got)
+	}
+}
+
+func TestIncidentPersonResolvedThenRefailOpensNew(t *testing.T) {
+	h := newIMHarness(t, "api")
+	openAuto(h, "api")
+	id := h.m.data.Incidents[0].ID
+	if _, err := h.m.post(id, core.NewUpdate{Status: core.IncidentResolved, Message: "done"}, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	h.m.applyChanges([]stateChange{{ServiceID: "api", From: core.StateOutage, To: core.StateOperational}})
+	h.setState("api", core.StateOutage)
+	h.m.applyChanges([]stateChange{{ServiceID: "api", From: core.StateOperational, To: core.StateOutage}})
+	if len(h.m.data.Incidents) != 2 || h.m.data.Incidents[1].Status != core.IncidentInvestigating {
+		t.Fatalf("incidents %+v", h.m.data.Incidents)
+	}
+}
+
+func TestIncidentReopenedIsNotAutoResolved(t *testing.T) {
+	h := newIMHarness(t, "api")
+	openAuto(h, "api")
+	recover1(h, "api")
+	id := h.m.data.Incidents[0].ID
+	if _, err := h.m.post(id, core.NewUpdate{Status: core.IncidentResolved, Message: "done"}, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(time.Minute)
+	inc, err := h.m.post(id, core.NewUpdate{Status: core.IncidentInvestigating, Message: "back"}, "alice")
+	if err != nil || inc.RecoveredAt != 0 || inc.Resolved != 0 {
+		t.Fatalf("%v %+v", err, inc)
+	}
+	h.now = h.now.Add(25 * time.Hour)
+	if h.m.tickAutoResolve() {
+		t.Fatal("reopened incident re-resolved")
+	}
+	// same via editUpdate on the latest update
+	if _, err := h.m.post(id, core.NewUpdate{Status: core.IncidentResolved, Message: "again"}, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	inc = h.m.data.Incidents[0]
+	inc.RecoveredAt = h.now.Unix() // simulate a recovery recorded before the resolve
+	h.m.data.Incidents[0] = inc
+	last := inc.Updates[len(inc.Updates)-1].ID
+	if _, err := h.m.editUpdate(id, last, core.NewUpdate{Status: core.IncidentMonitoring, Message: "again"}, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(25 * time.Hour)
+	if h.m.tickAutoResolve() {
+		t.Fatal("edit-reopened incident re-resolved")
+	}
+}
+
+func TestIncidentEditUpdateStatusRules(t *testing.T) {
+	h := newIMHarness(t, "api")
+	inc, _ := h.m.create(core.NewIncident{Title: "T", Services: []string{"api"}, Impact: core.StateDegraded,
+		Update: core.NewUpdate{Status: core.IncidentInvestigating, Message: "a"}}, "alice")
+	inc, _ = h.m.post(inc.ID, core.NewUpdate{Status: core.IncidentIdentified, Message: "b"}, "alice")
+	first, last := inc.Updates[0].ID, inc.Updates[1].ID
+	inc, err := h.m.editUpdate(inc.ID, first, core.NewUpdate{Status: core.IncidentResolved, Message: "a2"}, "bob")
+	if err != nil || inc.Status != core.IncidentIdentified || inc.Resolved != 0 {
+		t.Fatalf("older edit changed incident: %v %+v", err, inc)
+	}
+	inc, _ = h.m.editUpdate(inc.ID, last, core.NewUpdate{Status: core.IncidentResolved, Message: "b"}, "bob")
+	if inc.Status != core.IncidentResolved || inc.Resolved == 0 {
+		t.Fatalf("%+v", inc)
+	}
+	inc, _ = h.m.editUpdate(inc.ID, last, core.NewUpdate{Status: core.IncidentIdentified, Message: "b"}, "bob")
+	if inc.Status != core.IncidentIdentified || inc.Resolved != 0 {
+		t.Fatalf("%+v", inc)
+	}
+	if _, err := h.m.editUpdate(inc.ID, "nope", core.NewUpdate{Status: core.IncidentIdentified, Message: "b"}, "bob"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestIncidentEditIncident(t *testing.T) {
+	h := newIMHarness(t, "api", "web")
+	inc, _ := h.m.create(core.NewIncident{Title: "T", Services: []string{"api"}, Impact: core.StateDegraded,
+		Update: core.NewUpdate{Status: core.IncidentInvestigating, Message: "a"}}, "alice")
+	inc, err := h.m.editIncident(inc.ID, "  New title ", []string{"api", "web"}, "bob")
+	if err != nil || inc.Title != "New title" || len(inc.Services) != 2 {
+		t.Fatalf("%v %+v", err, inc)
+	}
+	if _, err := h.m.editIncident(inc.ID, "", nil, "bob"); err == nil {
+		t.Fatal("bad title accepted")
+	}
+	if _, err := h.m.editIncident(inc.ID, "ok", []string{"nope"}, "bob"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("unknown service: %v", err)
+	}
+	if got := h.m.data.Incidents[0].Title; got != "New title" {
+		t.Fatalf("rejected edit mutated: %q", got)
+	}
+}
+
+func TestIncidentEchoOncePerNewUpdate(t *testing.T) {
+	h := newIMHarness(t, "api")
+	openAuto(h, "api")
+	if len(h.echoes) != 1 {
+		t.Fatalf("auto open: %v", h.echoes)
+	}
+	inc := h.m.data.Incidents[0]
+	h.m.post(inc.ID, core.NewUpdate{Status: core.IncidentIdentified, Message: "x"}, "alice")
+	if len(h.echoes) != 2 {
+		t.Fatalf("post: %v", h.echoes)
+	}
+	h.m.editUpdate(inc.ID, inc.Updates[0].ID, core.NewUpdate{Status: core.IncidentInvestigating, Message: "y"}, "bob")
+	h.m.editIncident(inc.ID, "Renamed", nil, "bob")
+	if len(h.echoes) != 2 {
+		t.Fatalf("edits echoed: %v", h.echoes)
+	}
+	h.m.create(core.NewIncident{Title: "M", Services: []string{"api"}, Impact: core.StateDegraded,
+		Update: core.NewUpdate{Status: core.IncidentInvestigating, Message: "m"}}, "alice")
+	if len(h.echoes) != 3 {
+		t.Fatalf("create: %v", h.echoes)
+	}
+}
+
+func TestIncidentPersonResolvedRecoveredNotTouchedByTick(t *testing.T) {
+	h := newIMHarness(t, "api")
+	openAuto(h, "api")
+	recover1(h, "api")
+	id := h.m.data.Incidents[0].ID
+	inc, _ := h.m.post(id, core.NewUpdate{Status: core.IncidentResolved, Message: "done"}, "alice")
+	n, resolved := len(inc.Updates), inc.Resolved
+	h.now = h.now.Add(48 * time.Hour)
+	if h.m.tickAutoResolve() {
+		t.Fatal("tick touched a resolved incident")
+	}
+	// posting resolved again keeps the original Resolved time
+	inc, _ = h.m.post(id, core.NewUpdate{Status: core.IncidentResolved, Message: "again"}, "alice")
+	if inc.Resolved != resolved || len(inc.Updates) != n+1 {
+		t.Fatalf("resolved %d want %d", inc.Resolved, resolved)
+	}
+}
+
+func TestIncidentTriggersCapped(t *testing.T) {
+	h := newIMHarness(t, "api")
+	openAuto(h, "api")
+	for i := 0; i < 25; i++ {
+		recover1(h, "api")
+		h.setState("api", core.StateOutage)
+		h.m.applyChanges([]stateChange{{ServiceID: "api", From: core.StateOperational, To: core.StateOutage, Reason: fmt.Sprint("r", i)}})
+	}
+	inc := h.m.data.Incidents[0]
+	if len(h.m.data.Incidents) != 1 || len(inc.Triggers) != 20 || inc.Triggers[19] != "api: r24" {
+		t.Fatalf("n=%d triggers %v", len(h.m.data.Incidents), inc.Triggers)
+	}
+}
+
+func TestIncidentReturnedCopiesAreDeep(t *testing.T) {
+	h := newIMHarness(t, "api")
+	inc, _ := h.m.create(core.NewIncident{Title: "T", Services: []string{"api"}, Impact: core.StateDegraded,
+		Update: core.NewUpdate{Status: core.IncidentInvestigating, Message: "a"}}, "alice")
+	inc, _ = h.m.editUpdate(inc.ID, inc.Updates[0].ID, core.NewUpdate{Status: core.IncidentInvestigating, Message: "b"}, "bob")
+	inc.Updates[0].Message = "mutated"
+	inc.Updates[0].Edits[0].Message = "mutated"
+	inc.Services[0] = "mutated"
+	got := h.m.data.Incidents[0]
+	if got.Updates[0].Message != "b" || got.Updates[0].Edits[0].Message != "a" || got.Services[0] != "api" {
+		t.Fatalf("stored incident aliased: %+v", got)
 	}
 }
