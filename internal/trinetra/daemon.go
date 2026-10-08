@@ -1152,7 +1152,7 @@ func cmdDaemon(args []string) int {
 			go func() {
 				if !dispatchOnlyTo(q, Alert{Key: "status-page", Title: text, Severity: SevWarning, Kind: "fire", Source: "status-page", Time: time.Now().Unix()},
 					inQuietHours(getCfg().QuietHours, time.Now()), channels) {
-					fmt.Fprintf(stderr, "status page: echo to %s failed\n", strings.Join(channels, ","))
+					fmt.Fprintf(stderr, "status page: echo to %s not delivered (filtered by routes/quiet hours, or every channel failed)\n", strings.Join(channels, ","))
 				}
 			}()
 		},

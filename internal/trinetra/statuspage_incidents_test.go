@@ -405,3 +405,41 @@ func TestIncidentReturnedCopiesAreDeep(t *testing.T) {
 		t.Fatalf("stored incident aliased: %+v", got)
 	}
 }
+
+func TestSweepRecoversIncidentOfDeletedService(t *testing.T) {
+	h := newIMHarness(t, "api")
+	h.setState("api", core.StateOutage)
+	h.m.applyChanges([]stateChange{{ServiceID: "api", From: core.StateOperational, To: core.StateOutage}})
+	if h.m.sweepRecovered() {
+		t.Fatal("swept while the service is still in outage")
+	}
+	h.m.data.Services = nil
+	delete(h.m.data.State, "api")
+	if !h.m.sweepRecovered() {
+		t.Fatal("deleted service: no sweep")
+	}
+	inc := h.m.data.Incidents[0]
+	if inc.Status != core.IncidentMonitoring || inc.RecoveredAt == 0 {
+		t.Fatalf("not recovered: %+v", inc)
+	}
+	if h.m.sweepRecovered() {
+		t.Fatal("swept twice")
+	}
+}
+
+func TestSweepRecoversIncidentOfEditedOutService(t *testing.T) {
+	h := newIMHarness(t, "api", "web")
+	h.setState("api", core.StateOutage)
+	h.m.applyChanges([]stateChange{{ServiceID: "api", From: core.StateOperational, To: core.StateOutage}})
+	h.setState("api", core.StateOperational) // edited so it no longer fails; no change event reached the manager
+	if !h.m.sweepRecovered() {
+		t.Fatal("edited-out service: no sweep")
+	}
+	if inc := h.m.data.Incidents[0]; inc.Status != core.IncidentMonitoring || inc.RecoveredAt == 0 {
+		t.Fatalf("not recovered: %+v", inc)
+	}
+	h.now = h.now.Add(25 * time.Hour)
+	if !h.m.tickAutoResolve() || h.m.data.Incidents[0].Status != core.IncidentResolved {
+		t.Fatal("swept incident did not auto-resolve")
+	}
+}

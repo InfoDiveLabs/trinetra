@@ -111,6 +111,7 @@ func (r *statusPageRuntime) TickWith(now time.Time, in statusInputs) {
 	changes, evals := evaluateServices(r.data.Services, r.data.State, in)
 	r.evals = evals
 	r.im.applyChanges(changes)
+	r.im.sweepRecovered()
 	r.im.tickAutoResolve()
 	r.data.prune(now)
 	_ = r.persistLocked()
@@ -305,7 +306,7 @@ func buildPublicStatus(title string, d *statusPageData, now time.Time) core.Publ
 		}
 		for i := len(inc.Updates) - 1; i >= 0; i-- {
 			u := inc.Updates[i]
-			pi.Updates = append(pi.Updates, core.PublicUpdate{TS: u.TS, Status: u.Status, Message: u.Message})
+			pi.Updates = append(pi.Updates, core.PublicUpdate{ID: u.ID, TS: u.TS, Status: u.Status, Message: u.Message})
 		}
 		switch {
 		case inc.Status != core.IncidentResolved:

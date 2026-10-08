@@ -137,6 +137,34 @@ func (m *incidentManager) allRecovered(inc core.StatusIncident) bool {
 	return true
 }
 
+// markRecovered records that every service of incident i recovered and posts
+// the monitoring update.
+func (m *incidentManager) markRecovered(i int) {
+	inc := &m.data.Incidents[i]
+	inc.RecoveredAt = m.now().Unix()
+	verb := "has"
+	if len(inc.Services) > 1 {
+		verb = "have"
+	}
+	m.addUpdate(i, core.IncidentMonitoring, fmt.Sprintf("%s %s recovered. We're monitoring.", m.names(inc.Services), verb), core.SystemAuthor)
+}
+
+// sweepRecovered recovers open automatic incidents whose services are no
+// longer a problem without a change event having arrived (a service deleted
+// or edited out from under the incident). Services missing from State count
+// as recovered.
+func (m *incidentManager) sweepRecovered() bool {
+	changed := false
+	for i, inc := range m.data.Incidents {
+		if !inc.Auto || inc.Status == core.IncidentResolved || inc.RecoveredAt != 0 || !m.allRecovered(inc) {
+			continue
+		}
+		m.markRecovered(i)
+		changed = true
+	}
+	return changed
+}
+
 func (m *incidentManager) applyChanges(changes []stateChange) bool {
 	changed := false
 	var fresh []stateChange
@@ -166,13 +194,7 @@ func (m *incidentManager) applyChanges(changes []stateChange) bool {
 			if !ok || m.data.Incidents[i].RecoveredAt != 0 || !m.allRecovered(m.data.Incidents[i]) {
 				continue
 			}
-			inc := &m.data.Incidents[i]
-			inc.RecoveredAt = m.now().Unix()
-			verb := "has"
-			if len(inc.Services) > 1 {
-				verb = "have"
-			}
-			m.addUpdate(i, core.IncidentMonitoring, fmt.Sprintf("%s %s recovered. We're monitoring.", m.names(inc.Services), verb), core.SystemAuthor)
+			m.markRecovered(i)
 			changed = true
 		}
 	}

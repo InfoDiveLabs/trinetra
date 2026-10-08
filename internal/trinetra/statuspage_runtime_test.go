@@ -110,6 +110,9 @@ func TestPublicNeverLeaksInternals(t *testing.T) {
 	if pub.Active[0].Updates[0].Message != "Found it" {
 		t.Fatal("updates must be newest first")
 	}
+	if ups := pub.Active[0].Updates; ups[0].ID == "" || ups[0].ID == ups[len(ups)-1].ID {
+		t.Fatalf("public updates need distinct ids: %+v", ups)
+	}
 }
 
 func TestPublicDropsDeletedService(t *testing.T) {

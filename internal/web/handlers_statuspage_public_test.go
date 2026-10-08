@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +17,7 @@ func publicFixture() *fakeStatusPage {
 	return &fakeStatusPage{pub: core.PublicStatus{Schema: 1, Title: "Acme status", Overall: core.OverallPartial,
 		Services: []core.PublicService{{Name: "API", Group: "Core", State: core.StateDegraded, History: []core.PublicDay{{Date: "2026-10-08", State: core.StateDegraded}}}},
 		Active: []core.PublicIncident{{ID: "i1", Title: "Degraded performance: API", Impact: core.StateDegraded, Services: []string{"API"}, Status: "identified",
-			Updates: []core.PublicUpdate{{TS: 1759900000, Status: "identified", Message: "Line one\nLine two"}}}},
+			Updates: []core.PublicUpdate{{ID: "u1", TS: 1759900000, Status: "identified", Message: "Line one\nLine two"}}}},
 	}}
 }
 
@@ -139,7 +140,7 @@ func TestPublicAtomUsesConfiguredOriginAndHostFreeIDs(t *testing.T) {
 	if strings.Contains(body, "127.0.0.1") {
 		t.Errorf("Host leaked into feed: %s", body)
 	}
-	for _, want := range []string{"urn:trinetra:status:feed", "urn:trinetra:status:i1:0", "<author><name>Acme status</name></author>", "Identified"} {
+	for _, want := range []string{"urn:trinetra:status:feed", "urn:trinetra:status:i1:u1", "<author><name>Acme status</name></author>", "Identified"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -149,8 +150,8 @@ func TestPublicAtomUsesConfiguredOriginAndHostFreeIDs(t *testing.T) {
 func TestPublicAtomOrderingAndCap(t *testing.T) {
 	sp := publicFixture()
 	var ups []core.PublicUpdate
-	for i := 0; i < 60; i++ {
-		ups = append(ups, core.PublicUpdate{TS: int64(1759900000 + i), Status: "monitoring", Message: "m"})
+	for i := 59; i >= 0; i-- { // newest first, like the daemon
+		ups = append(ups, core.PublicUpdate{ID: fmt.Sprintf("u%d", i), TS: int64(1759900000 + i), Status: "monitoring", Message: "m"})
 	}
 	sp.pub.Active[0].Updates = ups
 	_, body := anonGet(t, publicDeps(t, sp, true), "/status/feed.atom")
@@ -166,7 +167,7 @@ func TestPublicAtomOrderingAndCap(t *testing.T) {
 	if len(feed.Entries) != 50 {
 		t.Fatalf("entries = %d, want 50", len(feed.Entries))
 	}
-	if feed.Entries[0].ID != "urn:trinetra:status:i1:59" {
+	if feed.Entries[0].ID != "urn:trinetra:status:i1:u59" {
 		t.Errorf("newest first violated: %s", feed.Entries[0].ID)
 	}
 	for i := 1; i < len(feed.Entries); i++ {
@@ -187,5 +188,40 @@ func TestPublicEscapesHostileServiceFields(t *testing.T) {
 		if strings.Contains(body, "<script>alert(2)") || strings.Contains(body, "<img src=y") {
 			t.Errorf("%s: not escaped", p)
 		}
+	}
+}
+
+func TestPublicAtomEntryIDsStableWhenUpdatePosted(t *testing.T) {
+	ids := func(sp *fakeStatusPage) map[string]bool {
+		_, body := anonGet(t, publicDeps(t, sp, true), "/status/feed.atom")
+		var feed struct {
+			Entries []struct {
+				ID string `xml:"id"`
+			} `xml:"entry"`
+		}
+		if err := xml.Unmarshal([]byte(body), &feed); err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]bool{}
+		for _, e := range feed.Entries {
+			m[e.ID] = true
+		}
+		return m
+	}
+	sp := publicFixture()
+	sp.pub.Active[0].Updates = []core.PublicUpdate{
+		{ID: "b", TS: 1759900100, Status: "monitoring", Message: "two"},
+		{ID: "a", TS: 1759900000, Status: "identified", Message: "one"},
+	}
+	before := ids(sp)
+	sp.pub.Active[0].Updates = append([]core.PublicUpdate{{ID: "c", TS: 1759900200, Status: "resolved", Message: "three"}}, sp.pub.Active[0].Updates...)
+	after := ids(sp)
+	for id := range before {
+		if !after[id] {
+			t.Errorf("entry id %s changed after a new update", id)
+		}
+	}
+	if len(after) != len(before)+1 {
+		t.Errorf("before %v after %v", before, after)
 	}
 }
