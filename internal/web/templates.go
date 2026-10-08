@@ -230,27 +230,29 @@ type navEntry struct {
 // admin-only entries (Alerting, Managed config) stay readable by viewers who
 // type the URL; routes.go owns that gating.
 var navItems = []navEntry{
-	{NavItem: NavItem{Heading: "Monitor"}},
+	{NavItem: NavItem{Heading: "Fleet"}},
 	{NavItem: NavItem{Href: "/fleet", Icon: "fleet", Label: "Fleet"}, MasterOnly: true},
 	{NavItem: NavItem{Href: "/fleet/incidents", Icon: "incidents", Label: "Incidents"}, MasterOnly: true},
-	{NavItem: NavItem{Href: "/status-page/incidents", Icon: "announce", Label: "Status updates"}, MinRole: RoleResponder},
 	{NavItem: NavItem{Href: "/fleet/silences", Icon: "silence", Label: "Silences"}, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/alerting", Icon: "zap", Label: "Alerting"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/admin", Icon: "shield", Label: "Fleet admin"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/managed", Icon: "file", Label: "Managed config"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/audit", Icon: "list", Label: "Audit"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Heading: "Monitor"}},
 	{NavItem: NavItem{Href: "/", Icon: "dashboard", Label: "Dashboard"}},
 	{NavItem: NavItem{Href: "/monitoring", Icon: "pulse", Label: "Monitoring"}},
 	{NavItem: NavItem{Href: "/host", Icon: "host", Label: "Host"}},
 	{NavItem: NavItem{Href: "/alerts", Icon: "bell", Label: "Alerts"}},
 	{NavItem: NavItem{Href: "/history", Icon: "history", Label: "History"}},
-	{NavItem: NavItem{Heading: "Admin"}, AdminOnly: true},
+	{NavItem: NavItem{Heading: "Status page"}},
+	{NavItem: NavItem{Href: "/status-page/incidents", Icon: "announce", Label: "Status updates"}, MinRole: RoleResponder},
+	{NavItem: NavItem{Href: "/status-page/services", Icon: "status", Label: "Services"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/settings/public", Icon: "globe", Label: "Public view"}, AdminOnly: true},
+	{NavItem: NavItem{Heading: "Settings"}},
 	{NavItem: NavItem{Href: "/config", Icon: "sliders", Label: "Configuration"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/channels", Icon: "send", Label: "Channels"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "users", Label: "Users"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/settings/public", Icon: "globe", Label: "Public view"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/status-page/services", Icon: "status", Label: "Status page"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/updates", Icon: "update", Label: "Updates"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/fleet/alerting", Icon: "zap", Label: "Alerting"}, AdminOnly: true, MasterOnly: true},
-	{NavItem: NavItem{Href: "/fleet/admin", Icon: "shield", Label: "Fleet admin"}, AdminOnly: true, MasterOnly: true},
-	{NavItem: NavItem{Href: "/fleet/managed", Icon: "file", Label: "Managed config"}, AdminOnly: true, MasterOnly: true},
-	{NavItem: NavItem{Href: "/fleet/audit", Icon: "list", Label: "Audit"}, AdminOnly: true, MasterOnly: true},
 }
 
 // navForRole returns navItems filtered to what role may see (viewers get
@@ -290,11 +292,27 @@ func navForRole(role string, counts NavCounts, node nodeScope, fleetRole string)
 			continue
 		}
 		item := n.NavItem
+		if item.Heading != "" {
+			out = append(out, item)
+			continue
+		}
 		item.Badge = badgeFor(item.Href, counts)
 		if item.Href != "" && !n.MasterOnly {
 			item.Href = nodeHref(node.Prefix, item.Href)
 		}
 		out = append(out, item)
+	}
+	return dropEmptyHeadings(out)
+}
+
+// dropEmptyHeadings removes headings with no visible item under them.
+func dropEmptyHeadings(items []NavItem) []NavItem {
+	out := items[:0]
+	for i, it := range items {
+		if it.Heading != "" && (i+1 == len(items) || items[i+1].Heading != "") {
+			continue
+		}
+		out = append(out, it)
 	}
 	return out
 }
@@ -550,10 +568,12 @@ func switcherTargetPath(p, rawQuery string) string {
 	return p
 }
 
-// nodeLabelFor renders PageData.NodeLabel for ns: "this server" for a
-// self-scoped page (solo, a master's own view, a child's own view), ns.Name
-// otherwise.
-func nodeLabelFor(ns nodeScope) string {
+// nodeLabelFor is the switcher button text: "Go to node" on fleet-wide
+// pages, "this server" on the host's own pages, else the node's name.
+func nodeLabelFor(ns nodeScope, path string) string {
+	if ns.Self && isMasterLocalPath(path) {
+		return "Go to node"
+	}
 	if ns.Self {
 		return "this server"
 	}
@@ -650,7 +670,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		Link:            fleetInfo.link,
 		MasterURL:       fleetInfo.masterURL,
 		Switcher:        switcher,
-		NodeLabel:       nodeLabelFor(node),
+		NodeLabel:       nodeLabelFor(node, r.URL.Path),
 	}
 }
 

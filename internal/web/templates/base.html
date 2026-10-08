@@ -14,7 +14,7 @@
 <body data-role="{{.Role}}" data-node-prefix="{{.Node.Prefix}}">
 <div class="app">
   <aside class="side">{{block "nav" .}}
-    <div class="brand"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="120" height="32"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="120" height="32"><small>{{.ServerName}}</small></div>
+    <div class="brand"><img class="brand-mark" src="{{asset "/assets/brand/icon-32.png"}}" alt="trinetra" width="28" height="28"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="120" height="32"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="120" height="32"><small>{{.ServerName}}</small></div>
     <nav class="nav">
       {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}} title="{{.Label}}" aria-label="{{.Label}}"><span class="ic">{{icon .Icon}}</span><span class="lb">{{.Label}}</span>{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
       {{end}}
@@ -55,7 +55,7 @@
       {{if eq .Role "viewer"}}<span class="pill ro-pill">read-only</span>{{end}}
       {{if eq .FleetRole "child"}}{{if .Link}}{{if linkUnreachable .Link}}<span class="pill" title="{{.MasterURL}}{{if .Link.LastError}} · {{.Link.LastError}}{{end}}"><span class="led warn"></span> Master unreachable {{nodeDur .Link.LastAck}} · alerting locally</span>{{else if le .Link.LastAck 0}}<span class="pill" title="{{.MasterURL}}"><span class="led"></span> Connecting to master</span>{{else}}<span class="pill" title="{{.MasterURL}}"><span class="led ok"></span> Linked to master · ack {{nodeAgo .Link.LastAck}}</span>{{end}}{{end}}{{end}}
       <span class="hb hb-gen" title="heartbeat"></span>
-      <span class="pill"><span class="led {{.Status}}"></span> {{.StatusText}}</span>
+      <a class="pill st" href="{{nodeHref .Node.Prefix "/alerts"}}" title="{{.StatusText}}" aria-label="{{.StatusText}}"><span class="led {{.Status}}"></span><span class="st-t">{{.StatusText}}</span></a>
       <button class="icon-btn" id="themeBtn" title="Toggle theme (T)">◑</button>
     </header>
     {{template "nodebanner" .}}
