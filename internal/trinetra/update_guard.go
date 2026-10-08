@@ -189,7 +189,7 @@ func resolveInterruptedSwap(d guardDeps, pending update.Pending) (update.Result,
 	}
 	result := update.Result{Version: pending.Version, From: pending.From, Outcome: "rolled_back", Detail: detail, At: d.now().Unix()}
 	err := update.WithState(d.paths.dir(), func(st *update.State) error {
-		st.Last = &result
+		st.RecordResult(result)
 		st.Pending = nil
 		return nil
 	})
@@ -259,7 +259,7 @@ func commitPending(p updatePaths, pending update.Pending, now time.Time) (update
 				st.RaiseFloor(v)
 			}
 		}
-		st.Last = &result
+		st.RecordResult(result)
 		st.Pending = nil
 		return nil
 	})
@@ -376,7 +376,7 @@ func finishRollback(p updatePaths, pending update.Pending, detail string, now ti
 		if !pending.Rollback {
 			st.MarkBad(pending.Version)
 		}
-		st.Last = &result
+		st.RecordResult(result)
 		st.Pending = nil
 		return nil
 	})

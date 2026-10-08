@@ -166,22 +166,38 @@ func updateLoopTick(ctx context.Context, u updater, c *config.Config, notify fun
 	notifyAvailable(u.paths, notify)
 }
 
-// notifyPendingResult delivers and marks Notified the current Last result,
-// if any and not already notified.
+// notifyPendingResult delivers queued update outcomes and drops only those it
+// delivered, so one a guard records meanwhile waits for the next tick. State
+// from an older build has only Last.
 func notifyPendingResult(p updatePaths, notify func(Alert)) {
 	st, err := update.LoadState(p.dir())
-	if err != nil || st.Last == nil || st.Last.Notified {
+	if err != nil {
 		return
 	}
-	a, ok := updateResultAlert(*st.Last)
-	if !ok {
+	queue := st.Unnotified
+	if len(queue) == 0 && st.Last != nil && !st.Last.Notified {
+		queue = []update.Result{*st.Last}
+	}
+	if len(queue) == 0 {
 		return
 	}
-	notify(a)
+	for _, r := range queue {
+		if a, ok := updateResultAlert(r); ok {
+			notify(a)
+		}
+	}
 	err = update.WithState(p.dir(), func(st2 *update.State) error {
-		// Mark only the result just delivered, not a newer one a guard may
-		// have written meanwhile.
-		if st2.Last != nil && st2.Last.At == st.Last.At && st2.Last.Version == st.Last.Version {
+		keep := st2.Unnotified[:0]
+		for _, r := range st2.Unnotified {
+			if !resultIn(r, queue) {
+				keep = append(keep, r)
+			}
+		}
+		st2.Unnotified = keep
+		if len(st2.Unnotified) == 0 {
+			st2.Unnotified = nil
+		}
+		if st2.Last != nil && resultIn(*st2.Last, queue) {
 			st2.Last.Notified = true
 		}
 		return nil
@@ -189,6 +205,15 @@ func notifyPendingResult(p updatePaths, notify func(Alert)) {
 	if err != nil {
 		log.Printf("update: mark result notified: %v", err)
 	}
+}
+
+func resultIn(r update.Result, rs []update.Result) bool {
+	for _, x := range rs {
+		if x.At == r.At && x.Version == r.Version && x.From == r.From && x.Outcome == r.Outcome {
+			return true
+		}
+	}
+	return false
 }
 
 // notifyRestoreFailed delivers and marks RestoreFailedNotified the current
