@@ -380,10 +380,7 @@ func (c *Config) FleetNodeDownAfter() time.Duration {
 	return 2 * time.Minute
 }
 
-// FleetFallbackAfter is how long a child waits for the master's receipt of a
-// routed alert before delivering it locally instead ("via local fallback:
-// master unreachable"); default 2m. An unparsable stored value (never
-// written by Set, which validates) also falls back to the default.
+// StatusTitle is the public status page heading (default "Status").
 func (c *Config) StatusTitle() string {
 	if t := strings.TrimSpace(c.Status.Title); t != "" {
 		return t
@@ -391,6 +388,8 @@ func (c *Config) StatusTitle() string {
 	return "Status"
 }
 
+// StatusAutoResolveAfter is how long a recovered automatic incident waits
+// before resolving itself; 0 means never (default 24h).
 func (c *Config) StatusAutoResolveAfter() time.Duration {
 	if c.Status.AutoResolveAfter == "0" {
 		return 0
@@ -401,6 +400,10 @@ func (c *Config) StatusAutoResolveAfter() time.Duration {
 	return 24 * time.Hour
 }
 
+// FleetFallbackAfter is how long a child waits for the master's receipt of a
+// routed alert before delivering it locally instead ("via local fallback:
+// master unreachable"); default 2m. An unparsable stored value (never
+// written by Set, which validates) also falls back to the default.
 func (c *Config) FleetFallbackAfter() time.Duration {
 	if d, err := time.ParseDuration(c.Fleet.FallbackAfter); err == nil && d > 0 {
 		return d

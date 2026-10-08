@@ -3,6 +3,8 @@ package trinetra
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +34,24 @@ func TestStatusPageRefusedOnChild(t *testing.T) {
 		t.Fatalf("Public on child: %v", err)
 	}
 	r.Tick(evalT0) // must not panic or write
+	if _, err := r.SetService(core.StatusService{ID: "a", Name: "A", Targets: []core.StatusTarget{{Kind: core.TargetHost}}}, "x"); !errors.Is(err, core.ErrStatusPageOnChild) {
+		t.Errorf("SetService: %v", err)
+	}
+	if _, err := r.CreateIncident(core.NewIncident{}, "x"); !errors.Is(err, core.ErrStatusPageOnChild) {
+		t.Errorf("CreateIncident: %v", err)
+	}
+	if _, err := r.PostUpdate("i", core.NewUpdate{}, "x"); !errors.Is(err, core.ErrStatusPageOnChild) {
+		t.Errorf("PostUpdate: %v", err)
+	}
+	if err := r.DeleteIncident("i", "x"); !errors.Is(err, core.ErrStatusPageOnChild) {
+		t.Errorf("DeleteIncident: %v", err)
+	}
+	if _, err := r.Evaluation(); !errors.Is(err, core.ErrStatusPageOnChild) {
+		t.Errorf("Evaluation: %v", err)
+	}
+	if _, err := r.Incidents(true); !errors.Is(err, core.ErrStatusPageOnChild) {
+		t.Errorf("Incidents: %v", err)
+	}
 }
 
 func TestRuntimeTickOpensIncidentAndEchoes(t *testing.T) {
@@ -122,5 +142,60 @@ func TestPublicHistoryHas90Days(t *testing.T) {
 	h := pub.Services[0].History
 	if len(h) != 90 || h[89].Date != "2026-10-08" || h[89].State != core.StateOperational || h[0].State != "" {
 		t.Fatalf("history len %d last %+v first %+v", len(h), h[len(h)-1], h[0])
+	}
+}
+
+func TestRuntimeReadsReturnCopies(t *testing.T) {
+	in := &statusInputs{}
+	r, _ := newTestRuntime(t, config.RoleMaster, in)
+	_, _ = r.SetService(core.StatusService{ID: "api", Name: "API", Targets: []core.StatusTarget{{Kind: core.TargetHost}}}, "a")
+	inc, err := r.CreateIncident(core.NewIncident{Title: "Slow", Services: []string{"api"}, Impact: core.StateDegraded,
+		Update: core.NewUpdate{Status: core.IncidentInvestigating, Message: "m"}}, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svcs, _ := r.Services()
+	svcs[0].Targets[0].Kind = "mutated"
+	got, _ := r.Incident(inc.ID)
+	got.Services[0] = "mutated"
+	got.Updates[0].Message = "mutated"
+	list, _ := r.Incidents(true)
+	list[0].Services[0] = "mutated"
+	list[0].Updates[0].Message = "mutated"
+
+	svcs2, _ := r.Services()
+	if svcs2[0].Targets[0].Kind != core.TargetHost {
+		t.Error("Services leaks Targets")
+	}
+	again, _ := r.Incident(inc.ID)
+	if again.Services[0] != "api" || again.Updates[0].Message != "m" {
+		t.Errorf("incident leaks internal slices: %+v", again)
+	}
+}
+
+func TestRuntimeTickSkipsUnchangedWrites(t *testing.T) {
+	in := &statusInputs{}
+	r, _ := newTestRuntime(t, config.RoleMaster, in)
+	_, _ = r.SetService(core.StatusService{ID: "api", Name: "API", Targets: []core.StatusTarget{{Kind: core.TargetHost}}}, "a")
+	r.Tick(evalT0)
+	mt := func() map[string]time.Time {
+		out := map[string]time.Time{}
+		for _, f := range []string{"services.json", "incidents.json", "state.json"} {
+			fi, err := os.Stat(filepath.Join(r.dir, f))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out[f] = fi.ModTime()
+		}
+		return out
+	}
+	before := mt()
+	time.Sleep(20 * time.Millisecond)
+	r.Tick(evalT0.Add(time.Second))
+	after := mt()
+	for f, m := range before {
+		if !after[f].Equal(m) {
+			t.Errorf("%s rewritten with no change", f)
+		}
 	}
 }

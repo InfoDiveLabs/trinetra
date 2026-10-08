@@ -1149,8 +1149,12 @@ func cmdDaemon(args []string) int {
 		getCfg,
 		nil, // the daemon ticks via TickWith, passing inputs from the sampler loop
 		func(text string, channels []string) {
-			go dispatchOnlyTo(q, Alert{Key: "status-page", Title: text, Severity: SevWarning, Kind: "fire", Source: "status-page", Time: time.Now().Unix()},
-				inQuietHours(getCfg().QuietHours, time.Now()), channels)
+			go func() {
+				if !dispatchOnlyTo(q, Alert{Key: "status-page", Title: text, Severity: SevWarning, Kind: "fire", Source: "status-page", Time: time.Now().Unix()},
+					inQuietHours(getCfg().QuietHours, time.Now()), channels) {
+					fmt.Fprintf(stderr, "status page: echo to %s failed\n", strings.Join(channels, ","))
+				}
+			}()
 		},
 		func(f string, a ...any) { fmt.Fprintf(stderr, f+"\n", a...) })
 	stopControl, socketPath, token, err := serveControlSocket(&fleetAwareAPI{API: controlAPI, fleetProvider: fleetRT.provider, status: statusRT})

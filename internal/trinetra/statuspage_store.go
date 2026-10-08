@@ -1,6 +1,7 @@
 package trinetra
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,10 @@ type statusPageData struct {
 	Services  []core.StatusService
 	Incidents []core.StatusIncident
 	State     map[string]*serviceRuntimeState
+
+	// saved holds the bytes last written (or known on disk) per file, so
+	// save() skips fsync'd writes when nothing changed.
+	saved map[string][]byte
 }
 
 type servicesFileV1 struct {
@@ -89,25 +94,35 @@ func loadStatusPage(dir string, logf func(string, ...any)) *statusPageData {
 	return d
 }
 
-func writeStatusJSON(path string, v any) error {
+func (d *statusPageData) writeIfChanged(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileAtomicSynced(path, b, 0o600)
+	if prev, ok := d.saved[path]; ok && bytes.Equal(prev, b) {
+		return nil
+	}
+	if err := writeFileAtomicSynced(path, b, 0o600); err != nil {
+		return err
+	}
+	if d.saved == nil {
+		d.saved = map[string][]byte{}
+	}
+	d.saved[path] = b
+	return nil
 }
 
 func (d *statusPageData) save(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := writeStatusJSON(filepath.Join(dir, "services.json"), servicesFileV1{Version: 1, Services: d.Services}); err != nil {
+	if err := d.writeIfChanged(filepath.Join(dir, "services.json"), servicesFileV1{Version: 1, Services: d.Services}); err != nil {
 		return err
 	}
-	if err := writeStatusJSON(filepath.Join(dir, "incidents.json"), incidentsFileV1{Version: 1, Incidents: d.Incidents}); err != nil {
+	if err := d.writeIfChanged(filepath.Join(dir, "incidents.json"), incidentsFileV1{Version: 1, Incidents: d.Incidents}); err != nil {
 		return err
 	}
-	return writeStatusJSON(filepath.Join(dir, "state.json"), stateFileV1{Version: 1, Services: d.State})
+	return d.writeIfChanged(filepath.Join(dir, "state.json"), stateFileV1{Version: 1, Services: d.State})
 }
 
 func dayKey(t time.Time) string { return t.UTC().Format("2006-01-02") }

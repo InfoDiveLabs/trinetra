@@ -116,13 +116,22 @@ func (r *statusPageRuntime) TickWith(now time.Time, in statusInputs) {
 	_ = r.persistLocked()
 }
 
+func cloneStatusServices(in []core.StatusService) []core.StatusService {
+	out := make([]core.StatusService, len(in))
+	for i, s := range in {
+		s.Targets = slices.Clone(s.Targets)
+		out[i] = s
+	}
+	return out
+}
+
 func (r *statusPageRuntime) Services() ([]core.StatusService, error) {
 	if err := r.guard(); err != nil {
 		return nil, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := slices.Clone(r.data.Services)
+	out := cloneStatusServices(r.data.Services)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Order < out[j].Order })
 	return out, nil
 }
@@ -135,6 +144,7 @@ func (r *statusPageRuntime) SetService(s core.StatusService, actor string) (core
 	if err := core.ValidateStatusService(s); err != nil {
 		return s, err
 	}
+	s.Targets = slices.Clone(s.Targets)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if i := slices.IndexFunc(r.data.Services, func(x core.StatusService) bool { return x.ID == s.ID }); i >= 0 {
@@ -178,7 +188,7 @@ func (r *statusPageRuntime) Incidents(includeResolved bool) ([]core.StatusIncide
 	var out []core.StatusIncident
 	for _, inc := range r.data.Incidents {
 		if includeResolved || inc.Status != core.IncidentResolved {
-			out = append(out, inc)
+			out = append(out, cloneStatusIncident(inc))
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Opened > out[j].Opened })
@@ -195,7 +205,7 @@ func (r *statusPageRuntime) Incident(id string) (core.StatusIncident, error) {
 	if !ok {
 		return core.StatusIncident{}, fmt.Errorf("no such incident %q: %w", id, core.ErrNotFound)
 	}
-	return r.data.Incidents[i], nil
+	return cloneStatusIncident(r.data.Incidents[i]), nil
 }
 
 // mutate runs f under the lock and persists on success.
