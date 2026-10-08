@@ -663,7 +663,7 @@ input.switch:checked::after{left:19px;background:var(--bg)}
 .status-page{max-width:880px;margin:0 auto;padding:40px 24px}
 .status-banner{border-radius:var(--r-lg);padding:16px 20px;margin:16px 0;font-size:1.1rem;color:var(--on-crit)}
 .status-operational{background:var(--ok)} .status-partial_outage{background:var(--warn)}
-.status-major_outage{background:var(--crit)} .status-maintenance{background:var(--info)}
+.status-major_outage{background:var(--crit)} .status-maintenance{background:#245E8F;color:#fff}
 .status-incident{border-left:4px solid var(--warn);padding:8px 16px;margin:16px 0;background:var(--surface)}
 .status-incident.impact-outage{border-color:var(--crit)} .status-incident.impact-maintenance{border-color:var(--info)}
 .status-updates{list-style:none;padding:0} .status-updates li{margin:10px 0}
@@ -677,3 +677,5 @@ input.switch:checked::after{left:19px;background:var(--bg)}
 .status-bar-legend{display:flex;justify-content:space-between;font-size:.75rem}
 .status-metrics{margin-top:24px}
 @media (max-width:600px){.status-page{padding:24px 16px}.status-bar{gap:1px;height:22px}}
+.status-title{margin:0;font-size:1.5rem}
+.status-title,.status-incident h2,.status-updates li div,.status-service-head span,.status-service p,.status-group h3{overflow-wrap:anywhere;min-width:0}

@@ -1,8 +1,8 @@
 {{define "head_extra"}}<link rel="alternate" type="application/atom+xml" title="{{.Status.Title}}" href="/status/feed.atom">{{end}}
 {{define "content"}}
 <div class="status-page" id="public-live">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px">
-    <div style="display:flex;align-items:center;gap:16px"><span style="width:128px"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="128" height="34"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="128" height="34"></span><h2 style="margin:0">{{.Status.Title}}</h2></div>
+  <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px">
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;min-width:0"><span style="width:128px"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="128" height="34"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="128" height="34"></span><h1 class="status-title">{{.Status.Title}}</h1></div>
     <a href="/login" class="btn">Login</a>
   </div>
   <p class="note" style="margin:0 0 22px">Public read-only view</p>

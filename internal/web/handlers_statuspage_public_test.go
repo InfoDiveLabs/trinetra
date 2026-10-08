@@ -122,3 +122,70 @@ func TestPublicEscapesHostileMessage(t *testing.T) {
 		t.Fatal("JSON not HTML-safe escaped")
 	}
 }
+
+func TestPublicAtomUsesConfiguredOriginAndHostFreeIDs(t *testing.T) {
+	d := publicDeps(t, publicFixture(), true)
+	c := d.Cfg()
+	c.Web.Origin = "https://status.example.com"
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/status/feed.atom", nil)
+	req.Host = "127.0.0.1:8088"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	newHandler(d).ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, `href="https://status.example.com/status/history#i1"`) {
+		t.Errorf("link not on configured origin: %s", body)
+	}
+	if strings.Contains(body, "127.0.0.1") {
+		t.Errorf("Host leaked into feed: %s", body)
+	}
+	for _, want := range []string{"urn:trinetra:status:feed", "urn:trinetra:status:i1:0", "<author><name>Acme status</name></author>", "Identified"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}
+
+func TestPublicAtomOrderingAndCap(t *testing.T) {
+	sp := publicFixture()
+	var ups []core.PublicUpdate
+	for i := 0; i < 60; i++ {
+		ups = append(ups, core.PublicUpdate{TS: int64(1759900000 + i), Status: "monitoring", Message: "m"})
+	}
+	sp.pub.Active[0].Updates = ups
+	_, body := anonGet(t, publicDeps(t, sp, true), "/status/feed.atom")
+	var feed struct {
+		Entries []struct {
+			Updated string `xml:"updated"`
+			ID      string `xml:"id"`
+		} `xml:"entry"`
+	}
+	if err := xml.Unmarshal([]byte(body), &feed); err != nil {
+		t.Fatal(err)
+	}
+	if len(feed.Entries) != 50 {
+		t.Fatalf("entries = %d, want 50", len(feed.Entries))
+	}
+	if feed.Entries[0].ID != "urn:trinetra:status:i1:59" {
+		t.Errorf("newest first violated: %s", feed.Entries[0].ID)
+	}
+	for i := 1; i < len(feed.Entries); i++ {
+		if feed.Entries[i].Updated > feed.Entries[i-1].Updated {
+			t.Fatalf("not newest-first at %d", i)
+		}
+	}
+}
+
+func TestPublicEscapesHostileServiceFields(t *testing.T) {
+	sp := publicFixture()
+	sp.pub.Services[0].Name = "<script>alert(2)</script>"
+	sp.pub.Services[0].Description = "<img src=y onerror=alert(3)>"
+	sp.pub.Active[0].Services = []string{"<script>alert(2)</script>"}
+	d := publicDeps(t, sp, true)
+	for _, p := range []string{"/", "/status/history"} {
+		_, body := anonGet(t, d, p)
+		if strings.Contains(body, "<script>alert(2)") || strings.Contains(body, "<img src=y") {
+			t.Errorf("%s: not escaped", p)
+		}
+	}
+}

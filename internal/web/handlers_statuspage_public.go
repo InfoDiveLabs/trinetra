@@ -1,12 +1,15 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
@@ -63,11 +66,34 @@ func groupPublicServices(svcs []core.PublicService) []publicServiceGroup {
 func renderBareStatusPage(w http.ResponseWriter, page string, data any) {
 	t, err := template.New("base_bare.html").Funcs(funcMap).ParseFS(templatesFS, "templates/base_bare.html", "templates/"+page)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		log.Printf("web: status page %s: parse: %v", page, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "base_bare.html", data); err != nil {
+		log.Printf("web: status page %s: render: %v", page, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = t.ExecuteTemplate(w, "base_bare.html", data)
+	_, _ = w.Write(buf.Bytes())
+}
+
+// statusBaseURL picks the origin for absolute feed links: the configured
+// web.origin, else the origin the request middleware derived (honours the
+// package's proxy-header trust policy), else the request's own Host.
+func statusBaseURL(d Deps, r *http.Request) string {
+	if o := strings.TrimRight(d.Cfg().Web.Origin, "/"); o != "" {
+		return o
+	}
+	if o := requestOriginFromContext(r); o != "" {
+		return o
+	}
+	if r.TLS != nil {
+		return "https://" + r.Host
+	}
+	return "http://" + r.Host
 }
 
 func publicGate(d Deps, w http.ResponseWriter, r *http.Request) bool {
@@ -123,6 +149,17 @@ type atomLink struct {
 	Rel  string `xml:"rel,attr,omitempty"`
 }
 
+type atomAuthor struct {
+	Name string `xml:"name"`
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 type atomEntry struct {
 	Title   string   `xml:"title"`
 	ID      string   `xml:"id"`
@@ -136,6 +173,7 @@ type atomFeed struct {
 	Title   string      `xml:"title"`
 	ID      string      `xml:"id"`
 	Updated string      `xml:"updated"`
+	Author  atomAuthor  `xml:"author"`
 	Link    []atomLink  `xml:"link"`
 	Entries []atomEntry `xml:"entry"`
 }
@@ -151,16 +189,13 @@ func statusFeedHandler(d Deps) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		base := "https://" + r.Host
-		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
-			base = "http://" + r.Host
-		}
+		base := statusBaseURL(d, r)
 		var entries []atomEntry
 		for _, inc := range append(append([]core.PublicIncident{}, pub.Active...), pub.Recent...) {
-			for _, u := range inc.Updates {
+			for i, u := range inc.Updates {
 				entries = append(entries, atomEntry{
-					Title:   fmt.Sprintf("%s — %s", inc.Title, u.Status),
-					ID:      fmt.Sprintf("%s/status/incident/%s/%d", base, inc.ID, u.TS),
+					Title:   fmt.Sprintf("%s \u2014 %s", inc.Title, capitalize(u.Status)),
+					ID:      fmt.Sprintf("urn:trinetra:status:%s:%d", inc.ID, i),
 					Updated: time.Unix(u.TS, 0).UTC().Format(time.RFC3339),
 					Link:    atomLink{Href: base + "/status/history#" + inc.ID},
 					Content: atomText{Type: "text", Body: u.Message},
@@ -175,7 +210,7 @@ func statusFeedHandler(d Deps) http.HandlerFunc {
 		if len(entries) > 0 {
 			updated = entries[0].Updated
 		}
-		feed := atomFeed{Title: pub.Title, ID: base + "/status/feed.atom", Updated: updated,
+		feed := atomFeed{Title: pub.Title, ID: "urn:trinetra:status:feed", Author: atomAuthor{Name: pub.Title}, Updated: updated,
 			Link: []atomLink{{Href: base + "/", Rel: "alternate"}, {Href: base + "/status/feed.atom", Rel: "self"}}, Entries: entries}
 		w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
 		_, _ = w.Write([]byte(xml.Header))
