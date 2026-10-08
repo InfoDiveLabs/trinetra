@@ -61,8 +61,12 @@ func loadStatusJSON(path string, v any, logf func(string, ...any)) {
 		}
 	}
 	aside := fmt.Sprintf("%s.corrupt-%d", path, time.Now().Unix())
-	_ = os.Rename(path, aside)
-	logf("status page: %s unreadable (%v); moved to %s and starting empty", path, err, aside)
+	renErr := os.Rename(path, aside)
+	if renErr != nil {
+		logf("status page: %s unreadable (%v); could not move to %s (%v); starting empty", path, err, aside, renErr)
+	} else {
+		logf("status page: %s unreadable (%v); moved to %s and starting empty", path, err, aside)
+	}
 }
 
 func loadStatusPage(dir string, logf func(string, ...any)) *statusPageData {
@@ -75,6 +79,12 @@ func loadStatusPage(dir string, logf func(string, ...any)) *statusPageData {
 	d := &statusPageData{Services: sf.Services, Incidents: inf.Incidents, State: stf.Services}
 	if d.State == nil {
 		d.State = map[string]*serviceRuntimeState{}
+	}
+	// Drop nil entries that may have been decoded from null in JSON.
+	for k, v := range d.State {
+		if v == nil {
+			delete(d.State, k)
+		}
 	}
 	return d
 }
@@ -114,6 +124,9 @@ func (d *statusPageData) prune(now time.Time) {
 	d.Incidents = kept
 	oldest := dayKey(now.AddDate(0, 0, -(statusHistoryDays - 1)))
 	for _, st := range d.State {
+		if st == nil {
+			continue
+		}
 		for day := range st.History {
 			if day < oldest {
 				delete(st.History, day)

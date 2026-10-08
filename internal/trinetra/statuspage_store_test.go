@@ -92,3 +92,29 @@ func TestStatusPageStorePrune(t *testing.T) {
 		t.Fatal("today's history dropped")
 	}
 }
+
+func TestStatusPageStoreNullStateDropped(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	dir := filepath.Join(t.TempDir(), "status")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Write state.json with null "api" and valid "web" entry.
+	stateJSON := `{"version":1,"services":{"api":null,"web":{"state":"operational"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(stateJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := loadStatusPage(dir, t.Logf)
+	// Assert "api" is absent, "web" is present.
+	if _, ok := d.State["api"]; ok {
+		t.Fatal("null state entry should be dropped")
+	}
+	if _, ok := d.State["web"]; !ok {
+		t.Fatal("valid state entry should be present")
+	}
+	if d.State["web"].State != core.StateOperational {
+		t.Fatalf("web state: got %q, want %q", d.State["web"].State, core.StateOperational)
+	}
+	// Assert prune doesn't panic.
+	d.prune(now)
+}
