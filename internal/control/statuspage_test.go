@@ -10,10 +10,10 @@ import (
 
 type fakeStatusPage struct {
 	core.StatusPageAPI // nil: unimplemented methods panic, so tests only call the overridden ones
-	svcs     []core.StatusService
-	posted   core.NewUpdate
-	actor    string
-	childErr bool
+	svcs               []core.StatusService
+	posted             core.NewUpdate
+	actor              string
+	childErr           bool
 }
 
 func (f *fakeStatusPage) Services() ([]core.StatusService, error) {
