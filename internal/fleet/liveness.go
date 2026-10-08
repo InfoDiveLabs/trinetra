@@ -220,6 +220,14 @@ func NewNodeAlerter() *NodeAlerter {
 	return &NodeAlerter{alerted: map[string]int64{}, massMembers: map[string]bool{}}
 }
 
+// Alerted reports whether id currently has an individual node-down alert
+// open. A node that is down as part of a mass disconnect (folded into the
+// fleet:connectivity incident) is not alerted individually.
+func (a *NodeAlerter) Alerted(id string) bool {
+	_, ok := a.alerted[id]
+	return ok
+}
+
 // humanDur renders an alert duration: "35s" under a minute, rounded
 // minutes ("2m") under an hour, then hours and minutes ("1h5m").
 func humanDur(sec int64) string {

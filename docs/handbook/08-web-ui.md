@@ -131,13 +131,14 @@ existing account's role, remove accounts, and revoke individual passkeys, with
 a standing guard that refuses to demote or remove the last remaining admin, so
 the instance can never lock itself out of administration.
 
-There are three roles:
+There are four roles, ordered viewer < responder < admin:
 
 | Role | What it can do |
 |------|----------------|
-| `admin` | Everything a viewer can, plus `/config`, `/channels`, `/users`, `/settings/public`, and acknowledging alerts. |
+| `admin` | Everything a responder can, plus `/config`, `/channels`, `/users`, `/settings/public`, `/status-page/services`, and deleting status-page incidents. |
+| `responder` | Everything a viewer can, plus acknowledging and un-acknowledging alerts, acknowledging fleet incidents, and running status-page incidents at `/status-page/incidents` (create, post and edit updates, edit titles). No config, channels, users, or services. |
 | `viewer` | Read-only: the dashboard, history graphs, and the alerts page (view only, no ack). |
-| anonymous | Only `/public`, and only when `public.enabled` is true. A curated, admin-picked subset of metrics, no login, no other route reachable. |
+| anonymous | Only the public page (`/public`, and `/` plus `/status/*` once a status page is set up), and only when `public.enabled` is true. No login, no other route reachable. |
 
 ## The pages
 
@@ -365,6 +366,127 @@ than a single number, and it must be listed in `public.panels` by name for that
 strip to appear. Older copies of the reference documentation omit it from the
 allowlist; the panel is real and allowlistable, and the table above is the
 authoritative list.
+
+## Public status page
+
+Besides the curated `/public` view, trinetra can publish a real status page: a
+short list of public **services**, each mapped to something you monitor, with a
+banner, a 90 day history and incidents your team can post updates to. It needs
+`public.enabled` and at least one service. With zero services, `/` behaves
+exactly as before. It runs on a standalone host or a fleet master; a child
+refuses it, because the master is where fleet state lives.
+
+![Public status page](../assets/screenshots/status-public.webp)
+
+On a phone the page stacks into a single column:
+
+![Public status page on a phone](../assets/screenshots/status-public-mobile.webp)
+
+### How a service's status is computed
+
+An admin defines services at `/status-page/services` (or with
+[`trinetra status-page service`](11-command-reference.md#trinetra-status-page)).
+Each service has an id, a public name, an optional group, description and order,
+and one or more **targets** saying what it depends on:
+
+| Target | Watches |
+|--------|---------|
+| `host` | This host's own alerts. |
+| `node:<id>` | A fleet node (down, or any of its alerts). |
+| `tag:<tag>` | Every fleet node carrying the tag. |
+| `container:<name>[@node]` | A container (alert key `docker:<name>`). |
+| `unit:<unit>[@node]` | A systemd unit (alert key `service:<unit>`). |
+| `mount:<path>[@node]` | A filesystem (alert key `disk:<path>`). |
+
+The daemon evaluates every service on the slow sampler tick (`sample_interval`,
+60 s by default). The worst thing found across a service's targets wins:
+
+| Condition | Service status |
+|-----------|----------------|
+| A target node is down, or a target has a critical alert | outage |
+| A target has a warning alert | degraded |
+| A target is inside an active maintenance window | maintenance |
+| None of the above | operational |
+
+A node counts as down only when trinetra has raised an individual node-down
+alert for it. That means:
+
+- A silenced node-down alert does not count, so a silenced node does not turn
+  its services red.
+- A fleet-wide connectivity drop (many nodes lost at once, which raises one
+  `fleet:connectivity` alert instead of one alert per node) does not mark any
+  node down. No lost node counts as down on the public page until every lost
+  node is back, though operators are still paged through the fleet
+  connectivity alert.
+- A node that is down while a maintenance window covers it shows
+  *maintenance*, not outage, so planned reboots never become public outages.
+  Alerts on the node still outrank maintenance.
+- Narrow targets (`container:`, `unit:` and `mount:` with an `@node`) go into
+  outage when their node is down.
+- Only a maintenance window that covers the whole node counts. A window scoped
+  to a rule or a severity (for example `rule=disk:*`) does not.
+
+Silenced alerts are ignored. To stop flapping, a change is only published once
+it has held for the service's **hold-down** (default 180 s, 0 to 3600 s, set
+with `--hold`), in both directions. Maintenance applies immediately. The page
+banner summarises all services: *All systems operational*, *Partial outage*,
+*Major outage* or *Under maintenance*.
+
+### Incidents
+
+When a service goes into outage or degraded, trinetra opens an
+incident automatically with generic text (for example "We're investigating an
+outage affecting API."). Services that change together share one incident, and
+an open automatic incident is reused rather than duplicated. Maintenance does
+not open an incident; it only changes the service's status and the banner. When every
+affected service has recovered the incident moves to *monitoring* (also when its service is deleted or edited so
+it no longer fails), and it
+resolves by itself after `status.auto_resolve_after` (default 24 h).
+
+People take over from there at `/status-page/incidents` (viewers cannot; this
+needs the `responder` role or above): create an incident by hand, post an
+update with status *investigating*, *identified*, *monitoring* or *resolved*,
+edit an update or the title (edits keep the history), or reopen a resolved
+incident. Each new update is also sent to the channels listed in
+`status.echo_channels`, so your team sees what the public sees. Only admins can
+delete an incident.
+
+Responders work incidents from the incident page, and admins manage services:
+
+![Incident detail](../assets/screenshots/status-incident.webp)
+
+![Status page services](../assets/screenshots/status-services.webp)
+
+### Public routes
+
+| Route | What it serves |
+|-------|----------------|
+| `/` | The banner, active incidents with their updates, services grouped with 90 day daily bars, then your normal `public.panels` metric panels. |
+| `/status/history` | Resolved incidents over the last 90 days. |
+| `/status/feed.atom` | An Atom feed of the newest 50 updates. Links use `web.origin` when it is set. |
+| `/status/api.json` | The same data as JSON (`"schema": 1`), CORS `*`, `Cache-Control: max-age=30`. |
+
+### Nothing internal leaks
+
+Only what you typed into the service and incident forms is public: service and
+group names, descriptions, incident titles and update text. Node names and ids,
+IPs, tags, alert keys, container, unit and mount names, authors and
+triggers never appear on any public route, in the feed or in the JSON. Write
+update text with that in mind, since you control it.
+
+### Settings
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `status.title` | `Status` | Heading of the public page, at most 60 characters. |
+| `status.auto_resolve_after` | `24h` | How long after recovery an automatic incident resolves itself. `0` never; otherwise at least `1h`. |
+| `status.echo_channels` | none | Comma-separated channels that receive a copy of every new incident update. |
+
+```bash
+sudo trinetra config set public.enabled true
+sudo trinetra status-page service add api --name "API" --target tag:api
+sudo trinetra config set status.title "Acme status"
+```
 
 ## Fleet
 

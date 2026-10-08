@@ -176,6 +176,26 @@ func statusServiceSaveHandler(d Deps) http.HandlerFunc {
 			fail(err.Error())
 			return
 		}
+		editing := r.FormValue("edit") == "1"
+		existing, err := sp.Services()
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		exists := false
+		for _, e := range existing {
+			if e.ID == form.ID {
+				exists = true
+			}
+		}
+		switch {
+		case !editing && exists:
+			fail("a service with id " + form.ID + " already exists \u2014 use Edit")
+			return
+		case editing && !exists:
+			fail("no such service")
+			return
+		}
 		svc := core.StatusService{ID: form.ID, Name: form.Name, Group: form.Group,
 			Description: form.Description, Order: order, HoldDownSec: hold, Targets: targets}
 		saved, err := sp.SetService(svc, auditUser(r))

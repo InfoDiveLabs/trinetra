@@ -192,10 +192,10 @@ func statusFeedHandler(d Deps) http.HandlerFunc {
 		base := statusBaseURL(d, r)
 		var entries []atomEntry
 		for _, inc := range append(append([]core.PublicIncident{}, pub.Active...), pub.Recent...) {
-			for i, u := range inc.Updates {
+			for _, u := range inc.Updates {
 				entries = append(entries, atomEntry{
 					Title:   fmt.Sprintf("%s \u2014 %s", inc.Title, capitalize(u.Status)),
-					ID:      fmt.Sprintf("urn:trinetra:status:%s:%d", inc.ID, i),
+					ID:      fmt.Sprintf("urn:trinetra:status:%s:%s", inc.ID, u.ID),
 					Updated: time.Unix(u.TS, 0).UTC().Format(time.RFC3339),
 					Link:    atomLink{Href: base + "/status/history#" + inc.ID},
 					Content: atomText{Type: "text", Body: u.Message},

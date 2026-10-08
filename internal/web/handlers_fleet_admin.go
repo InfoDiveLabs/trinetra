@@ -46,13 +46,6 @@ var fleetTagRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 // fleetNodeNameMax is the brief's rename bound: 1..64 characters.
 const fleetNodeNameMax = 64
 
-// fleetAdminMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
-// exactly like usersMutation (handlers_users.go): every /fleet/tokens* and
-// /fleet/nodes/{id}/* mutation needs both gates. The "master only, else
-// 404" half of the brief's "admin + CSRF for POST; master only else 404"
-// ruling is enforced separately, inside each handler (fleetGateHTML) --
-// requireRole/requireCSRF only ever gate on session/role/CSRF, never on
-// this daemon's fleet role.
 // fleetResponderMutation is fleetAdminMutation with the role floor lowered to
 // responder (admins pass too): requireRole(RoleResponder) + requireCSRF. Used
 // only for fleet incident ack; the master-only 404 is still enforced inside
@@ -65,6 +58,13 @@ func fleetResponderMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 
 // fleetAdminMutation: see fleetResponderMutation for the responder-level
 // variant (incident ack only); this one stays admin-only.
+// fleetAdminMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
+// exactly like usersMutation (handlers_users.go): every /fleet/tokens* and
+// /fleet/nodes/{id}/* mutation needs both gates. The "master only, else
+// 404" half of the brief's "admin + CSRF for POST; master only else 404"
+// ruling is enforced separately, inside each handler (fleetGateHTML) --
+// requireRole/requireCSRF only ever gate on session/role/CSRF, never on
+// this daemon's fleet role.
 func fleetAdminMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)

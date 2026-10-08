@@ -170,6 +170,7 @@ type PublicDay struct {
 }
 
 type PublicUpdate struct {
+	ID      string `json:"id"` // random update id, stable across new updates (feed entry id)
 	TS      int64  `json:"ts"`
 	Status  string `json:"status"`
 	Message string `json:"message"`

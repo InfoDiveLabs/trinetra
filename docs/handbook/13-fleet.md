@@ -107,6 +107,13 @@ The rest of this chapter walks the fleet-only pages in the order you would
 actually use them; see [The web UI: Fleet](08-web-ui.md#fleet) for the
 complete page-by-page reference.
 
+## Public status page
+
+A fleet master can publish a customer-facing status page whose services map to
+nodes (`node:<id>`) or tags (`tag:<tag>`): a node going down or raising a
+critical alert turns the service into an outage and opens an incident, with no
+node names shown publicly. See [Public status page](08-web-ui.md#public-status-page).
+
 ## Alert handoff and local fallback
 
 A child always detects its own alerts, exactly as it would solo. What

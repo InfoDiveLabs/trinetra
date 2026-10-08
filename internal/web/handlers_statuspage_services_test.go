@@ -205,3 +205,28 @@ func postFormAsRole(t *testing.T, d Deps, role Role, path string, form url.Value
 	}
 	return postForm(h, path, form, &http.Cookie{Name: sessionCookieName, Value: sess.ID}, sess.CSRF)
 }
+
+func TestStatusServiceAddRejectsExistingIDEditRequiresIt(t *testing.T) {
+	sp := &fakeStatusPage{svcs: []core.StatusService{{ID: "api", Name: "Orig", HoldDownSec: 180, Targets: []core.StatusTarget{{Kind: core.TargetHost}}}}}
+	d := statusPageDeps(t, sp)
+	form := url.Values{"id": {"api"}, "name": {"Clobber"}, "hold": {"180"}, "targets": {"host"}}
+	rr := postFormAsRole(t, d, RoleAdmin, "/status-page/services", form)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "already exists") {
+		t.Fatalf("add existing: %d %s", rr.Code, rr.Body.String())
+	}
+	if sp.svcs[0].Name != "Orig" {
+		t.Fatalf("overwritten: %+v", sp.svcs)
+	}
+	form.Set("edit", "1")
+	if code := postAsRole(t, d, RoleAdmin, "/status-page/services", form); code != http.StatusSeeOther {
+		t.Fatalf("edit existing: %d", code)
+	}
+	if sp.svcs[0].Name != "Clobber" {
+		t.Fatalf("edit not applied: %+v", sp.svcs)
+	}
+	form.Set("id", "ghost")
+	rr = postFormAsRole(t, d, RoleAdmin, "/status-page/services", form)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "no such service") {
+		t.Fatalf("edit missing: %d %s", rr.Code, rr.Body.String())
+	}
+}
