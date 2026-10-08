@@ -80,8 +80,9 @@ func userFromContext(r *http.Request) (*User, bool) {
 }
 
 // requireRole gates next behind the signed-in request's role satisfying
-// min: RoleViewer admits any authenticated user (viewer or admin);
-// RoleAdmin admits only admins. This is the RBAC gate the design doc's
+// min using the ranking viewer < responder < admin (roleRank): RoleViewer
+// admits any valid role, RoleResponder admits responders and admins,
+// RoleAdmin admits only admins; an unknown role satisfies nothing. This is the RBAC gate the design doc's
 // "middleware maps session→user→role" line calls for -- routes.go's
 // newHandler wires it onto the admin-only routes (config/channels/users/
 // public-settings, the mockup app.js's ADMIN_PAGES).
@@ -89,7 +90,7 @@ func userFromContext(r *http.Request) (*User, bool) {
 // No session/user at all (anonymous) redirects to /login regardless of
 // min: an anonymous visitor isn't unauthorized, they just haven't signed in
 // yet, so send them to do that. A signed-in user whose role falls short of
-// min instead renders the mockup's "Admin only" denied panel with 403 --
+// min instead renders the mockup's "Higher role needed" denied panel with 403 --
 // they ARE authenticated, just not authorized, so bouncing them to /login
 // would accomplish nothing (their passkey already works fine).
 //

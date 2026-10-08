@@ -83,7 +83,7 @@ func newHandler(d Deps) http.Handler {
 	// ack/silence mutations) -- task C2, plan C: the fleet incidents web UI
 	// over FleetAPI's Incidents/Incident/AckIncident/Explain/CreateSilence.
 	// GETs are viewer-gated and master-only (fleetGateHTML) exactly like the
-	// rest of "Monitor"; ack/silence are admin+CSRF (fleetAdminMutation),
+	// rest of "Monitor"; ack is responder+CSRF (fleetResponderMutation), silence admin+CSRF (fleetAdminMutation),
 	// same as /fleet/admin's mutations below. Already covered by
 	// node_scope.go's masterLocalPrefixes "/fleet" entry (prefix-matches
 	// every /fleet/... path), so /n/{node}/fleet/incidents... is already a
@@ -91,7 +91,7 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /fleet/incidents", requireRole(RoleViewer, d, fleetIncidentsHandler(d)))
 	mux.HandleFunc("GET /fleet/incidents/table", requireRole(RoleViewer, d, fleetIncidentsTableHandler(d)))
 	mux.HandleFunc("GET /fleet/incidents/{id}", requireRole(RoleViewer, d, fleetIncidentHandler(d)))
-	mux.HandleFunc("POST /fleet/incidents/{id}/ack", fleetAdminMutation(d, fleetIncidentAckHandler(d)))
+	mux.HandleFunc("POST /fleet/incidents/{id}/ack", fleetResponderMutation(d, fleetIncidentAckHandler(d)))
 	mux.HandleFunc("POST /fleet/incidents/{id}/silence", fleetAdminMutation(d, fleetIncidentSilenceHandler(d)))
 	// /fleet/alerting (+ /test, + /fleet/rules/state) -- task C3, plan C:
 	// the routing/escalation config editor (routes/policies/rules, "edit as
@@ -234,14 +234,14 @@ func newHandler(d Deps) http.Handler {
 	// the control socket (Deps.API.AlertHistory/ActiveAlerts), viewer+ per
 	// the design doc -- this
 	// resolves the earlier placeholder note that /alerts must be
-	// viewer-gated, not admin-only. Ack, however, is admin-only + CSRF: it
+	// viewer-gated, not admin-only. Ack, however, is responder-or-admin + CSRF (viewers are read-only): it
 	// mutates shared alert state everyone else's view depends on.
 	mux.HandleFunc("GET /alerts", requireRole(RoleViewer, d, alertsPageHandler(d)))
 	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsAckHandler(d)).ServeHTTP(w, r)
 	}))
 	// /alerts/{key}/unack (task C6): the ack action's inverse, over
-	// core.API.UnackAlert -- same admin+CSRF gate. As of task C6,
+	// core.API.UnackAlert -- same responder+CSRF gate. As of task C6,
 	// node_scope.go's withNodeRouter also allows a node-scoped POST to
 	// EXACTLY this path (and .../ack) through to here, re-dispatched with
 	// the node scope attached so apiFor(r,d) resolves to that node's own

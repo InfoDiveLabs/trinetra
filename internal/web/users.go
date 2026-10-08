@@ -76,7 +76,7 @@ type User struct {
 	// are the same value here; the mockup/design doc doesn't distinguish
 	// them for this app).
 	Name string `json:"name"`
-	// Role is this account's access level (RoleAdmin/RoleViewer), assigned by
+	// Role is this account's access level (RoleAdmin/RoleResponder/RoleViewer, ranked viewer < responder < admin), assigned by
 	// resolveEnrollRole (enroll_tokens.go) at enrollment time: first-run
 	// bootstrap or an admin-issued enrollment token's Role.
 	Role Role `json:"role"`

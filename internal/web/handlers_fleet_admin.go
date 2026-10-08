@@ -53,6 +53,18 @@ const fleetNodeNameMax = 64
 // ruling is enforced separately, inside each handler (fleetGateHTML) --
 // requireRole/requireCSRF only ever gate on session/role/CSRF, never on
 // this daemon's fleet role.
+// fleetResponderMutation is fleetAdminMutation with the role floor lowered to
+// responder (admins pass too): requireRole(RoleResponder) + requireCSRF. Used
+// only for fleet incident ack; the master-only 404 is still enforced inside
+// the handler (fleetGateHTML) and the audit entry still records the actor.
+func fleetResponderMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
+	return requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
+		requireCSRF(next).ServeHTTP(w, r)
+	})
+}
+
+// fleetAdminMutation: see fleetResponderMutation for the responder-level
+// variant (incident ack only); this one stays admin-only.
 func fleetAdminMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)

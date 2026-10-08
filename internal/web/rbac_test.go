@@ -127,7 +127,7 @@ func TestRequireRoleAnonRedirectsAcrossAllAdminRoutes(t *testing.T) {
 
 func TestRequireRoleRanks(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	d, users, sessions := rbacTestDeps(t)
+	d, _, _ := rbacTestDeps(t)
 	cases := []struct {
 		min, have Role
 		want      int
@@ -137,8 +137,8 @@ func TestRequireRoleRanks(t *testing.T) {
 		{RoleAdmin, RoleResponder, 403}, {RoleAdmin, RoleAdmin, 204},
 	}
 	for _, c := range cases {
-		r := seedSignedInRequest(t, users, sessions, c.have, "GET", "/x")
 		// requireRole reads the user userMiddleware would have resolved.
+		r := httptest.NewRequest("GET", "/x", nil)
 		r = r.WithContext(context.WithValue(r.Context(), userCtxKey{}, &User{ID: "u", Name: "u", Role: c.have}))
 		w := httptest.NewRecorder()
 		requireRole(c.min, d, ok).ServeHTTP(w, r)
@@ -223,5 +223,35 @@ func TestResponderDeniedAdminRoutes(t *testing.T) {
 	rr := postForm(h, "/users/invite", url.Values{"role": {"admin"}, "ttl": {"1h"}}, cookie, s.CSRF)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("responder POST /users/invite = %d, want 403", rr.Code)
+	}
+}
+
+func TestResponderCanUnackAlerts(t *testing.T) {
+	d, _, _ := configTestDeps(t)
+	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}}}
+	h := newHandler(d)
+	users := newUserStore(d.StateDir)
+	sessions := newSessionStore(d.StateDir)
+	u := &User{ID: mustNewUserID(t), Name: "resp", Role: RoleResponder, Created: 1}
+	if err := users.Put(u); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := sessions.New(u.ID, time.Hour)
+	rr := postForm(h, "/alerts/"+credentialParam([]byte("disk:/"))+"/unack", nil, &http.Cookie{Name: sessionCookieName, Value: s.ID}, s.CSRF)
+	if rr.Code == http.StatusForbidden {
+		t.Errorf("responder unack = 403: %s", rr.Body.String())
+	}
+}
+
+func TestResolveEnrollRoleRejectsInvalidTokenRole(t *testing.T) {
+	d, users, _ := rbacTestDeps(t)
+	tokens := newTokenStore(d.StateDir)
+	tok := tokens.Issue(Role("superuser"), time.Hour)
+	if _, _, err := resolveEnrollRole(tokens, users, tok); err == nil {
+		t.Error("invalid token role accepted")
+	}
+	tok = tokens.Issue(RoleResponder, time.Hour)
+	if r, _, err := resolveEnrollRole(tokens, users, tok); err != nil || r != RoleResponder {
+		t.Errorf("responder token = %q, %v", r, err)
 	}
 }

@@ -381,7 +381,7 @@ func badgeFor(href string, counts NavCounts) string {
 	}
 }
 
-// currentRole returns the signed-in request's role ("admin"/"viewer"), or
+// currentRole returns the signed-in request's role ("admin"/"responder"/"viewer"), or
 // "" for an anonymous one. userMiddleware (middleware.go) is what actually
 // resolves the session into a *User this reads back via userFromContext;
 // this is purely the cosmetic input to nav filtering (navForRole) and the
@@ -415,7 +415,7 @@ type PageData struct {
 	// old statusText helper mapped "crit"/"warn" to hardcoded text like "2
 	// alerts firing" no matter the real count).
 	Status, StatusText string
-	// Role is the current user's role ("admin" or "viewer"), from
+	// Role is the current user's role ("admin", "responder" or "viewer"), from
 	// currentRole. Drives both nav filtering and the read-only pill/footer.
 	Role string
 	// CanRespond is true for responder and admin: gates ack/unack UI.
@@ -835,7 +835,7 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
-// renderDenied renders the mockup's "Admin only" denied panel (templates/
+// renderDenied renders the mockup's "Higher role needed" denied panel (templates/
 // denied.html, ported from ui-mockup/assets/app.js's `.panel.denied` markup)
 // through the full app-shell layout with a 403 status -- requireRole
 // (middleware.go) calls this when a signed-in user's role falls short of a
