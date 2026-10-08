@@ -61,10 +61,19 @@ type fleetProvider struct {
 	managed *managedChild
 }
 
-// fleetAwareAPI is the daemon's core.API plus the optional FleetProvider.
+// fleetAwareAPI is the daemon's core.API plus the optional FleetProvider and
+// the status page (issue #157).
 type fleetAwareAPI struct {
 	core.API
 	*fleetProvider
+	status *statusPageRuntime
+}
+
+func (a *fleetAwareAPI) StatusPage() core.StatusPageAPI {
+	if a.status == nil {
+		return nil // avoid a non-nil interface wrapping a nil pointer
+	}
+	return a.status
 }
 
 func (p *fleetProvider) Fleet() core.FleetAPI { return fleetAPIImpl{p} }

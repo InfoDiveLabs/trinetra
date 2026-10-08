@@ -1144,7 +1144,16 @@ func cmdDaemon(args []string) int {
 		}
 		alog.SetTee(fleetRT.tee.Alert)
 	}
-	stopControl, socketPath, token, err := serveControlSocket(&fleetAwareAPI{API: controlAPI, fleetProvider: fleetRT.provider})
+	statusRT := newStatusPageRuntime(statusPageDir(stateDir),
+		func() string { return fleetRT.provider.role },
+		getCfg,
+		nil, // the daemon ticks via TickWith, passing inputs from the sampler loop
+		func(text string, channels []string) {
+			go dispatchOnlyTo(q, Alert{Key: "status-page", Title: text, Severity: SevWarning, Kind: "fire", Source: "status-page", Time: time.Now().Unix()},
+				inQuietHours(getCfg().QuietHours, time.Now()), channels)
+		},
+		func(f string, a ...any) { fmt.Fprintf(stderr, f+"\n", a...) })
+	stopControl, socketPath, token, err := serveControlSocket(&fleetAwareAPI{API: controlAPI, fleetProvider: fleetRT.provider, status: statusRT})
 	if err != nil {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
 	} else {
@@ -1531,6 +1540,16 @@ func cmdDaemon(args []string) int {
 			if fleetRT.provider.role == config.RoleChild {
 				fallbackAfter := getCfg().FleetFallbackAfter()
 				_ = pruneHandoffReceipts(handoffReceiptsPath(stateDir), now.Add(-10*fallbackAfter).Unix())
+			} else {
+				// Public status page (#157): masters and solo hosts evaluate;
+				// a child never serves one.
+				var in statusInputs
+				if fleetRT.provider.master != nil {
+					in = gatherMaster(fleetRT.provider.master, alerts.Active, merged, now)
+				} else {
+					in = gatherStandalone(alerts.Active, merged)
+				}
+				statusRT.TickWith(now, in)
 			}
 		}
 

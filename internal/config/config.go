@@ -222,6 +222,15 @@ type Config struct {
 		// never appear on the page even though it's present elsewhere.
 		Panels []string `json:"panels,omitempty"`
 	} `json:"public"`
+	// Status is the public status page (issue #157): the page title, how long
+	// a recovered automatic incident waits before resolving itself ("0" =
+	// never), and which notification channels receive a copy of each public
+	// update.
+	Status struct {
+		Title            string   `json:"title,omitempty"`
+		AutoResolveAfter string   `json:"auto_resolve_after,omitempty"`
+		EchoChannels     []string `json:"echo_channels,omitempty"`
+	} `json:"status"`
 	// Fleet holds master/child fleet settings (fleet mode, see
 	// docs/handbook/02-architecture.md "Fleet mode"). Role empty or "solo" means
 	// no fleet code runs at all -- the default, and exactly today's behaviour.
@@ -375,6 +384,23 @@ func (c *Config) FleetNodeDownAfter() time.Duration {
 // routed alert before delivering it locally instead ("via local fallback:
 // master unreachable"); default 2m. An unparsable stored value (never
 // written by Set, which validates) also falls back to the default.
+func (c *Config) StatusTitle() string {
+	if t := strings.TrimSpace(c.Status.Title); t != "" {
+		return t
+	}
+	return "Status"
+}
+
+func (c *Config) StatusAutoResolveAfter() time.Duration {
+	if c.Status.AutoResolveAfter == "0" {
+		return 0
+	}
+	if d, err := time.ParseDuration(c.Status.AutoResolveAfter); err == nil && d > 0 {
+		return d
+	}
+	return 24 * time.Hour
+}
+
 func (c *Config) FleetFallbackAfter() time.Duration {
 	if d, err := time.ParseDuration(c.Fleet.FallbackAfter); err == nil && d > 0 {
 		return d
@@ -884,6 +910,16 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.Public.Enabled), true
 	case "public.panels":
 		return strings.Join(c.Public.Panels, ","), true
+	case "status.title":
+		return c.StatusTitle(), true
+	case "status.auto_resolve_after":
+		if d := c.StatusAutoResolveAfter(); d == 0 {
+			return "0", true
+		} else {
+			return d.String(), true
+		}
+	case "status.echo_channels":
+		return strings.Join(c.Status.EchoChannels, ","), true
 	case "fleet.role":
 		return c.FleetRole(), true
 	case "fleet.listen":
@@ -1155,6 +1191,22 @@ func (c *Config) Set(key, val string) error {
 			return err
 		}
 		c.Public.Panels = panels
+	case "status.title":
+		v := strings.TrimSpace(val)
+		if len([]rune(v)) > 60 {
+			return fmt.Errorf("status.title must be at most 60 characters")
+		}
+		c.Status.Title = v
+	case "status.auto_resolve_after":
+		if val != "0" {
+			d, err := time.ParseDuration(val)
+			if err != nil || d < time.Hour {
+				return fmt.Errorf("status.auto_resolve_after must be 0 (never) or a duration of at least 1h, got %q", val)
+			}
+		}
+		c.Status.AutoResolveAfter = val
+	case "status.echo_channels":
+		c.Status.EchoChannels = splitKinds(val)
 	case "fleet.listen":
 		if err := validateListen(val); err != nil {
 			return fmt.Errorf("fleet.listen: %w", err)
@@ -1315,6 +1367,9 @@ var keyCatalog = []KeyInfo{
 
 	{Name: "public.enabled", Group: "Public", Kind: "bool", Help: "Enable the anonymous /public status page."},
 	{Name: "public.panels", Group: "Public", Kind: "csv", Help: "Comma-separated panel ids exposed on the public page."},
+	{Name: "status.title", Group: "Status page", Kind: "string", Help: "Heading of the public status page (default Status)."},
+	{Name: "status.auto_resolve_after", Group: "Status page", Kind: "duration", Help: "Resolve a recovered automatic incident after this long; 0 = never (default 24h, minimum 1h)."},
+	{Name: "status.echo_channels", Group: "Status page", Kind: "csv", Help: "Notification channels that receive a copy of every public status update (default none)."},
 
 	{Name: "fleet.listen", Group: "Fleet", Kind: "string", Help: "Master only: fleet listener bind address as host:port. Default :9443.", RestartRequired: true},
 	{Name: "fleet.outbox_max_mb", Group: "Fleet", Kind: "int", Help: "Child only: max MiB of telemetry spooled while the master is unreachable. Default 512.", RestartRequired: true},

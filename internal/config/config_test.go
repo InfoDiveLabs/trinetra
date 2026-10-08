@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1641,6 +1642,34 @@ func TestFleetLinkDownWarnAfterDefaultAndSet(t *testing.T) {
 	for _, bad := range []string{"", "not-a-duration", "1s", "-1m"} {
 		if err := c.Set("fleet.link_down_warn_after", bad); err == nil {
 			t.Errorf("Set(%q) accepted, want a validation error", bad)
+		}
+	}
+}
+
+func TestStatusKeys(t *testing.T) {
+	c := Default()
+	if c.StatusTitle() != "Status" || c.StatusAutoResolveAfter() != 24*time.Hour {
+		t.Fatalf("defaults: %q %v", c.StatusTitle(), c.StatusAutoResolveAfter())
+	}
+	for k, v := range map[string]string{"status.title": "Acme status", "status.auto_resolve_after": "0", "status.echo_channels": "tg, ops-email"} {
+		if err := c.Set(k, v); err != nil {
+			t.Fatalf("Set(%s): %v", k, err)
+		}
+	}
+	if c.StatusAutoResolveAfter() != 0 {
+		t.Fatal("0 must mean never")
+	}
+	if got, _ := c.Get("status.echo_channels"); got != "tg,ops-email" {
+		t.Fatalf("echo_channels %q", got)
+	}
+	for _, kv := range [][2]string{{"status.title", strings.Repeat("x", 61)}, {"status.auto_resolve_after", "30s"}, {"status.auto_resolve_after", "-1h"}} {
+		if err := c.Set(kv[0], kv[1]); err == nil {
+			t.Errorf("Set(%s,%q) accepted", kv[0], kv[1])
+		}
+	}
+	for _, k := range []string{"status.title", "status.auto_resolve_after", "status.echo_channels"} {
+		if err := c.Unset(k); err != nil {
+			t.Errorf("Unset(%s): %v", k, err)
 		}
 	}
 }
