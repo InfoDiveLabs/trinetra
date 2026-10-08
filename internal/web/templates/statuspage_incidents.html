@@ -1,0 +1,30 @@
+{{define "content"}}
+<section class="card">
+  <h2>Status updates</h2>
+  <p class="muted">What customers see on the public status page. Incidents open automatically when a service degrades. You write the updates.</p>
+  {{if .Unavailable}}<p class="notice">{{.Unavailable}}</p>{{else}}
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <h3>Active</h3>
+  <table class="table"><thead><tr><th>Incident</th><th>Impact</th><th>Status</th><th>Opened</th></tr></thead><tbody>
+  {{range .Active}}<tr><td><a href="/status-page/incidents/{{.ID}}">{{.Title}}</a>{{if .Auto}} <span class="pill">auto</span>{{end}}</td>
+    <td><span class="pill pill-{{.Impact}}">{{.Impact}}</span></td><td>{{.Status}}</td><td>{{timeText .Opened}}</td></tr>
+  {{else}}<tr><td colspan="4" class="muted">No active incidents.</td></tr>{{end}}
+  </tbody></table>
+  <details><summary>Open an incident by hand</summary>
+  <form method="post" action="/status-page/incidents" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label class="wide">Title <input name="title" required maxlength="200"></label>
+    <fieldset class="wide"><legend>Affected services</legend>{{range .Services}}<label><input type="checkbox" name="services" value="{{.ID}}"> {{.Name}}</label>{{end}}</fieldset>
+    <label>Impact <select name="impact"><option>degraded</option><option>outage</option><option>maintenance</option></select></label>
+    <label>Status <select name="status">{{range .Statuses}}<option>{{.}}</option>{{end}}</select></label>
+    <label class="wide">First update <textarea name="message" required maxlength="4096" rows="3"></textarea></label>
+    <button class="btn btn-primary">Publish</button>
+  </form></details>
+  <h3>Resolved</h3>
+  <table class="table"><tbody>
+  {{range .Resolved}}<tr><td><a href="/status-page/incidents/{{.ID}}">{{.Title}}</a></td><td><span class="pill pill-{{.Impact}}">{{.Impact}}</span></td><td>{{timeText .Resolved}}</td></tr>
+  {{else}}<tr><td class="muted">None yet.</td></tr>{{end}}
+  </tbody></table>
+  {{end}}
+</section>
+{{end}}

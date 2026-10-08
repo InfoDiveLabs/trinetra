@@ -119,6 +119,14 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /status-page/services", requireRole(RoleAdmin, d, statusServicesPageHandler(d)))
 	mux.HandleFunc("POST /status-page/services", fleetAdminMutation(d, statusServiceSaveHandler(d)))
 	mux.HandleFunc("POST /status-page/services/{id}/delete", fleetAdminMutation(d, statusServiceDeleteHandler(d)))
+	// Status-page incidents (#157, handlers_statuspage_incidents.go): responder+.
+	mux.HandleFunc("GET /status-page/incidents", requireRole(RoleResponder, d, statusIncidentsPageHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents", fleetResponderMutation(d, statusIncidentCreateHandler(d)))
+	mux.HandleFunc("GET /status-page/incidents/{id}", requireRole(RoleResponder, d, statusIncidentPageHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/updates", fleetResponderMutation(d, statusUpdatePostHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/updates/{uid}", fleetResponderMutation(d, statusUpdateEditHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/edit", fleetResponderMutation(d, statusIncidentEditHandler(d)))
+	mux.HandleFunc("POST /status-page/incidents/{id}/delete", fleetAdminMutation(d, statusIncidentDeleteHandler(d)))
 	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete) --
 	// task C4, plan C: the fleet silences and maintenance-windows web UI over
 	// core.FleetAPI's Silences/CreateSilence/ExpireSilence/Maintenances/
