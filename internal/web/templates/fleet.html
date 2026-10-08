@@ -30,10 +30,10 @@
      exactly like the table below them. */}}
 <div class="panel" style="margin-bottom:14px">
   <div class="head">
-    <div class="legend">
-      {{range .MetricOptions}}<a class="chip{{if .Active}} on{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}
+    <div class="legend seg" role="tablist" aria-label="Heatmap metric">
+      {{range .MetricOptions}}<a class="chip{{if .Active}} on{{end}}" href="{{.Href}}" title="Color the heatmap by {{.Label}}">{{.Label}}</a>{{end}}
     </div>
-    <a class="note mono" href="{{.RefreshHref}}">Refresh</a>
+    <a class="note mono" href="{{.RefreshHref}}" title="Reload the heatmap and top lists">Refresh</a>
   </div>
   <div class="grid g-heat" id="fleet-heatmap">
     {{range .HeatTiles}}<a class="heat-tile heat-{{.Band}}" href="{{.Href}}" data-heat-id="{{.ID}}"><span class="heat-name">{{.Name}}</span><span class="heat-val">{{.Text}}</span></a>{{else}}<div class="note">no fleet nodes match this filter</div>{{end}}

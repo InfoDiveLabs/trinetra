@@ -233,7 +233,7 @@ a.count:hover{border-color:var(--faint)}
    destructive-form pattern (plain POST + hx-post, no browser confirm()),
    extended with this reveal step per the controller ruling. */
 .confirm-check{position:absolute; opacity:0; width:1px; height:1px; overflow:hidden}
-.confirm-toggle{display:inline-flex; align-items:center; gap:8px; margin-left:8px}
+.confirm-toggle{position:relative; display:inline-flex; align-items:center; gap:8px; margin-left:8px}
 .confirm-toggle:first-child{margin-left:0}
 .confirm-toggle .confirm-armed{display:none; align-items:center; gap:8px}
 .confirm-check:checked ~ .confirm-ask{display:none}
@@ -595,6 +595,8 @@ input.switch:checked::after{left:19px;background:var(--bg)}
      container so it never pushes the page sideways, and keep each tab intact
      (no truncation) with a comfortable touch target. */
   .tabs{overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  /* hint that the tab strip scrolls */
+  .tabs{padding-right:28px; -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent); mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
   .tabs::-webkit-scrollbar{display:none}
   .tabs button{padding:12px 14px; min-height:44px; white-space:nowrap; flex:0 0 auto}
   /* narrow inline inputs (e.g. config per-target threshold) may stay compact */
@@ -612,6 +614,10 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   .cardpanel{background:transparent; border:0; border-radius:0; overflow:visible; padding:0}
   .cardpanel .tablewrap{overflow:visible; max-height:none}
   table.cards,table.cards tbody,table.cards td{display:block; width:auto}
+  table.cards td{overflow-wrap:anywhere}
+  .legend.seg{flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; gap:6px}
+  .legend.seg .chip{flex:none; min-height:34px; padding:0 12px}
+  .head:has(> .legend.seg){align-items:center; gap:10px}
   table.cards thead{position:absolute; width:1px; height:1px; padding:0; margin:-1px;
     overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0} /* visually hide headers */
   /* row is a flex column so the identifier cell can hoist to the top (order:-1)
