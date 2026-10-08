@@ -45,7 +45,7 @@ sudo trinetra telegram set-token <token>   # the only required setting
   [routing](#routing-and-escalation) · [rules](#fleet-wide-rules) ·
   [silences](#silences-and-maintenance-windows) ·
   [managed config](#managed-config) · [admin and audit](#fleet-admin-and-audit) ·
-  [security](#security) · [any screen](#any-screen-any-theme)
+  [status page](#public-status-page) · [security](#security) · [any screen](#any-screen-any-theme)
 - [How it works](#how-it-works)
 - [Quick start](#quick-start) · [Build a fleet](#build-a-fleet) ·
   [Upgrading from serverwatch](#upgrading-from-serverwatch)
@@ -219,6 +219,17 @@ Telegram, lands in the audit log with who did it.
 <td width="50%"><img src="docs/assets/screenshots/audit-log.webp" alt="Audit log: time, actor, action, target and detail"></td>
 </tr>
 </table>
+
+### Public status page
+
+Publish named services (an API, a database, a tag of nodes) whose status comes
+straight from monitoring, with a 90-day history, an Atom feed and a JSON API.
+Incidents open on their own when a service goes down, and your team posts
+updates as a `responder`, a role that can work incidents without admin rights.
+Internal names, IPs and alert keys never appear publicly. See the
+[handbook](docs/handbook/08-web-ui.md#public-status-page).
+
+<img src="docs/assets/screenshots/status-public.webp" alt="Public status page: banner, active incident, services with 90-day bars" width="100%">
 
 ### Security
 

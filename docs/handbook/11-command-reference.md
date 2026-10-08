@@ -56,6 +56,7 @@ column.
 | `alerts ack <key>` | Acknowledge an active alert. | persists (see Notes) |
 | `alerts unack <key>` | Un-acknowledge an alert. | persists (see Notes) |
 | `fleet <subcommand>` | Fleet mode: make this host a master, join or leave one, manage nodes and join codes. | see [`trinetra fleet`](#trinetra-fleet) |
+| `status-page <subcommand>` | Public status page: manage services and incidents. | see [`trinetra status-page`](#trinetra-status-page) |
 | `update <subcommand>` | Signed self-update: check, apply, roll back, and report status. | see [`trinetra update`](#trinetra-update) |
 
 This section covers the daemon, lifecycle, and low-level scriptable commands.
@@ -248,6 +249,37 @@ sudo systemctl restart trinetra
 
 # back on the master
 sudo trinetra fleet nodes --tag prod
+```
+
+## trinetra status-page
+
+`trinetra status-page` manages the [public status page](08-web-ui.md#public-status-page)
+through the running daemon (standalone host or fleet master; a child refuses).
+
+```
+usage:
+  trinetra status-page service list
+  trinetra status-page service add <id> --name N [--group G] [--desc D] [--order N] [--hold 3m] --target T ...
+  trinetra status-page service rm <id>
+  trinetra status-page incident list [--all]
+  trinetra status-page incident show <id>
+  trinetra status-page incident open --title T --service ID ... --impact degraded|outage|maintenance --message M [--status S]
+  trinetra status-page incident update <id> --status S --message M
+  trinetra status-page incident resolve <id> [--message M]
+```
+
+| Command | Output / effect |
+| --- | --- |
+| `service list` | One line per service: `<id> <name> <state> <reason>`. |
+| `service add` | Creates or replaces a service. `--target` is repeatable: `host`, `node:<id>`, `tag:<tag>`, `container:<name>[@node]`, `unit:<unit>[@node]`, `mount:<path>[@node]`. `--hold` is the hold-down (0 to 1h, default 3m). |
+| `incident list` | Open incidents (all with `--all`) as `<id>  <status> <impact> <title>`. |
+| `incident open` | Starts a manual incident on the given services. |
+| `incident update` | Posts an update with status `investigating`, `identified`, `monitoring` or `resolved`; echoed to `status.echo_channels`. |
+| `incident resolve` | Posts a final `resolved` update. |
+
+```bash
+sudo trinetra status-page service add api --name "API" --group Core --target tag:api --hold 30s
+sudo trinetra status-page incident open --title "Elevated errors" --service api --impact degraded --message "We are looking into it."
 ```
 
 ## trinetra update

@@ -327,6 +327,18 @@ the anonymous page can render. A metric absent from this list can never appear
 on `/public` even though it exists elsewhere, so curating this list is the whole
 of the public page's exposure surface.
 
+### Status page
+
+Settings for the public status page; see [Public status
+page](08-web-ui.md#public-status-page) for how services and incidents work.
+Services themselves are managed with `trinetra status-page`, not `config set`.
+
+| Key | Default | Validation |
+|-----|---------|------------|
+| `status.title` | `Status` | None. Heading of the public page. |
+| `status.auto_resolve_after` | `24h` | Duration string. `0` disables auto-resolve; any other value must be at least `1h`. |
+| `status.echo_channels` | empty | Comma-separated channel names. Each new incident update is sent to these. |
+
 ---
 
 [Configuration](04-configuration.md) | [Handbook index](README.md)

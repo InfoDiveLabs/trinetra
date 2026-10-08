@@ -132,6 +132,11 @@ Rolled up across the stable releases, the following is done and verified:
 - **The front-door install and safe-exec model**, with checksum-manifest
   verification before a plugin is exec'd and restart-on-upgrade of a running
   daemon.
+- **The public status page.** Admin-defined services mapped to a host, fleet
+  nodes, tags, containers, units or mounts; hold-down status evaluation, 90 day
+  bars, automatic and hand-posted incidents with updates, an Atom feed and a
+  JSON API, plus a `responder` web role and the `trinetra status-page` CLI.
+  See [Public status page](08-web-ui.md#public-status-page).
 - **Bounded-retry alert delivery.** The async notifier queue behind every
   channel (solo and fleet fallback alike) retries a failing channel with
   backoff instead of delivering once and giving up, without ever
@@ -207,9 +212,9 @@ plain about them:
   buttons on its own incident fire messages, authorized per enrolled chat
   (see [Fleet alerting](06-alerting-and-channels.md#telegram-buttons)), but
   the rest of phase 4 is still open --
-  `trinetra-ctl` has no fleet status/nodes/link-health screens yet, the
+  `trinetra-ctl` has no fleet status/nodes/link-health screens yet, and the
   Telegram bot has no `/fleet`, `/node <name>`, or `/incidents` text
-  commands, and the public status page has no fleet-level view.
+  commands.
 
   A few edges are known and parked rather than silently absent:
 
