@@ -88,12 +88,12 @@ const (
 
 // Limits.
 const (
-	MaxUpdateBytes  = 4096
-	MaxTitleRunes   = 200
-	MaxNameRunes    = 60
-	MaxDescRunes    = 200
-	MaxHoldDownSec  = 3600
-	SystemAuthor    = "system"
+	MaxUpdateBytes = 4096
+	MaxTitleRunes  = 200
+	MaxNameRunes   = 60
+	MaxDescRunes   = 200
+	MaxHoldDownSec = 3600
+	SystemAuthor   = "system"
 )
 
 // UpdateEdit records a previous version of an edited update.
@@ -157,11 +157,11 @@ type ServiceEvaluation struct {
 // Public view: the ONLY shape that reaches anonymous output. It has no ids
 // of nodes, no targets, no triggers, no authors.
 type PublicService struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Group       string         `json:"group,omitempty"`
-	State       ServiceState   `json:"state"`
-	History     []PublicDay    `json:"history"` // oldest first, 90 entries
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	Group       string       `json:"group,omitempty"`
+	State       ServiceState `json:"state"`
+	History     []PublicDay  `json:"history"` // oldest first, 90 entries
 }
 
 type PublicDay struct {
@@ -189,10 +189,10 @@ type PublicIncident struct {
 
 // Overall banners.
 const (
-	OverallOperational  = "operational"
-	OverallPartial      = "partial_outage"
-	OverallMajor        = "major_outage"
-	OverallMaintenance  = "maintenance"
+	OverallOperational = "operational"
+	OverallPartial     = "partial_outage"
+	OverallMajor       = "major_outage"
+	OverallMaintenance = "maintenance"
 )
 
 type PublicStatus struct {
@@ -305,7 +305,7 @@ func ValidateNewIncident(in NewIncident) error {
 	switch in.Impact {
 	case StateDegraded, StateOutage, StateMaintenance:
 	default:
-		return fmt.Errorf("impact must be degraded, outage or maintenance")
+		return errors.New("impact must be degraded, outage or maintenance")
 	}
 	return ValidateUpdate(in.Update)
 }

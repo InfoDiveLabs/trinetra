@@ -14,7 +14,7 @@ func TestValidateStatusService(t *testing.T) {
 	}
 	bad := []StatusService{
 		{ID: "", Name: "API"},
-		{ID: "API", Name: "API"},                      // uppercase slug
+		{ID: "API", Name: "API"}, // uppercase slug
 		{ID: strings.Repeat("a", 41), Name: "x"},
 		{ID: "api", Name: ""},
 		{ID: "api", Name: strings.Repeat("n", 61)},
@@ -22,9 +22,9 @@ func TestValidateStatusService(t *testing.T) {
 		{ID: "api", Name: "API", HoldDownSec: -1},
 		{ID: "api", Name: "API", HoldDownSec: 3601},
 		{ID: "api", Name: "API", Targets: []StatusTarget{{Kind: "bogus"}}},
-		{ID: "api", Name: "API", Targets: []StatusTarget{{Kind: TargetTag}}},             // tag needs value
-		{ID: "api", Name: "API", Targets: []StatusTarget{{Kind: TargetContainer}}},       // container needs value
-		{ID: "api", Name: "API", Targets: []StatusTarget{{Kind: TargetNode}}},            // node needs Node
+		{ID: "api", Name: "API", Targets: []StatusTarget{{Kind: TargetTag}}},       // tag needs value
+		{ID: "api", Name: "API", Targets: []StatusTarget{{Kind: TargetContainer}}}, // container needs value
+		{ID: "api", Name: "API", Targets: []StatusTarget{{Kind: TargetNode}}},      // node needs Node
 	}
 	for i, s := range bad {
 		if err := ValidateStatusService(s); err == nil {
