@@ -38,15 +38,20 @@ func gatherStandalone(active map[string]ActiveAlert, snap Snapshot) statusInputs
 	}
 }
 
-// maintenanceActiveForNode reports whether any maintenance window that
-// could apply to the node is active now.
+// maintenanceActiveForNode reports whether a whole-node maintenance window
+// (an applicable matcher with no rule or severity scope) is active now.
 func maintenanceActiveForNode(s *silenceStore, now time.Time, id, name string, tags []string) bool {
 	if s == nil {
 		return false
 	}
 	for _, m := range s.Maintenances() {
-		if maintenanceActiveAt(m, now) && len(applicableMatchers(m.Matchers, id, name, tags)) > 0 {
-			return true
+		if !maintenanceActiveAt(m, now) {
+			continue
+		}
+		for _, mt := range applicableMatchers(m.Matchers, id, name, tags) {
+			if mt.Rule == "" && mt.Severity == "" {
+				return true
+			}
 		}
 	}
 	return false
@@ -77,7 +82,7 @@ func gatherMaster(m *masterState, selfActive map[string]ActiveAlert, snap Snapsh
 		}
 		known[n.ID] = true
 		in.Tags[n.ID] = n.Tags
-		in.Down[n.ID] = m.tracker.State(n.ID) == fleet.StateDown
+		in.Down[n.ID] = nodeDownForStatus(m, n.ID, now)
 		in.Maint[n.ID] = maintenanceActiveForNode(m.silences, now, n.ID, n.Name, n.Tags)
 		api, err := m.sink.NodeAPI(n.ID, m.getCfg)
 		if err != nil {
@@ -104,4 +109,20 @@ func gatherMaster(m *masterState, selfActive map[string]ActiveAlert, snap Snapsh
 		}
 	}
 	return in
+}
+
+// nodeDownForStatus reports whether the node counts as down for the public
+// page: the tracker says down, it was alerted individually (a fleet-wide
+// connectivity drop raises one fleet:connectivity alert instead, and does not
+// mark nodes down), and its node-down alert is not silenced.
+func nodeDownForStatus(m *masterState, id string, now time.Time) bool {
+	if m.tracker.State(id) != fleet.StateDown {
+		return false
+	}
+	if m.loop != nil && !m.loop.nodeDownAlerted(id) {
+		return false
+	}
+	// Node-down alerts are master-owned, so the engine matches them with an
+	// empty node id/name and no tags (fleet_engine.go Submit).
+	return m.silences == nil || m.silences.Suppressed(now.Unix(), "", "", nil, nodeDownKey(id), "critical") == nil
 }

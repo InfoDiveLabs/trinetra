@@ -98,7 +98,7 @@ func computeServiceState(svc core.StatusService, in statusInputs) (core.ServiceS
 		}
 		key := targetKey(t)
 		for _, node := range targetNodes(t, in) {
-			if in.Down[node] {
+			if in.Down[node] && !in.Maint[node] { // planned downtime shows as maintenance
 				bump(core.StateOutage, nodeLabel(node)+" is down")
 			}
 			for _, s := range in.Signals {

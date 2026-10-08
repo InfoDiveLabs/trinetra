@@ -333,6 +333,14 @@ func trackUnseen(reg *fleet.Registry, tracker *fleet.Tracker, now int64) {
 	}
 }
 
+// nodeDownAlerted reports whether the loop has an individual node-down alert
+// open for id; a node lost as part of a fleet-wide connectivity drop does not.
+func (l *masterLoop) nodeDownAlerted(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.alerter != nil && l.alerter.Alerted(id)
+}
+
 func (l *masterLoop) tick(now time.Time) {
 	l.mu.Lock()
 	trackUnseen(l.reg, l.tracker, now.Unix())
