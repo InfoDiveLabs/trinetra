@@ -16,7 +16,7 @@
   <aside class="side">{{block "nav" .}}
     <div class="brand"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="120" height="32"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="120" height="32"><small>{{.ServerName}}</small></div>
     <nav class="nav">
-      {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}} title="{{.Label}}" aria-label="{{.Label}}"><span class="ic">{{.Icon}}</span><span class="lb">{{.Label}}</span>{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
+      {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}} title="{{.Label}}" aria-label="{{.Label}}"><span class="ic">{{icon .Icon}}</span><span class="lb">{{.Label}}</span>{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
       {{end}}
     </nav>
     <div class="foot">
@@ -66,11 +66,11 @@
 
   <!-- mobile bottom tab bar (<=640px only; display:none above) -- primary sections -->
   <nav class="botnav" aria-label="Primary">
-    <a href="{{nodeHref .Node.Prefix "/"}}"{{if eq (nodeHref .Node.Prefix "/") .Active}} class="active"{{end}}><span class="ic">◉</span><span class="lb">Dashboard</span></a>
-    <a href="{{nodeHref .Node.Prefix "/monitoring"}}"{{if eq (nodeHref .Node.Prefix "/monitoring") .Active}} class="active"{{end}}><span class="ic">▤</span><span class="lb">Monitoring</span></a>
-    <a href="{{nodeHref .Node.Prefix "/history"}}"{{if eq (nodeHref .Node.Prefix "/history") .Active}} class="active"{{end}}><span class="ic">◔</span><span class="lb">History</span></a>
-    <a href="{{nodeHref .Node.Prefix "/alerts"}}"{{if eq (nodeHref .Node.Prefix "/alerts") .Active}} class="active"{{end}}><span class="ic">!</span><span class="lb">Alerts</span>{{range .Nav}}{{if eq .Href (nodeHref $.Node.Prefix "/alerts")}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}{{end}}{{end}}</a>
-    <button type="button" class="botmore" id="moreBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="moreSheet"><span class="ic">⋯</span><span class="lb">More</span></button>
+    <a href="{{nodeHref .Node.Prefix "/"}}"{{if eq (nodeHref .Node.Prefix "/") .Active}} class="active"{{end}}><span class="ic">{{icon "dashboard"}}</span><span class="lb">Dashboard</span></a>
+    <a href="{{nodeHref .Node.Prefix "/monitoring"}}"{{if eq (nodeHref .Node.Prefix "/monitoring") .Active}} class="active"{{end}}><span class="ic">{{icon "pulse"}}</span><span class="lb">Monitoring</span></a>
+    <a href="{{nodeHref .Node.Prefix "/history"}}"{{if eq (nodeHref .Node.Prefix "/history") .Active}} class="active"{{end}}><span class="ic">{{icon "history"}}</span><span class="lb">History</span></a>
+    <a href="{{nodeHref .Node.Prefix "/alerts"}}"{{if eq (nodeHref .Node.Prefix "/alerts") .Active}} class="active"{{end}}><span class="ic">{{icon "bell"}}</span><span class="lb">Alerts</span>{{range .Nav}}{{if eq .Href (nodeHref $.Node.Prefix "/alerts")}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}{{end}}{{end}}</a>
+    <button type="button" class="botmore" id="moreBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="moreSheet"><span class="ic">{{icon "more"}}</span><span class="lb">More</span></button>
   </nav>
 
   <!-- "More" sheet: remaining nav items + account/sign-out (mobile only) -->
@@ -78,7 +78,7 @@
   <aside class="sheet" id="moreSheet" role="dialog" aria-modal="true" aria-label="More navigation">
     <div class="sheet-grip"></div>
     <nav class="sheet-nav">
-      {{range .Nav}}{{if not .Heading}}{{if and (ne .Href (nodeHref $.Node.Prefix "/")) (ne .Href (nodeHref $.Node.Prefix "/monitoring")) (ne .Href (nodeHref $.Node.Prefix "/history")) (ne .Href (nodeHref $.Node.Prefix "/alerts"))}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{.Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}{{end}}{{end}}
+      {{range .Nav}}{{if not .Heading}}{{if and (ne .Href (nodeHref $.Node.Prefix "/")) (ne .Href (nodeHref $.Node.Prefix "/monitoring")) (ne .Href (nodeHref $.Node.Prefix "/history")) (ne .Href (nodeHref $.Node.Prefix "/alerts"))}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{icon .Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}{{end}}{{end}}
     </nav>
     <div class="sheet-foot">
       <div class="who">

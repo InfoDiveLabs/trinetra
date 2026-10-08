@@ -207,115 +207,50 @@ func linkUnreachable(l *core.LinkView) bool {
 	return time.Since(time.Unix(l.LastAck, 0)) > linkUnreachableThreshold
 }
 
-// NavItem is one entry in the sidebar nav -- either a section heading (just
-// Heading set) or a link (Href/Icon/Label, optionally Badge), mirroring the
-// mockup app.js NAV array's {h:...} and {p:,ic:,t:,ct:} shapes.
+// NavItem is one sidebar entry: a section heading (Heading only) or a link.
 type NavItem struct {
 	Heading string
 	Href    string
-	Icon    string
+	Icon    string // a navIcons name
 	Label   string
 	Badge   string
 }
 
-// navEntry is a NavItem plus the role/fleet-role gates navForRole filters
-// on and never exposes to templates: AdminOnly mirrors the mockup NAV's
-// `admin:true` flag; MasterOnly (task 5, fleet-web-a) is this daemon's own
-// fleetRole gate for the "Fleet" entry -- solo/child daemons never show it
-// at all (global-constraints.md: "no fleet nav" on solo/child).
+// navEntry adds the gates navForRole filters on.
 type navEntry struct {
 	NavItem
 	AdminOnly bool
-	// MinRole gates the entry on a minimum role rank (zero = viewer).
-	MinRole Role
-	// MasterOnly entries are ALSO exempt from node-prefixing (see
-	// navForRole): unlike Dashboard/Monitoring/etc, "/fleet" is a
-	// master-local URL (node_scope.go's masterLocalPrefixes) that's
-	// reachable -- unprefixed -- from every page, including a remote
-	// node's (task-3-brief.md's nodeLinkAllowlist already carried "/fleet"
-	// in anticipation of this), not just the master's own self-scoped
-	// pages the way AdminOnly entries are restricted to.
+	MinRole   Role // minimum role rank (zero = viewer)
+	// MasterOnly entries show only on a fleet master and are master-local
+	// URLs, so they are never node-prefixed.
 	MasterOnly bool
 }
 
-// navItems mirrors the mockup app.js NAV array verbatim (headings, paths,
-// icons, labels, admin gating) with mockup .html paths swapped for the
-// server's real routes. Badge values are deliberately NOT set here: the
-// mockup's hardcoded demo counts (Monitoring 220 / Alerts 2 / Channels 5 /
-// Users 3) are computed fresh per request instead (navCountsFor, badgeFor
-// below) so they never go stale.
+// navItems is the sidebar. Badges are computed per request (badgeFor). Some
+// admin-only entries (Alerting, Managed config) stay readable by viewers who
+// type the URL; routes.go owns that gating.
 var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Monitor"}},
-	{NavItem: NavItem{Href: "/fleet", Icon: "⛶", Label: "Fleet"}, MasterOnly: true},
-	// Incidents (task C2, fleet phase 2 web UI plan C): master only, visible
-	// to viewers (no AdminOnly gate -- read-only for a viewer, ack/silence
-	// are admin+CSRF-gated at the route/handler level), badged with the
-	// firing count (badgeFor's "/fleet/incidents" case, nav_counts.go). Like
-	// "/fleet" above, MasterOnly also exempts its Href from node-prefixing --
-	// it only ever means "this master's own incidents".
-	{NavItem: NavItem{Href: "/fleet/incidents", Icon: "⚠", Label: "Incidents"}, MasterOnly: true},
-	// Status updates (#157): public status-page incidents, responder+.
-	{NavItem: NavItem{Href: "/status-page/incidents", Icon: "📣", Label: "Status updates"}, MinRole: RoleResponder},
-	// Silences (task C4, fleet phase 2 web UI plan C): master only, visible
-	// to viewers -- the brief's own ruling ("'Silences' in the Monitor
-	// group, master only, visible to viewers"). Read-only for a viewer
-	// (every create/expire/delete mutation is admin+CSRF-gated at the
-	// route/handler level, handlers_fleet_silences.go), exactly like
-	// "Incidents" above.
-	{NavItem: NavItem{Href: "/fleet/silences", Icon: "☾", Label: "Silences"}, MasterOnly: true},
-	{NavItem: NavItem{Href: "/", Icon: "◉", Label: "Dashboard"}},
-	{NavItem: NavItem{Href: "/monitoring", Icon: "▤", Label: "Monitoring"}},
-	{NavItem: NavItem{Href: "/host", Icon: "▢", Label: "Host"}},
-	{NavItem: NavItem{Href: "/alerts", Icon: "!", Label: "Alerts"}},
-	{NavItem: NavItem{Href: "/history", Icon: "◔", Label: "History"}},
+	{NavItem: NavItem{Href: "/fleet", Icon: "fleet", Label: "Fleet"}, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/incidents", Icon: "incidents", Label: "Incidents"}, MasterOnly: true},
+	{NavItem: NavItem{Href: "/status-page/incidents", Icon: "announce", Label: "Status updates"}, MinRole: RoleResponder},
+	{NavItem: NavItem{Href: "/fleet/silences", Icon: "silence", Label: "Silences"}, MasterOnly: true},
+	{NavItem: NavItem{Href: "/", Icon: "dashboard", Label: "Dashboard"}},
+	{NavItem: NavItem{Href: "/monitoring", Icon: "pulse", Label: "Monitoring"}},
+	{NavItem: NavItem{Href: "/host", Icon: "host", Label: "Host"}},
+	{NavItem: NavItem{Href: "/alerts", Icon: "bell", Label: "Alerts"}},
+	{NavItem: NavItem{Href: "/history", Icon: "history", Label: "History"}},
 	{NavItem: NavItem{Heading: "Admin"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/config", Icon: "⚙", Label: "Configuration"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/channels", Icon: "✉", Label: "Channels"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/users", Icon: "◇", Label: "Users"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/settings/public", Icon: "◈", Label: "Public view"}, AdminOnly: true},
-	{NavItem: NavItem{Href: "/status-page/services", Icon: "◉", Label: "Status page"}, AdminOnly: true},
-	// Updates (task 8): signed self-update status + manual actions
-	// (check/apply/rollback). Admin-only like Configuration/Channels/Users/
-	// Public view above -- self-update is a per-node action, so unlike
-	// Alerting/Fleet admin/Managed config/Audit below it is NOT MasterOnly
-	// and stays reachable (and node-prefixed, navForRole's default) from any
-	// daemon's own nav, solo, master, or child.
-	{NavItem: NavItem{Href: "/updates", Icon: "⬆", Label: "Updates"}, AdminOnly: true},
-	// Alerting (task C3, fleet phase 2 web UI plan C): the routing/
-	// escalation config editor, route tester, and rule states. AdminOnly +
-	// MasterOnly, exactly like "Fleet admin" below -- the brief's own
-	// ruling ("Alerting in the Admin group, master only, visible to
-	// admins"). A viewer gets no nav link (this entry) but the route
-	// itself stays viewer-gated read-only (routes.go), reachable by typing
-	// the URL directly -- deliberate: the brief left this an open call
-	// ("decide whether the nav should show for viewers too, and document
-	// it"), and every other Admin-group entry already hides from viewers
-	// this same way, so a lone exception here would be the surprising
-	// choice, not this one.
-	{NavItem: NavItem{Href: "/fleet/alerting", Icon: "⚡", Label: "Alerting"}, AdminOnly: true, MasterOnly: true},
-	// Fleet admin (Task 7, fleet-web-a): node management + join tokens.
-	// Admin role AND fleet master, both required (global-constraints.md/
-	// task-7-brief.md's ruling) -- AdminOnly gates on role (and, like every
-	// other AdminOnly entry, on node.Self: it's a master-local page,
-	// node_scope.go's masterLocalPrefixes), MasterOnly gates on fleetRole
-	// exactly like the "/fleet" entry above, and (per MasterOnly's own doc)
-	// also exempts this entry's Href from node-prefixing -- "/fleet/admin"
-	// only ever means "this master's own admin page".
-	{NavItem: NavItem{Href: "/fleet/admin", Icon: "⚑", Label: "Fleet admin"}, AdminOnly: true, MasterOnly: true},
-	// Managed config (task C5, fleet phase 2 web UI plan C): the managed-
-	// config fragment editor + per-node status. AdminOnly + MasterOnly,
-	// exactly like "Fleet admin" above -- task-5-brief.md's ruling ("Managed
-	// config in the Admin group, master only, admin only"). GET itself stays
-	// viewer-gated read-only (routes.go), reachable by typing the URL
-	// directly, matching "Alerting"'s precedent above.
-	{NavItem: NavItem{Href: "/fleet/managed", Icon: "▥", Label: "Managed config"}, AdminOnly: true, MasterOnly: true},
-	// Audit (task C5): the fleet audit log. AdminOnly + MasterOnly, per the
-	// same ruling ("'Audit' in the Admin group, master only, admin only") --
-	// unlike Managed config/Alerting, the audit log itself is admin-only
-	// end to end (task-5-brief.md's route list has no viewer-readable GET
-	// here), so there is no "hidden from viewers but still reachable by
-	// URL" nuance to document.
-	{NavItem: NavItem{Href: "/fleet/audit", Icon: "▦", Label: "Audit"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Href: "/config", Icon: "sliders", Label: "Configuration"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/channels", Icon: "send", Label: "Channels"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/users", Icon: "users", Label: "Users"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/settings/public", Icon: "globe", Label: "Public view"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/status-page/services", Icon: "status", Label: "Status page"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/updates", Icon: "update", Label: "Updates"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/fleet/alerting", Icon: "zap", Label: "Alerting"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/admin", Icon: "shield", Label: "Fleet admin"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/managed", Icon: "file", Label: "Managed config"}, AdminOnly: true, MasterOnly: true},
+	{NavItem: NavItem{Href: "/fleet/audit", Icon: "list", Label: "Audit"}, AdminOnly: true, MasterOnly: true},
 }
 
 // navForRole returns navItems filtered to what role may see (viewers get
