@@ -2,9 +2,11 @@
 <div class="center"><div class="card">
   <div class="logo"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="144" height="39"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="144" height="39"></div>
   <div class="key">⚷</div>
-  <h2 style="text-align:center">Sign in</h2><p class="sub" style="text-align:center" id="loginStatus">Use your passkey — no password to remember.</p>
+  <h2 style="text-align:center">Sign in</h2><p class="sub" style="text-align:center" id="loginStatus" role="status" aria-live="polite">Use your passkey — no password to remember.</p>
+  <div class="flash err" id="pkUnsupported" role="alert" hidden></div>
   <button class="btn primary" id="loginBtn" style="width:100%;justify-content:center;padding:12px">Continue with passkey</button>
-  <p class="note" style="text-align:center;margin-top:16px">Touch ID · Windows Hello · security key</p>
+  <label class="field" style="margin-top:16px"><span class="lb">Your name <span class="note">(optional)</span></span><input type="text" id="loginName" name="username" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" placeholder="only if your passkey doesn't appear"></label>
+  <p class="note" style="text-align:center;margin-top:12px">Works with Android, iPhone, Mac, Windows, password managers and security keys. Passkey on your phone? Choose “use another device” in the prompt and scan the QR code.</p>
   <p class="note" style="text-align:center;margin-top:22px;border-top:1px solid var(--border-soft);padding-top:16px">Have an invite? <a href="/enroll">Set up a passkey →</a></p>
 </div></div>
 {{end}}

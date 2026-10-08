@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -538,10 +539,9 @@ func loginPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// loginBeginHandler starts a WebAuthn login (assertion) ceremony
-// (beginLogin, auth_webauthn.go) using client-side discoverable
-// credentials -- the login page's single "Continue with passkey" button
-// posts here with no body, no username.
+// loginBeginHandler starts a WebAuthn sign-in. With no body (or an empty
+// name) the device lists its passkeys for this site; {"name": "..."} lists
+// that account's passkeys instead, for keys that are not discoverable.
 func loginBeginHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		wa, err := webAuthnConfig(d.Cfg(), r)
@@ -549,8 +549,14 @@ func loginBeginHandler(d Deps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		var body struct {
+			Name string `json:"name"`
+		}
+		if r.ContentLength != 0 {
+			_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+		}
 		ceremonies := newCeremonyStore(d.StateDir)
-		assertion, err := beginLogin(w, r, wa, ceremonies)
+		assertion, err := beginLoginFor(w, r, wa, ceremonies, newUserStore(d.StateDir), body.Name)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

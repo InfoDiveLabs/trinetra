@@ -2,12 +2,15 @@ package web
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -76,10 +79,22 @@ func webAuthnConfig(cfg *config.Config, r *http.Request) (*webauthn.WebAuthn, er
 		}
 		rpID = u.Hostname()
 	}
+	requireRK := false
 	return webauthn.New(&webauthn.Config{
 		RPID:          rpID,
 		RPDisplayName: "Trinetra",
 		RPOrigins:     []string{origin},
+		// Ask for a discoverable credential so the default sign-in (no name)
+		// can list it; the spec default ("discouraged") made Android and
+		// some password managers create keys that never showed up there.
+		// "preferred" rather than "required" so old security keys without
+		// discoverable storage can still register; they sign in by name.
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			ResidentKey:        protocol.ResidentKeyRequirementPreferred,
+			RequireResidentKey: &requireRK,
+			UserVerification:   protocol.VerificationPreferred,
+		},
+		AttestationPreference: protocol.PreferNoAttestation,
 	})
 }
 
@@ -228,17 +243,72 @@ func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, c
 	if err != nil {
 		return nil, fmt.Errorf("web: begin login: %w", err)
 	}
+	return assertion, stashLoginCeremony(w, r, sessionData, ceremonies)
+}
+
+// beginLoginFor starts a sign-in for the account called name, listing its
+// credentials (with their transports) so keys that are not discoverable
+// still work. An empty name is the usual discoverable sign-in. An unknown
+// name gets a stable decoy credential, so the response does not reveal
+// whether the account exists.
+func beginLoginFor(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, ceremonies SessionStore, users UserStore, name string) (*protocol.CredentialAssertion, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return beginLogin(w, r, wa, ceremonies)
+	}
+	var target webauthn.User = decoyLoginUser(name)
+	for _, u := range users.List() {
+		if strings.EqualFold(u.Name, name) && len(u.Credentials) > 0 {
+			target = u
+			break
+		}
+	}
+	assertion, sessionData, err := wa.BeginLogin(target)
+	if err != nil {
+		return nil, fmt.Errorf("web: begin login: %w", err)
+	}
+	return assertion, stashLoginCeremony(w, r, sessionData, ceremonies)
+}
+
+// decoySecret keys decoy credential ids; it changes per process, so a decoy
+// cannot be recomputed offline and told apart from a real credential id.
+var decoySecret = func() []byte {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return b
+}()
+
+type decoyUser struct{ id, credID []byte }
+
+func decoyLoginUser(name string) decoyUser {
+	mac := hmac.New(sha256.New, decoySecret)
+	mac.Write([]byte(strings.ToLower(name)))
+	sum := mac.Sum(nil)
+	return decoyUser{id: append([]byte("decoy:"), sum[:8]...), credID: sum}
+}
+
+func (d decoyUser) WebAuthnID() []byte          { return d.id }
+func (d decoyUser) WebAuthnName() string        { return "" }
+func (d decoyUser) WebAuthnDisplayName() string { return "" }
+func (d decoyUser) WebAuthnIcon() string        { return "" }
+func (d decoyUser) WebAuthnCredentials() []webauthn.Credential {
+	return []webauthn.Credential{{ID: d.credID, Transport: []protocol.AuthenticatorTransport{protocol.Internal, protocol.Hybrid}}}
+}
+
+func stashLoginCeremony(w http.ResponseWriter, r *http.Request, sessionData *webauthn.SessionData, ceremonies SessionStore) error {
 	data, err := json.Marshal(sessionData)
 	if err != nil {
-		return nil, fmt.Errorf("web: encode login ceremony: %w", err)
+		return fmt.Errorf("web: encode login ceremony: %w", err)
 	}
 	sess, err := ceremonies.New("", ceremonyTTL)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	sess.Data = data
 	if err := ceremonies.Put(sess); err != nil {
-		return nil, err
+		return err
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     loginCeremonyCookie,
@@ -249,7 +319,7 @@ func beginLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, c
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   300, // 5 minutes: matches ceremonyTTL.
 	})
-	return assertion, nil
+	return nil
 }
 
 // finishLogin completes the ceremony beginLogin started: it reads
@@ -293,24 +363,45 @@ func finishLogin(w http.ResponseWriter, r *http.Request, wa *webauthn.WebAuthn, 
 		return fmt.Errorf("web: decode login session: %w", err)
 	}
 
+	parsed, err := protocol.ParseCredentialRequestResponse(r)
+	if err != nil {
+		return fmt.Errorf("web: finish login: %w", err)
+	}
 	var matched *User
-	cred, err := wa.FinishDiscoverableLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
-		u, ok := users.Get(string(userHandle))
+	var cred *webauthn.Credential
+	if len(sessionData.UserID) > 0 {
+		// Signed in by name (beginLogin with a name): the credential may be
+		// non-discoverable and return no user handle.
+		u, ok := users.Get(string(sessionData.UserID))
 		if !ok {
-			return nil, fmt.Errorf("web: unknown credential user")
+			return fmt.Errorf("web: unknown credential user")
 		}
 		matched = u
-		return u, nil
-	}, sessionData, r)
+		cred, err = wa.ValidateLogin(u, sessionData, parsed)
+	} else {
+		cred, err = wa.ValidateDiscoverableLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
+			u, ok := users.Get(string(userHandle))
+			if !ok {
+				return nil, fmt.Errorf("web: unknown credential user")
+			}
+			matched = u
+			return u, nil
+		}, sessionData, parsed)
+	}
 	if err != nil {
 		return fmt.Errorf("web: finish login: %w", err)
 	}
 	if matched == nil {
 		return fmt.Errorf("web: internal error: no user resolved for login")
 	}
-	if cred.Authenticator.CloneWarning {
+	// A counter that is still counting but did not advance is the textbook
+	// clone signal. A counter of 0 means the authenticator does not count
+	// (synced passkeys always report 0), even if it once did.
+	newCount := parsed.Response.AuthenticatorData.Counter
+	if cred.Authenticator.CloneWarning && newCount != 0 {
 		return fmt.Errorf("web: authenticator signature counter did not advance (possible cloned credential); login rejected")
 	}
+	cred.Authenticator.SignCount = newCount
 
 	found := false
 	for i := range matched.Credentials {
