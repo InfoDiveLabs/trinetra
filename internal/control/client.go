@@ -196,7 +196,7 @@ func (c *Client) Close() error {
 // exactly the gap that review caught for core.ErrNoSuchNode/ErrNotMaster,
 // which -- before this fix -- never actually survived a real control-socket
 // round trip, only an in-process one).
-var wireErrSentinels = []error{core.ErrNoSuchNode, core.ErrNotMaster, core.ErrConflict, core.ErrNotFound}
+var wireErrSentinels = []error{core.ErrNoSuchNode, core.ErrNotMaster, core.ErrConflict, core.ErrNotFound, core.ErrStatusPageOnChild}
 
 // wireErr is a control-socket method error whose exact original text (msg)
 // is preserved for display/logging, while still unwrapping (Unwrap) to the
@@ -735,4 +735,60 @@ func (f fleetClient) FleetSeries(metric string, filter core.NodeFilter, agg core
 		"metric": metric, "filter": filter, "agg": agg, "from": from, "to": to, "res": res,
 	}, &v)
 	return v, err
+}
+
+// StatusPage returns the status-page API over the socket (issue #157).
+func (c *Client) StatusPage() core.StatusPageAPI {
+	return statusPageClient{c: &Client{clientConn: c.clientConn}}
+}
+
+type statusPageClient struct{ c *Client }
+
+var _ core.StatusPageAPI = statusPageClient{}
+
+func (s statusPageClient) Services() (out []core.StatusService, err error) {
+	err = s.c.call("StatusPage.Services", nil, &out)
+	return
+}
+func (s statusPageClient) SetService(svc core.StatusService, actor string) (out core.StatusService, err error) {
+	err = s.c.call("StatusPage.SetService", map[string]any{"service": svc, "actor": actor}, &out)
+	return
+}
+func (s statusPageClient) DeleteService(id, actor string) error {
+	return s.c.call("StatusPage.DeleteService", map[string]any{"id": id, "actor": actor}, nil)
+}
+func (s statusPageClient) Evaluation() (out []core.ServiceEvaluation, err error) {
+	err = s.c.call("StatusPage.Evaluation", nil, &out)
+	return
+}
+func (s statusPageClient) Incidents(includeResolved bool) (out []core.StatusIncident, err error) {
+	err = s.c.call("StatusPage.Incidents", map[string]any{"include_resolved": includeResolved}, &out)
+	return
+}
+func (s statusPageClient) Incident(id string) (out core.StatusIncident, err error) {
+	err = s.c.call("StatusPage.Incident", map[string]any{"id": id}, &out)
+	return
+}
+func (s statusPageClient) CreateIncident(in core.NewIncident, actor string) (out core.StatusIncident, err error) {
+	err = s.c.call("StatusPage.CreateIncident", map[string]any{"incident": in, "actor": actor}, &out)
+	return
+}
+func (s statusPageClient) PostUpdate(id string, u core.NewUpdate, actor string) (out core.StatusIncident, err error) {
+	err = s.c.call("StatusPage.PostUpdate", map[string]any{"id": id, "update": u, "actor": actor}, &out)
+	return
+}
+func (s statusPageClient) EditUpdate(id, updateID string, u core.NewUpdate, actor string) (out core.StatusIncident, err error) {
+	err = s.c.call("StatusPage.EditUpdate", map[string]any{"id": id, "update_id": updateID, "update": u, "actor": actor}, &out)
+	return
+}
+func (s statusPageClient) EditIncident(id, title string, services []string, actor string) (out core.StatusIncident, err error) {
+	err = s.c.call("StatusPage.EditIncident", map[string]any{"id": id, "title": title, "services": services, "actor": actor}, &out)
+	return
+}
+func (s statusPageClient) DeleteIncident(id, actor string) error {
+	return s.c.call("StatusPage.DeleteIncident", map[string]any{"id": id, "actor": actor}, nil)
+}
+func (s statusPageClient) Public() (out core.PublicStatus, err error) {
+	err = s.c.call("StatusPage.Public", nil, &out)
+	return
 }

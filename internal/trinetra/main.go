@@ -94,6 +94,8 @@ func Main(args []string) int {
 		return cmdAlerts(args[1:])
 	case "fleet":
 		return cmdFleet(args[1:])
+	case "status-page":
+		return cmdStatusPage(args[1:])
 	case "update":
 		return cmdUpdate(args[1:])
 	case "cli":
@@ -142,6 +144,9 @@ func writesConfigOrState(args []string) bool {
 		return true
 	case "fleet":
 		return in("init", "join", "leave", "disable")
+	case "status-page":
+		return (in("service") && len(args) > 2 && (args[2] == "add" || args[2] == "rm")) ||
+			(in("incident") && len(args) > 2 && (args[2] == "open" || args[2] == "update" || args[2] == "resolve"))
 	case "update":
 		return in("apply", "rollback", "guard")
 	}
@@ -181,6 +186,7 @@ usage:
   trinetra fleet status | nodes [--tag T] [--state S] [--q TEXT]
   trinetra fleet node revoke|remove|rename|tag <node> [value]
   trinetra fleet token create [--tags a,b] [--ttl 1h] [--uses 1] | list | delete <id>
+  trinetra status-page service|incident ...   # manage the public status page (services, incidents)
   trinetra update status [--json] | check | apply [--version V] [--bundle DIR] [--channel C] [--force] | rollback
   trinetra cli                       # interactive management (trinetra-ctl)
   trinetra web                       # web UI (trinetra-web)`

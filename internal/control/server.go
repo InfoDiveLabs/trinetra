@@ -134,6 +134,8 @@ func handleConn(api core.API, conn net.Conn, token string) {
 		switch {
 		case strings.HasPrefix(req.Method, "Fleet."):
 			result, callErr = dispatchFleet(api, req.Method, req.Params)
+		case strings.HasPrefix(req.Method, "StatusPage."):
+			result, callErr = dispatchStatusPage(api, req.Method, req.Params)
 		default:
 			target, err := resolveNode(api, req.Node)
 			if err != nil {
@@ -703,4 +705,68 @@ func dispatchFleet(api core.API, method string, params json.RawMessage) (json.Ra
 		return json.Marshal(v)
 	}
 	return nil, fmt.Errorf("control: unknown method %q", method)
+}
+
+var errNoStatusPage = errors.New("status page not available on this daemon")
+
+func dispatchStatusPage(api core.API, method string, params json.RawMessage) (json.RawMessage, error) {
+	prov, ok := api.(core.StatusPageProvider)
+	if !ok || prov.StatusPage() == nil {
+		return nil, errNoStatusPage
+	}
+	sp := prov.StatusPage()
+	var p struct {
+		ID              string             `json:"id"`
+		UpdateID        string             `json:"update_id"`
+		Actor           string             `json:"actor"`
+		Title           string             `json:"title"`
+		Services        []string           `json:"services"`
+		IncludeResolved bool               `json:"include_resolved"`
+		Service         core.StatusService `json:"service"`
+		Incident        core.NewIncident   `json:"incident"`
+		Update          core.NewUpdate     `json:"update"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+	var v any
+	var err error
+	switch method {
+	case "StatusPage.Services":
+		v, err = sp.Services()
+	case "StatusPage.SetService":
+		v, err = sp.SetService(p.Service, p.Actor)
+	case "StatusPage.DeleteService":
+		err = sp.DeleteService(p.ID, p.Actor)
+	case "StatusPage.Evaluation":
+		v, err = sp.Evaluation()
+	case "StatusPage.Incidents":
+		v, err = sp.Incidents(p.IncludeResolved)
+	case "StatusPage.Incident":
+		v, err = sp.Incident(p.ID)
+	case "StatusPage.CreateIncident":
+		v, err = sp.CreateIncident(p.Incident, p.Actor)
+	case "StatusPage.PostUpdate":
+		v, err = sp.PostUpdate(p.ID, p.Update, p.Actor)
+	case "StatusPage.EditUpdate":
+		v, err = sp.EditUpdate(p.ID, p.UpdateID, p.Update, p.Actor)
+	case "StatusPage.EditIncident":
+		v, err = sp.EditIncident(p.ID, p.Title, p.Services, p.Actor)
+	case "StatusPage.DeleteIncident":
+		err = sp.DeleteIncident(p.ID, p.Actor)
+	case "StatusPage.Public":
+		v, err = sp.Public()
+	default:
+		return nil, fmt.Errorf("unknown method %q", method)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return emptyResult, nil
+	}
+	b, err := json.Marshal(v)
+	return b, err
 }
