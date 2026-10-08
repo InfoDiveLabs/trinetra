@@ -732,3 +732,40 @@ input.switch:checked::after{left:19px;background:var(--bg)}
 .pane-intro{margin:0 0 14px}
 .save-bar{position:sticky; bottom:0; z-index:4; display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:20px; padding:14px 0; border-top:1px solid var(--border-soft); background:var(--bg)}
 @media (max-width:640px){.save-bar{bottom:calc(56px + env(safe-area-inset-bottom))} .save-bar .btn{flex:1 1 auto}}
+
+/* Public status page: readable at a glance. */
+.status-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px}
+.status-brand{display:flex; align-items:center; gap:14px; min-width:0; flex-wrap:wrap}
+.status-logo{width:112px; flex:none}
+.status-login{flex:none; color:var(--muted); font-size:13px; padding:10px 4px}
+.status-banner{display:flex; align-items:center; gap:14px}
+.status-banner-icon .i{width:30px; height:30px}
+.status-banner strong{display:block; font-size:1.25rem}
+.status-banner-sub{font-size:.9rem; opacity:.9; margin-top:2px}
+.status-group{margin-top:22px}
+.status-group-name{font-size:1rem; margin:0 0 4px}
+.status-service-name{display:flex; align-items:center; gap:10px; font-weight:550}
+.status-service .state-icon .i{width:20px; height:20px}
+.status-service-state{font-size:13px; font-weight:550; white-space:nowrap}
+.state-operational .state-icon,.state-operational .status-service-state{color:var(--ok)}
+.state-degraded .state-icon,.state-degraded .status-service-state{color:var(--warn)}
+.state-outage .state-icon,.state-outage .status-service-state{color:var(--crit)}
+.state-maintenance .status-service-state{color:var(--text)}
+.state-maintenance .state-icon{color:var(--text)}
+.status-bar-legend span:nth-child(2){color:var(--text)}
+.status-key{display:flex; flex-wrap:wrap; gap:6px 16px; margin:12px 0 4px}
+.status-key span{display:inline-flex; align-items:center; gap:6px}
+.status-key i{width:10px; height:10px; border-radius:2px; background:var(--track)}
+.status-key .day-operational{background:var(--ok)} .status-key .day-degraded{background:var(--warn)}
+.status-key .day-outage{background:var(--crit)} .status-key .day-maintenance{background:var(--info)}
+.status-section-title{font-size:1.05rem; margin:28px 0 0}
+.status-incident{border-radius:0 var(--r) var(--r) 0; padding:14px 18px}
+.status-incident-head{display:flex; justify-content:space-between; align-items:flex-start; gap:12px}
+.status-incident-head h3{margin:0; font-size:1.05rem; overflow-wrap:anywhere; min-width:0}
+.status-impact{flex:none; font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--border); text-transform:capitalize}
+.status-impact.impact-degraded{color:var(--warn)} .status-impact.impact-outage{color:var(--crit)}
+.status-latest{margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:var(--r-sm)}
+.status-latest div{margin-top:4px; overflow-wrap:anywhere}
+.status-earlier{margin-top:8px} .status-earlier summary{cursor:pointer; color:var(--muted); font-size:13px}
+@media (max-width:600px){.status-logo{width:92px} .status-banner strong{font-size:1.1rem}}
+.status-logo img{width:100%; height:auto}
