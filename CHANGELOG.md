@@ -8,6 +8,12 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
+### Added
+
+- The anonymous pages (public status, history, login, enroll) end with a small
+  "powered by trinetra · GitHub · studio" footer and carry a JSON-LD
+  `SoftwareApplication` description for crawlers.
+
 ## [0.6.0-beta.1] - 2026-10-08
 
 Beta of the public status page. Install it on a beta-channel host
