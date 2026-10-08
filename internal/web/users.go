@@ -19,9 +19,26 @@ import (
 type Role string
 
 const (
-	RoleAdmin  Role = "admin"
-	RoleViewer Role = "viewer"
+	RoleAdmin     Role = "admin"
+	RoleResponder Role = "responder" // posts status-page updates, acks alerts; no config/users/channels (issue #157)
+	RoleViewer    Role = "viewer"
 )
+
+// roleRank orders roles for requireRole: viewer < responder < admin; an
+// unknown or empty role ranks 0 and satisfies nothing.
+func roleRank(r Role) int {
+	switch r {
+	case RoleViewer:
+		return 1
+	case RoleResponder:
+		return 2
+	case RoleAdmin:
+		return 3
+	}
+	return 0
+}
+
+func validRole(r Role) bool { return roleRank(r) > 0 }
 
 // Credential is one registered passkey, in the flattened shape the design
 // doc's "Users store" section specifies (users.json: id, name, role,

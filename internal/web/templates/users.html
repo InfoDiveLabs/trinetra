@@ -8,7 +8,7 @@
       {{range $u := .Users}}
       <tr>
         <td class="card-title"><b>{{$u.Name}}</b>{{if $u.IsSelf}} <span class="note">(you)</span>{{end}}</td>
-        <td data-label="Role">{{if eq $u.Role "admin"}}<span class="badge role">admin</span>{{else}}<span class="badge">viewer</span>{{end}}</td>
+        <td data-label="Role">{{if eq $u.Role "admin"}}<span class="badge role">admin</span>{{else}}<span class="badge">{{$u.Role}}</span>{{end}}</td>
         <td class="mono" data-label="Passkeys">
           {{if $u.Credentials}}{{len $u.Credentials}} ·
             {{range $u.Credentials}}
@@ -23,13 +23,12 @@
         <td class="card-actions" style="text-align:right">
           <form method="post" action="/users/{{$u.ID}}/role" hx-post="/users/{{$u.ID}}/role" hx-target="#users-page" hx-swap="outerHTML" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            {{if eq $u.Role "admin"}}
-            <input type="hidden" name="role" value="viewer">
-            <button class="btn ghost" type="submit">Make viewer</button>
-            {{else}}
-            <input type="hidden" name="role" value="admin">
-            <button class="btn ghost" type="submit">Make admin</button>
-            {{end}}
+            <select name="role" aria-label="Role">
+              <option value="viewer"{{if eq $u.Role "viewer"}} selected{{end}}>viewer</option>
+              <option value="responder"{{if eq $u.Role "responder"}} selected{{end}}>responder</option>
+              <option value="admin"{{if eq $u.Role "admin"}} selected{{end}}>admin</option>
+            </select>
+            <button class="btn ghost" type="submit">Set role</button>
           </form>
           <form method="post" action="/users/{{$u.ID}}/remove" hx-post="/users/{{$u.ID}}/remove" hx-target="#users-page" hx-swap="outerHTML" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -44,6 +43,7 @@
     <div class="panel"><div class="head"><span class="eyebrow">Roles</span></div>
       <div class="rows">
         <div class="row"><span class="badge role">admin</span><div class="name note">Full access — config, users, all stats</div></div>
+        <div class="row"><span class="badge">responder</span><div class="name note">Viewer plus ack alerts and post status-page updates</div></div>
         <div class="row"><span class="badge">viewer</span><div class="name note">Read-only — dashboard, monitoring, history</div></div>
       </div>
     </div>
@@ -53,6 +53,7 @@
         <label class="field"><span class="lb">Role</span>
           <select name="role">
             <option value="viewer">viewer — read-only</option>
+            <option value="responder">responder — ack alerts, status updates</option>
             <option value="admin">admin — full access</option>
           </select>
         </label>

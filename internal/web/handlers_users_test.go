@@ -99,8 +99,8 @@ func TestUsersPageForbiddenForViewerAndAnon(t *testing.T) {
 	if viewerRR.Code != http.StatusForbidden {
 		t.Fatalf("GET /users as viewer status = %d, want 403, body: %s", viewerRR.Code, viewerRR.Body.String())
 	}
-	if !strings.Contains(viewerRR.Body.String(), "Admin only") {
-		t.Errorf("GET /users viewer 403 body missing \"Admin only\":\n%s", viewerRR.Body.String())
+	if !strings.Contains(viewerRR.Body.String(), "Higher role needed") {
+		t.Errorf("GET /users viewer 403 body missing \"Higher role needed\":\n%s", viewerRR.Body.String())
 	}
 
 	anonRR := httptest.NewRecorder()
@@ -646,5 +646,31 @@ func TestUsersMutationsWriteAuditRecords(t *testing.T) {
 		if !found {
 			t.Errorf("no audit record with action %q, got: %+v", action, recs)
 		}
+	}
+}
+
+func TestUsersInviteAndRoleChangeResponder(t *testing.T) {
+	d, users, sessions := rbacTestDeps(t)
+	h := newHandler(d)
+	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
+
+	if rr := postForm(h, "/users/invite", url.Values{"role": {"responder"}, "ttl": {"1h"}}, cookie, csrf); rr.Code != http.StatusOK {
+		t.Errorf("invite responder = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	if rr := postForm(h, "/users/invite", url.Values{"role": {"superuser"}, "ttl": {"1h"}}, cookie, csrf); rr.Code != http.StatusBadRequest {
+		t.Errorf("invite superuser = %d, want 400", rr.Code)
+	}
+	target := &User{ID: mustNewUserID(t), Name: "bob", Role: RoleViewer, Created: 1}
+	if err := users.Put(target); err != nil {
+		t.Fatal(err)
+	}
+	if rr := postForm(h, "/users/"+target.ID+"/role", url.Values{"role": {"responder"}}, cookie, csrf); rr.Code != http.StatusOK {
+		t.Errorf("role->responder = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	if got, _ := users.Get(target.ID); got == nil || got.Role != RoleResponder {
+		t.Errorf("role after change = %+v", got)
+	}
+	if rr := postForm(h, "/users/"+target.ID+"/role", url.Values{"role": {"superuser"}}, cookie, csrf); rr.Code != http.StatusBadRequest {
+		t.Errorf("role->superuser = %d, want 400", rr.Code)
 	}
 }

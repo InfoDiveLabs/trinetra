@@ -197,8 +197,8 @@ func usersInviteHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		role := Role(r.FormValue("role"))
-		if role != RoleAdmin && role != RoleViewer {
-			http.Error(w, "role must be admin or viewer", http.StatusBadRequest)
+		if !validRole(role) {
+			http.Error(w, "role must be admin, responder or viewer", http.StatusBadRequest)
 			return
 		}
 		ttlValue := r.FormValue("ttl")
@@ -244,8 +244,8 @@ func usersRoleHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		newRole := Role(r.FormValue("role"))
-		if newRole != RoleAdmin && newRole != RoleViewer {
-			http.Error(w, "role must be admin or viewer", http.StatusBadRequest)
+		if !validRole(newRole) {
+			http.Error(w, "role must be admin, responder or viewer", http.StatusBadRequest)
 			return
 		}
 

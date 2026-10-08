@@ -104,7 +104,7 @@ func requireRole(min Role, d Deps, next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		if min == RoleAdmin && u.Role != RoleAdmin {
+		if roleRank(u.Role) < roleRank(min) {
 			renderDenied(w, r, d)
 			return
 		}

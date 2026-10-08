@@ -237,7 +237,7 @@ func newHandler(d Deps) http.Handler {
 	// viewer-gated, not admin-only. Ack, however, is admin-only + CSRF: it
 	// mutates shared alert state everyone else's view depends on.
 	mux.HandleFunc("GET /alerts", requireRole(RoleViewer, d, alertsPageHandler(d)))
-	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsAckHandler(d)).ServeHTTP(w, r)
 	}))
 	// /alerts/{key}/unack (task C6): the ack action's inverse, over
@@ -247,7 +247,7 @@ func newHandler(d Deps) http.Handler {
 	// the node scope attached so apiFor(r,d) resolves to that node's own
 	// replicaAPI -- see withNodeRouter's doc for why this is the one
 	// deliberate exception to "node-scoped routes are GET/HEAD only".
-	mux.HandleFunc("POST /alerts/{key}/unack", requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /alerts/{key}/unack", requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsUnackHandler(d)).ServeHTTP(w, r)
 	}))
 
