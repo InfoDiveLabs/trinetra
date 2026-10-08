@@ -176,3 +176,20 @@ func TestIncidentPagesRenderCompletely(t *testing.T) {
 		t.Error("list missing incident")
 	}
 }
+
+func TestIncidentFormTextNormalizesCRLF(t *testing.T) {
+	sp := incidentFixture()
+	d := statusPageDeps(t, sp)
+	if code := postAsRole(t, d, RoleResponder, "/status-page/incidents/i1/updates", url.Values{"status": {"identified"}, "message": {"a\r\nb"}}); code != http.StatusSeeOther {
+		t.Fatalf("post: %d", code)
+	}
+	if got := sp.incs[0].Updates[len(sp.incs[0].Updates)-1].Message; got != "a\nb" {
+		t.Fatalf("message %q want a\\nb", got)
+	}
+	form := url.Values{"title": {"T\r\nU"}, "services": {"api"}, "impact": {"degraded"}, "status": {"investigating"}, "message": {"x\r\ny"}}
+	postAsRole(t, d, RoleResponder, "/status-page/incidents", form)
+	last := sp.incs[len(sp.incs)-1]
+	if strings.Contains(last.Title, "\r") || last.Updates[0].Message != "x\ny" {
+		t.Fatalf("create not normalized: %+v", last)
+	}
+}

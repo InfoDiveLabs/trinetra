@@ -80,8 +80,8 @@ func statusIncidentCreateHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		_ = r.ParseForm()
-		in := core.NewIncident{Title: r.FormValue("title"), Services: r.Form["services"], Impact: core.ServiceState(r.FormValue("impact")),
-			Update: core.NewUpdate{Status: r.FormValue("status"), Message: r.FormValue("message")}}
+		in := core.NewIncident{Title: formText(r, "title"), Services: r.Form["services"], Impact: core.ServiceState(r.FormValue("impact")),
+			Update: core.NewUpdate{Status: r.FormValue("status"), Message: formText(r, "message")}}
 		inc, err := sp.CreateIncident(in, auditUser(r))
 		if err != nil {
 			msg := err.Error()
@@ -163,14 +163,14 @@ func incidentMutation(d Deps, action string, op func(sp core.StatusPageAPI, r *h
 			} else {
 				data.Error = err.Error()
 			}
-			draft := StatusUpdateDraft{Status: r.FormValue("status"), Message: r.FormValue("message")}
+			draft := StatusUpdateDraft{Status: r.FormValue("status"), Message: formText(r, "message")}
 			switch action {
 			case "status_page.update.post":
 				data.PostDraft = draft
 			case "status_page.update.edit":
 				data.EditUID, data.EditDraft = r.PathValue("uid"), draft
 			case "status_page.incident.edit":
-				data.TitleDraft = r.FormValue("title")
+				data.TitleDraft = formText(r, "title")
 			}
 			renderStatusTemplate(w, "statuspage_incident.html", data, http.StatusBadRequest)
 			return
@@ -182,13 +182,13 @@ func incidentMutation(d Deps, action string, op func(sp core.StatusPageAPI, r *h
 
 func statusUpdatePostHandler(d Deps) http.HandlerFunc {
 	return incidentMutation(d, "status_page.update.post", func(sp core.StatusPageAPI, r *http.Request, id string) (core.StatusIncident, error) {
-		return sp.PostUpdate(id, core.NewUpdate{Status: r.FormValue("status"), Message: r.FormValue("message")}, auditUser(r))
+		return sp.PostUpdate(id, core.NewUpdate{Status: r.FormValue("status"), Message: formText(r, "message")}, auditUser(r))
 	})
 }
 
 func statusUpdateEditHandler(d Deps) http.HandlerFunc {
 	return incidentMutation(d, "status_page.update.edit", func(sp core.StatusPageAPI, r *http.Request, id string) (core.StatusIncident, error) {
-		return sp.EditUpdate(id, r.PathValue("uid"), core.NewUpdate{Status: r.FormValue("status"), Message: r.FormValue("message")}, auditUser(r))
+		return sp.EditUpdate(id, r.PathValue("uid"), core.NewUpdate{Status: r.FormValue("status"), Message: formText(r, "message")}, auditUser(r))
 	})
 }
 
@@ -200,7 +200,7 @@ func statusIncidentEditHandler(d Deps) http.HandlerFunc {
 		if _, err := sp.Incident(id); err != nil {
 			return core.StatusIncident{}, err
 		}
-		inc, err := sp.EditIncident(id, r.FormValue("title"), r.Form["services"], auditUser(r))
+		inc, err := sp.EditIncident(id, formText(r, "title"), r.Form["services"], auditUser(r))
 		if errors.Is(err, core.ErrNotFound) {
 			err = errors.New("unknown service")
 		}
@@ -232,4 +232,11 @@ func statusIncidentDeleteHandler(d Deps) http.HandlerFunc {
 // multiline renders plain text with line breaks AFTER escaping.
 func multiline(s string) template.HTML {
 	return template.HTML(strings.ReplaceAll(template.HTMLEscapeString(s), "\n", "<br>"))
+}
+
+// formText returns a form value with CRLF/CR normalized to LF (browsers submit
+// textarea newlines as \r\n; the public JSON should carry \n only).
+func formText(r *http.Request, key string) string {
+	v := strings.ReplaceAll(r.FormValue(key), "\r\n", "\n")
+	return strings.ReplaceAll(v, "\r", "\n")
 }

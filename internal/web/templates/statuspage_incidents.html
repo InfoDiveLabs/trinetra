@@ -1,30 +1,56 @@
+{{/* statuspage_incidents.html (#157): responder view of the public status
+     page's incidents, plus the hand-opened incident form. */}}
 {{define "content"}}
-<section class="card">
-  <h2>Status updates</h2>
-  <p class="muted">What customers see on the public status page. Incidents open automatically when a service degrades. You write the updates.</p>
-  {{if .Unavailable}}<p class="notice">{{.Unavailable}}</p>{{else}}
-  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-  <h3>Active</h3>
-  <table class="table"><thead><tr><th>Incident</th><th>Impact</th><th>Status</th><th>Opened</th></tr></thead><tbody>
-  {{range .OpenIncidents}}<tr><td><a href="/status-page/incidents/{{.ID}}">{{.Title}}</a>{{if .Auto}} <span class="pill">auto</span>{{end}}</td>
-    <td><span class="pill pill-{{.Impact}}">{{.Impact}}</span></td><td>{{.Status}}</td><td>{{timeText .Opened}}</td></tr>
-  {{else}}<tr><td colspan="4" class="muted">No active incidents.</td></tr>{{end}}
-  </tbody></table>
-  <details{{if .Error}} open{{end}}><summary>Open an incident by hand</summary>
-  <form method="post" action="/status-page/incidents" class="form-grid">
-    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <label class="wide">Title <input name="title" required maxlength="200" value="{{.Draft.Title}}"></label>
-    <fieldset class="wide"><legend>Affected services</legend>{{range .Services}}<label><input type="checkbox" name="services" value="{{.ID}}"{{if index $.Draft.Services .ID}} checked{{end}}> {{.Name}}</label>{{end}}</fieldset>
-    <label>Impact <select name="impact"><option{{if eq .Draft.Impact "degraded"}} selected{{end}}>degraded</option><option{{if eq .Draft.Impact "outage"}} selected{{end}}>outage</option><option{{if eq .Draft.Impact "maintenance"}} selected{{end}}>maintenance</option></select></label>
-    <label>Status <select name="status">{{range .Statuses}}<option{{if eq . $.Draft.Status}} selected{{end}}>{{.}}</option>{{end}}</select></label>
-    <label class="wide">First update <textarea name="message" required maxlength="4096" rows="3">{{.Draft.Message}}</textarea></label>
-    <button class="btn btn-primary">Publish</button>
-  </form></details>
-  <h3>Resolved</h3>
-  <table class="table"><tbody>
-  {{range .ResolvedIncidents}}<tr><td><a href="/status-page/incidents/{{.ID}}">{{.Title}}</a></td><td><span class="pill pill-{{.Impact}}">{{.Impact}}</span></td><td>{{timeText .Resolved}}</td></tr>
-  {{else}}<tr><td class="muted">None yet.</td></tr>{{end}}
-  </tbody></table>
+<div id="status-incidents-page">
+  <div class="section-label"><span class="eyebrow">Status updates</span></div>
+  <p class="note" style="margin:0 0 12px">What customers see on the public status page. Incidents open automatically when a service degrades. You write the updates.</p>
+  {{if .Unavailable}}<div class="flash err" role="status">{{.Unavailable}}</div>{{else}}
+  {{if .Error}}<div class="flash err" role="alert">{{.Error}}</div>{{end}}
+  <div class="section-label"><span class="eyebrow">Active</span></div>
+  <div class="panel pad0 cardpanel" style="margin-bottom:18px"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Incident</th><th>Impact</th><th>Status</th><th>Opened</th></tr></thead>
+    <tbody>
+    {{range .OpenIncidents}}
+      <tr>
+        <td class="card-title" data-label="Incident"><a href="/status-page/incidents/{{.ID}}">{{.Title}}</a>{{if .Auto}} <span class="badge">auto</span>{{end}}</td>
+        <td data-label="Impact"><span class="badge pill-{{.Impact}}">{{.Impact}}</span></td>
+        <td data-label="Status">{{.Status}}</td>
+        <td class="mono note" data-label="Opened">{{timeText .Opened}}</td>
+      </tr>
+    {{else}}<tr><td colspan="4" class="note">No active incidents.</td></tr>{{end}}
+    </tbody>
+  </table></div></div>
+
+  <div class="panel" style="margin-bottom:18px">
+    <div class="head"><span class="eyebrow">Open an incident by hand</span></div>
+    <form method="post" action="/status-page/incidents">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field"><span class="lb">Title</span><input name="title" required maxlength="200" value="{{.Draft.Title}}"></label>
+      <div class="field" style="margin-top:8px"><span class="lb">Affected services</span>
+        {{range .Services}}<label style="display:inline-block;margin-right:14px"><input type="checkbox" name="services" value="{{.ID}}"{{if index $.Draft.Services .ID}} checked{{end}}> {{.Name}}</label>{{else}}<span class="note">No services defined yet.</span>{{end}}
+      </div>
+      <div class="grid g-2" style="margin-top:8px">
+        <label class="field"><span class="lb">Impact</span><select name="impact"><option{{if eq .Draft.Impact "degraded"}} selected{{end}}>degraded</option><option{{if eq .Draft.Impact "outage"}} selected{{end}}>outage</option><option{{if eq .Draft.Impact "maintenance"}} selected{{end}}>maintenance</option></select></label>
+        <label class="field"><span class="lb">Status</span><select name="status">{{range .Statuses}}<option{{if eq . $.Draft.Status}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+      </div>
+      <label class="field" style="margin-top:8px"><span class="lb">First update (plain text, shown publicly)</span><textarea name="message" required maxlength="4096" rows="3">{{.Draft.Message}}</textarea></label>
+      <button class="btn primary" type="submit" style="margin-top:10px">Publish</button>
+    </form>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Resolved</span></div>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Incident</th><th>Impact</th><th>Resolved</th></tr></thead>
+    <tbody>
+    {{range .ResolvedIncidents}}
+      <tr>
+        <td class="card-title" data-label="Incident"><a href="/status-page/incidents/{{.ID}}">{{.Title}}</a></td>
+        <td data-label="Impact"><span class="badge pill-{{.Impact}}">{{.Impact}}</span></td>
+        <td class="mono note" data-label="Resolved">{{timeText .Resolved}}</td>
+      </tr>
+    {{else}}<tr><td colspan="3" class="note">None yet.</td></tr>{{end}}
+    </tbody>
+  </table></div></div>
   {{end}}
-</section>
+</div>
 {{end}}
