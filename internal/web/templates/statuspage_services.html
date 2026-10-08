@@ -15,7 +15,7 @@
         <td class="card-title" data-label="Service"><strong>{{.Name}}</strong><div class="note mono">{{.ID}}</div></td>
         <td data-label="Group">{{.Group}}</td>
         <td data-label="Now"><span class="badge pill-{{or .Eval.State "operational"}}">{{or .Eval.State "operational"}}</span>{{if .Eval.PendingSince}} <span class="note">&rarr; {{.Eval.Computed}} pending</span>{{end}}</td>
-        <td class="note" data-label="Why">{{.Eval.Reason}}{{range .Eval.Missing}}<div class="field-err">target not found: {{.}}</div>{{end}}</td>
+        <td class="note" data-label="Why">{{if or .Eval.Reason .Eval.Missing}}{{.Eval.Reason}}{{else}}—{{end}}{{range .Eval.Missing}}<div class="field-err">target not found: {{.}}</div>{{end}}</td>
         <td data-label="Targets"><pre class="mono" style="margin:0">{{.TargetsText}}</pre></td>
         <td class="card-actions" style="text-align:right">
           <a class="btn ghost" href="/status-page/services?edit={{.ID}}">Edit</a>

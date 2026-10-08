@@ -14,7 +14,7 @@
             {{range $u.Credentials}}
             <form method="post" action="/users/{{$u.ID}}/credentials/{{.Param}}/revoke" hx-post="/users/{{$u.ID}}/credentials/{{.Param}}/revoke" hx-target="#users-page" hx-swap="outerHTML" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-              <button class="btn ghost" type="submit" title="Revoke this passkey">{{.Label}} ✕</button>
+              <button class="btn ghost" type="submit" title="Revoke passkey {{.Label}}" aria-label="Revoke passkey {{.Label}}">{{.Label}} ✕</button>
             </form>
             {{end}}
           {{else}}<span class="note">0 · none registered</span>{{end}}
@@ -28,7 +28,7 @@
               <option value="responder"{{if eq $u.Role "responder"}} selected{{end}}>responder</option>
               <option value="admin"{{if eq $u.Role "admin"}} selected{{end}}>admin</option>
             </select>
-            <button class="btn ghost" type="submit">Set role</button>
+            <button class="btn ghost" type="submit" title="Apply the selected role">Set role</button>
           </form>
           <form method="post" action="/users/{{$u.ID}}/remove" hx-post="/users/{{$u.ID}}/remove" hx-target="#users-page" hx-swap="outerHTML" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">

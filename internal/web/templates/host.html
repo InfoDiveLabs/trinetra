@@ -1,7 +1,7 @@
 {{define "content"}}
 <div id="host-page">
   {{if .Available}}
-  <div class="grid g-2">
+  <div class="grid g-host">
     <div class="panel">
       <div class="head"><span class="eyebrow">System</span></div>
       <dl class="kv">
@@ -19,17 +19,17 @@
       <div class="head"><span class="eyebrow">Disks</span></div>
       {{if .Disks}}
       <div style="overflow-x:auto">
-        <table class="tbl">
+        <table class="cards">
           <thead><tr><th>Device</th><th>Model</th><th>Type</th><th>Size</th><th>FS</th><th>Mount</th></tr></thead>
           <tbody>
             {{range .Disks}}
             <tr>
-              <td class="mono">{{.Device}}</td>
-              <td>{{.Model}}</td>
-              <td>{{.Kind}}</td>
-              <td class="mono">{{.Size}}</td>
-              <td class="mono">{{.FSType}}</td>
-              <td class="mono">{{.Mount}}</td>
+              <td class="mono card-title" data-label="Device">{{.Device}}</td>
+              <td data-label="Model">{{.Model}}</td>
+              <td data-label="Type">{{.Kind}}</td>
+              <td class="mono" data-label="Size">{{.Size}}</td>
+              <td class="mono" data-label="FS">{{.FSType}}</td>
+              <td class="mono" data-label="Mount">{{.Mount}}</td>
             </tr>
             {{end}}
           </tbody>

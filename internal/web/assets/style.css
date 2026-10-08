@@ -106,7 +106,7 @@ a.pill{color:inherit} a.pill:hover{border-color:var(--faint)}
 .main{min-width:0}
 .topbar{display:flex; align-items:center; gap:16px; padding:14px 30px; border-bottom:1px solid var(--border); background:var(--bg); position:sticky; top:0; z-index:5}
 .topbar h1{font-size:18px; margin:0; font-weight:500; letter-spacing:0} .topbar p{margin:2px 0 0; color:var(--muted); font-size:12.5px}
-.pill{display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface); font-size:12px}
+.pill{display:inline-flex; align-items:center; gap:7px; white-space:nowrap; padding:6px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface); font-size:12px}
 .icon-btn{width:34px;height:34px;border:1px solid var(--border);background:var(--surface);border-radius:var(--r-sm);color:var(--muted);cursor:pointer;font-size:15px}
 .icon-btn:hover{color:var(--text);border-color:var(--faint)}
 .wrap{padding:22px 30px 48px}
@@ -132,6 +132,8 @@ a.pill{color:inherit} a.pill:hover{border-color:var(--faint)}
 
 /* grids */
 .grid{display:grid; gap:14px}
+.g-host{grid-template-columns:minmax(0,2fr) minmax(0,3fr)}
+@media (max-width:1100px){.g-host{grid-template-columns:1fr}}
 .g-tiles{grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
 .g-2{grid-template-columns:1fr 1fr}.g-3{grid-template-columns:1fr 1fr 1fr}.g-4{grid-template-columns:repeat(4,1fr)}
 .g-hero{grid-template-columns:2.4fr 1fr}.g-32{grid-template-columns:2fr 1fr}
@@ -695,3 +697,10 @@ input.switch:checked::after{left:19px;background:var(--bg)}
 
 /* Times, durations and sizes stay on one line in tables. */
 .nowrap,table td:is([data-label=When],[data-label=Opened],[data-label=Resolved],[data-label=Since],[data-label=Start],[data-label=End],[data-label=Expires],[data-label=Created],[data-label=Time],[data-label="Last seen"],[data-label="Next occurrence"],[data-label=Duration],[data-label=Size],[data-label=Free]){white-space:nowrap}
+/* A table wider than its panel scrolls inside it rather than the page. */
+@media (min-width:641px){.panel:has(> table.cards){overflow-x:auto}}
+/* Row actions: inline role pickers keep their natural width beside buttons. */
+@media (min-width:641px){
+  td.card-actions{white-space:nowrap}
+  td.card-actions select{width:auto; display:inline-block; vertical-align:middle}
+}

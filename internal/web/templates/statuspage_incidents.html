@@ -2,7 +2,6 @@
      page's incidents, plus the hand-opened incident form. */}}
 {{define "content"}}
 <div id="status-incidents-page">
-  <div class="section-label"><span class="eyebrow">Status updates</span></div>
   <p class="note" style="margin:0 0 12px">What customers see on the public status page. Incidents open automatically when a service degrades. You write the updates.</p>
   {{if .Unavailable}}<div class="flash err" role="status">{{.Unavailable}}</div>{{else}}
   {{if .Error}}<div class="flash err" role="alert">{{.Error}}</div>{{end}}

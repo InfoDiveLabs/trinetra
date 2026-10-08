@@ -42,4 +42,15 @@ func icon(name string) template.HTML {
 	return template.HTML(b.String())
 }
 
-func init() { funcMap["icon"] = icon }
+// orDash renders an unknown value as an em dash instead of a blank.
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "—"
+	}
+	return s
+}
+
+func init() {
+	funcMap["icon"] = icon
+	funcMap["orDash"] = orDash
+}

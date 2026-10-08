@@ -49,6 +49,14 @@
   // active theme -- call it at chart-build time, not once at load, so a
   // rebuild after a theme toggle (see the 'sw-theme' listeners below) picks
   // up the new theme's colors.
+  function swCompact(v){
+    if(v==null) return '';
+    var a=Math.abs(v);
+    if(a>=1e9) return +(v/1e9).toFixed(1)+'G';
+    if(a>=1e6) return +(v/1e6).toFixed(1)+'M';
+    if(a>=1e4) return +(v/1e3).toFixed(0)+'k';
+    return +v.toFixed(2)+'';
+  }
   function swAxesOpt(){
     var c=swAxisColors();
     var ax={stroke:c.stroke,ticks:{stroke:c.grid},grid:{stroke:c.grid}};
@@ -434,7 +442,12 @@
       if(!el||!window.uPlot) return null;
       var uSeries=[{}];
       series.forEach(function(lbl,i){uSeries.push({label:lbl,stroke:colors[i],width:1.8,fill:colors[i]+'22'});});
-      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:swAxesOpt()};
+      var axes=swAxesOpt();
+      axes[1]=Object.assign({},axes[1],{size:52,values:function(u,vals){return vals.map(swCompact);}});
+      // At least a 5-minute window from the data itself: for a single
+      // sample uPlot pads the range by ~1000 days.
+      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:axes,
+        scales:{x:{time:true,range:function(u,min,max){ var d=u.data[0]; if(!d||!d.length) return [min,max]; var hi=d[d.length-1]; return [Math.min(d[0],hi-300),hi]; }}}};
       var data=[[]]; series.forEach(function(){data.push([]);});
       var u=new uPlot(opts,data,el);
       charts[id]=u;
