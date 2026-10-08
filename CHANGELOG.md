@@ -15,7 +15,7 @@ branch; stable releases are tagged on `main`.
   (operational, degraded, outage, maintenance) is evaluated on the slow sampler
   tick with a per-service hold-down, shown on `/` with a banner and 90 day bars,
   and published at `/status/history`, `/status/feed.atom` and `/status/api.json`.
-  Outages open incidents automatically and responders post updates, echoed to
+  Outages and degraded service open incidents automatically and responders post updates, echoed to
   `status.echo_channels`. Internal names never appear publicly. Managed with
   `trinetra status-page` and the new `status.*` keys; see the
   [handbook](docs/handbook/08-web-ui.md#public-status-page).

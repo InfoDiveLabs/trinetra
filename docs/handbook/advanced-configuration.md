@@ -335,7 +335,7 @@ Services themselves are managed with `trinetra status-page`, not `config set`.
 
 | Key | Default | Validation |
 |-----|---------|------------|
-| `status.title` | `Status` | None. Heading of the public page. |
+| `status.title` | `Status` | At most 60 characters. Heading of the public page. Applied live (public data is cached for a few seconds). |
 | `status.auto_resolve_after` | `24h` | Duration string. `0` disables auto-resolve; any other value must be at least `1h`. |
 | `status.echo_channels` | empty | Comma-separated channel names. Each new incident update is sent to these. |
 

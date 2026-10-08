@@ -408,6 +408,22 @@ The daemon evaluates every service on the slow sampler tick (`sample_interval`,
 | A target is inside an active maintenance window | maintenance |
 | None of the above | operational |
 
+A node counts as down only when trinetra has raised an individual node-down
+alert for it. That means:
+
+- A silenced node-down alert does not count, so a silenced node does not turn
+  its services red.
+- A fleet-wide connectivity drop (many nodes lost at once, which raises one
+  `fleet:connectivity` alert instead of one alert per node) does not mark any
+  node down.
+- A node that is down while a maintenance window covers it shows
+  *maintenance*, not outage, so planned reboots never become public outages.
+  Alerts on the node still outrank maintenance.
+- Narrow targets (`container:`, `unit:` and `mount:` with an `@node`) go into
+  outage when their node is down.
+- Only a maintenance window that covers the whole node counts. A window scoped
+  to a rule or a severity (for example `rule=disk:*`) does not.
+
 Silenced alerts are ignored. To stop flapping, a change is only published once
 it has held for the service's **hold-down** (default 180 s, 0 to 3600 s, set
 with `--hold`), in both directions. Maintenance applies immediately. The page
@@ -416,11 +432,13 @@ banner summarises all services: *All systems operational*, *Partial outage*,
 
 ### Incidents
 
-When a service goes into outage, degraded or maintenance, trinetra opens an
+When a service goes into outage or degraded, trinetra opens an
 incident automatically with generic text (for example "We're investigating an
 outage affecting API."). Services that change together share one incident, and
-an open automatic incident is reused rather than duplicated. When every
-affected service has recovered the incident moves to *monitoring*, and it
+an open automatic incident is reused rather than duplicated. Maintenance does
+not open an incident; it only changes the service's status and the banner. When every
+affected service has recovered the incident moves to *monitoring* (also when its service is deleted or edited so
+it no longer fails), and it
 resolves by itself after `status.auto_resolve_after` (default 24 h).
 
 People take over from there at `/status-page/incidents` (viewers cannot; this
@@ -458,7 +476,7 @@ update text with that in mind, since you control it.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `status.title` | `Status` | Heading of the public page. |
+| `status.title` | `Status` | Heading of the public page, at most 60 characters. |
 | `status.auto_resolve_after` | `24h` | How long after recovery an automatic incident resolves itself. `0` never; otherwise at least `1h`. |
 | `status.echo_channels` | none | Comma-separated channels that receive a copy of every new incident update. |
 
