@@ -159,6 +159,10 @@ func (m *incidentManager) sweepRecovered() bool {
 		if !inc.Auto || inc.Status == core.IncidentResolved || inc.RecoveredAt != 0 || !m.allRecovered(inc) {
 			continue
 		}
+		// A person's latest word always stands (e.g. a reopened incident).
+		if n := len(inc.Updates); n > 0 && inc.Updates[n-1].Author != core.SystemAuthor {
+			continue
+		}
 		m.markRecovered(i)
 		changed = true
 	}

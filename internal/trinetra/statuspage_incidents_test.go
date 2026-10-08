@@ -443,3 +443,31 @@ func TestSweepRecoversIncidentOfEditedOutService(t *testing.T) {
 		t.Fatal("swept incident did not auto-resolve")
 	}
 }
+
+func TestSweepLeavesHumanReopenedIncidentAlone(t *testing.T) {
+	h := newIMHarness(t, "api")
+	h.setState("api", core.StateOutage)
+	h.m.applyChanges([]stateChange{{ServiceID: "api", From: core.StateOperational, To: core.StateOutage}})
+	h.setState("api", core.StateOperational)
+	h.m.applyChanges([]stateChange{{ServiceID: "api", From: core.StateOutage, To: core.StateOperational}})
+	h.now = h.now.Add(25 * time.Hour)
+	h.m.tickAutoResolve()
+	id := h.m.data.Incidents[0].ID
+	if h.m.data.Incidents[0].Status != core.IncidentResolved {
+		t.Fatal("setup: not resolved")
+	}
+	if _, err := h.m.post(id, core.NewUpdate{Status: core.IncidentInvestigating, Message: "still odd"}, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	n := len(h.m.data.Incidents[0].Updates)
+	for i := 0; i < 2; i++ { // per-tick entry points, then again after > auto_resolve_after
+		h.m.applyChanges(nil)
+		h.m.sweepRecovered()
+		h.m.tickAutoResolve()
+		h.now = h.now.Add(25 * time.Hour)
+	}
+	inc := h.m.data.Incidents[0]
+	if inc.Status != core.IncidentInvestigating || len(inc.Updates) != n || inc.RecoveredAt != 0 {
+		t.Fatalf("human reopen overridden: %+v", inc)
+	}
+}

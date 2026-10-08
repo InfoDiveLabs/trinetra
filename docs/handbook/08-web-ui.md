@@ -415,7 +415,9 @@ alert for it. That means:
   its services red.
 - A fleet-wide connectivity drop (many nodes lost at once, which raises one
   `fleet:connectivity` alert instead of one alert per node) does not mark any
-  node down.
+  node down. No lost node counts as down on the public page until every lost
+  node is back, though operators are still paged through the fleet
+  connectivity alert.
 - A node that is down while a maintenance window covers it shows
   *maintenance*, not outage, so planned reboots never become public outages.
   Alerts on the node still outrank maintenance.
