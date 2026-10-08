@@ -131,7 +131,7 @@ func TestIncidentFailedCreateKeepsForm(t *testing.T) {
 	if rr.Code != 400 {
 		t.Fatalf("%d", rr.Code)
 	}
-	for _, want := range []string{`value="My title"`, `value="api" checked`, `<option selected>outage</option>`, `<option selected>monitoring</option>`} {
+	for _, want := range []string{`value="My title"`, `style="width:auto;margin:0" checked`, `<option selected>outage</option>`, `<option selected>monitoring</option>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in %s", want, body)
 		}

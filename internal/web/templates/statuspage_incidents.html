@@ -27,7 +27,9 @@
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <label class="field"><span class="lb">Title</span><input name="title" required maxlength="200" value="{{.Draft.Title}}"></label>
       <div class="field" style="margin-top:8px"><span class="lb">Affected services</span>
-        {{range .Services}}<label style="display:inline-block;margin-right:14px"><input type="checkbox" name="services" value="{{.ID}}"{{if index $.Draft.Services .ID}} checked{{end}}> {{.Name}}</label>{{else}}<span class="note">No services defined yet.</span>{{end}}
+        <div style="display:flex;flex-wrap:wrap;gap:6px 18px">
+          {{range .Services}}<label style="display:flex;align-items:center;gap:6px;width:auto;white-space:nowrap"><input type="checkbox" name="services" value="{{.ID}}" style="width:auto;margin:0"{{if index $.Draft.Services .ID}} checked{{end}}><span>{{.Name}}</span></label>{{else}}<span class="note">No services defined yet.</span>{{end}}
+        </div>
       </div>
       <div class="grid g-2" style="margin-top:8px">
         <label class="field"><span class="lb">Impact</span><select name="impact"><option{{if eq .Draft.Impact "degraded"}} selected{{end}}>degraded</option><option{{if eq .Draft.Impact "outage"}} selected{{end}}>outage</option><option{{if eq .Draft.Impact "maintenance"}} selected{{end}}>maintenance</option></select></label>
