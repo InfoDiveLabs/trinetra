@@ -242,6 +242,7 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, d, publicSettingsPageHandler(d)))
 	mux.HandleFunc("POST /settings/public", publicSettingsMutation(d, publicSettingsSaveHandler(d)))
 	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
+	mux.HandleFunc("GET /status", publicPageHandler(d))
 	mux.HandleFunc("GET /public/events", publicEventsHandler(d))
 	// Public status page extras (#157): anonymous like /public/events (no
 	// requireRole); each handler 404s itself when public.enabled is false or

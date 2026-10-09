@@ -117,12 +117,9 @@ func TestRootAuthedViewerAndAdminSeeDashboardEvenWhenPublicEnabled(t *testing.T)
 	}
 }
 
-// TestPublicRouteRedirectsToRoot pins that the old GET /public link is
-// canonicalized onto / rather than serving content itself, for BOTH an
-// anonymous caller and a signed-in one -- the redirect is unconditional; it's
-// / (rootHandler) that decides what an anonymous vs. authenticated visitor
-// sees next.
-func TestPublicRouteRedirectsToRoot(t *testing.T) {
+// TestPublicRouteRedirectsToStatus pins that old /public links land on
+// /status, the public page's address for signed-in and anonymous visitors.
+func TestPublicRouteRedirectsToStatus(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).Public.Enabled = true
 	h := newHandler(d)
@@ -132,8 +129,25 @@ func TestPublicRouteRedirectsToRoot(t *testing.T) {
 	if rr.Code != http.StatusMovedPermanently && rr.Code != http.StatusFound {
 		t.Fatalf("GET /public status = %d, want 301 or 302", rr.Code)
 	}
-	if loc := rr.Header().Get("Location"); loc != "/" {
-		t.Errorf("GET /public Location = %q, want /", loc)
+	if loc := rr.Header().Get("Location"); loc != "/status" {
+		t.Errorf("GET /public Location = %q, want /status", loc)
+	}
+}
+
+func TestStatusShowsPublicPageToSignedInUsers(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	(*cfg).Public.Enabled = true
+	(*cfg).Public.Panels = []string{"cpu"}
+	code, body := getAsRole(t, d, RoleAdmin, "/status")
+	if code != http.StatusOK || strings.Contains(body, `class="side"`) || !strings.Contains(body, "pub-") {
+		t.Fatalf("signed-in GET /status = %d, want the public page, not the app shell:\n%s", code, body)
+	}
+	if code, body := getAsRole(t, d, RoleAdmin, "/"); code != http.StatusOK || !strings.Contains(body, `class="side"`) {
+		t.Errorf("signed-in GET / should stay the dashboard: %d", code)
+	}
+	(*cfg).Public.Enabled = false
+	if code, _ := getAsRole(t, d, RoleAdmin, "/status"); code != http.StatusNotFound {
+		t.Errorf("GET /status with the public page off = %d, want 404", code)
 	}
 }
 
@@ -795,5 +809,15 @@ func TestPublicSettingsSaveRequiresCSRF(t *testing.T) {
 	rr := postForm(h, "/settings/public", url.Values{"panel": {"cpu"}}, cookie, "" /* no CSRF */)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("POST /settings/public without CSRF status = %d, want 403", rr.Code)
+	}
+}
+
+func TestStatusIsPublicForAnonymousVisitors(t *testing.T) {
+	d, cfg, _ := configTestDeps(t)
+	(*cfg).Public.Enabled = true
+	rr := httptest.NewRecorder()
+	newHandler(d).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rr.Code != http.StatusOK || rr.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("anonymous GET /status = %d %q", rr.Code, rr.Header().Get("Cache-Control"))
 	}
 }

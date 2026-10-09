@@ -422,16 +422,8 @@ func rootHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// publicRouteRedirectHandler serves the now-canonicalized GET /public: old
-// links/bookmarks into the anonymous status page still work, they just
-// land on / (rootHandler above), which renders the identical anonymous page
-// for an anonymous visitor -- or, for an already-signed-in visitor, their
-// dashboard (a deliberate behavior change from the old /public, which used
-// to show the anonymous page even to a signed-in admin; now that / itself
-// is the one true landing route, there is no reason for a bookmarked
-// /public to behave differently from a bookmarked /). A permanent redirect
-// (301) since this is a genuine canonical-URL move, not a conditional one --
-// it does not depend on cfg.Public.Enabled at all.
+// publicRouteRedirectHandler sends old /public links to /status, which shows
+// the public page whether or not the visitor is signed in.
 func publicRouteRedirectHandler(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/", http.StatusMovedPermanently)
+	http.Redirect(w, r, "/status", http.StatusMovedPermanently)
 }
