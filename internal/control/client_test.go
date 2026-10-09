@@ -69,6 +69,7 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 	}
 	fake.cfg = &config.Config{SampleInterval: 30, FastInterval: 5}
 	fake.cfg.Collect.ContainerStats = falsePtr()
+	// NetThroughput left nil deliberately.
 	fake.enrollPIN = "424242"
 	fake.enrollEnrolled = false
 	fake.monitorTargets = []core.TargetView{{ID: "disk:/", Kind: "disk", Display: "/", Available: true}}
