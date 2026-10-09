@@ -42,14 +42,18 @@ type StatusServicesPageData struct {
 	Unavailable string // non-empty: show this notice instead of the editor
 	Error       string
 	Notice      string // non-fatal notice shown above the table
+	Added       string
 	Default     int
 	Form        StatusServiceForm
+	Nodes       []targetNode
+	Groups      []string
 }
 
 // StatusServiceForm is the add/edit form's field values (sticky on error,
 // prefilled on edit).
 type StatusServiceForm struct {
 	ID, Name, Group, Order, Hold, Description, Targets string
+	Picked                                             []string
 	Edit                                               bool
 }
 
@@ -117,6 +121,7 @@ func buildStatusServicesPage(r *http.Request, d Deps) StatusServicesPageData {
 	if evalErr != nil {
 		data.Notice = "Live status unavailable: " + evalErr.Error()
 	}
+	data.Groups = statusGroups(svcs)
 	byID := map[string]core.ServiceEvaluation{}
 	for _, e := range evals {
 		byID[e.ServiceID] = e
@@ -131,13 +136,45 @@ func buildStatusServicesPage(r *http.Request, d Deps) StatusServicesPageData {
 			data.Form = StatusServiceForm{ID: s.ID, Name: s.Name, Group: s.Group, Order: strconv.Itoa(s.Order),
 				Hold: strconv.Itoa(s.HoldDownSec), Description: s.Description, Targets: strings.Join(lines, "\n"), Edit: true}
 		}
+		if s.ID == r.URL.Query().Get("to") && r.Method == http.MethodGet {
+			if n, err := strconv.Atoi(r.URL.Query().Get("added")); err == nil {
+				data.Added = addedText(n, s.Name)
+			}
+		}
 	}
 	return data
 }
 
+func addedText(n int, name string) string {
+	switch n {
+	case 0:
+		return name + " already watches everything you selected."
+	case 1:
+		return "Added 1 item to " + name + "."
+	}
+	return "Added " + strconv.Itoa(n) + " items to " + name + "."
+}
+
+// finishStatusServicesPage fills the target checklist from the form's
+// targets; whatever the checklist can't show stays in the text field.
+func finishStatusServicesPage(r *http.Request, d Deps, data *StatusServicesPageData) {
+	if data.Unavailable != "" {
+		return
+	}
+	lines := targetLines(data.Form.Targets, data.Form.Picked)
+	picked := make(map[string]bool, len(lines))
+	for _, l := range lines {
+		picked[l] = true
+	}
+	data.Nodes = statusTargetInventory(r, d, picked)
+	data.Form.Targets = strings.Join(splitPicked(data.Nodes, lines), "\n")
+}
+
 func statusServicesPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		renderStatusTemplate(w, "statuspage_services.html", buildStatusServicesPage(r, d), http.StatusOK)
+		data := buildStatusServicesPage(r, d)
+		finishStatusServicesPage(r, d, &data)
+		renderStatusTemplate(w, "statuspage_services.html", data, http.StatusOK)
 	}
 }
 
@@ -151,12 +188,13 @@ func statusServiceSaveHandler(d Deps) http.HandlerFunc {
 		form := StatusServiceForm{ID: strings.TrimSpace(r.FormValue("id")), Name: strings.TrimSpace(r.FormValue("name")),
 			Group: strings.TrimSpace(r.FormValue("group")), Order: strings.TrimSpace(r.FormValue("order")),
 			Hold: strings.TrimSpace(r.FormValue("hold")), Description: strings.TrimSpace(r.FormValue("description")),
-			Targets: r.FormValue("targets")}
+			Targets: r.FormValue("targets"), Picked: r.PostForm["target"]}
 		fail := func(msg string) {
 			data := buildStatusServicesPage(r, d)
 			data.Form = form
 			data.Form.Edit = r.FormValue("edit") == "1"
 			data.Error = msg
+			finishStatusServicesPage(r, d, &data)
 			renderStatusTemplate(w, "statuspage_services.html", data, http.StatusBadRequest)
 		}
 		hold, err := strconv.Atoi(form.Hold)
@@ -171,9 +209,13 @@ func statusServiceSaveHandler(d Deps) http.HandlerFunc {
 				return
 			}
 		}
-		targets, err := parseStatusTargetText(r.FormValue("targets"))
+		targets, err := parseStatusTargetText(strings.Join(targetLines(form.Targets, form.Picked), "\n"))
 		if err != nil {
 			fail(err.Error())
+			return
+		}
+		if len(targets) == 0 {
+			fail("pick at least one thing this service depends on")
 			return
 		}
 		editing := r.FormValue("edit") == "1"

@@ -178,6 +178,7 @@
   // only for the fixed chart/action templates below, never for data-* values.
   function staticInto(parent,html){var t=document.createElement('div'); t.innerHTML=html; while(t.firstChild)parent.appendChild(t.firstChild);}
   document.addEventListener('click',function(e){
+    if(e.target.closest('.pick')) return;
     var row=e.target.closest('[data-detail]'); if(!row) return;
     var d=row.dataset, kind=d.kind||'item';
     var role=document.body.dataset.role||'admin';
@@ -322,6 +323,47 @@
   window.addEventListener('hashchange',function(){ swRestoreTabs(); });
   document.addEventListener('invalid',function(e){var p=e.target.closest&&e.target.closest('.tabpane');if(!p||p.classList.contains('on'))return;var w=p.closest('[data-tabs]');if(w) swShowTab(w,p.dataset.pane);},true);
   document.querySelectorAll('[data-filter]').forEach(function(inp){inp.addEventListener('input',function(){var q=inp.value.toLowerCase();document.querySelectorAll(inp.dataset.filter).forEach(function(tbl){tbl.querySelectorAll('tbody tr').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>-1?'':'none';});});});});
+  var pickBar=document.getElementById('pick-bar');
+  function pickBoxes(){return document.querySelectorAll('input[name=target][form=sp-add]');}
+  function pickSync(){
+    if(!pickBar) return;
+    var n=0; pickBoxes().forEach(function(b){if(b.checked)n++;});
+    document.querySelectorAll('[data-pick-count]').forEach(function(el){el.textContent=n;});
+    pickBar.hidden=n===0;
+  }
+  document.addEventListener('change',function(e){
+    var t=e.target;
+    if(t.matches('[data-pick-all]')){
+      document.querySelectorAll(t.dataset.pickAll+' tbody tr').forEach(function(tr){
+        var b=tr.querySelector('input[name=target]'); if(b&&tr.style.display!=='none') b.checked=t.checked;
+      });
+    }
+    if(t.matches('[data-pick-mode]')){
+      t.form.querySelectorAll('[data-pick-for]').forEach(function(fs){var on=fs.dataset.pickFor===t.value; fs.disabled=!on; fs.hidden=!on;});
+    }
+    if(t.name==='target'||t.matches('[data-pick-all]')) pickSync();
+  });
+  document.addEventListener('click',function(e){
+    var t=e.target.closest('[data-pick-open],[data-pick-close],[data-pick-clear]'); if(!t) return;
+    if(t.hasAttribute('data-pick-open')){
+      var dlg=document.querySelector(t.dataset.pickOpen); if(!dlg||!dlg.showModal) return;
+      dlg.showModal();
+      var first=dlg.querySelector('fieldset:not([disabled]) input, fieldset:not([disabled]) select'); if(first) first.focus();
+    }else if(t.hasAttribute('data-pick-close')){
+      var d=t.closest('dialog'); if(d) d.close();
+    }else{
+      pickBoxes().forEach(function(b){b.checked=false;});
+      document.querySelectorAll('[data-pick-all]').forEach(function(b){b.checked=false;});
+      pickSync();
+    }
+  });
+  document.addEventListener('input',function(e){
+    var t=e.target; if(!t.matches('[data-pick-filter]')) return;
+    var q=t.value.toLowerCase();
+    t.closest('.pick-node').querySelectorAll('.pick-cols .pick-row').forEach(function(r){r.style.display=r.textContent.toLowerCase().indexOf(q)>-1?'':'none';});
+  });
+  window.addEventListener('pageshow',pickSync);
+  pickSync();
   document.addEventListener('click',function(e){var c=e.target.closest('.chip');if(c&&c.parentElement&&c.parentElement.classList.contains('chips')){c.parentElement.querySelectorAll('.chip').forEach(function(x){x.classList.remove('on')});c.classList.add('on');}});
   // fleet admin (task 7): a generic "copy this element's text" button --
   // data-copy names the id of the element to copy (fleet_admin.html's

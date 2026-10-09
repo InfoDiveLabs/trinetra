@@ -1,5 +1,5 @@
 {{define "content"}}
-{{$v := .View}}
+{{$v := .View}}{{$pick := .StatusPick}}
 <div data-tabs>
 
   <div class="grid g-4" style="margin-bottom:18px">
@@ -28,14 +28,15 @@
     <span class="spacer"></span>
     <div class="search"><input type="text" placeholder="filter…" data-filter="#tbl-containers,#tbl-services,#tbl-fs,#tbl-proc"></div>
   </div>
-  <p class="note" style="margin:-6px 0 14px">Tip: click a row for details, live charts, and actions.</p>
+  <p class="note" style="margin:-6px 0 14px">Tip: click a row for details, live charts, and actions.{{if $pick}} Tick containers or services to show them on the public status page.{{end}}</p>
 
   <!-- CONTAINERS -->
   <div class="tabpane on" data-pane="containers"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-containers" class="cards">
-    <thead><tr><th>State</th><th>Container</th><th style="width:150px">CPU</th><th style="width:150px">Mem</th><th title="Network received ↓ / sent ↑, KB/s">Net I/O</th></tr></thead>
+    <thead><tr>{{if $pick}}<th class="pick"><input type="checkbox" data-pick-all="#tbl-containers" aria-label="Select all visible containers" title="Select all visible"></th>{{end}}<th>State</th><th>Container</th><th style="width:150px">CPU</th><th style="width:150px">Mem</th><th title="Network received ↓ / sent ↑, KB/s">Net I/O</th></tr></thead>
     <tbody>
       {{range $v.Containers}}
       <tr data-detail data-kind="container" data-name="{{.Name}}" data-state="{{.State}}"{{if .HasStats}} data-cpu="{{printf "%.0f" .CPUPct}}%" data-mem="{{printf "%.0f" .MemMiB}}M" data-net="↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}} MB/s"{{end}}>
+        {{if $pick}}<td class="pick" data-label="Select"><input type="checkbox" name="target" form="sp-add" value="container:{{.Name}}{{with $pick.Node}}@{{.}}{{end}}" aria-label="Select {{.Name}}"></td>{{end}}
         <td data-label="State"><span class="badge {{if eq .State "running"}}ok{{else if eq .State "restarting"}}warn{{else}}crit{{end}}">{{.State}}</span></td>
         <td class="mono card-title">{{.Name}}</td>
         <td data-label="CPU">{{if .HasStats}}<div class="meter"><div class="bar {{ledClass .CPUPct 70 90}}"><i style="width:{{printf "%.0f" .CPUPct}}%"></i></div><span class="pct">{{printf "%.0f" .CPUPct}}%</span></div>{{else}}<span class="note mono">-</span>{{end}}</td>
@@ -43,22 +44,22 @@
         <td class="mono note" data-label="Net I/O">{{if .HasStats}}↓{{printf "%.1f" .NetRxMB}} ↑{{printf "%.1f" .NetTxMB}}{{else}}--{{end}}</td>
       </tr>
       {{else}}
-      <tr><td colspan="5" class="note">no containers discovered</td></tr>
+      <tr><td colspan="6" class="note">no containers discovered</td></tr>
       {{end}}
     </tbody></table></div></div></div>
 
   <!-- SERVICES -->
   <div class="tabpane" data-pane="services"><div class="panel pad0 cardpanel"><div class="tablewrap"><table id="tbl-services" class="cards">
-    <thead><tr><th>State</th><th>Unit</th><th>Description</th><th title="systemd load state">Load</th></tr></thead>
+    <thead><tr>{{if $pick}}<th class="pick"><input type="checkbox" data-pick-all="#tbl-services" aria-label="Select all visible services" title="Select all visible"></th>{{end}}<th>State</th><th>Unit</th><th>Description</th><th title="systemd load state">Load</th></tr></thead>
     <tbody>
       {{if $v.UnitsEnabled}}
         {{range $v.Units}}
-        <tr data-detail data-kind="service" data-name="{{.Name}}" data-state="{{.Active}}" data-description="{{.Description}}" data-load="{{.Load}}"><td data-label="State"><span class="badge {{if eq .Active "active"}}ok{{else if eq .Active "failed"}}crit{{else}}warn{{end}}">{{.Active}}</span></td><td class="mono card-title">{{.Name}}</td><td class="note" data-label="Description">{{.Description}}</td><td class="mono note" data-label="Load">{{.Load}}</td></tr>
+        <tr data-detail data-kind="service" data-name="{{.Name}}" data-state="{{.Active}}" data-description="{{.Description}}" data-load="{{.Load}}">{{if $pick}}<td class="pick" data-label="Select"><input type="checkbox" name="target" form="sp-add" value="unit:{{.Name}}{{with $pick.Node}}@{{.}}{{end}}" aria-label="Select {{.Name}}"></td>{{end}}<td data-label="State"><span class="badge {{if eq .Active "active"}}ok{{else if eq .Active "failed"}}crit{{else}}warn{{end}}">{{.Active}}</span></td><td class="mono card-title">{{.Name}}</td><td class="note" data-label="Description">{{.Description}}</td><td class="mono note" data-label="Load">{{.Load}}</td></tr>
         {{else}}
-        <tr><td colspan="4" class="note">no units reported</td></tr>
+        <tr><td colspan="5" class="note">no units reported</td></tr>
         {{end}}
       {{else}}
-        <tr><td colspan="4" class="note">collector disabled (collect.services) — enable it to see the full unit inventory</td></tr>
+        <tr><td colspan="5" class="note">collector disabled (collect.services) — enable it to see the full unit inventory</td></tr>
       {{end}}
     </tbody></table></div></div>
     <p class="note" style="margin-top:10px">
@@ -107,4 +108,35 @@
   </div>
 
 </div>
+{{if $pick}}
+<div class="pick-bar" id="pick-bar" hidden>
+  <span><strong data-pick-count>0</strong> selected</span>
+  <span class="spacer"></span>
+  <button class="btn ghost" type="button" data-pick-clear>Clear</button>
+  <button class="btn primary" type="button" data-pick-open="#sp-dialog">Add to status page</button>
+</div>
+<dialog id="sp-dialog" class="sheet-dialog" aria-labelledby="sp-dialog-title">
+  <form id="sp-add" method="post" action="/status-page/services/add-targets">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <h2 id="sp-dialog-title">Add to status page</h2>
+    <p class="note"><span data-pick-count>0</span> selected. Visitors see the service's name and state, never the container or service names.</p>
+    <div class="choice" role="radiogroup" aria-label="Where to add">
+      <label><input type="radio" name="mode" value="new" checked data-pick-mode> New service</label>
+      <label{{if not $pick.Services}} title="No services yet"{{end}}><input type="radio" name="mode" value="existing" data-pick-mode{{if not $pick.Services}} disabled{{end}}> Add to existing</label>
+    </div>
+    <fieldset data-pick-for="new">
+      <label class="field"><span class="lb">Service name</span><input name="name" required maxlength="60" placeholder="Website" autocomplete="off"><span class="hint">What visitors see, e.g. "Website" or "Payments".</span></label>
+      <label class="field"><span class="lb">Group <span class="note">(optional)</span></span><input name="group" list="sp-groups" maxlength="60" placeholder="{{if $pick.Groups}}Pick one or type a new name{{else}}e.g. Core platform{{end}}" autocomplete="off"><span class="hint">Services in the same group are shown together.</span></label>
+    </fieldset>
+    <fieldset data-pick-for="existing" disabled hidden>
+      <label class="field"><span class="lb">Service</span><select name="service" required>{{range $pick.Services}}<option value="{{.ID}}">{{.Name}}{{with .Group}} · {{.}}{{end}}</option>{{end}}</select><span class="hint">Items it already watches are skipped.</span></label>
+    </fieldset>
+    <datalist id="sp-groups">{{range $pick.Groups}}<option value="{{.}}">{{end}}</datalist>
+    <div class="dialog-actions">
+      <button class="btn ghost" type="button" data-pick-close>Cancel</button>
+      <button class="btn primary" type="submit">Add</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
 {{end}}
