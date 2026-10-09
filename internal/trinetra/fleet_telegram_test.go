@@ -168,9 +168,8 @@ func TestTelegramCallbackUnknownDataAnswersUnknownExpired(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackUnknownIncidentAnswersUnknownExpired covers an
-// ack:/sil1h: id that no longer resolves to an incident (already rotated
-// away, or simply never existed -- e.g. a stale button on an old message).
+// TestTelegramCallbackUnknownIncidentAnswersUnknownExpired covers an ack:/sil1h: id that no
+// longer resolves to an incident.
 func TestTelegramCallbackUnknownIncidentAnswersUnknownExpired(t *testing.T) {
 	m := newTelegramTestMaster(t)
 	api := fleetAPIFor(m)

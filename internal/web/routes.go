@@ -126,19 +126,7 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(d, channelsUpdateHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(d, channelsRemoveHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(d, channelsTestHandler(d)))
-	// /settings/public + /public + /public/events: the admin-curated exposure
-	// picker (GET/POST /settings/public, admin-only + CSRF on the mutation --
-	// publicSettingsMutation, handlers_public.go); GET /public itself is now
-	// just a redirect to / (publicRouteRedirectHandler, handlers_public.go --
-	// the anonymous page moved to / itself, see rootHandler); and GET
-	// /public/events is the anonymous page's live SSE counterpart
-	// (publicEventsHandler, sse.go) -- deliberately NOT gated by
-	// requireRole/requireCSRF, same as / itself: it enforces its own "disabled
-	// -> 404" + server-side panel allowlist instead (see that handler's
-	// SECURITY doc). Never reuses /events (the viewer-gated stream) -- a shared
-	// endpoint would mean either leaking the full DashboardView anonymously or
-	// threading an allowlist filter through a handler that also serves
-	// authenticated viewers, both worse than a second, narrowly-scoped handler.
+	// /settings/public + /public + /public/events: the admin-curated exposure picker.
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, d, publicSettingsPageHandler(d)))
 	mux.HandleFunc("POST /settings/public", publicSettingsMutation(d, publicSettingsSaveHandler(d)))
 	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
@@ -177,18 +165,8 @@ func newHandler(d Deps) http.Handler {
 	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, withFleetMemo(withNodeRouter(d, mux))))))
 }
 
-// assetHandler wraps http.FileServer to force a deterministic Content-Type
-// for the extensions the shell needs (text/css, application/javascript)
-// instead of relying on mime.TypeByExtension, which consults the host's
-// /etc/mime.types on Unix and so isn't guaranteed to agree across machines.
-// http.ServeContent (which FileServer calls internally) only fills in
-// Content-Type when it isn't already set, so pre-setting it here wins.
-//
-// It also suppresses http.FileServer's built-in directory index: a request
-// whose path ends in "/" (e.g. "/assets/" after StripPrefix leaves "/") is
-// 404'd rather than served as an <a href> listing of every embedded asset.
-// The web only ever links concrete files, so an index is pure information
-// leakage.
+// assetHandler wraps http.FileServer to force a deterministic Content-Type for the
+// extensions the shell needs.
 func assetHandler(assets fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -253,32 +231,7 @@ type enrollBeginRequest struct {
 }
 
 // enrollBeginHandler starts a WebAuthn registration ceremony (beginRegistration,
-// auth_webauthn.go) for the posted name, creating a brand-new *User (not yet
-// persisted -- finishRegistration's store.Put is what actually writes it).
-//
-// SECURITY: this endpoint is UNAUTHENTICATED, so it must ONLY ever create a
-// new account -- it must never attach a credential to an existing one. An
-// earlier version looked the name up with store.ByName and, on a match, ran
-// the ceremony against the existing *User (with its existing role); that was
-// a cross-account credential-injection / account-takeover bug (an anonymous
-// caller could POST name="admin" and bind their own passkey to the admin
-// account). So a name that already exists is rejected with 409 here.
-// Adding a second passkey to an EXISTING account (multi-device) must
-// instead go through an authenticated session (the account's own owner) or
-// a future admin-managed flow -- never this anonymous path.
-//
-// Role assignment (issue #62, resolved): resolveEnrollRole
-// (enroll_tokens.go) decides how the new account proceeds -- an admin-issued
-// enrollment token's Role if one was posted (tokenStore.Redeem also
-// enforces the token being unknown/expired/already-used, and burns the
-// single-use token now), or a tokenless first-run BOOTSTRAP attempt when no
-// account exists yet, or a flat refusal once any account already exists:
-// unauthenticated open enrollment is only ever valid for that first
-// account. For a bootstrap attempt the admin role is NOT assigned here --
-// that decision is deferred to finish time (finishRegistration ->
-// jsonUserStore.CreateFirstAdmin, under the write lock) so two concurrent
-// tokenless enrollments can't both observe an empty store and both become
-// admin (the bootstrap TOCTOU).
+// auth_webauthn.go) for the posted name, creating a brand-new *User.
 func enrollBeginHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req enrollBeginRequest
@@ -411,11 +364,7 @@ func loginFinishHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// logoutHandler deletes the caller's signed-in session (if any -- see
-// requireCSRF's route wiring in newHandler, which already required a valid
-// session/CSRF pair to reach here) and clears the sw_session cookie.
-// Idempotent: a repeat call (or one with no session, which requireCSRF
-// would already have rejected) just clears the cookie again.
+// logoutHandler deletes the caller's signed-in session.
 func logoutHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessions := newSessionStore(d.StateDir)

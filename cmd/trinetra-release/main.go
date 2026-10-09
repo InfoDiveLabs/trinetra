@@ -1,8 +1,5 @@
-// Command trinetra-release is the maintainer-only tool for building,
-// signing, and co-signing trinetra release manifests and channel pointers.
-// It is not part of the shipped core binary and may depend on non-stdlib
-// crypto packages; see internal/trinetra/buildtag_test.go for the stdlib
-// guarantee that binds cmd/trinetra instead.
+// Command trinetra-release is the maintainer-only tool for building, signing, and
+// co-signing trinetra release manifests and channel pointers.
 package main
 
 import (

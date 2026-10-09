@@ -1,15 +1,5 @@
-// manage_config.go is the pure logic behind the "all settings" screen (issue
-// #91): a generic browse/edit flow over config.Keys() that reaches every
-// flat config key, including the ~20 that had no dedicated screen (sampling
-// intervals, baseline/anomaly tuning, global thresholds,
-// critical_overrides_quiet, storage.* (restart required), collection
-// toggles, the remaining web.* keys the guided web-setup wizard doesn't
-// collect, and public.*). It is deliberately unit-tested against plain
-// *config.Config values with no terminal involved, mirroring
-// manage_schedule.go/manage_quiet.go/manage_health.go/manage_monitor.go;
-// manage_ui.go stays the thin Bubble Tea glue that drives these functions
-// (group list -> key list -> value input) the same fetch-fresh/mutate-pure/
-// ApplyConfig shape every other management screen already uses.
+// manage_config.go is the pure logic behind the "all settings" screen (issue #91): a
+// generic browse/edit flow over config.Keys() that reaches every flat config key.
 package main
 
 import (
@@ -51,14 +41,7 @@ func applyConfigKey(cfg *config.Config, key, raw string) error {
 	return cfg.Set(key, raw)
 }
 
-// managedFragmentFor reports the fragment id currently managing key on the
-// daemon api talks to: api must implement core.FleetProvider AND
-// report a non-nil Status().Link.Managed entry for key -- true only for a
-// fleet CHILD with that key currently under management (a master/solo
-// daemon's Status has no Link at all). Used by runConfig's "set" verb and
-// applyConfigKeyCmd (the TUI's "all settings" per-key edit) to refuse a
-// managed key with the same message `trinetra config set` shows locally,
-// before ever calling config.Set/ApplyConfig.
+// managedFragmentFor reports the fragment id currently managing key on the daemon api.
 func managedFragmentFor(api core.API, key string) (fragmentID string, managed bool) {
 	fp, ok := api.(core.FleetProvider)
 	if !ok {

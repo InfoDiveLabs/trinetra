@@ -1,7 +1,5 @@
-// setup_web_test.go unit-tests setup_web.go's PURE logic (applyWebSetup,
-// webSetupSummary, validateManualPath) against plain values, no terminal
-// involved. The Bubble Tea glue that drives a user through these screens
-// (tui.go) is exercised end to end in tui_test.go.
+// setup_web_test.go unit-tests setup_web.go's PURE logic (applyWebSetup, webSetupSummary,
+// validateManualPath) against plain values, no terminal involved.
 package main
 
 import (

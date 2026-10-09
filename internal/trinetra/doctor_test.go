@@ -54,9 +54,7 @@ func TestBuildDoctorReport(t *testing.T) {
 	}
 }
 
-// TestBuildDoctorReportStoreStats asserts a live store's Stats() feed
-// through into StoreStats with the same "N series, X.X MB on disk (raw+1m)"
-// wording collectorSummary has always used.
+// TestBuildDoctorReportStoreStats asserts a live store's Stats() feed through into.
 func TestBuildDoctorReportStoreStats(t *testing.T) {
 	store, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {

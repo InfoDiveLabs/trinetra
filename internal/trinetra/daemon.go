@@ -330,10 +330,7 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 			recordCollectorErr(&snap, "docker", err)
 		}
 	}
-	// per-container cpu/mem/net (opt-in, docker-availability-gated): a stats
-	// error (docker daemon busy, container churn mid-call, etc.) just leaves
-	// ContainerStats nil for this tick rather than failing the whole
-	// collectSlow pass.
+	// per-container cpu/mem/net (opt-in, docker-availability-gated): a stats error.
 	if da.available && c != nil && c.ContainerStatsEnabled() {
 		if cs, err := da.stats(x); err == nil {
 			snap.ContainerStats = map[string]ContainerStat{}
@@ -354,11 +351,7 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 	} else {
 		recordCollectorErr(&snap, "services", err)
 	}
-	// full systemd unit inventory (opt-in via collect.services, snapshot-only:
-	// see UnitInfo/listUnits in discover.go for why this is never persisted
-	// to the SampleStore as a series). A nil config, disabled collector, or
-	// systemctl error all just leave snap.Units nil for this tick rather than
-	// failing the rest of collectSlow.
+	// full systemd unit inventory.
 	if c != nil && c.ServicesEnabled() {
 		if units, err := listUnits(x); err == nil {
 			snap.Units = units
@@ -706,22 +699,8 @@ func cmdDaemon(args []string) int {
 	// managedRef holds this child's managedChild once startFleet/startChild has built one (nil
 	// forever on solo/master, and briefly nil on a child too, until the Store below runs).
 	var managedRef atomic.Pointer[managedChild]
-	// reload persists newCfg to disk then applies it in-process: the closure
-	// newInprocAPI's ApplyConfig exposes to the control socket (and, through
-	// it, the web config editor, issue #66) so writes take effect
-	// immediately, without a SIGHUP round-trip.
-	// saveDaemonCfg keeps the on-disk fleet identity keys: this daemon's
-	// in-memory config (or a plugin's) may predate a `trinetra fleet`
-	// command, which must be the only thing that changes them.
-	//
-	// reimposeManagedValues runs FIRST: reload
-	// is the ONE shared full-config apply path every ApplyConfig caller goes
-	// through (the web channels/public-settings pages, every ctl "manage"
-	// screen, a child's own managed-config apply) -- none of the ordinary
-	// callers know anything about managed-config, so without this a stale
-	// read (or a race with a fresh master push) could silently persist a
-	// managed key back to whatever value it happened to carry. A nil
-	// managedRef (solo, master, or nothing currently managed) is a no-op.
+	// reload persists newCfg to disk then applies it in-process: the closure newInprocAPI's
+	// ApplyConfig exposes to the control socket.
 	reload := func(newCfg *config.Config) error {
 		reimposeManagedValues(managedRef.Load(), newCfg)
 		if err := saveDaemonCfg(newCfg); err != nil {
@@ -781,12 +760,8 @@ func cmdDaemon(args []string) int {
 	// smartState persists the last SMART scan across slow cycles so collectSlow can throttle
 	// smartctl calls to c.SmartIntervalSec() instead of scanning every cycle.
 	var smartState smartCache
-	// collHealth/prevSlow make slow collection fail-visible (#110): collHealth
-	// tracks per-collector consecutive failures across cycles (owned by the
-	// slow-collector goroutine, like the calcs above), and prevSlow holds the
-	// last published slow snapshot so a collector that errors this cycle carries
-	// its last-known values forward instead of publishing a healthy target
-	// flipped to gone.
+	// collHealth/prevSlow make slow collection fail-visible (#110): collHealth tracks
+	// per-collector consecutive failures across cycles.
 	collHealth := newCollectorHealth()
 	var prevSlow Snapshot
 	da := probeDocker(x, fs)
@@ -797,17 +772,8 @@ func cmdDaemon(args []string) int {
 	// every alert onto it.
 	bus := newEventBus()
 
-	// control socket: serves the daemon's own core.API over a unix socket
-	// under RUNTIME_DIRECTORY (or /run/trinetra) for the out-of-process
-	// plugins (trinetra-ctl, trinetra-web). newInprocAPI is untagged,
-	// so this carries no third-party dependency. Non-fatal: a bind failure
-	// just logs and leaves the daemon running without the socket (and thus
-	// without the web UI, which dials it).
-	// enroll is the shared Telegram enrollment-pin holder (#90, enroll.go):
-	// one instance for this daemon launch, handed to both the poll loop
-	// (which generates/announces/matches against it) and the control socket
-	// (so a separate process, e.g. `telegram set-token`, can read back the
-	// exact same pin instead of only ever seeing it in the daemon's log).
+	// control socket: serves the daemon's own core.API over a unix socket under
+	// RUNTIME_DIRECTORY (or /run/trinetra) for the out-of-process plugins.
 	enroll := &enrollState{}
 	controlAPI := newInprocAPI(latestSnapshot, getCfg, store, stateDir, reload, bus, enroll)
 	// fleet: the ONE place the fleet role is honoured (fleet_daemon.go).
@@ -1042,11 +1008,8 @@ func cmdDaemon(args []string) int {
 		// ultimately the control socket's Snapshot handler).
 		snap := merged
 		snapshotHub.Store(&snap)
-		// Tell any live control-socket subscribers a fresh Snapshot is ready,
-		// without pushing the Snapshot itself onto the bus: a subscriber (the
-		// web UI's SSE handler, eventually) fetches the actual DashboardView
-		// via Snapshot() only when this tick says to, keeping core.Event
-		// alert-shaped rather than carrying a giant view in every frame.
+		// Tell any live control-socket subscribers a fresh Snapshot is ready, without pushing the
+		// Snapshot itself onto the bus: a subscriber.
 		bus.Publish(core.Event{Kind: "snapshot", Time: now.Unix()})
 
 		// Liveness: stamp this sampler tick for the watchdog goroutine, which is now the SOLE
@@ -1266,11 +1229,8 @@ func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll 
 	for _, u := range ups {
 		offset = u.UpdateID + 1
 		if u.CallbackID != "" {
-			// A button tap is never a text command and never participates
-			// in enrollment: it carries its own authorization check (the
-			// enrolled owner chat, exactly like a text command) and must
-			// always be answered, even from a foreign chat or before
-			// anyone has ever enrolled at all.
+			// A button tap is never a text command and never participates in enrollment: it carries
+			// its own authorization check.
 			if onCallback != nil {
 				onCallback(c, u)
 			}

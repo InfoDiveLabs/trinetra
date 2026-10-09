@@ -239,9 +239,8 @@ func TestStreamPushToDisconnectedNodeReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestHubCloseAllClosesEveryConnection: CloseAll must close every connected
-// node's done channel (unblocking handleStream, as Disconnect does) and clear the
-// map so a later connect for the same id starts fresh.
+// TestHubCloseAllClosesEveryConnection: CloseAll must close every connected node's done
+// channel.
 func TestHubCloseAllClosesEveryConnection(t *testing.T) {
 	hub := NewHub(nil)
 	c1 := hub.connect("n1")
@@ -423,9 +422,7 @@ func TestRPCBodyOverOneMiBRejected(t *testing.T) {
 	}
 }
 
-// TestStreamNegotiatesHTTP2 asserts the stream request itself arrives as
-// HTTP/2 (the shipper's transport sets ForceAttemptHTTP2, and the master's
-// production TLS config does not opt out of it).
+// TestStreamNegotiatesHTTP2 asserts the stream request itself arrives as HTTP/2.
 func TestStreamNegotiatesHTTP2(t *testing.T) {
 	ca, leaf := newTestPKI(t)
 	dir := t.TempDir()

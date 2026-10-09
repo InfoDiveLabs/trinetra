@@ -1,9 +1,5 @@
-// Package trinetra: hostinfo.go collects static host hardware/OS inventory
-// (#100): RAM, CPU model and core/thread split, kernel and OS, per-disk model
-// and rotational type, and the host boot time (uptime is derived at read time).
-// All reads go through the injected Exec/FileSource seam so the parsers are
-// unit-testable from fixture strings with no host access, matching collect.go's
-// parseMeminfo/parseDFTypes style. Everything here is stdlib-only.
+// Package trinetra: hostinfo.go collects static host hardware/OS inventory (#100): RAM, CPU
+// model and core/thread split, kernel and OS, per-disk model and rotational type.
 package trinetra
 
 import (
@@ -189,10 +185,8 @@ func parseOSRelease(s string) string {
 	return ""
 }
 
-// baseBlockDevice maps a df device path (e.g. "/dev/sda1", "/dev/nvme0n1p2") to
-// its base block device name for a /sys/block lookup ("sda", "nvme0n1"). ok is
-// false for non-/dev devices (overlay, tmpfs, mapper), which have no
-// /sys/block entry and simply report no model/rotational.
+// baseBlockDevice maps a df device path (e.g. "/dev/sda1", "/dev/nvme0n1p2") to its base
+// block device name for a /sys/block lookup.
 func baseBlockDevice(dev string) (string, bool) {
 	name, ok := strings.CutPrefix(dev, "/dev/")
 	if !ok || name == "" {

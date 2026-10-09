@@ -1,7 +1,4 @@
-// Package trinetra: fleet_provider.go implements core.FleetProvider for
-// the daemon. On solo and child it reports just this host ("self"); on a
-// master it adds every enrolled node from the registry, with state from the
-// liveness tracker and metrics from each node's latest live update.
+// Package trinetra: fleet_provider.go implements core.FleetProvider for the daemon.
 package trinetra
 
 import (
@@ -49,10 +46,8 @@ type fleetProvider struct {
 	link      *fleet.Shipper
 	nodeID    string
 	masterURL string
-	// managed is this CHILD's own managed-config state (nil for a
-	// master/solo daemon): fleetAPIImpl.Status() reads it directly (this is
-	// the live daemon process itself, not a separate CLI invocation) to
-	// populate core.LinkView.Managed.
+	// managed is this CHILD's own managed-config state (nil for a master/solo daemon):
+	// fleetAPIImpl.Status() reads it directly.
 	managed *managedChild
 }
 
@@ -268,10 +263,7 @@ func (f fleetAPIImpl) SetNodeDeps(id string, deps []string, actor string) error 
 		return err
 	}
 	m.audited(actor, "fleet.node.deps", id, strings.Join(clean, ","))
-	// A dependency changing (in particular a down dependency being REMOVED) may
-	// free up a node folded waiting on it. releaseFoldedDependents only runs off
-	// that dependency's own recover, which never happens here, so trigger it
-	// explicitly.
+	// A dependency changing (in particular a down dependency being REMOVED) may free up.
 	if m.engine != nil {
 		m.engine.ReleaseIfDependenciesClear(id, time.Now().Unix())
 	}
@@ -406,9 +398,7 @@ func (f fleetAPIImpl) Incident(id string) (core.Incident, error) {
 	return inc, nil
 }
 
-// AckIncident acknowledges incident id: it pushes an "ack" frame (applied
-// via AlertState.Ack on the child, fleet_lease.go's applyAckFrame) for every
-// still-open alert on every member node, then records the ack itself.
+// AckIncident acknowledges incident id: it pushes an "ack" frame.
 func (f fleetAPIImpl) AckIncident(id, actor string) error {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -766,12 +756,8 @@ const fleetSeriesCap = 10
 // raw resolution (24h).
 const fleetSeriesRawWindowCapSeconds int64 = 24 * 3600
 
-// toSeriesResolution maps a core.Resolution onto this package's own
-// Resolution (mirroring coreapi_inproc.go's Series conversion): core.ResRaw
-// is raw, everything else (core.Res1m, and core.ResAuto -- FleetSeries has
-// no age-dependent picker of its own, unlike Series/PickResolution, since
-// the web compare page already decides raw-vs-1m itself off the requested
-// range) is Res1m.
+// toSeriesResolution maps a core.Resolution onto this package's own Resolution (mirroring
+// coreapi_inproc.go's Series conversion): core.ResRaw is raw, everything else.
 func toSeriesResolution(res core.Resolution) Resolution {
 	if res == core.ResRaw {
 		return ResRaw
@@ -833,10 +819,8 @@ func fleetSeriesBucketSeconds(res Resolution, getCfg func() *config.Config) int6
 	return 10
 }
 
-// floorToBucket floors ts down to the start of its bucketSeconds-wide
-// bucket; bucketSeconds<=0 (shouldn't happen -- fleetSeriesBucketSeconds
-// always returns a positive value) degrades to "no bucketing" rather than a
-// divide-by-zero.
+// floorToBucket floors ts down to the start of its bucketSeconds-wide bucket;
+// bucketSeconds<=0.
 func floorToBucket(ts, bucketSeconds int64) int64 {
 	if bucketSeconds <= 0 {
 		return ts
@@ -858,10 +842,8 @@ func bucketNodeSeries(pts []Point, bucketSeconds int64) map[int64]float64 {
 	return out
 }
 
-// fleetSeriesAggregate combines vals (one value per contributing node at a
-// shared timestamp bucket) per agg; avg is the default for any value other
-// than max/min (including AggNone, which never reaches here -- see
-// FleetSeries).
+// fleetSeriesAggregate combines vals (one value per contributing node at a shared timestamp
+// bucket) per agg; avg is the default for any value other than max/min.
 func fleetSeriesAggregate(agg core.Agg, vals []float64) float64 {
 	switch agg {
 	case core.AggMax:
@@ -889,13 +871,8 @@ func fleetSeriesAggregate(agg core.Agg, vals []float64) float64 {
 	}
 }
 
-// FleetSeries implements core.FleetAPI: metric's time series across every node
-// matching filter, either one series per node (agg="none", capped at
-// fleetSeriesCap nodes) or one aggregated series (agg avg/max/min, Node "").
-// The master's own node is included as the aggregate rules include it
-// (ruleSelfSource), reusing the self Name/Store the rule evaluator was wired
-// with (m.engine.rules.self); a nil evaluator (bare-bones test masterState)
-// just means self contributes no data.
+// FleetSeries implements core.FleetAPI: metric's time series across every node matching
+// filter, either one series per node.
 func (f fleetAPIImpl) FleetSeries(metric string, filter core.NodeFilter, agg core.Agg, from, to int64, res core.Resolution) ([]core.FleetSeriesPoint, error) {
 	m, err := f.requireMaster()
 	if err != nil {

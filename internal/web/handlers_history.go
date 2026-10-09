@@ -16,10 +16,8 @@ import (
 // generously beyond the 30-day rollup-retention default.
 const maxSeriesRangeSeconds = int64(400 * 24 * 3600)
 
-// seriesResponse is GET /api/series's JSON body: Series is uPlot's own data
-// shape -- parallel arrays, [0] the x/timestamp axis and [1..] the y series
-// (avg, then min, then max here) -- so assets/app.js can hand it to
-// `new uPlot(opts, data)`/`u.setData(data)` with no reshaping.
+// seriesResponse is GET /api/series's JSON body: Series is uPlot's own data shape --
+// parallel arrays, [0] the x/timestamp axis and [1..] the y series.
 type seriesResponse struct {
 	Metric string      `json:"metric"`
 	Series [][]float64 `json:"series"`
@@ -65,13 +63,7 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 			pts, err := api.Series(metric, from, to, core.ResAuto)
 			switch {
 			case err != nil:
-				// A genuine storage fault still renders as an empty 200 (the
-				// UI stays resilient -- a picked metric this daemon can't serve
-				// is an ordinary outcome, not a page-breaking error), but log
-				// it server-side so a real storage-layer failure isn't
-				// operationally invisible. An unrecognized metric is NOT an
-				// error in either backend (memStore/tsfile return an empty
-				// series, no error), so this path only fires on an actual fault.
+				// A genuine storage fault still renders as an empty 200.
 				log.Printf("web: /api/series query metric=%q from=%d to=%d: %v", metric, from, to, err)
 			case len(pts) > 0:
 				ts := make([]float64, len(pts))

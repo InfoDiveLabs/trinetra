@@ -1,24 +1,5 @@
-// Package trinetra: tsfile.go implements the default "tsfile" SampleStore
-// backend described in docs/handbook/09-storage-and-data-model.md -- a compact, append-only,
-// per-series binary store.
-//
-// Layout under dir:
-//
-//	<dir>/ts/raw/<safeMetric>.tsd  -- raw samples, one record per Append
-//	<dir>/ts/1m/<safeMetric>.tsd   -- 1-minute rollups, populated by Downsample
-//	                                 (Query on an absent file just returns no
-//	                                 points)
-//	<dir>/ts/events.tsd            -- downtime events
-//
-// Every file starts with a fixed 16-byte header (magic, version, record
-// length, resolution) followed by fixed-width records appended in
-// nondecreasing timestamp order. Range queries binary-search the sorted
-// records by offset instead of parsing the whole file. A torn trailing
-// record (a partial write from a crash mid-append) is tolerated by simply
-// excluding it from the record count -- see readCount below.
-//
-// tsfileStore opens files per operation rather than holding descriptors
-// open, so Close is a no-op; there is nothing to flush.
+// Package trinetra: tsfile.go implements the default "tsfile" SampleStore backend described
+// in docs/handbook/09-storage-and-data-model.md -- a compact, append-only.
 package trinetra
 
 import (
@@ -323,10 +304,8 @@ func (s *tsFileStore) AppendEvent(e DownEvent) error {
 	return appendRecord(s.eventsPath(), tsResolutionRaw, rec)
 }
 
-// PurgeEvents rewrites events.tsd keeping only events for which keep returns
-// true, reusing the same crash-durable rewrite machinery as Prune
-// (pruneFileGeneric: temp+rename, then one dir fsync), and reports how many
-// records were dropped.
+// PurgeEvents rewrites events.tsd keeping only events for which keep returns true, reusing
+// the same crash-durable rewrite machinery as Prune.
 func (s *tsFileStore) PurgeEvents(keep func(DownEvent) bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

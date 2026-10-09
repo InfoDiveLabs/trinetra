@@ -1,6 +1,5 @@
-// Package trinetra: alerts_cli.go implements `trinetra alerts ...`:
-// listing currently-active alerts plus recent alert-log history, and
-// acknowledging/unacknowledging an active alert.
+// Package trinetra: alerts_cli.go implements `trinetra alerts ...`: listing
+// currently-active alerts plus recent alert-log history.
 package trinetra
 
 import (

@@ -1,6 +1,5 @@
-// coreapi_inproc_update_test.go: inprocAPI's control-socket UpdateApply and
-// UpdateRollback must return quickly (fast preflight only, slow work continues
-// in a background goroutine) and only one may run at a time.
+// coreapi_inproc_update_test.go: inprocAPI's control-socket UpdateApply and UpdateRollback
+// must return quickly.
 package trinetra
 
 import (

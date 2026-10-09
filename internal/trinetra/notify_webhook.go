@@ -24,13 +24,8 @@ type webhookView struct {
 	Title    string
 	Body     string
 	Severity string
-	// Marker is the same emoji alertMarker (notify.go) puts in front of
-	// formatAlert's plain-text rendering (🚨/⚠️/ℹ️, or ✅ for a "recover"
-	// Alert regardless of Severity). The slack/discord presets (presets.go)
-	// use it instead of the textual Severity so their messages mirror
-	// formatAlert's style; the generic default template still uses Severity
-	// since it predates Marker and changing it would alter existing users'
-	// webhook payloads.
+	// Marker is the same emoji alertMarker (notify.go) puts in front of formatAlert's
+	// plain-text rendering.
 	Marker string
 	Kind   string
 	Key    string

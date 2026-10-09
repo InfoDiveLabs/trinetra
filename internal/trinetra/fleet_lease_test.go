@@ -611,9 +611,7 @@ func TestReconcilePendingFromLogSkipsDeliveredLocallyResolved(t *testing.T) {
 	}
 }
 
-// A delivered_locally record for a RECOVER (Kind stays "recover" through
-// deliverFallback -- only Title/Time are rewritten) resolves a pending
-// recover exactly like the fire case above.
+// A delivered_locally record for a RECOVER.
 func TestReconcilePendingFromLogSkipsDeliveredLocallyResolvedRecover(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -766,9 +764,8 @@ func TestRestartWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.T) {
 	fallbackAfter := 60 * time.Second
 	receiptsPath := noReceiptsPath(t)
 
-	// "Restart": a fresh handoff/lease, reconciled from the log the way
-	// startChild does, with a FRESH valid lease already re-granted (so it is
-	// fallback timing -- not lease expiry -- that must trigger delivery).
+	// "Restart": a fresh handoff/lease, reconciled from the log the way startChild does, with
+	// a FRESH valid lease already re-granted.
 	now := time.Unix(fireTime+30, 0) // fallback_after not yet elapsed
 	nowFn := func() time.Time { return now }
 	lease := newLeaseHolder(nowFn)
@@ -862,10 +859,7 @@ func TestRestartWithRecoverReceiptLoggedBeforeRestartNeverDeliversLocally(t *tes
 	}
 }
 
-// Scenario 3: same as above, but a delivered_locally record is already
-// present (the fallback delivery happened, then the process restarted
-// again before Tick's normal single-delivery guard would matter). No
-// second delivery.
+// Scenario 3: same as above, but a delivered_locally record is already present.
 func TestRestartWithDeliveredLocallyAlreadyPresentNoSecondDelivery(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -1097,12 +1091,8 @@ func TestPushedSilencesSuppressedMatchesRuleAndSeverity(t *testing.T) {
 	}
 }
 
-// TestPushedSilencesAppliesWhateverWasPushed: the child does not re-check Node
-// against its own name (config.ServerName is not reliably the master's
-// registry name, so a re-check risked wrongly delivering a silenced alert). It
-// applies a pushed Matcher's Rule/Severity only, trusting the master already
-// decided it applies to THIS node, even if the matcher carries a Node field
-// the master resolved for some OTHER node.
+// TestPushedSilencesAppliesWhateverWasPushed: the child does not re-check Node against its
+// own name.
 func TestPushedSilencesAppliesWhateverWasPushed(t *testing.T) {
 	p := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
 	// A matcher that would only ever have been resolved for a DIFFERENT node (Node:"db1") on

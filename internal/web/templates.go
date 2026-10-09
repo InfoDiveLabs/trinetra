@@ -43,19 +43,14 @@ func computeAssetVersion() string {
 // /assets/app.js?v=<hash>.
 func assetURL(path string) string { return path + "?v=" + assetVersion }
 
-// templatesFS embeds internal/web/templates: base.html (the app shell --
-// nav/topbar/content blocks, see that file's comments) plus one file per page
-// that fills in the "content" block (and, as needed, overrides other blocks).
+// templatesFS embeds the page templates; base.html is the app shell.
 //
 //go:embed templates
 var templatesFS embed.FS
 
 // funcMap holds the template helpers base.html and page templates call.
 var funcMap = template.FuncMap{
-	// ledClass/humanBytes/humanRate/diskTrendText/diskTrendClass/
-	// loadLedClass/diskWarnPct/diskCriticalPct/subInt (handlers_dashboard.go)
-	// are templates/dashboard.html's formatting helpers for the live
-	// DashboardView.
+	// Formatting helpers for the dashboard's live view.
 	"ledClass": ledClass,
 	// multiline/timeText (handlers_statuspage_incidents.go, handlers_fleet.go)
 	// render status-page update text and unix timestamps.
@@ -85,10 +80,8 @@ var funcMap = template.FuncMap{
 	// oneIndexed (U6, 2026-09-25 UI audit fix) renders a zero-based loop index as its 1-based
 	// display label -- fleet_alerting.html's Route/ Policy/Step row headings only.
 	"oneIndexed": oneIndexed,
-	// dict builds a map[string]any from alternating key/value arguments, for
-	// passing a small ad-hoc bundle of fields into a named template block
-	// ({{template "x" (dict "A" 1 "B" 2)}}) -- html/template has no map literal
-	// syntax of its own.
+	// dict builds a map[string]any from alternating key/value arguments, for passing a small
+	// ad-hoc bundle of fields into a named template block.
 	"dict": templateDict,
 	// managedKeyKnown reports whether key is one of core.ManagedKeys -- the create/edit form's
 	// key <select> uses it to add a visible.
@@ -108,13 +101,8 @@ func nodeHref(prefix, path string) string {
 	return prefix + path
 }
 
-// nodeDurText renders a Unix timestamp as a short duration since now, with
-// no "ago" suffix: "3s", "2m", "1h", "4d" (seconds precision below a
-// minute, minute above -- mirroring the fleet CLI's own `ago` helper,
-// internal/trinetra/fleet_cmd.go, which this package can't import across
-// the internal/web -> internal/trinetra layering boundary). ts<=0 (never
-// seen) renders "never". Used directly for the topbar child-link pill's
-// "Master unreachable 12m" text, and as nodeAgoText's building block.
+// nodeDurText renders a Unix timestamp as a short duration since now, with no "ago" suffix:
+// "3s", "2m", "1h", "4d".
 func nodeDurText(ts int64) string {
 	if ts <= 0 {
 		return "never"
@@ -215,29 +203,7 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/updates", Icon: "update", Label: "Updates"}, AdminOnly: true},
 }
 
-// navForRole returns navItems filtered to what role may see (viewers get
-// everything except AdminOnly entries, admins get everything) with each
-// entry's Badge filled in from counts via badgeFor, and every entry's Href
-// carrying node's URL prefix.
-//
-// node additionally gates the AdminOnly entries (the "Admin" heading plus
-// Configuration/Channels/Users/Public view): on a remote node's page
-// (node.Self == false) they're hidden outright, regardless of role --
-// config/channels/users/public-settings are master-local pages
-// (masterLocalPrefixes, node_scope.go) that only ever mean "this master", so
-// they stay reachable from the master's own (self-scoped) nav, never from a
-// node-scoped one.
-//
-// badgeFor is deliberately called with the entry's ORIGINAL, unprefixed
-// Href (its switch matches literal paths like "/monitoring") -- prefixing
-// happens after, so a remote node's Monitoring badge still resolves
-// correctly instead of silently going blank because "/n/child1/monitoring"
-// never matches badgeFor's cases.
-//
-// fleetRole gates MasterOnly entries: "/fleet" shows only when this daemon is
-// a fleet master (config.RoleMaster), regardless of node/role -- see
-// navEntry.MasterOnly's doc for why its Href is also exempt from the
-// node.Prefix join every other entry gets.
+// navForRole returns navItems filtered to what role may see.
 func navForRole(role string, counts NavCounts, node nodeScope, fleetRole string) []NavItem {
 	out := make([]NavItem, 0, len(navItems))
 	for _, n := range navItems {
@@ -313,15 +279,8 @@ type PageData struct {
 	Title, Sub string
 	// ServerName is this host's display name (config server.name, or the hostname when unset).
 	ServerName string
-	// Status/StatusText drive the topbar's status pill (led color class +
-	// display text) and are ALWAYS computed by newPageData from the real
-	// active-alert set (topbarStatus, over the control socket) -- see that function's
-	// doc. They are not caller-supplied: every page's topbar reflects the
-	// same real severity/counts rather than each page guessing its own
-	// (the old bug this replaces: most page handlers passed the literal
-	// "ok" into newPageData regardless of what was actually firing, and the
-	// old statusText helper mapped "crit"/"warn" to hardcoded text like "2
-	// alerts firing" no matter the real count).
+	// Status/StatusText drive the topbar's status pill (led color class + display text) and
+	// are ALWAYS computed by newPageData from the real active-alert set.
 	Status, StatusText string
 	// Role is the current user's role ("admin", "responder" or "viewer"), from currentRole.
 	Role string
@@ -351,10 +310,8 @@ type PageData struct {
 	// FleetRole is this daemon's fleet role for the CURRENT request: "solo"/"master"/"child"
 	// (config.RoleSolo/RoleMaster/RoleChild).
 	FleetRole string
-	// Banner is the replica banner for a page scoped to a genuinely remote
-	// fleet node -- nil for every self-scoped page (solo, a master's own view,
-	// a child's own view, or a node-scoped page redirected back to self). See
-	// buildNodeBanner's doc.
+	// Banner is the replica banner for a page scoped to a genuinely remote fleet node -- nil
+	// for every self-scoped page.
 	Banner *NodeBanner
 	// Link is a child daemon's link status to its master (core.LinkView, from
 	// Fleet().Status().Link).
@@ -377,14 +334,9 @@ const switcherNodeCap = 20
 type SwitcherNode struct {
 	// ID is the roster id (core.NodeSummary.ID; core.SelfNodeID for self).
 	ID string
-	// Name is the display name: "this server" for self, NodeSummary.Name
-	// otherwise (never empty -- a remote node with no configured name still
-	// carries its NodeSummary.Name, which fleet enrollment always sets).
+	// Name is the display name: "this server" for self, NodeSummary.Name otherwise.
 	Name string
-	// State is NodeSummary.State, defaulting to "online" for self (whose
-	// roster entry may leave State unset -- self's own health is already
-	// reported by the topbar's own status pill, not this list). Always
-	// rendered as plain text next to the led dot -- never color-only.
+	// State is NodeSummary.State, defaulting to "online" for self.
 	State string
 	// Self mirrors NodeSummary.Self.
 	Self bool
@@ -449,16 +401,8 @@ func buildSwitcherNodes(nodes []core.NodeSummary, current nodeScope, targetPath 
 	return out
 }
 
-// switcherTargetPath returns the page-type path (plus query string) every
-// switcher/palette entry links to: p unchanged (already node-prefix-stripped
-// -- see nodeFrom's doc, and newPageData's caller which passes r.URL.Path
-// directly) with "?"+rawQuery appended when set (switching nodes from e.g.
-// /history?metric=cpu must keep ?metric=cpu, not silently drop it) for an
-// ordinary node-scoped page; or "/" alone, with NO query string, when p falls
-// under node_scope.go's masterLocalPrefixes -- config/channels/users/
-// settings/fleet/etc. have no per-node counterpart to switch to, so the
-// switcher goes to the node's dashboard instead, and a filter/sort query tied
-// to a master-local page (e.g. /fleet?state=down) has no meaning there.
+// switcherTargetPath returns the page-type path (plus query string) every switcher/palette
+// entry links to: p unchanged.
 func switcherTargetPath(p, rawQuery string) string {
 	p = path.Clean(p)
 	if isMasterLocalPath(p) {
@@ -625,16 +569,7 @@ func firstInitial(name string) string {
 	return ""
 }
 
-// renderPageStatus parses base.html together with the named page template
-// (whose {{define "content"}} overrides base.html's content block -- the
-// standard html/template nested-layout pattern) and executes "base.html"
-// against data, writing status before the body. Parsing per-request keeps
-// each page's template set isolated (two pages both defining "content" in the
-// same set would conflict), which is cheap enough here: embed.FS reads are
-// in-memory and traffic is low; a future task can cache per-page
-// *template.Template if this shows up in profiling. Handlers rendering a
-// normal 200 page call it with http.StatusOK; the 403 denied panel
-// (middleware.go's renderDenied) passes http.StatusForbidden.
+// renderPageStatus parses base.html together with the named page template.
 func renderPageStatus(w http.ResponseWriter, page string, data PageData, status int) error {
 	tmpl, err := template.New("base.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base.html", "templates/"+page)

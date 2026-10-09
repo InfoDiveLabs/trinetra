@@ -345,7 +345,4 @@ func TestWebAuthnConfigDerivesFromRequestOriginInProxyMode(t *testing.T) {
 	}
 }
 
-// Expiry/eviction/capacity of the ceremony stash is pinned in session_test.go
-// (TestSessionGetTreatsExpiredAsAbsent, TestSessionGCRemovesExpiredRecords,
-// TestSessionNewRefusesWhenFull): both registration and login ceremonies stash
-// their SessionData in the real SessionStore (session.go).
+// Expiry/eviction/capacity of the ceremony stash is pinned in session_test.go.

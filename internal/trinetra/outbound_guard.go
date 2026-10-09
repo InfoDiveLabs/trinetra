@@ -1,15 +1,5 @@
-// Package trinetra: outbound_guard.go provides an opt-in SSRF guard for the
-// URLs the daemon dials on the operator's behalf (webhook/Slack/Discord/ntfy/
-// gotify channels and the healthchecks ping). Setting a channel URL already
-// requires an admin/root config write, so this is defense-in-depth, off by
-// default (notify.block_private_targets). When enabled it refuses to connect to
-// loopback, unspecified, link-local (which includes the 169.254.169.254 cloud
-// metadata endpoint), and private (RFC1918 / ULA) addresses.
-//
-// The check runs in net.Dialer.Control, i.e. AFTER DNS resolution and against
-// the actual IP about to be dialed, so a hostname that resolves to an internal
-// address (including a DNS-rebinding attempt) is blocked too, not just literal
-// IPs in the URL.
+// Package trinetra: outbound_guard.go provides an opt-in SSRF guard for the URLs the daemon
+// dials on the operator's behalf.
 package trinetra
 
 import (

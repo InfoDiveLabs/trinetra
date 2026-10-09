@@ -29,12 +29,8 @@ func configMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-// cloneConfig returns a deep, independent copy of c via a JSON round-trip:
-// simplest way to get a copy whose map/slice fields (Targets, Channels,
-// Collect.*) don't alias the original, so validating a batch of edits
-// against the clone can never mutate the live config before every field has
-// passed -- the "bad value -> 400, no write" requirement (routes.go/
-// configSaveHandler) depends on this.
+// cloneConfig returns a deep, independent copy of c via a JSON round-trip: simplest way to
+// get a copy whose map/slice fields.
 func cloneConfig(c *config.Config) (*config.Config, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -60,17 +56,8 @@ type configTargetRow struct {
 	Threshold string // "" = "use the global threshold above"
 }
 
-// configTargetRows merges cfg.Targets (explicit per-target overrides, the
-// only source of "docker:...", "smart:...", "temp:..." style targets today)
-// with the disk mounts the live snapshot currently reports (Deps.Snapshot),
-// so a disk nobody has touched yet still shows up as an enabled,
-// default-threshold row rather than not appearing at all.
-//
-// This is NOT the full auto-discovered target list (disk + docker + smart +
-// temp, sourced from internal/trinetra/discover.go's Discover): internal/web
-// must not import internal/trinetra, to keep the module graph one-way, and
-// Deps doesn't expose a generic target inventory -- only Snapshot's disk
-// mounts and whatever overrides already exist in config.
+// configTargetRows merges cfg.Targets with the live disk mounts, so an untouched disk still
+// shows as an enabled default row.
 func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow {
 	seen := map[string]bool{}
 	var out []configTargetRow
@@ -114,11 +101,7 @@ func clearTargetThreshold(c *config.Config, name string) {
 	c.Targets[name] = o
 }
 
-// parseQuietHours splits cfg.QuietHours ("H-H"/"HH-HH", validateQuietHours's
-// format -- see internal/config/config.go) into from/to hour integers plus
-// whether quiet hours are enabled at all (QuietHours != ""). An unparseable
-// stored value (shouldn't happen -- Set already validates on write) falls
-// back to 23/8 rather than failing the page.
+// parseQuietHours splits cfg.QuietHours into from/to hours; a bad value falls back to 23/8.
 func parseQuietHours(s string) (from, to int, enabled bool) {
 	if s == "" {
 		return 23, 8, false
@@ -330,11 +313,8 @@ var managedFormFields = map[string][]string{
 	"critical_overrides_quiet": {"critical_overrides_quiet"},
 }
 
-// configManagedFragments returns the current key->fragment-id map for the
-// managed-config keys this node's fleet master is managing (nil on a
-// master, solo daemon, or a child with nothing managed, or if Deps has no
-// fleet support at all) -- one Fleet().Status() round trip, mirroring
-// resolveFleetPageInfo's own nil-safety chain (templates.go).
+// configManagedFragments returns the current key->fragment-id map for the managed-config
+// keys this node's fleet master is managing.
 func configManagedFragments(d Deps) map[string]string {
 	if d.Fleet == nil {
 		return nil
@@ -386,14 +366,7 @@ func checkboxFormValue(r *http.Request, name string) string {
 	return "true"
 }
 
-// applyTargetEdits applies the posted monitors-table rows (target_name[],
-// target_enabled[] -- only checked boxes are present, matched by value since
-// unchecked checkboxes never submit -- and target_threshold[], positionally
-// paired with target_name[] since a text input always submits) onto newCfg.
-// Returns a 400-worthy error on an unparseable threshold; never partially
-// applies past that point's caller responsibility (newCfg is always a
-// clone -- see cloneConfig -- so an error here still leaves the live config
-// untouched).
+// applyTargetEdits applies the posted monitors-table rows.
 func applyTargetEdits(newCfg *config.Config, r *http.Request) error {
 	names := r.Form["target_name"]
 	thresholds := r.Form["target_threshold"]
@@ -423,22 +396,8 @@ func applyTargetEdits(newCfg *config.Config, r *http.Request) error {
 	return nil
 }
 
-// applyIntervalEdits sets fast_interval and sample_interval together on
-// newCfg, validating the FINAL (fast, sample) pair as a whole rather than
-// via two sequential config.Config.Set calls. config.Set validates each key
-// against the OTHER field's value as it stands on newCfg at the moment that
-// Set runs -- so applying fast_interval then sample_interval (or the
-// reverse) checks the new value of one against the OLD, not-yet-applied
-// value of the other. That wrongly rejects some genuinely valid final
-// combinations: from defaults (fast=5, sample=60), posting fast=7/sample=126
-// (a valid pair: 126%7==0) fails no matter the order, since 60%7!=0 and
-// 126%5!=0 are both checked in isolation. Mirrors config.Set's own bounds
-// (fast_interval >= 1, sample_interval >= 5, sample must be an integer
-// multiple of fast) but checks them against each other's POSTED values, and,
-// like every other field in configSaveHandler, only mutates newCfg (a
-// clone) once both parse and the pair validates together, so a rejected
-// pair leaves the clone -- and therefore the live config, per cloneConfig's
-// doc -- untouched.
+// applyIntervalEdits sets fast_interval and sample_interval together on newCfg, validating
+// the FINAL.
 func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error {
 	fast, err := strconv.Atoi(fastVal)
 	if err != nil || fast < 1 {
@@ -456,12 +415,8 @@ func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error 
 	return nil
 }
 
-// configSaveHandler handles POST /config: validates every posted field against
-// a clone of the current config via config.Config.Set (its existing,
-// already-tested validators -- a bad value rejects with 400 and writes
-// nothing), and only once every field has passed persists + in-process applies
-// via Deps.API.ApplyConfig, then appends one audit record per scalar field that
-// actually changed plus one summarizing any monitors table changes.
+// configSaveHandler handles POST /config: validates every posted field against a clone of
+// the current config via config.Config.Set.
 func configSaveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {

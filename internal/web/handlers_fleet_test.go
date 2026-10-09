@@ -16,9 +16,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fleetFiveNodeRoster is the Step 1 fixture: self online, web1 online tagged
-// "web", web2 lagging (also carrying a clock skew and replica drops, to
-// exercise the Link column's warning chips), db1 down, old1 revoked.
+// fleetFiveNodeRoster is the Step 1 fixture: self online, web1 online tagged "web", web2
+// lagging.
 func fleetFiveNodeRoster() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: core.SelfNodeID, Name: "self", Self: true, State: "online", CPU: 5, MemPct: 20, WorstDiskPct: 30, Load1: 0.5, Version: "1.2.3"},
@@ -226,9 +225,8 @@ func TestFleetOverviewBehindStateIncludesStale(t *testing.T) {
 	}
 }
 
-// TestFleetOverviewSort pins explicit sort/dir query handling: ?sort=cpu
-// &dir=desc orders rows by descending CPU (web2 30 > web1 12 > self 5 >
-// db1 0, old1 has CPU 0 too but sorts stably after db1).
+// TestFleetOverviewSort pins explicit sort/dir query handling: ?sort=cpu &dir=desc orders
+// rows by descending CPU.
 func TestFleetOverviewSort(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?sort=cpu&dir=desc")
@@ -312,9 +310,7 @@ func TestFleetTableFragmentReturnsOnlyTbody(t *testing.T) {
 	}
 }
 
-// TestFleetPageEmbedsPollingQueryString pins the full page's initial tbody
-// carrying the SAME query string the page itself was requested with -- the
-// htmx poll fragment must keep the current query string.
+// TestFleetPageEmbedsPollingQueryString pins the full page's initial tbody carrying.
 func TestFleetPageEmbedsPollingQueryString(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?state=down&sort=name&dir=asc")
@@ -598,12 +594,7 @@ func TestFleetQueryNonAdminStillMatchesTags(t *testing.T) {
 	}
 }
 
-// TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr pins that the
-// /fleet/table htmx fragment applies the SAME non-admin RemoteAddr query-match
-// rule as /fleet and /api/fleet/nodes
-// (TestFleetQueryNonAdminNeverMatchesRemoteAddr/
-// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr above) -- a direct
-// test on /fleet/table itself, not just its sibling endpoints.
+// TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr pins that the /fleet/table.
 func TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
 	nodes := fleetFiveNodeRoster()
 	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
@@ -690,9 +681,7 @@ func TestFleetHeatmapColorBandsAndOverrides(t *testing.T) {
 	}
 }
 
-// fleetLoadBandRoster exercises the load metric's absolute thresholds (1 and
-// 4; NodeSummary carries no core count, so the heatmap can't compute a
-// per-core ratio and falls back to these).
+// fleetLoadBandRoster exercises the load metric's absolute thresholds.
 func fleetLoadBandRoster() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: "lo", Name: "lo", State: "online", Load1: 0.5},
@@ -956,9 +945,8 @@ func fleetBigRoster(n int) []core.NodeSummary {
 	return nodes
 }
 
-// TestFleetOverviewPerformance200Nodes pins the performance bound: a 200-node
-// fake renders /fleet in under 300ms server-side, measured as the median over 3
-// runs (a generous, CI-safe bound).
+// TestFleetOverviewPerformance200Nodes pins the performance bound: a 200-node fake renders
+// /fleet in under 300ms server-side, measured as the median over 3 runs.
 func TestFleetOverviewPerformance200Nodes(t *testing.T) {
 	d := fleetMasterDeps(t, fleetBigRoster(200))
 	const runs = 3

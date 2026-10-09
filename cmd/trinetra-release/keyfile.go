@@ -48,10 +48,8 @@ func deriveKey(pass, salt []byte, n, r, p int) ([]byte, error) {
 	return scrypt.Key(pass, salt, n, r, p, chacha20poly1305.KeySize)
 }
 
-// writeEncryptedKey generates a fresh ed25519 key, encrypts its seed with
-// pass using XChaCha20-Poly1305 keyed by scrypt(pass), and writes the
-// envelope to path (0600, refusing to overwrite an existing file). It
-// returns the public key; the private key never touches stdout/stderr.
+// writeEncryptedKey generates a fresh ed25519 key, encrypts its seed with pass using
+// XChaCha20-Poly1305 keyed by scrypt(pass), and writes the envelope to path.
 func writeEncryptedKey(path string, pass []byte) (ed25519.PublicKey, error) {
 	if len(pass) == 0 {
 		return nil, errors.New("writeEncryptedKey: empty passphrase")
@@ -166,11 +164,7 @@ var openTTY = func() (*os.File, error) {
 }
 
 // readPassphrase returns a maintainer key passphrase, from the file named by
-// TRINETRA_MAINT_PASSPHRASE_FILE (mode 0600, for automation) or by prompting on
-// /dev/tty with echo off. It never reads argv or logs the passphrase. Terminal
-// echo is restored on completion and, via a signal handler installed only during
-// the prompt, on SIGINT/SIGTERM (a plain defer does not run when a signal kills
-// the process).
+// TRINETRA_MAINT_PASSPHRASE_FILE.
 func readPassphrase(prompt string) ([]byte, error) {
 	if p := os.Getenv("TRINETRA_MAINT_PASSPHRASE_FILE"); p != "" {
 		fi, err := os.Stat(p)

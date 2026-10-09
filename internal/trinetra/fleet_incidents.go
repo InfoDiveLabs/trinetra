@@ -1,8 +1,5 @@
-// Package trinetra: fleet_incidents.go is the master's incident store: one
-// incident per (node, alert key) fire->recover episode (grouping several
-// alerts into one incident arrives in a later task). incidents.jsonl is
-// append-only: every state change appends a full snapshot line, and on load
-// the last line per id wins. Rotated at 50 MB to incidents.jsonl.1.
+// Package trinetra: fleet_incidents.go is the master's incident store: one incident per
+// (node, alert key) fire->recover episode.
 package trinetra
 
 import (
@@ -50,12 +47,8 @@ type incidentApply struct {
 	alert            Alert
 	firedAt          int64
 	deliveredLocally bool
-	// suppressed is set when a silence or active maintenance window covers
-	// this alert record: it is recorded as a "suppressed" timeline event
-	// (leg-labelled "fire: "/"recover: " for a master-own incident, so
-	// legDeliveredStatus's resurrection check treats it as handled) and the
-	// incident's State becomes "suppressed" instead of "firing" (fire only;
-	// a suppressed recover still resolves the incident normally).
+	// suppressed is set when a silence or active maintenance window covers this alert record:
+	// it is recorded as a "suppressed" timeline event.
 	suppressed *suppressionInfo
 	now        int64
 
@@ -184,10 +177,8 @@ func (s *incidentStore) SuppressedOpen() []core.Incident {
 	return out
 }
 
-// isOpenState reports whether an incident in this state is still "open" --
-// tracked in s.open so a later fire/recover for the same (node, key) updates
-// it rather than opening a duplicate. A suppressed incident is open exactly
-// like a firing one: it is still an active episode, just not delivered.
+// isOpenState reports whether an incident in this state is still "open" -- tracked in
+// s.open so a later fire/recover for the same.
 func isOpenState(state string) bool {
 	return state == "firing" || state == "acked" || state == "suppressed"
 }
@@ -204,13 +195,7 @@ func (s *incidentStore) seenKeys() map[alertDedupKey]struct{} {
 		for _, inc := range incs {
 			for _, a := range inc.Alerts {
 				out[alertDedupKey{node: a.Node, key: a.Key, firedAt: a.FiredAt}] = struct{}{}
-				// A resolved alert's ResolvedAt is a SECOND, separately
-				// dedup'd alert record (the recover, whose own fired_at is
-				// ResolvedAt -- see Apply's recover branch, which updates
-				// the fire's own IncidentAlert in place rather than
-				// appending a new one). Both must be seeded, or a restarted
-				// engine would treat a replayed recover record as
-				// never-before-seen and redeliver it.
+				// A resolved alert's ResolvedAt is a SECOND, separately dedup'd alert record.
 				if a.ResolvedAt != 0 && a.ResolvedAt != a.FiredAt {
 					out[alertDedupKey{node: a.Node, key: a.Key, firedAt: a.ResolvedAt}] = struct{}{}
 				}
@@ -220,9 +205,8 @@ func (s *incidentStore) seenKeys() map[alertDedupKey]struct{} {
 	return out
 }
 
-// appendLine rotates path to path+".1" first if it has grown past
-// incidentRotateBytes, then appends inc as one JSON line (fsync'd, like the
-// rest of the fleet master's durable state).
+// appendLine rotates path to path+".1" first if it has grown past incidentRotateBytes, then
+// appends inc as one JSON line.
 func (s *incidentStore) appendLine(inc core.Incident) error {
 	if fi, err := os.Stat(s.path); err == nil && fi.Size() >= incidentRotateBytes {
 		_ = os.Rename(s.path, s.path+".1")
@@ -565,16 +549,8 @@ func (s *incidentStore) OpenForGroupKey(gk string) (core.Incident, bool) {
 	return cloneIncident(inc), ok
 }
 
-// OpenAlertIncident returns the currently open incident holding an
-// UNRESOLVED (Node, Key) member, if any -- for per-alert operations (ack,
-// resurrection, unsilence, dependency release) that must locate a specific
-// member without knowing (or recomputing) which grouping bucket it joined.
-// If several unresolved instances of the same (node, key) exist across
-// different open incidents (a re-fire whose earlier incident already
-// resolved is impossible; a re-fire joining a DIFFERENT bucket than its
-// still-open predecessor, e.g. after a route's GroupBy or severity changed
-// mid-incident, is the only way this can happen), the most recently
-// updated incident wins.
+// OpenAlertIncident returns the currently open incident holding an UNRESOLVED (Node, Key)
+// member, if any -- for per-alert operations.
 func (s *incidentStore) OpenAlertIncident(node, key string) (core.Incident, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -646,11 +622,8 @@ func (s *incidentStore) DeliverUnsilencedMember(id, node, key string, firedAt in
 	return cand, true, s.appendLine(cand)
 }
 
-// ReleaseFoldedMember clears a dependency-suppressed member's Suppressed reason
-// once none of its node's dependencies are down, recording reason (e.g.
-// "released: parent web-1 recovered") on the member and as a structured
-// "released" timeline event. A no-op (ok=false) if id has no such unresolved,
-// currently-suppressed (node, key) member (recovered or released already).
+// ReleaseFoldedMember clears a dependency-suppressed member's Suppressed reason once none
+// of its node's dependencies are down, recording reason.
 func (s *incidentStore) ReleaseFoldedMember(id, node, key string, firedAt, now int64, reason string) (inc core.Incident, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

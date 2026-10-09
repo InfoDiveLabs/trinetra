@@ -254,10 +254,8 @@ func TestPublicPageEmptyAllowlistRendersNoPanels(t *testing.T) {
 	}
 }
 
-// TestPublicPageOmitsUnavailableMetric pins that an allowlisted panel whose
-// underlying data isn't currently available (e.g. a disk mount that no
-// longer exists, or a zero thermal sensor reading) is simply omitted, never
-// rendered blank/zero.
+// TestPublicPageOmitsUnavailableMetric pins that an allowlisted panel whose underlying data
+// isn't currently available.
 func TestPublicPageOmitsUnavailableMetric(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).Public.Enabled = true
@@ -314,17 +312,7 @@ func TestPublicEventsDisabledReturns404(t *testing.T) {
 	}
 }
 
-// readFirstPublicSSEDataLine issues a real HTTP GET (via an httptest.Server,
-// not httptest.NewRecorder -- the handler's for/select loop only returns on
-// r.Context().Done(), so a real cancelable client request is required,
-// mirroring sse_test.go's eventsHandler tests) against /public/events and
-// returns the first "data: " line plus the response (headers/cookies still
-// readable after Body.Close()). The response body is closed here,
-// synchronously, before returning -- NOT deferred to t.Cleanup -- so that a
-// caller's own `defer srv.Close()` (which blocks until the handler's
-// goroutine notices the client is gone) doesn't stall for however long the
-// SSE ticker takes to next fire; closing eagerly makes the server side
-// notice the disconnect immediately instead.
+// readFirstPublicSSEDataLine issues a real HTTP GET.
 func readFirstPublicSSEDataLine(t *testing.T, srv *httptest.Server) (string, *http.Response) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

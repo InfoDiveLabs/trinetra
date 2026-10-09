@@ -151,12 +151,8 @@ func TestChannelAddErrorNamesMissingSetting(t *testing.T) {
 	}
 }
 
-// TestChannelAddAcceptsDisabledIncompleteChannel is the staging case: a
-// DISABLED channel can't misdeliver (it's never wired into the Dispatcher
-// while off, see channelsFromConfig/daemon.go), so it may be added with
-// incomplete settings -- exactly the ctl Channels screen's
-// channelNeedsValidation behavior (channels.go), now mirrored here via the
-// new --disabled flag.
+// TestChannelAddAcceptsDisabledIncompleteChannel is the staging case: a DISABLED channel
+// can't misdeliver.
 func TestChannelAddAcceptsDisabledIncompleteChannel(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")

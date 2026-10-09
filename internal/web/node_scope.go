@@ -14,10 +14,8 @@ import (
 // nodeScope under for a request dispatched through /n/{node}/...
 type nodeScopeCtxKey struct{}
 
-// nodeScope is what a page handler sees once nodeFrom(r) resolves the
-// current request: which fleet node it's scoped to, and enough to render a
-// node-aware page (a link prefix, a display name) without every handler
-// needing to reach back into the fleet roster itself.
+// nodeScope is what a page handler sees once nodeFrom(r) resolves the current request:
+// which fleet node it's scoped to, and enough to render a node-aware page.
 type nodeScope struct {
 	// ID is the registry id this request is scoped to: core.SelfNodeID ("self") for the
 	// master's own node -- true both for a plain unprefixed request.
@@ -94,28 +92,14 @@ func findNode(nodes []core.NodeSummary, id string) (core.NodeSummary, bool) {
 	return core.NodeSummary{}, false
 }
 
-// nodeScopedAlertAckPath reports whether p (already stripped of its
-// /n/{node} prefix, "/"-prefixed, NOT YET path.Clean'd) is EXACTLY
-// "/alerts/{key}/ack" or "/alerts/{key}/unack" for some non-empty {key} --
-// the one deliberate exception to "node-scoped routes are GET/HEAD only":
-// remote alert ack/unack re-dispatches as a POST through to
-// POST /alerts/{key}/ack|unack (routes.go), same as every other
-// node-scoped GET re-dispatches to its own top-level route, so the handler
-// resolves apiFor(r,d) to the right node. Every OTHER node-scoped path stays
-// GET/HEAD only. Checked against the RAW (uncleaned) sub path, like the
-// ".."-segment check in withNodeRouter, before path.Clean could normalize away
-// something that looked like this shape.
+// nodeScopedAlertAckPath reports whether p.
 func nodeScopedAlertAckPath(p string) bool {
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	return len(parts) == 3 && parts[0] == "alerts" && parts[1] != "" && (parts[2] == "ack" || parts[2] == "unack")
 }
 
-// containsDotDotSegment reports whether p, split on "/", has a literal ".."
-// path segment. r.URL.Path is always the percent-decoded form (verified:
-// both a literal "/a/../b" and an escaped "/a/%2e%2e/b" request target
-// arrive here as Path == "/a/../b"), so checking Path's segments catches a
-// raw ".." and a percent-encoded one identically -- there is no separate
-// "raw" form that could hide one from this check.
+// containsDotDotSegment reports whether p, split on "/", has a literal ".." path segment.
+// r.URL.Path is always the percent-decoded form.
 func containsDotDotSegment(p string) bool {
 	for _, seg := range strings.Split(p, "/") {
 		if seg == ".." {

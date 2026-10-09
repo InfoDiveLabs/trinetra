@@ -1,6 +1,5 @@
-// Package update implements Trinetra's signed-release format and the
-// verification every host runs before installing a build. It is part of the
-// core daemon and must import only the standard library.
+// Package update implements Trinetra's signed-release format and the verification every
+// host runs before installing a build.
 package update
 
 import (

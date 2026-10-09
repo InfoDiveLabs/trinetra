@@ -119,11 +119,8 @@ func TestFleetManagedKeySelectOffersOnlyAllowlistedKeys(t *testing.T) {
 	}
 }
 
-// TestFleetManagedNonAllowlistedKeyPostedDirectlyRejectedInline pins the
-// backend rejection: a key outside the allowlist, posted directly
-// (bypassing the <select> entirely, as any raw HTTP client could), is
-// rejected with 400 and the error inline next to that row -- never
-// silently accepted, never a 500.
+// TestFleetManagedNonAllowlistedKeyPostedDirectlyRejectedInline pins the backend rejection:
+// a key outside the allowlist, posted directly.
 func TestFleetManagedNonAllowlistedKeyPostedDirectlyRejectedInline(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)

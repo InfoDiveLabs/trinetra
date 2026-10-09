@@ -91,10 +91,8 @@ func TestNavBadgeHiddenWhenZero(t *testing.T) {
 	}
 }
 
-// TestNavCountsAlertStateMissingFileIsZeroNoPanic pins the defensive-decode
-// requirement: a nil API (the daemon reporting no active alerts, or a
-// transient socket read failure) must count as 0 active alerts, never panic
-// the page.
+// TestNavCountsAlertStateMissingFileIsZeroNoPanic pins the defensive-decode requirement: a
+// nil API.
 func TestNavCountsAlertStateMissingFileIsZeroNoPanic(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{activeErr: errTestActiveAlerts}

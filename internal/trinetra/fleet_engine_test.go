@@ -22,13 +22,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// engineFixture wires a fleetAlertEngine over a real incidentStore (on disk,
-// like production) with fake push/deliver/connected so a test can assert
-// exactly what the engine decided without any network or dispatcher
-// machinery. deliver runs synchronously (matching deliverSyncAndLog's real
-// contract) but Submit still calls it off its own goroutine, so any test
-// that triggers an actual delivery attempt must call waitIdle before
-// asserting on delivered/pushed.
+// engineFixture wires a fleetAlertEngine over a real incidentStore.
 type engineFixture struct {
 	mu          sync.Mutex
 	delivered   []Alert
@@ -200,11 +194,8 @@ func TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident(t *testing.T) 
 		t.Fatalf("group key = %q, want the default node-less bucket", got)
 	}
 
-	// n2's cpu fires (T_A) -- delivered normally via the shared incident's
-	// group delivery, THEN a second, byte-identical-dedup-key record for
-	// the SAME (n2, cpu, 2000) arrives marked DeliveredLocally (the child's
-	// own fallback resend for this exact alert): Submit's alreadySeen
-	// branch calls MarkDeliveredLocally, which is the buggy call site.
+	// n2's cpu fires (T_A) -- delivered normally via the shared incident's group delivery,
+	// THEN a second, byte-identical-dedup-key record for the SAME.
 	tAFire := AlertEvent{Time: 2000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 2000}
 	ef.engine.HandleChildAlert("n2", "box2", []string{"web"}, tAFire)
 	ef.waitIdle()
@@ -919,10 +910,7 @@ func TestEngineStopLeavesUndeliveredJobCleanForResurrection(t *testing.T) {
 		t.Fatal("fire leg shows delivered, but the job is deliberately still stuck")
 	}
 
-	// A "restart" (a fresh engine, over the SAME store -- same effect as
-	// reloading from disk, since resurrectMasterAlerts reads through
-	// incidentStore.List, not a snapshot) resurrects it while the original
-	// is still stuck.
+	// A fresh engine over the same store resurrects it while the original is stuck.
 	var delivered []Alert
 	engine2 := newFleetAlertEngine(
 		func() time.Time { return time.Unix(600, 0) },

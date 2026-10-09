@@ -1,12 +1,4 @@
-// onboard_ui.go is the first-run onboarding flow's Bubble Tea glue: whether
-// to show it (needsOnboarding, checked once against a fresh Config() fetch
-// right after Init) and the two screens it walks -- capture the Telegram
-// bot token, then show the enrollment pin (api.EnrollmentPIN, Task 1's
-// #90 work) with the "/start <pin>" instruction, polling until enrolled.
-// The pure decision (needsOnboarding) and config mutation (applyOnboardToken)
-// this drives live in onboarding.go, unit-tested there against a fake
-// core.API with no terminal involved; this file is deliberately thin,
-// mirroring tui.go's own split for the web-setup wizard.
+// onboard_ui.go is the first-run onboarding flow's Bubble Tea glue: whether to show it.
 package main
 
 import (
@@ -134,11 +126,7 @@ func (m model) updateOnboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateOnboardTokenKey feeds msg into the token input: enter applies it
-// (fetch, set telegram.token, ApplyConfig, all off the UI goroutine via
-// applyOnboardTokenCmd) once non-empty, esc skips onboarding for now and
-// returns to Home (the user can always set the token later via the
-// Channels screen or `trinetra telegram set-token`).
+// updateOnboardTokenKey feeds msg into the token input: enter applies it.
 func (m model) updateOnboardTokenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":

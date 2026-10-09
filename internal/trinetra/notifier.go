@@ -292,10 +292,8 @@ type NotifierQueue struct {
 	wake    chan struct{}
 	disp    atomic.Pointer[Dispatcher]
 	now     func() time.Time
-	// permanentlyFailed counts alerts that exhausted their retry budget
-	// with at least one channel still failing (Dropped, by contrast, counts
-	// alerts evicted by the capacity cap before any delivery attempt at
-	// all -- a different failure mode with a different counter).
+	// permanentlyFailed counts alerts that exhausted their retry budget with at least one
+	// channel still failing.
 	permanentlyFailed atomic.Int64
 }
 
@@ -311,9 +309,7 @@ func NewNotifierQueue(d *Dispatcher, capacity int) *NotifierQueue {
 func (q *NotifierQueue) SetDispatcher(d *Dispatcher) { q.disp.Store(d) }
 func (q *NotifierQueue) Dropped() int64              { return q.dropped.Load() }
 
-// PermanentlyFailed returns how many alerts have exhausted their retry
-// budget (notifierMaxAttempts/notifierRetryWindow, or the undroppable
-// variants) with at least one channel still failing.
+// PermanentlyFailed returns how many alerts have exhausted their retry budget.
 func (q *NotifierQueue) PermanentlyFailed() int64 { return q.permanentlyFailed.Load() }
 
 // setNowForTest overrides q's clock; tests use it to drive retry/exhaustion
@@ -424,20 +420,8 @@ func (q *NotifierQueue) deliverOnce(it queuedAlert) []DeliveryResult {
 	return d.DispatchTo(it.a, it.quiet, it.targetChannels)
 }
 
-// nextRetry inspects results (from deliverOnce(it)) and decides whether to
-// retry: nil/no error results in no retry (retry=false, nothing to do --
-// either every channel succeeded, or there was no dispatcher to try).
-// Otherwise, if it has budget left (notifierMaxAttempts/notifierRetryWindow,
-// or the undroppable variants), it returns the updated item -- attempt
-// incremented, targetChannels narrowed to just the channels that failed
-// (never one that already succeeded, so no channel is ever double-delivered
-// across the whole retry sequence), retryAt set via notifierBackoff -- for
-// the caller to requeue. If the budget is exhausted, it logs and counts
-// permanentlyFailed instead.
-//
-// A separate method (not inlined into Run) so a test can drive the
-// retry/exhaustion decision directly against q's injected clock, without
-// waiting on Run's own timers.
+// nextRetry inspects results (from deliverOnce(it)) and decides whether to retry: nil/no
+// error results in no retry.
 func (q *NotifierQueue) nextRetry(it queuedAlert, results []DeliveryResult) (next queuedAlert, retry bool) {
 	var failed []string
 	for _, r := range results {
@@ -466,9 +450,7 @@ func (q *NotifierQueue) nextRetry(it queuedAlert, results []DeliveryResult) (nex
 	return it, true
 }
 
-// attemptDelivery runs one delivery attempt for it and, if nextRetry says
-// to, requeues the updated item and wakes Run's loop so it can recompute
-// how long to wait for the new retryAt.
+// attemptDelivery runs one delivery attempt for it and, if nextRetry says to, requeues.
 func (q *NotifierQueue) attemptDelivery(it queuedAlert) {
 	results := q.deliverOnce(it)
 	next, retry := q.nextRetry(it, results)

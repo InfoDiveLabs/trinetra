@@ -338,10 +338,7 @@ func TestFleetAPIAlertingShowApplyRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFleetAPIRouteTestMatchesResolveRoute is the test-enforced invariant
-// RouteTest must be a thin wrapper around the exact same
-// resolveRoute function the alerting engine's real delivery uses, so a dry
-// run can never disagree with what actually happens for the same input.
+// TestFleetAPIRouteTestMatchesResolveRoute is the test-enforced invariant RouteTest must.
 func TestFleetAPIRouteTestMatchesResolveRoute(t *testing.T) {
 	m := newTestMasterState(t)
 	dir := t.TempDir()

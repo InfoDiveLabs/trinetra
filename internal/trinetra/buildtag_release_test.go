@@ -11,12 +11,7 @@ import (
 	"testing"
 )
 
-// TestReleaseBinariesCarryNoTestKeys: a default (release) build of
-// the daemon and of trinetra-release must contain neither the deterministic
-// test signers/key set nor the e2e crash-on-start hook, nor the name of any
-// TRINETRA_E2E_* hook variable (restart/guard commands, GitHub base URL,
-// swap pause, update-loop interval, health deadline). Only a
-// trinetra_testkeys build (the e2e image) may carry them.
+// TestReleaseBinariesCarryNoTestKeys: a default (release) build of the daemon.
 func TestReleaseBinariesCarryNoTestKeys(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds two binaries")

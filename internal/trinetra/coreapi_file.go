@@ -1,18 +1,5 @@
-// Package trinetra: coreapi_file.go implements core.API file-backed --
-// the counterpart to coreapi_inproc.go's in-process implementation, for the
-// separate CLI process (`trinetra status`/`dump`/`alerts`/...), which has
-// no access to the running daemon's live memory and so must read everything
-// back off disk: status.json for Snapshot, the configured SampleStore for
-// Series/Events, and alerts.json/alertlog.jsonl for ActiveAlerts/
-// AlertHistory. It shares buildDashboardView/buildMonitoringView and the
-// severityString/AlertRecord-mapping logic with coreapi_inproc.go so both
-// implementations stay consistent by construction rather than by two
-// separately-maintained copies.
-//
-// Deliberately UNTAGGED, same reasoning as coreapi_inproc.go's doc: core.API
-// and its DTOs live in internal/core, which imports nothing but stdlib +
-// internal/config, so this file never pulls internal/web's third-party
-// dependencies into the default build.
+// Package trinetra: coreapi_file.go implements core.API file-backed -- the counterpart to
+// coreapi_inproc.go's in-process implementation, for the separate CLI process.
 package trinetra
 
 import (
@@ -33,12 +20,8 @@ import (
 // in the running daemon's in-memory enrollState (enroll.go).
 var errEnrollNeedsDaemon = errors.New("trinetra: enrollment pin requires a running daemon; dial the control socket instead")
 
-// fileAPI is the file-backed core.API implementation: every method opens
-// whatever it needs off disk on each call (there is no long-lived daemon
-// state to hold onto here, unlike inprocAPI) -- stateDir is the daemon's
-// state directory (status.json, alerts.json, alertlog.jsonl) and cfg is the
-// CLI process' own freshly-loaded config, used both as Config()'s return
-// value and to open the configured SampleStore for Series/Events.
+// fileAPI is the file-backed core.API implementation: every method opens whatever it needs
+// off disk on each call.
 type fileAPI struct {
 	stateDir string
 	cfg      *config.Config
@@ -155,9 +138,7 @@ func (a *fileAPI) AlertHistory(since int64, limit int) ([]core.AlertRecord, erro
 	return alertHistoryRecords(NewAlertLog(a.alertLogPath()), since, limit)
 }
 
-// Config implements core.API: it just returns the cfg this fileAPI was
-// constructed with (the CLI process' own freshly-loaded config -- there is
-// no SIGHUP-safe live accessor to call through to here, unlike inprocAPI).
+// Config implements core.API: it just returns the cfg this fileAPI was constructed.
 func (a *fileAPI) Config() (*config.Config, error) {
 	return a.cfg, nil
 }
@@ -223,12 +204,7 @@ func (a *fileAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error)
 	return targetViewsFromTargets(DiscoverLocal()), nil
 }
 
-// ApplyConfig implements core.API: it persists c to cfgPath (saveDaemonCfg:
-// saveCfg with the on-disk fleet identity keys preserved, so only
-// `trinetra fleet` commands change them) then best-effort SIGHUPs a running daemon (reloadDaemon) so it picks
-// the change up immediately -- the exact save-then-signal sequence every
-// existing CLI config-mutating command follows (see channel.go's
-// cmdChannelAdd/Remove/Set for the pattern this generalizes).
+// ApplyConfig implements core.API: it persists c to cfgPath.
 func (a *fileAPI) ApplyConfig(c *config.Config) error {
 	if err := saveDaemonCfg(c); err != nil {
 		return err
@@ -273,13 +249,8 @@ func (a *fileAPI) TestChannel(name string) error {
 	return sendTestNotification(a.cfg, name, "cli")
 }
 
-// ValidateChannel implements core.API: it calls buildNotifier (channels.go)
-// against cc and this fileAPI's own cfg (the CLI process' freshly-loaded
-// config, same as every other method here) and reports only whether a
-// Notifier could be built, not sending anything -- inprocAPI.ValidateChannel's
-// (coreapi_inproc.go) counterpart, same accepted "checked against the
-// current saved config, not an unsaved in-flight edit" limitation documented
-// on core.API's ValidateChannel.
+// ValidateChannel implements core.API: it calls buildNotifier (channels.go) against cc and
+// this fileAPI's own cfg.
 func (a *fileAPI) ValidateChannel(cc config.ChannelConfig) error {
 	_, err := buildNotifier(cc, a.cfg)
 	return err

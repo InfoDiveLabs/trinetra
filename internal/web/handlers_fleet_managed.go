@@ -1,30 +1,5 @@
-// handlers_fleet_managed.go: GET /fleet/managed -- the managed-config
-// fragment list + create/edit form, and the per-node managed-config status
-// table -- over core.FleetAPI's Managed/SaveManaged/DeleteManaged/
-// ManagedStatus (internal/core/fleet.go). Master-only (fleetGateHTML, exactly
-// like every other /fleet* page); GET is viewer+ (read-only for a viewer),
-// every mutation is admin + CSRF (fleetAdminMutation) and passes the signed-in
-// web user's own name as actor (auditUser(r)), never a daemon-side
-// placeholder.
-//
-// The create/edit form follows fleet_silences.html's create-form convention
-// exactly: a PLAIN (non-htmx) <form> whose key-row add/remove buttons are
-// themselves submits (name="op") that reshape the draft in place and
-// re-render this SAME page at 200 without saving (see applyManagedRowOp) --
-// only an op of "" or "save" actually calls SaveManaged. A validation/
-// FleetAPI-error rejection re-renders the full page at its 4xx status with
-// the draft's exact posted input preserved and the error inline next to the
-// field (or ROW) it names -- never a redirect, never a 500. A SUCCESSFUL
-// save/delete instead redirects back to GET /fleet/managed with a fixed
-// ?flash= code (resolveManagedFlash's closed allowlist, exactly like
-// resolveIncidentFlash/resolveSilencesFlash).
-//
-// Editing an EXISTING fragment (rather than creating a new one) is a GET
-// /fleet/managed?edit=<id> link on that fragment's row: it preloads the
-// SAME single draft form with that fragment's Tag/Values, plus a hidden id
-// field, so a subsequent save updates that exact fragment by ID (not a
-// fresh upsert-by-tag, which could go wrong if the tag itself is also being
-// changed in the same edit -- see managedDraft's ID field doc).
+// handlers_fleet_managed.go: GET /fleet/managed -- the managed-config fragment list +
+// create/edit form, and the per-node managed-config status table.
 package web
 
 import (
@@ -40,13 +15,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// managedKeyRow is one key/value row of the create/edit form's draft: Key is
-// constrained client-side to core.ManagedKeys via a <select> (a blank Key, "--
-// choose a key --", is this package's own placeholder for "not filled in yet",
-// the same convention matcherRowsToCore's blank-matcher-row drop uses), Value
-// is free text (SaveManaged/config.Config.Set validate it). Err carries a
-// backend rejection naming THIS row's own key, so the template can place it
-// right next to that row instead of only at the top of the form.
+// managedKeyRow is one key/value row of the create/edit form's draft: Key is constrained
+// client-side to core.ManagedKeys via a <select>.
 type managedKeyRow struct {
 	Key   string
 	Value string
@@ -65,11 +35,8 @@ func newManagedDraft() managedDraft {
 	return managedDraft{Rows: []managedKeyRow{{}}}
 }
 
-// managedDraftFromFragment loads an existing fragment into a draft for
-// editing: one row per key ACTUALLY SET on the fragment, in
-// core.ManagedKeys' fixed order (Values is a map -- iterating it directly
-// would make row order, and therefore this page's rendered HTML, vary
-// nondeterministically run to run).
+// managedDraftFromFragment loads an existing fragment into a draft for editing: one row per
+// key ACTUALLY SET on the fragment, in core.ManagedKeys' fixed order.
 func managedDraftFromFragment(f core.ManagedFragment) managedDraft {
 	d := managedDraft{ID: f.ID, Tag: f.Tag}
 	for _, k := range core.ManagedKeys {
@@ -116,13 +83,7 @@ func applyManagedRowOp(rows *[]managedKeyRow, op string) {
 	}
 }
 
-// managedRowsToValues converts rows to a Values map, DROPPING any row with
-// a blank Key (the select's own "-- choose a key --" placeholder, or a
-// freshly-added row nobody has picked a key for yet) -- exactly like
-// matcherRowsToCore's identical treatment of an untouched blank row. A
-// later row for the SAME key overwrites an earlier one (last wins), rather
-// than being rejected as a duplicate: simplest behavior for what the admin
-// most likely means by re-picking the same key twice.
+// managedRowsToValues converts rows to a Values map, DROPPING any row with a blank Key.
 func managedRowsToValues(rows []managedKeyRow) map[string]string {
 	out := map[string]string{}
 	for _, row := range rows {
@@ -396,10 +357,8 @@ func renderManagedPage(w http.ResponseWriter, data ManagedPageData, status int) 
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
-// renderManagedError re-renders the full page with a top-level flash
-// (FlashErr=true) at the given 4xx status, for an error that names no
-// specific field/row (a bad id, "fleet not available", an invalid form
-// body); FleetAPI errors render as a flash, never a 500.
+// renderManagedError re-renders the full page with a top-level flash (FlashErr=true) at the
+// given 4xx status, for an error that names no specific field/row.
 func renderManagedError(w http.ResponseWriter, r *http.Request, d Deps, msg string, status int) {
 	data := buildManagedPageData(r, d, managedPageOptions{Flash: msg, FlashErr: true})
 	if err := renderManagedPage(w, data, status); err != nil {
@@ -424,10 +383,7 @@ func redirectToManaged(w http.ResponseWriter, r *http.Request, flashCode string)
 // --------------------------------------------------------------------------- Handlers
 // ---------------------------------------------------------------------------
 
-// fleetManagedPageHandler serves GET /fleet/managed: viewer+ (read-only for
-// a viewer -- the template disables every input/select and hides every
-// submit control when Role != "admin", exactly like fleet_silences.html's
-// $editable convention), master-only (fleetGateHTML).
+// fleetManagedPageHandler serves GET /fleet/managed: viewer+.
 func fleetManagedPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

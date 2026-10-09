@@ -57,11 +57,8 @@ func TestTopbarStatusNoActiveAlertsIsOK(t *testing.T) {
 	}
 }
 
-// TestLoadActiveAlertsDecodesCritical confirms activeAlertsViaAPI carries the
-// per-record severity (core.AlertRecord.Severity, set at fire time from the
-// breaching Check's own severity) into activeAlertView.Critical, so
-// topbarStatus has real severity to work with: "critical" -> Critical true,
-// anything else -> false.
+// TestLoadActiveAlertsDecodesCritical confirms activeAlertsViaAPI carries the per-record
+// severity.
 func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
 	d := Deps{API: fakeAPI{active: []core.AlertRecord{
 		{Key: "disk:/", Time: 1, Source: "full", Severity: "critical"},
@@ -138,10 +135,8 @@ func TestConfigPageTopbarCountMatchesNavBadge(t *testing.T) {
 	}
 }
 
-// TestConfigPageTopbarIsOKWithNoActiveAlerts is the negative case: no active
-// alerts at all renders the real "ok"/"All systems normal" pill (which,
-// before this fix, was ALSO what "ok" hardcoded -- so this pins that the
-// real computation doesn't regress the common case).
+// TestConfigPageTopbarIsOKWithNoActiveAlerts is the negative case: no active alerts at all
+// renders the real "ok"/"All systems normal" pill.
 func TestConfigPageTopbarIsOKWithNoActiveAlerts(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 

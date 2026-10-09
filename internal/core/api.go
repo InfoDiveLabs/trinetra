@@ -27,10 +27,7 @@ type API interface {
 	// ContainerLogs returns the last `lines` log lines of the named docker container (`docker
 	// logs --tail N`). name must match a container the daemon sees.
 	ContainerLogs(name string, lines int) (string, error)
-	// EnrollmentPIN returns the Telegram bot's current enrollment pin (accepted via
-	// "/start <pin>", #90) and whether the bot is already enrolled. pin is "" when
-	// enrolled or when telegram is unconfigured. Implementations with no live daemon
-	// (the file-backed CLI path) return an error.
+	// EnrollmentPIN returns the Telegram bot's current enrollment pin.
 	EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error)
 	// MonitorTargets lists every monitorable target the host exposes (docker containers, disk
 	// mounts, interfaces, thermal zone, smart devices; trinetra.Discover).

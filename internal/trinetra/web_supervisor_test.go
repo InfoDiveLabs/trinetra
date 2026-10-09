@@ -184,13 +184,7 @@ func containsEnv(env []string, kv string) bool {
 	return false
 }
 
-// TestStartWeb_SpawnsWithVerifiedPathAndEnv: startWeb resolves the plugin path
-// via resolveWebPlugin and spawns it via startWebProc with the control socket
-// and token passed as TRINETRA_CONTROL_SOCKET / TRINETRA_CONTROL_TOKEN, and
-// ALSO (compat for one release, so a pre-rename serverwatch-web binary still
-// works) the old SERVERWATCH_CONTROL_SOCKET / SERVERWATCH_CONTROL_TOKEN names.
-// Calling the returned stop func kills the running child and blocks until the
-// supervisor loop has exited.
+// TestStartWeb_SpawnsWithVerifiedPathAndEnv: startWeb resolves the plugin path via.
 func TestStartWeb_SpawnsWithVerifiedPathAndEnv(t *testing.T) {
 	h := setupWebTest(t)
 
@@ -243,10 +237,7 @@ func TestStartWeb_RestartsOnExit(t *testing.T) {
 	stop()
 }
 
-// TestStartWeb_BackoffGrowsAndCaps pins case C: repeated rapid exits (each
-// looking short-lived because timeNow is frozen, so the "healthy child"
-// reset never fires) make the recorded backoff sleep durations double from
-// webBackoffMin, capped at webBackoffMax.
+// TestStartWeb_BackoffGrowsAndCaps pins case C: repeated rapid exits.
 func TestStartWeb_BackoffGrowsAndCaps(t *testing.T) {
 	h := setupWebTest(t)
 
@@ -365,12 +356,8 @@ func TestStop_DuringBackoffReturnsPromptly(t *testing.T) {
 	}
 }
 
-// TestShouldStartWeb is the unit-level guard that cmdDaemon spawns the web
-// supervisor only when both the control socket is up (the child dials it,
-// so starting the supervisor without it would spawn a process with nothing
-// to talk to) and web.enabled is true -- cmdDaemon itself is too
-// process-heavy to unit test directly, so this pins the decision it defers
-// to instead.
+// TestShouldStartWeb is the unit-level guard that cmdDaemon spawns the web supervisor only
+// when both the control socket is up.
 func TestShouldStartWeb(t *testing.T) {
 	cases := []struct {
 		name     string

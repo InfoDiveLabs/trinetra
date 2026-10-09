@@ -126,13 +126,8 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err != nil {
 		return err
 	}
-	// updatePaths, NOT the bare package-level stateDir, is where install's floor
-	// check/raise must read and write: the update state (floor, pending, last
-	// outcome) lives at defaultUpdatePaths().dir() == StateDir/update, where
-	// `trinetra update`/the guard/status read and write it. The bare stateDir
-	// would use a state.json `trinetra update` never looks at, so a persisted
-	// floor would be ignored and never raised, and update.SaveState's
-	// MkdirAll+Chmod(0700) would land on stateDir itself (normally 0755).
+	// updatePaths, NOT the bare package-level stateDir, is where install's floor check/raise
+	// must read and write: the update state.
 	paths := defaultUpdatePaths()
 	unlock, err := installPreflight(paths)
 	if err != nil {
@@ -290,11 +285,7 @@ func verifyInstallBundle(keys update.KeySet, self string, names []string) (updat
 }
 
 // verifyInstallSignature wraps verifyInstallBundle with cmdInstall's
-// present/absent/require-signed policy: a present-and-valid manifest returns
-// (m, true, nil); an absent manifest returns (Manifest{}, false, nil) after
-// printing the unsigned-install warning, unless requireSigned is set, in which
-// case it refuses; any other verification failure (tampered file, bad/missing
-// signature) always refuses.
+// present/absent/require-signed policy: a present-and-valid manifest returns.
 func verifyInstallSignature(self string, names []string, requireSigned bool) (update.Manifest, bool, error) {
 	m, err := verifyInstallBundle(update.ProductionKeys(), self, names)
 	switch {
@@ -332,12 +323,8 @@ func checkInstallPolicy(paths updatePaths, m update.Manifest, running update.Ver
 	return nil
 }
 
-// currentInstalledVersion reports the version of whatever binary is
-// currently at /usr/local/bin/trinetra (queried the same way
-// updater.rollback/updater.status do, via `version --json`), or a zero
-// Version when nothing is installed there yet or it can't be queried -- a
-// fresh install must never be blocked by a policy check with nothing real to
-// compare against.
+// currentInstalledVersion reports the version of whatever binary is currently at
+// /usr/local/bin/trinetra.
 func currentInstalledVersion() update.Version {
 	const dst = "/usr/local/bin/trinetra"
 	fi, err := os.Stat(dst)
@@ -461,19 +448,8 @@ func unlinkOnPath(target, link string) {
 // pluginManifestNames lists the companion binary name suffixes.
 var pluginManifestNames = []string{"ctl", "web"}
 
-// writePluginManifest scans binDir (the directory the daemon binary was just
-// installed into) for companion plugin binaries and writes
-// <stateDir>/plugins.json (mode 0600, so only root -- or whichever uid runs
-// install -- can read or write it: it is the trust anchor loadPluginManifest
-// and verifyPlugin check plugin checksums against) mapping each plugin name
-// found to the hex SHA-256 of its file content.
-//
-// A companion binary that is absent at install time is simply omitted from
-// the manifest, not an error: loadPluginManifest/verifyPlugin then correctly
-// report that plugin as "not installed" (see errPluginNotInstalled) rather
-// than treating its absence as a verification failure. A companion that IS
-// present but somehow not recorded here still fails closed as intended,
-// which is the whole point of the manifest.
+// writePluginManifest scans binDir (the directory the daemon binary was just installed
+// into) for companion plugin binaries and writes <stateDir>/plugins.json.
 func writePluginManifest(binDir string) error {
 	manifest := make(map[string]string)
 	for _, name := range pluginManifestNames {
@@ -810,16 +786,7 @@ func cmdDoctor(args []string) int {
 	return 0
 }
 
-// buildDoctorReport runs the same probes `trinetra doctor` has always run
-// inline (docker reachability via probeDocker, smartctl availability via
-// `smartctl --scan`, the thermal-zone glob, target discovery via Discover,
-// and the collector on/off toggles plus SampleStore stats via
-// collectorSummary's underlying logic) and packages the results into a
-// core.DoctorReport, so both cmdDoctor and core.API.Doctor() (coreapi_inproc.go,
-// coreapi_file.go) share one probe implementation instead of two copies that
-// could drift. store may be nil (the configured backend failed to open, or
-// store-writes are disabled), in which case StoreStats reads "unavailable"
-// -- the same degrade collectorSummary has always applied.
+// buildDoctorReport runs the same probes `trinetra doctor` has always run inline.
 func buildDoctorReport(x Exec, fs FileSource, c *config.Config, store SampleStore) core.DoctorReport {
 	da := probeDocker(x, fs)
 	smartOK := false

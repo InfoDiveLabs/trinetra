@@ -1,20 +1,5 @@
-// Package trinetra: coreapi_inproc.go implements core.API in-process,
-// adapting the running daemon's live state (Snapshot, SampleStore, config,
-// alert files) directly -- no HTTP/socket round-trip. This is the daemon's
-// own consumer of the core.API contract: the
-// trinetra-web binary, over the control socket, and, eventually, an
-// in-process CLI path both read through this contract rather than reaching
-// into trinetra internals themselves.
-//
-// This file never imports internal/web: core.API and its DTOs live in
-// internal/core, which imports nothing but stdlib + internal/config (see
-// internal/core/doc.go), so building this adapter never pulls internal/web's
-// third-party dependencies into the default build. That's also why
-// buildDashboardView/buildMonitoringView (below) live here rather than in
-// internal/web itself: both this in-process API and the trinetra-web
-// binary (which gets its data through core.API over the control socket)
-// need the exact same Snapshot -> view projection, and this package never
-// has to import internal/web to provide it.
+// Package trinetra: coreapi_inproc.go implements core.API in-process, adapting the running
+// daemon's live state (Snapshot, SampleStore, config, alert files) directly.
 package trinetra
 
 import (
@@ -97,26 +82,7 @@ func degradedCollectorViews(health map[string]CollectorStat) []core.CollectorHea
 	return out
 }
 
-// buildMonitoringView adapts a trinetra.Snapshot plus the daemon's
-// current config (for the collect.services/collect.processes opt-in
-// toggles -- see the doc atop core.MonitoringView) into a core.MonitoringView,
-// the /monitoring detail page's counterpart to buildDashboardView above.
-// Same CONCURRENCY contract as buildDashboardView: every access below is a
-// read-only range/index against snap's map/slice fields, never an
-// assignment into them.
-//
-// cfg may be nil (a caller without a config handy, e.g. some tests): both
-// collector toggles then default to "disabled" -- the safer read when the
-// actual setting is unknown, rather than assuming the collector ran and
-// showing an empty table as if it deliberately reported zero units/processes.
-// targetViewsFromTargets maps Discover/DiscoverLocal's []Target to
-// []core.TargetView field for field, shared by inprocAPI.MonitorTargets and
-// fileAPI.MonitorTargets so both core.API implementations report identical
-// target lists from one mapping. It intentionally does NOT merge in
-// config.Config.TargetEnabled/TargetThreshold overrides: MonitorTargets is
-// the discovery half only (what does this host have), the same split
-// Config()/ApplyConfig() already draw for the enable/threshold half (see
-// core.API.MonitorTargets's doc).
+// buildMonitoringView adapts a trinetra.Snapshot plus the daemon's current config.
 func targetViewsFromTargets(targets []Target) []core.TargetView {
 	out := make([]core.TargetView, 0, len(targets))
 	for _, t := range targets {
@@ -256,9 +222,7 @@ func capContainers(all []core.ContainerView) []core.ContainerView {
 }
 
 // diskViews merges Snapshot.Disks (mount -> usage%, always populated) with
-// Snapshot.DiskDetail (mount -> device/size/free/fill-projection, additive)
-// into one sorted-by-mount slice -- read-only against both maps, see
-// buildDashboardView's CONCURRENCY note.
+// Snapshot.DiskDetail.
 func diskViews(disks map[string]float64, detail map[string]DiskDetail) []core.DiskView {
 	if len(disks) == 0 {
 		return nil
@@ -401,12 +365,7 @@ func (a *inprocAPI) alertStatePath() string { return filepath.Join(a.stateDir, "
 func (a *inprocAPI) alertLogPath() string   { return filepath.Join(a.stateDir, "alertlog.jsonl") }
 
 // Snapshot implements core.API: it projects the daemon's live Snapshot via
-// buildDashboardView, then computes Availability fresh (real "now", real
-// events overlapping the trailing 24h) on top. a itself satisfies
-// core.EventsSource (its Events method below has the exact signature
-// ComputeAvailability wants), so no separate adapter type is
-// needed; a nil a.store just makes a.Events degrade to "no events" the same
-// way a nil store degrades everywhere else in this file.
+// buildDashboardView, then computes Availability fresh.
 func (a *inprocAPI) Snapshot() (core.DashboardView, error) {
 	v := buildDashboardView(a.getSnap())
 	v.Availability = core.ComputeAvailability(a, time.Now().Unix())
@@ -651,13 +610,7 @@ func (a *inprocAPI) EnrollmentPIN(ctx context.Context) (pin string, enrolled boo
 	return pin, enrolled, nil
 }
 
-// MonitorTargets implements core.API: it runs DiscoverLocal() (the daemon's
-// own osExec{}/osFS{}-backed probes -- docker ps / df -PT / smartctl --scan
-// / the thermal-zone glob) in the daemon's own process, so a socket caller
-// (ctl's monitor-thresholds screen) sees exactly what this host's daemon can
-// see, including anything gated behind the daemon's own root/sudo access
-// that a separate, less-privileged CLI process (fileAPI.MonitorTargets,
-// coreapi_file.go) might not.
+// MonitorTargets implements core.API: it runs DiscoverLocal().
 func (a *inprocAPI) MonitorTargets(ctx context.Context) ([]core.TargetView, error) {
 	return targetViewsFromTargets(DiscoverLocal()), nil
 }
@@ -693,15 +646,8 @@ func (a *inprocAPI) TestChannel(name string) error {
 	return sendTestNotification(a.getCfg(), name, "web")
 }
 
-// ValidateChannel implements core.API: it calls buildNotifier (channels.go)
-// against cc and the LIVE config (a.getCfg(), same race-safe accessor
-// TestChannel above uses) and reports only whether a Notifier could be
-// built, not sending anything. This validates cc against the daemon's
-// current saved config -- a caller mid-edit of an unsaved config (e.g. a
-// telegram channel meant to lean on a global token/chat_id being changed in
-// the same in-flight edit) is checked against what's live now, not the
-// edit-in-progress; see the ValidateChannel doc on core.API for that
-// accepted limitation.
+// ValidateChannel implements core.API: it calls buildNotifier (channels.go) against cc and
+// the LIVE config.
 func (a *inprocAPI) ValidateChannel(cc config.ChannelConfig) error {
 	_, err := buildNotifier(cc, a.getCfg())
 	return err

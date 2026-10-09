@@ -1,12 +1,5 @@
-// Package trinetra: eventbus.go implements the daemon's in-process live
-// event fan-out (issue-tracked as the A2 "live push" epic): the sampler
-// loop and enqueueAndLog (daemon.go) both PUBLISH core.Event values on
-// every snapshot tick / dispatched alert, and inprocAPI.Subscribe
-// (coreapi_inproc.go) hands each control-socket subscriber its own
-// SUBSCRIPTION onto the same stream. This file only ever touches sync +
-// internal/core (no third-party import), so it never breaks the default
-// build's stdlib-only guarantee (TestDefaultBuildIsStdlibOnly,
-// buildtag_test.go).
+// Package trinetra: eventbus.go implements the daemon's in-process live event fan-out
+// (issue-tracked as the A2 "live push" epic): the sampler loop and enqueueAndLog.
 package trinetra
 
 import (

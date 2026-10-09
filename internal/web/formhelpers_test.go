@@ -55,9 +55,8 @@ func isSubmitControl(n *html.Node) bool {
 	return false
 }
 
-// nodeMatchesButton reports whether submit control n carries exactly
-// name=btnName value=btnValue (both attributes read literally -- a button
-// with no name attribute at all only matches btnName=="").
+// nodeMatchesButton reports whether submit control n carries exactly name=btnName
+// value=btnValue.
 func nodeMatchesButton(n *html.Node, btnName, btnValue string) bool {
 	if !isSubmitControl(n) {
 		return false

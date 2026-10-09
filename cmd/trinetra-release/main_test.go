@@ -193,11 +193,8 @@ func TestMaintKeyfileEncryptDecrypt(t *testing.T) {
 	}
 }
 
-// TestReadEncryptedKeyRejectsMalformedEnvelopeWithoutPanicking covers
-// review M3: every envelope field is bounds-checked before use (exact
-// scrypt N/r/p, exact salt/nonce lengths), so a hand-edited or corrupted
-// key file can only be rejected, never panic (aead.Open panics on a nonce
-// of the wrong length, and a huge N is an OOM vector).
+// TestReadEncryptedKeyRejectsMalformedEnvelopeWithoutPanicking covers review M3: every
+// envelope field is bounds-checked before use.
 func TestReadEncryptedKeyRejectsMalformedEnvelopeWithoutPanicking(t *testing.T) {
 	dir := t.TempDir()
 	good := filepath.Join(dir, "good.key")

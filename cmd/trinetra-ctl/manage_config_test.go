@@ -407,10 +407,7 @@ func TestApplyConfigKeyCmdRefusedWhenManaged(t *testing.T) {
 	}
 }
 
-// TestApplyQuietHoursCmdUnaffectedWhenNotManaged is the negative case: a
-// plain *fakeAPI (no fleet support at all, the pre-existing behavior of
-// every other ctl test) and a fleet-aware API reporting nothing managed
-// must both apply normally.
+// TestApplyQuietHoursCmdUnaffectedWhenNotManaged is the negative case: a plain *fakeAPI.
 func TestApplyQuietHoursCmdUnaffectedWhenNotManaged(t *testing.T) {
 	base := &fakeAPI{cfg: config.Default()}
 	msg := runCmd(t, applyQuietHoursCmd(base, "1-2"))

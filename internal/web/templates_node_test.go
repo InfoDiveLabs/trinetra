@@ -52,9 +52,7 @@ func allowedNodeLink(url, prefix string) bool {
 // nodeSwitcherItemTag matches a topbar node-switcher entry's own opening <a> tag.
 var nodeSwitcherItemTag = regexp.MustCompile(`<a[^>]*\bclass="ns-item[^"]*"[^>]*>`)
 
-// TestNodeScopedPagesLinkAudit renders every node-routable page under
-// /n/child1/ and asserts every same-origin href/action/hx-get is either
-// node-prefixed or in the master-local allowlist.
+// TestNodeScopedPagesLinkAudit renders every node-routable page under /n/child1/.
 func TestNodeScopedPagesLinkAudit(t *testing.T) {
 	master := fakeAPI{snap: core.DashboardView{TopCPUContainers: []core.ContainerView{{Name: "svc", State: "running"}}}}
 	child := fakeAPI{snap: core.DashboardView{TopCPUContainers: []core.ContainerView{{Name: "child-svc", State: "running"}}},
@@ -421,10 +419,8 @@ func TestFleetStatusCalledAtMostOnceOnRemoteNodePage(t *testing.T) {
 	}
 }
 
-// TestFleetStatusCalledExactlyOnceOnSelfPage pins the budget's other half:
-// an ordinary self-scoped page (never routed through withNodeRouter at
-// all, since its path doesn't start with /n/) calls Fleet().Status()
-// exactly once, from resolveFleetPageInfo.
+// TestFleetStatusCalledExactlyOnceOnSelfPage pins the budget's other half: an ordinary
+// self-scoped page.
 func TestFleetStatusCalledExactlyOnceOnSelfPage(t *testing.T) {
 	n := 0
 	realFleet := masterFleetWithChild()
@@ -522,28 +518,12 @@ func TestBodyDataNodePrefixEmptyOnSelfPage(t *testing.T) {
 
 // ---- app.js's same-origin data calls go through nodeURL() ---------------
 
-// appJSNodeScopedLiteral matches a quoted string literal that is one of
-// this app's node-scoped data URLs (/api/* or the bare /events -- never
-// /public/events, /enroll/*, /login/*, /logout, which are master-local and
-// must always target the master regardless of node scope), capturing
-// whether it's immediately preceded by "nodeURL(".
-//
-// Limitation: this regex ONLY catches a quoted string literal ('/api/...' or
-// "/api/..."), not a same-origin URL built any other way (string
-// concatenation, a template literal, a path assembled from a variable) -- it
-// would silently miss a future node-scoped fetch written in one of those
-// shapes. It's sufficient for every call site in app.js today (see the doc
-// above), but a future addition that builds its URL differently needs its own
-// check, not just this scan.
+// appJSNodeScopedLiteral matches a quoted string literal that is one of this app's
+// node-scoped data URLs.
 var appJSNodeScopedLiteral = regexp.MustCompile(`(nodeURL\(\s*)?['"](/api/[^'"]*|/events)['"]`)
 
-// TestAppJSDataFetchesGoThroughNodeURL pins that every fetch()/EventSource()
-// app.js makes against THIS daemon's own data API (/api/series,
-// /api/container/logs, /api/downtime, /events -- whether the literal path sits
-// directly in the call or is first assembled into a `var url=...` the call
-// later references) is wrapped in nodeURL(...), so a remote node's page
-// (base.html's <body data-node-prefix>) reads that node's own data instead of
-// silently falling back to the master's.
+// TestAppJSDataFetchesGoThroughNodeURL pins that every fetch()/EventSource() app.js makes
+// against THIS daemon's own data API.
 func TestAppJSDataFetchesGoThroughNodeURL(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -797,13 +777,8 @@ func TestNodeSwitcherMasterLocalPageDropsQueryString(t *testing.T) {
 // TestNodePaletteFocusTrapIncludesFooterLink is a static (source-scan) check.
 var paletteFocusableFunc = regexp.MustCompile(`(?s)function paletteFocusable\(\)\{.*?\n    \}`)
 
-// TestNodePaletteFocusTrapIncludesFooterLink pins that review's IMPORTANT fix:
-// the palette's focus trap must include its own footer link ("View all in Fleet
-// ->", #nodePaletteViewAll) as the true last element in the Tab cycle -- every
-// focusable element in an aria-modal dialog must be keyboard-reachable. This is
-// a static assertion (app.js's paletteFocusable function references both the
-// .ns-item results AND #nodePaletteViewAll), not a live DOM/keyboard
-// simulation.
+// TestNodePaletteFocusTrapIncludesFooterLink pins that review's IMPORTANT fix: the
+// palette's focus trap must include its own footer link.
 func TestNodePaletteFocusTrapIncludesFooterLink(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -860,11 +835,7 @@ func TestNodePaletteOpeningClosesSwitcher(t *testing.T) {
 
 // ---- switcher polish (recent nodes + page-type jump) -------------------
 
-// TestNodePaletteRecentNodesUseLocalStorageWithTryCatch pins that the palette's
-// recent-nodes list is capped at 5 and every localStorage read AND write is
-// wrapped in its own try/catch, so a private-browsing tab or a blocked/full
-// storage quota degrades to "no recent nodes" rather than throwing out of the
-// click/load handler.
+// TestNodePaletteRecentNodesUseLocalStorageWithTryCatch pins that the palette's.
 func TestNodePaletteRecentNodesUseLocalStorageWithTryCatch(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {

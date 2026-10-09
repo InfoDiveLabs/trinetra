@@ -308,9 +308,7 @@ func TestClientFleetMethods(t *testing.T) {
 	}
 }
 
-// TestClientPreservesErrNotFoundOverTheWire pins that a Fleet.* error wrapping
-// core.ErrNotFound still satisfies errors.Is(err, core.ErrNotFound) across a
-// real control-socket round trip; internal/web maps it to 404.
+// TestClientPreservesErrNotFoundOverTheWire pins that a Fleet.* error wrapping.
 func TestClientPreservesErrNotFoundOverTheWire(t *testing.T) {
 	f := &fleetFake{fakeAPI: &fakeAPI{}, expireSilenceErr: fmt.Errorf("no such silence %q: %w", "sil1", core.ErrNotFound)}
 	c, _ := Dial(startTestServer(t, f, "tok"), "tok")

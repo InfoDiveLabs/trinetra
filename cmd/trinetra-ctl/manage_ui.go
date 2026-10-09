@@ -1,10 +1,5 @@
-// Bubble Tea glue for the management menu ('m' off Home) and its four
-// config-backed screens (schedule, quiet hours, healthchecks, monitor
-// thresholds). The pure config mutations these screens apply live in
-// manage_schedule.go/manage_quiet.go/manage_health.go/manage_monitor.go
-// (unit-tested there against a fake core.API/plain *config.Config, no
-// terminal involved); this file is deliberately thin, mirroring tui.go's
-// own split for the web-setup wizard (setup_web.go vs. tui.go).
+// Bubble Tea glue for the management menu ('m' off Home) and its four config-backed screens
+// (schedule, quiet hours, healthchecks, monitor thresholds).
 package main
 
 import (
@@ -121,9 +116,8 @@ func newManageValueInput(placeholder string) textinput.Model {
 
 // --- messages ---
 
-// manageAppliedMsg carries the result of applying the schedule/quiet-hours/
-// healthchecks screens' single value (fetch Config, apply the pure mutator,
-// ApplyConfig) back into Update.
+// manageAppliedMsg carries the result of applying the schedule/quiet-hours/ healthchecks
+// screens' single value.
 type manageAppliedMsg struct {
 	err error
 }
@@ -171,11 +165,7 @@ type channelsConfigMsg struct {
 	err error
 }
 
-// channelActionMsg carries the result of an in-place list action (remove or
-// test, as opposed to the add/edit flow's channelSavedMsg) back into
-// Update. cfg is the freshly re-fetched, already-applied config after a
-// remove (nil for a test, which never changes config); name/isTest
-// identify what happened for the list's transient status line.
+// channelActionMsg carries the result of an in-place list action.
 type channelActionMsg struct {
 	cfg    *config.Config
 	name   string
@@ -196,10 +186,7 @@ type settingsConfigMsg struct {
 	err error
 }
 
-// settingsAppliedMsg carries the result of applying a single settings-
-// screen key edit (fetch Config, applyConfigKey, ApplyConfig) back into
-// Update. key is carried through so the result screen can show the
-// restart-required caveat for the key that was just applied.
+// settingsAppliedMsg carries the result of applying a single settings- screen key edit.
 type settingsAppliedMsg struct {
 	key string
 	err error
@@ -289,12 +276,8 @@ func applyHealthchecksCmd(api core.API, raw string) tea.Cmd {
 	}
 }
 
-// discoverMonitorCmd calls api.MonitorTargets over the control socket --
-// the daemon runs its own live target discovery (docker/df/smartctl probes,
-// trinetra.DiscoverLocal) and reports back a []core.TargetView, so ctl
-// never has to import internal/trinetra or run those probes itself --
-// alongside a fresh Config fetch, so the Monitor thresholds screen can merge
-// them via buildMonitorRows.
+// discoverMonitorCmd calls api.MonitorTargets over the control socket -- the daemon runs
+// its own live target discovery.
 func discoverMonitorCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		targets, err := api.MonitorTargets(context.Background())
@@ -367,11 +350,8 @@ func removeChannelCmd(api core.API, name string) tea.Cmd {
 	}
 }
 
-// testChannelCmd calls api.TestChannel(name) -- the same send-a-real-test-
-// notification path `channel test`/the web channels page's "send test"
-// button use (sendTestNotification, internal/trinetra/channel.go) --
-// against the channel as it is CURRENTLY saved on the daemon; it does not
-// touch config.
+// testChannelCmd calls api.TestChannel(name) -- the same send-a-real-test- notification
+// path `channel test`/the web channels page's "send test" button use.
 func testChannelCmd(api core.API, name string) tea.Cmd {
 	return func() tea.Msg {
 		err := api.TestChannel(name)
@@ -406,14 +386,7 @@ func fetchSettingsConfigCmd(api core.API) tea.Cmd {
 	}
 }
 
-// applyConfigKeyCmd fetches Config fresh, sets exactly key via
-// applyConfigKey (manage_config.go, the same validated config.Set setter
-// every other manage screen ultimately uses), and posts it with
-// ApplyConfig -- the same fetch/mutate/apply shape applyScheduleCmd uses.
-// An error from either applyConfigKey (a rejected value) or ApplyConfig
-// surfaces identically on settingsAppliedMsg.err; ApplyConfig is never
-// called when applyConfigKey itself failed, so an invalid value is never
-// persisted.
+// applyConfigKeyCmd fetches Config fresh, sets exactly key via applyConfigKey.
 func applyConfigKeyCmd(api core.API, key, raw string) tea.Cmd {
 	return func() tea.Msg {
 		if id, managed := managedFragmentFor(api, key); managed {
@@ -752,10 +725,8 @@ func (m model) updateSettingsKeysKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateSettingsValueKey feeds msg into the selected key's value input:
-// enter commits it via applyConfigKeyCmd (config.Set's real validation, so
-// a rejected value never reaches ApplyConfig), esc discards and returns to
-// the key list.
+// updateSettingsValueKey feeds msg into the selected key's value input: enter commits it
+// via applyConfigKeyCmd.
 func (m model) updateSettingsValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
@@ -919,9 +890,7 @@ func (m model) manageView() string {
 	return b.String()
 }
 
-// currentSettingsKeyHelp returns keys[cur].Help, or "" if cur is out of
-// range (defensive: the value screen is only reachable via a valid
-// selection, but View must never index out of bounds).
+// currentSettingsKeyHelp returns keys[cur].Help, or "" if cur is out of range.
 func currentSettingsKeyHelp(keys []config.KeyInfo, cur int) string {
 	if cur < 0 || cur >= len(keys) {
 		return ""

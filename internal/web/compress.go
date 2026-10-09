@@ -11,16 +11,8 @@ import (
 // gzipMinBytes is the minimum response size gzipMiddleware will compress.
 const gzipMinBytes = 1024
 
-// isEventsStreamPath reports whether p is a live SSE stream path that must
-// never be buffered by gzipMiddleware: the two unprefixed streams
-// (/events, /public/events) or a master's node-scoped counterpart
-// (/n/{id}/events) -- the exact same request withNodeRouter (node_scope.go)
-// re-dispatches internally as a plain /events once it resolves the node scope.
-// The node-scoped match is intentionally loose (any /n/.../events path, not a
-// validated node id): worst case a malformed /n/.../events path that
-// withNodeRouter itself would 404 just skips gzip too, which is harmless --
-// only a missed compression opportunity on a path that was never going to
-// succeed anyway.
+// isEventsStreamPath reports whether p is a live SSE stream path that must never be
+// buffered by gzipMiddleware: the two unprefixed streams.
 func isEventsStreamPath(p string) bool {
 	if p == "/events" || p == "/public/events" {
 		return true

@@ -71,10 +71,8 @@ var inviteTTLs = []struct{ Value, Label string }{
 	{"168h", "7 days"},
 }
 
-// ttlLabel maps an invite TTL <select> value to its human label, falling
-// back to the raw value itself for anything not in inviteTTLs (defensive;
-// the <select> only ever offers these three, but a hand-crafted POST could
-// send something else -- see usersInviteHandler's parsing).
+// ttlLabel maps an invite TTL <select> value to its human label, falling back to the raw
+// value itself for anything not in inviteTTLs.
 func ttlLabel(value string) string {
 	for _, t := range inviteTTLs {
 		if t.Value == value {
@@ -156,14 +154,8 @@ func usersPageHandler(d Deps) http.HandlerFunc {
 // missing or fails to parse as a duration.
 const defaultInviteTTL = time.Hour
 
-// usersInviteHandler issues (or re-issues) a single-use enrollment token for
-// the posted role/ttl (tokenStore.Issue, enroll_tokens.go) and renders the
-// users fragment with the resulting /enroll?token=... link so the admin can
-// copy/share it. Re-issuing is just calling this again -- a single-use token
-// left outstanding after an abandoned ceremony (see enroll_tokens.go's
-// Redeem doc) is never revoked, only ever left to expire or be redeemed;
-// this endpoint has no notion of "the previous token", it only ever mints a
-// fresh one.
+// usersInviteHandler issues (or re-issues) a single-use enrollment token for the posted
+// role/ttl.
 func usersInviteHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {

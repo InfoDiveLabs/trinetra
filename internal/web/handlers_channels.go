@@ -11,20 +11,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// channelsMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
-// mirroring usersMutation/configMutation: every /channels* mutation (add,
-// update, remove, test) needs both gates.
+// channelsMutation composes requireRole(RoleAdmin, ...) with requireCSRF, mirroring
+// usersMutation/configMutation: every /channels* mutation.
 func channelsMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
 
-// channelNameParam/channelNameFromParam convert a channel's Name (arbitrary
-// text -- "Ops email", "#infra" -- see config.ChannelConfig.Name) to/from the
-// URL-safe form the {name} path segment carries, reusing the exact encoding
-// handlers_users.go's credentialParam/credentialFromParam already use for
-// the same reason (a raw name isn't always a safe single path segment).
+// channelNameParam/channelNameFromParam convert a channel's Name.
 func channelNameParam(name string) string { return credentialParam([]byte(name)) }
 func channelNameFromParam(param string) (string, error) {
 	b, err := credentialFromParam(param)
@@ -54,10 +49,7 @@ var channelTypes = []struct{ Value, Label string }{
 	{"webhook", "Generic webhook"},
 }
 
-// describeRoutesWeb mirrors channel.go's describeRoutes (unexported to that
-// package, so duplicated here rather than reached into across the
-// trinetra/web boundary, per the rule that internal/web must never
-// import internal/trinetra, to keep the module graph one-way).
+// describeRoutesWeb mirrors channel.go's describeRoutes.
 func describeRoutesWeb(cc config.ChannelConfig) string {
 	var parts []string
 	if len(cc.IncludeKinds) > 0 {
@@ -75,9 +67,8 @@ func describeRoutesWeb(cc config.ChannelConfig) string {
 	return strings.Join(parts, " ")
 }
 
-// channelRows builds the /channels table rows from cfg.Channels, sorted by
-// name for a stable render order (Channels is a plain slice in append
-// order, which would otherwise reorder every time a channel is added).
+// channelRows builds the /channels table rows from cfg.Channels, sorted by name for a
+// stable render order.
 func channelRows(cfg *config.Config) []channelRow {
 	rows := make([]channelRow, 0, len(cfg.Channels))
 	for _, cc := range cfg.Channels {
@@ -98,16 +89,8 @@ func channelRows(cfg *config.Config) []channelRow {
 	return rows
 }
 
-// channelModalData is one add/edit channel modal's render data: the same
-// shape backs both the single "Add channel" modal (IsEdit false, all fields
-// at their zero value/default) and one per-existing-channel "Edit channel"
-// modal (IsEdit true, pre-filled from that channel's current config) -- see
-// templates/channels.html's "chanModalBody" block, defined once and
-// executed for each. Rendering N small edit modals server-side (rather than
-// one shared modal that JS pre-fills on open) avoids threading secret-bearing
-// Settings values through JS data-* attributes and avoids the CSP's
-// no-inline-script constraint entirely: every field is already correct by the
-// time the page loads.
+// channelModalData is one add/edit channel modal's render data: the same shape backs both
+// the single "Add channel" modal.
 type channelModalData struct {
 	ID                     string // DOM id: "chanModal-new" or "chanModal-<param>"
 	Title                  string
@@ -322,11 +305,8 @@ func applyChannelForm(newCfg *config.Config, name string, r *http.Request) error
 	return nil
 }
 
-// validateDeliverable rejects an ENABLED channel that could not build a
-// working notifier, so the web editor never silently persists a channel that
-// delivery would drop (#79 -- e.g. a telegram channel left without a chat id).
-// Disabled channels are drafts and skip the check; a nil d.ValidateChannel
-// (tests that don't wire it) also skips.
+// validateDeliverable rejects an ENABLED channel that could not build a working notifier,
+// so the web editor never silently persists a channel that delivery would drop.
 func validateDeliverable(d Deps, cfg *config.Config, name string) error {
 	if d.ValidateChannel == nil {
 		return nil

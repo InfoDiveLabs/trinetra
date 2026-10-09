@@ -1,8 +1,4 @@
-// Package trinetra: fleet_cmd.go is the `trinetra fleet` command. Role
-// changes (init/join/leave/disable) edit config and PKI files directly and
-// ask for a restart, because the daemon reads the role once at start. Every
-// other subcommand goes through the running daemon's control socket, which
-// owns the node registry and token store.
+// Package trinetra: fleet_cmd.go is the `trinetra fleet` command.
 package trinetra
 
 import (
@@ -131,9 +127,8 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// rejectPositionals prints and returns true if pos is non-empty: a command
-// that takes no positional arguments (init, leave, disable, nodes, token
-// create/list) but received one is a usage error, not silently ignored.
+// rejectPositionals prints and returns true if pos is non-empty: a command that takes no
+// positional arguments.
 func rejectPositionals(cmd, usage string, pos []string) bool {
 	if len(pos) == 0 {
 		return false
@@ -1072,10 +1067,7 @@ func fleetRouteTest(args []string) int {
 	})
 }
 
-// printRouteDecision prints d: the matched route, then EVERY matched policy
-// (several when Continue chained routes; each escalates independently, so each
-// prints its own steps and repeat_every) and, last, whether a silence would
-// suppress this exact alert.
+// printRouteDecision prints d: the matched route, then EVERY matched policy.
 func printRouteDecision(w io.Writer, d core.RouteDecision) {
 	route := d.Route
 	if route == "" {

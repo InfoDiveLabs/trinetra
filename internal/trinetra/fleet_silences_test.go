@@ -176,15 +176,8 @@ func TestMaintenanceOccurrenceFallBackLastsExactlyOneHour(t *testing.T) {
 	}
 }
 
-// TestMaintenanceOccurrenceSpringForwardDocumented documents the accepted
-// trade-off on the other DST transition: on
-// 2024-03-10 in America/New_York (spring-forward: clocks jump from 02:00
-// EST straight to 03:00 EDT, so wall-clock 02:00-02:59 never happens that
-// day), a 01:30-02:30 window's real elapsed duration still comes out to
-// exactly the configured 1h (start.Add(wallDuration) is immune to the gap),
-// but its END lands on 03:30 local time, not 02:30 -- because 02:30 simply
-// never existed that day, so "1h after 01:30" is 03:30 once the gap is
-// accounted for.
+// TestMaintenanceOccurrenceSpringForwardDocumented documents the accepted trade-off on the
+// other DST transition: on 2024-03-10 in America/New_York.
 func TestMaintenanceOccurrenceSpringForwardDocumented(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
@@ -646,18 +639,8 @@ func TestSilencesForNodeWeb1DB1MultiMatcherLeak(t *testing.T) {
 	}
 }
 
-// TestReplicaApplyCrossAlertKeyOrderingDropRepro demonstrates that fleet_
-// replica.go's apply() alert-ordering guard (lastAlertTS/alertLines) is
-// scoped PER NODE, not per (node, alert key): a delayed fallback record for
-// one alert key (its Time stamped at the LATER fallback-decision moment --
-// see fleet_lease.go's deliverFallback) can silently swallow a genuinely
-// later, unrelated alert on a DIFFERENT key for the SAME node, because
-// "ev.Time < n.lastAlertTS" is checked against the highest Time seen for
-// the node as a whole, never re-scoped per key. The docker fleet e2e run
-// this reproduces had child2 firing BOTH a "collector:services" alert
-// (flapping, independently of the mem test) and the "mem" alert under test
-// in the very same window (mocktg evidence: "via local fallback... collector
-// services failing" appears around the same run as the mem dance).
+// TestReplicaApplyCrossAlertKeyOrderingDropRepro demonstrates that fleet_ replica.go's
+// apply() alert-ordering guard (lastAlertTS/alertLines) is scoped PER NODE, not per.
 func TestReplicaApplyCrossAlertKeyOrderingDropRepro(t *testing.T) {
 	var onAlertCalls []AlertEvent
 	root := t.TempDir()
@@ -733,10 +716,8 @@ func TestPushedSilencesSetHoldsMutexThroughWrite(t *testing.T) {
 	secondDone := make(chan error, 1)
 	go func() { secondDone <- p.Set(second) }()
 
-	// Give the second call every chance to race ahead of the first if the
-	// mutex is NOT held through the write -- it would be able to acquire
-	// p.mu (released before the write, pre-fix) and complete its own write
-	// before the first call's (delayed) write ever reaches disk.
+	// Give the second call every chance to race ahead of the first if the mutex is NOT held
+	// through the write -- it would be able to acquire p.mu.
 	time.Sleep(20 * time.Millisecond)
 	close(releaseFirst)
 

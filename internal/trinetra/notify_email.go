@@ -73,12 +73,8 @@ func buildEmailMessage(from string, to []string, a Alert) []byte {
 	return []byte(b.String())
 }
 
-// sanitizeHeader makes s safe to interpolate into a single RFC-822 header
-// line: every control byte below 0x20 (notably CR and LF, the SMTP
-// header-injection vector) except tab is replaced with a space, then the
-// result is trimmed of surrounding whitespace. This collapses any
-// attempted header/body smuggling in system-derived values (unit names,
-// container names, device paths, file names) into a single folded line.
+// sanitizeHeader makes s safe to interpolate into a single RFC-822 header line: every
+// control byte below 0x20.
 func sanitizeHeader(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

@@ -1,9 +1,4 @@
-// Package trinetra: fleet_telegram.go is the master's side of a Telegram
-// inline-button tap: daemon.go's pollLoop/processUpdates route a callback_query
-// here instead of through handleCommand's text-command router. Solo and child
-// never reach telegramCallbackAnswer's action branches for a real reason: their
-// core.FleetAPI fails every write with core.ErrNotMaster, so a callback there
-// is answered "unknown/expired" and otherwise ignored.
+// Package trinetra: fleet_telegram.go is the master's side of a Telegram inline-button tap.
 package trinetra
 
 import (

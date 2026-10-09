@@ -121,13 +121,8 @@ func (c Check) breach(b *Baseline, sigma, minPct float64, baselineAlerts bool) (
 		return false, ""
 	}
 	if z, ready := b.Z(c.Key, c.Value); ready && math.Abs(z) >= sigma {
-		// A metric can be many sigma from its mean while barely moving in
-		// absolute/relative terms if its EWMA variance is underestimated
-		// (e.g. a temp sensor cycling narrowly, or ~stable mem%) -- that's
-		// exactly the "noisy but stable" flapping this gate exists to
-		// suppress. Only fire the baseline alert when the value is ALSO
-		// materially far from the mean, not just many (underestimated)
-		// standard deviations from it.
+		// A metric can be many sigma from its mean while barely moving in absolute/relative terms
+		// if its EWMA variance is underestimated.
 		mean, _ := b.Mean(c.Key)
 		denom := math.Abs(mean)
 		if denom < meanFloor {

@@ -74,10 +74,8 @@ func TestComputeAvailabilityMarksDownBlocksAndSummarizes(t *testing.T) {
 	}
 }
 
-// TestComputeAvailabilityClipsEventsToWindow confirms an event that started
-// before the 24h window (e.g. an outage that's still ongoing, or one that
-// began earlier and only partly falls in-window) only counts its in-window
-// portion toward downtime/uptime%, not its full real-world duration.
+// TestComputeAvailabilityClipsEventsToWindow confirms an event that started before the 24h
+// window.
 func TestComputeAvailabilityClipsEventsToWindow(t *testing.T) {
 	const day = 86400
 	now := int64(1_700_100_000)

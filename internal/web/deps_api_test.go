@@ -38,10 +38,8 @@ type fakeAPI struct {
 	logErr        error
 	version       string
 
-	// updateStatus/updateStatusErr back UpdateStatus;
-	// updateCheck/updateCheckErr do the same for UpdateCheck (defaulting to
-	// updateStatus/nil when unset, mirroring how a real check re-reports the
-	// same status view it just refreshed).
+	// updateStatus/updateStatusErr back UpdateStatus; updateCheck/updateCheckErr do the same
+	// for UpdateCheck.
 	updateStatus    core.UpdateStatusView
 	updateStatusErr error
 	updateCheckErr  error
@@ -170,12 +168,7 @@ func (f fakeAPI) Node(id string) (core.API, error) {
 
 var _ core.FleetProvider = fakeAPI{}
 
-// fakeFleet is a minimal core.FleetAPI test double: Status/Nodes return
-// canned fixtures (plus canned errors, for the "old daemon" and
-// roster-lookup-fails cases node_scope_test.go exercises); the
-// fleet-master mutation methods record what they were called with so a
-// later task's admin-page tests can assert against them, defaulting to a
-// harmless no-op/zero-value response.
+// fakeFleet is a minimal core.FleetAPI test double: Status/Nodes return canned fixtures.
 type fakeFleet struct {
 	status    core.FleetStatus
 	statusErr error
@@ -192,13 +185,7 @@ type fakeFleet struct {
 	createTokenErr error
 	deletedTokens  []string
 
-	// renamedActor/taggedActor/revokedActor/removedActor/deletedTokenActor
-	// record the actor the LAST
-	// RenameNode/SetNodeTags/RevokeNode/RemoveNode/DeleteToken call was made
-	// with, so a test can assert it was the signed-in web user's own name
-	// (auditUser(r)), never a placeholder -- the same convention
-	// ackedIncidentActor/expiredSilenceActor/deletedMaintenanceActor already
-	// use for their own mutations.
+	// renamedActor/taggedActor/revokedActor/removedActor/deletedTokenActor record the actor.
 	renamedActor      string
 	taggedActor       string
 	revokedActor      string
@@ -258,14 +245,8 @@ type fakeFleet struct {
 	silencesErr     error
 	maintenancesErr error
 
-	// expireSilenceErr/saveMaintenanceErr/deleteMaintenanceErr let a test
-	// force those three mutations to fail outright (a FleetAPI-level
-	// rejection, as opposed to fakeValidateMatchers/fakeValidateMaintenance's
-	// own validation, which CreateSilence/SaveMaintenance always apply).
-	// expiredSilenceID/expiredSilenceActor and
-	// deletedMaintenanceID/deletedMaintenanceActor record the last such call
-	// so a test can assert the actor was the SIGNED-IN web user
-	// (auditUser(r)), never a placeholder.
+	// expireSilenceErr/saveMaintenanceErr/deleteMaintenanceErr let a test force those three
+	// mutations to fail outright.
 	expireSilenceErr        error
 	expiredSilenceID        string
 	expiredSilenceActor     string
@@ -373,13 +354,7 @@ func (f *fakeFleet) DeleteToken(id, actor string) error {
 	return nil
 }
 
-// Incidents applies filter's State/Node in-memory (Tag is left unfiltered --
-// core.Incident carries no tag of its own, and no test here exercises tag
-// filtering; the real FleetAPI resolves it via each member's node, out of scope
-// for this package's fake) so handlers_fleet_incidents_test.go can exercise the
-// list's actual filtering/pagination/badge behavior, not just a canned
-// passthrough. incidentsCalls/lastIncidentsFilter record every call, for the
-// nav badge's "at most one call per request" test.
+// Incidents applies filter's State/Node in-memory.
 func (f *fakeFleet) Incidents(filter core.IncidentFilter) ([]core.Incident, error) {
 	f.incidentsCalls++
 	f.lastIncidentsFilter = filter
@@ -572,9 +547,7 @@ func fakeValidHHMM(s string) bool {
 }
 
 // fakeValidateMaintenance mirrors internal/trinetra/fleet_silences.go's own
-// validateMaintenance (name required, at least one weekday in 0..6, From/To
-// valid HH:MM, TZ loadable) -- see fakeValidateMatchers' doc for why this is
-// duplicated here rather than imported.
+// validateMaintenance.
 func fakeValidateMaintenance(m core.Maintenance) error {
 	if err := fakeValidateMatchers(m.Matchers); err != nil {
 		return err

@@ -296,10 +296,8 @@ func TestStyleCSSUsesBrandPalette(t *testing.T) {
 	}
 }
 
-// TestStyleCSSContrast checks WCAG contrast of the text tokens on every
-// opaque surface in both themes: body text and --muted at least 4.5:1,
-// --faint (eyebrows, table heads, axis labels) at least 3:1, and the status
-// colours used as small badge/trend text at least 4.5:1.
+// TestStyleCSSContrast checks WCAG contrast of the text tokens on every opaque surface in
+// both themes: body text and --muted at least 4.5:1, --faint.
 func TestStyleCSSContrast(t *testing.T) {
 	css := readStyleCSS(t)
 	for _, theme := range []string{"dark", "light"} {

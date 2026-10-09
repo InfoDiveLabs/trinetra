@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// runLatest feeds input (a JSON array shaped like `gh api
-// repos/{owner}/{repo}/releases --paginate`) to `latest --channel CHANNEL`
-// on stdin and returns what it printed on stdout plus its exit code.
+// runLatest runs `latest --channel CHANNEL` on a releases JSON array and returns stdout and the exit code.
 func runLatest(t *testing.T, channel, input string) (string, int) {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -166,12 +164,8 @@ func TestLatestRejectsUnknownChannel(t *testing.T) {
 	}
 }
 
-// TestLatestSkipsReleaseWithoutManifest covers B1: a release whose assets
-// don't include a signed manifest (e.g. v0.4.1, shipped as serverwatch
-// binaries with no manifest.json) must never be picked, even though it is a
-// final, non-draft release with a higher... er, lower version than a
-// qualifying one. The weekly channels.yml run must not sign a pointer at a
-// release a host cannot verify.
+// TestLatestSkipsReleaseWithoutManifest covers B1: a release whose assets don't include a
+// signed manifest.
 func TestLatestSkipsReleaseWithoutManifest(t *testing.T) {
 	input := `[
 		{"tag_name":"v0.4.1","prerelease":false,"draft":false,"assets":` + noManifest + `},

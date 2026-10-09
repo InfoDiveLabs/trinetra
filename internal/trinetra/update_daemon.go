@@ -1,7 +1,4 @@
-// Package trinetra: update_daemon.go wires self-update into the running
-// daemon: the periodic loop that checks for a new release and
-// turns update.State transitions into operator-facing Alerts ("update
-// available", "updated"/"rolled back", and a stale-pointer warning).
+// Package trinetra: update_daemon.go wires self-update into the running daemon.
 package trinetra
 
 import (
@@ -31,11 +28,8 @@ func updateLoopEvery() time.Duration {
 // is considered stale enough to warn about.
 const stalePointerAfter = 14 * 24 * time.Hour
 
-// updateResultAlert maps a not-yet-notified update.Result to the Alert
-// startUpdateLoop delivers, and reports false for a Result that carries no
-// alert (already notified, or an outcome this build doesn't know about --
-// defensive against a future outcome value a newer guard might write that
-// this daemon build predates).
+// updateResultAlert maps a not-yet-notified update.Result to the Alert startUpdateLoop
+// delivers, and reports false for a Result that carries no alert.
 func updateResultAlert(r update.Result) (Alert, bool) {
 	if r.Notified {
 		return Alert{}, false

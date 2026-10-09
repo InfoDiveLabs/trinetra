@@ -1,17 +1,4 @@
-// Package trinetra: collector_health.go makes slow-tier collection
-// fail-visible (#110). A monitoring daemon must never silently degrade: when a
-// collection command (docker/df/systemctl/smartctl) fails or times out, that is
-// itself a monitoring failure the operator should be alerted to, not a reason
-// to publish missing data or flip a healthy target to "gone".
-//
-// Two mechanisms live here:
-//   - carryForwardFailedCollectors preserves the previous cycle's values for any
-//     collector that errored this cycle, so a single failed `docker ps` does not
-//     blank the container set (making every container look gone).
-//   - collectorHealth tracks per-collector consecutive failures / last success /
-//     last error across cycles, so a sustained failure becomes a
-//     `collector:<name>` alert (see buildCollectorChecks) and is observable in
-//     status.json, and recovers automatically on the next success.
+// Package trinetra: collector_health.go makes slow-tier collection fail-visible (#110).
 package trinetra
 
 import "fmt"

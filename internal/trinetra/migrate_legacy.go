@@ -1021,11 +1021,8 @@ func stopLegacyService(ops migrationOps, force bool) (string, error) {
 		"Make sure no serverwatch daemon is running, then re-run with `sudo trinetra install --force`", legacyServiceName, state, err)
 }
 
-// strayLegacyDaemon returns the pid and executable of a live serverwatch
-// daemon named by a serverwatch pid file (in the old state dir, or in the new
-// one when an interrupted run already moved it), or 0. A stale pid file (no
-// such process, or a reused pid running something else) is ignored; " (deleted)"
-// covers a daemon whose binary was replaced on disk since it started.
+// strayLegacyDaemon returns the pid and executable of a live serverwatch daemon named by a
+// serverwatch pid file.
 func strayLegacyDaemon(p migrationPaths, ops migrationOps) (int, string) {
 	for _, dir := range []string{p.OldStateDir, p.NewStateDir} {
 		b, err := os.ReadFile(filepath.Join(dir, legacyPIDFileName))

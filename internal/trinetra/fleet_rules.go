@@ -1,28 +1,5 @@
-// Package trinetra: fleet_rules.go is the master's aggregate-rule engine
-// a small, hand-written grammar (NOT PromQL) parsed by
-// parseRuleExpr, evaluated every ruleTickInterval by fleetAlertEngine.TickRules
-// against the same data sources fleet_provider.go's Nodes() and the child's
-// own gap-filler already use -- the replica sink's latest snapshot
-// (replicaSink.LiveOf) and 1m series (replicaNode.store.Query), the liveness
-// tracker's state, and the registry's tags/LastSeen (see
-// fleet-phase2-map.md section 8).
-//
-// Grammar:
-//
-//	count(<sel>, <metric> <op> <num>) <op> <int> for <dur>
-//	avg|max|min(<sel>, <metric>) <op> <num> for <dur>
-//	online(<sel>) <op> <int> for <dur>
-//	absent(<sel>, <dur>)
-//
-// <sel> is one of tag:<t>, node:<glob> or all. Metrics: cpu, mem, swap, disk
-// (worst mount), load1, temp. Operators: > >= < <= == !=. `for` is required
-// except for absent, and its duration has a 1m minimum. A rule's "for"
-// sustain (and absent's blind window) is tracked purely in memory
-// (fleetRuleEvaluator.states / .started): a master restart always starts
-// both over, exactly as global-constraints documents for every other
-// engine timer -- the orphan check (masterLoop.stillActive's
-// "fleet:rule:<name>" case) is what reconciles a stale open incident after
-// that, not this in-memory state.
+// Package trinetra: fleet_rules.go is the master's aggregate-rule engine a small,
+// hand-written grammar (NOT PromQL) parsed by parseRuleExpr.
 package trinetra
 
 import (
@@ -542,9 +519,8 @@ type ruleSelfSource struct {
 	// Name is the master's own display name (fleetProvider.selfName, ultimately
 	// config.ServerName()) -- what a `node:<glob>` selector globs self's name against.
 	Name func() string
-	// Snap returns the master's own current Snapshot and whether one has
-	// ever been collected yet (false before the sampler loop's first tick --
-	// see snapshot_hub.go's latestSnapshot doc comment).
+	// Snap returns the master's own current Snapshot and whether one has ever been collected
+	// yet.
 	Snap func() (Snapshot, bool)
 	// Store is the master's own local SampleStore (fleetDeps.store): the same series
 	// count()/avg()/max()/min() read for every other node, just local instead of replicated.
@@ -680,9 +656,8 @@ func (r *fleetRuleEvaluator) isFiring(name string) bool {
 	return ok && st.firing
 }
 
-// snapshot returns one core.RuleState per rule in rules (config order),
-// merging in whatever runtime state has been observed for it so far (zero
-// value -- never evaluated yet -- for a rule added since the last tick).
+// snapshot returns one core.RuleState per rule in rules (config order), merging in whatever
+// runtime state has been observed for it so far.
 func (r *fleetRuleEvaluator) snapshot(rules []core.AggregateRule) []core.RuleState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -712,11 +687,8 @@ func (r *fleetRuleEvaluator) matchNodes(sel ruleSelector) (includeSelf bool, nod
 	return includeSelf, nodes
 }
 
-// selfMatches reports whether sel matches the master's own node: `all` always
-// includes self; `node:<glob>` includes self when the glob matches its display
-// name (ServerName(), via ruleSelfSource.Name) OR names the exact `self` id
-// (core.SelfNodeID), the same "id-exact-or-name-glob" shape core.Matcher.Node
-// uses. `tag:<t>` never matches self: the master's own node carries no tags.
+// selfMatches reports whether sel matches the master's own node: `all` always includes
+// self; `node:<glob>` includes self when the glob matches its display name.
 func (r *fleetRuleEvaluator) selfMatches(sel ruleSelector) bool {
 	switch sel.Kind {
 	case "all":

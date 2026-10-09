@@ -9,12 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// dashboardTestView is a distinctive fake DashboardView: every number is
-// chosen so it can't collide with the template's original hard-coded demo
-// figures (18% cpu, 83% mem, 4% swap, 0.42 load, 54°C temp, 6/7 containers,
-// 220 units, 91% disk, 214 processes, 11%/512M nextcloud, ...). If a rendered
-// page still shows one of those, the template is still using demo markup
-// instead of the real Deps.Snapshot() value.
+// dashboardTestView is a distinctive fake DashboardView: every number is chosen so it can't
+// collide with the template's original hard-coded demo figures.
 func dashboardTestView() DashboardView {
 	return DashboardView{
 		TS:      1_700_000_000,
@@ -180,10 +176,8 @@ func TestSidebarShowsCoreAndPluginVersions(t *testing.T) {
 	}
 }
 
-// TestDashboardRendersRealAvailabilityStrip pins that the #hbstrip
-// availability panel renders the real per-request Availability data
-// (ComputeAvailability's output, threaded through DashboardView) rather than
-// hardcoded demo values (N=96/dF=68/dT=70/wA=41, "1 incident · 45m").
+// TestDashboardRendersRealAvailabilityStrip pins that the #hbstrip availability panel
+// renders the real per-request Availability data.
 func TestDashboardRendersRealAvailabilityStrip(t *testing.T) {
 	view := dashboardTestView()
 	view.Availability = Availability{

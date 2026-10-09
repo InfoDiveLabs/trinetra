@@ -1,7 +1,5 @@
-// Package trinetra: fleet_child.go adapts a child daemon to the fleet
-// link: it tees local writes into the outbox, rebuilds dropped outbox ranges
-// from local history, builds the live update, and raises local alerts when
-// the link to the master is lost or the node is revoked.
+// Package trinetra: fleet_child.go adapts a child daemon to the fleet link: it tees local
+// writes into the outbox, rebuilds dropped outbox ranges from local history.
 package trinetra
 
 import (

@@ -1428,9 +1428,7 @@ func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 
 // --- config key catalog (KeyInfo/Keys) ---
 
-// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real key
-// (Set(key, Get(key)) on a fresh Default() succeeds) and that its Kind hint
-// matches the value Get returns.
+// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real key.
 func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	for _, ki := range Keys() {
 		c := Default()
@@ -1558,11 +1556,7 @@ func TestFleetKeysRequireRestart(t *testing.T) {
 	}
 }
 
-// fleet.fallback_after and fleet.link_down_warn_after apply live (the lease
-// holder / handoff and the child's link-alert planner all read the config
-// pointer fresh each time, unlike fleet.node_down_after's once-at-start
-// liveness tracker), so unlike the other fleet tunables they must NOT
-// require a restart.
+// fleet.fallback_after and fleet.link_down_warn_after apply live.
 func TestFleetFallbackAndLinkDownWarnKeysApplyLive(t *testing.T) {
 	dontWant := map[string]bool{"fleet.fallback_after": true, "fleet.link_down_warn_after": true}
 	for _, k := range Keys() {

@@ -41,12 +41,7 @@ func parseUnits(s string) []UnitInfo {
 	return out
 }
 
-// listUnits runs `systemctl list-units` (via runMaybeSudo: systemctl is
-// usually root-accessible without sudo, but the sudo fallback is harmless if
-// it isn't) and parses the full unit inventory. Snapshot-only: unlike
-// parseFailedUnits below (used for --failed alerting), this is never fed
-// into the SampleStore as a series -- full unit-name cardinality per host
-// makes that a bad fit for time-series storage.
+// listUnits runs `systemctl list-units`.
 func listUnits(x Exec) ([]UnitInfo, error) {
 	out, err := runMaybeSudo(x, "systemctl", "list-units", "--type=service", "--all", "--plain", "--no-legend")
 	if err != nil {
@@ -153,18 +148,7 @@ func isRealMount(m string) bool {
 	return true
 }
 
-// isRealFsType reports whether fstype names a real, user-facing block-device
-// filesystem (ext2/3/4, xfs, btrfs, zfs, vfat, exfat, f2fs, ntfs, reiserfs,
-// jfs, ...) as opposed to a pseudo/virtual/container filesystem (overlay,
-// tmpfs, proc, sysfs, cgroup, squashfs, ...). This is the robust
-// discriminator for the docker-host field bug: `df` on a root daemon lists
-// one `overlay` mount per container plus assorted pseudo-filesystems, and
-// path-prefix filtering (isRealMount) alone can't catch mounts outside the
-// known container-runtime directories, so this denylists filesystem TYPES
-// instead. Case-insensitive since some platforms/tools report fstype in
-// mixed case. "fuse.*" is treated as pseudo (FUSE-backed virtual/network
-// mounts like fuse.sshfs) except "fuseblk", which backs real block-device
-// filesystems (e.g. NTFS-3G) and is kept.
+// isRealFsType reports whether fstype names a real, user-facing block-device filesystem.
 func isRealFsType(fstype string) bool {
 	if fstype == "" {
 		return false

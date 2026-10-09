@@ -927,11 +927,7 @@ func TestMasterDropWarningSurvivesRestart(t *testing.T) {
 	}
 }
 
-// TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch: fleetDeps.alert
-// (used by a child's childLinkAlerts) must stay the async enqueueAndLog path
-// and never block its caller on a slow channel, unlike fleetDeps.deliverSync
-// (the master engine's path, which is SUPPOSED to block until dispatch
-// completes).
+// fleetDeps.alert must stay async; only deliverSync blocks.
 func TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))

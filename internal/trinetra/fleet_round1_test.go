@@ -1,7 +1,5 @@
-// Package trinetra: fleet_round1_test.go covers per-member silence
-// suppression, a dependency-folded member's recover finding the right bucket,
-// grouped resurrection, a release sweep on SetNodeDeps and the
-// group-interval/fallback-after interaction.
+// Package trinetra: fleet_round1_test.go covers per-member silence suppression, a
+// dependency-folded member's recover finding the right bucket, grouped resurrection.
 package trinetra
 
 import (
@@ -128,10 +126,8 @@ func TestEngineSilencedSiblingDoesNotFreezeEscalation(t *testing.T) {
 		t.Fatalf("delivered after n2's (silenced) fire = %d, want still 1", rf.deliveredCount())
 	}
 
-	// n1's escalation keeps running: its RepeatEvery (10m, due at +16m) still
-	// fires, keyed off n1 (latestActiveAlert must not switch to n2 just
-	// because n2 fired more recently -- n2 is silenced, so it is never
-	// "active").
+	// n1's escalation keeps running: its RepeatEvery (10m, due at +16m) still fires, keyed off
+	// n1.
 	rf.now = rf.now.Add(10*time.Minute + time.Second) // total +16m1s since n1 fired
 	rf.tick()
 	if rf.dispatchedCount() != 2 {
@@ -332,11 +328,8 @@ func TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage(t *test
 
 // --- SetNodeDeps must release a folded member itself ---------
 
-// TestSetNodeDepsReleasesFoldedChildImmediately: a child is folded into its
-// down parent's incident; removing the dependency (not waiting for the
-// parent to recover, which never happens in this test) must release and
-// promptly deliver the still-down child. Runs against a REAL master
-// (startFleet), since SetNodeDeps only exists on fleetAPIImpl/masterState.
+// TestSetNodeDepsReleasesFoldedChildImmediately: a child is folded into its down parent's
+// incident; removing the dependency.
 func TestSetNodeDepsReleasesFoldedChildImmediately(t *testing.T) {
 	dir := t.TempDir()
 	d, alerts := testDeps(t, dir)

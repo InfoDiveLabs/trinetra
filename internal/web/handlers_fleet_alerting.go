@@ -1,13 +1,5 @@
-// handlers_fleet_alerting.go: the fleet alerting admin page -- GET/POST
-// /fleet/alerting (routes/policies/rules editor, structured form or "edit as
-// JSON"), POST /fleet/alerting/test (the route tester), and GET
-// /fleet/rules/state (the htmx-polled rule-state fragment) -- over
-// core.FleetAPI's Alerting/SetAlerting/RouteTest/RuleStates
-// (internal/core/fleet.go). Master-only (fleetGateHTML/fleetGatePlain, exactly
-// like every other /fleet* page); GET is viewer+ (read-only for a viewer), the
-// save POST is admin+CSRF (fleetAdminMutation), and the route tester POST is
-// viewer+CSRF (routes.go) -- it never mutates the saved config, but still
-// requires a valid CSRF token like any other signed-in POST.
+// handlers_fleet_alerting.go: the fleet alerting admin page -- GET/POST /fleet/alerting
+// (routes/policies/rules editor, structured form or "edit as JSON").
 package web
 
 import (
@@ -224,14 +216,8 @@ func alertingConfigJSON(cfg core.AlertingConfig) string {
 	return string(b)
 }
 
-// ---------------------------------------------------------------------------
-// Form parsing: the structured editor posts every row as indexed fields
-// (route_<i>_name, route_<i>_matcher_<j>_tag, policy_<i>_step_<j>_after,
-// policy_<i>_step_<j>_channels, ...) plus a *_count hidden field per level,
-// so parseAlertingDraftForm can rebuild the exact posted shape (including a
-// row a validation failure must echo back unchanged) without depending on
-// r.Form's key ordering.
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Form parsing:
+// the structured editor posts every row as indexed fields.
 
 func parseAlertingDraftForm(r *http.Request) AlertingDraft {
 	var d AlertingDraft
@@ -314,17 +300,8 @@ func opIndexAt(parts []string, i int) (int, bool) {
 	return n, true
 }
 
-// applyAlertingOp reshapes d in place for every add/remove/reorder op the
-// structured editor's row buttons post (op's value, e.g. "add_route",
-// "remove_route:2", "move_route_up:2", "add_matcher:0",
-// "remove_matcher:0:1", "add_policy", "remove_policy:1", "add_step:1",
-// "remove_step:1:2", "add_rule", "remove_rule:2"). Never itself saves --
-// fleetAlertingSaveHandler re-renders the reshaped draft at 200 and waits
-// for an explicit "save" op. An out-of-range index, or removing a route/
-// policy/rule/step/matcher's last remaining row, is a silent no-op rather
-// than a panic or a 400: the buttons themselves never post one (they're
-// only rendered when the row exists / more than one remains), so this only
-// ever guards against a stale/tampered form.
+// applyAlertingOp reshapes d in place for every add/remove/reorder op the structured
+// editor's row buttons post.
 func applyAlertingOp(d *AlertingDraft, op string) {
 	parts := strings.Split(op, ":")
 	switch parts[0] {
@@ -499,10 +476,7 @@ type AlertingPageData struct {
 
 	Draft      AlertingDraft
 	JSONConfig string
-	// JSONErr is a "edit as JSON" mode-specific error (a JSON parse failure,
-	// an unknown field, trailing data, or a SetAlerting rejection while in
-	// JSON mode) rendered right next to the textarea, in addition to the
-	// generic top Flash banner every rejection also gets.
+	// JSONErr is a "edit as JSON" mode-specific error.
 	JSONErr string
 
 	// Channels are the master's configured channel names (d.Cfg().Channels), offered alongside
@@ -800,11 +774,7 @@ func alertingSaveErrorStatus(err error) (status int, flash string) {
 	return http.StatusBadRequest, err.Error()
 }
 
-// fleetAlertingTestHandler serves POST /fleet/alerting/test: the route
-// tester (viewer+CSRF, routes.go -- it never mutates the saved config, only
-// dry-runs RouteTest, but is still CSRF-gated like any other signed-in
-// POST). Renders just the "test_result" fragment, so the page's own tester
-// form can htmx-swap it in place without a full reload.
+// fleetAlertingTestHandler serves POST /fleet/alerting/test: the route tester.
 func fleetAlertingTestHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGatePlain(w, r, d) {
@@ -833,10 +803,7 @@ func fleetAlertingTestHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetRulesStateHandler serves GET /fleet/rules/state: the htmx poll
-// target (every 10s, hx-sync="this:replace" like every other self-polling
-// fragment in this package) backing the Rules panel's live value/firing
-// state.
+// fleetRulesStateHandler serves GET /fleet/rules/state: the htmx poll target.
 func fleetRulesStateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGatePlain(w, r, d) {

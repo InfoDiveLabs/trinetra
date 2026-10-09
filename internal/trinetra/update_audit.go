@@ -1,8 +1,5 @@
-// Package trinetra: update_audit.go records self-update events in an audit
-// log: apply and rollback starts (with the CLI user or
-// "socket" as actor) and the guard's commit/rollback outcomes. On a fleet
-// master the entries go to the fleet audit log; otherwise to
-// <state>/update/audit.jsonl, using the same append-only JSONL writer.
+// Package trinetra: update_audit.go records self-update events in an audit log: apply and
+// rollback starts.
 package trinetra
 
 import (

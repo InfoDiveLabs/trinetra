@@ -13,36 +13,15 @@ import (
 	"syscall"
 )
 
-// This file implements the safe plugin launcher: the front-door mechanism
-// that lets the core `trinetra` binary exec companion binaries
-// (trinetra-ctl, trinetra-web) as subcommands. Because the front-door
-// commonly runs as root (via `sudo trinetra cli`), exec'ing the wrong
-// file here is a privilege escalation, not just a bug. See
-// plans/2026-08-01-safe-plugin-frontdoor.md for the threat model this
-// defends against (PATH hijack, binary swap, tampering) and the net rule:
-// a plugin is only exec'd if ALL of (absolute path derived from the core
-// binary's own directory) AND (root-owned or core-owner-owned, non-writable
-// file and parent dir) AND (checksum matches the install-time manifest)
-// hold.
-//
-// Stdlib only: this file must not import anything outside the standard
-// library (crypto/sha256, encoding/*, errors, fmt, io, os, path/filepath,
-// syscall). TestDefaultBuildIsStdlibOnly (buildtag_test.go) enforces that
-// the default (untagged) build of cmd/trinetra never pulls in
-// third-party packages, and this file is part of that build.
+// This file implements the safe plugin launcher: the front-door mechanism that lets the
+// core `trinetra` binary exec companion binaries.
 
 // errPluginNotInstalled is returned when the plugin binary simply is not present at its
 // expected location.
 var errPluginNotInstalled = errors.New("trinetra: plugin not installed")
 
-// errPluginVerificationFailed is returned when the plugin binary exists but
-// fails one of the trust checks (wrong owner, writable by group/other,
-// missing or mismatched manifest entry, or checksum mismatch). Callers
-// should refuse to run it and print a security warning, since this may
-// indicate tampering. This is deliberately a DIFFERENT sentinel from
-// errPluginNotInstalled so callers (and tests) can tell "not installed" and
-// "installed but unsafe" apart with errors.Is and print the right message
-// for each.
+// errPluginVerificationFailed is returned when the plugin binary exists but fails one of
+// the trust checks.
 var errPluginVerificationFailed = errors.New("trinetra: plugin verification failed")
 
 // pluginPath returns the absolute, symlink-resolved path to the companion binary
@@ -68,11 +47,7 @@ func pluginPath(name string) (string, error) {
 // verifyPlugin checks that path is genuinely safe to exec as the named plugin: a regular
 // file, owned by uid 0 or expectedOwnerUID (the uid that owns the core binary).
 func verifyPlugin(path string, expectedOwnerUID int, manifest map[string]string, name string) error {
-	// Lstat, not Stat: if path were somehow still a symlink at this point
-	// (pluginPath already resolves symlinks, but verifyPlugin is a
-	// standalone, independently testable/callable function and must not
-	// silently follow one), Mode().IsRegular() below will correctly be
-	// false for a symlink and this fails closed.
+	// Lstat, not Stat: if path were somehow still a symlink at this point.
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {

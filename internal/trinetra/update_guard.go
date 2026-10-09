@@ -1,15 +1,4 @@
-// Package trinetra: update_guard.go is `trinetra update guard`'s state
-// machine. It always runs from the pinned guard binary
-// (/usr/local/lib/trinetra/guard/trinetra, a copy of the binary that wrote
-// the Pending), never the new build: launched via systemd-run right after
-// apply/rollback swap a build in, and every minute by the persistent
-// trinetra-update-watchdog.timer (`update guard --if-pending`), which is what
-// resolves a pending update after a killed guard, a crash mid-swap or a
-// reboot. It takes update/guard.lock before reading state, so only one
-// guard ever works on a Pending. It restarts the daemon onto the pending
-// build, polls the running daemon's health until the deadline, then commits
-// (raises the floor, clears Pending) or rolls back (restores the previous
-// build, marks the version bad, clears Pending).
+// Package trinetra: update_guard.go is `trinetra update guard`'s state machine.
 package trinetra
 
 import (
@@ -278,12 +267,7 @@ func retryFailedRestore(d guardDeps, pending update.Pending) (update.Result, err
 	return finishRollback(d.paths, pending, detail, d.now())
 }
 
-// finishRollback records a Pending as rolled back once its restore has
-// actually succeeded (whether on the first attempt, inside rollbackPending,
-// or on a later watchdog retry, inside retryFailedRestore): marks the
-// version bad (unless it is a rollback confirmation -- rollback semantics
-// never mark a version bad), clears Pending entirely (RestoreFailed and
-// RestoreFailedReason go with it), records Last, and audits.
+// finishRollback records a Pending as rolled back once its restore has actually succeeded.
 func finishRollback(p updatePaths, pending update.Pending, detail string, now time.Time) (update.Result, error) {
 	result := update.Result{Version: pending.Version, From: pending.From, Outcome: "rolled_back", Detail: detail, At: now.Unix()}
 	err := update.WithState(p.dir(), func(st *update.State) error {
@@ -372,10 +356,7 @@ func realGuardDeps() guardDeps {
 		now:    time.Now,
 		sleep:  time.Sleep,
 		restart: func() error {
-			// TRINETRA_E2E_RESTART_CMD (trinetra_testkeys builds only -- see
-			// update_e2e_hooks.go/update_e2e_hooks_testkeys.go) replaces
-			// `systemctl restart trinetra` for the docker e2e harness's
-			// systemd-less host.
+			// TRINETRA_E2E_RESTART_CMD replaces systemctl in the e2e harness (testkeys builds only).
 			if cmd, args, ok := e2eRestartCmd(); ok {
 				_, err := x.Run(cmd, args...)
 				return err

@@ -9,10 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// selfReq is a plain unscoped request (no /n/{node} routing attached), for
-// direct unit tests of functions node-scope.go's apiFor threads through
-// (activeAlertsViaAPI, coreVersionViaAPI, ...): nodeFrom(selfReq()) is always
-// the implicit self scope, so these calls go through the plain Deps.API path.
+// selfReq is a plain unscoped request (no /n/{node} routing attached), for direct unit
+// tests of functions node-scope.go's apiFor threads through.
 func selfReq() *http.Request {
 	return httptest.NewRequest(http.MethodGet, "/", nil)
 }

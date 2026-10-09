@@ -1,8 +1,5 @@
-// Package trinetra: coreapi_enroll_test.go covers core.API's
-// EnrollmentPIN (#90) on both implementations: inprocAPI reads through the
-// shared enrollState it was constructed with (coreapi_inproc.go), while
-// fileAPI -- a separate CLI process with no live daemon state -- always
-// returns errEnrollNeedsDaemon (coreapi_file.go).
+// Package trinetra: coreapi_enroll_test.go covers core.API's EnrollmentPIN (#90) on both
+// implementations.
 package trinetra
 
 import (
@@ -12,11 +9,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestInprocEnrollmentPINReadsThroughHolder pins that inprocAPI.EnrollmentPIN
-// is nothing but a pass-through to the enrollState it was constructed with,
-// called against the live getCfg -- the same enroll.PIN(c) call pollLoop
-// makes each iteration (daemon.go), so a socket caller sees the exact same
-// pin the daemon is matching /start <pin> against.
+// TestInprocEnrollmentPINReadsThroughHolder pins that inprocAPI.EnrollmentPIN is nothing.
 func TestInprocEnrollmentPINReadsThroughHolder(t *testing.T) {
 	cfg := newTgConfig("tok", "")
 	enroll := &enrollState{}

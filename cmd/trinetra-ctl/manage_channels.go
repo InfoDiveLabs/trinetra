@@ -1,9 +1,5 @@
-// manage_channels.go is the Channels screen's Bubble Tea glue: list, add,
-// edit, remove, and test. It is deliberately thin -- the config mutations
-// and the #79-safe validate-before-save gate it drives live in channels.go
-// (unit-tested there against a fake core.API, no terminal involved),
-// mirroring manage_ui.go's own split for the schedule/quiet-hours/
-// healthchecks/monitor-thresholds screens.
+// manage_channels.go is the Channels screen's Bubble Tea glue: list, add, edit, remove, and
+// test.
 package main
 
 import (
@@ -71,10 +67,7 @@ func (m model) updateChannelsListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateChannelsNameKey feeds msg into the add flow's name input (edit
-// skips this step -- the name is fixed once a channel exists). enter
-// commits and moves on to the type-selection screen; esc discards back to
-// the list.
+// updateChannelsNameKey feeds msg into the add flow's name input.
 func (m model) updateChannelsNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
@@ -117,11 +110,8 @@ func (m model) updateChannelsTypeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateChannelsEnabledKey handles the enabled/disabled toggle: any of
-// up/down/j/k/space flips it (there are only two states, so direction
-// doesn't matter, matching a simple on/off switch rather than a two-row
-// list), enter commits and starts walking the type's per-field Settings
-// inputs (enterChannelField), esc backs out to the type step.
+// updateChannelsEnabledKey handles the enabled/disabled toggle: any of up/down/j/k/space
+// flips it.
 func (m model) updateChannelsEnabledKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "down", "k", "j", " ":
@@ -154,11 +144,8 @@ func (m model) enterChannelField() (tea.Model, tea.Cmd) {
 	return m, m.mgr.chanFieldIn.Focus()
 }
 
-// updateChannelsFieldKey feeds msg into the current per-type Settings field
-// input: enter commits it into chanAns.Settings and advances to the next
-// field (or saves, via enterChannelField), esc backs out to the
-// enabled/disabled toggle (discarding this field's typed-but-uncommitted
-// value, matching every other text step's esc behavior in this package).
+// updateChannelsFieldKey feeds msg into the current per-type Settings field input: enter
+// commits it into chanAns.Settings and advances to the next field.
 func (m model) updateChannelsFieldKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":

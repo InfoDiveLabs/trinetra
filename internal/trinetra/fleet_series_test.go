@@ -9,11 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// fleetSeriesFixture wires a masterState with a real registry/sink, plus a
-// self store/name via engine.SetRules (fleet_rules.go's ruleSelfSource,
-// exactly the plumbing the aggregate-rule engine already uses -- see
-// fleet_provider.go's FleetSeries doc), so FleetSeries's self-inclusion path
-// is exercised the same way it runs in production.
+// fleetSeriesFixture wires a masterState with a real registry/sink, plus a self store/name
+// via engine.SetRules.
 type fleetSeriesFixture struct {
 	m         *masterState
 	api       fleetAPIImpl

@@ -27,10 +27,8 @@ type fleetQuery struct {
 	Sort, Dir         string
 }
 
-// parseFleetQuery reads tag/state/q/sort/dir off r's query string. dir is
-// normalized to exactly "asc" or "desc" (anything else, including absent,
-// becomes "asc") so template/link-building code never has to special-case a
-// third value.
+// parseFleetQuery reads tag/state/q/sort/dir off r's query string. dir is normalized to
+// exactly "asc" or "desc".
 func parseFleetQuery(r *http.Request) fleetQuery {
 	q := r.URL.Query()
 	dir := q.Get("dir")
@@ -112,10 +110,7 @@ type FleetRow struct {
 	// SkewText is fmtSkew's exact rendering (internal/trinetra/fleet_cmd.go, mirrored here
 	// since internal/web can't import that package): "-" for self, "0s" for zero skew.
 	SkewText string
-	// SkewWarn is the CLI's clock-skew warning sentence verbatim
-	// ("clock differs from this master's by <±Ns> (fix NTP on that host)",
-	// internal/trinetra/fleet_cmd.go's printNodeWarnings), non-empty only
-	// when |SkewSec| > fleetSkewWarnSec and the node isn't self.
+	// SkewWarn is the CLI's clock-skew warning sentence verbatim.
 	SkewWarn string
 	// DropsWarn is the CLI's replica-drops warning sentence ("replica drops: N out of order, N
 	// over the series limit, N duplicates (harmless re-sends)", the wording).
@@ -306,14 +301,7 @@ func parseFleetMetric(r *http.Request) fleetMetric {
 	}
 }
 
-// fleetPageQueryString returns fq's encoded query string (its own encode(),
-// UNCHANGED -- see that method's doc; the table's htmx poll relies on its
-// exact output, so this never mutates fq or its encode()) plus a trailing
-// metric=. Used by the heatmap's metric-selector links and the panels'
-// "Refresh" link, which reload the full page with the current filter/sort
-// AND the current metric selection; the table's own poll deliberately does
-// NOT carry metric (fleetQuery.encode() has no such field), since the
-// selected heatmap metric has no bearing on the table's rows.
+// fleetPageQueryString returns fq's encoded query string.
 func fleetPageQueryString(fq fleetQuery, metric fleetMetric) string {
 	v, _ := url.ParseQuery(fq.encode())
 	v.Set("metric", string(metric))
@@ -482,9 +470,8 @@ func topNByMetric(nodes []core.NodeSummary, value func(core.NodeSummary) float64
 	return rows
 }
 
-// FleetDownRow is one row in the "Down now" panel: node name/link plus how
-// long ago it was last seen (rendered via the "nodeAgo" template helper,
-// same as the table's own Last seen column).
+// FleetDownRow is one row in the "Down now" panel: node name/link plus how long ago it was
+// last seen.
 type FleetDownRow struct {
 	Name     string
 	Href     string
@@ -508,11 +495,7 @@ func fleetDownRows(nodes []core.NodeSummary) []FleetDownRow {
 	return rows
 }
 
-// fleetFilterNodes returns the subset of nodes passing fq's tag/state/q
-// filters (fleetFilterMatch/fleetStateMatches -- see their docs, including
-// fleetFilterMatch's non-admin RemoteAddr exclusion), in nodes' original
-// order. Shared by the table (buildFleetRows sorts this further) and the
-// heatmap/top-N panels, which respect the same filters.
+// fleetFilterNodes returns the subset of nodes passing fq's tag/state/q filters.
 func fleetFilterNodes(nodes []core.NodeSummary, fq fleetQuery, admin bool) []core.NodeSummary {
 	tagQuery := core.NodeFilter{Tag: fq.Tag, Query: fq.Query}
 	filtered := make([]core.NodeSummary, 0, len(nodes))
@@ -528,27 +511,7 @@ func fleetFilterNodes(nodes []core.NodeSummary, fq fleetQuery, admin bool) []cor
 	return filtered
 }
 
-// fleetFilterMatch reports whether n passes every one of f's criteria
-// (State/Tag/Query -- the caller, e.g. buildFleetRows, may additionally
-// apply its own State handling on top when it wants something other than
-// f.State's exact match, such as fleetStateMatches' "lagging also matches
-// stale" convenience; f.State is left "" in that case so this function's own
-// State check is a no-op there), with one deliberate difference from plain
-// core.NodeFilter.Match for a non-admin caller.
-//
-// core.NodeFilter.Match's Query haystack is "name + id + RemoteAddr", which
-// would let a viewer probe a node's network address by searching for address
-// fragments, even though RemoteAddr is otherwise redacted from a viewer's view
-// entirely (fleetNodesAPIHandler's own RemoteAddr-blanking, and the HTML table
-// never rendering it at all). admin==true keeps Match's exact semantics -- an
-// admin session already sees the real RemoteAddr elsewhere, so matching
-// against it here leaks nothing new. admin==false instead matches Query
-// against name+id+tags, never RemoteAddr; State and Tag are identical either
-// way.
-//
-// This is a web-layer helper, not a change to core.NodeFilter.Match itself, so
-// the non-admin path duplicates Match's State/Tag checks verbatim rather than
-// calling into it.
+// fleetFilterMatch reports whether n passes every one of f's criteria.
 func fleetFilterMatch(n core.NodeSummary, f core.NodeFilter, admin bool) bool {
 	if admin {
 		return f.Match(n)
@@ -568,12 +531,7 @@ func fleetFilterMatch(n core.NodeSummary, f core.NodeFilter, admin bool) bool {
 	return true
 }
 
-// buildFleetRows filters nodes by fq (tag/query via fleetFilterMatch, gated
-// by admin so a non-admin caller's q= never matches RemoteAddr -- see that
-// func's doc; state via fleetStateMatches, see its doc for the one
-// documented deviation), sorts the result, and projects each survivor into
-// a FleetRow. Shared by the full page (buildFleetPageData) and the bare
-// htmx fragment (fleetTableHandler) so both render identically.
+// buildFleetRows filters nodes by fq.
 func buildFleetRows(nodes []core.NodeSummary, fq fleetQuery, admin bool) []FleetRow {
 	return sortAndBuildFleetRows(fleetFilterNodes(nodes, fq, admin), fq)
 }
@@ -683,15 +641,8 @@ func renderFleetTableFragment(w http.ResponseWriter, data FleetTableData) error 
 	return tmpl.ExecuteTemplate(w, "fleet_rows", data)
 }
 
-// fleetGateOrNotFound is the shared "masters only" gate every /fleet*
-// handler applies first (404 unless fleetRole(d)=='master'), reported via
-// renderNotFound (styled page, for the HTML page) or a bare http.NotFound (for
-// the fragment/JSON endpoints, which have no shell to render). It returns
-// whether the caller should stop (true == already handled, a 404 was written).
-// fleetRole(r, d) reads r's request-scoped fleetMemo (fleet_memo.go), so this
-// gate's own Status() check costs a real round trip only once per request even
-// though GET /fleet's page render AND (for the HTML path) newPageData's own
-// resolveFleetPageInfo ask fleetRole/Status() questions too.
+// fleetGateOrNotFound is the shared "masters only" gate every /fleet* handler applies first
+// (404 unless fleetRole(d)=='master'), reported via renderNotFound.
 func fleetGateHTML(w http.ResponseWriter, r *http.Request, d Deps) bool {
 	if fleetRole(r, d) == config.RoleMaster {
 		return false
@@ -819,12 +770,8 @@ func (iq incidentQuery) withPage(page int) incidentQuery {
 	return next
 }
 
-// incidentDurationText renders a duration given in seconds using the same
-// short-unit convention nodeDurText uses for a timestamp-since-now (seconds
-// below a minute, minutes/hours/days above) -- internal/web can't import the
-// CLI's own duration helpers (see nodeDurText's doc for the same layering
-// reason), so this is an independent, tiny formatter taking a duration
-// directly rather than a timestamp.
+// incidentDurationText renders a duration given in seconds using the same short-unit
+// convention nodeDurText uses for a timestamp-since-now.
 func incidentDurationText(sec int64) string {
 	if sec < 0 {
 		sec = 0
@@ -961,17 +908,8 @@ func newIncidentRow(inc core.Incident) IncidentRow {
 	}
 }
 
-// fetchIncidentsFiltered reads every incident matching iq's state/node/tag
-// criteria straight from Fleet().Incidents (Limit 0 -- unlimited -- since
-// pagination happens in memory, paginateIncidents below). Deliberately NOT
-// read through the request-scoped fleetMemo (fleet_memo.go): the memo
-// exists to protect a value several DIFFERENT call sites in one request
-// might all ask for (the roster, fleet status); this specific, page's-own
-// filtered query has exactly one caller per request, so memoizing it would
-// just be a single-use cache. The nav badge's own, differently-filtered
-// (state=firing, capped) query is what fleetIncidentsFiringCount memoizes
-// instead. A nil Deps.Fleet, a nil FleetAPI, or a read error all degrade to
-// an empty list rather than failing the page.
+// fetchIncidentsFiltered reads every incident matching iq's state/node/tag criteria
+// straight from Fleet().Incidents.
 func fetchIncidentsFiltered(d Deps, iq incidentQuery) []core.Incident {
 	fleet, err := fleetAPIFor(d)
 	if err != nil {
@@ -1148,10 +1086,8 @@ type IncidentTimelineRow struct {
 	Actor string
 }
 
-// incidentChannelsText renders a delivery's channel list for display: "all
-// channels" for the literal wildcard ("*", meaning every enabled channel --
-// the same convention fleetAlertingChannelOptions/*'s "* (every enabled
-// channel)" checkbox uses), the channels themselves otherwise.
+// incidentChannelsText renders a delivery's channel list for display: "all channels" for
+// the literal wildcard.
 func incidentChannelsText(channels []string) string {
 	if len(channels) == 1 && channels[0] == "*" {
 		return "all channels"
@@ -1200,9 +1136,7 @@ func incidentEventText(ev core.IncidentEvent, nodeNames map[string]string) strin
 	case len(ev.Channels) > 0:
 		parts = append(parts, incidentChannelsText(ev.Channels))
 	case ev.Kind == "fired" || ev.Kind == "resolved":
-		// fireDetail/recoverDetail's ENTIRE content ("fired on X"/"recovered
-		// on X", or bare "fired"/"recovered" for a master-own alert) just
-		// restates the leg+node already rendered above -- nothing left to add.
+		// The detail only restates the leg and node shown above.
 	case ev.Detail != "":
 		parts = append(parts, incidentEventLegPrefix(ev.Leg, ev.Detail))
 	}
@@ -1253,10 +1187,8 @@ type IncidentMemberRow struct {
 	Explain []IncidentTimelineRow
 }
 
-// buildIncidentMembers projects inc.Alerts into their row shape.
-// explainByKey carries each distinct alert key's own Explain(key) trail
-// (fetched once per key by the caller, buildIncidentDetailPageData) for that
-// member's "Explain" panel.
+// buildIncidentMembers projects inc.Alerts into their row shape. explainByKey carries each
+// distinct alert key's own Explain(key) trail.
 func buildIncidentMembers(inc core.Incident, explainByKey map[string][]core.IncidentEvent) []IncidentMemberRow {
 	nodeNames := incidentNodeNameLookup(inc)
 	rows := make([]IncidentMemberRow, 0, len(inc.Alerts))
@@ -1338,9 +1270,8 @@ func incidentSilenceDurationSeconds(key string) (int64, bool) {
 	return 0, false
 }
 
-// incidentSilenceDurationOptions renders the fixed choices for the <select>,
-// marking selected as the currently-chosen one (defaulting to the first
-// choice, 30m, when selected is empty/unrecognized).
+// incidentSilenceDurationOptions renders the fixed choices for the <select>, marking
+// selected as the currently-chosen one.
 func incidentSilenceDurationOptions(selected string) []incidentSilenceDuration {
 	if _, ok := incidentSilenceDurationSeconds(selected); !ok {
 		selected = incidentSilenceDurationChoices[0].key
@@ -1352,12 +1283,8 @@ func incidentSilenceDurationOptions(selected string) []incidentSilenceDuration {
 	return opts
 }
 
-// incidentDetailOptions is buildIncidentDetailPageData's input: the page's
-// transient, this-response-only state -- a flash message (success, via the
-// ack/silence handlers' redirect, or a validation/FleetAPI error, rendered
-// in place) and the silence form's sticky "for"/comment input on a
-// validation failure -- exactly like fleetAdminOptions backs
-// buildFleetAdminPageData.
+// incidentDetailOptions is buildIncidentDetailPageData's input: the page's transient,
+// this-response-only state -- a flash message.
 type incidentDetailOptions struct {
 	Flash        string
 	FlashErr     bool
@@ -1446,10 +1373,8 @@ func buildIncidentDetailPageData(r *http.Request, d Deps, id string, opts incide
 	}, nil
 }
 
-// renderIncidentDetailPage renders templates/fleet_incident.html's "content"
-// block through the full app-shell layout, at the given status (200 for a
-// normal render, a 4xx for a validation/FleetAPI error re-render -- see
-// renderIncidentMutationError).
+// renderIncidentDetailPage renders templates/fleet_incident.html's "content" block through
+// the full app-shell layout, at the given status.
 func renderIncidentDetailPage(w http.ResponseWriter, data IncidentDetailPageData, status int) error {
 	tmpl, err := template.New("base.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base.html", "templates/fleet_incident.html")

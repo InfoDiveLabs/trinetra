@@ -1,18 +1,5 @@
-// Command trinetra-web serves the internal/web dashboard as a separate
-// process from the trinetra daemon. It never reads daemon state
-// in-process; instead it dials the daemon's control socket (internal/control)
-// and uses the resulting *control.Client -- a core.API implementation -- as
-// internal/web.Deps.API. The core daemon supervises this binary: when
-// web.enabled is set, internal/trinetra/web_supervisor.go verifies and
-// spawns it as a child process, restarts it with capped backoff if it exits,
-// and stops it on daemon shutdown.
-//
-// No build tag: this is a plain, standalone binary built like any other
-// command under ./cmd, `go build -o /usr/local/bin/trinetra-web
-// ./cmd/trinetra-web`. The default `trinetra` binary stays
-// stdlib-only (TestDefaultBuildIsStdlibOnly in internal/trinetra) simply
-// because it does not import internal/web or this package, not because of a
-// build tag.
+// Command trinetra-web serves the internal/web dashboard as a separate process from the
+// trinetra daemon.
 package main
 
 import (
@@ -46,9 +33,7 @@ const daemonStartWait = 30 * time.Second
 type connConfig struct {
 	// socketPath is the control socket to dial (control.Dial's path arg).
 	socketPath string
-	// token is the control-socket auth token, given directly (flag or
-	// TRINETRA_CONTROL_TOKEN/SERVERWATCH_CONTROL_TOKEN env, as the supervisor passes
-	// it) or read from tokenFile.
+	// token is the control-socket auth token, given directly.
 	token string
 	// tokenFile is read when no token was given directly: the sibling "token" file
 	// next to the socket, written 0600 by the daemon.

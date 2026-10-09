@@ -22,21 +22,7 @@ func projectMountDaysToFull(store SampleStore, mount string, currentPct float64,
 	return projectDaysToFull(pts, currentPct)
 }
 
-// projectDaysToFull fits a linear least-squares trend line to pts (x = TS in
-// unix seconds, y = Max -- the peak usage percentage within each point's
-// bucket) and projects how many days until that trend would cross 100%,
-// starting from currentPct (the freshest known usage percentage, which may
-// differ slightly from pts' own last value if it was collected more
-// recently than the store's last append).
-//
-// ok is false -- and days is meaningless -- whenever the projection wouldn't
-// be meaningful:
-//   - fewer than 2 points (can't fit a line through one point);
-//   - a non-positive slope (flat or declining usage never reaches 100%).
-//
-// This is a pure function over Points; callers (collectSlow) are
-// responsible for querying the right window (PickResolution over the
-// mount's "disk:<mount>" series) and guarding a nil store before calling it.
+// projectDaysToFull fits a linear least-squares trend line to pts.
 func projectDaysToFull(pts []Point, currentPct float64) (days float64, ok bool) {
 	n := len(pts)
 	if n < 2 {

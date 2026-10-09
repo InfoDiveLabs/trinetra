@@ -12,11 +12,8 @@ import (
 // nonce under, for renderPageStatus (templates.go) to read back into PageData.Nonce.
 type nonceCtxKey struct{}
 
-// newNonce returns a fresh, unguessable per-request value for the CSP
-// script-src 'nonce-...' directive: 16 random bytes (128 bits, well above
-// the 8-byte minimum the CSP spec recommends for nonces), URL-safe
-// base64-encoded so it drops cleanly into both an HTTP header value and an
-// HTML attribute without escaping.
+// newNonce returns a fresh, unguessable per-request value for the CSP script-src
+// 'nonce-...' directive: 16 random bytes.
 func newNonce() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {

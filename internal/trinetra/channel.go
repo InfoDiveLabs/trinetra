@@ -169,19 +169,8 @@ func cmdChannelTest(c *config.Config, args []string) int {
 	return 0
 }
 
-// sendTestNotification builds the named channel's Notifier (buildNotifier)
-// and sends it a fixed test Alert, reporting any failure along the way
-// (unknown channel, an incomplete/invalid channel config, or the send
-// itself failing) as a single error. source is threaded onto the test
-// Alert's Source field so a channel that surfaces it (e.g. a webhook
-// template referencing .Source) can tell a CLI-issued test apart from a
-// web-issued one (issue #66's "send test" button, reached over the control
-// socket via inprocAPI.TestChannel, coreapi_inproc.go).
-//
-// Shared by cmdChannelTest (`trinetra channel test <name>`) and the web
-// channels page's "Send test" action so both paths exercise the exact same
-// notifier-construction and delivery logic -- no channel type can behave
-// differently for one caller than the other.
+// sendTestNotification builds the named channel's Notifier (buildNotifier) and sends it a
+// fixed test Alert, reporting any failure along the way.
 func sendTestNotification(c *config.Config, name, source string) error {
 	cc, ok := c.GetChannel(name)
 	if !ok {

@@ -1,11 +1,4 @@
-// Package trinetra: enroll.go holds the shared Telegram enrollment-pin
-// state (#90). Before this, the enrollment pin was a pollLoop-local
-// variable (daemon.go) known only inside that goroutine, so `trinetra
-// telegram set-token` -- a separate process -- had no way to show the user
-// the pin the daemon would actually accept in "/start <pin>". enrollState
-// is constructed once in cmdDaemon and handed to BOTH pollLoop and
-// newInprocAPI, so a socket caller's EnrollmentPIN (core.API) always
-// returns the exact pin the poll loop is matching against.
+// Package trinetra: enroll.go holds the shared Telegram enrollment-pin state (#90).
 package trinetra
 
 import (
@@ -63,9 +56,8 @@ func (e *enrollState) Reset() {
 // Attempt evaluates one inbound message text against the current enrollment PIN while the
 // bot is unclaimed, updating brute-force state.
 func (e *enrollState) Attempt(cfg *config.Config, text string, now time.Time) bool {
-	// PIN applies the "configured AND not yet enrolled" gate and generates and
-	// caches the pin on first call; an empty pin (not configured, already
-	// enrolled, or a rand failure) can never be matched, so bail early.
+	// PIN applies the "configured AND not yet enrolled" gate and generates and caches the pin
+	// on first call; an empty pin.
 	if pin, _ := e.PIN(cfg); pin == "" {
 		return false
 	}

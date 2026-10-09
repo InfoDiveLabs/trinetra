@@ -437,14 +437,8 @@ func TestNewHandlerNodeRouterAuthFlow(t *testing.T) {
 	})
 }
 
-// TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts pins that finding I2's
-// remote-node case: rendering GET /n/child1/ (the dashboard, node-scoped) must
-// call the child node's apiFor(r,d).Snapshot() and ActiveAlerts() at most ONCE
-// each per request. The review found buildDashboardPageData's own Snapshot()
-// read duplicated by navCountsFor's node-scope branch (nav_counts.go:87-90) --
-// a fresh control-socket round trip THIS task's own nav-count code added -- and
-// ActiveAlerts() read by both topbarStatus (newPageData) and navCountsFor's
-// sidebar badge.
+// TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts pins that finding I2's remote-node
+// case: rendering GET /n/child1/.
 func TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts(t *testing.T) {
 	childCounting := newCountingAPI(childFakeAPI("child1-svc"))
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": childCounting}))
@@ -467,8 +461,5 @@ func TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts(t *testing.T) {
 	}
 }
 
-// errNodeScopeTestOldDaemon is a canned error standing in for the control
-// package's real "control: daemon does not support fleet node routing
-// (upgrade trinetra)"-shaped failure an old daemon's Fleet().Status() would
-// return; this test only cares that fleetRole treats ANY error this way.
+// errNodeScopeTestOldDaemon is a canned error standing in for the control package's real.
 var errNodeScopeTestOldDaemon = errors.New("old daemon has no Fleet.Status")

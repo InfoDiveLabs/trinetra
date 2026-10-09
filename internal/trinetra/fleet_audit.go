@@ -1,6 +1,5 @@
-// Package trinetra: fleet_audit.go is the fleet master's audit log: an
-// append-only, 0600 record of every fleet mutation (rename, tag, revoke,
-// remove, token create/delete, incident ack) with who did it.
+// Package trinetra: fleet_audit.go is the fleet master's audit log: an append-only, 0600
+// record of every fleet mutation.
 package trinetra
 
 import (
@@ -50,27 +49,7 @@ var auditRecentChunkSize int64 = 64 * 1024
 // auditRecentChunkSize's doc).
 const auditRecentChunkGrowth = 4
 
-// Recent returns the most recent audit entries, newest first, up to limit
-// (<= 0 means unlimited, which still has to read the whole file -- there is
-// no way to know "how far back is enough" without a limit). A missing file
-// is not an error (nothing audited yet).
-//
-// Bounded read: rather than scanning the file
-// forward from byte 0, this seeks backward from
-// EOF in growing chunks (auditRecentChunkSize, doubling by
-// auditRecentChunkGrowth each step) until it has accumulated at least limit
-// COMPLETE lines or reached the start of the file -- so a 50-entry page
-// view against a multi-hundred-thousand-line audit log reads a small
-// bounded tail of it, not the entire file. A chunk boundary can split the
-// line at its very start (offset 0 of the chunk), which this discards as a
-// PARTIAL line and re-reads on the next, larger step that extends further
-// back and re-covers that same byte range -- only the increasingly rare
-// case of the very first (oldest) chunk read can permanently drop a leading
-// partial line, and that only happens at the true start of the file, where
-// there IS no earlier byte to complete it from (i.e. it isn't a valid JSONL
-// line boundary at all, which can only happen if the file itself is
-// corrupt/truncated -- the same class of "skip what doesn't parse" leniency
-// bufio.Scanner-based parsing already had).
+// Recent returns the most recent audit entries, newest first, up to limit.
 func (a *auditLog) Recent(limit int) ([]core.AuditEntry, error) {
 	if a == nil {
 		return nil, nil

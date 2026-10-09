@@ -113,9 +113,8 @@ func parseFleetTags(raw string) ([]string, error) {
 	return tags, nil
 }
 
-// validateNodeName validates POST /fleet/nodes/{id}/rename's "name" field:
-// 1..64 characters (runes, not bytes -- a multi-byte display name shouldn't be
-// penalized for its UTF-8 encoding), no control characters.
+// validateNodeName validates POST /fleet/nodes/{id}/rename's "name" field: 1..64
+// characters.
 func validateNodeName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
@@ -157,9 +156,7 @@ func newTokenRow(t core.TokenView) TokenRow {
 	return TokenRow{
 		ID:       t.ID,
 		UsesLeft: t.Uses,
-		// Expires routes through silenceTimeText (handlers_fleet_silences.go,
-		// master-local zone with abbreviation) so every absolute timestamp on the
-		// fleet surface uses the one convention.
+		// Expires routes through silenceTimeText.
 		Expires: silenceTimeText(t.Expires),
 		Tags:    strings.Join(t.Tags, ","),
 		Creator: t.Creator,
@@ -219,11 +216,8 @@ type IssuedJoinToken struct {
 	Tags        string
 }
 
-// fleetAdminOptions is buildFleetAdminPageData's input: the page's
-// transient, this-response-only state (a flash message, a freshly issued
-// token, a form's sticky/invalid input) that a fresh GET /fleet/admin never
-// carries (the zero value), but a POST mutation's re-rendered page/fragment
-// does.
+// fleetAdminOptions is buildFleetAdminPageData's input: the page's transient,
+// this-response-only state.
 type fleetAdminOptions struct {
 	Flash    string
 	FlashErr bool
@@ -270,11 +264,8 @@ func fleetAdminNodesAndTokens(d Deps) ([]core.NodeSummary, []core.TokenView) {
 	return nodes, tokens
 }
 
-// buildFleetAdminPageData assembles FleetAdminPageData for GET /fleet/admin
-// and every /fleet/tokens*|/fleet/nodes/* mutation's re-render: the current
-// roster (excluding self -- there is nothing to manage about this host from
-// its own admin page) and token list, plus opts' transient flash/sticky-
-// form state layered on top.
+// buildFleetAdminPageData assembles FleetAdminPageData for GET /fleet/admin and every
+// /fleet/tokens*|/fleet/nodes/* mutation's re-render: the current roster.
 func buildFleetAdminPageData(r *http.Request, d Deps, opts fleetAdminOptions) FleetAdminPageData {
 	nodes, tokens := fleetAdminNodesAndTokens(d)
 
@@ -603,12 +594,8 @@ func fleetNodeRevokeHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetNodeRemoveHandler serves POST /fleet/nodes/{id}/remove: only a
-// revoked or down node may be removed (the template hides the control
-// otherwise, but this is the actual enforcement). A node this daemon's roster
-// no longer recognizes falls through to Fleet().RemoveNode itself, whose own
-// error (core.ErrNoSuchNode or equivalent) is what renders the 404 flash --
-// the state check only applies when the id IS still a known node.
+// fleetNodeRemoveHandler serves POST /fleet/nodes/{id}/remove: only a revoked or down node
+// may be removed.
 func fleetNodeRemoveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

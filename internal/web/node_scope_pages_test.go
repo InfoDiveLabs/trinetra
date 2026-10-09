@@ -137,9 +137,8 @@ func TestNodeScopedHostShowsChildData(t *testing.T) {
 	}
 }
 
-// TestNodeScopedHistoryPageShowsChildDiskMounts pins that /n/child1/history's
-// disk panel graphs child1's own mounts (apiFor(r,d).Snapshot(), not the
-// master-only Deps.Snapshot() closure -- see historyDiskMounts's doc).
+// TestNodeScopedHistoryPageShowsChildDiskMounts pins that /n/child1/history's disk panel
+// graphs child1's own mounts.
 func TestNodeScopedHistoryPageShowsChildDiskMounts(t *testing.T) {
 	master := fakeAPI{}
 	child := fakeAPI{snap: core.DashboardView{Disks: []core.DiskView{{Mount: "/child1-only-mount"}}}}
@@ -345,11 +344,8 @@ func TestNodeScopedTopbarAndAlertBadgeReflectNode(t *testing.T) {
 	}
 }
 
-// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins that on a remote
-// node page, master-local admin nav entries (Channels, Users, Configuration,
-// Public view) don't render AT ALL -- they're reachable only from the master's
-// own (self-scoped) nav -- while Monitoring (a daemon concept, node-scoped)
-// still renders and follows the node scope.
+// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins that on a remote node page,
+// master-local admin nav entries.
 func TestNodeScopedChannelsAndUsersBadgesStayMasterLocal(t *testing.T) {
 	master := fakeAPI{snap: core.DashboardView{ContainersTotal: 3}}
 	child := fakeAPI{snap: core.DashboardView{ContainersTotal: 9}}

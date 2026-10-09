@@ -113,9 +113,8 @@ func (f *fakeAPI) TestChannel(name string) error {
 	return f.testChannelErr
 }
 
-// ValidateChannel records cc in validateCalls and returns validateErr, so
-// the Channels screen's #79-safe validate-before-save gate (saveChannel,
-// channels.go) can be asserted to have (or not have) actually consulted it.
+// ValidateChannel records cc in validateCalls and returns validateErr, so the Channels
+// screen's #79-safe validate-before-save gate.
 func (f *fakeAPI) ValidateChannel(cc config.ChannelConfig) error {
 	f.validateCalls = append(f.validateCalls, cc)
 	return f.validateErr

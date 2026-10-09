@@ -522,11 +522,8 @@ func TestChannelsPageNeverRendersSecretValue(t *testing.T) {
 	}
 }
 
-// TestChannelsPageShowsSetPlaceholderForSecretField pins the "(set)" /
-// "(not set)" placeholder contract (secretPlaceholder's style,
-// handlers_config.go) for every type whose secret field the modal actually
-// renders: a channel with the secret configured shows "(set)"; one without
-// it shows "(not set)".
+// TestChannelsPageShowsSetPlaceholderForSecretField pins the "(set)" / "(not set)"
+// placeholder contract.
 func TestChannelsPageShowsSetPlaceholderForSecretField(t *testing.T) {
 	for _, f := range secretChannelFixtures() {
 		if !f.uiEditable {
@@ -675,13 +672,8 @@ func TestChannelsUpdateNewSecretValueReplacesStored(t *testing.T) {
 	}
 }
 
-// TestChannelsUpdateBlankSecretStillValidatesWithStoredValue pins that a
-// blank secret submission (kept, not cleared) still validates the REAL
-// stored value through Deps.ValidateChannel -- the "validation must still
-// receive the real stored value when the field was left blank" #139
-// requirement. tokenRequiredValidator rejects an enabled telegram channel
-// whose Settings["token"] is empty; posting a blank token on an ALREADY
-// -tokened channel must not trip that rejection.
+// TestChannelsUpdateBlankSecretStillValidatesWithStoredValue pins that a blank secret
+// submission.
 func TestChannelsUpdateBlankSecretStillValidatesWithStoredValue(t *testing.T) {
 	tokenRequiredValidator := func(cc config.ChannelConfig, _ *config.Config) error {
 		if cc.Type == "telegram" && cc.Settings["token"] == "" {

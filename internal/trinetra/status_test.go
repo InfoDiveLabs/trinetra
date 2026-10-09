@@ -61,13 +61,8 @@ func newFullSnapshot() Snapshot {
 	}
 }
 
-// TestSnapshotJSONRoundTripsExtendedFields marshals a fully-populated
-// Snapshot to JSON and unmarshals it back, asserting every extended-
-// collection field (issue #77, Epic #69) survives intact. This is the
-// contract status.json makes with the UI: Store.WriteStatus (store.go) does
-// a plain json.MarshalIndent of whatever Snapshot the daemon hands it, so
-// any field that doesn't round-trip here wouldn't be readable from
-// status.json either.
+// TestSnapshotJSONRoundTripsExtendedFields marshals a fully-populated Snapshot to JSON and
+// unmarshals it back, asserting every extended- collection field.
 func TestSnapshotJSONRoundTripsExtendedFields(t *testing.T) {
 	want := newFullSnapshot()
 

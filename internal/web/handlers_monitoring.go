@@ -39,10 +39,7 @@ func memBarPct(memMiB float64) float64 {
 	return pct
 }
 
-// buildMonitoringPageData assembles MonitoringPageData from Deps: the live
-// snapshot (Deps.API.Monitoring(), core.API's projection of the daemon's live
-// state into a MonitoringView) plus the summary counts its top-of-page tiles
-// need.
+// buildMonitoringPageData assembles MonitoringPageData from Deps: the live snapshot.
 func buildMonitoringPageData(r *http.Request, d Deps) MonitoringPageData {
 	var view MonitoringView
 	if api := apiFor(r, d); api != nil {

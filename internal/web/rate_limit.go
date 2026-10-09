@@ -1,10 +1,4 @@
-// Package web: rate_limit.go bounds how fast an UNAUTHENTICATED client can
-// drive the ceremony-store write path. /enroll/begin and /login/begin each do
-// a full-file read-modify-write of ceremonies.json under one shared lock
-// (session.go); without a cap an anonymous client can hammer that lock and
-// stall new ceremonies (#95). A small in-memory fixed-window limiter, applied
-// to just those two routes, caps the begins per client without touching the
-// authenticated session path.
+// Package web: rate_limit.go bounds how fast an UNAUTHENTICATED client can drive.
 package web
 
 import (

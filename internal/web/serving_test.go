@@ -11,10 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// webCfg builds a *config.Config with just the web.* fields serving.go cares
-// about set directly (bypassing Config.Set's own enum validation, so these
-// tests exercise validateOrigin's checks in isolation rather than
-// internal/config's).
+// webCfg builds a *config.Config with just the web.* fields serving.go cares about set
+// directly.
 func webCfg(mode, rpID, origin, autocertDomains, tlsCert, tlsKey string) *config.Config {
 	c := config.Default()
 	c.Web.Mode = mode
@@ -50,10 +48,8 @@ func TestValidateOriginAcceptsConsistentConfig(t *testing.T) {
 	}
 }
 
-// TestValidateOriginRejectsMismatchedHost pins the core passkey-security
-// invariant from the design doc: "rp_id/origin must match the public
-// hostname in every mode, validated at startup -- refuse to start on
-// mismatch."
+// TestValidateOriginRejectsMismatchedHost pins the core passkey-security invariant from the
+// design doc.
 func TestValidateOriginRejectsMismatchedHost(t *testing.T) {
 	cfg := webCfg("manual", "monitor.example.com", "https://other.example.com", "", "/tls.crt", "/tls.key")
 	if err := validateOrigin(cfg); err == nil {
@@ -125,10 +121,8 @@ func TestRequestOriginTrustsForwardedHeadersOnlyWhenAllowed(t *testing.T) {
 	}
 }
 
-// TestIsLoopbackAddr pins the gate requestOrigin's trustForwarded relies on:
-// only a listen address actually bound to loopback (where only same-host
-// processes, i.e. a local reverse proxy, can reach it) is trusted to have
-// its forwarded headers honored.
+// TestIsLoopbackAddr pins the gate requestOrigin's trustForwarded relies on: only a listen
+// address actually bound to loopback.
 func TestIsLoopbackAddr(t *testing.T) {
 	tests := []struct {
 		addr string
@@ -225,12 +219,8 @@ func TestAppJSBindsThemeButton(t *testing.T) {
 	}
 }
 
-// TestSecurityHeadersHSTSOnlyOverTLS pins that Strict-Transport-Security is
-// only ever sent when the current request actually arrived over TLS
-// (autocert/manual modes, where this process itself terminates TLS) -- never
-// in proxy mode, where our own server always sees plain HTTP even though a
-// front proxy may terminate TLS upstream (sending it there would be an
-// incorrect promise about a connection this process didn't make).
+// TestSecurityHeadersHSTSOnlyOverTLS pins that Strict-Transport-Security is only ever sent
+// when the current request actually arrived over TLS.
 func TestSecurityHeadersHSTSOnlyOverTLS(t *testing.T) {
 	h := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 

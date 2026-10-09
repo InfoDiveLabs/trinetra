@@ -1,6 +1,5 @@
-// Package trinetra: fleet_grouping_test.go covers incident grouping and node
-// dependencies end to end through the engine's real
-// Submit/TickGrouping/SetDependencies surface.
+// Package trinetra: fleet_grouping_test.go covers incident grouping and node dependencies
+// end to end through the engine's real Submit/TickGrouping/SetDependencies surface.
 package trinetra
 
 import (
@@ -158,11 +157,7 @@ func TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval(t *testing.T) {
 	}
 }
 
-// TestGroupingAckedIncidentStillDeliversNewMemberUpdate: acking a grouped
-// incident must not suppress a LATER member's update notification.
-// tryDeliverGroup only excludes inc.State == "suppressed"; "acked" only stops
-// future ESCALATION (tryEscalate gates on inc.State != "firing"). This fails
-// if tryDeliverGroup grows an "acked" exclusion.
+// TestGroupingAckedIncidentStillDeliversNewMemberUpdate: acking a grouped incident must.
 func TestGroupingAckedIncidentStillDeliversNewMemberUpdate(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
@@ -234,11 +229,7 @@ func TestGroupingAckedIncidentStillDeliversNewMemberUpdate(t *testing.T) {
 	}
 }
 
-// TestGroupingLateChildUpdateRespectsFallbackCap: with the DEFAULT config
-// (fleet.fallback_after 2m, so effectiveGroupInterval caps at 1m for a
-// child-sourced pending member) and default group_interval (5m), a late child
-// member's update ships within 60s of the last group delivery, not 5 minutes
-// later.
+// TestGroupingLateChildUpdateRespectsFallbackCap: with the DEFAULT config.
 func TestGroupingLateChildUpdateRespectsFallbackCap(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute) // spec defaults

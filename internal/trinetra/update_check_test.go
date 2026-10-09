@@ -39,10 +39,7 @@ func pointerSource(t *testing.T, channel, version, relChannel string, issued tim
 	}
 }
 
-// TestCheckSetsAvailableOnlyWhenPolicyPasses: Available (which drives
-// the "update available" alert, the web Apply button and Telegram /version)
-// is set only for a release this host would actually accept -- right
-// channel, above the floor, not known-bad -- and cleared otherwise.
+// Available is set only for a release this host would accept.
 func TestCheckSetsAvailableOnlyWhenPolicyPasses(t *testing.T) {
 	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
 	issued := now.Add(-time.Hour)
@@ -83,10 +80,7 @@ func TestCheckSetsAvailableOnlyWhenPolicyPasses(t *testing.T) {
 	}
 }
 
-// TestUpdaterCheckUnparsableFloorFailsClosed is #138: a persisted floor that
-// is valid JSON but not a valid version must refuse `trinetra update check`
-// with a clear error instead of silently acting as "no floor" (which, with
-// an unknown running version, would enforce no lower bound at all).
+// TestUpdaterCheckUnparsableFloorFailsClosed is #138: a persisted floor that is valid JSON.
 func TestUpdaterCheckUnparsableFloorFailsClosed(t *testing.T) {
 	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
 	issued := now.Add(-time.Hour)

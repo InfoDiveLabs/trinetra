@@ -38,12 +38,8 @@ func roleRank(r Role) int {
 
 func validRole(r Role) bool { return roleRank(r) > 0 }
 
-// Credential is one registered passkey, in the flattened shape the design
-// doc's "Users store" section specifies (users.json: id, name, role,
-// created, credentials[]{id, publicKey, signCount, transports}). It mirrors
-// the fields of *webauthn.Credential this package actually persists --
-// AttestationType/Flags/Authenticator.AAGUID aren't needed after the
-// ceremony completes, so they're dropped rather than round-tripped.
+// Credential is one registered passkey, in the flattened shape the design doc's "Users
+// store" section specifies.
 type Credential struct {
 	// ID is the credential ID the authenticator generated, used to look the
 	// credential up again during login.
@@ -89,11 +85,7 @@ func (u *User) WebAuthnDisplayName() string { return u.Name }
 // WebAuthnIcon satisfies webauthn.User.
 func (u *User) WebAuthnIcon() string { return "" }
 
-// WebAuthnCredentials adapts u.Credentials (this package's flattened storage
-// shape) into the []webauthn.Credential shape go-webauthn's login ceremony
-// needs to match an assertion against. Registration doesn't consult this (a
-// brand-new user has none yet), but it's part of the webauthn.User interface
-// contract regardless.
+// WebAuthnCredentials adapts u.Credentials (this package's flattened storage shape) into.
 func (u *User) WebAuthnCredentials() []webauthn.Credential {
 	out := make([]webauthn.Credential, len(u.Credentials))
 	for i, c := range u.Credentials {
@@ -188,21 +180,8 @@ type jsonUserStore struct {
 	path string
 }
 
-// fileStoreMutexes holds one *sync.Mutex per absolute file path, so every
-// file-backed store instance (jsonUserStore, jsonSessionStore, tokenStore)
-// pointing at the SAME file shares a single lock -- fetched via fileStoreMutex
-// at lock time rather than held in a struct field, so it works even for stores
-// constructed as bare struct literals in tests. Guarded by fileStoreMutexesMu
-// (a plain lock over the map itself, held only briefly to fetch/create the
-// per-path mutex -- never while doing store I/O).
-//
-// This is what makes the stores' read-modify-write (and jsonUserStore's atomic
-// last-admin guard) safe: every handler constructs a FRESH store per request
-// (newUserStore/newSessionStore/newCeremonyStore/newTokenStore), so a
-// per-INSTANCE mutex would serialize nothing across concurrent requests -- two
-// writers would each load, modify and save the whole file (last-writer-wins
-// lost updates) and collide on the shared "<path>.tmp" temp file. A path-keyed,
-// process-wide lock closes both.
+// fileStoreMutexes holds one *sync.Mutex per absolute file path, so every file-backed store
+// instance.
 var (
 	fileStoreMutexes   = map[string]*sync.Mutex{}
 	fileStoreMutexesMu sync.Mutex

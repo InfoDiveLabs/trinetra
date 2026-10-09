@@ -1,14 +1,7 @@
 //go:build !trinetra_testkeys
 
-// Package trinetra: update_e2e_hooks.go is the default (production) side of
-// the self-update e2e test hooks. See update_e2e_hooks_testkeys.go for what
-// these do in a trinetra_testkeys build; here every hook is a hard-coded
-// no-op that never reads its environment variable, so a production binary
-// cannot be steered by TRINETRA_E2E_RESTART_CMD, TRINETRA_E2E_GUARD_CMD,
-// TRINETRA_E2E_GITHUB_BASE_URL, TRINETRA_E2E_UPDATE_LOOP_INTERVAL or
-// TRINETRA_E2E_HEALTH_DEADLINE under any circumstances -- see
-// TestE2EHooksIgnoredInReleaseBuild (update_e2e_hooks_test.go), which pins
-// exactly this in a default build.
+// Package trinetra: update_e2e_hooks.go is the default (production) side of the self-update
+// e2e test hooks.
 package trinetra
 
 import "time"

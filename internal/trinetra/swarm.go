@@ -1,16 +1,5 @@
-// Package trinetra: swarm.go collapses Docker Swarm task containers to their
-// SERVICE (#118). A Swarm task container is named "<service>.<slot>.<taskid>"
-// where taskid changes on every (re)deploy, so keying series/alerts/UI on the
-// raw name means every rolling deploy (a) creates two new permanent series
-// (docker:<task>:cpu/mem), the root of the 3035-file cardinality explosion
-// (#112/#109), and (b) fires false "container down" churn as old task names
-// disappear. Keyed on the stable service name instead, cardinality tracks the
-// service count and a rolling deploy no longer flaps.
-//
-// This is gated on Swarm actually being active (dockerAccess.swarm, probed via
-// `docker info`), so a plain-docker host is completely unaffected: swarmService
-// only matches the strict task-name shape, and collapseSwarmTasks is only
-// called when Swarm is detected.
+// Package trinetra: swarm.go collapses Docker Swarm task containers to their SERVICE
+// (#118).
 package trinetra
 
 import (

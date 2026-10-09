@@ -1,6 +1,5 @@
 // Package trinetra: coreapi_write_test.go covers the write methods
-// (ApplyConfig/AckAlert/UnackAlert/TestChannel) on both core.API
-// implementations.
+// (ApplyConfig/AckAlert/UnackAlert/TestChannel) on both core.API implementations.
 package trinetra
 
 import (
@@ -35,14 +34,7 @@ func TestFileAPIApplyConfigPersists(t *testing.T) {
 	}
 }
 
-// TestInprocApplyConfigInvokesReloadClosure pins that the in-process
-// ApplyConfig is nothing but a pass-through to the reload closure
-// newInprocAPI was constructed with -- the exact pointer-swap-and-persist
-// behavior cmdDaemon's own `reload` closure (daemon.go) performs. A fake
-// closure here (rather than the real daemon reload) isolates ApplyConfig's
-// OWN contract -- "call reload with what I was given, propagate its error"
-// -- from reload's internal saveCfg/applyConfig mechanics, which belong to
-// daemon.go and aren't this method's concern.
+// TestInprocApplyConfigInvokesReloadClosure pins that the in-process ApplyConfig.
 func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 	var got *config.Config
 	reload := func(c *config.Config) error {
@@ -199,13 +191,8 @@ func TestInprocValidateChannelRejectsUndeliverable(t *testing.T) {
 	}
 }
 
-// TestInprocSubscribeNoBusReturnsSentinel pins inprocAPI.Subscribe's
-// degenerate case: an inprocAPI built with no live daemon bus (bus is nil --
-// every newInprocAPI call in this file/package that isn't specifically
-// testing Subscribe's real streaming behavior, which lives in
-// coreapi_inproc_test.go) returns errStreamRequiresDaemon rather than
-// panicking. Passing a nil ctx is safe here specifically because the nil-bus
-// check short-circuits before Subscribe ever touches ctx.
+// TestInprocSubscribeNoBusReturnsSentinel pins inprocAPI.Subscribe's degenerate case: an
+// inprocAPI built with no live daemon bus.
 func TestInprocSubscribeNoBusReturnsSentinel(t *testing.T) {
 	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), func(*config.Config) error { return nil }, nil, &enrollState{})
 	if _, err := api.Subscribe(nil); err != errStreamRequiresDaemon { //nolint:staticcheck // nil context: safe, Subscribe returns before touching ctx when bus is nil

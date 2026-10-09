@@ -50,14 +50,7 @@ func TestResolveTokenFileDefaultsToSocketSibling(t *testing.T) {
 }
 
 // TestResolveTokenEnvIsValueNotPath pins the front-door/supervisor contract:
-// TRINETRA_CONTROL_TOKEN (or, as a compat fallback, SERVERWATCH_CONTROL_TOKEN)
-// carries the token VALUE (the daemon sets it to the per-launch token when it
-// spawns/execs a plugin), so resolveToken must return it verbatim, NOT treat
-// it as a file path to read. Regression for the bug where `trinetra cli`
-// handed the token via this env var but the plugin os.ReadFile'd the token
-// string as a path, got nothing, and failed the socket handshake. The value
-// used here ("plaintok-not-a-path") is deliberately not a real filesystem
-// path.
+// TRINETRA_CONTROL_TOKEN.
 func TestResolveTokenEnvIsValueNotPath(t *testing.T) {
 	t.Setenv("TRINETRA_CONTROL_TOKEN", "plaintok-not-a-path")
 	got, err := resolveToken("", "/run/trinetra/control.sock")

@@ -516,11 +516,7 @@ func TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery(t *testi
 	}
 }
 
-// TestAppJSHandlesStaleSSEEvent is a static source test (this package's
-// established convention for app.js, e.g. templates_node_test.go's
-// TestAppJSDataFetchesGoThroughNodeURL) pinning that swBootSSE listens for
-// the "stale" SSE event, shows the exact banner text, and clears it on the
-// next "snapshot" event.
+// TestAppJSHandlesStaleSSEEvent is a static source test.
 func TestAppJSHandlesStaleSSEEvent(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -538,11 +534,8 @@ func TestAppJSHandlesStaleSSEEvent(t *testing.T) {
 	}
 }
 
-// TestEventsStreamSelfUnaffectedByRemoteNodePolling is a narrow sanity
-// check that the plain, unprefixed /events request still takes the
-// self-scope path (Deps.Snapshot, not apiFor/NodeAPI) even on a Deps wired
-// with node routing, as TestEventsStreamEmitsSnapshotFrame et al. already
-// pin.
+// TestEventsStreamSelfUnaffectedByRemoteNodePolling is a narrow sanity check that the
+// plain, unprefixed /events request still takes the self-scope path.
 func TestEventsStreamSelfUnaffectedByRemoteNodePolling(t *testing.T) {
 	master := masterFakeAPI(masterFleetWithChild(), map[string]core.API{
 		"child1": &nodeSnapshotAPI{snap: core.DashboardView{CPU: 5}},

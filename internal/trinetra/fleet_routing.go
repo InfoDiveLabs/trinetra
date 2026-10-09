@@ -1,11 +1,5 @@
-// Package trinetra: fleet_routing.go is the master's routing/escalation
-// config store: validated, versioned persistence of
-// AlertingConfig to alerting.json, and resolveRoute -- the ONE function both
-// the alerting engine's real delivery (fleet_engine.go) and
-// FleetAPI.RouteTest (fleet_provider.go) call to decide which policy applies
-// to a given (node, tags, rule, severity). Keeping route selection in this
-// single function is what makes RouteTest a trustworthy dry run: it can never
-// diverge from what the engine itself would do for the same input.
+// Package trinetra: fleet_routing.go is the master's routing/escalation config store:
+// validated, versioned persistence of AlertingConfig to alerting.json, and resolveRoute.
 package trinetra
 
 import (
@@ -48,9 +42,8 @@ func defaultAlertingConfig() core.AlertingConfig {
 
 // --- validation ----------------------------------------------------------
 
-// validGlob reports whether pattern is a syntactically valid path.Match glob,
-// checked against "" (path.Match's error, not its match result, is what a bad
-// pattern like "[" produces).
+// validGlob reports whether pattern is a syntactically valid path.Match glob, checked
+// against "".
 func validGlob(pattern string) bool {
 	_, err := path.Match(pattern, "")
 	return err == nil
@@ -243,11 +236,8 @@ func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name stri
 type routeResolution struct {
 	Route    string
 	Policies []core.Policy
-	// GroupBy is the FIRST matched route's own GroupBy,
-	// exactly mirroring how Route itself is only ever set from the first
-	// match: an empty GroupBy (no route matched, or the matched route didn't
-	// set one) means "use the default (rule, severity) group key" -- see
-	// groupKeyFor.
+	// GroupBy is the FIRST matched route's own GroupBy, exactly mirroring how Route itself is
+	// only ever set from the first match: an empty GroupBy.
 	GroupBy []string
 }
 

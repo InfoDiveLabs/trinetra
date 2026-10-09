@@ -1,9 +1,5 @@
-// Package trinetra: fleet_lease.go implements the child side of the
-// master's lease-based alert handoff: while the master holds a
-// delivery lease, a firing (or recovering) alert is routed to it instead of
-// delivered locally, and only falls back to local delivery if the master's
-// receipt never arrives, or the lease itself expires, before
-// fleet.fallback_after.
+// Package trinetra: fleet_lease.go implements the child side of the master's lease-based
+// alert handoff: while the master holds a delivery lease, a firing.
 package trinetra
 
 import (
@@ -74,12 +70,7 @@ func (l *leaseHolder) Revoke() {
 	l.until = 0
 }
 
-// handoffKey identifies one routed alert the same way the master's
-// dedup does (spec: dedup key is node_id, alert_key, fired_at -- node_id is
-// implicit here, this side only ever tracks its own): (alert key, the
-// fire/recover event's own unix time). A fire and its later recover share
-// Key but carry different Time, so they are tracked -- and can
-// independently time out -- as separate pending entries.
+// handoffKey identifies one routed alert the same way the master's dedup does.
 type handoffKey struct {
 	key     string
 	firedAt int64
@@ -103,10 +94,8 @@ type handoff struct {
 	pending map[handoffKey]pendingAlert
 }
 
-// newHandoff builds a handoff. now defaults to time.Now if nil.
-// fallbackAfter is read fresh on every Tick, not captured once, so
-// fleet.fallback_after's live-apply (config.go: it is not RestartRequired)
-// takes effect immediately, without a restart.
+// newHandoff builds a handoff. now defaults to time.Now if nil. fallbackAfter is read fresh
+// on every Tick, not captured once, so fleet.fallback_after's live-apply.
 func newHandoff(now func() time.Time, fallbackAfter func() time.Duration, lease *leaseHolder) *handoff {
 	if now == nil {
 		now = time.Now
@@ -206,17 +195,7 @@ type ackFrameData struct {
 }
 
 // handoffReceipt is one line in the child-private receipts sidecar (see
-// handoffReceiptsPath): a durable record that the master acknowledged
-// (Key, FiredAt) of the given Kind, so a restarted child's reconciliation
-// (reconcilePendingFromLog) knows not to treat it as still pending.
-//
-// Deliberately NOT part of alertlog.jsonl: that file feeds every unfiltered
-// alert-history reader (alertHistoryRecords -> the web UI's /alerts history,
-// `trinetra alerts list`) and is teed to the outbox (shipped to the master's
-// replica, and re-shipped by localGapFiller on gap repair) -- a receipt is
-// neither a fire nor a recover a human or the master's replica should ever
-// see as an alert. It is purely this child's own internal handoff
-// bookkeeping, so it gets its own small sidecar file instead.
+// handoffReceiptsPath): a durable record that the master acknowledged.
 type handoffReceipt struct {
 	Key     string `json:"key"`
 	FiredAt int64  `json:"fired_at"`

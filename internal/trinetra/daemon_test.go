@@ -245,10 +245,7 @@ func TestBuildSlowChecksBinaryWording(t *testing.T) {
 	}
 }
 
-// TestBuildSlowChecksRecoverySweepWording confirms the value=0 recovery-sweep
-// sites (for a service no longer failed, or a docker/smart target that
-// disappeared from the snapshot) also carry the human RecoverMsg, so a
-// recovery emitted from any of these sites still reads humanely.
+// TestBuildSlowChecksRecoverySweepWording confirms the value=0 recovery-sweep sites.
 func TestBuildSlowChecksRecoverySweepWording(t *testing.T) {
 	c := config.Default()
 	snap := Snapshot{
@@ -585,10 +582,7 @@ func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 	}
 }
 
-// TestCollectSlowFiltersDockerOverlayAndPseudoMounts is the regression test
-// for a root daemon on a docker host seeing dozens of `overlay` mounts plus
-// squashfs/tmpfs/nsfs pseudo-mounts in `df -PT -B1`: only the real ext4
-// mounts may survive in snap.Disks and snap.DiskDetail.
+// TestCollectSlowFiltersDockerOverlayAndPseudoMounts is the regression test for a root.
 func TestCollectSlowFiltersDockerOverlayAndPseudoMounts(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -875,10 +869,8 @@ func TestCollectSlowSkipsContainerStatsWhenDockerUnavailable(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsContainerStatsOnNilConfig asserts collectSlow never
-// panics when called with a nil *config.Config (defensive: any future
-// one-shot caller without a config handy should degrade gracefully rather
-// than crash).
+// TestCollectSlowSkipsContainerStatsOnNilConfig asserts collectSlow never panics when
+// called with a nil *config.Config.
 func TestCollectSlowSkipsContainerStatsOnNilConfig(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "docker" && len(args) > 0 && args[0] == "stats" {
@@ -894,10 +886,7 @@ func TestCollectSlowSkipsContainerStatsOnNilConfig(t *testing.T) {
 	}
 }
 
-// TestCollectSlowContainerStatsErrorDegradesGracefully asserts a docker
-// stats error (daemon busy, container churn mid-call, etc.) leaves
-// ContainerStats nil for this tick rather than propagating the error or
-// crashing the rest of collectSlow.
+// TestCollectSlowContainerStatsErrorDegradesGracefully asserts a docker stats error.
 func TestCollectSlowContainerStatsErrorDegradesGracefully(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "docker" && len(args) > 0 && args[0] == "stats" {

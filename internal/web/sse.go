@@ -10,18 +10,12 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// sseDefaultInterval is eventsHandler's fallback per-connection ticker
-// period when Deps.Cfg is nil or reports an invalid FastInterval (defensive;
-// every real Deps built by the trinetra-web binary's buildDeps
-// (cmd/trinetra-web) always has a
-// valid one) -- config.Default's own FastInterval (5s).
+// sseDefaultInterval is eventsHandler's fallback per-connection ticker period when Deps.Cfg
+// is nil or reports an invalid FastInterval.
 const sseDefaultInterval = 5 * time.Second
 
-// sseTickerInterval resolves the SSE stream's cadence to the daemon's
-// current fast-tier interval (cfg.FastInterval -- the same cadence
-// snapshotHub itself is republished on, see
-// internal/trinetra/snapshot_hub.go/daemon.go), so a subscriber never polls
-// faster than the source actually changes.
+// sseTickerInterval resolves the SSE stream's cadence to the daemon's current fast-tier
+// interval.
 func sseTickerInterval(cfg func() *config.Config) time.Duration {
 	if cfg == nil {
 		return sseDefaultInterval
@@ -119,12 +113,7 @@ func eventsHandler(d Deps) http.HandlerFunc {
 				return
 			case ev, ok := <-sub:
 				if !ok {
-					// The stream ended (daemon connection dropped, etc.):
-					// stop selecting on sub (nil disables the case for
-					// good -- otherwise a closed channel would fire this
-					// case on every loop iteration and busy-spin) and rely
-					// on the fallback ticker for the rest of the
-					// connection.
+					// The stream ended (daemon connection dropped, etc.): stop selecting on sub.
 					sub = nil
 					continue
 				}
@@ -161,9 +150,8 @@ var errRemoteNodeAPIUnavailable = fmt.Errorf("remote node API unavailable")
 // remoteNodeEventsLoop tolerates before it tells the browser the stream is stale.
 const remoteNodeStaleThreshold = 3
 
-// staleEventData is the "stale" SSE event's JSON payload: the Unix-seconds
-// time of the last successful snapshot, so assets/app.js's banner can show
-// "live updates paused -- last update <time>".
+// staleEventData is the "stale" SSE event's JSON payload: the Unix-seconds time of the last
+// successful snapshot.
 type staleEventData struct {
 	LastSuccess int64 `json:"last_success"`
 }

@@ -45,11 +45,8 @@ type Session struct {
 	// CSRF is this session's anti-CSRF token (requireCSRF, middleware.go), minted once by New
 	// and constant for the record's lifetime.
 	CSRF string `json:"csrf"`
-	// Data is an opaque, caller-defined payload carried alongside a record.
-	// auth_webauthn.go's registration/login ceremonies JSON-encode a
-	// *webauthn.SessionData here (plus, for registration, the not-yet-
-	// persisted pending *User) between /begin and /finish; an ordinary
-	// signed-in session leaves it nil.
+	// Data is an opaque, caller-defined payload carried alongside a record. auth_webauthn.go's
+	// registration/login ceremonies JSON-encode a *webauthn.SessionData here.
 	Data []byte `json:"data,omitempty"`
 }
 
@@ -58,9 +55,8 @@ type SessionStore interface {
 	// New mints a fresh Session (userID may be "" for a not-yet- authenticated login ceremony)
 	// with the given TTL, persists it, and returns it.
 	New(userID string, ttl time.Duration) (*Session, error)
-	// Get returns the session with the given ID, or (nil, false) if none
-	// exists or it has expired (an expired record is treated as absent, not
-	// actively removed here -- GC does that).
+	// Get returns the session with the given ID, or (nil, false) if none exists or it has
+	// expired.
 	Get(id string) (*Session, bool)
 	// Put persists a mutated Session (e.g. one whose Data a ceremony handler just filled in)
 	// under its existing ID.
@@ -84,12 +80,7 @@ type jsonSessionStore struct {
 	// now overrides the store's clock; nil (the production default, see newSessionStore) means
 	// time.Now.
 	now func() time.Time
-	// maxEntries overrides the default sessionMaxEntries cap when non-zero.
-	// newCeremonyStore sets it to ceremonyMaxEntries so the ceremony-
-	// placeholder store is bounded independently of the authenticated-
-	// session store; tests also set a small cap to exercise the refusal
-	// path without thousands of real (O(n) read-modify-write) disk round
-	// trips.
+	// maxEntries overrides the default sessionMaxEntries cap when non-zero. newCeremonyStore.
 	maxEntries int
 }
 

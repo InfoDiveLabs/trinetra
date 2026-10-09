@@ -110,10 +110,7 @@ func TestMonitoringRouteIsViewerGated(t *testing.T) {
 	}
 }
 
-// TestMonitoringFailedUnitsAlwaysShown pins that failed units are always
-// listed (systemctl --failed is always collected, regardless of the opt-in
-// collect.services full-inventory toggle) -- even while the full unit
-// inventory table itself shows the "collector disabled" note.
+// TestMonitoringFailedUnitsAlwaysShown pins that failed units are always listed.
 func TestMonitoringFailedUnitsAlwaysShown(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{monitoring: MonitoringView{

@@ -133,11 +133,7 @@ type FleetComparePageData struct {
 	ChartSummary string
 }
 
-// fleetCompareData is DataJSON's shape: uPlot's own parallel-array data
-// format (Series[0] the shared timestamp axis, Series[1:] one array per
-// node in Nodes' order, aligned to that axis with null for a gap) -- the
-// same convention handlers_history.go's seriesResponse uses for a single
-// series, extended here to however many node series the request selected.
+// fleetCompareData is DataJSON's shape: uPlot's own parallel-array data format.
 type fleetCompareData struct {
 	Metric string        `json:"metric"`
 	Nodes  []string      `json:"nodes"`

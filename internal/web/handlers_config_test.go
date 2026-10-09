@@ -55,13 +55,8 @@ func TestConfigSaveRejectsBadValueWithNoWrite(t *testing.T) {
 	}
 }
 
-// baseConfigForm returns a fully-populated, valid /config POST body mirroring
-// what the rendered form always submits (every field, since browsers always
-// submit text/number/time inputs and hidden fields regardless of whether the
-// user touched them). Checkbox fields that default to true (critical_
-// overrides_quiet, collect.*) are included checked so a bare baseConfigForm()
-// post doesn't flip them off as a side effect; baseline_alerts (defaults to
-// false) is deliberately omitted, matching an unchecked box.
+// baseConfigForm returns a fully-populated, valid /config POST body mirroring what the
+// rendered form always submits.
 func baseConfigForm() url.Values {
 	return url.Values{
 		"disk_pct":                 {"92"},

@@ -1,8 +1,5 @@
-// Package trinetra: coreapi_monitor_targets_test.go covers core.API's
-// MonitorTargets on both implementations (coreapi_inproc.go/coreapi_file.go)
-// plus the shared targetViewsFromTargets mapping they both use, so ctl's
-// monitor-thresholds screen can list targets over the control socket
-// instead of importing this package directly to call DiscoverLocal itself.
+// Package trinetra: coreapi_monitor_targets_test.go covers core.API's MonitorTargets on
+// both implementations.
 package trinetra
 
 import (

@@ -1,12 +1,5 @@
-// Package trinetra: fleet_managed.go is the master's managed-config
-// fragment store and push plus the child's counterpart
-// that applies whatever the master last pushed, live, with no restart, and
-// makes the ten allowlisted keys read-only locally while under management.
-//
-// Naming: this is a DIFFERENT concept from config.go's existing
-// fleetManagedKeys (fleet identity keys -- role/address/master_url/ca_pin/
-// node_id -- writable only by `trinetra fleet init|join|leave|disable`).
-// Every identifier here is named managedFragment* to keep the two apart.
+// Package trinetra: fleet_managed.go is the master's managed-config fragment store and push
+// plus the child's counterpart that applies whatever the master last pushed, live.
 package trinetra
 
 import (
@@ -498,10 +491,7 @@ func cloneStringMap(m map[string]string) map[string]string {
 	return out
 }
 
-// cloneConfigJSON returns a deep, independent copy of c via a JSON round
-// trip (mirrors internal/web's cloneConfig; duplicated here rather than
-// shared since internal/web must not be imported by this package and vice
-// versa).
+// cloneConfigJSON returns a deep, independent copy of c via a JSON round trip.
 func cloneConfigJSON(c *config.Config) (*config.Config, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -514,30 +504,8 @@ func cloneConfigJSON(c *config.Config) (*config.Config, error) {
 	return nc, nil
 }
 
-// Apply handles one received "managed_config" frame: an empty Values (every
-// fragment deleted) means the child stops enforcing (local values stay at their
-// last managed values, the sidecar is cleared); otherwise every value is
-// validated against a clone of the live config via config.Set, and only if
-// EVERY value passes is the clone applied via self.ApplyConfig (the live-apply
-// path, no restart). A single invalid value rejects the whole fragment: the old
-// config is untouched and the error is recorded for the next report.
-//
-// A frame identical to what is applied (same version AND values) is a complete
-// no-op (no re-validation, ApplyConfig or sidecar rewrite), so the periodic
-// (managedPushInterval) re-push doesn't thrash the disk or dispatcher. But
-// version+values matching is not sufficient alone: the LIVE config's effective
-// value for every managed key must ALSO equal what was committed
-// (configMatchesValues), or the push re-applies. Otherwise a child whose live
-// config diverged (direct config.json edit, restored backup, offline write)
-// would short-circuit every same-version push forever.
-//
-// mc.values (the committed set reimposeManagedValues re-forces onto every
-// OTHER full-config apply) is updated to the NEW values BEFORE
-// self.ApplyConfig is called: that call runs the shared reload closure
-// (daemon.go), which calls reimposeManagedValues, so committing first makes
-// THIS push's values the ones re-imposed on its own clone, not the stale ones.
-// It is rolled back if ApplyConfig itself fails (a downstream reload error
-// unrelated to the values' validity, which already passed).
+// Apply handles one received "managed_config" frame: an empty Values (every fragment
+// deleted) means the child stops enforcing.
 func (mc *managedChild) Apply(p managedConfigFrameData) {
 	if mc == nil {
 		return
@@ -716,12 +684,8 @@ func reconcileManagedValuesAtStart(mc *managedChild, logf func(string, ...any)) 
 	}
 }
 
-// Report builds this child's fleet.ManagedReport for its next LiveUpdate: nil
-// if no "managed_config" frame has ever been received (an old master, or not
-// yet connected to one), leaving the child unaffected. Values are read fresh
-// from the live config on every call, never cached, so the master always sees
-// the child's true current effective values whether or not the last apply
-// succeeded.
+// Report builds this child's fleet.ManagedReport for its next LiveUpdate: nil if no
+// "managed_config" frame has ever been received.
 func (mc *managedChild) Report() *fleet.ManagedReport {
 	if mc == nil {
 		return nil

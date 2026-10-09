@@ -268,12 +268,8 @@ func TestFleetIncidentsNavHiddenOnSolo(t *testing.T) {
 
 // ---- detail ---------------------------------------------------------------
 
-// TestFleetIncidentDetailShowsMembersAndFullTimeline pins the detail test
-// bullet verbatim: member alerts (node, key, fired, resolved, delivered
-// locally, silenced by, folded reason) and the full timeline (fired, grouped,
-// suppressed with reason, delivered via channels, escalated, acked by, receipt,
-// resolved) -- rendered from the STRUCTURED fields, with Detail as fallback
-// (the "grouped" legacy event).
+// TestFleetIncidentDetailShowsMembersAndFullTimeline pins the detail test bullet verbatim:
+// member alerts.
 func TestFleetIncidentDetailShowsMembersAndFullTimeline(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
 	d := fleetAdminDeps(t, fleet)
@@ -648,10 +644,7 @@ func TestFleetIncidentSilenceUnknownID404sWithNoMutation(t *testing.T) {
 	}
 }
 
-// TestIncidentMasterOwnMembersNamed pins that a member alert raised by the
-// master itself (engine.Submit(alertSource{}, ...) leaves Node and NodeName
-// empty) is shown under the master's own name -- in the list's Nodes column,
-// the members table and the timeline -- instead of being silently dropped.
+// TestIncidentMasterOwnMembersNamed pins that a member alert raised by the master itself.
 func TestIncidentMasterOwnMembersNamed(t *testing.T) {
 	inc := core.Incident{
 		ID: "inc1",

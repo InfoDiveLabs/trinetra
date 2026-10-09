@@ -261,12 +261,8 @@ func TestActiveAlertsMapsFields(t *testing.T) {
 	}
 }
 
-// TestAlertHistoryNewestFirstAndLimit exercises AlertHistory against a real
-// alertlog.jsonl written via AlertLog.AppendAlertEvent (out of chronological
-// append order, to prove the sort is real), pinning: the newest-first sort,
-// the limit cap, the since filter (via AlertEventsSince), and the AlertEvent
-// -> core.AlertRecord field mapping (Acked always false -- see the method's
-// doc for why).
+// TestAlertHistoryNewestFirstAndLimit exercises AlertHistory against a real alertlog.jsonl
+// written via AlertLog.AppendAlertEvent.
 func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 	stateDir := t.TempDir()
 
@@ -318,17 +314,8 @@ func TestAlertHistoryNewestFirstAndLimit(t *testing.T) {
 	}
 }
 
-// TestBuildDashboardViewCopiesScalarsAndDerivedCounts pins the adapter's
-// field-by-field copy plus the derived summary counts (containers
-// running/total, units failed/total, disks critical) the dashboard's
-// summary tiles need. Moved here (untagged) from the removed
-// daemon_web_dashboard_test.go (`//go:build web`) when the embedded web was
-// retired: buildDashboardView itself survives untagged in coreapi_inproc.go,
-// and these specific derived-value assertions (top-container sort order,
-// DisksCritical count, NetRates summation) are not otherwise covered by the
-// parity tests above, which only check newInprocAPI's Snapshot() against
-// buildDashboardView -- a tautology, since Snapshot() calls buildDashboardView
-// directly.
+// TestBuildDashboardViewCopiesScalarsAndDerivedCounts pins the adapter's field-by-field
+// copy plus the derived summary counts.
 func TestBuildDashboardViewCopiesScalarsAndDerivedCounts(t *testing.T) {
 	snap := Snapshot{
 		TS: 1_700_000_000, CPU: 37.5, MemPct: 61, SwapPct: 4, Load1: 0.42, Load5: 0.55, Load15: 0.61, TempC: 54,

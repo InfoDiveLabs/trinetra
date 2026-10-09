@@ -1,14 +1,5 @@
-// Package trinetra: control_socket.go starts the control-socket server
-// (internal/control) over the daemon's own core.API (newInprocAPI,
-// coreapi_inproc.go), the transport that lets a separate-process consumer
-// (S3's trinetra-ctl, S4's trinetra-web) talk to the running daemon
-// without going through the CLI's file-backed core.API.
-//
-// This file is deliberately UNTAGGED, same reasoning as coreapi_inproc.go:
-// internal/control imports only stdlib + internal/core + internal/config
-// (see internal/control/doc.go), so serving it never pulls internal/web's
-// third-party dependencies into the default build. cmdDaemon calls this in
-// both build variants.
+// Package trinetra: control_socket.go starts the control-socket server (internal/control)
+// over the daemon's own core.API (newInprocAPI, coreapi_inproc.go).
 package trinetra
 
 import (

@@ -153,10 +153,8 @@ func (g *gotifyNotifier) Send(ctx context.Context, a Alert) error {
 		return fmt.Errorf("gotify %s: encode message: %w", g.name, err)
 	}
 
-	// g.token is url.QueryEscape'd since Gotify tokens are configuration
-	// (not validated ahead of time here) and could in principle contain
-	// characters ('&', '=', '%', ...) that would otherwise corrupt the query
-	// string or smuggle extra parameters into it.
+	// g.token is url.QueryEscape'd since Gotify tokens are configuration (not validated ahead
+	// of time here) and could in principle contain characters.
 	reqURL := fmt.Sprintf("%s/message?token=%s", g.server, url.QueryEscape(g.token))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
 	if err != nil {

@@ -1,9 +1,5 @@
-// Package trinetra: eventbus_test.go pins eventBus's core contract --
-// the whole reason it exists, per its own doc (eventbus.go): Publish must
-// NEVER block the sampler loop / dispatchAndLog caller, regardless of how
-// many subscribers there are or how slow/absent they are. Every test here
-// is synchronous and single-goroutine (buffered channels make that
-// possible), so `go test -race` is the only concurrency proof needed on top.
+// Package trinetra: eventbus_test.go pins eventBus's core contract -- the whole reason it
+// exists, per its own doc (eventbus.go).
 package trinetra
 
 import (

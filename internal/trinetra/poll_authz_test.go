@@ -16,9 +16,8 @@ func newTgConfig(token, chatID string) *config.Config {
 	return c
 }
 
-// noopCallback is processUpdates' onCallback for every test in this file
-// that only cares about the plain-text-command path (none of them inject a
-// callback_query update, so this is never actually invoked).
+// noopCallback is processUpdates' onCallback for every test in this file that only cares
+// about the plain-text-command path.
 func noopCallback(*config.Config, telegram.Update) {}
 
 // TestProcessUpdatesIgnoresUnauthorizedSender is the core #78 guard: once a chat id is

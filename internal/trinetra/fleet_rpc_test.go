@@ -163,10 +163,8 @@ func rpcFrame(t *testing.T, f fleet.Frame) rpcFrameData {
 
 // --- rpcRegistry.Call / Deliver --------------------------------------------
 
-// TestRPCRegistryCallHappyPath exercises the full round trip: the master
-// pushes an "rpc" frame, a real child dispatches it via handleRPCFrame
-// (goroutine, core.API, truncation) and posts the result back over HTTP,
-// and Call returns it.
+// TestRPCRegistryCallHappyPath exercises the full round trip: the master pushes an "rpc"
+// frame, a real child dispatches it via handleRPCFrame.
 func TestRPCRegistryCallHappyPath(t *testing.T) {
 	m := newRPCTestMaster(t)
 	var sh *fleet.Shipper

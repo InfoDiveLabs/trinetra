@@ -1,12 +1,5 @@
-// Package trinetra: samplestore.go defines the SampleStore abstraction
-// described in docs/handbook/09-storage-and-data-model.md -- the swappable seam between the
-// daemon/handlers/digests and the concrete time-series storage engine.
-//
-// The existing JSONL Store (store.go) remains the live backend used by
-// callers for now; this file adds the new interface plus an in-memory
-// reference backend used for tests and the "memory" storage.backend option.
-// The default "tsfile" backend lives in tsfile.go (s7). A later task (s10)
-// migrates callers onto SampleStore.
+// Package trinetra: samplestore.go defines the SampleStore abstraction described in
+// docs/handbook/09-storage-and-data-model.md.
 package trinetra
 
 import (
@@ -58,13 +51,8 @@ type SampleStore interface {
 	Downsample(nowUnix int64) error
 	// Close releases any resources held by the backend.
 	Close() error
-	// Stats reports the storage engine's cardinality/disk cost: seriesCount
-	// is the number of distinct time series the backend is tracking
-	// (tsFileStore: the number of .tsd files on disk across raw/1m/events;
-	// memStore: the number of in-memory metric series) and diskBytes is the
-	// total bytes those series occupy on disk (always 0 for memStore, which
-	// is non-persistent). `trinetra doctor` surfaces this as a
-	// cardinality/disk guardrail (docs/handbook/12-roadmap-and-status.md Epic #69 x7).
+	// Stats reports the storage engine's cardinality/disk cost: seriesCount is the number of
+	// distinct time series the backend is tracking.
 	Stats() (seriesCount int, diskBytes int64, err error)
 }
 
@@ -195,9 +183,7 @@ func (m *memStore) Events(from, to int64) ([]DownEvent, error) {
 	return out, nil
 }
 
-// Prune drops points older than nowUnix - RollupRetention (see the memStore
-// doc comment for why RollupRetention, not RawRetention, bounds the single
-// series) and events older than nowUnix - EventRetention.
+// Prune drops points older than nowUnix - RollupRetention.
 func (m *memStore) Prune(nowUnix int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

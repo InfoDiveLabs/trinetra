@@ -1,17 +1,5 @@
-// Package trinetra: fleet_rpc.go is the master's side of an on-demand,
-// request/response call to a connected child over the master-to-child
-// stream: today the only method is "container_logs", used
-// by replicaAPI.ContainerLogs (fleet_replica.go) so a remote node's Docker
-// logs can be fetched exactly like a local one's, without a direct
-// connection to the child at all.
-//
-// The request travels down as an "rpc" stream Frame; the child answers by
-// POSTing to fleet.PathRPC (Shipper.PostRPCResult), which the master's
-// fleet.Hub hands to rpcRegistry.Deliver via Hub.OnRPCResult. Hub.OnRPCResult's
-// own doc comment is explicit that the id in that POST is untrusted input
-// from the wire -- rpcRegistry is the consumer it warns must verify the id
-// actually names a pending call sent to that exact node before trusting the
-// body; see Deliver.
+// Package trinetra: fleet_rpc.go is the master's side of an on-demand, request/response
+// call to a connected child over the master-to-child stream.
 package trinetra
 
 import (
@@ -28,12 +16,8 @@ import (
 // rpcCallTimeout is how long Call waits for a child's result before giving up.
 var rpcCallTimeout = 10 * time.Second
 
-// rpcSweepAfter/rpcMaxPendingPerNode are rpcRegistry's other two bounds
-// an entry is swept once it has been sitting unanswered for
-// this long past its own timeout (defense in depth -- Call already deletes
-// its own entry the moment it times out; this only matters if that never
-// happens, e.g. a future caller that doesn't wait), and no node may have
-// more than this many calls pending at once.
+// rpcSweepAfter/rpcMaxPendingPerNode are rpcRegistry's other two bounds an entry is swept
+// once it has been sitting unanswered for this long past its own timeout.
 var rpcSweepAfter = 60 * time.Second
 
 const rpcMaxPendingPerNode = 32

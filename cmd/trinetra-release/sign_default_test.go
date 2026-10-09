@@ -36,9 +36,8 @@ func TestTestKeysFlagsRefusedInDefaultBuild(t *testing.T) {
 	}
 }
 
-// TestManifestKeysFromBinaryFillsProductionKeys: --keys-from-binary
-// copies this tool's compiled-in ProductionKeys into manifest.keys, so the
-// maintainer's cosign sees "keys: unchanged" unless a rotation ships.
+// TestManifestKeysFromBinaryFillsProductionKeys: --keys-from-binary copies this tool's
+// compiled-in ProductionKeys into manifest.keys.
 func TestManifestKeysFromBinaryFillsProductionKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeAllReleaseFiles(t, dir)

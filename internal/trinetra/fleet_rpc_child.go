@@ -1,6 +1,5 @@
-// Package trinetra: fleet_rpc_child.go is the child's side of the master's
-// on-demand RPC over the stream (see fleet_rpc.go for the master's side and
-// the shared wire shapes). The only method is "container_logs".
+// Package trinetra: fleet_rpc_child.go is the child's side of the master's on-demand RPC
+// over the stream (see fleet_rpc.go for the master's side and the shared wire shapes).
 package trinetra
 
 import (
@@ -16,10 +15,8 @@ import (
 // for, regardless of what the master requested.
 const rpcMaxLines = 2000
 
-// rpcMaxOutputBytes bounds the RESULT this child will ever ship back over a
-// single RPC: truncated from the start (the OLDEST lines
-// are dropped, keeping the most recent output, which is what a log tail is
-// almost always wanted for), with a marker line saying so.
+// rpcMaxOutputBytes bounds the RESULT this child will ever ship back over a single RPC:
+// truncated from the start.
 const rpcMaxOutputBytes = 512 << 10
 
 // rpcTruncatedMarker prefixes a container_logs result that had to be

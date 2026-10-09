@@ -1,7 +1,5 @@
-// Package trinetra: systemd_telegram_test.go covers cmdTelegram
-// set-token's #90 behavior: printing the enrollment pin (or a graceful
-// fallback) after saving the token, via the injectable fetchEnrollmentPINFn
-// seam (systemd.go) so these tests need no real control socket/daemon.
+// Package trinetra: systemd_telegram_test.go covers cmdTelegram set-token's #90 behavior:
+// printing the enrollment pin (or a graceful fallback) after saving the token.
 package trinetra
 
 import (

@@ -10,9 +10,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// namedDelivery records one channel-scoped delivery attempt a routingFixture
-// observed (either a real fire/recover leg, via deliverNamed, or an
-// escalation/repeat notification, via dispatchOnly).
+// namedDelivery records one channel-scoped delivery attempt a routingFixture observed.
 type namedDelivery struct {
 	a        Alert
 	channels []string
@@ -549,12 +547,8 @@ func TestEngineStructuredEventsSurviveAmbiguousChannelName(t *testing.T) {
 	}
 }
 
-// TestEngineLegacyTextEventsStillParse: an incident recorded by a build from
-// before structured fields existed (Leg/Policy/AlertKey all zero, everything
-// carried in Detail text) must still be read correctly by every reader that
-// now prefers structured fields first -- resurrection's per-member leg
-// check and stepEventInfo's policy/step/channel extraction both fall back to
-// the exact old text-parsing rules for such an event.
+// TestEngineLegacyTextEventsStillParse: an incident recorded by a build from before
+// structured fields existed.
 func TestEngineLegacyTextEventsStillParse(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")

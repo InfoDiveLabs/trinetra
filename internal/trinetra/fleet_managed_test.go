@@ -449,14 +449,8 @@ func TestFleetAPIManagedStatusComputesDriftAndConflicts(t *testing.T) {
 
 // --- child-side: apply, live-apply-no-restart, invalid rejects whole ------
 
-// managedApplyAPI is a minimal core.API double for managedChild.Apply tests:
-// it embeds fleetCLIFakeAPI (fleet_cmd_test.go, a full core.API stub) for
-// every method except ApplyConfig, which it overrides to actually mimic the
-// real reload path: it stores whatever config was applied so Get(key) after
-// Apply proves the value took effect live, with no restart, and can be
-// primed to fail (an invalid managed-config value must never even reach
-// here -- see the "invalid value rejects the whole fragment" tests -- but a
-// downstream apply failure, e.g. a full reload error, must still surface).
+// managedApplyAPI is a minimal core.API double for managedChild.Apply tests: it embeds
+// fleetCLIFakeAPI.
 type managedApplyAPI struct {
 	fleetCLIFakeAPI
 	applied    *config.Config
@@ -639,11 +633,8 @@ func TestManagedFragmentForReadsRestoredSidecar(t *testing.T) {
 
 // --- shared full-config apply path re-imposes managed values -
 
-// TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits pins that the shared
-// full-config apply path (daemon.go's reload, which calls
-// reimposeManagedValues before persisting) forces a managed key back to its
-// committed value even when the incoming config carries a stale read of it,
-// while leaving every OTHER edit alone.
+// TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits pins that the shared full-config
+// apply path.
 func TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits(t *testing.T) {
 	cfg := config.Default()
 	self := &managedApplyAPI{}
@@ -695,9 +686,8 @@ func TestReimposeManagedValuesNoOpWhenNilOrNothingManaged(t *testing.T) {
 	}
 }
 
-// funcApplyAPI is a core.API double whose ApplyConfig runs an arbitrary
-// closure, used to mirror daemon.go's reload (reimpose, then persist under a
-// lock) in the concurrency test below without spinning up the daemon.
+// funcApplyAPI is a core.API double whose ApplyConfig runs an arbitrary closure, used to
+// mirror daemon.go's reload.
 type funcApplyAPI struct {
 	fleetCLIFakeAPI
 	apply func(*config.Config) error
@@ -705,15 +695,8 @@ type funcApplyAPI struct {
 
 func (a *funcApplyAPI) ApplyConfig(c *config.Config) error { return a.apply(c) }
 
-// TestManagedValueWinsOverConcurrentFullConfigApply: a push
-// (managedChild.Apply) races a concurrent, unrelated full-config apply (like
-// the channels/public-settings pages, which read-then-write-back the WHOLE
-// config without knowing a key is managed), under -race to prove no data race
-// on managedChild's state.
-//
-// A strict "who wrote last" assertion on the concurrent phase would be
-// timing-dependent, so "the managed value wins" is pinned deterministically
-// AFTER both goroutines finish, by one more stale full-config apply.
+// TestManagedValueWinsOverConcurrentFullConfigApply: a push (managedChild.Apply) races a
+// concurrent, unrelated full-config apply.
 func TestManagedValueWinsOverConcurrentFullConfigApply(t *testing.T) {
 	var mu sync.Mutex
 	cfg := config.Default()
@@ -829,10 +812,8 @@ func TestManagedChildApplyShortCircuitsWhenUnchanged(t *testing.T) {
 
 // --- server-side upsert-by-tag ----------------------
 
-// TestManagedFragmentSaveUpsertsByTagAtomically: Save with an empty ID and an
-// existing fragment for the SAME tag updates it in place (same id, values
-// replaced, version bumped) rather than creating a duplicate. "One fragment per
-// tag" is a server-side, lock-held guarantee, not the CLI's job.
+// TestManagedFragmentSaveUpsertsByTagAtomically: Save with an empty ID and an existing
+// fragment for the SAME tag updates it in place.
 func TestManagedFragmentSaveUpsertsByTagAtomically(t *testing.T) {
 	s, err := loadManagedFragmentStore(filepath.Join(t.TempDir(), "managed.json"))
 	if err != nil {
@@ -944,12 +925,8 @@ func TestManagedFragmentSaveReplaceDropsOtherKeys(t *testing.T) {
 
 // --- startup reconciliation + tightened short-circuit -----
 
-// TestReconcileManagedValuesAtStartFixesDivergedConfig: on a restart where the
-// live config holds a diverged value for a managed key (config.json hand-
-// edited, restored from backup, or written offline), after
-// reconcileManagedValuesAtStart (called by startChild right after
-// loadManagedChild, before the shipper starts) both the live config AND what
-// ApplyConfig persisted must hold the managed value again.
+// TestReconcileManagedValuesAtStartFixesDivergedConfig: on a restart where the live config
+// holds a diverged value for a managed key.
 func TestReconcileManagedValuesAtStartFixesDivergedConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "managed.json")

@@ -45,11 +45,8 @@ type NodeSummary struct {
 	// SkewSec is the master's filtered estimate of server_time - sent_at for this
 	// node: negative means the node's clock is ahead of the master's.
 	SkewSec int64 `json:"skew_sec,omitempty"`
-	// DroppedOutOfOrder / DroppedCardinality count points the master's
-	// replica refused because they were older than the series' last stored
-	// point (a clock that jumped back, data re-sent after a divergence) or
-	// over the per-node series limit. DroppedDuplicate counts harmless
-	// re-sent copies of points it already had (refills, retried batches).
+	// DroppedOutOfOrder / DroppedCardinality count points the master's replica refused because
+	// they were older than the series' last stored point.
 	DroppedOutOfOrder  int64 `json:"dropped_out_of_order,omitempty"`
 	DroppedDuplicate   int64 `json:"dropped_duplicate,omitempty"`
 	DroppedCardinality int64 `json:"dropped_cardinality,omitempty"`
@@ -168,10 +165,8 @@ type IncidentAlert struct {
 	FiredAt          int64  `json:"fired_at"`
 	ResolvedAt       int64  `json:"resolved_at,omitempty"`
 	DeliveredLocally bool   `json:"delivered_locally,omitempty"`
-	// Suppressed, when non-empty, means this member is folded into the incident but
-	// never delivered on its own while set: currently only a node-dependency fold
-	// ("suppressed: parent <name> down"). Cleared, and the member delivered as its
-	// own incident, when the dependency releases (see fleetAlertEngine).
+	// Suppressed, when non-empty, means this member is folded into the incident but never
+	// delivered on its own while set: currently only a node-dependency fold.
 	Suppressed string `json:"suppressed,omitempty"`
 	// SilencedBy, when non-empty, is the silence/maintenance reason this member's own fire
 	// matched.
@@ -246,10 +241,8 @@ func (m Matcher) Matches(nodeID, nodeName string, nodeTags []string, rule, sever
 	return true
 }
 
-// CouldApplyToNode reports whether m might match some alert on this node,
-// checking only Node/Tag (Rule/Severity describe the alert, so a matcher with
-// only those always could apply). The master uses it to choose which silences
-// and maintenance windows to push to a node.
+// CouldApplyToNode reports whether m might match some alert on this node, checking only
+// Node/Tag.
 func (m Matcher) CouldApplyToNode(nodeID, nodeName string, nodeTags []string) bool {
 	if m.Node != "" && m.Node != nodeID {
 		if ok, _ := path.Match(m.Node, nodeName); !ok {
@@ -346,12 +339,8 @@ type Route struct {
 	Continue bool      `json:"continue,omitempty"`
 }
 
-// PolicyStep is one delivery step of a Policy: After is a time.ParseDuration
-// string measured from the incident's first successful delivery (After:"0s"
-// is the immediate, first delivery), and Channels are channel NAMES from the
-// master's own config.Config.Channels -- or the literal "*", meaning every
-// currently enabled channel (still gated by each channel's own Route.Allows:
-// quiet hours, severity, kind).
+// PolicyStep is one delivery step of a Policy: After is a time.ParseDuration string
+// measured from the incident's first successful delivery.
 type PolicyStep struct {
 	After    string   `json:"after"`
 	Channels []string `json:"channels"`

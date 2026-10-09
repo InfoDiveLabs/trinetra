@@ -9,10 +9,7 @@ import (
 	"testing"
 )
 
-// newTestPlugin creates a temp file at dir/name with content and mode 0o755
-// (owner rwx, group/other read+exec but NOT write, so it passes the
-// group/world-writable check by default). Tests that want to violate a
-// specific invariant chmod it further after this call.
+// newTestPlugin creates a temp file at dir/name with content and mode 0o755.
 func newTestPlugin(t *testing.T, dir, name string, content []byte) string {
 	t.Helper()
 	path := filepath.Join(dir, name)

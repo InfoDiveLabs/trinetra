@@ -89,10 +89,8 @@ func TestTelegramNotifierSendWithButtonsSetsMarkup(t *testing.T) {
 	}
 }
 
-// TestTelegramNotifierSendWithoutButtonsSetsNoMarkup pins "solo/child
-// behaviour unchanged": an Alert with no Buttons (every non-incident alert,
-// and every alert on solo/child, which never sets Buttons at all) sends the
-// exact same plain request as before this task -- no reply_markup field.
+// TestTelegramNotifierSendWithoutButtonsSetsNoMarkup pins "solo/child behaviour unchanged":
+// an Alert with no Buttons.
 func TestTelegramNotifierSendWithoutButtonsSetsNoMarkup(t *testing.T) {
 	sawMarkup := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

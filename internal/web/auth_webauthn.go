@@ -43,21 +43,8 @@ func newUserID() (string, error) {
 	return newRandomID(32)
 }
 
-// webAuthnConfig builds a *webauthn.WebAuthn configured for the current
-// request: the operator-configured web.rp_id/web.origin when set (required
-// in autocert/manual mode, see internal/config and validateOrigin), or --
-// when left empty, as proxy mode permits -- derived from this request's own
-// resolved origin (requestOriginFromContext, issue #59's withRequestOrigin
-// middleware).
-//
-// This is what makes ceremony origin validation (this task's requirement 4)
-// actually bite: go-webauthn's ParsedCredentialCreationData.Verify rejects
-// any ceremony whose browser-reported clientData.origin isn't exactly one
-// of Config.RPOrigins, so a request whose attestation claims a different
-// origin than the one this server considers authoritative for itself -- the
-// configured origin, or in proxy mode the origin derived from the trusted
-// reverse proxy's forwarded headers -- is rejected regardless of what the
-// client sends.
+// webAuthnConfig builds a *webauthn.WebAuthn configured for the current request: the
+// operator-configured web.rp_id/web.origin when set.
 func webAuthnConfig(cfg *config.Config, r *http.Request) (*webauthn.WebAuthn, error) {
 	rpID, origin := cfg.Web.RPID, cfg.Web.Origin
 	if rpID == "" || origin == "" {

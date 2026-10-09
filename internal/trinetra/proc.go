@@ -16,12 +16,8 @@ type ProcInfo struct {
 	Threads int
 }
 
-// ProcSnapshot is the live process-table overview: aggregate counts by state
-// plus a bounded top-N by CPU (falling back to top-N by mem on the very
-// first tick, before ProcCPUCalc has a prior sample to diff against).
-// Deliberately snapshot-only: per-process series would be a cardinality trap
-// (hundreds of short-lived pids per host), so this is never fed into the
-// SampleStore -- see collectProcesses/daemon.go's sampler loop.
+// ProcSnapshot is the live process-table overview: aggregate counts by state plus a bounded
+// top-N by CPU.
 type ProcSnapshot struct {
 	Total, Running, Sleeping, Zombie int
 	Top                              []ProcInfo

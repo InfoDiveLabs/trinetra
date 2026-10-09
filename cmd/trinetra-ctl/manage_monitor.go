@@ -9,11 +9,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// monitorTargetRow is one Monitor thresholds screen row: a discovered
-// target (core.TargetView, from api.MonitorTargets over the control
-// socket) merged with its current config overrides -- the same enable/
-// threshold state `trinetra monitor list` reports (systemd.go's
-// cmdMonitor) via config.Config.TargetEnabled/TargetThreshold.
+// monitorTargetRow is one Monitor thresholds screen row: a discovered target.
 type monitorTargetRow struct {
 	ID           string
 	Kind         string

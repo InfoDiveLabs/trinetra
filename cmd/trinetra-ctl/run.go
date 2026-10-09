@@ -12,13 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
-// run dispatches a single non-interactive ctl subcommand against api and
-// writes its human-readable output to out, returning the process exit code
-// (0 success, 2 usage error, 1 for a failed API call). It is deliberately
-// decoupled from the socket dialing in main so a test can drive it with a
-// fake core.API and no real control socket. These subcommands are a
-// proof-of-transport for the control socket, not the final UX (the
-// interactive TUI is Task 3).
+// run dispatches a single non-interactive ctl subcommand against api and writes its
+// human-readable output to out, returning the process exit code.
 func run(api core.API, args []string, out io.Writer) int {
 	// --json may appear anywhere; strip it and pass the flag to the read
 	// verbs (status/doctor/alerts). It is inert for the mutating verbs.
@@ -314,9 +309,8 @@ func hostUptime(sec int64) string {
 	}
 }
 
-// runAlerts lists the currently active alerts, or a note when there are none;
-// with jsonOut it emits the alert records as a JSON array (always an array,
-// [] when none, so consumers need not special-case the empty state).
+// runAlerts lists the currently active alerts, or a note when there are none; with jsonOut
+// it emits the alert records as a JSON array.
 func runAlerts(api core.API, out io.Writer, jsonOut bool) int {
 	alerts, err := api.ActiveAlerts()
 	if err != nil {

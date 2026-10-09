@@ -1,5 +1,4 @@
 // Package config is the CLI-managed configuration store for trinetra.
-// There is no env or hand-edited file: all keys are set via `trinetra config set`.
 package config
 
 import (
@@ -483,9 +482,8 @@ func (c *Config) RemoveChannel(name string) bool {
 	return false
 }
 
-// GetChannel returns a pointer to the named channel's config (so callers
-// such as SetChannelField can mutate it in place), or (nil, false) if no
-// channel by that name exists.
+// GetChannel returns a pointer to the named channel's config (so callers such as
+// SetChannelField can mutate it in place).
 func (c *Config) GetChannel(name string) (*ChannelConfig, bool) {
 	for i := range c.Channels {
 		if c.Channels[i].Name == name {

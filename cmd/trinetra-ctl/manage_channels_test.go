@@ -9,9 +9,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestManageMenuChannelsOpensListAndFetches drives the menu -> "channels"
-// path (menu cursor 4, the last item) and asserts it issues
-// fetchChannelsConfigCmd and lands on the list with the fetched channels.
+// TestManageMenuChannelsOpensListAndFetches drives the menu -> "channels" path.
 func TestManageMenuChannelsOpensListAndFetches(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram", Enabled: true})

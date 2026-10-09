@@ -1,11 +1,5 @@
-// onboarding.go holds the first-run onboarding flow's PURE logic: whether
-// it's needed at all, and the config mutation that saves the captured bot
-// token, both unit-tested (onboarding_test.go) against a plain
-// *config.Config and the fake core.API (run_test.go) with no terminal
-// involved. The Bubble Tea glue that walks the user through capturing the
-// token, applying it, and polling api.EnrollmentPIN (Task 1) until
-// enrolled lives in onboard_ui.go, kept thin the same way manage_ui.go is
-// for the config screens.
+// onboarding.go holds the first-run onboarding flow's PURE logic: whether it's needed at
+// all, and the config mutation that saves the captured bot token, both unit-tested.
 package main
 
 import "github.com/InfoDiveLabs/trinetra/internal/config"

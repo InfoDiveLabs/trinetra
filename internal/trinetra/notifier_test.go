@@ -565,9 +565,7 @@ func TestNextRetryGivesUpAfterRetryWindowEvenWithAttemptsLeft(t *testing.T) {
 	}
 }
 
-// TestNextRetryUndroppableGetsLongerBudget: a critical/recover alert must
-// still be retrying at an attempt count and elapsed time that would already
-// have exhausted an ordinary alert's budget.
+// TestNextRetryUndroppableGetsLongerBudget: a critical/recover alert must still be.
 func TestNextRetryUndroppableGetsLongerBudget(t *testing.T) {
 	oldMax, oldUndroppableMax := notifierMaxAttempts, notifierUndroppableMaxAttempts
 	oldWindow, oldUndroppableWindow := notifierRetryWindow, notifierUndroppableRetryWindow
@@ -597,11 +595,8 @@ func TestNextRetryUndroppableGetsLongerBudget(t *testing.T) {
 	}
 }
 
-// TestNotifierQueueRunRetriesFailedChannelThenSucceeds is the end-to-end
-// wiring test: a channel that fails once must be retried (with real, but
-// shrunk, backoff) and eventually deliver -- exactly once, not zero times
-// and not more than the actual number of attempts it
-// took.
+// TestNotifierQueueRunRetriesFailedChannelThenSucceeds is the end-to-end wiring test: a
+// channel that fails once must be retried.
 func TestNotifierQueueRunRetriesFailedChannelThenSucceeds(t *testing.T) {
 	withShortNotifierRetryTuning(t)
 	n := &flakyNotifier{name: "flaky", failUntil: 1}

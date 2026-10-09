@@ -219,13 +219,8 @@ func TestResolveEnrollRoleClosedAfterBootstrap(t *testing.T) {
 	}
 }
 
-// TestResolveEnrollRoleFailsClosedOnUnreadableStore pins the #105 secondary
-// hardening: an UNREADABLE user store (corrupt/partially-written users.json,
-// I/O error) must NOT be treated as a genuine empty first-run store. If it
-// were, an attacker could tokenlessly bootstrap an admin during any window
-// the store is unreadable. resolveEnrollRole must fail closed -- return an
-// error, never bootstrap=true -- rather than trust List() swallowing the read
-// error into an empty slice.
+// TestResolveEnrollRoleFailsClosedOnUnreadableStore pins the #105 secondary hardening: an
+// UNREADABLE user store.
 func TestResolveEnrollRoleFailsClosedOnUnreadableStore(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
@@ -475,15 +470,8 @@ func enrollFinishRR(t *testing.T, h http.Handler, challenge string, cookie *http
 	return rr.Code
 }
 
-// TestBootstrapRaceYieldsExactlyOneAdmin is the TOCTOU regression pin: two
-// tokenless enrollments that BOTH begin against an empty store (each reads
-// zero users, each is a bootstrap attempt) must not both become admin. The
-// admin-or-refuse decision is made atomically at finish time
-// (jsonUserStore.CreateFirstAdmin, under the write lock), so whichever finish
-// commits first becomes the sole admin and the second -- now seeing a
-// non-empty store -- is rejected. The test drives two /enroll/begin, then two
-// /enroll/finish, and asserts exactly one account exists afterward and it is
-// admin.
+// TestBootstrapRaceYieldsExactlyOneAdmin is the TOCTOU regression pin: two tokenless
+// enrollments that BOTH begin against an empty store.
 func TestBootstrapRaceYieldsExactlyOneAdmin(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)

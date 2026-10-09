@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// sessionCtxKey is the unexported context key sessionMiddleware stores the
-// current request's *Session under (only present when the sw_session
-// cookie names a live, non-expired session), for requireCSRF/templates to
-// read back via sessionFromContext.
+// sessionCtxKey is the unexported context key sessionMiddleware stores the current
+// request's *Session under.
 type sessionCtxKey struct{}
 
 // sessionMiddleware reads the sw_session cookie (if any) and, when it names a live session
@@ -27,10 +25,8 @@ func sessionMiddleware(store SessionStore, next http.Handler) http.Handler {
 	})
 }
 
-// sessionFromContext returns the *Session sessionMiddleware stashed for this
-// request, or (nil, false) if there wasn't one (no cookie, unknown ID, or
-// expired -- SessionStore.Get treats an expired record as absent, which is
-// exactly what should make a request look unauthenticated here too).
+// sessionFromContext returns the *Session sessionMiddleware stashed for this request, or
+// (nil, false) if there wasn't one.
 func sessionFromContext(r *http.Request) (*Session, bool) {
 	sess, ok := r.Context().Value(sessionCtxKey{}).(*Session)
 	return sess, ok && sess != nil
@@ -53,10 +49,8 @@ func userMiddleware(store UserStore, next http.Handler) http.Handler {
 	})
 }
 
-// userFromContext returns the *User userMiddleware stashed for this
-// request, or (nil, false) if the request is anonymous (no session, or a
-// session whose UserID no longer resolves to an account -- e.g. a deleted
-// user with a still-live session record).
+// userFromContext returns the *User userMiddleware stashed for this request, or (nil,
+// false) if the request is anonymous.
 func userFromContext(r *http.Request) (*User, bool) {
 	u, ok := r.Context().Value(userCtxKey{}).(*User)
 	return u, ok && u != nil
@@ -79,13 +73,7 @@ func requireRole(min Role, d Deps, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// csrfTokenFromRequest reads the caller-supplied CSRF token off r: the
-// X-CSRF-Token header (what app.js sends alongside a fetch()'d mutation,
-// reading it from base.html's csrf-token meta tag) or, failing that, a
-// csrf_token form field (a plain HTML form POST without JS). r.FormValue
-// only actually parses the body for a application/x-www-form-urlencoded or
-// multipart/form-data Content-Type, so this is a no-op/empty-string read for
-// the JSON POST bodies /enroll and /login use.
+// csrfTokenFromRequest reads the caller-supplied CSRF token off r: the X-CSRF-Token header.
 func csrfTokenFromRequest(r *http.Request) string {
 	if t := r.Header.Get("X-CSRF-Token"); t != "" {
 		return t

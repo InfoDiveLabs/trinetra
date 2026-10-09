@@ -1,11 +1,5 @@
-// Package trinetra: fleet_silences.go is the master's silence and
-// maintenance-window store: explicit silences and recurring
-// maintenance windows, both persisted to silences.json, both suppressing a
-// matching alert exactly the same way (a maintenance window's reason is
-// simply "maintenance <name>"). It also builds the "silences" stream frame
-// pushed to children (fleet_engine.go's TickSilences/PushSilencesNow) and,
-// at the bottom of the file, the child-side counterpart that stores and
-// applies whatever the master last pushed.
+// Package trinetra: fleet_silences.go is the master's silence and maintenance-window store:
+// explicit silences and recurring maintenance windows, both persisted to silences.json.
 package trinetra
 
 import (

@@ -42,13 +42,7 @@ func cosePublicKeyCBORForKey(t *testing.T, priv *ecdsa.PrivateKey) []byte {
 	return b
 }
 
-// registerVirtualCredentialDirect runs a full begin->finish registration
-// ceremony (beginRegistration/finishRegistration, auth_webauthn.go) for u
-// against a freshly generated EC key pair, using the same "none"-attestation
-// shape auth_webauthn_test.go's creationResponseBody builds but pointed at
-// THIS key rather than a throwaway one -- so the private key can go on to
-// sign a login assertion in the same test. Returns the credential ID and
-// private key.
+// registerVirtualCredentialDirect runs a full begin->finish registration ceremony.
 func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store UserStore, ceremonies SessionStore, u *User, origin, rpID string) (credID []byte, priv *ecdsa.PrivateKey) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -350,14 +344,7 @@ func TestLoginRejectsExpiredCeremonySession(t *testing.T) {
 	}
 }
 
-// TestLoginHTTPHandlersAndLogoutCSRFFlow drives the full HTTP surface (POST
-// /login/begin, /login/finish, /logout through newHandler) rather than
-// calling beginLogin/finishLogin directly, pinning that routes.go's wiring --
-// webAuthnConfig derivation, sessionMiddleware/requireCSRF composition, and
-// the sw_session cookie's actual Set-Cookie header -- all work together.
-// Covers this task's CSRF requirement end-to-end: missing token -> 403,
-// mismatched token -> 403 (session left intact), matching token -> 204
-// (session deleted, cookie cleared).
+// TestLoginHTTPHandlersAndLogoutCSRFFlow drives the full HTTP surface.
 func TestLoginHTTPHandlersAndLogoutCSRFFlow(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)

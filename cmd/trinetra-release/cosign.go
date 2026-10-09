@@ -117,9 +117,8 @@ func cmdCosign(args []string) error {
 	return nil
 }
 
-// parseCosignArgs parses "cosign vX.Y.Z [--repo R] [--key F] [--testkeys]",
-// accepting the version and flags in any order (flag.FlagSet stops at the first
-// non-flag argument, which breaks "cosign vX.Y.Z --key FILE").
+// parseCosignArgs parses "cosign vX.Y.Z [--repo R] [--key F] [--testkeys]", accepting the
+// version and flags in any order.
 func parseCosignArgs(args []string) (version, repo, keyFile string, testkeys bool, err error) {
 	repo = "InfoDiveLabs/trinetra"
 	repoSet := false

@@ -32,9 +32,8 @@ func takeApplyLock(p updatePaths) (unlock func(), err error) {
 	return unlock, nil
 }
 
-// probeApplyLock reports errUpdateInProgress when another operation holds
-// the apply lock right now, without keeping it (the socket preflights use
-// it to refuse fast; the operation itself takes the lock for real).
+// probeApplyLock reports errUpdateInProgress when another operation holds the apply lock
+// right now, without keeping it.
 func probeApplyLock(p updatePaths) error {
 	unlock, err := takeApplyLock(p)
 	if err != nil {
@@ -56,17 +55,12 @@ func healthDeadline() time.Duration {
 	return updateHealthDeadline
 }
 
-// updatePaths locates everything a self-update touches: the binaries in
-// BinDir, this package's scratch space under StateDir/update (staged
-// downloads, the previous build kept for rollback, cached manifests, state
-// and locks), the pinned guard binary in GuardDir, and the watchdog units in
-// UnitDir.
+// updatePaths locates everything a self-update touches: the binaries in BinDir, this
+// package's scratch space under StateDir/update.
 type updatePaths struct{ BinDir, StateDir, GuardDir, UnitDir string }
 
-// defaultGuardDir holds the pinned guard binary: a copy of the binary
-// that performed the last apply (or install), on an exec-friendly root path
-// (not /var/lib, which is often noexec or labelled non-executable), so the
-// guard and the watchdog never execute the new, unproven build.
+// defaultGuardDir holds the pinned guard binary: a copy of the binary that performed the
+// last apply (or install), on an exec-friendly root path.
 const defaultGuardDir = "/usr/local/lib/trinetra/guard"
 
 // defaultUpdatePaths is what production callers use: the real install
@@ -90,11 +84,7 @@ const (
 	pendingSwapped  = "swapped"
 )
 
-// selfExecutable is the file the pinned guard is copied from: the running
-// binary. /proc/self/exe is preferred on Linux because it still opens after
-// the file on disk has been replaced (a daemon serving a socket apply after
-// an install); os.Executable would then name a "(deleted)" path. A variable
-// so tests can point it at a small fixture.
+// selfExecutable is the file the pinned guard is copied from: the running binary..
 var selfExecutable = func() (string, error) {
 	if _, err := os.Stat("/proc/self/exe"); err == nil {
 		return "/proc/self/exe", nil
@@ -173,10 +163,8 @@ type applyPlan struct {
 	Names    []string
 }
 
-// updateBinaries lists every binary self-update knows how to swap, in the
-// fixed order planApply/swapIn/restorePrevious always process them:
-// "trinetra" (the core daemon, always installed and always required) then
-// each companion plugin recognised by pluginManifestNames.
+// updateBinaries lists every binary self-update knows how to swap, in the fixed order
+// planApply/swapIn/restorePrevious always process them: "trinetra".
 var updateBinaries = append([]string{"trinetra"}, pluginNamesWithPrefix()...)
 
 // pluginNamesWithPrefix turns pluginManifestNames ("ctl", "web", from systemd.go) into

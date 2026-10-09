@@ -1,7 +1,4 @@
-// Package trinetra: fleet_replica.go is the master's side of fleet
-// ingest: a fleet.Sink that writes each child's records into its own tsfile
-// store under <stateDir>/fleet/nodes/<id>/, plus a core.API view over that
-// replica so every existing per-server read works for a remote node.
+// Package trinetra: fleet_replica.go is the master's side of fleet ingest.
 package trinetra
 
 import (
@@ -412,14 +409,8 @@ func (n *replicaNode) apply(id string, recs []fleet.Record, sequenced bool, onAl
 			if json.Compact(&line, rec.Data) != nil {
 				continue
 			}
-			// Scoped per ALERT KEY (never a single guard shared across every
-			// key on the node): a delayed fallback record for one key (its
-			// Time is the LATER fallback-decision moment, not the alert's
-			// own FiredAt -- see fleet_lease.go's deliverFallback) must
-			// never be able to advance the ordering guard past a genuinely
-			// newer, unrelated alert on a DIFFERENT key and cause it to be
-			// silently dropped here (see
-			// TestReplicaApplyCrossAlertKeyOrderingDropRepro).
+			// Scoped per ALERT KEY (never a single guard shared across every key on the node): a
+			// delayed fallback record for one key.
 			lastTS := n.lastAlertTS[ev.Key]
 			if ev.Time == lastTS && n.alertLines[ev.Key][line.String()] {
 				n.st.DroppedDuplicate++
@@ -596,11 +587,8 @@ func (r *replicaSink) LiveOf(id string) *fleet.LiveUpdate {
 	return n.live.Load()
 }
 
-// maintSliceSize is how many of total replicas one master tick maintains so
-// that each is maintained about once per interval: replica maintenance
-// (Downsample + Prune, which rewrite and fsync series files) runs on the same
-// cadence as the local store's (storeMaintenanceInterval), staggered across
-// ticks instead of every node at once.
+// maintSliceSize is how many of total replicas one master tick maintains so that each is
+// maintained about once per interval: replica maintenance.
 func maintSliceSize(total int, tick, interval time.Duration) int {
 	if total <= 0 {
 		return 0

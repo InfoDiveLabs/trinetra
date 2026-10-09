@@ -206,23 +206,14 @@ type Snapshot struct {
 	// ContainerStats is the live per-container cpu%/mem/net snapshot from `docker stats
 	// --no-stream` (opt-in via collect.container_stats, slow-tier only).
 	ContainerStats map[string]ContainerStat `json:"container_stats,omitempty"`
-	// NetRates is the live per-interface network throughput (bytes/sec),
-	// computed by NetRateCalc from consecutive /proc/net/dev samples
-	// (opt-in via collect.net_throughput, slow-tier only, see daemon.go's
-	// sampler loop and net.go). Empty/nil on the very first slow tick (no
-	// prior sample to diff against yet) and whenever the collector is
-	// disabled. Keyed by interface name.
+	// NetRates is the live per-interface network throughput (bytes/sec), computed by
+	// NetRateCalc from consecutive /proc/net/dev samples.
 	NetRates map[string]IfaceRate `json:"net_rates,omitempty"`
 	// Units is the live, full systemd service-unit inventory (opt-in via collect.services,
 	// slow-tier only, see daemon.go collectSlow and discover.go listUnits/parseUnits).
 	Units []UnitInfo `json:"units,omitempty"`
-	// Processes is the live process-table overview (counts + top-N by
-	// CPU/mem), computed by collectProcesses (opt-in via collect.processes,
-	// slow-tier only, see daemon.go's sampler loop and proc.go). Deliberately
-	// a snapshot only for the Monitoring "processes" tab -- NOT fed into the
-	// SampleStore as a series, since per-process cardinality (hundreds of
-	// short-lived pids per host) is exactly the trap this design avoids,
-	// mirroring Units above.
+	// Processes is the live process-table overview (counts + top-N by CPU/mem), computed by
+	// collectProcesses.
 	Processes ProcSnapshot `json:"processes,omitempty"`
 	// CollectorErrors is the set of slow-tier collectors that were ATTEMPTED this cycle but
 	// failed (key -> error text), e.g. "docker"/"disk"/ "services"/"smart" (#110).

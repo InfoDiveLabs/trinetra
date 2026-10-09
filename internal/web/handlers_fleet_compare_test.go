@@ -12,13 +12,7 @@ import (
 
 // ---- the /fleet checkbox selection must survive the table's 5s htmx poll ----
 
-// TestAppJSFleetCompareSurvivesTablePoll is a static source scan (same
-// convention as templates_node_test.go's TestAppJSDataFetchesGoThroughNodeURL:
-// read assets/app.js's embedded source, assert the expected code shapes are
-// present) pinning that a persisted selection Set survives #fleet-tbody's
-// every-5s outerHTML swap (which replaces every checkbox with a fresh,
-// unchecked one), re-applied onto the fresh checkboxes on htmx:afterSwap
-// before the counter/button are refreshed.
+// TestAppJSFleetCompareSurvivesTablePoll is a static source scan.
 func TestAppJSFleetCompareSurvivesTablePoll(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {

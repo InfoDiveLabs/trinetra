@@ -1,8 +1,5 @@
-// Package trinetra: fleet_dispatch.go is the master alerting engine's keyed
-// dispatcher: replaces a bare goroutine-per-alert with
-// one FIFO lane per dispatch key (so a recover is never run before its own
-// fire) and a global semaphore bounding how many dispatches run at once.
-// Enqueue never blocks its caller.
+// Package trinetra: fleet_dispatch.go is the master alerting engine's keyed dispatcher:
+// replaces a bare goroutine-per-alert with one FIFO lane per dispatch key.
 package trinetra
 
 import (
@@ -21,15 +18,8 @@ type dispatchLane struct {
 	pumping bool
 }
 
-// keyedDispatcher runs jobs off their own goroutine(s), never the caller's:
-// each key gets a FIFO (so ordering within a key -- e.g. a fire then its
-// recover -- is preserved regardless of how long an earlier job takes), and
-// a global semaphore of dispatchConcurrency bounds total concurrency across
-// all keys. Enqueue itself never blocks: it only appends to a mutex-guarded
-// slice and, at most, starts one goroutine for a lane that was idle. A lane
-// with an empty queue is removed from d.lanes,
-// so a long-lived dispatcher with high key churn holds no more lanes than
-// are currently active.
+// keyedDispatcher runs jobs off their own goroutine(s), never the caller's: each key gets a
+// FIFO.
 type keyedDispatcher struct {
 	sem chan struct{}
 
@@ -83,13 +73,8 @@ func (d *keyedDispatcher) Enqueue(key string, job func()) {
 	}
 }
 
-// pump drains l's queue strictly in order, one job at a time, acquiring the
-// dispatcher's global semaphore around each job (never while holding d.mu,
-// so a slow job cannot stall Enqueue or any other lane's pump) so at most
-// dispatchConcurrency run concurrently across every lane. It retires the
-// lane (clears pumping and removes it from d.lanes) in the same critical
-// section that observes the queue as empty -- see Enqueue's doc comment for
-// why that must be one atomic decision rather than two.
+// pump drains l's queue strictly in order, one job at a time, acquiring the dispatcher's
+// global semaphore around each job.
 func (d *keyedDispatcher) pump(key string, l *dispatchLane) {
 	for {
 		d.mu.Lock()

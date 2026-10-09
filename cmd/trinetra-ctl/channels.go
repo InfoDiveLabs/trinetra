@@ -1,10 +1,5 @@
-// channels.go holds the Channels screen's PURE logic: the add/edit/remove
-// config mutations and the #79-safe validate-before-save gate, all unit-
-// tested (channels_test.go) against a plain *config.Config and the fake
-// core.API (run_test.go) with no terminal involved. The Bubble Tea glue
-// that walks the user through these (manage_channels.go) is deliberately
-// thin, mirroring the split manage_schedule.go/setup_web.go already
-// establish for their own screens.
+// channels.go holds the Channels screen's PURE logic: the add/edit/remove config mutations
+// and the #79-safe validate-before-save gate, all unit- tested.
 package main
 
 import (

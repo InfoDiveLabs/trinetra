@@ -31,11 +31,7 @@ type fleetMemo struct {
 	nodes     []core.NodeSummary
 	nodesErr  error
 
-	// incidentsFiringOnce/incidentsFiringCount/incidentsFiringErr memoize
-	// fleetIncidentsFiringCount's own Incidents(State:"firing",
-	// Limit:fleetIncidentsFiringCap) call -- the "Incidents" nav badge's data
-	// source, computed at most once per request exactly like
-	// fleetStatus/fleetNodes above.
+	// incidentsFiring* memoize the Incidents nav badge count per request.
 	incidentsFiringOnce  sync.Once
 	incidentsFiringCount int
 	incidentsFiringErr   error

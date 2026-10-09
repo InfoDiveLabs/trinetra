@@ -9,11 +9,8 @@ import (
 	"sort"
 )
 
-// activeAlertView is one row of the dashboard's "Active alerts" panel,
-// projected from core.AlertRecord (the daemon's ActiveAlerts, read over the
-// control socket -- see activeAlertsViaAPI). It carries only what the panel
-// and the topbar status pill render, so those pages never read the daemon's
-// alerts.json off disk.
+// activeAlertView is one row of the dashboard's "Active alerts" panel, projected from
+// core.AlertRecord.
 type activeAlertView struct {
 	Key    string
 	Reason string
@@ -109,15 +106,7 @@ type DashboardPageData struct {
 	TopMemBars []containerBar
 }
 
-// buildDashboardPageData assembles DashboardPageData from Deps: the live
-// snapshot (Deps.API.Snapshot(), core.API's projection of the daemon's live
-// state -- see core.DashboardView's doc) plus the current active-alerts list
-// (activeAlertsViaAPI, over the control socket). The topbar's status pill
-// (PageData.Status/StatusText) is computed by newPageData itself from that
-// same active-alert set (topbarStatus, templates.go) -- see PageData's doc
-// for why every page
-// shares one computation rather than this page deriving its own from
-// disk/unit state.
+// buildDashboardPageData assembles DashboardPageData from Deps: the live snapshot.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
 	// snapshotViaAPI is memoized per request, so this read is shared with navCountsFor's

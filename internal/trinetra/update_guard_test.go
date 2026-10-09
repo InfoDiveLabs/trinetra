@@ -75,12 +75,7 @@ func TestGuardRollsBackOnEachFailedCondition(t *testing.T) {
 	}
 }
 
-// TestGuardNormalizesVPrefixedPendingVersion: Pending.Version can carry a "v"
-// prefix (e.g. rollback stored `version --json`'s raw output; see
-// TestUpdaterRollbackNormalizesVersion) while a healthy daemon's
-// control.Client.Version() reports without one (or vice versa).
-// checkGuardHealth must trim "v" on BOTH sides, as smokeTest does, or a healthy
-// restart is misdiagnosed as a version mismatch and wrongly rolled back.
+// TestGuardNormalizesVPrefixedPendingVersion: Pending.Version can carry a "v" prefix.
 func TestGuardNormalizesVPrefixedPendingVersion(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "v0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}})
 	h := &fakeHealth{active: true, version: "0.5.0", ts: 1002}
@@ -90,10 +85,8 @@ func TestGuardNormalizesVPrefixedPendingVersion(t *testing.T) {
 	}
 }
 
-// TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad: a healthy rollback
-// confirmation must commit without raising the floor (Floor starts unset here,
-// so a buggy RaiseFloor call would be observable) and without marking the
-// rolled-back-to version bad.
+// TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad: a healthy rollback confirmation must
+// commit without raising the floor.
 func TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -295,11 +288,8 @@ func TestGuardRetryDoesNotReRunHealthGate(t *testing.T) {
 	}
 }
 
-// TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation is a
-// guard-rail alongside TestGuardKeepsPendingWhenRestoreFails: a rollback
-// confirmation (Rollback: true) never attempts restorePrevious at all (there
-// is no older build to fall back to -- see rollbackPending's doc), so it
-// must never set Pending.RestoreFailed even when BinDir is unwritable.
+// TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation is a guard-rail
+// alongside TestGuardKeepsPendingWhenRestoreFails: a rollback confirmation.
 func TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)

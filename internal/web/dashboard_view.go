@@ -2,11 +2,7 @@ package web
 
 import "github.com/InfoDiveLabs/trinetra/internal/core"
 
-// DashboardView and its nested types moved to internal/core/dto.go so both this
-// package and internal/cli can consume the same projection of the daemon's live
-// Snapshot without internal/web depending on internal/trinetra. These are Go
-// type aliases, not new types, so every existing handler/template reference in
-// this package (v.CPU, v.Disks, etc.) keeps compiling unchanged.
+// DashboardView and its nested types moved to internal/core/dto.go so both this package.
 type DashboardView = core.DashboardView
 type ProcessCounts = core.ProcessCounts
 type ContainerView = core.ContainerView

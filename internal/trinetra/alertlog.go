@@ -1,9 +1,5 @@
-// Package trinetra: alertlog.go implements the alert event log -- an
-// append-only JSONL history of every alert notification the daemon has
-// dispatched (fired/recovered, and which channels actually delivered it).
-// This is deliberately separate from AlertState (alerts.json, the current
-// *active* alerts) and from the downtime/sample stores: it exists purely so
-// a human can later answer "was I notified about X, and did it get through?"
+// Package trinetra: alertlog.go implements the alert event log -- an append-only JSONL
+// history of every alert notification the daemon has dispatched.
 package trinetra
 
 import (

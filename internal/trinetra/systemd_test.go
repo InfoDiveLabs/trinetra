@@ -57,12 +57,8 @@ func TestRenderUnit(t *testing.T) {
 	}
 }
 
-// TestCmdDoctorPrintsCollectorSummary is a CLI-level smoke test for
-// cmdDoctor: it loads the configured store (via openConfiguredStore, same
-// helper migrate/dump use) and renders the collector on/off toggles plus
-// SampleStore stats via buildDoctorReport/renderDoctorReport (systemd.go).
-// Exercises the real tsfile-backend path end to end, not just those helpers
-// in isolation.
+// TestCmdDoctorPrintsCollectorSummary is a CLI-level smoke test for cmdDoctor: it loads the
+// configured store.
 func TestCmdDoctorPrintsCollectorSummary(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -170,10 +166,8 @@ func TestWritePluginManifest_RecordsPresentCompanions(t *testing.T) {
 	}
 }
 
-// TestWritePluginManifest_OmitsAbsentCompanion checks that when only one
-// companion binary is present next to the daemon (a `trinetra-ctl`-only
-// install with no `trinetra-web`, or vice versa), the manifest simply
-// omits the absent one rather than erroring or recording a bogus entry.
+// TestWritePluginManifest_OmitsAbsentCompanion checks that when only one companion binary
+// is present next to the daemon.
 func TestWritePluginManifest_OmitsAbsentCompanion(t *testing.T) {
 	prevStateDir := stateDir
 	stateDir = t.TempDir()

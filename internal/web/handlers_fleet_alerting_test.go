@@ -72,11 +72,8 @@ func fleetAlertingFixtureCfg() core.AlertingConfig {
 	}
 }
 
-// fleetAlertingSaveForm returns a minimal, individually valid structured-
-// form POST body for one route (tag=web -> policy p1) and one policy (p1,
-// one immediate step to every channel), op=save -- used only by the tests
-// below that don't need a real rendered page (a bare RBAC/size check), not
-// as a stand-in for what the template actually renders.
+// fleetAlertingSaveForm returns a minimal, individually valid structured- form POST body
+// for one route (tag=web -> policy p1) and one policy.
 func fleetAlertingSaveForm(version string) url.Values {
 	return url.Values{
 		"mode":                     {"form"},
@@ -157,9 +154,7 @@ func TestFleetAlertingRowLabelsAreOneIndexed(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingPolicyIntroReadsGrammatically pins that the Policies
-// section's intro reads as a sentence rather than dropping the "After"/"Repeat
-// every" field labels straight into it.
+// TestFleetAlertingPolicyIntroReadsGrammatically pins that the Policies section's intro.
 func TestFleetAlertingPolicyIntroReadsGrammatically(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	rr := fleetAdminGetAsRole(t, d, RoleAdmin, "/fleet/alerting")
@@ -279,10 +274,7 @@ func TestFleetAlertingAddRoutePreservesPoliciesAndRules(t *testing.T) {
 	// "Rules".
 }
 
-// TestFleetAlertingSaveSendsFullConfigUnchangedExceptRouteEdit pins that
-// clicking "Save" after editing only the route's name must submit the policies
-// and rule UNCHANGED alongside that one route edit -- never fabricated/blank
-// copies.
+// TestFleetAlertingSaveSendsFullConfigUnchangedExceptRouteEdit pins that clicking "Save".
 func TestFleetAlertingSaveSendsFullConfigUnchangedExceptRouteEdit(t *testing.T) {
 	fleet := &fakeFleet{alertingCfg: fleetAlertingFixtureCfg()}
 	d := fleetAdminDeps(t, fleet)
@@ -444,9 +436,8 @@ func TestFleetAlertingConflictReturns409KeepsInput(t *testing.T) {
 // --------------------------------------------------------------------------- Edit as JSON
 // ---------------------------------------------------------------------------
 
-// TestFleetAlertingJSONSave pins the "edit as JSON" mode end to end,
-// clicking the real rendered "Save JSON" button (proving its CSRF token is
-// actually wired up, not just assumed).
+// TestFleetAlertingJSONSave pins the "edit as JSON" mode end to end, clicking the real
+// rendered "Save JSON" button.
 func TestFleetAlertingJSONSave(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -528,10 +519,8 @@ func TestFleetAlertingRequestTooLarge(t *testing.T) {
 // --------------------------------------------------------------------------- Route tester
 // ---------------------------------------------------------------------------
 
-// TestFleetAlertingRouteTesterMultiplePolicies pins the Continue fan-out
-// case: RouteTest returning several policies renders every one of them
-// (name, steps, repeat) plus any suppression -- viewer-accessible, CSRF
-// required.
+// TestFleetAlertingRouteTesterMultiplePolicies pins the Continue fan-out case: RouteTest
+// returning several policies renders every one of them.
 func TestFleetAlertingRouteTesterMultiplePolicies(t *testing.T) {
 	sendResolved := true
 	fleet := &fakeFleet{routeTestResult: core.RouteDecision{

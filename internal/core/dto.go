@@ -7,9 +7,7 @@ type Resolution int
 const (
 	ResRaw Resolution = iota
 	Res1m
-	// ResAuto lets the implementation pick the resolution, via
-	// trinetra.PickResolution (which stays in internal/trinetra because it needs the
-	// store's raw-retention config, out of reach of this stdlib-only package).
+	// ResAuto lets the implementation pick the resolution, via trinetra.PickResolution.
 	ResAuto
 )
 
@@ -128,8 +126,7 @@ type DiskView struct {
 	FreeBytes uint64  `json:"free_bytes"`
 	SizeBytes uint64  `json:"size_bytes"`
 	// DaysToFull/DaysToFullKnown mirror trinetra.DiskDetail's linear-fill projection;
-	// DaysToFullKnown false means no meaningful trend yet (under 2 history points, or
-	// flat/declining usage).
+	// DaysToFullKnown false means no meaningful trend yet.
 	DaysToFull      float64 `json:"days_to_full,omitempty"`
 	DaysToFullKnown bool    `json:"days_to_full_known,omitempty"`
 }
@@ -321,21 +318,7 @@ type HostInfoView struct {
 	Disks         []HostDiskView `json:"disks,omitempty"`
 }
 
-// UpdateStatusView is core's projection of a host's self-update posture
-// (updateStatus, built from internal/update's State/KeySet) for the UpdateStatus/
-// UpdateCheck methods and the web Updates page. Running is the current build,
-// Channel/Source mirror update.channel/update.source, Floor is the version floor
-// that never lowers, Available is the newest release the last check found,
-// Previous is the build kept for rollback, Pending is set while an update awaits
-// its health-guard confirmation, Last is the latest apply/rollback outcome, and
-// KeysLoaded reports whether release keys are compiled in (ProductionKeys()).
-//
-// InProgress/LastError reflect the daemon's background apply/rollback: over the
-// socket, UpdateApply/UpdateRollback run their fast checks synchronously, then
-// continue in a goroutine and return, so a caller polls UpdateStatus for
-// InProgress and, when done, LastError (cleared on a clean finish; Last only
-// updates once a build was swapped in). Always false/"" for implementations that
-// run synchronously (the CLI and the file-backed API).
+// UpdateStatusView is core's projection of a host's self-update posture.
 type UpdateStatusView struct {
 	Running    string             `json:"running"`
 	Channel    string             `json:"channel"`

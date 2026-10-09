@@ -170,14 +170,7 @@ func TestTSFileMetricsDecodeEncodedIDs(t *testing.T) {
 	}
 }
 
-// TestReplicaApplyEvictsNodeOnWriteFailure proves a write failure partway
-// through a batch (record 2 of 4's raw-sample Append fails; the event and
-// alert records after it are never even attempted) does not poison the
-// in-memory ordering guard for the child's retry: after the failure is
-// cleared, resubmitting the EXACT SAME batch must apply every record
-// exactly once (no loss of what only the retry can write, no duplication of
-// what the first, partial attempt already got onto disk), and AppliedSeq
-// must advance only once the retry actually succeeds.
+// TestReplicaApplyEvictsNodeOnWriteFailure proves a write failure partway through a batch.
 func TestReplicaApplyEvictsNodeOnWriteFailure(t *testing.T) {
 	root := t.TempDir()
 	r := newReplicaSink(root, StoreOptions{}, nil)
@@ -542,10 +535,8 @@ func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
 
 // --- replicaAPI: remote ack/unack and container logs --------------
 
-// TestReplicaAPIAckAlertPushesFrameAndRecordsIncident: on a connected node,
-// AckAlert pushes an "ack" frame down that node's stream (a real, joined child
-// observes it) AND immediately records the ack on the master's own open
-// incident for (node, key).
+// TestReplicaAPIAckAlertPushesFrameAndRecordsIncident: on a connected node, AckAlert pushes
+// an "ack" frame down that node's stream.
 func TestReplicaAPIAckAlertPushesFrameAndRecordsIncident(t *testing.T) {
 	m := newRPCTestMaster(t)
 	frames := make(chan fleet.Frame, 4)
@@ -727,10 +718,8 @@ func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 // TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix: a compromised or buggy
 // child can POST back any error text in its RPC result.
 func TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix(t *testing.T) {
-	// Mirrors internal/control/client.go's wireErrSentinels list -- kept as
-	// literal texts here (not an import of internal/control, to stay out of
-	// this slice's scope) so this test still catches the regression even if
-	// this package never imports internal/control.
+	// Mirrors internal/control/client.go's wireErrSentinels list -- kept as literal texts
+	// here.
 	sentinels := []string{
 		core.ErrNoSuchNode.Error(),
 		core.ErrNotMaster.Error(),

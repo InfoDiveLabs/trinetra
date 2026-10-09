@@ -35,10 +35,7 @@ type alertHistoryRow struct {
 	Delivered string // comma-joined channel names that accepted delivery
 }
 
-// deliveredNames renders a history record's DeliveredTo (the channels that
-// actually accepted the notification, OK == true, carried over the socket in
-// core.AlertRecord) as a comma-joined list, or "-" if none did (or none were
-// configured).
+// deliveredNames renders a history record's DeliveredTo.
 func deliveredNames(r core.AlertRecord) string {
 	if len(r.DeliveredTo) == 0 {
 		return "-"
@@ -121,11 +118,7 @@ type AlertsPageData struct {
 	// NodeConnected reports whether ack/unack should render as LIVE actions: always true for
 	// the self scope.
 	NodeConnected bool
-	// RemoteReason is the fixed "node is not connected" text
-	// (nodeNotConnectedReason, handlers_logs.go) templates/alerts.html
-	// renders as the disabled Ack/Unack button's label/title when
-	// NodeRemote && !NodeConnected -- carried as data instead of a second
-	// hardcoded literal in the template.
+	// RemoteReason is the fixed "node is not connected" text.
 	RemoteReason string
 	// Flash/FlashErr surface a fixed-code redirect flash (resolveAlertsFlash below) for a
 	// remote ack/unack's backend failure.

@@ -1,6 +1,4 @@
-// Package trinetra: enroll_test.go covers enrollState (enroll.go), the
-// shared holder that makes the daemon's poll loop and the control socket's
-// EnrollmentPIN read the SAME Telegram enrollment pin (#90).
+// Package trinetra: enroll_test.go covers enrollState (enroll.go).
 package trinetra
 
 import (

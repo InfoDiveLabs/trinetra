@@ -112,9 +112,7 @@ func TestSwapInRefusesWithoutInstalledCore(t *testing.T) {
 	}
 }
 
-// crashMidSwap runs swapIn and kills it (runtime.Goexit, which like a real
-// crash skips the rest of swapIn, including its restore-on-error path) right
-// after the first binary is replaced.
+// crashMidSwap runs swapIn and kills it.
 func crashMidSwap(t *testing.T, p updatePaths, plan applyPlan) {
 	t.Helper()
 	prev := replaceFileFn

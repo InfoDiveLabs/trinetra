@@ -28,31 +28,7 @@ type NavCounts struct {
 	IncidentsFiring int
 }
 
-// navCountsFor computes NavCounts from Deps: a handful of cheap, per-request
-// reads (one small JSON decode, one config field, one JSON-file user-store
-// list, one already-computed snapshot field) -- safe to call on every page
-// render. Every source is defensive: a nil Cfg/Snapshot func, a missing or
-// socket read error, or an empty/absent user store all degrade to 0
-// rather than panicking or failing the page, mirroring
-// activeAlertsViaAPI/buildDashboardPageData's existing tolerance for the same
-// inputs.
-//
-// Alerts and Monitoring reflect the request's node scope (node_scope.go):
-// they're daemon/core.API concepts, so a /n/{node}/... page's badges show
-// that node's own counts. Channels and Users stay the master's own values
-// regardless of scope -- they're master-local concepts (config channels,
-// this trinetra-web instance's own account store), never node-scoped
-// (global-constraints.md).
-//
-// fleetRole is the caller's already-resolved fleetRole (newPageData's
-// resolveFleetPageInfo, computed once per request); FleetDown is skipped
-// outright (stays 0, no badge) on every solo/child/non-fleet request. When
-// it does run, it reads r's request-scoped fleetMemo (fleet_memo.go)
-// instead of calling Fleet().Nodes() directly -- the roster is very likely
-// already cached from resolveMasterAndNodes/fetchFleetNodes/fleetRole
-// itself having asked for it earlier in this same request, so this costs a
-// real round trip only when nothing else in the request already paid for
-// one.
+// navCountsFor computes NavCounts from Deps: a handful of cheap, per-request reads.
 func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 	var c NavCounts
 

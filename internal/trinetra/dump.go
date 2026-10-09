@@ -1,6 +1,5 @@
-// Package trinetra: dump.go implements the `trinetra dump` subcommand
-// (s9 in docs/handbook/09-storage-and-data-model.md): export one metric's series from the
-// configured SampleStore for humans or graphing tools.
+// Package trinetra: dump.go implements the `trinetra dump` subcommand (s9 in
+// docs/handbook/09-storage-and-data-model.md).
 package trinetra
 
 import (

@@ -1,8 +1,5 @@
-// Package trinetra: fleet_daemon.go is the single place the daemon's
-// fleet role is honoured. startFleet does nothing at all for solo (no
-// directories, no listener, no goroutines); for a master it serves the fleet
-// port, tracks liveness and raises node-down alerts; for a child it starts
-// the shipper and tees local writes into the outbox.
+// Package trinetra: fleet_daemon.go is the single place the daemon's fleet role is
+// honoured. startFleet does nothing at all for solo.
 package trinetra
 
 import (
@@ -62,9 +59,7 @@ func fleetPKIDir(stateDir string) string    { return filepath.Join(stateDir, "fl
 func fleetChildDir(stateDir string) string  { return filepath.Join(stateDir, "fleet-child") }
 func fleetOutboxDir(stateDir string) string { return filepath.Join(stateDir, "outbox") }
 
-// fleetInitPKI creates (or reuses) the master CA and issues a fresh server
-// leaf for hosts. server.crt holds the leaf followed by the CA so children
-// can pin the CA from the presented chain.
+// fleetInitPKI creates (or reuses) the master CA and issues a fresh server leaf for hosts..
 func fleetInitPKI(stateDir string, hosts []string, caName string, now time.Time) error {
 	dir := fleetPKIDir(stateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -198,11 +193,7 @@ type masterLoop struct {
 	reg     *fleet.Registry
 	tracker *fleet.Tracker
 	sink    *replicaSink
-	// engine is the master alerting engine (fleet_engine.go): every alert
-	// this loop raises (node-down/connectivity) goes through
-	// engine.Submit(alertSource{}, ...) exactly like a child-shipped one, so
-	// incidents/dedup cover both producers uniformly. It also owns the lease
-	// push cadence (TickLeases, called from tick below).
+	// engine is the master alerting engine (fleet_engine.go): every alert this loop raises.
 	engine *fleetAlertEngine
 	// managed drives the periodic managed-config push cadence (TickManaged); nil-safe (a
 	// bare-bones masterLoop from an older test suite never calls it).
@@ -220,11 +211,7 @@ type masterLoop struct {
 	// lastDropCheck is when checkDrops last ran.
 	lastDropCheck time.Time
 	// started is when this masterLoop was built (master start or latest restart).
-	// nodeDownAfter is the blind window (every node is seeded as "seen at master
-	// start", so an outage that predates a restart is never mistaken for a fresh
-	// one), captured once like the tracker's seed. Together they gate
-	// orphanChecked: the FIRST tick once now >= started+nodeDownAfter runs
-	// checkOrphanedIncidents exactly once.
+	// nodeDownAfter is the blind window.
 	started       time.Time
 	nodeDownAfter time.Duration
 	orphanChecked bool
@@ -536,12 +523,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	// SetConfig: lets tryDeliverGroup read the LIVE fleet.fallback_after (config can change at
 	// runtime via `set`) for effectiveGroupInterval's cap.
 	engine.SetConfig(d.getCfg)
-	// SetDependencies: expand a node's DependsOn ("tag:<t>"
-	// entries resolved against the registry's CURRENT tag membership, read
-	// fresh on every call so a tag added/removed after the fact takes effect
-	// immediately) into a concrete node-id list the engine can check for
-	// "is any of this node's dependencies currently down" without knowing
-	// anything about the registry itself.
+	// SetDependencies: expand a node's DependsOn.
 	engine.SetDependencies(func(id string) []string {
 		n, ok := reg.Get(id)
 		if !ok {
@@ -717,15 +699,8 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	reconcileManagedValuesAtStart(managedState, d.logf)
 	live := newLiveBuilder(d.latestSnapshot, d.alertStatePath, func() HostInfo { return collectHostInfoFor(d.getCfg()) }, managedState)
 
-	// Lease-based alert handoff (fleet_lease.go): while the master holds a
-	// valid lease, a firing/recovering alert is routed to it instead of
-	// delivered locally (alertRoute, consulted from enqueueAndLog), falling
-	// back to local delivery if no receipt arrives within
-	// fleet.fallback_after or the lease expires first (handoffState.Tick,
-	// driven below). lease/handoffState start with no lease ever granted, so
-	// until the first "lease" frame arrives -- including forever, against an
-	// old master with no stream endpoint at all -- Route always returns
-	// true: local delivery, exactly today's behaviour.
+	// Lease-based alert handoff (fleet_lease.go): while the master holds a valid lease, a
+	// firing/recovering alert is routed to it instead of delivered locally.
 	lease := newLeaseHolder(time.Now)
 	handoffState := newHandoff(time.Now, func() time.Duration { return d.getCfg().FleetFallbackAfter() }, lease)
 	restoreRoute := setAlertRoute(handoffState.Route)

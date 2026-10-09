@@ -24,9 +24,8 @@ func (f *fakeEventsStore) Events(from, to int64) ([]DownEventView, error) {
 	return f.events, nil
 }
 
-// historyTestDeps mirrors dashboardTestDeps/enrollTestDeps: a fresh StateDir
-// plus the given core.API (nil is valid, since the history/series/downtime
-// handlers all treat a nil Deps.API as "no data").
+// historyTestDeps mirrors dashboardTestDeps/enrollTestDeps: a fresh StateDir plus the given
+// core.API.
 func historyTestDeps(t *testing.T, api core.API) Deps {
 	t.Helper()
 	d := enrollTestDeps(t)
@@ -453,9 +452,8 @@ func TestDowntimeAPIOffsetBeyondTotalReturnsEmptyPage(t *testing.T) {
 	}
 }
 
-// TestDowntimeAPIInvalidLimitOffsetRejected pins the limit/offset
-// validation contract: non-numeric, out-of-bounds (limit<1, limit>500,
-// offset<0) all reject with 400 before reaching the store.
+// TestDowntimeAPIInvalidLimitOffsetRejected pins the limit/offset validation contract:
+// non-numeric, out-of-bounds.
 func TestDowntimeAPIInvalidLimitOffsetRejected(t *testing.T) {
 	d := historyTestDeps(t, fakeAPI{events: downtimeEventsFixture(3, 1000, 60)})
 	h := newHandler(d)

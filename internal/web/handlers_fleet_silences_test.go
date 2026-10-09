@@ -390,10 +390,7 @@ func TestFleetMaintenanceAddThenRemoveMatcherPreservesOtherFields(t *testing.T) 
 
 // ---- expire -----------------------------------------------------------------
 
-// TestFleetSilenceExpireWithConfirm drives the real two-step confirm control
-// (style.css's .confirm-toggle, the same CSS-only pattern fleet_admin.html's
-// revoke/remove use) through formValuesForButton, and pins that the actor
-// recorded is the SIGNED-IN web user.
+// TestFleetSilenceExpireWithConfirm drives the real two-step confirm control.
 func TestFleetSilenceExpireWithConfirm(t *testing.T) {
 	fleet := &fakeFleet{silences: []core.Silence{
 		{ID: "sil1", Matchers: []core.Matcher{{Tag: "web"}}, Start: 1000, End: 9999999999, Author: "root"},
@@ -620,10 +617,8 @@ func TestFleetSilencesUnknownIDsAre404(t *testing.T) {
 	}
 }
 
-// TestFleetSilencesNamesEscaped pins that a maintenance name/comment
-// containing HTML is escaped, never rendered raw (html/template's default
-// auto-escaping -- this just pins that nothing here bypasses it, e.g. via a
-// "safeHTML"-style funcMap helper).
+// TestFleetSilencesNamesEscaped pins that a maintenance name/comment containing HTML is
+// escaped, never rendered raw.
 func TestFleetSilencesNamesEscaped(t *testing.T) {
 	fleet := &fakeFleet{
 		silences: []core.Silence{

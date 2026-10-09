@@ -1,18 +1,5 @@
-// Command trinetra-ctl is a separate-process client for a running
-// trinetra daemon: it dials the daemon's control socket (internal/control)
-// to obtain a core.API and drives it. This file wires the transport
-// (resolve socket + token, control.Dial, defer Close) to either run() --
-// which holds the non-interactive subcommand logic (status/doctor/alerts),
-// tested against a fake core.API without a real socket -- or, when invoked
-// with no subcommand at all, runInteractive() (tui.go): a Bubble Tea TUI
-// with a live-status home screen and a guided "set up the web UI" wizard.
-//
-// This binary is the one place in the module allowed to import third-party
-// terminal UI packages (github.com/charmbracelet/bubbletea/bubbles/
-// lipgloss, see tui.go); nothing cmd/trinetra reaches imports this
-// package, so the default daemon build stays stdlib-only (enforced by
-// internal/trinetra/buildtag_test.go's TestDefaultBuildIsStdlibOnly,
-// scoped to cmd/trinetra's own graph for exactly this reason).
+// Command trinetra-ctl is a separate-process client for a running trinetra daemon: it dials
+// the daemon's control socket (internal/control) to obtain a core.API and drives it.
 package main
 
 import (
@@ -31,12 +18,8 @@ func main() {
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// realMain parses the global flags, resolves and dials the control socket,
-// and hands the resulting core.API to run (for a named subcommand) or
-// runInteractive (for none, i.e. `trinetra-ctl` on its own -- see
-// tui.go). It is split out from main so the os.Exit lives in exactly one
-// place; the socket dialing here is what run's and the TUI model's tests
-// replace with a fake core.API.
+// realMain parses the global flags, resolves and dials the control socket, and hands the
+// resulting core.API to run (for a named subcommand) or runInteractive.
 func realMain(args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("trinetra-ctl", flag.ContinueOnError)
 	fs.SetOutput(errOut)

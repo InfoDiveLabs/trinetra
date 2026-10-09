@@ -195,12 +195,8 @@ func TestFleetAdminSelfIDRejected(t *testing.T) {
 	}
 }
 
-// TestFleetAdminTokenCreate pins the create-token flow end to end: the response
-// renders the page directly (200, not a redirect) with the exact `sudo trinetra
-// fleet join <code>` command and a "shown once" note, Cache-Control: no-store
-// is set, Fleet().CreateToken received Creator == the acting admin's name, an
-// audit record was written with the right Action, and -- the security
-// requirement -- the join code itself never appears anywhere in the audit log.
+// TestFleetAdminTokenCreate pins the create-token flow end to end: the response renders the
+// page directly.
 func TestFleetAdminTokenCreate(t *testing.T) {
 	fleet := &fakeFleet{createdToken: core.CreatedToken{
 		Token:    core.TokenView{ID: "tok-new", Uses: 5, Expires: 4102444800, Tags: []string{"web", "prod"}, Creator: "root"},
@@ -512,10 +508,7 @@ func TestFleetAdminNodeRemoveRevokedAllowed(t *testing.T) {
 	}
 }
 
-// TestFleetAdminFleetAPIErrorsRenderAsFlashNever500 pins that any FleetAPI
-// error (ErrNoSuchNode, ErrNotMaster, or a generic daemon-side rejection)
-// renders as a flash message with a 4xx status, never a 500 -- across every
-// mutation route.
+// TestFleetAdminFleetAPIErrorsRenderAsFlashNever500 pins that any FleetAPI error.
 func TestFleetAdminFleetAPIErrorsRenderAsFlashNever500(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

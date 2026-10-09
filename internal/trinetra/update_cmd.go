@@ -1,7 +1,5 @@
 // Package trinetra: update_cmd.go implements `trinetra update
-// status|check|apply|rollback|guard`, the operator/systemd-facing surface
-// over the self-update primitives built in internal/update and
-// update_apply.go (fetch/verify, plan, stage, smoke-test, swap, restore).
+// status|check|apply|rollback|guard`.
 package trinetra
 
 import (
@@ -103,12 +101,8 @@ func (u updater) resolveSource(c *config.Config, bundle string) update.Source {
 	return updateSource(c)
 }
 
-// check fetches and verifies the channel pointer and the release it names,
-// checks it against host policy (floor/running), and records the outcome
-// (LastCheck, LastPointerIssued, and Available when a newer release exists)
-// in state. It returns the fetched manifest even when the policy check
-// fails (e.g. ErrAlreadyInstalled), so a caller can still report what's on
-// the channel.
+// check fetches and verifies the channel pointer and the release it names, checks it
+// against host policy (floor/running), and records the outcome.
 func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, error) {
 	channel := c.UpdateChannel()
 	if channel == "off" {
@@ -141,10 +135,8 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 		}
 		st.LastCheck = now.Unix()
 		st.LastPointerIssued = ptr.Issued
-		// Available drives the "update available" alert, the web Apply
-		// button and Telegram /version, so it names only a release this host
-		// would actually accept (channel, floor, min_upgrade_from, not known
-		// bad); anything else clears it.
+		// Available drives the "update available" alert, the web Apply button and Telegram
+		// /version, so it names only a release this host would actually accept.
 		st.Available = ""
 		if policyErr == nil {
 			st.Available = m.Version
@@ -723,11 +715,8 @@ func cmdUpdateRollback(args []string) int {
 	return 0
 }
 
-// cmdUpdateGuard ("trinetra update guard") is implemented in
-// update_guard.go: the health-gate state machine (wait out the pending
-// update's deadline, confirm or roll back, resume across a crash) that
-// launchGuard starts via systemd-run right after apply/rollback swap a
-// build in.
+// cmdUpdateGuard ("trinetra update guard") is implemented in update_guard.go: the
+// health-gate state machine.
 
 // runningVersion is this build's version; a dev build that does not parse is
 // the zero Version.

@@ -29,11 +29,8 @@ func TestAnomalyThresholdFireOnceThenRecover(t *testing.T) {
 	}
 }
 
-// TestBreachUsesFireMsgWhenSet confirms a threshold breach returns the
-// Check's FireMsg verbatim (for binary health checks like docker/service/
-// smart, which want human wording instead of the numeric comparison), and
-// falls back to the numeric string when FireMsg is empty (regression guard
-// for the existing numeric checks).
+// TestBreachUsesFireMsgWhenSet confirms a threshold breach returns the Check's FireMsg
+// verbatim.
 func TestBreachUsesFireMsgWhenSet(t *testing.T) {
 	withMsg := Check{Key: "docker:web", Value: 1, Threshold: 1, HasThreshold: true, FireMsg: "container web is down (exited)"}
 	if breach, reason := withMsg.breach(NewBaseline(), 3, 0, true); !breach || reason != "container web is down (exited)" {

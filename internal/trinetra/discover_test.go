@@ -130,10 +130,8 @@ func TestParseSmartScan(t *testing.T) {
 	}
 }
 
-// TestIsRealFsType asserts the fstype denylist: real block-device
-// filesystems (ext4/xfs/btrfs/...) pass, pseudo/virtual/container
-// filesystems (overlay, tmpfs, squashfs, proc, ...) are rejected, matching
-// case-insensitively, with fuseblk kept but other fuse.* rejected.
+// TestIsRealFsType asserts the fstype denylist: real block-device filesystems
+// (ext4/xfs/btrfs/...) pass, pseudo/virtual/container filesystems.
 func TestIsRealFsType(t *testing.T) {
 	real := []string{"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "vfat", "exfat", "f2fs", "ntfs", "reiserfs", "jfs", "EXT4", "fuseblk"}
 	for _, f := range real {

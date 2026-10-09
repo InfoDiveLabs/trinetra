@@ -1,27 +1,5 @@
-// Command relsrv is a stdlib-only stand-in for the parts of the GitHub REST
-// API internal/update.GitHubSource talks to, used by the update-e2e docker
-// harness (test/docker/update). It serves a directory of pre-built,
-// pre-signed release fixtures (see test/docker/update/Dockerfile, which
-// produces them at image build time with cmd/trinetra-release) exactly the
-// way a real GitHub release's tag and assets would look to GitHubSource:
-//
-//	GET /repos/InfoDiveLabs/trinetra/releases/tags/{tag}
-//	    -> {"assets":[{"name":"manifest.json","url":".../assets/{tag}/manifest.json"}, ...]}
-//	GET /assets/{tag}/{name}
-//	    -> the raw file bytes (application/octet-stream)
-//
-// Every request must carry "Authorization: Bearer <token>" (the token
-// defaults to "e2etoken", overridable with the TOKEN env var, matching
-// GitHubSource.Token / update.github_token) or the request is refused with
-// 401 -- this is what update-e2e scenario 9 ("config get and dump never
-// print e2etoken") is guarding.
-//
-// One tag directory under RELEASES_DIR (default /releases) per release: for
-// example RELEASES_DIR/v0.5.1/ holds manifest.json, manifest.ci.sig,
-// manifest.maint.sig and the nine trinetra*-linux-* binaries, and
-// RELEASES_DIR/channels/ holds the signed channel pointers (beta.json,
-// beta.json.sig). A tag directory that does not exist on disk 404s, exactly
-// like a real GitHub tag that was never published.
+// Command relsrv is a stdlib-only stand-in for the parts of the GitHub REST API
+// internal/update.GitHubSource talks to, used by the update-e2e docker harness.
 package main
 
 import (

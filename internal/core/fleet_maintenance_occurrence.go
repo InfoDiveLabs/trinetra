@@ -73,9 +73,7 @@ func MaintenanceOccurrences(m Maintenance, from, until time.Time) []Occurrence {
 // more than 7 days so every weekday gets a chance despite the +/-1 day padding.
 const occurrenceScanWindow = 8 * 24 * time.Hour
 
-// NextMaintenanceOccurrence returns the earliest Occurrence of m that has not
-// ENDED as of from, covering both an active window and an upcoming one. ok is
-// false only when m's Weekdays/From/To/TZ do not parse.
+// NextMaintenanceOccurrence returns the earliest Occurrence of m that has not ENDED.
 func NextMaintenanceOccurrence(m Maintenance, from time.Time) (Occurrence, bool) {
 	occs := MaintenanceOccurrences(m, from, from.Add(occurrenceScanWindow))
 	var best Occurrence

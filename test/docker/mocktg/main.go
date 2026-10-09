@@ -1,34 +1,5 @@
-// Command mocktg is a stdlib-only stand-in for the Telegram Bot API, used by
-// the containerized validation harness. It records outbound sendMessage calls
-// (text, chat_id and reply_markup, if any) and serves injected updates --
-// plain messages or callback queries -- back to the daemon's long poller.
-//
-// getUpdates queues are scoped by bot token (the "<tok>" segment of the
-// path), mirroring the real API: each bot only ever sees its own updates.
-// This matters once more than one daemon polls the same mock (fleet-e2e's
-// master and children each carry their own token): an update injected for
-// one token is never stolen by another token's poller. /_inject and
-// /_inject_callback both take an optional "token" query parameter for this;
-// omitting it files the update in a shared/legacy bucket that ANY
-// getUpdates call drains (first poller wins) -- the original, single-queue
-// behavior, kept as the default so existing callers need no changes.
-//
-// Endpoints:
-//
-//	POST /bot<tok>/sendMessage         -- records the "text"/"chat_id"/"reply_markup" form values
-//	POST /bot<tok>/answerCallbackQuery -- records the "callback_query_id"/"text" form values
-//	GET  /bot<tok>/getUpdates          -- returns (and drains) <tok>'s queued updates, plus the shared bucket
-//	POST /_inject?text=...[&token=...]            -- test-only: queue an inbound message (chat 999)
-//	POST /_inject_callback?data=...&chat=...&id=...[&token=...]  -- test-only: queue an inbound
-//	                                       callback_query (chat/id default to 999/an
-//	                                       auto-incrementing "cbN")
-//	GET  /_messages  -- test-only: dump recorded sendMessage texts as a JSON array
-//	GET  /_chats     -- test-only: dump recorded sendMessage chat_id values (same index as
-//	                    /_messages) as a JSON array
-//	GET  /_markups   -- test-only: dump recorded reply_markup values (same index as
-//	                    /_messages; "" for a message sent without one) as a JSON array
-//	GET  /_answers   -- test-only: dump recorded answerCallbackQuery calls, each
-//	                    "<callback_query_id>:<text>", as a JSON array
+// Command mocktg is a stdlib-only stand-in for the Telegram Bot API, used by the
+// containerized validation harness.
 package main
 
 import (
@@ -41,10 +12,8 @@ import (
 	"time"
 )
 
-// botToken extracts the "<tok>" segment from a "/bot<tok>/<method>" path, or
-// "" if the path does not have that shape (should not happen for any real
-// request this mux handles, since every registered method path contains
-// "/bot").
+// botToken extracts the "<tok>" segment from a "/bot<tok>/<method>" path, or "" if the path
+// does not have that shape.
 func botToken(path string) string {
 	const marker = "/bot"
 	i := strings.Index(path, marker)

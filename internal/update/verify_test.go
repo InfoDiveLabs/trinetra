@@ -142,11 +142,8 @@ func TestCheckPolicy(t *testing.T) {
 	}
 }
 
-// TestCheckPolicyNoFloorAcceptsAnyVersion: with no floor recorded and no known
-// running version (HasFloor false, Floor the zero Version) both a 0.0.0
-// pre-release and a later release are accepted; the zero Version standing in for
-// "nothing recorded" must not be compared as an installed version. MinUpgradeFrom
-// is 0.0.0 so only the floor logic is under test.
+// TestCheckPolicyNoFloorAcceptsAnyVersion: with no floor recorded and no known running
+// version.
 func TestCheckPolicyNoFloorAcceptsAnyVersion(t *testing.T) {
 	v := func(s string) Version { x, _ := ParseVersion(s); return x }
 	for _, ver := range []string{"0.0.0-rc.1", "0.5.0"} {

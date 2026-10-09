@@ -12,9 +12,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestAlertsPageListsLogEvents pins the core TDD obligation: a populated
-// alert log (served through the control socket, Deps.API.AlertHistory)
-// renders as history rows on GET /alerts.
+// TestAlertsPageListsLogEvents pins the core TDD obligation: a populated alert log.
 func TestAlertsPageListsLogEvents(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{history: []core.AlertRecord{
@@ -334,10 +332,8 @@ func nodeScopedAlertsDeps(t *testing.T, childState string, child fakeAPI) Deps {
 	return fleetTestDeps(t, masterFakeAPI(fleet, map[string]core.API{"child1": child}))
 }
 
-// TestNodeScopedAlertsAckSucceedsWhenNodeConnected pins the core remote-ack
-// obligation: a connected node's Ack button is enabled, and clicking it (via
-// formValuesForButton, the browser-faithful helper) calls THAT node's own
-// core.API.AckAlert -- not the master's.
+// TestNodeScopedAlertsAckSucceedsWhenNodeConnected pins the core remote-ack obligation: a
+// connected node's Ack button is enabled, and clicking it.
 func TestNodeScopedAlertsAckSucceedsWhenNodeConnected(t *testing.T) {
 	var ackCalled bool
 	var ackedKey string

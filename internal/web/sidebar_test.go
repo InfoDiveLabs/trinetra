@@ -39,13 +39,8 @@ func TestSidebarShowsSignedInUserNotHardcodedName(t *testing.T) {
 	}
 }
 
-// TestSidebarNavLinksCarryTitleAndLabelSpan pins U10b (2026-09-25 UI audit):
-// the icon-rail breakpoint (641-1024px, style.css) hides each nav link's
-// label text via CSS and relies on title/aria-label for its accessible
-// name/tooltip, and on a dedicated .lb span to target the label text with
-// CSS (a bare text node can't be display:none'd). Both must be present at
-// every width, not just the rail's -- they're harmless (a native tooltip,
-// a wrapping span) above and below it.
+// TestSidebarNavLinksCarryTitleAndLabelSpan pins U10b (2026-09-25 UI audit): the icon-rail
+// breakpoint.
 func TestSidebarNavLinksCarryTitleAndLabelSpan(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	h := newHandler(d)

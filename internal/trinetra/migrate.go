@@ -1,15 +1,5 @@
-// Package trinetra: migrate.go implements the `trinetra migrate`
-// subcommand (s9 in docs/handbook/09-storage-and-data-model.md): a one-shot importer that reads
-// every legacy JSONL sample/downtime record written by the old Store
-// (store.go) and re-appends it into the configured SampleStore, then
-// archives the legacy files.
-//
-// Idempotency note: archiving the legacy files alone does NOT make migrate
-// safe to re-run -- a second run would re-read whatever legacy data is on disk
-// and re-import (duplicate) it. To make migrate a true one-shot we drop a
-// marker file (<oldDir>/.migrated, containing the unix time of the import)
-// after the first successful import and refuse to import again while it
-// exists. `--force` bypasses the marker for a deliberate re-import.
+// Package trinetra: migrate.go implements the `trinetra migrate` subcommand (s9 in
+// docs/handbook/09-storage-and-data-model.md).
 package trinetra
 
 import (

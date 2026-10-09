@@ -1,8 +1,5 @@
-// Package updatetest holds the deterministic test signers and key set used
-// by tests and by trinetra_testkeys builds (the e2e image). Nothing in a
-// default build imports it, so release binaries carry neither the signers'
-// publicly derivable private keys nor the test trust anchor (R22; pinned by
-// TestReleaseBinariesCarryNoTestKeys).
+// Package updatetest holds the deterministic test signers and key set used by tests and by
+// trinetra_testkeys builds (the e2e image).
 package updatetest
 
 import (

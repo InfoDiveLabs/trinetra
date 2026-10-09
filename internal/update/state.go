@@ -19,9 +19,8 @@ type Pending struct {
 	Deadline int64    `json:"deadline"`
 	Files    []string `json:"files"`
 	Rollback bool     `json:"rollback,omitempty"`
-	// Phase is "swapping" from just before the first binary is replaced
-	// until every binary and plugins.json are in place, then "swapped"
-	// (empty in state written before phases existed: treat as swapped).
+	// Phase is "swapping" from just before the first binary is replaced until every binary and
+	// plugins.json are in place, then "swapped".
 	Phase string `json:"phase,omitempty"`
 	// RestoreFailed is set by the guard's rollbackPending when a Pending has failed its health
 	// gate AND restoring the previous build itself then fails: the failure detail.

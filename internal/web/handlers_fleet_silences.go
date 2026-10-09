@@ -1,29 +1,5 @@
-// handlers_fleet_silences.go: GET
-// /fleet/silences -- the silences (Active/Upcoming/Expired tabs, a
-// create-silence form) and maintenance windows (a list showing each
-// window's next occurrence, a create form) page -- over core.FleetAPI's
-// Silences/CreateSilence/ExpireSilence/Maintenances/SaveMaintenance/
-// DeleteMaintenance (internal/core/fleet.go). Master-only (fleetGateHTML,
-// exactly like every other /fleet* page); GET is viewer+ (read-only for a
-// viewer), every mutation is admin+CSRF (fleetAdminMutation) and passes the
-// signed-in web user's own name as actor/author (auditUser(r)), never a
-// daemon-side placeholder.
-//
-// Both create forms follow fleet_alerting.html's structured-editor
-// convention exactly: a PLAIN (non-htmx) <form> whose matcher-row add/remove
-// buttons are themselves submits (name="op") that reshape the draft in place
-// and re-render the FULL page at 200 without saving anything (see
-// applyMatcherRowOp) -- only an op of "" or "save" actually calls
-// CreateSilence/SaveMaintenance. A validation/FleetAPI-error rejection
-// re-renders the full page at its 4xx status with the draft's exact posted
-// input preserved and the error inline next to the field it names
-// (silenceErrField/maintenanceErrField) -- never a redirect (a redirect
-// would lose the just-typed input), never a 500. A SUCCESSFUL mutation
-// instead redirects back to GET /fleet/silences with a fixed ?flash= code
-// (resolveSilencesFlash's closed allowlist, exactly like
-// resolveIncidentFlash) plus a server-computed ?tab= (also a closed
-// three-value enum, never free text) -- both safe to round-trip through a
-// URL because neither ever echoes anything the client posted.
+// handlers_fleet_silences.go: GET /fleet/silences -- the silences (Active/Upcoming/Expired
+// tabs, a create-silence form) and maintenance windows.
 package web
 
 import (
@@ -39,12 +15,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// ---------------------------------------------------------------------------
-// Matcher rows: shared by the silence-create and maintenance-create forms
-// (both have exactly one flat, OR'd matcher list -- core.Matcher's four
-// fields), mirroring AlertingMatcherRow (handlers_fleet_alerting.go) at the
-// top level instead of nested inside a route.
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Matcher rows:
+// shared by the silence-create and maintenance-create forms.
 
 // silenceMatcherRow is one OR'd matcher row (core.Matcher's four fields).
 type silenceMatcherRow struct {
@@ -74,19 +46,8 @@ func parseMatcherRows(r *http.Request, prefix string) []silenceMatcherRow {
 	return rows
 }
 
-// applyMatcherRowOp reshapes rows in place for an "add_matcher"/
-// "remove_matcher:<i>" op token (or the maintenance form's own
-// "add_mnt_matcher"/"remove_mnt_matcher:<i>" -- a distinct vocabulary purely
-// so the silence-create and maintenance-create forms' otherwise-identical
-// "Add matcher"/"Remove matcher" buttons never collide on name=value, which
-// would make them impossible to tell apart by a browser-faithful test
-// (formValuesForButton, formhelpers_test.go, matches the FIRST form
-// containing a given name=value submit control)) -- shared by both create
-// forms' own add/remove-row buttons, mirroring applyAlertingOp's per-route
-// matcher ops but over a single flat list. A remove of the last remaining
-// row, or an out-of-range index, is a silent no-op (the button itself is
-// never rendered in that state -- see applyAlertingOp's own doc for why
-// this is safe).
+// applyMatcherRowOp reshapes rows in place for an "add_matcher"/ "remove_matcher:<i>" op
+// token.
 func applyMatcherRowOp(rows *[]silenceMatcherRow, op string) {
 	parts := strings.Split(op, ":")
 	switch parts[0] {
@@ -318,10 +279,6 @@ func newSilenceRow(s core.Silence, now int64) SilenceRow {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Silence create form draft
-// ---------------------------------------------------------------------------
-
 // datetimeLocalLayout is the exact format an <input type="datetime-local"> posts/expects
 // (no seconds, no timezone offset -- the browser's own local wall clock).
 const datetimeLocalLayout = "2006-01-02T15:04"
@@ -382,12 +339,8 @@ func silenceDurationOptions(selected string) []SilenceDurationOption {
 	return opts
 }
 
-// resolveSilenceWindow computes the silence's Start/End from the draft:
-// StartAt (or now, if blank), then EITHER EndAt (an explicit end,
-// prioritized when set) OR one of the fixed Duration presets
-// (incidentSilenceDurationSeconds). fieldErr names which field the returned
-// error targets ("start"/"end"/"duration"), for the template's inline
-// placement.
+// resolveSilenceWindow computes the silence's Start/End from the draft: StartAt (or now, if
+// blank), then EITHER EndAt.
 func resolveSilenceWindow(d silenceDraft) (start, end int64, fieldErr string, err error) {
 	start = time.Now().Unix()
 	if strings.TrimSpace(d.StartAt) != "" {
@@ -411,12 +364,7 @@ func resolveSilenceWindow(d silenceDraft) (start, end int64, fieldErr string, er
 	return start, start + sec, "", nil
 }
 
-// silenceErrField maps a CreateSilence rejection (validateMatchers'/
-// validateSilence's plain-English wording, internal/trinetra/
-// fleet_silences.go) to the field the create form should highlight it next
-// to -- mirrors alertingErrField's role for the alerting editor, just over a
-// fixed, small set of known message shapes instead of per-row regexes (this
-// form has no named rows to disambiguate between).
+// silenceErrField maps a CreateSilence rejection.
 func silenceErrField(err error) string {
 	if err == nil {
 		return ""
@@ -433,10 +381,6 @@ func silenceErrField(err error) string {
 		return ""
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Maintenance create form draft
-// ---------------------------------------------------------------------------
 
 // commonTZChoices is a fixed list of common IANA zone names for the maintenance
 // form's TZ <select>.
@@ -570,14 +514,7 @@ func weekdaysText(days []int) string {
 	return strings.Join(labels, ",")
 }
 
-// maintenanceNextText renders m's next occurrence
-// (core.NextMaintenanceOccurrence, computed server-side from the same helper
-// the engine uses -- see that function's doc for why the shared implementation
-// lives in internal/core rather than internal/trinetra, which internal/web
-// cannot import), in m's own TZ: "active now, until <end>" when it's the
-// currently-running occurrence, else its start time. "-" when it can't be
-// computed at all (an unparsable TZ/From/To, which SaveMaintenance should
-// never have allowed to be saved).
+// maintenanceNextText renders m's next occurrence.
 func maintenanceNextText(m core.Maintenance) string {
 	occ, ok := core.NextMaintenanceOccurrence(m, time.Now())
 	if !ok {
@@ -619,9 +556,7 @@ func newMaintenanceRow(m core.Maintenance) MaintenanceRow {
 	}
 }
 
-// maintenanceErrField maps a SaveMaintenance rejection (validateMaintenance's
-// plain-English wording, internal/trinetra/fleet_silences.go) to the field
-// the create form should highlight it next to.
+// maintenanceErrField maps a SaveMaintenance rejection.
 func maintenanceErrField(err error) string {
 	if err == nil {
 		return ""
@@ -828,10 +763,7 @@ func redirectToSilences(w http.ResponseWriter, r *http.Request, tab silenceTab, 
 // --------------------------------------------------------------------------- Handlers
 // ---------------------------------------------------------------------------
 
-// fleetSilencesPageHandler serves GET /fleet/silences: viewer+ (read-only
-// for a viewer -- the template disables every input/select/textarea and
-// hides every submit control when Role != "admin", exactly like
-// fleet_alerting.html's $editable convention), master-only (fleetGateHTML).
+// fleetSilencesPageHandler serves GET /fleet/silences: viewer+.
 func fleetSilencesPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -908,11 +840,8 @@ func fleetSilenceCreateHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetSilenceExpireHandler serves POST /fleet/silences/{id}/expire
-// (admin+CSRF, fleetAdminMutation), used with the in-page two-step confirm
-// (style.css's .confirm-toggle, the same CSS-only pattern fleet_admin.html's
-// revoke/remove controls use). actor is the signed-in web user's own name
-// (auditUser), never a placeholder.
+// fleetSilenceExpireHandler serves POST /fleet/silences/{id}/expire (admin+CSRF,
+// fleetAdminMutation), used with the in-page two-step confirm.
 func fleetSilenceExpireHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

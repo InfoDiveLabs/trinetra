@@ -1,19 +1,5 @@
 // Interactive management TUI for trinetra-ctl, built on Bubble Tea
-// (github.com/charmbracelet/bubbletea). This is the only place in the
-// module that third-party terminal UI packages (bubbletea, bubbles,
-// lipgloss) are imported: cmd/trinetra-ctl is a separate binary from
-// the trinetra daemon (cmd/trinetra), which stays stdlib-only (see
-// internal/trinetra/buildtag_test.go's TestDefaultBuildIsStdlibOnly,
-// scoped to cmd/trinetra's own dependency graph for exactly this
-// reason).
-//
-// The model is deliberately split from the terminal plumbing: Init/Update/
-// View below hold ALL of the state transition logic as plain, pure(ish)
-// functions over a `model` value, so setup_web_test.go and tui_test.go can
-// drive a wizard end to end (mode -> listen -> domain -> rp_id -> origin ->
-// confirm -> applied) by constructing tea.KeyMsg values and calling
-// Update directly, with no real terminal, no tea.Program, and a fake
-// core.API standing in for the control socket.
+// (github.com/charmbracelet/bubbletea).
 package main
 
 import (
@@ -171,14 +157,7 @@ func fetchAlertsCmd(api core.API) tea.Cmd {
 	}
 }
 
-// applyWebSetupCmd fetches the CURRENT config fresh from the daemon (so the
-// wizard's changes layer onto whatever else is configured, never a stale
-// snapshot from when the TUI started), applies ans onto it via
-// applyWebSetup (setup_web.go), and posts the result with api.ApplyConfig.
-// Any error, whether a local validation error from applyWebSetup or one the
-// daemon returned from ApplyConfig, is surfaced identically to the caller
-// as webSetupAppliedMsg.err -- the confirm screen doesn't need to know
-// which step failed, only that nothing was applied.
+// applyWebSetupCmd fetches the CURRENT config fresh from the daemon.
 func applyWebSetupCmd(api core.API, ans webSetupAnswers) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()

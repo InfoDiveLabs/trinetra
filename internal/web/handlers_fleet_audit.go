@@ -1,17 +1,5 @@
 // handlers_fleet_audit.go: GET /fleet/audit -- the fleet audit log, over
-// core.FleetAPI.Audit(limit) (internal/core/fleet.go). Admin-only end to end
-// (RoleAdmin at the route, routes.go; fleetGateHTML here for "master only, else
-// 404"), unlike Managed config/Alerting/Admin, which stay viewer-readable.
-//
-// Filters (?actor=, ?action=) are GET params, applied IN MEMORY over one
-// Audit(limit=fleetAuditQueryLimit) read, same convention
-// buildFleetRows/fleetFilterMatch use for the roster table -- there is no
-// server-side filtered query on core.FleetAPI.Audit itself, only a limit.
-// Paginated 50/page (fleetIncidentsPageSize, this package's one shared
-// page-size constant). Every displayed time is the master's own local zone
-// (silenceTimeText) with its abbreviation shown; Detail is rendered through
-// html/template's normal auto-escaping like everything else on this page -- no
-// template.HTML anywhere in this file.
+// core.FleetAPI.Audit(limit) (internal/core/fleet.go).
 package web
 
 import (
@@ -81,12 +69,7 @@ func (q auditQuery) encode() string {
 	return v.Encode()
 }
 
-// filterAuditEntries returns the subset of all matching q's Actor/Action
-// (case-insensitive exact match on Actor -- audit actors are account names/
-// "cli", not free text to substring-search; Action is matched exactly too,
-// since it's a closed, machine-chosen vocabulary like "fleet.node.rename",
-// never something an operator would partially remember). Both filters are
-// ANDed when both are set.
+// filterAuditEntries returns the subset of all matching q's Actor/Action.
 func filterAuditEntries(all []core.AuditEntry, q auditQuery) []core.AuditEntry {
 	if q.Actor == "" && q.Action == "" {
 		return all

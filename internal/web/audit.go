@@ -14,10 +14,7 @@ type AuditRecord struct {
 	// Time is a Unix timestamp (seconds), defaulted to time.Now() by
 	// appendAudit when left zero.
 	Time int64 `json:"time"`
-	// User is the acting session's account name (auditUser), or "" if no
-	// session was resolved (shouldn't happen for a mutation already behind
-	// requireRole, but this is display-only, not an access-control decision,
-	// so it degrades gracefully rather than failing the write).
+	// User is the acting session's account name (auditUser), or "" if no session was resolved.
 	User string `json:"user"`
 	// Action names the mutation kind, e.g. "config.set", "channel.add", "channel.remove",
 	// "channel.update", "alert.ack", "user.role", "user.remove", "user.invite".
