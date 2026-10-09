@@ -48,8 +48,9 @@ type onboardModel struct {
 // onboardCheckMsg carries the result of the ONE Config() fetch Init issues
 // (fetchOnboardCheckCmd) to decide whether to auto-enter onboarding at all.
 type onboardCheckMsg struct {
-	cfg *config.Config
-	err error
+	cfg      *config.Config
+	err      error
+	webUsers int
 }
 
 // onboardTokenAppliedMsg carries the result of applying the captured token
@@ -76,7 +77,11 @@ type onboardPollTickMsg time.Time
 func fetchOnboardCheckCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
-		return onboardCheckMsg{cfg: cfg, err: err}
+		msg := onboardCheckMsg{cfg: cfg, err: err}
+		if needsFirstRun(cfg, 0) {
+			msg.webUsers, _ = webUsersCountFn()
+		}
+		return msg
 	}
 }
 
@@ -138,8 +143,7 @@ func (m model) updateOnboardTokenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.onboard.applyErr = nil
 		return m, applyOnboardTokenCmd(m.api, token)
 	case "esc":
-		m.step = stepHome
-		return m, nil
+		return m.goHome()
 	}
 	var cmd tea.Cmd
 	m.onboard.tokenIn, cmd = m.onboard.tokenIn.Update(msg)
@@ -150,11 +154,10 @@ func (m model) updateOnboardTokenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // is already saved by the time this screen shows, so leaving here never loses that).
 func (m model) updateOnboardPINKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" {
-		m.step = stepHome
-		return m, nil
+		return m.goHome()
 	}
 	if m.onboard.enrolled {
-		m.step = stepHome
+		return m.goHome()
 	}
 	return m, nil
 }

@@ -257,9 +257,7 @@ func (s *jsonUserStore) saveLocked(users []*User) error {
 // Get returns the user with the given WebAuthn user handle (User.ID), or
 // (nil, false) if none exists or the store can't be read.
 func (s *jsonUserStore) Get(id string) (*User, bool) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -274,9 +272,7 @@ func (s *jsonUserStore) Get(id string) (*User, bool) {
 
 // ByName returns the first user with the given Name, or (nil, false) if none exists.
 func (s *jsonUserStore) ByName(name string) (*User, bool) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -291,9 +287,7 @@ func (s *jsonUserStore) ByName(name string) (*User, bool) {
 
 // Put inserts u, or replaces the existing user with the same ID, and persists the result.
 func (s *jsonUserStore) Put(u *User) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -311,9 +305,7 @@ func (s *jsonUserStore) Put(u *User) error {
 // CreateFirstAdmin atomically persists u as the first-ever account, forcing its role to
 // RoleAdmin -- but ONLY if the store is still empty.
 func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -328,9 +320,7 @@ func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
 
 // List returns every stored user, or nil if the store is empty/unreadable.
 func (s *jsonUserStore) List() []*User {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil
@@ -340,9 +330,7 @@ func (s *jsonUserStore) List() []*User {
 
 // IsEmpty reports whether the store holds zero accounts.
 func (s *jsonUserStore) IsEmpty() (bool, error) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return false, err
@@ -352,9 +340,7 @@ func (s *jsonUserStore) IsEmpty() (bool, error) {
 
 // Delete removes the user with the given ID, reporting an error if no such user exists.
 func (s *jsonUserStore) Delete(id string) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -371,9 +357,7 @@ func (s *jsonUserStore) Delete(id string) error {
 // SetRoleUnlessLastAdmin sets user id's Role to role, all under a SINGLE fileStoreMutex
 // critical section: it loads the current users, and only if demoting id.
 func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -398,9 +382,7 @@ func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
 // RemoveUnlessLastAdmin deletes user id under a SINGLE fileStoreMutex critical section,
 // refusing (errLastAdmin) to delete the sole remaining admin.
 func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -425,9 +407,7 @@ func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
 // RevokeCredentialUnlessLastAdmin removes credential credID from user id's Credentials
 // under a SINGLE fileStoreMutex critical section -- load, last-admin check.
 func (s *jsonUserStore) RevokeCredentialUnlessLastAdmin(id, credID string) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err

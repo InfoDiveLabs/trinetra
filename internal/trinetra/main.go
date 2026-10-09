@@ -100,6 +100,8 @@ func Main(args []string) int {
 		return cmdFrontDoor("cli", "ctl", args[1:])
 	case "web":
 		return cmdFrontDoor("web", "web", args[1:])
+	case "users":
+		return cmdFrontDoor("web", "web", append([]string{"users"}, args[1:]...))
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s\n", args[0], usage)
 		return 2
@@ -185,7 +187,8 @@ usage:
   trinetra status-page service|incident ...   # manage the public status page (services, incidents)
   trinetra update status [--json] | check | apply [--version V] [--bundle DIR] [--channel C] [--force] | rollback
   trinetra cli                       # interactive management (trinetra-ctl)
-  trinetra web                       # web UI (trinetra-web)`
+  trinetra web                       # web UI (trinetra-web)
+  trinetra users list | invite --role R | set-role <name> <role> | remove <name>   # web UI users`
 
 func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
 

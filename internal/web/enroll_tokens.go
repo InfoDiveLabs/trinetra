@@ -2,10 +2,15 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // EnrollToken is a single admin-issued, single-use, expiring invitation to enroll a new web
@@ -99,9 +104,7 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 	now := s.clock()
 	et := &EnrollToken{Token: tok, Role: role, Expires: now.Add(ttl).Unix()}
 
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return ""
@@ -113,12 +116,16 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 	return tok
 }
 
+// List returns every stored token, used or not.
+func (s *tokenStore) List() ([]*EnrollToken, error) {
+	defer lockStore(s.path)()
+	return s.loadLocked()
+}
+
 // Redeem looks up tok and, if it exists, is unexpired, and hasn't already been used, marks
 // it Used and returns its Role.
 func (s *tokenStore) Redeem(tok string) (Role, error) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return "", err
@@ -146,9 +153,7 @@ func (s *tokenStore) Redeem(tok string) (Role, error) {
 // GC removes every token whose Expires is <= now, whether or not it was ever used -- the
 // same eager disk-space-reclaim role as SessionStore.GC.
 func (s *tokenStore) GC(now int64) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return
@@ -183,7 +188,31 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 }
 
 // resolveEnrollRole decides, at /enroll/begin, how a NEW registration should proceed:
-func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role Role, bootstrap bool, err error) {
+var errSetupLinkRequired = errors.New("this server isn't set up yet: on the server, run `sudo trinetra web users invite --role admin` and open the link it prints")
+
+// localOnly reports whether the web UI is configured to be reached only from this machine:
+// it must listen on loopback, and a configured origin must be loopback too.
+func localOnly(cfg *config.Config) bool {
+	h, _, err := net.SplitHostPort(cfg.Web.Listen)
+	if err != nil || !loopbackHost(h) {
+		return false
+	}
+	if cfg.Web.Origin == "" {
+		return true
+	}
+	u, err := url.Parse(cfg.Web.Origin)
+	return err == nil && loopbackHost(u.Hostname())
+}
+
+func loopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+func resolveEnrollRole(tokens *tokenStore, users UserStore, token string, allowBootstrap bool) (role Role, bootstrap bool, err error) {
 	if token != "" {
 		r, err := tokens.Redeem(token)
 		if err == nil && !validRole(r) {
@@ -198,6 +227,9 @@ func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role 
 		return "", false, fmt.Errorf("web: cannot verify user store is empty; refusing tokenless enrollment: %w", err)
 	}
 	if empty {
+		if !allowBootstrap {
+			return "", false, errSetupLinkRequired
+		}
 		return "", true, nil
 	}
 	return "", false, fmt.Errorf("web: enrollment is closed; an admin-issued invite token is required")

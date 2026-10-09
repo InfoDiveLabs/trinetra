@@ -613,6 +613,9 @@ type BarePageData struct {
 	// EnrollClosed (U8, 2026-09-25 UI audit fix) is true when GET /enroll carries no ?token=
 	// AND the user store already has at least one account: resolveEnrollRole.
 	EnrollClosed bool
+	// EnrollNeedsSetup: no users yet and the UI is not local-only, so the
+	// first admin must use an invite link minted on the server.
+	EnrollNeedsSetup bool
 }
 
 // newBarePageData builds the BarePageData a bare-layout page handler needs.

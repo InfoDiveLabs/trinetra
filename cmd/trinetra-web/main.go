@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -27,6 +28,9 @@ const defaultRuntimeDir = "/run/trinetra"
 // defaultStateDir is the daemon's default state directory; duplicated for the
 // same reason as defaultRuntimeDir.
 const defaultStateDir = "/var/lib/trinetra"
+
+// configPath is where `users` reads web.* when the daemon isn't running.
+var configPath = "/etc/trinetra/config.json"
 
 const daemonStartWait = 30 * time.Second
 
@@ -206,6 +210,15 @@ func lastGoodConfig(fetch func() (*config.Config, error)) func() *config.Config 
 }
 
 func run(args []string, getenv func(string) string, stderr *os.File) int {
+	return runTo(args, getenv, os.Stdout, stderr)
+}
+
+func runTo(args []string, getenv func(string) string, stdout io.Writer, stderr *os.File) int {
+	for i, a := range args {
+		if a == "users" {
+			return runUsers(args[:i], args[i+1:], getenv, stdout, stderr)
+		}
+	}
 	cc, err := resolveConnConfig(args, getenv)
 	if err != nil {
 		if err == flag.ErrHelp {
@@ -248,6 +261,35 @@ func run(args []string, getenv func(string) string, stderr *os.File) int {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	return 0
+}
+
+// runUsers serves `trinetra-web [flags] users …`. web.* comes from the daemon when it is
+// reachable, else from config.json, so it works with the daemon stopped.
+func runUsers(flags, args []string, getenv func(string) string, stdout io.Writer, stderr *os.File) int {
+	cc, err := resolveConnConfig(flags, getenv)
+	if err != nil {
+		fmt.Fprintln(stderr, "trinetra-web:", err)
+		return 2
+	}
+	var cfg *config.Config
+	if client, err := control.Dial(cc.socketPath, cc.token); err == nil {
+		cfg, _ = client.Config()
+		client.Close()
+	}
+	if cfg == nil {
+		if c, err := config.Load(configPath); err == nil {
+			cfg = c
+		} else {
+			cfg = config.Default()
+		}
+	}
+	actor := "cli"
+	if u := getenv("SUDO_USER"); u != "" {
+		actor = "cli:" + u
+	} else if u := getenv("USER"); u != "" {
+		actor = "cli:" + u
+	}
+	return web.RunUsersCommand(args, cc.stateDir, cfg, actor, stdout, stderr)
 }
 
 func main() {

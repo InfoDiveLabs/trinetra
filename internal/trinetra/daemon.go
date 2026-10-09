@@ -729,8 +729,7 @@ func cmdDaemon(args []string) int {
 	// cfg (mirroring the SIGHUP reload above).
 	setChatID := func(id string) {
 		mu.Lock()
-		nc := *cfg // shallow struct copy
-		nc.Telegram.ChatID = id
+		nc := *withChatID(cfg, id)
 		// Saved (which overlays the on-disk fleet keys onto nc, so a `fleet join` made since
 		// start is never wiped) BEFORE the swap.
 		_ = saveDaemonCfg(&nc)

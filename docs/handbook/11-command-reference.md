@@ -47,6 +47,7 @@ column.
 | `daemon` | Run the sampler/notifier loop in the foreground. | long-running |
 | `cli` | Front-door: verify and exec `trinetra-ctl`, the management TUI. | see Notes |
 | `web` | Front-door: verify and exec `trinetra-web`, the web UI. | see Notes |
+| `users` | Manage web UI accounts; runs `trinetra-web users …` (see [trinetra users](#trinetra-users)). | none |
 | `status` | Print the last status snapshot. | read-only |
 | `version [--json]` | Print the build-stamped version this binary was compiled with. | read-only |
 | `doctor` | Print a diagnostic report (collectors, tools, targets). | read-only |
@@ -139,6 +140,24 @@ yourself, you must (re-)run `trinetra install` afterward so its checksum
 is recorded (see [Installation and first run](03-installation.md)); until
 then the front-door has nothing to verify the unrecorded binary against and
 refuses to run it.
+
+## trinetra users
+
+Web UI accounts are stored by the web plugin, so `trinetra users …` runs
+`trinetra-web users …` through the same front door as `trinetra web`. It works
+with the daemon stopped (it then reads `web.*` from `/etc/trinetra/config.json`).
+Every change is written to the web audit log as `cli:<your user>`.
+
+| Command | Does |
+|---------|------|
+| `users list [--json]` | Name, role, passkey count, created. |
+| `users invite --role admin\|responder\|viewer [--ttl 24h] [--json]` | Prints a single-use enroll link: `<web.origin>/enroll?token=…` (or `http://<web.listen>/…` with a note when `web.origin` is unset). |
+| `users set-role <name> <role>` | Change a role. Refuses to demote the last admin. |
+| `users remove <name>` | Remove an account and its passkeys. Refuses to remove the last admin. |
+
+The first admin: on a web UI reachable only from this machine, the first
+person to open `/enroll` may create it without a link. Otherwise run
+`sudo trinetra users invite --role admin`.
 
 ## trinetra fleet
 
@@ -400,7 +419,7 @@ Telegram token saved. The daemon will log the enrollment PIN on start:
 
 A failed PIN fetch is never treated as `telegram set-token` failing; only the
 printed message changes. See the enrollment diagram in [Installation and
-first run](03-installation.md#5-connect-telegram-and-enroll-as-owner) for how
+first run](03-installation.md#telegram-optional) for how
 this fits together with `trinetra-ctl`'s onboarding screen, which shows
 the same PIN.
 

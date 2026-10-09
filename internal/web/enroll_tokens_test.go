@@ -190,7 +190,7 @@ func TestResolveEnrollRoleBootstrapsFirstUserAsAdmin(t *testing.T) {
 	tokens := newTokenStore(dir)
 	users := newUserStore(dir)
 
-	role, bootstrap, err := resolveEnrollRole(tokens, users, "")
+	role, bootstrap, err := resolveEnrollRole(tokens, users, "", true)
 	if err != nil {
 		t.Fatalf("resolveEnrollRole(bootstrap): %v", err)
 	}
@@ -214,7 +214,7 @@ func TestResolveEnrollRoleClosedAfterBootstrap(t *testing.T) {
 		t.Fatalf("seed Put: %v", err)
 	}
 
-	if _, _, err := resolveEnrollRole(tokens, users, ""); err == nil {
+	if _, _, err := resolveEnrollRole(tokens, users, "", true); err == nil {
 		t.Fatal("resolveEnrollRole(no token, users exist) = nil error, want rejection (enrollment closed)")
 	}
 }
@@ -231,7 +231,7 @@ func TestResolveEnrollRoleFailsClosedOnUnreadableStore(t *testing.T) {
 		t.Fatalf("seed corrupt store: %v", err)
 	}
 
-	role, bootstrap, err := resolveEnrollRole(tokens, users, "")
+	role, bootstrap, err := resolveEnrollRole(tokens, users, "", true)
 	if err == nil {
 		t.Fatal("resolveEnrollRole(unreadable store, no token) = nil error, want fail-closed rejection")
 	}
@@ -254,7 +254,7 @@ func TestResolveEnrollRoleHonorsValidToken(t *testing.T) {
 	}
 
 	tok := tokens.Issue(RoleViewer, time.Hour)
-	role, bootstrap, err := resolveEnrollRole(tokens, users, tok)
+	role, bootstrap, err := resolveEnrollRole(tokens, users, tok, true)
 	if err != nil {
 		t.Fatalf("resolveEnrollRole(valid token): %v", err)
 	}

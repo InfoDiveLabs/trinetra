@@ -140,7 +140,7 @@ func TestNodeBannerOnlineState(t *testing.T) {
 		ID: "child1", Name: "child1", State: "online",
 		LastSeen: time.Now().Add(-3 * time.Second).Unix(),
 	})
-	if !strings.Contains(body, "Viewing child1 · replica, updated 3s ago") {
+	if !strings.Contains(body, "Viewing child1 · replica, updated 3s ago") && !strings.Contains(body, "Viewing child1 · replica, updated 4s ago") {
 		t.Errorf("online banner missing exact text:\n%s", body)
 	}
 	if !strings.Contains(body, `<div class="nodebanner" role="status">`) {
@@ -301,7 +301,8 @@ func TestChildTopbarPillRetryingUnderTwoMinutesStaysHealthy(t *testing.T) {
 	if strings.Contains(body, "Master unreachable") {
 		t.Errorf("a retrying link under the 2m threshold must not render the unreachable pill:\n%s", body)
 	}
-	if !strings.Contains(body, "Linked to master · ack 30s ago") {
+	// A second can tick over between building the fixture and rendering it.
+	if !strings.Contains(body, "Linked to master · ack 30s ago") && !strings.Contains(body, "Linked to master · ack 31s ago") {
 		t.Errorf("child pill missing the healthy fallback text:\n%s", body)
 	}
 }

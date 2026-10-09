@@ -1,5 +1,6 @@
 {{define "content"}}
 {{$v := .View}}
+{{if .NoChannels}}<div class="flash notice-dismiss" data-dismiss="no-channel" role="status"><span>No alert channel yet, so alerts only show here. <a href="/channels">Choose where alerts go →</a></span><button type="button" class="btn ghost" data-dismiss-btn aria-label="Dismiss" title="Dismiss">✕</button></div>{{end}}
 <div id="dashboard-live">
 
   <!-- stale-stream banner (task C6): hidden by default, shown by app.js's

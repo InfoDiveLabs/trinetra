@@ -101,8 +101,11 @@ func cmdInstall(args []string) int {
 	waitErr := waitForDaemonFn()
 	switch {
 	case waitErr == nil:
-		fmt.Fprint(stdout, installedPluginsMessage()+" installed and started. ")
-		fmt.Fprintln(stdout, telegramInstallHint())
+		fmt.Fprintln(stdout, installedPluginsMessage()+" installed and started; monitoring this server.")
+		if h := telegramInstallHint(); h != "" {
+			fmt.Fprintln(stdout, h)
+		}
+		fmt.Fprint(stdout, installNextSteps())
 	case errors.Is(waitErr, errServiceSlow):
 		fmt.Fprintln(stdout, installedPluginsMessage()+" installed; the daemon is still starting. Give it a moment before `trinetra cli` (systemctl status trinetra).")
 	default:
@@ -362,13 +365,26 @@ func raiseInstallFloor(paths updatePaths, version string) {
 // on an unconfigured host, or a "already configured" note when a token.
 func telegramInstallHint() string {
 	c, err := loadCfg()
-	if err != nil || c == nil || c.Telegram.Token == "" {
-		return "set a Telegram token: trinetra telegram set-token <token>"
-	}
-	if c.Telegram.ChatID != "" {
-		return "Telegram already configured and enrolled."
+	if err != nil || c == nil || c.Telegram.Token == "" || c.Telegram.ChatID != "" {
+		return ""
 	}
 	return "Telegram token already set; enroll the chat by messaging the bot /start <pin>."
+}
+
+func installNextSteps() string {
+	return "Next:\n" +
+		"  sudo trinetra cli                          guided setup: web UI, first admin, alerts\n" +
+		"  sudo trinetra users invite --role admin    just the first admin's enroll link\n"
+}
+
+// noChannelReminder is "" once any alert channel is enabled.
+func noChannelReminder(c *config.Config) string {
+	for _, ch := range c.Channels {
+		if ch.Enabled {
+			return ""
+		}
+	}
+	return "No alert channel yet: alerts only show in the web UI and trinetra cli. Add one there, or with: trinetra channel add"
 }
 
 // installedPluginsMessage reports which companion plugins ended up recorded in the plugin
@@ -664,6 +680,17 @@ func cmdSchedule(args []string) int {
 		return 2
 	}
 	switch args[0] {
+	case "off":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: schedule daily HH:MM | weekly dow@HH:MM | off")
+			return 2
+		}
+		for _, k := range []string{"schedule.daily", "schedule.weekly"} {
+			if err := c.Set(k, ""); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		}
 	case "daily":
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, "usage: schedule daily HH:MM | weekly dow@HH:MM | off")
@@ -763,6 +790,11 @@ func cmdStatus(args []string) int {
 		return 1
 	}
 	fmt.Fprintln(stdout, string(b))
+	if c, err := loadCfg(); err == nil {
+		if r := noChannelReminder(c); r != "" {
+			fmt.Fprintln(stderr, r)
+		}
+	}
 	return 0
 }
 

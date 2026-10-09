@@ -238,11 +238,11 @@ func TestResolveEnrollRoleRejectsInvalidTokenRole(t *testing.T) {
 	d, users, _ := rbacTestDeps(t)
 	tokens := newTokenStore(d.StateDir)
 	tok := tokens.Issue(Role("superuser"), time.Hour)
-	if _, _, err := resolveEnrollRole(tokens, users, tok); err == nil {
+	if _, _, err := resolveEnrollRole(tokens, users, tok, true); err == nil {
 		t.Error("invalid token role accepted")
 	}
 	tok = tokens.Issue(RoleResponder, time.Hour)
-	if r, _, err := resolveEnrollRole(tokens, users, tok); err != nil || r != RoleResponder {
+	if r, _, err := resolveEnrollRole(tokens, users, tok, true); err != nil || r != RoleResponder {
 		t.Errorf("responder token = %q, %v", r, err)
 	}
 }

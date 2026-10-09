@@ -224,6 +224,16 @@ func titleWithHost(serverName, title string) string {
 	return "[" + serverName + "] " + title
 }
 
+// withChatID returns a copy of c with the enrolled Telegram chat set and a telegram channel
+// added if none exists.
+func withChatID(c *config.Config, id string) *config.Config {
+	nc := *c
+	nc.Channels = append([]config.ChannelConfig(nil), c.Channels...)
+	nc.Telegram.ChatID = id
+	migrateTelegramChannel(&nc)
+	return &nc
+}
+
 // migrateTelegramChannel back-fills a "telegram" ChannelConfig from the legacy
 // Telegram.Token/Telegram.ChatID keys.
 func migrateTelegramChannel(c *config.Config) bool {
