@@ -209,13 +209,11 @@ func (f fleetAPIImpl) RenameNode(id, name, actor string) error {
 	if name == "" || utf8.RuneCountInString(name) > 64 {
 		return fmt.Errorf("node name must be 1-64 characters")
 	}
-	// Names must stay unique (case-insensitively) so a Matcher.Node glob has
-	// a precise target: unlike a join, a rename is
-	// a deliberate operator action, so a collision is refused rather than
-	// silently suffixed. Registry.Rename checks and applies this atomically
-	// under one lock (review round 3, item 2: a separate NameConflict-then-
-	// Update here was a TOCTOU race two concurrent renames, or a rename
-	// racing a join, could both slip through).
+	// Names must stay unique (case-insensitively) so a Matcher.Node glob has a
+	// precise target: unlike a join, a rename is a deliberate operator action, so
+	// a collision is refused rather than suffixed. Registry.Rename checks and
+	// applies this atomically under one lock; a separate NameConflict-then-Update
+	// would be a TOCTOU race between two renames, or a rename and a join.
 	if err := m.reg.Rename(id, name); err != nil {
 		return err
 	}
@@ -284,11 +282,10 @@ func (f fleetAPIImpl) SetNodeDeps(id string, deps []string, actor string) error 
 		return err
 	}
 	m.audited(actor, "fleet.node.deps", id, strings.Join(clean, ","))
-	// task 6 fix round 1, IMPORTANT 4: a dependency changing (in particular,
-	// a down dependency being REMOVED) may free up a node that was folded
-	// waiting on it -- releaseFoldedDependents only ever runs off that
-	// dependency's own recover, which never happens here, so this must be
-	// triggered explicitly.
+	// A dependency changing (in particular a down dependency being REMOVED) may
+	// free up a node folded waiting on it. releaseFoldedDependents only runs off
+	// that dependency's own recover, which never happens here, so trigger it
+	// explicitly.
 	if m.engine != nil {
 		m.engine.ReleaseIfDependenciesClear(id, time.Now().Unix())
 	}
@@ -794,17 +791,14 @@ func (f fleetAPIImpl) ManagedStatus() ([]core.ManagedStatus, error) {
 	return out, nil
 }
 
-// fleetSeriesCap is FleetSeries' agg="none" node-count ceiling (plan C, task
-// 1b: "capped at 10 nodes"); it also bounds the web compare page's checkbox
-// selection.
+// fleetSeriesCap is FleetSeries' agg="none" node-count ceiling (10); it also
+// bounds the web compare page's checkbox selection.
 const fleetSeriesCap = 10
 
 // fleetSeriesRawWindowCapSeconds bounds how wide a [from, to] window
-// FleetSeries will serve at raw resolution (task-1b review round 1, minors:
-// "cap the raw window at 24h with an error") -- a raw query over a much
-// wider span would mean reading (and returning) a huge number of points for
-// no real benefit over 1m; a caller wanting a wider view should ask for
-// core.Res1m instead.
+// FleetSeries serves at raw resolution (24h): a raw query over a much wider
+// span reads and returns a huge number of points for no benefit over 1m; a
+// wider view should ask for core.Res1m.
 const fleetSeriesRawWindowCapSeconds int64 = 24 * 3600
 
 // toSeriesResolution maps a core.Resolution onto this package's own
@@ -872,15 +866,12 @@ func querySeriesPoints(store SampleStore, metric string, from, to int64, res Res
 }
 
 // fleetSeriesBucketSeconds picks the fixed bucket width FleetSeries'
-// avg/max/min aggregation groups every source's points into (task-1b review
-// round 1): 60s at 1m resolution (matching the underlying rollup's own
-// granularity exactly), or at raw resolution the master's own configured
-// raw ("fast tier") sample interval when known (getCfg non-nil and
-// Config.FastInterval > 0 -- the cadence cpu/mem/... are actually collected
-// at, config.go's FastInterval), otherwise a 10s default. Exactly ONE bucket
-// width is used for the whole request, computed once (never re-derived per
-// node): every node's points must land on the SAME shared grid for the
-// across-node aggregation step to combine them meaningfully.
+// avg/max/min aggregation groups every source's points into: 60s at 1m
+// resolution (the rollup's granularity), or at raw resolution the master's
+// configured fast-tier sample interval when known (getCfg non-nil and
+// Config.FastInterval > 0), otherwise 10s. Exactly ONE width is used per
+// request, computed once: every node's points must land on the SAME grid for
+// the across-node aggregation to combine them meaningfully.
 func fleetSeriesBucketSeconds(res Resolution, getCfg func() *config.Config) int64 {
 	if res == Res1m {
 		return 60
@@ -904,13 +895,10 @@ func floorToBucket(ts, bucketSeconds int64) int64 {
 	return (ts / bucketSeconds) * bucketSeconds
 }
 
-// bucketNodeSeries floors every point in pts into its bucketSeconds-wide
-// bucket and, for a bucket more than one point lands in, keeps only the
-// LAST one by actual (unfloored) TS (task-1b review round 1: "Per node,
-// take the last value in the bucket") -- e.g. raw resolution can pack
-// several samples into one bucket when bucketSeconds is coarser than the
-// data's real cadence. Returns one value per bucket this node actually has
-// data in.
+// bucketNodeSeries floors every point in pts into its bucketSeconds-wide bucket
+// and, where several points land in one (raw resolution with a bucket coarser
+// than the data's cadence), keeps only the LAST by actual (unfloored) TS.
+// Returns one value per bucket this node has data in.
 func bucketNodeSeries(pts []Point, bucketSeconds int64) map[int64]float64 {
 	lastTS := map[int64]int64{}
 	out := map[int64]float64{}
@@ -954,15 +942,13 @@ func fleetSeriesAggregate(agg core.Agg, vals []float64) float64 {
 	}
 }
 
-// FleetSeries implements core.FleetAPI: metric's time
-// series across every node matching filter, either one series per node
-// (agg="none", capped at fleetSeriesCap nodes) or one aggregated series
-// (agg avg/max/min, Node ""). The master's own node is included the same
-// way B7's aggregate rules include it (fleet_rules.go's ruleSelfSource):
-// this reuses the exact self Name/Store the master's own rule evaluator was
-// wired with (m.engine.rules.self) rather than plumbing a second reference
-// onto masterState, so a nil/never-wired evaluator (bare-bones test
-// masterState) just means self contributes no data, not a panic.
+// FleetSeries implements core.FleetAPI: metric's time series across every node
+// matching filter, either one series per node (agg="none", capped at
+// fleetSeriesCap nodes) or one aggregated series (agg avg/max/min, Node "").
+// The master's own node is included as the aggregate rules include it
+// (ruleSelfSource), reusing the self Name/Store the rule evaluator was wired
+// with (m.engine.rules.self); a nil evaluator (bare-bones test masterState)
+// just means self contributes no data.
 func (f fleetAPIImpl) FleetSeries(metric string, filter core.NodeFilter, agg core.Agg, from, to int64, res core.Resolution) ([]core.FleetSeriesPoint, error) {
 	m, err := f.requireMaster()
 	if err != nil {

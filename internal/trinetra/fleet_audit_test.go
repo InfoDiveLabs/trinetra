@@ -71,15 +71,10 @@ func TestAuditLogMissingFileIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead is the C5 review
-// carry-over's core obligation: against a 50k-line audit log, Recent(50)
-// returns exactly the newest 50 entries, newest first, and does so via a
-// small bounded read from EOF backward -- not a forward scan of the whole
-// file. Correctness is asserted directly; the bound is asserted by wall
-// time (a forward os.Open+bufio.Scanner pass over 50k lines is easily
-// measurable, while the chunked backward read is not) rather than
-// instrumenting the file descriptor, per this task's own "or just check
-// correctness plus a time bound" allowance.
+// TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead: against a 50k-line
+// audit log, Recent(50) returns exactly the newest 50 entries, newest first,
+// via a small backward read from EOF rather than a forward scan. The bound is
+// asserted by wall time instead of instrumenting the file descriptor.
 func TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")
@@ -122,12 +117,10 @@ func TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead(t *testing.T) {
 	}
 }
 
-// TestAuditLogRecentEdgeCases is round-1 review's table-test obligation for
-// the backward-chunked Recent() rewrite: each case writes a raw fixture file
-// directly (not through Append, so the exact byte layout -- trailing
-// newline or its absence, where a line falls relative to a chunk boundary
-// -- is fully controlled) and asserts the EXACT newest-first Action
-// sequence Recent(limit) returns.
+// TestAuditLogRecentEdgeCases is a table test of the backward-chunked Recent():
+// each case writes a raw fixture directly (not through Append) so the byte
+// layout (trailing newline or not, a line straddling a chunk boundary) is
+// fully controlled, and asserts the EXACT newest-first Action sequence.
 func TestAuditLogRecentEdgeCases(t *testing.T) {
 	// line builds one raw JSONL line (no trailing newline of its own --
 	// callers join with "\n" or append one explicitly) for action act.

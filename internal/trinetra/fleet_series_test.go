@@ -119,8 +119,7 @@ func TestFleetSeriesNoneReturnsOneSeriesPerNode(t *testing.T) {
 }
 
 // TestFleetSeriesAggAvgAndMax pins avg/max's per-bucket aggregation across
-// every matching node (task-1b-brief.md: "avg/max/min return one aggregated
-// series ... computed per timestamp bucket").
+// every matching node.
 func TestFleetSeriesAggAvgAndMax(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	web1 := f.addNode(t, "web1", []string{"web"})
@@ -177,9 +176,8 @@ func TestFleetSeriesTagFilterExcludesNonMatching(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesNoneCapError pins agg="none"'s 10-node cap
-// (task-1b-brief.md: "capped at 10 nodes. Above the cap the error is
-// 'compare at most 10 nodes'").
+// TestFleetSeriesNoneCapError pins agg="none"'s 10-node cap and its error
+// ("compare at most 10 nodes").
 func TestFleetSeriesNoneCapError(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	for i := 0; i < 11; i++ {
@@ -191,10 +189,8 @@ func TestFleetSeriesNoneCapError(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesIncludesSelf pins that FleetSeries includes the master's
-// own node via its local store, exactly like the aggregate-rule engine's
-// ruleSelfSource (task-1b-brief.md: "Includes the master's own node (self)
-// the same way B7's rules do, via its local store").
+// TestFleetSeriesIncludesSelf pins that FleetSeries includes the master's own
+// node via its local store, like the aggregate-rule engine's ruleSelfSource.
 func TestFleetSeriesIncludesSelf(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	if err := f.selfStore.AppendRollup("cpu", Point{TS: 1000, Min: 55, Avg: 55, Max: 55}); err != nil {
@@ -221,13 +217,12 @@ func TestFleetSeriesRequiresMaster(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesAggBucketsMisalignedRawTimestamps pins task-1b review round
-// 1's bucketing ruling at raw resolution: two nodes whose raw samples are
-// NOT taken at the same instants (a realistic scenario -- nothing
-// synchronizes two independent daemons' sample clocks) still land in the
-// same shared bucket and aggregate together, each node contributing only
-// its LAST value within that bucket. newTestMasterState's getCfg is
-// config.Default (FastInterval 5), so the raw bucket width here is 5s.
+// TestFleetSeriesAggBucketsMisalignedRawTimestamps: two nodes whose raw
+// samples are NOT taken at the same instants (nothing synchronizes independent
+// daemons' sample clocks) still land in the same shared bucket and aggregate
+// together, each contributing only its LAST value in that bucket.
+// newTestMasterState's getCfg is config.Default (FastInterval 5), so the raw
+// bucket width here is 5s.
 func TestFleetSeriesAggBucketsMisalignedRawTimestamps(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	web1 := f.addNode(t, "web1", []string{"web"})
@@ -292,8 +287,8 @@ func TestFleetSeriesDiskMetricUsesWorstMountPerBucket(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesRejectsUnknownAgg pins the minor validation ruling: an agg
-// value other than none/avg/max/min is rejected, naming it verbatim.
+// TestFleetSeriesRejectsUnknownAgg: an agg value other than none/avg/max/min
+// is rejected, naming it verbatim.
 func TestFleetSeriesRejectsUnknownAgg(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	_, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.Agg("bogus"), 900, 1200, core.Res1m)
@@ -302,8 +297,8 @@ func TestFleetSeriesRejectsUnknownAgg(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesRejectsToNotAfterFrom pins the minor validation ruling:
-// to<=from is rejected rather than silently returning nothing/garbage.
+// TestFleetSeriesRejectsToNotAfterFrom: to<=from is rejected rather than
+// silently returning nothing/garbage.
 func TestFleetSeriesRejectsToNotAfterFrom(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	if _, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 1000, 1000, core.Res1m); err == nil {
@@ -314,8 +309,8 @@ func TestFleetSeriesRejectsToNotAfterFrom(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesRejectsRawWindowOverCap pins the minor validation ruling:
-// a raw-resolution window wider than 24h is rejected.
+// TestFleetSeriesRejectsRawWindowOverCap: a raw-resolution window wider than
+// 24h is rejected.
 func TestFleetSeriesRejectsRawWindowOverCap(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	_, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 0, 25*3600, core.ResRaw)

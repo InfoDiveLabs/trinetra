@@ -122,14 +122,10 @@ type replicaSink struct {
 	// too so a replicaSink built without one, e.g. in older tests, still
 	// works).
 	onAlert func(nodeID string, ev AlertEvent)
-	// onAckSync, if set, is called whenever a node's alerts.json actually
-	// changes (see Live below): the master alerting engine's entry point
-	// for a child-side ack/unack reaching the master (fleet_engine.go's
-	// HandleChildAckSync). Unlike onAlert, it is not a constructor
-	// parameter -- it is set directly on the field by startMaster, since it
-	// is task-3-only wiring and every existing newReplicaSink call site
-	// (tests included) would otherwise need updating a second time for a
-	// hook most of them never exercise.
+	// onAckSync, if set, is called whenever a node's alerts.json actually changes
+	// (see Live): the master alerting engine's entry point for a child-side
+	// ack/unack (HandleChildAckSync). Set directly by startMaster rather than via
+	// the constructor so existing newReplicaSink call sites need no update.
 	onAckSync func(nodeID string, as json.RawMessage)
 
 	// hub/rpc/incidents wire remote ack/unack and remote container
@@ -839,33 +835,19 @@ func (a *replicaAPI) remoteAck(key string, unack bool) error {
 	}
 	a.hub.Push(a.nodeID, fleet.Frame{Type: frameType, Data: data})
 	if !unack && a.incidents != nil {
-		// Also record the ack on the master's own incident view immediately
-		//so the UI need not wait for anything to come
-		// back over the stream. The actor isn't known at this layer -- this
-		// package has no notion of "which web user clicked ack", and
-		// core.API.AckAlert(key) (the interface replicaAPI implements here)
-		// has no actor parameter to carry one, on purpose: it's shared by
-		// every core.API backend (file/inproc/replica), and adding one would
-		// mean touching every implementation and every existing caller for a
-		// path this method is not the primary one for.
+		// Also record the ack on the master's own incident view immediately, so the
+		// UI need not wait for anything to come back over the stream. The actor
+		// isn't known at this layer: core.API.AckAlert(key) is shared by every
+		// backend (file/inproc/replica) and has no actor parameter.
 		//
-		// Deliberately kept as "web" (plan C task C5 ruling -- the smaller of
-		// the two options the brief offered, the other being a new
-		// FleetAPI.AckNodeAlert(node, key, actor) plus rewiring the web's
-		// alertsAckHandler to call it for a remote node instead of going
-		// through this apiFor(r,d)-resolved core.API): the AUTHORITATIVE path
-		// for a web user's ack, with the real signed-in actor
-		// (auditUser(r)), is already POST /fleet/incidents/{id}/ack ->
-		// FleetAPI.AckIncident(id, actor), which updates this same
-		// incident and pushes the ack frame itself. This remoteAck path only
-		// runs as a SECONDARY sync when a remote node's alert is acked from
-		// the plain /alerts page instead (apiFor(r,d) resolving to this
-		// replicaAPI) -- a narrower, legacy surface that predates the
-		// incidents page. Threading a real actor through it would need a
-		// second FleetAPI method and a web-side special case for a cosmetic
-		// improvement to a path AckIncident's own audit trail already covers
-		// for the common case, so it's left as "web" and documented here
-		// instead.
+		// Deliberately kept as "web". The AUTHORITATIVE path for a web user's ack,
+		// with the real signed-in actor, is POST /fleet/incidents/{id}/ack ->
+		// FleetAPI.AckIncident(id, actor), which updates this same incident and
+		// pushes the ack frame itself. This remoteAck path only runs as a SECONDARY
+		// sync when a remote node's alert is acked from the plain /alerts page.
+		// Threading an actor through it would need a second FleetAPI method and a
+		// web-side special case, for a cosmetic gain AckIncident's audit trail
+		// already covers.
 		if inc, ok := a.incidents.OpenAlertIncident(a.nodeID, key); ok {
 			_, _ = a.incidents.Ack(inc.ID, "web", time.Now().Unix())
 		}
@@ -891,20 +873,15 @@ func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
 		return "", err
 	}
 	if !res.OK {
-		// res.Error is authored end-to-end by the remote child (Hub.handleRPC
-		// only authenticates the node, it never validates the RPC result
-		// body's content -- a buggy or compromised child can POST back any
-		// text it likes). A plain prefix ("container_logs: "+res.Error) would
-		// NOT be enough: control.wireErrSentinels is matched by SUFFIX, and
-		// res.Error still ends the resulting string, so a child error that
-		// happens to end in, say, "not found" would still let a
-		// control-socket caller's errors.Is(err, core.ErrNotFound)
-		// misclassify a real RPC/docker error as a 404 (final-review
-		// transport I1). %q instead, like the local docker-error paths in
-		// this same function already do, always ends the message in a
-		// literal '"' -- none of the sentinels' texts end in one, so this
-		// can never coincide with a bare sentinel suffix, while still
-		// keeping the child's own text visible for display/logging.
+		// res.Error is authored end-to-end by the remote child (Hub.handleRPC only
+		// authenticates the node), so a buggy or compromised child can send any text.
+		// A plain prefix ("container_logs: "+res.Error) would NOT be enough:
+		// control.wireErrSentinels is matched by SUFFIX and res.Error still ends the
+		// string, so a child error ending in, say, "not found" would make a
+		// control-socket caller's errors.Is(err, core.ErrNotFound) misclassify it as
+		// a 404. %q, like the local docker-error paths here, always ends the message
+		// in a literal '"', which no sentinel text ends in, while keeping the child's
+		// text visible.
 		return "", fmt.Errorf("container_logs: child reported %q", res.Error)
 	}
 	return res.Output, nil

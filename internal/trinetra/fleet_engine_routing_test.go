@@ -177,9 +177,9 @@ func TestEngineRoutingDeliversFireToResolvedChannels(t *testing.T) {
 	}
 }
 
-// TestEngineEscalationFiresAfterDelayAndIsIdempotent covers the task-5
-// ruling: a step whose After has elapsed, on a still-firing/unacked
-// incident, is escalated exactly once even across repeated ticks.
+// TestEngineEscalationFiresAfterDelayAndIsIdempotent: a step whose After has
+// elapsed, on a still-firing/unacked incident, is escalated exactly once even
+// across repeated ticks.
 func TestEngineEscalationFiresAfterDelayAndIsIdempotent(t *testing.T) {
 	rf := newRoutingFixture(t, twoStepPolicy("5m", ""))
 	rf.engine.Submit(alertSource{}, Alert{Key: "cpu", Kind: "fire", Severity: SevCritical, Time: rf.now.Unix()})
@@ -260,9 +260,9 @@ func TestEngineEscalationStopsOnResolve(t *testing.T) {
 	}
 }
 
-// TestEngineRepeatEveryRenotifiesLastReachedStep covers the task-5 ruling:
-// once the last step is reached, RepeatEvery re-notifies its channels on
-// that cadence while firing and unacked.
+// TestEngineRepeatEveryRenotifiesLastReachedStep: once the last step is
+// reached, RepeatEvery re-notifies its channels on that cadence while firing
+// and unacked.
 func TestEngineRepeatEveryRenotifiesLastReachedStep(t *testing.T) {
 	rf := newRoutingFixture(t, core.AlertingConfig{
 		Policies: []core.Policy{{
@@ -303,9 +303,8 @@ func TestEngineRepeatEveryRenotifiesLastReachedStep(t *testing.T) {
 	}
 }
 
-// TestEngineResolvedGoesToUnionOfDeliveredChannels covers the task-5 ruling:
-// the resolved message goes to every channel that received any step of the
-// fire leg, not just step 0's own channels.
+// TestEngineResolvedGoesToUnionOfDeliveredChannels: the resolved message goes
+// to every channel that received any step of the fire leg, not just step 0's.
 func TestEngineResolvedGoesToUnionOfDeliveredChannels(t *testing.T) {
 	rf := newRoutingFixture(t, twoStepPolicy("1m", ""))
 	src := alertSource{}
@@ -364,10 +363,8 @@ func TestEngineSendResolvedFalseSuppressesRecoverDelivery(t *testing.T) {
 }
 
 // twoIndependentPolicies builds a Continue-chained route pair matching every
-// alert, each referencing its own policy -- the standard shape these B5
-// fix-round-1 tests use to prove two matched policies escalate/repeat fully
-// independently of each other (never merged by index, the CRITICAL bug this
-// round fixes).
+// alert, each referencing its own policy: the shape that proves two matched
+// policies escalate/repeat independently (never merged by index).
 func twoIndependentPolicies(a, b core.Policy) core.AlertingConfig {
 	return core.AlertingConfig{
 		Routes: []core.Route{
@@ -379,10 +376,10 @@ func twoIndependentPolicies(a, b core.Policy) core.AlertingConfig {
 	}
 }
 
-// TestEngineEscalationEachMatchedPolicyIndependent is the B5 fix round 1
-// CRITICAL regression test: policy A's step 1 (After 5m, chanX) and policy
-// B's step 1 (After 30m, chanY) must fire on THEIR OWN schedules -- chanY
-// must never be paged at 5m just because it shares an index with chanX.
+// TestEngineEscalationEachMatchedPolicyIndependent: policy A's step 1 (After
+// 5m, chanX) and policy B's step 1 (After 30m, chanY) must fire on THEIR OWN
+// schedules; chanY must never be paged at 5m just because it shares an index
+// with chanX.
 func TestEngineEscalationEachMatchedPolicyIndependent(t *testing.T) {
 	policyA := core.Policy{Name: "A", Steps: []core.PolicyStep{
 		{After: "0s", Channels: []string{"base"}}, {After: "5m", Channels: []string{"chanX"}},
@@ -415,8 +412,8 @@ func TestEngineEscalationEachMatchedPolicyIndependent(t *testing.T) {
 	}
 }
 
-// TestEngineRepeatEveryPerPolicyCadence covers the B5 fix round 1 ruling:
-// each matched policy repeats on its OWN RepeatEvery, independently.
+// TestEngineRepeatEveryPerPolicyCadence: each matched policy repeats on its
+// OWN RepeatEvery, independently.
 func TestEngineRepeatEveryPerPolicyCadence(t *testing.T) {
 	policyA := core.Policy{Name: "A", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"chanA"}}}, RepeatEvery: "10m"}
 	policyB := core.Policy{Name: "B", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"chanB"}}}, RepeatEvery: "30m"}
@@ -442,9 +439,9 @@ func TestEngineRepeatEveryPerPolicyCadence(t *testing.T) {
 	}
 }
 
-// TestEngineSendResolvedMixOnlySendsToTruePolicies covers the B5 fix round 1
-// ruling: with one matched policy SendResolved=true and another false, the
-// resolved message reaches only the true policy's channels.
+// TestEngineSendResolvedMixOnlySendsToTruePolicies: with one matched policy
+// SendResolved=true and another false, the resolved message reaches only the
+// true policy's channels.
 func TestEngineSendResolvedMixOnlySendsToTruePolicies(t *testing.T) {
 	yes, no := true, false
 	policyA := core.Policy{Name: "A", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"chanA"}}}, SendResolved: &yes}
@@ -467,12 +464,10 @@ func TestEngineSendResolvedMixOnlySendsToTruePolicies(t *testing.T) {
 	}
 }
 
-// TestEngineEscalationSurvivesRestartNoResend is the B5 fix round 1 minor:
-// an already-escalated step is never re-sent by a FRESH engine instance
-// built over the same incidentStore file (restart), and RepeatEvery's
-// cadence continues from the last durable event on disk (the "escalated"
-// event, and then each successive "repeated" event) rather than restarting
-// from zero.
+// TestEngineEscalationSurvivesRestartNoResend: an already-escalated step is
+// never re-sent by a FRESH engine over the same incidentStore file, and
+// RepeatEvery's cadence continues from the last durable event on disk (the
+// "escalated" event, then each "repeated" one) rather than restarting.
 func TestEngineEscalationSurvivesRestartNoResend(t *testing.T) {
 	dir := t.TempDir()
 	cfg := twoStepPolicy("5m", "10m") // single policy "esc": step 1 pager @5m, repeat every 10m
@@ -528,17 +523,13 @@ func TestEngineEscalationSurvivesRestartNoResend(t *testing.T) {
 	}
 }
 
-// --- task 6 part 1: structured timeline events ----------------------------
+// --- structured timeline events ----------------------------
 
-// TestEngineStructuredEventsSurviveAmbiguousChannelName is the review
-// finding this part fixes: a channel literally NAMED "step 5: pager" used to
-// confuse the old text-only parser (policyStepDetail's Detail text embeds
-// the policy/step/channels as plain text, and a channel name containing the
-// substring " step N: " could be misread as a second step marker). With
-// structured fields (Policy/Step/Channels) written on every event and read
-// FIRST (stepEventInfo), this channel name is no longer special at all: the
-// step is recognized as already escalated (no re-send on a later tick) and
-// stepEventInfo reports the exact channel list, untouched by text parsing.
+// TestEngineStructuredEventsSurviveAmbiguousChannelName: a channel literally
+// NAMED "step 5: pager" could be misread by the text parser as a second step
+// marker in Detail. With structured fields (Policy/Step/Channels) read FIRST
+// (stepEventInfo), the step is recognized as already escalated (no re-send on
+// a later tick) and stepEventInfo reports the exact channel list.
 func TestEngineStructuredEventsSurviveAmbiguousChannelName(t *testing.T) {
 	trickyChannel := "step 5: pager"
 	cfg := twoStepPolicy("5m", "")

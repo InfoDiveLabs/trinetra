@@ -82,11 +82,10 @@ func TestParseRuleExprValidForms(t *testing.T) {
 	}
 }
 
-// TestParseRuleExprBadInputs covers the task-7 ruling's "6+ bad inputs with
-// position-bearing errors": every case's error must be a *ruleParseError
-// whose Pos matches wantPos exactly (computed via strings.Index against the
-// expression itself, so a test typo can never silently assert the wrong
-// position).
+// TestParseRuleExprBadInputs covers 6+ bad inputs with position-bearing
+// errors: every case's error must be a *ruleParseError whose Pos matches
+// wantPos exactly (computed via strings.Index against the expression, so a
+// test typo can never silently assert the wrong position).
 func TestParseRuleExprBadInputs(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -124,8 +123,7 @@ func TestParseRuleExprBadInputs(t *testing.T) {
 			if !strings.Contains(pe.Msg, tt.wantMsg) {
 				t.Fatalf("parseRuleExpr(%q) error = %q, want to contain %q", tt.expr, pe.Msg, tt.wantMsg)
 			}
-			// Every error names its position exactly per the ruling's own
-			// example format ("expected ',' at 12").
+			// Every error names its position ("expected ',' at 12").
 			if !strings.HasSuffix(err.Error(), " at "+itoa(pe.Pos)) {
 				t.Fatalf("parseRuleExpr(%q) error string = %q, want it to end with ' at %d'", tt.expr, err.Error(), pe.Pos)
 			}
@@ -248,9 +246,9 @@ type ruleFixture struct {
 	engine    *fleetAlertEngine
 	now       time.Time
 
-	// self (round-1 review fix, IMPORTANT 2: all/node:<glob> selectors
-	// include the master's own node) backs ruleSelfSource. selfMu guards
-	// selfName/selfSnap/hasSelf since a test may mutate them between ticks.
+	// self (all/node:<glob> selectors include the master's own node) backs
+	// ruleSelfSource. selfMu guards selfName/selfSnap/hasSelf since a test may
+	// mutate them between ticks.
 	selfMu      sync.Mutex
 	selfName    string
 	selfSnap    Snapshot
@@ -319,17 +317,15 @@ func newRuleFixture(t *testing.T) *ruleFixture {
 	return rf
 }
 
-// setSelfSnapshot posts the master's own current snapshot (round-1 review
-// fix, IMPORTANT 2's ruleSelfSource.Snap).
+// setSelfSnapshot posts the master's own current snapshot (ruleSelfSource.Snap).
 func (rf *ruleFixture) setSelfSnapshot(snap Snapshot) {
 	rf.selfMu.Lock()
 	defer rf.selfMu.Unlock()
 	rf.selfSnap, rf.hasSelf = snap, true
 }
 
-// appendSelfSeriesPoint appends one 1m-resolution rollup point to the
-// master's own local store (round-1 review fix, IMPORTANT 2's
-// ruleSelfSource.Store), exactly like appendSeriesPoint does for a
+// appendSelfSeriesPoint appends one 1m-resolution rollup point to the master's
+// own local store (ruleSelfSource.Store), like appendSeriesPoint does for a
 // replicated fleet node.
 func (rf *ruleFixture) appendSelfSeriesPoint(t *testing.T, metric string, ts int64, v float64) {
 	t.Helper()
@@ -628,8 +624,8 @@ func TestRuleAbsentBlindWindow(t *testing.T) {
 	}
 }
 
-// TestRuleAbsentFiresWhenNoNodeMatchesAtAll covers the "including the case
-// where no node matches the selector at all" ruling.
+// TestRuleAbsentFiresWhenNoNodeMatchesAtAll covers the case where no node
+// matches the selector at all.
 func TestRuleAbsentFiresWhenNoNodeMatchesAtAll(t *testing.T) {
 	rf := newRuleFixture(t)
 	rf.setRules(t, core.AggregateRule{Name: "no-such-tag", Expr: "absent(tag:nonexistent, 5m)"})
@@ -775,8 +771,7 @@ func TestRuleAlertRoutedNormallyWhenNotSilenced(t *testing.T) {
 // Round-1 review fixes
 // =====================================================================
 
-// ---- IMPORTANT 1: an in-place edit of a firing rule is no longer a
-// silent no-op --------------------------------------------------------
+// ---- an in-place edit of a firing rule is not a silent no-op ----
 
 func TestRuleInPlaceEditWhileFiringRecoversThenRefires(t *testing.T) {
 	rf := newRuleFixture(t)
@@ -871,7 +866,7 @@ func TestRuleInPlaceSeverityOnlyChangeWhileFiringRecoversThenRefires(t *testing.
 	}
 }
 
-// ---- IMPORTANT 2: `all`/`node:<glob>` include the master's own node -----
+// ---- `all`/`node:<glob>` include the master's own node -----
 
 func TestSelfSelectorMatching(t *testing.T) {
 	rf := newRuleFixture(t)
@@ -951,7 +946,7 @@ func TestRuleTagSelectorNeverMatchesSelf(t *testing.T) {
 	}
 }
 
-// ---- MINORS ---------------------------------------------------------------
+// ---- misc ---------------------------------------------------------------
 
 func TestParseRuleExprRejectsNaNAndInf(t *testing.T) {
 	tests := []struct{ expr, at string }{

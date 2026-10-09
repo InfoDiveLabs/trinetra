@@ -58,15 +58,11 @@ type pushedFrame struct {
 	f    fleet.Frame
 }
 
-// disableGroupWaitForTest zeroes groupWait/groupInterval for the duration of
-// a test (restored via t.Cleanup): every engine test that predates task 6's
-// incident grouping fires an alert and expects it delivered immediately, but
-// group_wait/group_interval now gate a fire's first/updated group
-// notification (tryDeliverGroup). groupWait/groupInterval are package VARS,
-// not consts, precisely so a test can do this -- a
-// grouping-specific test instead sets them to whatever it wants to exercise
-// directly, or leaves this disabled and drives timing through the fake
-// clock + an explicit TickGrouping call, exactly like escalation testing.
+// disableGroupWaitForTest zeroes groupWait/groupInterval for the duration of a
+// test (restored via t.Cleanup): group_wait/group_interval gate a fire's
+// first/updated group notification (tryDeliverGroup), but most engine tests
+// expect immediate delivery. Grouping tests set their own values, or leave this
+// disabled and drive timing via the fake clock + TickGrouping.
 func disableGroupWaitForTest(t *testing.T) {
 	t.Helper()
 	prevWait, prevInterval := groupWait, groupInterval
@@ -277,8 +273,8 @@ func TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident(t *testing.T) 
 	}
 }
 
-// TestEngineFireCarriesIncidentButtons pins task 9's wiring: a delivered
-// fire Alert carries Ack/Silence-1h buttons naming its own incident's id.
+// TestEngineFireCarriesIncidentButtons pins that a delivered fire Alert carries
+// Ack/Silence-1h buttons naming its own incident's id.
 func TestEngineFireCarriesIncidentButtons(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -297,7 +293,7 @@ func TestEngineFireCarriesIncidentButtons(t *testing.T) {
 }
 
 // TestEngineRecoverCarriesNoButtons: a recover notification never carries
-// Ack/Silence buttons (task-9 ruling: "only on incident fire messages").
+// Ack/Silence buttons (only incident fire messages do).
 func TestEngineRecoverCarriesNoButtons(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -476,7 +472,7 @@ func TestEngineMasterOwnAlertGoesThroughSubmitUnprefixed(t *testing.T) {
 	}
 }
 
-// --- B3 review round 2 1(a): master-own alert crash recovery -------------
+// --- master-own alert crash recovery -------------
 
 // TestEngineResurrectsMasterOwnAlertAfterCrash: the master records a
 // node-down fire (Submit's step 1) and then "crashes" before any delivery
@@ -557,11 +553,10 @@ func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 	}
 }
 
-// TestEngineResurrectsBothLegsFireBeforeRecover covers the B3 review round 3
-// IMPORTANT fix: if the master crashed with BOTH the fire and its recover
-// recorded but neither delivered, resurrection must redeliver both -- not
-// just whichever leg the incident's current state happens to reflect -- and
-// the fire must go out before the recover.
+// TestEngineResurrectsBothLegsFireBeforeRecover: if the master crashed with
+// BOTH the fire and its recover recorded but neither delivered, resurrection
+// must redeliver both, not just the leg the incident's current state reflects,
+// and the fire must go out before the recover.
 func TestEngineResurrectsBothLegsFireBeforeRecover(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -847,7 +842,7 @@ func TestReplicaSinkOnAlertHookDedupsByteIdenticalRecord(t *testing.T) {
 	}
 }
 
-// --- B3 review round 2: keyed dispatch ordering + bounded concurrency -----
+// --- keyed dispatch ordering + bounded concurrency -----
 
 // TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel exercises the
 // keyed dispatcher (fleet_dispatch.go) through Submit/HandleChildAlert
@@ -953,11 +948,10 @@ func TestEngineBoundsConcurrentDispatches(t *testing.T) {
 	}
 }
 
-// TestEngineStopLeavesUndeliveredJobCleanForResurrection is the B3 review
-// round 3 minor 2's engine-level check: a job still in flight when Stop's
-// timeout expires leaves the incident exactly as step 1 recorded it -- no
-// "delivered" event -- so resurrectMasterAlerts at the next start (a fresh
-// engine over the same store) is what actually redelivers it.
+// TestEngineStopLeavesUndeliveredJobCleanForResurrection: a job still in
+// flight when Stop's timeout expires leaves the incident as step 1 recorded it
+// (no "delivered" event), so resurrectMasterAlerts at the next start (a fresh
+// engine over the same store) redelivers it.
 func TestEngineStopLeavesUndeliveredJobCleanForResurrection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -1032,15 +1026,13 @@ func TestEngineHandleChildAckSyncAcksOpenIncident(t *testing.T) {
 	}
 }
 
-// --- B3 review round 1: ordering (record -> deliver -> receipt) ----------
+// --- ordering (record -> deliver -> receipt) ----------
 
-// TestEngineReceiptFollowsDeliveredEventOnSuccess is the ruling's "success"
-// case: the receipt goes out only AFTER the "delivered" timeline event is
-// durably recorded, never before. The fake push callback checks the
-// incident's OWN on-disk-backed state at the moment it is invoked (both run
-// in the same goroutine, in program order, inside deliverAndReceipt), so if
-// the ordering were ever reversed this test would see no "delivered" event
-// yet when the receipt frame arrives.
+// TestEngineReceiptFollowsDeliveredEventOnSuccess: the receipt goes out only
+// AFTER the "delivered" timeline event is durably recorded. The fake push
+// callback checks the incident's on-disk-backed state when invoked (same
+// goroutine, program order, inside deliverAndReceipt), so a reversed ordering
+// would see no "delivered" event when the receipt frame arrives.
 func TestEngineReceiptFollowsDeliveredEventOnSuccess(t *testing.T) {
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
@@ -1089,10 +1081,9 @@ func TestEngineReceiptFollowsDeliveredEventOnSuccess(t *testing.T) {
 	}
 }
 
-// TestEngineAllChannelsFailSendsNoReceipt is the ruling's "all channels
-// fail" case: no receipt goes out, the incident stays firing with no
-// "delivered" event, and (per HandleChildAlert's contract) the child's own
-// fallback remains the only path to actual delivery.
+// TestEngineAllChannelsFailSendsNoReceipt: when all channels fail, no receipt
+// goes out and the incident stays firing with no "delivered" event; the
+// child's own fallback is the only path to delivery.
 func TestEngineAllChannelsFailSendsNoReceipt(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -1125,14 +1116,11 @@ func TestEngineAllChannelsFailSendsNoReceipt(t *testing.T) {
 	}
 }
 
-// TestEngineCrashBetweenRecordAndReceiptThenChildFallback is the ruling's
-// "crash between record and receipt" case: incidents.Apply records the fire
-// durably (step 1), then the process is gone before delivery ever runs (no
-// receipt is ever sent). A restarted engine, built fresh over the same
-// file, then receives the child's OWN later fallback delivery (the receipt
-// never arrived, so the child fell back on schedule) for the exact same
-// (node, key, fired_at) -- the master must record delivered_locally and
-// must NOT attempt delivery again.
+// TestEngineCrashBetweenRecordAndReceiptThenChildFallback: incidents.Apply
+// records the fire durably, then the process dies before delivery (no receipt
+// sent). A restarted engine over the same file then receives the child's OWN
+// fallback delivery for the same (node, key, fired_at); the master must record
+// delivered_locally and must NOT attempt delivery again.
 func TestEngineCrashBetweenRecordAndReceiptThenChildFallback(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")

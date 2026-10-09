@@ -51,10 +51,9 @@ func TestMatcherMatchesGlobsExactFieldsAndEmptyMeansAny(t *testing.T) {
 	}
 }
 
-// TestMatcherNodeMatchesExactIDRegardlessOfName is the review round-2 item
-// (c) test: Matcher.Node matches if it EXACTLY equals the node's internal
-// id, even when it does NOT glob-match the node's current display name --
-// giving a precise, rename-proof target.
+// TestMatcherNodeMatchesExactIDRegardlessOfName: Matcher.Node matches if it
+// EXACTLY equals the node's internal id, even when it does NOT glob-match the
+// node's current display name, giving a precise, rename-proof target.
 func TestMatcherNodeMatchesExactIDRegardlessOfName(t *testing.T) {
 	m := core.Matcher{Node: idOfDB1}
 	if !m.Matches(idOfDB1, "totally-renamed", nil, "cpu_pct", "critical") {
@@ -68,12 +67,10 @@ func TestMatcherNodeMatchesExactIDRegardlessOfName(t *testing.T) {
 	}
 }
 
-// TestMatcherNodeWithRealHexIDIsNotAUsableGlob is the review round-3 minor:
-// a real, generated node id (fleet.NewNodeID, 32 hex chars) pins that it can
-// only ever match via the exact-id branch, never as a glob pattern -- hex
-// characters have no special meaning to path.Match, so a real id used as
-// Matcher.Node can never accidentally act as a wildcard against some other
-// node's name or id.
+// TestMatcherNodeWithRealHexIDIsNotAUsableGlob: a real generated node id
+// (fleet.NewNodeID, 32 hex chars) only ever matches via the exact-id branch;
+// hex characters mean nothing to path.Match, so it can never act as a wildcard
+// against another node's name or id.
 func TestMatcherNodeWithRealHexIDIsNotAUsableGlob(t *testing.T) {
 	id, err := fleet.NewNodeID()
 	if err != nil {
@@ -168,15 +165,13 @@ func TestMaintenanceOccurrencesInRangeExpandsNext24h(t *testing.T) {
 	}
 }
 
-// --- review round 1, item 2: DST -------------------------------------------
+// --- DST -------------------------------------------
 
-// TestMaintenanceOccurrenceFallBackLastsExactlyOneHour is the review round-1
-// item 2 regression test: 2024-11-03 is the US fall-back day in
-// America/New_York (clocks go from 02:00 EDT back to 01:00 EST, so the
-// 01:00-02:00 hour occurs twice in real time). Computing the occurrence's
-// end independently via time.Date (the old code) would double this window
-// to 2 real hours; computing it as start.Add(wallDuration) keeps it at
-// exactly 1h regardless.
+// TestMaintenanceOccurrenceFallBackLastsExactlyOneHour: 2024-11-03 is the US
+// fall-back day in America/New_York (02:00 EDT back to 01:00 EST, so the
+// 01:00-02:00 hour occurs twice). Computing the occurrence's end independently
+// via time.Date would double the window to 2 real hours; computing it as
+// start.Add(wallDuration) keeps it at exactly 1h.
 func TestMaintenanceOccurrenceFallBackLastsExactlyOneHour(t *testing.T) {
 	m := core.Maintenance{Name: "w", Weekdays: []int{0}, From: "01:00", To: "02:00", TZ: "America/New_York"} // Sunday
 	from := time.Date(2024, 11, 3, 0, 0, 0, 0, time.UTC)                                                     // 2024-11-03 is a Sunday
@@ -218,11 +213,10 @@ func TestMaintenanceOccurrenceSpringForwardDocumented(t *testing.T) {
 	}
 }
 
-// TestMaintenanceOccurrenceOwnedBySundayNotMonday is the review round-1 item
-// 2 weekday-ownership test: a window crossing midnight is scheduled by the
-// weekday of its START, never the day its End happens to land on.
-// Weekdays=[Sunday] must produce the Sunday 22:00 -> Monday 02:00
-// occurrence; it must NOT also (or instead) require Monday in Weekdays.
+// TestMaintenanceOccurrenceOwnedBySundayNotMonday: a window crossing midnight
+// is scheduled by the weekday of its START, never the day its End lands on.
+// Weekdays=[Sunday] must produce the Sunday 22:00 -> Monday 02:00 occurrence
+// and must NOT also (or instead) require Monday in Weekdays.
 func TestMaintenanceOccurrenceOwnedBySundayNotMonday(t *testing.T) {
 	m := core.Maintenance{Name: "w", Weekdays: []int{0}, From: "22:00", To: "02:00", TZ: "UTC"} // Sunday only
 	from := time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC)                                         // 2024-01-07 is a Sunday
@@ -280,9 +274,8 @@ func TestSilenceStoreCreateValidatesAndPersists(t *testing.T) {
 	}
 }
 
-// TestSilenceStoreCreateRejectsBadGlob pins task C4's brief: a silence's
-// Node/Rule glob must parse (validGlob, same check a Route's own matchers
-// already get), not just be non-empty.
+// TestSilenceStoreCreateRejectsBadGlob pins that a silence's Node/Rule glob
+// must parse (validGlob, as for a Route's matchers), not just be non-empty.
 func TestSilenceStoreCreateRejectsBadGlob(t *testing.T) {
 	s := newTestSilenceStore(t)
 	if _, err := s.Create(core.Silence{Matchers: []core.Matcher{{Node: "["}}, Start: 1000, End: 2000, Author: "cli"}); err == nil {
@@ -528,23 +521,16 @@ func TestEngineDeliversAfterSilenceEnded(t *testing.T) {
 	}
 }
 
-// TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied is the
-// review round-1 item 3 regression test. The race it guards against: a
-// deliverUnsilenced SCAN (at some earlier tick) sees an incident suppressed
-// and unresolved and enqueues a re-check job for it; before that job's turn
-// in its lane actually comes up, a RECOVER for the very same key arrives and
-// is fully Applied. Without moving the delivery DECISION into the job
-// itself (and re-reading fresh state there, as tryDeliverUnsilenced now
-// does), a scan-time decision would still think it's suppressed and
-// unresolved by the time it runs, and deliver a stale "fire" AFTER the
-// recover already went out.
+// TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied guards a
+// race: a deliverUnsilenced SCAN sees an incident suppressed and unresolved and
+// enqueues a re-check job; before the job's turn in its lane, a RECOVER for the
+// same key arrives and is fully Applied. Deciding at scan time would deliver a
+// stale "fire" AFTER the recover went out, so the decision lives in the job,
+// which re-reads fresh state (tryDeliverUnsilenced).
 //
-// This is exercised by calling tryDeliverUnsilenced directly, standing in
-// for "the re-check job finally getting its turn in the lane": the actual
-// wall-clock race between a background dispatcher goroutine and this
-// test's own Submit call is not itself deterministic (nor should a test's
-// pass/fail depend on winning it) -- what IS deterministic, and what this
-// pins, is that whenever that job DOES run, it must see the incident's
+// It calls tryDeliverUnsilenced directly, standing in for "the re-check job
+// getting its turn": the real wall-clock race is not deterministic, but it is
+// deterministic that whenever the job DOES run it must see the incident's
 // CURRENT state, not a stale snapshot.
 func TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied(t *testing.T) {
 	ef := newEngineFixture(t)
@@ -641,13 +627,13 @@ func TestEngineTickSilencesPrunesLongExpired(t *testing.T) {
 	}
 }
 
-// --- review round 1, item 1: multi-matcher leak, end to end (web1/db1) -----
+// --- multi-matcher leak, end to end (web1/db1) -----
 
-// TestSilencesForNodeWeb1DB1MultiMatcherLeak is the review round-1 item 1
-// regression test, end to end: a Silence with two OR'd matchers -- "silence
-// everything on db1" and "silence disk* alerts everywhere" -- must never let
-// web1 suppress an unrelated (mem) alert just because the db1-only matcher
-// rode along in the same OR list. web1 must not suppress; db1 must.
+// TestSilencesForNodeWeb1DB1MultiMatcherLeak, end to end: a Silence with two
+// OR'd matchers ("silence everything on db1" and "silence disk* alerts
+// everywhere") must never let web1 suppress an unrelated (mem) alert just
+// because the db1-only matcher rode along in the same OR list. web1 must not
+// suppress; db1 must.
 func TestSilencesForNodeWeb1DB1MultiMatcherLeak(t *testing.T) {
 	store := newTestSilenceStore(t)
 	matchers := []core.Matcher{{Node: "db1"}, {Rule: "disk*"}}
@@ -746,13 +732,10 @@ func TestReplicaApplyCrossAlertKeyOrderingDropRepro(t *testing.T) {
 	}
 }
 
-// TestPushedSilencesSetHoldsMutexThroughWrite reproduces final-review
-// engine I2's second half: pushedSilences.Set released its mutex before
-// marshaling and writing to disk, so two concurrent Set calls could
-// complete their writes out of order, leaving the on-disk sidecar stale
-// relative to p.silences. Set must hold its mutex for the entire call,
-// including the write, so a slower, earlier Set can never land on disk
-// after a faster, later one.
+// TestPushedSilencesSetHoldsMutexThroughWrite: Set must hold its mutex for the
+// entire call, including the disk write; otherwise two concurrent Set calls
+// could complete their writes out of order, leaving the sidecar stale relative
+// to p.silences.
 func TestPushedSilencesSetHoldsMutexThroughWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pushed-silences.json")
 	p := newPushedSilences(path)

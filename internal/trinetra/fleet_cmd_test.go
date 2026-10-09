@@ -333,9 +333,8 @@ func (a fleetCLIFakeFleetAPI) ManagedStatus() ([]core.ManagedStatus, error) {
 	return a.f.managedStatus, a.f.managedStatusErr
 }
 
-// FleetSeries: plan C task 1b's fleet-wide series API has no CLI surface;
-// this stub exists only so fleetCLIFakeFleetAPI keeps satisfying
-// core.FleetAPI.
+// FleetSeries has no CLI surface; this stub only keeps fleetCLIFakeFleetAPI
+// satisfying core.FleetAPI.
 func (a fleetCLIFakeFleetAPI) FleetSeries(string, core.NodeFilter, core.Agg, int64, int64, core.Resolution) ([]core.FleetSeriesPoint, error) {
 	return nil, nil
 }
@@ -508,10 +507,9 @@ func testOldMasterForCLI(t *testing.T) (code string) {
 	return fleet.EncodeJoin(fleet.JoinInfo{URL: srv.URL, Token: "swt_unused", Pin: fleet.SPKIPin(ca.Cert)})
 }
 
-// TestFleetJoinAgainstOlderMasterPrintsRequestedName is the review round-3
-// item 1 regression test: an older master's JoinResponse has no "name"
-// field, which decodes as "" -- the CLI must treat that as "not reported"
-// (fall back to the requested name) rather than printing a false
+// TestFleetJoinAgainstOlderMasterPrintsRequestedName: an older master's
+// JoinResponse has no "name" field (decodes as ""); the CLI must treat that as
+// "not reported" and fall back to the requested name, not print a false
 // "registered as \"\" instead" note.
 func TestFleetJoinAgainstOlderMasterPrintsRequestedName(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
@@ -730,8 +728,8 @@ func TestFleetNodeRevoke(t *testing.T) {
 	}
 }
 
-// TestFleetNodeDependsSetsAndClears covers task 6 part 3's CLI:
-// `fleet node depends <node> <dep,...>`, with an empty value clearing it.
+// TestFleetNodeDependsSetsAndClears covers `fleet node depends <node>
+// <dep,...>`, with an empty value clearing it.
 func TestFleetNodeDependsSetsAndClears(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{nodes: []core.NodeSummary{
@@ -1190,10 +1188,9 @@ func TestFleetMaintenanceDelete(t *testing.T) {
 	}
 }
 
-// TestFleetRouteTestPrintsDecision covers the B5 fix round 1 CLI output:
-// every matched policy (here, two -- as a Continue chain would produce)
-// prints its own steps and repeat_every separately, since each escalates
-// independently.
+// TestFleetRouteTestPrintsDecision: every matched policy (here two, as a
+// Continue chain produces) prints its own steps and repeat_every separately,
+// since each escalates independently.
 func TestFleetRouteTestPrintsDecision(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{routeTestResult: core.RouteDecision{
@@ -1334,7 +1331,7 @@ func TestFleetAlertingApplySurfacesValidationError(t *testing.T) {
 	}
 }
 
-// --- task 8: managed config CLI, read-only enforcement, fleet leave ------
+// --- managed config CLI, read-only enforcement, fleet leave ------
 
 func TestFleetManagedList(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
@@ -1372,13 +1369,11 @@ func TestFleetManagedSetCreatesWhenNoExistingTag(t *testing.T) {
 	}
 }
 
-// TestFleetManagedSetNeverListsFirstLettingServerUpsert is the round-1
-// review MINOR fix's test: the CLI no longer calls Fleet().Managed() to
-// decide create-vs-update itself (a list-then-write TOCTOU) -- it always
-// sends an empty ID and lets the server's own atomic upsert-by-tag
-// (managedFragmentStore.Save, unit-tested directly in
-// fleet_managed_test.go) decide, even when an existing fragment for the
-// same tag is right there in fake.managed.
+// TestFleetManagedSetNeverListsFirstLettingServerUpsert: the CLI does not call
+// Fleet().Managed() to choose create-vs-update (a list-then-write TOCTOU); it
+// always sends an empty ID and lets the server's atomic upsert-by-tag
+// (managedFragmentStore.Save) decide, even when a fragment for the same tag
+// is already in fake.managed.
 func TestFleetManagedSetNeverListsFirstLettingServerUpsert(t *testing.T) {
 	_, _, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{managed: []core.ManagedFragment{
@@ -1396,11 +1391,9 @@ func TestFleetManagedSetNeverListsFirstLettingServerUpsert(t *testing.T) {
 	}
 }
 
-// TestFleetManagedSetDefaultsToMerge pins the CLI half of the C5 review
-// carry-over: a plain `fleet managed set` (no --replace) sends
-// Merge:true, so the server merges into the tag's existing fragment by
-// default (managedFragmentStore.Save's merge logic, unit-tested directly in
-// fleet_managed_test.go).
+// TestFleetManagedSetDefaultsToMerge pins that a plain `fleet managed set` (no
+// --replace) sends Merge:true, so the server merges into the tag's existing
+// fragment.
 func TestFleetManagedSetDefaultsToMerge(t *testing.T) {
 	_, _, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{}
@@ -1520,12 +1513,10 @@ func TestConfigSetRefusedOnManagedChild(t *testing.T) {
 	}
 }
 
-// TestFleetLeaveKeepsManagedValuesRemovesSidecar pins the task-8 ruling for
-// `fleet leave`: the last managed values stay as ordinary local config (they
-// already are -- leave never touches Thresholds/etc.), only the
-// managed-config sidecar is removed, so this host stops enforcing them as
-// read-only. Uses a plain (non --purge) leave so the rest of fleet-child
-// survives, isolating the assertion to the sidecar alone.
+// TestFleetLeaveKeepsManagedValuesRemovesSidecar pins `fleet leave`: the last
+// managed values stay as ordinary local config, only the managed-config
+// sidecar is removed so this host stops enforcing them as read-only. A plain
+// (non --purge) leave isolates the assertion to the sidecar.
 func TestFleetLeaveKeepsManagedValuesRemovesSidecar(t *testing.T) {
 	dir, _, errb := fleetCLIEnv(t)
 	code := testMasterForCLI(t)

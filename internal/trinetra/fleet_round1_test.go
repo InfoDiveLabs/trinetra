@@ -1,8 +1,7 @@
-// Package trinetra: fleet_round1_test.go covers the fleet phase 2 task 6
-// review's fix round 1: per-member silence suppression, a
-// dependency-folded member's recover finding the right bucket,
-// grouped resurrection, a release sweep on SetNodeDeps
-// and the group-interval/fallback-after interaction
+// Package trinetra: fleet_round1_test.go covers per-member silence
+// suppression, a dependency-folded member's recover finding the right bucket,
+// grouped resurrection, a release sweep on SetNodeDeps and the
+// group-interval/fallback-after interaction.
 package trinetra
 
 import (
@@ -95,13 +94,11 @@ func TestEngineSilencedMemberFirstThenUnsilencedSiblingIsDelivered(t *testing.T)
 	}
 }
 
-// TestEngineSilencedSiblingDoesNotFreezeEscalation: an unsilenced member
-// fires first and starts escalating; a silenced sibling joining afterward
-// must not disturb its escalation (previously: ANY later fire unconditionally
-// overwrote the whole incident's State, freezing escalation the moment a
-// silenced fire landed, since TickEscalations only ever considers
-// state=="firing"). After the silenced sibling's own silence ends, it is
-// delivered and the incident state is (still) "firing".
+// TestEngineSilencedSiblingDoesNotFreezeEscalation: an unsilenced member fires
+// first and starts escalating; a silenced sibling joining afterward must not
+// disturb its escalation (a later fire must not overwrite the whole incident's
+// State, since TickEscalations only considers state=="firing"). After the
+// sibling's silence ends, it is delivered and the state is still "firing".
 func TestEngineSilencedSiblingDoesNotFreezeEscalation(t *testing.T) {
 	rf := newRoutingFixture(t, twoStepPolicy("5m", "10m")) // step 1 @5m, repeat every 10m
 	rf.engine.PushLeaseNow("n1", rf.now)
@@ -283,7 +280,7 @@ func TestEngineFoldedChildRecoverResolvesCorrectBucket(t *testing.T) {
 	}
 }
 
-// --- IMPORTANT 3: grouped resurrection -------------------------------------
+// --- grouped resurrection -------------------------------------
 
 // TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage: two
 // master-own members of the SAME incident are both undelivered when the
@@ -355,7 +352,7 @@ func TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage(t *test
 	}
 }
 
-// --- IMPORTANT 4: SetNodeDeps must release a folded member itself ---------
+// --- SetNodeDeps must release a folded member itself ---------
 
 // TestSetNodeDepsReleasesFoldedChildImmediately: a child is folded into its
 // down parent's incident; removing the dependency (not waiting for the

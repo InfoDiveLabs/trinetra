@@ -249,24 +249,17 @@ func (c *childLinkAlerts) Plan(st fleet.LinkStatus, masterURL string, startedAt,
 	return out
 }
 
-// handleLinkRevocation is called once per childLinkAlerts tick, BEFORE
-// la.Plan, when the child sees its own link reported as revoked
-// (final-review engine ruling (b)). It permanently invalidates lease
-// (leaseHolder.Revoke): from this point on, handoff.Route always returns
-// true (deliver locally), so la.Plan's own "fleet:link:revoked" notice --
-// raised right after this returns, in the same tick -- is delivered
-// directly and never carries deliverFallback's "master unreachable" prefix,
-// which would be actively misleading for a node that was deliberately cut
-// off, not merely unreachable.
+// handleLinkRevocation is called once per childLinkAlerts tick, BEFORE la.Plan,
+// when the child sees its own link reported as revoked. It permanently
+// invalidates the lease (leaseHolder.Revoke), so handoff.Route always returns
+// true (deliver locally) and la.Plan's "fleet:link:revoked" notice is
+// delivered directly without deliverFallback's misleading "master
+// unreachable" prefix: this node was deliberately cut off.
 //
-// It also drains (handoff.Drain) every alert still routed to the
-// now-revoked master, delivering each locally right away via fallback with
-// revokedFallbackPrefix instead of waiting out its own individual
-// fallbackAfter countdown -- there is no point still hoping for a receipt
-// from a master that explicitly cut this node off. Safe to call every tick
-// once revoked: Revoke and Drain are both idempotent (Drain returns nil
-// once pending is already empty), so this is a cheap no-op after the first
-// call.
+// It also drains (handoff.Drain) every alert still routed to the revoked
+// master, delivering each locally via fallback with revokedFallbackPrefix
+// instead of waiting out its fallbackAfter countdown. Revoke and Drain are
+// idempotent, so it is a cheap no-op after the first call.
 func handleLinkRevocation(st fleet.LinkStatus, lease *leaseHolder, handoffState *handoff, silences *pushedSilences, fallback func(a Alert, silences *pushedSilences, prefix string)) {
 	if st.State != fleet.LinkRevoked {
 		return

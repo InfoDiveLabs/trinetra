@@ -61,22 +61,16 @@ func newKeyedDispatcher() *keyedDispatcher {
 	return &keyedDispatcher{sem: make(chan struct{}, dispatchConcurrency), lanes: map[string]*dispatchLane{}}
 }
 
-// Enqueue appends job to key's FIFO and, if key's lane was previously idle
-// (or didn't exist yet), starts exactly one goroutine to drain it -- never a
-// second goroutine for the same key while one is already running. A no-op
-// (job is silently dropped, not queued) once Stop has been called.
+// Enqueue appends job to key's FIFO and, if key's lane was idle (or didn't
+// exist), starts exactly one goroutine to drain it. A no-op (job dropped) once
+// Stop has been called.
 //
-// mu is held for the entire lookup-or-create + append, exactly matching
-// pump's own locking order (mu outer, then the lane's own state) -- without
-// that, a lane pump sees empty and is about to retire could otherwise be
-// handed a new job by an Enqueue call that is already holding a stale
-// reference to it, orphaning that job on a lane no longer reachable through
-// d.lanes at all (a second, divergent lane object would then be created for
-// the same key by the next unrelated Enqueue, breaking per-key ordering).
-// Locking the whole decision under one mutex avoids that split-brain state
-// entirely, at the cost of briefly serializing Enqueue/pump against each
-// other -- never against the (semaphore-gated) job itself, which always
-// runs with neither lock held.
+// mu is held for the whole lookup-or-create + append, matching pump's locking
+// order (mu outer, then the lane's own state). Otherwise a lane that pump sees
+// empty and is about to retire could be handed a job by an Enqueue holding a
+// stale reference, orphaning it, and the next Enqueue would create a second
+// lane for the key and break per-key ordering. Jobs themselves run with
+// neither lock held.
 // enqueueAfterUnlockHook, when set by a test, runs in Enqueue right after mu
 // is released: the window in which a running pump can already take and
 // finish the new job.

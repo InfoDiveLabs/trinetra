@@ -46,12 +46,10 @@ func incidentGroupKey(nodeID, key string) string {
 
 // incidentApply is what fleetAlertEngine.Submit hands to incidentStore.Apply
 // for one dedup'd alert record. It records ONLY the fire/recover decision
-// (deliveredLocally: the child already delivered it, so the master never
-// will) -- whether the master itself successfully delivers it is known only
-// later, off Submit's own goroutine, and recorded separately via
-// incidentStore.AppendEvent once delivery actually completes (B3 review
-// round 1: the record must be durable before delivery is even attempted, not
-// after).
+// (deliveredLocally: the child already delivered it, so the master never will);
+// whether the master delivers it is recorded later via
+// incidentStore.AppendEvent. The record must be durable before delivery is
+// attempted.
 type incidentApply struct {
 	src              alertSource
 	alert            Alert
@@ -112,24 +110,18 @@ type incidentStore struct {
 	// a duplicate.
 	open map[string]string
 	// openMember maps a (node, key) member slot to the id of the incident
-	// CURRENTLY holding its unresolved instance (task 6 fix round 1, CRITICAL
-	// 2): a recover must find and resolve that exact member regardless of
-	// what grouping bucket ITS OWN (recover-side) key/severity would compute
-	// -- a dependency-folded member in particular lives in its parent's
-	// incident, under the parent's own bucket, never its own. Maintained by
-	// Apply (set on fire, deleted on recover) and load; a member released
-	// from a fold (ReleaseFoldedMember) also deletes its old entry, since
-	// deliverReleasedMember's fresh Apply call re-adds it under the new
-	// incident.
+	// CURRENTLY holding its unresolved instance: a recover must resolve that exact
+	// member regardless of the bucket its own (recover-side) key/severity would
+	// compute (a dependency-folded member lives in its parent's incident, under
+	// the parent's bucket). Maintained by Apply (set on fire, deleted on recover)
+	// and load; ReleaseFoldedMember also deletes its old entry, since
+	// deliverReleasedMember's fresh Apply re-adds it under the new incident.
 	openMember map[memberKey]string
-	// suppressed indexes every incident with AT LEAST ONE open (unresolved)
-	// member whose SilencedBy is set (review round 1, item 3's second half;
-	// refined in fix round 1, CRITICAL 1, to be per-member rather than
-	// keyed off the whole incident's State): fleetAlertEngine.
-	// deliverUnsilenced runs every 5s (TickSilences) and must not do a full
-	// List() scan that often just to find the handful of incidents that
-	// might have a silence worth re-checking. Kept in lockstep by
-	// recomputeState's callers via syncIndexesLocked.
+	// suppressed indexes every incident with AT LEAST ONE open (unresolved) member
+	// whose SilencedBy is set (per-member, not keyed off the incident's State):
+	// fleetAlertEngine.deliverUnsilenced runs every 5s (TickSilences) and must not
+	// do a full List() scan that often. Kept in lockstep by recomputeState's
+	// callers via syncIndexesLocked.
 	suppressed map[string]struct{}
 }
 
@@ -435,29 +427,23 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 	return inc, s.appendLine(inc)
 }
 
-// recomputeState derives inc.State from its members and ack status (task 6
-// fix round 1, CRITICAL 1). Previously each fire/recover unconditionally
-// overwrote inc.State from ONLY the record just applied, so whichever member
-// fired or recovered LAST decided the WHOLE incident's state: a silenced
-// member could be starved forever once an unsilenced sibling flipped the
-// incident back to "firing" (nothing ever re-suppressed it), and an
-// unsilenced sibling's escalation would freeze the moment a LATER silenced
-// fire flipped the whole incident to "suppressed" (TickEscalations only ever
-// considers state=="firing"). now is used only to stamp inc.Resolved the
-// FIRST time this transitions to resolved.
+// recomputeState derives inc.State from its members and ack status, rather
+// than from only the record just applied: otherwise whichever member
+// fired/recovered LAST would decide the whole incident, starving a silenced
+// member once an unsilenced sibling flipped it back to "firing", and freezing
+// an unsilenced sibling's escalation (TickEscalations only considers
+// state=="firing") when a later silenced fire flipped it to "suppressed". now
+// stamps inc.Resolved the FIRST time this transitions to resolved.
 //
 // Called after every mutation that can affect it: Apply, AppendEvent, Ack,
-// MarkDeliveredLocally, a per-member unsilence delivery
-// (DeliverUnsilencedMember) and a dependency release (ReleaseFoldedMember).
+// MarkDeliveredLocally, DeliverUnsilencedMember and ReleaseFoldedMember.
 // Precedence, highest first:
 //   - resolved:   every member has recovered;
-//   - acked:      AckedBy is set (an ack is sticky -- a NEW member firing
-//     after an ack does not implicitly reopen it; only a full resolve
-//     changes it again);
-//   - suppressed: every still-open (unresolved) member is silenced
-//     (SilencedBy != "") or dependency-folded (Suppressed != "");
-//   - firing:     anything else (including "no members at all", which
-//     should not happen).
+//   - acked:      AckedBy is set (sticky: a NEW member firing after an ack
+//     does not reopen it; only a full resolve changes it);
+//   - suppressed: every still-open member is silenced (SilencedBy != "") or
+//     dependency-folded (Suppressed != "");
+//   - firing:     anything else.
 func recomputeState(inc *core.Incident, now int64) {
 	if allAlertsResolved(inc.Alerts) {
 		if inc.State != "resolved" {
@@ -690,9 +676,8 @@ func cloneIncident(inc core.Incident) core.Incident {
 	return inc
 }
 
-// OpenForGroupKey returns the currently open (firing or acked) incident for
-// gk, if any -- used to find "the incident this node+key's alert belongs
-// to" without a full alert-key scan.
+// OpenForGroupKey returns the currently open (firing or acked) incident for gk,
+// if any, without a full alert-key scan.
 func (s *incidentStore) OpenForGroupKey(gk string) (core.Incident, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -741,15 +726,12 @@ func (s *incidentStore) HasUnresolvedAlert(node, key string) bool {
 	return ok
 }
 
-// DeliverUnsilencedMember atomically clears one member's SilencedBy (task 6
-// fix round 1, CRITICAL 1: unsilence decides using SilencedBy, never the
-// timeline) and appends events (one per matched policy, for a routed
-// delivery, or a single event otherwise) recording that delivery, in one
-// persisted snapshot. A no-op (ok=false, nothing written) if id has no such
-// unresolved, currently-silenced (node, key, firedAt) member -- e.g. it
-// already recovered, or a racing call (or the silence matching again by the
-// time this runs) already handled it -- or if events is empty (nothing to
-// record, so nothing should be cleared either).
+// DeliverUnsilencedMember atomically clears one member's SilencedBy (unsilence
+// decides using SilencedBy, never the timeline) and appends events (one per
+// matched policy for a routed delivery, else a single event) recording that
+// delivery, in one persisted snapshot. A no-op (ok=false, nothing written) if
+// id has no such unresolved, currently-silenced (node, key, firedAt) member
+// (it recovered, or a racing call already handled it), or if events is empty.
 func (s *incidentStore) DeliverUnsilencedMember(id, node, key string, firedAt int64, events ...core.IncidentEvent) (inc core.Incident, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -790,13 +772,11 @@ func (s *incidentStore) DeliverUnsilencedMember(id, node, key string, firedAt in
 	return cand, true, s.appendLine(cand)
 }
 
-// ReleaseFoldedMember clears a dependency-suppressed member's Suppressed
-// reason (task 6 part 3: "mark the folded member as released") once none of
-// its node's dependencies are down any more, recording reason (e.g.
-// "released: parent web-1 recovered") both on the member and as a
-// structured "released" timeline event. A no-op (ok=false) if id has no
-// such unresolved, currently-suppressed (node, key) member -- e.g. it
-// recovered or was released already by a racing call.
+// ReleaseFoldedMember clears a dependency-suppressed member's Suppressed reason
+// once none of its node's dependencies are down, recording reason (e.g.
+// "released: parent web-1 recovered") on the member and as a structured
+// "released" timeline event. A no-op (ok=false) if id has no such unresolved,
+// currently-suppressed (node, key) member (recovered or released already).
 func (s *incidentStore) ReleaseFoldedMember(id, node, key string, firedAt, now int64, reason string) (inc core.Incident, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

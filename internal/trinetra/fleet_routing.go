@@ -51,9 +51,9 @@ func defaultAlertingConfig() core.AlertingConfig {
 
 // --- validation ----------------------------------------------------------
 
-// validGlob reports whether pattern is a syntactically valid path.Match
-// glob, checked against "" per the task-5 ruling (path.Match's error, not
-// its match result, is what a bad pattern like "[" produces).
+// validGlob reports whether pattern is a syntactically valid path.Match glob,
+// checked against "" (path.Match's error, not its match result, is what a bad
+// pattern like "[" produces).
 func validGlob(pattern string) bool {
 	_, err := path.Match(pattern, "")
 	return err == nil
@@ -121,13 +121,9 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 
 	routeNames := map[string]bool{}
 	for _, r := range cfg.Routes {
-		// Route names are REQUIRED and unique (fleet-ui-c task C3 fix round
-		// 1): the web editor's inline field-error matching needs a stable,
-		// unambiguous key per row, and an unnamed route's daemon-side
-		// messages used to all collapse onto the same synthetic
-		// "(unnamed)" label (routeLabel's old fallback), which made two
-		// unnamed routes indistinguishable. Nothing has shipped a routing
-		// config yet, so this is not a breaking migration.
+		// Route names are REQUIRED and unique: the web editor's inline field-error
+		// matching needs a stable, unambiguous key per row, and unnamed routes' error
+		// messages would collapse onto the same synthetic label.
 		if strings.TrimSpace(r.Name) == "" {
 			return errors.New("every route needs a name")
 		}
@@ -265,12 +261,10 @@ func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name stri
 // --- route selection ---------------------------------------------------
 
 // routeResolution is resolveRoute's result: which route matched (if any) and
-// EVERY policy that applies. B5 fix round 1 ruling: a Continue chain that
-// matches several routes escalates each matched policy independently (its
-// own steps, its own RepeatEvery, its own SendResolved) rather than merging
-// them into one synthetic policy -- so there is nothing left to compute here
-// beyond the ordered list of policies themselves; the engine and RouteTest
-// both iterate Policies directly.
+// EVERY policy that applies. A Continue chain matching several routes
+// escalates each matched policy independently (own steps, RepeatEvery,
+// SendResolved) rather than merging them, so the engine and RouteTest both
+// iterate Policies directly.
 type routeResolution struct {
 	Route    string
 	Policies []core.Policy
@@ -349,10 +343,9 @@ func sendResolvedOf(p core.Policy) bool {
 }
 
 // unionStepChannels returns the deduplicated, order-preserving union of
-// step-`step`'s Channels across every policy that has that many steps
-// (policies with fewer steps simply don't contribute at that index). Used
-// for the FIRE leg's single physical dispatch to step 0 across every matched
-// policy at once (B5 fix round 1 ruling: "in one dispatch, as now").
+// step-`step`'s Channels across every policy that has that many steps (fewer
+// steps simply don't contribute). Used for the FIRE leg's single physical
+// dispatch to step 0 across every matched policy.
 func unionStepChannels(policies []core.Policy, step int) []string {
 	var all []string
 	for _, p := range policies {

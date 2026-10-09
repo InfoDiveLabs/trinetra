@@ -1,7 +1,6 @@
-// Package trinetra: fleet_grouping_test.go covers task 6 part 2 (incident
-// grouping) and part 3 (node dependencies) end to end, through the engine's
-// real Submit/TickGrouping/SetDependencies surface -- see fleet_engine.go's
-// groupKeyFor/tryDeliverGroup/dependencyFoldReason/releaseFoldedDependents.
+// Package trinetra: fleet_grouping_test.go covers incident grouping and node
+// dependencies end to end through the engine's real
+// Submit/TickGrouping/SetDependencies surface.
 package trinetra
 
 import (
@@ -26,10 +25,9 @@ func setGroupTimingForTest(t *testing.T, wait, interval time.Duration) {
 	t.Cleanup(func() { groupWait, groupInterval = prevWait, prevInterval })
 }
 
-// TestGroupingTwoNodesWithinWaitProduceOneDelivery is the brief's first
-// required grouping test: two nodes firing the same rule/severity within
-// group_wait join ONE incident, and its first notification -- sent only
-// once group_wait has elapsed since the incident opened -- lists both.
+// TestGroupingTwoNodesWithinWaitProduceOneDelivery: two nodes firing the same
+// rule/severity within group_wait join ONE incident, and its first
+// notification, sent once group_wait has elapsed since it opened, lists both.
 func TestGroupingTwoNodesWithinWaitProduceOneDelivery(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
@@ -75,26 +73,24 @@ func TestGroupingTwoNodesWithinWaitProduceOneDelivery(t *testing.T) {
 			t.Fatalf("node %s receipts = %d, want 1", node, len(ef.framesFor(node, "receipt")))
 		}
 	}
-	// task 9: a grouped fire notification carries Ack/Silence buttons for
-	// its own incident too, exactly like an ungrouped one.
+	// A grouped fire notification carries Ack/Silence buttons for its own
+	// incident, like an ungrouped one.
 	want := incidentButtons(incs[0].ID)
 	if got := ef.lastDelivered().Buttons; !reflect.DeepEqual(got, want) {
 		t.Fatalf("buttons = %+v, want %+v", got, want)
 	}
 }
 
-// TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval is the brief's
-// second required grouping test: a member joining AFTER the first delivery
-// produces exactly one "update" notification, sent only once group_interval
-// has elapsed since the last group delivery.
+// TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval: a member joining
+// AFTER the first delivery produces exactly one "update" notification, sent
+// once group_interval has elapsed since the last group delivery.
 func TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
-	// This test exercises groupInterval itself (5m), in isolation: task 6 fix
-	// round 1's fallback_after cap (effectiveGroupInterval) would otherwise
-	// shrink it to fallback_after/2 (1m by default) since every pending
-	// member here is child-sourced -- see TestGroupingLateChildUpdateRespectsFallbackCap
-	// for that interaction specifically.
+	// This exercises groupInterval itself (5m) in isolation: the fallback_after
+	// cap (effectiveGroupInterval) would otherwise shrink it to fallback_after/2
+	// since every pending member is child-sourced (see
+	// TestGroupingLateChildUpdateRespectsFallbackCap).
 	ef.engine.SetConfig(func() *config.Config {
 		c := config.Default()
 		c.Fleet.FallbackAfter = "24h"
@@ -168,14 +164,11 @@ func TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval(t *testing.T) {
 	}
 }
 
-// TestGroupingAckedIncidentStillDeliversNewMemberUpdate pins a B6 review
-// regression: acking a grouped incident must not suppress a member that
-// fires LATER from getting its own update notification. tryDeliverGroup
-// only ever excludes inc.State == "suppressed" (every open member silenced
-// or dependency-folded) -- "acked" only stops future ESCALATION
-// (tryEscalate gates on inc.State != "firing"), never a fresh member's
-// first delivery through the group. This test fails if that ever regresses
-// (e.g. tryDeliverGroup grows an "acked" exclusion mirroring tryEscalate's).
+// TestGroupingAckedIncidentStillDeliversNewMemberUpdate: acking a grouped
+// incident must not suppress a LATER member's update notification.
+// tryDeliverGroup only excludes inc.State == "suppressed"; "acked" only stops
+// future ESCALATION (tryEscalate gates on inc.State != "firing"). This fails
+// if tryDeliverGroup grows an "acked" exclusion.
 func TestGroupingAckedIncidentStillDeliversNewMemberUpdate(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
@@ -247,13 +240,11 @@ func TestGroupingAckedIncidentStillDeliversNewMemberUpdate(t *testing.T) {
 	}
 }
 
-// TestGroupingLateChildUpdateRespectsFallbackCap is task 6 fix round 1's
-// IMPORTANT 5 required test: with the DEFAULT config (fleet.fallback_after
-// 2m, so effectiveGroupInterval caps at 1m for a child-sourced pending
-// member) and the spec's default group_interval (5m, which would otherwise
-// leave a late-joining child waiting far longer than its own local fallback
-// timer), a late child member's update ships within 60s of the incident's
-// last group delivery -- not up to 5 minutes later.
+// TestGroupingLateChildUpdateRespectsFallbackCap: with the DEFAULT config
+// (fleet.fallback_after 2m, so effectiveGroupInterval caps at 1m for a
+// child-sourced pending member) and default group_interval (5m), a late child
+// member's update ships within 60s of the last group delivery, not 5 minutes
+// later.
 func TestGroupingLateChildUpdateRespectsFallbackCap(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute) // spec defaults
@@ -309,10 +300,9 @@ func TestGroupingLateChildUpdateRespectsFallbackCap(t *testing.T) {
 	}
 }
 
-// TestGroupingRouteGroupByNodeKeepsNodesSeparate is the brief's third
-// required grouping test: a route's GroupBy overrides the default (rule,
-// severity) bucket -- GroupBy: ["node"] means two different nodes never
-// share an incident even for the identical rule/severity.
+// TestGroupingRouteGroupByNodeKeepsNodesSeparate: a route's GroupBy overrides
+// the default (rule, severity) bucket; GroupBy: ["node"] means two nodes never
+// share an incident even for identical rule/severity.
 func TestGroupingRouteGroupByNodeKeepsNodesSeparate(t *testing.T) {
 	sendResolved := true
 	cfg := core.AlertingConfig{
@@ -355,11 +345,10 @@ func TestGroupingRouteGroupByNodeKeepsNodesSeparate(t *testing.T) {
 	}
 }
 
-// TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover is the
-// brief's fourth required grouping test: within one incident, member A's own
-// fire is delivered before its own recover is ever considered (per-alert
-// ordering holds even though member B joins in between), and the incident
-// stays open -- no "resolved" notification -- until member B ALSO recovers.
+// TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover: within one
+// incident, member A's fire is delivered before its recover is considered
+// (even though member B joins in between), and the incident stays open, with
+// no "resolved" notification, until member B ALSO recovers.
 func TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover(t *testing.T) {
 	ef := newEngineFixture(t) // group_wait/interval are 0 here: immediate grouped delivery.
 	ef.connect("n1")
@@ -438,10 +427,9 @@ func TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover(t *testing.T)
 	}
 }
 
-// TestEngineResurrectionOnlyResendsUndeliveredMember is the brief's fifth
-// required test: a grouped incident with two members where only ONE
-// member's fire was ever recorded as delivered before a "crash" must, on
-// resurrection, resend only the OTHER member.
+// TestEngineResurrectionOnlyResendsUndeliveredMember: a grouped incident with
+// two members where only ONE fire was recorded as delivered before a "crash"
+// must, on resurrection, resend only the OTHER member.
 func TestEngineResurrectionOnlyResendsUndeliveredMember(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/incidents.jsonl"
@@ -494,11 +482,10 @@ func TestEngineResurrectionOnlyResendsUndeliveredMember(t *testing.T) {
 	}
 }
 
-// TestEngineDependencyFoldAndRelease is the brief's required dependency
-// test: a child node's node-down alert folds silently into its down
-// parent's incident (one delivery, the parent's), and is delivered
-// separately, as its own new incident, once the parent recovers while the
-// child is still down.
+// TestEngineDependencyFoldAndRelease: a child node's node-down alert folds
+// silently into its down parent's incident (one delivery, the parent's), and is
+// delivered separately as its own new incident once the parent recovers while
+// the child is still down.
 func TestEngineDependencyFoldAndRelease(t *testing.T) {
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(dir + "/incidents.jsonl")

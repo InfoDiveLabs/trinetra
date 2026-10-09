@@ -559,9 +559,9 @@ func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
 // genuinely connected node.
 
 // TestReplicaAPIAckAlertPushesFrameAndRecordsIncident: on a connected node,
-// AckAlert pushes an "ack" frame down that node's stream (a real, joined
-// child observes it) AND records the ack on the master's own open incident
-// for (node, key) immediately, per the task-9 ruling.
+// AckAlert pushes an "ack" frame down that node's stream (a real, joined child
+// observes it) AND immediately records the ack on the master's own open
+// incident for (node, key).
 func TestReplicaAPIAckAlertPushesFrameAndRecordsIncident(t *testing.T) {
 	m := newRPCTestMaster(t)
 	frames := make(chan fleet.Frame, 4)
@@ -680,8 +680,8 @@ func TestReplicaAPIContainerLogsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIContainerLogsNotConnected pins the exact wording (task-9
-// ruling) for a node with no open stream connection.
+// TestReplicaAPIContainerLogsNotConnected pins the exact error wording for a
+// node with no open stream connection.
 func TestReplicaAPIContainerLogsNotConnected(t *testing.T) {
 	m := newRPCTestMaster(t)
 	if _, err := m.sink.node(testNodeID); err != nil {
@@ -713,10 +713,9 @@ func TestReplicaAPIContainerLogsTimeout(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIContainerLogsChildErrorPassesThrough pins "the child's own
-// error, passed through" -- wrapped (final-review transport
-// I1) so its text can never come out as a bare sentinel suffix, but still
-// containing the child's original message for display/logging.
+// TestReplicaAPIContainerLogsChildErrorPassesThrough pins that the child's own
+// error is passed through, wrapped so its text can never come out as a bare
+// sentinel suffix, yet still containing the child's message.
 func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 	m := newRPCTestMaster(t)
 	var sh *fleet.Shipper
@@ -744,18 +743,13 @@ func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix is the
-// final-review transport I1 regression: a compromised or buggy child can
-// POST back any error text it likes in its RPC result body (Hub.handleRPC
-// only authenticates the node, it never validates the body's content), and
-// that text used to flow to the control-socket caller as a bare
-// errors.New(res.Error). If it happened to end in one of
-// control.wireErrSentinels' exact texts (e.g. a generic, plausible docker
-// error ending in "not found"), a caller doing
-// errors.Is(err, core.ErrNotFound) over the wire would misreport a real
-// RPC/docker error as a 404. ContainerLogs must wrap the child's text so it
-// can never come out as a bare sentinel suffix, for every sentinel
-// control.wireErrSentinels lists.
+// TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix: a
+// compromised or buggy child can POST back any error text in its RPC result
+// (Hub.handleRPC only authenticates the node). If it ended in one of
+// control.wireErrSentinels' texts (e.g. "not found"), a control-socket caller's
+// errors.Is(err, core.ErrNotFound) would misreport an RPC/docker error as a
+// 404. ContainerLogs must wrap the child's text so it never ends in a bare
+// sentinel suffix, for every sentinel control.wireErrSentinels lists.
 func TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix(t *testing.T) {
 	// Mirrors internal/control/client.go's wireErrSentinels list -- kept as
 	// literal texts here (not an import of internal/control, to stay out of

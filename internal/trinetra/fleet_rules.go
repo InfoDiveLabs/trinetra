@@ -41,19 +41,16 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// ruleTickInterval is how often TickRules actually evaluates rules (task 7:
-// "every 30s"), self-gated inside TickRules exactly like TickSilences's own
-// silencePushInterval gate -- masterLoop.tick calls TickRules every 5s (its
-// own tick cadence) and lets the gate decide whether this call does
-// anything.
+// ruleTickInterval is how often TickRules actually evaluates rules (30s),
+// self-gated inside TickRules like TickSilences's silencePushInterval:
+// masterLoop.tick calls it every 5s and the gate decides whether to act.
 const ruleTickInterval = 30 * time.Second
 
 // ---- grammar: tokenizer -----------------------------------------------
 
-// ruleParseError is parseRuleExpr's error type: every error names the
-// position (byte offset into the original expression string) it was found
-// at, per the task-7 ruling ("errors name the position:
-// \"expected ',' at 12\"").
+// ruleParseError is parseRuleExpr's error type: every error names the position
+// (byte offset into the original expression) it was found at, e.g.
+// "expected ',' at 12".
 type ruleParseError struct {
 	Pos int
 	Msg string
@@ -82,15 +79,12 @@ type ruleToken struct {
 	pos  int
 }
 
-// ruleLexer is a small hand-written scanner (task-7 ruling: "no
-// regexp-only parsing"): every token is either punctuation ('(', ')', ','),
-// a comparison operator (> >= < <= == !=), or a "word" -- a run of
-// characters a selector, metric name, number, integer, duration or the
-// `for` keyword can all be made of (letters, digits, and the handful of
-// symbols a tag/glob/duration/number ever contains: ':', '_', '-', '.',
-// '*', '?', '[', ']', '/'). Operator characters ('>', '<', '=', '!') are
-// deliberately excluded from that set so a word never swallows the
-// comparison that follows it.
+// ruleLexer is a small hand-written scanner: every token is punctuation
+// ('(', ')', ','), a comparison operator (> >= < <= == !=), or a "word", a run
+// of characters a selector, metric name, number, duration or the `for` keyword
+// can be made of (letters, digits, ':', '_', '-', '.', '*', '?', '[', ']',
+// '/'). Operator characters ('>', '<', '=', '!') are excluded so a word never
+// swallows the comparison that follows it.
 type ruleLexer struct {
 	s   string
 	pos int
@@ -362,8 +356,7 @@ func (p *ruleParser) parseDuration() (time.Duration, error) {
 	return d, nil
 }
 
-// parseForClause parses `for <dur>`, enforcing the task-7 ruling's 1m
-// minimum on the `for` duration specifically.
+// parseForClause parses `for <dur>`, enforcing a 1m minimum on the duration.
 func (p *ruleParser) parseForClause() (time.Duration, error) {
 	if err := p.expectWord("for"); err != nil {
 		return 0, err
@@ -379,11 +372,10 @@ func (p *ruleParser) parseForClause() (time.Duration, error) {
 	return d, nil
 }
 
-// parseRuleExpr parses s per the task-7 grammar. It is also the Validate
-// hook validateAlertingConfig calls (via validateRules) for every
-// AggregateRule.Expr before it is ever saved, so a bad expression is
-// rejected at `fleet alerting apply`/SetAlerting time, not silently ignored
-// at evaluation time.
+// parseRuleExpr parses s per the rule grammar. It is also the Validate hook
+// validateAlertingConfig calls (via validateRules) for every
+// AggregateRule.Expr before it is saved, so a bad expression is rejected at
+// `fleet alerting apply`/SetAlerting time, not ignored at evaluation time.
 func parseRuleExpr(s string) (*ruleExpr, error) {
 	p, err := newRuleParser(s)
 	if err != nil {
@@ -497,7 +489,7 @@ func parseRuleExpr(s string) (*ruleExpr, error) {
 
 // ---- validation (Validate hook into validateAlertingConfig) --------------
 
-// ruleNameRe is the task-7 ruling's exact rule-name grammar.
+// ruleNameRe is the rule-name grammar.
 var ruleNameValid = func(name string) bool {
 	if len(name) == 0 || len(name) > 64 {
 		return false
@@ -537,8 +529,7 @@ func validateRules(rules []core.AggregateRule) error {
 	return nil
 }
 
-// ruleRuntimeSeverity is rule.Severity, defaulted to "warning" (task-7
-// ruling: "the default is warning").
+// ruleRuntimeSeverity is rule.Severity, defaulting to "warning".
 func ruleRuntimeSeverity(rule core.AggregateRule) string {
 	if rule.Severity == "" {
 		return "warning"
@@ -548,8 +539,8 @@ func ruleRuntimeSeverity(rule core.AggregateRule) string {
 
 // ---- evaluation ------------------------------------------------------
 
-// ruleState is one rule's in-memory runtime state (task-7 ruling: "keep a
-// per-rule since timestamp in memory... after a restart it starts over").
+// ruleState is one rule's in-memory runtime state (a per-rule since timestamp;
+// after a restart it starts over).
 type ruleState struct {
 	since    int64 // unix time the condition first became continuously true; 0 = not currently true
 	firing   bool
@@ -557,13 +548,11 @@ type ruleState struct {
 	hasValue bool
 	noData   bool
 	parseErr string
-	severity string // the last-APPLIED effective severity (round 1: used to detect an in-place edit)
-	expr     string // the last-APPLIED Expr text (round 1: ditto)
-	// initialized is false only before this rule's very first evaluation --
-	// it exists so a brand new rule's expr/severity (compared against the
-	// zero value "") is never itself mistaken for an "edit" (round 1,
-	// IMPORTANT 1: a genuine edit must have a PRIOR applied definition to
-	// differ from).
+	severity string // the last-APPLIED effective severity (detects an in-place edit)
+	expr     string // the last-APPLIED Expr text (detects an in-place edit)
+	// initialized is false only before this rule's very first evaluation, so a
+	// brand new rule's expr/severity (compared against the zero value "") is not
+	// mistaken for an "edit": a genuine edit needs a PRIOR applied definition.
 	initialized bool
 }
 
@@ -573,7 +562,7 @@ type ruleState struct {
 type ruleEvalResult struct {
 	value    float64
 	hasValue bool
-	noData   bool // task-7 ruling: "no data" never fires/recovers, holds the previous firing state
+	noData   bool // "no data" never fires/recovers, holds the previous firing state
 	condTrue bool // meaningless when noData
 }
 
@@ -652,13 +641,11 @@ type ruleAction struct {
 	hasValue bool
 }
 
-// evaluate re-evaluates every rule in rules against the current data
-// sources, updates each rule's in-memory state, and returns every
-// fire/recover transition that resulted -- a rule whose condition merely
-// continues (or continues to not hold) produces nothing here; only an
-// actual state change is ever submitted (task-7 ruling: alerts fire/recover
-// on transition, not every tick, matching every other master-own alert in
-// this codebase).
+// evaluate re-evaluates every rule in rules against the current data sources,
+// updates each rule's in-memory state, and returns every fire/recover
+// transition. A rule whose condition merely continues produces nothing: alerts
+// fire/recover on transition, not every tick, like every other master-own
+// alert.
 func (r *fleetRuleEvaluator) evaluate(now time.Time, rules []core.AggregateRule) []ruleAction {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -674,14 +661,11 @@ func (r *fleetRuleEvaluator) evaluate(now time.Time, rules []core.AggregateRule)
 			r.states[rule.Name] = st
 		}
 
-		// Round-1 review fix, IMPORTANT 1: an in-place edit of a firing rule
-		// (same Name, different Expr or Severity) used to be a silent no-op --
-		// the old firing/since state just kept being evaluated against
-		// whatever the NEW Expr happened to compute, with no recover for the
-		// old definition and no fresh `for` sustain window for the new one.
-		// Detect the edit here (only once this rule has been evaluated
-		// before -- see ruleState.initialized), before doing anything else
-		// with it this tick.
+		// An in-place edit of a firing rule (same Name, different Expr or Severity)
+		// must not be a silent no-op: otherwise the old firing/since state would keep
+		// being evaluated against the NEW Expr, with no recover for the old
+		// definition and no fresh `for` sustain window. Detect it here (only once the
+		// rule has been evaluated before; see ruleState.initialized).
 		effSeverity := ruleRuntimeSeverity(rule)
 		oldExpr, oldSeverity := st.expr, st.severity
 		if edited := st.initialized && (rule.Expr != oldExpr || effSeverity != oldSeverity); edited {
@@ -797,13 +781,11 @@ func (r *fleetRuleEvaluator) matchNodes(sel ruleSelector) (includeSelf bool, nod
 	return includeSelf, nodes
 }
 
-// selfMatches reports whether sel matches the master's own node (round-1
-// review fix, IMPORTANT 2): `all` always includes self; `node:<glob>`
-// includes self when the glob matches its display name (ServerName(), via
-// ruleSelfSource.Name) OR the matcher names the exact `self` id
-// (core.SelfNodeID) verbatim -- the same "id-exact-or-name-glob" shape
-// core.Matcher.Node uses for every other node. `tag:<t>` never matches self:
-// the master's own node carries no tags (it isn't a registry entry at all).
+// selfMatches reports whether sel matches the master's own node: `all` always
+// includes self; `node:<glob>` includes self when the glob matches its display
+// name (ServerName(), via ruleSelfSource.Name) OR names the exact `self` id
+// (core.SelfNodeID), the same "id-exact-or-name-glob" shape core.Matcher.Node
+// uses. `tag:<t>` never matches self: the master's own node carries no tags.
 func (r *fleetRuleEvaluator) selfMatches(sel ruleSelector) bool {
 	switch sel.Kind {
 	case "all":
@@ -854,10 +836,9 @@ func selectorMatches(sel ruleSelector, n fleet.Node) bool {
 	return false
 }
 
-// nodeOnlineOrLagging reports whether id's tracked state counts as
-// available for count()'s per-node eligibility gate and online()'s own
-// tally (task-7 ruling: "A node is included only if its state is online or
-// lagging").
+// nodeOnlineOrLagging reports whether id's tracked state counts as available
+// for count()'s per-node eligibility gate and online()'s tally (only online or
+// lagging).
 func (r *fleetRuleEvaluator) nodeOnlineOrLagging(id string) bool {
 	switch r.tracker.State(id) {
 	case fleet.StateOnline, fleet.StateLagging:
@@ -880,9 +861,8 @@ func (r *fleetRuleEvaluator) snapshotOf(id string) (Snapshot, bool) {
 	return snap, true
 }
 
-// metricValue reads metric's current value off snap, per the task-7
-// metric-to-snapshot-field mapping ("disk" is the worst mount, via the same
-// worstDisk helper fleet_provider.go's Nodes() uses).
+// metricValue reads metric's current value off snap ("disk" is the worst
+// mount, via the same worstDisk helper fleet_provider.go's Nodes() uses).
 func metricValue(metric string, snap Snapshot) float64 {
 	switch metric {
 	case "cpu":
@@ -935,12 +915,11 @@ func (r *fleetRuleEvaluator) evalExpr(expr *ruleExpr, now time.Time) ruleEvalRes
 }
 
 // evalCount implements count(<sel>, <metric> <op> <num>) <op> <int>: a
-// per-node condition (metric compared against InnerNum) counted across
-// every selector-matching node currently online or lagging (task-7 ruling:
-// "For count, stale, down and revoked nodes are skipped"), then that COUNT
-// compared against OuterNum. Self is
-// always eligible -- its "state" is definitionally always online -- so it
-// contributes whenever it matches sel and a current snapshot is available.
+// per-node condition (metric compared against InnerNum) counted across every
+// selector-matching node currently online or lagging (stale, down and revoked
+// nodes are skipped), then that COUNT compared against OuterNum. Self is
+// always eligible (its state is definitionally online), so it contributes
+// whenever it matches sel and a current snapshot is available.
 func (r *fleetRuleEvaluator) evalCount(expr *ruleExpr) ruleEvalResult {
 	count := 0
 	includeSelf, nodes := r.matchNodes(expr.Sel)
@@ -965,11 +944,9 @@ func (r *fleetRuleEvaluator) evalCount(expr *ruleExpr) ruleEvalResult {
 }
 
 // evalOnline implements online(<sel>) <op> <int>: the count of
-// selector-matching nodes currently online or lagging (task-7 ruling: "For
-// online, they [stale/down/revoked] count as not online"). Self (round-1
-// review fix, IMPORTANT 2) always counts as online when it matches sel --
-// unconditionally, per the ruling ("state: always online"), regardless of
-// whether a snapshot has ever been collected for it.
+// selector-matching nodes currently online or lagging (stale/down/revoked count
+// as not online). Self always counts as online when it matches sel, even if no
+// snapshot has ever been collected for it.
 func (r *fleetRuleEvaluator) evalOnline(expr *ruleExpr) ruleEvalResult {
 	online := 0
 	includeSelf, nodes := r.matchNodes(expr.Sel)
@@ -984,9 +961,9 @@ func (r *fleetRuleEvaluator) evalOnline(expr *ruleExpr) ruleEvalResult {
 	return ruleEvalResult{value: float64(online), hasValue: true, condTrue: compare(float64(online), expr.OuterOp, expr.OuterNum)}
 }
 
-// nodeSeriesAverage returns id's average value of metric over [from, to] at
-// 1m resolution, and whether it has any points at all in that window (task-7
-// ruling: "If a node has no points in the window, exclude it").
+// nodeSeriesAverage returns id's average value of metric over [from, to] at 1m
+// resolution, and whether it has any points in that window (a node with none
+// is excluded).
 func (r *fleetRuleEvaluator) nodeSeriesAverage(id, metric string, from, to int64) (float64, bool) {
 	n, err := r.sink.node(id)
 	if err != nil {
@@ -995,13 +972,11 @@ func (r *fleetRuleEvaluator) nodeSeriesAverage(id, metric string, from, to int64
 	return seriesAverage(n.store, metric, from, to)
 }
 
-// seriesAverage returns store's average value of metric over [from, to] at
-// 1m resolution, and whether it has any points at all in that window. "disk"
-// is special-cased to the worst mount's own average (diskSeriesAverage).
-// Shared by nodeSeriesAverage (a replicated fleet node's own *tsFileStore)
-// and the master's own local store (round-1 review fix, IMPORTANT 2:
-// ruleSelfSource.Store) -- both satisfy SampleStore, so one implementation
-// serves both.
+// seriesAverage returns store's average value of metric over [from, to] at 1m
+// resolution, and whether it has any points in that window. "disk" is
+// special-cased to the worst mount's own average (diskSeriesAverage). Shared by
+// nodeSeriesAverage (a replicated node's *tsFileStore) and the master's own
+// local store (ruleSelfSource.Store); both satisfy SampleStore.
 //
 // TODO(perf): every rule with a series-based condition (avg/max/min) queries
 // its own window fresh, per node, every TickRules pass; two rules reading
@@ -1087,15 +1062,12 @@ func diskSeriesAverage(store SampleStore, from, to int64) (float64, bool) {
 }
 
 // evalAggSeries implements avg|max|min(<sel>, <metric>) <op> <num>: each
-// selector-matching node's own AVERAGE of metric over the `for` window (a
-// node with no points in the window is excluded entirely -- task-7 ruling),
-// then the rule's own aggregation function (avg/max/min) applied across
-// those per-node averages. If NO node has any data, the result is "no data"
-// (task-7 ruling: "does not fire and does not recover; it holds the
-// previous state"). Self contributes its
-// own local-store average exactly like any other node's replicated one, via
-// ruleSelfSource.Store; a nil Store (or a backend that has never collected
-// this metric) simply excludes self, same as a node with no points.
+// selector-matching node's own AVERAGE of metric over the `for` window (a node
+// with no points in the window is excluded), then the rule's aggregation
+// (avg/max/min) applied across those averages. If NO node has any data the
+// result is "no data": it neither fires nor recovers, and holds the previous
+// state. Self contributes its local-store average via ruleSelfSource.Store; a
+// nil Store (or a backend that never collected this metric) excludes self.
 func (r *fleetRuleEvaluator) evalAggSeries(expr *ruleExpr, now time.Time) ruleEvalResult {
 	from := now.Add(-expr.ForDur).Unix()
 	to := now.Unix()
@@ -1139,18 +1111,15 @@ func (r *fleetRuleEvaluator) evalAggSeries(expr *ruleExpr, now time.Time) ruleEv
 }
 
 // evalAbsent implements absent(<sel>, <dur>): fires when no selector-matching
-// node (including the case where none match at all) has a LastSeen within
-// AbsentFor of now, but only once the master itself has been up at least
-// AbsentFor -- during that window condTrue is
-// forced false, not "no data" (the state is known: deliberately not yet
-// judged). Self contributes `now` as its
-// own LastSeen whenever it matches sel (the ruling: "LastSeen: now") -- it
-// can never itself be the reason an absent() rule fires. value is the number
-// of seconds since the most recently seen matching node last reported (or
-// since the master started, if no matching node has EVER reported -- round-1
-// review fix: a node whose LastSeen is genuinely 0, same as none matching at
-// all, must not be read as "reported at the Unix epoch", which would make
-// value a nonsensical ~55-year number).
+// node (including none matching at all) has a LastSeen within AbsentFor of
+// now, but only once the master itself has been up at least AbsentFor; during
+// that window condTrue is forced false, not "no data" (the state is known:
+// deliberately not yet judged). Self contributes `now` as its LastSeen
+// whenever it matches sel, so it can never itself make an absent() rule fire.
+// value is the seconds since the most recently seen matching node last
+// reported (or since the master started, if none has EVER reported): a node
+// whose LastSeen is genuinely 0 must not be read as "reported at the Unix
+// epoch", which would make value a nonsensical ~55-year number.
 func (r *fleetRuleEvaluator) evalAbsent(expr *ruleExpr, now time.Time) ruleEvalResult {
 	includeSelf, nodes := r.matchNodes(expr.Sel)
 	maxLastSeen := int64(0) // 0 means "no matching node has ever reported"
@@ -1187,21 +1156,17 @@ func formatRuleValue(v float64, hasValue bool) string {
 
 // ---- fleetAlertEngine wiring -------------------------------------------
 
-// SetRules wires the aggregate-rule evaluator, mirroring
-// SetSilences/SetRouting/SetDependencies's own "called once from
-// startMaster, after both the engine and its data sources exist" pattern. A
-// nil e.rules (no SetRules call, every existing engine test) makes
-// TickRules/RuleStates/ruleStillFiring all no-ops. self (round-1 review fix,
-// IMPORTANT 2) is the master's own node data, so `all`/`node:<glob>`
-// selectors include it too -- see ruleSelfSource's doc comment.
+// SetRules wires the aggregate-rule evaluator, called once from startMaster
+// after both the engine and its data sources exist. A nil e.rules makes
+// TickRules/RuleStates/ruleStillFiring no-ops. self is the master's own node
+// data, so `all`/`node:<glob>` selectors include it too (see ruleSelfSource).
 func (e *fleetAlertEngine) SetRules(reg *fleet.Registry, sink *replicaSink, tracker *fleet.Tracker, started time.Time, self ruleSelfSource) {
 	e.rules = newFleetRuleEvaluator(reg, sink, tracker, started, self)
 }
 
 // TickRules evaluates every configured aggregate rule at most once every
-// ruleTickInterval (task 7: "every 30s"), submitting a fire/recover through
-// Submit -- exactly like any other master-own alert -- for every rule whose
-// firing state just changed.
+// ruleTickInterval, submitting a fire/recover through Submit, like any other
+// master-own alert, for every rule whose firing state just changed.
 func (e *fleetAlertEngine) TickRules(now time.Time) {
 	if e.rules == nil || e.alerting == nil {
 		return
@@ -1219,9 +1184,9 @@ func (e *fleetAlertEngine) TickRules(now time.Time) {
 // matched by masterLoop.stillActive's own case.
 func ruleAlertKey(name string) string { return "fleet:rule:" + name }
 
-// submitRuleAlert builds and submits one rule's fire/recover alert (task-7
-// ruling: key "fleet:rule:<name>", title "rule <name>: <expr> (value <v>)",
-// severity from the rule).
+// submitRuleAlert builds and submits one rule's fire/recover alert: key
+// "fleet:rule:<name>", title "rule <name>: <expr> (value <v>)", severity from
+// the rule.
 func (e *fleetAlertEngine) submitRuleAlert(act ruleAction, now time.Time) {
 	sev, err := ParseSeverity(act.severity)
 	if err != nil {
@@ -1242,11 +1207,11 @@ func (e *fleetAlertEngine) RuleStates() []core.RuleState {
 	return e.rules.snapshot(e.alerting.Get().Rules)
 }
 
-// ruleStillFiring implements the task-7 stillActive extension: false if the
-// rule no longer exists in the live config, or its current in-memory state
-// is not firing -- so an orphaned "fleet:rule:<name>" incident (open across
-// a master restart that then removed or resolved the rule) recovers via
-// checkOrphanedIncidents instead of paging forever.
+// ruleStillFiring implements stillActive for rules: false if the rule no longer
+// exists in the live config or its in-memory state is not firing, so an
+// orphaned "fleet:rule:<name>" incident (open across a master restart that
+// removed or resolved the rule) recovers via checkOrphanedIncidents instead of
+// paging forever.
 func (e *fleetAlertEngine) ruleStillFiring(name string) bool {
 	if e.rules == nil || e.alerting == nil {
 		return false

@@ -25,11 +25,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// rpcCallTimeout is how long Call waits for a child's result before giving
-// up (task-9 ruling: 10s). A package-level var, not a const -- like
-// pingInterval (internal/fleet/stream.go) and backoffBase (internal/fleet/
-// child.go) -- so a test can shorten it instead of actually waiting out a
-// real 10s timeout.
+// rpcCallTimeout is how long Call waits for a child's result before giving up.
+// A package-level var, not a const, so a test can shorten it.
 var rpcCallTimeout = 10 * time.Second
 
 // rpcSweepAfter/rpcMaxPendingPerNode are rpcRegistry's other two bounds
@@ -70,8 +67,8 @@ type rpcContainerLogsArgs struct {
 	Lines int    `json:"lines"`
 }
 
-// rpcResultData is the body a child POSTs back via PostRPCResult (task-9
-// ruling): {"ok":true,"output":...} or {"ok":false,"error":...}.
+// rpcResultData is the body a child POSTs back via PostRPCResult:
+// {"ok":true,"output":...} or {"ok":false,"error":...}.
 type rpcResultData struct {
 	OK     bool   `json:"ok"`
 	Output string `json:"output,omitempty"`
@@ -85,14 +82,12 @@ type pendingCall struct {
 	ch      chan rpcResultData
 }
 
-// rpcRegistry is the master's pending-RPC registry: id -> {node, created,
-// ch}, per the task-9 ruling. now is injected so a test can control sweep
-// timing without sleeping; production passes time.Now. logf receives one
-// line per rejected result (unknown id, wrong node, or a duplicate/already-
-// completed id) -- Hub.OnRPCResult's doc comment requires this never be
-// silent, since a rejected result is either a bug or an attempted spoof --
-// rate-limited per node (see logRejectRateLimited) so a wedged or hostile
-// child retrying the same bad id in a loop cannot flood the log.
+// rpcRegistry is the master's pending-RPC registry: id -> {node, created, ch}.
+// now is injected so a test can control sweep timing without sleeping. logf
+// receives one line per rejected result (unknown id, wrong node, or a
+// duplicate/completed id), never silently, since a rejected result is a bug or
+// an attempted spoof; it is rate-limited per node (logRejectRateLimited) so a
+// wedged or hostile child retrying a bad id cannot flood the log.
 type rpcRegistry struct {
 	now  func() time.Time
 	logf func(format string, args ...any)

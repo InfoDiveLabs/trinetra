@@ -97,12 +97,10 @@ func TestTelegramCallbackSilence1hAuthorized(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence is the
-// round-1 review fix: a "sil1h:<id>" callback on an incident that has
-// already resolved (e.g. a stale button on an old message, tapped after the
-// alert cleared on its own) must create no silence at all and answer
-// "unknown/expired" -- not silently silence a rule/node combo that isn't
-// even firing any more.
+// TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence: a
+// "sil1h:<id>" callback on an already-resolved incident (e.g. a stale button
+// tapped after the alert cleared) must create no silence and answer
+// "unknown/expired", not silence a rule/node combo that isn't firing.
 func TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence(t *testing.T) {
 	m := newTelegramTestMaster(t)
 	nodeID, incID := openIncidentFor(t, m, "web1", "cpu")

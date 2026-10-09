@@ -44,14 +44,10 @@ func randomSilenceID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// validateMatchers rejects an empty matcher list, one containing a
-// completely empty Matcher (either would let the silence/maintenance window
-// match every alert on every node, which is never intentional), or one whose
-// Node/Rule glob doesn't even parse -- task C4:
-// the web silences/maintenance page's own brief documents "a bad glob" as
-// one of the backend rejections its inline-error UI surfaces, mirroring
-// validGlob's identical check for a Route's own matchers
-// (validateAlertingConfig, fleet_routing.go, same package, same wording).
+// validateMatchers rejects an empty matcher list, one containing a completely
+// empty Matcher (either would match every alert on every node, which is never
+// intentional), or one whose Node/Rule glob doesn't parse (the same check as
+// validGlob for a Route's matchers).
 func validateMatchers(ms []core.Matcher) error {
 	if len(ms) == 0 {
 		return errors.New("a silence must match something")
@@ -79,17 +75,14 @@ func matchersApply(ms []core.Matcher, nodeID, nodeName string, tags []string, ru
 	return false
 }
 
-// applicableMatchers returns the SUBSET of ms whose Node/Tag constraints
-// could apply to this node (review round 1, item 1(a)): a Silence/
-// Maintenance's Matchers are OR'd, but only some of them may have been
-// "meant for" this particular node -- pushing the whole list to every node
-// any single matcher applies to would leak an unrelated matcher (e.g. one
-// meant only for a different node, with no Rule/Severity of its own) to a
-// node it was never meant to cover. The MASTER is the only place this
-// filtering happens: it resolves nodeID/nodeName from its
-// own registry, where names are kept unique, so this is a precise, one-node
-// decision -- the child (pushedSilences.Suppressed) trusts the result
-// verbatim and never re-derives it.
+// applicableMatchers returns the SUBSET of ms whose Node/Tag constraints could
+// apply to this node. A Silence/Maintenance's Matchers are OR'd, but only some
+// may be "meant for" this node: pushing the whole list to every node any single
+// matcher applies to would leak an unrelated matcher (e.g. one for a different
+// node, with no Rule/Severity of its own) to a node it was never meant to
+// cover. Only the MASTER filters, resolving nodeID/nodeName from its registry
+// (names are unique), so this is a precise one-node decision; the child
+// (pushedSilences.Suppressed) trusts the result verbatim.
 func applicableMatchers(ms []core.Matcher, nodeID, nodeName string, tags []string) []core.Matcher {
 	var out []core.Matcher
 	for _, m := range ms {
@@ -145,22 +138,16 @@ func validateSilence(s core.Silence) error {
 }
 
 // occurrence is one concrete [Start,End) instant a maintenance window's
-// recurring definition expands to -- an alias for core.Occurrence (task C4,
-// fleet phase 2 web UI plan C), so this package's own field access
-// (occ.Start/occ.End) and its tests are unaffected by the underlying type
-// living in internal/core now.
+// recurring definition expands to; an alias for core.Occurrence.
 type occurrence = core.Occurrence
 
 // maintenanceOccurrencesInRange returns every occurrence of m that overlaps
-// [from, until), expanded in m's own TZ -- a thin wrapper over
-// core.MaintenanceOccurrences: that function now holds the one
-// real implementation (moved out of this package so internal/web's fleet
-// silences page can compute the SAME "next occurrence" this engine uses,
-// without internal/web ever importing internal/trinetra -- server.go's Deps
-// doc: the module graph is deliberately one-way). See
-// core.MaintenanceOccurrences' own doc for the full DST-safety rationale
-// and the crossing-midnight ownership rule (review
-// round 1, item 2 also covers this).
+// [from, until), expanded in m's own TZ: a thin wrapper over
+// core.MaintenanceOccurrences, which holds the one implementation so
+// internal/web's silences page can compute the SAME "next occurrence" without
+// importing internal/trinetra (the module graph is deliberately one-way). See
+// core.MaintenanceOccurrences for the DST-safety rationale and the
+// crossing-midnight ownership rule.
 func maintenanceOccurrencesInRange(m core.Maintenance, from, until time.Time) []occurrence {
 	return core.MaintenanceOccurrences(m, from, until)
 }
@@ -409,14 +396,12 @@ func (s *silenceStore) Suppressed(now int64, nodeID, nodeName string, tags []str
 	return nil
 }
 
-// silencesForNode builds the filtered "silences" frame payload for a node
-// with the given id/display name/tags: every currently active explicit
-// silence with at least one matcher that could apply to it (only THOSE
-// matchers are sent, not the whole OR'd list -- review round 1, item 1(a)),
-// plus every occurrence of a maintenance window (likewise filtered) in the
-// next 24h, each expanded to a concrete [Start,End) instant. The master is
-// the only place Node is ever resolved/matched: the child
-// applies whatever comes out of this verbatim.
+// silencesForNode builds the filtered "silences" frame payload for a node with
+// the given id/display name/tags: every currently active explicit silence with
+// at least one matcher that could apply to it (only THOSE matchers are sent),
+// plus every occurrence of a maintenance window (likewise filtered) in the next
+// 24h, each expanded to a concrete [Start,End) instant. The master is the only
+// place Node is resolved/matched; the child applies the result verbatim.
 func (s *silenceStore) silencesForNode(now int64, nodeID, nodeName string, tags []string) []pushedSilence {
 	s.mu.Lock()
 	silences := append([]core.Silence(nil), s.silences...)
@@ -510,11 +495,9 @@ func loadPushedSilences(path string) *pushedSilences {
 	return p
 }
 
-// pushedSilencesWriteHook, when set by a test, runs synchronously
-// immediately before Set's disk write -- used to prove the write happens
-// while p.mu is still held, by blocking one
-// caller mid-write and observing whether a second, concurrent Set can
-// still race ahead of it.
+// pushedSilencesWriteHook, when set by a test, runs synchronously right before
+// Set's disk write, to prove the write happens while p.mu is held by blocking
+// one caller mid-write and observing whether a second Set can race ahead.
 var pushedSilencesWriteHook func()
 
 // Set replaces the pushed silence set and persists it (0600, fsync'd). A nil
@@ -544,11 +527,9 @@ func (p *pushedSilences) Set(silences []pushedSilence) error {
 // rule (its Key) and severity is currently covered by a pushed silence or
 // maintenance occurrence, and if so, its reason.
 //
-// Only Rule/Severity are checked here (review round 2: Node was re-checked
-// in an earlier round, but removed -- see pushedSilences's doc comment for
-// why): Node/Tag applicability was already decided at the master, over its
-// own registry, before this entry was ever pushed to this specific node, and
-// the child has no more authoritative source to re-derive it from.
+// Only Rule/Severity are checked: Node/Tag applicability was decided at the
+// master, over its own registry, before the entry was pushed, and the child has
+// no more authoritative source to re-derive it from (see pushedSilences).
 //
 // A nil receiver reports no suppression (no push ever received).
 func (p *pushedSilences) Suppressed(now int64, rule, severity string) (string, bool) {

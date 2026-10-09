@@ -1,7 +1,6 @@
 // Package trinetra: fleet_rpc_child.go is the child's side of the master's
-// on-demand RPC over the stream (task 9, see fleet_rpc.go for the master's
-// side and the wire shapes both sides share): today the only method is
-// "container_logs".
+// on-demand RPC over the stream (see fleet_rpc.go for the master's side and
+// the shared wire shapes). The only method is "container_logs".
 package trinetra
 
 import (
@@ -119,8 +118,7 @@ func runRPC(self core.API, sh *fleet.Shipper, logf func(string, ...any), req rpc
 }
 
 // dispatchRPC runs req.Method against self, returning {"ok":false,"error":
-// "unknown method"} for anything this child doesn't implement (task-9
-// ruling).
+// "unknown method"} for anything this child doesn't implement.
 func dispatchRPC(self core.API, req rpcFrameData) rpcResultData {
 	switch req.Method {
 	case "container_logs":
@@ -150,7 +148,7 @@ func dispatchContainerLogs(self core.API, rawArgs json.RawMessage) rpcResultData
 }
 
 // truncateRPCOutput bounds s to rpcMaxOutputBytes, dropping from the START
-// (oldest content) and prefixing a marker line, per the task-9 ruling.
+// (oldest content) and prefixing a marker line.
 func truncateRPCOutput(s string) string {
 	if len(s) <= rpcMaxOutputBytes {
 		return s

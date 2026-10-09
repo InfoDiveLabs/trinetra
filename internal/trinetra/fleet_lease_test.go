@@ -47,9 +47,8 @@ func TestLeaseHolderGrantCapsAtMax(t *testing.T) {
 	}
 }
 
-// TestLeaseHolderRevokeInvalidatesImmediately is the final-review engine
-// ruling (b) regression: a valid lease must become (and stay) invalid the
-// instant Revoke is called, with no grace window.
+// TestLeaseHolderRevokeInvalidatesImmediately: a valid lease must become (and
+// stay) invalid the instant Revoke is called, with no grace window.
 func TestLeaseHolderRevokeInvalidatesImmediately(t *testing.T) {
 	now := time.Unix(1000, 0)
 	l := newLeaseHolder(func() time.Time { return now })
@@ -63,11 +62,10 @@ func TestLeaseHolderRevokeInvalidatesImmediately(t *testing.T) {
 	}
 }
 
-// TestHandoffDrainReturnsAllPendingRegardlessOfTiming is the final-review
-// engine ruling (b) regression for handoff.Drain: unlike Tick, it must
-// return every pending alert right away, even when neither the lease has
-// expired nor fallbackAfter has elapsed -- and it must be idempotent (a
-// second call returns nothing once pending is already empty).
+// TestHandoffDrainReturnsAllPendingRegardlessOfTiming: unlike Tick,
+// handoff.Drain must return every pending alert right away, even when neither
+// the lease has expired nor fallbackAfter elapsed, and be idempotent (a second
+// call returns nothing).
 func TestHandoffDrainReturnsAllPendingRegardlessOfTiming(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -96,13 +94,11 @@ func TestHandoffDrainReturnsAllPendingRegardlessOfTiming(t *testing.T) {
 	}
 }
 
-// TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix is the
-// final-review engine ruling (b) regression at handleLinkRevocation's own
-// level: it must (1) revoke the lease, (2) deliver every pending alert
-// exactly once via the given fallback func with revokedFallbackPrefix (not
-// fallbackPrefix -- "master unreachable" would be false for a node that was
-// deliberately revoked), and (3) be a no-op on a second call (no
-// double-delivery).
+// TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix: it must (1)
+// revoke the lease, (2) deliver every pending alert exactly once via the given
+// fallback func with revokedFallbackPrefix (not fallbackPrefix: "master
+// unreachable" would be false for a revoked node), and (3) be a no-op on a
+// second call.
 func TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -152,15 +148,10 @@ func TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix(t *testing.T)
 	}
 }
 
-// TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix is the
-// final-review engine ruling (b) regression covering both "the revoked
-// notice itself carries no 'master unreachable' prefix" and "every alert
-// AFTER revocation delivers with no prefix at all": once lease.Revoke has
-// run, Route must return true unconditionally, and fallbackPrefix/
-// revokedFallbackPrefix are only ever applied inside deliverFallback -- a
-// path Route()==true (direct/local delivery) never goes through -- so an
-// alert's title is never touched by either prefix once the node is
-// revoked.
+// TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix: once
+// lease.Revoke has run, Route returns true unconditionally, and the fallback
+// prefixes are only applied inside deliverFallback, which a Route()==true
+// (local) delivery never goes through, so no alert title gets a prefix.
 func TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -458,8 +449,8 @@ func TestOnStreamFrameReceipt(t *testing.T) {
 	}
 
 	// The receipt must also be durably recorded in the SIDECAR (never
-	// alertlog.jsonl -- see the round-2 fix), so a restart doesn't
-	// resurrect this alert as pending (reconcilePendingFromLog).
+	// alertlog.jsonl), so a restart doesn't resurrect this alert as pending
+	// (reconcilePendingFromLog).
 	receipts, err := readHandoffReceipts(receiptsPath, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -1149,15 +1140,12 @@ func TestPushedSilencesSuppressedMatchesRuleAndSeverity(t *testing.T) {
 	}
 }
 
-// TestPushedSilencesAppliesWhateverWasPushed is the review round-2 item (a)
-// regression test: the child no longer re-checks Node against its own name
-// (removed -- config.ServerName is not reliably the master's registry name
-// for this node, which made the earlier re-check a false-negative risk that
-// could wrongly deliver a silenced alert). It now applies a pushed Matcher's
-// Rule/Severity only, trusting that the master already decided this
-// specific matcher applies to THIS node before ever sending it -- even a
-// matcher carrying a Node field (here, one the master resolved for some
-// OTHER node's id/name) is honoured purely on Rule/Severity once pushed.
+// TestPushedSilencesAppliesWhateverWasPushed: the child does not re-check Node
+// against its own name (config.ServerName is not reliably the master's
+// registry name, so a re-check risked wrongly delivering a silenced alert). It
+// applies a pushed Matcher's Rule/Severity only, trusting the master already
+// decided it applies to THIS node, even if the matcher carries a Node field
+// the master resolved for some OTHER node.
 func TestPushedSilencesAppliesWhateverWasPushed(t *testing.T) {
 	p := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
 	// A matcher that would only ever have been resolved for a DIFFERENT

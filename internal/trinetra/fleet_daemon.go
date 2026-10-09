@@ -251,13 +251,12 @@ type masterLoop struct {
 	// lastDropCheck is when checkDrops last ran. Only tick touches it; the
 	// per-node baselines live in each replica's ingest.state.
 	lastDropCheck time.Time
-	// started is when this masterLoop was built (master start, or the most
-	// recent restart). nodeDownAfter is the blind window (spec: every node
-	// is seeded as "seen at master start", so an outage that predates a
-	// restart is never mistaken for a fresh one) -- captured once, matching
-	// how the tracker itself was seeded, rather than re-read live. Together
-	// they gate orphanChecked (B3 review round 2 1(b)): the FIRST tick once
-	// now >= started+nodeDownAfter runs checkOrphanedIncidents exactly once.
+	// started is when this masterLoop was built (master start or latest restart).
+	// nodeDownAfter is the blind window (every node is seeded as "seen at master
+	// start", so an outage that predates a restart is never mistaken for a fresh
+	// one), captured once like the tracker's seed. Together they gate
+	// orphanChecked: the FIRST tick once now >= started+nodeDownAfter runs
+	// checkOrphanedIncidents exactly once.
 	started       time.Time
 	nodeDownAfter time.Duration
 	orphanChecked bool
@@ -360,10 +359,9 @@ func (l *masterLoop) tick(now time.Time) {
 			}
 		}
 	}
-	// checkOrphanedIncidents runs exactly once: the first tick at or after
-	// the blind window (node_down_after since this masterLoop started) has
-	// elapsed, so the tracker has had a real chance to observe every node's
-	// TRUE state before anything is judged orphaned (B3 review round 2 1(b)).
+	// checkOrphanedIncidents runs exactly once, on the first tick at or after the
+	// blind window, so the tracker has observed every node's TRUE state before
+	// anything is judged orphaned.
 	runOrphanCheck := !l.orphanChecked && now.Sub(l.started) >= l.nodeDownAfter
 	if runOrphanCheck {
 		l.orphanChecked = true
@@ -436,9 +434,9 @@ func (l *masterLoop) stillActive(key string, ev fleet.Evaluation) bool {
 		}
 		return l.tracker.State(id) == fleet.StateDown
 	case strings.HasPrefix(key, "fleet:rule:"):
-		// task 7: false if the rule no longer exists in the live config, or
-		// its current in-memory state (reset by this very restart) is not
-		// firing -- see fleetAlertEngine.ruleStillFiring.
+		// false if the rule no longer exists in the live config, or its current
+		// in-memory state (reset by this restart) is not firing; see
+		// fleetAlertEngine.ruleStillFiring.
 		if l.engine == nil {
 			return false
 		}
@@ -449,12 +447,11 @@ func (l *masterLoop) stillActive(key string, ev fleet.Evaluation) bool {
 }
 
 // checkOrphanedIncidents recovers any open (firing or acked) master-own
-// incident whose condition is no longer active (B3 review round 2 1(b)): a
-// restart clears the in-memory NodeAlerter/tracker state that would
-// normally notice and emit the matching recover itself, so without this an
-// incident whose node came back online (or was removed/revoked) while the
-// master was down, or a mass-connectivity event that has since ended, would
-// stay stuck "firing" forever. Runs once, from tick, after the blind window.
+// incident whose condition is no longer active: a restart clears the
+// in-memory NodeAlerter/tracker state that would emit the recover, so an
+// incident whose node came back (or was removed/revoked) while the master was
+// down would otherwise stay "firing" forever. Runs once, from tick, after the
+// blind window.
 func (l *masterLoop) checkOrphanedIncidents(now time.Time, ev fleet.Evaluation) {
 	if l.engine == nil || l.engine.incidents == nil {
 		return
@@ -696,16 +693,12 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		revoked[n.ID] = n.Revoked
 	}
 	tracker.Seed(ids, revoked, time.Now().Unix())
-	// SetRules: reg/sink/tracker now all exist, so the aggregate-
-	// rule evaluator can read tags/LastSeen, snapshots/1m series and
-	// liveness state directly (fleet-phase2-map.md section 8). started is
-	// this master start's own timestamp -- absent(...)'s blind window
-	// measures from here, same reference point masterLoop.started uses for
-	// its own orphan-check blind window. self (round-1 review fix,
-	// IMPORTANT 2) is the master's own node data -- rt.provider.selfName is
-	// already built (startFleet, before this role branch ever runs);
-	// d.latestSnapshot/d.store are the exact same accessors the daemon's own
-	// control socket and local sampler already use for "this host".
+	// SetRules: reg/sink/tracker now all exist, so the aggregate-rule evaluator
+	// can read tags/LastSeen, snapshots/1m series and liveness state. started is
+	// this master start's timestamp, the reference for absent(...)'s blind window
+	// (same as masterLoop.started). self is the master's own node data
+	// (rt.provider.selfName is already built); d.latestSnapshot/d.store are the
+	// accessors the control socket and local sampler use for "this host".
 	engine.SetRules(reg, sink, tracker, time.Now(), ruleSelfSource{
 		Name: rt.provider.selfName,
 		Snap: func() (Snapshot, bool) {
@@ -820,12 +813,11 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	// from its sidecar (fleet-child/managed.json) so a restart while the
 	// master is unreachable keeps enforcing whatever was last applied.
 	managedState := loadManagedChild(managedChildPath(d.stateDir), d.getCfg, d.self, time.Now)
-	// Round-2 review, IMPORTANT: reconcile once, right after restoring
-	// managedState and before the shipper (or anything else) starts, so a
-	// child whose config.json diverged from its committed managed values
-	// while this process wasn't running (a direct edit, a restored backup,
-	// an offline write) self-heals on restart instead of the divergence
-	// becoming permanent (see reconcileManagedValuesAtStart's doc comment).
+	// Reconcile once, right after restoring managedState and before the shipper
+	// starts, so a child whose config.json diverged from its committed managed
+	// values while this process was down (direct edit, restored backup) self-heals
+	// on restart instead of the divergence becoming permanent (see
+	// reconcileManagedValuesAtStart).
 	reconcileManagedValuesAtStart(managedState, d.logf)
 	live := newLiveBuilder(d.latestSnapshot, d.alertStatePath, func() HostInfo { return collectHostInfoFor(d.getCfg()) }, managedState)
 
@@ -842,14 +834,11 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	handoffState := newHandoff(time.Now, func() time.Duration { return d.getCfg().FleetFallbackAfter() }, lease)
 	restoreRoute := setAlertRoute(handoffState.Route)
 
-	// childSilences is this child's copy of the master's last pushed
-	// "silences" frame (fleet_silences.go), restored from its sidecar so a
-	// restart while the master stays unreachable keeps honouring it for
-	// fallback deliveries (see deliverFallback). It applies whatever the
-	// master pushed verbatim, with no local Node re-check: the master is the
-	// only place with the authoritative registry to resolve Node against
-	// (review round 2 -- see pushedSilences's doc comment for why an
-	// earlier round's child-side re-check was removed).
+	// childSilences is this child's copy of the master's last pushed "silences"
+	// frame, restored from its sidecar so a restart while the master is
+	// unreachable keeps honouring it for fallback deliveries (deliverFallback).
+	// It applies the push verbatim, with no local Node re-check: only the master
+	// has the authoritative registry to resolve Node against (see pushedSilences).
 	childSilences := loadPushedSilences(childSilencesPath(d.stateDir))
 
 	// Restart safety: handoff.pending lives only in memory, so a routed

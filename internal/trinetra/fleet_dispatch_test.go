@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// TestKeyedDispatcherPreservesOrderPerKey covers the B3 review round 2
-// ruling: a fire and its later recover on the SAME key are always run in
-// order, even when the fire's own job is slow -- the recover must wait for
-// it, never race ahead.
+// TestKeyedDispatcherPreservesOrderPerKey: a fire and its later recover on the
+// SAME key always run in order, even when the fire's job is slow.
 func TestKeyedDispatcherPreservesOrderPerKey(t *testing.T) {
 	d := newKeyedDispatcher()
 	var mu sync.Mutex
@@ -69,9 +67,8 @@ func TestKeyedDispatcherDifferentKeysRunConcurrently(t *testing.T) {
 	d.waitIdleForTest()
 }
 
-// TestKeyedDispatcherBoundsGlobalConcurrency is the B3 review round 2
-// ruling: 200 concurrent Enqueue calls across many different keys must
-// never exceed dispatchConcurrency (8) jobs actually running at once.
+// TestKeyedDispatcherBoundsGlobalConcurrency: 200 concurrent Enqueue calls
+// across many keys must never exceed dispatchConcurrency (8) running jobs.
 func TestKeyedDispatcherBoundsGlobalConcurrency(t *testing.T) {
 	d := newKeyedDispatcher()
 
@@ -150,10 +147,9 @@ func TestKeyedDispatcherEnqueueNeverBlocks(t *testing.T) {
 	d.waitIdleForTest()
 }
 
-// TestKeyedDispatcherRetiresDrainedLanes is the B3 review round 3 minor 1:
-// a lane whose queue drains to empty must be removed from d.lanes, not held
-// forever, so a long-lived dispatcher with high key churn doesn't leak one
-// lane object per key it has ever seen.
+// TestKeyedDispatcherRetiresDrainedLanes: a lane whose queue drains must be
+// removed from d.lanes, so a long-lived dispatcher with high key churn doesn't
+// leak a lane per key.
 func TestKeyedDispatcherRetiresDrainedLanes(t *testing.T) {
 	d := newKeyedDispatcher()
 	var wg sync.WaitGroup
@@ -183,11 +179,10 @@ func TestKeyedDispatcherRetiresDrainedLanes(t *testing.T) {
 	}
 }
 
-// TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait is the B3 review round
-// 3 minor 2: Stop returns promptly (bounded by its own timeout) even while
-// a job is still blocked, work enqueued after Stop is dropped rather than
-// queued forever, and no goroutine is left running once everything that WAS
-// queued before Stop actually finishes.
+// TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait: Stop returns promptly
+// (bounded by its own timeout) even while a job is blocked, work enqueued
+// after Stop is dropped, and no goroutine is left once everything queued
+// before Stop finishes.
 func TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait(t *testing.T) {
 	before := runtime.NumGoroutine()
 
@@ -244,8 +239,7 @@ func TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait(t *testing.T) {
 }
 
 // A pump already draining a lane can take and finish a freshly appended job
-// before Enqueue returns; the WaitGroup must never go negative (it used to
-// panic with "sync: negative WaitGroup counter" under load).
+// before Enqueue returns; the WaitGroup must never go negative.
 func TestKeyedDispatcherEnqueueWhilePumpRunningNeverNegative(t *testing.T) {
 	d := newKeyedDispatcher()
 	var ran atomic.Int64

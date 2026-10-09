@@ -183,16 +183,14 @@ func (h *handoff) Receipt(key string, firedAt int64) (kind string, ok bool) {
 }
 
 // Reconcile re-adds alerts a restarted process lost from memory (see
-// reconcilePendingFromLog), preserving each one's OWN Time as its routedAt,
-// so Tick judges it exactly as if Route had been called back when it
-// actually fired -- an alert that fired long enough ago is delivered on the
-// very next Tick, not after a fresh fallbackAfter countdown starting now.
+// reconcilePendingFromLog), preserving each one's OWN Time as its routedAt so
+// Tick judges it as if Route had been called when it fired: an old enough
+// alert is delivered on the next Tick, not after a fresh fallbackAfter
+// countdown.
 //
-// An entry already pending (Route ran again for the same (key, firedAt)
-// during the brief window between startChild constructing handoff and
-// calling Reconcile -- possible if a lease frame and a fresh fire race the
-// reconciliation scan) is left alone rather than overwritten, since Route's
-// own routedAt is at least as accurate as the log's.
+// An entry already pending (Route ran again for the same (key, firedAt) before
+// Reconcile was called) is left alone, since Route's routedAt is at least as
+// accurate as the log's.
 func (h *handoff) Reconcile(alerts []Alert) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -523,33 +521,26 @@ func reconcilePendingFromLog(alog *AlertLog, receiptsPath string, fallbackAfter 
 
 // deliverFallback is what startChild's handoff ticker calls for every Alert
 // handoff.Tick returns: the master's receipt never arrived (or the lease
-// expired) in time, so it is delivered locally now instead, exactly once.
+// expired) in time, so it is delivered locally now, exactly once.
 //
-// It deliberately does not go back through enqueueAndLog/alertRoute: a
-// still-valid lease with just an overdue receipt would otherwise route it
-// right back into pending, and this delivery must be unconditional. Instead
-// it mirrors enqueueAndLog's shape directly -- log, publish, enqueue -- with
-// two differences: the title carries fallbackPrefix, and the AlertEvent
-// records DeliveredLocally with FiredAt equal to the ORIGINAL alert's Time
-// (not this delivery's own, later, nowUnix), so the master's dedup key
-// (node_id, alert_key, fired_at) still lines up the two records this one
-// alert produced -- the earlier "routed_to_master" one Route's caller
-// logged, and this one -- as the same alert.
+// It deliberately skips enqueueAndLog/alertRoute: a still-valid lease with an
+// overdue receipt would route it right back into pending, and this delivery
+// must be unconditional. It mirrors enqueueAndLog (log, publish, enqueue)
+// with two differences: the title carries prefix, and the AlertEvent records
+// DeliveredLocally with FiredAt equal to the ORIGINAL alert's Time, so the
+// master's dedup key (node_id, alert_key, fired_at) still ties it to the
+// earlier "routed_to_master" record.
 //
-// silences is checked ONLY here -- a fallback delivery -- never for
-// an ordinary local alert that never routed to the master: if a pushed
-// silence or maintenance occurrence still covers this alert, the record is
-// still logged (DeliveredLocally true, so the master never redelivers it
-// either) but the title notes the suppression and neither bus.Publish nor
-// q.Enqueue is called, so nothing actually fires. A nil silences (no push
-// ever received) behaves exactly as before task 4.
+// silences is checked ONLY here, never for an ordinary local alert: if a
+// pushed silence or maintenance occurrence covers this alert, the record is
+// still logged (DeliveredLocally true, so the master never redelivers) but the
+// title notes the suppression and neither bus.Publish nor q.Enqueue runs. A
+// nil silences (no push ever received) suppresses nothing.
 //
-// prefix is prepended to the title instead of the unconditional
-// fallbackPrefix (final-review engine ruling (b)): every existing caller
-// passes fallbackPrefix ("via local fallback: master unreachable — "), but
-// handleLinkRevocation's drain-on-revoke call site passes
-// revokedFallbackPrefix instead, since "master unreachable" is simply false
-// for a node that was deliberately revoked.
+// prefix is prepended to the title: callers pass fallbackPrefix ("via local
+// fallback: master unreachable — "), except handleLinkRevocation's
+// drain-on-revoke, which passes revokedFallbackPrefix since "master
+// unreachable" is false for a deliberately revoked node.
 func deliverFallback(silences *pushedSilences, alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, nowUnix int64, prefix string) {
 	firedAt := a.Time
 	reason, suppressed := silences.Suppressed(nowUnix, a.Key, a.Severity.String())

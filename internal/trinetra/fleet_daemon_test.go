@@ -37,10 +37,10 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 	}, &alerts
 }
 
-// TestStartMasterWarnsOnceAboutDuplicateRegistryNames is the review round-2
-// item (b) regression test: an EXISTING registry.json (from before names
-// were unique) is loaded as-is -- no migration, no auto-rename -- but
-// startMaster logs one warning line naming the duplicates.
+// TestStartMasterWarnsOnceAboutDuplicateRegistryNames: an EXISTING
+// registry.json from before names were unique is loaded as-is (no migration,
+// no auto-rename), but startMaster logs one warning line naming the
+// duplicates.
 func TestStartMasterWarnsOnceAboutDuplicateRegistryNames(t *testing.T) {
 	dir := t.TempDir()
 	if err := fleetInitPKI(dir, []string{"127.0.0.1"}, "test", time.Now()); err != nil {
@@ -394,8 +394,8 @@ func TestMasterProviderNodesAndManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// task 6 part 3: SetNodeDeps validates self-dependency and unknown
-	// node ids, accepts a mix of node ids and "tag:<t>" entries, and audits.
+	// SetNodeDeps validates self-dependency and unknown node ids, accepts a mix
+	// of node ids and "tag:<t>" entries, and audits.
 	if err := fa.SetNodeDeps(live, []string{live}, "op"); err == nil {
 		t.Fatal("self-dependency accepted")
 	}
@@ -535,11 +535,11 @@ func TestMasterLoopAlertsNeverContactedNode(t *testing.T) {
 	}
 }
 
-// TestMasterLoopNodeDownAlertGoesThroughEngine covers task 3's "masterLoop's
-// own fleet alerts go through the same engine as a child's": with a real
-// fleetAlertEngine wired as loop.alert, a node-down fire must both reach
-// d.alert (via the engine's deliver) AND create a firing incident, keyed
-// "self:<alert key>" since a master-generated alert has no source node.
+// TestMasterLoopNodeDownAlertGoesThroughEngine: masterLoop's own fleet alerts
+// go through the same engine as a child's. With a real fleetAlertEngine wired
+// as loop.alert, a node-down fire must reach d.alert (via the engine's
+// deliver) AND create a firing incident keyed "self:<alert key>", since a
+// master-generated alert has no source node.
 func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 	disableGroupWaitForTest(t)
 	dir := t.TempDir()
@@ -584,9 +584,8 @@ func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 	}
 }
 
-// TestMasterLoopTickPushesLeasesExcludingRevoked covers the lease cadence
-// ruling: tick pushes a lease to every connected, non-revoked node; a
-// revoked node gets none.
+// TestMasterLoopTickPushesLeasesExcludingRevoked: tick pushes a lease to every
+// connected, non-revoked node; a revoked node gets none.
 func TestMasterLoopTickPushesLeasesExcludingRevoked(t *testing.T) {
 	dir := t.TempDir()
 	d, _ := testDeps(t, dir)
@@ -652,13 +651,10 @@ func TestFleetStopIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestFleetStopClosesLiveStreamConnections is the final-review transport I2
-// regression: rt.stop must force-close every live /fleet/v1/stream
-// connection (Hub.CloseAll) BEFORE m.Shutdown's deadline wait, not rely on
-// the client disconnecting or the process exiting. masterShutdownDeadline
-// is shrunk so a pre-fix run (which would otherwise block for the full
-// deadline with the connection still open, never actually closing it) fails
-// fast rather than costing a real multi-second wait.
+// TestFleetStopClosesLiveStreamConnections: rt.stop must force-close every
+// live /fleet/v1/stream connection (Hub.CloseAll) BEFORE m.Shutdown's
+// deadline wait, not rely on the client disconnecting. masterShutdownDeadline
+// is shrunk so a regression fails fast instead of waiting the full deadline.
 func TestFleetStopClosesLiveStreamConnections(t *testing.T) {
 	old := masterShutdownDeadline
 	masterShutdownDeadline = 300 * time.Millisecond
@@ -943,12 +939,11 @@ func TestMasterDropWarningSurvivesRestart(t *testing.T) {
 	}
 }
 
-// TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch is the B3 review
-// round 2 minor: fleetDeps.alert (used by a child's own childLinkAlerts,
-// fleet_daemon.go's startChild) must stay the ordinary async enqueueAndLog
-// path -- it must never block its caller on a slow/blocked channel, unlike
-// fleetDeps.deliverSync (the master engine's synchronous path, which is
-// SUPPOSED to block until dispatch completes).
+// TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch: fleetDeps.alert
+// (used by a child's childLinkAlerts) must stay the async enqueueAndLog path
+// and never block its caller on a slow channel, unlike fleetDeps.deliverSync
+// (the master engine's path, which is SUPPOSED to block until dispatch
+// completes).
 func TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -992,11 +987,10 @@ func TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch(t *testing.T) {
 	}
 }
 
-// TestMasterLoopStillActiveVariants covers stillActive's per-key rules
-// directly (B3 review round 2 1(b)): a down node's key is active, an
-// online/revoked/removed node's key is not, fleet:connectivity follows
-// MassDown, and an unrecognized key defaults to "still active" (left alone,
-// for a future rule alert per B7 to plug in later).
+// TestMasterLoopStillActiveVariants covers stillActive's per-key rules: a down
+// node's key is active, an online/revoked/removed node's key is not,
+// fleet:connectivity follows MassDown, and an unrecognized key defaults to
+// "still active" (left alone).
 func TestMasterLoopStillActiveVariants(t *testing.T) {
 	dir := t.TempDir()
 	d, _ := testDeps(t, dir)
@@ -1052,13 +1046,12 @@ func TestMasterLoopStillActiveVariants(t *testing.T) {
 	}
 }
 
-// TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow covers B3
-// review round 2 1(b): an incident left "firing" for a node that is
-// actually online again (e.g. recorded before a restart wiped the
-// in-memory NodeAlerter/tracker state that would have noticed and emitted
-// the matching recover itself) must be reconciled -- but only once the
-// blind window (node_down_after since this masterLoop started) has passed,
-// giving the tracker a real chance to observe the node's true state first.
+// TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow: an incident left
+// "firing" for a node that is online again (e.g. recorded before a restart
+// wiped the tracker state that would have emitted the recover) must be
+// reconciled, but only once the blind window (node_down_after since this
+// masterLoop started) has passed, so the tracker has observed the node's true
+// state first.
 func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
 	disableGroupWaitForTest(t)
 	dir := t.TempDir()
