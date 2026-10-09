@@ -8,163 +8,56 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// sessionGCInterval is how often Start's background sweep removes expired
-// records from <StateDir>/sessions.json (session.go's SessionStore.GC).
-// Session/ceremony expiry itself is enforced immediately and independently
-// by SessionStore.Get treating an expired record as absent (see
-// jsonSessionStore.Get) -- this ticker only reclaims disk space/file size
-// for records nobody ever looks up again after they expire, so an interval
-// this coarse costs nothing in correctness.
+// sessionGCInterval is how often Start's background sweep removes expired records from
+// <StateDir>/sessions.json (session.go's SessionStore.GC).
 const sessionGCInterval = 10 * time.Minute
 
-// This package's reach into github.com/go-webauthn/webauthn (what used to
-// be pinned here by a placeholder stub, see git history) is now the real
-// registration ceremony: webAuthnConfig/beginRegistration/
-// finishRegistration in auth_webauthn.go, and *User's webauthn.User
-// implementation in users.go (issue #60). This package is compiled into the
-// trinetra-web binary, no build tag.
+// This package's WebAuthn use is the real registration ceremony:
+// webAuthnConfig/beginRegistration/finishRegistration in auth_webauthn.go.
 
-// Deps is what the web server needs from the running daemon, expressed
-// without importing internal/trinetra (internal/web must never import
-// internal/trinetra, to keep the module graph one-way). API is this
-// package's single seam onto the daemon's live state (see Deps.API's own
-// doc below): the dashboard,
-// monitoring, history/series, and downtime handlers all read through it,
-// and its write methods (ApplyConfig/TestChannel/AckAlert/UnackAlert) cover
-// config and channel writes too, so this package never needs to import
-// trinetra's own store/config-reload types directly.
+// Deps is what the web server needs from the running daemon, expressed without importing
+// internal/trinetra.
 type Deps struct {
 	// Cfg returns the current config (race-safe against the daemon's reload).
 	Cfg func() *config.Config
 	// Reload validates, persists, and applies a new config in-process.
 	Reload func(*config.Config) error
-	// API is the daemon's core.API, the single boundary this package reads
-	// live state through (Task 5, core-contract-s1): the dashboard, monitoring,
-	// history/series, and downtime handlers all call API.Snapshot()/
-	// .Monitoring()/.Series()/.Events() instead of the individual closures/
-	// stores those handlers used before this task. May be nil in tests that
-	// don't exercise a routed handler; every caller must check before calling
-	// (exactly like every other Deps field) and treat a nil API the same as
-	// "no data" rather than panicking.
-	//
-	// As of task 8, the write methods are wired too: configSaveHandler/
-	// channelsAddHandler/channelsUpdateHandler/channelsRemoveHandler
-	// (handlers_config.go/handlers_channels.go) persist through
-	// API.ApplyConfig instead of Deps.Reload, and channelsTestHandler sends
-	// through API.TestChannel instead of Deps.TestChannel -- both fields
-	// remain on Deps (Deps.Reload still backs the /public settings save,
-	// handlers_public.go) but are no longer read by the config/channels
-	// paths. AckAlert/UnackAlert are implemented on both core.API backends
-	// too, but the alerts page's ack handler (handlers_alerts.go)
-	// deliberately keeps its own direct alerts.json read-modify-write: its
-	// on-disk shape (ackAlertState) omits ActiveAlert.Critical, which
-	// AlertState.Save (the shape AckAlert/UnackAlert round-trip) would
-	// preserve -- routing it through API.AckAlert would silently change what
-	// gets written, so that page stays on its pre-task-8 path until that
-	// divergence is resolved on its own terms.
+	// API is the daemon's core.API, the single boundary this package reads live state through:
+	// the dashboard, monitoring, history/series.
 	API core.API
-	// Events is the daemon's downtime event log (EventsStore,
-	// events_store.go), backing the alerts page's "Uptime · 30d" tile
-	// (uptimePct30d, handlers_alerts.go), the one remaining consumer that
-	// isn't routed through API yet (downtimeAPIHandler itself now reads
-	// API.Events instead). May be nil (store-writes-disabled mode); callers
-	// must treat nil as "no events" rather than assuming it's set.
+	// Events is the daemon's downtime event log (EventsStore, events_store.go), backing the
+	// alerts page's "Uptime · 30d" tile (uptimePct30d, handlers_alerts.go).
 	Events EventsStore
-	// Snapshot returns the latest live snapshot, already projected into this
-	// package's own DashboardView (dashboard_view.go) by
-	// internal/trinetra/coreapi_inproc.go's buildDashboardView, then
-	// carried here over the control socket by the trinetra-web binary's
-	// buildDeps (cmd/trinetra-web) -- see that type's doc for why the
-	// projection (rather than trinetra.Snapshot itself) is what
-	// crosses this boundary. Lock-free/cheap: safe to call from any
-	// goroutine, any number of times. Still used directly by the SSE
-	// handlers (sse.go, on every tick), the sidebar nav counts
-	// (nav_counts.go), the /public panels (handlers_public.go), and the
-	// history page's disk-mount list (historyDiskMounts); dashboardHandler
-	// itself now reads through API.Snapshot() instead (Task 5).
+	// Snapshot returns the latest live snapshot, already projected into this package's own
+	// DashboardView.
 	Snapshot func() DashboardView
-	// StateDir is the web plugin's own state directory (its user store,
-	// sessions, and enrollment tokens live here). Alert data no longer comes
-	// from disk paths under it: active alerts, alert history, and acks all go
-	// through API (ActiveAlerts/AlertHistory/AckAlert) over the control
-	// socket, so the plugin reads no daemon-owned state off disk.
+	// StateDir is the web plugin's own state directory (its user store, sessions, and
+	// enrollment tokens live here).
 	StateDir string
-	// TestChannel sends a one-off test notification through the named
-	// channel (internal/trinetra/daemon.go's testChannel closure, built
-	// from sendTestNotification/buildNotifier -- the same logic `trinetra
-	// channel test <name>` uses). As of task 8, channelsTestHandler
-	// (handlers_channels.go) reads through Deps.API.TestChannel instead --
-	// this field is kept on Deps (still assigned by the trinetra-web
-	// binary's buildDeps, cmd/trinetra-web) but no
-	// longer read by this package; it stays only in case a future
-	// non-core.API consumer needs it directly.
+	// TestChannel sends a one-off test notification through the named channel.
 	TestChannel func(name string) error
-	// ValidateChannel reports whether a channel config could actually build a
-	// working notifier (the trinetra-web binary's buildDeps wires it to
-	// client.ValidateChannel, which dry-runs trinetra.buildNotifier on the
-	// daemon side over the control socket), the same check `channel test` and
-	// delivery use, minus the network send.
-	// The channels handlers call it before persisting an ENABLED channel so
-	// the web editor never silently creates a channel that would be dropped at
-	// delivery time (#79 -- e.g. a telegram channel with no chat id). May be
-	// nil in tests that don't exercise it; callers must check before calling.
+	// ValidateChannel reports whether a channel config could actually build a working
+	// notifier.
 	ValidateChannel func(config.ChannelConfig, *config.Config) error
 	// Enabled mirrors cfg.Web.Enabled (the web.enabled config key, issue
 	// #58), read once at daemon startup -- see daemon.go's cmdDaemon.
 	Enabled bool
-	// Listen mirrors cfg.Web.Listen (the web.listen config key, issue #58),
-	// a "host:port" string net.SplitHostPort-validated by
-	// internal/config.Config.Set.
+	// Listen mirrors cfg.Web.Listen (the web.listen config key, issue #58), a "host:port"
+	// string net.SplitHostPort-validated by internal/config.Config.Set.
 	Listen string
-	// Subscribe opens a live event stream: the daemon's core.API.Subscribe
-	// (Task 2's socket streaming), adapted into this package's own LiveEvent
-	// type (see LiveEvent's doc) so internal/web never needs to import
-	// core.Event for this path -- the trinetra-web binary's buildDeps
-	// wires this to a closure calling client.Subscribe(ctx) and copying each
-	// core.Event's fields into a LiveEvent. nil when unavailable (e.g. a
-	// test that doesn't exercise the SSE handlers): eventsHandler/
-	// publicEventsHandler (sse.go) treat a nil Subscribe exactly like the
-	// pre-Task-3 pure-ticker behavior, never call it, never panic.
+	// Subscribe opens a live event stream: the daemon's core.API.Subscribe, adapted into this
+	// package's own LiveEvent type.
 	Subscribe func(context.Context) (<-chan LiveEvent, error)
-	// Fleet returns the daemon's core.FleetAPI (fleet-wide status and the
-	// node roster) -- the trinetra-web binary's buildDeps wires this to
-	// client.Fleet (internal/control, always unrouted: Fleet.* calls run
-	// against the master regardless of any node scope). nil means no fleet
-	// support at all (e.g. a test Deps that doesn't exercise routing);
-	// node_scope.go's fleetRole/withNodeRouter treat a nil Fleet, a nil
-	// FleetAPI, or a Status() error identically: "solo", no /n/{node}/...
-	// routing. Even a genuinely solo daemon answers Fleet().Status() (role
-	// "solo") once wired -- see fleetRole's doc for why every failure mode
-	// collapses to that same answer rather than needing separate handling.
+	// Fleet returns the daemon's core.FleetAPI (fleet-wide status and the node roster) -- the
+	// trinetra-web binary's buildDeps wires this to client.Fleet.
 	Fleet func() core.FleetAPI
-	// StatusPage is the daemon's public status page API (issue #157). Nil, or
-	// a nil result, means unavailable (older daemon / not wired).
+	// StatusPage is the daemon's public status page API (issue #157).
 	StatusPage func() core.StatusPageAPI
-	// NodeAPI returns a core.API view routed to fleet node id (the
-	// trinetra-web binary's buildDeps wires this to
-	// func(id string) core.API { return client.ForNode(id) }, internal/
-	// control's routed-view client): every core.API method called through
-	// it carries that node's id on the wire (see control.Client.ForNode's
-	// doc), so it never fails locally for an unknown id -- withNodeRouter
-	// validates {node} against Fleet().Nodes(...) before a request ever
-	// reaches a handler that would call this. nil means only self is
-	// available (no fleet routing wired); node_scope.go's apiFor falls back
-	// to d.API in that case, exactly like the self scope.
+	// NodeAPI returns a core.API view routed to fleet node id.
 	NodeAPI func(id string) core.API
 }
 
-// Start is the web server's entry point: given Deps, it binds and serves
-// (per cfg.Web.Mode, see serving.go's listenAndServe) when Deps.Enabled and
-// returns a stop func that gracefully shuts it down. If Deps.Enabled is
-// false, Start binds nothing and returns a no-op stop and a nil error: the
-// trinetra-web binary calls Start unconditionally (see cmd/trinetra-web),
-// so "disabled" has to be a valid, harmless outcome here rather than an error.
-//
-// When Enabled is true, Start first calls validateOrigin (issue #59) to
-// fail fast on a passkey-unsafe or incomplete web.* config BEFORE binding
-// anything: a non-nil return here means the caller (trinetra-web) must
-// log it and treat the web server as not started, while it itself
-// keeps running.
+// Start is the web server's entry point: given Deps, it binds and serves.
 func Start(d Deps) (stop func(), err error) {
 	if !d.Enabled {
 		return func() {}, nil
@@ -174,12 +67,8 @@ func Start(d Deps) (stop func(), err error) {
 		return nil, err
 	}
 
-	// The authenticated-session store, the separate ceremony-placeholder
-	// store, and the enrollment-token store (session.go/enroll_tokens.go)
-	// all need a periodic GC sweep independent of any particular request --
-	// see sessionGCInterval's doc -- so all three are started once here,
-	// alongside the listener, rather than per-request like newHandler's
-	// other per-call newSessionStore/newCeremonyStore/newTokenStore uses.
+	// The authenticated-session store, the separate ceremony-placeholder store, and the
+	// enrollment-token store.
 	sessionGCStop := newSessionStore(d.StateDir).startGC(sessionGCInterval)
 	ceremonyGCStop := newCeremonyStore(d.StateDir).startGC(sessionGCInterval)
 	tokenGCStop := newTokenStore(d.StateDir).startGC(sessionGCInterval)
@@ -189,10 +78,8 @@ func Start(d Deps) (stop func(), err error) {
 		tokenGCStop()
 	}
 
-	// listenerStop (NOT the named return "stop") is deliberate: the returned
-	// closure below calls listenerStop, and if it instead captured "stop" by
-	// name, assigning the closure itself to "stop" via `return func(){...}`
-	// would make the closure call itself -- infinite recursion.
+	// listenerStop (NOT the named return "stop") is deliberate: the returned closure below
+	// calls listenerStop, and if it instead captured "stop" by name.
 	listenerStop, err := listenAndServe(d, newHandler(d))
 	if err != nil {
 		gcStop()

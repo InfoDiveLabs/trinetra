@@ -31,9 +31,8 @@ func TestFleetManagedAnonymousRedirectsToLogin(t *testing.T) {
 	}
 }
 
-// TestFleetManagedViewerReadOnly pins the ruling: a viewer sees the page
-// (200), the fragments list and status table, but no create/edit/delete
-// controls at all.
+// TestFleetManagedViewerReadOnly pins that a viewer sees the page (200), the
+// fragments list and status table, but no create/edit/delete controls at all.
 func TestFleetManagedViewerReadOnly(t *testing.T) {
 	fleet := &fakeFleet{managed: []core.ManagedFragment{
 		{ID: "f1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "90"}, Version: 2, Author: "root"},
@@ -104,8 +103,8 @@ func TestFleetManagedMissingCSRFForbidden(t *testing.T) {
 
 // ---- key select allowlist --------------------------------------------------
 
-// TestFleetManagedKeySelectOffersOnlyAllowlistedKeys pins the ruling: the
-// key <select> offers exactly core.ManagedKeys, nothing more/less.
+// TestFleetManagedKeySelectOffersOnlyAllowlistedKeys pins that the key <select>
+// offers exactly core.ManagedKeys, nothing more/less.
 func TestFleetManagedKeySelectOffersOnlyAllowlistedKeys(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	body, _, _ := fleetAdminSessionGet(t, d, "/fleet/managed")
@@ -114,18 +113,14 @@ func TestFleetManagedKeySelectOffersOnlyAllowlistedKeys(t *testing.T) {
 			t.Errorf("key select missing allowlisted key %q, body:\n%s", k, body)
 		}
 	}
-	// Sanity: something OUTSIDE the allowlist must not appear as a select
-	// option value.
+	// Sanity: something OUTSIDE the allowlist must not appear as a select option value.
 	if strings.Contains(body, `value="server.name"`) {
 		t.Error("key select must not offer a non-allowlisted key")
 	}
 }
 
-// TestFleetManagedNonAllowlistedKeyPostedDirectlyRejectedInline pins the
-// backend rejection: a key outside the allowlist, posted directly
-// (bypassing the <select> entirely, as any raw HTTP client could), is
-// rejected with 400 and the error inline next to that row -- never
-// silently accepted, never a 500.
+// TestFleetManagedNonAllowlistedKeyPostedDirectlyRejectedInline pins the backend rejection:
+// a key outside the allowlist, posted directly.
 func TestFleetManagedNonAllowlistedKeyPostedDirectlyRejectedInline(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -153,9 +148,8 @@ func TestFleetManagedNonAllowlistedKeyPostedDirectlyRejectedInline(t *testing.T)
 
 // ---- create / upsert -------------------------------------------------------
 
-// TestFleetManagedCreateRoundTripsWithSessionUserAsAuthor drives the real
-// rendered form (formValuesForButton), never a hand-built payload, and pins
-// that the saved fragment's actor/author is the SIGNED-IN web user.
+// TestFleetManagedCreateRoundTripsWithSessionUserAsAuthor drives the real rendered form
+// (formValuesForButton), never a hand-built payload.
 func TestFleetManagedCreateRoundTripsWithSessionUserAsAuthor(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -187,10 +181,7 @@ func TestFleetManagedCreateRoundTripsWithSessionUserAsAuthor(t *testing.T) {
 	}
 }
 
-// TestFleetManagedSaveUpsertsByTag pins task-5-brief.md's exact ruling:
-// saving a fresh draft (ID "") whose tag matches an EXISTING fragment
-// updates that fragment in place rather than creating a second one for the
-// same tag.
+// TestFleetManagedSaveUpsertsByTag pins that saving a fresh draft.
 func TestFleetManagedSaveUpsertsByTag(t *testing.T) {
 	fleet := &fakeFleet{managed: []core.ManagedFragment{
 		{ID: "f1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "80"}, Version: 1, Author: "root"},
@@ -225,11 +216,8 @@ func TestFleetManagedSaveUpsertsByTag(t *testing.T) {
 	}
 }
 
-// TestFleetManagedSaveAuditDescribesChangeNotActor pins the C5 review
-// carry-over: the save mutation's audit record New field describes the
-// fragment's tag/keys, not the acting user -- AuditRecord.User (auditUser(r)
-// via logAudit) already carries the actor, so New repeating it told an
-// operator nothing about what actually changed.
+// TestFleetManagedSaveAuditDescribesChangeNotActor pins the C5 review carry-over: the save
+// mutation's audit record New field describes the fragment's tag/keys, not the acting user.
 func TestFleetManagedSaveAuditDescribesChangeNotActor(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -272,9 +260,7 @@ func TestFleetManagedSaveAuditDescribesChangeNotActor(t *testing.T) {
 }
 
 // TestFleetManagedDeleteAuditDescribesChangeNotActor is
-// TestFleetManagedSaveAuditDescribesChangeNotActor's delete counterpart: the
-// audit record describes the DELETED fragment's tag/keys (looked up before
-// the delete goes through), not the actor.
+// TestFleetManagedSaveAuditDescribesChangeNotActor's delete counterpart.
 func TestFleetManagedDeleteAuditDescribesChangeNotActor(t *testing.T) {
 	fleet := &fakeFleet{managed: []core.ManagedFragment{
 		{ID: "f1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "80"}, Version: 1, Author: "root"},
@@ -309,9 +295,8 @@ func TestFleetManagedDeleteAuditDescribesChangeNotActor(t *testing.T) {
 
 // ---- row add/remove field survival -----------------------------------------
 
-// TestFleetManagedAddRowRoundTrip pins the add/remove-row draft pattern
-// itself: clicking "Add key" must reshape the draft (now two rows) and
-// re-render at 200 WITHOUT saving anything.
+// TestFleetManagedAddRowRoundTrip pins the add/remove-row draft pattern itself: clicking
+// "Add key" must reshape the draft.
 func TestFleetManagedAddRowRoundTrip(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -330,11 +315,8 @@ func TestFleetManagedAddRowRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFleetManagedAddThenRemoveRowPreservesOtherFields is the browser-
-// faithful field-survival test: fill Tag + the first row's key/value, click
-// "Add key" (reshaping the draft, re-rendering at 200), then click "Remove
-// key" on the newly-added row -- every OTHER field (Tag, the first row's own
-// key/value) must survive both round trips unchanged.
+// TestFleetManagedAddThenRemoveRowPreservesOtherFields is the browser- faithful
+// field-survival test: fill Tag + the first row's key/value, click "Add key".
 func TestFleetManagedAddThenRemoveRowPreservesOtherFields(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -374,9 +356,8 @@ func TestFleetManagedAddThenRemoveRowPreservesOtherFields(t *testing.T) {
 
 // ---- edit an existing fragment ---------------------------------------------
 
-// TestFleetManagedEditLoadsExistingFragment pins the ?edit=<id> load: the
-// form is preloaded with that fragment's tag/keys/values plus a hidden id,
-// so a subsequent save updates that SAME fragment by id.
+// TestFleetManagedEditLoadsExistingFragment pins the ?edit=<id> load: the form is preloaded
+// with that fragment's tag/keys/values plus a hidden id.
 func TestFleetManagedEditLoadsExistingFragment(t *testing.T) {
 	fleet := &fakeFleet{managed: []core.ManagedFragment{
 		{ID: "f1", Tag: "db", Values: map[string]string{"thresholds.mem_pct": "75"}, Version: 3, Author: "root"},
@@ -403,8 +384,8 @@ func TestFleetManagedEditLoadsExistingFragment(t *testing.T) {
 
 // ---- status table -----------------------------------------------------------
 
-// TestFleetManagedStatusRendersDriftAndConflicts pins the per-node status
-// table's drift-keys-as-badges and conflicts-listed ruling.
+// TestFleetManagedStatusRendersDriftAndConflicts pins that the per-node
+// status table shows drift keys as badges and lists conflicts.
 func TestFleetManagedStatusRendersDriftAndConflicts(t *testing.T) {
 	fleet := &fakeFleet{managedStatus: []core.ManagedStatus{
 		{
@@ -440,10 +421,8 @@ func TestFleetManagedStatusRendersDriftAndConflicts(t *testing.T) {
 	}
 }
 
-// TestFleetManagedStatusShowsNodeNameNotID pins U2 (2026-09-25 UI audit):
-// the per-node status table's Node column must show the roster's display
-// name, with the raw id only as a title/tooltip -- not the raw id as the
-// visible text.
+// TestFleetManagedStatusShowsNodeNameNotID pins U2 (2026-09-25 UI audit): the per-node
+// status table's Node column must show the roster's display name.
 func TestFleetManagedStatusShowsNodeNameNotID(t *testing.T) {
 	const rawID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 	fleet := &fakeFleet{

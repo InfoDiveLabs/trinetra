@@ -9,10 +9,8 @@ import (
 
 const dialRetryInterval = 200 * time.Millisecond
 
-// DialWait is Dial that keeps retrying, for up to wait, while the daemon is
-// still starting (#162). waiting, if non-nil, runs once before the first
-// retry. token is re-read per attempt because the daemon writes a fresh one
-// at startup; other errors return at once unless the token changed meanwhile.
+// DialWait is Dial that keeps retrying, for up to wait, while the daemon is still starting
+// (#162). waiting, if non-nil.
 func DialWait(path string, token func() (string, error), wait time.Duration, waiting func()) (*Client, error) {
 	deadline := time.Now().Add(wait)
 	notified := false

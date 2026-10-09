@@ -5,10 +5,8 @@ import (
 	"html/template"
 )
 
-// Attribution for the anonymous pages (public status, history, login,
-// enroll): a small visible footer with followed links, plus a JSON-LD
-// description so crawlers can attribute the page to the project. Neither
-// names the company.
+// Attribution for the anonymous pages (public status, history, login, enroll): a small
+// visible footer with followed links.
 const (
 	attributionProductURL = "https://www.infodivelabs.com/products/trinetra"
 	attributionRepoURL    = "https://github.com/InfoDiveLabs/trinetra"

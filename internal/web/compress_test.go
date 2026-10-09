@@ -50,10 +50,7 @@ func TestGzipMiddlewarePassthroughWhenNotAccepted(t *testing.T) {
 	}
 }
 
-// TestGzipMiddlewareBelowThresholdStaysUncompressed proves the 1KB minimum
-// size gate: a response under gzipMinBytes must be served as-is even when
-// the client advertises Accept-Encoding: gzip, so tiny responses (most JSON
-// API replies) don't pay the CPU/framing cost of gzip for no bandwidth win.
+// TestGzipMiddlewareBelowThresholdStaysUncompressed proves the 1KB minimum size gate.
 func TestGzipMiddlewareBelowThresholdStaysUncompressed(t *testing.T) {
 	small := strings.Repeat("x", 100)
 	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,12 +70,8 @@ func TestGzipMiddlewareBelowThresholdStaysUncompressed(t *testing.T) {
 	}
 }
 
-// TestGzipMiddlewareExcludesSSERoutes proves the SSE-exclusion short-circuit:
-// /events and /public/events stream text/event-stream and must never be
-// buffered/gzipped, even when the client sends Accept-Encoding: gzip and the
-// streamed body exceeds the compression threshold -- buffering would defeat
-// the whole point of a live push stream (the browser would see nothing until
-// the handler returns).
+// TestGzipMiddlewareExcludesSSERoutes proves the SSE-exclusion short-circuit: /events and
+// /public/events stream text/event-stream and must never be buffered/gzipped.
 func TestGzipMiddlewareExcludesSSERoutes(t *testing.T) {
 	big := strings.Repeat("x", 4096)
 	streamHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,13 +97,8 @@ func TestGzipMiddlewareExcludesSSERoutes(t *testing.T) {
 	}
 }
 
-// TestIsEventsStreamPath is a direct unit test for isEventsStreamPath
-// (Task 4/fleet-web-a review carry-over, task-5-brief.md's global-
-// constraints.md): every prior test only exercised it indirectly through
-// gzipMiddleware's exclusion behavior (TestGzipMiddlewareExcludesSSERoutes
-// above, and node_scope_test.go's node-routing tests) -- this pins the
-// predicate itself, positive and negative, independent of the middleware
-// wrapping it.
+// TestIsEventsStreamPath is a direct unit test for isEventsStreamPath: every prior test
+// only exercised it indirectly through gzipMiddleware's exclusion behavior.
 func TestIsEventsStreamPath(t *testing.T) {
 	positive := []string{"/events", "/public/events", "/n/abc/events"}
 	for _, p := range positive {
@@ -126,14 +114,8 @@ func TestIsEventsStreamPath(t *testing.T) {
 	}
 }
 
-// countingResponseWriter wraps an httptest.ResponseRecorder to count
-// WriteHeader calls -- httptest.ResponseRecorder itself silently swallows a
-// second WriteHeader call (only its FIRST call's code/headers stick), which
-// is exactly why the double-WriteHeader bug below wasn't caught by the
-// original test suite: asserting against a bare ResponseRecorder can't see
-// it. This wrapper is deliberately NOT embedding ResponseRecorder -- it
-// implements Header/Write/WriteHeader explicitly so WriteHeader's counter
-// increment can't be bypassed by promoted-method resolution.
+// countingResponseWriter wraps an httptest.ResponseRecorder to count WriteHeader calls --
+// httptest.ResponseRecorder itself silently swallows a second WriteHeader call.
 type countingResponseWriter struct {
 	rec         *httptest.ResponseRecorder
 	headerCalls int
@@ -148,24 +130,13 @@ func (c *countingResponseWriter) WriteHeader(code int) {
 	c.rec.WriteHeader(code)
 }
 
-// TestGzipMiddlewareNoDoubleWriteHeaderOnPreexistingContentEncoding is the
-// regression test for the double-WriteHeader bug: a handler that pre-sets
-// its own Content-Encoding (so gzipMiddleware must back off, per
-// startGzip's "caller already set an encoding" guard) and then writes a
-// body >= gzipMinBytes must still result in exactly ONE WriteHeader call on
-// the underlying ResponseWriter -- not two. Before the fix, startGzip's
-// flushPlain call (which writes the deferred status) left g.gz nil, so
-// Close's `g.gz != nil` check couldn't tell "already finalized via
-// flushPlain" apart from "never finalized" and called flushPlain a second
-// time, calling WriteHeader again ("http: superfluous response.WriteHeader
-// call" against a real ResponseWriter; httptest.ResponseRecorder hides this,
-// hence the custom counting wrapper here instead of a bare Recorder).
+// TestGzipMiddlewareNoDoubleWriteHeaderOnPreexistingContentEncoding is the regression test
+// for the double-WriteHeader bug: a handler that pre-sets its own Content-Encoding.
 func TestGzipMiddlewareNoDoubleWriteHeaderOnPreexistingContentEncoding(t *testing.T) {
 	big := strings.Repeat("x", 4096)
 	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Simulates a handler that already serves a specific encoding (e.g.
-		// pre-compressed content) -- startGzip must back off via flushPlain
-		// rather than double-encode, exactly the path that triggered the bug.
+		// Simulates a handler that already serves a specific encoding (e.g. pre-compressed
+		// content) -- startGzip must back off via flushPlain rather than double-encode.
 		w.Header().Set("Content-Encoding", "identity")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, big)

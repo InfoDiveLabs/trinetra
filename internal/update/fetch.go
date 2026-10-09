@@ -32,8 +32,7 @@ func readSmall(ctx context.Context, open func() (io.ReadCloser, error)) ([]byte,
 	return b, nil
 }
 
-// FetchRelease downloads manifest.json and both signatures for version and
-// verifies them. A signature file that cannot be fetched counts as missing.
+// FetchRelease downloads manifest.json and both signatures for version and verifies them.
 func FetchRelease(ctx context.Context, src Source, keys KeySet, version string) (Manifest, []byte, error) {
 	get := func(name string) ([]byte, error) {
 		return readSmall(ctx, func() (io.ReadCloser, error) { return src.ReleaseAsset(ctx, version, name) })
@@ -57,14 +56,11 @@ func FetchRelease(ctx context.Context, src Source, keys KeySet, version string) 
 	return m, mb, nil
 }
 
-// ErrNoPointer means the source answered but has no <channel>.json or no
-// signature for it: together with ErrExpired, the signature of a withheld
-// (frozen) channel rather than an offline host.
+// ErrNoPointer means the source answered but has no <channel>.json or no signature for it:
+// together with ErrExpired, the signature of a withheld.
 var ErrNoPointer = errors.New("update: channel pointer or its signature is missing")
 
-// FetchLatest reads and verifies <channel>.json from the source's channel
-// pointers. A pointer or signature the source reports as absent is
-// ErrNoPointer; a transport error is returned as is.
+// FetchLatest reads and verifies <channel>.json from the source's channel pointers.
 func FetchLatest(ctx context.Context, src Source, keys KeySet, channel string, now time.Time) (Pointer, error) {
 	get := func(name string) ([]byte, error) {
 		b, err := readSmall(ctx, func() (io.ReadCloser, error) { return src.ChannelAsset(ctx, name) })
@@ -91,8 +87,7 @@ func FetchLatest(ctx context.Context, src Source, keys KeySet, channel string, n
 	return p, nil
 }
 
-// FetchVerified streams one release file into dstDir, checking size and
-// SHA-256 as it goes. Nothing is left in dstDir on any failure.
+// FetchVerified streams one release file into dstDir, checking size and SHA-256 as it goes.
 func FetchVerified(ctx context.Context, src Source, version string, f File, dstDir string, perm os.FileMode) (string, error) {
 	rc, err := src.ReleaseAsset(ctx, version, f.Name)
 	if err != nil {

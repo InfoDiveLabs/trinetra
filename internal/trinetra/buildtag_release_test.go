@@ -11,12 +11,7 @@ import (
 	"testing"
 )
 
-// TestReleaseBinariesCarryNoTestKeys is R22: a default (release) build of
-// the daemon and of trinetra-release must contain neither the deterministic
-// test signers/key set nor the e2e crash-on-start hook, nor the name of any
-// TRINETRA_E2E_* hook variable (restart/guard commands, GitHub base URL,
-// swap pause, update-loop interval, health deadline). Only a
-// trinetra_testkeys build (the e2e image) may carry them.
+// TestReleaseBinariesCarryNoTestKeys: a default (release) build of the daemon.
 func TestReleaseBinariesCarryNoTestKeys(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds two binaries")
@@ -39,9 +34,8 @@ func TestReleaseBinariesCarryNoTestKeys(t *testing.T) {
 		if err != nil {
 			t.Fatalf("go tool nm %s: %v\n%s", pkg, err, syms)
 		}
-		// No update-e2e hook can be read from the environment by a release
-		// binary: the default-build hooks never look a TRINETRA_E2E_*
-		// variable up, so none of their names is even in the binary.
+		// No update-e2e hook can be read from the environment by a release binary: the
+		// default-build hooks never look a TRINETRA_E2E_* variable up.
 		raw, err := os.ReadFile(bin)
 		if err != nil {
 			t.Fatal(err)

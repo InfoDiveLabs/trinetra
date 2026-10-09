@@ -12,9 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// The default sign-in (no name) only finds discoverable credentials, so
-// registration must ask for one; left at the spec default Android and some
-// password managers create keys the picker can't list.
+// The default sign-in (no name) only finds discoverable credentials, so registration must
+// ask for one.
 func TestRegistrationRequestsDiscoverableCredential(t *testing.T) {
 	cfg := config.Default()
 	cfg.Web.RPID, cfg.Web.Origin = testRPID, testOrigin
@@ -36,9 +35,7 @@ func TestRegistrationRequestsDiscoverableCredential(t *testing.T) {
 	}
 }
 
-// Synced passkeys report a signature counter of 0. A credential that once
-// counted and now reports 0 (moved to a syncing provider) must still sign
-// in; a counter that goes backwards while still counting is rejected.
+// Synced passkeys report a signature counter of 0.
 func TestLoginAcceptsAuthenticatorThatStoppedCounting(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
@@ -60,10 +57,8 @@ func TestLoginAcceptsAuthenticatorThatStoppedCounting(t *testing.T) {
 	}
 }
 
-// Keys created before registration asked for discoverable credentials (or
-// by authenticators that ignore it) return no user handle. Signing in by
-// name lists them explicitly, with their transports, and verifies against
-// that user.
+// Keys created before registration asked for discoverable credentials (or by authenticators
+// that ignore it) return no user handle.
 func TestLoginByNameWorksForNonDiscoverableCredential(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())

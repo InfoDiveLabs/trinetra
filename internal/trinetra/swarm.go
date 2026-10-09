@@ -1,16 +1,5 @@
-// Package trinetra: swarm.go collapses Docker Swarm task containers to their
-// SERVICE (#118). A Swarm task container is named "<service>.<slot>.<taskid>"
-// where taskid changes on every (re)deploy, so keying series/alerts/UI on the
-// raw name means every rolling deploy (a) creates two new permanent series
-// (docker:<task>:cpu/mem), the root of the 3035-file cardinality explosion
-// (#112/#109), and (b) fires false "container down" churn as old task names
-// disappear. Keyed on the stable service name instead, cardinality tracks the
-// service count and a rolling deploy no longer flaps.
-//
-// This is gated on Swarm actually being active (dockerAccess.swarm, probed via
-// `docker info`), so a plain-docker host is completely unaffected: swarmService
-// only matches the strict task-name shape, and collapseSwarmTasks is only
-// called when Swarm is detected.
+// Package trinetra: swarm.go collapses Docker Swarm task containers to their SERVICE
+// (#118).
 package trinetra
 
 import (
@@ -18,14 +7,8 @@ import (
 	"sort"
 )
 
-// swarmTaskRe matches a Swarm task container name "<service>.<slot>.<taskid>":
-//   - service: any non-empty prefix (may contain dashes/underscores/dots)
-//   - slot: the replica number (replicated services) or node id (global)
-//   - taskid: the 20+ char random task id that changes every redeploy
-//
-// The greedy service group backtracks so the last two dot-segments are the
-// slot and taskid; the long-taskid anchor keeps an ordinary dotted container
-// name (e.g. "my.app") from matching.
+// swarmTaskRe matches a Swarm task container name "<service>.<slot>.<taskid>": - service:
+// any non-empty prefix (may contain dashes/underscores/dots) - slot: the replica number.
 var swarmTaskRe = regexp.MustCompile(`^(.+)\.([a-z0-9]+)\.([a-z0-9]{20,})$`)
 
 // swarmServiceName returns the service name for a Swarm task container name, or
@@ -47,14 +30,8 @@ func serviceKey(name string) string {
 	return name
 }
 
-// collapseSwarmTasks rewrites the per-task container state and stats maps to be
-// keyed by SERVICE (#118). Container state collapses to "running" when ANY task
-// of the service is running (so a rolling deploy, where the old task has exited
-// but a new one runs, never reports the service down); an all-non-running
-// service keeps a representative non-running state so it still alerts. Stats
-// (cpu%/mem/net) are SUMMED across the service's tasks, giving the service's
-// total footprint as one continuous series across redeploys. Plain (non-task)
-// container names pass through unchanged, so a mixed host works.
+// collapseSwarmTasks rewrites the per-task container state and stats maps to be keyed by
+// SERVICE (#118).
 func collapseSwarmTasks(containers map[string]string, stats map[string]ContainerStat) (map[string]string, map[string]ContainerStat) {
 	var outStates map[string]string
 	if containers != nil {
@@ -86,10 +63,8 @@ func collapseSwarmTasks(containers map[string]string, stats map[string]Container
 	return outStates, outStats
 }
 
-// reduceServiceState collapses a service's per-task states into one: "running"
-// if any task is running, otherwise a deterministic representative of the
-// non-running states (lexicographically first) so a genuinely-down service
-// still reports a non-running state and alerts.
+// reduceServiceState collapses a service's per-task states into one: "running" if any task
+// is running, otherwise a deterministic representative of the non-running states.
 func reduceServiceState(states []string) string {
 	for _, st := range states {
 		if st == "running" {

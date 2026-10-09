@@ -1,15 +1,5 @@
-// Package trinetra: outbound_guard.go provides an opt-in SSRF guard for the
-// URLs the daemon dials on the operator's behalf (webhook/Slack/Discord/ntfy/
-// gotify channels and the healthchecks ping). Setting a channel URL already
-// requires an admin/root config write, so this is defense-in-depth, off by
-// default (notify.block_private_targets). When enabled it refuses to connect to
-// loopback, unspecified, link-local (which includes the 169.254.169.254 cloud
-// metadata endpoint), and private (RFC1918 / ULA) addresses.
-//
-// The check runs in net.Dialer.Control, i.e. AFTER DNS resolution and against
-// the actual IP about to be dialed, so a hostname that resolves to an internal
-// address (including a DNS-rebinding attempt) is blocked too, not just literal
-// IPs in the URL.
+// Package trinetra: outbound_guard.go provides an opt-in SSRF guard for the URLs the daemon
+// dials on the operator's behalf.
 package trinetra
 
 import (
@@ -20,10 +10,8 @@ import (
 	"time"
 )
 
-// isBlockedIP reports whether ip is an internal/loopback/link-local/private
-// target the outbound guard refuses when enabled. A nil ip (unparseable
-// address) is treated as blocked: when guarding, fail closed rather than dial
-// something we could not classify.
+// isBlockedIP reports whether ip is an internal/loopback/link-local/private target the
+// outbound guard refuses when enabled.
 func isBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -49,10 +37,7 @@ func guardControl(network, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// newGuardedHTTPClient returns an *http.Client bounded by timeout. When block
-// is false it is a plain client (behavior unchanged from before this guard
-// existed). When block is true its dialer rejects internal targets via
-// guardControl. Callers pass their own per-channel timeout (webhook vs push).
+// newGuardedHTTPClient returns an *http.Client bounded by timeout.
 func newGuardedHTTPClient(timeout time.Duration, block bool) *http.Client {
 	if !block {
 		return &http.Client{Timeout: timeout}

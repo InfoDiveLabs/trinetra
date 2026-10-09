@@ -1,12 +1,4 @@
-// onboard_ui.go is the first-run onboarding flow's Bubble Tea glue: whether
-// to show it (needsOnboarding, checked once against a fresh Config() fetch
-// right after Init) and the two screens it walks -- capture the Telegram
-// bot token, then show the enrollment pin (api.EnrollmentPIN, Task 1's
-// #90 work) with the "/start <pin>" instruction, polling until enrolled.
-// The pure decision (needsOnboarding) and config mutation (applyOnboardToken)
-// this drives live in onboarding.go, unit-tested there against a fake
-// core.API with no terminal involved; this file is deliberately thin,
-// mirroring tui.go's own split for the web-setup wizard.
+// onboard_ui.go is the first-run onboarding flow's Bubble Tea glue: whether to show it.
 package main
 
 import (
@@ -31,9 +23,8 @@ const (
 	onboardPINStep
 )
 
-// onboardPollInterval is how often the pin screen re-fetches
-// api.EnrollmentPIN while waiting for the user to message the bot, so
-// "enrolled" is detected without the user having to press a refresh key.
+// onboardPollInterval is how often the pin screen re-fetches api.EnrollmentPIN while
+// waiting for the user to message the bot.
 const onboardPollInterval = 2 * time.Second
 
 // onboardModel holds the onboarding flow's state across both screens.
@@ -67,9 +58,8 @@ type onboardTokenAppliedMsg struct {
 	err error
 }
 
-// onboardPINMsg carries the result of an api.EnrollmentPIN call back into
-// Update, for both the first fetch right after the token is saved and every
-// later poll.
+// onboardPINMsg carries the result of an api.EnrollmentPIN call back into Update, for both
+// the first fetch right after the token is saved and every later poll.
 type onboardPINMsg struct {
 	pin      string
 	enrolled bool
@@ -81,11 +71,8 @@ type onboardPollTickMsg time.Time
 
 // --- commands ---
 
-// fetchOnboardCheckCmd fetches Config once, right after Init, so Update can
-// decide whether to auto-enter onboarding (needsOnboarding, onboarding.go).
-// A fetch error is treated as "needs onboarding" too, matching
-// needsOnboarding(nil)'s own doc: a transient failure at startup must not
-// hide the flow from a genuinely fresh install.
+// fetchOnboardCheckCmd fetches Config once, right after Init, so Update can decide whether
+// to auto-enter onboarding (needsOnboarding, onboarding.go).
 func fetchOnboardCheckCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -93,9 +80,8 @@ func fetchOnboardCheckCmd(api core.API) tea.Cmd {
 	}
 }
 
-// applyOnboardTokenCmd fetches Config fresh, sets telegram.token via
-// applyOnboardToken (onboarding.go), and posts it with ApplyConfig -- the
-// same fetch/mutate/apply shape applyWebSetupCmd/applyScheduleCmd use.
+// applyOnboardTokenCmd fetches Config fresh, sets telegram.token via applyOnboardToken
+// (onboarding.go), and posts it with ApplyConfig.
 func applyOnboardTokenCmd(api core.API, token string) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -112,9 +98,8 @@ func applyOnboardTokenCmd(api core.API, token string) tea.Cmd {
 	}
 }
 
-// fetchOnboardPINCmd calls api.EnrollmentPIN (Task 1, #90) -- the exact pin
-// the daemon's poll loop accepts via "/start <pin>". Used both for the
-// first fetch after the token is saved and for every later poll tick.
+// fetchOnboardPINCmd calls api.EnrollmentPIN (Task 1, #90) -- the exact pin the daemon's
+// poll loop accepts via "/start <pin>".
 func fetchOnboardPINCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		pin, enrolled, err := api.EnrollmentPIN(context.Background())
@@ -122,8 +107,7 @@ func fetchOnboardPINCmd(api core.API) tea.Cmd {
 	}
 }
 
-// onboardPollTickCmd schedules the next pin re-fetch onboardPollInterval
-// from now.
+// onboardPollTickCmd schedules the next pin re-fetch onboardPollInterval from now.
 func onboardPollTickCmd() tea.Cmd {
 	return tea.Tick(onboardPollInterval, func(t time.Time) tea.Msg { return onboardPollTickMsg(t) })
 }
@@ -142,11 +126,7 @@ func (m model) updateOnboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateOnboardTokenKey feeds msg into the token input: enter applies it
-// (fetch, set telegram.token, ApplyConfig, all off the UI goroutine via
-// applyOnboardTokenCmd) once non-empty, esc skips onboarding for now and
-// returns to Home (the user can always set the token later via the
-// Channels screen or `trinetra telegram set-token`).
+// updateOnboardTokenKey feeds msg into the token input: enter applies it.
 func (m model) updateOnboardTokenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
@@ -166,10 +146,8 @@ func (m model) updateOnboardTokenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateOnboardPINKey handles the pin screen: esc leaves onboarding at any
-// point (the token is already saved by the time this screen shows, so
-// leaving here never loses that), and once enrolled, any key continues on
-// to Home.
+// updateOnboardPINKey handles the pin screen: esc leaves onboarding at any point (the token
+// is already saved by the time this screen shows, so leaving here never loses that).
 func (m model) updateOnboardPINKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" {
 		m.step = stepHome

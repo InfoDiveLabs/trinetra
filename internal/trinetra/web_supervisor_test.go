@@ -9,10 +9,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// fakeProc is a concurrency-safe fake of supervisedProc. Wait blocks until
-// the test calls exit (simulating the child process exiting on its own) or
-// Kill is called (simulating the supervisor killing it on stop); either one
-// unblocks Wait exactly once.
+// fakeProc is a concurrency-safe fake of supervisedProc.
 type fakeProc struct {
 	exitCh chan error
 
@@ -56,10 +53,8 @@ type spawnCall struct {
 	env  []string
 }
 
-// webTestHarness wires fake seams (startWebProc, resolveWebPlugin,
-// supervisorSleep, supervisorLog) for a single test and records everything
-// observable through them, all guarded by one mutex so it is safe under
-// -race with the supervisor goroutine running concurrently.
+// webTestHarness wires fake seams (startWebProc, resolveWebPlugin, supervisorSleep,
+// supervisorLog) for a single test and records everything observable through them.
 type webTestHarness struct {
 	mu     sync.Mutex
 	spawns []spawnCall
@@ -72,9 +67,6 @@ type webTestHarness struct {
 }
 
 // setupWebTest installs fake seams and restores the real ones on cleanup.
-// The default resolveWebPlugin resolves to a fixed verified path; the
-// default supervisorSleep is instant (records the requested duration and
-// returns immediately) so tests never wait on real backoff.
 func setupWebTest(t *testing.T) *webTestHarness {
 	t.Helper()
 
@@ -120,9 +112,6 @@ func setupWebTest(t *testing.T) *webTestHarness {
 }
 
 // nextSpawn waits for the next startWebProc call and returns its fakeProc.
-// It never sleeps to wait: it blocks on the harness's spawnCh, which the
-// fake startWebProc feeds synchronously, and only times out (failing the
-// test) if a spawn that should happen never does.
 func (h *webTestHarness) nextSpawn(t *testing.T) *fakeProc {
 	t.Helper()
 	select {
@@ -195,14 +184,7 @@ func containsEnv(env []string, kv string) bool {
 	return false
 }
 
-// TestStartWeb_SpawnsWithVerifiedPathAndEnv pins case A from the brief: on
-// startWeb, the supervisor resolves the plugin path via resolveWebPlugin and
-// spawns it via startWebProc with the control socket and token passed as the
-// TRINETRA_CONTROL_SOCKET / TRINETRA_CONTROL_TOKEN env vars, and ALSO (compat,
-// for one release, so a pre-rename serverwatch-web binary still works) the old
-// SERVERWATCH_CONTROL_SOCKET / SERVERWATCH_CONTROL_TOKEN names. Calling the
-// returned stop func kills the running child and blocks until the supervisor
-// loop has actually exited.
+// TestStartWeb_SpawnsWithVerifiedPathAndEnv: startWeb resolves the plugin path via.
 func TestStartWeb_SpawnsWithVerifiedPathAndEnv(t *testing.T) {
 	h := setupWebTest(t)
 
@@ -255,10 +237,7 @@ func TestStartWeb_RestartsOnExit(t *testing.T) {
 	stop()
 }
 
-// TestStartWeb_BackoffGrowsAndCaps pins case C: repeated rapid exits (each
-// looking short-lived because timeNow is frozen, so the "healthy child"
-// reset never fires) make the recorded backoff sleep durations double from
-// webBackoffMin, capped at webBackoffMax.
+// TestStartWeb_BackoffGrowsAndCaps pins case C: repeated rapid exits.
 func TestStartWeb_BackoffGrowsAndCaps(t *testing.T) {
 	h := setupWebTest(t)
 
@@ -296,10 +275,8 @@ func TestStartWeb_BackoffGrowsAndCaps(t *testing.T) {
 	stop()
 }
 
-// TestStartWeb_VerifyFailureThenRecovers pins case D: if resolveWebPlugin
-// fails (e.g. the plugin fails the front-door trust check), the supervisor
-// must NOT call startWebProc, must log a refusal, and must keep retrying so
-// it recovers once resolveWebPlugin starts succeeding again.
+// TestStartWeb_VerifyFailureThenRecovers pins case D: if resolveWebPlugin fails (e.g. the
+// plugin fails the front-door trust check), the supervisor must NOT call startWebProc.
 func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 	h := setupWebTest(t)
 
@@ -317,16 +294,14 @@ func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 
 	stop := startWeb("/run/trinetra/control.sock", "tok123")
 
-	// The only spawn that will ever arrive is the one after resolve
-	// recovers; if startWebProc had been called during the failed first
-	// attempt, spawnCount would already be 2 by the time this one arrives.
+	// The only spawn that will ever arrive is the one after resolve recovers; if startWebProc
+	// had been called during the failed first attempt.
 	h.nextSpawn(t)
 	if h.spawnCount() != 1 {
 		t.Fatalf("spawnCount = %d, want 1 (startWebProc must not be called until resolve succeeds)", h.spawnCount())
 	}
-	// Guard against the failed first attempt's (empty) path sneaking
-	// through as this "only" spawn: it must be the recovered, verified
-	// path, not whatever resolveWebPlugin returned alongside its error.
+	// Guard against the failed first attempt's (empty) path sneaking through as this "only"
+	// spawn: it must be the recovered, verified path.
 	if call := h.lastSpawn(); call.path != "/opt/trinetra/trinetra-web" {
 		t.Fatalf("spawn path = %q, want the recovered verified path (an unverified/empty path means a verify error reached startWebProc)", call.path)
 	}
@@ -337,10 +312,8 @@ func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 	stop()
 }
 
-// TestStop_DuringBackoffReturnsPromptly pins case E: if stop() is called
-// while the loop is asleep in a backoff wait, it must return promptly
-// (without waiting for the sleep to finish) and no further spawn must
-// occur.
+// TestStop_DuringBackoffReturnsPromptly pins case E: if stop() is called while the loop is
+// asleep in a backoff wait, it must return promptly.
 func TestStop_DuringBackoffReturnsPromptly(t *testing.T) {
 	h := setupWebTest(t)
 
@@ -383,12 +356,8 @@ func TestStop_DuringBackoffReturnsPromptly(t *testing.T) {
 	}
 }
 
-// TestShouldStartWeb is the unit-level guard that cmdDaemon spawns the web
-// supervisor only when both the control socket is up (the child dials it,
-// so starting the supervisor without it would spawn a process with nothing
-// to talk to) and web.enabled is true -- cmdDaemon itself is too
-// process-heavy to unit test directly, so this pins the decision it defers
-// to instead.
+// TestShouldStartWeb is the unit-level guard that cmdDaemon spawns the web supervisor only
+// when both the control socket is up.
 func TestShouldStartWeb(t *testing.T) {
 	cases := []struct {
 		name     string

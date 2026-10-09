@@ -70,10 +70,8 @@ func TestRegistryTouchFlushAndRevoke(t *testing.T) {
 	}
 }
 
-// TestRegistryAddDedupesNameCaseInsensitive is the review round-2 item (b)
-// regression test: a join whose requested name collides (case-insensitively)
-// with an existing node's is registered as "<name>-2", "-3", ... instead of
-// silently sharing the name.
+// TestRegistryAddDedupesNameCaseInsensitive: a join whose name collides
+// case-insensitively is registered as "<name>-2", "-3", ... not shared.
 func TestRegistryAddDedupesNameCaseInsensitive(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "registry.json")
 	r, err := OpenRegistry(p)
@@ -115,10 +113,8 @@ func TestRegistryAddDedupesNameCaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestRegistryAddBoundsUniqueNameLoop is the final-review transport minor 3
-// regression: uniqueNameLocked's "-2", "-3", ... collision loop had no
-// upper bound. uniqueNameCap is shrunk for the test so it doesn't need to
-// actually register 1000 real nodes to exercise the bound.
+// TestRegistryAddBoundsUniqueNameLoop: the "-N" collision loop is bounded by
+// uniqueNameCap, shrunk here so the test need not register 1000 nodes.
 func TestRegistryAddBoundsUniqueNameLoop(t *testing.T) {
 	old := uniqueNameCap
 	uniqueNameCap = 5
@@ -177,12 +173,8 @@ func TestRegistryNameConflict(t *testing.T) {
 	}
 }
 
-// TestRegistryRenameConcurrentExactlyOneWinner is the review round-3 item 2
-// concurrency test: N goroutines rename N DIFFERENT existing nodes to the
-// SAME target name at once. Registry.Rename's check-then-write is atomic
-// under one lock, so exactly one of them must win; the rest must see the
-// name already taken (by whichever one got there first) and fail, leaving
-// no duplicate afterward.
+// TestRegistryRenameConcurrentExactlyOneWinner: N goroutines rename N different nodes to
+// the same name at once; Rename is atomic, so exactly one wins and no duplicate remains.
 func TestRegistryRenameConcurrentExactlyOneWinner(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "registry.json")
 	r, err := OpenRegistry(p)
@@ -229,12 +221,8 @@ func TestRegistryRenameConcurrentExactlyOneWinner(t *testing.T) {
 	}
 }
 
-// TestRegistryRenameRacesJoinNoDuplicateNames is the review round-3 item 2
-// concurrency test's second half: a Rename racing several concurrent Adds
-// (a join) all targeting the same name. Add always succeeds (suffixing on
-// collision); Rename either wins the exact name outright or is refused --
-// either way, every write is atomic under Registry's single lock, so no
-// duplicate (case-insensitive) name can result.
+// TestRegistryRenameRacesJoinNoDuplicateNames: a Rename racing concurrent Adds of the same
+// name either wins outright or is refused, so no case-insensitive duplicate can result.
 func TestRegistryRenameRacesJoinNoDuplicateNames(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "registry.json")
 	r, err := OpenRegistry(p)

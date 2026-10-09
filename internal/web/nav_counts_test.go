@@ -10,11 +10,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestNavBadgesRenderRealCounts pins Part 2's core obligation: the sidebar
-// nav's Alerts/Channels/Users/Monitoring badges must reflect real per-request
-// counts (Deps.AlertStatePath's active map, len(Cfg().Channels), the user
-// store's List(), and the live snapshot's container count) rather than the
-// mockup's hardcoded demo values (220/2/5/3).
+// TestNavBadgesRenderRealCounts pins that the sidebar nav's
+// Alerts/Channels/Users/Monitoring badges reflect real per-request counts.
 func TestNavBadgesRenderRealCounts(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}, {Key: "cpu", Time: 2, Source: "y"}}}
@@ -68,9 +65,6 @@ func TestNavBadgesRenderRealCounts(t *testing.T) {
 func TestNavBadgeHiddenWhenZero(t *testing.T) {
 	d := enrollTestDeps(t)
 	// No API set (nil) -> 0 active alerts.
-	// Default config -> zero channels.
-	// No users seeded -> zero users.
-	// Zero-value Snapshot -> zero containers.
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)
@@ -97,10 +91,8 @@ func TestNavBadgeHiddenWhenZero(t *testing.T) {
 	}
 }
 
-// TestNavCountsAlertStateMissingFileIsZeroNoPanic pins the defensive-decode
-// requirement: a nil API (the daemon reporting no active alerts, or a
-// transient socket read failure) must count as 0 active alerts, never panic
-// the page.
+// TestNavCountsAlertStateMissingFileIsZeroNoPanic pins the defensive-decode requirement: a
+// nil API.
 func TestNavCountsAlertStateMissingFileIsZeroNoPanic(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{activeErr: errTestActiveAlerts}

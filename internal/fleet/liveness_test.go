@@ -88,13 +88,8 @@ func TestNodeAlerterMassDisconnectIsOneIncident(t *testing.T) {
 	}
 }
 
-// TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers reproduces the review
-// finding: a,b,c go silent and open a mass incident; d,e,f then go silent
-// too (only reaching "stale", not yet "down") while the incident is already
-// open; a,b,c reconnect. The incident must NOT resolve while d,e,f are still
-// lost (whether stale or, later, down), no individual down alert may ever
-// fire for d,e,f, and exactly one connectivity-recover intent must fire once
-// every node is finally back.
+// TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers: a,b,c go silent and open a mass
+// incident; d,e,f then go stale while it is open; a,b,c reconnect.
 func TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers(t *testing.T) {
 	tr := NewTracker(cfgT())
 	ids := []string{"a", "b", "c", "d", "e", "f"}
@@ -117,8 +112,7 @@ func TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers(t *testing.T) {
 		t.Fatalf("stale-join intents = %+v", in)
 	}
 
-	// a,b,c reconnect while d,e,f are still stale: the incident must stay
-	// open (this is exactly the bug: it used to fire an early Recover here).
+	// a,b,c reconnect while d,e,f are still stale: the incident must stay open.
 	tr.Seen("a", 230, 0)
 	tr.Seen("b", 230, 0)
 	tr.Seen("c", 230, 0)

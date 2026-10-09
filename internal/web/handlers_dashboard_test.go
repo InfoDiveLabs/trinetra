@@ -9,13 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// dashboardTestView is a distinctive fake DashboardView: every number is
-// chosen so it can't collide with any of the mockup's hard-coded demo
-// figures (18% cpu, 83% mem, 4% swap, 0.42 load, 54°C temp, 6/7 containers,
-// 220 units, 91% disk, 214 processes, 11%/512M nextcloud, ...) -- see
-// ui-mockup/dashboard.html. If a rendered page still shows one of those, the
-// template is still using demo markup instead of the real Deps.Snapshot()
-// value.
+// dashboardTestView is a distinctive fake DashboardView: every number is chosen so it can't
+// collide with the template's original hard-coded demo figures.
 func dashboardTestView() DashboardView {
 	return DashboardView{
 		TS:      1_700_000_000,
@@ -55,11 +50,8 @@ func dashboardTestView() DashboardView {
 	}
 }
 
-// dashboardMockupDemoNumbers are the mockup's hard-coded demo figures
-// (ui-mockup/dashboard.html) that must NOT survive into the real dashboard
-// template once it's bound to Deps.Snapshot() -- each is distinctive enough
-// (in context) not to collide with real formatted output from
-// dashboardTestView above.
+// dashboardMockupDemoNumbers are the template's original hard-coded demo figures that must
+// NOT survive into the real dashboard template once it's bound to Deps.Snapshot().
 var dashboardMockupDemoNumbers = []string{
 	"6<span class=\"of\">/7", // containers running demo count
 	"220<span class=\"of\">", // systemd units demo count
@@ -76,10 +68,8 @@ func dashboardTestDeps(t *testing.T) Deps {
 	return d
 }
 
-// TestDashboardRendersRealSnapshotValues pins the core TDD obligation for
-// this task: GET / (signed in) must render actual numbers pulled from
-// Deps.Snapshot() (through the DashboardView adapter), not the mockup's
-// hard-coded demo figures.
+// TestDashboardRendersRealSnapshotValues pins that GET / (signed in) renders actual numbers
+// pulled from Deps.Snapshot() (through the DashboardView adapter).
 func TestDashboardRendersRealSnapshotValues(t *testing.T) {
 	d := dashboardTestDeps(t)
 	h := newHandler(d)
@@ -121,10 +111,8 @@ func TestDashboardRendersRealSnapshotValues(t *testing.T) {
 	}
 }
 
-// TestDashboardRendersHiddenStaleBanner pins the markup half of task C6's
-// stale indicator: the dashboard always renders #stale-banner, hidden by
-// default -- app.js's swBootSSE is what shows/hides it, purely client-side,
-// so there is no server-rendered "stale" state to assert beyond presence.
+// TestDashboardRendersHiddenStaleBanner pins the markup half of the stale indicator: the
+// dashboard always renders #stale-banner, hidden by default.
 func TestDashboardRendersHiddenStaleBanner(t *testing.T) {
 	d := dashboardTestDeps(t)
 	h := newHandler(d)
@@ -145,9 +133,8 @@ func TestDashboardRendersHiddenStaleBanner(t *testing.T) {
 	}
 }
 
-// TestDashboardShowsHostStrip pins the compact host strip (#100): when host
-// info is available, the dashboard renders the OS, a socket-aware CPU digest,
-// memory, uptime, and local IP, with a link through to the full /host page.
+// TestDashboardShowsHostStrip pins the compact host strip (#100): when host info is
+// available, the dashboard renders the OS, a socket-aware CPU digest, memory, uptime.
 func TestDashboardShowsHostStrip(t *testing.T) {
 	d := dashboardTestDeps(t)
 	d.API = fakeAPI{snap: dashboardTestView(), hostInfo: core.HostInfoView{
@@ -171,10 +158,8 @@ func TestDashboardShowsHostStrip(t *testing.T) {
 	}
 }
 
-// TestSidebarShowsCoreAndPluginVersions pins #107: the sidebar footer shows the
-// core daemon's version (over the socket) and the web plugin's own version, and
-// flags a mismatch when they differ. The web plugin's own version is "dev" in a
-// test binary, so a distinct core version must render as a mismatch.
+// TestSidebarShowsCoreAndPluginVersions pins #107: the sidebar footer shows the core
+// daemon's version (over the socket) and the web plugin's own version.
 func TestSidebarShowsCoreAndPluginVersions(t *testing.T) {
 	d := dashboardTestDeps(t)
 	d.API = fakeAPI{snap: dashboardTestView(), version: "v9.9.9"}
@@ -191,11 +176,8 @@ func TestSidebarShowsCoreAndPluginVersions(t *testing.T) {
 	}
 }
 
-// TestDashboardRendersRealAvailabilityStrip pins Part 2 of the field-feedback
-// fix: the #hbstrip availability panel must render the real per-request
-// Availability data (ComputeAvailability's output, threaded through
-// DashboardView) rather than the app.js mockup's hardcoded #hbstrip demo
-// (N=96/dF=68/dT=70/wA=41, "1 incident · 45m").
+// TestDashboardRendersRealAvailabilityStrip pins that the #hbstrip availability panel
+// renders the real per-request Availability data.
 func TestDashboardRendersRealAvailabilityStrip(t *testing.T) {
 	view := dashboardTestView()
 	view.Availability = Availability{
@@ -234,11 +216,7 @@ func TestDashboardRendersRealAvailabilityStrip(t *testing.T) {
 }
 
 // TestDashboardRoutesAreViewerGated pins that both GET / and GET /events
-// require at least a viewer session: anonymous is redirected to /login. (The
-// positive/admin case is already covered by TestServerServesDashboardAndAssets
-// for GET / and by the SSE tests in sse_test.go for GET /events; this test
-// is the negative case for both routes together, since Task 8 adds /events
-// as a second viewer-gated route alongside the existing dashboard gate.)
+// require at least a viewer session: anonymous is redirected to /login.
 func TestDashboardRoutesAreViewerGated(t *testing.T) {
 	d := dashboardTestDeps(t)
 	h := newHandler(d)

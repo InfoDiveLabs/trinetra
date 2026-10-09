@@ -55,13 +55,8 @@ func TestLoadStateCorruptFailsClosed(t *testing.T) {
 	}
 }
 
-// TestFloorVersionTruthTable pins the four cases from #138: no persisted
-// floor with an unknown running version means no lower bound at all; no
-// persisted floor with a known running version uses it as the floor; a
-// persisted, valid floor is always enforced (raised further by a higher
-// running version); and a persisted floor that isn't a valid version must
-// fail closed as an error, never silently read as "no floor" (that would
-// re-open downgrades exactly like an unreadable/corrupt state.json would).
+// TestFloorVersionTruthTable pins the four cases from #138: no persisted floor with an
+// unknown running version means no lower bound at all.
 func TestFloorVersionTruthTable(t *testing.T) {
 	v := func(x string) Version {
 		y, err := ParseVersion(x)

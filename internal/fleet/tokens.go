@@ -117,8 +117,7 @@ func (s *TokenStore) unexpiredLocked(now time.Time) []Token {
 	return out
 }
 
-// Consume validates plain and spends one use. Every stored hash is compared
-// in constant time so timing does not reveal a near match.
+// Consume validates plain and spends one use.
 func (s *TokenStore) Consume(plain string, now time.Time) (Token, error) {
 	h := []byte(hashToken(plain))
 	s.mu.Lock()

@@ -9,11 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// selfReq is a plain unscoped request (no /n/{node} routing attached), for
-// direct unit tests of functions node-scope.go's apiFor now threads through
-// (activeAlertsViaAPI, coreVersionViaAPI, ...): nodeFrom(selfReq()) is always
-// the implicit self scope, so these calls exercise exactly the same
-// Deps.API path they did before Task 2 (fleet-web-a).
+// selfReq is a plain unscoped request (no /n/{node} routing attached), for direct unit
+// tests of functions node-scope.go's apiFor threads through.
 func selfReq() *http.Request {
 	return httptest.NewRequest(http.MethodGet, "/", nil)
 }
@@ -22,13 +19,8 @@ func selfReq() *http.Request {
 // path (a socket read failing), distinct from "no alerts fired yet".
 var errTestActiveAlerts = errors.New("control: active alerts unavailable")
 
-// TestActiveAlertsViaAPIMapsAndSorts pins the core.AlertRecord ->
-// activeAlertView projection the web pages use in place of the old on-disk
-// loadActiveAlerts: Reason comes from AlertRecord.Source (where
-// activeAlertRecords stashes the human reason text), Critical is derived from
-// Severity == "critical", Since from Time, and the list is ordered
-// most-recent-first (Since desc, then Key asc) to match what loadActiveAlerts
-// rendered from disk.
+// TestActiveAlertsViaAPIMapsAndSorts pins the core.AlertRecord -> activeAlertView
+// projection the web pages use in place of the old on-disk loadActiveAlerts.
 func TestActiveAlertsViaAPIMapsAndSorts(t *testing.T) {
 	d := Deps{API: fakeAPI{active: []core.AlertRecord{
 		{Key: "cpu", Severity: "critical", Source: "cpu = 95 >= 90", Time: 1000, Acked: false},
@@ -71,9 +63,8 @@ func TestActiveAlertsViaAPIMapsAndSorts(t *testing.T) {
 	}
 }
 
-// TestActiveAlertsViaAPIDegradesToNil pins the display-only tolerance: a nil
-// API (or one whose ActiveAlerts errors) renders as "no active alerts"
-// rather than failing the page, matching loadActiveAlerts's own tolerance.
+// TestActiveAlertsViaAPIDegradesToNil pins the display-only tolerance: a nil API (or one
+// whose ActiveAlerts errors) renders as "no active alerts" rather than failing the page.
 func TestActiveAlertsViaAPIDegradesToNil(t *testing.T) {
 	if got := activeAlertsViaAPI(selfReq(), Deps{}); got != nil {
 		t.Errorf("activeAlertsViaAPI(nil API) = %v, want nil", got)

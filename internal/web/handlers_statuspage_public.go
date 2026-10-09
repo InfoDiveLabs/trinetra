@@ -98,8 +98,7 @@ func uptimeText(days []core.PublicDay) string {
 	return fmt.Sprintf("%.2f%%", float64(up)*100/float64(with))
 }
 
-// statusSummary says in one line how many services are fine and what the
-// rest are doing.
+// statusSummary says in one line how many services are fine and what the rest are doing.
 func statusSummary(svcs []core.PublicService) string {
 	n := map[core.ServiceState]int{}
 	for _, s := range svcs {
@@ -142,9 +141,8 @@ func renderBareStatusPage(w http.ResponseWriter, page string, data any) {
 	_, _ = w.Write(buf.Bytes())
 }
 
-// statusBaseURL picks the origin for absolute feed links: the configured
-// web.origin, else the origin the request middleware derived (honours the
-// package's proxy-header trust policy), else the request's own Host.
+// statusBaseURL picks the origin for absolute feed links: the configured web.origin, else
+// the origin the request middleware derived.
 func statusBaseURL(d Deps, r *http.Request) string {
 	if o := strings.TrimRight(d.Cfg().Web.Origin, "/"); o != "" {
 		return o

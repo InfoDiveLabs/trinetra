@@ -21,41 +21,11 @@ import (
 
 const unitPath = "/etc/systemd/system/trinetra.service"
 
-// secondaryBinPath is a symlink install adds alongside the real
-// /usr/local/bin/trinetra so that `sudo trinetra ...` resolves on
-// distros whose sudo secure_path omits /usr/local/bin (see cmdInstall).
+// secondaryBinPath is a symlink install adds alongside the real /usr/local/bin/trinetra so
+// that `sudo trinetra ...` resolves on distros whose sudo secure_path omits /usr/local/bin.
 const secondaryBinPath = "/usr/bin/trinetra"
 
 // renderUnit renders the systemd unit file installed by cmdInstall.
-// WatchdogSec=90 pairs with the sdNotify("WATCHDOG=1") ping now sent by a
-// dedicated, liveness-gated watchdog goroutine (runWatchdog, watchdog.go) --
-// NOT inline on the sampler loop anymore. That goroutine pings at a third of
-// this window only while both the sampler loop and the slow collector have
-// made recent progress (livenessGate), so a merely-slow slow collection can
-// no longer starve the ping and trip a spurious restart, while a genuinely
-// wedged loop or a permanently stuck collector still stops the pings and lets
-// systemd restart the unit.
-// Type=simple still works here: WATCHDOG=1 from the main PID is accepted
-// regardless of Type, unlike READY=1 which needs Type=notify.
-//
-// RuntimeDirectory=trinetra tells systemd to create /run/trinetra
-// (tmpfs, mode 0755, owned by User=root above) before starting the unit and
-// remove it when the unit stops, and to export
-// RUNTIME_DIRECTORY=/run/trinetra into the service's environment. That is
-// where serveControlSocket (control_socket.go) puts the control socket the
-// daemon's core.API is served over, so the directory always exists with the
-// right lifetime instead of the daemon having to create/clean it up itself.
-//
-// There is no separate "web" unit: cmdInstall (below) always copies
-// os.Executable(), whichever binary is currently running, to
-// /usr/local/bin/trinetra and writes this exact same unit around it. So
-// installing the `trinetra-web` binary (`go build -o
-// /usr/local/bin/trinetra-web ./cmd/trinetra-web`, no build tag) and
-// then `trinetra config set web.enabled true` is the rest of the path to
-// a web-capable service: the daemon's own supervisor verifies and spawns
-// trinetra-web as a child once web.enabled is set and the daemon
-// restarts, so still no unit change is needed. See
-// docs/handbook/08-web-ui.md for the web.*/public.* config keys and serving modes.
 func renderUnit(binPath string) string {
 	return fmt.Sprintf(`[Unit]
 Description=Trinetra — self-hosted server & fleet monitor
@@ -85,19 +55,16 @@ func cmdInstall(args []string) int {
 	for _, a := range args {
 		switch a {
 		case "--force":
-			// Only relaxes the serverwatch migration's "is the old daemon
-			// really stopped?" checks: systemctl cannot answer, or a
-			// serverwatch daemon runs outside serverwatch.service.
+			// Only relaxes the serverwatch migration's "is the old daemon really stopped?" checks:
+			// systemctl cannot answer, or a serverwatch daemon runs outside serverwatch.service.
 			force = true
 		case "--state-already-at-new-path":
 			// The operator moved the serverwatch state volume to the
 			// trinetra state path; adopt it instead of refusing.
 			opts.stateAtNewPath = true
 		case "--require-signed":
-			// Refuse an unsigned install outright instead of warning and
-			// continuing (see installBinaryAndUnit/verifyInstallBundle):
-			// manifest.json/manifest.ci.sig/manifest.maint.sig must sit next
-			// to the binary being installed.
+			// Refuse an unsigned install outright instead of warning and continuing (see
+			// installBinaryAndUnit/verifyInstallBundle).
 			requireSigned = true
 		default:
 			fmt.Fprintf(stderr, "unknown install flag %q\nusage: install [--force] [--require-signed] [--state-already-at-new-path]\n", a)
@@ -130,11 +97,7 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	// Only nudge the operator to set a Telegram token on a genuinely
-	// unconfigured host. On an upgrade/reinstall where Telegram is already
-	// configured (and possibly enrolled), re-printing the set-token line
-	// wrongly implies setup is needed again (#106), so report the existing
-	// state instead.
+	// Only nudge the operator to set a Telegram token on a genuinely unconfigured host.
 	waitErr := waitForDaemonFn()
 	switch {
 	case waitErr == nil:
@@ -155,30 +118,16 @@ func cmdInstall(args []string) int {
 	return 0
 }
 
-// installBinaryAndUnit is the normal install: verify a signed release
-// manifest (if present) against self and any companion plugins sitting next
-// to it, copy the running binary (and companion plugins) into
-// /usr/local/bin, record the plugin manifest, write the unit, seed the
-// config and (re)start trinetra.service. requireSigned mirrors `install
-// --require-signed`: refuse outright when no manifest sits next to self,
-// rather than warning and continuing unsigned.
+// installBinaryAndUnit is the normal install: verify a signed release manifest (if present)
+// against self and any companion plugins sitting next to it, copy the running binary.
 func installBinaryAndUnit(self string, requireSigned bool) error {
 	names := companionInstallNames(self)
 	m, verified, err := verifyInstallSignature(self, names, requireSigned)
 	if err != nil {
 		return err
 	}
-	// updatePaths -- NOT the bare package-level stateDir -- is where install's
-	// floor check/raise must read and write (fix round 1, Ruling R8): the
-	// update state (floor, pending, last outcome) lives at
-	// defaultUpdatePaths().dir() == StateDir/update, exactly where
-	// `trinetra update`/the guard/status already read and write it
-	// (update_apply.go/update_cmd.go). Using bare stateDir here previously
-	// meant the floor was read from (and written to) a state.json that
-	// `trinetra update` never looks at, so a persisted floor was silently
-	// ignored and never actually raised -- and update.SaveState's
-	// MkdirAll+Chmod(0700) landed on stateDir itself (normally 0755) instead
-	// of its "update" subdirectory.
+	// updatePaths, NOT the bare package-level stateDir, is where install's floor check/raise
+	// must read and write: the update state.
 	paths := defaultUpdatePaths()
 	unlock, err := installPreflight(paths)
 	if err != nil {
@@ -195,42 +144,26 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err := copyFile(self, dst, 0o755); err != nil {
 		return fmt.Errorf("copy binary: %w", err)
 	}
-	// Also expose the binary on /usr/bin, which is on sudo's secure_path on
-	// every common distro (unlike /usr/local/bin, absent on RHEL/CentOS 7 and
-	// some minimal images). Without this, `sudo trinetra ...` fails with
-	// "command not found" there even though the service itself runs fine off
-	// the absolute ExecStart. Non-fatal: the binary and unit are already in
-	// place, so a link failure only affects the `sudo trinetra` shortcut.
+	// Also expose the binary on /usr/bin, which is on sudo's secure_path on every common
+	// distro (unlike /usr/local/bin, absent on RHEL/CentOS 7 and some minimal images).
 	if err := linkOnPath(dst, secondaryBinPath); err != nil {
 		fmt.Fprintf(stderr, "warning: could not link %s -> %s: %v\n", secondaryBinPath, dst, err)
 	}
-	// Copy any companion plugin binaries (trinetra-ctl, trinetra-web)
-	// sitting next to the SOURCE binary (self) into the same directory dst
-	// was just installed into, so the manifest scan below actually finds
-	// something. Per-plugin non-fatal, like everything else here: a copy
-	// hiccup on one plugin should not block installing the daemon itself,
-	// and a plugin that simply is not present next to self is not an error
-	// (see writePluginManifest's identical "absence is not failure" note).
+	// Copy any companion plugin binaries (trinetra-ctl, trinetra-web) sitting next to the
+	// SOURCE binary (self) into the same directory dst was just installed into.
 	if err := copyPluginsAlongside(filepath.Dir(self), filepath.Dir(dst)); err != nil {
 		fmt.Fprintf(stderr, "warning: could not copy plugin binaries: %v\n", err)
 	}
-	// Record the checksum manifest the safe plugin launcher (plugin_launch.go)
-	// verifies companion binaries against before exec'ing them. Scanning the
-	// SAME directory dst was just copied into (rather than, say, os.Executable
-	// of this process) matters: dst is exactly where pluginPath will look for
-	// trinetra-ctl/trinetra-web once this binary is running as
-	// /usr/local/bin/trinetra. Non-fatal: a manifest hiccup should not
-	// block installing the daemon itself, since the front-door already fails
-	// closed (refuses to exec) when the manifest is missing or incomplete.
+	// Record the checksum manifest the safe plugin launcher (plugin_launch.go) verifies
+	// companion binaries against before exec'ing them.
 	if err := writePluginManifest(filepath.Dir(dst)); err != nil {
 		fmt.Fprintf(stderr, "warning: could not write plugin manifest: %v\n", err)
 	}
 	if err := os.WriteFile(unitPath, []byte(renderUnit(dst)), 0o644); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
-	// The self-update safety net (R14): the pinned guard binary (a copy of
-	// this binary) and the watchdog timer that runs it every minute to
-	// resolve any pending update, whatever state the new build is in.
+	// The self-update safety net: the pinned guard binary (a copy of this binary) and the
+	// watchdog timer that runs it every minute to resolve any pending update.
 	if err := writePinnedGuard(paths); err != nil {
 		return err
 	}
@@ -244,12 +177,7 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 		}
 	}
 	x := osExec{}
-	// enable + restart (not `enable --now`): `enable --now` only STARTS a
-	// stopped service, so on an upgrade of an already-running trinetra the
-	// new binary and unit would sit on disk while the old daemon kept running
-	// until a manual restart. `restart` starts a stopped unit and reloads a
-	// running one, so a fresh install and an in-place upgrade both end on the
-	// just-installed binary with the freshly-written unit.
+	// enable + restart (not `enable --now`): `enable --now` only STARTS a stopped service.
 	for _, a := range [][]string{
 		{"systemctl", "daemon-reload"},
 		{"systemctl", "enable", "trinetra"},
@@ -260,18 +188,15 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 		}
 	}
 	if verified {
-		// Best-effort: a floor-raise failure must not undo an otherwise
-		// successful install (the binaries are already copied and the unit
-		// already (re)started above).
+		// Best-effort: a floor-raise failure must not undo an otherwise successful install (the
+		// binaries are already copied and the unit already (re)started above).
 		raiseInstallFloor(paths, m.Version)
 	}
 	return nil
 }
 
-// installPreflight claims the self-update apply lock for the whole install
-// (R16) and refuses while an update is pending: install replacing the
-// binaries under a live health guard would have the guard roll the
-// operator's install back and mark the pending version bad.
+// installPreflight claims the self-update apply lock for the whole install and refuses
+// while an update is pending.
 func installPreflight(paths updatePaths) (unlock func(), err error) {
 	unlock, err = takeApplyLock(paths)
 	if err != nil {
@@ -289,18 +214,12 @@ func installPreflight(paths updatePaths) (unlock func(), err error) {
 	return unlock, nil
 }
 
-// errNoSignedManifest is returned by verifyInstallBundle when manifest.json
-// is absent from filepath.Dir(self) -- cmdInstall/verifyInstallSignature
-// decide whether that means "warn and install unsigned" or "refuse"
-// (--require-signed), not verifyInstallBundle itself.
+// errNoSignedManifest is returned by verifyInstallBundle when manifest.json is absent from
+// filepath.Dir(self).
 var errNoSignedManifest = errors.New("trinetra: no signed manifest found next to the binary")
 
-// companionInstallNames lists the binary names verifyInstallSignature should
-// verify: "trinetra" (self) always, plus each companion plugin
-// ("trinetra-<name>" for every name in pluginManifestNames) that is actually
-// present as a regular file next to self -- mirroring copyPluginsAlongside's
-// own presence check, so install verifies exactly the binaries it is about
-// to copy, no more and no less.
+// companionInstallNames lists the binary names verifyInstallSignature should verify:
+// "trinetra" (self) always, plus each companion plugin.
 func companionInstallNames(self string) []string {
 	names := []string{"trinetra"}
 	dir := filepath.Dir(self)
@@ -313,15 +232,8 @@ func companionInstallNames(self string) []string {
 	return names
 }
 
-// verifyInstallBundle looks for manifest.json/manifest.ci.sig/
-// manifest.maint.sig next to self (filepath.Dir(self)), verifies both
-// signatures via update.VerifyRelease, then checks that every binary named
-// in names -- self itself for "trinetra", filepath.Dir(self)/<name>
-// otherwise -- hashes to exactly the manifest's "<name>-linux-<GOARCH>"
-// entry. Any mismatch refuses with a message naming the file and both
-// checksums, before the caller has copied anything. Returns
-// errNoSignedManifest (not wrapped) when manifest.json itself is absent, so
-// callers can tell "no manifest" apart from "manifest present but invalid".
+// verifyInstallBundle looks for manifest.json/manifest.ci.sig/ manifest.maint.sig next to
+// self (filepath.Dir(self)), verifies both signatures via update.VerifyRelease.
 func verifyInstallBundle(keys update.KeySet, self string, names []string) (update.Manifest, error) {
 	dir := filepath.Dir(self)
 	mb, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
@@ -373,12 +285,7 @@ func verifyInstallBundle(keys update.KeySet, self string, names []string) (updat
 }
 
 // verifyInstallSignature wraps verifyInstallBundle with cmdInstall's
-// present/absent/require-signed policy: a present-and-valid manifest returns
-// (m, true, nil); an absent manifest returns (Manifest{}, false, nil) after
-// printing the unsigned-install warning, unless requireSigned is set, in
-// which case it refuses with the exact wording task-8-brief.md specifies;
-// any other verification failure (tampered file, bad/missing signature)
-// always refuses, requireSigned or not.
+// present/absent/require-signed policy: a present-and-valid manifest returns.
 func verifyInstallSignature(self string, names []string, requireSigned bool) (update.Manifest, bool, error) {
 	m, err := verifyInstallBundle(update.ProductionKeys(), self, names)
 	switch {
@@ -395,28 +302,8 @@ func verifyInstallSignature(self string, names []string, requireSigned bool) (up
 	}
 }
 
-// checkInstallPolicy applies update.CheckPolicy to a verified install
-// manifest: AllowEqual true (reinstalling the currently installed version is
-// a legitimate repair), Channel set to the manifest's own channel (an
-// install is not read against the host's configured update.channel -- it
-// installs whatever signed release it was handed, mirroring apply()'s own
-// --bundle-with-updates-off ruling R7), and Floor from persisted update
-// state (paths.dir(), the SAME state.json `trinetra update`/the guard/status
-// already share -- see installBinaryAndUnit's doc, fix round 1 Ruling R8).
-//
-// running is the currently installed binary's own reported version, or the
-// zero Version when nothing is installed yet (a fresh host), a serverwatch
-// migration hasn't placed /usr/local/bin/trinetra yet, or the old binary
-// didn't answer `version --json`. Ruling R9 (fix round 1, Important #1):
-// when running is the zero Version, MinUpgradeFrom is deliberately NOT
-// enforced against it -- CheckPolicy's Running field is instead set to the
-// manifest's own MinUpgradeFrom, which trivially satisfies that sub-check --
-// because there is nothing real to compare against and refusing every real
-// release with ErrTooOld on a fresh/migrated host would be wrong. The floor
-// check (independent of Running) and both signature/hash checks
-// (verifyInstallBundle, already run before this is ever called) still fully
-// apply regardless: only the min-upgrade-from gate is skipped, and only when
-// running is genuinely unknown.
+// checkInstallPolicy applies update.CheckPolicy to a verified install manifest: AllowEqual
+// true (reinstalling the installed version is a legitimate repair).
 func checkInstallPolicy(paths updatePaths, m update.Manifest, running update.Version) error {
 	st, err := update.LoadState(paths.dir())
 	if err != nil {
@@ -436,12 +323,8 @@ func checkInstallPolicy(paths updatePaths, m update.Manifest, running update.Ver
 	return nil
 }
 
-// currentInstalledVersion reports the version of whatever binary is
-// currently at /usr/local/bin/trinetra (queried the same way
-// updater.rollback/updater.status do, via `version --json`), or a zero
-// Version when nothing is installed there yet or it can't be queried -- a
-// fresh install must never be blocked by a policy check with nothing real to
-// compare against.
+// currentInstalledVersion reports the version of whatever binary is currently at
+// /usr/local/bin/trinetra.
 func currentInstalledVersion() update.Version {
 	const dst = "/usr/local/bin/trinetra"
 	fi, err := os.Stat(dst)
@@ -462,15 +345,8 @@ func currentInstalledVersion() update.Version {
 	return ver
 }
 
-// raiseInstallFloor records m's version as the new update floor (in
-// paths.dir()'s state.json -- the same file checkInstallPolicy reads and
-// `trinetra update`/the guard/status share, fix round 1 Ruling R8) after a
-// successful signed install, mirroring what a successful `trinetra update
-// apply` does at the end of swapIn -- a floor-raise or state-save failure is
-// swallowed (best-effort, matching cmdInstall's other post-copy warnings):
-// the binaries and unit are already in place by the time this runs, and a
-// missed floor raise only means a future `update apply`/`install` could
-// re-verify a version this host already has, not a safety regression.
+// raiseInstallFloor records m's version as the new update floor (in paths.dir()'s
+// state.json, the file checkInstallPolicy reads) after a successful signed install.
 func raiseInstallFloor(paths updatePaths, version string) {
 	v, err := update.ParseVersion(version)
 	if err != nil {
@@ -482,10 +358,8 @@ func raiseInstallFloor(paths updatePaths, version string) {
 	})
 }
 
-// telegramInstallHint returns the install success line's Telegram clause: a
-// set-token nudge on an unconfigured host, or a "already configured" note when
-// a token (and optionally an enrolled chat) is already present. Reads the live
-// config; a load failure falls back to the nudge (the safe default).
+// telegramInstallHint returns the install success line's Telegram clause: a set-token nudge
+// on an unconfigured host, or a "already configured" note when a token.
 func telegramInstallHint() string {
 	c, err := loadCfg()
 	if err != nil || c == nil || c.Telegram.Token == "" {
@@ -497,13 +371,8 @@ func telegramInstallHint() string {
 	return "Telegram token already set; enroll the chat by messaging the bot /start <pin>."
 }
 
-// installedPluginsMessage reports which companion plugins ended up recorded
-// in the plugin manifest after copyPluginsAlongside/writePluginManifest ran,
-// so the install success line tells the operator whether the plugins they
-// expect actually made it in (or that none were found next to the source
-// binary and copied). Reads the manifest rather than re-deriving the list
-// from copyPluginsAlongside's own return value so it reflects exactly what
-// verifyPlugin will later check against.
+// installedPluginsMessage reports which companion plugins ended up recorded in the plugin
+// manifest after copyPluginsAlongside/writePluginManifest ran.
 func installedPluginsMessage() string {
 	manifest, err := loadPluginManifest()
 	if err != nil || len(manifest) == 0 {
@@ -521,24 +390,8 @@ func installedPluginsMessage() string {
 	return "installed plugins: " + strings.Join(names, ", ") + ";"
 }
 
-// copyPluginsAlongside copies each companion plugin binary
-// ("trinetra-<name>" for every name in pluginManifestNames) found in
-// srcDir into dstDir at mode 0755, using the same atomic copyFile as the
-// daemon binary itself. srcDir is the directory of the SOURCE binary
-// (filepath.Dir(self) in cmdInstall) -- the natural place an operator drops
-// the plugin binaries alongside the daemon binary before running install --
-// not dstDir, which is /usr/local/bin, the install destination.
-//
-// A plugin that is absent from srcDir is skipped, not an error: most
-// installs only ship the daemon, or only some of the plugins. A path that
-// exists but is not a regular file (a symlink or directory left behind by
-// something else) is likewise skipped, mirroring writePluginManifest's
-// IsRegular guard immediately below -- only real plugin binaries get
-// installed and only real plugin binaries get hashed into the manifest.
-// A copy failure on one plugin (permissions, disk full, ...) is reported
-// back as a single joined error for the caller to log as a warning; it does
-// not stop the loop from attempting the remaining plugins, so one bad
-// companion never blocks another good one from installing.
+// copyPluginsAlongside copies each companion plugin binary ("trinetra-<name>" for every
+// name in pluginManifestNames) found in srcDir into dstDir at mode 0755.
 func copyPluginsAlongside(srcDir, dstDir string) error {
 	var errs []string
 	for _, name := range pluginManifestNames {
@@ -567,12 +420,8 @@ func copyPluginsAlongside(srcDir, dstDir string) error {
 	return nil
 }
 
-// linkOnPath ensures link is a symlink to target, so `sudo <name>` resolves
-// on distros whose secure_path omits target's directory. It never clobbers an
-// existing path: if anything already lives at link (a distro-provided real
-// binary, or any symlink), it is left untouched. Creating the symlink only
-// when link is absent keeps install idempotent and safe. A nil return means
-// link now resolves the command (freshly created, or already present).
+// linkOnPath ensures link is a symlink to target, so `sudo <name>` resolves on distros
+// whose secure_path omits target's directory.
 func linkOnPath(target, link string) error {
 	if target == link {
 		return nil
@@ -584,9 +433,8 @@ func linkOnPath(target, link string) error {
 	return os.Symlink(target, link)
 }
 
-// unlinkOnPath removes link only when it is still OUR symlink pointing at
-// target, so uninstall never deletes a distro-provided real binary or a
-// symlink someone else created.
+// unlinkOnPath removes link only when it is still OUR symlink pointing at target, so
+// uninstall never deletes a distro-provided real binary or a symlink someone else created.
 func unlinkOnPath(target, link string) {
 	fi, err := os.Lstat(link)
 	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
@@ -597,25 +445,11 @@ func unlinkOnPath(target, link string) {
 	}
 }
 
-// pluginManifestNames lists the companion binary name suffixes (matching the
-// "trinetra-<name>" convention pluginPath/verifyPlugin use in
-// plugin_launch.go) that writePluginManifest looks for next to the daemon
-// binary. Keep this in sync with the launcher's `cli`/`web` front-doors.
+// pluginManifestNames lists the companion binary name suffixes.
 var pluginManifestNames = []string{"ctl", "web"}
 
-// writePluginManifest scans binDir (the directory the daemon binary was just
-// installed into) for companion plugin binaries and writes
-// <stateDir>/plugins.json (mode 0600, so only root -- or whichever uid runs
-// install -- can read or write it: it is the trust anchor loadPluginManifest
-// and verifyPlugin check plugin checksums against) mapping each plugin name
-// found to the hex SHA-256 of its file content.
-//
-// A companion binary that is absent at install time is simply omitted from
-// the manifest, not an error: loadPluginManifest/verifyPlugin then correctly
-// report that plugin as "not installed" (see errPluginNotInstalled) rather
-// than treating its absence as a verification failure. A companion that IS
-// present but somehow not recorded here still fails closed as intended,
-// which is the whole point of the manifest.
+// writePluginManifest scans binDir (the directory the daemon binary was just installed
+// into) for companion plugin binaries and writes <stateDir>/plugins.json.
 func writePluginManifest(binDir string) error {
 	manifest := make(map[string]string)
 	for _, name := range pluginManifestNames {
@@ -627,9 +461,8 @@ func writePluginManifest(binDir string) error {
 			}
 			return fmt.Errorf("stat %s: %w", path, err)
 		}
-		// Skip anything that is not a plain regular file (e.g. a symlink or
-		// directory left behind by something else): only hash the exact
-		// bytes verifyPlugin will later Lstat and hash itself.
+		// Skip anything that is not a plain regular file (e.g. a symlink or directory left behind
+		// by something else).
 		if !info.Mode().IsRegular() {
 			continue
 		}
@@ -647,23 +480,16 @@ func writePluginManifest(binDir string) error {
 	if err != nil {
 		return fmt.Errorf("marshal plugin manifest: %w", err)
 	}
-	// update.WriteFileAtomic writes a fresh temp file at exactly 0600, fsyncs
-	// it, renames it over plugins.json and fsyncs the directory, so a
-	// pre-existing manifest with looser perms never keeps them (the
-	// "root-only trust anchor" guarantee holds on every install) and a crash
-	// mid-swap never leaves a truncated manifest (R20).
+	// update.WriteFileAtomic writes a fresh temp file at exactly 0600, fsyncs it, renames it
+	// over plugins.json and fsyncs the directory.
 	if err := update.WriteFileAtomic(pluginManifestPath(), b, 0o600); err != nil {
 		return fmt.Errorf("write plugin manifest %s: %w", pluginManifestPath(), err)
 	}
 	return nil
 }
 
-// removeInstalledPlugins removes each companion plugin binary
-// ("trinetra-<name>" for every name in pluginManifestNames) from binDir.
-// Best-effort and symmetric with the other cmdUninstall cleanups: it never
-// returns an error, so a plugin that is already absent (never installed, or
-// removed by hand) is simply a no-op for that name, not a failure that could
-// abort the rest of uninstall.
+// removeInstalledPlugins removes each companion plugin binary ("trinetra-<name>" for every
+// name in pluginManifestNames) from binDir.
 func removeInstalledPlugins(binDir string) {
 	for _, name := range pluginManifestNames {
 		_ = os.Remove(filepath.Join(binDir, "trinetra-"+name))
@@ -681,16 +507,11 @@ func cmdUninstall(args []string) int {
 	// The serverwatch compat links a migration left (only if still ours).
 	unlinkOnPath(legacyBinFilePath, legacyUsrBinPath)
 	unlinkOnPath("/usr/local/bin/trinetra", legacyBinFilePath)
-	// Best-effort, like the other uninstall cleanups above: a plugin the
-	// front-door can no longer verify against is safer than a stale manifest
-	// left lying around after uninstall. --purge below already removes the
-	// whole stateDir, so this matters mainly for a non-purge uninstall.
+	// Best-effort, like the other uninstall cleanups above: a plugin the front-door can no
+	// longer verify against is safer than a stale manifest left lying around after uninstall.
 	_ = os.Remove(pluginManifestPath())
-	// Symmetric with cmdInstall's copyPluginsAlongside: remove the plugin
-	// binaries install placed next to the daemon, so an uninstall does not
-	// leave orphaned trinetra-ctl/trinetra-web binaries -- now
-	// unverifiable anyway since the manifest above was just removed -- sitting
-	// in /usr/local/bin.
+	// Symmetric with cmdInstall's copyPluginsAlongside: remove the plugin binaries install
+	// placed next to the daemon.
 	removeInstalledPlugins("/usr/local/bin")
 	_, _ = x.Run("systemctl", "daemon-reload")
 	purge := len(args) > 0 && args[0] == "--purge"
@@ -702,14 +523,8 @@ func cmdUninstall(args []string) int {
 	return 0
 }
 
-// copyFile copies src to dst atomically and durably (update.CopyFile): a
-// random same-directory temp file, fsync, rename, then an fsync of dst's
-// directory. rename(2) swaps the directory entry without truncating the
-// existing file, so this succeeds even when dst is a currently-running
-// executable -- a plain truncating write (os.WriteFile over dst) fails there
-// with ETXTBSY "text file busy". This is what lets `trinetra install` and
-// self-update replace the binary of a live daemon in place, and the fsyncs
-// mean a power loss never leaves a zero-length binary behind (R20).
+// copyFile copies src to dst atomically and durably (update.CopyFile): a random
+// same-directory temp file, fsync, rename.
 func copyFile(src, dst string, perm os.FileMode) error {
 	return update.CopyFile(src, dst, perm)
 }
@@ -734,28 +549,19 @@ func cmdTelegram(args []string) int {
 	return 2
 }
 
-// enrollPINFetchAttempts/enrollPINFetchDelay bound how long
-// fetchEnrollmentPIN retries dialing the control socket after set-token's
-// reloadDaemon() SIGHUP: about 1.5s total across a few attempts, enough for
-// a running daemon to finish reloading its config (and so start reporting a
-// pin for the token just saved) without making `set-token` feel slow.
+// enrollPINFetchAttempts/enrollPINFetchDelay bound how long fetchEnrollmentPIN retries
+// dialing the control socket after set-token's reloadDaemon() SIGHUP.
 const (
 	enrollPINFetchAttempts = 5
 	enrollPINFetchDelay    = 300 * time.Millisecond
 )
 
-// fetchEnrollmentPINFn is the seam printEnrollmentPIN calls to learn the
-// daemon's current enrollment pin: the real implementation (below) dials
-// the control socket with a brief retry; tests override this var with a
-// canned result so cmdTelegram's print behavior can be exercised without a
-// real socket/daemon.
+// fetchEnrollmentPINFn is the seam printEnrollmentPIN calls to learn the daemon's current
+// enrollment pin: the real implementation dials the control socket with a brief retry.
 var fetchEnrollmentPINFn = dialEnrollmentPIN
 
-// dialEnrollmentPIN resolves the control socket path/token the same way
-// cmdFrontDoor does (plugin_launch.go) and calls EnrollmentPIN over it,
-// retrying up to enrollPINFetchAttempts times (enrollPINFetchDelay apart) so
-// a daemon that is still applying the SIGHUP reloadDaemon() just sent has
-// time to pick up the new token before this gives up.
+// dialEnrollmentPIN resolves the control socket path/token the same way cmdFrontDoor does
+// (plugin_launch.go) and calls EnrollmentPIN over it.
 func dialEnrollmentPIN() (pin string, enrolled bool, err error) {
 	socketPath := controlSocketPath()
 	tokenBytes, _ := os.ReadFile(controlTokenPath())
@@ -779,13 +585,8 @@ func dialEnrollmentPIN() (pin string, enrolled bool, err error) {
 	return "", false, err
 }
 
-// printEnrollmentPIN prints the /start <pin> instruction after `telegram
-// set-token` has already saved the token, using fetchEnrollmentPINFn to
-// learn the daemon's current pin. The token is saved and reloadDaemon()
-// already sent by the time this runs, so a fetch failure (daemon not
-// installed/running, or the retries in dialEnrollmentPIN all erroring) is
-// NEVER treated as set-token's own failure -- it only changes which message
-// is printed, never the exit code.
+// printEnrollmentPIN prints the /start <pin> instruction after `telegram set-token` has
+// already saved the token, using fetchEnrollmentPINFn to learn the daemon's current pin.
 func printEnrollmentPIN() {
 	pin, enrolled, err := fetchEnrollmentPINFn()
 	switch {
@@ -911,10 +712,8 @@ func cmdQuietHours(args []string) int {
 		fmt.Fprintln(stderr, "usage: quiet-hours <HH-HH> | off")
 		return 2
 	}
-	// Round-1 review, IMPORTANT 2: this dedicated command is a second,
-	// separate path onto quiet_hours besides `config set`/the web config
-	// page (both already guarded) -- it must refuse identically when a
-	// fleet master manages it.
+	// This dedicated command is a second path onto quiet_hours besides `config set`/the web
+	// config page (both already guarded).
 	if id, managed := ManagedFragmentFor(stateDir, "quiet_hours"); managed {
 		fmt.Fprintf(stderr, "quiet_hours: managed by the fleet master (fragment %s); change it on the master\n", id)
 		return 1
@@ -971,10 +770,8 @@ func cmdDoctor(args []string) int {
 	x := osExec{}
 	fs := osFS{}
 
-	// Cardinality/disk guardrail visibility (docs/handbook/12-roadmap-and-status.md Epic #69 x7): a
-	// corrupt config just falls back to defaults here (same as cmdConfig's
-	// set/unset repair path) since doctor is a read-only diagnostic, not
-	// worth failing over.
+	// Cardinality/disk guardrail visibility (docs/handbook/12-roadmap-and-status.md Epic #69
+	// x7): a corrupt config just falls back to defaults here.
 	c, err := loadCfg()
 	if err != nil {
 		c = config.Default()
@@ -989,16 +786,7 @@ func cmdDoctor(args []string) int {
 	return 0
 }
 
-// buildDoctorReport runs the same probes `trinetra doctor` has always run
-// inline (docker reachability via probeDocker, smartctl availability via
-// `smartctl --scan`, the thermal-zone glob, target discovery via Discover,
-// and the collector on/off toggles plus SampleStore stats via
-// collectorSummary's underlying logic) and packages the results into a
-// core.DoctorReport, so both cmdDoctor and core.API.Doctor() (coreapi_inproc.go,
-// coreapi_file.go) share one probe implementation instead of two copies that
-// could drift. store may be nil (the configured backend failed to open, or
-// store-writes are disabled), in which case StoreStats reads "unavailable"
-// -- the same degrade collectorSummary has always applied.
+// buildDoctorReport runs the same probes `trinetra doctor` has always run inline.
 func buildDoctorReport(x Exec, fs FileSource, c *config.Config, store SampleStore) core.DoctorReport {
 	da := probeDocker(x, fs)
 	smartOK := false
@@ -1039,19 +827,12 @@ func buildDoctorReport(x Exec, fs FileSource, c *config.Config, store SampleStor
 	return rep
 }
 
-// seriesCountWarnThreshold is the doctor guardrail line for tsfile cardinality
-// (#112): a healthy host tracks its live targets (low hundreds of series), so a
-// count at/above this signals series accumulating faster than retention reaps
-// them (the 3035-file explosion that caused #109). Warn, don't fail.
+// seriesCountWarnThreshold is the doctor guardrail line for tsfile cardinality (#112): a
+// healthy host tracks its live targets (low hundreds of series).
 const seriesCountWarnThreshold = 1000
 
-// renderDoctorReport writes rep to w in the exact line-for-line format
-// cmdDoctor has always printed -- reconstructed from the DoctorReport DTO
-// now that the probe orchestration that fills it in lives in
-// buildDoctorReport. Kept as its own function (rather than inlined back into
-// cmdDoctor) so a golden test can pin the print format against a
-// hand-built core.DoctorReport, independent of whatever a fakeExec/fakeFS
-// probe run produces.
+// renderDoctorReport writes rep to w in the exact line-for-line format cmdDoctor has always
+// printed.
 func renderDoctorReport(w io.Writer, rep core.DoctorReport) {
 	fmt.Fprintf(w, "docker: %s\n", rep.DockerAccess)
 	if rep.SmartctlAvailable {

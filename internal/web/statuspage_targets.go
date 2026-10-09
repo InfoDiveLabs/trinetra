@@ -13,8 +13,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// targetOption is one checkbox in a target picker. Value uses the same
-// one-line grammar as the Targets text field (formatStatusTarget).
+// targetOption is one checkbox in a target picker.
 type targetOption struct {
 	Value, Label, State string
 	Checked             bool
