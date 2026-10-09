@@ -1032,8 +1032,7 @@ func cmdDaemon(args []string) int {
 	// chat id and keep failing silently until the next SIGHUP.
 	setChatID := func(id string) {
 		mu.Lock()
-		nc := *cfg // shallow struct copy
-		nc.Telegram.ChatID = id
+		nc := *withChatID(cfg, id)
 		// Saved (which overlays the on-disk fleet keys onto nc, so a
 		// `fleet join` made since start is never wiped) BEFORE the swap:
 		// nc must not be mutated once other goroutines can read it.
