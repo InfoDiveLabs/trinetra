@@ -10,9 +10,8 @@ import (
 	"testing"
 )
 
-// fakeLaunch records the arguments it was called with and returns whatever
-// err is set, standing in for launchPlugin (which would otherwise
-// syscall.Exec and never return -- unusable directly from a test).
+// fakeLaunch records the arguments it was called with and returns whatever err is set,
+// standing in for launchPlugin.
 type fakeLaunch struct {
 	calledName       string
 	calledArgs       []string

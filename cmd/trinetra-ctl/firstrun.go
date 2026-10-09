@@ -13,9 +13,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// needsFirstRun is true only for a server nobody has set up yet. Upgraded
-// servers that already have Telegram enrolled, an enabled channel, or a web
-// user never see the flow, even without setup.completed.
+// needsFirstRun is true only for a server nobody has set up yet.
 func needsFirstRun(cfg *config.Config, webUsers int) bool {
 	if cfg == nil || cfg.Setup.Completed || cfg.Telegram.ChatID != "" || webUsers > 0 {
 		return false
@@ -38,9 +36,7 @@ var (
 	inviteAdminFn   = inviteAdmin
 )
 
-// webBinary prefers the trinetra-web installed next to this binary. The
-// child inherits this process's environment, including the control socket
-// the front door handed us.
+// webBinary prefers the trinetra-web installed next to this binary.
 func webBinary() string {
 	if self, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(self), "trinetra-web")

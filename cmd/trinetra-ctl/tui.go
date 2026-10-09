@@ -1,19 +1,5 @@
 // Interactive management TUI for trinetra-ctl, built on Bubble Tea
-// (github.com/charmbracelet/bubbletea). This is the only place in the
-// module that third-party terminal UI packages (bubbletea, bubbles,
-// lipgloss) are imported: cmd/trinetra-ctl is a separate binary from
-// the trinetra daemon (cmd/trinetra), which stays stdlib-only (see
-// internal/trinetra/buildtag_test.go's TestDefaultBuildIsStdlibOnly,
-// scoped to cmd/trinetra's own dependency graph for exactly this
-// reason).
-//
-// The model is deliberately split from the terminal plumbing: Init/Update/
-// View below hold ALL of the state transition logic as plain, pure(ish)
-// functions over a `model` value, so setup_web_test.go and tui_test.go can
-// drive a wizard end to end (mode -> listen -> domain -> rp_id -> origin ->
-// confirm -> applied) by constructing tea.KeyMsg values and calling
-// Update directly, with no real terminal, no tea.Program, and a fake
-// core.API standing in for the control socket.
+// (github.com/charmbracelet/bubbletea).
 package main
 
 import (
@@ -41,14 +27,12 @@ const (
 	stepFirstRun
 )
 
-// refreshInterval is how often the home screen re-fetches Snapshot() while
-// idle, so "live status" actually stays live without the user pressing a
-// refresh key.
+// refreshInterval is how often the home screen re-fetches Snapshot() while idle, so "live
+// status" actually stays live without the user pressing a refresh key.
 const refreshInterval = 2 * time.Second
 
 // cpuHistCap bounds the rolling CPU history the home sparkline draws from: at
-// refreshInterval each, this is the last ~80s of samples. Kept small so the
-// slice never grows without bound over a long-lived session.
+// refreshInterval each, this is the last ~80s of samples.
 const cpuHistCap = 40
 
 var (
@@ -57,10 +41,7 @@ var (
 	errStyle   = lipgloss.NewStyle().Bold(true)
 )
 
-// model is the Bubble Tea model backing the whole TUI. It holds the home
-// screen's latest snapshot plus the guided web-setup wizard's state; only
-// one of the two is ever shown at a time (step), but both are kept on the
-// same model so returning from the wizard to Home needs no re-fetch.
+// model is the Bubble Tea model backing the whole TUI.
 type model struct {
 	api core.API
 
@@ -70,9 +51,8 @@ type model struct {
 	snap    core.DashboardView
 	snapErr error
 	loading bool
-	// alerts holds the latest ActiveAlerts() fetch, refreshed alongside the
-	// snapshot on Home so the ALERTS panel stays live; alertsErr surfaces a
-	// failed fetch without taking down the whole dashboard.
+	// alerts holds the latest ActiveAlerts() fetch, refreshed alongside the snapshot on Home
+	// so the ALERTS panel stays live.
 	alerts    []core.AlertRecord
 	alertsErr error
 	// cpuHist is the rolling CPU% history the home sparkline draws, capped at
@@ -81,10 +61,7 @@ type model struct {
 	// help toggles the global keymap overlay (opened with '?' from Home,
 	// dismissed by any key).
 	help bool
-	// serverName is the host's display name (config server.name, or the
-	// hostname when unset), captured from the Config() fetch Init already
-	// issues and shown in the Home header so a multi-host operator can tell
-	// which host this ctl is pointed at (#101), matching the web sidebar brand.
+	// serverName is the host's display name (config server.name, or the hostname when unset).
 	serverName string
 
 	// web setup wizard
@@ -99,16 +76,11 @@ type model struct {
 	keyIn      textinput.Model // manual mode only (webSetupKey)
 	applying   bool
 	applyErr   error
-	// wizFieldErr is the cert/key steps' own must-not-be-empty guard
-	// message (validateManualPath): set when "enter" is pressed on a blank
-	// value, cleared once that step is passed. It is deliberately scoped to
-	// these two steps only -- no other wizard text step rejects a blank
-	// value locally (their fields are optional, or validated later by
-	// applyWebSetup's config.Set calls instead).
+	// wizFieldErr is the cert/key steps' own must-not-be-empty guard message
+	// (validateManualPath): set when "enter" is pressed on a blank value.
 	wizFieldErr error
 
-	// management menu (schedule/quiet-hours/healthchecks/monitor thresholds/
-	// channels)
+	// management menu (schedule/quiet-hours/healthchecks/monitor thresholds/ channels)
 	mgr manageModel
 
 	// first-run onboarding (capture the Telegram bot token, then show the
@@ -125,9 +97,8 @@ type model struct {
 	quitting bool
 }
 
-// newModel builds the initial model: Home screen, nothing loaded yet, and
-// the wizard's text inputs pre-built (but unfocused) so switching into the
-// wizard never has to construct them mid-flow.
+// newModel builds the initial model: Home screen, nothing loaded yet, and the wizard's text
+// inputs pre-built.
 func newModel(api core.API) model {
 	mk := func(placeholder string) textinput.Model {
 		ti := textinput.New()
@@ -151,9 +122,8 @@ func newModel(api core.API) model {
 
 // --- messages ---
 
-// snapshotMsg carries the result of an api.Snapshot() call back into
-// Update; err is non-nil when the control socket call failed (surfaced on
-// the home screen rather than crashing the TUI).
+// snapshotMsg carries the result of an api.Snapshot() call back into Update; err is non-nil
+// when the control socket call failed.
 type snapshotMsg struct {
 	view core.DashboardView
 	err  error
@@ -162,9 +132,8 @@ type snapshotMsg struct {
 // tickMsg drives the home screen's periodic refresh.
 type tickMsg time.Time
 
-// alertsMsg carries the result of an api.ActiveAlerts() call back into Update;
-// err is non-nil when the control socket call failed (surfaced on the ALERTS
-// panel rather than crashing the TUI).
+// alertsMsg carries the result of an api.ActiveAlerts() call back into Update; err is
+// non-nil when the control socket call failed.
 type alertsMsg struct {
 	alerts []core.AlertRecord
 	err    error
@@ -196,14 +165,7 @@ func fetchAlertsCmd(api core.API) tea.Cmd {
 	}
 }
 
-// applyWebSetupCmd fetches the CURRENT config fresh from the daemon (so the
-// wizard's changes layer onto whatever else is configured, never a stale
-// snapshot from when the TUI started), applies ans onto it via
-// applyWebSetup (setup_web.go), and posts the result with api.ApplyConfig.
-// Any error, whether a local validation error from applyWebSetup or one the
-// daemon returned from ApplyConfig, is surfaced identically to the caller
-// as webSetupAppliedMsg.err -- the confirm screen doesn't need to know
-// which step failed, only that nothing was applied.
+// applyWebSetupCmd fetches the CURRENT config fresh from the daemon.
 func applyWebSetupCmd(api core.API, ans webSetupAnswers) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -233,10 +195,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		}
-		// The help overlay swallows the next keypress to dismiss itself, so it
-		// never interferes with the screen underneath. '?' opens it from Home
-		// only, where no text field is focused (opening it mid-input would eat
-		// a literal '?' keystroke).
+		// The help overlay swallows the next keypress to dismiss itself, so it never interferes
+		// with the screen underneath. '?' opens it from Home only.
 		if m.help {
 			m.help = false
 			return m, nil
@@ -471,10 +431,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateHomeKey handles a keypress on the Home screen: 's' launches the web
-// setup wizard, 'm' opens the management menu (schedule/quiet-hours/
-// healthchecks/monitor thresholds), 'r' forces an immediate Snapshot
-// refresh, 'q' quits.
+// updateHomeKey handles a keypress on the Home screen: 's' launches the web setup wizard,
+// 'm' opens the management menu (schedule/quiet-hours/ healthchecks/monitor thresholds).
 func (m model) updateHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
@@ -519,10 +477,8 @@ func (m model) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateModeKey handles the mode-selection screen: up/down (or j/k) moves
-// the cursor over webModeChoices, enter commits the choice and derives a
-// sensible default listen address for it (deriveWebDefaults), esc backs out
-// to Home.
+// updateModeKey handles the mode-selection screen: up/down (or j/k) moves the cursor over
+// webModeChoices.
 func (m model) updateModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -546,16 +502,8 @@ func (m model) updateModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateTextKey feeds msg into whichever text step (listen/domain/rp_id/
-// origin) m.wiz names, unless it is enter (commit via that step's onXDone)
-// or esc (back to mode selection). It always mutates and returns THIS
-// receiver copy's own field (m.listenIn, not some other copy's) and tail-
-// calls the onXDone methods on the same copy for "enter", so the textinput's
-// cursor/typed value and the wizard's step transitions never diverge across
-// the value-receiver copies Go makes on each method call -- an earlier draft
-// passed a *textinput.Model pointer into a *different* copy than the one
-// ultimately returned, silently dropping every keystroke; this shape avoids
-// that by keeping mutation and return on one copy throughout.
+// updateTextKey feeds msg into whichever text step (listen/domain/rp_id/ origin) m.wiz
+// names, unless it is enter (commit via that step's onXDone) or esc.
 func (m model) updateTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
@@ -597,23 +545,15 @@ func (m model) updateTextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onListenDone commits the listen-address step and advances to the domain
-// step. Every mode now visits it (#106): autocert/manual require a public
-// hostname, and proxy mode offers it optionally so an operator whose reverse
-// proxy does not forward X-Forwarded-* headers can still set rp_id/origin
-// explicitly instead of dropping to `config set`.
+// onListenDone commits the listen-address step and advances to the domain step.
 func (m model) onListenDone() (tea.Model, tea.Cmd) {
 	m.ans.Listen = m.listenIn.Value()
 	m.wiz = webSetupDomain
 	return m, m.domainIn.Focus()
 }
 
-// onDomainDone commits the domain step and seeds rp_id/origin's defaults from
-// it (deriveRPIDOrigin) before moving on so the following two screens open
-// pre-filled. In proxy mode a BLANK domain is allowed: it leaves rp_id/origin
-// unset (derived per-request from the reverse proxy's forwarded headers) and
-// skips straight to confirm, preserving the old proxy default for operators
-// whose proxy does forward the headers.
+// onDomainDone commits the domain step and seeds rp_id/origin's defaults from it
+// (deriveRPIDOrigin) before moving on so the following two screens open pre-filled.
 func (m model) onDomainDone() (tea.Model, tea.Cmd) {
 	m.ans.Domain = strings.TrimSpace(m.domainIn.Value())
 	if m.ans.Mode == "proxy" && m.ans.Domain == "" {
@@ -636,10 +576,8 @@ func (m model) onRPIDDone() (tea.Model, tea.Cmd) {
 	return m, m.originIn.Focus()
 }
 
-// onOriginDone commits the origin step. manual mode still needs its TLS
-// cert/key file paths (internal/web's manual serving mode refuses to start
-// without both), so it continues on to the cert step; proxy/autocert go
-// straight to confirm as before.
+// onOriginDone commits the origin step. manual mode still needs its TLS cert/key file paths
+// (internal/web's manual serving mode refuses to start without both).
 func (m model) onOriginDone() (tea.Model, tea.Cmd) {
 	m.ans.Origin = m.originIn.Value()
 	if m.ans.Mode == "manual" {
@@ -650,10 +588,7 @@ func (m model) onOriginDone() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// onCertDone commits the cert-path step. A blank path is rejected in place
-// (validateManualPath) rather than letting the wizard reach confirm/apply
-// with manual mode set but no certificate configured -- the exact bug this
-// screen exists to close.
+// onCertDone commits the cert-path step.
 func (m model) onCertDone() (tea.Model, tea.Cmd) {
 	val := m.certIn.Value()
 	if err := validateManualPath("cert path", val); err != nil {
@@ -680,9 +615,8 @@ func (m model) onKeyDone() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateConfirmKey handles the review screen: enter/'y' applies (fetch,
-// merge, ApplyConfig, all in applyWebSetupCmd so it runs off the UI
-// goroutine), 'n'/esc discards the wizard and returns to Home.
+// updateConfirmKey handles the review screen: enter/'y' applies (fetch, merge, ApplyConfig,
+// all in applyWebSetupCmd so it runs off the UI goroutine).
 func (m model) updateConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter", "y":
@@ -717,11 +651,8 @@ func (m model) View() string {
 	}
 }
 
-// homeView renders the live dashboard: a status header, two side-by-side
-// panels (SYSTEM meters + CPU sparkline, and the ALERTS list), an inventory
-// line, and the key hints. The panels/meters are drawn with the pure helpers
-// in style.go and coloured by the palette; lipgloss emits no ANSI when stdout
-// is not a tty, so the literal labels survive for the render tests.
+// homeView renders the live dashboard: a status header, two side-by-side panels (SYSTEM
+// meters + CPU sparkline, and the ALERTS list), an inventory line, and the key hints.
 func (m model) homeView() string {
 	var b strings.Builder
 	b.WriteString(m.homeHeader() + "\n\n")
@@ -797,9 +728,8 @@ func (m model) systemPanel() string {
 	return panelStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
-// disksPanel is the boxed DISKS panel: the top mounts by usage, each with a
-// coloured usage bar. Empty (renders nothing) when disk collection produced
-// no mounts.
+// disksPanel is the boxed DISKS panel: the top mounts by usage, each with a coloured usage
+// bar.
 func (m model) disksPanel() string {
 	if len(m.snap.Disks) == 0 {
 		return ""
@@ -823,9 +753,8 @@ func (m model) disksPanel() string {
 	return panelStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
-// availabilityStrip renders the 24h up/down blocks (green up, red down) plus
-// the uptime %, total downtime, and incident count. Empty when the snapshot
-// carries no availability blocks.
+// availabilityStrip renders the 24h up/down blocks (green up, red down) plus the uptime %,
+// total downtime, and incident count.
 func (m model) availabilityStrip() string {
 	av := m.snap.Availability
 	if len(av.Blocks) == 0 {
@@ -1003,10 +932,8 @@ func (m model) setupView() string {
 	return b.String()
 }
 
-// runInteractive launches the Bubble Tea program against api and blocks
-// until the user quits. It writes a one-line error to errOut and returns a
-// non-zero exit code if the terminal program itself fails to run (e.g. not
-// attached to a tty); a normal quit returns 0.
+// runInteractive launches the Bubble Tea program against api and blocks until the user
+// quits.
 func runInteractive(api core.API, errOut io.Writer) int {
 	p := tea.NewProgram(newModel(api))
 	if _, err := p.Run(); err != nil {

@@ -11,8 +11,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
-// Default paths. Exported so other packages (install scripts, docs) can
-// reference the canonical locations.
+// Default paths.
 const (
 	ConfigPath = "/etc/trinetra/config.json"
 	StateDir   = "/var/lib/trinetra"
@@ -39,9 +38,8 @@ func Main(args []string) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
-	// Commands that write the config or state must not create the trinetra
-	// paths next to an unmigrated serverwatch install (install would then
-	// refuse to merge the two). Read-only commands are not affected.
+	// Commands that write the config or state must not create the trinetra paths next to an
+	// unmigrated serverwatch install (install would then refuse to merge the two).
 	if writesConfigOrState(args) {
 		if err := legacyWriteGuard(defaultMigrationPaths()); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -110,10 +108,8 @@ func Main(args []string) int {
 	}
 }
 
-// writesConfigOrState reports whether args is a CLI command that writes the
-// config file or the state dir itself (not through the running daemon).
-// doctor and dump count: opening the sample store creates the state dir's
-// ts/ tree, which would make a later install refuse with "found both".
+// writesConfigOrState reports whether args is a CLI command that writes the config file or
+// the state dir itself (not through the running daemon). doctor and dump count.
 func writesConfigOrState(args []string) bool {
 	sub := ""
 	if len(args) > 1 {
@@ -198,15 +194,8 @@ func loadCfg() (*config.Config, error) { return config.Load(cfgPath) }
 
 func saveCfg(c *config.Config) error { return c.Save(cfgPath) }
 
-// configForDisplay returns a shallow copy of c with every collect.* toggle
-// resolved to its effective value (nil -> the documented default, true).
-// c.Collect's *bool fields carry `omitempty` so Save/Load can tell "never
-// set" from "explicitly false" apart on disk; a raw json.Marshal of c would
-// therefore silently drop any toggle still at its default, which is exactly
-// the cardinality/disk-cost information `config get` (full dump) exists to
-// surface. The copy is shallow (maps/slices like Targets/Channels stay
-// shared with c) since only Collect's value fields are mutated here, and c
-// itself is never touched.
+// configForDisplay returns a shallow copy of c with every collect.* toggle resolved to its
+// effective value.
 func configForDisplay(c *config.Config) *config.Config {
 	d := *c
 	containerStats := c.ContainerStatsEnabled()
@@ -220,9 +209,8 @@ func configForDisplay(c *config.Config) *config.Config {
 	d.Collect.Processes = &processes
 	d.Collect.SmartAttrs = &smartAttrs
 	d.Collect.SmartInterval = c.SmartIntervalSec()
-	// Secrets never appear in the clear in a full-config display (CLI dump,
-	// eventually the web config page): "(set)"/"(not set)" instead, matching
-	// how a single-key `config get <secret key>` redacts (see cmdConfig).
+	// Secrets never appear in the clear in a full-config display (CLI dump, eventually the web
+	// config page): "(set)"/"(not set)" instead.
 	if d.Update.GitHubToken != "" {
 		d.Update.GitHubToken = "(set)"
 	}
@@ -242,9 +230,8 @@ func cmdConfig(args []string) int {
 		fmt.Fprintln(stderr, "usage: config get|set|unset")
 		return 2
 	}
-	// A corrupt config must stay CLI-repairable: for the mutating set/unset
-	// subcommands, fall back to defaults on a load error so `config set ...` can
-	// rewrite a clean file. `get` keeps erroring (nothing to repair by reading).
+	// A corrupt config must stay CLI-repairable: for the mutating set/unset subcommands, fall
+	// back to defaults on a load error so `config set ...` can rewrite a clean file.
 	if err != nil {
 		switch args[0] {
 		case "set", "unset":
@@ -323,16 +310,10 @@ func jsonMarshalIndent(v any) ([]byte, error) {
 	return jsonIndent(v)
 }
 
-// saveDaemonCfg is saveCfg for every save that is NOT a `trinetra fleet`
-// command (daemon reload/ApplyConfig, the Telegram chat-id capture, other
-// plugins' config writes): it first overlays the fleet identity keys from
-// the config currently on disk onto c, so a config built before a
-// `fleet init|join|leave|disable` (or by a plugin that knows nothing about
-// fleet) can never wipe or change them. c is modified in place so the
-// in-memory config matches what was saved.
+// saveDaemonCfg is saveCfg for every save that is NOT a `trinetra fleet` command (daemon
+// reload/ApplyConfig, the Telegram chat-id capture, other plugins' config writes).
 func saveDaemonCfg(c *config.Config) error {
-	// A missing file loads as defaults (no fleet identity). An unreadable
-	// or corrupt file cannot be trusted either way, so c is saved as given.
+	// A missing file loads as defaults (no fleet identity).
 	if onDisk, err := config.Load(cfgPath); err == nil {
 		c.KeepFleetIdentity(onDisk)
 	}

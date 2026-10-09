@@ -1,6 +1,4 @@
-// onboarding.go saves the bot token captured by the Telegram setup screens
-// (onboard_ui.go). Telegram is optional: the guided first run lives in
-// firstrun.go.
+// onboarding.go saves the bot token captured by the Telegram setup screens (onboard_ui.go).
 package main
 
 import "github.com/InfoDiveLabs/trinetra/internal/config"

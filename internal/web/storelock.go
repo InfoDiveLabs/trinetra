@@ -6,11 +6,8 @@ import (
 	"syscall"
 )
 
-// lockStore serializes load-modify-save of a JSON store file within this
-// process (fileStoreMutex) and across processes (flock on path.lock): the
-// CLI's `users` commands write the same files the web server does. Real
-// state dirs are absolute; a relative path only comes from tests with no
-// state dir, and gets the in-process lock alone.
+// lockStore serializes load-modify-save of a JSON store file within this process
+// (fileStoreMutex) and across processes (flock on path.lock).
 func lockStore(path string) (unlock func()) {
 	mu := fileStoreMutex(path)
 	mu.Lock()

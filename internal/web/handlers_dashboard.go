@@ -11,73 +11,31 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// activeAlertView is one row of the dashboard's "Active alerts" panel,
-// projected from core.AlertRecord (the daemon's ActiveAlerts, read over the
-// control socket -- see activeAlertsViaAPI). It carries only what the panel
-// and the topbar status pill render, so those pages never read the daemon's
-// alerts.json off disk.
+// activeAlertView is one row of the dashboard's "Active alerts" panel, projected from
+// core.AlertRecord.
 type activeAlertView struct {
 	Key    string
 	Reason string
 	Since  int64
 	Acked  bool
-	// Critical mirrors trinetra.ActiveAlert.Critical -- the severity of
-	// whatever condition raised this alert, recorded at fire time -- so
-	// callers (topbarStatus) can tell a critical alert from a mere warning
-	// among currently active alerts without re-deriving it from Reason
-	// text.
+	// Critical mirrors trinetra.ActiveAlert.Critical -- the severity of whatever condition
+	// raised this alert, recorded at fire time -- so callers.
 	Critical bool
 }
 
-// activeAlertsViaAPI returns this request's active alerts, memoized via the
-// request-scoped fleetMemo (fleet_memo.go) so every call site in the same
-// request -- the topbar status pill, the sidebar alert badge, the dashboard
-// panel, and the alerts page -- shares one control-socket round trip rather
-// than each making its own (round-2 review finding I2: GET /alerts alone
-// used to call this three times). The actual read/projection is
-// fetchActiveAlertsViaAPI, below; this is just the memoized front door every
-// caller already used before the memo existed, unchanged.
+// activeAlertsViaAPI returns this request's active alerts, memoized via the request-scoped
+// fleetMemo (fleet_memo.go) so every call site in the same request.
 func activeAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
 	return fleetMemoFrom(r).activeAlerts(r, d)
 }
 
-// snapshotViaAPI returns this request's apiFor(r,d).Snapshot(), memoized the
-// same way as activeAlertsViaAPI above -- the dashboard page's own live view
-// and the sidebar's Monitoring badge (nav_counts.go's node-scope branch)
-// used to each poll a remote node's Snapshot() independently (round-2
-// review finding I2). NOT used by remoteNodeSnapshot (sse.go)'s polling
-// loop, which must keep reading live for the SSE connection's whole
-// lifetime rather than caching one snapshot forever.
+// snapshotViaAPI returns this request's apiFor(r,d).Snapshot(), memoized the same way as
+// activeAlertsViaAPI above.
 func snapshotViaAPI(r *http.Request, d Deps) (DashboardView, error) {
 	return fleetMemoFrom(r).snapshot(r, d)
 }
 
-// fetchActiveAlertsViaAPI reads the daemon's current active alerts over the
-// control socket (Deps.API.ActiveAlerts) and projects each core.AlertRecord
-// into an activeAlertView for the dashboard panel, the sidebar badge, the
-// topbar status pill, and the alerts page. It is the channel-only replacement
-// for the old loadActiveAlerts, which decoded the daemon's alerts.json
-// directly off disk: a plugin must not read daemon-owned state from disk, so
-// all four callers now go through core.API. Called at most once per request
-// -- see activeAlertsViaAPI's own doc, above, which every caller uses
-// instead of this directly.
-//
-// The AlertRecord shape comes from trinetra's activeAlertRecords mapping:
-// the human reason text is carried in Source, and Critical is encoded as
-// Severity == "critical" (Severity.String is "info"/"warning"/"critical").
-// Results are ordered most-recent-first (Since desc, then Key asc), the same
-// order loadActiveAlerts produced, so the rendered panels are unchanged.
-//
-// A nil API or a read error (a transient socket failure) degrades to nil --
-// "no active alerts" -- rather than failing the whole page: these panels are
-// display-only, never the source of truth for alert state (that stays the
-// daemon's AlertState and the `trinetra alerts` CLI).
-//
-// Reads through apiFor(r, d) (node_scope.go), so a request scoped to a fleet
-// node (/n/{node}/...) sees that node's own active alerts rather than the
-// master's -- the topbar status pill, the sidebar alert badge, and every
-// page's alert panel all follow the request's node scope through this one
-// call site.
+// fetchActiveAlertsViaAPI reads the daemon's current active alerts over the control socket.
 func fetchActiveAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
 	api := apiFor(r, d)
 	if api == nil {
@@ -106,12 +64,8 @@ func fetchActiveAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
 	return out
 }
 
-// containerBar is one row of a "Top containers" hbar panel: a container's
-// value (CPU% or MemMiB) rendered as a track width RELATIVE to the largest
-// value in that same top-N list -- unlike the CPU/mem/swap resource tiles
-// (which are already 0-100 percentages, usable as a width directly),
-// MemMiB is an absolute megabyte figure, so it needs normalizing against
-// its list's own max before it means anything as a CSS bar width.
+// containerBar is one row of a "Top containers" hbar panel: a container's value (CPU% or
+// MemMiB) rendered as a track width RELATIVE to the largest value in that same top-N list.
 type containerBar struct {
 	Name      string
 	State     string
@@ -119,10 +73,8 @@ type containerBar struct {
 	WidthPct  float64
 }
 
-// containerBars builds a []containerBar from list, using value to extract
-// the metric each row's width is normalized against (the list's own max ->
-// 100%) and format to render that metric's display text (e.g. "27%" or
-// "555M").
+// containerBars builds a []containerBar from list, using value to extract the metric each
+// row's width is normalized against.
 func containerBars(list []ContainerView, value func(ContainerView) float64, format func(float64) string) []containerBar {
 	if len(list) == 0 {
 		return nil
@@ -145,10 +97,8 @@ func containerBars(list []ContainerView, value func(ContainerView) float64, form
 	return out
 }
 
-// DashboardPageData is what templates/dashboard.html renders against: the
-// shared PageData (nav/topbar/CSRF) embedded, the live DashboardView, the
-// current active-alerts list, and the two "Top containers" panels
-// pre-normalized into display-ready bars (containerBars).
+// DashboardPageData is what templates/dashboard.html renders against: the shared PageData
+// (nav/topbar/CSRF) embedded, the live DashboardView, the current active-alerts list.
 type DashboardPageData struct {
 	PageData
 	View       DashboardView
@@ -159,24 +109,11 @@ type DashboardPageData struct {
 	NoChannels bool
 }
 
-// buildDashboardPageData assembles DashboardPageData from Deps: the live
-// snapshot (Deps.API.Snapshot(), core.API's projection of the daemon's live
-// state -- see core.DashboardView's doc) plus the current active-alerts list
-// (activeAlertsViaAPI, over the control socket). The topbar's status pill
-// (PageData.Status/StatusText) is computed by newPageData itself from that
-// same active-alert set (topbarStatus, templates.go) -- see PageData's doc
-// for why every page
-// shares one computation rather than this page deriving its own from
-// disk/unit state.
+// buildDashboardPageData assembles DashboardPageData from Deps: the live snapshot.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
-	// snapshotViaAPI (round-2 review finding I2) is memoized per request, so
-	// this read is shared with navCountsFor's node-scope branch
-	// (nav_counts.go) instead of each making its own apiFor(r,d).Snapshot()
-	// round trip -- errNoAPI (fleet_memo.go) is "no core.API to poll at
-	// all", the same case the old `if api := apiFor(r, d); api != nil` guard
-	// silently skipped without logging; any other error still logs exactly
-	// as before.
+	// snapshotViaAPI (round-2 review finding I2) is memoized per request, so this read is
+	// shared with navCountsFor's node-scope branch.
 	v, err := snapshotViaAPI(r, d)
 	if err != nil {
 		if !errors.Is(err, errNoAPI) {
@@ -201,11 +138,8 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	}
 }
 
-// renderDashboardPage renders templates/dashboard.html through the full
-// app-shell layout (base.html) against DashboardPageData -- the same
-// parse/execute shape renderPageStatus (templates.go) uses for plain PageData
-// pages, mirrored here (like renderUsersPage/handlers_users.go) because this
-// page needs the extra View/Alerts fields alongside the shared ones.
+// renderDashboardPage renders templates/dashboard.html through the full app-shell layout
+// (base.html) against DashboardPageData -- the same parse/execute shape renderPageStatus.
 func renderDashboardPage(w http.ResponseWriter, data DashboardPageData) error {
 	tmpl, err := template.New("base.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base.html", "templates/dashboard.html")
@@ -216,11 +150,8 @@ func renderDashboardPage(w http.ResponseWriter, data DashboardPageData) error {
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
-// dashboardHandler renders GET /: the live summary counts, resource tiles,
-// active alerts, top-containers hbars, and filesystems table, all bound to
-// the current Deps.Snapshot() -- see DashboardView's doc for the exact
-// projection. requireRole(RoleViewer, ...) (routes.go's wiring) has already
-// gated this by the time it runs.
+// dashboardHandler renders GET /: the live summary counts, resource tiles, active alerts,
+// top-containers hbars, and filesystems table, all bound to the current Deps.Snapshot().
 func dashboardHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := buildDashboardPageData(r, d)
@@ -230,9 +161,8 @@ func dashboardHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// ledClass buckets a metric value into the mockup's led/meter/badge color
-// classes ("ok"/"warn"/"crit") against the given warn/crit cutoffs. Used by
-// templates/dashboard.html for every tile's <span class="led ...">.
+// ledClass buckets a metric value into the mockup's led/meter/badge color classes
+// ("ok"/"warn"/"crit") against the given warn/crit cutoffs.
 func ledClass(value, warn, crit float64) string {
 	switch {
 	case value >= crit:
@@ -244,9 +174,8 @@ func ledClass(value, warn, crit float64) string {
 	}
 }
 
-// byteUnits are the humanBytes step points, largest first, mirroring the
-// mockup's "710 GB"/"520 GB"/"310 MB" filesystem-table style (one
-// significant decimal for GB and above, whole numbers below).
+// byteUnits are the humanBytes step points, largest first, mirroring the mockup's "710
+// GB"/"520 GB"/"310 MB" filesystem-table style.
 var byteUnits = []struct {
 	size float64
 	unit string
@@ -257,9 +186,8 @@ var byteUnits = []struct {
 	{1 << 10, "KB"},
 }
 
-// humanBytes formats b the way the mockup's filesystems table does (e.g.
-// "4.1 GB", "310 MB"): one decimal at GB/TB scale, whole numbers at MB/KB
-// scale, plain "B" below 1 KB.
+// humanBytes formats b the way the mockup's filesystems table does (e.g. "4.1 GB", "310
+// MB"): one decimal at GB/TB scale, whole numbers at MB/KB scale, plain "B" below 1 KB.
 func humanBytes(b uint64) string {
 	f := float64(b)
 	for _, u := range byteUnits {
@@ -287,10 +215,8 @@ func humanRate(bps float64) string {
 	}
 }
 
-// diskFullSoonDays is the DaysToFull cutoff at/under which the filesystems
-// table's trend column renders as "filling" (red, mockup's .trend.up) rather
-// than "stable" (green, .trend.dn) -- a display-only cutoff, same caveat as
-// DiskCriticalPct/DiskWarnPct in dashboard_view.go.
+// diskFullSoonDays is the DaysToFull cutoff at/under which the filesystems table's trend
+// column renders as "filling" (red, mockup's .trend.up) rather than "stable".
 const diskFullSoonDays = 14
 
 // diskTrendText renders a DiskView's fill-rate projection as the mockup's
@@ -314,9 +240,8 @@ func diskTrendClass(days float64, known bool) string {
 	return "dn"
 }
 
-// loadLedClass buckets the load-1m tile's led class relative to core count:
-// a load average is only "high" relative to how many cores can service it,
-// unlike a flat percentage -- warn at >=70% of cores busy, crit at >=100%.
+// loadLedClass buckets the load-1m tile's led class relative to core count: a load average
+// is only "high" relative to how many cores can service it, unlike a flat percentage.
 func loadLedClass(load1 float64, cores int) string {
 	if cores <= 0 {
 		cores = 1
@@ -325,9 +250,8 @@ func loadLedClass(load1 float64, cores int) string {
 	return ledClass(load1, 0.7*c, c)
 }
 
-// subInt is templates/dashboard.html's integer subtraction helper (e.g. the
-// summary count tile's "N down" = total-running); html/template has no
-// built-in arithmetic.
+// subInt is templates/dashboard.html's integer subtraction helper (e.g. the summary count
+// tile's "N down" = total-running); html/template has no built-in arithmetic.
 func subInt(a, b int) int { return a - b }
 
 func anyChannelEnabled(c *config.Config) bool {

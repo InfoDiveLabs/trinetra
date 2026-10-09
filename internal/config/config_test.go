@@ -50,9 +50,8 @@ func TestSetUnsetRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBaselineMinPctRoundTrip confirms baseline_min_pct sets, gets, validates
-// (>= 0), and unsets back to its 0.15 default -- the config-side plumbing
-// for the minimum-relative-deviation anomaly gate.
+// TestBaselineMinPctRoundTrip confirms baseline_min_pct sets, gets, validates (>= 0), and
+// unsets back to its 0.15 default.
 func TestBaselineMinPctRoundTrip(t *testing.T) {
 	c := Default()
 	if err := c.Set("baseline_min_pct", "0.2"); err != nil {
@@ -72,11 +71,8 @@ func TestBaselineMinPctRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBaselineAlertsDefaultOffRoundTrip pins Part 1 of the field-feedback
-// fix: baseline-deviation alerting is opt-in, default OFF (spiky cpu/mem/temp
-// metrics were flapping constantly on sigma-deviation in the field; threshold
-// alerting is unaffected and always on). Mirrors
-// TestBaselineMinPctRoundTrip's set/get/unset shape.
+// TestBaselineAlertsDefaultOffRoundTrip pins Part 1 of the field-feedback fix:
+// baseline-deviation alerting is opt-in, default OFF.
 func TestBaselineAlertsDefaultOffRoundTrip(t *testing.T) {
 	c := Default()
 	if got, ok := c.Get("baseline_alerts"); !ok || got != "false" {
@@ -263,9 +259,7 @@ func TestFastIntervalRejectedIfBreaksExistingMultiple(t *testing.T) {
 }
 
 func TestFastIntervalCheckedAgainstEffectiveSampleIntervalOnBareConfig(t *testing.T) {
-	// A directly-constructed &Config{} has SampleInterval==0, which Load()
-	// back-fills to 60. Set("fast_interval","7") must reject rather than
-	// succeed silently and let Load() persist an inconsistent 60%7!=0 config.
+	// A directly-constructed &Config{} has SampleInterval==0, which Load() back-fills to 60.
 	c := &Config{}
 	if err := c.Set("fast_interval", "7"); err == nil {
 		t.Fatal("expected error: effective sample_interval 60 is not a multiple of 7")
@@ -1329,9 +1323,8 @@ func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
 	}
 }
 
-// TestPublicEnabledPanelsDefaultSetUnset pins public.enabled/public.panels
-// (issue #67): both default to "off"/empty, Set/Get round-trip, and Unset
-// restores the defaults -- mirroring TestWebEnabledListenDefaultSetUnset.
+// TestPublicEnabledPanelsDefaultSetUnset pins public.enabled/public.panels (issue #67):
+// both default to "off"/empty, Set/Get round-trip, and Unset restores the defaults.
 func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	c := Default()
 	if got, _ := c.Get("public.enabled"); got != "false" {
@@ -1368,11 +1361,8 @@ func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	}
 }
 
-// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist at the
-// config layer: only the fixed catalog (or "disk:<mount>") may be stored in
-// public.panels -- anything else (typos, or someone trying to smuggle a
-// non-metric identifier like "users"/"config" into the curated list) is
-// rejected with no write, exactly like the other validated config keys.
+// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist at the config layer:
+// only the fixed catalog (or "disk:<mount>") may be stored in public.panels.
 func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {
 	c := Default()
 	for _, v := range []string{"bogus", "cpu,bogus", "disk:", "users", "config", "channels"} {
@@ -1437,17 +1427,8 @@ func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 }
 
 // --- Task 2 (#91): config key catalog (KeyInfo/Keys) ---
-//
-// The catalog exists so trinetra-ctl's generic "all settings" screen
-// (cmd/trinetra-ctl) can browse and edit every flat key without a
-// dedicated screen per key. These tests are the drift guard: they fail if
-// the catalog and the Set/Get switch (config.go) ever fall out of lockstep,
-// in either direction.
 
-// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real
-// Set/Get key (a round trip of Set(key, Get(key)) on a fresh Default()
-// config must succeed) and that its Kind hint is self-consistent with the
-// value Get actually returns.
+// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real Set/Get key.
 func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	for _, ki := range Keys() {
 		c := Default()
@@ -1492,11 +1473,8 @@ func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	}
 }
 
-// setSwitchKeys parses config.go's own source and extracts every string
-// case label in (*Config).Set's switch statement, so
-// TestKeyCatalogCoversEverySetKey checks the catalog against the actual
-// Set implementation rather than a second hand-maintained list that could
-// drift right alongside it.
+// setSwitchKeys parses config.go's own source and extracts every string case label in
+// (*Config).Set's switch statement.
 func setSwitchKeys(t *testing.T) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -1531,10 +1509,8 @@ func setSwitchKeys(t *testing.T) []string {
 	return keys
 }
 
-// TestKeyCatalogCoversEverySetKey asserts the catalog's key names are
-// EXACTLY the set of keys (*Config).Set accepts: no key Set handles is
-// missing from the catalog, no catalog entry names a key Set doesn't
-// handle (a typo or a stale entry), and no key is listed twice.
+// TestKeyCatalogCoversEverySetKey asserts the catalog's key names are EXACTLY the set of
+// keys (*Config).Set accepts: no key Set handles is missing from the catalog.
 func TestKeyCatalogCoversEverySetKey(t *testing.T) {
 	setKeys := setSwitchKeys(t)
 	if len(setKeys) == 0 {
@@ -1580,11 +1556,7 @@ func TestFleetKeysRequireRestart(t *testing.T) {
 	}
 }
 
-// fleet.fallback_after and fleet.link_down_warn_after apply live (the lease
-// holder / handoff and the child's link-alert planner all read the config
-// pointer fresh each time, unlike fleet.node_down_after's once-at-start
-// liveness tracker), so unlike the other fleet tunables they must NOT
-// require a restart.
+// fleet.fallback_after and fleet.link_down_warn_after apply live.
 func TestFleetFallbackAndLinkDownWarnKeysApplyLive(t *testing.T) {
 	dontWant := map[string]bool{"fleet.fallback_after": true, "fleet.link_down_warn_after": true}
 	for _, k := range Keys() {
