@@ -6,9 +6,8 @@ import (
 	"unicode/utf8"
 )
 
-// TestBarWidthIsExact pins the invariant the home-screen layout relies on:
-// bar() always renders exactly `width` runes regardless of percentage, so
-// meters line up in a column and never wrap the panel.
+// TestBarWidthIsExact pins the invariant the home-screen layout relies on: bar() always
+// renders exactly `width` runes regardless of percentage.
 func TestBarWidthIsExact(t *testing.T) {
 	for _, pct := range []float64{-10, 0, 12.5, 50, 77.7, 100, 250} {
 		got := bar(pct, 10)
@@ -80,11 +79,8 @@ func TestSparkKeepsMostRecent(t *testing.T) {
 	}
 }
 
-// TestPaletteIsTrinetraBrand pins the TUI accents to the Trinetra palette:
-// ember for alerts / down, verdigris for online, amber for warn and slate for
-// muted text. The neutral accent (selection, sparklines, values) is ash on a
-// dark terminal and ink on a light one, so ember stays reserved for the one
-// thing that needs attention.
+// TestPaletteIsTrinetraBrand pins the TUI accents to the Trinetra palette: ember for alerts
+// / down, verdigris for online, amber for warn and slate for muted text.
 func TestPaletteIsTrinetraBrand(t *testing.T) {
 	for _, c := range []struct {
 		name      string

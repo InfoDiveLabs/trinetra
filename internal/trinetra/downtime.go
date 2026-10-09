@@ -29,9 +29,8 @@ func readHeartbeat(path string, fs FileSource) (time.Time, bool) {
 	return time.Unix(n, 0), true
 }
 
-// shouldReportDowntime suppresses a boot report whose window was already
-// reported on a previous start (ev.End <= lastReportedEnd), so a restart that
-// recomputes the same gap from an unchanged heartbeat does not re-notify.
+// shouldReportDowntime suppresses a boot report whose window was already reported on a
+// previous start (ev.End <= lastReportedEnd).
 func shouldReportDowntime(ev DownEvent, lastReportedEnd int64) bool {
 	return ev.End > lastReportedEnd
 }
@@ -52,9 +51,8 @@ func readCleanStop(path string, fs FileSource) (int64, bool) {
 	return n, true
 }
 
-// hostBootTime reads the host's boot time from /proc/stat's "btime <seconds>"
-// line. ok is false when /proc/stat cannot be read or has no btime (e.g. a
-// non-Linux dev box), so callers fall back rather than assume.
+// hostBootTime reads the host's boot time from /proc/stat's "btime <seconds>" line. ok is
+// false when /proc/stat cannot be read or has no btime (e.g. a non-Linux dev box).
 func hostBootTime(fs FileSource) (time.Time, bool) {
 	b, err := fs.Read("/proc/stat")
 	if err != nil {
@@ -77,20 +75,8 @@ func hostBootTime(fs FileSource) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// reconstructPowerDown decides whether the heartbeat gap between lastBeat and
-// daemonStart is real HOST downtime worth recording (#116). A gap is host
-// downtime only if the host actually rebooted during it: hostBoot lands after
-// the last heartbeat, so the box was down from lastBeat until it came back. If
-// the host stayed up the whole time (hostBoot at or before lastBeat), the gap
-// is a MONITOR restart (crash loop, deploy, `systemctl restart`), NOT host
-// downtime, and nothing is recorded -- otherwise a restart storm fabricates
-// hours of "downtime" and tanks the uptime % even though the host never went
-// down.
-//
-// hostBootOK reports whether the host boot time could be read. When it could
-// not (non-Linux, unreadable /proc), we fall back to the pre-#116 behavior of
-// treating a long gap as a power_down: better to over-report than to silently
-// drop a real outage we cannot classify.
+// reconstructPowerDown decides whether the heartbeat gap between lastBeat and daemonStart
+// is real HOST downtime worth recording (#116).
 func reconstructPowerDown(lastBeat, daemonStart, hostBoot time.Time, hostBootOK bool, interval time.Duration) (DownEvent, bool) {
 	if !daemonStart.After(lastBeat) {
 		return DownEvent{}, false // clock skew / no gap
@@ -102,8 +88,7 @@ func reconstructPowerDown(lastBeat, daemonStart, hostBoot time.Time, hostBootOK 
 		// Host was up across the whole gap: a monitoring gap, not host downtime.
 		return DownEvent{}, false
 	}
-	// Real host downtime. It ended when the host booted (the true recovery
-	// instant, when known and inside the gap), else when the daemon returned.
+	// Real host downtime.
 	end := daemonStart
 	if hostBootOK && hostBoot.After(lastBeat) && hostBoot.Before(daemonStart) {
 		end = hostBoot

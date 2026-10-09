@@ -7,9 +7,7 @@ import (
 	"time"
 )
 
-// blockingStore is a SampleStore whose Prune blocks until released, simulating
-// the real tsFileStore's fsync stalling under a disk backlog while holding the
-// store lock. appends counts how many Append calls landed.
+// blockingStore is a SampleStore whose Prune blocks until released.
 type blockingStore struct {
 	release <-chan struct{}
 	appends atomic.Int64
@@ -32,10 +30,7 @@ func (b *blockingStore) Prune(nowUnix int64) error {
 func (b *blockingStore) Close() error               { return nil }
 func (b *blockingStore) Stats() (int, int64, error) { return 0, 0, nil }
 
-// The sampler must never block on storage I/O. With the writer wedged in a
-// hung Prune, submit() must keep returning immediately (dropping batches),
-// never stalling the caller -- otherwise a slow disk freezes liveness and the
-// watchdog crash-loops the daemon (the real-world bug this guards against).
+// The sampler must never block on storage I/O.
 func TestStoreWriterSubmitNeverBlocksWhenPruneHangs(t *testing.T) {
 	release := make(chan struct{})
 	bs := &blockingStore{release: release}
@@ -50,8 +45,7 @@ func TestStoreWriterSubmitNeverBlocksWhenPruneHangs(t *testing.T) {
 	// Give the writer a moment to pick up that batch and wedge in Prune.
 	time.Sleep(50 * time.Millisecond)
 
-	// Now hammer submit while the writer is stuck. Every call MUST return fast;
-	// if submit blocked, this loop would take ~seconds and time out the test.
+	// Now hammer submit while the writer is stuck.
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 1000; i++ {

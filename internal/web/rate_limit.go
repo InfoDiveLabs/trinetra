@@ -1,10 +1,4 @@
-// Package web: rate_limit.go bounds how fast an UNAUTHENTICATED client can
-// drive the ceremony-store write path. /enroll/begin and /login/begin each do
-// a full-file read-modify-write of ceremonies.json under one shared lock
-// (session.go); without a cap an anonymous client can hammer that lock and
-// stall new ceremonies (#95). A small in-memory fixed-window limiter, applied
-// to just those two routes, caps the begins per client without touching the
-// authenticated session path.
+// Package web: rate_limit.go bounds how fast an UNAUTHENTICATED client can drive.
 package web
 
 import (
@@ -15,11 +9,8 @@ import (
 	"time"
 )
 
-// beginRateMax and beginRateWindow are the default cap: at most beginRateMax
-// ceremony begins per beginRateWindow per client key. Generous for a real user
-// (a WebAuthn enroll/login is a handful of requests) yet a hard ceiling on an
-// abusive client. Deliberately not a config key: this is an internal safety
-// limit, not an operator tuning knob.
+// beginRateMax and beginRateWindow are the default cap: at most beginRateMax ceremony
+// begins per beginRateWindow per client key.
 const (
 	beginRateMax    = 15
 	beginRateWindow = 10 * time.Second
@@ -49,9 +40,7 @@ func newRateLimiter(max int, window time.Duration) *rateLimiter {
 	}
 }
 
-// allow records a hit for key and reports whether it is within the limit. The
-// window is fixed: the first hit starts the window, and once max hits land
-// inside it every further hit is rejected until the window rolls over.
+// allow records a hit for key and reports whether it is within the limit.
 func (rl *rateLimiter) allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -84,11 +73,7 @@ func (rl *rateLimiter) gcLocked(now time.Time) {
 	}
 }
 
-// clientKey identifies the caller for rate-limiting: the TCP peer host from
-// RemoteAddr. It deliberately does NOT trust X-Forwarded-For, which an
-// attacker could vary per request to dodge the limit. Behind a reverse proxy
-// this makes the limit act as a shared ceiling for all clients of that proxy,
-// which is the safe direction for a defense-in-depth cap.
+// clientKey identifies the caller for rate-limiting: the TCP peer host from RemoteAddr.
 func clientKey(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -97,9 +82,8 @@ func clientKey(r *http.Request) string {
 	return host
 }
 
-// rateLimitBegin wraps an unauthenticated ceremony-begin handler: it rejects
-// with 429 (and a Retry-After) once a client exceeds rl, otherwise passes
-// through to next.
+// rateLimitBegin wraps an unauthenticated ceremony-begin handler: it rejects with 429 (and
+// a Retry-After) once a client exceeds rl, otherwise passes through to next.
 func rateLimitBegin(rl *rateLimiter, next http.HandlerFunc) http.HandlerFunc {
 	retryAfter := strconv.Itoa(int(rl.window.Seconds()))
 	return func(w http.ResponseWriter, r *http.Request) {

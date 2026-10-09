@@ -9,28 +9,11 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// This file implements the web supervisor: the goroutine IN the core
-// trinetra daemon that keeps the companion trinetra-web binary
-// running as a verified child process. It reuses the front-door trust
-// check, resolveAndVerifyPlugin("web") (plugin_launch.go), before every
-// (re)spawn, so a binary swapped in between restarts is caught the same
-// way a swap before the first spawn would be.
-//
-// The child reads its control socket path and auth token from the env vars
-// TRINETRA_CONTROL_SOCKET and TRINETRA_CONTROL_TOKEN (falling back to the
-// old SERVERWATCH_CONTROL_SOCKET/TOKEN names, which this supervisor also
-// sets for one release) and sources ALL of its config over that socket, so
-// this supervisor only ever needs to set those env vars; it never passes a
-// listen address or any other config.
-//
-// Stdlib only: this file must not import anything outside the standard
-// library. TestDefaultBuildIsStdlibOnly (buildtag_test.go) enforces that
-// the default (untagged) build of cmd/trinetra never pulls in
-// third-party packages, and this file is part of that build.
+// This file implements the web supervisor: the goroutine IN the core trinetra daemon that
+// keeps the companion trinetra-web binary running as a verified child process.
 
-// supervisedProc is the minimal child-process interface the supervisor
-// needs: wait for it to exit, or kill it. It exists so tests can swap in a
-// fake process instead of a real os/exec.Cmd.
+// supervisedProc is the minimal child-process interface the supervisor needs: wait for it
+// to exit, or kill it.
 type supervisedProc interface {
 	Wait() error
 	Kill() error
@@ -43,19 +26,12 @@ type execProc struct {
 
 func (p *execProc) Wait() error { return p.cmd.Wait() }
 
-// Kill sends an immediate kill (SIGKILL via os.Process.Kill) rather than a
-// graceful SIGTERM-then-wait. trinetra-web holds no state of its own
-// (it sources everything from the control socket on every connection), so
-// there is nothing for it to flush on shutdown, and a plain Kill keeps this
-// seam simple: { Wait; Kill }, nothing more.
+// Kill sends an immediate kill (SIGKILL via os.Process.Kill) rather than a graceful
+// SIGTERM-then-wait. trinetra-web holds no state of its own.
 func (p *execProc) Kill() error { return p.cmd.Process.Kill() }
 
-// startWebProc is the seam over process creation: the default spawns path
-// as a child with env as its full environment (which the caller has
-// already built from os.Environ() plus the two SERVERWATCH_CONTROL_* vars),
-// wiring the child's stdout/stderr to the daemon's own so its logs show up
-// wherever the daemon's do. Overridden in tests to avoid spawning a real
-// process.
+// startWebProc is the seam over process creation: the default spawns path as a child with
+// env as its full environment.
 var startWebProc = func(path string, env []string) (supervisedProc, error) {
 	cmd := exec.Command(path)
 	cmd.Env = env
@@ -67,20 +43,16 @@ var startWebProc = func(path string, env []string) (supervisedProc, error) {
 	return &execProc{cmd: cmd}, nil
 }
 
-// resolveWebPlugin is the seam over the front-door trust check, re-run
-// before EVERY (re)spawn so a binary swapped between restarts is caught.
-// Overridden in tests to avoid touching the filesystem.
+// resolveWebPlugin is the seam over the front-door trust check, re-run before EVERY
+// (re)spawn so a binary swapped between restarts is caught.
 var resolveWebPlugin = func() (string, error) {
 	return resolveAndVerifyPlugin("web")
 }
 
-// supervisorSleep is the seam over the backoff wait. Overridden in tests so
-// backoff is instant and durations can be recorded instead of actually
-// waited out.
+// supervisorSleep is the seam over the backoff wait.
 var supervisorSleep = func(d time.Duration) { time.Sleep(d) }
 
-// supervisorLog is the seam over logging. Overridden in tests to capture
-// messages instead of writing to the real log.
+// supervisorLog is the seam over logging.
 var supervisorLog = log.Printf
 
 // timeNow is the seam over the clock, so tests can freeze time for the
@@ -99,11 +71,8 @@ func shouldStartWeb(cfg *config.Config, socketUp bool) bool {
 	return socketUp && cfg.Web.Enabled
 }
 
-// startWeb launches the web supervisor goroutine and returns a stop func
-// that signals the loop to exit, kills any running child, and blocks until
-// the loop has actually exited. Mirrors the daemon's existing
-// serveControlSocket pattern (control_socket.go): the caller defers the
-// returned stop.
+// startWeb launches the web supervisor goroutine and returns a stop func that signals the
+// loop to exit, kills any running child, and blocks until the loop has actually exited.
 func startWeb(socketPath, token string) (stop func()) {
 	stopCh := make(chan struct{})
 	done := make(chan struct{})
@@ -114,18 +83,15 @@ func startWeb(socketPath, token string) (stop func()) {
 	}
 }
 
-// superviseWeb resolves and spawns trinetra-web, then restarts it with
-// capped backoff whenever it exits on its own, until stopCh closes. Every
-// (re)spawn re-runs resolveWebPlugin so a binary swapped in between
-// restarts is caught the same way a swap before the first spawn would be.
+// superviseWeb resolves and spawns trinetra-web, then restarts it with capped backoff
+// whenever it exits on its own, until stopCh closes.
 func superviseWeb(socketPath, token string, stopCh <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
 	env := append(os.Environ(),
 		"TRINETRA_CONTROL_SOCKET="+socketPath,
 		"TRINETRA_CONTROL_TOKEN="+token,
-		// Compat: kept for one release so a pre-rename serverwatch-web
-		// binary (which only reads the old names) still works when spawned
-		// by a new core.
+		// Compat: kept for one release so a pre-rename serverwatch-web binary (which only reads
+		// the old names) still works when spawned by a new core.
 		"SERVERWATCH_CONTROL_SOCKET="+socketPath,
 		"SERVERWATCH_CONTROL_TOKEN="+token,
 	)
@@ -184,11 +150,8 @@ func nextBackoff(d time.Duration) time.Duration {
 	return min(d*2, webBackoffMax)
 }
 
-// sleepOrStop sleeps d via supervisorSleep, but returns false immediately
-// (without waiting for the sleep to finish) if stopCh closes first. It
-// returns true if the sleep ran to completion. Running supervisorSleep in
-// its own goroutine and selecting against stopCh is what makes stop()
-// return promptly even in the middle of a backoff wait.
+// sleepOrStop sleeps d via supervisorSleep, but returns false immediately (without waiting
+// for the sleep to finish) if stopCh closes first.
 func sleepOrStop(d time.Duration, stopCh <-chan struct{}) bool {
 	slept := make(chan struct{})
 	go func() {

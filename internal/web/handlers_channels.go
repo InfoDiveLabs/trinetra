@@ -11,20 +11,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// channelsMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
-// mirroring usersMutation/configMutation: every /channels* mutation (add,
-// update, remove, test) needs both gates.
+// channelsMutation composes requireRole(RoleAdmin, ...) with requireCSRF, mirroring
+// usersMutation/configMutation: every /channels* mutation.
 func channelsMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
 
-// channelNameParam/channelNameFromParam convert a channel's Name (arbitrary
-// text -- "Ops email", "#infra" -- see config.ChannelConfig.Name) to/from the
-// URL-safe form the {name} path segment carries, reusing the exact encoding
-// handlers_users.go's credentialParam/credentialFromParam already use for
-// the same reason (a raw name isn't always a safe single path segment).
+// channelNameParam/channelNameFromParam convert a channel's Name.
 func channelNameParam(name string) string { return credentialParam([]byte(name)) }
 func channelNameFromParam(param string) (string, error) {
 	b, err := credentialFromParam(param)
@@ -81,8 +76,7 @@ func deliveryRows(rows []channelRow) []deliveryRow {
 }
 
 // channelTypes is the fixed set of channel types the add/edit modal offers
-// (mirrors buildNotifier's switch, channel.go), in the mockup's display
-// order.
+// (mirrors buildNotifier's switch, channel.go), in display order.
 var channelTypes = []struct{ Value, Label string }{
 	{"telegram", "Telegram"},
 	{"email", "Email (SMTP)"},
@@ -91,10 +85,7 @@ var channelTypes = []struct{ Value, Label string }{
 	{"webhook", "Generic webhook"},
 }
 
-// describeRoutesWeb mirrors channel.go's describeRoutes (unexported to that
-// package, so duplicated here rather than reached into across the
-// trinetra/web boundary, per the rule that internal/web must never
-// import internal/trinetra, to keep the module graph one-way).
+// describeRoutesWeb mirrors channel.go's describeRoutes.
 func describeRoutesWeb(cc config.ChannelConfig) string {
 	var parts []string
 	if len(cc.IncludeKinds) > 0 {
@@ -112,9 +103,8 @@ func describeRoutesWeb(cc config.ChannelConfig) string {
 	return strings.Join(parts, " ")
 }
 
-// channelRows builds the /channels table rows from cfg.Channels, sorted by
-// name for a stable render order (Channels is a plain slice in append
-// order, which would otherwise reorder every time a channel is added).
+// channelRows builds the /channels table rows from cfg.Channels, sorted by name for a
+// stable render order.
 func channelRows(cfg *config.Config) []channelRow {
 	rows := make([]channelRow, 0, len(cfg.Channels))
 	for _, cc := range cfg.Channels {
@@ -136,16 +126,8 @@ func channelRows(cfg *config.Config) []channelRow {
 	return rows
 }
 
-// channelModalData is one add/edit channel modal's render data: the same
-// shape backs both the single "Add channel" modal (IsEdit false, all fields
-// at their zero value/default) and one per-existing-channel "Edit channel"
-// modal (IsEdit true, pre-filled from that channel's current config) -- see
-// templates/channels.html's "chanModalBody" block, defined once and
-// executed for each. Rendering N small edit modals server-side (rather than
-// one shared modal the mockup's app.js JS-prefills on open) avoids needing
-// to thread secret-bearing Settings values through JS data-* attributes and
-// avoids the CSP's no-inline-script constraint entirely: every field is
-// simply already correct by the time the page loads.
+// channelModalData is one add/edit channel modal's render data: the same shape backs both
+// the single "Add channel" modal.
 type channelModalData struct {
 	ID                     string // DOM id: "chanModal-new" or "chanModal-<param>"
 	Title                  string
@@ -159,26 +141,15 @@ type channelModalData struct {
 	IncludeKinds           string
 	ExcludeKinds           string
 	CriticalOverridesQuiet bool
-	// SettingsMasked/SettingsSet are the template-safe view of the channel's
-	// Settings map (maskChannelSettings): SettingsMasked never carries a
-	// secret value (channelSecretSettingKeys) -- the template renders every
-	// settings.<k> <input value="..."> from THIS, never from a raw Settings
-	// map, so a credential structurally cannot reach the page. SettingsSet
-	// reports, per key, whether a value is currently stored, for a secret
-	// field's "(set)"/"(not set)" placeholder and its "clear" checkbox.
+	// SettingsMasked/SettingsSet are the template-safe view of the channel's Settings map
+	// (maskChannelSettings): SettingsMasked never carries a secret value.
 	SettingsMasked map[string]string
 	SettingsSet    map[string]bool
-	// CSRF is threaded in directly (rather than read via the outer page's
-	// "$" inside the shared "chanModalBody" template) because {{template
-	// "name" pipeline}} gives that block a FRESH "$" scoped to pipeline
-	// itself, not inherited from the content block that invoked it.
+	// CSRF is threaded in directly.
 	CSRF string
 }
 
-// newChannelModalData is the blank "Add channel" modal's data: telegram
-// (the mockup's default selected type) with an empty Settings map so
-// `{{index .Settings "..."}}` always resolves to "" rather than needing a
-// nil-map guard in the template.
+// newChannelModalData is the blank "Add channel" modal's data: telegram.
 var newChannelModalData = channelModalData{
 	ID:             "chanModal-new",
 	Title:          "Add channel",
@@ -224,9 +195,8 @@ type ChannelsPageData struct {
 	ChannelTypes []struct{ Value, Label string }
 	NewModal     channelModalData
 	EditModals   []channelModalData
-	// TestResult, if non-empty, is rendered as a one-line status after a
-	// "Send test" action -- success or the error message -- since a test-send
-	// has nothing to persist and nothing else to show for it.
+	// TestResult, if non-empty, is rendered as a one-line status after a "Send test" action --
+	// success or the error message.
 	TestResult string
 }
 
@@ -277,19 +247,8 @@ func channelsPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// channelSettingKeys lists, per channel type, which posted "settings.<k>"
-// form fields channelSettingsFromForm reads -- the fields
-// templates/channels.html's per-type <div data-cond="..."> blocks actually
-// render (see that template), so a channel's Settings map only ever picks
-// up keys relevant to its own type. discord/gotify are listed here (their
-// full settings list, per buildNotifier -- internal/trinetra/channels.go)
-// even though the modal's Type <select> has no option for them today (a
-// channel of either type can only be created via the CLI); listing them
-// keeps this map -- and channelSecretSettingKeys below -- the single,
-// complete catalog of every channel type's settings (#139), and costs
-// nothing: channelSettingsFromForm simply never finds a
-// "settings.<k>"/"settings.<k>.clear" field posted for a type the modal
-// can't select, so these keys are never touched by a real submission.
+// channelSettingKeys lists, per channel type, which posted "settings.<k>" form fields
+// channelSettingsFromForm reads.
 var channelSettingKeys = map[string][]string{
 	"telegram": {"token", "chat_id"},
 	"email":    {"host", "port", "username", "password", "from", "to"},
@@ -300,18 +259,8 @@ var channelSettingKeys = map[string][]string{
 	"gotify":   {"server", "token"},
 }
 
-// channelSecretSettingKeys maps each channel type to the settings key(s)
-// that hold a credential -- the value buildNotifier
-// (internal/trinetra/channels.go) treats as the secret for that type:
-// telegram's bot token, email's SMTP password, and the webhook/slack/
-// discord URL itself (the URL embeds the credential -- a Slack/Discord
-// incoming-webhook path or a bearer token in a query string -- so the whole
-// URL is secret, not just part of it). ntfy/gotify's "token" is their
-// access/application token. This is the single source of truth #139 asks
-// for: templates/channels.html never renders one of these values back
-// (isSecretChannelSetting/maskChannelSettings below), a blank submit keeps
-// the stored value, and only an explicit "<key>.clear" checkbox removes it
-// (channelSettingsFromForm).
+// channelSecretSettingKeys maps each channel type to the settings key(s) that hold a
+// credential -- the value buildNotifier.
 var channelSecretSettingKeys = map[string][]string{
 	"telegram": {"token"},
 	"email":    {"password"},
@@ -333,14 +282,8 @@ func isSecretChannelSetting(typ, k string) bool {
 	return false
 }
 
-// maskChannelSettings returns settings' template-safe counterpart:
-// masked is a copy with every channelSecretSettingKeys value blanked out
-// (never rendered back into an <input value="...">, per #139), and set
-// reports, per key, whether the ORIGINAL value was non-empty -- the only
-// thing a secret field's placeholder/hint may show
-// ("(set)"/"(not set)", secretPlaceholder's style, handlers_config.go),
-// since even a non-empty length or a truncated/partial value would still
-// leak something about the credential.
+// maskChannelSettings returns settings' template-safe counterpart: masked is a copy with
+// every channelSecretSettingKeys value blanked out.
 func maskChannelSettings(typ string, settings map[string]string) (masked map[string]string, set map[string]bool) {
 	masked = make(map[string]string, len(settings))
 	set = make(map[string]bool, len(settings))
@@ -355,22 +298,7 @@ func maskChannelSettings(typ string, settings map[string]string) (masked map[str
 	return masked, set
 }
 
-// channelSettingsFromForm reads settings.<k> fields for typ from r (already
-// ParseForm'd) into the map channelSettingFieldsFromForm applies onto a
-// channel's Settings via config.SetChannelField("setting.<k>", ...):
-//   - a non-blank posted value always replaces the stored one (secret or
-//     not);
-//   - a BLANK secret field leaves the stored value untouched, UNLESS its
-//     "settings.<k>.clear" checkbox was also posted, which explicitly
-//     clears it (sets it to "") -- the "blank keeps, clear removes" #139
-//     contract; a non-blank value takes priority over a posted clear
-//     checkbox (typing a new token is a stronger signal than a stray
-//     checked box);
-//   - a blank NON-secret field is always left untouched (its own
-//     "leave one field blank without retyping every other setting"
-//     contract, predating #139 -- there is no way to clear a non-secret
-//     setting from this form, matching config.SetChannelField's own "a key
-//     not explicitly given is left alone" semantics).
+// channelSettingsFromForm reads settings.<k> fields for typ from r.
 func channelSettingsFromForm(r *http.Request, typ string) map[string]string {
 	out := map[string]string{}
 	for _, k := range channelSettingKeys[typ] {
@@ -385,12 +313,8 @@ func channelSettingsFromForm(r *http.Request, typ string) map[string]string {
 	return out
 }
 
-// applyChannelForm applies every posted channel field onto the named
-// channel via config.Config.SetChannelField (reusing its existing
-// validators, e.g. min_severity) -- used by both channelsAddHandler (after
-// AddChannel creates the row) and channelsUpdateHandler (channel already
-// exists). Returns the first validation error, if any; the caller is
-// responsible for not persisting when that happens.
+// applyChannelForm applies every posted channel field onto the named channel via
+// config.Config.SetChannelField (reusing its existing validators, e.g. min_severity).
 func applyChannelForm(newCfg *config.Config, name string, r *http.Request) error {
 	typ := r.FormValue("type")
 	if err := newCfg.SetChannelField(name, "type", typ); err != nil {
@@ -423,11 +347,8 @@ func applyChannelForm(newCfg *config.Config, name string, r *http.Request) error
 	return nil
 }
 
-// validateDeliverable rejects an ENABLED channel that could not build a
-// working notifier, so the web editor never silently persists a channel that
-// delivery would drop (#79 -- e.g. a telegram channel left without a chat id).
-// Disabled channels are drafts and skip the check; a nil d.ValidateChannel
-// (tests that don't wire it) also skips.
+// validateDeliverable rejects an ENABLED channel that could not build a working notifier,
+// so the web editor never silently persists a channel that delivery would drop.
 func validateDeliverable(d Deps, cfg *config.Config, name string) error {
 	if d.ValidateChannel == nil {
 		return nil
@@ -440,13 +361,7 @@ func validateDeliverable(d Deps, cfg *config.Config, name string) error {
 }
 
 // boolFormValue renders a posted boolean-ish field as "true"/"false" for
-// config.SetChannelField's strconv.ParseBool-based enabled/
-// critical_overrides_quiet keys. Two calling conventions both work: a real
-// checkbox (present with some truthy value like "1" when checked, entirely
-// ABSENT -- not merely empty -- when unchecked, per HTML form semantics), or
-// a hidden field carrying an explicit "true"/"false" literal (the channels
-// table's per-row enabled-toggle button, which needs to post the OPPOSITE
-// of the row's current state rather than "checked/unchecked").
+// config.SetChannelField's strconv.ParseBool-based enabled/ critical_overrides_quiet keys.
 func boolFormValue(r *http.Request, field string) string {
 	v := r.FormValue(field)
 	if v == "" {
@@ -455,15 +370,12 @@ func boolFormValue(r *http.Request, field string) string {
 	if b, err := strconv.ParseBool(v); err == nil {
 		return strconv.FormatBool(b)
 	}
-	// Present with some other truthy placeholder (e.g. a checkbox's
-	// value="1") -> checked.
+	// Present with some other truthy placeholder (e.g. a checkbox's value="1") -> checked.
 	return "true"
 }
 
-// channelsAddHandler handles POST /channels: creates a new channel from the
-// posted name/type/settings/routing fields. Validates against a clone of
-// the current config (cloneConfig, handlers_config.go) before persisting,
-// same "bad value -> 400, no write" contract as /config.
+// channelsAddHandler handles POST /channels: creates a new channel from the posted
+// name/type/settings/routing fields.
 func channelsAddHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -516,9 +428,8 @@ func channelSummary(cfg *config.Config, name string) string {
 	return fmt.Sprintf("type=%s enabled=%v min_severity=%s", cc.Type, cc.Enabled, cc.MinSeverity)
 }
 
-// channelsUpdateHandler handles POST /channels/{name}/update: applies the
-// posted fields onto the EXISTING named channel, same validation/no-write
-// contract as channelsAddHandler.
+// channelsUpdateHandler handles POST /channels/{name}/update: applies the posted fields
+// onto the EXISTING named channel, same validation/no-write contract as channelsAddHandler.
 func channelsUpdateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name, err := channelNameFromParam(r.PathValue("name"))
@@ -595,13 +506,8 @@ func channelsRemoveHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// channelsTestHandler handles POST /channels/{name}/test: sends a one-off
-// test notification via Deps.API.TestChannel (task 8; previously
-// Deps.TestChannel directly -- both backends' TestChannel call the exact
-// same sendTestNotification internal/trinetra always has, see
-// coreapi_inproc.go/coreapi_file.go). A nil Deps.API (some minimal test
-// Deps, or a hypothetical future non-trinetra host of this package)
-// renders a clear "not wired" result rather than panicking.
+// channelsTestHandler handles POST /channels/{name}/test: sends a one-off test notification
+// via Deps.API.TestChannel.
 func channelsTestHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name, err := channelNameFromParam(r.PathValue("name"))

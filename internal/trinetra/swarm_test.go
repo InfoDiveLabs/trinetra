@@ -12,8 +12,7 @@ func TestSwarmServiceName(t *testing.T) {
 		service string
 		ok      bool
 	}{
-		// Real replicated task from the issue: service is stable across the
-		// changing task id.
+		// Real replicated task from the issue: service is stable across the changing task id.
 		{"analyzer-frontend-reeta-wspwrb.1.khre0c0w4ryoiuq0igz5f8whu", "analyzer-frontend-reeta-wspwrb", true},
 		{"web.1.abcdefghij0123456789xy", "web", true},
 		{"stack_api.5.zyxwvutsrqponmlkjihgfedcb", "stack_api", true},

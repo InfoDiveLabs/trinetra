@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// var _ = func(a API) API { return a } asserts, at compile time, that API is
-// referenceable as a type: this file fails to compile until api.go defines
-// the interface.
+// var _ = func(a API) API { return a } asserts, at compile time, that API is referenceable
+// as a type: this file fails to compile until api.go defines the interface.
 var _ = func(a API) API { return a }
 
 func TestAlertRecordJSONKeys(t *testing.T) {

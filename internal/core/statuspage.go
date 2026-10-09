@@ -7,9 +7,8 @@ import (
 	"strings"
 )
 
-// ErrStatusPageOnChild is returned by every StatusPage method on a fleet
-// child: the public status page is evaluated and served by the master (or a
-// standalone host) only.
+// ErrStatusPageOnChild is returned by every StatusPage method on a fleet child: the public
+// status page is evaluated and served by the master (or a standalone host) only.
 var ErrStatusPageOnChild = errors.New("status page runs on the fleet master, not on a child")
 
 // ServiceState is a public service's status.
@@ -56,8 +55,7 @@ const (
 	TargetMount     = "mount"     // disk:<Value> on Node
 )
 
-// StatusTarget is one internal thing a public service depends on. Never
-// exposed publicly.
+// StatusTarget is one internal thing a public service depends on.
 type StatusTarget struct {
 	Kind  string `json:"kind"`
 	Node  string `json:"node,omitempty"`
@@ -154,8 +152,7 @@ type ServiceEvaluation struct {
 	Missing      []string     `json:"missing,omitempty"` // targets not found, human-readable
 }
 
-// Public view: the ONLY shape that reaches anonymous output. It has no ids
-// of nodes, no targets, no triggers, no authors.
+// Public view: the ONLY shape that reaches anonymous output.
 type PublicService struct {
 	Name        string       `json:"name"`
 	Description string       `json:"description,omitempty"`
@@ -206,8 +203,7 @@ type PublicStatus struct {
 	Recent    []PublicIncident `json:"recent"` // resolved within 90 days, newest first
 }
 
-// StatusPageAPI is the status-page surface served over the control socket
-// ("StatusPage.*"). Writes take the acting user's name for the record.
+// StatusPageAPI is the status-page surface served over the control socket ("StatusPage.*").
 type StatusPageAPI interface {
 	Services() ([]StatusService, error)
 	SetService(s StatusService, actor string) (StatusService, error)
@@ -223,8 +219,7 @@ type StatusPageAPI interface {
 	Public() (PublicStatus, error)
 }
 
-// StatusPageProvider is implemented by the daemon's served API and by
-// control.Client. Consumers type-assert to it.
+// StatusPageProvider is implemented by the daemon's served API and by control.Client.
 type StatusPageProvider interface {
 	StatusPage() StatusPageAPI
 }

@@ -2,10 +2,8 @@ package update
 
 import "testing"
 
-// TestTestKeySetMatchesDeterministicSigners pins testKeySet() to the exact
-// signer seeds documented on it and on keys_testkeys.go's ProductionKeys(),
-// so the two cannot silently drift now that ProductionKeys() (in a
-// trinetra_testkeys build) simply calls this function.
+// TestTestKeySetMatchesDeterministicSigners pins testKeySet() to the exact signer seeds
+// documented on it and on keys_testkeys.go's ProductionKeys().
 func TestTestKeySetMatchesDeterministicSigners(t *testing.T) {
 	k := testKeySet()
 	want := KeySet{

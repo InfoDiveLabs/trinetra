@@ -189,11 +189,8 @@ func TestOutboxNotifyOnAppend(t *testing.T) {
 	}
 }
 
-// TestOutboxCapCrashBetweenPersistAndDelete simulates a crash that lands
-// after enforceCapLocked durably persists the gap/ack advance for an
-// evicted segment but before it deletes that segment's file. Reopening
-// must not re-read those records as unacked (Read(Acked()) must start
-// right after the gap), and the leftover file must be cleaned up.
+// TestOutboxCapCrashBetweenPersistAndDelete simulates a crash after enforceCapLocked
+// persists the gap/ack advance but before it deletes the evicted segment.
 func TestOutboxCapCrashBetweenPersistAndDelete(t *testing.T) {
 	dir := t.TempDir()
 	// Cap far above what we write, so no real eviction happens here — we
@@ -262,13 +259,8 @@ func TestOutboxCapCrashBetweenPersistAndDelete(t *testing.T) {
 	}
 }
 
-// TestOutboxReconcilesCursorWithGapsOnOpen simulates a crash between
-// enforceCapLocked's two persists: gaps.json commits an eviction (so the
-// records are gone for good) but the crash lands before the cursor file is
-// updated to match, leaving the cursor behind the recorded gap and the
-// evicted segment's file still on disk. Reopening must treat the gap as
-// authoritative: advance and re-persist the cursor to the gap's LastSeq,
-// never re-serve the dropped records, and clean up the stale file.
+// TestOutboxReconcilesCursorWithGapsOnOpen simulates a crash between enforceCapLocked's two
+// persists: gaps.json commits an eviction but the cursor lags.
 func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
 	dir := t.TempDir()
 	o, err := openOutbox(dir, 1<<20, 200)
@@ -303,9 +295,8 @@ func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Commit the gap (as enforceCapLocked would) but deliberately leave the
-	// cursor file at its earlier Ack(2) value, and segs[0]'s file in place:
-	// exactly the on-disk state a crash right after this write leaves.
+	// Commit the gap (as enforceCapLocked would) but deliberately leave the cursor file at its
+	// earlier Ack(2) value, and segs[0]'s file in place.
 	if err := writeFileAtomic(filepath.Join(dir, "gaps.json"), gb, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -338,21 +329,8 @@ func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
 	}
 }
 
-// TestOutboxConcurrentAppendReadAck exercises the outbox under its documented
-// concurrent-use contract: one goroutine appends continuously (driving
-// segment rotation and cap eviction) while another concurrently reads from
-// and acks the cursor (driving segment deletion), with a small cap/segment
-// size so rotation and eviction happen throughout the run.
-//
-// The appender drives a FIXED number of operations (round-1 review fix),
-// not a fixed wall-clock duration: a time-based deadline made the load
-// assertion below flaky under `-race` (whose instrumentation slows every
-// Append/Read/Ack down, sometimes past the point of reaching 1000 appends
-// within one second on a loaded machine) -- "test didn't generate enough
-// load" was a timing artifact, not a real failure. A fixed count makes the
-// achieved load deterministic and lets the final assertion below be exact
-// (appended == totalAppends) rather than a lower bound, which is strictly
-// stronger, never weaker, than what this test proved before.
+// TestOutboxConcurrentAppendReadAck exercises the documented concurrent-use contract: one
+// goroutine appends (driving rotation and cap eviction) while another reads and acks.
 func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 	dir := t.TempDir()
 	o, err := openOutbox(dir, 4096, 512)
@@ -425,18 +403,16 @@ func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 		t.Fatalf("appended=%d, want exactly %d (the appender's fixed op count)", total, totalAppends)
 	}
 
-	// Seqs delivered by Read must be strictly increasing across the whole
-	// run: never repeated, never delivered out of order, never re-delivered
-	// once past the (monotonically advancing) acked cursor.
+	// Seqs delivered by Read must be strictly increasing across the whole run: never repeated,
+	// never delivered out of order.
 	for i := 1; i < len(delivered); i++ {
 		if delivered[i] <= delivered[i-1] {
 			t.Fatalf("delivered seqs not strictly increasing at %d: %d <= %d", i, delivered[i], delivered[i-1])
 		}
 	}
 
-	// Every seq that was ever appended must be accounted for: either
-	// delivered, or covered by a recorded Gap (dropped by the cap before
-	// the reader could catch up).
+	// Every seq that was ever appended must be accounted for: either delivered, or covered by
+	// a recorded Gap (dropped by the cap before the reader could catch up).
 	covered := make([]bool, total+1)
 	for _, s := range delivered {
 		covered[s] = true
@@ -453,12 +429,8 @@ func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 	}
 }
 
-// TestOutboxAckBeyondNextRecordsDivergenceGap covers a child whose outbox was
-// deleted or rolled back while the master kept its applied seq: the master
-// acks a seq the local outbox never issued. The unacked local records must
-// become a gap (repaired from local history) and seq numbering must jump past
-// the master's view, instead of the ack being clamped and every new record
-// silently discarded by the master as "already applied".
+// TestOutboxAckBeyondNextRecordsDivergenceGap: the master acks a seq the local outbox never
+// issued (it was deleted or rolled back).
 func TestOutboxAckBeyondNextRecordsDivergenceGap(t *testing.T) {
 	dir := t.TempDir()
 	o, err := OpenOutbox(dir, 64<<20)
@@ -520,11 +492,8 @@ func TestOutboxAckBeyondNextOnEmptyOutboxRecordsNoGap(t *testing.T) {
 	}
 }
 
-// TestOutboxFailedAppendBecomesGapAndKeepsSegmentReadable injects a write
-// failure that leaves half a frame on disk mid-segment. The torn bytes must
-// not hide later records (they are truncated away and the next append goes to
-// a fresh segment), the failed record's seq must not be silently reused, and
-// its time range must become a gap so local-history backfill repairs it.
+// TestOutboxFailedAppendBecomesGapAndKeepsSegmentReadable injects a write failure that
+// leaves half a frame on disk mid-segment.
 func TestOutboxFailedAppendBecomesGapAndKeepsSegmentReadable(t *testing.T) {
 	dir := t.TempDir()
 	o, err := OpenOutbox(dir, 64<<20)
@@ -567,9 +536,8 @@ func TestOutboxFailedAppendBecomesGapAndKeepsSegmentReadable(t *testing.T) {
 	}
 }
 
-// OldestUnackedTS is the ts of the first record after the ack, not the
-// oldest ts in its segment: a partly acked segment must not make a caught-up
-// node look like it has a large backlog (and so "lagging").
+// OldestUnackedTS is the ts of the first record after the ack, not the oldest ts in its
+// segment.
 func TestOutboxOldestUnackedIsPerRecord(t *testing.T) {
 	o, _ := OpenOutbox(t.TempDir(), 64<<20)
 	defer o.Close()
@@ -637,9 +605,8 @@ func TestOutboxReadPriorityAscendingMultipleAlerts(t *testing.T) {
 	}
 }
 
-// Once an alert's seq is genuinely acked (the normal Ingest path, not
-// ReadPriority), it drops out of the priority index so it is never sent a
-// third time.
+// Once an alert's seq is genuinely acked (the normal Ingest path, not ReadPriority), it
+// drops out of the priority index so it is never sent a third time.
 func TestOutboxReadPriorityPrunedByAck(t *testing.T) {
 	o, _ := OpenOutbox(t.TempDir(), 64<<20)
 	defer o.Close()
@@ -656,10 +623,8 @@ func TestOutboxReadPriorityPrunedByAck(t *testing.T) {
 	}
 }
 
-// The alert-seq index survives a close/reopen (rebuilt from the on-disk
-// segments), so a crash or restart between shipping an alert with
-// ReadPriority (which never acks) and the normal backlog catching up to it
-// does not lose the alert's priority.
+// The alert-seq index survives a close/reopen (rebuilt from the on-disk segments), so a
+// crash or restart between shipping an alert with ReadPriority.
 func TestOutboxReadPrioritySurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
 	o, err := OpenOutbox(dir, 64<<20)
@@ -686,9 +651,8 @@ func TestOutboxReadPrioritySurvivesReopen(t *testing.T) {
 	}
 }
 
-// An alert record evicted by the cap before it was ever acked or shipped
-// becomes a Gap like any other record; ReadPriority must not keep offering
-// its now-nonexistent seq forever.
+// An alert record evicted by the cap before it was ever acked or shipped becomes a Gap like
+// any other record; ReadPriority must not keep offering its now-nonexistent seq forever.
 func TestOutboxReadPriorityDropsStaleEntryOnCapEviction(t *testing.T) {
 	dir := t.TempDir()
 	o, err := OpenOutboxSegmented(dir, 3000, 1000)

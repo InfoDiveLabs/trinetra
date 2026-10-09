@@ -12,11 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// secretPlaceholder renders the placeholder text a secret <input> shows
-// instead of its real value (config.IsSecretKey keys, e.g.
-// update.github_token): "(set)" when a value is currently stored, "(not
-// set)" otherwise. Mirrors `config get`'s own "(set)"/"(not set)" redaction
-// (config.IsSecretKey's doc) for the web config page.
+// secretPlaceholder renders the placeholder text a secret <input> shows instead of its real
+// value (config.IsSecretKey keys, e.g. update.github_token).
 func secretPlaceholder(isSet bool) string {
 	if isSet {
 		return "(set)"
@@ -24,21 +21,16 @@ func secretPlaceholder(isSet bool) string {
 	return "(not set)"
 }
 
-// configMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
-// mirroring usersMutation (handlers_users.go): only an admin session may
-// POST /config, and only with a valid CSRF token.
+// configMutation composes requireRole(RoleAdmin, ...) with requireCSRF, mirroring
+// usersMutation (handlers_users.go): only an admin session may POST /config.
 func configMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
 
-// cloneConfig returns a deep, independent copy of c via a JSON round-trip:
-// simplest way to get a copy whose map/slice fields (Targets, Channels,
-// Collect.*) don't alias the original, so validating a batch of edits
-// against the clone can never mutate the live config before every field has
-// passed -- the "bad value -> 400, no write" requirement (routes.go/
-// configSaveHandler) depends on this.
+// cloneConfig returns a deep, independent copy of c via a JSON round-trip: simplest way to
+// get a copy whose map/slice fields.
 func cloneConfig(c *config.Config) (*config.Config, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -52,9 +44,7 @@ func cloneConfig(c *config.Config) (*config.Config, error) {
 }
 
 // trimFloatText formats v the same way config.Config.Get does internally
-// (strconv.FormatFloat(v, 'f', -1, 64)) -- used for both rendering a
-// TargetOverride.Threshold into the monitors table and diffing old/new
-// values for the audit log.
+// (strconv.FormatFloat(v, 'f', -1, 64)).
 func trimFloatText(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
@@ -66,21 +56,8 @@ type configTargetRow struct {
 	Threshold string // "" = "use the global threshold above"
 }
 
-// configTargetRows merges cfg.Targets (explicit per-target overrides, the
-// only source of "docker:...", "smart:...", "temp:..." style targets today)
-// with the disk mounts the live snapshot currently reports (Deps.Snapshot),
-// so a disk nobody has touched yet still shows up as an enabled,
-// default-threshold row rather than not appearing at all.
-//
-// This is NOT the full auto-discovered target list the mockup's config.html
-// shows (disk + docker + smart + temp, sourced from
-// internal/trinetra/discover.go's Discover): internal/web must not import
-// internal/trinetra, to keep the module graph one-way, and Deps doesn't
-// expose a generic target inventory today -- only Snapshot's disk mounts and
-// whatever overrides already exist in config. Extending Deps with a full
-// target list is future work; scoping to what's actually available here
-// keeps this task's "enable/disable + per-target threshold" contract real
-// and testable without widening the trinetra/web seam further.
+// configTargetRows merges cfg.Targets with the live disk mounts, so an untouched disk still
+// shows as an enabled default row.
 func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow {
 	seen := map[string]bool{}
 	var out []configTargetRow
@@ -110,12 +87,8 @@ func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow 
 	return out
 }
 
-// clearTargetThreshold removes a target's threshold override (if any),
-// leaving its Disabled flag untouched -- the config package itself only
-// exposes SetTargetThreshold (always sets), not a way to clear one, since
-// the CLI (`trinetra target threshold ... `, if it existed) has never
-// needed to; the web form does, since leaving the "Alert at" cell blank
-// means "use the global threshold above" (configTargetRow.Threshold == "").
+// clearTargetThreshold removes a target's threshold override (if any), leaving its Disabled
+// flag untouched -- the config package itself only exposes SetTargetThreshold.
 func clearTargetThreshold(c *config.Config, name string) {
 	if c.Targets == nil {
 		return
@@ -128,11 +101,7 @@ func clearTargetThreshold(c *config.Config, name string) {
 	c.Targets[name] = o
 }
 
-// parseQuietHours splits cfg.QuietHours ("H-H"/"HH-HH", validateQuietHours's
-// format -- see internal/config/config.go) into from/to hour integers plus
-// whether quiet hours are enabled at all (QuietHours != ""). An unparseable
-// stored value (shouldn't happen -- Set already validates on write) falls
-// back to 23/8, the mockup's own default, rather than failing the page.
+// parseQuietHours splits cfg.QuietHours into from/to hours; a bad value falls back to 23/8.
 func parseQuietHours(s string) (from, to int, enabled bool) {
 	if s == "" {
 		return 23, 8, false
@@ -169,9 +138,8 @@ func parseWeekly(s string) (day, hm string, enabled bool) {
 // ConfigPageData is what templates/config.html renders against.
 type ConfigPageData struct {
 	PageData
-	// ServerNameRaw is the configured server.name verbatim (may be empty, in
-	// which case ServerName() falls back to the hostname); CollectPublicIP is
-	// the collect.public_ip opt-in. Both back the "Identity" panel (#101/#102).
+	// ServerNameRaw is the configured server.name verbatim (may be empty, in which case
+	// ServerName() falls back to the hostname).
 	ServerNameRaw   string
 	CollectPublicIP bool
 	DiskPct         string
@@ -180,11 +148,8 @@ type ConfigPageData struct {
 	CPUPct          string
 	SwapPct         string
 	AnomalySigma    string
-	// BaselineAlerts/BaselineMinPct back the "Anomaly detection" panel:
-	// BaselineAlerts is the important on/off switch for the whole
-	// z-score-deviation branch (defaults to false); BaselineMinPct is
-	// rendered/accepted as the raw fraction config.Set expects (e.g. 0.15),
-	// not a percent, per the template's hint text.
+	// BaselineAlerts/BaselineMinPct back the "Anomaly detection" panel: BaselineAlerts is the
+	// important on/off switch for the whole z-score-deviation branch (defaults to false).
 	BaselineAlerts         bool
 	BaselineMinPct         string
 	QuietEnabled           bool
@@ -197,9 +162,8 @@ type ConfigPageData struct {
 	FastInterval      string
 	SampleInterval    string
 	HeartbeatInterval string
-	// CollectContainerStats..CollectSmartAttrs mirror config.Config's
-	// Collect.* opt-in extended-collector toggles (all default true);
-	// SmartInterval is collect.smart_interval's effective value in seconds.
+	// CollectContainerStats..CollectSmartAttrs mirror config.Config's Collect.* opt-in
+	// extended-collector toggles (all default true).
 	CollectContainerStats bool
 	CollectNetThroughput  bool
 	CollectServices       bool
@@ -218,38 +182,24 @@ type ConfigPageData struct {
 	Weekdays        []string
 	DeadmanURL      string
 	Targets         []configTargetRow
-	// WebEnabled..WebSessionTTL are the READ-ONLY "Access & domain" panel's
-	// current values (web.enabled/mode/origin/rp_id/listen/session_ttl).
-	// Deliberately not editable here: the page must render no <input> that
-	// config.Set could apply a web.* key from, since a mistaken/forged
-	// origin or rp_id change from the web UI itself could lock an admin out
-	// of passkey login. Managed via `trinetra config set web.*` instead.
+	// WebEnabled..WebSessionTTL are the READ-ONLY "Access & domain" panel's current values
+	// (web.enabled/mode/origin/rp_id/listen/session_ttl).
 	WebEnabled    bool
 	WebMode       string
 	WebOrigin     string
 	WebRPID       string
 	WebListen     string
 	WebSessionTTL string
-	// ManagedFragment (task 8) maps a managed-config allowlist key (e.g.
-	// "thresholds.cpu_pct") to the id of the fleet fragment currently
-	// supplying it, for exactly the keys this node's fleet master is
-	// currently managing. Empty/nil on a master, solo daemon, or a child
-	// with nothing managed. The template disables each such field's
-	// <input> and shows the fragment id; configSaveHandler independently
-	// rejects a POST that names one of these fields regardless (a forged
-	// request bypassing the disabled attribute), never trusting the
-	// disabled attribute alone.
+	// ManagedFragment maps a managed-config allowlist key (e.g. "thresholds.cpu_pct") to the
+	// id of the fleet fragment currently supplying it.
 	ManagedFragment map[string]string
-	// UpdateGitHubTokenSet is whether update.github_token (config.IsSecretKey)
-	// currently holds a value -- the input itself never renders the real
-	// token (secretPlaceholder), so the placeholder text ("(set)"/"(not
-	// set)") is this page's only way to show whether one is stored.
+	// update.github_token (config.IsSecretKey): newCfg is already a clone of oldCfg
+	// (cloneConfig).
 	UpdateGitHubTokenSet bool
 }
 
-// buildConfigPageData assembles ConfigPageData from the current config
-// (d.Cfg()) and the live snapshot's disk mounts (d.Snapshot, for
-// configTargetRows).
+// buildConfigPageData assembles ConfigPageData from the current config (d.Cfg()) and the
+// live snapshot's disk mounts (d.Snapshot, for configTargetRows).
 func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 	cfg := d.Cfg()
 	var snap DashboardView
@@ -344,21 +294,12 @@ func configPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// scalarEdit is one dotted config.Set key/value pair this handler applies,
-// paired up so configSaveHandler can both validate (config.Config.Set
-// itself) and, for whatever actually changed, emit an audit record.
+// scalarEdit is one dotted config.Set key/value pair this handler applies, paired up so
+// configSaveHandler can both validate.
 type scalarEdit struct{ key, val string }
 
-// managedFormFields maps each of the ten managed-config allowlist keys
-// (task 8) to the posted form field name(s) that would change it. A real
-// browser never submits a disabled <input> at all, so when a key is
-// currently managed and NONE of its fields are present in the POST body,
-// configSaveHandler simply leaves it out of the edits it applies (its
-// clone already carries the current value -- see cloneConfig) rather than
-// erroring; when ANY of its fields IS present (a forged request bypassing
-// the disabled attribute, since the real page never sends one), the whole
-// POST is rejected with the same "managed by the fleet master" message the
-// CLI/ctl show.
+// managedFormFields maps each of the ten managed-config allowlist keys to the posted form
+// field name(s) that would change it.
 var managedFormFields = map[string][]string{
 	"thresholds.disk_pct":      {"disk_pct"},
 	"thresholds.mem_pct":       {"mem_pct"},
@@ -372,11 +313,8 @@ var managedFormFields = map[string][]string{
 	"critical_overrides_quiet": {"critical_overrides_quiet"},
 }
 
-// configManagedFragments returns the current key->fragment-id map for the
-// managed-config keys this node's fleet master is managing (nil on a
-// master, solo daemon, or a child with nothing managed, or if Deps has no
-// fleet support at all) -- one Fleet().Status() round trip, mirroring
-// resolveFleetPageInfo's own nil-safety chain (templates.go).
+// configManagedFragments returns the current key->fragment-id map for the managed-config
+// keys this node's fleet master is managing.
 func configManagedFragments(d Deps) map[string]string {
 	if d.Fleet == nil {
 		return nil
@@ -392,9 +330,8 @@ func configManagedFragments(d Deps) map[string]string {
 	return st.Link.Managed
 }
 
-// quietHoursFormValue composes the posted quiet-hours enabled flag + from/to
-// hour <select> values into the "H-H" string config.Set("quiet_hours", ...)
-// expects, or "" to clear it -- the inverse of parseQuietHours.
+// quietHoursFormValue composes the posted quiet-hours enabled flag + from/to hour <select>
+// values into the "H-H" string config.Set("quiet_hours", ...) expects, or "" to clear it.
 func quietHoursFormValue(r *http.Request) string {
 	if r.FormValue("quiet_enabled") == "" {
 		return ""
@@ -420,12 +357,8 @@ func weeklyFormValue(r *http.Request) string {
 	return r.FormValue("weekly_day") + "@" + r.FormValue("weekly_time")
 }
 
-// checkboxFormValue returns the "true"/"false" string config.Config.Set
-// expects for a bool key, from the named checkbox's presence in the posted
-// form. A browser never submits an unchecked checkbox at all (no empty
-// value, no field), so absence must be read as an explicit "false" rather
-// than "leave unchanged" -- this is what lets every collect.*/baseline_
-// alerts/critical_overrides_quiet toggle below round-trip off correctly.
+// checkboxFormValue returns the "true"/"false" string config.Config.Set expects for a bool
+// key, from the named checkbox's presence in the posted form.
 func checkboxFormValue(r *http.Request, name string) string {
 	if r.FormValue(name) == "" {
 		return "false"
@@ -433,14 +366,7 @@ func checkboxFormValue(r *http.Request, name string) string {
 	return "true"
 }
 
-// applyTargetEdits applies the posted monitors-table rows (target_name[],
-// target_enabled[] -- only checked boxes are present, matched by value since
-// unchecked checkboxes never submit -- and target_threshold[], positionally
-// paired with target_name[] since a text input always submits) onto newCfg.
-// Returns a 400-worthy error on an unparseable threshold; never partially
-// applies past that point's caller responsibility (newCfg is always a
-// clone -- see cloneConfig -- so an error here still leaves the live config
-// untouched).
+// applyTargetEdits applies the posted monitors-table rows.
 func applyTargetEdits(newCfg *config.Config, r *http.Request) error {
 	names := r.Form["target_name"]
 	thresholds := r.Form["target_threshold"]
@@ -470,22 +396,8 @@ func applyTargetEdits(newCfg *config.Config, r *http.Request) error {
 	return nil
 }
 
-// applyIntervalEdits sets fast_interval and sample_interval together on
-// newCfg, validating the FINAL (fast, sample) pair as a whole rather than
-// via two sequential config.Config.Set calls. config.Set validates each key
-// against the OTHER field's value as it stands on newCfg at the moment that
-// Set runs -- so applying fast_interval then sample_interval (or the
-// reverse) checks the new value of one against the OLD, not-yet-applied
-// value of the other. That wrongly rejects some genuinely valid final
-// combinations: from defaults (fast=5, sample=60), posting fast=7/sample=126
-// (a valid pair: 126%7==0) fails no matter the order, since 60%7!=0 and
-// 126%5!=0 are both checked in isolation. Mirrors config.Set's own bounds
-// (fast_interval >= 1, sample_interval >= 5, sample must be an integer
-// multiple of fast) but checks them against each other's POSTED values, and,
-// like every other field in configSaveHandler, only mutates newCfg (a
-// clone) once both parse and the pair validates together, so a rejected
-// pair leaves the clone -- and therefore the live config, per cloneConfig's
-// doc -- untouched.
+// applyIntervalEdits sets fast_interval and sample_interval together on newCfg, validating
+// the FINAL.
 func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error {
 	fast, err := strconv.Atoi(fastVal)
 	if err != nil || fast < 1 {
@@ -503,16 +415,8 @@ func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error 
 	return nil
 }
 
-// configSaveHandler handles POST /config: validates every posted field
-// against a clone of the current config via config.Config.Set (its
-// existing, already-tested validators -- a bad value rejects with 400 and
-// writes nothing), and only once every field has passed persists +
-// in-process applies via Deps.API.ApplyConfig (task 8; previously
-// Deps.Reload directly -- ApplyConfig's in-process/file-backed
-// implementations perform the exact same save-then-apply/save-then-SIGHUP
-// sequence Reload always did), then appends one audit record per scalar
-// field that actually changed plus one summarizing any monitors table
-// changes.
+// configSaveHandler handles POST /config: validates every posted field against a clone of
+// the current config via config.Config.Set.
 func configSaveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -539,10 +443,8 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			{"baseline_alerts", checkboxFormValue(r, "baseline_alerts")},
 			{"quiet_hours", quietHoursFormValue(r)},
 			{"critical_overrides_quiet", checkboxFormValue(r, "critical_overrides_quiet")},
-			// fast_interval/sample_interval are deliberately NOT validated here
-			// via newCfg.Set -- see applyIntervalEdits below, called separately
-			// so the two are validated as a single final pair instead of each
-			// against the other's stale value.
+			// fast_interval/sample_interval are deliberately NOT validated here via newCfg.Set --
+			// see applyIntervalEdits below.
 			{"heartbeat_interval", r.FormValue("heartbeat_interval")},
 			{"collect.container_stats", checkboxFormValue(r, "collect_container_stats")},
 			{"collect.net_throughput", checkboxFormValue(r, "collect_net_throughput")},
@@ -557,14 +459,8 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			{"healthchecks.url", r.FormValue("deadman_url")},
 		}
 
-		// Managed-config read-only enforcement (task 8): a key currently
-		// managed by the fleet master is never edited from here. A real
-		// browser never submits a disabled field at all, so its absence from
-		// the POST body is the normal case (silently skipped below, leaving
-		// newCfg's cloned current value untouched); any of its fields
-		// actually being PRESENT means either a stale form or a forged
-		// request, and the whole save is rejected rather than silently
-		// dropping just that field.
+		// Managed-config read-only enforcement: a key currently managed by the fleet master is
+		// never edited from here.
 		managed := configManagedFragments(d)
 		for key, id := range managed {
 			for _, field := range managedFormFields[key] {
@@ -606,13 +502,8 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		// update.github_token (config.IsSecretKey): newCfg is already a clone
-		// of oldCfg (cloneConfig), so simply never setting it here is what
-		// keeps the stored value on a blank submit -- the "empty submit keeps
-		// what's stored" contract task-8-brief.md asks for. Only an explicit,
-		// non-blank token OR the clear checkbox change it, and either change
-		// is audited with "(set)"/"(not set)" in place of the raw secret
-		// value (never the token itself, in either Old or New).
+		// update.github_token (config.IsSecretKey): newCfg is already a clone of oldCfg
+		// (cloneConfig).
 		oldTokenSet := oldCfg.Update.GitHubToken != ""
 		switch tok := strings.TrimSpace(r.FormValue("update_github_token")); {
 		case tok != "":

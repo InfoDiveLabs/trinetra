@@ -92,24 +92,8 @@ func TestAlertsListShowsActiveAndHistoryViaCLI(t *testing.T) {
 	}
 }
 
-// TestAlertsListGoldenOutput is the task-6 golden test: it pins `trinetra
-// alerts list`'s exact rendered output against a fixture exercising both
-// output paths core.AlertRecord cannot fully reproduce --
-//
-//   - an ACKED active alert ("[acked X ago]" needs ActiveAlert.AckedAt,
-//     which core.AlertRecord does not carry -- only Acked bool);
-//   - a history event with Delivered channel results (the "-> channel
-//     status" lines need AlertEvent.Delivered/.Title, neither of which
-//     core.AlertRecord carries either).
-//
-// Per the task-6 brief: cmdAlerts list may only be routed through
-// core.API.ActiveAlerts()/AlertHistory() if doing so keeps this output
-// byte-identical. It cannot (see the missing fields above), so cmdAlerts
-// stays reading AlertState/AlertLog directly (alertStateAndLogPaths) --
-// this test's job is to guard that decision: if a future change routes
-// cmdAlerts through core.API without also widening AlertRecord, this test
-// fails loudly rather than silently dropping ack-age/delivery-status lines
-// from real CLI output.
+// TestAlertsListGoldenOutput pins `trinetra alerts list`'s exact output for two paths
+// core.AlertRecord cannot reproduce:
 func TestAlertsListGoldenOutput(t *testing.T) {
 	dir := t.TempDir()
 	stateDir = dir
@@ -138,11 +122,8 @@ func TestAlertsListGoldenOutput(t *testing.T) {
 		}
 	}
 
-	// now is frozen relative to the fixture's Since/AckedAt/Time values by
-	// computing the expected "ago" text the same way printActiveAlerts does
-	// (humanDur(now-since)) rather than hardcoding a duration string that
-	// would go stale/flaky as wall-clock time passes between a test run and
-	// whenever this file was last edited.
+	// now is frozen relative to the fixture's Since/AckedAt/Time values by computing the
+	// expected "ago" text the same way printActiveAlerts does.
 	now := time.Now().Unix()
 
 	if code := Main([]string{"alerts", "list", "--since", "999999h"}); code != 0 {

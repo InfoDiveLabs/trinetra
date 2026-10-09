@@ -78,10 +78,8 @@ func startShipper(t *testing.T, f *masterFixture, ob *Outbox, gaps GapFiller) (*
 	return sh, cancel
 }
 
-// startShipperWithFastBackoff is startShipper with the data-loop retry
-// backoff shortened to milliseconds, for tests that deliberately trigger
-// several retries (e.g. gap-fill failures) and would otherwise wait out
-// backoffDelay's real 1s-60s jittered wall-clock sleeps.
+// startShipperWithFastBackoff is startShipper with the data-loop retry backoff shortened to
+// milliseconds, for tests that deliberately trigger several retries.
 func startShipperWithFastBackoff(t *testing.T, f *masterFixture, ob *Outbox, gaps GapFiller) (*Shipper, context.CancelFunc) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "fleet-child")
@@ -131,23 +129,8 @@ func TestShipperDrainsOutboxAndSendsLive(t *testing.T) {
 	waitFor(t, "second drain", func() bool { return ob.Acked() == 25 })
 }
 
-// TestShipperPriorityLaneShipsAlertBeforeBacklog: a large samples backlog
-// (10k records, more than one Ingest batch's worth at MaxBatchRecords) plus
-// one freshly-fired alert. The alert must reach the fake master via
-// Backfill before the backlog's first Ingest/Apply call -- proven by call
-// order at the sink, not by timing -- and the backlog must still fully
-// apply afterwards: nothing the priority lane jumped ahead of is lost.
-//
-// Because the priority lane never Acks (Backfill carries no seq
-// bookkeeping) it keeps re-offering the same still-unacked alert on every
-// shipOnce call until the backlog's own Ingest sweep naturally reaches that
-// seq and Acks it for real -- so with a backlog spanning multiple Ingest
-// batches, the alert is backfilled more than once here. That is the
-// intended "re-sent and deduped" behaviour (a real master's replica alert
-// guard, exercised elsewhere, is what makes the extra sends free); what
-// must hold is that every one of those backfills happens before the apply
-// call it precedes, that only the alert's own seq is ever backfilled, and
-// that the backlog still converges to fully applied.
+// TestShipperPriorityLaneShipsAlertBeforeBacklog: with a 10k-record backlog (more than one
+// batch) plus one fresh alert.
 func TestShipperPriorityLaneShipsAlertBeforeBacklog(t *testing.T) {
 	f := newMasterFixture(t)
 	ob, _ := OpenOutbox(t.TempDir(), 64<<20)
@@ -189,11 +172,7 @@ func TestShipperPriorityLaneShipsAlertBeforeBacklog(t *testing.T) {
 		}
 	}
 
-	// Nothing lost: every backlog record plus the alert was eventually
-	// applied for real via the ordinary Ingest path (the fake sink's Apply
-	// just counts seqs; production content-level dedup of the alert's
-	// repeat arrival there is package trinetra's replicaNode.apply, and
-	// TestIngestIsIdempotentAndOrdered covers Ingest's own seq dedup).
+	// Nothing lost: every backlog record plus the alert was applied via Ingest.
 	if applied := f.sink.AppliedFor(nodeID); applied != alertSeq {
 		t.Fatalf("applied = %d, want %d", applied, alertSeq)
 	}
@@ -202,9 +181,8 @@ func TestShipperPriorityLaneShipsAlertBeforeBacklog(t *testing.T) {
 	}
 }
 
-// nodeIDFromOutbox returns the sole node id the fixture's sink has heard
-// from, for tests where the shipper (and so the node id) was started
-// directly rather than through startShipper's return value.
+// nodeIDFromOutbox returns the sole node id the fixture's sink has heard from, for tests
+// where the shipper.
 func nodeIDFromOutbox(t *testing.T, f *masterFixture, ob *Outbox) string {
 	t.Helper()
 	f.sink.mu.Lock()
@@ -219,16 +197,13 @@ func nodeIDFromOutbox(t *testing.T, f *masterFixture, ob *Outbox) string {
 	return ""
 }
 
-// shipOnce must report that the priority lane already made real progress
-// (a durable Backfill the master has) even when the general backlog Read
-// that follows it fails: worked must be true alongside the error, not
-// false, so a caller can tell "something happened" from "nothing did."
+// shipOnce must report worked=true alongside the error when the priority lane
+// made durable progress but the following backlog Read fails.
 func TestShipOnceReportsWorkedTrueWhenPriorityBackfillSucceedsButReadFails(t *testing.T) {
 	f := newMasterFixture(t)
 	dir := t.TempDir()
-	// A tiny segMax forces the alert and the backlog samples after it into
-	// separate segment files, so the backlog's segment(s) can be broken
-	// without touching the one the priority lane reads from.
+	// A tiny segMax forces the alert and the backlog samples after it into separate segment
+	// files.
 	ob, err := OpenOutboxSegmented(dir, 1<<20, 64)
 	if err != nil {
 		t.Fatal(err)
@@ -241,10 +216,8 @@ func TestShipOnceReportsWorkedTrueWhenPriorityBackfillSucceedsButReadFails(t *te
 	}
 	appendN(t, ob, 2, 5)
 
-	// Break every segment that does NOT hold the alert: replace its file
-	// with a directory, so reading it returns a real (non-ErrNotExist)
-	// error instead of silently skipping it like a cap-evicted segment
-	// would.
+	// Break every segment that does NOT hold the alert: replace its file with a directory, so
+	// reading it returns a real.
 	broke := 0
 	for _, s := range ob.segs {
 		if s.first <= alertSeq && alertSeq <= s.last {
@@ -308,9 +281,8 @@ func TestShipperRepairsGapsBeforeOutbox(t *testing.T) {
 	}
 }
 
-// flakyGaps fails Fill some number of times (or forever, if always is set)
-// before succeeding, so tests can exercise the shipper's transient-failure
-// retry and abandon-after-N-attempts behaviour.
+// flakyGaps fails Fill some number of times (or forever, if always is set) before
+// succeeding.
 type flakyGaps struct {
 	mu     sync.Mutex
 	fails  int
@@ -467,11 +439,8 @@ func TestRunReturnsWhenLiveCallbackHangs(t *testing.T) {
 	}
 }
 
-// TestShipperRecoversFromOutboxDivergence: the master already applied up to
-// seq 100 for this node (e.g. the child's outbox was restored from an old
-// backup or deleted) while the child's outbox restarts at 1. The master drops
-// seqs 1..3 as already applied, and acks 100. The child must not lose those
-// records: they are re-sent via backfill, and newer records get seqs > 100.
+// TestShipperRecoversFromOutboxDivergence: the master already applied up to seq 100 for
+// this node.
 func TestShipperRecoversFromOutboxDivergence(t *testing.T) {
 	f := newMasterFixture(t)
 	dir := filepath.Join(t.TempDir(), "fleet-child")
@@ -647,9 +616,8 @@ func (s failingApplySink) Apply(id string, recs []Record) error {
 	return s.Sink.Apply(id, recs)
 }
 
-// While live updates get through but the data lane is backing off with
-// unacked records, the link reads "catching up", never "linked"; once the
-// backlog drains it is "linked" again.
+// While live updates get through but the data lane is backing off with unacked records, the
+// link reads "catching up", never "linked"; once the backlog drains it is "linked" again.
 func TestShipperCatchingUpWhileDataLaneRetries(t *testing.T) {
 	var fail atomic.Bool
 	fail.Store(true)

@@ -9,9 +9,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// downFleet registers n nodes, and makes them all go down. With recent=true
-// they were last seen just before going down (a mass disconnect); otherwise
-// long ago (individually down).
+// downFleet registers n nodes, and makes them all go down.
 func downFleet(t *testing.T, n int, recent bool) (*masterState, []string, time.Time) {
 	t.Helper()
 	m := newTestMasterState(t)

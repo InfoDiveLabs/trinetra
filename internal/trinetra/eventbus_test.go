@@ -1,9 +1,5 @@
-// Package trinetra: eventbus_test.go pins eventBus's core contract --
-// the whole reason it exists, per its own doc (eventbus.go): Publish must
-// NEVER block the sampler loop / dispatchAndLog caller, regardless of how
-// many subscribers there are or how slow/absent they are. Every test here
-// is synchronous and single-goroutine (buffered channels make that
-// possible), so `go test -race` is the only concurrency proof needed on top.
+// Package trinetra: eventbus_test.go pins eventBus's core contract -- the whole reason it
+// exists, per its own doc (eventbus.go).
 package trinetra
 
 import (
@@ -12,18 +8,14 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestEventBusPublishNoSubscribersDoesNotBlock is the base case: Publish
-// against a freshly built bus with zero subscribers must return immediately
-// rather than blocking or panicking (there is, after all, nowhere to send
-// to).
+// TestEventBusPublishNoSubscribersDoesNotBlock is the base case.
 func TestEventBusPublishNoSubscribersDoesNotBlock(t *testing.T) {
 	b := newEventBus()
 	b.Publish(core.Event{Kind: "snapshot", Time: 1})
 }
 
-// TestEventBusPublishDeliversToAllSubscribers pins the fan-out: a single
-// Publish call must reach every subscriber currently registered, each
-// getting its own copy off its own channel.
+// TestEventBusPublishDeliversToAllSubscribers pins the fan-out: a single Publish call must
+// reach every subscriber currently registered.
 func TestEventBusPublishDeliversToAllSubscribers(t *testing.T) {
 	b := newEventBus()
 	ch1, cancel1 := b.Subscribe()
@@ -44,11 +36,8 @@ func TestEventBusPublishDeliversToAllSubscribers(t *testing.T) {
 	}
 }
 
-// TestEventBusPublishDropsWhenSubscriberBufferFull pins the drop-on-full
-// contract: filling a subscriber's buffer to capacity (eventBusBuffer) and
-// then publishing one more event must not block the publisher -- the
-// overflow event is simply dropped, and the events already buffered stay
-// readable in order.
+// TestEventBusPublishDropsWhenSubscriberBufferFull pins the drop-on-full contract: filling
+// a subscriber's buffer to capacity.
 func TestEventBusPublishDropsWhenSubscriberBufferFull(t *testing.T) {
 	b := newEventBus()
 	ch, cancel := b.Subscribe()
@@ -58,9 +47,6 @@ func TestEventBusPublishDropsWhenSubscriberBufferFull(t *testing.T) {
 		b.Publish(core.Event{Kind: "snapshot", Time: int64(i)})
 	}
 	// The buffer is now exactly full (cap eventBusBuffer, 0 read out yet).
-	// This next Publish must return immediately (select/default drop) rather
-	// than block -- if it blocked, this test would hang and -race/the test
-	// timeout would catch it.
 	b.Publish(core.Event{Kind: "snapshot", Time: 999})
 
 	for i := 0; i < eventBusBuffer; i++ {
@@ -76,27 +62,22 @@ func TestEventBusPublishDropsWhenSubscriberBufferFull(t *testing.T) {
 	}
 }
 
-// TestEventBusCancelRemovesSubscriberAndClosesChannel pins cancel's two
-// effects: a Publish after cancel is no longer delivered to that
-// subscriber (proven by the channel being closed, not just silent), and
-// calling cancel a second time is safe (no panic on double-close).
+// TestEventBusCancelRemovesSubscriberAndClosesChannel pins cancel's two effects: a Publish
+// after cancel is no longer delivered to that subscriber.
 func TestEventBusCancelRemovesSubscriberAndClosesChannel(t *testing.T) {
 	b := newEventBus()
 	ch, cancel := b.Subscribe()
 
 	cancel()
 
-	// A closed channel with nothing buffered receives the zero value with
-	// ok==false immediately -- proving the channel was actually closed, not
-	// just abandoned.
+	// A closed channel with nothing buffered receives the zero value with ok==false
+	// immediately -- proving the channel was actually closed, not just abandoned.
 	if v, ok := <-ch; ok {
 		t.Fatalf("ch open after cancel: got %+v, ok=%v, want closed", v, ok)
 	}
 
-	// A Publish after cancel must not somehow resurrect delivery to this
-	// subscriber -- there is nothing left to observe on ch (it's closed),
-	// this just proves Publish itself doesn't panic against a bus with no
-	// remaining subscribers.
+	// A Publish after cancel must not somehow resurrect delivery to this subscriber -- there
+	// is nothing left to observe on ch (it's closed).
 	b.Publish(core.Event{Kind: "snapshot", Time: 1})
 
 	cancel() // double-cancel must be safe (no panic on double-close).

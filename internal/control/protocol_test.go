@@ -69,9 +69,8 @@ func TestFrameRoundTripHello(t *testing.T) {
 	}
 }
 
-// TestFrameWriteAppendsNewlineAndMultipleFramesReadInOrder checks that each
-// frame is newline-delimited so multiple frames written to the same stream
-// can be read back one at a time, in order.
+// TestFrameWriteAppendsNewlineAndMultipleFramesReadInOrder: frames are
+// newline-delimited and read back one at a time, in order.
 func TestFrameWriteAppendsNewlineAndMultipleFramesReadInOrder(t *testing.T) {
 	var buf bytes.Buffer
 	first := request{ID: 1, Method: "Snapshot", Params: json.RawMessage(`{}`)}

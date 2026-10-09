@@ -31,15 +31,8 @@ func TestUpdateResultAlert(t *testing.T) {
 	}
 }
 
-// TestNotifyRestoreFailedAlertsOnce is issue #136's alerting half:
-// rollbackPending keeps Pending set (with RestoreFailed recorded) when
-// restoring the previous build fails, since the guard is a separate,
-// short-lived process that cannot notify directly. notifyRestoreFailed is
-// the daemon's periodic-loop chance to raise the critical alert exactly
-// once for that failure episode, deduped via the persisted
-// RestoreFailedNotified flag -- repeated failing watchdog retries (each a
-// fresh guard run that rewrites RestoreFailed) must not re-alert every
-// tick.
+// TestNotifyRestoreFailedAlertsOnce is issue #136's alerting half: rollbackPending keeps
+// Pending set (with RestoreFailed recorded) when restoring the previous build fails.
 func TestNotifyRestoreFailedAlertsOnce(t *testing.T) {
 	p := testUpdatePaths(t)
 	now := time.Unix(5000, 0)
@@ -68,9 +61,8 @@ func TestNotifyRestoreFailedAlertsOnce(t *testing.T) {
 		t.Fatalf("RestoreFailedNotified not persisted: %+v", st.Pending)
 	}
 
-	// A repeated failing retry: the guard reran, restorePrevious failed
-	// again, and rewrote Pending.RestoreFailed -- but left
-	// RestoreFailedNotified as it was (true). No second alert.
+	// A repeated failing retry: the guard reran, restorePrevious failed again, and rewrote
+	// Pending.RestoreFailed -- but left RestoreFailedNotified as it was (true).
 	st.Pending.RestoreFailed = "restoring the previous build also failed: permission denied (retry)"
 	if err := update.SaveState(p.dir(), st); err != nil {
 		t.Fatal(err)
@@ -112,9 +104,7 @@ func TestUpdateAvailableAlertOncePerVersion(t *testing.T) {
 }
 
 // channelSource is a Source fake for runDueCheck tests: unlike mapSource
-// (update_apply_test.go), whose ChannelAsset always returns
-// update.ErrNoChannel, this also serves channel pointer bytes so a full
-// u.check() round trip (FetchLatest + FetchRelease) can succeed.
+// (update_apply_test.go), whose ChannelAsset always returns update.ErrNoChannel.
 type channelSource struct {
 	channel map[string][]byte
 	release mapSource
@@ -163,12 +153,7 @@ func staleAlerts(as []Alert) int {
 	return n
 }
 
-// TestRunDueCheckFreezeDetection is R17: the freeze alert must actually be
-// able to fire. An expired or missing pointer is the freeze signature and
-// alerts at once; a LastPointerIssued older than 14 days alerts whatever the
-// check's outcome; a plain network error alerts only once the last good
-// pointer is more than 14 days old. Each episode alerts once, and the dedup
-// is persisted in State so a daemon restart does not re-page.
+// TestRunDueCheckFreezeDetection: the freeze alert must actually be able to fire.
 func TestRunDueCheckFreezeDetection(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	fresh := now.Add(-2 * 24 * time.Hour).Format(time.RFC3339)
@@ -255,14 +240,8 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// TestRunDueCheckNeverVerifiedPointer is R25: freeze detection only makes
-// sense once a host has verified a channel pointer at least once
-// (State.LastPointerIssued). A fresh, unconfigured install (update.source=
-// github, private release repo, no update.github_token) 404s on every
-// check; before any pointer has ever verified, that must not raise the
-// stale/freeze alert on tick one, and must not spam a log line every tick --
-// just one line per distinct failure cause, and the cause surfaces via
-// State.LastCheckError (what `update status` reads).
+// TestRunDueCheckNeverVerifiedPointer: freeze detection only makes sense once a host has
+// verified a channel pointer at least once (State.LastPointerIssued).
 func TestRunDueCheckNeverVerifiedPointer(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	p := testUpdatePaths(t)
@@ -294,9 +273,7 @@ func TestRunDueCheckNeverVerifiedPointer(t *testing.T) {
 }
 
 // TestRunDueCheckSeenOnceThenExpired: once a pointer has verified once
-// (State.LastPointerIssued set), R17 applies unchanged -- an expired pointer
-// is the freeze signature and alerts at once, unlike
-// TestRunDueCheckNeverVerifiedPointer's silence before that.
+// (State.LastPointerIssued set).
 func TestRunDueCheckSeenOnceThenExpired(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	p := testUpdatePaths(t)
@@ -313,10 +290,8 @@ func TestRunDueCheckSeenOnceThenExpired(t *testing.T) {
 	}
 }
 
-// TestRunDueCheckSeenOnceThenMissing: once a pointer has verified once, a
-// 404/missing pointer (e.g. the token was removed afterward) still counts as
-// a real freeze signal and alerts, same as TestRunDueCheckFreezeDetection's
-// "missing pointer alerts at once" case.
+// TestRunDueCheckSeenOnceThenMissing: once a pointer has verified once, a 404/missing
+// pointer.
 func TestRunDueCheckSeenOnceThenMissing(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	p := testUpdatePaths(t)

@@ -11,9 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestSettingsGroupsFromCatalog asserts settingsGroups returns the distinct
-// groups from config.Keys(), in the catalog's own first-seen order, with no
-// duplicates -- the "all settings" screen's top level group list.
+// TestSettingsGroupsFromCatalog asserts settingsGroups returns the distinct groups from
+// config.Keys(), in the catalog's own first-seen order, with no duplicates.
 func TestSettingsGroupsFromCatalog(t *testing.T) {
 	groups := settingsGroups()
 	if len(groups) == 0 {
@@ -32,10 +31,8 @@ func TestSettingsGroupsFromCatalog(t *testing.T) {
 			t.Errorf("settingsGroups() is missing group %q (from key %q)", ki.Group, ki.Name)
 		}
 	}
-	// "Intervals" is the catalog's first group (config.go's keyCatalog
-	// starts with sample_interval/fast_interval/heartbeat_interval); pin
-	// the ordering guarantee so a screen can rely on catalog order rather
-	// than resorting.
+	// "Intervals" is the catalog's first group (config.go's keyCatalog starts with
+	// sample_interval/fast_interval/heartbeat_interval).
 	if groups[0] != "Intervals" {
 		t.Errorf("settingsGroups()[0] = %q, want Intervals (catalog order)", groups[0])
 	}
@@ -67,9 +64,8 @@ func TestSettingsGroupKeysUnknownGroupIsEmpty(t *testing.T) {
 	}
 }
 
-// TestApplyConfigKeySetsValidValue asserts applyConfigKey sets exactly the
-// named key via config.Set, the same validated setter every other manage
-// screen ultimately uses.
+// TestApplyConfigKeySetsValidValue asserts applyConfigKey sets exactly the named key via
+// config.Set, the same validated setter every other manage screen ultimately uses.
 func TestApplyConfigKeySetsValidValue(t *testing.T) {
 	cfg := &config.Config{}
 	if err := applyConfigKey(cfg, "sample_interval", "30"); err != nil {
@@ -104,13 +100,8 @@ func TestApplyConfigKeyUnknownKeyErrors(t *testing.T) {
 
 // --- Bubble Tea glue: group list -> key list -> value input ---
 
-// openSettingsGroupList drives 'm', moves the menu cursor down to "all
-// settings" (the last row manageItems appends), opens it, and runs the
-// resulting fetchSettingsConfigCmd through to completion -- the pre-fill
-// round trip every screen does on open, mirroring manage_ui_test.go's
-// openManageScreen for the schedule/quiet-hours/healthchecks screens (which
-// this screen does not share state with, since it uses its own mgr.set*
-// fields rather than mgr.configLoading/mgr.valueIn).
+// openSettingsGroupList drives 'm', moves the menu cursor down to "all settings" (the last
+// row manageItems appends), opens it.
 func openSettingsGroupList(t *testing.T, api core.API) tea.Model {
 	t.Helper()
 	var mm tea.Model = newModel(api)
@@ -130,9 +121,8 @@ func openSettingsGroupList(t *testing.T, api core.API) tea.Model {
 	return mm
 }
 
-// TestManageSettingsMenuEntryOpensGroupList asserts "all settings" is the
-// last row of the management menu and opening it lands on the group list,
-// populated from settingsGroups().
+// TestManageSettingsMenuEntryOpensGroupList asserts "all settings" is the last row of the
+// management menu and opening it lands on the group list, populated from settingsGroups().
 func TestManageSettingsMenuEntryOpensGroupList(t *testing.T) {
 	mm := openSettingsGroupList(t, &fakeAPI{cfg: config.Default()})
 	got := mm.(model)
@@ -147,9 +137,8 @@ func TestManageSettingsMenuEntryOpensGroupList(t *testing.T) {
 	}
 }
 
-// TestManageSettingsGroupSelectOpensKeyListWithCurrentValues asserts
-// selecting a group opens its key list, and that the list can report each
-// key's CURRENT value via the freshly fetched config (mgr.setCfg.Get).
+// TestManageSettingsGroupSelectOpensKeyListWithCurrentValues asserts selecting a group
+// opens its key list.
 func TestManageSettingsGroupSelectOpensKeyListWithCurrentValues(t *testing.T) {
 	cfg := config.Default()
 	cfg.FastInterval = 7
@@ -191,10 +180,7 @@ func TestManageSettingsKeySelectPrefillsCurrentValue(t *testing.T) {
 	}
 }
 
-// TestManageSettingsValueApplyValidChangesOnlyThatKey drives a full edit
-// (group -> key -> new value -> enter) and asserts ApplyConfig received a
-// config with EXACTLY that key changed and nothing else -- the fetch-fresh/
-// mutate-one-key/apply shape every other manage screen uses.
+// TestManageSettingsValueApplyValidChangesOnlyThatKey drives a full edit.
 func TestManageSettingsValueApplyValidChangesOnlyThatKey(t *testing.T) {
 	cfg := config.Default()
 	api := &fakeAPI{cfg: cfg}
@@ -231,9 +217,8 @@ func TestManageSettingsValueApplyValidChangesOnlyThatKey(t *testing.T) {
 	if api.applied.FastInterval != 10 {
 		t.Errorf("applied.FastInterval = %d, want 10", api.applied.FastInterval)
 	}
-	// Nothing else should have moved: compare every other field against
-	// the original default by round-tripping through the Get/Set-visible
-	// keys, using SampleInterval as the representative untouched sibling.
+	// Nothing else should have moved: compare every other field against the original default
+	// by round-tripping through the Get/Set-visible keys.
 	if api.applied.SampleInterval != cfg.SampleInterval {
 		t.Errorf("applied.SampleInterval = %d, want unchanged %d", api.applied.SampleInterval, cfg.SampleInterval)
 	}
@@ -250,9 +235,8 @@ func TestManageSettingsValueApplyValidChangesOnlyThatKey(t *testing.T) {
 	}
 }
 
-// TestManageSettingsValueApplyInvalidDoesNotCallApplyConfig asserts a value
-// config.Set rejects surfaces the error on the result screen and never
-// reaches ApplyConfig, so nothing invalid is ever persisted.
+// TestManageSettingsValueApplyInvalidDoesNotCallApplyConfig asserts a value config.Set
+// rejects surfaces the error on the result screen and never reaches ApplyConfig.
 func TestManageSettingsValueApplyInvalidDoesNotCallApplyConfig(t *testing.T) {
 	api := &fakeAPI{cfg: config.Default()}
 	mm := openSettingsGroupList(t, api)
@@ -284,10 +268,8 @@ func TestManageSettingsValueApplyInvalidDoesNotCallApplyConfig(t *testing.T) {
 	}
 }
 
-// TestManageSettingsRestartRequiredCaveatShown asserts a RestartRequired
-// key (storage.backend) shows the restart caveat on its value screen, the
-// same style the guided web-setup wizard already uses for its own
-// restart-required keys.
+// TestManageSettingsRestartRequiredCaveatShown asserts a RestartRequired key
+// (storage.backend) shows the restart caveat on its value screen.
 func TestManageSettingsRestartRequiredCaveatShown(t *testing.T) {
 	api := &fakeAPI{cfg: config.Default()}
 	mm := openSettingsGroupList(t, api)
@@ -310,10 +292,8 @@ func TestManageSettingsRestartRequiredCaveatShown(t *testing.T) {
 	}
 }
 
-// TestManageSettingsGroupFetchErrorIsGraceful asserts a failing Config()
-// fetch on screen-open surfaces mgr.setErr rather than crashing or showing
-// a stale/blank screen, mirroring TestManageConfigFetchErrorIsGraceful for
-// the schedule/quiet-hours/healthchecks screens.
+// TestManageSettingsGroupFetchErrorIsGraceful asserts a failing Config() fetch on
+// screen-open surfaces mgr.setErr rather than crashing or showing a stale/blank screen.
 func TestManageSettingsGroupFetchErrorIsGraceful(t *testing.T) {
 	wantErr := errors.New("config fetch failed")
 	api := &fakeAPI{cfg: config.Default(), configErr: wantErr}
@@ -362,12 +342,10 @@ func eqFold(a, b string) bool {
 	return true
 }
 
-// --- round-1 review, IMPORTANT 2: managed-key refusal across every ---------
-// --- dedicated ctl edit path (not just the generic "all settings" screen) -
+// --- managed-key refusal across every dedicated ctl edit path ---------------
 
-// stubFleetAPI satisfies core.FleetAPI by embedding a nil core.FleetAPI and
-// overriding only Status -- the one method managedFragmentFor ever calls --
-// so a test fake never has to implement the whole (large) interface.
+// stubFleetAPI satisfies core.FleetAPI by embedding a nil core.FleetAPI and overriding only
+// Status -- the one method managedFragmentFor ever calls.
 type stubFleetAPI struct {
 	core.FleetAPI
 	status core.FleetStatus
@@ -375,12 +353,8 @@ type stubFleetAPI struct {
 
 func (s stubFleetAPI) Status() (core.FleetStatus, error) { return s.status, nil }
 
-// fleetAwareFakeAPI adds core.FleetProvider to *fakeAPI (run_test.go),
-// wrapping whatever core.FleetStatus (in particular its Link.Managed map)
-// a test wants managedFragmentFor to see, without changing fakeAPI itself
-// (every other ctl test keeps using a plain *fakeAPI, which never satisfies
-// core.FleetProvider at all -- managedFragmentFor's type assertion simply
-// reports "not managed" for those, exactly the pre-existing behavior).
+// fleetAwareFakeAPI adds core.FleetProvider to *fakeAPI (run_test.go), wrapping whatever
+// core.FleetStatus.
 type fleetAwareFakeAPI struct {
 	*fakeAPI
 	status core.FleetStatus
@@ -395,9 +369,8 @@ func managedStatus(key, fragmentID string) core.FleetStatus {
 	return core.FleetStatus{Role: "child", Link: &core.LinkView{Managed: map[string]string{key: fragmentID}}}
 }
 
-// TestApplyQuietHoursCmdRefusedWhenManaged pins the ctl Quiet Hours screen's
-// refusal (round-1 review IMPORTANT 2): identical message to `config set`/
-// the web config page, and ApplyConfig/Config are never even called.
+// TestApplyQuietHoursCmdRefusedWhenManaged pins the ctl Quiet Hours screen's refusal:
+// identical message to `config set`/ the web config page.
 func TestApplyQuietHoursCmdRefusedWhenManaged(t *testing.T) {
 	base := &fakeAPI{cfg: config.Default()}
 	api := fleetAwareFakeAPI{fakeAPI: base, status: managedStatus("quiet_hours", "fragqh123456")}
@@ -415,10 +388,8 @@ func TestApplyQuietHoursCmdRefusedWhenManaged(t *testing.T) {
 	}
 }
 
-// TestApplyConfigKeyCmdRefusedWhenManaged pins the generic "all settings"
-// screen's refusal for an allowlisted key it, unlike the dedicated Quiet
-// Hours screen, ALSO reaches (e.g. thresholds.cpu_pct has no dedicated
-// screen of its own).
+// TestApplyConfigKeyCmdRefusedWhenManaged pins the generic "all settings" screen's refusal
+// for an allowlisted key it, unlike the dedicated Quiet Hours screen, ALSO reaches.
 func TestApplyConfigKeyCmdRefusedWhenManaged(t *testing.T) {
 	base := &fakeAPI{cfg: config.Default()}
 	api := fleetAwareFakeAPI{fakeAPI: base, status: managedStatus("thresholds.cpu_pct", "fragcpu123456")}
@@ -436,10 +407,7 @@ func TestApplyConfigKeyCmdRefusedWhenManaged(t *testing.T) {
 	}
 }
 
-// TestApplyQuietHoursCmdUnaffectedWhenNotManaged is the negative case: a
-// plain *fakeAPI (no fleet support at all, the pre-existing behavior of
-// every other ctl test) and a fleet-aware API reporting nothing managed
-// must both apply normally.
+// TestApplyQuietHoursCmdUnaffectedWhenNotManaged is the negative case: a plain *fakeAPI.
 func TestApplyQuietHoursCmdUnaffectedWhenNotManaged(t *testing.T) {
 	base := &fakeAPI{cfg: config.Default()}
 	msg := runCmd(t, applyQuietHoursCmd(base, "1-2"))

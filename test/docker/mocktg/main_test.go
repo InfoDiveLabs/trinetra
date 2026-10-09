@@ -9,10 +9,8 @@ import (
 	"testing"
 )
 
-// TestMocktgRecordsReplyMarkup pins task 9's mocktg extension: a
-// sendMessage carrying reply_markup is recorded (index-aligned with
-// /_messages), and one sent WITHOUT it records "" at that index --
-// preserving the existing /_messages shape callers already grep.
+// TestMocktgRecordsReplyMarkup pins task 9's mocktg extension: a sendMessage carrying
+// reply_markup is recorded (index-aligned with /_messages).
 func TestMocktgRecordsReplyMarkup(t *testing.T) {
 	srv := httptest.NewServer(newMux())
 	defer srv.Close()
@@ -41,10 +39,8 @@ func TestMocktgRecordsReplyMarkup(t *testing.T) {
 	}
 }
 
-// TestMocktgCallbackInjectionRoundTrip pins the /_inject_callback ->
-// getUpdates round trip: an injected callback_query is served back exactly
-// once, decodes with telegram.Client.GetUpdates's expected shape (id, data,
-// from.id, message.chat.id), and answerCallbackQuery is recorded.
+// TestMocktgCallbackInjectionRoundTrip pins the /_inject_callback -> getUpdates round trip:
+// an injected callback_query is served back exactly once.
 func TestMocktgCallbackInjectionRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(newMux())
 	defer srv.Close()
@@ -82,8 +78,7 @@ func TestMocktgCallbackInjectionRoundTrip(t *testing.T) {
 		t.Fatalf("callback_query = %+v", cb)
 	}
 
-	// A second getUpdates must NOT redeliver it (drained, like plain
-	// messages already are).
+	// A second getUpdates must NOT redeliver it (drained, like plain messages already are).
 	var raw2 struct {
 		Result []map[string]any `json:"result"`
 	}
@@ -116,11 +111,8 @@ func TestMocktgRecordsChatID(t *testing.T) {
 	}
 }
 
-// TestMocktgGetUpdatesScopedByToken pins the fleet-e2e requirement that an
-// update injected for one bot token is never delivered to a different
-// token's getUpdates poller (each daemon in the fleet harness carries its
-// own token), while an update injected with no token (the legacy/shared
-// bucket) still reaches whichever token polls first.
+// TestMocktgGetUpdatesScopedByToken pins the fleet-e2e requirement that an update injected
+// for one bot token is never delivered to a different token's getUpdates poller.
 func TestMocktgGetUpdatesScopedByToken(t *testing.T) {
 	srv := httptest.NewServer(newMux())
 	defer srv.Close()

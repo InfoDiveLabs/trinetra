@@ -9,10 +9,7 @@ import (
 	"testing"
 )
 
-// newTestPlugin creates a temp file at dir/name with content and mode 0o755
-// (owner rwx, group/other read+exec but NOT write, so it passes the
-// group/world-writable check by default). Tests that want to violate a
-// specific invariant chmod it further after this call.
+// newTestPlugin creates a temp file at dir/name with content and mode 0o755.
 func newTestPlugin(t *testing.T, dir, name string, content []byte) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -204,9 +201,8 @@ func TestVerifyPlugin_RejectsSymlink(t *testing.T) {
 	}
 	manifest := map[string]string{"ctl": sum}
 
-	// verifyPlugin must Lstat, not Stat: called directly on a symlink (as
-	// opposed to a path pluginPath already resolved) it must refuse, not
-	// silently follow it.
+	// verifyPlugin must Lstat, not Stat: called directly on a symlink (as opposed to a path
+	// pluginPath already resolved) it must refuse, not silently follow it.
 	err = verifyPlugin(link, os.Getuid(), manifest, "ctl")
 	if !errors.Is(err, errPluginVerificationFailed) {
 		t.Fatalf("want errPluginVerificationFailed for a symlink, got %v", err)
@@ -226,10 +222,8 @@ func TestVerifyPlugin_MissingFile(t *testing.T) {
 	}
 }
 
-// TestPluginPath_NeverConsultsPath plants a plugin-shaped binary on $PATH
-// and asserts pluginPath ignores it entirely: it must resolve strictly
-// relative to the core binary's own directory (os.Executable()), which is
-// the PATH-hijack defense from the threat model.
+// TestPluginPath_NeverConsultsPath plants a plugin-shaped binary on $PATH and asserts
+// pluginPath ignores it entirely.
 func TestPluginPath_NeverConsultsPath(t *testing.T) {
 	pathDir := t.TempDir()
 	fake := filepath.Join(pathDir, "trinetra-pathtrap")
@@ -251,12 +245,8 @@ func TestPluginPath_NotInstalled(t *testing.T) {
 	}
 }
 
-// TestPluginPath_ResolvesNextToCoreBinary and its symlink counterpart write
-// a synthetic plugin file directly next to the running test binary (what
-// os.Executable() reports during `go test`), which is normally a writable
-// temp directory. If the sandbox this happens to run in doesn't allow that,
-// skip rather than fail: the behavior is still covered indirectly by
-// TestResolveAndVerifyPlugin_Success below via resolveAndVerifyPlugin.
+// TestPluginPath_ResolvesNextToCoreBinary and its symlink counterpart write a synthetic
+// plugin file directly next to the running test binary.
 func TestPluginPath_ResolvesNextToCoreBinary(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -367,10 +357,8 @@ func TestLoadPluginManifest_Corrupt(t *testing.T) {
 	}
 }
 
-// TestResolveAndVerifyPlugin_Success exercises the full resolve+verify path
-// launchPlugin runs before it would call syscall.Exec (which can't itself
-// be unit tested since it replaces the process on success). Everything up
-// to, but not including, the exec is covered here.
+// TestResolveAndVerifyPlugin_Success exercises the full resolve+verify path launchPlugin
+// runs before it would call syscall.Exec.
 func TestResolveAndVerifyPlugin_Success(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -415,10 +403,8 @@ func TestResolveAndVerifyPlugin_Success(t *testing.T) {
 	}
 }
 
-// TestResolveAndVerifyPlugin_TamperedBinary tampers the plugin AFTER the
-// manifest is written (mirroring a swap attack) and confirms
-// resolveAndVerifyPlugin refuses -- i.e. that launchPlugin would never
-// reach syscall.Exec in this case.
+// TestResolveAndVerifyPlugin_TamperedBinary tampers the plugin AFTER the manifest is
+// written (mirroring a swap attack) and confirms resolveAndVerifyPlugin refuses.
 func TestResolveAndVerifyPlugin_TamperedBinary(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {
