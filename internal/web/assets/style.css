@@ -89,10 +89,11 @@ a:hover{text-decoration-color:var(--text)}
    (already margin-top:auto) stays pinned at the bottom, never overlapping. */
 .nav{flex:1 1 auto; min-height:0; overflow-y:auto}
 .nav a{display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:var(--r-sm); color:var(--muted); font-weight:500; font-size:13.5px}
-.nav a .ic{width:16px; text-align:center; opacity:.85} .nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
+.nav a .ic{width:16px; display:inline-flex; align-items:center; justify-content:center; flex:none; opacity:.85} .nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
 .nav a:hover{background:var(--surface2); color:var(--text)}
 .nav a.active{background:var(--elev); color:var(--text); box-shadow:inset 2px 0 0 var(--text)}
 .nav a.active .ic{color:var(--text); opacity:1}
+.ic .i{display:block}
 .nav .grp{margin-top:14px; padding:4px 11px}
 .side .foot{margin-top:auto; padding:10px 8px 2px; border-top:1px solid var(--border-soft); flex:none}
 .avatar{width:26px;height:26px;border-radius:50%;background:var(--elev);border:1px solid var(--border);display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:700}
@@ -524,7 +525,7 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   .botnav a,.botnav button{flex:1 1 0; display:flex; flex-direction:column; align-items:center;
     justify-content:center; gap:3px; min-height:56px; padding:6px 2px; position:relative;
     background:none; border:0; color:var(--muted); font:inherit; cursor:pointer; text-decoration:none}
-  .botnav .ic{font-size:18px; line-height:1; opacity:.85}
+  .botnav .ic{display:inline-flex; line-height:1; opacity:.85} .botnav .ic .i{width:20px; height:20px}
   .botnav .lb{font-size:10.5px; letter-spacing:.01em}
   .botnav a.active,.botnav button.active{color:var(--text)}
   .botnav a.active .ic{opacity:1}
@@ -552,7 +553,7 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   .sheet-nav{display:flex; flex-direction:column; gap:2px; min-height:0; overflow-y:auto; flex:1 1 auto}
   .sheet-nav a{display:flex; align-items:center; gap:12px; min-height:48px; padding:12px 10px;
     border-radius:var(--r-sm); color:var(--text); font-size:15px; font-weight:500}
-  .sheet-nav a .ic{width:18px; text-align:center; color:var(--muted); opacity:.9}
+  .sheet-nav a .ic{width:18px; display:inline-flex; align-items:center; justify-content:center; color:var(--muted); opacity:.9}
   .sheet-nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
   .sheet-nav a.active{background:var(--elev)}
   .sheet-nav a.active .ic{color:var(--text); opacity:1}
