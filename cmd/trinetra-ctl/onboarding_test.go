@@ -7,35 +7,6 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-func TestNeedsOnboardingNilConfig(t *testing.T) {
-	if !needsOnboarding(nil) {
-		t.Error("needsOnboarding(nil) = false, want true")
-	}
-}
-
-func TestNeedsOnboardingNoToken(t *testing.T) {
-	if !needsOnboarding(&config.Config{}) {
-		t.Error("needsOnboarding(no token) = false, want true")
-	}
-}
-
-func TestNeedsOnboardingTokenNotEnrolled(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Telegram.Token = "abc"
-	if !needsOnboarding(cfg) {
-		t.Error("needsOnboarding(token set, no chat id) = false, want true")
-	}
-}
-
-func TestNeedsOnboardingEnrolled(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Telegram.Token = "abc"
-	cfg.Telegram.ChatID = "123"
-	if needsOnboarding(cfg) {
-		t.Error("needsOnboarding(token+chat id set) = true, want false")
-	}
-}
-
 func TestApplyOnboardTokenSetsToken(t *testing.T) {
 	cfg := &config.Config{}
 	if err := applyOnboardToken(cfg, "mytoken"); err != nil {

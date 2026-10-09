@@ -588,7 +588,7 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, fetchSettingsConfigCmd(m.api)
 		}
 	case "esc", "q":
-		m.step = stepHome
+		return m.goHome()
 	}
 	return m, nil
 }

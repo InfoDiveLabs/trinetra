@@ -38,6 +38,7 @@ const (
 	stepSetupWeb
 	stepManage
 	stepOnboard
+	stepFirstRun
 )
 
 // refreshInterval is how often the home screen re-fetches Snapshot() while
@@ -113,6 +114,9 @@ type model struct {
 	// first-run onboarding (capture the Telegram bot token, then show the
 	// enrollment pin and poll until enrolled -- see onboard_ui.go)
 	onboard onboardModel
+
+	firstRun  firstRunModel
+	noChannel bool
 
 	quitting bool
 }
@@ -246,6 +250,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateManageKey(msg)
 		case stepOnboard:
 			return m.updateOnboardKey(msg)
+		case stepFirstRun:
+			return m.updateFirstRunKey(msg)
 		}
 		return m, nil
 
@@ -384,7 +390,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mgr.chanSaving = false
 		m.mgr.applyErr = msg.err
 		m.mgr.screen = manageResult
-		return m, nil
+		return m, fetchOnboardCheckCmd(m.api)
 
 	case settingsConfigMsg:
 		m.mgr.setLoading = false
@@ -407,17 +413,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.cfg != nil {
 			m.serverName = msg.cfg.ServerName()
 		}
-		// Only auto-enter onboarding if the user is still sitting on Home:
-		// by the time this lands (it's fetched alongside the snapshot/tick
-		// in Init, so it can arrive after other keys), they may already have
-		// navigated into the web wizard or the management menu, and forcing
-		// them out into onboarding would be more annoying than helpful.
-		if m.step == stepHome && needsOnboarding(msg.cfg) {
-			m.step = stepOnboard
-			m.onboard = onboardModel{tokenIn: newManageValueInput("bot token from @BotFather")}
-			return m, m.onboard.tokenIn.Focus()
+		m.noChannel = msg.cfg != nil && !anyChannelEnabled(msg.cfg)
+		// Only start the first run from Home: this lands after Init, and the
+		// user may already have moved into another screen.
+		if m.step == stepHome && needsFirstRun(msg.cfg, msg.webUsers) {
+			return m.startFirstRun(), nil
 		}
 		return m, nil
+
+	case firstRunInviteMsg:
+		m.firstRun.inviting = false
+		m.firstRun.inviteURL, m.firstRun.inviteErr, m.firstRun.adminExists = msg.url, msg.err, msg.exists
+		if msg.exists && m.step == stepFirstRun && m.firstRun.screen == frAdmin {
+			m.firstRun.screen = frAlerts
+		}
+		return m, nil
+
+	case setupCompletedMsg:
+		return m, fetchOnboardCheckCmd(m.api)
 
 	case onboardTokenAppliedMsg:
 		m.onboard.applying = false
@@ -471,6 +484,10 @@ func (m model) updateHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.step = stepManage
 		m.mgr = manageModel{}
 		return m, nil
+	case "n":
+		return m.enterChannels()
+	case "t":
+		return m.enterTelegramSetup()
 	case "r":
 		m.loading = true
 		return m, fetchSnapshotCmd(m.api)
@@ -489,8 +506,7 @@ func (m model) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateConfirmKey(msg)
 	case webSetupResult:
 		// Any key returns Home; the wizard state resets on next entry.
-		m.step = stepHome
-		return m, nil
+		return m.goHome()
 	}
 	return m, nil
 }
@@ -517,7 +533,7 @@ func (m model) updateModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.wiz = webSetupListen
 		return m, m.listenIn.Focus()
 	case "esc":
-		m.step = stepHome
+		return m.goHome()
 	}
 	return m, nil
 }
@@ -665,7 +681,7 @@ func (m model) updateConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applying = true
 		return m, applyWebSetupCmd(m.api, m.ans)
 	case "n", "esc":
-		m.step = stepHome
+		return m.goHome()
 	}
 	return m, nil
 }
@@ -686,6 +702,8 @@ func (m model) View() string {
 		return m.manageView()
 	case stepOnboard:
 		return m.onboardView()
+	case stepFirstRun:
+		return m.firstRunView()
 	default:
 		return m.homeView()
 	}
@@ -736,7 +754,11 @@ func (m model) homeHeader() string {
 }
 
 func (m model) homeHints() string {
-	return faintStyle.Render("s setup   m manage   r refresh   ? help   q quit")
+	hints := faintStyle.Render("s setup   m manage   n alert channels   t telegram   r refresh   ? help   q quit")
+	if m.noChannel {
+		hints = warnStyle.Render("No alert channel yet: alerts only show here and in the web UI. Press n to add one.") + "\n" + hints
+	}
+	return hints
 }
 
 // systemPanel is the boxed SYSTEM panel: coloured CPU/MEM/SWAP meter bars, the
@@ -869,6 +891,8 @@ func (m model) helpView() string {
 	section("Home", [][2]string{
 		{"s", "set up the web UI (guided wizard)"},
 		{"m", "manage config (schedule, channels, thresholds, all settings)"},
+		{"n", "alert channels (Slack, Discord, email, ntfy, Gotify, webhook, Telegram)"},
+		{"t", "Telegram bot setup (token, then /start <pin>)"},
 		{"r", "refresh live status now"},
 		{"?", "toggle this help"},
 		{"q", "quit"},
