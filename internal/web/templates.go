@@ -854,6 +854,9 @@ type BarePageData struct {
 	// IsEmpty error handling) rather than showing a form that would only
 	// fail with a different, more confusing error.
 	EnrollClosed bool
+	// EnrollNeedsSetup: no users yet and the UI is not local-only, so the
+	// first admin must use an invite link minted on the server.
+	EnrollNeedsSetup bool
 }
 
 // newBarePageData builds the BarePageData a bare-layout page handler needs.

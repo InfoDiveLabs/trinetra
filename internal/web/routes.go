@@ -399,8 +399,11 @@ func enrollPageHandler(d Deps) http.HandlerFunc {
 		data := newBarePageData(r, "Set up passkey")
 		if data.EnrollToken == "" {
 			empty, err := newUserStore(d.StateDir).IsEmpty()
-			if err != nil || !empty {
+			switch {
+			case err != nil || !empty:
 				data.EnrollClosed = true
+			case !localOnly(d.Cfg()):
+				data.EnrollNeedsSetup = true
 			}
 		}
 		if err := renderBarePage(w, "enroll.html", data); err != nil {
@@ -474,7 +477,7 @@ func enrollBeginHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		role, bootstrap, err := resolveEnrollRole(newTokenStore(d.StateDir), store, strings.TrimSpace(req.Token))
+		role, bootstrap, err := resolveEnrollRole(newTokenStore(d.StateDir), store, strings.TrimSpace(req.Token), localOnly(d.Cfg()))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return

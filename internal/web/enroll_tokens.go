@@ -2,10 +2,15 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // EnrollToken is a single admin-issued, single-use, expiring invitation to
@@ -243,7 +248,34 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 // A true bootstrap result is threaded through the ceremony (regCeremonyData.
 // Bootstrap) so finishRegistration knows to route through CreateFirstAdmin
 // rather than a plain Put.
-func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role Role, bootstrap bool, err error) {
+var errSetupLinkRequired = errors.New("this server isn't set up yet: on the server, run `sudo trinetra web users invite --role admin` and open the link it prints")
+
+// localOnly reports whether the web UI is configured to be reached only from
+// this machine. It is decided from config, not the request: behind a reverse
+// proxy every request comes from 127.0.0.1.
+func localOnly(cfg *config.Config) bool {
+	host := ""
+	if cfg.Web.Origin != "" {
+		u, err := url.Parse(cfg.Web.Origin)
+		if err != nil {
+			return false
+		}
+		host = u.Hostname()
+	} else {
+		h, _, err := net.SplitHostPort(cfg.Web.Listen)
+		if err != nil {
+			return false
+		}
+		host = h
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func resolveEnrollRole(tokens *tokenStore, users UserStore, token string, allowBootstrap bool) (role Role, bootstrap bool, err error) {
 	if token != "" {
 		r, err := tokens.Redeem(token)
 		if err == nil && !validRole(r) {
@@ -260,6 +292,9 @@ func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role 
 		return "", false, fmt.Errorf("web: cannot verify user store is empty; refusing tokenless enrollment: %w", err)
 	}
 	if empty {
+		if !allowBootstrap {
+			return "", false, errSetupLinkRequired
+		}
 		return "", true, nil
 	}
 	return "", false, fmt.Errorf("web: enrollment is closed; an admin-issued invite token is required")
