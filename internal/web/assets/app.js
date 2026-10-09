@@ -1107,6 +1107,8 @@
       var name=(nameEl&&nameEl.value||'').trim();
       var token=(tokenEl&&tokenEl.value||'').trim();
       if(!name){ if(statusEl) statusEl.textContent='Enter a name first.'; return; }
+      var why=pkUnsupportedReason();
+      if(why){ if(statusEl) statusEl.textContent=why; return; }
       if(statusEl) statusEl.textContent='Waiting for your device…';
       fetch('/enroll/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,token:token})})
         .then(function(r){
@@ -1124,57 +1126,107 @@
           return navigator.credentials.create({publicKey:pk});
         })
         .then(function(cred){
+          // transports tell later sign-ins where this passkey lives (this
+          // device, a phone via QR, a USB/NFC key), so browsers offer the
+          // right option.
           return fetch('/enroll/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
             id:cred.id,
             rawId:bufToB64url(cred.rawId),
             type:cred.type,
+            authenticatorAttachment:cred.authenticatorAttachment||undefined,
+            clientExtensionResults:cred.getClientExtensionResults?cred.getClientExtensionResults():{},
             response:{
               clientDataJSON:bufToB64url(cred.response.clientDataJSON),
-              attestationObject:bufToB64url(cred.response.attestationObject)
+              attestationObject:bufToB64url(cred.response.attestationObject),
+              transports:cred.response.getTransports?cred.response.getTransports():[]
             }
           })});
         })
-        .then(function(r){ if(!r.ok) throw new Error('could not finish enrollment'); if(statusEl) statusEl.textContent='Passkey created -- you can sign in now.'; })
-        .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
+        .then(function(r){ if(!r.ok) throw new Error('could not finish enrollment'); if(statusEl) statusEl.textContent='Passkey created — you can sign in now.'; })
+        .catch(function(e){ if(statusEl) statusEl.textContent=e&&e.name?pkErrorText(e,true):'Error: '+e.message; });
     });
   }
 
   // ---- passkey login (templates/login.html) ----
-  // No username field -- the mockup's login page is a single "Continue with
-  // passkey" button, so this uses navigator.credentials.get() against a
-  // client-side discoverable ("resident key") credential: the authenticator
-  // itself surfaces which stored passkey matches this site, and the server
-  // resolves the account afterward from the assertion's userHandle
-  // (internal/web/auth_webauthn.go's beginLogin/finishLogin).
+  // The button asks the device for any passkey it has for this site
+  // (discoverable credentials). Typing a name lists that account's passkeys
+  // instead, which also covers keys that are not discoverable. Where the
+  // browser supports it, focusing the name field offers saved passkeys as
+  // autofill (conditional mediation).
+  function pkUnsupportedReason(){
+    if(!window.isSecureContext) return 'Passkeys only work on a secure (https://) address or on localhost. Open this page using its https:// address.';
+    if(!window.PublicKeyCredential||!navigator.credentials) return 'This browser does not support passkeys. Update it, or use Chrome, Safari, Edge or Firefox.';
+    var h=location.hostname;
+    if(/^\d+\.\d+\.\d+\.\d+$/.test(h)||h.indexOf(':')>=0) return 'Passkeys need a domain name, not an IP address. Open this page using its domain name (ask your admin which one).';
+    return '';
+  }
+  function pkErrorText(e,creating){
+    var n=e&&e.name;
+    if(n==='NotAllowedError') return creating
+      ? 'Passkey creation was cancelled or timed out. Try again; if your browser offers several places to save it, pick one.'
+      : 'Sign-in was cancelled or timed out, or this device has no passkey for this site. Try again, type your name below, or choose “use another device” to scan a QR code with your phone.';
+    if(n==='SecurityError') return 'This address does not match the site the passkey belongs to. Open the site using its usual address.';
+    if(n==='InvalidStateError') return 'This device already has a passkey for this account. Sign in with it instead.';
+    if(n==='NotSupportedError') return 'This device cannot create the kind of passkey needed. Try another device, a password manager or a security key.';
+    return (e&&e.message)||'Something went wrong. Please try again.';
+  }
+  function pkLoginOptions(opts){
+    var pk=opts.publicKey;
+    pk.challenge=b64urlToBuf(pk.challenge);
+    if(pk.allowCredentials) pk.allowCredentials.forEach(function(c){ c.id=b64urlToBuf(c.id); });
+    return pk;
+  }
+  function pkFinishLogin(cred){
+    return fetch('/login/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      id:cred.id,
+      rawId:bufToB64url(cred.rawId),
+      type:cred.type,
+      authenticatorAttachment:cred.authenticatorAttachment||undefined,
+      clientExtensionResults:cred.getClientExtensionResults?cred.getClientExtensionResults():{},
+      response:{
+        clientDataJSON:bufToB64url(cred.response.clientDataJSON),
+        authenticatorData:bufToB64url(cred.response.authenticatorData),
+        signature:bufToB64url(cred.response.signature),
+        userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null
+      }
+    })}).then(function(r){ if(!r.ok) throw new Error('That passkey was not accepted. If it was set up a while ago, ask an admin for a new invite.'); });
+  }
   var loginBtn=document.getElementById('loginBtn');
   if(loginBtn){
+    var loginStatus=document.getElementById('loginStatus'), loginName=document.getElementById('loginName');
+    var unsupported=pkUnsupportedReason();
+    if(unsupported){
+      var box=document.getElementById('pkUnsupported');
+      if(box){ box.textContent=unsupported; box.hidden=false; }
+      loginBtn.disabled=true;
+    }
+    var autofill=null;
+    function signedIn(){ if(loginStatus) loginStatus.textContent='Signed in — redirecting…'; window.location.assign('/'); }
+    function startAutofill(){
+      if(unsupported||!PublicKeyCredential.isConditionalMediationAvailable) return;
+      PublicKeyCredential.isConditionalMediationAvailable().then(function(ok){
+        if(!ok) return;
+        autofill=new AbortController();
+        var signal=autofill.signal;
+        fetch('/login/begin',{method:'POST',credentials:'same-origin'})
+          .then(function(r){ if(!r.ok) throw new Error('could not start sign-in'); return r.json(); })
+          .then(function(opts){ return navigator.credentials.get({publicKey:pkLoginOptions(opts),mediation:'conditional',signal:signal}); })
+          .then(function(cred){ return pkFinishLogin(cred).then(signedIn); })
+          .catch(function(e){ if(e&&e.name==='AbortError') return; if(loginStatus) loginStatus.textContent=pkErrorText(e,false); });
+      }).catch(function(){});
+    }
     loginBtn.addEventListener('click',function(){
-      var statusEl=document.getElementById('loginStatus');
-      if(statusEl) statusEl.textContent='Waiting for your device…';
-      fetch('/login/begin',{method:'POST',credentials:'same-origin'})
-        .then(function(r){ if(!r.ok) throw new Error('could not start sign-in'); return r.json(); })
-        .then(function(opts){
-          var pk=opts.publicKey;
-          pk.challenge=b64urlToBuf(pk.challenge);
-          if(pk.allowCredentials) pk.allowCredentials.forEach(function(c){ c.id=b64urlToBuf(c.id); });
-          return navigator.credentials.get({publicKey:pk});
-        })
-        .then(function(cred){
-          return fetch('/login/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-            id:cred.id,
-            rawId:bufToB64url(cred.rawId),
-            type:cred.type,
-            response:{
-              clientDataJSON:bufToB64url(cred.response.clientDataJSON),
-              authenticatorData:bufToB64url(cred.response.authenticatorData),
-              signature:bufToB64url(cred.response.signature),
-              userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null
-            }
-          })});
-        })
-        .then(function(r){ if(!r.ok) throw new Error('sign-in failed'); if(statusEl) statusEl.textContent='Signed in -- redirecting…'; window.location.assign('/'); })
-        .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
+      if(autofill){ autofill.abort(); autofill=null; }
+      var name=(loginName&&loginName.value||'').trim();
+      if(loginStatus) loginStatus.textContent='Waiting for your device…';
+      fetch('/login/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
+        .then(function(r){ if(!r.ok) throw new Error('Could not start sign-in. Reload the page and try again.'); return r.json(); })
+        .then(function(opts){ return navigator.credentials.get({publicKey:pkLoginOptions(opts)}); })
+        .then(function(cred){ return pkFinishLogin(cred).then(signedIn); })
+        .catch(function(e){ if(loginStatus) loginStatus.textContent=pkErrorText(e,false); startAutofill(); });
     });
+    if(loginName) loginName.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); loginBtn.click(); } });
+    startAutofill();
   }
 
   // ---- quiet-hours preview (templates/config.html, Task 10/#66) ----

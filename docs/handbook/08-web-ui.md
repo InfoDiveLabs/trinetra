@@ -108,11 +108,36 @@ before the plugin binary is present. It simply has nothing to supervise until
 ## Authentication and roles
 
 There is no password login anywhere in the web UI. Accounts authenticate with
-WebAuthn passkeys only: a platform authenticator like Touch ID or Windows
-Hello, or a hardware security key. Sessions are kept server-side, and state-
-changing requests are protected with CSRF tokens.
+WebAuthn passkeys only. Any passkey works:
+- the device's own (Android, iPhone, Mac, Windows Hello);
+- a passkey synced by a password manager (Google, iCloud Keychain, 1Password,
+  Bitwarden and others);
+- a phone used from a computer by scanning the QR code;
+- a hardware security key.
+
+Sessions are kept server-side, and state-changing requests are protected with
+CSRF tokens.
 
 ![Passkey login](../assets/screenshots/login.webp)
+
+**Signing in.** "Continue with passkey" asks the device for any passkey it
+holds for this site. Browsers that support passkey autofill also offer saved
+passkeys when you tap the name field. Some keys can't be listed this way:
+older hardware keys, and passkeys created before v0.6. For those, type your
+account name first and the browser asks for that account's key. An unknown
+name gets the same prompt, so the form doesn't reveal which accounts exist.
+
+**When a passkey doesn't show up.**
+- Open the UI through its domain name over `https://`, or on `localhost`.
+  Browsers refuse passkeys on plain `http://` addresses and on IP addresses
+  such as `http://10.0.0.5:8080`; the sign-in page says so when that's the
+  cause.
+- Use the same address the passkey was created on. A passkey made on
+  `monitor.example.com` doesn't work on `monitor.internal`.
+- Type your account name and try again. That covers keys that can't be
+  listed.
+- On a computer, choose "use another device" in the browser prompt to use a
+  passkey on your phone.
 
 Getting the first account is a one-time bootstrap. With `web.enabled true` and
 no accounts yet, you visit `/enroll` with no token and register a passkey. The
