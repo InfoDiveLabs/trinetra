@@ -14,11 +14,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fakeAPI is a minimal core.API test double for handleConn/dispatch tests:
-// each read field backs exactly one read method's return value, and each
-// write method records its argument and returns the configured error (nil
-// unless the test sets one), so a test can prove both that a write reached
-// the API and that its error propagates back over the wire.
+// fakeAPI is a minimal core.API test double: read fields back one read method
+// each, and write methods record their argument and return the configured error.
 type fakeAPI struct {
 	snapshot   core.DashboardView
 	monitoring core.MonitoringView
@@ -32,28 +29,22 @@ type fakeAPI struct {
 
 	enrollPIN      string
 	enrollEnrolled bool
-	// enrollErr, when set, is returned by EnrollmentPIN -- same
-	// error-propagation proof as ackAlertErr/validateChannelErr.
+	// enrollErr, when set, is returned by EnrollmentPIN.
 	enrollErr error
 
 	monitorTargets []core.TargetView
-	// monitorTargetsErr, when set, is returned by MonitorTargets -- same
-	// error-propagation proof as enrollErr.
+	// monitorTargetsErr, when set, is returned by MonitorTargets.
 	monitorTargetsErr error
 
-	// updateStatus/updateStatusErr back UpdateStatus/UpdateCheck (task 8):
-	// updateStatus is returned by both on success; updateCheckErr, when set,
-	// is what UpdateCheck returns (proving a check failure still surfaces
-	// over the wire), and updateStatusErr does the same for UpdateStatus.
+	// updateStatus is returned by UpdateStatus and UpdateCheck on success; the
+	// matching *Err fields make them fail.
 	updateStatus    core.UpdateStatusView
 	updateStatusErr error
 	updateCheckErr  error
-	// appliedUpdateVersion records the version UpdateApply was called with;
-	// updateApplyErr, when set, is what UpdateApply returns.
+	// appliedUpdateVersion records UpdateApply's argument; updateApplyErr is its error.
 	appliedUpdateVersion string
 	updateApplyErr       error
-	// updateRollbackCalled/updateRollbackErr mirror the above for
-	// UpdateRollback, which takes no argument.
+	// updateRollbackCalled/updateRollbackErr cover UpdateRollback.
 	updateRollbackCalled bool
 	updateRollbackErr    error
 
@@ -63,22 +54,15 @@ type fakeAPI struct {
 	testedChannel    string
 	validatedChannel config.ChannelConfig
 
-	// ackAlertErr, when set, is returned by AckAlert -- used to prove a
-	// method error propagates back over the wire as ok=false.
+	// ackAlertErr, when set, is returned by AckAlert.
 	ackAlertErr error
-	// validateChannelErr, when set, is returned by ValidateChannel -- same
-	// error-propagation proof as ackAlertErr, for the write method whose
-	// only other observable effect is the recorded validatedChannel arg.
+	// validateChannelErr, when set, is returned by ValidateChannel.
 	validateChannelErr error
 
-	// subscribeCh, when non-nil, makes Subscribe return it (with a nil
-	// error) instead of the default "not implemented" error, standing in
-	// for a real daemon's live event bus. subscribeCancelled, when also
-	// non-nil, is closed by a goroutine the moment the ctx passed to
-	// Subscribe is done -- mirroring inprocAPI.Subscribe's own ctx.Done ->
-	// cancel goroutine (coreapi_inproc.go) -- so a streaming test can prove
-	// server.go derives that ctx from the connection's lifetime and cancels
-	// it on client disconnect.
+	// subscribeCh, when non-nil, makes Subscribe return it instead of the default
+	// "not implemented" error. subscribeCancelled, when also non-nil, is closed once
+	// the ctx passed to Subscribe is done, so tests can prove the server cancels it
+	// on client disconnect.
 	subscribeCh        chan core.Event
 	subscribeCancelled chan struct{}
 }
@@ -166,9 +150,8 @@ func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	go func() {
 		<-ctx.Done()
 		close(f.subscribeCancelled)
-		// Mirror eventBus.cancel (eventbus.go): unsubscribing closes the
-		// subscriber's channel, which is what lets streamSubscribe's
-		// `for ev := range ch` loop end instead of blocking forever.
+		// Unsubscribing closes the subscriber's channel, which ends streamSubscribe's
+		// range loop instead of blocking forever.
 		close(f.subscribeCh)
 	}()
 	return f.subscribeCh, nil
@@ -176,10 +159,9 @@ func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 
 var _ core.API = (*fakeAPI)(nil)
 
-// dialTestConn starts handleConn on one end of an in-memory net.Pipe (via
-// net.Conn's dedicated pipe helper) with fake as the backing API and hands
-// the test the other end plus a reader for it, already past a valid hello
-// handshake. It returns a done channel closed once handleConn returns.
+// dialTestConn runs handleConn on one end of a net.Pipe with fake as the API and
+// returns the other end plus a reader, past a valid hello. done closes when
+// handleConn returns.
 func dialTestConn(t *testing.T, fake core.API) (net.Conn, *bufio.Reader, <-chan struct{}) {
 	t.Helper()
 	server, client := net.Pipe()
@@ -269,11 +251,8 @@ func TestHandleConnMethodErrorPropagates(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnValidateChannelPropagatesError mirrors
-// TestHandleConnMethodErrorPropagates for the new write method: an error
-// api.ValidateChannel returns (buildNotifier's undeliverable-channel error,
-// in production) must come back over the wire as ok=false, and the channel
-// argument must have reached the API.
+// TestHandleConnValidateChannelPropagatesError: an api.ValidateChannel error
+// comes back as ok=false and the channel argument reaches the API.
 func TestHandleConnValidateChannelPropagatesError(t *testing.T) {
 	fake := &fakeAPI{validateChannelErr: errors.New(`telegram channel "phone": chat_id not configured`)}
 	client, r, done := dialTestConn(t, fake)
@@ -296,9 +275,7 @@ func TestHandleConnValidateChannelPropagatesError(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnEnrollmentPINRoundTrip pins dispatch's EnrollmentPIN case
-// (#90): the pin/enrolled the fake api reports must come back over the wire
-// unmodified.
+// TestHandleConnEnrollmentPINRoundTrip (#90): pin/enrolled come back unmodified.
 func TestHandleConnEnrollmentPINRoundTrip(t *testing.T) {
 	fake := &fakeAPI{enrollPIN: "424242", enrollEnrolled: false}
 	client, r, done := dialTestConn(t, fake)
@@ -321,10 +298,8 @@ func TestHandleConnEnrollmentPINRoundTrip(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnEnrollmentPINPropagatesError mirrors
-// TestHandleConnMethodErrorPropagates for EnrollmentPIN: fileAPI's
-// errEnrollNeedsDaemon (or any other EnrollmentPIN error) must come back
-// over the wire as ok=false, not a zero-value success.
+// TestHandleConnEnrollmentPINPropagatesError: an EnrollmentPIN error comes back
+// as ok=false, not a zero-value success.
 func TestHandleConnEnrollmentPINPropagatesError(t *testing.T) {
 	fake := &fakeAPI{enrollErr: errors.New("trinetra: enrollment pin requires a running daemon")}
 	client, r, done := dialTestConn(t, fake)
@@ -343,9 +318,7 @@ func TestHandleConnEnrollmentPINPropagatesError(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnMonitorTargetsRoundTrip pins dispatch's MonitorTargets case:
-// the target list the fake api reports must come back over the wire
-// unmodified.
+// TestHandleConnMonitorTargetsRoundTrip: the target list comes back unmodified.
 func TestHandleConnMonitorTargetsRoundTrip(t *testing.T) {
 	fake := &fakeAPI{monitorTargets: []core.TargetView{
 		{ID: "disk:/", Kind: "disk", Display: "/", Available: true},
@@ -370,8 +343,7 @@ func TestHandleConnMonitorTargetsRoundTrip(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnMonitorTargetsPropagatesError mirrors
-// TestHandleConnEnrollmentPINPropagatesError for MonitorTargets.
+// TestHandleConnMonitorTargetsPropagatesError covers MonitorTargets errors.
 func TestHandleConnMonitorTargetsPropagatesError(t *testing.T) {
 	fake := &fakeAPI{monitorTargetsErr: errors.New("discovery failed")}
 	client, r, done := dialTestConn(t, fake)
@@ -408,11 +380,8 @@ func TestHandleConnSubscribeReturnsError(t *testing.T) {
 	<-done
 }
 
-// TestStreamSubscribeSendsEventsInOrderAfterAck proves handleConn's
-// streaming path for the Subscribe method: after the ack, every event
-// fakeAPI's Subscribe channel receives arrives on the wire as a stream
-// frame (response{ID: streamID, OK: true, Result: <core.Event JSON>}), in
-// the order it was published.
+// TestStreamSubscribeSendsEventsInOrderAfterAck: after the ack, each event from
+// the Subscribe channel arrives as a stream frame (ID streamID) in order.
 func TestStreamSubscribeSendsEventsInOrderAfterAck(t *testing.T) {
 	fake := &fakeAPI{subscribeCh: make(chan core.Event, 4), subscribeCancelled: make(chan struct{})}
 	client, r, done := dialTestConn(t, fake)
@@ -464,13 +433,9 @@ func TestStreamSubscribeSendsEventsInOrderAfterAck(t *testing.T) {
 	<-done
 }
 
-// TestStreamSubscribeDisconnectCancelsContext proves the CRITICAL
-// correctness property flagged in the A2 plan's review of task 1: the ctx
-// server.go passes to api.Subscribe must be derived from the streaming
-// connection's own lifetime, so that closing the client end (a read on the
-// server's side returning EOF) cancels it -- letting api.Subscribe's own
-// unsubscribe run instead of leaking a subscriber and a goroutine on the
-// daemon side forever.
+// TestStreamSubscribeDisconnectCancelsContext: the ctx passed to api.Subscribe
+// must derive from the connection's lifetime, so closing the client end cancels
+// it and Subscribe's unsubscribe runs instead of leaking a subscriber.
 func TestStreamSubscribeDisconnectCancelsContext(t *testing.T) {
 	fake := &fakeAPI{subscribeCh: make(chan core.Event), subscribeCancelled: make(chan struct{})}
 	client, r, done := dialTestConn(t, fake)
@@ -528,8 +493,7 @@ func TestHandleConnWrongVersionHelloRejected(t *testing.T) {
 		t.Errorf("resp.Error is empty, want a version-mismatch message")
 	}
 
-	// The server must close the connection after rejecting the hello: a
-	// further read should fail rather than hang or yield a real response.
+	// The server must close the connection after rejecting the hello.
 	var again response
 	if err := readFrame(r, &again); err == nil {
 		t.Errorf("expected a read error after hello rejection, got a frame: %+v", again)
@@ -538,9 +502,7 @@ func TestHandleConnWrongVersionHelloRejected(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnRightTokenAccepted proves a client hello carrying the exact
-// token handleConn was configured with completes the handshake and can make
-// a normal request, the same as the no-auth (token="") tests above.
+// TestHandleConnRightTokenAccepted: the configured token completes the handshake.
 func TestHandleConnRightTokenAccepted(t *testing.T) {
 	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 1}}
 	server, client := net.Pipe()
@@ -573,10 +535,8 @@ func TestHandleConnRightTokenAccepted(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnWrongTokenRejected proves a client hello carrying a token
-// that does not match the one handleConn was configured with is rejected at
-// the handshake, with the connection closed afterward, just like a
-// version-mismatched hello.
+// TestHandleConnWrongTokenRejected: a wrong token is rejected at the handshake
+// and the connection closed, like a version mismatch.
 func TestHandleConnWrongTokenRejected(t *testing.T) {
 	fake := &fakeAPI{}
 	server, client := net.Pipe()
@@ -612,10 +572,8 @@ func TestHandleConnWrongTokenRejected(t *testing.T) {
 	<-done
 }
 
-// TestHandleConnEmptyTokenRejectedWhenAuthConfigured proves an empty client
-// token is treated as any other wrong token once the server has a
-// non-empty configured token -- an unauthenticated client can't just omit
-// the field to skip the check.
+// TestHandleConnEmptyTokenRejectedWhenAuthConfigured: omitting the token cannot
+// skip the check.
 func TestHandleConnEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
 	fake := &fakeAPI{}
 	server, client := net.Pipe()
@@ -648,8 +606,7 @@ func TestApplyConfigAndConfigRoundTrip(t *testing.T) {
 	client, r, done := dialTestConn(t, fake)
 	defer client.Close()
 
-	// Config: read back the raw config.Config, preserving zero/omitted
-	// fields the way configForDisplay would not.
+	// Config: the raw config.Config, preserving zero/omitted fields.
 	resp := sendRequest(t, client, r, 4, "Config", struct{}{})
 	if !resp.OK {
 		t.Fatalf("Config resp.OK = false, want true (error: %s)", resp.Error)
@@ -662,7 +619,7 @@ func TestApplyConfigAndConfigRoundTrip(t *testing.T) {
 		t.Errorf("Config got %+v, want %+v", gotCfg, *fake.cfg)
 	}
 
-	// ApplyConfig: the fake should receive the unmarshaled struct.
+	// ApplyConfig: the fake receives the unmarshaled struct.
 	newCfg := config.Config{SampleInterval: 60, FastInterval: 10}
 	resp = sendRequest(t, client, r, 5, "ApplyConfig", map[string]config.Config{"config": newCfg})
 	if !resp.OK {

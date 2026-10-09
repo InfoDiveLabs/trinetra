@@ -218,11 +218,8 @@ func TestClientRoutesToNode(t *testing.T) {
 	if local.CPU != 11 || rv.CPU != 77 {
 		t.Fatalf("local=%v remote=%v", local.CPU, rv.CPU)
 	}
-	// fix round 1 (task C4): before reconstructWireErr existed, errors.Is
-	// against core.ErrNoSuchNode was dead code for any caller on THIS side
-	// of the control socket -- Client.call returned a bare errors.New(text),
-	// so only the message text (checked below) survived the wire, never the
-	// sentinel's identity. Both are pinned here now.
+	// errors.Is against core.ErrNoSuchNode must survive the wire (reconstructWireErr),
+	// not just the message text.
 	if _, err := c.ForNode("nope").Snapshot(); err == nil || !strings.Contains(err.Error(), "no such fleet node") {
 		t.Fatalf("unknown node err = %v", err)
 	} else if !errors.Is(err, core.ErrNoSuchNode) {
@@ -311,13 +308,9 @@ func TestClientFleetMethods(t *testing.T) {
 	}
 }
 
-// TestClientPreservesErrNotFoundOverTheWire pins fix round 1 (task C4, fleet
-// phase 2 web UI plan C): a Fleet.* method error wrapping core.ErrNotFound
-// (e.g. ExpireSilence/DeleteMaintenance/Incident/DeleteManaged on the daemon
-// side, internal/trinetra) must still satisfy errors.Is(err,
-// core.ErrNotFound) for a caller on the OTHER side of a REAL control-socket
-// round trip -- not just in-process -- since internal/web's fleetAPIErrStatus
-// relies on exactly that to map it to 404.
+// TestClientPreservesErrNotFoundOverTheWire pins that a Fleet.* error wrapping
+// core.ErrNotFound still satisfies errors.Is(err, core.ErrNotFound) across a
+// real control-socket round trip; internal/web maps it to 404.
 func TestClientPreservesErrNotFoundOverTheWire(t *testing.T) {
 	f := &fleetFake{fakeAPI: &fakeAPI{}, expireSilenceErr: fmt.Errorf("no such silence %q: %w", "sil1", core.ErrNotFound)}
 	c, _ := Dial(startTestServer(t, f, "tok"), "tok")

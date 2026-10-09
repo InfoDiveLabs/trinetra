@@ -15,44 +15,30 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// helloMagic is the fixed Hello value both ends of the control socket must
-// send in their handshake frame, alongside a matching ProtocolVersion.
+// helloMagic is the Hello value both ends must send, alongside a matching
+// ProtocolVersion.
 const helloMagic = "serverwatch-control"
 
-// helloTimeout and idleTimeout bound the two read deadlines handleConn
-// enforces on each connection: helloTimeout for the opening hello frame,
-// idleTimeout for every request frame after that. Without these, a
-// connection that connects and then never speaks (accidentally or by a
-// misbehaving/hostile peer) would tie up its goroutine forever. Unlike
-// callTimeout (internal/control/client.go), these stay consts: Serve
-// spawns a handleConn goroutine per connection that can outlive the test
-// that started it, so a mutable package var here would be read and
-// written from different goroutines with no synchronization between
-// tests.
+// helloTimeout bounds the opening hello read and idleTimeout every request read
+// after it, so a peer that connects and never speaks cannot tie up a goroutine.
+// Unlike callTimeout these stay consts: handleConn goroutines can outlive the
+// test that started them, so a mutable var would be a data race.
 const (
 	helloTimeout = 10 * time.Second
 	idleTimeout  = 5 * time.Minute
 )
 
-// streamWriteTimeout bounds each stream-frame write in streamSubscribe. A
-// streaming connection is expected to sit idle between events (unlike a
-// request/response connection, bounded above by idleTimeout instead), but a
-// write must still not block forever if the client stops reading -- a
-// wedged or dead peer whose socket buffer has filled up would otherwise tie
-// up this goroutine, and the api.Subscribe channel behind it, forever.
+// streamWriteTimeout bounds each stream-frame write. A stream may sit idle
+// between events, but a write must not block forever if the client stops reading.
 const streamWriteTimeout = 30 * time.Second
 
-// emptyResult is the Result payload for a write method (ApplyConfig,
-// AckAlert, UnackAlert, TestChannel, ValidateChannel): the call succeeded,
-// there is nothing to return beyond ok=true.
+// emptyResult is the Result for write methods: success with nothing to return.
 var emptyResult = json.RawMessage("{}")
 
-// Serve accepts connections on ln and handles each one (in its own
-// goroutine) against api. token is the per-launch secret each client's
-// hello must present (constant-time compared in handleConn); an empty
-// token means no auth is required, which keeps the package's own
-// round-trip tests simple -- production always sets one. Serve returns once
-// Accept fails, which happens when ln is closed by the caller.
+// Serve accepts connections on ln and handles each in its own goroutine against
+// api. token is the per-launch secret each hello must present (constant-time
+// compared in handleConn); empty means no auth, for tests only. Serve returns
+// when ln is closed.
 func Serve(api core.API, ln net.Listener, token string) error {
 	for {
 		conn, err := ln.Accept()
@@ -63,12 +49,9 @@ func Serve(api core.API, ln net.Listener, token string) error {
 	}
 }
 
-// handleConn owns one client connection end to end: it validates the
-// client's opening hello (protocol version, then token if one is
-// configured), echoes its own, then services request frames against api
-// until the peer disconnects or a frame can't be read (either case ends
-// the connection quietly -- a peer going away mid-read is normal shutdown,
-// not a protocol fault worth logging).
+// handleConn validates the client's hello (version, then token), echoes its own,
+// and services requests until the peer disconnects. A peer going away mid-read is
+// normal shutdown, not a fault worth logging.
 func handleConn(api core.API, conn net.Conn, token string) {
 	defer conn.Close()
 
@@ -79,8 +62,7 @@ func handleConn(api core.API, conn net.Conn, token string) {
 	}
 	var clientHello hello
 	if err := readFrame(r, &clientHello); err != nil {
-		// The peer disconnected, or never completed the handshake before
-		// helloTimeout expired; either way there is nothing to reply to.
+		// Peer disconnected or missed helloTimeout; nothing to reply to.
 		return
 	}
 	if clientHello.Hello != helloMagic || clientHello.Version != ProtocolVersion {
@@ -108,19 +90,14 @@ func handleConn(api core.API, conn net.Conn, token string) {
 		}
 		var req request
 		if err := readFrame(r, &req); err != nil {
-			// EOF, an idle connection past idleTimeout, or a partial/
-			// unterminated final frame after the peer closed its write
-			// side: end the connection, not an error.
+			// EOF, idle past idleTimeout, or a partial final frame: end quietly.
 			return
 		}
 
 		if req.Method == "Subscribe" {
-			// Subscribe dedicates the rest of this connection's lifetime to
-			// streaming (or, on error, to a single error response) -- it
-			// never returns to this request/response loop, matching the
-			// client's own design of opening a brand-new connection for
-			// each subscription (client.go's Subscribe) rather than reusing
-			// its mutex-serialized primary conn.
+			// Subscribe takes over the rest of the connection for streaming (or a single
+			// error response) and never returns to this loop; clients open a new connection
+			// per subscription.
 			if req.Node != "" && req.Node != core.SelfNodeID {
 				_ = writeFrame(conn, response{ID: req.ID, Node: req.Node, OK: false, Error: "control: live event streams are not available for remote fleet nodes yet"})
 				return
@@ -159,25 +136,14 @@ func handleConn(api core.API, conn net.Conn, token string) {
 	}
 }
 
-// streamSubscribe switches conn into Subscribe streaming mode for one
-// request. It calls api.Subscribe first -- deciding whether the client gets
-// a stream at all -- and only once that succeeds does it write the ack
-// response and start relaying events; on error it writes a single ok=false
-// response instead, the same shape every other dispatch error takes, so a
-// caller that gets no live daemon behind api (fileAPI, or an inprocAPI built
-// without a bus) sees a normal error rather than a stream that silently
-// never sends anything.
+// streamSubscribe switches conn into Subscribe streaming mode. It calls
+// api.Subscribe first and only then writes the ack, so a caller with no live bus
+// behind api gets a normal error response rather than a silent stream.
 //
-// The ctx passed to api.Subscribe is tied to conn's lifetime, not to
-// anything with its own timeout: a background goroutine does nothing but
-// read from conn (via r, which after this point belongs solely to that
-// goroutine -- the caller stops reading once it hands off here) so that the
-// moment the client disconnects, a read on conn returns EOF or another
-// error and ctx is cancelled. That is what makes api.Subscribe's own
-// unsubscribe fire instead of leaking a subscriber -- and this goroutine --
-// on the daemon side forever. The normal idleTimeout read deadline does not
-// apply here: a streaming connection is expected to sit idle between
-// events, unlike a request/response connection.
+// The ctx given to api.Subscribe is tied to conn's lifetime: a goroutine that
+// only reads from conn (r now belongs solely to it) cancels ctx on EOF/error, so
+// a disconnect fires Subscribe's unsubscribe instead of leaking a subscriber. The
+// idleTimeout deadline does not apply since streams idle between events.
 func streamSubscribe(api core.API, conn net.Conn, r *bufio.Reader, reqID int) {
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return
@@ -218,16 +184,11 @@ func streamSubscribe(api core.API, conn net.Conn, r *bufio.Reader, reqID int) {
 	}
 }
 
-// dispatch decodes params for method, calls the matching core.API method on
-// api, and marshals its result. Read methods return the method's DTO; write
-// methods (ApplyConfig, AckAlert, UnackAlert, TestChannel, ValidateChannel)
-// return emptyResult and surface only the error. Config/ApplyConfig carry the raw
-// config.Config value (not a display-formatted projection) so
-// Collect.*bool's omitempty semantics survive the round trip. An
-// unrecognized method name returns an error. Subscribe never reaches here --
-// handleConn intercepts it before calling dispatch, since it switches the
-// connection into streaming mode (streamSubscribe above) instead of
-// producing one normal response.
+// dispatch decodes params for method, calls the matching core.API method and
+// marshals the result. Write methods return emptyResult. Config/ApplyConfig carry
+// the raw config.Config (not a display projection) so Collect.*bool omitempty
+// semantics survive the round trip. Subscribe never reaches here; handleConn
+// intercepts it.
 func dispatch(api core.API, method string, params json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "Snapshot":
@@ -448,10 +409,9 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 	}
 }
 
-// resolveNode maps a request's node field to the API that should serve it:
-// "" or core.SelfNodeID means this daemon's own api, anything else requires
-// api to be a core.FleetProvider (a plain solo/child daemon has no fleet to
-// route into).
+// resolveNode maps a request's node field to the API serving it: "" or
+// core.SelfNodeID is api itself, anything else needs api to be a
+// core.FleetProvider.
 func resolveNode(api core.API, node string) (core.API, error) {
 	if node == "" || node == core.SelfNodeID {
 		return api, nil
@@ -463,12 +423,8 @@ func resolveNode(api core.API, node string) (core.API, error) {
 	return fp.Node(node)
 }
 
-// dispatchFleet serves the Fleet.* methods against api's core.FleetAPI. Like
-// dispatch, its write methods (RenameNode, SetNodeTags, RevokeNode, RemoveNode,
-// DeleteToken) return emptyResult on success -- the same ok=true/empty-result
-// shape dispatch's own write methods (AckAlert and friends) use -- so the
-// client's call sees a uniform response regardless of which dispatch path
-// served it.
+// dispatchFleet serves the Fleet.* methods against api's core.FleetAPI; write
+// methods return emptyResult like dispatch's.
 func dispatchFleet(api core.API, method string, params json.RawMessage) (json.RawMessage, error) {
 	fp, ok := api.(core.FleetProvider)
 	if !ok {
