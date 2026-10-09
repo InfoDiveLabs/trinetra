@@ -172,11 +172,9 @@ func (ca *CA) IssueServer(hosts []string, now time.Time) (certPEM, keyPEM []byte
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), kp, nil
 }
 
-// parseCSR decodes and fully validates csrPEM: well-formed PEM, a parseable
-// CSR, a self-signature that checks out, and an ECDSA key. It is the single
-// place that validation lives; both CheckCSR and SignClient call it so a
-// caller can validate a CSR before spending anything (e.g. a join token) and
-// SignClient never has to re-check what its caller already checked.
+// parseCSR decodes and fully validates csrPEM (PEM, parse, self-signature, ECDSA
+// key). CheckCSR and SignClient share it so a caller can validate before
+// spending anything, such as a join token.
 func parseCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
 	blk, _ := pem.Decode(csrPEM)
 	if blk == nil || blk.Type != "CERTIFICATE REQUEST" {

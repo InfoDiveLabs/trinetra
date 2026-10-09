@@ -189,11 +189,10 @@ func TestOutboxNotifyOnAppend(t *testing.T) {
 	}
 }
 
-// TestOutboxCapCrashBetweenPersistAndDelete simulates a crash that lands
-// after enforceCapLocked durably persists the gap/ack advance for an
-// evicted segment but before it deletes that segment's file. Reopening
-// must not re-read those records as unacked (Read(Acked()) must start
-// right after the gap), and the leftover file must be cleaned up.
+// TestOutboxCapCrashBetweenPersistAndDelete simulates a crash after
+// enforceCapLocked persists the gap/ack advance but before it deletes the evicted
+// segment. Reopening must not re-read those records as unacked, and the
+// leftover file must be cleaned up.
 func TestOutboxCapCrashBetweenPersistAndDelete(t *testing.T) {
 	dir := t.TempDir()
 	// Cap far above what we write, so no real eviction happens here — we
@@ -263,12 +262,9 @@ func TestOutboxCapCrashBetweenPersistAndDelete(t *testing.T) {
 }
 
 // TestOutboxReconcilesCursorWithGapsOnOpen simulates a crash between
-// enforceCapLocked's two persists: gaps.json commits an eviction (so the
-// records are gone for good) but the crash lands before the cursor file is
-// updated to match, leaving the cursor behind the recorded gap and the
-// evicted segment's file still on disk. Reopening must treat the gap as
-// authoritative: advance and re-persist the cursor to the gap's LastSeq,
-// never re-serve the dropped records, and clean up the stale file.
+// enforceCapLocked's two persists: gaps.json commits an eviction but the cursor
+// lags. Reopening must treat the gap as authoritative: advance the cursor to its
+// LastSeq, never re-serve the dropped records, and remove the stale file.
 func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
 	dir := t.TempDir()
 	o, err := openOutbox(dir, 1<<20, 200)
@@ -338,21 +334,13 @@ func TestOutboxReconcilesCursorWithGapsOnOpen(t *testing.T) {
 	}
 }
 
-// TestOutboxConcurrentAppendReadAck exercises the outbox under its documented
-// concurrent-use contract: one goroutine appends continuously (driving
-// segment rotation and cap eviction) while another concurrently reads from
-// and acks the cursor (driving segment deletion), with a small cap/segment
-// size so rotation and eviction happen throughout the run.
+// TestOutboxConcurrentAppendReadAck exercises the documented concurrent-use
+// contract: one goroutine appends (driving rotation and cap eviction) while
+// another reads and acks (driving segment deletion), with a small cap/segment size.
 //
-// The appender drives a FIXED number of operations (round-1 review fix),
-// not a fixed wall-clock duration: a time-based deadline made the load
-// assertion below flaky under `-race` (whose instrumentation slows every
-// Append/Read/Ack down, sometimes past the point of reaching 1000 appends
-// within one second on a loaded machine) -- "test didn't generate enough
-// load" was a timing artifact, not a real failure. A fixed count makes the
-// achieved load deterministic and lets the final assertion below be exact
-// (appended == totalAppends) rather than a lower bound, which is strictly
-// stronger, never weaker, than what this test proved before.
+// The appender runs a fixed number of operations, not a wall-clock duration:
+// under -race a time-based deadline made the load assertion flaky. A fixed count
+// makes the load deterministic and the final assertion exact.
 func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 	dir := t.TempDir()
 	o, err := openOutbox(dir, 4096, 512)
@@ -453,12 +441,10 @@ func TestOutboxConcurrentAppendReadAck(t *testing.T) {
 	}
 }
 
-// TestOutboxAckBeyondNextRecordsDivergenceGap covers a child whose outbox was
-// deleted or rolled back while the master kept its applied seq: the master
-// acks a seq the local outbox never issued. The unacked local records must
-// become a gap (repaired from local history) and seq numbering must jump past
-// the master's view, instead of the ack being clamped and every new record
-// silently discarded by the master as "already applied".
+// TestOutboxAckBeyondNextRecordsDivergenceGap: the master acks a seq the local
+// outbox never issued (it was deleted or rolled back). Unacked local records
+// must become a gap and numbering must jump past the master's view, instead of
+// every new record being discarded as "already applied".
 func TestOutboxAckBeyondNextRecordsDivergenceGap(t *testing.T) {
 	dir := t.TempDir()
 	o, err := OpenOutbox(dir, 64<<20)

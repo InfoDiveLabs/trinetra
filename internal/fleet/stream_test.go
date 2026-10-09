@@ -15,10 +15,9 @@ import (
 	"time"
 )
 
-// newMasterFixtureWithServerTimeout is newMasterFixture but with the
-// underlying httptest.Server's Read/WriteTimeout set to wt, so a test can
-// prove the stream handler survives a server-wide timeout far shorter than
-// the stream itself by clearing its own deadlines.
+// newMasterFixtureWithServerTimeout is newMasterFixture with the httptest
+// server's Read/WriteTimeout set to wt, to prove the stream handler survives a
+// server-wide timeout shorter than the stream by clearing its own deadlines.
 func newMasterFixtureWithServerTimeout(t *testing.T, wt time.Duration, opts ...func(*MasterConfig)) *masterFixture {
 	t.Helper()
 	ca, leaf := newTestPKI(t)
@@ -41,9 +40,8 @@ func newMasterFixtureWithServerTimeout(t *testing.T, wt time.Duration, opts ...f
 	return f
 }
 
-// newOldMasterFixture is a masterFixture whose handler answers every request
-// except PathStream exactly like a real master, and 404s PathStream: this is
-// what a pre-phase-2 master looks like to a phase-2 child.
+// newOldMasterFixture is a masterFixture that 404s PathStream like a
+// pre-phase-2 master and otherwise behaves like a real master.
 func newOldMasterFixture(t *testing.T) *masterFixture {
 	t.Helper()
 	ca, leaf := newTestPKI(t)
@@ -243,11 +241,9 @@ func TestStreamPushToDisconnectedNodeReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestHubCloseAllClosesEveryConnection is the final-review transport I2
-// regression at the Hub level: CloseAll must close every currently
-// connected node's done channel (unblocking handleStream's select loop,
-// the same way Disconnect does for one node) and clear the connection map
-// so a later Connected/connect for the same id starts fresh.
+// TestHubCloseAllClosesEveryConnection: CloseAll must close every connected
+// node's done channel (unblocking handleStream, as Disconnect does) and clear the
+// map so a later connect for the same id starts fresh.
 func TestHubCloseAllClosesEveryConnection(t *testing.T) {
 	hub := NewHub(nil)
 	c1 := hub.connect("n1")
@@ -505,22 +501,15 @@ func streamOnlyFixture(t *testing.T, stream http.HandlerFunc) *masterFixture {
 	return &masterFixture{ca: ca, reg: reg, toks: toks, sink: sink, srv: srv, pin: SPKIPin(ca.Cert)}
 }
 
-// TestStreamBackoffResetsAfterEstablishedConnection is the regression test
-// for the CRITICAL fix in fix round 1: streamLoop's attempt counter must
-// reset to 0 once a connection was actually established (read at least one
-// frame), even though that connection later ends in an error -- not just on
-// the unreachable "clean shutdown" path. Without the fix, three failed
-// connection attempts followed by one that connects, reads a frame, and then
-// ends would drive the *next* backoff call to attempt 3 (and every one
-// after that, forever, once past attempt 6, pinned at the ~60s-equivalent
-// ceiling); with the fix it's attempt 0 again, matching the very first call.
+// TestStreamBackoffResetsAfterEstablishedConnection: streamLoop's attempt counter
+// must reset to 0 once a connection was established (read at least one frame)
+// even if it later ends in an error. Otherwise three failed attempts followed by
+// a connect-read-drop would drive the next backoff to attempt 3, and eventually
+// pin it at the ~60s ceiling.
 //
-// The test uses the real backoffDelay formula (not a stubbed-out replacement
-// backoff func): it scales backoffBase down so the real jittered shape runs
-// in milliseconds, and asserts both on the sequence of attempt values passed
-// to it (deterministic) and, for the post-reset call, on the actual delay
-// backoffDelay(0) can produce for attempt 0: it must land in
-// [backoffBase, 2*backoffBase), a range only attempt 0 can produce.
+// Uses the real backoffDelay with backoffBase scaled down. It asserts the
+// attempt sequence passed to backoff and that the post-reset delay lands in
+// [backoffBase, 2*backoffBase), which only attempt 0 can produce.
 func TestStreamBackoffResetsAfterEstablishedConnection(t *testing.T) {
 	oldBase := backoffBase
 	backoffBase = 2 * time.Millisecond
@@ -607,14 +596,10 @@ func TestStreamBackoffResetsAfterEstablishedConnection(t *testing.T) {
 	}
 }
 
-// TestStreamOutlivesScaledDownClientTimeoutEquivalent proves the stream no
-// longer dies at Shipper.client's 60s Client.Timeout (IMPORTANT 1 in fix
-// round 1): it must use a dedicated client with no such cap. Since we can't
-// wait out a real 60s in a test, pingInterval is shortened and the same
-// ratio the old cap had to the default ping (60s / 20s = 3x) is applied to
-// the shortened one, giving a scaled-down analogue of "the old cap would
-// have fired here"; the stream is kept alive several multiples past that
-// point.
+// TestStreamOutlivesScaledDownClientTimeoutEquivalent: the stream must not die at
+// Shipper.client's 60s Timeout, so it uses a dedicated client with no cap. The
+// test shortens pingInterval, applies the same 3x ratio (60s / 20s) to it, and
+// keeps the stream alive several multiples past that point.
 func TestStreamOutlivesScaledDownClientTimeoutEquivalent(t *testing.T) {
 	oldPing := setPingInterval(15 * time.Millisecond)
 	t.Cleanup(func() { setPingInterval(oldPing) })
@@ -645,11 +630,9 @@ func TestStreamOutlivesScaledDownClientTimeoutEquivalent(t *testing.T) {
 	}
 }
 
-// TestStreamReconnectsAfterPingsStop proves the child's own read-idle
-// watchdog (IMPORTANT 1 in fix round 1), not just the removal of
-// Shipper.client's Timeout: a connection that stays open at the TCP/TLS
-// level but stops delivering anything -- pings included -- must still be
-// abandoned and reconnected, at roughly 3x the ping interval.
+// TestStreamReconnectsAfterPingsStop: the read-idle watchdog must abandon and
+// reconnect a connection that stays open but delivers nothing, pings included,
+// at roughly 3x the ping interval.
 func TestStreamReconnectsAfterPingsStop(t *testing.T) {
 	oldPing := setPingInterval(60 * time.Millisecond)
 	t.Cleanup(func() { setPingInterval(oldPing) })

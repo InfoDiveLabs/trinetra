@@ -66,11 +66,9 @@ type Master struct {
 	srv     *http.Server
 }
 
-// NewMaster builds a Master; nil Now/OnContact/Logf get safe defaults. The
-// *http.Server is built here and never reassigned, so Serve and Shutdown
-// only ever read/call a field set once before any goroutine starts -- no
-// lock or nil check is needed at the call sites, and Shutdown is safe to
-// call even if Serve is never called (or hasn't been called yet).
+// NewMaster builds a Master; nil Now/OnContact/Logf get defaults. The
+// *http.Server is built here and never reassigned, so Serve and Shutdown need no
+// lock or nil check, and Shutdown is safe even if Serve was never called.
 func NewMaster(cfg MasterConfig) *Master {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -113,8 +111,7 @@ func (m *Master) Handler() http.Handler {
 	return mux
 }
 
-// Serve serves TLS on ln until Shutdown. The server was already built by
-// NewMaster, so this only starts it -- Serve does not mutate m.
+// Serve serves TLS on ln until Shutdown; it does not mutate m.
 func (m *Master) Serve(ln net.Listener) error {
 	err := m.srv.ServeTLS(ln, "", "")
 	if errors.Is(err, http.ErrServerClosed) {
@@ -123,9 +120,7 @@ func (m *Master) Serve(ln net.Listener) error {
 	return err
 }
 
-// Shutdown stops Serve gracefully. Safe to call even if Serve was never
-// called or hasn't been called yet: http.Server.Shutdown on a server with no
-// active listeners or connections returns immediately.
+// Shutdown stops Serve gracefully; safe if Serve was never called.
 func (m *Master) Shutdown(ctx context.Context) error {
 	return m.srv.Shutdown(ctx)
 }
@@ -419,12 +414,10 @@ func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	// Same per-node lock handleIngest/handleBackfill already take: without
-	// it, two concurrent Live posts for one node can race inside the sink
-	// (replicaSink.Live ends with an unsynchronized writeFileAtomic of
-	// live.json) -- observed intermittently as "rename .../live.json.tmp
-	// .../live.json: no such file or directory" (debug-step12-report.md,
-	// "second, separate issue").
+	// Take the same per-node lock as handleIngest/handleBackfill: concurrent Live
+	// posts for one node race inside the sink (replicaSink.Live ends with an
+	// unsynchronized writeFileAtomic of live.json) and intermittently fail with
+	// "rename live.json.tmp: no such file".
 	l := m.nodeLock(id)
 	l.Lock()
 	defer l.Unlock()
@@ -497,10 +490,8 @@ func (l *ipLimiter) allow(ip string, now time.Time) bool {
 		return true
 	}
 
-	// A new IP. Bound the map: sweep out IPs whose most recent hit is
-	// stale, and only if the map is still at/over cap after sweeping do we
-	// refuse -- fail closed rather than let it grow unbounded under a
-	// sustained spray of distinct active IPs.
+	// A new IP. Bound the map: sweep stale IPs, and if still at/over cap refuse
+	// (fail closed) rather than grow under a spray of distinct active IPs.
 	if len(l.hits) >= l.cap {
 		for k, v := range l.hits {
 			if len(v) == 0 || !v[len(v)-1].After(cut) {

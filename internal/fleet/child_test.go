@@ -131,23 +131,16 @@ func TestShipperDrainsOutboxAndSendsLive(t *testing.T) {
 	waitFor(t, "second drain", func() bool { return ob.Acked() == 25 })
 }
 
-// TestShipperPriorityLaneShipsAlertBeforeBacklog: a large samples backlog
-// (10k records, more than one Ingest batch's worth at MaxBatchRecords) plus
-// one freshly-fired alert. The alert must reach the fake master via
-// Backfill before the backlog's first Ingest/Apply call -- proven by call
-// order at the sink, not by timing -- and the backlog must still fully
-// apply afterwards: nothing the priority lane jumped ahead of is lost.
+// TestShipperPriorityLaneShipsAlertBeforeBacklog: with a 10k-record backlog
+// (more than one batch) plus one fresh alert, the alert must reach the sink via
+// Backfill before the backlog's first Apply, proven by call order, not timing,
+// and the backlog must still fully apply.
 //
-// Because the priority lane never Acks (Backfill carries no seq
-// bookkeeping) it keeps re-offering the same still-unacked alert on every
-// shipOnce call until the backlog's own Ingest sweep naturally reaches that
-// seq and Acks it for real -- so with a backlog spanning multiple Ingest
-// batches, the alert is backfilled more than once here. That is the
-// intended "re-sent and deduped" behaviour (a real master's replica alert
-// guard, exercised elsewhere, is what makes the extra sends free); what
-// must hold is that every one of those backfills happens before the apply
-// call it precedes, that only the alert's own seq is ever backfilled, and
-// that the backlog still converges to fully applied.
+// The priority lane never Acks, so it re-offers the alert on every shipOnce until
+// the backlog's Ingest reaches its seq. The alert may therefore be backfilled
+// more than once (the master's replica alert guard makes that free); each
+// backfill must precede the apply it precedes and only the alert's seq may be
+// backfilled.
 func TestShipperPriorityLaneShipsAlertBeforeBacklog(t *testing.T) {
 	f := newMasterFixture(t)
 	ob, _ := OpenOutbox(t.TempDir(), 64<<20)
@@ -189,11 +182,7 @@ func TestShipperPriorityLaneShipsAlertBeforeBacklog(t *testing.T) {
 		}
 	}
 
-	// Nothing lost: every backlog record plus the alert was eventually
-	// applied for real via the ordinary Ingest path (the fake sink's Apply
-	// just counts seqs; production content-level dedup of the alert's
-	// repeat arrival there is package trinetra's replicaNode.apply, and
-	// TestIngestIsIdempotentAndOrdered covers Ingest's own seq dedup).
+	// Nothing lost: every backlog record plus the alert was applied via Ingest.
 	if applied := f.sink.AppliedFor(nodeID); applied != alertSeq {
 		t.Fatalf("applied = %d, want %d", applied, alertSeq)
 	}
@@ -219,10 +208,8 @@ func nodeIDFromOutbox(t *testing.T, f *masterFixture, ob *Outbox) string {
 	return ""
 }
 
-// shipOnce must report that the priority lane already made real progress
-// (a durable Backfill the master has) even when the general backlog Read
-// that follows it fails: worked must be true alongside the error, not
-// false, so a caller can tell "something happened" from "nothing did."
+// shipOnce must report worked=true alongside the error when the priority lane
+// made durable progress but the following backlog Read fails.
 func TestShipOnceReportsWorkedTrueWhenPriorityBackfillSucceedsButReadFails(t *testing.T) {
 	f := newMasterFixture(t)
 	dir := t.TempDir()

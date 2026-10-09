@@ -263,18 +263,13 @@ func (a *NodeAlerter) Forget(id, name string) []AlertIntent {
 	return out
 }
 
-// Plan returns the alerts to raise/resolve for ev. A mass disconnect opens
-// one fleet:connectivity incident; nodes that are part of it (or go stale or
-// down while it is open, even if they join after the incident opened) are
-// not paged individually. Membership is added, never inferred solely from
-// the opening ev.MassDown set: every tick the incident is open, any node
-// newly reported in ev.MassDown or newly transitioning to stale or down
-// (and not already individually alerted) joins the incident. A member
-// leaves only when it transitions to online, lagging or revoked, and the
-// incident resolves once every member has left — so a node that goes silent
-// after the incident opened, and is still lost when the original members
-// recover, correctly keeps the incident open instead of triggering an early
-// "restored" alert followed by a late, separate individual page.
+// Plan returns the alerts to raise/resolve for ev. A mass disconnect opens one
+// fleet:connectivity incident; nodes in it (or going stale/down while it is open,
+// even if they joined later) are not paged individually. Membership grows every
+// tick from ev.MassDown and new stale/down transitions, and a member leaves only
+// on transitioning to online, lagging or revoked. The incident resolves when all
+// members have left, so a node still lost when the originals recover keeps it
+// open rather than causing an early "restored" and a late individual page.
 func (a *NodeAlerter) Plan(ev Evaluation, now int64, name func(id string) string) []AlertIntent {
 	var out []AlertIntent
 	if !a.massActive && len(ev.MassDown) > 0 {
