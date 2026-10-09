@@ -1,10 +1,5 @@
-// Package trinetra: culprit.go enriches CPU and memory alerts by naming the
-// top process and/or container consuming that resource (#103), so a "cpu high"
-// alert reads "cpu = 96.0 >= threshold 95.0 (top: ffmpeg 82%, container web
-// 30%)" instead of a bare number. It reads only the process/container data
-// already on the snapshot (Snapshot.Processes.Top, Snapshot.ContainerStats), so
-// it adds no new collection and degrades to no suffix when that data is absent
-// (collect.processes off, no docker, or nothing consuming the resource).
+// Package trinetra: culprit.go enriches CPU and memory alerts by naming the top process
+// and/or container consuming that resource (#103).
 package trinetra
 
 import (

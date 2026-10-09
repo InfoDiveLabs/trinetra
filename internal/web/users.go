@@ -42,7 +42,7 @@ func validRole(r Role) bool { return roleRank(r) > 0 }
 // store" section specifies.
 type Credential struct {
 	// ID is the credential ID the authenticator generated, used to look the
-	// credential up again during login (Task 5/#61).
+	// credential up again during login.
 	ID []byte `json:"id"`
 	// PublicKey is the COSE-encoded public key bytes go-webauthn extracted from the
 	// attestation object; the private key never leaves the authenticator.
@@ -60,8 +60,8 @@ type User struct {
 	// ID is this user's WebAuthn user handle: an opaque, random identifier (see newUserID),
 	// never the display Name.
 	ID string `json:"id"`
-	// Name is the human-palatable account name (display name and username are the same value
-	// here; the mockup/design doc doesn't distinguish them for this app).
+	// Name is the human-palatable account name (display name and username
+	// are the same value here).
 	Name string `json:"name"`
 	// Role is this account's access level (RoleAdmin/RoleResponder/RoleViewer, ranked viewer <
 	// responder < admin), assigned by resolveEnrollRole (enroll_tokens.go) at enrollment time.
@@ -85,8 +85,7 @@ func (u *User) WebAuthnDisplayName() string { return u.Name }
 // WebAuthnIcon satisfies webauthn.User.
 func (u *User) WebAuthnIcon() string { return "" }
 
-// WebAuthnCredentials adapts u.Credentials (this package's flattened storage shape) into
-// the []webauthn.Credential shape go-webauthn's login ceremony.
+// WebAuthnCredentials adapts u.Credentials (this package's flattened storage shape) into.
 func (u *User) WebAuthnCredentials() []webauthn.Credential {
 	out := make([]webauthn.Credential, len(u.Credentials))
 	for i, c := range u.Credentials {

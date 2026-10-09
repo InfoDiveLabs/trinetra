@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="panel" style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
   <div style="flex:1"><b>Public status page</b><div class="note">Anyone with the link sees only the panels you pick below — no login, read-only, filtered on the server.</div></div>
-  {{if .Enabled}}<a href="/public" class="btn">View public page →</a>{{end}}
+  {{if .Enabled}}<a href="/status" class="btn" target="_blank" rel="noopener">View public page ↗</a>{{end}}
 </div>
 
 <form method="post" action="/settings/public">

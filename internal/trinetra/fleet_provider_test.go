@@ -11,9 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// newTestMasterState builds a masterState with a real registry, engine,
-// incident store, audit log and Hub (no live connections), for testing
-// fleetAPIImpl's incident/audit surface without a full startFleet.
+// newTestMasterState builds a masterState with a real registry, engine, incident store,
+// audit log and Hub (no live connections).
 func newTestMasterState(t *testing.T) *masterState {
 	t.Helper()
 	dir := t.TempDir()
@@ -106,10 +105,8 @@ func TestFleetAPIAckIncidentSkipsResolvedAlertsAndSelfNode(t *testing.T) {
 
 	incs, _ := api.Incidents(core.IncidentFilter{})
 	for _, inc := range incs {
-		// AckIncident must not panic pushing to a self/master alert (no
-		// node) or to an already-resolved one; both should simply be
-		// skipped. Reaching this call without an error/panic is the
-		// assertion.
+		// AckIncident must not panic pushing to a self/master alert (no node) or to an
+		// already-resolved one; both should simply be skipped.
 		if err := api.AckIncident(inc.ID, "cli"); err != nil {
 			t.Fatalf("AckIncident(%s) = %v", inc.ID, err)
 		}
@@ -156,12 +153,8 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 	m.joinURL = "https://master.example:9443" // required for CreateToken
 	api := fleetAPIFor(m)
 
-	// Actor plumbing (plan C task C5): every one of these used to have no
-	// actor parameter at all and always audited the literal placeholder
-	// "unknown", regardless of who actually made the call. Each now records
-	// whatever the caller passes -- exercised here with a real per-call
-	// actor (mirroring a signed-in web user's own name) so this test itself
-	// pins the fix, not just the plumbing.
+	// Actor plumbing: each call records whatever actor the caller passes (here a real per-call
+	// actor, like a signed-in web user's name), not a placeholder "unknown".
 	if err := api.RenameNode(nodeID, "web1-renamed", "alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -213,10 +206,8 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 	}
 }
 
-// TestRenameNodeRejectsNameAlreadyUsed is the review round-2 item (b)
-// regression test: renaming a node to a name already used (case-
-// insensitively) by ANOTHER node is refused with the exact error text, and
-// the target node keeps its original name.
+// TestRenameNodeRejectsNameAlreadyUsed: renaming a node to a name already used
+// (case-insensitively) by ANOTHER node is refused with the exact error text.
 func TestRenameNodeRejectsNameAlreadyUsed(t *testing.T) {
 	m := newTestMasterState(t)
 	id1, err := fleet.NewNodeID()
@@ -254,9 +245,8 @@ func TestRenameNodeRejectsNameAlreadyUsed(t *testing.T) {
 	}
 }
 
-// TestFleetAPIMutationsNilSafeWithoutOptionalFields guards against a panic
-// when hub/engine/audit are nil -- e.g. an older test-only masterState built
-// directly (not via startMaster), or a defensive future caller.
+// TestFleetAPIMutationsNilSafeWithoutOptionalFields guards against a panic when
+// hub/engine/audit are nil -- e.g. an older test-only masterState built directly.
 func TestFleetAPIMutationsNilSafeWithoutOptionalFields(t *testing.T) {
 	dir := t.TempDir()
 	reg, err := fleet.OpenRegistry(filepath.Join(dir, "registry.json"))
@@ -293,10 +283,8 @@ func TestFleetAPIMutationsNilSafeWithoutOptionalFields(t *testing.T) {
 	}
 }
 
-// TestFleetAPIAlertingShowApplyRoundTrip covers the task-5 "show|apply"
-// contract: Alerting() reports the built-in default until SetAlerting saves
-// something, SetAlerting validates against the master's CURRENT channel
-// config, and a successful save is audited.
+// TestFleetAPIAlertingShowApplyRoundTrip: Alerting() reports the built-in default until
+// SetAlerting saves something.
 func TestFleetAPIAlertingShowApplyRoundTrip(t *testing.T) {
 	m := newTestMasterState(t)
 	dir := t.TempDir()
@@ -350,10 +338,7 @@ func TestFleetAPIAlertingShowApplyRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFleetAPIRouteTestMatchesResolveRoute is the test-enforced invariant
-// (task-5 brief): RouteTest must be a thin wrapper around the exact same
-// resolveRoute function the alerting engine's real delivery uses, so a dry
-// run can never disagree with what actually happens for the same input.
+// TestFleetAPIRouteTestMatchesResolveRoute is the test-enforced invariant RouteTest must.
 func TestFleetAPIRouteTestMatchesResolveRoute(t *testing.T) {
 	m := newTestMasterState(t)
 	dir := t.TempDir()

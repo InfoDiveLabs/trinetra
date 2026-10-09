@@ -12,11 +12,8 @@ type Target struct {
 	Available bool
 }
 
-// UnitInfo is one systemd service unit's live state, as parsed from
-// `systemctl list-units --type=service --all --plain --no-legend`. This is a
-// full inventory (not just failures) for the Monitoring "services" tab, kept
-// deliberately snapshot-only: see listUnits/collectSlow for why it is never
-// persisted to the SampleStore as a series.
+// UnitInfo is one systemd service unit's live state, as parsed from `systemctl list-units
+// --type=service --all --plain --no-legend`.
 type UnitInfo struct {
 	Name        string
 	Load        string
@@ -25,13 +22,7 @@ type UnitInfo struct {
 	Description string
 }
 
-// parseUnits parses `systemctl list-units --type=service --all --plain
-// --no-legend` output. Each line is UNIT LOAD ACTIVE SUB DESCRIPTION,
-// whitespace-separated with DESCRIPTION free-form (may itself contain
-// spaces), so only the first 4 fields are split out positionally and the
-// remainder of the line is joined back as Description. Blank/whitespace-only
-// lines and any line with fewer than 5 fields (malformed/truncated output)
-// are skipped rather than aborting the whole batch.
+// parseUnits parses `systemctl list-units --type=service --all --plain --no-legend` output.
 func parseUnits(s string) []UnitInfo {
 	var out []UnitInfo
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
@@ -50,12 +41,7 @@ func parseUnits(s string) []UnitInfo {
 	return out
 }
 
-// listUnits runs `systemctl list-units` (via runMaybeSudo: systemctl is
-// usually root-accessible without sudo, but the sudo fallback is harmless if
-// it isn't) and parses the full unit inventory. Snapshot-only: unlike
-// parseFailedUnits below (used for --failed alerting), this is never fed
-// into the SampleStore as a series -- full unit-name cardinality per host
-// makes that a bad fit for time-series storage.
+// listUnits runs `systemctl list-units`.
 func listUnits(x Exec) ([]UnitInfo, error) {
 	out, err := runMaybeSudo(x, "systemctl", "list-units", "--type=service", "--all", "--plain", "--no-legend")
 	if err != nil {
@@ -78,19 +64,8 @@ func parseFailedUnits(s string) []string {
 	return out
 }
 
-// DiscoverLocal enumerates monitorable targets on THIS host using the real
-// OS-backed Exec/FileSource (os/exec, os.ReadFile, filepath.Glob) -- the
-// same probes cmdMonitor (systemd.go) runs for `trinetra monitor list`.
-// Exported so a caller guaranteed to run on the same host as the daemon it
-// is managing -- trinetra-ctl, whose control socket is always a local
-// unix socket (internal/control), never a network one -- can list targets
-// for its monitor-thresholds screen without duplicating Discover's exec/fs
-// plumbing or routing target discovery through core.API (which would mean
-// running these same df/docker/smartctl probes on every core.API.Monitoring()
-// call, including the web dashboard's Monitoring page poll -- see the
-// beta-2 B2 task 2 report for why that path was rejected). See Discover for
-// the general, dependency-injected form cmdMonitor and this package's own
-// tests use.
+// DiscoverLocal enumerates monitorable targets on THIS host using the real OS-backed
+// Exec/FileSource, the same probes cmdMonitor runs.
 func DiscoverLocal() []Target {
 	return Discover(osExec{}, osFS{})
 }
@@ -111,13 +86,8 @@ func Discover(x Exec, fs FileSource) []Target {
 		ts = append(ts, Target{ID: "docker", Kind: "docker", Display: "docker (unavailable)", Available: false})
 	}
 
-	// filesystems: use the TYPED df (`df -PT`) so we can apply the same
-	// isRealMount && isRealFsType gate collectSlow uses to fill snap.Disks.
-	// Without the fstype gate, a root daemon on a docker host would surface
-	// one `disk:<overlay>` target per container (plus squashfs/tmpfs/nsfs
-	// pseudo-mounts) in `monitor list`/`monitor threshold`, none of which
-	// ever populate snap.Disks -- the two paths must agree on what a real
-	// disk is (see collectSlow and fix-disk-telegram-brief.md).
+	// filesystems: use the TYPED df (`df -PT`) so we can apply the same isRealMount &&
+	// isRealFsType gate collectSlow uses to fill snap.Disks.
 	if out, err := x.Run("df", "-PT"); err == nil {
 		typed := parseDFTypes(string(out))
 		mounts := make([]string, 0, len(typed))
@@ -139,10 +109,8 @@ func Discover(x Exec, fs FileSource) []Target {
 		}
 	}
 
-	// thermal: collectSnapshot only reads zone[0] into a single snap.TempC, and
-	// buildChecks keys the anomaly check on the plain id "temp". Emit exactly ONE
-	// target with that same id so `monitor disable temp` / `monitor threshold
-	// temp 70` line up with the check (per-zone ids were a silent no-op).
+	// thermal: collectSnapshot only reads zone[0] into a single snap.TempC, and buildChecks
+	// keys the anomaly check on the plain id "temp".
 	if zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp"); len(zones) > 0 {
 		display := "cpu-thermal"
 		if zones[0] != "" {
@@ -167,12 +135,8 @@ func isRealMount(m string) bool {
 			return false
 		}
 	}
-	// Defense-in-depth: reject known container/snap runtime mount roots even
-	// if isRealFsType's fstype denylist somehow doesn't catch them (e.g. a
-	// bind-mount or future overlay driver reporting a real-looking fstype).
-	// A root daemon on a docker host otherwise sees one mount per container
-	// under /var/lib/docker/overlay2/<hash>/merged -- this is the field bug
-	// that motivated this whole filter (see fix-disk-telegram-brief.md).
+	// Defense-in-depth: reject known container/snap runtime mount roots even if isRealFsType's
+	// fstype denylist somehow doesn't catch them.
 	for _, p := range []string{
 		"/var/lib/docker/", "/var/lib/containers/", "/var/lib/kubelet/",
 		"/snap/", "/var/snap/",
@@ -184,18 +148,7 @@ func isRealMount(m string) bool {
 	return true
 }
 
-// isRealFsType reports whether fstype names a real, user-facing block-device
-// filesystem (ext2/3/4, xfs, btrfs, zfs, vfat, exfat, f2fs, ntfs, reiserfs,
-// jfs, ...) as opposed to a pseudo/virtual/container filesystem (overlay,
-// tmpfs, proc, sysfs, cgroup, squashfs, ...). This is the robust
-// discriminator for the docker-host field bug: `df` on a root daemon lists
-// one `overlay` mount per container plus assorted pseudo-filesystems, and
-// path-prefix filtering (isRealMount) alone can't catch mounts outside the
-// known container-runtime directories, so this denylists filesystem TYPES
-// instead. Case-insensitive since some platforms/tools report fstype in
-// mixed case. "fuse.*" is treated as pseudo (FUSE-backed virtual/network
-// mounts like fuse.sshfs) except "fuseblk", which backs real block-device
-// filesystems (e.g. NTFS-3G) and is kept.
+// isRealFsType reports whether fstype names a real, user-facing block-device filesystem.
 func isRealFsType(fstype string) bool {
 	if fstype == "" {
 		return false

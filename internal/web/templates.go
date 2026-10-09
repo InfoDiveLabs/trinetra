@@ -43,20 +43,14 @@ func computeAssetVersion() string {
 // /assets/app.js?v=<hash>.
 func assetURL(path string) string { return path + "?v=" + assetVersion }
 
-// templatesFS embeds internal/web/templates: base.html (the ported mockup
-// shell -- nav/topbar/content blocks, see that file's comments) plus one file
-// per page that fills in the "content" block (and, later, overrides other
-// blocks as needed).
+// templatesFS embeds the page templates; base.html is the app shell.
 //
 //go:embed templates
 var templatesFS embed.FS
 
 // funcMap holds the template helpers base.html and page templates call.
 var funcMap = template.FuncMap{
-	// ledClass/humanBytes/humanRate/diskTrendText/diskTrendClass/
-	// loadLedClass/diskWarnPct/diskCriticalPct/subInt (handlers_dashboard.go)
-	// are templates/dashboard.html's formatting helpers for the live
-	// DashboardView.
+	// Formatting helpers for the dashboard's live view.
 	"ledClass": ledClass,
 	// multiline/timeText (handlers_statuspage_incidents.go, handlers_fleet.go)
 	// render status-page update text and unix timestamps.
@@ -76,7 +70,8 @@ var funcMap = template.FuncMap{
 	// asset appends the build's content-hash to an asset path for cache-busting
 	// (see assetVersion); templates reference assets via {{asset "/assets/x"}}.
 	"asset": assetURL,
-	// nodeHref/nodeAgo/nodeDur/clockTime/linkUnreachable (task 3, node-aware templates) back.
+	// nodeHref/nodeAgo/nodeDur/clockTime/linkUnreachable back every same-origin link's node
+	// prefix and the replica banner / child link badge's time and threshold formatting.
 	"nodeHref":        nodeHref,
 	"nodeAgo":         nodeAgoText,
 	"nodeDur":         nodeDurText,
@@ -85,11 +80,11 @@ var funcMap = template.FuncMap{
 	// oneIndexed (U6, 2026-09-25 UI audit fix) renders a zero-based loop index as its 1-based
 	// display label -- fleet_alerting.html's Route/ Policy/Step row headings only.
 	"oneIndexed": oneIndexed,
-	// dict (task C3, fleet_alerting.html) builds a map[string]any from alternating key/value
-	// arguments, for passing a small ad-hoc bundle of fields into a named template block.
+	// dict builds a map[string]any from alternating key/value arguments, for passing a small
+	// ad-hoc bundle of fields into a named template block.
 	"dict": templateDict,
-	// managedKeyKnown (task C5, fleet_managed.html) reports whether key is one of
-	// core.ManagedKeys -- the create/edit form's key <select> uses it to add a visible.
+	// managedKeyKnown reports whether key is one of core.ManagedKeys -- the create/edit form's
+	// key <select> uses it to add a visible.
 	"managedKeyKnown": func(key string) bool {
 		for _, k := range core.ManagedKeys {
 			if k == key {
@@ -147,8 +142,7 @@ func nodeClockTime(ts int64) string {
 	return time.Unix(ts, 0).Local().Format("15:04")
 }
 
-// linkUnreachableThreshold is the controller ruling's cutoff for the topbar child-link
-// pill.
+// linkUnreachableThreshold is the cutoff for the topbar child-link pill.
 const linkUnreachableThreshold = 2 * time.Minute
 
 // linkUnreachable reports whether a child's link to its master (from Fleet().Status().Link,
@@ -281,8 +275,7 @@ func currentRole(r *http.Request) string {
 // PageData is what every page template renders against: base.html's shell
 // (nav/topbar) plus whatever the page itself needs.
 type PageData struct {
-	// Title/Sub drive the topbar's <h1>/<p>, mirroring the mockup's
-	// data-title/data-sub attributes.
+	// Title/Sub drive the topbar's <h1>/<p>.
 	Title, Sub string
 	// ServerName is this host's display name (config server.name, or the hostname when unset).
 	ServerName string
@@ -296,8 +289,7 @@ type PageData struct {
 	// Name/Initial are the signed-in user's display name (User.Name) and its uppercased first
 	// letter, rendered in the sidebar footer's identity block (#80).
 	Name, Initial string
-	// Active is the request path, used to mark the matching nav link
-	// class="active" (mirrors the mockup's here===n.p comparison).
+	// Active is the request path, used to mark the matching nav link class="active".
 	Active string
 	// Nav is Role's filtered nav list, precomputed so the template doesn't
 	// need role-aware logic beyond the active-link comparison.
@@ -318,27 +310,27 @@ type PageData struct {
 	// FleetRole is this daemon's fleet role for the CURRENT request: "solo"/"master"/"child"
 	// (config.RoleSolo/RoleMaster/RoleChild).
 	FleetRole string
-	// Banner is the replica banner (task 3) for a page scoped to a genuinely remote fleet node
-	// -- nil for every self-scoped page.
+	// Banner is the replica banner for a page scoped to a genuinely remote fleet node -- nil
+	// for every self-scoped page.
 	Banner *NodeBanner
 	// Link is a child daemon's link status to its master (core.LinkView, from
 	// Fleet().Status().Link).
 	Link *core.LinkView
 	// MasterURL is a child daemon's configured master address (core.FleetStatus.MasterURL).
 	MasterURL string
-	// Switcher is the topbar node switcher/Ctrl-K palette's node list (task 6, fleet-web-a):
-	// up to switcherNodeCap entries (self first, then down nodes, then the rest by name).
+	// Switcher is the topbar node switcher/Ctrl-K palette's node list: up to switcherNodeCap
+	// entries (self first, then down nodes, then the rest by name).
 	Switcher []SwitcherNode
 	// NodeLabel is the switcher button's own text: "this server" for a self-scoped page (solo,
 	// a master's own view, a child's own view -- Node.Self).
 	NodeLabel string
 }
 
-// switcherNodeCap is the topbar switcher/Ctrl-K palette's ruling: list up to 20 nodes.
+// switcherNodeCap is the most nodes the topbar switcher/Ctrl-K palette lists.
 const switcherNodeCap = 20
 
 // SwitcherNode is one entry in the topbar node switcher dropdown and its Ctrl-K palette
-// counterpart (task 6, fleet-web-a).
+// counterpart: a fleet roster node projected for THIS request's own page.
 type SwitcherNode struct {
 	// ID is the roster id (core.NodeSummary.ID; core.SelfNodeID for self).
 	ID string
@@ -357,7 +349,7 @@ type SwitcherNode struct {
 }
 
 // buildSwitcherNodes projects nodes (the full, unfiltered fleet roster) into the
-// switcher/palette's ordering and per-node Href, per the controller ruling: self first.
+// switcher/palette's ordering and per-node Href: self first, then down nodes (by name).
 func buildSwitcherNodes(nodes []core.NodeSummary, current nodeScope, targetPath string) []SwitcherNode {
 	var self *core.NodeSummary
 	var down, rest []core.NodeSummary
@@ -434,8 +426,8 @@ func nodeLabelFor(ns nodeScope, path string) string {
 	return ns.Name
 }
 
-// NodeBanner is the replica banner's render data (task 3, task-3-brief.md's exact
-// interface): a compact summary of the remote node's own last-known state.
+// NodeBanner is the replica banner's render data: a compact summary of the remote node's
+// own last-known state, rendered by base.html's "nodebanner" partial just under the topbar.
 type NodeBanner struct {
 	// Name is the node's display name (NodeSummary.Name).
 	Name string
@@ -514,7 +506,7 @@ type fleetPageInfo struct {
 }
 
 // resolveFleetPageInfo determines the current request's fleet role (and, for a child, its
-// link status/master URL) for newPageData, honoring the controller ruling.
+// link status/master URL) for newPageData: call Fleet().Status() at most once per REQUEST.
 func resolveFleetPageInfo(r *http.Request, d Deps) fleetPageInfo {
 	if _, ok := r.Context().Value(nodeScopeCtxKey{}).(nodeScope); ok {
 		return fleetPageInfo{role: config.RoleMaster}
@@ -542,7 +534,7 @@ func buildNodeBanner(ns nodeScope) *NodeBanner {
 }
 
 // behindText renders NodeBanner.Behind (the "catching up"/"lagging" banner's "N behind"
-// clause) from NodeSummary.OutboxBytes/OutboxOldest.
+// clause) from NodeSummary.OutboxBytes/OutboxOldest: the queued byte count.
 func behindText(n core.NodeSummary) string {
 	var parts []string
 	if n.OutboxBytes > 0 {
@@ -589,7 +581,8 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
-// renderDenied renders the mockup's "Higher role needed" denied panel.
+// renderDenied renders the "Higher role needed" denied panel (templates/denied.html)
+// through the full app-shell layout with a 403 status -- requireRole.
 func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
 	data := newPageData(r, d, "Higher role needed", "Access denied")
 	if err := renderPageStatus(w, "denied.html", data, http.StatusForbidden); err != nil {
@@ -606,7 +599,8 @@ func renderNotFound(w http.ResponseWriter, r *http.Request, d Deps, reason strin
 	}
 }
 
-// BarePageData is what a "bare"/centered page.
+// BarePageData is what a "bare"/centered page (enroll, login, the public dashboard -- they
+// use the centered `.card`/`.center` styling rather than the app shell) renders against.
 type BarePageData struct {
 	// Title feeds the <title> tag, same as PageData.Title.
 	Title string
@@ -615,6 +609,7 @@ type BarePageData struct {
 	Nonce string
 	// EnrollToken is this request's ?token= query parameter, if any.
 	EnrollToken string
+	SignedIn    bool
 	// EnrollClosed (U8, 2026-09-25 UI audit fix) is true when GET /enroll carries no ?token=
 	// AND the user store already has at least one account: resolveEnrollRole.
 	EnrollClosed bool
@@ -629,7 +624,13 @@ func newBarePageData(r *http.Request, title string) BarePageData {
 		Title:       title,
 		Nonce:       nonceFromContext(r),
 		EnrollToken: r.URL.Query().Get("token"),
+		SignedIn:    signedIn(r),
 	}
+}
+
+func signedIn(r *http.Request) bool {
+	_, ok := userFromContext(r)
+	return ok
 }
 
 // renderBarePage is renderPageStatus's counterpart for the bare/centered layout: it parses

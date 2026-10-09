@@ -9,8 +9,6 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestOnboardCheckEntersOnboardingWhenNoToken asserts Init's fetchOnboardCheckCmd, once its
-// onboardCheckMsg lands on a model still sitting on Home.
 func TestOnboardCheckStartsFirstRunOnFreshServer(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{cfg: &config.Config{}})
 	mm, _ = mm.Update(onboardCheckMsg{cfg: &config.Config{}})
@@ -20,7 +18,6 @@ func TestOnboardCheckStartsFirstRunOnFreshServer(t *testing.T) {
 	}
 }
 
-// configured and enrolled never enters onboarding.
 func TestOnboardCheckSkippedWhenEnrolled(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Telegram.Token = "abc"

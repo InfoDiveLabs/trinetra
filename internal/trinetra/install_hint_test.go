@@ -8,8 +8,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestTelegramInstallHint: Telegram is optional, so install only mentions it
-// when a token is set but no chat is enrolled yet.
+// TestTelegramInstallHint pins #106 part 2: install nudges the operator to set a token only
+// on a genuinely unconfigured host; a host that already has a token.
 func TestTelegramInstallHint(t *testing.T) {
 	prev := cfgPath
 	t.Cleanup(func() { cfgPath = prev })

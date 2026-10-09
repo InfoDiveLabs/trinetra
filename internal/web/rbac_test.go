@@ -53,7 +53,8 @@ func TestRequireRoleAnonRedirectsToLogin(t *testing.T) {
 	}
 }
 
-// TestRequireRoleViewerBlockedFromAdminRoute pins the RBAC matrix's core negative case.
+// TestRequireRoleViewerBlockedFromAdminRoute pins the RBAC matrix's core negative case: a
+// signed-in viewer hitting an admin route gets 403 and the "Admin only" denied panel.
 func TestRequireRoleViewerBlockedFromAdminRoute(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -87,8 +88,8 @@ func TestRequireRoleAdminAllowed(t *testing.T) {
 	}
 }
 
-// TestRequireRoleAppliesAcrossAllAdminRoutes pins that every admin nav target the mockup's
-// ADMIN_PAGES list names (config/channels/users/ public-settings) is actually gated.
+// TestRequireRoleAppliesAcrossAllAdminRoutes pins that every admin nav target
+// (config/channels/users/public-settings) is actually gated, not just /config.
 func TestRequireRoleAppliesAcrossAllAdminRoutes(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)

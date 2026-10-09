@@ -3,7 +3,7 @@
 <div class="status-page" id="public-live">
   <header class="status-head">
     <div class="status-brand"><span class="status-logo"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="112" height="30"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="112" height="30"></span><h1 class="status-title">{{.Status.Title}}</h1></div>
-    <a href="/login" class="status-login">Sign in</a>
+    {{if .SignedIn}}<a href="/" class="status-login">Dashboard</a>{{else}}<a href="/login" class="status-login">Sign in</a>{{end}}
   </header>
 
   <section class="status-banner status-{{.Status.Overall}}" role="status">

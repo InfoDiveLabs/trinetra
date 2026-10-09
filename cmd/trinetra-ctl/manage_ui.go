@@ -123,7 +123,7 @@ type manageAppliedMsg struct {
 }
 
 // scheduleConfigMsg carries a freshly fetched Config back into Update for the Schedule
-// screen's pre-fill (#review-fix-1): the CURRENT schedule.daily/schedule.weekly values.
+// screen's pre-fill: the CURRENT schedule.daily/schedule.weekly values.
 type scheduleConfigMsg struct {
 	cfg *config.Config
 	err error

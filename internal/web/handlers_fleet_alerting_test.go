@@ -13,11 +13,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// seedViewer puts a RoleViewer *User in store and mints a live session for
-// it, returning the session cookie plus that session's CSRF token --
-// mirrors seedAdmin (handlers_users_test.go) for the viewer role, needed
-// now that POST /fleet/alerting/test requires CSRF too (fix round 1
-// IMPORTANT 1).
+// seedViewer puts a RoleViewer *User in store and mints a live session for it, returning
+// the session cookie plus that session's CSRF token -- mirrors seedAdmin.
 func seedViewer(t *testing.T, name string, users UserStore, sessions SessionStore) (*User, *http.Cookie, string) {
 	t.Helper()
 	u := &User{ID: mustNewUserID(t), Name: name, Role: RoleViewer, Created: 1}
@@ -31,10 +28,8 @@ func seedViewer(t *testing.T, name string, users UserStore, sessions SessionStor
 	return u, &http.Cookie{Name: sessionCookieName, Value: sess.ID}, sess.CSRF
 }
 
-// fleetAlertingViewerPost issues a viewer-signed-in, CSRF-valid, form-
-// encoded POST against d's handler -- for POST /fleet/alerting/test, which
-// stays viewer-gated but still requires a valid CSRF token like any other
-// signed-in POST.
+// fleetAlertingViewerPost issues a viewer-signed-in, CSRF-valid, form- encoded POST against
+// d's handler -- for POST /fleet/alerting/test.
 func fleetAlertingViewerPost(t *testing.T, d Deps, target string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	h := newHandler(d)
@@ -44,11 +39,8 @@ func fleetAlertingViewerPost(t *testing.T, d Deps, target string, form url.Value
 	return postForm(h, target, form, cookie, csrf)
 }
 
-// fleetAdminSessionGet issues an admin-signed-in GET against d's handler and
-// returns the response body, the handler, and the session cookie used --
-// so a follow-up POST (formValuesForButton + postForm) can act as the SAME
-// session: the csrf_token extracted from the rendered page belongs to this
-// one session, so the follow-up POST must reuse its cookie, not a fresh one.
+// fleetAdminSessionGet issues an admin-signed-in GET against d's handler and returns the
+// response body, the handler, and the session cookie used -- so a follow-up POST.
 func fleetAdminSessionGet(t *testing.T, d Deps, target string) (body string, h http.Handler, cookie *http.Cookie) {
 	t.Helper()
 	h = newHandler(d)
@@ -65,10 +57,8 @@ func fleetAdminSessionGet(t *testing.T, d Deps, target string) (body string, h h
 	return rr.Body.String(), h, cookie
 }
 
-// fleetAlertingFixtureCfg is this file's shared "pre-existing config"
-// fixture: one route, two policies, and one aggregate rule -- fix round 1's
-// own choice of shape for the browser-faithful tests (a route-only op or
-// edit must never disturb the two policies or the rule).
+// fleetAlertingFixtureCfg is this file's shared "pre-existing config" fixture: one route,
+// two policies, and one aggregate rule, for the browser-faithful tests.
 func fleetAlertingFixtureCfg() core.AlertingConfig {
 	return core.AlertingConfig{
 		Version: 5,
@@ -82,11 +72,8 @@ func fleetAlertingFixtureCfg() core.AlertingConfig {
 	}
 }
 
-// fleetAlertingSaveForm returns a minimal, individually valid structured-
-// form POST body for one route (tag=web -> policy p1) and one policy (p1,
-// one immediate step to every channel), op=save -- used only by the tests
-// below that don't need a real rendered page (a bare RBAC/size check), not
-// as a stand-in for what the template actually renders.
+// fleetAlertingSaveForm returns a minimal, individually valid structured- form POST body
+// for one route (tag=web -> policy p1) and one policy.
 func fleetAlertingSaveForm(version string) url.Values {
 	return url.Values{
 		"mode":                     {"form"},
@@ -110,9 +97,8 @@ func fleetAlertingSaveForm(version string) url.Values {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Page/RBAC basics
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Page/RBAC
+// basics ---------------------------------------------------------------------------
 
 // TestFleetAlertingSoloDaemon404s pins "master only, else 404" for the page
 // itself on a non-master daemon.
@@ -140,12 +126,8 @@ func TestFleetAlertingPageRendersDefaultConfig(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingRowLabelsAreOneIndexed pins U6 (2026-09-25 UI audit):
-// the Route/Policy/Step display labels must read 1, 2, 3, ... for an
-// operator, not the raw zero-based loop index they used to render directly.
-// The underlying form field names (route_0_name, policy_0_step_0_after,
-// ...) stay 0-based -- parseAlertingDraftForm indexes off them verbatim --
-// so this only touches the label TEXT, never the input name= attributes.
+// TestFleetAlertingRowLabelsAreOneIndexed pins that the Route/Policy/Step display labels
+// read 1, 2, 3, ... for an operator, not the raw zero-based loop index.
 func TestFleetAlertingRowLabelsAreOneIndexed(t *testing.T) {
 	fleet := &fakeFleet{alertingCfg: fleetAlertingFixtureCfg()}
 	d := fleetAdminDeps(t, fleet)
@@ -172,11 +154,7 @@ func TestFleetAlertingRowLabelsAreOneIndexed(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingPolicyIntroReadsGrammatically pins U5 (2026-09-25 UI
-// audit): the Policies section's intro used to read "Each step fires After
-// its incident's first delivery; the last step repeats on Repeat every
-// until acked or resolved" -- the "After"/"Repeat every" field labels
-// dropped straight into the sentence rather than referenced grammatically.
+// TestFleetAlertingPolicyIntroReadsGrammatically pins that the Policies section's intro.
 func TestFleetAlertingPolicyIntroReadsGrammatically(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	rr := fleetAdminGetAsRole(t, d, RoleAdmin, "/fleet/alerting")
@@ -192,9 +170,8 @@ func TestFleetAlertingPolicyIntroReadsGrammatically(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingViewerReadOnly pins the viewer floor: GET succeeds
-// (read-only), but no edit forms render (no "Add route"/"Save routing
-// config"/"Save JSON" controls) -- only the route tester stays a live form.
+// TestFleetAlertingViewerReadOnly pins the viewer floor: GET succeeds (read-only), but no
+// edit forms render (no "Add route"/"Save routing config"/"Save JSON" controls).
 func TestFleetAlertingViewerReadOnly(t *testing.T) {
 	fleet := &fakeFleet{alertingCfg: core.AlertingConfig{
 		Routes:        []core.Route{{Name: "r1", Matchers: []core.Matcher{{Tag: "web"}}, Policy: "p1"}},
@@ -250,10 +227,8 @@ func TestFleetAlertingMissingCSRFForbidden(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingTestMissingCSRFForbidden pins fix round 1 IMPORTANT 1:
-// POST /fleet/alerting/test now requires CSRF too (the /channels/{name}/test
-// precedent), even though a viewer may call it and it never mutates the
-// saved config.
+// TestFleetAlertingTestMissingCSRFForbidden pins that POST /fleet/alerting/test now
+// requires CSRF too (the /channels/{name}/test precedent).
 func TestFleetAlertingTestMissingCSRFForbidden(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	h := newHandler(d)
@@ -267,20 +242,10 @@ func TestFleetAlertingTestMissingCSRFForbidden(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Browser-faithful structured-editor tests (fix round 1 CRITICAL): every
-// POST here is built by rendering the real page, then extracting exactly
-// the fields the form containing a given submit button would submit
-// (formValuesForButton, formhelpers_test.go) -- never a hand-built
-// url.Values fixture standing in for what the template "should" produce.
-// This is what actually catches the round-1 bug: three separate <form>s
-// (one per section) each fabricating blank rows for the other two sections
-// on submit.
-// ---------------------------------------------------------------------------
+// Browser-faithful structured-editor tests.
 
-// TestFleetAlertingAddRoutePreservesPoliciesAndRules pins the CRITICAL fix:
-// starting from a config with 2 policies and 1 rule, clicking "Add route"
-// (a route-only op) must not wipe the policies or the rule from the
-// re-rendered draft, and must not call SetAlerting at all.
+// TestFleetAlertingAddRoutePreservesPoliciesAndRules pins that starting from a config with
+// 2 policies and 1 rule, clicking "Add route".
 func TestFleetAlertingAddRoutePreservesPoliciesAndRules(t *testing.T) {
 	fleet := &fakeFleet{alertingCfg: fleetAlertingFixtureCfg()}
 	d := fleetAdminDeps(t, fleet)
@@ -295,9 +260,8 @@ func TestFleetAlertingAddRoutePreservesPoliciesAndRules(t *testing.T) {
 		t.Errorf("SetAlerting calls = %d, want 0 (add_route must not save)", fleet.setAlertingCalls)
 	}
 	got := rr.Body.String()
-	// U6 (2026-09-25 UI audit): row labels are 1-based, not the raw
-	// zero-based loop index -- r0 (the fixture's one existing route) is
-	// row 1, the freshly-added route is row 2.
+	// U6 (2026-09-25 UI audit): row labels are 1-based, not the raw zero-based loop index --
+	// r0 (the fixture's one existing route) is row 1, the freshly-added route is row 2.
 	for _, want := range []string{"p1", "p2", "rule1", ">Route 1<", ">Route 2<"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("POST /fleet/alerting op=add_route: missing %q (policies/rule must survive a route-only op)\nbody:\n%s", want, got)
@@ -306,19 +270,11 @@ func TestFleetAlertingAddRoutePreservesPoliciesAndRules(t *testing.T) {
 	if strings.Contains(got, "No policies configured") {
 		t.Errorf("POST /fleet/alerting op=add_route: the 2 existing policies were wiped\nbody:\n%s", got)
 	}
-	// Both the editable "Aggregate rules" table's empty state and the
-	// separate, unrelated live "Rules" (RuleStates) panel's empty state
-	// happen to share the literal text "no aggregate rules configured" --
-	// this fake has no RuleStates fixture at all, so the LIVE panel is
-	// legitimately empty regardless of the editable draft. rule1's own
-	// name appearing (asserted above) is what actually pins "the rule
-	// survived the route-only op".
+	// Both the editable "Aggregate rules" table's empty state and the separate, unrelated live
+	// "Rules".
 }
 
-// TestFleetAlertingSaveSendsFullConfigUnchangedExceptRouteEdit pins the
-// other half of the CRITICAL fix: clicking "Save" after editing only the
-// route's name must submit the policies and rule UNCHANGED alongside that
-// one route edit -- never fabricated/blank copies.
+// TestFleetAlertingSaveSendsFullConfigUnchangedExceptRouteEdit pins that clicking "Save".
 func TestFleetAlertingSaveSendsFullConfigUnchangedExceptRouteEdit(t *testing.T) {
 	fleet := &fakeFleet{alertingCfg: fleetAlertingFixtureCfg()}
 	d := fleetAdminDeps(t, fleet)
@@ -357,13 +313,8 @@ func TestFleetAlertingSaveSendsFullConfigUnchangedExceptRouteEdit(t *testing.T) 
 	}
 }
 
-// TestFleetAlertingFormSaveRoundTrip drives the WHOLE structured-editor flow
-// through real rendered pages: starting from nothing, click "Add route",
-// then "Add policy" (both against the SAME session/form, each response
-// re-parsed for the next click), fill in the new route/policy fields, then
-// click "Save" -- pinning both that add ops never fabricate/lose sections
-// and that a real save round-trips end to end (actor, audit, converted
-// config).
+// TestFleetAlertingFormSaveRoundTrip drives the WHOLE structured-editor flow through real
+// rendered pages: starting from nothing, click "Add route", then "Add policy".
 func TestFleetAlertingFormSaveRoundTrip(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -430,11 +381,8 @@ func TestFleetAlertingFormSaveRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingValidationErrorKeepsInputInline pins global-
-// constraints.md's ruling: a rejected save re-renders at 400 with the
-// backend's message inline next to the field it names (a route, here), and
-// every posted value preserved -- driven off the real rendered "Save"
-// button's form fields, not a hand-built fixture.
+// TestFleetAlertingValidationErrorKeepsInputInline pins that a rejected save re-renders at
+// 400 with the backend's message inline next to the field it names (a route, here).
 func TestFleetAlertingValidationErrorKeepsInputInline(t *testing.T) {
 	fleet := &fakeFleet{alertingCfg: fleetAlertingFixtureCfg()}
 	fleet.setAlertingErr = fmt.Errorf(`route "r0": unknown policy "p1"`)
@@ -463,9 +411,8 @@ func TestFleetAlertingValidationErrorKeepsInputInline(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingConflictReturns409KeepsInput pins core.ErrConflict's
-// fixed 409 message and input preservation, again driven off the real
-// rendered "Save" button's form fields.
+// TestFleetAlertingConflictReturns409KeepsInput pins core.ErrConflict's fixed 409 message
+// and input preservation, again driven off the real rendered "Save" button's form fields.
 func TestFleetAlertingConflictReturns409KeepsInput(t *testing.T) {
 	fleet := &fakeFleet{alertingCfg: fleetAlertingFixtureCfg()}
 	fleet.setAlertingErr = core.ErrConflict
@@ -486,13 +433,11 @@ func TestFleetAlertingConflictReturns409KeepsInput(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Edit as JSON
+// --------------------------------------------------------------------------- Edit as JSON
 // ---------------------------------------------------------------------------
 
-// TestFleetAlertingJSONSave pins the "edit as JSON" mode end to end,
-// clicking the real rendered "Save JSON" button (proving its CSRF token is
-// actually wired up, not just assumed).
+// TestFleetAlertingJSONSave pins the "edit as JSON" mode end to end, clicking the real
+// rendered "Save JSON" button.
 func TestFleetAlertingJSONSave(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -516,10 +461,8 @@ func TestFleetAlertingJSONSave(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingJSONUnknownFieldRejectedInline pins fix round 1
-// IMPORTANT 2: a typo'd field ("send_resolve" instead of "send_resolved")
-// is rejected by DisallowUnknownFields, naming the field, WITHOUT ever
-// calling SetAlerting, and the textarea keeps exactly what was posted.
+// TestFleetAlertingJSONUnknownFieldRejectedInline pins that a typo'd field ("send_resolve"
+// instead of "send_resolved") is rejected by DisallowUnknownFields, naming the field.
 func TestFleetAlertingJSONUnknownFieldRejectedInline(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -540,8 +483,8 @@ func TestFleetAlertingJSONUnknownFieldRejectedInline(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingJSONTrailingDataRejected pins the other half of
-// IMPORTANT 2: the body must contain EXACTLY one JSON value.
+// TestFleetAlertingJSONTrailingDataRejected pins that the body must contain
+// EXACTLY one JSON value.
 func TestFleetAlertingJSONTrailingDataRejected(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -555,9 +498,8 @@ func TestFleetAlertingJSONTrailingDataRejected(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingRequestTooLarge pins the MINOR fix: a body over
-// alertingMaxBodyBytes (256 KiB) is rejected at 413 with an inline message,
-// before ever being parsed into a draft.
+// TestFleetAlertingRequestTooLarge pins that a body over alertingMaxBodyBytes (256 KiB) is
+// rejected at 413 with an inline message, before ever being parsed into a draft.
 func TestFleetAlertingRequestTooLarge(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -574,14 +516,11 @@ func TestFleetAlertingRequestTooLarge(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Route tester
+// --------------------------------------------------------------------------- Route tester
 // ---------------------------------------------------------------------------
 
-// TestFleetAlertingRouteTesterMultiplePolicies pins the Continue fan-out
-// case: RouteTest returning several policies renders every one of them
-// (name, steps, repeat) plus any suppression -- viewer-accessible, CSRF
-// required.
+// TestFleetAlertingRouteTesterMultiplePolicies pins the Continue fan-out case: RouteTest
+// returning several policies renders every one of them.
 func TestFleetAlertingRouteTesterMultiplePolicies(t *testing.T) {
 	sendResolved := true
 	fleet := &fakeFleet{routeTestResult: core.RouteDecision{
@@ -608,9 +547,8 @@ func TestFleetAlertingRouteTesterMultiplePolicies(t *testing.T) {
 	}
 }
 
-// TestFleetAlertingRouteTesterFormSubmitsRealCSRF drives the tester through
-// the real rendered form (formValuesForButton), pinning that its own
-// csrf_token hidden field is actually present and valid, not merely assumed.
+// TestFleetAlertingRouteTesterFormSubmitsRealCSRF drives the tester through the real
+// rendered form (formValuesForButton).
 func TestFleetAlertingRouteTesterFormSubmitsRealCSRF(t *testing.T) {
 	fleet := &fakeFleet{routeTestResult: core.RouteDecision{Route: "r1", Policies: []core.Policy{{Name: "p1", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"*"}}}}}}}
 	d := fleetAdminDeps(t, fleet)
@@ -637,13 +575,11 @@ func TestFleetAlertingRouteTesterFormSubmitsRealCSRF(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Rules panel
+// --------------------------------------------------------------------------- Rules panel
 // ---------------------------------------------------------------------------
 
-// TestFleetRulesStateFragmentNoDataAndFiring pins the /fleet/rules/state
-// fragment's two key states: a rule with no value yet renders "no data",
-// and a firing rule renders "firing" as literal text (never color-only).
+// TestFleetRulesStateFragmentNoDataAndFiring pins the /fleet/rules/state fragment's two key
+// states: a rule with no value yet renders "no data".
 func TestFleetRulesStateFragmentNoDataAndFiring(t *testing.T) {
 	fleet := &fakeFleet{ruleStates: []core.RuleState{
 		{Name: "quiet", Expr: "avg(cpu_pct) > 90", NoData: true},

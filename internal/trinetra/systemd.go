@@ -97,6 +97,7 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// Only nudge the operator to set a Telegram token on a genuinely unconfigured host.
 	waitErr := waitForDaemonFn()
 	switch {
 	case waitErr == nil:
@@ -128,8 +129,8 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err != nil {
 		return err
 	}
-	// updatePaths -- NOT the bare package-level stateDir -- is where install's floor
-	// check/raise must read and write (fix round 1, Ruling R8): the update state.
+	// updatePaths, NOT the bare package-level stateDir, is where install's floor check/raise
+	// must read and write: the update state.
 	paths := defaultUpdatePaths()
 	unlock, err := installPreflight(paths)
 	if err != nil {
@@ -164,8 +165,8 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err := os.WriteFile(unitPath, []byte(renderUnit(dst)), 0o644); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
-	// The self-update safety net (R14): the pinned guard binary (a copy of this binary) and
-	// the watchdog timer that runs it every minute to resolve any pending update.
+	// The self-update safety net: the pinned guard binary (a copy of this binary) and the
+	// watchdog timer that runs it every minute to resolve any pending update.
 	if err := writePinnedGuard(paths); err != nil {
 		return err
 	}
@@ -197,8 +198,8 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	return nil
 }
 
-// installPreflight claims the self-update apply lock for the whole install (R16) and
-// refuses while an update is pending.
+// installPreflight claims the self-update apply lock for the whole install and refuses
+// while an update is pending.
 func installPreflight(paths updatePaths) (unlock func(), err error) {
 	unlock, err = takeApplyLock(paths)
 	if err != nil {
@@ -305,7 +306,7 @@ func verifyInstallSignature(self string, names []string, requireSigned bool) (up
 }
 
 // checkInstallPolicy applies update.CheckPolicy to a verified install manifest: AllowEqual
-// true (reinstalling the currently installed version is a legitimate repair).
+// true (reinstalling the installed version is a legitimate repair).
 func checkInstallPolicy(paths updatePaths, m update.Manifest, running update.Version) error {
 	st, err := update.LoadState(paths.dir())
 	if err != nil {
@@ -347,7 +348,8 @@ func currentInstalledVersion() update.Version {
 	return ver
 }
 
-// raiseInstallFloor records m's version as the new update floor.
+// raiseInstallFloor records m's version as the new update floor (in paths.dir()'s
+// state.json, the file checkInstallPolicy reads) after a successful signed install.
 func raiseInstallFloor(paths updatePaths, version string) {
 	v, err := update.ParseVersion(version)
 	if err != nil {
@@ -359,8 +361,8 @@ func raiseInstallFloor(paths updatePaths, version string) {
 	})
 }
 
-// telegramInstallHint is "" unless a Telegram token is set but no chat has
-// been enrolled yet: Telegram is one optional channel among several.
+// telegramInstallHint returns the install success line's Telegram clause: a set-token nudge
+// on an unconfigured host, or a "already configured" note when a token.
 func telegramInstallHint() string {
 	c, err := loadCfg()
 	if err != nil || c == nil || c.Telegram.Token == "" || c.Telegram.ChatID != "" {
@@ -571,7 +573,7 @@ const (
 )
 
 // fetchEnrollmentPINFn is the seam printEnrollmentPIN calls to learn the daemon's current
-// enrollment pin: the real implementation.
+// enrollment pin: the real implementation dials the control socket with a brief retry.
 var fetchEnrollmentPINFn = dialEnrollmentPIN
 
 // dialEnrollmentPIN resolves the control socket path/token the same way cmdFrontDoor does
@@ -737,8 +739,8 @@ func cmdQuietHours(args []string) int {
 		fmt.Fprintln(stderr, "usage: quiet-hours <HH-HH> | off")
 		return 2
 	}
-	// Round-1 review, IMPORTANT 2: this dedicated command is a second, separate path onto
-	// quiet_hours besides `config set`/the web config page (both already guarded).
+	// This dedicated command is a second path onto quiet_hours besides `config set`/the web
+	// config page (both already guarded).
 	if id, managed := ManagedFragmentFor(stateDir, "quiet_hours"); managed {
 		fmt.Fprintf(stderr, "quiet_hours: managed by the fleet master (fragment %s); change it on the master\n", id)
 		return 1

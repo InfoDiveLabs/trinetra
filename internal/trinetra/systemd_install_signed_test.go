@@ -39,10 +39,8 @@ func TestVerifyInstallBundle(t *testing.T) {
 	}
 }
 
-// TestVerifyInstallBundleNoManifest pins errNoSignedManifest: absent
-// manifest.json must be distinguishable from a present-but-invalid one, so
-// cmdInstall (verifyInstallSignature) can warn-and-continue instead of
-// refusing outright unless --require-signed was passed.
+// TestVerifyInstallBundleNoManifest pins errNoSignedManifest: absent manifest.json must be
+// distinguishable from a present-but-invalid one, so cmdInstall.
 func TestVerifyInstallBundleNoManifest(t *testing.T) {
 	dir := t.TempDir()
 	self := filepath.Join(dir, "trinetra")
@@ -54,20 +52,14 @@ func TestVerifyInstallBundleNoManifest(t *testing.T) {
 	}
 }
 
-// TestInstallAcceptsSignedPrereleaseZeroOnFreshHost pins the real-world
-// rehearsal bug: a fresh host with nothing installed (running is the zero
-// Version) and no persisted floor (a brand-new state dir, no state.json at
-// all) must accept a signed 0.0.0-rc.1 release. Before the fix, "no floor"
-// was represented as the zero Version itself, and 0.0.0-rc.1 sorts below
-// 0.0.0 by semver precedence, so the install was wrongly refused as a
-// downgrade.
+// TestInstallAcceptsSignedPrereleaseZeroOnFreshHost pins the real-world rehearsal bug: a
+// fresh host with nothing installed (running is the zero Version) and no persisted floor.
 func TestInstallAcceptsSignedPrereleaseZeroOnFreshHost(t *testing.T) {
 	dir := t.TempDir()
 	core := []byte("CORE")
 	os.WriteFile(filepath.Join(dir, "trinetra"), core, 0o755)
-	// Channel beta: a pre-release version must not be on the stable channel
-	// (manifest.go's own decode rule) -- unrelated to the floor bug this test
-	// pins, so pick a channel that lets a pre-release version through at all.
+	// Channel beta: a pre-release version must not be on the stable channel (manifest.go's own
+	// decode rule) -- unrelated to the floor bug this test pins.
 	m := update.Manifest{Schema: 1, Product: "trinetra", Version: "0.0.0-rc.1", Channel: "beta",
 		Published: "2026-10-01T10:00:00Z", MinUpgradeFrom: "0.0.0",
 		Files: []update.File{mf("trinetra-linux-"+runtime.GOARCH, core)}}
@@ -95,20 +87,14 @@ func TestInstallAcceptsSignedPrereleaseZeroOnFreshHost(t *testing.T) {
 }
 
 // freshInstallManifest returns a minimal valid manifest for
-// checkInstallPolicy/raiseInstallFloor tests -- these exercise state
-// plumbing, not signature verification (verifyInstallBundle already covers
-// that), so the manifest itself never needs to be signed here.
+// checkInstallPolicy/raiseInstallFloor tests -- these exercise state plumbing.
 func freshInstallManifest(version, minUpgradeFrom string) update.Manifest {
 	return update.Manifest{Schema: 1, Product: "trinetra", Version: version, Channel: "stable",
 		Published: "2026-10-01T10:00:00Z", MinUpgradeFrom: minUpgradeFrom}
 }
 
-// TestCheckInstallPolicyUsesUpdateStateDir pins fix round 1's Ruling R8: the
-// install floor check must read the SAME state.json `trinetra update`/the
-// guard/status already share (defaultUpdatePaths().dir(), i.e.
-// StateDir/update) -- not the bare state directory. A floor seeded directly
-// at paths.dir() must be honored: a release below it is refused, one above
-// it succeeds.
+// TestCheckInstallPolicyUsesUpdateStateDir pins that the install floor check reads the SAME
+// state.json `trinetra update`/the guard/status share.
 func TestCheckInstallPolicyUsesUpdateStateDir(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
@@ -119,9 +105,8 @@ func TestCheckInstallPolicyUsesUpdateStateDir(t *testing.T) {
 		t.Fatalf("seed floor: %v", err)
 	}
 
-	// Below the persisted floor: refused, even though running (a fresh/
-	// unknown host) is the zero Version -- the floor check is independent of
-	// Running.
+	// Below the persisted floor: refused, even though running (a fresh/ unknown host) is the
+	// zero Version -- the floor check is independent of Running.
 	below := freshInstallManifest("0.5.0", "0.4.1")
 	if err := checkInstallPolicy(paths, below, update.Version{}); err == nil || !errors.Is(err, update.ErrDowngrade) {
 		t.Fatalf("checkInstallPolicy(0.5.0, floor 0.6.0) = %v, want a wrapped update.ErrDowngrade", err)
@@ -134,11 +119,8 @@ func TestCheckInstallPolicyUsesUpdateStateDir(t *testing.T) {
 	}
 }
 
-// TestCheckInstallPolicyUnparsableFloorFailsClosed is #138 truth-table case
-// (d)'s install half: a persisted floor that is valid JSON but not a valid
-// version must refuse the install with a clear error, never silently act as
-// "no floor" (which, with an unknown running version on a fresh host, would
-// enforce no lower bound at all).
+// TestCheckInstallPolicyUnparsableFloorFailsClosed is #138 truth-table case (d)'s install
+// half.
 func TestCheckInstallPolicyUnparsableFloorFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
@@ -154,12 +136,8 @@ func TestCheckInstallPolicyUnparsableFloorFailsClosed(t *testing.T) {
 	}
 }
 
-// TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir pins the other half of
-// Ruling R8: raiseInstallFloor must write state.json under paths.dir()
-// (StateDir/update), never directly in StateDir -- and must never touch
-// StateDir's own permissions (update.SaveState chmods the directory IT is
-// given to 0700; passing the bare StateDir previously re-permissioned
-// /var/lib/trinetra itself, which normally stays 0755).
+// TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir pins that raiseInstallFloor writes
+// state.json under paths.dir() (StateDir/update), never directly in StateDir.
 func TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
@@ -188,12 +166,8 @@ func TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir(t *testing.T) {
 	}
 }
 
-// TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown pins fix round
-// 1's Ruling R9: when running is the zero Version (a fresh host, or a
-// serverwatch migration with nothing at /usr/local/bin/trinetra yet), a
-// signed install must not be refused just because the manifest's
-// MinUpgradeFrom is above 0.0.0 -- only the floor (still zero/unset here)
-// and the caller's already-run signature/hash checks gate it.
+// TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown: when running is the zero
+// Version.
 func TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
@@ -207,10 +181,8 @@ func TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown(t *testing.T) {
 	}
 }
 
-// TestCheckInstallPolicyEnforcesMinUpgradeFromWhenRunningKnown is the flip
-// side: once a real running version IS known, MinUpgradeFrom is still
-// enforced exactly as update.CheckPolicy always has -- Ruling R9 only skips
-// the check when running is genuinely unknown, it does not disable it.
+// TestCheckInstallPolicyEnforcesMinUpgradeFromWhenRunningKnown is the flip side: once a
+// real running version IS known.
 func TestCheckInstallPolicyEnforcesMinUpgradeFromWhenRunningKnown(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}

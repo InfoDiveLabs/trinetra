@@ -62,40 +62,21 @@ func realDial(host string) bool {
 }
 
 // connDial is the dial function collectSlow uses for the connectivity check.
-// Overridable for tests (mirrors the cfgPath/stateDir/stdout/stderr pattern
-// in main.go): swapping it out lets tests exercise collectSlow's Online
-// field with a fake instead of hitting the real network.
 var connDial = realDial
 
 // IfaceRate is one interface's computed throughput (bytes/sec), derived by
 // NetRateCalc from two consecutive IfaceCounters samples.
 type IfaceRate struct{ RxBps, TxBps float64 }
 
-// NetRateCalc turns the cumulative counters parseNetDev reads from
-// /proc/net/dev into per-interface rates, by diffing against the previous
-// sample. It is meant to be owned by a single goroutine (the sampler loop,
-// mirroring the *CPUStat pattern in collectFast) and called once per slow
-// tick -- no locking, since only one goroutine ever touches it.
+// NetRateCalc turns the cumulative counters parseNetDev reads from /proc/net/dev into
+// per-interface rates, by diffing against the previous sample.
 type NetRateCalc struct {
 	prev   map[string]IfaceCounters
 	prevTS int64
 }
 
-// Rates computes bytes/sec rates from cur against the previously stored
-// sample, then updates the stored sample to cur/nowUnix for the next call.
-//
-// The first call ever (no prior sample) has nothing to diff against, so it
-// returns an empty map -- this is also what makes the daemon's first slow
-// tick after startup skip appending net series, since there's no meaningful
-// rate yet.
-//
-// For interfaces present in both prev and cur: elapsed = nowUnix - prevTS;
-// elapsed <= 0 (clock didn't advance, or went backwards) skips that computation
-// entirely (avoids a divide-by-zero/negative-elapsed rate). A counter that
-// went backwards (cur < prev -- an interface reset, or the counter wrapped)
-// is also skipped rather than emitting a negative rate. Interfaces present
-// in only one of prev/cur (new interface appeared, or one disappeared) are
-// omitted from the result.
+// Rates computes bytes/sec rates from cur against the previously stored sample, then stores
+// cur/nowUnix for the next call.
 func (n *NetRateCalc) Rates(cur map[string]IfaceCounters, nowUnix int64) map[string]IfaceRate {
 	out := map[string]IfaceRate{}
 	if n.prev != nil {

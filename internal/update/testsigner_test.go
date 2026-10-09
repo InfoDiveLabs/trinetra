@@ -5,9 +5,8 @@ import (
 	"encoding/base64"
 )
 
-// TestSigner is this package's own copy of updatetest.TestSigner (package
-// update's internal tests cannot import updatetest, which imports update).
-// It is test-only: release builds carry no test signer (R22).
+// TestSigner is this package's own copy of updatetest.TestSigner (package update's internal
+// tests cannot import updatetest, which imports update).
 type TestSigner struct{ priv ed25519.PrivateKey }
 
 func NewTestSigner(seed byte) TestSigner {

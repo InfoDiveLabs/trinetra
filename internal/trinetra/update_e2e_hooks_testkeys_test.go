@@ -7,13 +7,8 @@ import (
 	"time"
 )
 
-// TestE2ETimerHooksInTestkeysBuild pins the trinetra_testkeys side of the
-// update-e2e timer overrides: TRINETRA_E2E_UPDATE_LOOP_INTERVAL and
-// TRINETRA_E2E_HEALTH_DEADLINE shorten the self-update loop's tick and the
-// guard's health window when set to a positive Go duration, and anything
-// else (unset, unparsable, zero or negative) keeps the production values.
-// TestE2EHooksIgnoredInReleaseBuild pins that a default build never reads
-// them at all.
+// TestE2ETimerHooksInTestkeysBuild pins the trinetra_testkeys side of the update-e2e timer
+// overrides.
 func TestE2ETimerHooksInTestkeysBuild(t *testing.T) {
 	for _, tc := range []struct {
 		env        string

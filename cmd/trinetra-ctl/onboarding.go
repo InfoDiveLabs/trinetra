@@ -1,4 +1,5 @@
-// onboarding.go saves the bot token captured by the Telegram setup screens (onboard_ui.go).
+// onboarding.go holds the first-run onboarding flow's PURE logic: whether it's needed at
+// all, and the config mutation that saves the captured bot token, both unit-tested.
 package main
 
 import "github.com/InfoDiveLabs/trinetra/internal/config"

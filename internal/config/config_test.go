@@ -71,8 +71,8 @@ func TestBaselineMinPctRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBaselineAlertsDefaultOffRoundTrip pins Part 1 of the field-feedback fix:
-// baseline-deviation alerting is opt-in, default OFF.
+// TestBaselineAlertsDefaultOffRoundTrip pins that baseline-deviation alerting is opt-in
+// (default OFF) because spiky metrics flapped on sigma-deviation.
 func TestBaselineAlertsDefaultOffRoundTrip(t *testing.T) {
 	c := Default()
 	if got, ok := c.Get("baseline_alerts"); !ok || got != "false" {
@@ -1361,8 +1361,8 @@ func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	}
 }
 
-// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist at the config layer:
-// only the fixed catalog (or "disk:<mount>") may be stored in public.panels.
+// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist: only the fixed
+// catalog (or "disk:<mount>") may be stored in public.panels; anything else.
 func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {
 	c := Default()
 	for _, v := range []string{"bogus", "cpu,bogus", "disk:", "users", "config", "channels"} {
@@ -1426,9 +1426,9 @@ func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	}
 }
 
-// --- Task 2 (#91): config key catalog (KeyInfo/Keys) ---
+// --- config key catalog (KeyInfo/Keys) ---
 
-// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real Set/Get key.
+// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real key.
 func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	for _, ki := range Keys() {
 		c := Default()
@@ -1473,8 +1473,8 @@ func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	}
 }
 
-// setSwitchKeys parses config.go's own source and extracts every string case label in
-// (*Config).Set's switch statement.
+// setSwitchKeys extracts every string case label in (*Config).Set's switch from config.go's
+// source.
 func setSwitchKeys(t *testing.T) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -1509,8 +1509,8 @@ func setSwitchKeys(t *testing.T) []string {
 	return keys
 }
 
-// TestKeyCatalogCoversEverySetKey asserts the catalog's key names are EXACTLY the set of
-// keys (*Config).Set accepts: no key Set handles is missing from the catalog.
+// TestKeyCatalogCoversEverySetKey asserts the catalog's keys are exactly the keys
+// Set accepts: none missing, none stale, none duplicated.
 func TestKeyCatalogCoversEverySetKey(t *testing.T) {
 	setKeys := setSwitchKeys(t)
 	if len(setKeys) == 0 {

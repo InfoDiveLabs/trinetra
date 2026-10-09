@@ -5,11 +5,8 @@ package update
 
 import "crypto/ed25519"
 
-// ProductionKeys in a trinetra_testkeys build trusts the deterministic test
-// signers (seeds 1 = ci, 2 = maint, 3 = pointer; 4/5/6 as "next" keys; see
-// internal/update/updatetest). Only the e2e image is built with this tag;
-// the release workflow refuses to ship a binary whose Fingerprints() match
-// these, and default builds carry none of this (R22).
+// ProductionKeys in a trinetra_testkeys build trusts the deterministic test signers (seeds
+// 1 = ci, 2 = maint, 3 = pointer; 4/5/6 as "next" keys; see internal/update/updatetest).
 func ProductionKeys() KeySet {
 	pub := func(seed byte) PublicKey {
 		return ed25519.NewKeyFromSeed(testSeed(seed)).Public().(ed25519.PublicKey)

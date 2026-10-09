@@ -17,7 +17,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
-// fakeAPI is a minimal core.API test double.
+// fakeAPI is a minimal core.API test double (core.API has no shared one): read fields back
+// one read method each.
 type fakeAPI struct {
 	snapshot core.DashboardView
 	events   []core.DownEventView
@@ -68,8 +69,8 @@ func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, errors.New("not supported in fakeAPI")
 }
 
-// shortSocketPath returns a temp-dir socket path independent of the test name, mirroring
-// internal/control/client_test.go's helper of the same name.
+// shortSocketPath returns a short temp socket path: t.TempDir() plus a long test
+// name and macOS $TMPDIR can exceed the ~104-byte sun_path limit.
 func shortSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "sw-web")
@@ -80,7 +81,7 @@ func shortSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "s.sock")
 }
 
-// startFakeServer serves api over a fresh, short-pathed unix socket, protected by token,
+// startFakeServer serves api over a short-pathed unix socket protected by token
 // and returns the socket path.
 func startFakeServer(t *testing.T, api core.API, token string) (socketPath string) {
 	t.Helper()
@@ -100,8 +101,8 @@ func envLookup(m map[string]string) func(string) string {
 	}
 }
 
-// TestResolveConnConfigDefaults pins the fully-default resolution path (no flags, no
-// TRINETRA_CONTROL_*/SERVERWATCH_CONTROL_* env set).
+// TestResolveConnConfigDefaults pins resolution with no flags and no
+// TRINETRA_CONTROL_*/SERVERWATCH_CONTROL_* env.
 func TestResolveConnConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cc, err := resolveConnConfig(nil, envLookup(map[string]string{"RUNTIME_DIRECTORY": dir}))
@@ -122,8 +123,8 @@ func TestResolveConnConfigDefaults(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigReadsTokenFile pins that, absent an explicit token (flag or env),
-// resolveConnConfig reads the token from tokenFile and trims a trailing newline.
+// TestResolveConnConfigReadsTokenFile: with no explicit token, the token is read
+// from tokenFile with a trailing newline trimmed (see bytesTrimNewline).
 func TestResolveConnConfigReadsTokenFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("abc123\n"), 0o600); err != nil {
@@ -138,8 +139,8 @@ func TestResolveConnConfigReadsTokenFile(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigEnvOverrides pins that TRINETRA_CONTROL_SOCKET/
-// TRINETRA_CONTROL_TOKEN.
+// TestResolveConnConfigEnvOverrides: TRINETRA_CONTROL_SOCKET/TOKEN take priority
+// over the RUNTIME_DIRECTORY default, and a directly set token skips tokenFile.
 func TestResolveConnConfigEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "elsewhere.sock")
@@ -159,8 +160,8 @@ func TestResolveConnConfigEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigEnvOverrides_OldNameFallback pins the compat side: with
-// TRINETRA_CONTROL_SOCKET/TOKEN unset.
+// TestResolveConnConfigEnvOverrides_OldNameFallback: with TRINETRA_CONTROL_* unset, the old
+// SERVERWATCH_CONTROL_* names still work for one release.
 func TestResolveConnConfigEnvOverrides_OldNameFallback(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "elsewhere.sock")
@@ -180,8 +181,7 @@ func TestResolveConnConfigEnvOverrides_OldNameFallback(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigFlagsOverrideEnv pins that explicit flags win over
-// both env vars and the mirrored default, the documented top priority.
+// TestResolveConnConfigFlagsOverrideEnv: explicit flags win over env and defaults.
 func TestResolveConnConfigFlagsOverrideEnv(t *testing.T) {
 	dir := t.TempDir()
 	cc, err := resolveConnConfig(
@@ -206,8 +206,8 @@ func TestResolveConnConfigFlagsOverrideEnv(t *testing.T) {
 	}
 }
 
-// TestBuildDepsWiresLiveDataThroughSocket is this task's core TDD case: a real
-// control.Serve, over a temp unix socket, backed by a fakeAPI standing in for the daemon.
+// TestBuildDepsWiresLiveDataThroughSocket: a real control.Serve over a temp socket, backed
+// by a fakeAPI standing in for the daemon.
 func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	dir := t.TempDir()
 	api := &fakeAPI{
@@ -270,8 +270,8 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 		t.Errorf("fakeAPI.testedChannel = %q, want telegram (TestChannel call didn't cross the socket)", api.testedChannel)
 	}
 
-	// #79: the web editor must validate a channel through the daemon (client.ValidateChannel)
-	// at save time, not skip validation entirely.
+	// #79: the web editor must validate a channel through the daemon
+	// (client.ValidateChannel) at save time, so deps.ValidateChannel must be set.
 	if deps.ValidateChannel == nil {
 		t.Fatal("deps.ValidateChannel is nil, want it wired to client.ValidateChannel (#79)")
 	}
@@ -280,8 +280,8 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	}
 }
 
-// freeLoopbackAddr picks an available "127.0.0.1:port" by binding an ephemeral TCP listener
-// and immediately closing it -- the standard.
+// freeLoopbackAddr picks a free "127.0.0.1:port" by binding an ephemeral listener and
+// closing it (slightly racy but fine for tests).
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -293,8 +293,8 @@ func freeLoopbackAddr(t *testing.T) string {
 	return addr
 }
 
-// TestPublicPageServesLiveSnapshotOverSocket drives the one full, unauthenticated,
-// real-HTTP path through this binary's wiring: a control.Serve-backed fakeAPI.
+// TestPublicPageServesLiveSnapshotOverSocket is the one full unauthenticated HTTP path: a
+// control.Serve-backed fakeAPI, turned into web.Deps by buildDeps.
 func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 	dir := t.TempDir()
 	addr := freeLoopbackAddr(t)
@@ -381,5 +381,32 @@ func TestUsersWorksWithDaemonStopped(t *testing.T) {
 	b, _ := os.ReadFile(out.Name())
 	if !strings.Contains(string(b), "https://ops.example.com/enroll?token=") {
 		t.Fatalf("no enroll URL from config.json: %s", b)
+	}
+}
+
+func TestLastGoodConfigSurvivesFailedReads(t *testing.T) {
+	var fail bool
+	real := config.Default()
+	real.QuietHours = "22-6"
+	cfg := lastGoodConfig(func() (*config.Config, error) {
+		if fail {
+			return nil, errors.New("daemon restarting")
+		}
+		return real, nil
+	})
+	fail = true
+	if got := cfg(); got.QuietHours != "" {
+		t.Fatalf("before any successful read: %q, want defaults", got.QuietHours)
+	}
+	fail = false
+	cfg()
+	fail = true
+	got := cfg()
+	if got.QuietHours != "22-6" {
+		t.Fatalf("after a failed read: quiet hours %q, want the last real config", got.QuietHours)
+	}
+	got.QuietHours = "mutated"
+	if again := cfg(); again.QuietHours != "22-6" {
+		t.Fatal("a caller's edit leaked into the cached config")
 	}
 }

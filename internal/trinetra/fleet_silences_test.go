@@ -14,9 +14,7 @@ import (
 
 // --- Matcher / validation ----------------------------------------------
 
-// idOfDB1/idOfWeb1/idOfApp1 are placeholder node ids distinct from any test
-// node's NAME, so a test asserting on name-glob behaviour can never
-// accidentally pass via the separate exact-id-match branch instead.
+// idOfDB1/idOfWeb1/idOfApp1 are placeholder node ids distinct from any test node's NAME.
 const (
 	idOfDB1  = "id-of-db1-node"
 	idOfWeb1 = "id-of-web1-node"
@@ -51,10 +49,8 @@ func TestMatcherMatchesGlobsExactFieldsAndEmptyMeansAny(t *testing.T) {
 	}
 }
 
-// TestMatcherNodeMatchesExactIDRegardlessOfName is the review round-2 item
-// (c) test: Matcher.Node matches if it EXACTLY equals the node's internal
-// id, even when it does NOT glob-match the node's current display name --
-// giving a precise, rename-proof target.
+// TestMatcherNodeMatchesExactIDRegardlessOfName: Matcher.Node matches if it EXACTLY equals
+// the node's internal id, even when it does NOT glob-match the node's current display name.
 func TestMatcherNodeMatchesExactIDRegardlessOfName(t *testing.T) {
 	m := core.Matcher{Node: idOfDB1}
 	if !m.Matches(idOfDB1, "totally-renamed", nil, "cpu_pct", "critical") {
@@ -68,12 +64,8 @@ func TestMatcherNodeMatchesExactIDRegardlessOfName(t *testing.T) {
 	}
 }
 
-// TestMatcherNodeWithRealHexIDIsNotAUsableGlob is the review round-3 minor:
-// a real, generated node id (fleet.NewNodeID, 32 hex chars) pins that it can
-// only ever match via the exact-id branch, never as a glob pattern -- hex
-// characters have no special meaning to path.Match, so a real id used as
-// Matcher.Node can never accidentally act as a wildcard against some other
-// node's name or id.
+// TestMatcherNodeWithRealHexIDIsNotAUsableGlob: a real generated node id (fleet.NewNodeID,
+// 32 hex chars) only ever matches via the exact-id branch.
 func TestMatcherNodeWithRealHexIDIsNotAUsableGlob(t *testing.T) {
 	id, err := fleet.NewNodeID()
 	if err != nil {
@@ -168,15 +160,10 @@ func TestMaintenanceOccurrencesInRangeExpandsNext24h(t *testing.T) {
 	}
 }
 
-// --- review round 1, item 2: DST -------------------------------------------
+// --- DST -------------------------------------------
 
-// TestMaintenanceOccurrenceFallBackLastsExactlyOneHour is the review round-1
-// item 2 regression test: 2024-11-03 is the US fall-back day in
-// America/New_York (clocks go from 02:00 EDT back to 01:00 EST, so the
-// 01:00-02:00 hour occurs twice in real time). Computing the occurrence's
-// end independently via time.Date (the old code) would double this window
-// to 2 real hours; computing it as start.Add(wallDuration) keeps it at
-// exactly 1h regardless.
+// TestMaintenanceOccurrenceFallBackLastsExactlyOneHour: 2024-11-03 is the US fall-back day
+// in America/New_York (02:00 EDT back to 01:00 EST, so the 01:00-02:00 hour occurs twice).
 func TestMaintenanceOccurrenceFallBackLastsExactlyOneHour(t *testing.T) {
 	m := core.Maintenance{Name: "w", Weekdays: []int{0}, From: "01:00", To: "02:00", TZ: "America/New_York"} // Sunday
 	from := time.Date(2024, 11, 3, 0, 0, 0, 0, time.UTC)                                                     // 2024-11-03 is a Sunday
@@ -189,15 +176,8 @@ func TestMaintenanceOccurrenceFallBackLastsExactlyOneHour(t *testing.T) {
 	}
 }
 
-// TestMaintenanceOccurrenceSpringForwardDocumented documents the accepted
-// trade-off on the other DST transition (review round 1, item 2): on
-// 2024-03-10 in America/New_York (spring-forward: clocks jump from 02:00
-// EST straight to 03:00 EDT, so wall-clock 02:00-02:59 never happens that
-// day), a 01:30-02:30 window's real elapsed duration still comes out to
-// exactly the configured 1h (start.Add(wallDuration) is immune to the gap),
-// but its END lands on 03:30 local time, not 02:30 -- because 02:30 simply
-// never existed that day, so "1h after 01:30" is 03:30 once the gap is
-// accounted for.
+// TestMaintenanceOccurrenceSpringForwardDocumented documents the accepted trade-off on the
+// other DST transition: on 2024-03-10 in America/New_York.
 func TestMaintenanceOccurrenceSpringForwardDocumented(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
@@ -218,11 +198,8 @@ func TestMaintenanceOccurrenceSpringForwardDocumented(t *testing.T) {
 	}
 }
 
-// TestMaintenanceOccurrenceOwnedBySundayNotMonday is the review round-1 item
-// 2 weekday-ownership test: a window crossing midnight is scheduled by the
-// weekday of its START, never the day its End happens to land on.
-// Weekdays=[Sunday] must produce the Sunday 22:00 -> Monday 02:00
-// occurrence; it must NOT also (or instead) require Monday in Weekdays.
+// TestMaintenanceOccurrenceOwnedBySundayNotMonday: a window crossing midnight is scheduled
+// by the weekday of its START, never the day its End lands on.
 func TestMaintenanceOccurrenceOwnedBySundayNotMonday(t *testing.T) {
 	m := core.Maintenance{Name: "w", Weekdays: []int{0}, From: "22:00", To: "02:00", TZ: "UTC"} // Sunday only
 	from := time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC)                                         // 2024-01-07 is a Sunday
@@ -280,9 +257,8 @@ func TestSilenceStoreCreateValidatesAndPersists(t *testing.T) {
 	}
 }
 
-// TestSilenceStoreCreateRejectsBadGlob pins task C4's brief: a silence's
-// Node/Rule glob must parse (validGlob, same check a Route's own matchers
-// already get), not just be non-empty.
+// TestSilenceStoreCreateRejectsBadGlob pins that a silence's Node/Rule glob
+// must parse (validGlob, as for a Route's matchers), not just be non-empty.
 func TestSilenceStoreCreateRejectsBadGlob(t *testing.T) {
 	s := newTestSilenceStore(t)
 	if _, err := s.Create(core.Silence{Matchers: []core.Matcher{{Node: "["}}, Start: 1000, End: 2000, Author: "cli"}); err == nil {
@@ -528,24 +504,7 @@ func TestEngineDeliversAfterSilenceEnded(t *testing.T) {
 	}
 }
 
-// TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied is the
-// review round-1 item 3 regression test. The race it guards against: a
-// deliverUnsilenced SCAN (at some earlier tick) sees an incident suppressed
-// and unresolved and enqueues a re-check job for it; before that job's turn
-// in its lane actually comes up, a RECOVER for the very same key arrives and
-// is fully Applied. Without moving the delivery DECISION into the job
-// itself (and re-reading fresh state there, as tryDeliverUnsilenced now
-// does), a scan-time decision would still think it's suppressed and
-// unresolved by the time it runs, and deliver a stale "fire" AFTER the
-// recover already went out.
-//
-// This is exercised by calling tryDeliverUnsilenced directly, standing in
-// for "the re-check job finally getting its turn in the lane": the actual
-// wall-clock race between a background dispatcher goroutine and this
-// test's own Submit call is not itself deterministic (nor should a test's
-// pass/fail depend on winning it) -- what IS deterministic, and what this
-// pins, is that whenever that job DOES run, it must see the incident's
-// CURRENT state, not a stale snapshot.
+// TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied guards a race.
 func TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -576,9 +535,8 @@ func TestTryDeliverUnsilencedSkipsStaleFireWhenRecoverAlreadyApplied(t *testing.
 		t.Fatal(err)
 	}
 
-	// A recover for the same key arrives and is fully processed BEFORE the
-	// re-check job's turn comes up -- delivered normally, resolving the
-	// incident.
+	// A recover for the same key arrives and is fully processed BEFORE the re-check job's turn
+	// comes up -- delivered normally, resolving the incident.
 	rec := AlertEvent{Time: 1010, Key: "cpu", Title: "cpu back to normal", Severity: "warning", Kind: "recover", Source: "anomaly", RoutedToMaster: true, FiredAt: 1010}
 	ef.engine.HandleChildAlert("n1", "box1", []string{"web"}, rec)
 	ef.waitIdle()
@@ -641,13 +599,9 @@ func TestEngineTickSilencesPrunesLongExpired(t *testing.T) {
 	}
 }
 
-// --- review round 1, item 1: multi-matcher leak, end to end (web1/db1) -----
+// --- multi-matcher leak, end to end (web1/db1) -----
 
-// TestSilencesForNodeWeb1DB1MultiMatcherLeak is the review round-1 item 1
-// regression test, end to end: a Silence with two OR'd matchers -- "silence
-// everything on db1" and "silence disk* alerts everywhere" -- must never let
-// web1 suppress an unrelated (mem) alert just because the db1-only matcher
-// rode along in the same OR list. web1 must not suppress; db1 must.
+// TestSilencesForNodeWeb1DB1MultiMatcherLeak, end to end: a Silence with two OR'd matchers.
 func TestSilencesForNodeWeb1DB1MultiMatcherLeak(t *testing.T) {
 	store := newTestSilenceStore(t)
 	matchers := []core.Matcher{{Node: "db1"}, {Rule: "disk*"}}
@@ -685,18 +639,8 @@ func TestSilencesForNodeWeb1DB1MultiMatcherLeak(t *testing.T) {
 	}
 }
 
-// TestReplicaApplyCrossAlertKeyOrderingDropRepro demonstrates that fleet_
-// replica.go's apply() alert-ordering guard (lastAlertTS/alertLines) is
-// scoped PER NODE, not per (node, alert key): a delayed fallback record for
-// one alert key (its Time stamped at the LATER fallback-decision moment --
-// see fleet_lease.go's deliverFallback) can silently swallow a genuinely
-// later, unrelated alert on a DIFFERENT key for the SAME node, because
-// "ev.Time < n.lastAlertTS" is checked against the highest Time seen for
-// the node as a whole, never re-scoped per key. The docker fleet e2e run
-// this reproduces had child2 firing BOTH a "collector:services" alert
-// (flapping, independently of the mem test) and the "mem" alert under test
-// in the very same window (mocktg evidence: "via local fallback... collector
-// services failing" appears around the same run as the mem dance).
+// TestReplicaApplyCrossAlertKeyOrderingDropRepro demonstrates that fleet_ replica.go's
+// apply() alert-ordering guard (lastAlertTS/alertLines) is scoped PER NODE, not per.
 func TestReplicaApplyCrossAlertKeyOrderingDropRepro(t *testing.T) {
 	var onAlertCalls []AlertEvent
 	root := t.TempDir()
@@ -713,10 +657,8 @@ func TestReplicaApplyCrossAlertKeyOrderingDropRepro(t *testing.T) {
 		return fleet.Record{Seq: seq, Kind: fleet.KindAlert, TS: ts, Data: b}
 	}
 
-	// An UNRELATED alert key ("collector:services") fires and, because the
-	// master was briefly unreachable, its fallback decision is logged late
-	// (its own Time is the fallback-decision moment, well after its actual
-	// FiredAt) -- both records ship together.
+	// An UNRELATED alert key ("collector:services") fires and, because the master was briefly
+	// unreachable, its fallback decision is logged late.
 	if err := sink.Apply(testNodeID, []fleet.Record{
 		mk(1, base, "collector:services", "fire", false, base),
 		mk(2, base+200, "collector:services", "fire", true, base), // fallback resend, Time inflated
@@ -746,13 +688,8 @@ func TestReplicaApplyCrossAlertKeyOrderingDropRepro(t *testing.T) {
 	}
 }
 
-// TestPushedSilencesSetHoldsMutexThroughWrite reproduces final-review
-// engine I2's second half: pushedSilences.Set released its mutex before
-// marshaling and writing to disk, so two concurrent Set calls could
-// complete their writes out of order, leaving the on-disk sidecar stale
-// relative to p.silences. Set must hold its mutex for the entire call,
-// including the write, so a slower, earlier Set can never land on disk
-// after a faster, later one.
+// TestPushedSilencesSetHoldsMutexThroughWrite: Set must hold its mutex for the entire call,
+// including the disk write.
 func TestPushedSilencesSetHoldsMutexThroughWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pushed-silences.json")
 	p := newPushedSilences(path)
@@ -779,10 +716,8 @@ func TestPushedSilencesSetHoldsMutexThroughWrite(t *testing.T) {
 	secondDone := make(chan error, 1)
 	go func() { secondDone <- p.Set(second) }()
 
-	// Give the second call every chance to race ahead of the first if the
-	// mutex is NOT held through the write -- it would be able to acquire
-	// p.mu (released before the write, pre-fix) and complete its own write
-	// before the first call's (delayed) write ever reaches disk.
+	// Give the second call every chance to race ahead of the first if the mutex is NOT held
+	// through the write -- it would be able to acquire p.mu.
 	time.Sleep(20 * time.Millisecond)
 	close(releaseFirst)
 

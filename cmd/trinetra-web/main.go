@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,12 +21,12 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
-// defaultRuntimeDir mirrors internal/trinetra/control_socket.go's defaultRuntimeDir: where
-// the control socket + token live when systemd.
+// defaultRuntimeDir is where the control socket and token live when systemd or the
+// supervisor has not set RUNTIME_DIRECTORY.
 const defaultRuntimeDir = "/run/trinetra"
 
-// defaultStateDir mirrors internal/trinetra.StateDir (main.go), the daemon's default
-// on-disk state directory.
+// defaultStateDir is the daemon's default state directory; duplicated for the
+// same reason as defaultRuntimeDir.
 const defaultStateDir = "/var/lib/trinetra"
 
 // configPath is where `users` reads web.* when the daemon isn't running.
@@ -37,17 +39,18 @@ const daemonStartWait = 30 * time.Second
 type connConfig struct {
 	// socketPath is the control socket to dial (control.Dial's path arg).
 	socketPath string
-	// token is the control-socket auth token, either taken directly.
+	// token is the control-socket auth token, given directly.
 	token string
-	// tokenFile is where to read the token from when it wasn't given directly.
+	// tokenFile is read when no token was given directly: the sibling "token" file
+	// next to the socket, written 0600 by the daemon.
 	tokenFile string
-	// stateDir backs web.Deps.StateDir: the web plugin's OWN local storage (its user store,
-	// sessions, enrollment tokens).
+	// stateDir backs web.Deps.StateDir: this plugin's OWN storage (user store, sessions,
+	// enrollment tokens).
 	stateDir string
 }
 
-// resolveConnConfig parses args against a fresh FlagSet and layers in environment defaults:
-// an explicit flag always wins.
+// resolveConnConfig parses args against a fresh FlagSet and layers environment defaults: an
+// explicit flag wins, then TRINETRA_CONTROL_SOCKET/TOKEN (as the supervisor sets them).
 func resolveConnConfig(args []string, getenv func(string) string) (connConfig, error) {
 	fs := flag.NewFlagSet("trinetra-web", flag.ContinueOnError)
 	socket := fs.String("socket", "", "control socket path (default: $TRINETRA_CONTROL_SOCKET, else $SERVERWATCH_CONTROL_SOCKET, else $RUNTIME_DIRECTORY/control.sock, else /run/trinetra/control.sock)")
@@ -87,8 +90,7 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	if cc.tokenFile == "" {
 		cc.tokenFile = filepath.Join(runtimeDir, "token")
 	}
-	// Only read tokenFile when no token was given directly (flag or env): a missing token file
-	// is fine in that case, it just means no-auth.
+	// Only read tokenFile when no token was given.
 	if cc.token == "" {
 		if b, err := os.ReadFile(cc.tokenFile); err == nil {
 			cc.token = string(bytesTrimNewline(b))
@@ -100,7 +102,8 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	return cc, nil
 }
 
-// adaptLiveEvent is THE ONLY place core.Event ever turns into a web.LiveEvent.
+// adaptLiveEvent is the only place core.Event becomes web.LiveEvent: internal/web
+// never imports internal/core, so the field copy happens here.
 func adaptLiveEvent(ev core.Event) web.LiveEvent {
 	return web.LiveEvent{
 		Kind:     ev.Kind,
@@ -111,8 +114,8 @@ func adaptLiveEvent(ev core.Event) web.LiveEvent {
 	}
 }
 
-// bytesTrimNewline trims a single trailing newline (and any preceding carriage return) from
-// a token file's contents -- writeTokenFile.
+// bytesTrimNewline trims one trailing newline (and preceding CR) from a token
+// file; writeTokenFile writes none, but a hand-edited file often has one.
 func bytesTrimNewline(b []byte) []byte {
 	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
 		b = b[:len(b)-1]
@@ -120,26 +123,17 @@ func bytesTrimNewline(b []byte) []byte {
 	return b
 }
 
-// buildDeps assembles web.Deps around client, the control-socket core.API implementation
-// client.Dial returns. api.Snapshot/api.Events back both Deps.API.
+// buildDeps assembles web.Deps around client.
 func buildDeps(client *control.Client, cc connConfig) web.Deps {
-	cfg := func() *config.Config {
-		c, err := client.Config()
-		if err != nil || c == nil {
-			// A Config() failure must never surface as a nil Cfg(): every handler in internal/web
-			// calls d.Cfg() unconditionally and dereferences the result (see web.Deps.Cfg's doc).
-			return config.Default()
-		}
-		return c
-	}
+	cfg := lastGoodConfig(client.Config)
 
 	deps := web.Deps{
 		Cfg: cfg,
-		// Reload backs the /public settings save path.
+		// Reload is the /public page's save path; ApplyConfig is the same
+		// validate-persist-apply write that client.Config reads back.
 		Reload: client.ApplyConfig,
 		API:    client,
-		// Events: client.Events already has the exact signature web.EventsStore wants (see this
-		// func's doc), so client is passed directly rather than through an adapter.
+		// client.Events already has web.EventsStore's signature, so it is passed directly.
 		Events: client,
 		Snapshot: func() web.DashboardView {
 			v, err := client.Snapshot()
@@ -150,13 +144,13 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 		},
 		StateDir:    cc.stateDir,
 		TestChannel: client.TestChannel,
-		// ValidateChannel is now a core.API method (core-contract-s1 task A1, #79): it dry-runs
-		// buildNotifier against the daemon's live config over the socket.
+		// ValidateChannel dry-runs buildNotifier against the daemon's live config over the
+		// socket.
 		ValidateChannel: func(cc config.ChannelConfig, _ *config.Config) error {
 			return client.ValidateChannel(cc)
 		},
-		// Subscribe wires web.Deps' live-push seam (Task 3) to client.Subscribe --
-		// internal/control's dedicated-connection streaming client (Task 2).
+		// Subscribe wires web.Deps' live-push seam to client.Subscribe, adapting each core.Event
+		// into a web.LiveEvent.
 		Subscribe: func(ctx context.Context) (<-chan web.LiveEvent, error) {
 			ch, err := client.Subscribe(ctx)
 			if err != nil {
@@ -175,8 +169,8 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 			}()
 			return out, nil
 		},
-		// Fleet/NodeAPI (fleet-web-a task 1): client.Fleet is always unrouted (Fleet.* calls run
-		// against the master regardless of node scope, see internal/control's Client.Fleet doc).
+		// Fleet/NodeAPI: client.Fleet is always unrouted (Fleet.* calls run against the master
+		// regardless of node scope, see internal/control's Client.Fleet doc).
 		Fleet:      client.Fleet,
 		StatusPage: client.StatusPage,
 		NodeAPI: func(id string) core.API {
@@ -187,6 +181,32 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 	deps.Enabled = c.Web.Enabled
 	deps.Listen = c.Web.Listen
 	return deps
+}
+
+// lastGoodConfig returns the daemon's config, or the last one read
+// successfully when a read fails, so a restarting daemon never makes the
+// settings pages show (and save) built-in defaults. Each call gets a copy.
+func lastGoodConfig(fetch func() (*config.Config, error)) func() *config.Config {
+	var mu sync.Mutex
+	var last []byte
+	return func() *config.Config {
+		c, err := fetch()
+		mu.Lock()
+		defer mu.Unlock()
+		if err == nil && c != nil {
+			if b, jerr := json.Marshal(c); jerr == nil {
+				last = b
+			}
+			return c
+		}
+		if last != nil {
+			var cp config.Config
+			if json.Unmarshal(last, &cp) == nil {
+				return &cp
+			}
+		}
+		return config.Default()
+	}
 }
 
 func run(args []string, getenv func(string) string, stderr *os.File) int {
@@ -220,6 +240,7 @@ func runTo(args []string, getenv func(string) string, stdout io.Writer, stderr *
 		return 1
 	}
 	defer client.Close()
+	client.SetTokenSource(token)
 
 	deps := buildDeps(client, cc)
 	stop, err := web.Start(deps)

@@ -10,8 +10,7 @@ import (
 	"io"
 )
 
-// Record kinds. Durable kinds travel through the outbox with a seq; the live
-// snapshot is not a Record (see LiveUpdate).
+// Record kinds.
 const (
 	KindSamples   = "samples"
 	KindDownEvent = "downevent"
@@ -40,9 +39,8 @@ const (
 	maxDecodedRecords = 2 * MaxBatchRecords
 )
 
-// Frame is one push on the master-to-child stream (PathStream): the response
-// body is application/x-ndjson, one JSON-encoded Frame per line, flushed as
-// soon as it is written.
+// Frame is one push on the master-to-child stream (PathStream): the response body is
+// application/x-ndjson, one JSON-encoded Frame per line, flushed as soon as it is written.
 type Frame struct {
 	Type string          `json:"type"` // lease|receipt|ack|unack|silences|managed_config|rpc|revoked|ping
 	Data json.RawMessage `json:"data,omitempty"`
@@ -72,7 +70,7 @@ type RollupPoint struct {
 	Max float64 `json:"max"`
 }
 
-// DownEventData mirrors trinetra.DownEvent's JSON shape.
+// DownEventData is the JSON shape of trinetra.DownEvent.
 type DownEventData struct {
 	Type        string `json:"type"`
 	Start       int64  `json:"start"`
@@ -98,21 +96,13 @@ type LiveUpdate struct {
 	AlertState json.RawMessage `json:"alert_state,omitempty"`
 	HostInfo   json.RawMessage `json:"hostinfo,omitempty"`
 	Outbox     OutboxStats     `json:"outbox"`
-	// Managed reports this child's managed-config state (task 8): nil until
-	// the child has received at least one "managed_config" frame from the
-	// master (an old master that never sends one, or a child that has not
-	// yet connected to a phase-2 master, leaves this nil forever -- exactly
-	// today's behaviour for everything else this task touches).
+	// Managed reports this child's managed-config state: nil until the child has
+	// received a "managed_config" frame, so an old master leaves it nil forever.
 	Managed *ManagedReport `json:"managed,omitempty"`
 }
 
-// ManagedReport is a child's report of its managed-config state, carried on
-// every LiveUpdate once it has ever received a "managed_config" frame:
-// Version is the version it last SUCCESSFULLY applied (unchanged by a
-// failed attempt -- see Applied/Error); Values are its CURRENT effective
-// values for every allowlisted managed-config key (read fresh from its live
-// config on every report, not cached), letting the master compute drift
-// without trusting the child's own idea of what it applied.
+// ManagedReport is a child's managed-config state, carried on every LiveUpdate once it has
+// received a "managed_config" frame.
 type ManagedReport struct {
 	Version int64             `json:"version"`
 	Applied bool              `json:"applied"`
@@ -137,11 +127,7 @@ type JoinRequest struct {
 	PrevSig    string          `json:"prev_sig,omitempty"`
 }
 
-// JoinResponse carries the new identity. Name is the name actually stored
-// in the registry, which may differ from the requested name if it collided
-// (case-insensitively) with an existing node -- Registry.Add suffixes it
-// "-2", "-3", ... to keep names unique (review round 2, item b), and the
-// child prints this one, not the one it asked for.
+// JoinResponse carries the new identity.
 type JoinResponse struct {
 	NodeID string `json:"node_id"`
 	Name   string `json:"name"`
@@ -173,8 +159,7 @@ func EncodeBatch(recs []Record) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// DecodeBatch reverses EncodeBatch with hard limits against oversized or
-// hostile input.
+// DecodeBatch reverses EncodeBatch with hard limits against oversized or hostile input.
 func DecodeBatch(r io.Reader) ([]Record, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {

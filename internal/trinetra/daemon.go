@@ -241,8 +241,8 @@ func httpPingGuarded(url string, block bool) error {
 	return nil
 }
 
-// collectFast gathers the cheap, high-frequency resources: /proc reads for
-// CPU/mem/swap/load, plus the /sys thermal read.
+// collectFast gathers the cheap, high-frequency resources (/proc reads and the /sys thermal
+// read). prev is the caller's single-goroutine-owned CPUStat.
 func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 	var snap Snapshot
 	if b, err := fs.Read("/proc/stat"); err == nil {
@@ -289,8 +289,8 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 	snap.DockerAccess = da.method
 	// Per-collector attempt/error tracking (#110): disk and the failed-units check always run.
 	snap.collectorsAttempted = map[string]bool{"disk": true, "services": true}
-	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed `df -PT -B1` call
-	// (device/fstype/usage/size/free per mount), gated by isRealMount && isRealFsType.
+	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed `df -PT -B1` call,
+	// gated by isRealMount && isRealFsType.
 	if out, err := x.Run("df", "-PT", "-B1"); err == nil {
 		types := parseDFTypes(string(out))
 		var inodes map[string]float64
@@ -468,7 +468,7 @@ const storeMaintenanceInterval = 15 * time.Minute
 var alertRoute atomic.Pointer[func(Alert) bool]
 
 // setAlertRoute installs f (nil clears it) as alertRoute and returns a restore func that
-// puts back whatever was installed before -- so startChild's shutdown.
+// puts back whatever was installed before.
 func setAlertRoute(f func(Alert) bool) (restore func()) {
 	var prev *func(Alert) bool
 	if f == nil {
@@ -479,8 +479,8 @@ func setAlertRoute(f func(Alert) bool) (restore func()) {
 	return func() { alertRoute.Store(prev) }
 }
 
-// reloadOnHUP is the SIGHUP handler's actual logic, extracted from its goroutine (below, in
-// the daemon's own startup function) so it is testable without spinning the whole daemon.
+// reloadOnHUP is the SIGHUP handler's logic, split out so it is testable: read cfgPath and
+// apply it via reload.
 func reloadOnHUP(cfgPath string, reload func(*config.Config) error) (msg string, err error) {
 	c, loadErr := config.Load(cfgPath)
 	if loadErr != nil {
@@ -524,7 +524,7 @@ func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, qui
 }
 
 // deliverSyncAndLog is enqueueAndLog's synchronous twin, used ONLY as the fleet master's
-// alerting-engine delivery hook.
+// alerting-engine delivery hook (fleetDeps.alert).
 func deliverSyncAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool) bool {
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
@@ -547,8 +547,8 @@ func deliverSyncAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert,
 	return false
 }
 
-// deliverSyncAndLogTo is deliverSyncAndLog narrowed to a specific channel-name subset
-// (fleet routing, task 5): identical alert-log/live-bus recording.
+// deliverSyncAndLogTo is deliverSyncAndLog narrowed to a specific channel-name subset:
+// identical alert-log/live-bus recording.
 func deliverSyncAndLogTo(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool, channels []string) bool {
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
@@ -572,7 +572,7 @@ func deliverSyncAndLogTo(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Aler
 }
 
 // dispatchOnlyTo dispatches to a channel-name subset WITHOUT any alert-log/live-bus
-// recording (fleet routing, task 5).
+// recording.
 func dispatchOnlyTo(q *NotifierQueue, a Alert, quiet bool, channels []string) bool {
 	d := q.disp.Load()
 	if d == nil {
@@ -696,8 +696,8 @@ func cmdDaemon(args []string) int {
 		os.Exit(0)
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
-	// managedRef (task 8, round-1 review IMPORTANT 1) holds this child's managedChild once
-	// startFleet/startChild has built one.
+	// managedRef holds this child's managedChild once startFleet/startChild has built one (nil
+	// forever on solo/master, and briefly nil on a child too, until the Store below runs).
 	var managedRef atomic.Pointer[managedChild]
 	// reload persists newCfg to disk then applies it in-process: the closure newInprocAPI's
 	// ApplyConfig exposes to the control socket.
@@ -709,7 +709,8 @@ func cmdDaemon(args []string) int {
 		applyConfig(newCfg)
 		return nil
 	}
-	// SIGHUP: re-read cfgPath and apply it.
+	// SIGHUP: re-read cfgPath and apply it via reload, not applyConfig directly: an external
+	// edit can diverge a managed key from its committed value.
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, sighup)
 	go func() {
@@ -909,8 +910,8 @@ func cmdDaemon(args []string) int {
 		watchdogPeriodSec(), func() int64 { return clock.Now().Unix() },
 		func() error { return sdNotify("WATCHDOG=1") })
 
-	// boot/recovery report from heartbeat gap, deduped against a previous start (Task 5): the
-	// same gap, recomputed from an unchanged heartbeat on a restart, reports only once.
+	// boot/recovery report from heartbeat gap, deduped against a previous start the same gap,
+	// recomputed from an unchanged heartbeat on a restart, reports only once.
 	c0 := getCfg()
 	cleanStopPath := st.CleanStopPath()
 	// bootReportCh carries the boot/recovery report from its background collector goroutine
@@ -949,7 +950,7 @@ func cmdDaemon(args []string) int {
 	_ = os.Remove(cleanStopPath)
 
 	// self-update: start the background loop that checks for a new release on the configured
-	// cadence and turns update.State transitions into Alerts.
+	// cadence and turns update.State transitions into Alerts (update_daemon.go).
 	go startUpdateLoop(daemonCtx, getCfg, newUpdater(getCfg()), func(a Alert) {
 		enqueueAndLog(alog, bus, q, a, false)
 	})
@@ -1084,8 +1085,8 @@ func cmdDaemon(args []string) int {
 			lastWeekly = now
 			enqueueAndLog(alog, bus, q, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
-		// alerts.json only changes when a fire/recover transition happened; baseline.json's stats
-		// are updated every fast tick in memory but only need to hit disk at the slow cadence.
+		// alerts.json only changes on a fire/recover transition; baseline.json's stats change
+		// every fast tick in memory but only need to hit disk at the slow cadence.
 		if stateChanged {
 			// Pull any CLI-written ack flags back onto the in-memory state before saving.
 			alerts.MergeAckFromDisk(st.AlertStatePath(), fs)
@@ -1209,8 +1210,8 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			setChatID(id)
 			enroll.Reset()
 		}
-		// onCallback (task 9) answers a button tap: unlike reply, it is invoked for EVERY
-		// callback_query processUpdates sees, authorized or not.
+		// onCallback answers a button tap: unlike reply, it runs for EVERY callback_query
+		// processUpdates sees, authorized or not, since Telegram requires an answer either way.
 		onCallback := func(cc *config.Config, u telegram.Update) {
 			text := telegramCallbackAnswer(fleetAPI, cc.Telegram.ChatID, u, time.Now)
 			client := telegram.New(cc.Telegram.Token, cc.Telegram.ChatID)

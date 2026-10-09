@@ -9,11 +9,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// monitorTargetRow is one Monitor thresholds screen row: a discovered
-// target (core.TargetView, from api.MonitorTargets over the control
-// socket) merged with its current config overrides -- the same enable/
-// threshold state `trinetra monitor list` reports (systemd.go's
-// cmdMonitor) via config.Config.TargetEnabled/TargetThreshold.
+// monitorTargetRow is one Monitor thresholds screen row: a discovered target.
 type monitorTargetRow struct {
 	ID           string
 	Kind         string
@@ -24,10 +20,8 @@ type monitorTargetRow struct {
 	ThresholdSet bool
 }
 
-// buildMonitorRows merges targets (as api.MonitorTargets returns them) with
-// cfg's per-target overrides into display/edit rows, sorted by ID for a
-// stable on-screen order (the daemon's own discovery order is grouped by
-// kind but not alphabetical).
+// buildMonitorRows merges targets (as api.MonitorTargets returns them) with cfg's
+// per-target overrides into display/edit rows, sorted by ID for a stable on-screen order.
 func buildMonitorRows(targets []core.TargetView, cfg *config.Config) []monitorTargetRow {
 	rows := make([]monitorTargetRow, 0, len(targets))
 	for _, t := range targets {
@@ -48,20 +42,14 @@ func buildMonitorRows(targets []core.TargetView, cfg *config.Config) []monitorTa
 	return rows
 }
 
-// applyMonitorEnable sets target's enabled/disabled override on cfg via the
-// SAME config.Config.SetTarget setter `trinetra monitor enable|disable`
-// uses (systemd.go's cmdMonitor). SetTarget does no validation (any target
-// id is accepted, matching the CLI, which never checks the id against a
-// live discovery list either), so this cannot fail.
+// applyMonitorEnable sets target's enabled/disabled override on cfg via the SAME
+// config.Config.SetTarget setter `trinetra monitor enable|disable` uses.
 func applyMonitorEnable(cfg *config.Config, target string, enabled bool) {
 	cfg.SetTarget(target, enabled)
 }
 
-// applyMonitorThreshold parses valueStr and sets target's threshold
-// override on cfg via config.Config.SetTargetThreshold, the same parse +
-// setter `trinetra monitor threshold <target> <value>` uses
-// (systemd.go's cmdMonitor). Returns a wrapped strconv error (nothing
-// applied) when valueStr isn't a valid float.
+// applyMonitorThreshold parses valueStr and sets target's threshold override on cfg via
+// config.Config.SetTargetThreshold.
 func applyMonitorThreshold(cfg *config.Config, target, valueStr string) error {
 	v, err := strconv.ParseFloat(valueStr, 64)
 	if err != nil {

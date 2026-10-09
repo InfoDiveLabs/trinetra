@@ -112,8 +112,8 @@ type DashboardPageData struct {
 // buildDashboardPageData assembles DashboardPageData from Deps: the live snapshot.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
-	// snapshotViaAPI (round-2 review finding I2) is memoized per request, so this read is
-	// shared with navCountsFor's node-scope branch.
+	// snapshotViaAPI is memoized per request, so this read is shared with navCountsFor's
+	// node-scope branch.
 	v, err := snapshotViaAPI(r, d)
 	if err != nil {
 		if !errors.Is(err, errNoAPI) {
@@ -161,7 +161,7 @@ func dashboardHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// ledClass buckets a metric value into the mockup's led/meter/badge color classes
+// ledClass buckets a metric value into the led/meter/badge color classes
 // ("ok"/"warn"/"crit") against the given warn/crit cutoffs.
 func ledClass(value, warn, crit float64) string {
 	switch {
@@ -174,8 +174,8 @@ func ledClass(value, warn, crit float64) string {
 	}
 }
 
-// byteUnits are the humanBytes step points, largest first, mirroring the mockup's "710
-// GB"/"520 GB"/"310 MB" filesystem-table style.
+// byteUnits are the humanBytes step points, largest first (one significant
+// decimal for GB and above, whole numbers below).
 var byteUnits = []struct {
 	size float64
 	unit string
@@ -186,8 +186,8 @@ var byteUnits = []struct {
 	{1 << 10, "KB"},
 }
 
-// humanBytes formats b the way the mockup's filesystems table does (e.g. "4.1 GB", "310
-// MB"): one decimal at GB/TB scale, whole numbers at MB/KB scale, plain "B" below 1 KB.
+// humanBytes formats b as e.g. "4.1 GB", "310 MB": one decimal at GB/TB
+// scale, whole numbers at MB/KB scale, plain "B" below 1 KB.
 func humanBytes(b uint64) string {
 	f := float64(b)
 	for _, u := range byteUnits {
@@ -202,8 +202,7 @@ func humanBytes(b uint64) string {
 	return fmt.Sprintf("%d B", b)
 }
 
-// humanRate formats a bytes/sec throughput the way the mockup's network
-// tile/chart legends do (e.g. "1.8 MB/s", "240 KB/s").
+// humanRate formats a bytes/sec throughput, e.g. "1.8 MB/s", "240 KB/s".
 func humanRate(bps float64) string {
 	switch {
 	case bps >= 1<<20:
@@ -216,11 +215,11 @@ func humanRate(bps float64) string {
 }
 
 // diskFullSoonDays is the DaysToFull cutoff at/under which the filesystems table's trend
-// column renders as "filling" (red, mockup's .trend.up) rather than "stable".
+// column renders as "filling" (red, .trend.up) rather than "stable" (green, .trend.dn).
 const diskFullSoonDays = 14
 
-// diskTrendText renders a DiskView's fill-rate projection as the mockup's
-// "▲ full in Nd" / "▼ stable" trend column text.
+// diskTrendText renders a DiskView's fill-rate projection as "▲ full in Nd" /
+// "▼ stable" trend column text.
 func diskTrendText(days float64, known bool) string {
 	if !known {
 		return "▼ stable"
@@ -231,8 +230,7 @@ func diskTrendText(days float64, known bool) string {
 	return fmt.Sprintf("▼ %.0fd to full", days)
 }
 
-// diskTrendClass is diskTrendText's companion CSS class ("up"/"dn" -- the
-// mockup's .trend.up/.trend.dn colors).
+// diskTrendClass is diskTrendText's companion CSS class ("up"/"dn").
 func diskTrendClass(days float64, known bool) string {
 	if known && days <= diskFullSoonDays {
 		return "up"

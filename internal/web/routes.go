@@ -23,16 +23,16 @@ func newHandler(d Deps) http.Handler {
 	// / is the true landing route (public-rework task): an authenticated visitor (viewer or
 	// admin) sees the dashboard, exactly like the old requireRole(RoleViewer, ...) wiring.
 	mux.HandleFunc("GET /{$}", rootHandler(d))
-	// /events (Task 8/#64): the SSE stream dashboard.html's live tiles/charts subscribe to
-	// (assets/app.js's swBootSSE, sse.go).
+	// /events: the SSE stream dashboard.html's live tiles/charts subscribe to (assets/app.js's
+	// swBootSSE, sse.go).
 	mux.HandleFunc("GET /events", requireRole(RoleViewer, d, eventsHandler(d)))
-	// /history + /api/series (Task 9/#65): time-range history graphs backed by the daemon's
-	// SampleStore, reached through Deps.API.Series (core.API, see server.go's Deps.API doc).
+	// /history + /api/series: time-range history graphs backed by the daemon's SampleStore,
+	// reached through Deps.API.Series (core.API, see server.go's Deps.API doc).
 	mux.HandleFunc("GET /history", requireRole(RoleViewer, d, historyPageHandler(d)))
 	mux.HandleFunc("GET /api/series", requireRole(RoleViewer, d, seriesAPIHandler(d)))
 	mux.HandleFunc("GET /api/downtime", requireRole(RoleViewer, d, downtimeAPIHandler(d)))
 	// /monitoring: the detailed per-entity view (containers/systemd units/
-	// processes/filesystems), ported from ui-mockup/monitoring.html.
+	// processes/filesystems).
 	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, d, monitoringHandler(d)))
 	// /host (#100): the static host hardware/OS inventory, read over the control socket via
 	// Deps.API.HostInfo.
@@ -40,23 +40,23 @@ func newHandler(d Deps) http.Handler {
 	// /api/container/logs (#115): a docker-logs snapshot for the dashboard
 	// drawer's "View logs" action. Admin-gated -- logs can carry secrets.
 	mux.HandleFunc("GET /api/container/logs", requireRole(RoleAdmin, d, containerLogsHandler(d)))
-	// /fleet + /fleet/table + /api/fleet/nodes (Task 5/fleet-web-a): the fleet overview --
-	// health strip, filterable/sortable node table, and its htmx poll fragment/JSON API.
+	// /fleet + /fleet/table + /api/fleet/nodes: the fleet overview -- health strip,
+	// filterable/sortable node table, and its htmx poll fragment/JSON API.
 	mux.HandleFunc("GET /fleet", requireRole(RoleViewer, d, fleetOverviewHandler(d)))
 	mux.HandleFunc("GET /fleet/table", requireRole(RoleViewer, d, fleetTableHandler(d)))
 	mux.HandleFunc("GET /api/fleet/nodes", requireRole(RoleViewer, d, fleetNodesAPIHandler(d)))
-	// /fleet/compare (Task C1b, plan C): the fleet-wide metric compare view over
-	// FleetAPI.FleetSeries -- ?nodes=a,b,c.
+	// /fleet/compare: the fleet-wide metric compare view over FleetAPI.FleetSeries --
+	// ?nodes=a,b,c (the table's "Compare" action below) or ?tag=web selects the nodes.
 	mux.HandleFunc("GET /fleet/compare", requireRole(RoleViewer, d, fleetCompareHandler(d)))
 	// /fleet/incidents + /fleet/incidents/{id} (+ /table poll fragment, + ack/silence
-	// mutations) -- task C2, plan C.
+	// mutations).
 	mux.HandleFunc("GET /fleet/incidents", requireRole(RoleViewer, d, fleetIncidentsHandler(d)))
 	mux.HandleFunc("GET /fleet/incidents/table", requireRole(RoleViewer, d, fleetIncidentsTableHandler(d)))
 	mux.HandleFunc("GET /fleet/incidents/{id}", requireRole(RoleViewer, d, fleetIncidentHandler(d)))
 	mux.HandleFunc("POST /fleet/incidents/{id}/ack", fleetResponderMutation(d, fleetIncidentAckHandler(d)))
 	mux.HandleFunc("POST /fleet/incidents/{id}/silence", fleetAdminMutation(d, fleetIncidentSilenceHandler(d)))
-	// /fleet/alerting (+ /test, + /fleet/rules/state) -- task C3, plan C: the
-	// routing/escalation config editor (routes/policies/rules, "edit as JSON").
+	// /fleet/alerting (+ /test, + /fleet/rules/state): the routing/escalation config editor
+	// (routes/policies/rules, "edit as JSON"), the route tester, and the rule-state fragment.
 	mux.HandleFunc("GET /fleet/alerting", requireRole(RoleViewer, d, fleetAlertingPageHandler(d)))
 	mux.HandleFunc("POST /fleet/alerting", limitBody(alertingMaxBodyBytes, fleetAdminMutation(d, fleetAlertingSaveHandler(d))))
 	mux.HandleFunc("POST /fleet/alerting/test", requireRole(RoleViewer, d, func(w http.ResponseWriter, r *http.Request) {
@@ -76,14 +76,13 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /status-page/incidents/{id}/updates/{uid}", fleetResponderMutation(d, statusUpdateEditHandler(d)))
 	mux.HandleFunc("POST /status-page/incidents/{id}/edit", fleetResponderMutation(d, statusIncidentEditHandler(d)))
 	mux.HandleFunc("POST /status-page/incidents/{id}/delete", fleetAdminMutation(d, statusIncidentDeleteHandler(d)))
-	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete) -- task C4, plan
-	// C.
+	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete).
 	mux.HandleFunc("GET /fleet/silences", requireRole(RoleViewer, d, fleetSilencesPageHandler(d)))
 	mux.HandleFunc("POST /fleet/silences", fleetAdminMutation(d, fleetSilenceCreateHandler(d)))
 	mux.HandleFunc("POST /fleet/silences/{id}/expire", fleetAdminMutation(d, fleetSilenceExpireHandler(d)))
 	mux.HandleFunc("POST /fleet/maintenance", fleetAdminMutation(d, fleetMaintenanceCreateHandler(d)))
 	mux.HandleFunc("POST /fleet/maintenance/{id}/delete", fleetAdminMutation(d, fleetMaintenanceDeleteHandler(d)))
-	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a): node management
+	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/*: node management
 	// (rename/tags/revoke/remove) and join-token issuance/revocation.
 	mux.HandleFunc("GET /fleet/admin", requireRole(RoleAdmin, d, fleetAdminPageHandler(d)))
 	mux.HandleFunc("POST /fleet/tokens", fleetAdminMutation(d, fleetTokenCreateHandler(d)))
@@ -92,8 +91,8 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /fleet/nodes/{id}/tags", fleetAdminMutation(d, fleetNodeTagsHandler(d)))
 	mux.HandleFunc("POST /fleet/nodes/{id}/revoke", fleetAdminMutation(d, fleetNodeRevokeHandler(d)))
 	mux.HandleFunc("POST /fleet/nodes/{id}/remove", fleetAdminMutation(d, fleetNodeRemoveHandler(d)))
-	// /fleet/managed (+ /{id}/delete) + /fleet/audit -- task C5, plan C: the managed-config
-	// fragment editor + per-node status, and the fleet audit log.
+	// /fleet/managed (+ /{id}/delete) + /fleet/audit: the managed-config fragment editor +
+	// per-node status, and the fleet audit log.
 	mux.HandleFunc("GET /fleet/managed", requireRole(RoleViewer, d, fleetManagedPageHandler(d)))
 	mux.HandleFunc("POST /fleet/managed", fleetAdminMutation(d, fleetManagedSaveHandler(d)))
 	mux.HandleFunc("POST /fleet/managed/{id}/delete", fleetAdminMutation(d, fleetManagedDeleteHandler(d)))
@@ -111,28 +110,27 @@ func newHandler(d Deps) http.Handler {
 	// /enroll or /login), so it's CSRF-protected -- see requireCSRF's doc.
 	mux.Handle("POST /logout", requireCSRF(logoutHandler(d)))
 
-	// Admin-only routes: the mockup app.js's ADMIN_PAGES list
-	// (config.html/channels.html/users.html/public-settings.html).
+	// Admin-only routes (config/channels/users/public-settings), gated by
+	// requireRole(RoleAdmin, ...) (middleware.go). /config: the config editor -- thresholds.
 	mux.HandleFunc("GET /config", requireRole(RoleAdmin, d, configPageHandler(d)))
 	mux.HandleFunc("POST /config", configMutation(d, configSaveHandler(d)))
-	// /updates (task 8): self-update status + manual actions over
+	// /updates: self-update status + manual actions over
 	// core.API.UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback.
 	mux.HandleFunc("GET /updates", requireRole(RoleAdmin, d, updatesPageHandler(d)))
 	mux.HandleFunc("POST /updates/check", updatesMutation(d, updatesCheckHandler(d)))
 	mux.HandleFunc("POST /updates/apply", updatesMutation(d, updatesApplyHandler(d)))
 	mux.HandleFunc("POST /updates/rollback", updatesMutation(d, updatesRollbackHandler(d)))
-	// /channels (Task 10/#66): CRUD over config.Channels, ported from
-	// ui-mockup/channels.html's table + add/edit modal.
+	// /channels: CRUD over config.Channels (table + add/edit modal).
 	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, d, channelsPageHandler(d)))
 	mux.HandleFunc("POST /channels", channelsMutation(d, channelsAddHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(d, channelsUpdateHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(d, channelsRemoveHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(d, channelsTestHandler(d)))
-	// /settings/public + /public + /public/events (Task 11/#67, extended by the public-rework
-	// task): the admin-curated exposure picker.
+	// /settings/public + /public + /public/events: the admin-curated exposure picker.
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, d, publicSettingsPageHandler(d)))
 	mux.HandleFunc("POST /settings/public", publicSettingsMutation(d, publicSettingsSaveHandler(d)))
 	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
+	mux.HandleFunc("GET /status", publicPageHandler(d))
 	mux.HandleFunc("GET /public/events", publicEventsHandler(d))
 	// Public status page extras (#157): anonymous like /public/events (no requireRole); each
 	// handler 404s itself when public.enabled is false or no services are configured.
@@ -140,20 +138,19 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /status/feed.atom", statusFeedHandler(d))
 	mux.HandleFunc("GET /status/api.json", statusAPIHandler(d))
 
-	// /alerts (Task 10/#66): alert history + active alerts, both read over the control socket
+	// /alerts: alert history + active alerts, both read over the control socket
 	// (Deps.API.AlertHistory/ActiveAlerts), viewer+ per the design doc.
 	mux.HandleFunc("GET /alerts", requireRole(RoleViewer, d, alertsPageHandler(d)))
 	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsAckHandler(d)).ServeHTTP(w, r)
 	}))
-	// /alerts/{key}/unack (task C6): the ack action's inverse, over core.API.UnackAlert --
-	// same responder+CSRF gate.
+	// /alerts/{key}/unack: the ack action's inverse, over core.API.UnackAlert.
 	mux.HandleFunc("POST /alerts/{key}/unack", requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsUnackHandler(d)).ServeHTTP(w, r)
 	}))
 
-	// /users (Task 7/#63): the real user-management page -- list accounts, issue/re-issue
-	// enrollment tokens, change roles, remove accounts, revoke individual passkeys.
+	// /users: the real user-management page -- list accounts, issue/re-issue enrollment
+	// tokens, change roles, remove accounts, revoke individual passkeys.
 	mux.HandleFunc("GET /users", requireRole(RoleAdmin, d, usersPageHandler(d)))
 	mux.HandleFunc("POST /users/invite", usersMutation(d, usersInviteHandler(d)))
 	mux.HandleFunc("POST /users/{id}/role", usersMutation(d, usersRoleHandler(d)))
@@ -164,13 +161,13 @@ func newHandler(d Deps) http.Handler {
 	// session (sessionFromContext) -- including requireCSRF above.
 	sessions := newSessionStore(d.StateDir)
 	users := newUserStore(d.StateDir)
-	// gzipMiddleware (Task 7, slow-request-resilience) is the outermost wrap: it compresses
-	// large responses (history/series JSON) for congested uplinks, gated on Accept-Encoding.
+	// gzipMiddleware is the outermost wrap: it compresses large responses (history/series
+	// JSON) for congested uplinks, gated on Accept-Encoding: gzip and a 1KB minimum.
 	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, withFleetMemo(withNodeRouter(d, mux))))))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type for the
-// extensions the mockup shell needs.
+// extensions the shell needs.
 func assetHandler(assets fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,8 +187,8 @@ func assetHandler(assets fs.FS) http.Handler {
 	})
 }
 
-// contentTypeByExt returns the Content-Type this package's vendored/mockup assets and the
-// Trinetra brand files (brand/*.png|.ico, fonts/*.woff2 and the font's OFL.txt) need.
+// contentTypeByExt returns the Content-Type this package's vendored assets and the Trinetra
+// brand files (brand/*.png|.ico, fonts/*.woff2 and the font's OFL.txt) need.
 func contentTypeByExt(name string) string {
 	switch {
 	case strings.HasSuffix(name, ".css"):
@@ -210,8 +207,8 @@ func contentTypeByExt(name string) string {
 	return ""
 }
 
-// enrollPageHandler renders the passkey-registration page (ported from
-// ui-mockup/enroll.html -- see templates/enroll.html) through the bare/ centered layout.
+// enrollPageHandler renders the passkey-registration page (templates/ enroll.html) through
+// the bare/centered layout (base_bare.html/BarePageData, templates.go).
 func enrollPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := newBarePageData(r, "Set up passkey")
@@ -313,8 +310,8 @@ func enrollFinishHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// loginPageHandler renders the passkey sign-in page (ported from ui-mockup/login.html --
-// see templates/login.html) through the bare/ centered layout, same as enrollPageHandler.
+// loginPageHandler renders the passkey sign-in page (templates/login.html) through the
+// bare/centered layout, same as enrollPageHandler.
 func loginPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := newBarePageData(r, "Sign in")

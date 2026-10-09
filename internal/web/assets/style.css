@@ -806,3 +806,8 @@ td.pick input,th.pick input{cursor:pointer}
 .pick-head .hint{display:block; color:var(--faint); font-size:11px; margin-top:4px}
 .pick-whole{flex-wrap:wrap} .pick-whole .note{flex:1 1 160px}
 .notice-dismiss{display:flex; gap:10px; align-items:center} .notice-dismiss span{flex:1} .notice-dismiss .btn{flex:none; padding:4px 10px}
+.update-hero{display:flex; gap:14px 18px; align-items:center; flex-wrap:wrap}
+.update-hero .update-state{flex:1 1 320px; display:grid; gap:4px}
+.update-hero .update-state strong{font-size:17px}
+.update-hero form{flex:none}
+.deliv-list{display:block; flex:1; text-align:left}
