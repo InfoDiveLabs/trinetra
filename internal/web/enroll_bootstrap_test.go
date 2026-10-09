@@ -21,10 +21,13 @@ func TestLocalOnly(t *testing.T) {
 		{"", "[::1]:8088", true},
 		{"", "0.0.0.0:8088", false},
 		{"", ":8088", false},
-		{"http://localhost:8088", "0.0.0.0:8088", true},
+		{"http://localhost:8088", "0.0.0.0:8088", false},
+		{"http://localhost:8088", "127.0.0.1:8088", true},
+		{"http://localhost:8088", ":8088", false},
 		{"https://status.example.com", "127.0.0.1:8088", false},
 		{"https://192.168.1.10", "127.0.0.1:8088", false},
 		{"http://127.0.0.5:9000", "127.0.0.1:8088", true},
+		{"http://localhost:8088", "[::]:8088", false},
 	} {
 		c := config.Default()
 		c.Web.Origin, c.Web.Listen = tc.origin, tc.listen

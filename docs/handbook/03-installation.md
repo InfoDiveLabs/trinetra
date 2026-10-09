@@ -524,8 +524,8 @@ This prints a single-use enroll link, valid for 24 hours, built from
 `trinetra users list`, `set-role` and `remove` manage accounts afterwards (see
 the [Command reference](11-command-reference.md#trinetra-users)).
 
-If the web UI is configured to be reached only from this machine (`web.origin`
-or, when unset, `web.listen` on `localhost`/`127.0.0.1`/`::1`), the first person
+If the web UI is configured to be reached only from this machine (`web.listen`
+on `localhost`/`127.0.0.1`/`::1`, and `web.origin`, if set, too), the first person
 to open `/enroll` may create the admin account without a link. Anywhere else,
 the link is required, so whoever finds a fresh server first cannot claim it.
 

@@ -143,8 +143,8 @@ Getting the first account is a one-time bootstrap. On the server, run
 `sudo trinetra users invite --role admin` (or let `sudo trinetra cli` do it in
 its first run) and open the link it prints; the passkey you register becomes
 the admin account. If the web UI is configured to be reached only from this
-machine (`web.origin`, or `web.listen` when origin is unset, on `localhost`,
-`127.0.0.1` or `::1`), you may instead visit `/enroll` with no token. On any
+machine (`web.listen` on `localhost`, `127.0.0.1` or `::1`, and `web.origin`,
+if set, on one of those too), you may instead visit `/enroll` with no token. On any
 other address tokenless `/enroll` explains how to get the link, so whoever
 finds a fresh server first cannot claim it. The first-admin decision is
 atomic: if two people race to bootstrap at the same instant, exactly one wins

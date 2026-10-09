@@ -251,27 +251,27 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 var errSetupLinkRequired = errors.New("this server isn't set up yet: on the server, run `sudo trinetra web users invite --role admin` and open the link it prints")
 
 // localOnly reports whether the web UI is configured to be reached only from
-// this machine. It is decided from config, not the request: behind a reverse
-// proxy every request comes from 127.0.0.1.
+// this machine: it must listen on loopback, and a configured origin must be
+// loopback too. Decided from config, not the request: behind a reverse proxy
+// every request comes from 127.0.0.1, and a non-browser client can claim any
+// WebAuthn origin.
 func localOnly(cfg *config.Config) bool {
-	host := ""
-	if cfg.Web.Origin != "" {
-		u, err := url.Parse(cfg.Web.Origin)
-		if err != nil {
-			return false
-		}
-		host = u.Hostname()
-	} else {
-		h, _, err := net.SplitHostPort(cfg.Web.Listen)
-		if err != nil {
-			return false
-		}
-		host = h
+	h, _, err := net.SplitHostPort(cfg.Web.Listen)
+	if err != nil || !loopbackHost(h) {
+		return false
 	}
-	if host == "localhost" {
+	if cfg.Web.Origin == "" {
 		return true
 	}
-	ip := net.ParseIP(host)
+	u, err := url.Parse(cfg.Web.Origin)
+	return err == nil && loopbackHost(u.Hostname())
+}
+
+func loopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
 	return ip != nil && ip.IsLoopback()
 }
 
