@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -238,5 +240,55 @@ func TestSwapInJoinsRestoreFailureWithOriginalError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "half-updated") {
 		t.Fatalf("missing half-updated warning: %v", err)
+	}
+}
+
+func TestRunProbeFallsBackOnNoexec(t *testing.T) {
+	p := testUpdatePaths(t)
+	staged := filepath.Join(p.StateDir, "update", "staging", "0.5.0", "trinetra-linux-amd64")
+	os.MkdirAll(filepath.Dir(staged), 0o700)
+	os.WriteFile(staged, []byte("NEW-core"), 0o755)
+
+	var ran []string
+	x := fakeExec{fn: func(name string, _ ...string) ([]byte, error) {
+		ran = append(ran, name)
+		if strings.HasPrefix(name, p.StateDir) {
+			return nil, &fs.PathError{Op: "fork/exec", Path: name, Err: syscall.EACCES}
+		}
+		b, err := os.ReadFile(name)
+		if err != nil || string(b) != "NEW-core" {
+			t.Errorf("probe copy %s = %q, %v", name, b, err)
+		}
+		return []byte(`{"version":"0.5.0"}`), nil
+	}}
+	out, err := runProbe(p, x, staged, "version", "--json")
+	if err != nil || !strings.Contains(string(out), "0.5.0") {
+		t.Fatalf("runProbe = %q, %v", out, err)
+	}
+	if len(ran) != 2 || !strings.HasPrefix(ran[1], filepath.Dir(p.GuardDir)) {
+		t.Fatalf("ran %v, want the staged path then a copy beside the guard", ran)
+	}
+	if _, err := os.Stat(ran[1]); !os.IsNotExist(err) {
+		t.Errorf("probe copy %s left behind", ran[1])
+	}
+
+	boom := errors.New("boom")
+	_, err = runProbe(p, fakeExec{fn: func(string, ...string) ([]byte, error) { return nil, boom }}, staged, "version")
+	if !errors.Is(err, boom) {
+		t.Errorf("non-permission error = %v, want it returned as is", err)
+	}
+}
+
+func TestWritePinnedGuardSyncsParent(t *testing.T) {
+	p := testUpdatePaths(t)
+	var synced []string
+	prev := syncDirFn
+	syncDirFn = func(d string) error { synced = append(synced, d); return nil }
+	t.Cleanup(func() { syncDirFn = prev })
+	if err := writePinnedGuard(p); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(synced, filepath.Dir(p.GuardDir)) {
+		t.Fatalf("synced %v, want the guard dir's parent", synced)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,10 +130,50 @@ func writePinnedGuard(p updatePaths) error {
 	if err := os.Chmod(p.GuardDir, 0o755); err != nil {
 		return err
 	}
+	// A freshly created guard dir is only durable once its parent is synced.
+	if err := syncDirFn(filepath.Dir(p.GuardDir)); err != nil {
+		return err
+	}
 	if err := copyFile(self, p.guardBin(), 0o755); err != nil {
 		return fmt.Errorf("update: write the pinned guard binary: %w", err)
 	}
 	return nil
+}
+
+var syncDirFn = syncDir
+
+// runProbe runs bin with args, and if the exec is refused (a noexec mount or
+// SELinux label on /var/lib) retries from a temporary copy beside the guard
+// dir, which install already requires to be executable (#141).
+func runProbe(p updatePaths, x Exec, bin string, args ...string) ([]byte, error) {
+	out, err := x.Run(bin, args...)
+	if err == nil || !errors.Is(err, fs.ErrPermission) || p.GuardDir == "" {
+		return out, err
+	}
+	dir := filepath.Dir(p.GuardDir)
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		return out, err
+	}
+	f, cErr := os.CreateTemp(dir, ".probe-")
+	if cErr != nil {
+		return out, err
+	}
+	tmp := f.Name()
+	f.Close()
+	defer os.Remove(tmp)
+	if cErr := copyFile(bin, tmp, 0o700); cErr != nil {
+		return out, err
+	}
+	return x.Run(tmp, args...)
+}
+
+type probeExec struct {
+	p updatePaths
+	x Exec
+}
+
+func (e probeExec) Run(name string, args ...string) ([]byte, error) {
+	return runProbe(e.p, e.x, name, args...)
 }
 
 // applyPlan is what a release manifest resolves to for THIS host: the
