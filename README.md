@@ -47,8 +47,30 @@ Details in [Quick start](#quick-start).
 
 ---
 
+## See it in action
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/media/first-run.gif" alt="sudo trinetra cli on a new server: web UI step, a one-time admin enroll link, choosing where alerts go, then the live home screen"><br><sub><b>Guided first run</b> in the terminal</sub></td>
+<td width="50%"><img src="docs/assets/media/status-page.gif" alt="Monitoring page: tick two containers, add them to a new status page service called Checkout, then see it on the public status page"><br><sub><b>Status page from Monitoring</b>: tick containers, publish a service</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/media/dashboard-ctrl-k.gif" alt="Dashboard tour, then Ctrl K opens the node switcher and jumps to db-01's dashboard"><br><sub><b>Dashboard</b>, and any server in the fleet with <kbd>Ctrl</kbd> <kbd>K</kbd></sub></td>
+<td width="50%"><img src="docs/assets/media/who-gets-what.gif" alt="Notifications: the channel list, then the Who gets what tab showing which channels receive each alert level, plus quiet hours"><br><sub><b>Who gets what</b>: every alert level and its channels</sub></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="40%"><a href="docs/assets/media/fleet-mode.mp4"><img src="docs/assets/media/fleet-mode.jpg" alt="Play: fleet mode explained, 47 seconds with narration"></a><br><sub><b>Fleet mode</b> · 47 s, narrated</sub></td>
+<td width="40%"><a href="docs/assets/media/self-update.mp4"><img src="docs/assets/media/self-update.jpg" alt="Play: how self-update works, 39 seconds with narration"></a><br><sub><b>Self-update and rollback</b> · 39 s, narrated</sub></td>
+<td width="20%"><a href="docs/assets/media/launch-reel.mp4"><img src="docs/assets/media/launch-reel.jpg" alt="Play: the 25-second trinetra launch reel"></a><br><sub><b>In 25 seconds</b></sub></td>
+</tr>
+</table>
+
 ## Contents
 
+- [See it in action](#see-it-in-action)
 - [Small by design](#small-by-design)
 - [Feature tour](#feature-tour): [dashboard](#live-dashboard) ·
   [monitoring](#containers-services-filesystems-processes) ·
@@ -138,6 +160,9 @@ with its own severity floor and quiet-hours behaviour.
 <td width="50%"><img src="docs/assets/screenshots/channels.webp" alt="Channels: Telegram, Slack and webhook channels with severity and routing"></td>
 </tr>
 </table>
+
+<img src="docs/assets/media/add-channel.gif" alt="trinetra cli: from the no-channel reminder, press n, add a channel named ops-slack, choose Slack, paste the webhook URL, saved; back on Home the reminder is gone" width="100%">
+<sub>Adding a Slack channel from <code>trinetra cli</code>.</sub>
 
 ### Fleet overview
 
