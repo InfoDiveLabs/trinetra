@@ -21,19 +21,10 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// --- virtual authenticator: builds a real, verifiable "none"-format
-// attestation response so beginRegistration/finishRegistration can be
-// exercised end-to-end without a real hardware/platform authenticator or
-// browser. "none" attestation requires no signature over the attestation
-// itself (see go-webauthn's AttestationObject.Verify: format "none" only
-// requires an empty attStmt), which keeps this fixture to "assemble the
-// right bytes" rather than "implement an attestation statement format".
+// --- virtual authenticator: builds a real.
 
-// cosePublicKeyCBOR returns a syntactically-valid COSE_Key CBOR encoding of
-// a fresh P-256 EC public key (kty=EC2, crv=P-256, alg=ES256), the shape
-// go-webauthn's unmarshalCredentialPublicKey expects to find at the tail of
-// authenticatorData. The private key is discarded; "none" attestation never
-// asks for a signature, so it's never needed.
+// cosePublicKeyCBOR returns a syntactically-valid COSE_Key CBOR encoding of a fresh P-256
+// EC public key (kty=EC2, crv=P-256, alg=ES256).
 func cosePublicKeyCBOR(t *testing.T) []byte {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -42,8 +33,7 @@ func cosePublicKeyCBOR(t *testing.T) []byte {
 	}
 	x := priv.X.Bytes()
 	y := priv.Y.Bytes()
-	// P-256 coordinates must be exactly 32 bytes; left-pad if Bytes()
-	// dropped leading zeroes.
+	// P-256 coordinates must be exactly 32 bytes; left-pad if Bytes() dropped leading zeroes.
 	x = append(make([]byte, 32-len(x)), x...)
 	y = append(make([]byte, 32-len(y)), y...)
 
@@ -62,8 +52,7 @@ func cosePublicKeyCBOR(t *testing.T) []byte {
 }
 
 // authenticatorData builds a raw authenticatorData structure (§6.1) with the
-// attested-credential-data flag set: rpIdHash(32) + flags(1) + counter(4) +
-// aaguid(16) + credIDLen(2, big-endian) + credID + COSE public key.
+// attested-credential-data flag set.
 func authenticatorData(t *testing.T, rpID string, credID, pubKeyCBOR []byte) []byte {
 	t.Helper()
 	rpIDHash := sha256.Sum256([]byte(rpID))
@@ -83,11 +72,7 @@ func authenticatorData(t *testing.T, rpID string, credID, pubKeyCBOR []byte) []b
 	return buf.Bytes()
 }
 
-// attestationObjectCBOR wraps rawAuthData into a "none"-format attestation
-// object: {"fmt":"none","attStmt":{},"authData":<bytes>}. go-webauthn's
-// webauthncbor falls back to each struct field's `json` tag when no `cbor`
-// tag is present (see fxamacker/cbor's structfields.go), so these map keys
-// line up with protocol.AttestationObject's fmt/attStmt/authData tags.
+// attestationObjectCBOR wraps rawAuthData into a "none"-format attestation object.
 func attestationObjectCBOR(t *testing.T, rawAuthData []byte) []byte {
 	t.Helper()
 	obj := map[string]interface{}{
@@ -107,10 +92,7 @@ func attestationObjectCBOR(t *testing.T, rawAuthData []byte) []byte {
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 // creationResponseBody assembles the full JSON body a browser's
-// navigator.credentials.create() would POST to /enroll/finish, given the
-// server's challenge/rpID and a client-controlled origin (deliberately a
-// parameter, not always the "right" one, so tests can exercise both the
-// happy path and origin-mismatch rejection).
+// navigator.credentials.create() would POST to /enroll/finish.
 func creationResponseBody(t *testing.T, challenge, origin, rpID string) (body []byte, credID []byte) {
 	t.Helper()
 	credID = make([]byte, 16)
@@ -147,10 +129,7 @@ func creationResponseBody(t *testing.T, challenge, origin, rpID string) (body []
 	return body, credID
 }
 
-// testWebAuthn returns a *webauthn.WebAuthn configured for rpID/origin,
-// used directly (bypassing webAuthnConfig's config/request derivation) so
-// these tests can pin exact RP values without needing a *config.Config or
-// *http.Request to carry them.
+// testWebAuthn returns a *webauthn.WebAuthn configured for rpID/origin, used directly.
 func testWebAuthn(t *testing.T, rpID, origin string) *webauthn.WebAuthn {
 	t.Helper()
 	wa, err := webauthn.New(&webauthn.Config{
@@ -192,10 +171,8 @@ func cookieFrom(t *testing.T, rr *httptest.ResponseRecorder, name string) *http.
 	return nil
 }
 
-// TestBeginRegistrationReturnsCreationOptionsAndSetsCookie pins the
-// begin-half of the ceremony in isolation: it must hand back real
-// PublicKeyCredentialCreationOptions (a non-empty challenge, the user's
-// name) and stash a session by setting enrollSessionCookie.
+// TestBeginRegistrationReturnsCreationOptionsAndSetsCookie pins the begin-half of the
+// ceremony in isolation: it must hand back real PublicKeyCredentialCreationOptions.
 func TestBeginRegistrationReturnsCreationOptionsAndSetsCookie(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	u := &User{ID: mustNewUserID(t), Name: "on-call", Role: RoleViewer}
@@ -223,11 +200,8 @@ func TestBeginRegistrationReturnsCreationOptionsAndSetsCookie(t *testing.T) {
 	}
 }
 
-// TestRegistrationRoundTripProducesStoredCredentialWithPublicKey is the
-// full begin -> (virtual authenticator) -> finish ceremony: it pins that a
-// well-formed attestation response results in a persisted Credential with a
-// non-zero public key, a matching credential ID, and the transports the
-// finish request carried.
+// TestRegistrationRoundTripProducesStoredCredentialWithPublicKey is the full begin ->
+// (virtual authenticator) -> finish ceremony.
 func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
@@ -268,10 +242,8 @@ func TestRegistrationRoundTripProducesStoredCredentialWithPublicKey(t *testing.T
 	}
 }
 
-// TestRegistrationRejectsTamperedAttestation pins the negative path: a
-// finish request whose clientDataJSON claims a challenge that was never
-// issued (simulating a tampered/replayed attestation) must be rejected, and
-// nothing must be persisted.
+// TestRegistrationRejectsTamperedAttestation pins the negative path: a finish request whose
+// clientDataJSON claims a challenge that was never issued.
 func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
@@ -300,11 +272,7 @@ func TestRegistrationRejectsTamperedAttestation(t *testing.T) {
 	}
 }
 
-// TestRegistrationRejectsWrongOrigin is this task's requirement-4 pin: an
-// attestation whose clientData.origin doesn't match the WebAuthn instance's
-// configured RPOrigins must be rejected even though the challenge/rpID
-// otherwise line up -- this is the check that stops a WebAuthn ceremony
-// completed against a spoofed/incorrect origin from ever registering.
+// TestRegistrationRejectsWrongOrigin is this task's requirement-4 pin.
 func TestRegistrationRejectsWrongOrigin(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
@@ -337,9 +305,8 @@ func TestRegistrationRejectsWrongOrigin(t *testing.T) {
 	}
 }
 
-// TestWebAuthnConfigUsesConfiguredRPIDOrigin pins webAuthnConfig's primary
-// path: when web.rp_id/web.origin are set (autocert/manual mode), those
-// values are used verbatim regardless of the request.
+// TestWebAuthnConfigUsesConfiguredRPIDOrigin pins webAuthnConfig's primary path: when
+// web.rp_id/web.origin are set (autocert/manual mode).
 func TestWebAuthnConfigUsesConfiguredRPIDOrigin(t *testing.T) {
 	cfg := config.Default()
 	cfg.Web.RPID = testRPID
@@ -358,11 +325,8 @@ func TestWebAuthnConfigUsesConfiguredRPIDOrigin(t *testing.T) {
 	}
 }
 
-// TestWebAuthnConfigDerivesFromRequestOriginInProxyMode pins the proxy-mode
-// fallback: with web.rp_id/web.origin left empty, webAuthnConfig must derive
-// both from the request's context-stored origin (withRequestOrigin,
-// issue #59), the same value validateOrigin/requestOriginFromContext already
-// establish as authoritative for this server.
+// TestWebAuthnConfigDerivesFromRequestOriginInProxyMode pins the proxy-mode fallback: with
+// web.rp_id/web.origin left empty.
 func TestWebAuthnConfigDerivesFromRequestOriginInProxyMode(t *testing.T) {
 	cfg := config.Default() // Web.RPID/Origin left empty (proxy-mode default)
 
@@ -381,9 +345,4 @@ func TestWebAuthnConfigDerivesFromRequestOriginInProxyMode(t *testing.T) {
 	}
 }
 
-// Ceremony-stash-specific expiry/eviction/capacity tests used to live here
-// (Task 4's temporary in-memory ceremonyStash). That type is gone -- both
-// registration and login ceremonies now stash their SessionData in the real
-// SessionStore (session.go), whose equivalent expiry/GC/capacity behavior is
-// pinned in session_test.go (TestSessionGetTreatsExpiredAsAbsent,
-// TestSessionGCRemovesExpiredRecords, TestSessionNewRefusesWhenFull).
+// Expiry/eviction/capacity of the ceremony stash is pinned in session_test.go.

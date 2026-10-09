@@ -127,9 +127,8 @@ func TestChannelNeedsValidation(t *testing.T) {
 	}
 }
 
-// TestSaveChannelGateBlocksInvalidEnabledChannel is the #79-safe regression
-// test: an enabled channel that fails api.ValidateChannel must NOT be
-// persisted -- cfg comes back untouched, and the caller learns why.
+// TestSaveChannelGateBlocksInvalidEnabledChannel is the #79-safe regression test: an
+// enabled channel that fails api.ValidateChannel must NOT be persisted.
 func TestSaveChannelGateBlocksInvalidEnabledChannel(t *testing.T) {
 	wantErr := errors.New("token not configured")
 	api := &fakeAPI{validateErr: wantErr}
@@ -148,9 +147,8 @@ func TestSaveChannelGateBlocksInvalidEnabledChannel(t *testing.T) {
 	}
 }
 
-// TestSaveChannelGateSkippedForDisabledChannel asserts a disabled channel
-// skips the ValidateChannel gate entirely (it can't misdeliver) and saves
-// even though the fake would have rejected it.
+// TestSaveChannelGateSkippedForDisabledChannel asserts a disabled channel skips the
+// ValidateChannel gate entirely.
 func TestSaveChannelGateSkippedForDisabledChannel(t *testing.T) {
 	api := &fakeAPI{validateErr: errors.New("would fail if checked")}
 	cfg := &config.Config{}

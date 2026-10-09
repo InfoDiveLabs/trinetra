@@ -23,11 +23,11 @@ root is what lets the daemon read every container and process on the box, pull
 SMART health data straight off the disks, and start automatically at boot with
 no interactive login. You will run the install command with `sudo`.
 
-**A Telegram bot token.** Message **@BotFather** on Telegram, send `/newbot`,
-follow the prompts to name your bot, and copy the token it hands back. It looks
-like `123456789:AAExampleTokenStringFromBotFather`. Keep it handy; you will set
-it in step 5. This is the one setting that is genuinely required. Everything
-else has a working default.
+Nothing else is required: every setting has a working default, and alerts can
+go to Telegram, Slack, Discord, email, ntfy, Gotify or a webhook, which you
+choose in step 5. If you want Telegram, message **@BotFather**, send `/newbot`,
+and keep the token it hands back (it looks like
+`123456789:AAExampleTokenStringFromBotFather`).
 
 The rest are optional and are auto-discovered when present:
 
@@ -499,14 +499,48 @@ state and effective threshold:
 sudo trinetra monitor list
 ```
 
-## 5. Connect Telegram and enroll as owner
+## 5. Web UI, your admin account, and where alerts go
 
-Now give the bot its token. You can do this from the command line as shown
-below, or from the guided `trinetra-ctl` first-run onboarding screen
-(`sudo trinetra cli`; see [Managing with
-trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl)); both
-paths surface the same enrollment PIN. This runbook continues with the
-command line: use the token you copied from @BotFather in step 1:
+The quickest way is the guided setup:
+
+```bash
+sudo trinetra cli
+```
+
+On a server nobody has set up yet it walks through three skippable steps (see
+[Managing with trinetra-ctl](plugins/trinetra-ctl.md#managing-with-trinetra-ctl)):
+how the web UI is reached, a one-time enroll link for your admin account, and
+where alerts go. It runs once; afterwards `trinetra cli` opens straight to its
+home screen. The sections below do the same with plain commands.
+
+### Create the first admin
+
+```bash
+sudo trinetra users invite --role admin
+```
+
+This prints a single-use enroll link, valid for 24 hours, built from
+`web.origin`. Open it on the device you will sign in from and create a passkey.
+`trinetra users list`, `set-role` and `remove` manage accounts afterwards (see
+the [Command reference](11-command-reference.md#trinetra-users)).
+
+If the web UI is configured to be reached only from this machine (`web.listen`
+on `localhost`/`127.0.0.1`/`::1`, and `web.origin`, if set, too), the first person
+to open `/enroll` may create the admin account without a link. Anywhere else,
+the link is required, so whoever finds a fresh server first cannot claim it.
+
+### Choose where alerts go
+
+Until a channel is set up, alerts show only in the web UI and `trinetra cli`,
+and both remind you. Add a channel in the web UI under **Notifications**, in
+`trinetra cli` (press `n`), or on the command line with `trinetra channel add`
+(see [Alerting and channels](06-alerting-and-channels.md)).
+
+### Telegram (optional)
+
+Telegram can also answer commands (`/stats`, ack and silence buttons). Give the
+bot its token from the command line as shown below, or press `t` in
+`sudo trinetra cli`; both paths surface the same enrollment PIN:
 
 ```bash
 sudo trinetra telegram set-token <token>
@@ -527,20 +561,19 @@ old "just message the bot" behavior is gone. While the bot is unclaimed, the
 daemon holds a one-time **6-digit enrollment PIN**. `telegram set-token`
 dials the daemon over the control socket right after saving the token and
 prints that PIN along with the `/start` instruction, so in the normal case
-you never have to leave the terminal you ran it in. The `trinetra-ctl`
-first-run onboarding screen (see the [Command
-reference](plugins/trinetra-ctl.md)) shows the exact
-same PIN the same way, if you set the token through the guided TUI instead.
+you never have to leave the terminal you ran it in. The Telegram setup screen
+in `trinetra cli` (press `t`; see [trinetra-ctl](plugins/trinetra-ctl.md)) shows
+the exact same PIN the same way.
 If the daemon cannot be reached, for example it is not installed yet or is
 still starting, `telegram set-token` falls back to pointing you at the
 journal, where the daemon also logs the PIN.
 
 ```mermaid
 flowchart TD
-  a[Admin runs trinetra telegram set-token, or completes the token step in ctl onboarding] --> b[Token saved, daemon reloads, bot unclaimed]
+  a[Admin runs trinetra telegram set-token, or completes Telegram setup in trinetra cli] --> b[Token saved, daemon reloads, bot unclaimed]
   b --> c[Daemon holds a one-time 6-digit enrollment PIN]
   c --> d{Control socket reachable right now?}
-  d -->|Yes| e[set-token or ctl onboarding prints the PIN and the /start instruction]
+  d -->|Yes| e[set-token or trinetra cli prints the PIN and the /start instruction]
   d -->|No| f[Fallback: read the PIN from journalctl -u trinetra]
   e --> g[Admin sends /start PIN to the bot from their Telegram account]
   f --> g

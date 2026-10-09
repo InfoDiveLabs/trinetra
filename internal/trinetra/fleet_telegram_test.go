@@ -11,9 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/telegram"
 )
 
-// newTelegramTestMaster is newTestMasterState (fleet_provider_test.go) plus
-// a real silence store, so CreateSilence (used by the "sil1h:" callback)
-// works.
+// newTelegramTestMaster is newTestMasterState (fleet_provider_test.go) plus a real silence
+// store, so CreateSilence (used by the "sil1h:" callback) works.
 func newTelegramTestMaster(t *testing.T) *masterState {
 	t.Helper()
 	m := newTestMasterState(t)
@@ -68,9 +67,8 @@ func TestTelegramCallbackAckAuthorized(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackSilence1hAuthorized: a "sil1h:<id>" callback from the
-// enrolled owner chat creates a 1h silence matching the incident's members
-// (node + rule) and answers "silenced 1h".
+// TestTelegramCallbackSilence1hAuthorized: a "sil1h:<id>" callback from the enrolled owner
+// chat creates a 1h silence matching the incident's members.
 func TestTelegramCallbackSilence1hAuthorized(t *testing.T) {
 	m := newTelegramTestMaster(t)
 	nodeID, incID := openIncidentFor(t, m, "web1", "cpu")
@@ -97,12 +95,8 @@ func TestTelegramCallbackSilence1hAuthorized(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence is the
-// round-1 review fix: a "sil1h:<id>" callback on an incident that has
-// already resolved (e.g. a stale button on an old message, tapped after the
-// alert cleared on its own) must create no silence at all and answer
-// "unknown/expired" -- not silently silence a rule/node combo that isn't
-// even firing any more.
+// TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence: a "sil1h:<id>" callback
+// on an already-resolved incident.
 func TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence(t *testing.T) {
 	m := newTelegramTestMaster(t)
 	nodeID, incID := openIncidentFor(t, m, "web1", "cpu")
@@ -130,9 +124,8 @@ func TestTelegramCallbackSilence1hOnResolvedIncidentCreatesNoSilence(t *testing.
 	}
 }
 
-// TestTelegramCallbackForeignChatRejected: a callback from any chat other
-// than the enrolled owner is answered "not authorized" and performs no
-// action, even with an otherwise-valid ack: payload.
+// TestTelegramCallbackForeignChatRejected: a callback from any chat other than the enrolled
+// owner is answered "not authorized" and performs no action.
 func TestTelegramCallbackForeignChatRejected(t *testing.T) {
 	m := newTelegramTestMaster(t)
 	_, incID := openIncidentFor(t, m, "web1", "cpu")
@@ -151,9 +144,8 @@ func TestTelegramCallbackForeignChatRejected(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackUnclaimedBotRejected: before any owner chat is
-// enrolled at all (ownerChatID == ""), every callback is "not authorized" --
-// there is no "the enrolled chat" to compare against yet.
+// TestTelegramCallbackUnclaimedBotRejected: before any owner chat is enrolled at all
+// (ownerChatID == ""), every callback is "not authorized".
 func TestTelegramCallbackUnclaimedBotRejected(t *testing.T) {
 	m := newTelegramTestMaster(t)
 	_, incID := openIncidentFor(t, m, "web1", "cpu")
@@ -176,9 +168,8 @@ func TestTelegramCallbackUnknownDataAnswersUnknownExpired(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackUnknownIncidentAnswersUnknownExpired covers an
-// ack:/sil1h: id that no longer resolves to an incident (already rotated
-// away, or simply never existed -- e.g. a stale button on an old message).
+// TestTelegramCallbackUnknownIncidentAnswersUnknownExpired covers an ack:/sil1h: id that no
+// longer resolves to an incident.
 func TestTelegramCallbackUnknownIncidentAnswersUnknownExpired(t *testing.T) {
 	m := newTelegramTestMaster(t)
 	api := fleetAPIFor(m)
@@ -189,10 +180,8 @@ func TestTelegramCallbackUnknownIncidentAnswersUnknownExpired(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackSoloUnchanged: solo/child's own core.FleetAPI fails
-// every write with core.ErrNotMaster (requireMaster), so a callback there
-// is always answered "unknown/expired" and never performs an action --
-// solo/child behaviour is unaffected by this task beyond always answering.
+// TestTelegramCallbackSoloUnchanged: solo/child's own core.FleetAPI fails every write with
+// core.ErrNotMaster (requireMaster).
 func TestTelegramCallbackSoloUnchanged(t *testing.T) {
 	p := &fleetProvider{role: config.RoleSolo, self: fleetCLIFakeAPI{}, selfName: func() string { return "solo1" }}
 	api := p.Fleet()
@@ -203,9 +192,8 @@ func TestTelegramCallbackSoloUnchanged(t *testing.T) {
 	}
 }
 
-// TestTelegramCallbackNilFleetAPIAnswersUnknownExpired is a defensive
-// belt-and-braces check: telegramCallbackAnswer must not panic on a nil
-// fleetAPI, even though production code never passes one.
+// TestTelegramCallbackNilFleetAPIAnswersUnknownExpired is a defensive belt-and-braces
+// check: telegramCallbackAnswer must not panic on a nil fleetAPI.
 func TestTelegramCallbackNilFleetAPIAnswersUnknownExpired(t *testing.T) {
 	text := telegramCallbackAnswer(nil, "999", cbUpdate("999", "ack:abcdef012345"), time.Now)
 	if text != "unknown/expired" {

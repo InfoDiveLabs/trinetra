@@ -5,9 +5,8 @@ import (
 	"path/filepath"
 )
 
-// writeFileAtomic writes b to a temp sibling, fsyncs, chmods and renames it
-// over path, so a crash never leaves a torn file. The parent directory is
-// created 0700 if missing.
+// writeFileAtomic writes b to a temp sibling, fsyncs, chmods and renames it over path, so a
+// crash never leaves a torn file.
 func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

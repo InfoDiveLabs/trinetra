@@ -9,11 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// fleetSeriesFixture wires a masterState with a real registry/sink, plus a
-// self store/name via engine.SetRules (fleet_rules.go's ruleSelfSource,
-// exactly the plumbing the aggregate-rule engine already uses -- see
-// fleet_provider.go's FleetSeries doc), so FleetSeries's self-inclusion path
-// is exercised the same way it runs in production.
+// fleetSeriesFixture wires a masterState with a real registry/sink, plus a self store/name
+// via engine.SetRules.
 type fleetSeriesFixture struct {
 	m         *masterState
 	api       fleetAPIImpl
@@ -51,9 +48,7 @@ func (f *fleetSeriesFixture) addNode(t *testing.T, name string, tags []string) f
 	return got
 }
 
-// appendPoint writes one 1m-resolution rollup point directly to id's
-// replicated store (the same call fleet_replica.go's gap filler and
-// fleet_rules_test.go's ruleFixture.appendSeriesPoint use).
+// appendPoint writes one 1m-resolution rollup point directly to id's replicated store.
 func (f *fleetSeriesFixture) appendPoint(t *testing.T, id, metric string, ts int64, v float64) {
 	t.Helper()
 	n, err := f.m.sink.node(id)
@@ -65,9 +60,8 @@ func (f *fleetSeriesFixture) appendPoint(t *testing.T, id, metric string, ts int
 	}
 }
 
-// appendRawPoint writes one raw (unrolled-up) sample directly to id's
-// replicated store, the same call the real ingest path (fleet_replica.go)
-// uses for a fast-tier metric.
+// appendRawPoint writes one raw (unrolled-up) sample directly to id's replicated store, the
+// same call the real ingest path (fleet_replica.go) uses for a fast-tier metric.
 func (f *fleetSeriesFixture) appendRawPoint(t *testing.T, id, metric string, ts int64, v float64) {
 	t.Helper()
 	n, err := f.m.sink.node(id)
@@ -89,9 +83,8 @@ func fleetSeriesValues(pts []core.FleetSeriesPoint, node string) map[int64]float
 	return out
 }
 
-// TestFleetSeriesNoneReturnsOneSeriesPerNode pins agg="none"'s per-node
-// shape (task-1b-brief.md): both fake replica nodes' own points come back,
-// each tagged with that node's display name.
+// TestFleetSeriesNoneReturnsOneSeriesPerNode pins agg="none"'s per-node shape: both fake
+// replica nodes' own points come back, each tagged with that node's display name.
 func TestFleetSeriesNoneReturnsOneSeriesPerNode(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	web1 := f.addNode(t, "web1", []string{"web"})
@@ -119,16 +112,13 @@ func TestFleetSeriesNoneReturnsOneSeriesPerNode(t *testing.T) {
 }
 
 // TestFleetSeriesAggAvgAndMax pins avg/max's per-bucket aggregation across
-// every matching node (task-1b-brief.md: "avg/max/min return one aggregated
-// series ... computed per timestamp bucket").
+// every matching node.
 func TestFleetSeriesAggAvgAndMax(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	web1 := f.addNode(t, "web1", []string{"web"})
 	web2 := f.addNode(t, "web2", []string{"web"})
-	// 960/1020 are 60s-bucket-aligned (real 1m rollups always are); using
-	// aligned timestamps here keeps this test about avg/max/min itself, not
-	// about the bucketing floor (see TestFleetSeriesAggBucketsMisalignedRawTimestamps
-	// for that).
+	// 960/1020 are 60s-bucket-aligned (real 1m rollups always are); using aligned timestamps
+	// here keeps this test about avg/max/min itself, not about the bucketing floor.
 	f.appendPoint(t, web1.ID, "cpu", 960, 10)
 	f.appendPoint(t, web1.ID, "cpu", 1020, 20)
 	f.appendPoint(t, web2.ID, "cpu", 960, 30)
@@ -177,9 +167,8 @@ func TestFleetSeriesTagFilterExcludesNonMatching(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesNoneCapError pins agg="none"'s 10-node cap
-// (task-1b-brief.md: "capped at 10 nodes. Above the cap the error is
-// 'compare at most 10 nodes'").
+// TestFleetSeriesNoneCapError pins agg="none"'s 10-node cap and its error
+// ("compare at most 10 nodes").
 func TestFleetSeriesNoneCapError(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	for i := 0; i < 11; i++ {
@@ -191,10 +180,8 @@ func TestFleetSeriesNoneCapError(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesIncludesSelf pins that FleetSeries includes the master's
-// own node via its local store, exactly like the aggregate-rule engine's
-// ruleSelfSource (task-1b-brief.md: "Includes the master's own node (self)
-// the same way B7's rules do, via its local store").
+// TestFleetSeriesIncludesSelf pins that FleetSeries includes the master's own
+// node via its local store, like the aggregate-rule engine's ruleSelfSource.
 func TestFleetSeriesIncludesSelf(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	if err := f.selfStore.AppendRollup("cpu", Point{TS: 1000, Min: 55, Avg: 55, Max: 55}); err != nil {
@@ -221,13 +208,8 @@ func TestFleetSeriesRequiresMaster(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesAggBucketsMisalignedRawTimestamps pins task-1b review round
-// 1's bucketing ruling at raw resolution: two nodes whose raw samples are
-// NOT taken at the same instants (a realistic scenario -- nothing
-// synchronizes two independent daemons' sample clocks) still land in the
-// same shared bucket and aggregate together, each node contributing only
-// its LAST value within that bucket. newTestMasterState's getCfg is
-// config.Default (FastInterval 5), so the raw bucket width here is 5s.
+// TestFleetSeriesAggBucketsMisalignedRawTimestamps: two nodes whose raw samples are NOT
+// taken at the same instants.
 func TestFleetSeriesAggBucketsMisalignedRawTimestamps(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	web1 := f.addNode(t, "web1", []string{"web"})
@@ -267,16 +249,13 @@ func TestFleetSeriesAggBucketsMisalignedRawTimestamps(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesDiskMetricUsesWorstMountPerBucket pins that FleetSeries'
-// "disk" metric reports, at each bucket, the WORST of a node's several
-// mounts -- not just one mount's own series -- exactly like
-// NodeSummary.WorstDiskPct/the aggregate rules' own "disk (worst)" framing.
+// TestFleetSeriesDiskMetricUsesWorstMountPerBucket pins that FleetSeries' "disk" metric
+// reports, at each bucket, the WORST of a node's several mounts.
 func TestFleetSeriesDiskMetricUsesWorstMountPerBucket(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	web1 := f.addNode(t, "web1", []string{"web"})
-	// At ts=960, "/data" (70) is worse than "/" (40); at ts=1020, "/" (55)
-	// is worse than "/data" (50) -- the worst mount flips between buckets,
-	// so a correct implementation can't just pick one mount's series.
+	// At ts=960, "/data" (70) is worse than "/" (40); at ts=1020, "/" (55) is worse than
+	// "/data" (50) -- the worst mount flips between buckets.
 	f.appendPoint(t, web1.ID, "disk:/", 960, 40)
 	f.appendPoint(t, web1.ID, "disk:/data", 960, 70)
 	f.appendPoint(t, web1.ID, "disk:/", 1020, 55)
@@ -292,8 +271,8 @@ func TestFleetSeriesDiskMetricUsesWorstMountPerBucket(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesRejectsUnknownAgg pins the minor validation ruling: an agg
-// value other than none/avg/max/min is rejected, naming it verbatim.
+// TestFleetSeriesRejectsUnknownAgg: an agg value other than none/avg/max/min
+// is rejected, naming it verbatim.
 func TestFleetSeriesRejectsUnknownAgg(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	_, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.Agg("bogus"), 900, 1200, core.Res1m)
@@ -302,8 +281,8 @@ func TestFleetSeriesRejectsUnknownAgg(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesRejectsToNotAfterFrom pins the minor validation ruling:
-// to<=from is rejected rather than silently returning nothing/garbage.
+// TestFleetSeriesRejectsToNotAfterFrom: to<=from is rejected rather than
+// silently returning nothing/garbage.
 func TestFleetSeriesRejectsToNotAfterFrom(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	if _, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 1000, 1000, core.Res1m); err == nil {
@@ -314,8 +293,8 @@ func TestFleetSeriesRejectsToNotAfterFrom(t *testing.T) {
 	}
 }
 
-// TestFleetSeriesRejectsRawWindowOverCap pins the minor validation ruling:
-// a raw-resolution window wider than 24h is rejected.
+// TestFleetSeriesRejectsRawWindowOverCap: a raw-resolution window wider than
+// 24h is rejected.
 func TestFleetSeriesRejectsRawWindowOverCap(t *testing.T) {
 	f := newFleetSeriesFixture(t)
 	_, err := f.api.FleetSeries("cpu", core.NodeFilter{}, core.AggNone, 0, 25*3600, core.ResRaw)

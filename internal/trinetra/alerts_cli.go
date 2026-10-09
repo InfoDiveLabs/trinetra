@@ -1,6 +1,5 @@
-// Package trinetra: alerts_cli.go implements `trinetra alerts ...`:
-// listing currently-active alerts plus recent alert-log history, and
-// acknowledging/unacknowledging an active alert.
+// Package trinetra: alerts_cli.go implements `trinetra alerts ...`: listing
+// currently-active alerts plus recent alert-log history.
 package trinetra
 
 import (
@@ -37,13 +36,7 @@ func alertStateAndLogPaths() (statePath, logPath string) {
 	return s.AlertStatePath(), s.AlertLogPath()
 }
 
-// cmdAlertsAck implements both `alerts ack <key>` and `alerts unack <key>`
-// (ack distinguishes them) by routing through the file-backed core.API
-// (newFileAPI, coreapi_file.go): AckAlert/UnackAlert do the exact
-// LoadAlertState -> Ack/Unack -> Save -> reloadDaemon sequence this command
-// ran inline before task 8 routed it through core.API -- cfg is passed as
-// nil since neither method touches it (only Series/Events/Doctor/TestChannel
-// need a real *config.Config).
+// cmdAlertsAck implements `alerts ack <key>` and `alerts unack <key>`.
 func cmdAlertsAck(args []string, ack bool) int {
 	verb := "ack"
 	if !ack {

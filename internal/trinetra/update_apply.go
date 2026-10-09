@@ -16,14 +16,11 @@ import (
 )
 
 // errUpdateInProgress is returned when another apply/rollback/install holds
-// update/apply.lock, or a Pending update is already recorded: a second
-// `trinetra update apply` (CLI, socket or web, or a concurrent one) must not
-// stage a new build over a host that has not yet confirmed the last one.
+// update/apply.lock, or a Pending update is already recorded.
 var errUpdateInProgress = errors.New("update: an update is already in progress (see trinetra update status)")
 
-// takeApplyLock claims update/apply.lock without blocking (R16): one apply,
-// rollback or install at a time per host, across processes. A held lock is
-// errUpdateInProgress. The kernel drops the lock if the holder dies.
+// takeApplyLock claims update/apply.lock without blocking: one apply, rollback or install
+// at a time per host, across processes.
 func takeApplyLock(p updatePaths) (unlock func(), err error) {
 	unlock, ok, err := update.TryLock(p.applyLock())
 	if err != nil {
@@ -35,9 +32,8 @@ func takeApplyLock(p updatePaths) (unlock func(), err error) {
 	return unlock, nil
 }
 
-// probeApplyLock reports errUpdateInProgress when another operation holds
-// the apply lock right now, without keeping it (the socket preflights use
-// it to refuse fast; the operation itself takes the lock for real).
+// probeApplyLock reports errUpdateInProgress when another operation holds the apply lock
+// right now, without keeping it.
 func probeApplyLock(p updatePaths) error {
 	unlock, err := takeApplyLock(p)
 	if err != nil {
@@ -47,16 +43,11 @@ func probeApplyLock(p updatePaths) error {
 	return nil
 }
 
-// updateHealthDeadline is how long a freshly-swapped-in build has to prove
-// itself healthy (see the Pending.Deadline this package sets) before
-// whatever watches it rolls back.
+// updateHealthDeadline is how long a freshly-swapped-in build has to prove itself healthy
+// (see the Pending.Deadline this package sets) before whatever watches it rolls back.
 const updateHealthDeadline = 90 * time.Second
 
-// healthDeadline is the health window every Pending and guard uses:
-// updateHealthDeadline, except in a trinetra_testkeys build whose
-// update-e2e harness shortens it via TRINETRA_E2E_HEALTH_DEADLINE
-// (update_e2e_hooks_testkeys.go). A default build never reads that
-// variable (update_e2e_hooks.go).
+// healthDeadline is the health window every Pending and guard uses: updateHealthDeadline.
 func healthDeadline() time.Duration {
 	if d, ok := e2eHealthDeadline(); ok {
 		return d
@@ -64,17 +55,12 @@ func healthDeadline() time.Duration {
 	return updateHealthDeadline
 }
 
-// updatePaths locates everything a self-update touches: the binaries in
-// BinDir, this package's scratch space under StateDir/update (staged
-// downloads, the previous build kept for rollback, cached manifests, state
-// and locks), the pinned guard binary in GuardDir, and the watchdog units in
-// UnitDir.
+// updatePaths locates everything a self-update touches: the binaries in BinDir, this
+// package's scratch space under StateDir/update.
 type updatePaths struct{ BinDir, StateDir, GuardDir, UnitDir string }
 
-// defaultGuardDir holds the pinned guard binary (R14): a copy of the binary
-// that performed the last apply (or install), on an exec-friendly root path
-// (not /var/lib, which is often noexec or labelled non-executable), so the
-// guard and the watchdog never execute the new, unproven build.
+// defaultGuardDir holds the pinned guard binary: a copy of the binary that performed the
+// last apply (or install), on an exec-friendly root path.
 const defaultGuardDir = "/usr/local/lib/trinetra/guard"
 
 // defaultUpdatePaths is what production callers use: the real install
@@ -91,21 +77,14 @@ func (p updatePaths) applyLock() string       { return filepath.Join(p.dir(), "a
 func (p updatePaths) guardLock() string       { return filepath.Join(p.dir(), "guard.lock") }
 func (p updatePaths) guardBin() string        { return filepath.Join(p.GuardDir, "trinetra") }
 
-// Pending phases (R15): swapIn records Pending in phase pendingSwapping
-// before its first rename and moves it to pendingSwapped once every binary
-// and plugins.json are in place. A guard that finds pendingSwapping with no
-// live apply holding apply.lock knows the swap was interrupted. A Pending
-// with no phase (written before phases existed) counts as swapped.
+// Pending phases: swapIn records Pending in phase pendingSwapping before its first rename
+// and moves it to pendingSwapped once every binary and plugins.json are in place.
 const (
 	pendingSwapping = "swapping"
 	pendingSwapped  = "swapped"
 )
 
-// selfExecutable is the file the pinned guard is copied from: the running
-// binary. /proc/self/exe is preferred on Linux because it still opens after
-// the file on disk has been replaced (a daemon serving a socket apply after
-// an install); os.Executable would then name a "(deleted)" path. A variable
-// so tests can point it at a small fixture.
+// selfExecutable is the file the pinned guard is copied from: the running binary..
 var selfExecutable = func() (string, error) {
 	if _, err := os.Stat("/proc/self/exe"); err == nil {
 		return "/proc/self/exe", nil
@@ -113,9 +92,8 @@ var selfExecutable = func() (string, error) {
 	return os.Executable()
 }
 
-// writePinnedGuard copies the running binary to p.guardBin() (dir and file
-// 0755, same-directory temp file, fsync, rename, directory fsync): the code
-// that writes a Pending is the code that resolves it (R14).
+// writePinnedGuard copies the running binary to p.guardBin() (dir and file 0755,
+// same-directory temp file, fsync, rename, directory fsync).
 func writePinnedGuard(p updatePaths) error {
 	if p.GuardDir == "" {
 		return errors.New("update: no guard directory configured")
@@ -142,9 +120,8 @@ func writePinnedGuard(p updatePaths) error {
 
 var syncDirFn = syncDir
 
-// runProbe runs bin with args, and if the exec is refused (a noexec mount or
-// SELinux label on /var/lib) retries from a temporary copy beside the guard
-// dir, which install already requires to be executable (#141).
+// runProbe runs bin with args, and if the exec is refused (a noexec mount or SELinux label
+// on /var/lib) retries from a temporary copy beside the guard dir.
 func runProbe(p updatePaths, x Exec, bin string, args ...string) ([]byte, error) {
 	out, err := x.Run(bin, args...)
 	if err == nil || !errors.Is(err, fs.ErrPermission) || p.GuardDir == "" {
@@ -176,10 +153,8 @@ func (e probeExec) Run(name string, args ...string) ([]byte, error) {
 	return runProbe(e.p, e.x, name, args...)
 }
 
-// applyPlan is what a release manifest resolves to for THIS host: the
-// manifest itself (plus its raw bytes, for caching), the arch to install
-// for, and the subset of Files/Names to fetch and swap in. Files[i] is the
-// release asset for the installed binary Names[i].
+// applyPlan is what a release manifest resolves to for THIS host: the manifest itself (plus
+// its raw bytes, for caching).
 type applyPlan struct {
 	Manifest update.Manifest
 	Raw      []byte
@@ -188,16 +163,12 @@ type applyPlan struct {
 	Names    []string
 }
 
-// updateBinaries lists every binary self-update knows how to swap, in the
-// fixed order planApply/swapIn/restorePrevious always process them:
-// "trinetra" (the core daemon, always installed and always required) then
-// each companion plugin recognised by pluginManifestNames.
+// updateBinaries lists every binary self-update knows how to swap, in the fixed order
+// planApply/swapIn/restorePrevious always process them: "trinetra".
 var updateBinaries = append([]string{"trinetra"}, pluginNamesWithPrefix()...)
 
-// pluginNamesWithPrefix turns pluginManifestNames ("ctl", "web", from
-// systemd.go) into their installed binary names ("trinetra-ctl",
-// "trinetra-web"), so updateBinaries and pluginManifestNames can never drift
-// apart.
+// pluginNamesWithPrefix turns pluginManifestNames ("ctl", "web", from systemd.go) into
+// their installed binary names ("trinetra-ctl", "trinetra-web").
 func pluginNamesWithPrefix() []string {
 	names := make([]string, len(pluginManifestNames))
 	for i, n := range pluginManifestNames {
@@ -206,12 +177,8 @@ func pluginNamesWithPrefix() []string {
 	return names
 }
 
-// planApply picks, for arch, the release asset for every binary that is
-// either the core ("trinetra", always required) or reported installed by
-// installed(name). A release missing an asset for an installed binary is an
-// error: partial upgrades (core newer than a plugin it dials) are exactly
-// what version stamping (#107) exists to catch, so self-update must not
-// silently leave one behind.
+// planApply picks, for arch, the release asset for every binary that is either the core
+// ("trinetra", always required) or reported installed by installed(name).
 func planApply(m update.Manifest, raw []byte, arch string, installed func(name string) bool) (applyPlan, error) {
 	plan := applyPlan{Manifest: m, Raw: raw, Arch: arch}
 	for _, name := range updateBinaries {
@@ -238,11 +205,8 @@ func planApply(m update.Manifest, raw []byte, arch string, installed func(name s
 	return plan, nil
 }
 
-// stage fetches (and hash-verifies, via update.FetchVerified) every file in
-// plan into StateDir/update/staging/<version>/, replacing any earlier
-// staging attempt for the same version. It also caches the manifest bytes
-// (plan.Raw), when present, so `trinetra update status` can show what was
-// staged without re-fetching it.
+// stage fetches (and hash-verifies, via update.FetchVerified) every file in plan into
+// StateDir/update/staging/<version>/.
 func stage(ctx context.Context, p updatePaths, src update.Source, plan applyPlan) error {
 	dir := p.staging(plan.Manifest.Version)
 	if err := os.RemoveAll(dir); err != nil {
@@ -267,27 +231,20 @@ func stage(ctx context.Context, p updatePaths, src update.Source, plan applyPlan
 	return nil
 }
 
-// smokeTestTimeout bounds how long the freshly staged core binary gets to
-// answer `version --json` in smokeTest. It is deliberately far tighter than
-// the shared execTimeout collectors get for legitimately slow host commands:
-// a binary that cannot report its own version within this window is not
-// healthy enough to trust with a swap. Callers pass timeoutExec{smokeTestTimeout}.
+// smokeTestTimeout bounds how long the freshly staged core binary gets to answer `version
+// --json` in smokeTest.
 const smokeTestTimeout = 5 * time.Second
 
-// timeoutExec is an Exec bound by a fixed timeout of its own rather than the
-// package-level execTimeout osExec uses -- so a caller like smokeTest is not
-// stuck sharing the 60s budget a slow df/docker/smartctl legitimately needs.
+// timeoutExec is an Exec bound by a fixed timeout of its own rather than the package-level
+// execTimeout osExec uses.
 type timeoutExec struct{ d time.Duration }
 
 func (t timeoutExec) Run(name string, args ...string) ([]byte, error) {
 	return runWithTimeout(t.d, name, args...)
 }
 
-// smokeTest runs the freshly staged core binary (`path version --json`) and
-// checks it reports the version we just staged, before it is ever trusted to
-// run as the daemon. x is expected to be timeoutExec{smokeTestTimeout} in
-// production (Task 6 wires this up); smokeTest itself applies no timeout of
-// its own, so the bound comes entirely from x.
+// smokeTest runs the freshly staged core binary (`path version --json`) and checks it
+// reports the version we just staged.
 func smokeTest(x Exec, path, want string) error {
 	out, err := x.Run(path, "version", "--json")
 	if err != nil {
@@ -305,10 +262,8 @@ func smokeTest(x Exec, path, want string) error {
 	return nil
 }
 
-// replaceFile copies src onto dst atomically (copyFile writes a same-dir
-// temp file then renames it into place), so dst is only ever the complete
-// old file or the complete new one -- never a partial write, even if src is
-// a currently-running executable.
+// replaceFile copies src onto dst atomically (copyFile writes a same-dir temp file then
+// renames it into place).
 func replaceFile(src, dst string) error {
 	return copyFile(src, dst, 0o755)
 }
@@ -317,30 +272,11 @@ func replaceFile(src, dst string) error {
 // tests can observe the state at, or crash, a given rename.
 var replaceFileFn = replaceFile
 
-// pluginManifestBase is the bare file name copyFile/restorePrevious use for
-// the plugin checksum manifest inside previous/, matching
-// filepath.Base(pluginManifestPath()).
+// pluginManifestBase is the bare file name copyFile/restorePrevious use for the plugin
+// checksum manifest inside previous/, matching filepath.Base(pluginManifestPath()).
 func pluginManifestBase() string { return filepath.Base(pluginManifestPath()) }
 
-// swapIn is the only step that touches BinDir. The caller holds
-// update/apply.lock. Order matters for crash safety (R15): everything a
-// recovery needs is durable before the first rename, so a crash at any
-// point after that is resolved by the update watchdog's guard.
-//
-//  1. Refuse if an update is already Pending, or if there is no installed
-//     core binary to keep for rollback.
-//  2. Snapshot the current binaries (and plugins.json, if any) into
-//     previous.new/, fsync, then swap it into place as previous/.
-//  3. Write the pinned guard binary (a copy of this binary).
-//  4. Re-hash every staged file against the manifest.
-//  5. Record Pending{phase: swapping, version, from, files} (fsynced).
-//  6. Atomically replace each installed binary with its staged file.
-//  7. Rewrite plugins.json for the new binaries.
-//  8. Move Pending to phase swapped, with a fresh health deadline.
-//
-// A failure in steps 6-7 restores the previous build and clears Pending; if
-// that restore also fails, the error joins both and Pending is kept so the
-// watchdog finishes the job.
+// swapIn is the only step that touches BinDir.
 func swapIn(p updatePaths, plan applyPlan, now time.Time) error {
 	st, err := update.LoadState(p.dir())
 	if err != nil {
@@ -409,10 +345,8 @@ func setPending(p updatePaths, pending *update.Pending) error {
 	})
 }
 
-// snapshotPrevious copies the named binaries (those present) and
-// plugins.json into previous.new/, fsyncs it, and only then replaces
-// previous/ with it, so a failure or crash part-way never destroys the last
-// complete rollback copy.
+// snapshotPrevious copies the named binaries (those present) and plugins.json into
+// previous.new/, fsyncs it, and only then replaces previous/ with it.
 func snapshotPrevious(p updatePaths, names []string) error {
 	prev := p.previous()
 	next := prev + ".new"
@@ -445,10 +379,8 @@ func snapshotPrevious(p updatePaths, names []string) error {
 	return update.SyncDir(p.dir())
 }
 
-// restoreAfterFailedSwap is swapIn's failure path once renames may have
-// started: restore the previous build and clear Pending. If the restore
-// fails too, Pending is kept (phase swapping) so the watchdog's guard
-// retries it, and the error says so.
+// restoreAfterFailedSwap is swapIn's failure path once renames may have started: restore
+// the previous build and clear Pending.
 func restoreAfterFailedSwap(p updatePaths, cause error) error {
 	if rerr := restorePrevious(p); rerr != nil {
 		return errors.Join(cause, fmt.Errorf("update: restoring the previous build also failed (host may be half-updated; the update watchdog will retry within a minute): %w", rerr))
@@ -459,12 +391,8 @@ func restoreAfterFailedSwap(p updatePaths, cause error) error {
 	return cause
 }
 
-// restorePrevious puts back everything swapIn snapshotted into previous/:
-// each binary via the same atomic same-dir-temp-then-rename copyFile uses,
-// and plugins.json verbatim (it describes the binaries being restored, not
-// the ones swapIn just failed to fully install). It attempts every file and
-// returns the first error, so one unreadable entry does not stop the rest of
-// the rollback.
+// restorePrevious puts back everything swapIn snapshotted into previous/: each binary via
+// the same atomic same-dir-temp-then-rename copyFile uses, and plugins.json verbatim.
 func restorePrevious(p updatePaths) error {
 	entries, err := os.ReadDir(p.previous())
 	if err != nil {

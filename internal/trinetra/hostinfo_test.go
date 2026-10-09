@@ -71,9 +71,8 @@ cpu cores	: 2
 }
 
 func TestParseCPUInfoDualSocket(t *testing.T) {
-	// Two physical Xeon sockets, 2 cores / 4 threads each (trimmed): the box has
-	// 2 sockets, 4 cores total, 8 threads total. Mirrors the infodivelabs host
-	// where a dual-socket machine was reporting only its aggregate core count.
+	// Two physical Xeon sockets, 2 cores / 4 threads each (trimmed): the box has 2 sockets, 4
+	// cores total, 8 threads total.
 	var b strings.Builder
 	for proc := 0; proc < 8; proc++ {
 		phys := 0

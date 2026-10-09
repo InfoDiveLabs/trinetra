@@ -23,10 +23,7 @@ func mountOrSkip(t *testing.T, args ...string) {
 	t.Cleanup(func() { _ = exec.Command("umount", "-l", target).Run() })
 }
 
-// Review repro B: the legacy state dir is a mount point. The first run must
-// refuse before touching anything; bind-mounting it at the new path as well
-// (what the old hint suggested) must not lead to the shared volume being
-// emptied.
+// the legacy state dir is a mount point.
 func TestLegacyMigrationMountPointAndBindMountAsRoot(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
@@ -102,9 +99,7 @@ func TestSameDeviceBindMountDetectedAsRoot(t *testing.T) {
 	}
 }
 
-// P4: the real legacy state volume did not mount this boot (an empty mount
-// point dir). Refuse without touching anything; once the volume is back, the
-// migration moves its data.
+// P4: the real legacy state volume did not mount this boot (an empty mount point dir).
 func TestLegacyMigrationUnmountedStateVolumeAsRoot(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)

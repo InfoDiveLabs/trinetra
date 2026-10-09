@@ -22,13 +22,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// shortSocketPath returns a temp-dir socket path independent of the test
-// name: a plain t.TempDir() nests under a per-test-name directory that,
-// combined with a long test name and a long $TMPDIR (common on macOS,
-// e.g. under /var/folders/...), can exceed the ~104-byte sun_path limit
-// unix domain sockets are bound by. os.MkdirTemp with a short, fixed
-// prefix keeps the path well under that limit regardless of the calling
-// test's name.
+// shortSocketPath returns a short temp socket path: t.TempDir() plus a long test
+// name and macOS $TMPDIR can exceed the ~104-byte sun_path limit.
 func shortSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "sw-ctl")
@@ -41,9 +36,8 @@ func shortSocketPath(t *testing.T) string {
 
 var errWantedByTest = errors.New("no such alert: cpu")
 
-// startTestServer stands up a real Serve loop over a temp unix socket
-// backed by fake, requiring token (empty means no auth), and returns the
-// socket path plus a cleanup func.
+// startTestServer runs a real Serve loop over a temp unix socket backed by fake,
+// requiring token (empty means no auth), and returns the path and a cleanup func.
 func startTestServer(t *testing.T, fake core.API, token string) string {
 	t.Helper()
 	path := shortSocketPath(t)
@@ -130,8 +124,7 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 		t.Errorf("MonitorTargets() = %+v, %v; want %+v, nil", got, err, fake.monitorTargets)
 	}
 
-	// Config round trip: must preserve the *bool omitempty semantics --
-	// ContainerStats explicitly false, NetThroughput left nil.
+	// Config round trip must preserve *bool omitempty semantics.
 	gotCfg, err := client.Config()
 	if err != nil {
 		t.Fatalf("Config() error: %v", err)
@@ -188,11 +181,8 @@ func TestClientRoundTripsEveryMethod(t *testing.T) {
 	}
 }
 
-// TestClientValidateChannelSurfacesError is the A1 brief's dedicated
-// round-trip test: client.ValidateChannel, dialed against a real Serve
-// loop (not the in-memory net.Pipe dialTestConn uses), must surface the
-// exact error the server-side api.ValidateChannel returned -- the
-// undeliverable-channel case ValidateChannel exists to catch (#79).
+// TestClientValidateChannelSurfacesError: over a real Serve loop, ValidateChannel
+// must surface the server-side error (undeliverable channel, #79).
 func TestClientValidateChannelSurfacesError(t *testing.T) {
 	wantErr := `telegram channel "phone": chat_id not configured`
 	fake := &fakeAPI{validateChannelErr: errors.New(wantErr)}
@@ -236,10 +226,8 @@ func TestClientSurfacesMethodError(t *testing.T) {
 	}
 }
 
-// TestClientEnrollmentPINSurfacesError is the #90 counterpart to
-// TestClientValidateChannelSurfacesError: fileAPI's errEnrollNeedsDaemon (or
-// any other EnrollmentPIN error) must round-trip to the client unchanged,
-// not get swallowed into a zero-value success.
+// TestClientEnrollmentPINSurfacesError: an EnrollmentPIN error (#90) must
+// round-trip unchanged, not become a zero-value success.
 func TestClientEnrollmentPINSurfacesError(t *testing.T) {
 	wantErr := "trinetra: enrollment pin requires a running daemon; dial the control socket instead"
 	fake := &fakeAPI{enrollErr: errors.New(wantErr)}
@@ -260,9 +248,7 @@ func TestClientEnrollmentPINSurfacesError(t *testing.T) {
 	}
 }
 
-// TestClientMonitorTargetsSurfacesError mirrors
-// TestClientEnrollmentPINSurfacesError for MonitorTargets: a discovery
-// error must round-trip to the client unchanged.
+// TestClientMonitorTargetsSurfacesError: a discovery error must round-trip unchanged.
 func TestClientMonitorTargetsSurfacesError(t *testing.T) {
 	wantErr := "discovery failed"
 	fake := &fakeAPI{monitorTargetsErr: errors.New(wantErr)}
@@ -283,13 +269,8 @@ func TestClientMonitorTargetsSurfacesError(t *testing.T) {
 	}
 }
 
-// TestClientCallTimesOutWhenServerNeverResponds proves the per-call read
-// deadline in Client.call fires instead of hanging forever when the server
-// accepts the connection, completes the hello handshake, reads the
-// request, and then never writes a response -- e.g. a wedged server
-// method. Without a deadline this would hang the test (and, in production,
-// every caller sharing the Client, since call holds the mutex across the
-// read).
+// TestClientCallTimesOutWhenServerNeverResponds: the per-call read deadline must fire when
+// the server completes the handshake, reads the request, and never answers.
 func TestClientCallTimesOutWhenServerNeverResponds(t *testing.T) {
 	orig := callTimeout
 	callTimeout = 100 * time.Millisecond
@@ -319,8 +300,7 @@ func TestClientCallTimesOutWhenServerNeverResponds(t *testing.T) {
 
 		var req request
 		_ = readFrame(r, &req)
-		// Deliberately never write a response: the client's read deadline
-		// must fire instead of this call hanging forever.
+		// Never respond: the client's read deadline must fire.
 	}()
 
 	client, err := Dial(path, "")
@@ -345,9 +325,8 @@ func TestClientCallTimesOutWhenServerNeverResponds(t *testing.T) {
 	}
 }
 
-// TestClientCallRejectsMismatchedResponseID proves Client.call refuses a
-// response whose id does not match the request it just sent, rather than
-// silently handing the caller a result meant for a different call.
+// TestClientCallRejectsMismatchedResponseID: call refuses a response whose id
+// differs from the request's.
 func TestClientCallRejectsMismatchedResponseID(t *testing.T) {
 	path := shortSocketPath(t)
 	ln, err := net.Listen("unix", path)
@@ -392,9 +371,7 @@ func TestClientCallRejectsMismatchedResponseID(t *testing.T) {
 	}
 }
 
-// TestDialWithMatchingTokenRoundTrips proves a client that dials with the
-// same token the server was started with completes the handshake and can
-// make normal calls.
+// TestDialWithMatchingTokenRoundTrips: a matching token completes the handshake.
 func TestDialWithMatchingTokenRoundTrips(t *testing.T) {
 	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 7}}
 	path := startTestServer(t, fake, "secret")
@@ -414,10 +391,8 @@ func TestDialWithMatchingTokenRoundTrips(t *testing.T) {
 	}
 }
 
-// TestDialWithWrongTokenRejected proves a client that dials with a token
-// that does not match the server's configured token does not succeed: Dial
-// itself fails the handshake (the server's rejection frame does not parse
-// as a valid hello), so a caller never gets a usable Client.
+// TestDialWithWrongTokenRejected: a wrong token fails Dial itself, since the
+// rejection frame does not parse as a valid hello.
 func TestDialWithWrongTokenRejected(t *testing.T) {
 	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 7}}
 	path := startTestServer(t, fake, "secret")
@@ -427,8 +402,7 @@ func TestDialWithWrongTokenRejected(t *testing.T) {
 	}
 }
 
-// TestDialWithEmptyTokenRejectedWhenAuthConfigured proves an empty token
-// does not get treated as "skip the check" once the server requires one.
+// TestDialWithEmptyTokenRejectedWhenAuthConfigured: an empty token must not skip the check.
 func TestDialWithEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
 	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 7}}
 	path := startTestServer(t, fake, "secret")
@@ -438,10 +412,8 @@ func TestDialWithEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
 	}
 }
 
-// TestClientSubscribeReceivesPublishedEvents proves Client.Subscribe opens
-// its own dedicated connection (over a real Serve loop / unix socket, not
-// an in-memory pipe) and delivers events published server-side on the
-// returned channel.
+// TestClientSubscribeReceivesPublishedEvents: Subscribe opens its own connection
+// and delivers server-side events on the returned channel.
 func TestClientSubscribeReceivesPublishedEvents(t *testing.T) {
 	fake := &fakeAPI{subscribeCh: make(chan core.Event, 4), subscribeCancelled: make(chan struct{})}
 	path := startTestServer(t, fake, "")
@@ -476,12 +448,8 @@ func TestClientSubscribeReceivesPublishedEvents(t *testing.T) {
 	}
 }
 
-// TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel proves cancelling
-// the ctx passed to Client.Subscribe makes the server unsubscribe (fakeAPI's
-// subscribeCancelled fires, mirroring inprocAPI's own ctx.Done -> cancel)
-// and closes the client's returned channel -- the disconnect path from the
-// client side, matching TestStreamSubscribeDisconnectCancelsContext's
-// server-side proof of the same property.
+// TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel: cancelling the ctx
+// makes the server unsubscribe and closes the returned channel.
 func TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel(t *testing.T) {
 	fake := &fakeAPI{subscribeCh: make(chan core.Event), subscribeCancelled: make(chan struct{})}
 	path := startTestServer(t, fake, "")
@@ -516,10 +484,8 @@ func TestClientSubscribeCtxCancelUnsubscribesAndClosesChannel(t *testing.T) {
 	}
 }
 
-// TestClientNormalCallWorksWhileSubscriptionActive proves the dedicated
-// stream connection Subscribe opens does not interfere with the primary
-// connection's mutex-serialized calls: Snapshot must still complete while a
-// subscription is active, with no deadlock between the two.
+// TestClientNormalCallWorksWhileSubscriptionActive: the dedicated stream
+// connection must not block calls on the primary connection.
 func TestClientNormalCallWorksWhileSubscriptionActive(t *testing.T) {
 	fake := &fakeAPI{
 		snapshot:           core.DashboardView{CPU: 7},
@@ -549,24 +515,8 @@ func TestClientNormalCallWorksWhileSubscriptionActive(t *testing.T) {
 	}
 }
 
-// TestClientReconnectsAfterTransportFailure proves the CRITICAL production
-// property the timeout/mismatch tests above do NOT: a transport failure
-// (a read timeout, an EOF, or a desyncing id mismatch) poisons the
-// connection, and the NEXT call transparently reconnects and succeeds --
-// rather than the Client staying wedged on a permanently misaligned
-// connection until the whole process is restarted.
-//
-// This is the root cause of the web dashboard going all-zero after a single
-// slow daemon response and only recovering on a core restart (issue #105):
-// the web plugin holds one long-lived Client, so once a late response
-// desynced the shared connection, every later Snapshot returned an
-// id-mismatch error and the dashboard rendered the zero-value DashboardView.
-//
-// The server hands the FIRST connection a mismatched response id (the exact
-// desync a late response produces on a shared connection) and drops it, then
-// serves every subsequent connection normally. With no reconnect the second
-// call reuses the dead connection and fails; with reconnect it re-dials and
-// succeeds.
+// TestClientReconnectsAfterTransportFailure: after a transport failure poisons the
+// connection, the next call must reconnect and succeed.
 func TestClientReconnectsAfterTransportFailure(t *testing.T) {
 	path := shortSocketPath(t)
 	ln, err := net.Listen("unix", path)
@@ -603,8 +553,7 @@ func TestClientReconnectsAfterTransportFailure(t *testing.T) {
 					}
 					id := req.ID
 					if corrupt {
-						// Desync this connection exactly as a late response
-						// would: answer with the wrong id, then drop it.
+						// Desync this connection like a late response would: wrong id, then drop.
 						id = req.ID + 1
 					}
 					b, _ := json.Marshal(want)
@@ -640,14 +589,8 @@ func TestClientReconnectsAfterTransportFailure(t *testing.T) {
 	}
 }
 
-// coreErrSentinelTexts parses every non-test .go file in internal/core and
-// extracts the exact message of every top-level exported
-// "var ErrXxx = errors.New("...")" declaration, so
-// TestWireErrSentinelsCoverEveryCoreSentinel checks wireErrSentinels
-// against core's actual sentinel declarations rather than a second,
-// hand-maintained list that could drift right alongside it (final-review
-// transport minor 4: "reconstructWireErr's sentinel list is a manually
-// maintained parallel structure to core's sentinel definitions").
+// coreErrSentinelTexts extracts the message of every exported "var ErrXxx =
+// errors.New(...)" in internal/core.
 func coreErrSentinelTexts(t *testing.T) map[string]string {
 	t.Helper()
 	files, err := filepath.Glob("../core/*.go")
@@ -708,12 +651,8 @@ func coreErrSentinelTexts(t *testing.T) map[string]string {
 	return texts
 }
 
-// TestWireErrSentinelsCoverEveryCoreSentinel is the final-review transport
-// minor 4 regression: every exported core.Err* sentinel declared as a plain
-// errors.New(...) must have its exact text present in wireErrSentinels, so
-// a future Fleet.*/node method that wraps a new one via
-// fmt.Errorf("...: %w", sentinel) doesn't silently lose errors.Is over the
-// control socket just because nobody remembered to add it here too.
+// TestWireErrSentinelsCoverEveryCoreSentinel: every exported core.Err* sentinel declared
+// via errors.New must appear in wireErrSentinels.
 func TestWireErrSentinelsCoverEveryCoreSentinel(t *testing.T) {
 	want := coreErrSentinelTexts(t)
 	if len(want) == 0 {
@@ -792,5 +731,43 @@ func TestClientRedialsAfterIdleClose(t *testing.T) {
 	}
 	if n := accepts.Load(); n != 2 {
 		t.Errorf("connections = %d, want 2", n)
+	}
+}
+
+func TestClientRereadsTokenAfterDaemonRestart(t *testing.T) {
+	orig := redialAfter
+	redialAfter = 10 * time.Millisecond
+	t.Cleanup(func() { redialAfter = orig })
+
+	path := shortSocketPath(t)
+	ln1, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go Serve(&fakeAPI{}, ln1, "first")
+	client, err := Dial(path, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	current := "first"
+	client.SetTokenSource(func() (string, error) { return current, nil })
+	if _, err := client.Snapshot(); err != nil {
+		t.Fatalf("before restart: %v", err)
+	}
+
+	ln1.Close()
+	os.Remove(path)
+	ln2, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln2.Close()
+	go Serve(&fakeAPI{}, ln2, "second")
+	current = "second"
+	time.Sleep(30 * time.Millisecond)
+
+	if _, err := client.Snapshot(); err != nil {
+		t.Fatalf("after the daemon restarted with a new token: %v", err)
 	}
 }

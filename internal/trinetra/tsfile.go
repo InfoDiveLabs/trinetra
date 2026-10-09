@@ -1,24 +1,5 @@
-// Package trinetra: tsfile.go implements the default "tsfile" SampleStore
-// backend described in docs/handbook/09-storage-and-data-model.md -- a compact, append-only,
-// per-series binary store.
-//
-// Layout under dir:
-//
-//	<dir>/ts/raw/<safeMetric>.tsd  -- raw samples, one record per Append
-//	<dir>/ts/1m/<safeMetric>.tsd   -- 1-minute rollups, populated by Downsample
-//	                                 (Query on an absent file just returns no
-//	                                 points)
-//	<dir>/ts/events.tsd            -- downtime events
-//
-// Every file starts with a fixed 16-byte header (magic, version, record
-// length, resolution) followed by fixed-width records appended in
-// nondecreasing timestamp order. Range queries binary-search the sorted
-// records by offset instead of parsing the whole file. A torn trailing
-// record (a partial write from a crash mid-append) is tolerated by simply
-// excluding it from the record count -- see readCount below.
-//
-// tsfileStore opens files per operation rather than holding descriptors
-// open, so Close is a no-op; there is nothing to flush.
+// Package trinetra: tsfile.go implements the default "tsfile" SampleStore backend described
+// in docs/handbook/09-storage-and-data-model.md -- a compact, append-only.
 package trinetra
 
 import (
@@ -45,31 +26,19 @@ const (
 	tsEventTypeNet   = uint8(2) // net_down
 )
 
-// tsFileStore is the on-disk binary SampleStore backend. Safe for concurrent
-// use: a single RWMutex serializes writers (Append/AppendEvent/Prune/
-// Downsample) against each other and against readers (Query/Events), which
-// also keeps a Query from ever observing a file mid-append.
-//
-// Prune and Downsample take that write lock PER FILE, not once for the whole
-// pass, so a maintenance pass over many series files does not pin the lock for
-// its full (multi-second) duration and starve reads (#113). Each individual
-// file is still rewritten atomically under the lock, and a reader only ever
-// touches one series file, so the finer granularity is transparent to Query.
+// tsFileStore is the on-disk binary SampleStore backend.
 type tsFileStore struct {
 	mu   sync.RWMutex
 	dir  string // <configured dir>/ts
 	opts StoreOptions
 }
 
-// pruneBetweenFilesHook, when non-nil, is invoked by pruneDir/Downsample
-// BETWEEN per-file operations, i.e. at a point where the store lock is NOT
-// held. Test-only (nil in production): a test uses it to prove the lock is
-// released between files so reads can interleave (#113).
+// pruneBetweenFilesHook, when non-nil, is invoked by pruneDir/Downsample BETWEEN per-file
+// operations, i.e. at a point where the store lock is NOT held.
 var pruneBetweenFilesHook func()
 
-// newTSFileStore creates the tsfile directory layout under dir and returns a
-// ready-to-use store. opts configures per-resolution retention (see
-// StoreOptions); zero values fall back to the documented defaults.
+// newTSFileStore creates the tsfile directory layout under dir and returns a ready-to-use
+// store. opts configures per-resolution retention (see StoreOptions).
 func newTSFileStore(dir string, opts StoreOptions) (*tsFileStore, error) {
 	root := filepath.Join(dir, "ts")
 	for _, sub := range []string{"raw", "1m"} {
@@ -82,15 +51,8 @@ func newTSFileStore(dir string, opts StoreOptions) (*tsFileStore, error) {
 
 const tsHexDigits = "0123456789ABCDEF"
 
-// safeMetric maps a metric id to a filesystem-safe filename stem via a
-// reversible, injective encoding: bytes in the unreserved set
-// [A-Za-z0-9._-] pass through literally, and every other byte (including
-// '%', '/', ':', space, control bytes) is percent-encoded as %XX with
-// uppercase hex. Distinct ids therefore always produce distinct filenames --
-// this prevents unrelated series (e.g. discovery-driven mounts "/mnt/my disk"
-// vs "/mnt/my/disk") from silently colliding into one .tsd file. The result
-// stays human-readable for the common ASCII ids. Empty id maps to "%00" so
-// it is never an empty or dot filename.
+// safeMetric maps a metric id to a filesystem-safe filename stem via a reversible,
+// injective encoding: bytes in the unreserved set [A-Za-z0-9._-] pass through literally.
 func safeMetric(id string) string {
 	if id == "" {
 		return "%00"
@@ -141,9 +103,8 @@ func writeTSHeader(w io.Writer, resolution uint32) error {
 	return err
 }
 
-// readTSHeader reads and validates the fixed header from f (positioned at
-// its start), leaving the file offset just past the header. It returns the
-// header's resolution field.
+// readTSHeader reads and validates the fixed header from f (positioned at its start),
+// leaving the file offset just past the header.
 func readTSHeader(f *os.File) (uint32, error) {
 	var buf [tsHeaderLen]byte
 	if _, err := io.ReadFull(f, buf[:]); err != nil {
@@ -163,10 +124,8 @@ func readTSHeader(f *os.File) (uint32, error) {
 	return binary.BigEndian.Uint32(buf[8:12]), nil
 }
 
-// readCount opens f's header-less body and returns the number of *whole*
-// records present, silently excluding a torn trailing partial record (this
-// is the corruption-tolerance mechanism: integer division floors away any
-// trailing bytes short of a full record).
+// readCount opens f's header-less body and returns the number of *whole* records present,
+// silently excluding a torn trailing partial record.
 func readCount(f *os.File) (int64, error) {
 	fi, err := f.Stat()
 	if err != nil {
@@ -264,11 +223,8 @@ func decodeEventRecord(b []byte) DownEvent {
 
 // ---- SampleStore implementation ----
 
-// Append records one timestamped sample of each metric in ms to its raw
-// series file (creating the file, with header, on first write). Callers must
-// Append in nondecreasing ts order: records are stored in write order and
-// Query relies on that ordering for its binary search (out-of-order appends
-// are not re-sorted or indexed).
+// Append records one timestamped sample of each metric in ms to its raw series file
+// (creating the file, with header, on first write).
 func (s *tsFileStore) Append(ts int64, ms MetricSet) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -281,11 +237,7 @@ func (s *tsFileStore) Append(ts int64, ms MetricSet) error {
 	return nil
 }
 
-// Query returns the points for metric within [from, to] at the given
-// resolution. An absent series file is not an error: it just means no data
-// exists yet at that resolution. Query assumes records are stored in
-// nondecreasing ts order (the Append contract) and binary-searches on that
-// invariant.
+// Query returns the points for metric within [from, to] at the given resolution.
 func (s *tsFileStore) Query(metric string, from, to int64, res Resolution) ([]Point, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -352,10 +304,8 @@ func (s *tsFileStore) AppendEvent(e DownEvent) error {
 	return appendRecord(s.eventsPath(), tsResolutionRaw, rec)
 }
 
-// PurgeEvents rewrites events.tsd keeping only events for which keep returns
-// true, reusing the same crash-durable rewrite machinery as Prune
-// (pruneFileGeneric: temp+rename, then one dir fsync), and reports how many
-// records were dropped.
+// PurgeEvents rewrites events.tsd keeping only events for which keep returns true, reusing
+// the same crash-durable rewrite machinery as Prune.
 func (s *tsFileStore) PurgeEvents(keep func(DownEvent) bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -414,19 +364,8 @@ func (s *tsFileStore) Events(from, to int64) ([]DownEvent, error) {
 	return out, nil
 }
 
-// pruneFileGeneric rewrites path keeping only records for which keep returns
-// true, with three outcomes: if NO records survive (a dead target whose data
-// has fully aged out past retention) the file is deleted -- this reaps stale
-// series so cardinality stays bounded to live targets instead of growing
-// without bound; if ALL records survive it is left untouched (no needless
-// rewrite+fsync); otherwise it is rewritten with the survivors. The rewrite is
-// crash-durable: contents are built in a temp file, the temp's data is fsynced,
-// then atomically renamed over path. The parent-directory fsync that makes the
-// rename/unlink durable is NOT done here -- the caller batches ONE dir fsync
-// per prune pass, because across many series a per-file dir fsync dominated
-// prune time (and pinned the store lock long enough to starve reads). A crash
-// mid-prune leaves either the untouched original or the fully-written
-// replacement, never a partial file. A missing path is not an error.
+// pruneFileGeneric rewrites path keeping only records for which keep returns true, with
+// three outcomes: if NO records survive.
 func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -461,8 +400,7 @@ func pruneFileGeneric(path string, keep func(rec []byte) bool) error {
 		}
 	}
 	if kept == 0 {
-		// Dead series: remove the file. Directory durability for the unlink is
-		// batched once per pass by the caller.
+		// Dead series: remove the file.
 		f.Close()
 		return os.Remove(path)
 	}
@@ -506,14 +444,8 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-// pruneDir prunes every .tsd series file in dir, taking the store write lock
-// PER FILE (#113) rather than once for the whole pass. A directory with many
-// series would otherwise pin s.mu for the entire multi-second pass and block
-// every Query (RLock) until it finished; locking per file caps the longest a
-// reader can wait to a single file's rewrite+fsync and lets reads interleave
-// between files. The caller (Prune) therefore must NOT hold s.mu. The
-// directory listing and the one batched dir fsync touch no store state, so
-// they run without the lock.
+// pruneDir prunes every .tsd series file in dir, taking the store write lock PER FILE
+// (#113) rather than once for the whole pass.
 func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -537,25 +469,19 @@ func (s *tsFileStore) pruneDir(dir string, cut int64) error {
 			pruneBetweenFilesHook()
 		}
 	}
-	// One directory fsync per pass makes every rename/unlink pruneFileGeneric
-	// did above durable, instead of one fsync per series file (which dominated
-	// prune time and held the store lock long enough to starve reads). Missing
-	// dir (nothing was ever written) is not an error.
+	// One directory fsync per pass makes every rename/unlink pruneFileGeneric did above
+	// durable, instead of one fsync per series file.
 	if err := syncDir(dir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-// Prune drops samples and events older than the store's per-resolution
-// retention windows (s.opts), relative to now: raw at RawRetention, 1m
-// rollups and events at RollupRetention/EventRetention respectively.
+// Prune drops samples and events older than the store's per-resolution retention windows
+// (s.opts), relative to now: raw at RawRetention.
 func (s *tsFileStore) Prune(now int64) error {
-	// pruneDir takes the write lock PER FILE (see its doc), so Prune itself
-	// does NOT hold s.mu across the whole pass -- that is the #113 fix. Prune
-	// and Downsample are only ever driven by the single storewriter maintenance
-	// goroutine (storewriter.go), so there is no concurrent Prune to interleave
-	// with; the finer locking only lets Query reads slip in between files.
+	// pruneDir takes the write lock PER FILE (see its doc), so Prune itself does NOT hold s.mu
+	// across the whole pass -- that is the #113 fix.
 	if err := s.pruneDir(filepath.Join(s.dir, "raw"), now-int64(s.opts.RawRetention.Seconds())); err != nil {
 		return err
 	}
@@ -581,14 +507,11 @@ func (s *tsFileStore) Prune(now int64) error {
 	return nil
 }
 
-// tsRollupBucketSeconds is the 1m resolution's bucket width. A bucket's key
-// is its start (floor(ts/60)*60); the bucket is "completed" once
-// key+tsRollupBucketSeconds <= now.
+// tsRollupBucketSeconds is the 1m resolution's bucket width.
 const tsRollupBucketSeconds = int64(60)
 
-// lastRecordTS returns the ts of the last record in path, or
-// math.MinInt64 if the file doesn't exist or is empty (meaning "no progress
-// yet, roll every completed bucket").
+// lastRecordTS returns the ts of the last record in path, or math.MinInt64 if the file
+// doesn't exist or is empty (meaning "no progress yet, roll every completed bucket").
 func lastRecordTS(path string) (int64, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -616,15 +539,8 @@ func lastRecordTS(path string) (int64, error) {
 	return sampleRecordTS(buf[:]), nil
 }
 
-// downsampleFile rolls rawPath's points into 1-minute min/avg/max buckets
-// and appends any newly-completed buckets to oneMPath, in bucket order.
-//
-// Idempotent + gap-safe: it reads oneMPath's last written bucket key
-// (lastBucket) and only considers raw points whose bucket key is strictly
-// greater than lastBucket, so a second call with the same or a later now
-// never re-rolls or duplicates a bucket. A bucket is only rolled once it is
-// fully in the past (key+60 <= now), so the current, still-filling minute is
-// left alone until a later Downsample call once it too has completed.
+// downsampleFile rolls rawPath's points into 1-minute min/avg/max buckets and appends any
+// newly-completed buckets to oneMPath, in bucket order.
 func downsampleFile(rawPath, oneMPath string, now int64) error {
 	lastBucket, err := lastRecordTS(oneMPath)
 	if err != nil {
@@ -700,9 +616,7 @@ func downsampleFile(rawPath, oneMPath string, now int64) error {
 }
 
 // Downsample rolls each metric's completed raw buckets into its 1m file (see
-// downsampleFile). Called under the store's write lock, alongside
-// Append/AppendEvent/Prune, so it never races a concurrent Query observing a
-// 1m file mid-append.
+// downsampleFile).
 func (s *tsFileStore) Downsample(now int64) error {
 	rawDir := filepath.Join(s.dir, "raw")
 	entries, err := os.ReadDir(rawDir)
@@ -712,10 +626,8 @@ func (s *tsFileStore) Downsample(now int64) error {
 		}
 		return err
 	}
-	// Per-file locking, same rationale as pruneDir (#113): don't pin s.mu for
-	// the whole downsample pass and starve Query reads. Each raw file is
-	// downsampled to its 1m rollup atomically under the lock; only the single
-	// maintenance goroutine calls this, so files never interleave.
+	// Per-file locking, same rationale as pruneDir (#113): don't pin s.mu for the whole
+	// downsample pass and starve Query reads.
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsd") {
 			continue
@@ -735,15 +647,12 @@ func (s *tsFileStore) Downsample(now int64) error {
 	return nil
 }
 
-// Close releases any resources held by the store. tsFileStore opens files
-// per operation rather than holding descriptors open, so there is nothing
-// to flush or close here.
+// Close releases any resources held by the store. tsFileStore opens files per operation
+// rather than holding descriptors open, so there is nothing to flush or close here.
 func (s *tsFileStore) Close() error { return nil }
 
-// Stats reports cardinality/disk cost: seriesCount is the total number of
-// .tsd files under ts/raw and ts/1m, plus events.tsd if it exists, and
-// diskBytes is their combined size on disk. See the SampleStore.Stats doc
-// comment for how `trinetra doctor` uses this.
+// Stats reports cardinality/disk cost: seriesCount is the total number of .tsd files under
+// ts/raw and ts/1m, plus events.tsd if it exists.
 func (s *tsFileStore) Stats() (int, int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -781,9 +690,8 @@ func (s *tsFileStore) Stats() (int, int64, error) {
 
 // ---- fleet replica helpers ----
 
-// LastTS returns the timestamp of metric's newest record at res, or
-// math.MinInt64 when the series is empty or missing. The fleet replica uses
-// it to keep appends in nondecreasing order (the Append contract).
+// LastTS returns the timestamp of metric's newest record at res, or math.MinInt64 when the
+// series is empty or missing.
 func (s *tsFileStore) LastTS(metric string, res Resolution) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -822,9 +730,8 @@ func (s *tsFileStore) Metrics(res Resolution) ([]string, error) {
 	return out, nil
 }
 
-// SyncMetrics fsyncs the raw and 1m files of metrics (those that exist) and,
-// if events is set, events.tsd. The fleet master calls it before acking a
-// batch so an acked record survives a power cut.
+// SyncMetrics fsyncs the raw and 1m files of metrics (those that exist) and, if events is
+// set, events.tsd.
 func (s *tsFileStore) SyncMetrics(metrics []string, events bool) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -11,22 +11,11 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestServeControlSocketRoundTrip builds a real newInprocAPI over a fake
-// snapshot func, a fake getCfg returning config.Default(), a nil store, and
-// a temp stateDir, serves it on a control socket resolved under
-// RUNTIME_DIRECTORY (so the test needs no root), dials it, and asserts
-// Snapshot/Series/Config round-trip through the socket exactly as calling
-// the in-process api directly would -- proving the transport adds no
-// behavior change of its own.
+// TestServeControlSocketRoundTrip builds a real newInprocAPI over a fake snapshot func, a
+// fake getCfg returning config.Default(), a nil store, and a temp stateDir.
 func TestServeControlSocketRoundTrip(t *testing.T) {
 	// A plain t.TempDir() nests under a per-test-name directory
-	// (.../TestServeControlSocketRoundTrip.../001) that, combined with a long
-	// $TMPDIR (common on macOS, e.g. under /var/folders/...), can exceed the
-	// ~104-byte sun_path limit unix domain sockets are bound by. Use a short,
-	// flat MkdirTemp instead so this test's socket path stays well under that
-	// limit on every platform; under systemd (the real deployment path)
-	// RUNTIME_DIRECTORY is always the short /run/trinetra, so this is
-	// purely a test-environment accommodation.
+	// (.../TestServeControlSocketRoundTrip.../001) that, combined with a long $TMPDIR.
 	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
@@ -122,9 +111,8 @@ func newSocketTestAPI(t *testing.T) core.API {
 	return newInprocAPI(getSnap, getCfg, nil, t.TempDir(), reload, nil, &enrollState{})
 }
 
-// assertSocketFailedClosed asserts serveControlSocket refused to serve: it
-// returned an error and a nil stop, and left NO socket or token file behind
-// for an unauthenticated client to connect to (#96).
+// assertSocketFailedClosed asserts serveControlSocket refused to serve: it returned an
+// error and a nil stop.
 func assertSocketFailedClosed(t *testing.T, runtimeDir string, stop func(), err error) {
 	t.Helper()
 	if err == nil {
@@ -143,10 +131,8 @@ func assertSocketFailedClosed(t *testing.T, runtimeDir string, stop func(), err 
 	}
 }
 
-// TestServeControlSocketFailsClosedOnTokenGenError proves that when the
-// per-launch token cannot be GENERATED, the control socket is not served at
-// all (fail closed) rather than served with no auth (#96). The daemon
-// already tolerates a nil-stop error return by running without the socket.
+// TestServeControlSocketFailsClosedOnTokenGenError proves that when the per-launch token
+// cannot be GENERATED, the control socket is not served at all.
 func TestServeControlSocketFailsClosedOnTokenGenError(t *testing.T) {
 	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
 	if err != nil {
@@ -166,9 +152,8 @@ func TestServeControlSocketFailsClosedOnTokenGenError(t *testing.T) {
 	assertSocketFailedClosed(t, runtimeDir, stop, err)
 }
 
-// TestServeControlSocketFailsClosedOnTokenWriteError proves that when the
-// token WRITE fails, the socket is likewise not served unauthenticated (#96).
-// The write is forced to fail by pre-creating the token path as a directory.
+// TestServeControlSocketFailsClosedOnTokenWriteError proves that when the token WRITE
+// fails, the socket is likewise not served unauthenticated (#96).
 func TestServeControlSocketFailsClosedOnTokenWriteError(t *testing.T) {
 	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
 	if err != nil {
@@ -199,9 +184,7 @@ func TestServeControlSocketFailsClosedOnTokenWriteError(t *testing.T) {
 }
 
 // TestServeControlSocketStopRemovesSocketAndTokenFiles proves the stop func
-// serveControlSocket returns cleans up both files it created, not just the
-// socket: a stale token file left behind after a daemon restart would let an
-// old, still-readable token keep working against a should-be-fresh socket.
+// serveControlSocket returns cleans up both files it created, not just the socket.
 func TestServeControlSocketStopRemovesSocketAndTokenFiles(t *testing.T) {
 	runtimeDir, err := os.MkdirTemp("", "sw-ctl")
 	if err != nil {

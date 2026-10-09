@@ -139,9 +139,14 @@ name gets the same prompt, so the form doesn't reveal which accounts exist.
 - On a computer, choose "use another device" in the browser prompt to use a
   passkey on your phone.
 
-Getting the first account is a one-time bootstrap. With `web.enabled true` and
-no accounts yet, you visit `/enroll` with no token and register a passkey. The
-very first passkey to register becomes the admin account. This decision is
+Getting the first account is a one-time bootstrap. On the server, run
+`sudo trinetra users invite --role admin` (or let `sudo trinetra cli` do it in
+its first run) and open the link it prints; the passkey you register becomes
+the admin account. If the web UI is configured to be reached only from this
+machine (`web.listen` on `localhost`, `127.0.0.1` or `::1`, and `web.origin`,
+if set, on one of those too), you may instead visit `/enroll` with no token. On any
+other address tokenless `/enroll` explains how to get the link, so whoever
+finds a fresh server first cannot claim it. The first-admin decision is
 atomic: if two people race to bootstrap at the same instant, exactly one wins
 and becomes admin, and the other is told enrollment is closed. There is never a
 window where the instance has two admins from the race or none at all.

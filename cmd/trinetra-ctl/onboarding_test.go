@@ -7,35 +7,6 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-func TestNeedsOnboardingNilConfig(t *testing.T) {
-	if !needsOnboarding(nil) {
-		t.Error("needsOnboarding(nil) = false, want true")
-	}
-}
-
-func TestNeedsOnboardingNoToken(t *testing.T) {
-	if !needsOnboarding(&config.Config{}) {
-		t.Error("needsOnboarding(no token) = false, want true")
-	}
-}
-
-func TestNeedsOnboardingTokenNotEnrolled(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Telegram.Token = "abc"
-	if !needsOnboarding(cfg) {
-		t.Error("needsOnboarding(token set, no chat id) = false, want true")
-	}
-}
-
-func TestNeedsOnboardingEnrolled(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Telegram.Token = "abc"
-	cfg.Telegram.ChatID = "123"
-	if needsOnboarding(cfg) {
-		t.Error("needsOnboarding(token+chat id set) = true, want false")
-	}
-}
-
 func TestApplyOnboardTokenSetsToken(t *testing.T) {
 	cfg := &config.Config{}
 	if err := applyOnboardToken(cfg, "mytoken"); err != nil {
@@ -46,13 +17,8 @@ func TestApplyOnboardTokenSetsToken(t *testing.T) {
 	}
 }
 
-// TestOnboardFlowAgainstFakeAPI drives the whole pure-ish flow end to end
-// against a fakeAPI, the shape the task spec asks for: capture a token,
-// apply it, fetch the pin (not yet enrolled), then simulate the daemon
-// completing enrollment (fakeAPI.enrollEnrolled flips) and fetch again.
-// This exercises exactly the sequence onboard_ui.go's Bubble Tea glue
-// drives via applyOnboardTokenCmd/fetchOnboardPINCmd, without any terminal
-// or tea.Program involved.
+// TestOnboardFlowAgainstFakeAPI drives the whole pure-ish flow end to end against a
+// fakeAPI, the shape the task spec asks for: capture a token, apply it, fetch the pin.
 func TestOnboardFlowAgainstFakeAPI(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}, enrollPIN: "4821", enrollEnrolled: false}
 

@@ -323,6 +323,12 @@
   window.addEventListener('hashchange',function(){ swRestoreTabs(); });
   document.addEventListener('invalid',function(e){var p=e.target.closest&&e.target.closest('.tabpane');if(!p||p.classList.contains('on'))return;var w=p.closest('[data-tabs]');if(w) swShowTab(w,p.dataset.pane);},true);
   document.querySelectorAll('[data-filter]').forEach(function(inp){inp.addEventListener('input',function(){var q=inp.value.toLowerCase();document.querySelectorAll(inp.dataset.filter).forEach(function(tbl){tbl.querySelectorAll('tbody tr').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>-1?'':'none';});});});});
+  document.querySelectorAll('[data-dismiss]').forEach(function(el){
+    var key='dismiss:'+el.dataset.dismiss;
+    try{ if(localStorage.getItem(key)){ el.remove(); return; } }catch(e){}
+    var b=el.querySelector('[data-dismiss-btn]');
+    if(b) b.addEventListener('click',function(){ try{localStorage.setItem(key,'1');}catch(e){} el.remove(); });
+  });
   var pickBar=document.getElementById('pick-bar');
   function pickBoxes(){return document.querySelectorAll('input[name=target][form=sp-add]');}
   function pickSync(){

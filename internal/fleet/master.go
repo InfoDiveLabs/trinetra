@@ -21,8 +21,7 @@ import (
 	"unicode/utf8"
 )
 
-// Sink is where the master puts what children send. The trinetra package
-// implements it over per-node tsfile replicas.
+// Sink is where the master puts what children send.
 type Sink interface {
 	// AppliedSeq is the highest seq durably applied for nodeID (0 if none).
 	AppliedSeq(nodeID string) (uint64, error)
@@ -43,16 +42,13 @@ type MasterConfig struct {
 	Registry *Registry
 	Tokens   *TokenStore
 	Sink     Sink
-	// Hub fans lease/receipt/silence/managed-config/rpc frames out over
-	// GET PathStream and receives RPC results posted to PathRPC. A nil Hub
-	// gets a default built with Logf.
+	// Hub fans lease/receipt/silence/managed-config/rpc frames out over GET PathStream and
+	// receives RPC results posted to PathRPC.
 	Hub       *Hub
 	Now       func() time.Time
 	OnContact func(nodeID string, now time.Time, u *LiveUpdate)
-	// OnSkew receives the child's send time (unix seconds) for every request
-	// that carries one (HeaderSentAt on ingest/backfill, SentAt on live), so
-	// the caller can track clock skew as now - sentAt. now is when the
-	// request arrived, before it was applied. Optional.
+	// OnSkew receives the child's send time (unix seconds) for every request that carries one
+	// (HeaderSentAt on ingest/backfill, SentAt on live).
 	OnSkew func(nodeID string, now time.Time, sentAt int64)
 	Logf   func(format string, args ...any)
 }
@@ -66,11 +62,7 @@ type Master struct {
 	srv     *http.Server
 }
 
-// NewMaster builds a Master; nil Now/OnContact/Logf get safe defaults. The
-// *http.Server is built here and never reassigned, so Serve and Shutdown
-// only ever read/call a field set once before any goroutine starts -- no
-// lock or nil check is needed at the call sites, and Shutdown is safe to
-// call even if Serve is never called (or hasn't been called yet).
+// NewMaster builds a Master; nil Now/OnContact/Logf get defaults.
 func NewMaster(cfg MasterConfig) *Master {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -113,8 +105,7 @@ func (m *Master) Handler() http.Handler {
 	return mux
 }
 
-// Serve serves TLS on ln until Shutdown. The server was already built by
-// NewMaster, so this only starts it -- Serve does not mutate m.
+// Serve serves TLS on ln until Shutdown; it does not mutate m.
 func (m *Master) Serve(ln net.Listener) error {
 	err := m.srv.ServeTLS(ln, "", "")
 	if errors.Is(err, http.ErrServerClosed) {
@@ -123,9 +114,7 @@ func (m *Master) Serve(ln net.Listener) error {
 	return err
 }
 
-// Shutdown stops Serve gracefully. Safe to call even if Serve was never
-// called or hasn't been called yet: http.Server.Shutdown on a server with no
-// active listeners or connections returns immediately.
+// Shutdown stops Serve gracefully; safe if Serve was never called.
 func (m *Master) Shutdown(ctx context.Context) error {
 	return m.srv.Shutdown(ctx)
 }
@@ -301,9 +290,8 @@ func (m *Master) handleJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	// The name actually stored may differ from what was requested (Add
-	// suffixes a case-insensitive collision with "-2", "-3", ...): re-fetch
-	// it so the join response -- and the log line -- report the real name.
+	// The name actually stored may differ from what was requested (Add suffixes a
+	// case-insensitive collision with "-2", "-3", ...): re-fetch it so the join response.
 	finalName := cleanName(req.Name, id)
 	if n, ok := m.cfg.Registry.Get(id); ok {
 		finalName = n.Name
@@ -419,12 +407,8 @@ func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	// Same per-node lock handleIngest/handleBackfill already take: without
-	// it, two concurrent Live posts for one node can race inside the sink
-	// (replicaSink.Live ends with an unsynchronized writeFileAtomic of
-	// live.json) -- observed intermittently as "rename .../live.json.tmp
-	// .../live.json: no such file or directory" (debug-step12-report.md,
-	// "second, separate issue").
+	// Take the same per-node lock as handleIngest/handleBackfill: concurrent Live posts for
+	// one node race inside the sink.
 	l := m.nodeLock(id)
 	l.Lock()
 	defer l.Unlock()
@@ -442,9 +426,8 @@ func (m *Master) handleLive(w http.ResponseWriter, r *http.Request, id string) {
 	writeJSON(w, map[string]int64{"server_time": now.Unix()})
 }
 
-// noteSentAt reports the request's HeaderSentAt, if present and valid, to
-// OnSkew. arrived is when the request reached the handler: time the master
-// then spends applying it is not the child's clock being off.
+// noteSentAt reports the request's HeaderSentAt, if present and valid, to OnSkew. arrived
+// is when the request reached the handler.
 func (m *Master) noteSentAt(id string, now time.Time, r *http.Request) {
 	if v, err := strconv.ParseInt(r.Header.Get(HeaderSentAt), 10, 64); err == nil && v > 0 {
 		m.cfg.OnSkew(id, now, v)
@@ -458,13 +441,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
-// defaultIPLimiterCap bounds the number of distinct source IPs an ipLimiter
-// tracks at once, so a spray of join attempts from many different IPs cannot
-// grow its map without bound.
+// defaultIPLimiterCap bounds the number of distinct source IPs an ipLimiter tracks at once,
+// so a spray of join attempts from many different IPs cannot grow its map without bound.
 const defaultIPLimiterCap = 10000
 
-// ipLimiter allows n events per window per IP, tracking at most cap distinct
-// IPs at a time.
+// ipLimiter allows n events per window per IP, tracking at most cap distinct IPs at a time.
 type ipLimiter struct {
 	mu     sync.Mutex
 	n      int
@@ -497,10 +478,7 @@ func (l *ipLimiter) allow(ip string, now time.Time) bool {
 		return true
 	}
 
-	// A new IP. Bound the map: sweep out IPs whose most recent hit is
-	// stale, and only if the map is still at/over cap after sweeping do we
-	// refuse -- fail closed rather than let it grow unbounded under a
-	// sustained spray of distinct active IPs.
+	// A new IP.
 	if len(l.hits) >= l.cap {
 		for k, v := range l.hits {
 			if len(v) == 0 || !v[len(v)-1].After(cut) {

@@ -71,10 +71,8 @@ func TestResolveRouteNoMatchUsesDefaultPolicy(t *testing.T) {
 	}
 }
 
-// TestResolveRouteContinueChainsKeepsEachPolicySeparate covers the B5 fix
-// round 1 ruling: Continue:true keeps evaluating later routes too, and every
-// matched route's policy is returned SEPARATELY (never merged) -- each one
-// escalates independently.
+// TestResolveRouteContinueChainsKeepsEachPolicySeparate: Continue:true keeps evaluating
+// later routes, and every matched route's policy is returned SEPARATELY (never merged).
 func TestResolveRouteContinueChainsKeepsEachPolicySeparate(t *testing.T) {
 	cfg := core.AlertingConfig{
 		Routes: []core.Route{
@@ -114,9 +112,8 @@ func TestResolveRouteWithoutContinueStopsAtFirstMatch(t *testing.T) {
 	}
 }
 
-// TestUnionStepChannelsAcrossPolicies covers the B5 fix round 1 ruling for
-// the fire leg's single physical dispatch: step 0's channels are the union
-// across every matched policy that has that many steps.
+// TestUnionStepChannelsAcrossPolicies: for the fire leg's single physical dispatch, step
+// 0's channels are the union across every matched policy that has that many steps.
 func TestUnionStepChannelsAcrossPolicies(t *testing.T) {
 	policies := []core.Policy{
 		{Name: "a", Steps: []core.PolicyStep{{After: "0s", Channels: []string{"slack"}}, {After: "5m", Channels: []string{"pager"}}}},
@@ -239,10 +236,8 @@ func TestValidateAlertingConfigDuplicateNames(t *testing.T) {
 	}
 }
 
-// TestValidateAlertingConfigRouteNameRequired pins the C3 fix round 1
-// ruling: a blank route name is rejected outright ("every route needs a
-// name"), removing the old "(unnamed)" ambiguity the web editor's inline
-// field-error matching used to have to live with.
+// TestValidateAlertingConfigRouteNameRequired pins that a blank route name is rejected
+// outright ("every route needs a name").
 func TestValidateAlertingConfigRouteNameRequired(t *testing.T) {
 	cfg := core.AlertingConfig{
 		Routes:        []core.Route{{Matchers: []core.Matcher{{Rule: "*"}}, Policy: "p"}},
@@ -255,9 +250,8 @@ func TestValidateAlertingConfigRouteNameRequired(t *testing.T) {
 	}
 }
 
-// TestValidateAlertingConfigRejectsZeroStepPolicy is the B5 fix round 1
-// minor: a policy with no steps at all is rejected (it would silently
-// deliver nowhere, forever, for every incident routed to it).
+// TestValidateAlertingConfigRejectsZeroStepPolicy: a policy with no steps is rejected (it
+// would silently deliver nowhere for every incident routed to it).
 func TestValidateAlertingConfigRejectsZeroStepPolicy(t *testing.T) {
 	cfg := core.AlertingConfig{
 		Policies:      []core.Policy{{Name: "p", Steps: nil}},

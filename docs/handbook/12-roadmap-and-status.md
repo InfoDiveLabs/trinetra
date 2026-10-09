@@ -123,7 +123,7 @@ Rolled up across the stable releases, the following is done and verified:
   set-token` prints the `/start <pin>` instruction directly to the terminal
   right after saving the token, and `trinetra-ctl`'s onboarding screen
   surfaces the same PIN. See [Installation and first
-  run](03-installation.md#5-connect-telegram-and-enroll-as-owner).
+  run](03-installation.md#telegram-optional).
 - **Guided setup ownership (#91)**: the guided, validated walk-through for web
   UI setup and first-run Telegram onboarding lives in `trinetra-ctl`; the
   core CLI does not grow an interactive wizard of its own. `config set` and the

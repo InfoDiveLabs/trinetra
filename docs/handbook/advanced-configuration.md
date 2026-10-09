@@ -185,8 +185,8 @@ is the scriptable equivalent for automation.
 ### Telegram
 
 The original always-on notification channel (see [Alerting and notification
-channels](06-alerting-and-channels.md)). A token is the one required setting for
-a fresh install.
+channels](06-alerting-and-channels.md)). Optional: alerts can go to any channel,
+and Telegram is only needed if you want it.
 
 | Key | Default | Validation |
 |-----|---------|------------|
@@ -204,7 +204,7 @@ to a `journalctl` pointer if the daemon cannot be reached yet). In
 (token entry, then the same `/start <pin>` shown and polled for you); once
 onboarding is complete, the token can be changed later from the **Channels**
 screen. See
-[Installation and first run](03-installation.md#5-connect-telegram-and-enroll-as-owner)
+[Installation and first run](03-installation.md#telegram-optional)
 for the full enrollment flow and diagram.
 
 ### Healthchecks

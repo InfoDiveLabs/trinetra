@@ -1,7 +1,5 @@
-// Package trinetra: coreapi_write_test.go covers the task-8 write methods
-// (ApplyConfig/AckAlert/UnackAlert/TestChannel) on both core.API
-// implementations -- the counterpart to coreapi_inproc_test.go/
-// coreapi_file_test.go's read-method coverage.
+// Package trinetra: coreapi_write_test.go covers the write methods
+// (ApplyConfig/AckAlert/UnackAlert/TestChannel) on both core.API implementations.
 package trinetra
 
 import (
@@ -12,12 +10,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestFileAPIApplyConfigPersists is the task-8 brief's Step 1 test: the
-// file-backed ApplyConfig must persist the posted config to cfgPath (via
-// saveCfg) so a later config.Load(cfgPath) sees it -- the same behavior
-// every existing `channel`/`target` CLI setter gets from saveCfg directly.
-// cfgPath is overridden via the package-level test seam (mirrors
-// channel_cli_test.go/dump_test.go/main_test.go's own use of it).
+// TestFileAPIApplyConfigPersists checks the file-backed ApplyConfig persists the posted
+// config to cfgPath.
 func TestFileAPIApplyConfigPersists(t *testing.T) {
 	dir := t.TempDir()
 	prevCfgPath := cfgPath
@@ -40,14 +34,7 @@ func TestFileAPIApplyConfigPersists(t *testing.T) {
 	}
 }
 
-// TestInprocApplyConfigInvokesReloadClosure pins that the in-process
-// ApplyConfig is nothing but a pass-through to the reload closure
-// newInprocAPI was constructed with -- the exact pointer-swap-and-persist
-// behavior cmdDaemon's own `reload` closure (daemon.go) performs. A fake
-// closure here (rather than the real daemon reload) isolates ApplyConfig's
-// OWN contract -- "call reload with what I was given, propagate its error"
-// -- from reload's internal saveCfg/applyConfig mechanics, which belong to
-// daemon.go and aren't this method's concern.
+// TestInprocApplyConfigInvokesReloadClosure pins that the in-process ApplyConfig.
 func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 	var got *config.Config
 	reload := func(c *config.Config) error {
@@ -66,9 +53,8 @@ func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 	}
 }
 
-// TestInprocApplyConfigPropagatesReloadError pins that a reload failure
-// (e.g. the daemon's own validation) surfaces back through ApplyConfig
-// rather than being swallowed.
+// TestInprocApplyConfigPropagatesReloadError pins that a reload failure (e.g. the daemon's
+// own validation) surfaces back through ApplyConfig rather than being swallowed.
 func TestInprocApplyConfigPropagatesReloadError(t *testing.T) {
 	wantErr := errNotExist
 	reload := func(*config.Config) error { return wantErr }
@@ -79,11 +65,8 @@ func TestInprocApplyConfigPropagatesReloadError(t *testing.T) {
 	}
 }
 
-// TestFileAPIAckAlertUnackAlertRoundTrip pins fileAPI's Ack/Unack: they must
-// load alerts.json, flip Acked/AckedAt via AlertState.Ack/Unack, and save it
-// back -- readable afterward via LoadAlertState, exactly like
-// cmdAlertsAck's pre-task-8 inline sequence (now delegated to this method,
-// see alerts_cli.go).
+// TestFileAPIAckAlertUnackAlertRoundTrip pins fileAPI's Ack/Unack: they load alerts.json,
+// flip Acked/AckedAt via AlertState.Ack/Unack and save it back.
 func TestFileAPIAckAlertUnackAlertRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	state := NewAlertState()
@@ -111,9 +94,8 @@ func TestFileAPIAckAlertUnackAlertRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFileAPIAckAlertUnknownKeyReturnsError pins the same "no active alert
-// for key %q" error AlertState.Ack itself returns for a never-fired key --
-// the exact message cmdAlertsAck has always printed to stderr on a bad ack.
+// TestFileAPIAckAlertUnknownKeyReturnsError pins the same "no active alert for key %q"
+// error AlertState.Ack itself returns for a never-fired key.
 func TestFileAPIAckAlertUnknownKeyReturnsError(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 	err := api.AckAlert("nope")
@@ -151,14 +133,8 @@ func TestInprocAckAlertUnackAlertRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFileAPITestChannelDelegatesToSendTestNotification and its in-process
-// counterpart below pin that TestChannel routes through the shared
-// sendTestNotification (channel.go) rather than reimplementing it: an
-// unknown channel name surfaces sendTestNotification's own "unknown channel"
-// error, proving the call actually reached it (a real send is out of scope
-// for a unit test -- see channel_cli_test.go's TestChannelAddListSetRemoveTestViaCLI
-// for the equivalent CLI-level proof against a real, if undeliverable,
-// channel).
+// TestFileAPITestChannelDelegatesToSendTestNotification and its in-process counterpart
+// below pin that TestChannel routes through the shared sendTestNotification.
 func TestFileAPITestChannelDelegatesToSendTestNotification(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 	err := api.TestChannel("does-not-exist")
@@ -175,12 +151,8 @@ func TestInprocTestChannelDelegatesToSendTestNotification(t *testing.T) {
 	}
 }
 
-// TestFileAPIValidateChannelRejectsUndeliverable and its in-process
-// counterpart below pin that ValidateChannel routes through the shared
-// buildNotifier (channels.go) -- the same check TestChannel/`channel test`
-// use, minus the network send -- against this API's own config: a telegram
-// channel with no chat id and no global fallback is rejected, and a
-// deliverable channel (a webhook with a url) passes.
+// TestFileAPIValidateChannelRejectsUndeliverable and its in-process counterpart below pin
+// that ValidateChannel routes through the shared buildNotifier (channels.go).
 func TestFileAPIValidateChannelRejectsUndeliverable(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 
@@ -219,13 +191,8 @@ func TestInprocValidateChannelRejectsUndeliverable(t *testing.T) {
 	}
 }
 
-// TestInprocSubscribeNoBusReturnsSentinel pins inprocAPI.Subscribe's
-// degenerate case: an inprocAPI built with no live daemon bus (bus is nil --
-// every newInprocAPI call in this file/package that isn't specifically
-// testing Subscribe's real streaming behavior, which lives in
-// coreapi_inproc_test.go) returns errStreamRequiresDaemon rather than
-// panicking. Passing a nil ctx is safe here specifically because the nil-bus
-// check short-circuits before Subscribe ever touches ctx.
+// TestInprocSubscribeNoBusReturnsSentinel pins inprocAPI.Subscribe's degenerate case: an
+// inprocAPI built with no live daemon bus.
 func TestInprocSubscribeNoBusReturnsSentinel(t *testing.T) {
 	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), func(*config.Config) error { return nil }, nil, &enrollState{})
 	if _, err := api.Subscribe(nil); err != errStreamRequiresDaemon { //nolint:staticcheck // nil context: safe, Subscribe returns before touching ctx when bus is nil

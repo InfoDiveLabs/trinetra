@@ -1,6 +1,4 @@
-// Package trinetra: enroll_test.go covers enrollState (enroll.go), the
-// shared holder that makes the daemon's poll loop and the control socket's
-// EnrollmentPIN read the SAME Telegram enrollment pin (#90).
+// Package trinetra: enroll_test.go covers enrollState (enroll.go).
 package trinetra
 
 import (
@@ -11,9 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// newEnrollCfg builds an unclaimed-bot config (token set, no chat id) with the
-// given brute-force bound so the Attempt tests run at a small, deterministic
-// threshold instead of the default 5.
+// newEnrollCfg builds an unclaimed-bot config (token set, no chat id) with the given
+// brute-force bound so the Attempt tests run at a small.
 func newEnrollCfg(maxAttempts, cooldownSec int) *config.Config {
 	c := newTgConfig("tok", "")
 	c.Telegram.MaxEnrollAttempts = maxAttempts
@@ -21,10 +18,8 @@ func newEnrollCfg(maxAttempts, cooldownSec int) *config.Config {
 	return c
 }
 
-// TestEnrollStatePINConfiguredNotEnrolled: telegram token set, chat id
-// empty -> a stable non-empty pin, the same value across repeated calls
-// (so the value the daemon prints and the value it later matches against
-// in enrollMatch never drift).
+// TestEnrollStatePINConfiguredNotEnrolled: telegram token set, chat id empty -> a stable
+// non-empty pin, the same value across repeated calls.
 func TestEnrollStatePINConfiguredNotEnrolled(t *testing.T) {
 	e := &enrollState{}
 	cfg := newTgConfig("tok", "")
@@ -46,9 +41,8 @@ func TestEnrollStatePINConfiguredNotEnrolled(t *testing.T) {
 	}
 }
 
-// TestEnrollStatePINEnrolled: once a chat id is set, PIN must report "" and
-// enrolled=true -- there is nothing left to enroll with, so no pin should
-// ever be shown or matched again.
+// TestEnrollStatePINEnrolled: once a chat id is set, PIN must report "" and enrolled=true
+// -- there is nothing left to enroll with, so no pin should ever be shown or matched again.
 func TestEnrollStatePINEnrolled(t *testing.T) {
 	e := &enrollState{}
 	cfg := newTgConfig("tok", "555")
@@ -77,10 +71,8 @@ func TestEnrollStatePINNotConfigured(t *testing.T) {
 	}
 }
 
-// TestEnrollStateReset: Reset clears the cached pin (white-box: this test
-// lives in package trinetra, so it can inspect e.pin directly), so the
-// next PIN() call generates a fresh one rather than reusing a pin that was
-// already consumed by a successful enrollment.
+// TestEnrollStateReset: Reset clears the cached pin (white-box: this test lives in package
+// trinetra, so it can inspect e.pin directly).
 func TestEnrollStateReset(t *testing.T) {
 	e := &enrollState{}
 	cfg := newTgConfig("tok", "")
@@ -100,10 +92,8 @@ func TestEnrollStateReset(t *testing.T) {
 	}
 }
 
-// TestEnrollStatePINConcurrentCallsAgree (-race): concurrent PIN() calls
-// against the same unenrolled config must all observe the SAME pin -- the
-// mutex must serialize the generate-once-and-cache path, not race two
-// callers into caching different pins.
+// TestEnrollStatePINConcurrentCallsAgree (-race): concurrent PIN() calls against the same
+// unenrolled config must all observe the SAME pin.
 func TestEnrollStatePINConcurrentCallsAgree(t *testing.T) {
 	e := &enrollState{}
 	cfg := newTgConfig("tok", "")
@@ -151,9 +141,8 @@ func TestEnrollAttemptCorrectPINSucceeds(t *testing.T) {
 	}
 }
 
-// TestEnrollAttemptNonStartNeverCounts: messages that are not a well-formed
-// "/start <arg>" are ignored WITHOUT advancing the failure counter, so
-// ordinary chatter can never rotate the pin or trip the cooldown.
+// TestEnrollAttemptNonStartNeverCounts: messages that are not a well-formed "/start <arg>"
+// are ignored WITHOUT advancing the failure counter.
 func TestEnrollAttemptNonStartNeverCounts(t *testing.T) {
 	e := &enrollState{pin: "424242"}
 	cfg := newEnrollCfg(3, 60)
@@ -171,9 +160,8 @@ func TestEnrollAttemptNonStartNeverCounts(t *testing.T) {
 	}
 }
 
-// TestEnrollAttemptWrongGuessThenCorrectResets: wrong guesses below the
-// threshold accumulate but don't rotate; a subsequent correct guess still
-// enrolls and clears the counter.
+// TestEnrollAttemptWrongGuessThenCorrectResets: wrong guesses below the threshold
+// accumulate but don't rotate.
 func TestEnrollAttemptWrongGuessThenCorrectResets(t *testing.T) {
 	e := &enrollState{pin: "424242"}
 	cfg := newEnrollCfg(5, 60) // threshold 5, so 2 wrong guesses don't rotate
@@ -197,11 +185,7 @@ func TestEnrollAttemptWrongGuessThenCorrectResets(t *testing.T) {
 	}
 }
 
-// TestEnrollAttemptRotatesAndCoolsDownAtThreshold is the core #93 property:
-// once wrong guesses reach the threshold the pin ROTATES and a cooldown opens
-// during which every /start is ignored; after the cooldown the freshly rotated
-// pin is what enrolls, so an attacker's earlier progress against the old pin is
-// worthless.
+// TestEnrollAttemptRotatesAndCoolsDownAtThreshold is the core #93 property.
 func TestEnrollAttemptRotatesAndCoolsDownAtThreshold(t *testing.T) {
 	e := &enrollState{pin: "424242"}
 	cfg := newEnrollCfg(3, 60)
@@ -235,9 +219,8 @@ func TestEnrollAttemptRotatesAndCoolsDownAtThreshold(t *testing.T) {
 	}
 }
 
-// TestEnrollAttemptGatedWhenNotEnrollable: with no token (nothing to enroll)
-// or once a chat id is set (already enrolled), Attempt never enrolls, matching
-// PIN()'s gate.
+// TestEnrollAttemptGatedWhenNotEnrollable: with no token (nothing to enroll) or once a chat
+// id is set (already enrolled), Attempt never enrolls, matching PIN()'s gate.
 func TestEnrollAttemptGatedWhenNotEnrollable(t *testing.T) {
 	notConfigured := &config.Config{} // no token
 	if (&enrollState{}).Attempt(notConfigured, "/start 424242", enrollBase) {

@@ -9,9 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// The anonymous pages (public status, history, login) carry a small visible
-// attribution footer with followed links and a JSON-LD description of the
-// project, so crawlers can attribute the page. Neither names the company.
+// The anonymous pages (public status, history, login) carry a small visible attribution
+// footer with followed links and a JSON-LD description of the project.
 func TestAnonymousPagesCarryAttribution(t *testing.T) {
 	sp := publicFixture()
 	d := publicDeps(t, sp, true)

@@ -75,14 +75,7 @@ func TestGuardRollsBackOnEachFailedCondition(t *testing.T) {
 	}
 }
 
-// TestGuardNormalizesVPrefixedPendingVersion is fix-round-1 F1: Pending.Version
-// can carry a "v" prefix (e.g. update.rollback stored `version --json`'s raw
-// output before that call was normalised too -- see
-// TestUpdaterRollbackNormalizesVersion in update_cmd_test.go), while a
-// healthy daemon's control.Client.Version() reports without one (or vice
-// versa). checkGuardHealth must trim "v" on BOTH sides before comparing, the
-// same way smokeTest already does, or a perfectly healthy restart is
-// misdiagnosed as a version mismatch and wrongly rolled back.
+// TestGuardNormalizesVPrefixedPendingVersion: Pending.Version can carry a "v" prefix.
 func TestGuardNormalizesVPrefixedPendingVersion(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "v0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}})
 	h := &fakeHealth{active: true, version: "0.5.0", ts: 1002}
@@ -92,18 +85,14 @@ func TestGuardNormalizesVPrefixedPendingVersion(t *testing.T) {
 	}
 }
 
-// TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad is fix-round-1's
-// Rollback=true coverage: a healthy rollback confirmation must commit
-// without ever raising the floor (there is no prior floor here to leave
-// unchanged from -- Floor starts unset, so a buggy RaiseFloor call would be
-// directly observable) and without marking the rolled-back-to version bad.
+// TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad: a healthy rollback confirmation must
+// commit without raising the floor.
 func TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
 	os.WriteFile(filepath.Join(p.previous(), "trinetra"), []byte("OLD-core"), 0o755)
-	// rollback() already restores previous/ into BinDir before launching the
-	// guard (see updater.rollback), so BinDir already holds the rollback
-	// target by the time the guard runs.
+	// rollback() already restores previous/ into BinDir before launching the guard (see
+	// updater.rollback).
 	os.WriteFile(filepath.Join(p.BinDir, "trinetra"), []byte("OLD-core"), 0o755)
 	pending := update.Pending{Version: "0.4.1", From: "0.5.0", Deadline: 1090, Files: []string{"trinetra"}, Rollback: true}
 	if err := update.SaveState(p.dir(), update.State{Pending: &pending}); err != nil {
@@ -127,12 +116,8 @@ func TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad(t *testing.T) {
 	}
 }
 
-// TestGuardRollbackFailedGateDoesNotLoop is fix-round-1's Rollback=true
-// failure coverage: when a rollback confirmation never becomes healthy,
-// there is no older build to fall back to (previous/ already IS the build
-// currently running), so the guard must not attempt another
-// restorePrevious/restart and must not mark anything bad -- it just records
-// the failure and leaves the binaries as they are.
+// TestGuardRollbackFailedGateDoesNotLoop: when a rollback confirmation never becomes
+// healthy there is no older build to fall back to (previous/ already IS the running build).
 func TestGuardRollbackFailedGateDoesNotLoop(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -168,17 +153,8 @@ func TestGuardRollbackFailedGateDoesNotLoop(t *testing.T) {
 	}
 }
 
-// TestGuardKeepsPendingWhenRestoreFails is issue #136: when a Pending fails
-// its health gate AND restoring the previous build itself then fails (e.g. a
-// write error in BinDir), rollbackPending must NOT clear Pending the way
-// every other outcome does -- otherwise the persistent watchdog timer never
-// retries and the host can be left half-updated. Pending must stay, with the
-// failure recorded on it (Pending.RestoreFailed), and the version must not
-// be marked bad or the outcome recorded as rolled_back: this update has not
-// actually finished rolling back yet. A second guard run (as the watchdog
-// would trigger a minute later), with the restore now possible, must behave
-// like a normal rollback: Pending cleared, the version marked bad, outcome
-// rolled_back.
+// TestGuardKeepsPendingWhenRestoreFails is issue #136: when a Pending fails its health gate
+// AND restoring the previous build itself then fails (e.g. a write error in BinDir).
 func TestGuardKeepsPendingWhenRestoreFails(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}, Phase: pendingSwapped})
 	h := &fakeHealth{active: false, version: "0.5.0", ts: 1002} // never healthy -> rolls back
@@ -225,9 +201,7 @@ func TestGuardKeepsPendingWhenRestoreFails(t *testing.T) {
 		t.Fatalf("Last recorded before the rollback actually finished: %+v", st.Last)
 	}
 
-	// Second guard run: fix the write error (as a real retry would find
-	// BinDir writable again once whatever blocked it clears) and confirm the
-	// watchdog's next tick finishes the job normally.
+	// Second guard run: fix the write error.
 	if err := os.Chmod(p.BinDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -254,17 +228,8 @@ func TestGuardKeepsPendingWhenRestoreFails(t *testing.T) {
 	}
 }
 
-// TestGuardRetryDoesNotReRunHealthGate is #136 fix round 1: once a Pending
-// has already failed its health gate AND a restore attempt, the rollback
-// decision is final. A later guard run (the watchdog retrying) must retry
-// ONLY the restore -- never restart the still-pending build and re-poll its
-// health. Prove it with a fakeHealth that WOULD report healthy if consulted
-// (active, right version, fresh sample): a buggy guard that re-ran the
-// health gate would commit a build it already condemned. The correct guard
-// must still roll back (restore the previous build, mark it bad) once the
-// restore succeeds, without ever calling restart() while the restore keeps
-// failing, and the eventual Result.Detail must explain the ORIGINAL
-// health-gate failure, not an accumulation of restore-retry noise.
+// TestGuardRetryDoesNotReRunHealthGate pins #136: once a Pending has already failed its
+// health gate AND a restore attempt, the rollback decision is final.
 func TestGuardRetryDoesNotReRunHealthGate(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{
 		Version: "0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}, Phase: pendingSwapped,
@@ -292,9 +257,8 @@ func TestGuardRetryDoesNotReRunHealthGate(t *testing.T) {
 		t.Fatalf("RestoreFailedReason lost or Pending cleared: %+v", st.Pending)
 	}
 
-	// Fix the write error and retry: even though the (never-consulted)
-	// health fake would report healthy, the guard must still roll back --
-	// not commit -- because the decision is already final.
+	// Fix the write error and retry: even though the (never-consulted) health fake would
+	// report healthy, the guard must still roll back -- not commit.
 	if err := os.Chmod(p.BinDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -324,11 +288,8 @@ func TestGuardRetryDoesNotReRunHealthGate(t *testing.T) {
 	}
 }
 
-// TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation is a
-// guard-rail alongside TestGuardKeepsPendingWhenRestoreFails: a rollback
-// confirmation (Rollback: true) never attempts restorePrevious at all (there
-// is no older build to fall back to -- see rollbackPending's doc), so it
-// must never set Pending.RestoreFailed even when BinDir is unwritable.
+// TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation is a guard-rail
+// alongside TestGuardKeepsPendingWhenRestoreFails: a rollback confirmation.
 func TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -351,13 +312,8 @@ func TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation(t *testing
 	}
 }
 
-// TestGuardCommitsDespiteRestartError is fix-round-1 F2: osExec's own
-// timeout (60s, execTimeout) is shorter than systemd's default 90s
-// TimeoutStopSec, so `systemctl restart trinetra` can genuinely return an
-// error (the command's own wait timed out) even though systemd goes on to
-// finish the restart successfully a few seconds later. runGuard must not
-// treat restart()'s error as fatal -- it must still poll for health, and
-// commit if the daemon does come up healthy within the deadline.
+// TestGuardCommitsDespiteRestartError pins that runGuard does not treat restart()'s error
+// as fatal: osExec's 60s execTimeout is shorter than systemd's default 90s TimeoutStopSec.
 func TestGuardCommitsDespiteRestartError(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}})
 	h := &fakeHealth{active: true, version: "0.5.0", ts: 1002}
@@ -368,10 +324,8 @@ func TestGuardCommitsDespiteRestartError(t *testing.T) {
 	}
 }
 
-// TestGuardRollsBackWhenRestartErrorsAndNeverHealthy is F2's other half: a
-// restart() error that turns out to reflect a real problem (the daemon
-// never comes up healthy) must still roll back by the deadline, exactly
-// like any other failed health gate -- not hang or leave Pending set.
+// TestGuardRollsBackWhenRestartErrorsAndNeverHealthy: a restart() error that reflects a
+// real problem (the daemon never comes up healthy) must still roll back by the deadline.
 func TestGuardRollsBackWhenRestartErrorsAndNeverHealthy(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}})
 	h := &fakeHealth{active: false, version: "0.5.0", ts: 1002}

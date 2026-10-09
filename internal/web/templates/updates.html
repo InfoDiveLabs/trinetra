@@ -1,25 +1,50 @@
-{{/* updates.html (task 8): the admin-only self-update status + actions page.
-     Status is core.UpdateStatusView (Deps.API.UpdateStatus). Three plain
-     (non-htmx) single-purpose forms -- Check now / Apply <available> / Roll
-     back -- each carries the CSRF hidden field and its own confirmation
-     line; every submit redirects back here with a fixed ?flash= code
-     (handlers_updates.go's resolveUpdatesFlash), never free text.
-
-     Status.InProgress/Status.LastError (fix round 1, Ruling R10) reflect a
-     background apply/rollback goroutine on the daemon serving this page over
-     the control socket: InProgress renders a banner while it's still
-     running; LastError, once it finishes, renders the daemon's own error
-     text -- unlike Flash (a closed set of literals this page chose), this IS
-     free text from the daemon, so it is rendered as an ordinary dynamic
-     template value (html/template auto-escapes it -- never inserted via a
-     raw/unescaped helper). */}}
+{{/* Status.LastError is free text from the daemon; it relies on html/template escaping. */}}
 {{define "content"}}
-<div id="updates-page">
+<div id="updates-page" data-tabs data-tabs-hash>
   {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
   {{if .Status.InProgress}}<div class="flash" role="status" id="update-in-progress">Update in progress&hellip;</div>{{end}}
   {{if and .Status.LastError (not .Status.InProgress)}}<div class="flash err" role="status" id="update-last-error">Last update error: {{.Status.LastError}}</div>{{end}}
 
-  <div class="section-label"><span class="eyebrow">Self-update</span></div>
+  {{with .Status.Pending}}{{if .RestoreFailed}}<div class="flash err" role="status" id="update-restore-failed">Restore of the previous build failed: {{.RestoreFailed}} &mdash; the watchdog will retry.</div>{{end}}{{end}}
+
+  <div class="tabs settings-tabs" role="tablist" aria-label="Update sections">
+    <button type="button" role="tab" data-tab="overview" class="on">Overview</button><button type="button" role="tab" data-tab="details">Details</button>
+  </div>
+
+  <section class="tabpane on" data-pane="overview" role="tabpanel">
+  <div class="panel update-hero">
+    {{if .Status.InProgress}}
+      <div class="update-state"><strong>Updating now</strong><span class="note">The daemon restarts once the new build passes its health check. This page shows the result when you reload it.</span></div>
+    {{else if .Status.Pending}}{{with .Status.Pending}}
+      <div class="update-state"><strong>Checking {{.Version}} is healthy</strong><span class="note">Installed over {{.From}}. If it isn't confirmed healthy by {{nodeAgo .Deadline}}, the previous build comes back automatically.</span></div>
+    {{end}}{{else if .Status.Available}}
+      <div class="update-state"><strong>Update available: {{.Status.Available}}</strong><span class="note">You're running {{orDash .Status.Running}}. Installing verifies the signed release, tests it, swaps it in and watches its health; if anything looks wrong it rolls back by itself.</span></div>
+      <form method="post" action="/updates/apply">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <input type="hidden" name="version" value="{{.Status.Available}}">
+        <button class="btn primary" type="submit" name="do" value="apply">Install {{.Status.Available}}</button>
+      </form>
+    {{else}}
+      <div class="update-state"><strong>You're up to date</strong><span class="note">{{with .Status.Running}}Running {{.}} on{{else}}On{{end}} the {{if .Status.Channel}}{{.Status.Channel}}{{else}}stable{{end}} channel.{{with .Status.Last}} Last update: {{.Version}}, {{.Outcome}}, {{nodeAgo .At}}.{{end}}</span></div>
+    {{end}}
+    <form method="post" action="/updates/check">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn{{if .Status.Available}} ghost{{end}}" type="submit" name="do" value="check" title="Fetch and verify the channel's latest signed release">Check for updates</button>
+    </form>
+  </div>
+
+  {{if .Status.Previous}}
+  <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Roll back</span></div>
+    <p class="note" style="margin:-4px 0 14px">Something wrong since the last update? This puts back the previous build ({{.Status.Previous}}) and checks it starts healthy.</p>
+    <form method="post" action="/updates/rollback">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn ghost" type="submit" name="do" value="rollback">Roll back to {{.Status.Previous}}</button>
+    </form>
+  </div>
+  {{end}}
+  </section>
+
+  <section class="tabpane" data-pane="details" role="tabpanel">
   <div class="grid g-2">
     <div class="panel"><div class="head"><span class="eyebrow">Status</span></div>
       <label class="field"><span class="lb">Running</span><span class="mono">{{orDash .Status.Running}}</span></label>
@@ -33,9 +58,6 @@
       <label class="field"><span class="lb">Previous</span><span class="mono">{{if .Status.Previous}}{{.Status.Previous}}{{else}}none{{end}}</span></label>
       {{with .Status.Pending}}
       <label class="field"><span class="lb">Pending</span><span class="mono">{{.Version}} (from {{.From}}{{if .Rollback}}, rollback{{end}}) &middot; confirms by {{nodeAgo .Deadline}}</span></label>
-      {{if .RestoreFailed}}
-      <div class="flash err" role="status" id="update-restore-failed">Restore of the previous build failed: {{.RestoreFailed}} &mdash; the watchdog will retry.</div>
-      {{end}}
       {{end}}
       {{with .Status.Last}}
       <label class="field"><span class="lb">Last outcome</span><span class="mono">{{.Version}} &middot; {{.Outcome}}{{if .Detail}} ({{.Detail}}){{end}} &middot; {{nodeAgo .At}}</span></label>
@@ -43,38 +65,7 @@
     </div>
   </div>
 
-  <div class="section-label"><span class="eyebrow">Actions</span></div>
-  <div class="grid g-2">
-    <div class="panel"><div class="head"><span class="eyebrow">Check now</span></div>
-      <p class="note" style="margin:-4px 0 14px">Fetch and verify the channel's latest signed release, and record what's available.</p>
-      <form method="post" action="/updates/check">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <button class="btn" type="submit" name="do" value="check">Check now</button>
-      </form>
-    </div>
-
-    <div class="panel"><div class="head"><span class="eyebrow">Apply update</span></div>
-      {{if .Status.Available}}
-      <p class="note" style="margin:-4px 0 14px">Installs {{.Status.Available}}: verifies the signed release, stages it, smoke-tests it, then swaps it in and starts the health guard. The daemon restarts once the guard confirms the new build is healthy.</p>
-      <form method="post" action="/updates/apply">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <input type="hidden" name="version" value="{{.Status.Available}}">
-        <button class="btn primary" type="submit" name="do" value="apply">Apply {{.Status.Available}}</button>
-      </form>
-      {{else}}
-      <p class="note" style="margin:-4px 0">No update available. Check now to look for one.</p>
-      {{end}}
-    </div>
-  </div>
-
-  {{if .Status.Previous}}
-  <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Roll back</span></div>
-    <p class="note" style="margin:-4px 0 14px">Restores the previous build ({{.Status.Previous}}) and starts the health guard to confirm it. Use this if the current build is unhealthy.</p>
-    <form method="post" action="/updates/rollback">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn ghost" type="submit" name="do" value="rollback">Roll back to {{.Status.Previous}}</button>
-    </form>
-  </div>
-  {{end}}
+  <p class="note" style="margin-top:14px">To switch between stable and beta releases, run <span class="mono">sudo trinetra config set update.channel beta</span> (or <span class="mono">stable</span>) on the server.</p>
+  </section>
 </div>
 {{end}}

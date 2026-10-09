@@ -16,15 +16,12 @@ import (
 // ---- link audit: every same-origin href/action/hx-get on a node page is
 // either node-prefixed or in the master-local allowlist ----------------
 
-// sameOriginAttr matches an href/action/hx-get attribute's double-quoted
-// value, mirroring brand_test.go's own regex-over-rendered-HTML convention
-// (this package's tests don't pull in an HTML parser -- see
-// TestNoExternalAssetURLs's externalAssetURL for the precedent).
+// sameOriginAttr matches an href/action/hx-get attribute's double-quoted value, mirroring
+// brand_test.go's own regex-over-rendered-HTML convention.
 var sameOriginAttr = regexp.MustCompile(`(?:href|action|hx-get)\s*=\s*"([^"]*)"`)
 
-// nodeLinkAllowlist is task-3-brief.md's exact master-local allowlist: a
-// same-origin URL on a /n/{node}/... page that ISN'T prefixed with the
-// node's own prefix must start with one of these instead.
+// nodeLinkAllowlist is the master-local allowlist: a same-origin URL on a /n/{node}/...
+// page that ISN'T prefixed with the node's own prefix must start with one of these instead.
 var nodeLinkAllowlist = []string{
 	"/fleet",
 	"/config",
@@ -52,19 +49,10 @@ func allowedNodeLink(url, prefix string) bool {
 	return false
 }
 
-// nodeSwitcherItemTag matches a topbar node-switcher entry's own opening <a>
-// tag (task 6, fleet-web-a's base.html: class="ns-item...", role="option").
-// TestNodeScopedPagesLinkAudit strips these before scanning: the switcher's
-// entire job is linking ACROSS nodes from a /n/{node}/... page -- including
-// back to self ("/") and to other remote nodes' own prefixes -- so its
-// hrefs are a deliberate, reviewed exception to "every same-origin link on
-// a node page is node-prefixed or master-local", not a bug this audit
-// should flag.
+// nodeSwitcherItemTag matches a topbar node-switcher entry's own opening <a> tag.
 var nodeSwitcherItemTag = regexp.MustCompile(`<a[^>]*\bclass="ns-item[^"]*"[^>]*>`)
 
-// TestNodeScopedPagesLinkAudit renders every node-routable page under
-// /n/child1/ and asserts every same-origin href/action/hx-get is either
-// node-prefixed or in the master-local allowlist (task-3-brief.md step 1).
+// TestNodeScopedPagesLinkAudit renders every node-routable page under /n/child1/.
 func TestNodeScopedPagesLinkAudit(t *testing.T) {
 	master := fakeAPI{snap: core.DashboardView{TopCPUContainers: []core.ContainerView{{Name: "svc", State: "running"}}}}
 	child := fakeAPI{snap: core.DashboardView{TopCPUContainers: []core.ContainerView{{Name: "child-svc", State: "running"}}},
@@ -95,10 +83,8 @@ func TestNodeScopedPagesLinkAudit(t *testing.T) {
 	}
 }
 
-// TestNodeScopedNavHidesAdminGroup pins task-3-brief.md's nav ruling: on a
-// remote node page, the whole Admin nav group (heading + Configuration/
-// Channels/Users/Public view) is absent, even for an admin -- those pages
-// are master-local and stay reachable only from the master's own nav.
+// TestNodeScopedNavHidesAdminGroup pins that on a remote node page, the whole Admin nav
+// group (heading + Configuration/Channels/Users/Public view) is absent, even for an admin.
 func TestNodeScopedNavHidesAdminGroup(t *testing.T) {
 	master := fakeAPI{}
 	child := fakeAPI{}
@@ -154,7 +140,7 @@ func TestNodeBannerOnlineState(t *testing.T) {
 		ID: "child1", Name: "child1", State: "online",
 		LastSeen: time.Now().Add(-3 * time.Second).Unix(),
 	})
-	if !strings.Contains(body, "Viewing child1 · replica, updated 3s ago") {
+	if !strings.Contains(body, "Viewing child1 · replica, updated 3s ago") && !strings.Contains(body, "Viewing child1 · replica, updated 4s ago") {
 		t.Errorf("online banner missing exact text:\n%s", body)
 	}
 	if !strings.Contains(body, `<div class="nodebanner" role="status">`) {
@@ -165,9 +151,8 @@ func TestNodeBannerOnlineState(t *testing.T) {
 	}
 }
 
-// TestNodeBannerCatchingUpState pins the "catching up, N behind" text,
-// sourced from NodeSummary.OutboxBytes/OutboxOldest per the controller
-// ruling, with the neutral/amber "nb-behind" accent (never ember).
+// TestNodeBannerCatchingUpState pins the "catching up, N behind" text, sourced from
+// NodeSummary.OutboxBytes/OutboxOldest, with the neutral/amber "nb-behind" accent.
 func TestNodeBannerCatchingUpState(t *testing.T) {
 	body := bannerFor(t, core.NodeSummary{
 		ID: "child1", Name: "child1", State: "catching up",
@@ -184,9 +169,7 @@ func TestNodeBannerCatchingUpState(t *testing.T) {
 	}
 }
 
-// TestNodeBannerLaggingState pins that "lagging" (NodeSummary.State's other
-// behind-but-alive value) renders the same catching-up-shaped sentence and
-// accent as "catching up".
+// TestNodeBannerLaggingState pins that "lagging".
 func TestNodeBannerLaggingState(t *testing.T) {
 	body := bannerFor(t, core.NodeSummary{
 		ID: "child1", Name: "child1", State: "lagging",
@@ -201,8 +184,7 @@ func TestNodeBannerLaggingState(t *testing.T) {
 }
 
 // TestNodeBannerDownState pins the down banner's exact text and its ember
-// (.led.crit / .nb-down) accent -- the ONE state that gets ember, per the
-// controller ruling.
+// (.led.crit / .nb-down) accent -- the ONE state that gets ember.
 func TestNodeBannerDownState(t *testing.T) {
 	lastSeen := time.Date(2024, 1, 1, 14, 2, 0, 0, time.Local).Unix()
 	body := bannerFor(t, core.NodeSummary{ID: "child1", Name: "child1", State: "down", LastSeen: lastSeen})
@@ -217,9 +199,8 @@ func TestNodeBannerDownState(t *testing.T) {
 	}
 }
 
-// TestNodeBannerStaleState pins that "stale" renders the SAME "is down
-// since..." text as "down" (per the brief) but WITHOUT the ember accent --
-// "ember accent only for down".
+// TestNodeBannerStaleState pins that "stale" renders the SAME "is down since..." text as
+// "down" but WITHOUT the ember accent -- "ember accent only for down".
 func TestNodeBannerStaleState(t *testing.T) {
 	lastSeen := time.Date(2024, 1, 1, 14, 2, 0, 0, time.Local).Unix()
 	body := bannerFor(t, core.NodeSummary{ID: "child1", Name: "child1", State: "stale", LastSeen: lastSeen})
@@ -313,22 +294,21 @@ func TestChildTopbarPillUnreachableAfterTwoMinutes(t *testing.T) {
 	}
 }
 
-// TestChildTopbarPillRetryingUnderTwoMinutesStaysHealthy pins the
-// threshold: a "retrying" link under 2 minutes still renders the healthy
-// pill, not the amber one.
+// TestChildTopbarPillRetryingUnderTwoMinutesStaysHealthy pins the threshold: a "retrying"
+// link under 2 minutes still renders the healthy pill, not the amber one.
 func TestChildTopbarPillRetryingUnderTwoMinutesStaysHealthy(t *testing.T) {
 	body := childPillFor(t, &core.LinkView{State: "retrying", LastAck: time.Now().Add(-30 * time.Second).Unix()})
 	if strings.Contains(body, "Master unreachable") {
 		t.Errorf("a retrying link under the 2m threshold must not render the unreachable pill:\n%s", body)
 	}
-	if !strings.Contains(body, "Linked to master · ack 30s ago") {
+	// A second can tick over between building the fixture and rendering it.
+	if !strings.Contains(body, "Linked to master · ack 30s ago") && !strings.Contains(body, "Linked to master · ack 31s ago") {
 		t.Errorf("child pill missing the healthy fallback text:\n%s", body)
 	}
 }
 
-// TestChildTopbarPillAbsentWithoutFleetLink pins that a "child"-role daemon
-// whose Status() reports no Link at all renders no pill (no panic, no
-// empty markup).
+// TestChildTopbarPillAbsentWithoutFleetLink pins that a "child"-role daemon whose Status()
+// reports no Link at all renders no pill (no panic, no empty markup).
 func TestChildTopbarPillAbsentWithoutFleetLink(t *testing.T) {
 	body := childPillFor(t, nil)
 	if strings.Contains(body, "Linked to master") || strings.Contains(body, "Master unreachable") {
@@ -338,10 +318,8 @@ func TestChildTopbarPillAbsentWithoutFleetLink(t *testing.T) {
 
 // ---- solo: no fleet markup leaks at all ---------------------------------
 
-// TestSoloRendersNoFleetMarkup pins the controller ruling directly (solo's
-// golden-file idea is dropped in favor of this positive-absence check):
-// solo renders no switcher, no banner, no child badge, and no "/n/" link
-// anywhere on its dashboard.
+// TestSoloRendersNoFleetMarkup is a positive-absence check: solo renders no switcher, no
+// banner, no child badge, and no "/n/" link anywhere on its dashboard.
 func TestSoloRendersNoFleetMarkup(t *testing.T) {
 	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleSolo, Nodes: 1}}
 	d := fleetTestDeps(t, fakeAPI{fleet: fleet, snap: core.DashboardView{TopCPUContainers: []core.ContainerView{{Name: "svc", State: "running"}}}})
@@ -369,10 +347,8 @@ func TestSoloRendersNoFleetMarkup(t *testing.T) {
 	}
 }
 
-// TestSoloDeposWithNoFleetRendersNoFleetMarkup covers the more common test
-// fixture shape (d.Fleet left nil entirely, as most of this package's
-// pre-fleet tests do) -- fleetRole/resolveFleetPageInfo must collapse that
-// to "solo" too, with the exact same absence of fleet markup.
+// TestSoloDeposWithNoFleetRendersNoFleetMarkup covers the more common test fixture shape
+// (d.Fleet left nil entirely, as most of this package's pre-fleet tests do).
 func TestSoloDepsWithNoFleetRendersNoFleetMarkup(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{snap: core.DashboardView{}}
@@ -394,15 +370,8 @@ func TestSoloDepsWithNoFleetRendersNoFleetMarkup(t *testing.T) {
 
 // ---- Fleet().Status() call budget ---------------------------------------
 
-// countingFleet wraps a core.FleetAPI and counts Status()/Nodes() calls
-// separately, so a test can pin the controller ruling: "call
-// d.Fleet().Status() at most once per request, and only when the role
-// isn't already known from resolveMasterAndNodes" -- and, as of the fleet
-// overview's (task 5) round-1 review, the SAME per-request budget for
-// Nodes(). Either counter pointer may be left nil by a test that only
-// cares about the other one (e.g. the two Status()-only tests below):
-// both methods no-op the increment when their pointer is nil rather than
-// panicking, so a caller only pays for what it wires up.
+// countingFleet wraps a core.FleetAPI and counts Status()/Nodes() calls separately, so a
+// test can pin that d.Fleet().Status() is called at most once per request.
 type countingFleet struct {
 	core.FleetAPI
 	statusCalls *int
@@ -425,13 +394,8 @@ func (c countingFleet) Nodes(f core.NodeFilter) ([]core.NodeSummary, error) {
 
 var _ core.FleetAPI = countingFleet{}
 
-// TestFleetStatusCalledAtMostOnceOnRemoteNodePage pins the ctx-known-master
-// short circuit: a /n/child1/... request's Fleet().Status() call count is
-// 0, both because resolveMasterAndNodes (withNodeRouter) already proves
-// master via Nodes() alone (masterFleetWithChild's roster has 2 entries)
-// and because resolveFleetPageInfo (templates.go) skips its own Status()
-// call entirely once it sees the request already came through the node
-// router.
+// TestFleetStatusCalledAtMostOnceOnRemoteNodePage pins the ctx-known-master short circuit:
+// a /n/child1/... request's Fleet().Status() call count is 0.
 func TestFleetStatusCalledAtMostOnceOnRemoteNodePage(t *testing.T) {
 	n := 0
 	realFleet := masterFleetWithChild()
@@ -456,10 +420,8 @@ func TestFleetStatusCalledAtMostOnceOnRemoteNodePage(t *testing.T) {
 	}
 }
 
-// TestFleetStatusCalledExactlyOnceOnSelfPage pins the budget's other half:
-// an ordinary self-scoped page (never routed through withNodeRouter at
-// all, since its path doesn't start with /n/) calls Fleet().Status()
-// exactly once, from resolveFleetPageInfo.
+// TestFleetStatusCalledExactlyOnceOnSelfPage pins the budget's other half: an ordinary
+// self-scoped page.
 func TestFleetStatusCalledExactlyOnceOnSelfPage(t *testing.T) {
 	n := 0
 	realFleet := masterFleetWithChild()
@@ -479,13 +441,10 @@ func TestFleetStatusCalledExactlyOnceOnSelfPage(t *testing.T) {
 	}
 }
 
-// ---- Task 4 carry-overs from the Task 3 review --------------------------
+// ---- child topbar pill / node badge edge cases ----------------------------
 
-// TestChildTopbarPillConnectingWhenNeverAcked pins the controller ruling: a
-// child link that has never once acked (LastAck<=0) but isn't (yet)
-// "retrying" long enough to count as linkUnreachable must not render the
-// confusing "Linked to master · ack never" -- it renders "Connecting to
-// master" instead.
+// TestChildTopbarPillConnectingWhenNeverAcked pins that a child link that has never once
+// acked (LastAck<=0) but isn't.
 func TestChildTopbarPillConnectingWhenNeverAcked(t *testing.T) {
 	body := childPillFor(t, &core.LinkView{State: "linked", LastAck: 0})
 	if !strings.Contains(body, "Connecting to master") {
@@ -499,12 +458,8 @@ func TestChildTopbarPillConnectingWhenNeverAcked(t *testing.T) {
 	}
 }
 
-// TestChildBadgeAbsentWhenFleetStatusErrors pins the Task 3 review
-// carry-over: when Fleet().Status() itself errors (a transient
-// control-socket hiccup, or an old daemon that doesn't implement it yet),
-// resolveFleetPageInfo collapses that to "solo" (see its own doc), so no
-// child link pill/badge renders at all -- never one built from a
-// zero-valued/stale FleetStatus.
+// TestChildBadgeAbsentWhenFleetStatusErrors pins that when Fleet().Status() itself errors
+// (a transient control-socket hiccup, or an old daemon that doesn't implement it yet).
 func TestChildBadgeAbsentWhenFleetStatusErrors(t *testing.T) {
 	fleet := &fakeFleet{statusErr: errors.New("control socket unavailable")}
 	d := fleetTestDeps(t, fakeAPI{fleet: fleet})
@@ -523,13 +478,10 @@ func TestChildBadgeAbsentWhenFleetStatusErrors(t *testing.T) {
 	}
 }
 
-// ---- Task 4: <body data-node-prefix> ------------------------------------
+// ---- <body data-node-prefix> ----------------------------------------
 
-// TestBodyDataNodePrefixOnNodeScopedPage pins the controller ruling: a
-// master's node-scoped page (/n/{id}/...) renders <body data-node-prefix>
-// with that node's URL prefix, so assets/app.js's nodeURL() helper can
-// prepend it to the page's own same-origin data fetches (/api/*, /events)
-// instead of hitting the master's own data.
+// TestBodyDataNodePrefixOnNodeScopedPage pins that a master's node-scoped page
+// (/n/{id}/...) renders <body data-node-prefix> with that node's URL prefix.
 func TestBodyDataNodePrefixOnNodeScopedPage(t *testing.T) {
 	d := nodeScopedDeps(t, fakeAPI{}, fakeAPI{})
 	h := newHandler(d)
@@ -546,9 +498,8 @@ func TestBodyDataNodePrefixOnNodeScopedPage(t *testing.T) {
 	}
 }
 
-// TestBodyDataNodePrefixEmptyOnSelfPage pins the other half: every
-// self-scoped page (solo, a master's own view, a child's own view) renders
-// the attribute present but empty, so nodeURL() is a no-op there.
+// TestBodyDataNodePrefixEmptyOnSelfPage pins the other half: every self-scoped page (solo,
+// a master's own view, a child's own view) renders the attribute present but empty.
 func TestBodyDataNodePrefixEmptyOnSelfPage(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{}
@@ -566,30 +517,14 @@ func TestBodyDataNodePrefixEmptyOnSelfPage(t *testing.T) {
 	}
 }
 
-// ---- Task 4: app.js's same-origin data calls go through nodeURL() ------
+// ---- app.js's same-origin data calls go through nodeURL() ---------------
 
-// appJSNodeScopedLiteral matches a quoted string literal that is one of
-// this app's node-scoped data URLs (/api/* or the bare /events -- never
-// /public/events, /enroll/*, /login/*, /logout, which are master-local and
-// must always target the master regardless of node scope), capturing
-// whether it's immediately preceded by "nodeURL(".
-//
-// Task 4 review carry-over (task-5-brief.md): this regex ONLY catches a
-// quoted string literal ('/api/...' or "/api/..."), not a same-origin URL
-// built any other way (string concatenation, a template literal, a path
-// assembled from a variable) -- it would silently miss a future node-scoped
-// fetch written in one of those shapes. It's sufficient for every call site
-// in app.js today (see the doc above), but a future addition that builds
-// its URL differently needs its own check, not just this scan.
+// appJSNodeScopedLiteral matches a quoted string literal that is one of this app's
+// node-scoped data URLs.
 var appJSNodeScopedLiteral = regexp.MustCompile(`(nodeURL\(\s*)?['"](/api/[^'"]*|/events)['"]`)
 
-// TestAppJSDataFetchesGoThroughNodeURL pins the controller ruling: every
-// fetch()/EventSource() app.js makes against THIS daemon's own data API
-// (/api/series, /api/container/logs, /api/downtime, /events -- whether the
-// literal path sits directly in the call or is first assembled into a
-// `var url=...` the call later references) must be wrapped in nodeURL(...),
-// so a remote node's page (base.html's <body data-node-prefix>) reads that
-// node's own data instead of silently falling back to the master's.
+// TestAppJSDataFetchesGoThroughNodeURL pins that every fetch()/EventSource() app.js makes
+// against THIS daemon's own data API.
 func TestAppJSDataFetchesGoThroughNodeURL(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -609,15 +544,8 @@ func TestAppJSDataFetchesGoThroughNodeURL(t *testing.T) {
 	for _, m := range matches {
 		wrapped, path := m[1], m[2]
 		if path == "/api/fleet/nodes" {
-			// Deliberately exempt (task 6, fleet-web-a): the Ctrl-K palette
-			// fetches the FLEET roster, a master-local endpoint
-			// (node_scope.go's masterLocalPrefixes lists "/fleet") with no
-			// per-node counterpart to route to in the first place -- the
-			// same reason /fleet's own links are never nodeURL(...)-wrapped
-			// either. It must still be an absolute literal, never built
-			// through nodeURL(...): app.js's own comment at the fetch call
-			// site says so, and TestNodePaletteFetchesFleetNodesAbsolute
-			// pins it directly.
+			// Deliberately exempt: the Ctrl-K palette fetches the FLEET roster, a master-local
+			// endpoint.
 			continue
 		}
 		if wrapped == "" {
@@ -630,11 +558,10 @@ func TestAppJSDataFetchesGoThroughNodeURL(t *testing.T) {
 	}
 }
 
-// ---- Task 6: topbar node switcher + Ctrl-K palette ----------------------
+// ---- topbar node switcher + Ctrl-K palette ---------------------------
 
-// switcherFixtureNodes is this section's shared roster: self (online),
-// web1 (online), db1 (down) -- enough to exercise self-first/down-next/
-// rest-by-name ordering without a 20-node roster.
+// switcherFixtureNodes is this section's shared roster: self (online), web1 (online), db1
+// (down).
 func switcherFixtureNodes() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: core.SelfNodeID, Self: true, State: "online"},
@@ -643,9 +570,8 @@ func switcherFixtureNodes() []core.NodeSummary {
 	}
 }
 
-// switcherTestDeps builds a master Deps whose fleet roster is nodes, with a
-// fake per-node core.API registered for every non-self id in nodes (so a
-// /n/<id>/... page renders successfully).
+// switcherTestDeps builds a master Deps whose fleet roster is nodes, with a fake per-node
+// core.API registered for every non-self id in nodes.
 func switcherTestDeps(t *testing.T, nodes []core.NodeSummary) Deps {
 	t.Helper()
 	perNode := map[string]core.API{}
@@ -658,10 +584,8 @@ func switcherTestDeps(t *testing.T, nodes []core.NodeSummary) Deps {
 	return fleetTestDeps(t, masterFakeAPI(fleet, perNode))
 }
 
-// TestNodeSwitcherListsNodesAndPreservesPageType pins the switcher's core
-// contract on a master: the topbar button/listbox render (role="listbox",
-// no <select>), list every roster node with its own page-type-preserving
-// href, and mark the current node.
+// TestNodeSwitcherListsNodesAndPreservesPageType pins the switcher's core contract on a
+// master: the topbar button/listbox render (role="listbox", no <select>).
 func TestNodeSwitcherListsNodesAndPreservesPageType(t *testing.T) {
 	d := switcherTestDeps(t, switcherFixtureNodes())
 	rr := fleetGetAsViewer(t, d, "/n/web1/monitoring")
@@ -709,10 +633,8 @@ func TestNodeSwitcherListsNodesAndPreservesPageType(t *testing.T) {
 	}
 }
 
-// TestNodeSwitcherMasterLocalPageSwitchesToDashboard pins the ruling:
-// viewing a master-local page (e.g. /fleet) from ANY node scope, every
-// switcher entry links to that node's dashboard ("/" or "/n/<id>/"), not a
-// (nonexistent) node-scoped /fleet.
+// TestNodeSwitcherMasterLocalPageSwitchesToDashboard pins that viewing a master-local page
+// (e.g. /fleet) from ANY node scope, every switcher entry links to that node's dashboard.
 func TestNodeSwitcherMasterLocalPageSwitchesToDashboard(t *testing.T) {
 	d := switcherTestDeps(t, switcherFixtureNodes())
 	rr := fleetGetAsViewer(t, d, "/fleet")
@@ -747,8 +669,8 @@ func TestNodePaletteMarkupPresentOnMaster(t *testing.T) {
 	}
 }
 
-// TestNodeSwitcherAndPaletteAbsentOnSoloAndChild pins the controller ruling:
-// "Solo/child: no switcher, no palette."
+// TestNodeSwitcherAndPaletteAbsentOnSoloAndChild pins that solo and child
+// daemons get no switcher and no palette.
 func TestNodeSwitcherAndPaletteAbsentOnSoloAndChild(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -774,11 +696,8 @@ func TestNodeSwitcherAndPaletteAbsentOnSoloAndChild(t *testing.T) {
 	}
 }
 
-// TestNodePaletteFetchesFleetNodesAbsolute pins the ruling: the palette's
-// JS must fetch the literal absolute '/api/fleet/nodes' (master-local, no
-// per-node counterpart), never nodeURL('/api/fleet/nodes') -- and
-// credentials:'same-origin', matching every other same-origin fetch in this
-// file.
+// TestNodePaletteFetchesFleetNodesAbsolute pins that the palette's JS must fetch the
+// literal absolute '/api/fleet/nodes' (master-local, no per-node counterpart).
 func TestNodePaletteFetchesFleetNodesAbsolute(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -793,13 +712,8 @@ func TestNodePaletteFetchesFleetNodesAbsolute(t *testing.T) {
 	}
 }
 
-// TestNodeSwitcherFleetStatusCallBudgetUnchanged pins that building the
-// switcher costs no EXTRA Fleet() round trip: it reads through the same
-// request-scoped fleetMemo every other roster lookup already shares
-// (fleet_memo.go), so TestFleetStatusCalledExactlyOnceOnSelfPage/
-// TestFleetStatusCalledAtMostOnceOnRemoteNodePage's existing budgets still
-// hold with the switcher wired in -- this test only pins Nodes(), the call
-// the switcher itself actually makes.
+// TestNodeSwitcherFleetStatusCallBudgetUnchanged pins that building the switcher costs no
+// EXTRA Fleet() round trip.
 func TestNodeSwitcherFleetStatusCallBudgetUnchanged(t *testing.T) {
 	n := 0
 	realFleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: switcherFixtureNodes()}
@@ -815,11 +729,10 @@ func TestNodeSwitcherFleetStatusCallBudgetUnchanged(t *testing.T) {
 	}
 }
 
-// ---- Task 6, round 1 review fixes ---------------------------------------
+// ---- switcher/palette regressions --------------------------------------
 
-// TestNodeSwitcherPreservesQueryString pins round-1 review item (a): a page
-// with a query string (e.g. /history?metric=cpu) keeps it when the switcher
-// switches node -- both for the self entry and a remote node's entry.
+// TestNodeSwitcherPreservesQueryString pins that item (a): a page with a query string (e.g.
+// /history?metric=cpu) keeps it when the switcher switches node.
 func TestNodeSwitcherPreservesQueryString(t *testing.T) {
 	d := switcherTestDeps(t, switcherFixtureNodes())
 	rr := fleetGetAsViewer(t, d, "/n/web1/history?metric=cpu")
@@ -838,9 +751,8 @@ func TestNodeSwitcherPreservesQueryString(t *testing.T) {
 	}
 }
 
-// TestNodeSwitcherMasterLocalPageDropsQueryString pins the other half of
-// (a): a master-local page's own query string (e.g. /fleet?state=down) is
-// NOT carried onto a node's dashboard, which has nothing to do with it.
+// TestNodeSwitcherMasterLocalPageDropsQueryString pins the other half of (a): a
+// master-local page's own query string.
 func TestNodeSwitcherMasterLocalPageDropsQueryString(t *testing.T) {
 	d := switcherTestDeps(t, switcherFixtureNodes())
 	rr := fleetGetAsViewer(t, d, "/fleet?state=down")
@@ -853,9 +765,8 @@ func TestNodeSwitcherMasterLocalPageDropsQueryString(t *testing.T) {
 			t.Errorf("expected switcher entry %q with no leftover query string:\n%s", want, body)
 		}
 	}
-	// The health strip's own "?state=down" count links are unrelated and
-	// expected to remain -- scope the negative assertion to the switcher's
-	// own entries specifically, not a blanket "state=down" substring check.
+	// The health strip's own "?state=down" count links are unrelated and expected to remain --
+	// scope the negative assertion to the switcher's own entries specifically.
 	for _, unwanted := range []string{`href="/?state=down"`, `href="/n/web1/?state=down"`, `href="/n/db1/?state=down"`} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("switcher must not carry /fleet's own query string onto a node's dashboard, found %q:\n%s", unwanted, body)
@@ -864,18 +775,11 @@ func TestNodeSwitcherMasterLocalPageDropsQueryString(t *testing.T) {
 }
 
 // paletteFocusableFunc matches app.js's paletteFocusable() function body --
-// TestNodePaletteFocusTrapIncludesFooterLink is a static (source-scan)
-// check, mirroring this file's existing appJSNodeScopedLiteral-style tests,
-// since this package's tests don't drive a real browser/DOM.
+// TestNodePaletteFocusTrapIncludesFooterLink is a static (source-scan) check.
 var paletteFocusableFunc = regexp.MustCompile(`(?s)function paletteFocusable\(\)\{.*?\n    \}`)
 
-// TestNodePaletteFocusTrapIncludesFooterLink pins round-1 review's IMPORTANT
-// fix: the palette's focus trap must include its own footer link
-// ("View all in Fleet ->", #nodePaletteViewAll) as the true last element in
-// the Tab cycle -- every focusable element in an aria-modal dialog must be
-// keyboard-reachable. This is a static assertion (app.js's paletteFocusable
-// function references both the .ns-item results AND #nodePaletteViewAll),
-// not a live DOM/keyboard simulation.
+// TestNodePaletteFocusTrapIncludesFooterLink pins that review's IMPORTANT fix: the
+// palette's focus trap must include its own footer link.
 func TestNodePaletteFocusTrapIncludesFooterLink(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -883,9 +787,8 @@ func TestNodePaletteFocusTrapIncludesFooterLink(t *testing.T) {
 	}
 	src := string(b)
 
-	// #nodePaletteViewAll's id lives in base.html, not app.js -- checked
-	// directly (app.js only ever REFERENCES the id via getElementById,
-	// asserted below).
+	// #nodePaletteViewAll's id lives in base.html, not app.js -- checked directly (app.js only
+	// ever REFERENCES the id via getElementById, asserted below).
 	htmlB, err := templatesFS.ReadFile("templates/base.html")
 	if err != nil {
 		t.Fatalf("read base.html: %v", err)
@@ -906,16 +809,14 @@ func TestNodePaletteFocusTrapIncludesFooterLink(t *testing.T) {
 	}
 
 	// The trap handler itself must call paletteFocusable(), not rebuild its
-	// own (footer-link-less) list inline -- the exact bug round-1 review
-	// found.
+	// own (footer-link-less) list inline.
 	if !strings.Contains(src, "var focusable=paletteFocusable();") {
 		t.Error("app.js: the Tab-trap keydown handler must build its cycle from paletteFocusable(), not an inline list that leaves the footer link out")
 	}
 }
 
-// TestNodePaletteOpeningClosesSwitcher pins round-1 review item (b): opening
-// the palette (Ctrl/Cmd-K) must close the switcher dropdown first, so the
-// two elements' Escape handlers can never both be live at once.
+// TestNodePaletteOpeningClosesSwitcher pins that item (b): opening the palette (Ctrl/Cmd-K)
+// must close the switcher dropdown first.
 func TestNodePaletteOpeningClosesSwitcher(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -926,22 +827,16 @@ func TestNodePaletteOpeningClosesSwitcher(t *testing.T) {
 	if i < 0 {
 		t.Fatal("app.js: missing function openPalette(){...}")
 	}
-	// The function body's first statement should be the closeSwitcher()
-	// call (checked within a short window after the opening brace so this
-	// doesn't just match some unrelated later call).
+	// The function body's first statement should be the closeSwitcher() call.
 	window := src[i : i+200]
 	if !strings.Contains(window, "closeSwitcher();") {
 		t.Errorf("app.js: openPalette() must call closeSwitcher() so opening the palette closes the switcher dropdown:\n%s", window)
 	}
 }
 
-// ---- task C6: switcher polish (recent nodes + page-type jump) -------------
+// ---- switcher polish (recent nodes + page-type jump) -------------------
 
-// TestNodePaletteRecentNodesUseLocalStorageWithTryCatch pins the ruling: the
-// palette's recent-nodes list is capped at 5 and every localStorage read AND
-// write is wrapped in its own try/catch, so a private-browsing tab or a
-// blocked/full storage quota degrades to "no recent nodes" rather than
-// throwing out of the click/load handler.
+// TestNodePaletteRecentNodesUseLocalStorageWithTryCatch pins that the palette's.
 func TestNodePaletteRecentNodesUseLocalStorageWithTryCatch(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -998,9 +893,8 @@ func TestNodePaletteRecentNodesUseLocalStorageWithTryCatch(t *testing.T) {
 	}
 }
 
-// TestNodePalettePageTypeJumpParsesTrailingPageWord pins the ruling: typing
-// "<name> <pagetype>" (e.g. "web1 history") targets that specific page type
-// on the matched node(s), for exactly the five node-routable page types.
+// TestNodePalettePageTypeJumpParsesTrailingPageWord pins that typing "<name> <pagetype>"
+// (e.g. "web1 history") targets that specific page type on the matched node(s).
 func TestNodePalettePageTypeJumpParsesTrailingPageWord(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -1017,9 +911,7 @@ func TestNodePalettePageTypeJumpParsesTrailingPageWord(t *testing.T) {
 	if !strings.Contains(src, "function pageTypePath(t){") {
 		t.Error("app.js: missing function pageTypePath(t){...} to render a page-type's own path")
 	}
-	// hrefFor must accept and use the parsed page type, not just
-	// currentTargetPath() -- otherwise a jump would still land on whatever
-	// page the palette happened to be opened from.
+	// hrefFor must accept and use the parsed page type, not just currentTargetPath().
 	if !strings.Contains(src, "function hrefFor(node,pageType){") {
 		t.Error("app.js: hrefFor() must take a pageType parameter")
 	}

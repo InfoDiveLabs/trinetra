@@ -22,10 +22,8 @@ const helpText = `commands:
 /version -- running version and any available update
 /help -- this message`
 
-// handleCommand dispatches an inbound Telegram command to its renderer. c is
-// the live config (thresholds for renderStatus's ok/warn/crit markers); it
-// may be nil (renderStatus degrades to config.Default() rather than
-// panicking), mirroring the existing nil-store degrade pattern below.
+// handleCommand dispatches an inbound Telegram command to its renderer. c is the live
+// config (thresholds for renderStatus's ok/warn/crit markers); it may be nil.
 func handleCommand(text string, store SampleStore, snap Snapshot, c *config.Config) string {
 	fields := strings.Fields(text)
 	if len(fields) == 0 {
@@ -90,9 +88,8 @@ func inQuietHours(spec string, now time.Time) bool {
 	return h >= start || h < end // wraps midnight
 }
 
-// renderVersionReply is Telegram /version (spec §2 Commands, R23): the
-// running version and, when the last check found a newer release this host
-// accepts (update.State.Available), "update available: X".
+// renderVersionReply is Telegram /version: the running version and, when the last check
+// found a newer release this host accepts (update.State.Available), "update available: X".
 func renderVersionReply(p updatePaths) string {
 	out := "trinetra " + version.String()
 	if st, err := update.LoadState(p.dir()); err == nil {

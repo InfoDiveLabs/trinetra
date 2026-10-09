@@ -40,8 +40,7 @@ func writeAllReleaseFiles(t *testing.T, dir string) {
 	}
 }
 
-// captureStdout runs fn with os.Stdout redirected to a pipe and returns
-// what was written.
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what was written.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -124,10 +123,8 @@ func TestManifestRequiresExactly9Files(t *testing.T) {
 	}
 }
 
-// TestManifestRejectsUnexpectedReleaseFile covers review F4: a
-// trinetra*-linux-* file that is not one of the 9 expected names must be
-// rejected, not silently skipped (e.g. a stray checksum sidecar or a
-// leftover build).
+// TestManifestRejectsUnexpectedReleaseFile covers review F4: a trinetra*-linux-* file that
+// is not one of the 9 expected names must be rejected, not silently skipped.
 func TestManifestRejectsUnexpectedReleaseFile(t *testing.T) {
 	dir := t.TempDir()
 	writeAllReleaseFiles(t, dir)
@@ -148,9 +145,8 @@ func TestManifestRejectsUnexpectedReleaseFile(t *testing.T) {
 	}
 }
 
-// TestManifestIgnoresNonReleaseFiles covers review F4: files that are not
-// named trinetra*-linux-* (checksums.txt, darwin binaries, ...) are simply
-// not considered, not treated as errors.
+// TestManifestIgnoresNonReleaseFiles covers review F4: files that are not named
+// trinetra*-linux-* (checksums.txt, darwin binaries, ...) are simply not considered.
 func TestManifestIgnoresNonReleaseFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeAllReleaseFiles(t, dir)
@@ -197,11 +193,8 @@ func TestMaintKeyfileEncryptDecrypt(t *testing.T) {
 	}
 }
 
-// TestReadEncryptedKeyRejectsMalformedEnvelopeWithoutPanicking covers
-// review M3: every envelope field is bounds-checked before use (exact
-// scrypt N/r/p, exact salt/nonce lengths), so a hand-edited or corrupted
-// key file can only be rejected, never panic (aead.Open panics on a nonce
-// of the wrong length, and a huge N is an OOM vector).
+// TestReadEncryptedKeyRejectsMalformedEnvelopeWithoutPanicking covers review M3: every
+// envelope field is bounds-checked before use.
 func TestReadEncryptedKeyRejectsMalformedEnvelopeWithoutPanicking(t *testing.T) {
 	dir := t.TempDir()
 	good := filepath.Join(dir, "good.key")
@@ -267,9 +260,8 @@ func TestReadNewPassphraseRejectsEmpty(t *testing.T) {
 	}
 }
 
-// TestWriteEncryptedKeyRejectsEmptyPassphrase covers review M1 at the
-// lower-level entry point too, and confirms no partial key file is left
-// behind.
+// TestWriteEncryptedKeyRejectsEmptyPassphrase covers review M1 at the lower-level entry
+// point too, and confirms no partial key file is left behind.
 func TestWriteEncryptedKeyRejectsEmptyPassphrase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "maint.key")
 	if _, err := writeEncryptedKey(path, nil); err == nil {
