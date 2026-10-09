@@ -87,7 +87,7 @@ func TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips(t *te
 		">resolved<", "swap high on web1", ">warning<", "web1", "web2",
 		silenceTimeText(1000), // incidentTimeText(1000) in master-local zone
 		">1h<",                // incidentDurationText(5400)
-		"delivered 1", "suppressed 1",
+		">1 sent<", ">1 held<",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /fleet/incidents: missing %q\nbody:\n%s", want, body)
@@ -130,13 +130,13 @@ func TestFleetIncidentsListChipsCountFromTimelineWhenMemberFlagsUnset(t *testing
 		t.Fatalf("GET /fleet/incidents status = %d, want 200, body: %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "delivered 1") {
+	if !strings.Contains(body, ">1 sent<") {
 		t.Errorf("GET /fleet/incidents: delivered chip did not count the master-dispatched Timeline event:\n%s", body)
 	}
-	if !strings.Contains(body, "suppressed 1") {
+	if !strings.Contains(body, ">1 held<") {
 		t.Errorf("GET /fleet/incidents: suppressed chip did not count the silence Timeline event:\n%s", body)
 	}
-	if strings.Contains(body, "delivered 0") || strings.Contains(body, "suppressed 0") {
+	if strings.Contains(body, ">0 sent<") || strings.Contains(body, ">0 held<") {
 		t.Errorf("GET /fleet/incidents: chips still show 0/0 (B5 regression):\n%s", body)
 	}
 }

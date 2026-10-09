@@ -398,6 +398,17 @@ and one or more **targets** saying what it depends on:
 | `unit:<unit>[@node]` | A systemd unit (alert key `service:<unit>`). |
 | `mount:<path>[@node]` | A filesystem (alert key `disk:<path>`). |
 
+On the Services form you pick targets from a checklist of every server's
+containers and system services, plus a "whole server" box per server. Tags,
+disks and anything not running right now go in **Other targets**, one per line,
+using the forms above.
+
+You can also start from **Monitoring**: as an admin, tick containers or system
+services (on this server or any fleet node), then **Add to status page**. Choose
+**New service** to create one from the selection (give it a name and, optionally,
+an existing or new group), or **Add to existing** to add the selection to a
+service you already have. Items that service already watches are skipped.
+
 The daemon evaluates every service on the slow sampler tick (`sample_interval`,
 60 s by default). The worst thing found across a service's targets wins:
 

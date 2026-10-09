@@ -27,6 +27,11 @@ var navIcons = map[string]string{
 	"file":      `<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>`,
 	"list":      `<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>`,
 	"more":      `<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>`,
+	// service states on the status page
+	"operational": `<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>`,
+	"degraded":    `<path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>`,
+	"outage":      `<circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/>`,
+	"maintenance": `<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>`,
 }
 
 // icon renders the named nav icon as inline SVG; unknown names render nothing.
@@ -42,4 +47,15 @@ func icon(name string) template.HTML {
 	return template.HTML(b.String())
 }
 
-func init() { funcMap["icon"] = icon }
+// orDash renders an unknown value as an em dash instead of a blank.
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "—"
+	}
+	return s
+}
+
+func init() {
+	funcMap["icon"] = icon
+	funcMap["orDash"] = orDash
+}

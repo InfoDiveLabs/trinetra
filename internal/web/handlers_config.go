@@ -262,7 +262,7 @@ func buildConfigPageData(r *http.Request, d Deps) ConfigPageData {
 	for i := range hours {
 		hours[i] = i
 	}
-	pageData := newPageData(r, d, "Configuration", "Thresholds, monitors, schedules, quiet hours")
+	pageData := newPageData(r, d, "Server settings", "Alerts, what to monitor, reports and data")
 	var managedFragment map[string]string
 	if pageData.Link != nil {
 		managedFragment = pageData.Link.Managed

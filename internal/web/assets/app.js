@@ -49,6 +49,14 @@
   // active theme -- call it at chart-build time, not once at load, so a
   // rebuild after a theme toggle (see the 'sw-theme' listeners below) picks
   // up the new theme's colors.
+  function swCompact(v){
+    if(v==null) return '';
+    var a=Math.abs(v);
+    if(a>=1e9) return +(v/1e9).toFixed(1)+'G';
+    if(a>=1e6) return +(v/1e6).toFixed(1)+'M';
+    if(a>=1e4) return +(v/1e3).toFixed(0)+'k';
+    return +v.toFixed(2)+'';
+  }
   function swAxesOpt(){
     var c=swAxisColors();
     var ax={stroke:c.stroke,ticks:{stroke:c.grid},grid:{stroke:c.grid}};
@@ -170,6 +178,7 @@
   // only for the fixed chart/action templates below, never for data-* values.
   function staticInto(parent,html){var t=document.createElement('div'); t.innerHTML=html; while(t.firstChild)parent.appendChild(t.firstChild);}
   document.addEventListener('click',function(e){
+    if(e.target.closest('.pick')) return;
     var row=e.target.closest('[data-detail]'); if(!row) return;
     var d=row.dataset, kind=d.kind||'item';
     var role=document.body.dataset.role||'admin';
@@ -297,8 +306,64 @@
   document.addEventListener('change',function(e){ if(e.target.matches('[data-autosubmit]')&&e.target.form){ e.target.form.submit(); } });
 
   // ---- tabs / filter / chips / switches ----
-  document.addEventListener('click',function(e){var b=e.target.closest('.tabs button');if(!b)return;var w=b.closest('[data-tabs]');w.querySelectorAll('.tabs button').forEach(function(x){x.classList.toggle('on',x===b)});w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===b.dataset.tab)});});
+  function swShowTab(w,name){
+    var found=false;
+    w.querySelectorAll('.tabs button[data-tab]').forEach(function(x){var on=x.dataset.tab===name; if(on) found=true; x.classList.toggle('on',on); x.setAttribute('aria-selected',on?'true':'false');});
+    if(!found) return false;
+    w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===name)});
+    return true;
+  }
+  document.addEventListener('click',function(e){var b=e.target.closest('.tabs button[data-tab]');if(!b)return;var w=b.closest('[data-tabs]');if(!w)return;swShowTab(w,b.dataset.tab);if(w.hasAttribute('data-tabs-hash')) history.replaceState(null,'','#'+b.dataset.tab);});
+  // Settings-style tabs live in the URL (#alerts), and a field that fails
+  // validation on save brings its tab forward so the browser can show why.
+  function swRestoreTabs(root){ (root||document).querySelectorAll('[data-tabs-hash]').forEach(function(w){ if(location.hash) swShowTab(w,location.hash.slice(1)); }); }
+  swRestoreTabs();
+  // htmx re-renders a whole tabbed page after an action; keep the open tab.
+  document.addEventListener("htmx:afterSwap",function(){ swRestoreTabs(); });
+  window.addEventListener('hashchange',function(){ swRestoreTabs(); });
+  document.addEventListener('invalid',function(e){var p=e.target.closest&&e.target.closest('.tabpane');if(!p||p.classList.contains('on'))return;var w=p.closest('[data-tabs]');if(w) swShowTab(w,p.dataset.pane);},true);
   document.querySelectorAll('[data-filter]').forEach(function(inp){inp.addEventListener('input',function(){var q=inp.value.toLowerCase();document.querySelectorAll(inp.dataset.filter).forEach(function(tbl){tbl.querySelectorAll('tbody tr').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>-1?'':'none';});});});});
+  var pickBar=document.getElementById('pick-bar');
+  function pickBoxes(){return document.querySelectorAll('input[name=target][form=sp-add]');}
+  function pickSync(){
+    if(!pickBar) return;
+    var n=0; pickBoxes().forEach(function(b){if(b.checked)n++;});
+    document.querySelectorAll('[data-pick-count]').forEach(function(el){el.textContent=n;});
+    pickBar.hidden=n===0;
+  }
+  document.addEventListener('change',function(e){
+    var t=e.target;
+    if(t.matches('[data-pick-all]')){
+      document.querySelectorAll(t.dataset.pickAll+' tbody tr').forEach(function(tr){
+        var b=tr.querySelector('input[name=target]'); if(b&&tr.style.display!=='none') b.checked=t.checked;
+      });
+    }
+    if(t.matches('[data-pick-mode]')){
+      t.form.querySelectorAll('[data-pick-for]').forEach(function(fs){var on=fs.dataset.pickFor===t.value; fs.disabled=!on; fs.hidden=!on;});
+    }
+    if(t.name==='target'||t.matches('[data-pick-all]')) pickSync();
+  });
+  document.addEventListener('click',function(e){
+    var t=e.target.closest('[data-pick-open],[data-pick-close],[data-pick-clear]'); if(!t) return;
+    if(t.hasAttribute('data-pick-open')){
+      var dlg=document.querySelector(t.dataset.pickOpen); if(!dlg||!dlg.showModal) return;
+      dlg.showModal();
+      var first=dlg.querySelector('fieldset:not([disabled]) input, fieldset:not([disabled]) select'); if(first) first.focus();
+    }else if(t.hasAttribute('data-pick-close')){
+      var d=t.closest('dialog'); if(d) d.close();
+    }else{
+      pickBoxes().forEach(function(b){b.checked=false;});
+      document.querySelectorAll('[data-pick-all]').forEach(function(b){b.checked=false;});
+      pickSync();
+    }
+  });
+  document.addEventListener('input',function(e){
+    var t=e.target; if(!t.matches('[data-pick-filter]')) return;
+    var q=t.value.toLowerCase();
+    t.closest('.pick-node').querySelectorAll('.pick-cols .pick-row').forEach(function(r){r.style.display=r.textContent.toLowerCase().indexOf(q)>-1?'':'none';});
+  });
+  window.addEventListener('pageshow',pickSync);
+  pickSync();
   document.addEventListener('click',function(e){var c=e.target.closest('.chip');if(c&&c.parentElement&&c.parentElement.classList.contains('chips')){c.parentElement.querySelectorAll('.chip').forEach(function(x){x.classList.remove('on')});c.classList.add('on');}});
   // fleet admin (task 7): a generic "copy this element's text" button --
   // data-copy names the id of the element to copy (fleet_admin.html's
@@ -434,7 +499,12 @@
       if(!el||!window.uPlot) return null;
       var uSeries=[{}];
       series.forEach(function(lbl,i){uSeries.push({label:lbl,stroke:colors[i],width:1.8,fill:colors[i]+'22'});});
-      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:swAxesOpt()};
+      var axes=swAxesOpt();
+      axes[1]=Object.assign({},axes[1],{size:52,values:function(u,vals){return vals.map(swCompact);}});
+      // At least a 5-minute window from the data itself: for a single
+      // sample uPlot pads the range by ~1000 days.
+      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:axes,
+        scales:{x:{time:true,range:function(u,min,max){ var d=u.data[0]; if(!d||!d.length) return [min,max]; var hi=d[d.length-1]; return [Math.min(d[0],hi-300),hi]; }}}};
       var data=[[]]; series.forEach(function(){data.push([]);});
       var u=new uPlot(opts,data,el);
       charts[id]=u;

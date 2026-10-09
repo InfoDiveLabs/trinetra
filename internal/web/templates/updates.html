@@ -22,10 +22,10 @@
   <div class="section-label"><span class="eyebrow">Self-update</span></div>
   <div class="grid g-2">
     <div class="panel"><div class="head"><span class="eyebrow">Status</span></div>
-      <label class="field"><span class="lb">Running</span><span class="mono">{{.Status.Running}}</span></label>
-      <label class="field"><span class="lb">Channel</span><span class="mono">{{.Status.Channel}}</span></label>
-      <label class="field"><span class="lb">Source</span><span class="mono">{{.Status.Source}}</span></label>
-      <label class="field"><span class="lb">Floor</span><span class="mono">{{.Status.Floor}}</span></label>
+      <label class="field"><span class="lb">Running</span><span class="mono">{{orDash .Status.Running}}</span></label>
+      <label class="field"><span class="lb">Channel</span><span class="mono">{{orDash .Status.Channel}}</span></label>
+      <label class="field"><span class="lb">Source</span><span class="mono">{{orDash .Status.Source}}</span></label>
+      <label class="field"><span class="lb">Floor</span><span class="mono">{{orDash .Status.Floor}}</span></label>
       <label class="field"><span class="lb">Release keys</span><span class="mono">{{if .Status.KeysLoaded}}loaded{{else}}not loaded{{end}}</span></label>
     </div>
     <div class="panel"><div class="head"><span class="eyebrow">Versions</span></div>

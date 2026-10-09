@@ -209,7 +209,7 @@ func publicPageHandler(d Deps) http.HandlerFunc {
 			Availability:     snap.Availability,
 		}
 		if pub, ok := publicStatusData(d); ok {
-			sdata := StatusPublicPageData{PublicPageData: data, Status: pub, OverallLabel: overallLabel[pub.Overall], Groups: groupPublicServices(pub.Services)}
+			sdata := StatusPublicPageData{PublicPageData: data, Status: pub, OverallLabel: overallLabel[pub.Overall], Summary: statusSummary(pub.Services), Groups: groupPublicServices(pub.Services)}
 			sdata.Title = pub.Title
 			renderBareStatusPage(w, "status_public.html", sdata)
 			return

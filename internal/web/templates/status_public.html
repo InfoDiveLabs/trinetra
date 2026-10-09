@@ -1,36 +1,44 @@
 {{define "head_extra"}}<link rel="alternate" type="application/atom+xml" title="{{.Status.Title}}" href="/status/feed.atom">{{end}}
 {{define "content"}}
 <div class="status-page" id="public-live">
-  <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px">
-    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;min-width:0"><span style="width:128px"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="128" height="34"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="128" height="34"></span><h1 class="status-title">{{.Status.Title}}</h1></div>
-    <a href="/login" class="btn">Login</a>
-  </div>
-  <p class="note" style="margin:0 0 22px">Public read-only view</p>
+  <header class="status-head">
+    <div class="status-brand"><span class="status-logo"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="112" height="30"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="112" height="30"></span><h1 class="status-title">{{.Status.Title}}</h1></div>
+    <a href="/login" class="status-login">Sign in</a>
+  </header>
 
-  <section class="status-banner status-{{.Status.Overall}}" role="status"><strong>{{.OverallLabel}}</strong></section>
-
-  {{range .Status.Active}}
-  <article class="status-incident impact-{{.Impact}}" id="{{.ID}}">
-    <h2>{{.Title}}</h2>
-    <p class="note">{{range $i, $s := .Services}}{{if $i}}, {{end}}{{$s}}{{end}}</p>
-    <ol class="status-updates">
-      {{range .Updates}}<li><strong class="cap">{{.Status}}</strong> <time>{{timeText .TS}}</time><div>{{multiline .Message}}</div></li>{{end}}
-    </ol>
-  </article>
-  {{end}}
+  <section class="status-banner status-{{.Status.Overall}}" role="status">
+    <span class="status-banner-icon">{{if eq .Status.Overall "operational"}}{{icon "operational"}}{{else if eq .Status.Overall "maintenance"}}{{icon "maintenance"}}{{else if eq .Status.Overall "major_outage"}}{{icon "outage"}}{{else}}{{icon "degraded"}}{{end}}</span>
+    <div><strong>{{.OverallLabel}}</strong><div class="status-banner-sub">{{.Summary}}{{if .Status.Generated}} · updated {{clockTime .Status.Generated}}{{end}}</div></div>
+  </section>
 
   {{range .Groups}}
   <section class="status-group">
-    {{if .Name}}<h3>{{.Name}}</h3>{{end}}
+    {{if .Name}}<h2 class="status-group-name">{{.Name}}</h2>{{end}}
     {{range .Services}}
-    <div class="status-service">
-      <div class="status-service-head"><span>{{.Name}}</span><span class="pill pill-{{.State}}">{{.State}}</span></div>
+    <div class="status-service state-{{.State}}">
+      <div class="status-service-head">
+        <span class="status-service-name"><span class="state-icon" aria-hidden="true">{{icon (print .State)}}</span>{{.Name}}</span>
+        <span class="status-service-state">{{.Label}}</span>
+      </div>
       {{if .Description}}<p class="note">{{.Description}}</p>{{end}}
-      <div class="status-bar" aria-label="90 day history">{{range .History}}<span class="day day-{{or .State "nodata"}}" title="{{.Date}}: {{or .State "no data"}}"></span>{{end}}</div>
-      <div class="status-bar-legend note"><span>90 days ago</span><span>today</span></div>
+      <div class="status-bar" role="img" aria-label="Last 90 days for {{.Name}}">{{range .History}}<span class="day day-{{or .State "nodata"}}" title="{{.Date}}: {{or .State "no data"}}"></span>{{end}}</div>
+      <div class="status-bar-legend note"><span>90 days ago</span>{{if .Uptime}}<span>{{.Uptime}} uptime</span>{{end}}<span>today</span></div>
     </div>
     {{end}}
   </section>
+  {{end}}
+  <div class="status-key note" aria-label="Colour key"><span><i class="day-operational"></i>Operational</span><span><i class="day-degraded"></i>Degraded</span><span><i class="day-outage"></i>Outage</span><span><i class="day-maintenance"></i>Maintenance</span><span><i class="day-nodata"></i>No data yet</span></div>
+
+  {{if .Status.Active}}<h2 class="status-section-title">Current incidents</h2>{{end}}
+  {{range .Status.Active}}
+  <article class="status-incident impact-{{.Impact}}" id="{{.ID}}">
+    <div class="status-incident-head"><h3>{{.Title}}</h3><span class="status-impact impact-{{.Impact}}">{{.Impact}}</span></div>
+    <p class="note">Affects {{range $i, $s := .Services}}{{if $i}}, {{end}}{{$s}}{{end}}</p>
+    {{range $i, $u := .Updates}}{{if eq $i 0}}<div class="status-latest"><strong class="cap">{{$u.Status}}</strong> <time>{{timeText $u.TS}}</time><div>{{multiline $u.Message}}</div></div>{{end}}{{end}}
+    {{if gt (len .Updates) 1}}<details class="status-earlier"><summary>Earlier updates ({{subInt (len .Updates) 1}})</summary>
+      <ol class="status-updates">{{range $i, $u := .Updates}}{{if $i}}<li><strong class="cap">{{$u.Status}}</strong> <time>{{timeText $u.TS}}</time><div>{{multiline $u.Message}}</div></li>{{end}}{{end}}</ol>
+    </details>{{end}}
+  </article>
   {{end}}
 
   {{if or .Panels .ShowAvailability}}<section class="status-metrics">

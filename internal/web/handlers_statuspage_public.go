@@ -36,15 +36,30 @@ var overallLabel = map[string]string{
 	core.OverallMaintenance: "Under maintenance",
 }
 
+// stateLabel is a service state in words a customer understands.
+var stateLabel = map[core.ServiceState]string{
+	core.StateOperational: "Operational",
+	core.StateDegraded:    "Degraded performance",
+	core.StateOutage:      "Outage",
+	core.StateMaintenance: "Under maintenance",
+}
+
+type publicServiceView struct {
+	core.PublicService
+	Label  string
+	Uptime string // share of days with data that had no outage, "" with no data
+}
+
 type publicServiceGroup struct {
 	Name     string
-	Services []core.PublicService
+	Services []publicServiceView
 }
 
 type StatusPublicPageData struct {
 	PublicPageData
 	Status       core.PublicStatus
 	OverallLabel string
+	Summary      string
 	Groups       []publicServiceGroup
 }
 
@@ -58,9 +73,56 @@ func groupPublicServices(svcs []core.PublicService) []publicServiceGroup {
 			idx[s.Group] = i
 			out = append(out, publicServiceGroup{Name: s.Group})
 		}
-		out[i].Services = append(out[i].Services, s)
+		out[i].Services = append(out[i].Services, publicServiceView{PublicService: s, Label: stateLabel[s.State], Uptime: uptimeText(s.History)})
 	}
 	return out
+}
+
+func uptimeText(days []core.PublicDay) string {
+	var with, up int
+	for _, d := range days {
+		if d.State == "" {
+			continue
+		}
+		with++
+		if d.State != core.StateOutage {
+			up++
+		}
+	}
+	if with == 0 {
+		return ""
+	}
+	if up == with {
+		return "100%"
+	}
+	return fmt.Sprintf("%.2f%%", float64(up)*100/float64(with))
+}
+
+// statusSummary says in one line how many services are fine and what the
+// rest are doing.
+func statusSummary(svcs []core.PublicService) string {
+	n := map[core.ServiceState]int{}
+	for _, s := range svcs {
+		n[s.State]++
+	}
+	total := len(svcs)
+	if n[core.StateOperational] == total {
+		if total == 1 {
+			return "The service is working normally"
+		}
+		return fmt.Sprintf("All %d services are working normally", total)
+	}
+	parts := []string{fmt.Sprintf("%d of %d services working normally", n[core.StateOperational], total)}
+	if c := n[core.StateOutage]; c > 0 {
+		parts = append(parts, fmt.Sprintf("%d down", c))
+	}
+	if c := n[core.StateDegraded]; c > 0 {
+		parts = append(parts, fmt.Sprintf("%d degraded", c))
+	}
+	if c := n[core.StateMaintenance]; c > 0 {
+		parts = append(parts, fmt.Sprintf("%d under maintenance", c))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func renderBareStatusPage(w http.ResponseWriter, page string, data any) {

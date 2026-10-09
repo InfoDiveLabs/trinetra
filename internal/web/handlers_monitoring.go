@@ -24,6 +24,8 @@ type MonitoringPageData struct {
 	// filesystems table/DisksCritical tile uses (DiskWarnPct,
 	// dashboard_view.go).
 	DisksWarnCrit int
+	// StatusPick is set when the viewer can add rows to the status page.
+	StatusPick *statusPick
 }
 
 // monitoringMemBarNormalMiB is the MemMiB value templates/monitoring.html's
@@ -76,6 +78,7 @@ func buildMonitoringPageData(r *http.Request, d Deps) MonitoringPageData {
 		ContainersUp:    up,
 		ContainersTotal: total,
 		DisksWarnCrit:   warnCrit,
+		StatusPick:      buildStatusPick(r, d),
 	}
 }
 

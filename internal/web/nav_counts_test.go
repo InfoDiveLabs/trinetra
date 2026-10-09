@@ -49,7 +49,7 @@ func TestNavBadgesRenderRealCounts(t *testing.T) {
 
 	for _, want := range []string{
 		`<span class="lb">Alerts</span><span class="ct">2</span>`,
-		`<span class="lb">Channels</span><span class="ct">3</span>`,
+		`<span class="lb">Notifications</span><span class="ct">3</span>`,
 		`<span class="lb">Users</span><span class="ct">2</span>`,
 		`<span class="lb">Monitoring</span><span class="ct">9</span>`,
 	} {

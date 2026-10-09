@@ -118,6 +118,7 @@ func newHandler(d Deps) http.Handler {
 	// Public status page services admin (#157, handlers_statuspage_services.go).
 	mux.HandleFunc("GET /status-page/services", requireRole(RoleAdmin, d, statusServicesPageHandler(d)))
 	mux.HandleFunc("POST /status-page/services", fleetAdminMutation(d, statusServiceSaveHandler(d)))
+	mux.HandleFunc("POST /status-page/services/add-targets", fleetAdminMutation(d, statusServiceAddTargetsHandler(d)))
 	mux.HandleFunc("POST /status-page/services/{id}/delete", fleetAdminMutation(d, statusServiceDeleteHandler(d)))
 	// Status-page incidents (#157, handlers_statuspage_incidents.go): responder+.
 	mux.HandleFunc("GET /status-page/incidents", requireRole(RoleResponder, d, statusIncidentsPageHandler(d)))

@@ -67,9 +67,10 @@ body{background:var(--bg); color:var(--text); font-family:var(--font-sans); font
 .mono{font-family:var(--font-mono); font-variant-numeric:tabular-nums}
 a{color:var(--text); text-decoration:underline; text-decoration-color:var(--faint); text-underline-offset:3px}
 a:hover{text-decoration-color:var(--text)}
-.nav a,.botnav a,.sheet-nav a,a.btn{text-decoration:none}
+.nav a,.botnav a,.sheet-nav a,a.btn,a.pill{text-decoration:none}
+a.pill{color:inherit} a.pill:hover{border-color:var(--faint)}
 :focus-visible{outline:2px solid var(--text); outline-offset:2px; border-radius:4px}
-.eyebrow{font-family:var(--font-mono); font-size:10.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint)}
+.eyebrow{font-family:var(--font-mono); font-size:11px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint)}
 .spacer{flex:1}
 .note{color:var(--muted); font-size:12.5px}
 .small{font-size:12px}
@@ -87,24 +88,25 @@ a:hover{text-decoration-color:var(--text)}
    it grows to fill whatever space brand/foot don't need and scrolls
    internally past that, while brand stays pinned at the top and .foot
    (already margin-top:auto) stays pinned at the bottom, never overlapping. */
-.nav{flex:1 1 auto; min-height:0; overflow-y:auto}
-.nav a{display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:var(--r-sm); color:var(--muted); font-weight:500; font-size:13.5px}
-.nav a .ic{width:16px; display:inline-flex; align-items:center; justify-content:center; flex:none; opacity:.85} .nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--faint)}
+.nav{flex:1 1 auto; min-height:0; overflow-y:auto; padding-bottom:18px; -webkit-mask-image:linear-gradient(#000 calc(100% - 18px),transparent); mask-image:linear-gradient(#000 calc(100% - 18px),transparent)}
+.nav a{display:flex; align-items:center; gap:11px; padding:7px 11px; border-radius:var(--r-sm); color:var(--muted); font-weight:500; font-size:13.5px}
+.nav a .ic{width:16px; display:inline-flex; align-items:center; justify-content:center; flex:none; opacity:.85} .nav a .ct{margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--faint)}
 .nav a:hover{background:var(--surface2); color:var(--text)}
 .nav a.active{background:var(--elev); color:var(--text); box-shadow:inset 2px 0 0 var(--text)}
 .nav a.active .ic{color:var(--text); opacity:1}
 .ic .i{display:block}
-.nav .grp{margin-top:14px; padding:4px 11px}
+.nav .grp{margin-top:12px; padding:4px 11px}
+.brand-mark{display:none}
 .side .foot{margin-top:auto; padding:10px 8px 2px; border-top:1px solid var(--border-soft); flex:none}
 .avatar{width:26px;height:26px;border-radius:50%;background:var(--elev);border:1px solid var(--border);display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:700}
 .who{display:flex; align-items:center; gap:9px}
-.side .foot .ver{min-width:0; max-width:100%; display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:10.5px; color:var(--faint)}
+.side .foot .ver{min-width:0; max-width:100%; display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:11px; color:var(--faint)}
 .side .foot .ver span{max-width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .side .foot .ver .ver-warn{color:var(--warn)}
 .main{min-width:0}
 .topbar{display:flex; align-items:center; gap:16px; padding:14px 30px; border-bottom:1px solid var(--border); background:var(--bg); position:sticky; top:0; z-index:5}
 .topbar h1{font-size:18px; margin:0; font-weight:500; letter-spacing:0} .topbar p{margin:2px 0 0; color:var(--muted); font-size:12.5px}
-.pill{display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface); font-size:12px}
+.pill{display:inline-flex; align-items:center; gap:7px; white-space:nowrap; padding:6px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface); font-size:12px}
 .icon-btn{width:34px;height:34px;border:1px solid var(--border);background:var(--surface);border-radius:var(--r-sm);color:var(--muted);cursor:pointer;font-size:15px}
 .icon-btn:hover{color:var(--text);border-color:var(--faint)}
 .wrap{padding:22px 30px 48px}
@@ -130,6 +132,8 @@ a:hover{text-decoration-color:var(--text)}
 
 /* grids */
 .grid{display:grid; gap:14px}
+.g-host{grid-template-columns:minmax(0,2fr) minmax(0,3fr)}
+@media (max-width:1100px){.g-host{grid-template-columns:1fr}}
 .g-tiles{grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
 .g-2{grid-template-columns:1fr 1fr}.g-3{grid-template-columns:1fr 1fr 1fr}.g-4{grid-template-columns:repeat(4,1fr)}
 .g-hero{grid-template-columns:2.4fr 1fr}.g-32{grid-template-columns:2fr 1fr}
@@ -158,7 +162,8 @@ a.count:hover{border-color:var(--faint)}
 
 /* stat tile */
 .tile{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:14px 15px; position:relative; overflow:hidden}
-.tile .k{display:flex; align-items:center; justify-content:space-between}
+.tile .k{display:flex; align-items:center; justify-content:space-between; gap:10px}
+.tile .k>span{min-width:0; overflow-wrap:anywhere}
 .tile .val{font-family:var(--font-mono); font-size:27px; font-weight:600; letter-spacing:-.02em; margin-top:7px; line-height:1}
 .tile .val .u{font-size:13px; color:var(--muted); font-weight:500; margin-left:3px}
 .tile .sub{color:var(--muted); font-size:11px; margin-top:5px; font-family:var(--font-mono)}
@@ -229,7 +234,7 @@ a.count:hover{border-color:var(--faint)}
    destructive-form pattern (plain POST + hx-post, no browser confirm()),
    extended with this reveal step per the controller ruling. */
 .confirm-check{position:absolute; opacity:0; width:1px; height:1px; overflow:hidden}
-.confirm-toggle{display:inline-flex; align-items:center; gap:8px; margin-left:8px}
+.confirm-toggle{position:relative; display:inline-flex; align-items:center; gap:8px; margin-left:8px}
 .confirm-toggle:first-child{margin-left:0}
 .confirm-toggle .confirm-armed{display:none; align-items:center; gap:8px}
 .confirm-check:checked ~ .confirm-ask{display:none}
@@ -241,7 +246,7 @@ a.count:hover{border-color:var(--faint)}
 .led.ok{background:var(--ok);box-shadow:0 0 7px color-mix(in oklab,var(--ok) 70%,transparent)}
 .led.warn{background:var(--warn);box-shadow:0 0 7px color-mix(in oklab,var(--warn) 70%,transparent)}
 .led.crit{background:var(--crit);box-shadow:0 0 7px color-mix(in oklab,var(--crit) 70%,transparent)}
-.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:11px;font-family:var(--font-mono);border:1px solid var(--border);color:var(--muted)}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:11.5px;font-family:var(--font-mono);border:1px solid var(--border);color:var(--muted)}
 .badge.ok{color:var(--ok);border-color:color-mix(in oklab,var(--ok) 40%,var(--border))}
 .badge.warn{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--border))}
 .badge.crit{color:var(--crit);border-color:color-mix(in oklab,var(--crit) 45%,var(--border))}
@@ -253,7 +258,7 @@ a.count:hover{border-color:var(--faint)}
 
 /* tables */
 table{width:100%; border-collapse:collapse; font-size:13px}
-th{text-align:left; padding:10px 14px; font-family:var(--font-mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--surface); cursor:pointer}
+th{text-align:left; padding:10px 14px; font-family:var(--font-mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--surface); cursor:pointer}
 th:hover{color:var(--text)}
 /* fleet overview (task 5): sortable column headers are plain links
    (server-rendered ?sort=&dir=, no client JS) -- inherit th's own color/
@@ -464,7 +469,8 @@ tr[data-detail]{cursor:pointer}
      WIDTH toggle, unrelated to theme, so it deliberately avoids that
      selector) hides the two wordmark images at rail width; small hides the
      server-name subtitle underneath them -- neither fits in 64px. */
-  .brand img,.brand small{display:none}
+  .app .side .brand img:not(.brand-mark),.brand small{display:none}
+  .app .side .brand .brand-mark{display:block; width:28px; height:28px}
   .nav .grp{display:none}
   .nav a{position:relative; justify-content:center; gap:0; padding:11px 0}
   .nav a .lb{display:none}
@@ -516,6 +522,9 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   .topbar>div:first-child{flex:1 1 auto; min-width:0}
   .topbar h1,.topbar p{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   .topbar .pill{flex:0 0 auto; white-space:nowrap; padding:6px 10px}
+  .topbar p{display:none}
+  .topbar .pill .st-t{display:none}
+  .topbar .pill.st{padding:9px}
 
   /* --- bottom tab bar --- */
   .botnav{display:flex; position:fixed; left:0; right:0; bottom:0; z-index:80;
@@ -579,12 +588,16 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   /* --- touch targets (>=44px) --- */
   .btn{min-height:44px}
   input,select,textarea{min-height:44px}
+  input.switch{min-height:0; height:23px}
+  input[type=checkbox],input[type=radio]{min-height:0}
   .icon-btn{width:40px; height:40px}
   .chip{min-height:38px; display:inline-flex; align-items:center}
   /* the 4 tabs are wider than a phone: make the strip a swipeable scroll
      container so it never pushes the page sideways, and keep each tab intact
      (no truncation) with a comfortable touch target. */
   .tabs{overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  /* hint that the tab strip scrolls */
+  .tabs{padding-right:28px; -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent); mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
   .tabs::-webkit-scrollbar{display:none}
   .tabs button{padding:12px 14px; min-height:44px; white-space:nowrap; flex:0 0 auto}
   /* narrow inline inputs (e.g. config per-target threshold) may stay compact */
@@ -602,6 +615,10 @@ input.switch:checked::after{left:19px;background:var(--bg)}
   .cardpanel{background:transparent; border:0; border-radius:0; overflow:visible; padding:0}
   .cardpanel .tablewrap{overflow:visible; max-height:none}
   table.cards,table.cards tbody,table.cards td{display:block; width:auto}
+  table.cards td{overflow-wrap:anywhere}
+  .legend.seg{flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; gap:6px}
+  .legend.seg .chip{flex:none; min-height:34px; padding:0 12px}
+  .head:has(> .legend.seg){align-items:center; gap:10px}
   table.cards thead{position:absolute; width:1px; height:1px; padding:0; margin:-1px;
     overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0} /* visually hide headers */
   /* row is a flex column so the identifier cell can hoist to the top (order:-1)
@@ -684,3 +701,107 @@ input.switch:checked::after{left:19px;background:var(--bg)}
 .attribution{color:var(--muted); font-size:11.5px; text-align:center; margin:22px 16px 18px}
 .attribution a{color:inherit; text-decoration:underline; text-decoration-color:var(--border); text-underline-offset:2px}
 .attribution a:hover{color:var(--text)}
+
+/* Times, durations and sizes stay on one line in tables. */
+.nowrap,table td:is([data-label=When],[data-label=Opened],[data-label=Resolved],[data-label=Since],[data-label=Start],[data-label=End],[data-label=Expires],[data-label=Created],[data-label=Time],[data-label="Last seen"],[data-label="Next occurrence"],[data-label=Duration],[data-label=Size],[data-label=Free]){white-space:nowrap}
+/* A table wider than its panel scrolls inside it rather than the page. */
+@media (min-width:641px){.panel:has(> table.cards){overflow-x:auto}}
+/* Row actions: inline role pickers keep their natural width beside buttons. */
+@media (min-width:641px){
+  td.card-actions{white-space:nowrap}
+  td.card-actions select{width:auto; display:inline-block; vertical-align:middle}
+}
+
+/* Touch screens get 44px targets regardless of width. */
+@media (pointer:coarse){
+  .btn,select,input:not([type=checkbox]):not([type=radio]):not(.switch),.chip{min-height:44px}
+  .nav a{min-height:44px}
+  .icon-btn{width:44px; height:44px}
+  input[type=checkbox],input[type=radio]{width:20px; height:20px}
+  #logoutBtn{min-width:44px; min-height:44px}
+}
+@media (max-width:640px){
+  .icon-btn{width:44px; height:44px}
+  .topbar .pill.st{width:44px; height:44px; justify-content:center; padding:0}
+  .ns-trigger{min-height:44px}
+  input[type=checkbox],input[type=radio]{width:20px; height:20px}
+}
+
+/* Settings pages: tabbed sections with one save bar for all of them. */
+.settings-tabs{flex-wrap:wrap}
+.pane-intro{margin:0 0 14px}
+.save-bar{position:sticky; bottom:0; z-index:4; display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:20px; padding:14px 0; border-top:1px solid var(--border-soft); background:var(--bg)}
+@media (max-width:640px){.save-bar{bottom:calc(56px + env(safe-area-inset-bottom))} .save-bar .btn{flex:1 1 auto}}
+
+/* Public status page: readable at a glance. */
+.status-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px}
+.status-brand{display:flex; align-items:center; gap:14px; min-width:0; flex-wrap:wrap}
+.status-logo{width:112px; flex:none}
+.status-login{flex:none; color:var(--muted); font-size:13px; padding:10px 4px}
+.status-banner{display:flex; align-items:center; gap:14px}
+.status-banner-icon .i{width:30px; height:30px}
+.status-banner strong{display:block; font-size:1.25rem}
+.status-banner-sub{font-size:.9rem; opacity:.9; margin-top:2px}
+.status-group{margin-top:22px}
+.status-group-name{font-size:1rem; margin:0 0 4px}
+.status-service-name{display:flex; align-items:center; gap:10px; font-weight:550}
+.status-service .state-icon .i{width:20px; height:20px}
+.status-service-state{font-size:13px; font-weight:550; white-space:nowrap}
+.state-operational .state-icon,.state-operational .status-service-state{color:var(--ok)}
+.state-degraded .state-icon,.state-degraded .status-service-state{color:var(--warn)}
+.state-outage .state-icon,.state-outage .status-service-state{color:var(--crit)}
+.state-maintenance .status-service-state{color:var(--text)}
+.state-maintenance .state-icon{color:var(--text)}
+.status-bar-legend span:nth-child(2){color:var(--text)}
+.status-key{display:flex; flex-wrap:wrap; gap:6px 16px; margin:12px 0 4px}
+.status-key span{display:inline-flex; align-items:center; gap:6px}
+.status-key i{width:10px; height:10px; border-radius:2px; background:var(--track)}
+.status-key .day-operational{background:var(--ok)} .status-key .day-degraded{background:var(--warn)}
+.status-key .day-outage{background:var(--crit)} .status-key .day-maintenance{background:var(--info)}
+.status-section-title{font-size:1.05rem; margin:28px 0 0}
+.status-incident{border-radius:0 var(--r) var(--r) 0; padding:14px 18px}
+.status-incident-head{display:flex; justify-content:space-between; align-items:flex-start; gap:12px}
+.status-incident-head h3{margin:0; font-size:1.05rem; overflow-wrap:anywhere; min-width:0}
+.status-impact{flex:none; font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--border); text-transform:capitalize}
+.status-impact.impact-degraded{color:var(--warn)} .status-impact.impact-outage{color:var(--crit)}
+.status-latest{margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:var(--r-sm)}
+.status-latest div{margin-top:4px; overflow-wrap:anywhere}
+.status-earlier{margin-top:8px} .status-earlier summary{cursor:pointer; color:var(--muted); font-size:13px}
+@media (max-width:600px){.status-logo{width:92px} .status-banner strong{font-size:1.1rem}}
+.status-logo img{width:100%; height:auto}
+
+/* status page picker: Monitoring selection and Services form checklist */
+th.pick,td.pick{width:40px}
+td.pick input,th.pick input{cursor:pointer}
+.pick-bar{position:sticky; bottom:0; z-index:5; display:flex; gap:10px; align-items:center; margin-top:14px; padding:10px 14px; border:1px solid var(--border); border-radius:var(--r); background:var(--elev); box-shadow:var(--shadow)}
+.pick-bar[hidden]{display:none}
+@media (max-width:640px){.pick-bar{bottom:calc(64px + env(safe-area-inset-bottom))} .pick-bar .btn{flex:1 1 auto}}
+.sheet-dialog{width:min(480px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); overflow:auto; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface); color:var(--text); padding:20px; box-shadow:var(--shadow)}
+.sheet-dialog::backdrop{background:var(--scrim)}
+.sheet-dialog h2{margin:0 0 6px; font-size:17px}
+.sheet-dialog fieldset{border:0; padding:0; margin:14px 0 0; min-width:0; display:grid; gap:12px}
+.sheet-dialog fieldset[hidden]{display:none}
+.choice{display:flex; gap:8px; margin-top:14px}
+.choice label{flex:1; display:flex; gap:8px; align-items:center; padding:10px 12px; border:1px solid var(--border); border-radius:var(--r); cursor:pointer; font-size:13px}
+.choice label:has(input:checked){border-color:var(--signal); background:color-mix(in oklab,var(--signal) 12%,var(--surface))}
+.choice label:has(input:disabled){opacity:.5; cursor:not-allowed}
+.dialog-actions{display:flex; gap:10px; justify-content:flex-end; margin-top:18px}
+.pick-nodes{display:grid; gap:8px; margin-top:8px}
+.pick-node{border:1px solid var(--border-soft); border-radius:var(--r); padding:10px 12px; min-width:0}
+.pick-node summary{cursor:pointer; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.pick-name{font-weight:600}
+.pick-row{display:flex; gap:8px; align-items:center; padding:5px 0; cursor:pointer; min-width:0}
+.pick-row .mono{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+.pick-row .note{flex:none}
+.pick-whole{margin-top:8px; padding-bottom:8px; border-bottom:1px solid var(--border-soft)}
+.pick-filter{margin:8px 0; max-width:none}
+.pick-cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr)); gap:4px 18px; max-height:320px; overflow:auto}
+.pick-cols .eyebrow{display:block; margin:4px 0}
+.pick-advanced{margin-top:12px}
+.pick-advanced summary{cursor:pointer; color:var(--muted); font-size:13px}
+.pick-row input,.choice input,.pick input{width:auto; flex:none; margin:0; padding:0}
+.choice label{justify-content:flex-start; text-align:left}
+.pick-head{margin-top:14px}
+.pick-head .lb{display:block; font-size:12px; color:var(--muted)}
+.pick-head .hint{display:block; color:var(--faint); font-size:11px; margin-top:4px}
+.pick-whole{flex-wrap:wrap} .pick-whole .note{flex:1 1 160px}
