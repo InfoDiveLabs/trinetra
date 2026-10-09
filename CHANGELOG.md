@@ -8,11 +8,55 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
+## [0.6.0-beta.2] - 2026-10-09
+
+Second beta of 0.6.0: easier status page setup, a reworked web UI, passkey
+sign-in that works on every device, and self-update fixes.
+
 ### Added
 
+- **Status page services from Monitoring.** Admins tick containers or systemd
+  services on Monitoring (this server or any fleet node) and add them to a new
+  status page service, in a new or existing group, or to an existing one. The
+  Services form picks targets from a per-server checklist and suggests existing
+  groups.
+- **Sign in by name.** The login page has an optional name field, so passkeys
+  that browsers can't list (older security keys, passkeys registered before
+  this release) still sign in. Where the browser supports it, the field offers
+  saved passkeys as autofill.
 - The anonymous pages (public status, history, login, enroll) end with a small
   "powered by trinetra · GitHub · studio" footer and carry a JSON-LD
   `SoftwareApplication` description for crawlers.
+
+### Changed
+
+- **Web UI.** The sidebar is grouped into Fleet, Monitor, Status page and
+  Settings, with one SVG icon set. Every page fits phones and tablets without
+  sideways scrolling, with 44 px touch targets. Column headers and controls
+  have tooltips.
+- **Settings.** Server settings are split into tabs (General, Alerts, What to
+  monitor, Reports, Data & performance) with one Save button and plain-language
+  labels. Users has People, Invite someone and role tabs, with a Copy button
+  for invite links.
+- **Public status page.** The banner says what is happening in words, services
+  come first with their state and 90-day uptime, a colour key explains the
+  bars, and incidents show their latest update first.
+
+### Fixed
+
+- **Passkeys** are now created as discoverable credentials where the device
+  supports it, so they show up at sign-in on Android and elsewhere. Synced
+  passkeys that stop counting sign-ins are no longer rejected as clones, and
+  the login page explains plain-`http://` or IP-address access, where browsers
+  block passkeys (#170).
+- **`trinetra cli` right after `install`** no longer fails on a missing control
+  socket: `install` waits for the daemon, and `cli` and `web` retry while it
+  starts (#162).
+- **Self-update** works on hosts where `/var/lib` is `noexec` or blocked by
+  SELinux (#141), and every update and rollback outcome is notified, not just
+  the last (#142).
+- **Updates** no longer offer a release that is already installed, in the web
+  UI, Telegram `/version` or the "update available" alert (#167).
 
 ## [0.6.0-beta.1] - 2026-10-08
 
@@ -542,7 +586,9 @@ and management tooling move out of process.
 - Initial release: the stdlib-only `serverwatch` daemon with core metric
   collection, threshold and anomaly detection, and Telegram alerting.
 
-[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.6.0-beta.2...HEAD
+[0.6.0-beta.2]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.2
+[0.6.0-beta.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.1
 [0.5.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.5.0
 [0.4.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.4.1
 [0.4.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.4.0
