@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -119,15 +121,7 @@ func bytesTrimNewline(b []byte) []byte {
 
 // buildDeps assembles web.Deps around client.
 func buildDeps(client *control.Client, cc connConfig) web.Deps {
-	cfg := func() *config.Config {
-		c, err := client.Config()
-		if err != nil || c == nil {
-			// A Config() failure must not surface as a nil Cfg(): web handlers dereference it
-			// unconditionally, so degrade to defaults rather than panic on a transient socket error.
-			return config.Default()
-		}
-		return c
-	}
+	cfg := lastGoodConfig(client.Config)
 
 	deps := web.Deps{
 		Cfg: cfg,
@@ -185,6 +179,32 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 	return deps
 }
 
+// lastGoodConfig returns the daemon's config, or the last one read
+// successfully when a read fails, so a restarting daemon never makes the
+// settings pages show (and save) built-in defaults. Each call gets a copy.
+func lastGoodConfig(fetch func() (*config.Config, error)) func() *config.Config {
+	var mu sync.Mutex
+	var last []byte
+	return func() *config.Config {
+		c, err := fetch()
+		mu.Lock()
+		defer mu.Unlock()
+		if err == nil && c != nil {
+			if b, jerr := json.Marshal(c); jerr == nil {
+				last = b
+			}
+			return c
+		}
+		if last != nil {
+			var cp config.Config
+			if json.Unmarshal(last, &cp) == nil {
+				return &cp
+			}
+		}
+		return config.Default()
+	}
+}
+
 func run(args []string, getenv func(string) string, stderr *os.File) int {
 	cc, err := resolveConnConfig(args, getenv)
 	if err != nil {
@@ -207,6 +227,7 @@ func run(args []string, getenv func(string) string, stderr *os.File) int {
 		return 1
 	}
 	defer client.Close()
+	client.SetTokenSource(token)
 
 	deps := buildDeps(client, cc)
 	stop, err := web.Start(deps)

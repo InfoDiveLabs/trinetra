@@ -358,3 +358,30 @@ func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 		t.Errorf("GET / body missing the live snapshot's cpu value (77%%), the socket-side fakeAPI's data never reached the served page:\n%s", body)
 	}
 }
+
+func TestLastGoodConfigSurvivesFailedReads(t *testing.T) {
+	var fail bool
+	real := config.Default()
+	real.QuietHours = "22-6"
+	cfg := lastGoodConfig(func() (*config.Config, error) {
+		if fail {
+			return nil, errors.New("daemon restarting")
+		}
+		return real, nil
+	})
+	fail = true
+	if got := cfg(); got.QuietHours != "" {
+		t.Fatalf("before any successful read: %q, want defaults", got.QuietHours)
+	}
+	fail = false
+	cfg()
+	fail = true
+	got := cfg()
+	if got.QuietHours != "22-6" {
+		t.Fatalf("after a failed read: quiet hours %q, want the last real config", got.QuietHours)
+	}
+	got.QuietHours = "mutated"
+	if again := cfg(); again.QuietHours != "22-6" {
+		t.Fatal("a caller's edit leaked into the cached config")
+	}
+}
