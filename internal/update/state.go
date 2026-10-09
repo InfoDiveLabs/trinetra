@@ -162,9 +162,8 @@ func SaveState(dir string, s State) error {
 		os.Remove(tmp)
 		return err
 	}
-	// The directory fsync is what makes the rename durable; a failure here
-	// is returned so a caller never believes Pending/floor were persisted
-	// when they may not survive a power loss.
+	// The directory fsync makes the rename durable; return its failure so a caller
+	// never believes Pending/floor were persisted when a power loss could lose them.
 	return SyncDir(dir)
 }
 

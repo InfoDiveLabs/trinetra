@@ -142,14 +142,11 @@ func TestCheckPolicy(t *testing.T) {
 	}
 }
 
-// TestCheckPolicyNoFloorAcceptsAnyVersion pins "no floor recorded and no
-// known running version must mean no lower bound": a Policy that never sets
-// a floor (the zero-value HasFloor false, Floor left as the zero Version)
-// must accept both a pre-release of 0.0.0 and an ordinary later release --
-// the zero Version standing in for "nothing recorded" must never be compared
-// against as if it were a real, already-installed version. MinUpgradeFrom is
-// pinned at 0.0.0 here (Running 0.0.0 satisfies it) so only the floor logic
-// is under test.
+// TestCheckPolicyNoFloorAcceptsAnyVersion: with no floor recorded and no known
+// running version (HasFloor false, Floor the zero Version) both a 0.0.0
+// pre-release and a later release are accepted; the zero Version standing in for
+// "nothing recorded" must not be compared as an installed version. MinUpgradeFrom
+// is 0.0.0 so only the floor logic is under test.
 func TestCheckPolicyNoFloorAcceptsAnyVersion(t *testing.T) {
 	v := func(s string) Version { x, _ := ParseVersion(s); return x }
 	for _, ver := range []string{"0.0.0-rc.1", "0.5.0"} {
@@ -163,10 +160,8 @@ func TestCheckPolicyNoFloorAcceptsAnyVersion(t *testing.T) {
 	}
 }
 
-// TestCheckPolicyFloorStillEnforcedWhenSet is the flip side of
-// TestCheckPolicyNoFloorAcceptsAnyVersion: once a floor IS recorded
-// (HasFloor true), it must still refuse anything below it, pre-release or
-// not.
+// TestCheckPolicyFloorStillEnforcedWhenSet: once a floor is recorded (HasFloor
+// true) it still refuses anything below it, pre-release or not.
 func TestCheckPolicyFloorStillEnforcedWhenSet(t *testing.T) {
 	v := func(s string) Version { x, _ := ParseVersion(s); return x }
 	for _, ver := range []string{"0.4.9", "0.5.0-rc.1"} {
@@ -180,9 +175,8 @@ func TestCheckPolicyFloorStillEnforcedWhenSet(t *testing.T) {
 	}
 }
 
-// TestCheckPolicyChannelRule is R18 (spec §2 Verification step 3): a beta
-// host accepts beta and stable manifests (beta = newest of either); a stable
-// host accepts only stable; anything else is refused.
+// TestCheckPolicyChannelRule (R18): a beta host accepts beta and stable
+// manifests, a stable host only stable; anything else is refused.
 func TestCheckPolicyChannelRule(t *testing.T) {
 	v := func(s string) Version { x, _ := ParseVersion(s); return x }
 	for _, c := range []struct {
@@ -228,8 +222,8 @@ func TestVerifyPointer(t *testing.T) {
 		t.Errorf("release-prefixed sig accepted as pointer sig: %v", err)
 	}
 
-	// Ruling R4: a pointer's own lifetime must not exceed MaxPointerLifetime
-	// (plus clock-skew slack), regardless of what it self-declares.
+	// A pointer's own lifetime must not exceed MaxPointerLifetime (plus clock-skew
+	// slack), whatever it self-declares.
 	longLived := Pointer{Schema: 1, Product: "trinetra", Channel: "stable", Version: "0.5.0",
 		Issued: issued.Format(time.RFC3339), Expires: issued.Add(30 * 24 * time.Hour).Format(time.RFC3339)}
 	llb, _ := json.Marshal(longLived)

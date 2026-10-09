@@ -137,12 +137,11 @@ func VerifyRelease(keys KeySet, manifest, ciSig, maintSig []byte) (Manifest, err
 	return DecodeManifest(manifest)
 }
 
-// VerifyPointer checks a channel pointer's signature, then its lifetime: a
-// pointer must not have been issued in the future (past clock-skew slack),
-// must not claim a lifetime longer than MaxPointerLifetime (plus slack), and
-// must not have expired. All three protect against a compromised pointer
-// key self-declaring an expiry far enough out to freeze a host on a stale
-// release (Ruling R4).
+// VerifyPointer checks a channel pointer's signature, then its lifetime: it must
+// not be issued in the future (past clock-skew slack), claim a lifetime longer
+// than MaxPointerLifetime (plus slack), or have expired. These guard against a
+// compromised pointer key declaring a far-future expiry to freeze a host on a
+// stale release.
 func VerifyPointer(keys KeySet, pointer, sig []byte, now time.Time) (Pointer, error) {
 	if keys.empty() {
 		return Pointer{}, ErrNoKeys
@@ -187,9 +186,8 @@ type Policy struct {
 }
 
 // ChannelAccepts reports whether a host on channel host accepts a release
-// published on channel release (spec §2 Verification step 3, R18): a stable
-// host accepts only stable; a beta host accepts beta and stable, so beta
-// hosts also move on to final releases (beta = newest of either).
+// published on channel release: a stable host accepts only stable; a beta host
+// accepts beta and stable, so beta hosts also move on to final releases.
 func ChannelAccepts(host, release string) bool {
 	switch host {
 	case "stable":

@@ -36,34 +36,23 @@ func New(token, chatID string) *Client {
 	}
 }
 
-// telegramMaxMessageLen is Telegram's hard limit on a single sendMessage
-// text (4096 characters). Renderers (internal/trinetra/status.go) are
-// designed to stay well under this via summary-first/only-failures
-// rendering, but this is the safety net for whatever still doesn't: a
-// message this size used to come back as an HTTP 400 that daemon.go
-// silently discarded (see fix-disk-telegram-brief.md), leaving the user
-// with no reply at all.
+// telegramMaxMessageLen is Telegram's hard limit on one sendMessage text (4096
+// characters). Renderers stay well under it; this is the safety net for what does
+// not, since an oversized message returns an HTTP 400 that would otherwise leave
+// the user with no reply.
 const telegramMaxMessageLen = 4096
 
-// SendMessage sends text as one or more Telegram messages (chunked if text
-// exceeds telegramMaxMessageLen, see chunkMessage), with parse_mode=HTML so
-// renderers' <pre>/<b> tags render instead of showing as literal text.
-// Callers rendering dynamic content (mount names, container names, etc.)
-// into HTML-mode text MUST html-escape it themselves -- SendMessage does not
-// re-escape, since it also carries pre-built <pre>/<b> markup that must NOT
-// be escaped. If any chunk fails to send, SendMessage returns that error
-// immediately (a partial multi-chunk delivery is reported, not swallowed).
-//
-// SendMessage delegates to SendMessageContext with a background context, so
-// callers that don't need cancellation get identical behavior.
+// SendMessage sends text as one or more Telegram messages (chunked past
+// telegramMaxMessageLen, see chunkMessage) with parse_mode=HTML. Callers MUST
+// html-escape dynamic content (mount names, container names) themselves:
+// SendMessage does not re-escape because it also carries pre-built <pre>/<b>
+// markup. If any chunk fails, that error is returned immediately.
 func (c *Client) SendMessage(text string) error {
 	return c.SendMessageContext(context.Background(), text)
 }
 
-// SendMessageContext is SendMessage's ctx-aware variant: same chunking,
-// request shape, and status/error handling, but the HTTP request is built
-// with http.NewRequestWithContext so a cancelled ctx aborts an in-flight
-// send instead of blocking for the full client timeout (up to 65s).
+// SendMessageContext is SendMessage with a ctx, so a cancelled ctx aborts an
+// in-flight send instead of blocking for the client timeout (up to 65s).
 func (c *Client) SendMessageContext(ctx context.Context, text string) error {
 	for _, chunk := range chunkMessage(text, telegramMaxMessageLen) {
 		if err := c.sendOneContext(ctx, chunk); err != nil {
@@ -81,13 +70,10 @@ type Button struct {
 	Data string
 }
 
-// SendMessageWithButtons sends text (see SendMessage) with an inline
-// keyboard attached: rows renders top to bottom, each inner slice one row
-// of buttons left to right. Unlike SendMessage, this never chunks -- a
-// reply_markup cannot sensibly span more than one message bubble, and every
-// caller (fleet_engine.go's incident-fire notifications) only ever passes
-// short text. It delegates to SendMessageWithButtonsContext with a
-// background context.
+// SendMessageWithButtons sends text with an inline keyboard: rows render top to
+// bottom, each inner slice one row left to right. Unlike SendMessage it never
+// chunks, since a reply_markup cannot span message bubbles and callers pass short
+// text.
 func (c *Client) SendMessageWithButtons(text string, rows [][]Button) error {
 	return c.SendMessageWithButtonsContext(context.Background(), text, rows)
 }
@@ -101,9 +87,8 @@ func (c *Client) SendMessageWithButtonsContext(ctx context.Context, text string,
 	return c.sendFormContext(ctx, text, string(markup))
 }
 
-// inlineKeyboardButton/inlineKeyboardMarkup mirror the Telegram Bot API's
-// InlineKeyboardButton/InlineKeyboardMarkup JSON shape: marshaled, this is
-// exactly the value the "reply_markup" form field carries.
+// inlineKeyboardButton/inlineKeyboardMarkup mirror the Bot API JSON; marshaled,
+// this is the "reply_markup" form field.
 type inlineKeyboardButton struct {
 	Text         string `json:"text"`
 	CallbackData string `json:"callback_data"`
@@ -195,22 +180,15 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, id, text string) error
 	return nil
 }
 
-// chunkMessage splits s into parts of at most limit characters, breaking on
-// newline boundaries so a single logical line is never split across two
-// Telegram messages -- UNLESS a single line itself exceeds the per-chunk
-// budget, in which case that line is hard-split (there is no better boundary
-// to use). Returns []string{s} unchanged when s already fits in one chunk
-// (the common case, so callers pay nothing extra for short messages).
+// chunkMessage splits s into parts of at most limit characters on newline
+// boundaries; a single line longer than the budget is hard-split. It returns
+// []string{s} unchanged when s fits.
 //
-// Because SendMessage sends parse_mode=HTML, a chunk boundary that falls
-// inside a <pre>...</pre> block would leave one chunk with an unclosed
-// <pre> and the next with a stray </pre> -- unbalanced HTML that Telegram
-// rejects with a 400. chunkMessage tracks <pre> nesting across the split:
-// a chunk that ends still inside a block gets a synthetic </pre> appended,
-// and the continuation chunk gets a synthetic <pre> prepended, so every
-// emitted chunk is individually tag-balanced. (renderStatus/renderDisks
-// only ever emit a single, non-nested <pre> block, which this handles;
-// deeper nesting is tracked defensively but not expected.)
+// Because parse_mode=HTML, a boundary inside <pre>...</pre> would leave unbalanced
+// tags that Telegram rejects with a 400. chunkMessage tracks <pre> nesting: a
+// chunk ending inside a block gets a synthetic </pre> and the continuation a
+// synthetic <pre>, so every chunk is tag-balanced. Only a single non-nested <pre>
+// block is expected; deeper nesting is tracked defensively.
 func chunkMessage(s string, limit int) []string {
 	if len(s) <= limit {
 		return []string{s}
@@ -268,10 +246,8 @@ func chunkMessage(s string, limit int) []string {
 	}
 
 	for _, line := range strings.Split(s, "\n") {
-		// Hard-split a single line longer than the per-chunk budget: there's
-		// no newline to break on. Each piece is emitted as its own balanced
-		// chunk (with tag wrapping, though pre tables have short rows so this
-		// path is effectively never hit for <pre> content).
+		// Hard-split a single line longer than the per-chunk budget (no newline to break
+		// on); each piece is a balanced chunk. Effectively never hit for <pre> tables.
 		for {
 			budget := limit - reserve()
 			if budget < 1 {
