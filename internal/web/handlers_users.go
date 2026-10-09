@@ -80,8 +80,7 @@ type UsersPageData struct {
 	Issued *IssuedInvite
 }
 
-// inviteTTLs is the invite form's fixed set of expiries, mirroring the
-// mockup's "Link expires" <select> (ui-mockup/users.html).
+// inviteTTLs is the invite form's fixed set of expiries.
 var inviteTTLs = []struct{ Value, Label string }{
 	{"1h", "1 hour"},
 	{"24h", "24 hours"},
@@ -104,7 +103,7 @@ func ttlLabel(value string) string {
 // buildUsersPageData assembles UsersPageData from the current store state
 // (and, if issued is non-nil, the just-minted invite to render alongside
 // it), tagging the requesting session's own account with IsSelf so the
-// template can show "(you)" the way the mockup does.
+// template can show "(you)".
 func buildUsersPageData(r *http.Request, d Deps, store UserStore, issued *IssuedInvite) UsersPageData {
 	self, _ := userFromContext(r)
 	all := store.List()
@@ -275,8 +274,7 @@ func usersRoleHandler(d Deps) http.HandlerFunc {
 }
 
 // usersRemoveHandler deletes {id}, refusing (409) to remove the sole
-// remaining admin -- see usersRoleHandler's doc for why that lockout matters
-// (this is the guard the task brief specifically calls out).
+// remaining admin -- see usersRoleHandler's doc for why that lockout matters.
 func usersRemoveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")

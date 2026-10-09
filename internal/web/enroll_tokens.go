@@ -12,9 +12,8 @@ import (
 // enroll a new web UI account. /enroll?token=... (routes.go's
 // enrollPageHandler/enrollBeginHandler) redeems it via tokenStore.Redeem,
 // and the Role it carries is what the resulting NEW account is created with
-// (see resolveEnrollRole, below). Task 7's user management page is what
-// actually issues these (tokenStore.Issue); this task only wires the store
-// and the /enroll gate that consumes them.
+// (see resolveEnrollRole, below). The user management page is what
+// actually issues these (tokenStore.Issue).
 type EnrollToken struct {
 	// Token is the opaque, unguessable value carried in the /enroll?token=
 	// query string and the /enroll/begin request body's "token" field.

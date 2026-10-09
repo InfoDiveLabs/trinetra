@@ -56,8 +56,7 @@ func deliveredNames(r core.AlertRecord) string {
 
 // alertHistoryRows caps the log to the most recent maxAlertHistoryRows
 // records (newest first, already alertHistoryViaAPI's order) for the
-// "Recent history" table -- the mockup shows a bounded recent window, not
-// the entire log.
+// "Recent history" table.
 const maxAlertHistoryRows = 100
 
 func alertHistoryRows(events []core.AlertRecord) []alertHistoryRow {
@@ -72,9 +71,8 @@ func alertHistoryRows(events []core.AlertRecord) []alertHistoryRow {
 			Source:   ev.Source,
 			Kind:     ev.Kind,
 			// When routes through silenceTimeText (handlers_fleet_silences.go,
-			// master-local zone with abbreviation) rather than its own
-			// unlabeled-UTC format -- round-2 review finding I1, matching
-			// incidentTimeText's own fix (handlers_fleet.go) so every absolute
+			// master-local zone with abbreviation) rather than its own unlabeled-UTC
+			// format, matching incidentTimeText (handlers_fleet.go) so every absolute
 			// timestamp on the fleet surface uses the one convention.
 			When:      silenceTimeText(ev.Time),
 			Delivered: deliveredNames(ev),
@@ -93,7 +91,7 @@ type activeAlertRow struct {
 }
 
 // agoText renders a Unix timestamp as a short "Xm ago"/"Xh ago"/"Xd ago"
-// duration relative to now, mirroring the mockup's "14m ago" style.
+// duration relative to now.
 func agoText(unixSec int64) string {
 	d := time.Since(time.Unix(unixSec, 0))
 	switch {
@@ -141,13 +139,13 @@ type AlertsPageData struct {
 	// (node_scope.go's nodeFrom(r).Self == false).
 	NodeRemote bool
 	// NodeConnected reports whether ack/unack should render as LIVE actions:
-	// always true for the self scope, and (task C6 ruling) true for a
-	// remote scope only when the roster's own NodeSummary.State (as of the
-	// request-scoped fleetMemo, node_scope.go) is "online" -- the same
-	// state string fleet_provider.go/liveness.go's fleet.StateOnline
-	// reports for a node whose stream is currently connected. When false,
-	// templates/alerts.html renders every Ack/Unack control disabled with
-	// RemoteReason instead of a live POST form.
+	// always true for the self scope, and true for a remote scope only when the
+	// roster's own NodeSummary.State (as of the request-scoped fleetMemo,
+	// node_scope.go) is "online" -- the same state string
+	// fleet_provider.go/liveness.go's fleet.StateOnline reports for a node
+	// whose stream is currently connected. When false, templates/alerts.html
+	// renders every Ack/Unack control disabled with RemoteReason instead of a
+	// live POST form.
 	NodeConnected bool
 	// RemoteReason is the fixed "node is not connected" text
 	// (nodeNotConnectedReason, handlers_logs.go) templates/alerts.html
@@ -159,7 +157,7 @@ type AlertsPageData struct {
 	// below) for a remote ack/unack's backend failure -- the ONLY case this
 	// page ever redirects rather than re-rendering directly, since a remote
 	// ack/unack is a fire-and-forget push over the fleet stream with no rich
-	// per-field validation to show inline (task C6 ruling).
+	// per-field validation to show inline.
 	Flash    string
 	FlashErr bool
 }
@@ -192,7 +190,7 @@ func resolveAlertsFlash(r *http.Request) (text string, isErr bool) {
 }
 
 // resolvedInWindow counts "recover" events within the last window (relative
-// to now) -- the mockup's "Resolved · 7d" tile.
+// to now) -- the "Resolved · 7d" tile.
 func resolvedInWindow(events []core.AlertRecord, window time.Duration) int {
 	cutoff := time.Now().Add(-window).Unix()
 	n := 0
@@ -204,7 +202,7 @@ func resolvedInWindow(events []core.AlertRecord, window time.Duration) int {
 	return n
 }
 
-// uptimePct30d computes the mockup's "Uptime · 30d" tile: 100% minus the
+// uptimePct30d computes the "Uptime · 30d" tile: 100% minus the
 // fraction of the last 30 days spent in a downtime event. For the self
 // scope it reads Deps.Events (the same downtime event store the history
 // page's panel uses, events_store.go) -- the cheap, already-wired local
@@ -323,7 +321,7 @@ func alertsRedirectHref(r *http.Request, flashCode string) string {
 // active set to preserve the old handler's 404 for an unknown key (a read
 // error there is a real 500, not a masked "not found").
 //
-// The two scopes behave differently on from here (task C6 ruling):
+// The two scopes behave differently on from here:
 //
 //   - Self scope (the pre-existing behavior, byte-for-byte unchanged for
 //     ack): AckAlert/UnackAlert runs against THIS daemon's own in-memory

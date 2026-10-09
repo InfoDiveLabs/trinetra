@@ -72,15 +72,11 @@ type configTargetRow struct {
 // so a disk nobody has touched yet still shows up as an enabled,
 // default-threshold row rather than not appearing at all.
 //
-// This is NOT the full auto-discovered target list the mockup's config.html
-// shows (disk + docker + smart + temp, sourced from
-// internal/trinetra/discover.go's Discover): internal/web must not import
-// internal/trinetra, to keep the module graph one-way, and Deps doesn't
-// expose a generic target inventory today -- only Snapshot's disk mounts and
-// whatever overrides already exist in config. Extending Deps with a full
-// target list is future work; scoping to what's actually available here
-// keeps this task's "enable/disable + per-target threshold" contract real
-// and testable without widening the trinetra/web seam further.
+// This is NOT the full auto-discovered target list (disk + docker + smart +
+// temp, sourced from internal/trinetra/discover.go's Discover): internal/web
+// must not import internal/trinetra, to keep the module graph one-way, and
+// Deps doesn't expose a generic target inventory -- only Snapshot's disk
+// mounts and whatever overrides already exist in config.
 func configTargetRows(cfg *config.Config, snap DashboardView) []configTargetRow {
 	seen := map[string]bool{}
 	var out []configTargetRow
@@ -132,7 +128,7 @@ func clearTargetThreshold(c *config.Config, name string) {
 // format -- see internal/config/config.go) into from/to hour integers plus
 // whether quiet hours are enabled at all (QuietHours != ""). An unparseable
 // stored value (shouldn't happen -- Set already validates on write) falls
-// back to 23/8, the mockup's own default, rather than failing the page.
+// back to 23/8 rather than failing the page.
 func parseQuietHours(s string) (from, to int, enabled bool) {
 	if s == "" {
 		return 23, 8, false
@@ -230,20 +226,21 @@ type ConfigPageData struct {
 	WebRPID       string
 	WebListen     string
 	WebSessionTTL string
-	// ManagedFragment (task 8) maps a managed-config allowlist key (e.g.
-	// "thresholds.cpu_pct") to the id of the fleet fragment currently
-	// supplying it, for exactly the keys this node's fleet master is
-	// currently managing. Empty/nil on a master, solo daemon, or a child
-	// with nothing managed. The template disables each such field's
-	// <input> and shows the fragment id; configSaveHandler independently
-	// rejects a POST that names one of these fields regardless (a forged
-	// request bypassing the disabled attribute), never trusting the
-	// disabled attribute alone.
+	// ManagedFragment maps a managed-config allowlist key (e.g.
+	// "thresholds.cpu_pct") to the id of the fleet fragment currently supplying
+	// it, for exactly the keys this node's fleet master is currently managing.
+	// Empty/nil on a master, solo daemon, or a child with nothing managed. The
+	// template disables each such field's <input> and shows the fragment id;
+	// configSaveHandler independently rejects a POST that names one of these
+	// fields regardless (a forged request bypassing the disabled attribute),
+	// never trusting the disabled attribute alone.
 	ManagedFragment map[string]string
-	// UpdateGitHubTokenSet is whether update.github_token (config.IsSecretKey)
-	// currently holds a value -- the input itself never renders the real
-	// token (secretPlaceholder), so the placeholder text ("(set)"/"(not
-	// set)") is this page's only way to show whether one is stored.
+	// update.github_token (config.IsSecretKey): newCfg is already a clone
+	// of oldCfg (cloneConfig), so simply never setting it here is what
+	// keeps the stored value on a blank submit. Only an explicit,
+	// non-blank token OR the clear checkbox change it, and either change
+	// is audited with "(set)"/"(not set)" in place of the raw secret
+	// value (never the token itself, in either Old or New).
 	UpdateGitHubTokenSet bool
 }
 
@@ -349,16 +346,15 @@ func configPageHandler(d Deps) http.HandlerFunc {
 // itself) and, for whatever actually changed, emit an audit record.
 type scalarEdit struct{ key, val string }
 
-// managedFormFields maps each of the ten managed-config allowlist keys
-// (task 8) to the posted form field name(s) that would change it. A real
-// browser never submits a disabled <input> at all, so when a key is
-// currently managed and NONE of its fields are present in the POST body,
-// configSaveHandler simply leaves it out of the edits it applies (its
-// clone already carries the current value -- see cloneConfig) rather than
-// erroring; when ANY of its fields IS present (a forged request bypassing
-// the disabled attribute, since the real page never sends one), the whole
-// POST is rejected with the same "managed by the fleet master" message the
-// CLI/ctl show.
+// managedFormFields maps each of the ten managed-config allowlist keys to the
+// posted form field name(s) that would change it. A real browser never submits
+// a disabled <input> at all, so when a key is currently managed and NONE of its
+// fields are present in the POST body, configSaveHandler simply leaves it out
+// of the edits it applies (its clone already carries the current value -- see
+// cloneConfig) rather than erroring; when ANY of its fields IS present (a
+// forged request bypassing the disabled attribute, since the real page never
+// sends one), the whole POST is rejected with the same "managed by the fleet
+// master" message the CLI/ctl show.
 var managedFormFields = map[string][]string{
 	"thresholds.disk_pct":      {"disk_pct"},
 	"thresholds.mem_pct":       {"mem_pct"},
@@ -503,16 +499,12 @@ func applyIntervalEdits(newCfg *config.Config, fastVal, sampleVal string) error 
 	return nil
 }
 
-// configSaveHandler handles POST /config: validates every posted field
-// against a clone of the current config via config.Config.Set (its
-// existing, already-tested validators -- a bad value rejects with 400 and
-// writes nothing), and only once every field has passed persists +
-// in-process applies via Deps.API.ApplyConfig (task 8; previously
-// Deps.Reload directly -- ApplyConfig's in-process/file-backed
-// implementations perform the exact same save-then-apply/save-then-SIGHUP
-// sequence Reload always did), then appends one audit record per scalar
-// field that actually changed plus one summarizing any monitors table
-// changes.
+// configSaveHandler handles POST /config: validates every posted field against
+// a clone of the current config via config.Config.Set (its existing,
+// already-tested validators -- a bad value rejects with 400 and writes
+// nothing), and only once every field has passed persists + in-process applies
+// via Deps.API.ApplyConfig, then appends one audit record per scalar field that
+// actually changed plus one summarizing any monitors table changes.
 func configSaveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -557,14 +549,13 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 			{"healthchecks.url", r.FormValue("deadman_url")},
 		}
 
-		// Managed-config read-only enforcement (task 8): a key currently
-		// managed by the fleet master is never edited from here. A real
-		// browser never submits a disabled field at all, so its absence from
-		// the POST body is the normal case (silently skipped below, leaving
-		// newCfg's cloned current value untouched); any of its fields
-		// actually being PRESENT means either a stale form or a forged
-		// request, and the whole save is rejected rather than silently
-		// dropping just that field.
+		// Managed-config read-only enforcement: a key currently managed by the
+		// fleet master is never edited from here. A real browser never submits
+		// a disabled field at all, so its absence from the POST body is the
+		// normal case (silently skipped below, leaving newCfg's cloned current
+		// value untouched); any of its fields actually being PRESENT means
+		// either a stale form or a forged request, and the whole save is
+		// rejected rather than silently dropping just that field.
 		managed := configManagedFragments(d)
 		for key, id := range managed {
 			for _, field := range managedFormFields[key] {
@@ -608,8 +599,7 @@ func configSaveHandler(d Deps) http.HandlerFunc {
 
 		// update.github_token (config.IsSecretKey): newCfg is already a clone
 		// of oldCfg (cloneConfig), so simply never setting it here is what
-		// keeps the stored value on a blank submit -- the "empty submit keeps
-		// what's stored" contract task-8-brief.md asks for. Only an explicit,
+		// keeps the stored value on a blank submit. Only an explicit,
 		// non-blank token OR the clear checkbox change it, and either change
 		// is audited with "(set)"/"(not set)" in place of the raw secret
 		// value (never the token itself, in either Old or New).

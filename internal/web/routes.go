@@ -33,23 +33,21 @@ func newHandler(d Deps) http.Handler {
 	// /monitoring) stay gated by requireRole(RoleViewer, ...) as before --
 	// only / itself has a third, anonymous-but-not-login-redirected outcome.
 	mux.HandleFunc("GET /{$}", rootHandler(d))
-	// /events (Task 8/#64): the SSE stream dashboard.html's live tiles/charts
-	// subscribe to (assets/app.js's swBootSSE, sse.go). Viewer-gated exactly
-	// like the dashboard itself -- it carries the same live metrics, just
-	// pushed instead of polled.
+	// /events: the SSE stream dashboard.html's live tiles/charts subscribe to
+	// (assets/app.js's swBootSSE, sse.go). Viewer-gated exactly like the
+	// dashboard itself -- it carries the same live metrics, just pushed instead
+	// of polled.
 	mux.HandleFunc("GET /events", requireRole(RoleViewer, d, eventsHandler(d)))
-	// /history + /api/series (Task 9/#65): time-range history graphs backed
-	// by the daemon's SampleStore, reached through Deps.API.Series (core.API,
-	// see server.go's Deps.API doc). Viewer-gated exactly like the
-	// dashboard/events above: history is read-only data, same role floor as
-	// the rest of "Monitor".
+	// /history + /api/series: time-range history graphs backed by the daemon's
+	// SampleStore, reached through Deps.API.Series (core.API, see server.go's
+	// Deps.API doc). Viewer-gated exactly like the dashboard/events above:
+	// history is read-only data, same role floor as the rest of "Monitor".
 	mux.HandleFunc("GET /history", requireRole(RoleViewer, d, historyPageHandler(d)))
 	mux.HandleFunc("GET /api/series", requireRole(RoleViewer, d, seriesAPIHandler(d)))
 	mux.HandleFunc("GET /api/downtime", requireRole(RoleViewer, d, downtimeAPIHandler(d)))
 	// /monitoring: the detailed per-entity view (containers/systemd units/
-	// processes/filesystems), ported from ui-mockup/monitoring.html. Same
-	// viewer+ floor as the rest of "Monitor" -- see monitoringHandler
-	// (handlers_monitoring.go) and web.MonitoringView/
+	// processes/filesystems). Same viewer+ floor as the rest of "Monitor" -- see
+	// monitoringHandler (handlers_monitoring.go) and web.MonitoringView/
 	// internal/trinetra/coreapi_inproc.go's buildMonitoringView adapter for
 	// where its data comes from.
 	mux.HandleFunc("GET /monitoring", requireRole(RoleViewer, d, monitoringHandler(d)))
@@ -60,56 +58,51 @@ func newHandler(d Deps) http.Handler {
 	// /api/container/logs (#115): a docker-logs snapshot for the dashboard
 	// drawer's "View logs" action. Admin-gated -- logs can carry secrets.
 	mux.HandleFunc("GET /api/container/logs", requireRole(RoleAdmin, d, containerLogsHandler(d)))
-	// /fleet + /fleet/table + /api/fleet/nodes (Task 5/fleet-web-a): the
-	// fleet overview -- health strip, filterable/sortable node table, and
-	// its htmx poll fragment/JSON API. Viewer-gated exactly like the rest
-	// of "Monitor" (RBAC doesn't distinguish master from solo/child here);
-	// each handler itself 404s unless fleetRole(d)=="master"
-	// (handlers_fleet.go), so a solo/child daemon's viewer sees a plain
-	// not-found rather than an empty fleet page. /fleet is also on
-	// node_scope.go's masterLocalPrefixes, so /n/{node}/fleet is already a
-	// 404 via withNodeRouter -- these three routes only ever render the
-	// master's own view.
+	// /fleet + /fleet/table + /api/fleet/nodes: the fleet overview -- health
+	// strip, filterable/sortable node table, and its htmx poll fragment/JSON
+	// API. Viewer-gated exactly like the rest of "Monitor" (RBAC doesn't
+	// distinguish master from solo/child here); each handler itself 404s unless
+	// fleetRole(d)=="master" (handlers_fleet.go), so a solo/child daemon's
+	// viewer sees a plain not-found rather than an empty fleet page. /fleet is
+	// also on node_scope.go's masterLocalPrefixes, so /n/{node}/fleet is
+	// already a 404 via withNodeRouter -- these three routes only ever render
+	// the master's own view.
 	mux.HandleFunc("GET /fleet", requireRole(RoleViewer, d, fleetOverviewHandler(d)))
 	mux.HandleFunc("GET /fleet/table", requireRole(RoleViewer, d, fleetTableHandler(d)))
 	mux.HandleFunc("GET /api/fleet/nodes", requireRole(RoleViewer, d, fleetNodesAPIHandler(d)))
-	// /fleet/compare (Task C1b, plan C): the fleet-wide metric compare view
-	// over FleetAPI.FleetSeries -- ?nodes=a,b,c (the table's "Compare"
-	// action below) or ?tag=web selects the nodes, one uPlot overlay per
-	// request. Viewer-gated and master-only exactly like the read-only
-	// /fleet routes above; already on node_scope.go's masterLocalPrefixes
-	// via its "/fleet" entry.
+	// /fleet/compare: the fleet-wide metric compare view over
+	// FleetAPI.FleetSeries -- ?nodes=a,b,c (the table's "Compare" action below)
+	// or ?tag=web selects the nodes, one uPlot overlay per request.
+	// Viewer-gated and master-only exactly like the read-only /fleet routes
+	// above; already on node_scope.go's masterLocalPrefixes via its "/fleet"
+	// entry.
 	mux.HandleFunc("GET /fleet/compare", requireRole(RoleViewer, d, fleetCompareHandler(d)))
 	// /fleet/incidents + /fleet/incidents/{id} (+ /table poll fragment, +
-	// ack/silence mutations) -- task C2, plan C: the fleet incidents web UI
-	// over FleetAPI's Incidents/Incident/AckIncident/Explain/CreateSilence.
-	// GETs are viewer-gated and master-only (fleetGateHTML) exactly like the
-	// rest of "Monitor"; ack is responder+CSRF (fleetResponderMutation), silence admin+CSRF (fleetAdminMutation),
-	// same as /fleet/admin's mutations below. Already covered by
-	// node_scope.go's masterLocalPrefixes "/fleet" entry (prefix-matches
-	// every /fleet/... path), so /n/{node}/fleet/incidents... is already a
-	// 404 via withNodeRouter.
+	// ack/silence mutations): the fleet incidents web UI over FleetAPI's
+	// Incidents/Incident/AckIncident/Explain/CreateSilence. GETs are viewer-gated
+	// and master-only (fleetGateHTML) exactly like the rest of "Monitor"; ack is
+	// responder+CSRF (fleetResponderMutation), silence admin+CSRF
+	// (fleetAdminMutation), same as /fleet/admin's mutations below. Already covered by node_scope.go's masterLocalPrefixes
+	// "/fleet" entry (prefix-matches every /fleet/... path), so
+	// /n/{node}/fleet/incidents... is already a 404 via withNodeRouter.
 	mux.HandleFunc("GET /fleet/incidents", requireRole(RoleViewer, d, fleetIncidentsHandler(d)))
 	mux.HandleFunc("GET /fleet/incidents/table", requireRole(RoleViewer, d, fleetIncidentsTableHandler(d)))
 	mux.HandleFunc("GET /fleet/incidents/{id}", requireRole(RoleViewer, d, fleetIncidentHandler(d)))
 	mux.HandleFunc("POST /fleet/incidents/{id}/ack", fleetResponderMutation(d, fleetIncidentAckHandler(d)))
 	mux.HandleFunc("POST /fleet/incidents/{id}/silence", fleetAdminMutation(d, fleetIncidentSilenceHandler(d)))
-	// /fleet/alerting (+ /test, + /fleet/rules/state) -- task C3, plan C:
-	// the routing/escalation config editor (routes/policies/rules, "edit as
-	// JSON"), the route tester, and the rule-state fragment, over
-	// FleetAPI's Alerting/SetAlerting/RouteTest/RuleStates. GET is
-	// viewer-gated (read-only for a viewer -- the page renders no <form>
-	// for anything but the tester at that role) and master-only
-	// (fleetGateHTML, handlers_fleet_alerting.go); the save POST is
-	// admin+CSRF (fleetAdminMutation), exactly like /fleet/admin's
-	// mutations. The route tester POST stays viewer-gated (it only ever
-	// dry-runs RouteTest, it never mutates the saved config) but still
-	// requires CSRF (fix round 1 IMPORTANT 1) -- the same precedent
-	// POST /channels/{name}/test sets for a non-mutating-but-still-
-	// session-triggered action: any signed-in POST that could be forged
-	// cross-site gets a CSRF check regardless of whether it happens to
-	// write anything. Already covered by node_scope.go's
-	// masterLocalPrefixes "/fleet" entry.
+	// /fleet/alerting (+ /test, + /fleet/rules/state): the routing/escalation
+	// config editor (routes/policies/rules, "edit as JSON"), the route tester, and
+	// the rule-state fragment, over FleetAPI's
+	// Alerting/SetAlerting/RouteTest/RuleStates. GET is viewer-gated (read-only
+	// for a viewer -- the page renders no <form> for anything but the tester at
+	// that role) and master-only (fleetGateHTML, handlers_fleet_alerting.go);
+	// the save POST is admin+CSRF (fleetAdminMutation), exactly like
+	// /fleet/admin's mutations. The route tester POST stays viewer-gated (it
+	// only ever dry-runs RouteTest, it never mutates the saved config) but
+	// still requires CSRF -- the same precedent POST /channels/{name}/test sets:
+	// any signed-in POST that could be forged cross-site gets a CSRF check
+	// regardless of whether it happens to write anything. Already covered by
+	// node_scope.go's masterLocalPrefixes "/fleet" entry.
 	mux.HandleFunc("GET /fleet/alerting", requireRole(RoleViewer, d, fleetAlertingPageHandler(d)))
 	mux.HandleFunc("POST /fleet/alerting", limitBody(alertingMaxBodyBytes, fleetAdminMutation(d, fleetAlertingSaveHandler(d))))
 	mux.HandleFunc("POST /fleet/alerting/test", requireRole(RoleViewer, d, func(w http.ResponseWriter, r *http.Request) {
@@ -129,29 +122,27 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /status-page/incidents/{id}/updates/{uid}", fleetResponderMutation(d, statusUpdateEditHandler(d)))
 	mux.HandleFunc("POST /status-page/incidents/{id}/edit", fleetResponderMutation(d, statusIncidentEditHandler(d)))
 	mux.HandleFunc("POST /status-page/incidents/{id}/delete", fleetAdminMutation(d, statusIncidentDeleteHandler(d)))
-	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete) --
-	// task C4, plan C: the fleet silences and maintenance-windows web UI over
-	// core.FleetAPI's Silences/CreateSilence/ExpireSilence/Maintenances/
-	// SaveMaintenance/DeleteMaintenance (internal/core/fleet.go,
-	// handlers_fleet_silences.go). GET is viewer-gated and master-only
-	// (fleetGateHTML) exactly like the rest of "Monitor"; every mutation is
-	// admin+CSRF (fleetAdminMutation), same as /fleet/admin's and
-	// /fleet/alerting's mutations above. Already covered by
+	// /fleet/silences (+ /{id}/expire, + /fleet/maintenance + /{id}/delete): the
+	// fleet silences and maintenance-windows web UI over core.FleetAPI's
+	// Silences/CreateSilence/ExpireSilence/Maintenances/SaveMaintenance/
+	// DeleteMaintenance (internal/core/fleet.go, handlers_fleet_silences.go). GET
+	// is viewer-gated and master-only (fleetGateHTML) exactly like the rest of
+	// "Monitor"; every mutation is admin+CSRF (fleetAdminMutation), same as
+	// /fleet/admin's and /fleet/alerting's mutations above. Already covered by
 	// node_scope.go's masterLocalPrefixes "/fleet" entry.
 	mux.HandleFunc("GET /fleet/silences", requireRole(RoleViewer, d, fleetSilencesPageHandler(d)))
 	mux.HandleFunc("POST /fleet/silences", fleetAdminMutation(d, fleetSilenceCreateHandler(d)))
 	mux.HandleFunc("POST /fleet/silences/{id}/expire", fleetAdminMutation(d, fleetSilenceExpireHandler(d)))
 	mux.HandleFunc("POST /fleet/maintenance", fleetAdminMutation(d, fleetMaintenanceCreateHandler(d)))
 	mux.HandleFunc("POST /fleet/maintenance/{id}/delete", fleetAdminMutation(d, fleetMaintenanceDeleteHandler(d)))
-	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/* (Task 7, fleet-web-a):
-	// node management (rename/tags/revoke/remove) and join-token
-	// issuance/revocation, admin+CSRF-gated like /users/* below -- see
-	// fleetAdminMutation's doc. Each handler additionally 404s unless
-	// fleetRole(d)=="master" (fleetGateHTML, handlers_fleet_admin.go),
-	// exactly like the read-only /fleet routes above. "/fleet/admin" is
-	// already on node_scope.go's masterLocalPrefixes (its "/fleet" entry
-	// prefix-matches every /fleet/... path), so /n/{node}/fleet/admin is
-	// already a 404 via withNodeRouter.
+	// /fleet/admin + /fleet/tokens*/ + /fleet/nodes/*: node management
+	// (rename/tags/revoke/remove) and join-token issuance/revocation,
+	// admin+CSRF-gated like /users/* below -- see fleetAdminMutation's doc.
+	// Each handler additionally 404s unless fleetRole(d)=="master"
+	// (fleetGateHTML, handlers_fleet_admin.go), exactly like the read-only
+	// /fleet routes above. "/fleet/admin" is already on node_scope.go's
+	// masterLocalPrefixes (its "/fleet" entry prefix-matches every /fleet/...
+	// path), so /n/{node}/fleet/admin is already a 404 via withNodeRouter.
 	mux.HandleFunc("GET /fleet/admin", requireRole(RoleAdmin, d, fleetAdminPageHandler(d)))
 	mux.HandleFunc("POST /fleet/tokens", fleetAdminMutation(d, fleetTokenCreateHandler(d)))
 	mux.HandleFunc("POST /fleet/tokens/{id}/delete", fleetAdminMutation(d, fleetTokenDeleteHandler(d)))
@@ -159,17 +150,14 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /fleet/nodes/{id}/tags", fleetAdminMutation(d, fleetNodeTagsHandler(d)))
 	mux.HandleFunc("POST /fleet/nodes/{id}/revoke", fleetAdminMutation(d, fleetNodeRevokeHandler(d)))
 	mux.HandleFunc("POST /fleet/nodes/{id}/remove", fleetAdminMutation(d, fleetNodeRemoveHandler(d)))
-	// /fleet/managed (+ /{id}/delete) + /fleet/audit -- task C5, plan C: the
-	// managed-config fragment editor + per-node status, and the fleet audit
-	// log, over core.FleetAPI's Managed/SaveManaged/DeleteManaged/
-	// ManagedStatus/Audit (internal/core/fleet.go, handlers_fleet_managed.go/
-	// handlers_fleet_audit.go). GET /fleet/managed is viewer-gated and
-	// master-only (fleetGateHTML) like the rest of "Monitor"/"Admin"; its
-	// mutations are admin+CSRF (fleetAdminMutation), same as /fleet/admin's
-	// above. GET /fleet/audit is admin-only end to end (RoleAdmin here,
-	// task-5-brief.md's own ruling -- unlike Managed config, this page has
-	// no viewer-facing read at all). Already covered by node_scope.go's
-	// masterLocalPrefixes "/fleet" entry.
+	// /fleet/managed (+ /{id}/delete) + /fleet/audit: the managed-config
+	// fragment editor + per-node status, and the fleet audit log, over
+	// core.FleetAPI's Managed/SaveManaged/DeleteManaged/ManagedStatus/Audit
+	// (internal/core/fleet.go, handlers_fleet_managed.go/handlers_fleet_audit.go).
+	// GET /fleet/managed is viewer-gated and master-only (fleetGateHTML) like the
+	// rest of "Monitor"/"Admin"; its mutations are admin+CSRF (fleetAdminMutation),
+	// same as /fleet/admin's above. GET /fleet/audit is admin-only end to end.
+	// Already covered by node_scope.go's masterLocalPrefixes "/fleet" entry.
 	mux.HandleFunc("GET /fleet/managed", requireRole(RoleViewer, d, fleetManagedPageHandler(d)))
 	mux.HandleFunc("POST /fleet/managed", fleetAdminMutation(d, fleetManagedSaveHandler(d)))
 	mux.HandleFunc("POST /fleet/managed/{id}/delete", fleetAdminMutation(d, fleetManagedDeleteHandler(d)))
@@ -192,31 +180,25 @@ func newHandler(d Deps) http.Handler {
 	// aren't.
 	mux.Handle("POST /logout", requireCSRF(logoutHandler(d)))
 
-	// Admin-only routes: the mockup app.js's ADMIN_PAGES list
-	// (config.html/channels.html/users.html/public-settings.html), gated by
-	// requireRole(RoleAdmin, ...) (middleware.go). Real content (config
-	// editor, channel management, user management, public-view curation) is
-	// later tasks' job -- these are placeholders in exactly the same spirit
-	// dashboardHandler was before the live-dashboard task, proving the
-	// RBAC gate + shell wiring work before the pages have anything real to
-	// show.
-	// /config (Task 10/#66): the real config editor -- thresholds, monitors
-	// (enable/disable + per-target threshold), schedules, quiet hours. GET is
-	// requireRole(RoleAdmin, ...) like the other admin routes; POST additionally
-	// needs requireCSRF (configMutation, handlers_config.go), since it's a
-	// config-wide mutation exactly like the /users/* mutations below.
+	// Admin-only routes (config/channels/users/public-settings), gated by
+	// requireRole(RoleAdmin, ...) (middleware.go).
+	// /config: the config editor -- thresholds, monitors (enable/disable +
+	// per-target threshold), schedules, quiet hours. GET is
+	// requireRole(RoleAdmin, ...) like the other admin routes; POST
+	// additionally needs requireCSRF (configMutation, handlers_config.go),
+	// since it's a config-wide mutation exactly like the /users/* mutations
+	// below.
 	mux.HandleFunc("GET /config", requireRole(RoleAdmin, d, configPageHandler(d)))
 	mux.HandleFunc("POST /config", configMutation(d, configSaveHandler(d)))
-	// /updates (task 8): self-update status + manual actions over
-	// core.API.UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback.
-	// Admin-only like /config; every mutation additionally needs
-	// requireCSRF (updatesMutation, handlers_updates.go).
+	// /updates: self-update status + manual actions over
+	// core.API.UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback. Admin-only
+	// like /config; every mutation additionally needs requireCSRF
+	// (updatesMutation, handlers_updates.go).
 	mux.HandleFunc("GET /updates", requireRole(RoleAdmin, d, updatesPageHandler(d)))
 	mux.HandleFunc("POST /updates/check", updatesMutation(d, updatesCheckHandler(d)))
 	mux.HandleFunc("POST /updates/apply", updatesMutation(d, updatesApplyHandler(d)))
 	mux.HandleFunc("POST /updates/rollback", updatesMutation(d, updatesRollbackHandler(d)))
-	// /channels (Task 10/#66): CRUD over config.Channels, ported from
-	// ui-mockup/channels.html's table + add/edit modal. GET is
+	// /channels: CRUD over config.Channels (table + add/edit modal). GET is
 	// requireRole(RoleAdmin, ...) like /config; every mutation additionally
 	// needs requireCSRF (channelsMutation, handlers_channels.go).
 	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, d, channelsPageHandler(d)))
@@ -224,21 +206,19 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /channels/{name}/update", channelsMutation(d, channelsUpdateHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/remove", channelsMutation(d, channelsRemoveHandler(d)))
 	mux.HandleFunc("POST /channels/{name}/test", channelsMutation(d, channelsTestHandler(d)))
-	// /settings/public + /public + /public/events (Task 11/#67, extended by
-	// the public-rework task): the admin-curated exposure picker (GET/POST
-	// /settings/public, admin-only + CSRF on the mutation --
+	// /settings/public + /public + /public/events: the admin-curated exposure
+	// picker (GET/POST /settings/public, admin-only + CSRF on the mutation --
 	// publicSettingsMutation, handlers_public.go); GET /public itself is now
-	// just a redirect to / (publicRouteRedirectHandler,
-	// handlers_public.go -- the anonymous page moved to / itself, see
-	// rootHandler); and GET /public/events is the anonymous page's live SSE
-	// counterpart (publicEventsHandler, sse.go) -- deliberately NOT gated by
-	// requireRole/requireCSRF, same as / itself: it enforces its own
-	// "disabled -> 404" + server-side panel allowlist instead (see that
-	// handler's SECURITY doc). Never reuses /events (the viewer-gated
-	// stream) -- a shared endpoint would mean either leaking the full
-	// DashboardView anonymously or threading an allowlist filter through a
-	// handler that also serves authenticated viewers, both worse than a
-	// second, narrowly-scoped handler.
+	// just a redirect to / (publicRouteRedirectHandler, handlers_public.go --
+	// the anonymous page moved to / itself, see rootHandler); and GET
+	// /public/events is the anonymous page's live SSE counterpart
+	// (publicEventsHandler, sse.go) -- deliberately NOT gated by
+	// requireRole/requireCSRF, same as / itself: it enforces its own "disabled
+	// -> 404" + server-side panel allowlist instead (see that handler's
+	// SECURITY doc). Never reuses /events (the viewer-gated stream) -- a shared
+	// endpoint would mean either leaking the full DashboardView anonymously or
+	// threading an allowlist filter through a handler that also serves
+	// authenticated viewers, both worse than a second, narrowly-scoped handler.
 	mux.HandleFunc("GET /settings/public", requireRole(RoleAdmin, d, publicSettingsPageHandler(d)))
 	mux.HandleFunc("POST /settings/public", publicSettingsMutation(d, publicSettingsSaveHandler(d)))
 	mux.HandleFunc("GET /public", publicRouteRedirectHandler)
@@ -250,34 +230,33 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /status/feed.atom", statusFeedHandler(d))
 	mux.HandleFunc("GET /status/api.json", statusAPIHandler(d))
 
-	// /alerts (Task 10/#66): alert history + active alerts, both read over
-	// the control socket (Deps.API.AlertHistory/ActiveAlerts), viewer+ per
-	// the design doc -- this
-	// resolves the earlier placeholder note that /alerts must be
-	// viewer-gated, not admin-only. Ack, however, is responder-or-admin + CSRF (viewers are read-only): it
-	// mutates shared alert state everyone else's view depends on.
+	// /alerts: alert history + active alerts, both read over the control socket
+	// (Deps.API.AlertHistory/ActiveAlerts), viewer+ per the design doc -- this
+	// resolves the earlier placeholder note that /alerts must be viewer-gated,
+	// not admin-only. Ack, however, is responder-or-admin + CSRF (viewers are
+	// read-only): it mutates shared alert state everyone else's view depends
+	// on.
 	mux.HandleFunc("GET /alerts", requireRole(RoleViewer, d, alertsPageHandler(d)))
 	mux.HandleFunc("POST /alerts/{key}/ack", requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsAckHandler(d)).ServeHTTP(w, r)
 	}))
-	// /alerts/{key}/unack (task C6): the ack action's inverse, over
-	// core.API.UnackAlert -- same responder+CSRF gate. As of task C6,
-	// node_scope.go's withNodeRouter also allows a node-scoped POST to
-	// EXACTLY this path (and .../ack) through to here, re-dispatched with
-	// the node scope attached so apiFor(r,d) resolves to that node's own
-	// replicaAPI -- see withNodeRouter's doc for why this is the one
+	// /alerts/{key}/unack: the ack action's inverse, over core.API.UnackAlert
+	// -- same responder+CSRF gate. node_scope.go's withNodeRouter also allows a
+	// node-scoped POST to EXACTLY this path (and .../ack) through to here,
+	// re-dispatched with the node scope attached so apiFor(r,d) resolves to that
+	// node's own replicaAPI -- see withNodeRouter's doc for why this is the one
 	// deliberate exception to "node-scoped routes are GET/HEAD only".
 	mux.HandleFunc("POST /alerts/{key}/unack", requireRole(RoleResponder, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(alertsUnackHandler(d)).ServeHTTP(w, r)
 	}))
 
-	// /users (Task 7/#63): the real user-management page -- list accounts,
-	// issue/re-issue enrollment tokens, change roles, remove accounts, revoke
-	// individual passkeys. GET is requireRole(RoleAdmin, ...) like the other
-	// admin routes above; every mutation additionally needs requireCSRF
-	// (usersMutation, handlers_users.go), since these change someone ELSE's
-	// account rather than the caller's own session (unlike POST /logout,
-	// which only needs the CSRF half).
+	// /users: the real user-management page -- list accounts, issue/re-issue
+	// enrollment tokens, change roles, remove accounts, revoke individual
+	// passkeys. GET is requireRole(RoleAdmin, ...) like the other admin routes
+	// above; every mutation additionally needs requireCSRF (usersMutation,
+	// handlers_users.go), since these change someone ELSE's account rather than
+	// the caller's own session (unlike POST /logout, which only needs the CSRF
+	// half).
 	mux.HandleFunc("GET /users", requireRole(RoleAdmin, d, usersPageHandler(d)))
 	mux.HandleFunc("POST /users/invite", usersMutation(d, usersInviteHandler(d)))
 	mux.HandleFunc("POST /users/{id}/role", usersMutation(d, usersRoleHandler(d)))
@@ -292,34 +271,31 @@ func newHandler(d Deps) http.Handler {
 	// and currentRole (templates.go) both read via userFromContext.
 	sessions := newSessionStore(d.StateDir)
 	users := newUserStore(d.StateDir)
-	// gzipMiddleware (Task 7, slow-request-resilience) is the outermost
-	// wrap: it compresses large responses (history/series JSON) for
-	// congested uplinks, gated on Accept-Encoding: gzip and a 1KB minimum,
-	// and excludes /events + /public/events (SSE streams -- see its doc in
-	// compress.go for why buffering those would break live push).
+	// gzipMiddleware is the outermost wrap: it compresses large responses
+	// (history/series JSON) for congested uplinks, gated on Accept-Encoding: gzip
+	// and a 1KB minimum, and excludes /events + /public/events (SSE streams -- see
+	// its doc in compress.go for why buffering those would break live push).
 	//
-	// withNodeRouter (node_scope.go, fleet-web-a task 1) sits just inside
-	// userMiddleware, not outside it: a /n/{node}/... request must already
-	// carry the same resolved session/user every other request does before
-	// requireRole/requireCSRF on the re-dispatched (prefix-stripped)
-	// request evaluate it -- node scoping never bypasses auth.
+	// withNodeRouter (node_scope.go) sits just inside userMiddleware, not outside
+	// it: a /n/{node}/... request must already carry the same resolved
+	// session/user every other request does before requireRole/requireCSRF on the
+	// re-dispatched (prefix-stripped) request evaluate it -- node scoping never
+	// bypasses auth.
 	//
-	// withFleetMemo (fleet_memo.go, fleet-web-a task 5 round-1 review) wraps
-	// just OUTSIDE withNodeRouter: withNodeRouter's own resolveMasterAndNodes
-	// call needs the memo already present, and its request-cloning carries
-	// this context value forward to the re-dispatched node-scoped request
-	// automatically -- see withFleetMemo's own doc for why this is the
-	// narrowest correct place to install it.
+	// withFleetMemo (fleet_memo.go) wraps just OUTSIDE withNodeRouter:
+	// withNodeRouter's own resolveMasterAndNodes call needs the memo already
+	// present, and its request-cloning carries this context value forward to the
+	// re-dispatched node-scoped request automatically -- see withFleetMemo's own
+	// doc for why this is the narrowest correct place to install it.
 	return gzipMiddleware(securityHeaders(sessionMiddleware(sessions, userMiddleware(users, withFleetMemo(withNodeRouter(d, mux))))))
 }
 
 // assetHandler wraps http.FileServer to force a deterministic Content-Type
-// for the extensions the mockup shell needs (text/css, application/
-// javascript) instead of relying on mime.TypeByExtension, which consults
-// the host's /etc/mime.types on Unix and so isn't guaranteed to agree
-// across machines. http.ServeContent (which FileServer calls internally)
-// only fills in Content-Type when it isn't already set, so pre-setting it
-// here wins.
+// for the extensions the shell needs (text/css, application/javascript)
+// instead of relying on mime.TypeByExtension, which consults the host's
+// /etc/mime.types on Unix and so isn't guaranteed to agree across machines.
+// http.ServeContent (which FileServer calls internally) only fills in
+// Content-Type when it isn't already set, so pre-setting it here wins.
 //
 // It also suppresses http.FileServer's built-in directory index: a request
 // whose path ends in "/" (e.g. "/assets/" after StripPrefix leaves "/") is
@@ -348,11 +324,11 @@ func assetHandler(assets fs.FS) http.Handler {
 	})
 }
 
-// contentTypeByExt returns the Content-Type this package's vendored/mockup
-// assets and the Trinetra brand files (brand/*.png|.ico, fonts/*.woff2 and
-// the font's OFL.txt) need, or "" to let http.FileServer's default
-// sniffing/mime lookup decide (harmless for extensions this handler doesn't
-// special-case). woff2 in particular is missing from many hosts' mime.types.
+// contentTypeByExt returns the Content-Type this package's vendored assets
+// and the Trinetra brand files (brand/*.png|.ico, fonts/*.woff2 and the font's
+// OFL.txt) need, or "" to let http.FileServer's default sniffing/mime lookup
+// decide (harmless for extensions this handler doesn't special-case). woff2 in
+// particular is missing from many hosts' mime.types.
 func contentTypeByExt(name string) string {
 	switch {
 	case strings.HasSuffix(name, ".css"):
@@ -371,12 +347,11 @@ func contentTypeByExt(name string) string {
 	return ""
 }
 
-// enrollPageHandler renders the passkey-registration page (ported from
-// ui-mockup/enroll.html -- see templates/enroll.html) through the bare/
-// centered layout (base_bare.html/BarePageData, templates.go): unlike the
-// dashboard/app-shell pages, there's no signed-in session yet to fill a
-// sidebar/topbar with. assets/app.js wires the page's form to
-// /enroll/begin and /enroll/finish via navigator.credentials.create.
+// enrollPageHandler renders the passkey-registration page (templates/
+// enroll.html) through the bare/centered layout (base_bare.html/BarePageData,
+// templates.go): unlike the dashboard/app-shell pages, there's no signed-in
+// session yet to fill a sidebar/topbar with. assets/app.js wires the page's
+// form to /enroll/begin and /enroll/finish via navigator.credentials.create.
 //
 // Any ?token=... on this GET is threaded through to BarePageData.EnrollToken
 // (templates.go) so enroll.html can stash it in a hidden field and app.js
@@ -385,15 +360,14 @@ func contentTypeByExt(name string) string {
 // resolveEnrollRole/tokenStore.Redeem); a page load must stay side-effect
 // free (a token is single-use and shouldn't burn on a mere GET or refresh).
 //
-// U8 (2026-09-25 UI audit fix): when there's no token AND the user store
-// already has at least one account, resolveEnrollRole will refuse any
-// POST /enroll/begin this page's form could possibly submit -- so rather
-// than render the form and let the operator discover that only after
-// filling it in and clicking "Create passkey", BarePageData.EnrollClosed is
-// set here and enroll.html renders a "you need an invite" message (with a
-// link to /login) instead. This is a read-only IsEmpty() check, same
-// fail-closed direction as resolveEnrollRole's own: a store that can't be
-// read is treated as closed too, never as if it were empty.
+// When there's no token AND the user store already has at least one account,
+// resolveEnrollRole will refuse any POST /enroll/begin this page's form could
+// submit -- so rather than render the form and let the operator discover that
+// only after filling it in, BarePageData.EnrollClosed is set here and
+// enroll.html renders a "you need an invite" message (with a link to /login)
+// instead. This is a read-only IsEmpty() check, same fail-closed direction as
+// resolveEnrollRole's own: a store that can't be read is treated as closed
+// too, never as if it were empty.
 func enrollPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := newBarePageData(r, "Set up passkey")
@@ -527,10 +501,9 @@ func enrollFinishHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// loginPageHandler renders the passkey sign-in page (ported from
-// ui-mockup/login.html -- see templates/login.html) through the bare/
-// centered layout, same as enrollPageHandler: there's no session yet to fill
-// an app-shell sidebar/topbar with.
+// loginPageHandler renders the passkey sign-in page (templates/login.html)
+// through the bare/centered layout, same as enrollPageHandler: there's no
+// session yet to fill an app-shell sidebar/topbar with.
 func loginPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := newBarePageData(r, "Sign in")

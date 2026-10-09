@@ -56,11 +56,11 @@ func validateOrigin(cfg *config.Config) error {
 		}
 	}
 
-	// Whenever both are set (required above for non-proxy, optional but
-	// still checked for proxy), rp_id must equal origin's host: this is the
-	// same host WebAuthn's relying-party validation enforces at ceremony
-	// time (Task 4/#60), so a mismatch here would only be caught later, at
-	// the worst possible moment (a user's browser rejecting every passkey).
+	// Whenever both are set (required above for non-proxy, optional but still
+	// checked for proxy), rp_id must equal origin's host: this is the same host
+	// WebAuthn's relying-party validation enforces at ceremony time, so a
+	// mismatch here would only be caught later, at the worst possible moment (a
+	// user's browser rejecting every passkey).
 	if rpID != "" && origin != "" {
 		u, err := url.Parse(origin)
 		if err != nil {

@@ -12,10 +12,8 @@ import (
 
 // fakeEventsStore is a minimal EventsStore test double: events is returned
 // verbatim from Events (ignoring the from/to filter unless err is set). It's
-// no longer used to build Deps.API here (fakeAPI, deps_api_test.go, covers
-// that, since /api/downtime reads through Deps.API now, Task 5) but stays
-// for availability_test.go, which exercises core.ComputeAvailability
-// directly against a core.EventsSource.
+// not used to build Deps.API here but serves availability_test.go, which
+// exercises core.ComputeAvailability directly against a core.EventsSource.
 type fakeEventsStore struct {
 	events []DownEventView
 	err    error
@@ -30,8 +28,7 @@ func (f *fakeEventsStore) Events(from, to int64) ([]DownEventView, error) {
 
 // historyTestDeps mirrors dashboardTestDeps/enrollTestDeps: a fresh StateDir
 // plus the given core.API (nil is valid, since the history/series/downtime
-// handlers all treat a nil Deps.API as "no data", mirroring the pre-Task-5
-// "nil store" contract).
+// handlers all treat a nil Deps.API as "no data").
 func historyTestDeps(t *testing.T, api core.API) Deps {
 	t.Helper()
 	d := enrollTestDeps(t)
@@ -80,11 +77,10 @@ func TestSeriesAPIReturnsPointsForValidRange(t *testing.T) {
 }
 
 // TestSeriesAPIReturnsLoadAndDiskMetrics pins that the load5/load15 and
-// per-mount disk:<mount> series (the mockup history.html shows a full
-// 1m/5m/15m load chart and a per-filesystem disk-usage panel, both dropped
-// by the first port) come back through the same /api/series endpoint just
-// like cpu -- the whole restore leans on these being ordinary queryable
-// metrics, nothing special-cased.
+// per-mount disk:<mount> series (the history page's 1m/5m/15m load chart and
+// per-filesystem disk-usage panel) come back through the same /api/series
+// endpoint just like cpu -- they are ordinary queryable metrics, nothing
+// special-cased.
 func TestSeriesAPIReturnsLoadAndDiskMetrics(t *testing.T) {
 	api := fakeAPI{series: map[string][]SeriesPoint{
 		"load5":      {{TS: 1000, Avg: 0.5}},
@@ -224,7 +220,7 @@ func TestHistoryAndSeriesRoutesAreViewerGated(t *testing.T) {
 
 // TestDowntimeAPIReturnsEventsForValidRange pins the /api/downtime endpoint:
 // a valid range against a populated fake EventsStore returns the downtime
-// events as JSON for the mockup's "Downtime · 30d" timeline/rows, newest
+// events as JSON for the "Downtime · 30d" timeline/rows, newest
 // (largest Start) first -- net_down (2000) sorts ahead of power_down (1000)
 // even though power_down is listed first in the fake store.
 func TestDowntimeAPIReturnsEventsForValidRange(t *testing.T) {
@@ -779,10 +775,9 @@ func TestDowntimeAPITimelineIndependentOfLimitOffset(t *testing.T) {
 	}
 }
 
-// TestHistoryPageRendersDiskAndDowntimeSections pins that the restored
-// mockup sections are present: a per-mount disk panel driven off the current
-// snapshot's mounts, and a downtime panel the client fills from
-// /api/downtime.
+// TestHistoryPageRendersDiskAndDowntimeSections pins that the page carries a
+// per-mount disk panel driven off the current snapshot's mounts, and a
+// downtime panel the client fills from /api/downtime.
 func TestHistoryPageRendersDiskAndDowntimeSections(t *testing.T) {
 	d := historyTestDeps(t, nil)
 	d.Snapshot = func() DashboardView {

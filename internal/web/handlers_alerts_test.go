@@ -39,11 +39,11 @@ func TestAlertsPageListsLogEvents(t *testing.T) {
 	}
 }
 
-// TestAlertHistoryRowsUsesMasterLocalZone pins round-2 review finding I1's
-// second half: alertHistoryRows' "When" column must render through the same
+// TestAlertHistoryRowsUsesMasterLocalZone pins that finding I1's second half:
+// alertHistoryRows' "When" column must render through the same
 // master-local-zone-with-abbreviation convention silenceTimeText
-// (handlers_fleet_silences.go) established for Silences/Audit/Incidents,
-// not its own unlabeled-UTC format -- see TestIncidentTimeTextUsesMasterLocalZone
+// (handlers_fleet_silences.go) established for Silences/Audit/Incidents, not
+// its own unlabeled-UTC format -- see TestIncidentTimeTextUsesMasterLocalZone
 // (handlers_fleet_incidents_test.go) for the sibling pin on incidentTimeText.
 func TestAlertHistoryRowsUsesMasterLocalZone(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
@@ -60,11 +60,11 @@ func TestAlertHistoryRowsUsesMasterLocalZone(t *testing.T) {
 	}
 }
 
-// TestAlertsPageMemoizesActiveAlerts pins round-2 review finding I2: GET
-// /alerts must call apiFor(r,d).ActiveAlerts() at most ONCE per request --
-// the review found it called three separate times (topbarStatus's
-// newPageData, navCountsFor's sidebar badge, and buildAlertsPageData's own
-// read), each a redundant control-socket round trip on a fleet node.
+// TestAlertsPageMemoizesActiveAlerts pins that GET /alerts must call
+// apiFor(r,d).ActiveAlerts() at most ONCE per request -- the review found it
+// called three separate times (topbarStatus's newPageData, navCountsFor's
+// sidebar badge, and buildAlertsPageData's own read), each a redundant
+// control-socket round trip on a fleet node.
 func TestAlertsPageMemoizesActiveAlerts(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	counting := newCountingAPI(fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1700000000}}})
@@ -212,11 +212,11 @@ func TestAlertsAckRoundTripsToAlertState(t *testing.T) {
 	}
 }
 
-// TestAlertsUnackRoundTripsToAlertState is TestAlertsAckRoundTripsToAlertState's
-// unack counterpart (self scope): POSTing unack for an already-acked active
-// alert calls Deps.API.UnackAlert and re-renders the page in place at 200
-// (no redirect -- self scope is unchanged by task C6), plus writes an
-// "alert.unack" audit record.
+// TestAlertsUnackRoundTripsToAlertState is
+// TestAlertsAckRoundTripsToAlertState's unack counterpart (self scope): POSTing
+// unack for an already-acked active alert calls Deps.API.UnackAlert and
+// re-renders the page in place at 200, plus writes an "alert.unack" audit
+// record.
 func TestAlertsUnackRoundTripsToAlertState(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	var unackedKey string
@@ -334,7 +334,7 @@ func seedViewerWithCSRF(t *testing.T, users UserStore, sessions SessionStore) (*
 	return u, &http.Cookie{Name: sessionCookieName, Value: sess.ID}, sess.CSRF
 }
 
-// ---- task C6: remote node ack/unack ----------------------------------------
+// ---- remote node ack/unack ----------------------------------------
 
 // nodeScopedAlertsDeps builds a master Deps with a single fleet node
 // (child1) whose roster State is childState -- "online" for a connected
@@ -355,9 +355,9 @@ func nodeScopedAlertsDeps(t *testing.T, childState string, child fakeAPI) Deps {
 }
 
 // TestNodeScopedAlertsAckSucceedsWhenNodeConnected pins the core remote-ack
-// obligation (task C6 ruling 1): a connected node's Ack button is enabled,
-// and clicking it (via formValuesForButton, the browser-faithful helper)
-// calls THAT node's own core.API.AckAlert -- not the master's.
+// obligation: a connected node's Ack button is enabled, and clicking it (via
+// formValuesForButton, the browser-faithful helper) calls THAT node's own
+// core.API.AckAlert -- not the master's.
 func TestNodeScopedAlertsAckSucceedsWhenNodeConnected(t *testing.T) {
 	var ackCalled bool
 	var ackedKey string

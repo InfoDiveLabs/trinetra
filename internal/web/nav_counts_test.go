@@ -10,11 +10,11 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestNavBadgesRenderRealCounts pins Part 2's core obligation: the sidebar
-// nav's Alerts/Channels/Users/Monitoring badges must reflect real per-request
-// counts (Deps.AlertStatePath's active map, len(Cfg().Channels), the user
-// store's List(), and the live snapshot's container count) rather than the
-// mockup's hardcoded demo values (220/2/5/3).
+// TestNavBadgesRenderRealCounts pins that the sidebar nav's
+// Alerts/Channels/Users/Monitoring badges reflect real per-request counts
+// (Deps.AlertStatePath's active map, len(Cfg().Channels), the user store's
+// List(), and the live snapshot's container count) rather than hardcoded demo
+// values (220/2/5/3).
 func TestNavBadgesRenderRealCounts(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}, {Key: "cpu", Time: 2, Source: "y"}}}

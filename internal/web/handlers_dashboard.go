@@ -31,8 +31,7 @@ type activeAlertView struct {
 // request-scoped fleetMemo (fleet_memo.go) so every call site in the same
 // request -- the topbar status pill, the sidebar alert badge, the dashboard
 // panel, and the alerts page -- shares one control-socket round trip rather
-// than each making its own (round-2 review finding I2: GET /alerts alone
-// used to call this three times). The actual read/projection is
+// than each making its own. The actual read/projection is
 // fetchActiveAlertsViaAPI, below; this is just the memoized front door every
 // caller already used before the memo existed, unchanged.
 func activeAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
@@ -41,11 +40,10 @@ func activeAlertsViaAPI(r *http.Request, d Deps) []activeAlertView {
 
 // snapshotViaAPI returns this request's apiFor(r,d).Snapshot(), memoized the
 // same way as activeAlertsViaAPI above -- the dashboard page's own live view
-// and the sidebar's Monitoring badge (nav_counts.go's node-scope branch)
-// used to each poll a remote node's Snapshot() independently (round-2
-// review finding I2). NOT used by remoteNodeSnapshot (sse.go)'s polling
-// loop, which must keep reading live for the SSE connection's whole
-// lifetime rather than caching one snapshot forever.
+// and the sidebar's Monitoring badge (nav_counts.go's node-scope branch) used
+// to each poll a remote node's Snapshot() independently. NOT used by
+// remoteNodeSnapshot (sse.go)'s polling loop, which must keep reading live for
+// the SSE connection's whole lifetime rather than caching one snapshot forever.
 func snapshotViaAPI(r *http.Request, d Deps) (DashboardView, error) {
 	return fleetMemoFrom(r).snapshot(r, d)
 }
@@ -53,10 +51,9 @@ func snapshotViaAPI(r *http.Request, d Deps) (DashboardView, error) {
 // fetchActiveAlertsViaAPI reads the daemon's current active alerts over the
 // control socket (Deps.API.ActiveAlerts) and projects each core.AlertRecord
 // into an activeAlertView for the dashboard panel, the sidebar badge, the
-// topbar status pill, and the alerts page. It is the channel-only replacement
-// for the old loadActiveAlerts, which decoded the daemon's alerts.json
-// directly off disk: a plugin must not read daemon-owned state from disk, so
-// all four callers now go through core.API. Called at most once per request
+// topbar status pill, and the alerts page. It is the channel-only path (a
+// plugin must not read daemon-owned state from disk), shared by all four
+// callers. Called at most once per request
 // -- see activeAlertsViaAPI's own doc, above, which every caller uses
 // instead of this directly.
 //
@@ -167,13 +164,12 @@ type DashboardPageData struct {
 // disk/unit state.
 func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	var view DashboardView
-	// snapshotViaAPI (round-2 review finding I2) is memoized per request, so
-	// this read is shared with navCountsFor's node-scope branch
-	// (nav_counts.go) instead of each making its own apiFor(r,d).Snapshot()
-	// round trip -- errNoAPI (fleet_memo.go) is "no core.API to poll at
-	// all", the same case the old `if api := apiFor(r, d); api != nil` guard
-	// silently skipped without logging; any other error still logs exactly
-	// as before.
+	// snapshotViaAPI is memoized per request, so this read is shared with
+	// navCountsFor's node-scope branch (nav_counts.go) instead of each making
+	// its own apiFor(r,d).Snapshot() round trip -- errNoAPI (fleet_memo.go) is
+	// "no core.API to poll at all", the same case the old `if api := apiFor(r,
+	// d); api != nil` guard silently skipped without logging; any other error
+	// still logs exactly as before.
 	v, err := snapshotViaAPI(r, d)
 	if err != nil {
 		if !errors.Is(err, errNoAPI) {
@@ -226,8 +222,8 @@ func dashboardHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// ledClass buckets a metric value into the mockup's led/meter/badge color
-// classes ("ok"/"warn"/"crit") against the given warn/crit cutoffs. Used by
+// ledClass buckets a metric value into the led/meter/badge color classes
+// ("ok"/"warn"/"crit") against the given warn/crit cutoffs. Used by
 // templates/dashboard.html for every tile's <span class="led ...">.
 func ledClass(value, warn, crit float64) string {
 	switch {
@@ -240,9 +236,8 @@ func ledClass(value, warn, crit float64) string {
 	}
 }
 
-// byteUnits are the humanBytes step points, largest first, mirroring the
-// mockup's "710 GB"/"520 GB"/"310 MB" filesystem-table style (one
-// significant decimal for GB and above, whole numbers below).
+// byteUnits are the humanBytes step points, largest first (one significant
+// decimal for GB and above, whole numbers below).
 var byteUnits = []struct {
 	size float64
 	unit string
@@ -253,9 +248,8 @@ var byteUnits = []struct {
 	{1 << 10, "KB"},
 }
 
-// humanBytes formats b the way the mockup's filesystems table does (e.g.
-// "4.1 GB", "310 MB"): one decimal at GB/TB scale, whole numbers at MB/KB
-// scale, plain "B" below 1 KB.
+// humanBytes formats b as e.g. "4.1 GB", "310 MB": one decimal at GB/TB
+// scale, whole numbers at MB/KB scale, plain "B" below 1 KB.
 func humanBytes(b uint64) string {
 	f := float64(b)
 	for _, u := range byteUnits {
@@ -270,8 +264,7 @@ func humanBytes(b uint64) string {
 	return fmt.Sprintf("%d B", b)
 }
 
-// humanRate formats a bytes/sec throughput the way the mockup's network
-// tile/chart legends do (e.g. "1.8 MB/s", "240 KB/s").
+// humanRate formats a bytes/sec throughput, e.g. "1.8 MB/s", "240 KB/s".
 func humanRate(bps float64) string {
 	switch {
 	case bps >= 1<<20:
@@ -284,13 +277,13 @@ func humanRate(bps float64) string {
 }
 
 // diskFullSoonDays is the DaysToFull cutoff at/under which the filesystems
-// table's trend column renders as "filling" (red, mockup's .trend.up) rather
-// than "stable" (green, .trend.dn) -- a display-only cutoff, same caveat as
+// table's trend column renders as "filling" (red, .trend.up) rather than
+// "stable" (green, .trend.dn) -- a display-only cutoff, same caveat as
 // DiskCriticalPct/DiskWarnPct in dashboard_view.go.
 const diskFullSoonDays = 14
 
-// diskTrendText renders a DiskView's fill-rate projection as the mockup's
-// "▲ full in Nd" / "▼ stable" trend column text.
+// diskTrendText renders a DiskView's fill-rate projection as "▲ full in Nd" /
+// "▼ stable" trend column text.
 func diskTrendText(days float64, known bool) string {
 	if !known {
 		return "▼ stable"
@@ -301,8 +294,7 @@ func diskTrendText(days float64, known bool) string {
 	return fmt.Sprintf("▼ %.0fd to full", days)
 }
 
-// diskTrendClass is diskTrendText's companion CSS class ("up"/"dn" -- the
-// mockup's .trend.up/.trend.dn colors).
+// diskTrendClass is diskTrendText's companion CSS class ("up"/"dn").
 func diskTrendClass(days float64, known bool) string {
 	if known && days <= diskFullSoonDays {
 		return "up"

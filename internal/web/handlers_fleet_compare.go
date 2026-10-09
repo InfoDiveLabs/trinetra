@@ -12,11 +12,11 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fleetCompareMetric is /fleet/compare's metric selector (task-1b-brief.md:
-// "Metrics: cpu, mem, swap, load1, temp, disk (worst mount)") -- a
-// deliberately different set from the heatmap's fleetMetric (cpu/mem/disk/
-// load), since the compare view exposes every metric FleetSeries can serve,
-// not just the four the heatmap tiles show.
+// fleetCompareMetric is /fleet/compare's metric selector (cpu, mem, swap,
+// load1, temp, disk (worst mount)) -- a deliberately different set from the
+// heatmap's fleetMetric (cpu/mem/disk/load), since the compare view exposes
+// every metric FleetSeries can serve, not just the four the heatmap tiles
+// show.
 type fleetCompareMetric string
 
 const (
@@ -53,8 +53,8 @@ func parseFleetCompareMetric(r *http.Request) fleetCompareMetric {
 	return compareMetricCPU
 }
 
-// fleetCompareRangeSeconds are /fleet/compare's four allowed ?range= values
-// (task-1b-brief.md: "Range is one of 1h/6h/24h/7d"), in display order.
+// fleetCompareRangeSeconds are /fleet/compare's four allowed ?range= values, in
+// display order.
 var fleetCompareRangeSeconds = []struct {
 	key     string
 	seconds int64
@@ -86,8 +86,7 @@ func fleetCompareRangeWindow(rangeKey string) int64 {
 	return 21600
 }
 
-// fleetCompareResolution picks raw vs 1m off the requested range
-// (task-1b-brief.md: "Resolution: raw for ranges up to 6h, 1m above that").
+// fleetCompareResolution picks raw vs 1m off the requested range.
 func fleetCompareResolution(rangeKey string) core.Resolution {
 	if rangeKey == "1h" || rangeKey == "6h" {
 		return core.ResRaw
@@ -130,16 +129,14 @@ type FleetComparePageData struct {
 	// or a tag (?tag=) to compare; false means the page shows its initial
 	// "nothing selected yet" prompt instead of a chart.
 	Selected bool
-	// ErrorMsg is a validation/cap error rendered inline (task-1b-brief.md:
-	// "the cap error is shown inline"), e.g. FleetSeries' "compare at most
-	// 10 nodes" or an unknown ?nodes= id -- never a 500.
+	// ErrorMsg is a validation/cap error rendered inline, e.g. FleetSeries'
+	// "compare at most 10 nodes" or an unknown ?nodes= id -- never a 500.
 	ErrorMsg string
-	// EmptyMsg (round 1 review fix) is set instead of ErrorMsg when the
-	// selection and request were both valid but FleetSeries simply returned
-	// no points (e.g. a brand new node with no data yet in the requested
-	// range) -- a distinct, non-alarming message rather than a silent blank
-	// chart panel or the same red "error" styling a real validation failure
-	// gets.
+	// EmptyMsg is set instead of ErrorMsg when the selection and request were
+	// both valid but FleetSeries simply returned no points (e.g. a brand new
+	// node with no data yet in the requested range) -- a distinct, non-alarming
+	// message rather than a silent blank chart panel or the same red "error"
+	// styling a real validation failure gets.
 	EmptyMsg string
 	Legend   []FleetCompareLegendEntry
 	// DataJSON is the chart's data, JSON-encoded and embedded as a data
@@ -147,10 +144,9 @@ type FleetComparePageData struct {
 	// it) rather than fetched separately, so the whole page -- including
 	// its one FleetSeries call -- renders from a single request.
 	DataJSON string
-	// ChartSummary is the chart mount's aria-label (round 1 review fix): a
-	// canvas-drawn uPlot chart is otherwise silent to a screen reader, so
-	// this gives a short text equivalent -- the metric and each compared
-	// node's latest value.
+	// ChartSummary is the chart mount's aria-label: a canvas-drawn uPlot chart
+	// is otherwise silent to a screen reader, so this gives a short text
+	// equivalent -- the metric and each compared node's latest value.
 	ChartSummary string
 }
 
@@ -165,10 +161,10 @@ type fleetCompareData struct {
 	Series []interface{} `json:"series"`
 }
 
-// parseFleetCompareFilter reads /fleet/compare's node selection off r:
-// either an explicit ?nodes=a,b,c list (the /fleet table's "Compare" action)
-// or a ?tag=web fallback -- the two forms task-1b-brief.md's URL examples
-// give. Neither present means nothing is selected yet.
+// parseFleetCompareFilter reads /fleet/compare's node selection off r: either
+// an explicit ?nodes=a,b,c list (the /fleet table's "Compare" action) or a
+// ?tag=web fallback -- the two forms the URL examples give. Neither present
+// means nothing is selected yet.
 func parseFleetCompareFilter(r *http.Request) (filter core.NodeFilter, selected bool) {
 	q := r.URL.Query()
 	if raw := strings.TrimSpace(q.Get("nodes")); raw != "" {
@@ -263,11 +259,11 @@ func buildFleetCompareChart(metric string, pts []core.FleetSeriesPoint) (string,
 	return string(b), legend, nil
 }
 
-// fleetCompareSummary builds a short text summary of pts for the chart
-// mount's aria-label (round 1 review fix): "<metric>: <node> <latest
-// value>, ..." -- a canvas-drawn uPlot chart otherwise offers a screen
-// reader nothing at all. "Latest" is each node's own point with the
-// greatest TS (ties keep the first one seen, i.e. pts' own order).
+// fleetCompareSummary builds a short text summary of pts for the chart mount's
+// aria-label: "<metric>: <node> <latest value>, ..." -- a canvas-drawn uPlot
+// chart otherwise offers a screen reader nothing at all. "Latest" is each
+// node's own point with the greatest TS (ties keep the first one seen, i.e.
+// pts' own order).
 func fleetCompareSummary(metric string, pts []core.FleetSeriesPoint) string {
 	type latest struct {
 		ts  int64
@@ -294,10 +290,10 @@ func fleetCompareSummary(metric string, pts []core.FleetSeriesPoint) string {
 // fleetCompareUnknownNodes returns every id in ids that names no node in the
 // current roster, by id or display name -- the same "id-or-name" matching
 // core.NodeFilter.Nodes itself uses, so "known" here means exactly what
-// FleetSeries would actually match. Checked BEFORE ever calling FleetSeries
-// (round 1 review fix), off the same request-scoped fleet memo the rest of
-// /fleet already reads through (fetchFleetNodes), so validating costs no
-// extra round trip and a typo'd/stale node id never reaches the daemon.
+// FleetSeries would actually match. Checked BEFORE ever calling FleetSeries,
+// off the same request-scoped fleet memo the rest of /fleet already reads
+// through (fetchFleetNodes), so validating costs no extra round trip and a
+// typo'd/stale node id never reaches the daemon.
 func fleetCompareUnknownNodes(r *http.Request, d Deps, ids []string) []string {
 	roster := fetchFleetNodes(r, d)
 	known := make(map[string]bool, len(roster)*2)
@@ -314,11 +310,11 @@ func fleetCompareUnknownNodes(r *http.Request, d Deps, ids []string) []string {
 	return unknown
 }
 
-// fleetCompareHandler serves GET /fleet/compare (task C1b): a single uPlot
-// overlay comparing metric across the nodes named by ?nodes=a,b,c or
-// ?tag=web, over one of four fixed ranges. Viewer-gated (routes.go) and
-// master-only (fleetGateHTML, exactly like every other /fleet* page) --
-// solo/child both 404 here, never render an empty compare page.
+// fleetCompareHandler serves GET /fleet/compare: a single uPlot overlay
+// comparing metric across the nodes named by ?nodes=a,b,c or ?tag=web, over one
+// of four fixed ranges. Viewer-gated (routes.go) and master-only
+// (fleetGateHTML, exactly like every other /fleet* page) -- solo/child both 404
+// here, never render an empty compare page.
 func fleetCompareHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

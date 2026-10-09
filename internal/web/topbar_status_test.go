@@ -92,12 +92,11 @@ func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
 	}
 }
 
-// TestConfigPageTopbarReflectsRealActiveCriticalAlert pins the "every page's
-// topbar is accurate" obligation end to end: GET /config used to always
-// pass the literal "ok" status into newPageData no matter what was actually
-// firing. With a critical alert active on disk, the rendered topbar pill
-// must show "crit" styling and a real "1 alert firing" count -- not the old
-// hardcoded-"ok" "All systems normal".
+// TestConfigPageTopbarReflectsRealActiveCriticalAlert pins that every page's
+// topbar is accurate: GET /config must not pass a literal "ok" status into
+// newPageData regardless of what's firing. With a critical alert active on
+// disk, the rendered topbar pill must show "crit" styling and a real "1 alert
+// firing" count -- not "All systems normal".
 func TestConfigPageTopbarReflectsRealActiveCriticalAlert(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "disk full", Severity: "critical"}}}

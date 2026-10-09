@@ -10,9 +10,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// sessionCookieName is the cookie a signed-in session lives under (Task
-// 5/#61's login ceremony sets it; see session.go's setSessionCookie /
-// middleware.go's sessionMiddleware, which reads it back on every request).
+// sessionCookieName is the cookie a signed-in session lives under.
 const sessionCookieName = "sw_session"
 
 // defaultSessionTTL is used whenever cfg.Web.SessionTTL is empty or fails to
@@ -38,9 +36,7 @@ func sessionTTL(cfg *config.Config) time.Duration {
 // Session is a server-side session record: either a real signed-in web UI
 // session, or -- reusing the very same store -- a short-lived placeholder
 // stashing an in-flight WebAuthn ceremony's data between its /begin and
-// /finish requests (see auth_webauthn.go's beginRegistration/beginLogin,
-// which replaced Task 4's temporary in-memory ceremonyStash with this store;
-// TODO(#61), now resolved).
+// /finish requests (see auth_webauthn.go's beginRegistration/beginLogin).
 type Session struct {
 	// ID is the random, unguessable identifier: the sw_session cookie's
 	// value for a signed-in session, or the ceremony cookie's value
@@ -109,14 +105,12 @@ type SessionStore interface {
 const sessionMaxEntries = 4096
 
 // ceremonyMaxEntries hard-caps the SEPARATE ceremony-placeholder store
-// (newCeremonyStore) -- the bound Task 4's temporary in-memory ceremonyStash
-// enforced with its own same-named constant, now applied to the file-backed
-// store that replaced it (issue #61). Because /login/begin and /enroll/begin
-// are unauthenticated, an attacker can flood them; when this store fills,
-// only further ceremony begins are refused -- real, authenticated sessions
-// (a different store, above) are unaffected. A single interactive ceremony
-// is one short-lived (ceremonyTTL) record, so this ceiling sits far above
-// any honest concurrency.
+// (newCeremonyStore). Because /login/begin and /enroll/begin are
+// unauthenticated, an attacker can flood them; when this store fills, only
+// further ceremony begins are refused -- real, authenticated sessions (a
+// different store, above) are unaffected. A single interactive ceremony is one
+// short-lived (ceremonyTTL) record, so this ceiling sits far above any honest
+// concurrency.
 const ceremonyMaxEntries = 1024
 
 // jsonSessionStore is SessionStore backed by a single JSON file

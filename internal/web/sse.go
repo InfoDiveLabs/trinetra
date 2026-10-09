@@ -89,44 +89,35 @@ func writeAlertEvent(w http.ResponseWriter, f http.Flusher, ev LiveEvent) bool {
 // eventsHandler serves GET /events: a Server-Sent Events stream of the live
 // DashboardView (Deps.Snapshot(), the same projection dashboardHandler's
 // initial page render uses) -- assets/app.js's swBootSSE consumes it to keep
-// the dashboard's tiles/charts live between full page loads, per the design
-// doc's "live snapshot sharing" architecture (no status.json polling, no
-// second timer racing the daemon's own sampler loop).
+// the dashboard's tiles/charts live between full page loads (no status.json
+// polling, no second timer racing the daemon's own sampler loop).
 //
-// The very first frame is written immediately, before anything else, so a
-// subscriber sees current data right away.
+// The very first frame is written immediately so a subscriber sees current
+// data right away.
 //
-// As of Task 3, when Deps.Subscribe is set this handler is PUSH-driven: it
-// opens one live channel at connection start (ctx = r.Context()) and reacts
-// to whatever the daemon's event bus publishes instead of polling on a
-// fixed cadence -- a Kind:"snapshot" LiveEvent triggers a fresh snapshot
-// frame (writeSnapshotEvent), any other kind (an alert fire/recover) writes
-// a distinct alert frame (writeAlertEvent) so the browser can toast/refresh
-// its alert list the instant it happens. A coarse sseFallbackInterval ticker
-// stays running throughout as a safety net (still calling snapshot()) in
-// case the stream stalls, and once the channel closes (the daemon
-// connection dropped) the handler falls back to that ticker for the rest of
-// the connection rather than tearing the stream down.
+// When Deps.Subscribe is set this handler is PUSH-driven: it opens one live
+// channel at connection start (ctx = r.Context()) and reacts to whatever the
+// daemon's event bus publishes -- a Kind:"snapshot" LiveEvent triggers a fresh
+// snapshot frame (writeSnapshotEvent), any other kind (an alert fire/recover)
+// writes a distinct alert frame (writeAlertEvent) so the browser can
+// toast/refresh its alert list the instant it happens. A coarse
+// sseFallbackInterval ticker stays running throughout as a safety net (still
+// calling snapshot()) in case the stream stalls, and once the channel closes
+// (the daemon connection dropped) the handler falls back to that ticker for the
+// rest of the connection rather than tearing the stream down.
 //
-// When Deps.Subscribe is nil (e.g. a test, or a backend with no live
-// daemon), eventsHandler keeps its original pure-ticker behavior unchanged:
-// poll Deps.Snapshot() on sseTickerInterval, nothing else.
+// When Deps.Subscribe is nil (e.g. a test, or a backend with no live daemon),
+// it polls Deps.Snapshot() on sseTickerInterval, nothing else.
 //
-// As of Task 4 (fleet-web-a), a request scoped to a remote fleet node
-// (nodeFrom(r).Self == false -- reachable once withNodeRouter stopped
-// excluding /events from node routing, node_scope.go) never reaches any of
-// the self-scope logic below at all: it is handed off to
-// remoteNodeEventsLoop instead, a poll-only path over apiFor(r,d).Snapshot()
-// that never calls Deps.Subscribe (there is no per-node live push over the
-// control socket -- Subscribe is scoped to THIS daemon's own event bus, not
-// a remote node's).
+// A request scoped to a remote fleet node (nodeFrom(r).Self == false) never
+// reaches the self-scope logic below: it is handed off to remoteNodeEventsLoop,
+// a poll-only path over apiFor(r,d).Snapshot() that never calls Deps.Subscribe
+// (there is no per-node live push over the control socket -- Subscribe is
+// scoped to THIS daemon's own event bus).
 //
-// Either way, the stream loops on a select that also watches
-// r.Context().Done(): a client disconnect (navigating away, closing the
-// tab, the browser's own EventSource reconnect logic tearing down the old
-// connection) cancels the request context, and this handler notices and
-// returns promptly -- it does not wait for the next tick's write to fail
-// before giving up the goroutine/ticker/subscription.
+// Either way, the stream selects on r.Context().Done(): a client disconnect
+// cancels the request context and the handler returns promptly instead of
+// waiting for the next tick's write to fail.
 func eventsHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
@@ -161,8 +152,7 @@ func eventsHandler(d Deps) http.HandlerFunc {
 
 		// sub stays nil (and its select case below never fires, since a
 		// receive on a nil channel blocks forever) unless Deps.Subscribe is
-		// set and succeeds -- the two conditions under which this handler
-		// must behave exactly like the pre-Task-3 pure-ticker path.
+		// set and succeeds; otherwise this behaves as a pure-ticker path.
 		var sub <-chan LiveEvent
 		interval := sseTickerInterval(d.Cfg)
 		if d.Subscribe != nil {
@@ -208,10 +198,9 @@ func eventsHandler(d Deps) http.HandlerFunc {
 
 // remoteNodeSnapshot reads apiFor(r, d).Snapshot() for
 // remoteNodeEventsLoop's polling path, reporting a nil API or a read error
-// as its own error rather than collapsing to the zero DashboardView -- as of
-// task C6, the caller uses that error to HOLD the last successful snapshot
-// (see remoteNodeEventsLoop's doc) instead of ever writing a zeroed-out
-// frame to the client.
+// as its own error rather than collapsing to the zero DashboardView, so the
+// caller can HOLD the last successful snapshot (see remoteNodeEventsLoop's
+// doc) instead of ever writing a zeroed-out frame to the client.
 func remoteNodeSnapshot(r *http.Request, d Deps) (DashboardView, error) {
 	api := apiFor(r, d)
 	if api == nil {
@@ -225,12 +214,11 @@ func remoteNodeSnapshot(r *http.Request, d Deps) (DashboardView, error) {
 // like a real Snapshot() error by remoteNodeEventsLoop's hold/stale logic.
 var errRemoteNodeAPIUnavailable = fmt.Errorf("remote node API unavailable")
 
-// remoteNodeStaleThreshold is how many CONSECUTIVE remoteNodeSnapshot
-// failures remoteNodeEventsLoop tolerates before it tells the browser the
-// stream is stale (task C6 ruling: "After 3 consecutive errors, emit an SSE
-// event `stale`"). Below this, a single transient control-plane hiccup is
-// invisible to the viewer -- the loop just keeps holding the last good
-// frame and silently retries.
+// remoteNodeStaleThreshold is how many CONSECUTIVE remoteNodeSnapshot failures
+// remoteNodeEventsLoop tolerates before it tells the browser the stream is
+// stale. Below this, a single transient control-plane hiccup is invisible to
+// the viewer -- the loop just keeps holding the last good frame and silently
+// retries.
 const remoteNodeStaleThreshold = 3
 
 // staleEventData is the "stale" SSE event's JSON payload: the Unix-seconds
@@ -257,34 +245,29 @@ func writeStaleEvent(w http.ResponseWriter, f http.Flusher, lastSuccess time.Tim
 }
 
 // remoteNodeEventsLoop is eventsHandler's path for a request scoped to a
-// remote fleet node (nodeFrom(r).Self == false, Task 4/fleet-web-a): it
-// polls apiFor(r,d).Snapshot() on sseTickerInterval and writes a fresh
-// "snapshot" frame only when the polled view actually changed since the
-// last one successfully written (reflect.DeepEqual -- DashboardView carries
-// slice fields, so a plain == comparison doesn't compile), rather than
-// resending an identical frame on every tick. It never touches
-// Deps.Subscribe: there is no per-node live push over the control socket
-// yet (Subscribe is scoped to THIS daemon's own event bus, not a remote
-// node's), so a remote alert fire/recover is never streamed here -- only
-// snapshot polling, per the brief.
+// remote fleet node (nodeFrom(r).Self == false): it polls
+// apiFor(r,d).Snapshot() on sseTickerInterval and writes a fresh "snapshot"
+// frame only when the polled view actually changed since the last one
+// successfully written (reflect.DeepEqual -- DashboardView carries slice
+// fields, so a plain == comparison doesn't compile). It never touches
+// Deps.Subscribe: there is no per-node live push over the control socket yet,
+// so a remote alert fire/recover is never streamed here -- only snapshot
+// polling.
 //
-// Stale indicator (task C6, parked from plan A Task 4): a poll error HOLDS
-// the last successful snapshot -- it never overwrites it with a zero-valued
-// DashboardView the way the pre-task-C6 version did -- and after
+// Stale indicator: a poll error HOLDS the last successful snapshot -- it never
+// overwrites it with a zero-valued DashboardView -- and after
 // remoteNodeStaleThreshold consecutive errors, emits one "stale" SSE event
-// naming the last-success time (writeStaleEvent). The very next successful
-// poll always emits a fresh "snapshot" frame, even if its content happens
-// to be identical to the held one (bypassing the usual DeepEqual
-// short-circuit) precisely so the browser has something to react to and
-// clear its stale banner on.
+// naming the last-success time (writeStaleEvent). The very next successful poll
+// always emits a fresh "snapshot" frame, even if its content is identical to
+// the held one (bypassing the usual DeepEqual short-circuit), so the browser
+// has something to react to and clear its stale banner on.
 //
-// The very first frame is always written immediately regardless of
-// "changed" (a failed first poll still writes the zero-valued initial
-// frame, matching eventsHandler's own "subscriber sees SOMETHING right
-// away" self-scope contract, before the error-counting/holding logic below
-// has anything to hold yet). Like eventsHandler's main loop, it watches
-// r.Context().Done() so a client disconnect is noticed promptly rather than
-// only on the next tick's failed write.
+// The very first frame is always written immediately regardless of "changed"
+// (a failed first poll still writes the zero-valued initial frame, matching
+// eventsHandler's "subscriber sees SOMETHING right away" contract). Like
+// eventsHandler's main loop, it watches r.Context().Done() so a client
+// disconnect is noticed promptly rather than only on the next tick's failed
+// write.
 func remoteNodeEventsLoop(w http.ResponseWriter, r *http.Request, flusher http.Flusher, d Deps) {
 	last, err := remoteNodeSnapshot(r, d)
 	if !writeSnapshotEvent(w, flusher, last) {
@@ -399,8 +382,8 @@ func writePublicSnapshotEvent(w http.ResponseWriter, f http.Flusher, frame publi
 //     proxy/CDN must never keep serving stream frames after the admin
 //     disables /public or narrows its allowlist.
 //   - No session is read, and no cookie is ever set.
-//   - As of Task 3, when Deps.Subscribe is set this stream is push-driven
-//     the same way eventsHandler's is, but Kind:"snapshot" is the ONLY
+//   - When Deps.Subscribe is set this stream is push-driven the same way
+//     eventsHandler's is, but Kind:"snapshot" is the ONLY
 //     LiveEvent kind that ever produces a frame here: an alert event (Title/
 //     Source/Severity) is deliberately ignored rather than forwarded, since
 //     unlike the authed /events stream, /public/events must never leak alert

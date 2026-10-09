@@ -20,11 +20,10 @@ import (
 // excluded, exactly like a real click only ever submits the one control
 // that was activated.
 //
-// This exists so a test posts precisely what the browser would -- catching
-// the class of bug fix round 1 found (a button living in one <form> that
-// silently dropped ANOTHER section's fields because they lived in a
-// different <form>) that a hand-built url.Values fixture can't catch, since
-// a hand-built fixture reflects what the test AUTHOR assumed the form
+// This lets a test post precisely what the browser would, catching a button
+// living in one <form> that silently drops ANOTHER section's fields because
+// they live in a different <form> -- which a hand-built url.Values fixture
+// can't catch, since it reflects what the test AUTHOR assumed the form
 // contained, not what the rendered HTML actually wired up.
 func formValuesForButton(t *testing.T, body, btnName, btnValue string) url.Values {
 	t.Helper()

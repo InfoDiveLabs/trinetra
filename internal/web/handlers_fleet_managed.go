@@ -1,10 +1,9 @@
-// handlers_fleet_managed.go (task C5, fleet phase 2 web UI plan C): GET
-// /fleet/managed -- the managed-config fragment list + create/edit form,
-// and the per-node managed-config status table -- over core.FleetAPI's
-// Managed/SaveManaged/DeleteManaged/ManagedStatus (internal/core/fleet.go).
-// Master-only (fleetGateHTML, exactly like every other /fleet* page); GET
-// is viewer+ (read-only for a viewer -- task-5-brief.md's ruling), every
-// mutation is admin + CSRF (fleetAdminMutation) and passes the signed-in
+// handlers_fleet_managed.go: GET /fleet/managed -- the managed-config
+// fragment list + create/edit form, and the per-node managed-config status
+// table -- over core.FleetAPI's Managed/SaveManaged/DeleteManaged/
+// ManagedStatus (internal/core/fleet.go). Master-only (fleetGateHTML, exactly
+// like every other /fleet* page); GET is viewer+ (read-only for a viewer),
+// every mutation is admin + CSRF (fleetAdminMutation) and passes the signed-in
 // web user's own name as actor (auditUser(r)), never a daemon-side
 // placeholder.
 //
@@ -42,14 +41,12 @@ import (
 )
 
 // managedKeyRow is one key/value row of the create/edit form's draft: Key is
-// constrained client-side to core.ManagedKeys via a <select> (a blank Key,
-// "-- choose a key --", is this package's own placeholder for "not filled
-// in yet", the same convention matcherRowsToCore's blank-matcher-row drop
-// uses), Value is free text (SaveManaged/config.Config.Set validate it).
-// Err carries a backend rejection naming THIS row's own key, so the
-// template can place it right next to that row instead of only at the top
-// of the form (task-5-brief.md's ruling: "Show the backend error inline on
-// that row").
+// constrained client-side to core.ManagedKeys via a <select> (a blank Key, "--
+// choose a key --", is this package's own placeholder for "not filled in yet",
+// the same convention matcherRowsToCore's blank-matcher-row drop uses), Value
+// is free text (SaveManaged/config.Config.Set validate it). Err carries a
+// backend rejection naming THIS row's own key, so the template can place it
+// right next to that row instead of only at the top of the form.
 type managedKeyRow struct {
 	Key   string
 	Value string
@@ -198,15 +195,12 @@ func applyManagedRowErr(rows []managedKeyRow, err error) (matched bool) {
 }
 
 // managedKeyOptions is the key <select>'s fixed option list: core.ManagedKeys
-// verbatim, in that same closed order -- task-5-brief.md's ruling ("The key
-// is a select limited to the allowlist").
+// verbatim, in that same closed order.
 func managedKeyOptions() []string { return core.ManagedKeys }
 
-// buildManagedRosterTags collects every DISTINCT tag currently carried by
-// any node in the roster (read through r's request-scoped fleetMemo,
-// exactly like buildSilenceNodeNames), sorted -- backs the tag field's
-// <datalist> (task-5-brief.md: "a tag input with a datalist of roster
-// tags").
+// buildManagedRosterTags collects every DISTINCT tag currently carried by any
+// node in the roster (read through r's request-scoped fleetMemo, exactly like
+// buildSilenceNodeNames), sorted -- backs the tag field's <datalist>.
 func buildManagedRosterTags(r *http.Request, d Deps) []string {
 	nodes, err := fleetMemoFrom(r).fleetNodes(d)
 	if err != nil {
@@ -241,12 +235,8 @@ type ManagedFragmentRow struct {
 }
 
 // describeManagedChange renders f's tag + keys/values as the audit log's New
-// field (C5 review carry-over): fleetManagedSaveHandler/
-// fleetManagedDeleteHandler used to pass the ACTOR as New, which just
-// duplicated AuditRecord.User (already filled by logAudit's own
-// auditUser(r) call) and never actually described the mutation. This
-// mirrors newManagedFragmentRow's own TagText/KVText computation so the
-// audit trail and the fragments table describe a fragment identically.
+// field. It mirrors newManagedFragmentRow's own TagText/KVText computation so
+// the audit trail and the fragments table describe a fragment identically.
 func describeManagedChange(f core.ManagedFragment) string {
 	row := newManagedFragmentRow(f)
 	if row.KVText == "" {
@@ -319,8 +309,7 @@ func newManagedStatusRow(s core.ManagedStatus, nodeNames map[string]string) Mana
 }
 
 // ---------------------------------------------------------------------------
-// Flash: a FIXED set of codes only (task C2's resolveIncidentFlash
-// precedent).
+// Flash: a FIXED set of codes only (like resolveIncidentFlash).
 // ---------------------------------------------------------------------------
 
 func resolveManagedFlash(r *http.Request) (text string, isErr bool) {
@@ -448,8 +437,7 @@ func renderManagedPage(w http.ResponseWriter, data ManagedPageData, status int) 
 // renderManagedError re-renders the full page with a top-level flash
 // (FlashErr=true) at the given 4xx status, for an error that names no
 // specific field/row (a bad id, "fleet not available", an invalid form
-// body) -- global-constraints.md's "FleetAPI errors ... render as a flash
-// message ... Never return a 500" ruling.
+// body); FleetAPI errors render as a flash, never a 500.
 func renderManagedError(w http.ResponseWriter, r *http.Request, d Deps, msg string, status int) {
 	data := buildManagedPageData(r, d, managedPageOptions{Flash: msg, FlashErr: true})
 	if err := renderManagedPage(w, data, status); err != nil {

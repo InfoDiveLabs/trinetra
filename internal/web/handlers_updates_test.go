@@ -48,13 +48,13 @@ func TestUpdatesPageAdminGated(t *testing.T) {
 	}
 }
 
-// TestUpdatesPageRendersInProgressAndLastError pins fix round 1's Ruling
-// R10 web-side requirement: /updates must show a banner while a background
-// apply/rollback is running (Status.InProgress) and, once it's finished, the
-// daemon's own last-error text (Status.LastError) -- rendered through
-// html/template's normal auto-escaping (never inserted unescaped), and
-// suppressed while InProgress is still true (a stale error from a PREVIOUS
-// attempt must not be shown as if it were this one's outcome).
+// TestUpdatesPageRendersInProgressAndLastError pins that Ruling R10 web-side
+// requirement: /updates must show a banner while a background apply/rollback is
+// running (Status.InProgress) and, once it's finished, the daemon's own
+// last-error text (Status.LastError) -- rendered through html/template's normal
+// auto-escaping (never inserted unescaped), and suppressed while InProgress is
+// still true (a stale error from a PREVIOUS attempt must not be shown as if it
+// were this one's outcome).
 func TestUpdatesPageRendersInProgressAndLastError(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{updateStatus: core.UpdateStatusView{
@@ -105,7 +105,7 @@ func TestUpdatesPageRendersInProgressAndLastError(t *testing.T) {
 	}
 }
 
-// TestUpdatesPageRendersRestoreFailed is #136 fix round 1's web-facing half:
+// TestUpdatesPageRendersRestoreFailed is the web-facing half of #136:
 // when the guard's health-gate rollback itself failed to restore the
 // previous build, Pending.RestoreFailed (core.UpdatePendingView.RestoreFailed)
 // must show on the page -- explaining that the watchdog will retry -- and,

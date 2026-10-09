@@ -1,4 +1,4 @@
-// Package web: handlers_updates.go (task 8) is the admin-only Updates page:
+// Package web: handlers_updates.go is the admin-only Updates page:
 // GET /updates shows this host's self-update posture (channel, floor,
 // running/available/previous versions, any pending update, the last apply/
 // rollback outcome) over core.API.UpdateStatus, plus three POST actions --

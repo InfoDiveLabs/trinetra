@@ -45,8 +45,7 @@ type channelRow struct {
 }
 
 // channelTypes is the fixed set of channel types the add/edit modal offers
-// (mirrors buildNotifier's switch, channel.go), in the mockup's display
-// order.
+// (mirrors buildNotifier's switch, channel.go), in display order.
 var channelTypes = []struct{ Value, Label string }{
 	{"telegram", "Telegram"},
 	{"email", "Email (SMTP)"},
@@ -105,10 +104,10 @@ func channelRows(cfg *config.Config) []channelRow {
 // modal (IsEdit true, pre-filled from that channel's current config) -- see
 // templates/channels.html's "chanModalBody" block, defined once and
 // executed for each. Rendering N small edit modals server-side (rather than
-// one shared modal the mockup's app.js JS-prefills on open) avoids needing
-// to thread secret-bearing Settings values through JS data-* attributes and
-// avoids the CSP's no-inline-script constraint entirely: every field is
-// simply already correct by the time the page loads.
+// one shared modal that JS pre-fills on open) avoids threading secret-bearing
+// Settings values through JS data-* attributes and avoids the CSP's
+// no-inline-script constraint entirely: every field is already correct by the
+// time the page loads.
 type channelModalData struct {
 	ID                     string // DOM id: "chanModal-new" or "chanModal-<param>"
 	Title                  string
@@ -139,7 +138,7 @@ type channelModalData struct {
 }
 
 // newChannelModalData is the blank "Add channel" modal's data: telegram
-// (the mockup's default selected type) with an empty Settings map so
+// (the default selected type) with an empty Settings map so
 // `{{index .Settings "..."}}` always resolves to "" rather than needing a
 // nil-map guard in the template.
 var newChannelModalData = channelModalData{
@@ -553,13 +552,10 @@ func channelsRemoveHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// channelsTestHandler handles POST /channels/{name}/test: sends a one-off
-// test notification via Deps.API.TestChannel (task 8; previously
-// Deps.TestChannel directly -- both backends' TestChannel call the exact
-// same sendTestNotification internal/trinetra always has, see
-// coreapi_inproc.go/coreapi_file.go). A nil Deps.API (some minimal test
-// Deps, or a hypothetical future non-trinetra host of this package)
-// renders a clear "not wired" result rather than panicking.
+// channelsTestHandler handles POST /channels/{name}/test: sends a one-off test
+// notification via Deps.API.TestChannel. A nil Deps.API (some minimal test
+// Deps, or a hypothetical future non-trinetra host of this package) renders a
+// clear "not wired" result rather than panicking.
 func channelsTestHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name, err := channelNameFromParam(r.PathValue("name"))

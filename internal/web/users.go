@@ -48,7 +48,7 @@ func validRole(r Role) bool { return roleRank(r) > 0 }
 // ceremony completes, so they're dropped rather than round-tripped.
 type Credential struct {
 	// ID is the credential ID the authenticator generated, used to look the
-	// credential up again during login (Task 5/#61).
+	// credential up again during login.
 	ID []byte `json:"id"`
 	// PublicKey is the COSE-encoded public key bytes go-webauthn extracted
 	// from the attestation object; the private key never leaves the
@@ -73,8 +73,7 @@ type User struct {
 	// doc warns identity decisions must key off this, not Name.
 	ID string `json:"id"`
 	// Name is the human-palatable account name (display name and username
-	// are the same value here; the mockup/design doc doesn't distinguish
-	// them for this app).
+	// are the same value here).
 	Name string `json:"name"`
 	// Role is this account's access level (RoleAdmin/RoleResponder/RoleViewer, ranked viewer < responder < admin), assigned by
 	// resolveEnrollRole (enroll_tokens.go) at enrollment time: first-run
@@ -105,11 +104,11 @@ func (u *User) WebAuthnDisplayName() string { return u.Name }
 // permanent blank stub.
 func (u *User) WebAuthnIcon() string { return "" }
 
-// WebAuthnCredentials adapts u.Credentials (this package's flattened
-// storage shape) into the []webauthn.Credential shape go-webauthn's login
-// ceremony (Task 5/#61) needs to match an assertion against. Registration
-// doesn't consult this (a brand-new user has none yet), but it's part of
-// the webauthn.User interface contract regardless.
+// WebAuthnCredentials adapts u.Credentials (this package's flattened storage
+// shape) into the []webauthn.Credential shape go-webauthn's login ceremony
+// needs to match an assertion against. Registration doesn't consult this (a
+// brand-new user has none yet), but it's part of the webauthn.User interface
+// contract regardless.
 func (u *User) WebAuthnCredentials() []webauthn.Credential {
 	out := make([]webauthn.Credential, len(u.Credentials))
 	for i, c := range u.Credentials {
@@ -249,18 +248,18 @@ type jsonUserStore struct {
 // fileStoreMutexes holds one *sync.Mutex per absolute file path, so every
 // file-backed store instance (jsonUserStore, jsonSessionStore, tokenStore)
 // pointing at the SAME file shares a single lock -- fetched via fileStoreMutex
-// at lock time rather than held in a struct field, so it works even for the
-// stores constructed as bare struct literals in tests. Guarded by
-// fileStoreMutexesMu (a plain lock over the map itself, held only briefly to
-// fetch/create the per-path mutex -- never while doing store I/O).
+// at lock time rather than held in a struct field, so it works even for stores
+// constructed as bare struct literals in tests. Guarded by fileStoreMutexesMu
+// (a plain lock over the map itself, held only briefly to fetch/create the
+// per-path mutex -- never while doing store I/O).
 //
-// This is what makes these stores' long-standing read-modify-write safety
-// (and jsonUserStore's atomic last-admin guard) actually hold: every handler
-// constructs a FRESH store per request (newUserStore/newSessionStore/
-// newCeremonyStore/newTokenStore), so a per-INSTANCE mutex would serialize
-// nothing across concurrent requests -- two writers would each load→modify→
-// save the whole file (last-writer-wins lost updates) and collide on the
-// shared "<path>.tmp" temp file. A path-keyed, process-wide lock closes both.
+// This is what makes the stores' read-modify-write (and jsonUserStore's atomic
+// last-admin guard) safe: every handler constructs a FRESH store per request
+// (newUserStore/newSessionStore/newCeremonyStore/newTokenStore), so a
+// per-INSTANCE mutex would serialize nothing across concurrent requests -- two
+// writers would each load, modify and save the whole file (last-writer-wins
+// lost updates) and collide on the shared "<path>.tmp" temp file. A path-keyed,
+// process-wide lock closes both.
 var (
 	fileStoreMutexes   = map[string]*sync.Mutex{}
 	fileStoreMutexesMu sync.Mutex
@@ -367,12 +366,11 @@ func (s *jsonUserStore) Get(id string) (*User, bool) {
 }
 
 // ByName returns the first user with the given Name, or (nil, false) if
-// none exists. TODO(#62): this store does not (yet) enforce Name uniqueness
-// on Put; enrollBeginHandler uses ByName only to REJECT a duplicate-name
-// enrollment (never to attach to an existing account), so the takeover risk
-// is closed regardless, but Task 6's user-management/Put path should add a
-// uniqueness constraint so two accounts can't share a name in the first
-// place.
+// none exists. TODO(#62): Put does not enforce Name uniqueness;
+// enrollBeginHandler uses ByName only to REJECT a duplicate-name enrollment
+// (never to attach to an existing account), so the takeover risk is closed
+// regardless, but Put should add a uniqueness constraint so two accounts can't
+// share a name.
 func (s *jsonUserStore) ByName(name string) (*User, bool) {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()

@@ -8,12 +8,11 @@ import (
 )
 
 // monitoringTestView is a distinctive fake MonitoringView: every value is
-// chosen so it can't collide with any of the mockup's hard-coded demo
-// figures (see ui-mockup/monitoring.html: jellyfin/nextcloud/postgres
-// containers, docker.service/ssh.service units, /, /data filesystems,
-// postgres/php-fpm processes, 220 units, 214 processes, ...). If a rendered
-// page still shows one of those, the template is still using demo markup
-// instead of the real Deps.Monitoring() value.
+// chosen so it can't collide with the template's original hard-coded demo
+// figures (jellyfin/nextcloud/postgres containers, docker.service/ssh.service
+// units, /, /data filesystems, postgres/php-fpm processes, 220 units, 214
+// processes, ...). If a rendered page still shows one of those, the template is
+// still using demo markup instead of the real Deps.Monitoring() value.
 func monitoringTestView() MonitoringView {
 	return MonitoringView{
 		Containers: []MonitoringContainerView{
@@ -39,9 +38,9 @@ func monitoringTestDeps(t *testing.T) Deps {
 	return d
 }
 
-// TestMonitoringRendersRealValues pins the core TDD obligation for Part 1:
-// GET /monitoring (signed in) must render actual values pulled from
-// Deps.Monitoring(), not the mockup's hard-coded demo figures.
+// TestMonitoringRendersRealValues pins that GET /monitoring (signed in)
+// renders actual values pulled from Deps.Monitoring(), not hard-coded demo
+// figures.
 func TestMonitoringRendersRealValues(t *testing.T) {
 	d := monitoringTestDeps(t)
 	h := newHandler(d)

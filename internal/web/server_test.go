@@ -80,11 +80,10 @@ func TestHostPageRendersInventory(t *testing.T) {
 
 // TestServerServesDashboardAndAssets pins newHandler's routes: GET / is
 // viewer+ (requireRole(RoleViewer, ...)), so a SIGNED-IN request renders the
-// base layout (brand + nav) around the dashboard placeholder while an
-// anonymous one redirects to /login; and GET /assets/style.css serves the
-// embedded mockup CSS verbatim (anonymously -- assets aren't gated) with a
-// text/css content type. httptest.NewRecorder exercises the handler
-// directly, no real port bound.
+// base layout (brand + nav) around the dashboard while an anonymous one
+// redirects to /login; and GET /assets/style.css serves the embedded CSS
+// verbatim (anonymously -- assets aren't gated) with a text/css content type.
+// httptest.NewRecorder exercises the handler directly, no real port bound.
 func TestServerServesDashboardAndAssets(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
@@ -204,9 +203,8 @@ func TestAssetsDirectoryListingSuppressed(t *testing.T) {
 }
 
 // TestStartBindsWhenEnabled exercises the other half of Start not covered by
-// TestStartReturnsNoopStop (Task 1's Enabled=false stub path): when Enabled
-// is true, Start must actually bind a listener on Listen and return a stop
-// func that shuts it down cleanly.
+// TestStartReturnsNoopStop: when Enabled is true, Start must actually bind a
+// listener on Listen and return a stop func that shuts it down cleanly.
 func TestStartBindsWhenEnabled(t *testing.T) {
 	stop, err := Start(testDeps(t))
 	if err != nil {

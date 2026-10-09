@@ -1,15 +1,13 @@
-// handlers_fleet_alerting.go (task C3, fleet phase 2 web UI plan C): the
-// fleet alerting admin page -- GET/POST /fleet/alerting (routes/policies/
-// rules editor, structured form or "edit as JSON"), POST
-// /fleet/alerting/test (the route tester), and GET /fleet/rules/state (the
-// htmx-polled rule-state fragment) -- over core.FleetAPI's Alerting/
-// SetAlerting/RouteTest/RuleStates (internal/core/fleet.go). Master-only
-// (fleetGateHTML/fleetGatePlain, exactly like every other /fleet* page);
-// GET is viewer+ (read-only for a viewer, per the brief), the save POST is
-// admin+CSRF (fleetAdminMutation), and the route tester POST is viewer+CSRF
-// (routes.go) -- it never mutates the saved config, but still requires a
-// valid CSRF token like any other signed-in POST (fix round 1 IMPORTANT 1,
-// the /channels/{name}/test precedent).
+// handlers_fleet_alerting.go: the fleet alerting admin page -- GET/POST
+// /fleet/alerting (routes/policies/rules editor, structured form or "edit as
+// JSON"), POST /fleet/alerting/test (the route tester), and GET
+// /fleet/rules/state (the htmx-polled rule-state fragment) -- over
+// core.FleetAPI's Alerting/SetAlerting/RouteTest/RuleStates
+// (internal/core/fleet.go). Master-only (fleetGateHTML/fleetGatePlain, exactly
+// like every other /fleet* page); GET is viewer+ (read-only for a viewer), the
+// save POST is admin+CSRF (fleetAdminMutation), and the route tester POST is
+// viewer+CSRF (routes.go) -- it never mutates the saved config, but still
+// requires a valid CSRF token like any other signed-in POST.
 package web
 
 import (
@@ -64,15 +62,14 @@ func templateDict(pairs ...any) (map[string]any, error) {
 // ---------------------------------------------------------------------------
 
 // alertingRowLabel is the display/match label for a row's name: "(unnamed)"
-// for a blank one. Route names are REQUIRED and unique as of the C3 fix
-// round 1 (validateAlertingConfig, internal/trinetra/fleet_routing.go), so
-// this only ever matters for a route mid-edit (before the user has typed a
-// name in, pre-save) -- a SAVED route's own field-path errors always carry
-// its real name. Policy/rule names stay optional in the backend's own
-// vocabulary ("every policy needs a name" is a top-level message naming no
-// row; a blank rule name's own error is `rule "": ...` -- see
-// alertingErrField's rule patterns, which run a name through this same
-// function so both sides of the match agree).
+// for a blank one. Route names are REQUIRED and unique (validateAlertingConfig,
+// internal/trinetra/fleet_routing.go), so this only ever matters for a route
+// mid-edit (before the user has typed a name in, pre-save) -- a SAVED route's
+// own field-path errors always carry its real name. Policy/rule names stay
+// optional in the backend's own vocabulary ("every policy needs a name" is a
+// top-level message naming no row; a blank rule name's own error is
+// `rule "": ...` -- see alertingErrField's rule patterns, which run a name
+// through this same function so both sides of the match agree).
 func alertingRowLabel(name string) string {
 	if strings.TrimSpace(name) == "" {
 		return "(unnamed)"
@@ -423,12 +420,11 @@ func applyAlertingOp(d *AlertingDraft, op string) {
 // one row/step a message names; anything that doesn't match a known shape
 // (e.g. "every policy needs a name" or "every route needs a name", which
 // name no specific row) renders at the top only (ErrField==""). A route's
-// own name is required and unique (C3 fix round 1), so a route field-path
-// error's captured name is never blank in practice; a policy's/rule's can
-// still be blank pre-save, and each capture is run through alertingRowLabel
-// so both sides of the match agree on "(unnamed)" for a blank name (fix
-// round 1 MINOR: `rule "": ...` -- validateRules names a blank rule
-// literally as "" via r.Name, unlike the old routeLabel convention).
+// own name is required and unique, so a route field-path error's captured
+// name is never blank in practice; a policy's/rule's can still be blank
+// pre-save, and each capture is run through alertingRowLabel so both sides of
+// the match agree on "(unnamed)" for a blank name (validateRules names a blank
+// rule literally as `rule "": ...` via r.Name).
 // ---------------------------------------------------------------------------
 
 var alertingErrPatterns = []struct {
@@ -757,23 +753,23 @@ func fleetAlertingPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// alertingConflictMessage is the brief's exact wording for a stale-Version
-// SetAlerting rejection (core.ErrConflict).
+// alertingConflictMessage is the wording for a stale-Version SetAlerting
+// rejection (core.ErrConflict).
 const alertingConflictMessage = "the alerting config changed since you loaded it — reload to see the latest"
 
-// alertingMaxBodyBytes caps POST /fleet/alerting's request body (fix round 1
-// MINOR): the JSON textarea in particular could otherwise post an
-// arbitrarily large body. 256 KiB comfortably fits even a large structured
-// config or its JSON mirror; anything past it is rejected with 413 before
-// r.ParseForm ever buffers it into memory.
+// alertingMaxBodyBytes caps POST /fleet/alerting's request body: the JSON
+// textarea in particular could otherwise post an arbitrarily large body. 256
+// KiB comfortably fits even a large structured config or its JSON mirror;
+// anything past it is rejected with 413 before r.ParseForm ever buffers it into
+// memory.
 const alertingMaxBodyBytes = 256 * 1024
 
-// decodeAlertingJSON decodes raw as exactly one core.AlertingConfig JSON
-// value (fix round 1 IMPORTANT 2): DisallowUnknownFields rejects an unknown
-// field by name (e.g. a typo'd "send_resolve"), and the second Decode call
-// (expecting io.EOF) rejects any trailing data after that one value -- the
-// standard idiom for "this body must contain exactly one JSON value", since
-// a bare json.Decoder.Decode call alone happily ignores trailing garbage.
+// decodeAlertingJSON decodes raw as exactly one core.AlertingConfig JSON value:
+// DisallowUnknownFields rejects an unknown field by name (e.g. a typo'd
+// "send_resolve"), and the second Decode call (expecting io.EOF) rejects any
+// trailing data after that one value -- the standard idiom for "this body must
+// contain exactly one JSON value", since a bare json.Decoder.Decode call alone
+// happily ignores trailing garbage.
 func decodeAlertingJSON(raw string) (core.AlertingConfig, error) {
 	var cfg core.AlertingConfig
 	dec := json.NewDecoder(strings.NewReader(raw))
@@ -890,10 +886,10 @@ func fleetAlertingSaveHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// alertingSaveErrorStatus maps a SetAlerting error to its render status/
-// flash text: core.ErrConflict is the brief's exact 409 + fixed message;
-// anything else is a validation rejection, 400, shown verbatim (it already
-// names the offending field in plain English -- see alertingErrField).
+// alertingSaveErrorStatus maps a SetAlerting error to its render status/flash
+// text: core.ErrConflict is the 409 + fixed message; anything else is a
+// validation rejection, 400, shown verbatim (it already names the offending
+// field in plain English -- see alertingErrField).
 func alertingSaveErrorStatus(err error) (status int, flash string) {
 	if errors.Is(err, core.ErrConflict) {
 		return http.StatusConflict, alertingConflictMessage

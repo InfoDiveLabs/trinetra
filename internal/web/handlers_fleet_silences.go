@@ -1,4 +1,4 @@
-// handlers_fleet_silences.go (task C4, fleet phase 2 web UI plan C): GET
+// handlers_fleet_silences.go: GET
 // /fleet/silences -- the silences (Active/Upcoming/Expired tabs, a
 // create-silence form) and maintenance windows (a list showing each
 // window's next occurrence, a create form) page -- over core.FleetAPI's
@@ -165,10 +165,10 @@ func buildSilenceNodeNames(r *http.Request, d Deps) []string {
 
 // ---------------------------------------------------------------------------
 // Silence tabs: GET ?tab=active|upcoming|expired (a closed three-value
-// enum -- task-4-brief.md's ruling). "Expired" shows the last 7 days,
-// because the master's own silenceStore.Prune (internal/trinetra/
-// fleet_silences.go) already drops anything older than that -- Silences()
-// never returns an older one to filter out here.
+// enum). "Expired" shows the last 7 days, because the master's own
+// silenceStore.Prune (internal/trinetra/fleet_silences.go) already drops
+// anything older than that -- Silences() never returns an older one to filter
+// out here.
 // ---------------------------------------------------------------------------
 
 type silenceTab string
@@ -294,13 +294,12 @@ func filterSilencesByTab(all []core.Silence, tab silenceTab, now int64) []core.S
 // silenceTimeText renders a unix timestamp in the MASTER's own local zone
 // (time.Local) with its abbreviation appended -- e.g. "2030-06-01 12:00
 // IST" -- "-" for <= 0. This is the ONE helper every silence time on this
-// page (the list's Start/End) renders through (fix round 1 review: a
-// silence's Start/End datetime-local inputs are parsed in time.Local
-// (parseDatetimeLocal), but this used to render them back in UTC with no
-// zone label at all -- an admin typing "12:00" meaning noon their own time
-// would see some UTC-shifted reading with nothing telling them why it
-// didn't match what they typed). See silenceTimeZoneNote for the form-side
-// half of this fix (the visible "Times are in ..." note next to Start/End).
+// page (the list's Start/End) renders through: a silence's Start/End
+// datetime-local inputs are parsed in time.Local (parseDatetimeLocal), so
+// rendering them back in UTC with no zone label would show an admin who typed
+// "12:00" for noon their own time some UTC-shifted reading with nothing
+// telling them why. See silenceTimeZoneNote for the form-side half (the
+// visible "Times are in ..." note next to Start/End).
 func silenceTimeText(ts int64) string {
 	if ts <= 0 {
 		return "-"
@@ -311,14 +310,13 @@ func silenceTimeText(ts int64) string {
 }
 
 // silenceTimeZoneNote is the "Times are in <IANA name> (<abbrev>)" note
-// rendered next to the create-silence form's Start/Duration/End fields --
-// fix round 1 review's ruling, telling the admin which zone silenceTimeText
-// (above) and parseDatetimeLocal/formatDatetimeLocal (below) both use.
-// time.Local's own String() is the IANA name when the host has one
-// configured (e.g. via the TZ environment variable or /etc/localtime); on a
-// host with no such name configured it's the literal placeholder "Local",
-// which is never shown verbatim -- falling back to just the abbreviation
-// instead, per the ruling.
+// rendered next to the create-silence form's Start/Duration/End fields,
+// telling the admin which zone silenceTimeText (above) and
+// parseDatetimeLocal/formatDatetimeLocal (below) both use. time.Local's own
+// String() is the IANA name when the host has one configured (e.g. via the TZ
+// environment variable or /etc/localtime); on a host with no such name
+// configured it's the literal placeholder "Local", which is never shown
+// verbatim -- the abbreviation alone is shown instead.
 func silenceTimeZoneNote() string {
 	now := time.Now()
 	name := now.Location().String()
@@ -413,10 +411,10 @@ type SilenceDurationOption struct {
 }
 
 // silenceDurationOptions reuses incidentSilenceDurationChoices verbatim
-// (handlers_fleet.go) -- the SAME 30m/1h/4h/24h presets task-4-brief.md
-// calls for, task C2's own silence-from-incident form already offers --
-// plus a leading blank entry so a duration selection is never forced when
-// the admin means to use the explicit end field instead.
+// (handlers_fleet.go) -- the SAME 30m/1h/4h/24h presets the
+// silence-from-incident form offers -- plus a leading blank entry so a
+// duration selection is never forced when the admin means to use the explicit
+// end field instead.
 func silenceDurationOptions(selected string) []SilenceDurationOption {
 	opts := make([]SilenceDurationOption, 0, len(incidentSilenceDurationChoices)+1)
 	opts = append(opts, SilenceDurationOption{Key: "", Label: "(use explicit end below)", Selected: selected == ""})
@@ -482,9 +480,8 @@ func silenceErrField(err error) string {
 // Maintenance create form draft
 // ---------------------------------------------------------------------------
 
-// commonTZChoices is a fixed list of common IANA zone names for the
-// maintenance form's TZ <select> (task-4-brief.md: "a fixed list of common
-// zones plus free text validated server-side").
+// commonTZChoices is a fixed list of common IANA zone names for the maintenance
+// form's TZ <select>.
 var commonTZChoices = []string{
 	"UTC",
 	"America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
@@ -510,9 +507,8 @@ func masterLocalTZName() string {
 	return name
 }
 
-// tzSelectOptions builds the TZ <select>'s options: the master's own local
-// zone first (task-4-brief.md's exact ruling), UTC, then every other common
-// zone, each listed at most once.
+// tzSelectOptions builds the TZ <select>'s options: the master's own local zone
+// first, UTC, then every other common zone, each listed at most once.
 func tzSelectOptions() []string {
 	local := masterLocalTZName()
 	seen := map[string]bool{}
@@ -626,14 +622,14 @@ func weekdaysText(days []int) string {
 	return strings.Join(labels, ",")
 }
 
-// maintenanceNextText renders m's next occurrence (core.NextMaintenanceOccurrence
-// -- task C4's own ruling: "computed server-side from the same helper the
-// engine uses. Reuse it; don't reimplement it" -- see that function's doc
-// for why the shared implementation lives in internal/core rather than
-// internal/trinetra, which internal/web cannot import), in m's own TZ:
-// "active now, until <end>" when it's the currently-running occurrence,
-// else its start time. "-" when it can't be computed at all (an unparsable
-// TZ/From/To, which SaveMaintenance should never have allowed to be saved).
+// maintenanceNextText renders m's next occurrence
+// (core.NextMaintenanceOccurrence, computed server-side from the same helper
+// the engine uses -- see that function's doc for why the shared implementation
+// lives in internal/core rather than internal/trinetra, which internal/web
+// cannot import), in m's own TZ: "active now, until <end>" when it's the
+// currently-running occurrence, else its start time. "-" when it can't be
+// computed at all (an unparsable TZ/From/To, which SaveMaintenance should
+// never have allowed to be saved).
 func maintenanceNextText(m core.Maintenance) string {
 	occ, ok := core.NextMaintenanceOccurrence(m, time.Now())
 	if !ok {
@@ -705,9 +701,9 @@ func maintenanceErrField(err error) string {
 }
 
 // ---------------------------------------------------------------------------
-// Flash: a FIXED set of codes only (task C2's resolveIncidentFlash
-// precedent) -- every value below is a literal the handler chose, never
-// anything reflected from the request.
+// Flash: a FIXED set of codes only (like resolveIncidentFlash) -- every value
+// below is a literal the handler chose, never anything reflected from the
+// request.
 // ---------------------------------------------------------------------------
 
 func resolveSilencesFlash(r *http.Request) (text string, isErr bool) {
@@ -746,10 +742,10 @@ type SilencesPageData struct {
 
 	SilenceDraft           silenceDraft
 	SilenceDurationOptions []SilenceDurationOption
-	// TZNote is the "Times are in <IANA name> (<abbrev>)" note rendered next
-	// to the Start/Duration/End fields (fix round 1 review), so an admin
-	// knows which zone every silence time on this page (silenceTimeText) and
-	// the datetime-local inputs (parseDatetimeLocal) both use.
+	// TZNote is the "Times are in <IANA name> (<abbrev>)" note rendered next to
+	// the Start/Duration/End fields, so an admin knows which zone every silence
+	// time on this page (silenceTimeText) and the datetime-local inputs
+	// (parseDatetimeLocal) both use.
 	TZNote          string
 	SilenceErr      string
 	SilenceErrField string
@@ -808,8 +804,8 @@ func buildSilencesPageData(r *http.Request, d Deps, opts silencesPageOptions) Si
 		return "/fleet/silences?tab=" + string(opts.Tab) + "&page=" + strconv.Itoa(p)
 	}
 
-	// Maintenance windows are NOT paginated (accepted by the controller, fix
-	// round 1 review) -- see paginateSilences' doc for the rationale.
+	// Maintenance windows are NOT paginated -- see paginateSilences' doc for
+	// the rationale.
 	mrows := make([]MaintenanceRow, 0, len(allMaint))
 	for _, m := range allMaint {
 		mrows = append(mrows, newMaintenanceRow(m))
@@ -874,10 +870,9 @@ func renderSilencesPage(w http.ResponseWriter, data SilencesPageData, status int
 }
 
 // renderSilencesError re-renders the full page with a top-level flash
-// (FlashErr=true) at the given 4xx status -- global-constraints.md's
-// "FleetAPI errors ... render as a flash message ... Never return a 500"
-// ruling, for an error that names no specific form field (a bad/missing id,
-// "fleet not available", an invalid form body).
+// (FlashErr=true) at the given 4xx status (FleetAPI errors render as a flash,
+// never a 500), for an error that names no specific form field (a bad/missing
+// id, "fleet not available", an invalid form body).
 func renderSilencesError(w http.ResponseWriter, r *http.Request, d Deps, tab silenceTab, msg string, status int) {
 	data := buildSilencesPageData(r, d, silencesPageOptions{Tab: tab, Flash: msg, FlashErr: true})
 	if err := renderSilencesPage(w, data, status); err != nil {
@@ -922,8 +917,7 @@ func fleetSilencesPageHandler(d Deps) http.HandlerFunc {
 // (resolveSilenceWindow, then CreateSilence itself) and either re-renders
 // the form with its error inline (never a redirect, so the just-typed input
 // survives) or, on success, redirects to GET /fleet/silences?tab=<landing>
-// -- Upcoming when the new silence's Start is in the future (task-4-brief.md:
-// "allow a future start, which lands on the Upcoming tab"), else Active.
+// -- Upcoming when the new silence's Start is in the future, else Active.
 func fleetSilenceCreateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -1017,9 +1011,7 @@ func fleetSilenceExpireHandler(d Deps) http.HandlerFunc {
 // fleetMaintenanceCreateHandler serves POST /fleet/maintenance (admin+CSRF,
 // fleetAdminMutation): the same op-reshape/validate/save shape as
 // fleetSilenceCreateHandler, over the maintenance draft. Only ever creates a
-// NEW window (task-4-brief.md's route list has no /fleet/maintenance/{id}
-// edit route, only .../delete) -- SaveMaintenance is always called with
-// ID "".
+// NEW window -- SaveMaintenance is always called with ID "".
 func fleetMaintenanceCreateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

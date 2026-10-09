@@ -1,22 +1,17 @@
-// handlers_fleet_audit.go (task C5, fleet phase 2 web UI plan C): GET
-// /fleet/audit -- the fleet audit log, over core.FleetAPI.Audit(limit)
-// (internal/core/fleet.go). Admin-only end to end (RoleAdmin at the route,
-// routes.go; fleetGateHTML here for "master only, else 404" -- exactly like
-// the rest of "Monitor"/"Admin"), unlike Managed config/Alerting/Admin,
-// which stay viewer-readable: this page has no viewer-facing read at all
-// (task-5-brief.md's route list is a single admin GET).
+// handlers_fleet_audit.go: GET /fleet/audit -- the fleet audit log, over
+// core.FleetAPI.Audit(limit) (internal/core/fleet.go). Admin-only end to end
+// (RoleAdmin at the route, routes.go; fleetGateHTML here for "master only, else
+// 404"), unlike Managed config/Alerting/Admin, which stay viewer-readable.
 //
 // Filters (?actor=, ?action=) are GET params, applied IN MEMORY over one
-// Audit(limit=fleetAuditQueryLimit) read (task-5-brief.md's exact ruling),
-// same convention buildFleetRows/fleetFilterMatch use for the roster
-// table -- there is no server-side filtered query on core.FleetAPI.Audit
-// itself, only a limit. Paginated 50/page (fleetIncidentsPageSize, this
-// package's one shared page-size constant -- global-constraints.md: "Lists
-// are paginated (50 per page)"). Every displayed time is the master's own
-// local zone (silenceTimeText, task C4's shared helper) with its
-// abbreviation shown; Detail is rendered through html/template's normal
-// auto-escaping like everything else on this page -- no template.HTML
-// anywhere in this file.
+// Audit(limit=fleetAuditQueryLimit) read, same convention
+// buildFleetRows/fleetFilterMatch use for the roster table -- there is no
+// server-side filtered query on core.FleetAPI.Audit itself, only a limit.
+// Paginated 50/page (fleetIncidentsPageSize, this package's one shared
+// page-size constant). Every displayed time is the master's own local zone
+// (silenceTimeText) with its abbreviation shown; Detail is rendered through
+// html/template's normal auto-escaping like everything else on this page -- no
+// template.HTML anywhere in this file.
 package web
 
 import (
@@ -30,11 +25,9 @@ import (
 )
 
 // fleetAuditQueryLimit is how many of the most recent audit entries this
-// page reads before filtering/paginating in memory -- task-5-brief.md's
-// exact value ("applied in memory over Audit(limit=5000)"). Filtering
-// narrows this same window; a filter matching something older than the
-// 5000th-most-recent entry simply won't show it, exactly like `fleet audit`
-// CLI's own --limit.
+// page reads before filtering/paginating in memory. Filtering narrows this same
+// window; a filter matching something older than the 5000th-most-recent entry
+// simply won't show it, exactly like `fleet audit` CLI's own --limit.
 const fleetAuditQueryLimit = 5000
 
 // AuditRow is one row of the audit table: core.AuditEntry's fields

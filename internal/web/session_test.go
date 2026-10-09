@@ -205,9 +205,9 @@ func TestSessionDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSessionNewRefusesWhenFull pins the pre-auth DoS bound (mirrors Task
-// 4's ceremonyStash.put): once the store is at sessionMaxEntries live
-// records, New refuses to mint another rather than growing without bound.
+// TestSessionNewRefusesWhenFull pins the pre-auth DoS bound: once the store is
+// at sessionMaxEntries live records, New refuses to mint another rather than
+// growing without bound.
 func TestSessionNewRefusesWhenFull(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	// A small maxEntries override keeps this test's O(n) read-modify-write

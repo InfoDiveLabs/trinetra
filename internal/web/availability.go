@@ -3,12 +3,11 @@ package web
 import "github.com/InfoDiveLabs/trinetra/internal/core"
 
 // AvailabilityBlock, Availability, and ComputeAvailability moved to
-// internal/core/availability.go (core.API contract task 2). Availability is
-// a Go type alias (not a new type), so every existing handler/template
-// reference in this package (v.Availability.Blocks, etc.) keeps compiling
-// unchanged.
+// internal/core/availability.go. Availability is a Go type alias (not a new
+// type), so every existing handler/template reference in this package
+// (v.Availability.Blocks, etc.) keeps compiling unchanged.
 //
-// ComputeAvailability now delegates to core.ComputeAvailability: this
+// ComputeAvailability delegates to core.ComputeAvailability: this
 // package's EventsStore (events_store.go) satisfies core.EventsSource
 // structurally (same Events(from, to int64) ([]DownEventView, error)
 // method, and DownEventView is itself a core alias), so an EventsStore value

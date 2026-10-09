@@ -14,9 +14,8 @@ import (
 
 // maxSeriesRangeSeconds bounds a single /api/series request's [from, to]
 // span: 400 days, generously beyond the 30-day rollup-retention default
-// (docs/handbook/09-storage-and-data-model.md) so any legitimate history query (even the
-// mockup's widest "30d" chip) fits comfortably, while still rejecting the
-// "absurd range" case this task's validation requires (e.g. from=0, a
+// (docs/handbook/09-storage-and-data-model.md) so any legitimate history query
+// fits comfortably, while still rejecting an absurd range (e.g. from=0, a
 // multi-century span) before it ever reaches the store.
 const maxSeriesRangeSeconds = int64(400 * 24 * 3600)
 
@@ -367,10 +366,9 @@ type HistoryPageData struct {
 	DiskLabels  string
 }
 
-// historyPageHandler renders GET /history: ported from
-// ui-mockup/history.html (templates/history.html) through the full
-// app-shell layout, same as dashboardHandler. The metric charts carry no
-// server-rendered points -- assets/app.js's swBootHistoryCharts fetches them
+// historyPageHandler renders GET /history (templates/history.html) through
+// the full app-shell layout, same as dashboardHandler. The metric charts carry
+// no server-rendered points -- assets/app.js's swBootHistoryCharts fetches them
 // from /api/series (and downtime from /api/downtime) client-side once the
 // page loads, driven by the metric/time-range chips' data attributes. The
 // one thing resolved server-side is the disk panel's per-mount series list,

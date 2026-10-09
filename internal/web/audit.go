@@ -9,11 +9,10 @@ import (
 )
 
 // AuditRecord is one line of <StateDir>/audit.jsonl: who changed what, and
-// what it was before/after. Task 10 (#66) requires this for every config
-// write, channel CRUD mutation, and alert ack, plus (retrofitted) every
-// Task 7 (#63) user-management mutation -- see appendAudit's callers across
-// handlers_config.go/handlers_channels.go/handlers_alerts.go/
-// handlers_users.go.
+// what it was before/after. Written for every config write, channel CRUD
+// mutation, alert ack and user-management mutation -- see appendAudit's
+// callers (handlers_config.go, handlers_channels.go, handlers_alerts.go,
+// handlers_users.go).
 type AuditRecord struct {
 	// Time is a Unix timestamp (seconds), defaulted to time.Now() by
 	// appendAudit when left zero.

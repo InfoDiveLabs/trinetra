@@ -9,8 +9,8 @@ import (
 
 // NavCounts holds the small per-request counts rendered as the sidebar nav's
 // badges (base.html's "nav" block, NavItem.Badge): Alerts/Channels/Users/
-// Monitoring. These replace the mockup's hardcoded demo values (220/2/5/3) --
-// see navCountsFor's doc for exactly what each counts and how it degrades.
+// Monitoring. See navCountsFor's doc for exactly what each counts and how it
+// degrades.
 type NavCounts struct {
 	// Alerts is the number of entries in the daemon's current active-alert
 	// set (Deps.API.ActiveAlerts, over the control socket), i.e. how many
@@ -25,20 +25,19 @@ type NavCounts struct {
 	// (<StateDir>/users.json).
 	Users int
 	// Monitoring is the live snapshot's container count
-	// (DashboardView.ContainersTotal) -- the brief's "stable default" choice
-	// for a single meaningful number on the Monitoring nav entry.
+	// (DashboardView.ContainersTotal) -- the "stable default" choice for a
+	// single meaningful number on the Monitoring nav entry.
 	Monitoring int
-	// FleetDown (task 5, fleet-web-a) is how many fleet nodes are currently
-	// State=="down", for the "Fleet" nav entry's badge -- 0 (no badge) on
-	// every page where this daemon isn't a fleet master, since
-	// navCountsFor only computes it when fleetRole=="master" (see its doc).
+	// FleetDown is how many fleet nodes are currently State=="down", for the
+	// "Fleet" nav entry's badge -- 0 (no badge) on every page where this daemon
+	// isn't a fleet master, since navCountsFor only computes it when
+	// fleetRole=="master" (see its doc).
 	FleetDown int
-	// IncidentsFiring (task C2, fleet incidents web UI) is how many fleet
-	// incidents are currently State=="firing", for the "Incidents" nav
-	// entry's badge -- 0 (no badge) whenever this daemon isn't a fleet
-	// master, exactly like FleetDown. Read through the request-scoped
-	// fleetMemo's fleetIncidentsFiringCount (fleet_memo.go), so this costs a
-	// real round trip only once per request.
+	// IncidentsFiring is how many fleet incidents are currently
+	// State=="firing", for the "Incidents" nav entry's badge -- 0 (no badge)
+	// whenever this daemon isn't a fleet master, exactly like FleetDown. Read
+	// through the request-scoped fleetMemo's fleetIncidentsFiringCount
+	// (fleet_memo.go), so this costs a real round trip only once per request.
 	IncidentsFiring int
 }
 
@@ -85,10 +84,10 @@ func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 			c.Monitoring = d.Snapshot().ContainersTotal
 		}
 	} else if v, err := snapshotViaAPI(r, d); err == nil {
-		// snapshotViaAPI (round-2 review finding I2) is memoized per
-		// request, shared with buildDashboardPageData's own Snapshot read
-		// (handlers_dashboard.go) instead of this costing a second
-		// apiFor(r,d).Snapshot() round trip on every remote-node page load.
+		// snapshotViaAPI is memoized per request, shared with
+		// buildDashboardPageData's own Snapshot read (handlers_dashboard.go)
+		// instead of this costing a second apiFor(r,d).Snapshot() round trip on
+		// every remote-node page load.
 		c.Monitoring = v.ContainersTotal
 	}
 

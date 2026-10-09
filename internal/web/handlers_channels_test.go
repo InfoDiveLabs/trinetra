@@ -323,9 +323,8 @@ func TestChannelsRemoveRoundTrips(t *testing.T) {
 	}
 }
 
-// TestChannelsTestHandlerCallsTestChannel pins the "send test" wiring: it
-// calls Deps.API.TestChannel (task 8; previously Deps.TestChannel directly)
-// with the decoded name and renders its result.
+// TestChannelsTestHandlerCallsTestChannel pins the "send test" wiring: it calls
+// Deps.API.TestChannel with the decoded name and renders its result.
 func TestChannelsTestHandlerCallsTestChannel(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"})
@@ -351,11 +350,8 @@ func TestChannelsTestHandlerCallsTestChannel(t *testing.T) {
 	}
 }
 
-// TestChannelsTestHandlerNilTestChannelDoesNotPanic pins the "not yet
-// wired" fallback: a nil Deps.API renders a clear message instead of
-// panicking (task 8: the guard moved from checking Deps.TestChannel to
-// checking Deps.API, since that's what channelsTestHandler now calls
-// through).
+// TestChannelsTestHandlerNilTestChannelDoesNotPanic pins the "not yet wired"
+// fallback: a nil Deps.API renders a clear message instead of panicking.
 func TestChannelsTestHandlerNilTestChannelDoesNotPanic(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"})

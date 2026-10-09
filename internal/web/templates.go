@@ -49,10 +49,9 @@ func computeAssetVersion() string {
 // assets stay cached forever, a changed asset gets a new URL.
 func assetURL(path string) string { return path + "?v=" + assetVersion }
 
-// templatesFS embeds internal/web/templates: base.html (the ported mockup
-// shell -- nav/topbar/content blocks, see that file's comments) plus one file
-// per page that fills in the "content" block (and, later, overrides other
-// blocks as needed).
+// templatesFS embeds internal/web/templates: base.html (the app shell --
+// nav/topbar/content blocks, see that file's comments) plus one file per page
+// that fills in the "content" block (and, as needed, overrides other blocks).
 //
 //go:embed templates
 var templatesFS embed.FS
@@ -82,10 +81,9 @@ var funcMap = template.FuncMap{
 	// asset appends the build's content-hash to an asset path for cache-busting
 	// (see assetVersion); templates reference assets via {{asset "/assets/x"}}.
 	"asset": assetURL,
-	// nodeHref/nodeAgo/nodeDur/clockTime/linkUnreachable (task 3, node-aware
-	// templates) back every same-origin link's node prefix and the replica
-	// banner / child link badge's time and threshold formatting -- see each
-	// func's own doc below.
+	// nodeHref/nodeAgo/nodeDur/clockTime/linkUnreachable back every same-origin
+	// link's node prefix and the replica banner / child link badge's time and
+	// threshold formatting -- see each func's own doc below.
 	"nodeHref":        nodeHref,
 	"nodeAgo":         nodeAgoText,
 	"nodeDur":         nodeDurText,
@@ -96,19 +94,19 @@ var funcMap = template.FuncMap{
 	// Policy/Step row headings only; the underlying 0-based index still
 	// backs every field name/op value.
 	"oneIndexed": oneIndexed,
-	// dict (task C3, fleet_alerting.html) builds a map[string]any from
-	// alternating key/value arguments, for passing a small ad-hoc bundle of
-	// fields into a named template block ({{template "x" (dict "A" 1 "B"
-	// 2)}}) -- html/template has no map literal syntax of its own.
+	// dict builds a map[string]any from alternating key/value arguments, for
+	// passing a small ad-hoc bundle of fields into a named template block
+	// ({{template "x" (dict "A" 1 "B" 2)}}) -- html/template has no map literal
+	// syntax of its own.
 	"dict": templateDict,
-	// managedKeyKnown (task C5, fleet_managed.html) reports whether key is
-	// one of core.ManagedKeys -- the create/edit form's key <select> uses it
-	// to add a visible, selected fallback option for a row whose Key came
-	// from a rejected raw POST naming something OUTSIDE the allowlist
-	// (bypassing the select entirely, as any raw HTTP client could): without
-	// this, that row's own <select> would silently show nothing selected on
-	// re-render, losing the very input the error message is about
-	// (global-constraints.md: "a validation error ... preserves ALL input").
+	// managedKeyKnown reports whether key is one of core.ManagedKeys -- the
+	// create/edit form's key <select> uses it to add a visible, selected
+	// fallback option for a row whose Key came from a rejected raw POST naming
+	// something OUTSIDE the allowlist (bypassing the select entirely, as any
+	// raw HTTP client could): without this, that row's own <select> would
+	// silently show nothing selected on re-render, losing the very input the
+	// error message is about (global-constraints.md: "a validation error ...
+	// preserves ALL input").
 	"managedKeyKnown": func(key string) bool {
 		for _, k := range core.ManagedKeys {
 			if k == key {
@@ -119,16 +117,13 @@ var funcMap = template.FuncMap{
 	},
 }
 
-// nodeHref joins a node scope's URL prefix (nodeScope.Prefix, node_scope.go:
-// "" for self, "/n/<id>" for a remote node) with a same-origin route path,
-// for every page-template link/form-action that must follow the current
-// request's node scope (task 3, global-constraints.md's "remote nodes are
-// read-only in the UI" plus the plan's "every same-origin link is node-
-// prefixed" requirement). path must start with "/" -- every caller passes a
-// literal route path, never a relative one, so this is plain concatenation:
-// nodeHref("", "/monitoring") == "/monitoring" (self, byte-identical to
-// before this task), nodeHref("/n/child1", "/monitoring") ==
-// "/n/child1/monitoring".
+// nodeHref joins a node scope's URL prefix (nodeScope.Prefix, node_scope.go: ""
+// for self, "/n/<id>" for a remote node) with a same-origin route path, for
+// every page-template link/form-action that must follow the current request's
+// node scope. path must start with "/" -- every caller passes a literal route
+// path, never a relative one, so this is plain concatenation: nodeHref("",
+// "/monitoring") == "/monitoring" (self, byte-identical to before this task),
+// nodeHref("/n/child1", "/monitoring") == "/n/child1/monitoring".
 func nodeHref(prefix, path string) string {
 	return prefix + path
 }
@@ -182,10 +177,9 @@ func nodeClockTime(ts int64) string {
 	return time.Unix(ts, 0).Local().Format("15:04")
 }
 
-// linkUnreachableThreshold is the controller ruling's cutoff for the topbar
-// child-link pill: a link retrying for longer than this renders the amber
-// "Master unreachable" pill instead of the healthy verdigris "Linked to
-// master" one.
+// linkUnreachableThreshold is the cutoff for the topbar child-link pill: a
+// link retrying for longer than this renders the amber "Master unreachable"
+// pill instead of the healthy verdigris "Linked to master" one.
 const linkUnreachableThreshold = 2 * time.Minute
 
 // linkUnreachable reports whether a child's link to its master (from
@@ -256,18 +250,17 @@ var navItems = []navEntry{
 }
 
 // navForRole returns navItems filtered to what role may see (viewers get
-// everything except AdminOnly entries, admins get everything -- the
-// server-side equivalent of the mockup app.js NAV.filter(role==='admin' ||
-// !n.admin)) with each entry's Badge filled in from counts via badgeFor,
-// and (task 3) every entry's Href carrying node's URL prefix.
+// everything except AdminOnly entries, admins get everything) with each
+// entry's Badge filled in from counts via badgeFor, and every entry's Href
+// carrying node's URL prefix.
 //
 // node additionally gates the AdminOnly entries (the "Admin" heading plus
 // Configuration/Channels/Users/Public view): on a remote node's page
 // (node.Self == false) they're hidden outright, regardless of role --
 // config/channels/users/public-settings are master-local pages
-// (masterLocalPrefixes, node_scope.go) that only ever mean "this master",
-// so they stay reachable from the master's own (self-scoped) nav, never
-// from a node-scoped one (global-constraints.md, task-3-brief.md).
+// (masterLocalPrefixes, node_scope.go) that only ever mean "this master", so
+// they stay reachable from the master's own (self-scoped) nav, never from a
+// node-scoped one.
 //
 // badgeFor is deliberately called with the entry's ORIGINAL, unprefixed
 // Href (its switch matches literal paths like "/monitoring") -- prefixing
@@ -275,10 +268,10 @@ var navItems = []navEntry{
 // correctly instead of silently going blank because "/n/child1/monitoring"
 // never matches badgeFor's cases.
 //
-// fleetRole (task 5, fleet-web-a) gates MasterOnly entries: "/fleet" shows
-// only when this daemon is a fleet master (config.RoleMaster), regardless
-// of node/role -- see navEntry.MasterOnly's doc for why its Href is also
-// exempt from the node.Prefix join every other entry gets.
+// fleetRole gates MasterOnly entries: "/fleet" shows only when this daemon is
+// a fleet master (config.RoleMaster), regardless of node/role -- see
+// navEntry.MasterOnly's doc for why its Href is also exempt from the
+// node.Prefix join every other entry gets.
 func navForRole(role string, counts NavCounts, node nodeScope, fleetRole string) []NavItem {
 	out := make([]NavItem, 0, len(navItems))
 	for _, n := range navItems {
@@ -357,8 +350,7 @@ func currentRole(r *http.Request) string {
 // PageData is what every page template renders against: base.html's shell
 // (nav/topbar) plus whatever the page itself needs.
 type PageData struct {
-	// Title/Sub drive the topbar's <h1>/<p>, mirroring the mockup's
-	// data-title/data-sub attributes.
+	// Title/Sub drive the topbar's <h1>/<p>.
 	Title, Sub string
 	// ServerName is this host's display name (config server.name, or the
 	// hostname when unset), shown as the sidebar brand subtitle so a multi-host
@@ -387,7 +379,7 @@ type PageData struct {
 	// every user; these carry the real value from userFromContext.
 	Name, Initial string
 	// Active is the request path, used to mark the matching nav link
-	// class="active" (mirrors the mockup's here===n.p comparison).
+	// class="active".
 	Active string
 	// Nav is Role's filtered nav list, precomputed so the template doesn't
 	// need role-aware logic beyond the active-link comparison.
@@ -413,10 +405,10 @@ type PageData struct {
 	VersionMismatch bool
 	// Node is this request's fleet node scope (node_scope.go's nodeFrom(r)):
 	// the zero value's ID=="self"/Self==true/Prefix=="" replica -- ordinary
-	// solo/master-self/child pages all render identically to before task 3,
-	// since nodeHref(node.Prefix, path) with an empty Prefix is a no-op.
-	// Non-zero (Self==false, Prefix=="/n/<id>") only on a master's page for
-	// a genuinely remote node.
+	// solo/master-self/child pages all render identically, since
+	// nodeHref(node.Prefix, path) with an empty Prefix is a no-op. Non-zero
+	// (Self==false, Prefix=="/n/<id>") only on a master's page for a genuinely
+	// remote node.
 	Node nodeScope
 	// FleetRole is this daemon's fleet role for the CURRENT request:
 	// "solo"/"master"/"child" (config.RoleSolo/RoleMaster/RoleChild). Drives
@@ -425,10 +417,10 @@ type PageData struct {
 	// Fleet().Status() round trip on a page already known to be a master's
 	// (a node-scoped request, Node.Self==false).
 	FleetRole string
-	// Banner is the replica banner (task 3) for a page scoped to a genuinely
-	// remote fleet node -- nil for every self-scoped page (solo, a master's
-	// own view, a child's own view, or a node-scoped page redirected back to
-	// self). See buildNodeBanner's doc.
+	// Banner is the replica banner for a page scoped to a genuinely remote
+	// fleet node -- nil for every self-scoped page (solo, a master's own view,
+	// a child's own view, or a node-scoped page redirected back to self). See
+	// buildNodeBanner's doc.
 	Banner *NodeBanner
 	// Link is a child daemon's link status to its master (core.LinkView,
 	// from Fleet().Status().Link), non-nil only when FleetRole=="child" and
@@ -440,14 +432,13 @@ type PageData struct {
 	// tooltip so an operator can see exactly where "master" points without
 	// following an external link out of this page.
 	MasterURL string
-	// Switcher is the topbar node switcher/Ctrl-K palette's node list (task
-	// 6, fleet-web-a): up to switcherNodeCap entries (self first, then down
-	// nodes, then the rest by name), each carrying this SPECIFIC page's
-	// link under that node's prefix -- see buildSwitcherNodes' doc. Nil
-	// (base.html renders neither the switcher button nor the #nodePalette
-	// markup at all) unless FleetRole==config.RoleMaster: per the
-	// controller ruling, solo and child daemons get no switcher and no
-	// palette, full stop.
+	// Switcher is the topbar node switcher/Ctrl-K palette's node list: up to
+	// switcherNodeCap entries (self first, then down nodes, then the rest by
+	// name), each carrying this SPECIFIC page's link under that node's prefix
+	// -- see buildSwitcherNodes' doc. Nil (base.html renders neither the
+	// switcher button nor the #nodePalette markup at all) unless
+	// FleetRole==config.RoleMaster: solo and child daemons get no switcher and no
+	// palette.
 	Switcher []SwitcherNode
 	// NodeLabel is the switcher button's own text: "this server" for a
 	// self-scoped page (solo, a master's own view, a child's own view --
@@ -455,16 +446,14 @@ type PageData struct {
 	NodeLabel string
 }
 
-// switcherNodeCap is the topbar switcher/Ctrl-K palette's ruling: list up
-// to 20 nodes.
+// switcherNodeCap is the most nodes the topbar switcher/Ctrl-K palette lists.
 const switcherNodeCap = 20
 
-// SwitcherNode is one entry in the topbar node switcher dropdown and its
-// Ctrl-K palette counterpart (task 6, fleet-web-a): a fleet roster node
-// projected for THIS request's own page -- its Href already carries the
-// current page's "type" (e.g. /monitoring) under that node's own prefix,
-// per switcherTargetPath's doc, so a template/click handler never needs to
-// re-derive it.
+// SwitcherNode is one entry in the topbar node switcher dropdown and its Ctrl-K
+// palette counterpart: a fleet roster node projected for THIS request's own
+// page -- its Href already carries the current page's "type" (e.g. /monitoring)
+// under that node's own prefix, per switcherTargetPath's doc, so a
+// template/click handler never needs to re-derive it.
 type SwitcherNode struct {
 	// ID is the roster id (core.NodeSummary.ID; core.SelfNodeID for self).
 	ID string
@@ -488,12 +477,12 @@ type SwitcherNode struct {
 }
 
 // buildSwitcherNodes projects nodes (the full, unfiltered fleet roster) into
-// the switcher/palette's ordering and per-node Href, per the controller
-// ruling: self first, then down nodes (by name), then the rest (by name),
-// capped at switcherNodeCap. current is this request's own node scope (for
-// the Current flag); targetPath is the page-type path every entry links to
-// under its own node's prefix (switcherTargetPath's result -- already
-// swapped to "/" for a master-local current page).
+// the switcher/palette's ordering and per-node Href: self first, then down
+// nodes (by name), then the rest (by name), capped at switcherNodeCap. current
+// is this request's own node scope (for the Current flag); targetPath is the
+// page-type path every entry links to under its own node's prefix
+// (switcherTargetPath's result -- already swapped to "/" for a master-local
+// current page).
 func buildSwitcherNodes(nodes []core.NodeSummary, current nodeScope, targetPath string) []SwitcherNode {
 	var self *core.NodeSummary
 	var down, rest []core.NodeSummary
@@ -548,15 +537,13 @@ func buildSwitcherNodes(nodes []core.NodeSummary, current nodeScope, targetPath 
 // switcherTargetPath returns the page-type path (plus query string) every
 // switcher/palette entry links to: p unchanged (already node-prefix-stripped
 // -- see nodeFrom's doc, and newPageData's caller which passes r.URL.Path
-// directly) with "?"+rawQuery appended when set (round-1 review: switching
-// nodes from e.g. /history?metric=cpu must keep ?metric=cpu, not silently
-// drop it) for an ordinary node-scoped page; or "/" alone, with NO query
-// string, when p falls under node_scope.go's masterLocalPrefixes --
-// config/channels/users/settings/fleet/etc. have no per-node counterpart to
-// switch to at all (task 6's ruling: "master-local pages... switch to the
-// node's dashboard instead"), and a filter/sort query tied to a
-// master-local page (e.g. /fleet?state=down) has no meaning on a node's own
-// dashboard.
+// directly) with "?"+rawQuery appended when set (switching nodes from e.g.
+// /history?metric=cpu must keep ?metric=cpu, not silently drop it) for an
+// ordinary node-scoped page; or "/" alone, with NO query string, when p falls
+// under node_scope.go's masterLocalPrefixes -- config/channels/users/
+// settings/fleet/etc. have no per-node counterpart to switch to, so the
+// switcher goes to the node's dashboard instead, and a filter/sort query tied
+// to a master-local page (e.g. /fleet?state=down) has no meaning there.
 func switcherTargetPath(p, rawQuery string) string {
 	p = path.Clean(p)
 	if isMasterLocalPath(p) {
@@ -580,13 +567,13 @@ func nodeLabelFor(ns nodeScope, path string) string {
 	return ns.Name
 }
 
-// NodeBanner is the replica banner's render data (task 3, task-3-brief.md's
-// exact interface): a compact summary of the remote node's own last-known
-// state, rendered by base.html's "nodebanner" partial just under the
-// topbar. Built by buildNodeBanner from the current request's nodeScope
-// (node_scope.go), which already carries the roster's NodeSummary for the
-// scoped node (fetched once by withNodeRouter/resolveMasterAndNodes to
-// validate the {node} path segment -- no extra Fleet() round trip here).
+// NodeBanner is the replica banner's render data: a compact summary of the
+// remote node's own last-known state, rendered by base.html's "nodebanner"
+// partial just under the topbar. Built by buildNodeBanner from the current
+// request's nodeScope (node_scope.go), which already carries the roster's
+// NodeSummary for the scoped node (fetched once by
+// withNodeRouter/resolveMasterAndNodes to validate the {node} path segment --
+// no extra Fleet() round trip here).
 type NodeBanner struct {
 	// Name is the node's display name (NodeSummary.Name).
 	Name string
@@ -609,18 +596,16 @@ type NodeBanner struct {
 
 // newPageData builds the PageData every page handler needs, deriving Role
 // from the request and Active from its path, and Status/StatusText from the
-// real active-alert set (topbarStatus(activeAlertsViaAPI(d))) --
-// see PageData's doc for why every page shares this one computation rather
-// than each supplying its own. d is also used to compute the nav's live
-// badge counts (navCountsFor); every other field is unchanged from the
-// request/session.
+// real active-alert set (topbarStatus(activeAlertsViaAPI(d))) -- see
+// PageData's doc for why every page shares this one computation. d is also
+// used to compute the nav's live badge counts (navCountsFor); every other
+// field is unchanged from the request/session.
 //
-// Active carries the current node scope's prefix (task 3): a bare
-// r.URL.Path would no longer match a remote node's now-prefixed Nav hrefs
-// (navForRole), breaking the sidebar/mobile-nav "active" highlight on every
-// node-scoped page -- reconstructing the full node-scoped path here keeps
-// the comparison correct, and is a no-op (Prefix=="") for every self-scoped
-// page exactly as before this task.
+// Active carries the current node scope's prefix: a bare r.URL.Path would no
+// longer match a remote node's prefixed Nav hrefs (navForRole), breaking the
+// sidebar/mobile-nav "active" highlight on every node-scoped page --
+// reconstructing the full node-scoped path here keeps the comparison correct,
+// and is a no-op (Prefix=="") for every self-scoped page.
 func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	role := currentRole(r)
 	name := ""
@@ -685,23 +670,21 @@ type fleetPageInfo struct {
 }
 
 // resolveFleetPageInfo determines the current request's fleet role (and, for
-// a child, its link status/master URL) for newPageData, honoring the
-// controller ruling: call Fleet().Status() at most once per REQUEST (not
-// per call site -- see fleet_memo.go), and only when the role isn't already
-// known from resolveMasterAndNodes.
+// a child, its link status/master URL) for newPageData: call Fleet().Status()
+// at most once per REQUEST (not per call site -- see fleet_memo.go), and only
+// when the role isn't already known from resolveMasterAndNodes.
 //
-// A request that reached here through withNodeRouter (node_scope.go) --
-// i.e. nodeScopeCtxKey{} is set in its context -- already proved this
-// daemon a master (withNodeRouter only proceeds past resolveMasterAndNodes
-// when isMaster is true), so that case returns "master" outright with no
-// further round trip -- not even a memoized one, since resolveMasterAndNodes
-// may well have settled "master" from Nodes() alone without ever calling
-// Status() at all. Every other request (the vast majority: every
-// unprefixed page, since withNodeRouter only inspects /n/... paths at all)
-// falls through to r's fleetMemo, collapsing every failure mode (nil
-// Deps.Fleet, a nil FleetAPI, a Status() error, or an empty Role -- an old
-// daemon predating Fleet.Status) to "solo", exactly like fleetRole's doc
-// explains for the same failure set.
+// A request that reached here through withNodeRouter (node_scope.go) -- i.e.
+// nodeScopeCtxKey{} is set in its context -- already proved this daemon a
+// master (withNodeRouter only proceeds past resolveMasterAndNodes when
+// isMaster is true), so that case returns "master" outright with no further
+// round trip -- not even a memoized one, since resolveMasterAndNodes may well
+// have settled "master" from Nodes() alone without ever calling Status().
+// Every other request (the vast majority: every unprefixed page, since
+// withNodeRouter only inspects /n/... paths) falls through to r's fleetMemo,
+// collapsing every failure mode (nil Deps.Fleet, a nil FleetAPI, a Status()
+// error, or an empty Role -- an old daemon predating Fleet.Status) to "solo",
+// exactly like fleetRole's doc explains for the same failure set.
 func resolveFleetPageInfo(r *http.Request, d Deps) fleetPageInfo {
 	if _, ok := r.Context().Value(nodeScopeCtxKey{}).(nodeScope); ok {
 		return fleetPageInfo{role: config.RoleMaster}
@@ -732,13 +715,12 @@ func buildNodeBanner(ns nodeScope) *NodeBanner {
 	}
 }
 
-// behindText renders NodeBanner.Behind (the "catching up"/"lagging" banner's
-// "N behind" clause) from NodeSummary.OutboxBytes/OutboxOldest (the
-// controller ruling's exact source fields): the queued byte count
-// (humanBytes) and, when known, how long the oldest queued record has been
-// waiting ("oldest Xm ago", via nodeAgoText). Empty when neither is known,
-// so the banner can omit the clause entirely rather than render a bare
-// trailing ", behind".
+// behindText renders NodeBanner.Behind (the "catching up"/"lagging" banner's "N
+// behind" clause) from NodeSummary.OutboxBytes/OutboxOldest: the queued byte
+// count (humanBytes) and, when known, how long the oldest queued record has
+// been waiting ("oldest Xm ago", via nodeAgoText). Empty when neither is known,
+// so the banner can omit the clause entirely rather than render a bare trailing
+// ", behind".
 func behindText(n core.NodeSummary) string {
 	var parts []string
 	if n.OutboxBytes > 0 {
@@ -797,8 +779,7 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
-// renderDenied renders the mockup's "Higher role needed" denied panel (templates/
-// denied.html, ported from ui-mockup/assets/app.js's `.panel.denied` markup)
+// renderDenied renders the "Higher role needed" denied panel (templates/denied.html)
 // through the full app-shell layout with a 403 status -- requireRole
 // (middleware.go) calls this when a signed-in user's role falls short of a
 // route's required minimum. It still renders through the normal PageData/
@@ -823,10 +804,9 @@ func renderNotFound(w http.ResponseWriter, r *http.Request, d Deps, reason strin
 	}
 }
 
-// BarePageData is what a "bare"/centered page (enroll now; login and the
-// public dashboard in later tasks, per the mockup's login.html/public.html
-// which use the same centered `.card`/`.center` styling rather than the app
-// shell) renders against: just the title and the CSP nonce its boot script
+// BarePageData is what a "bare"/centered page (enroll, login, the public
+// dashboard -- they use the centered `.card`/`.center` styling rather than the
+// app shell) renders against: just the title and the CSP nonce its boot script
 // needs, none of PageData's nav/topbar/role fields -- those pages render
 // before there's a signed-in session (or, for /public, deliberately without
 // one) so the sidebar/topbar shell has nothing to fill in.

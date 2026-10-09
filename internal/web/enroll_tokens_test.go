@@ -508,9 +508,9 @@ func enrollFinishRR(t *testing.T, h http.Handler, challenge string, cookie *http
 // admin-or-refuse decision is made atomically at finish time
 // (jsonUserStore.CreateFirstAdmin, under the write lock), so whichever finish
 // commits first becomes the sole admin and the second -- now seeing a
-// non-empty store -- is rejected. This reproduces the reviewer's live repro
-// (two /enroll/begin, then two /enroll/finish) and asserts exactly one
-// account exists afterward and it is admin.
+// non-empty store -- is rejected. The test drives two /enroll/begin, then two
+// /enroll/finish, and asserts exactly one account exists afterward and it is
+// admin.
 func TestBootstrapRaceYieldsExactlyOneAdmin(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)

@@ -87,8 +87,7 @@ func TestUsersPageListsUsers(t *testing.T) {
 // TestUsersPageForbiddenForViewerAndAnon pins the RBAC gate at this specific
 // route: a signed-in viewer gets the 403 "Admin only" panel, an anonymous
 // visitor is redirected to /login -- the same matrix rbac_test.go already
-// pins generically across every admin route, verified again here directly
-// against the real (non-placeholder) /users handler per the task brief.
+// pins generically across every admin route.
 func TestUsersPageForbiddenForViewerAndAnon(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -273,9 +272,9 @@ func TestUsersRemoveWorksForNonLastAdmin(t *testing.T) {
 	}
 }
 
-// TestUsersRemoveRefusesLastAdmin pins the brief's headline guard: removing
-// the sole remaining admin must be refused with an error/4xx, and the
-// account must still be present afterward.
+// TestUsersRemoveRefusesLastAdmin pins the headline guard: removing the sole
+// remaining admin must be refused with an error/4xx, and the account must still
+// be present afterward.
 func TestUsersRemoveRefusesLastAdmin(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -591,10 +590,9 @@ func TestUsersMutationsRequireAdminRole(t *testing.T) {
 	}
 }
 
-// TestUsersMutationsWriteAuditRecords pins the audit-log retrofit (issue
-// #66's "ALSO retrofit the Task-7 user-management mutations to write audit
-// records"): invite, role change, remove, and credential revoke each append
-// an AuditRecord with the expected Action/Key.
+// TestUsersMutationsWriteAuditRecords pins that invite, role change, remove,
+// and credential revoke each append an AuditRecord with the expected
+// Action/Key (issue #66).
 func TestUsersMutationsWriteAuditRecords(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)

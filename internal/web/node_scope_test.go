@@ -34,12 +34,9 @@ func fleetTestDeps(t *testing.T, api fakeAPI) Deps {
 	return d
 }
 
-// fleetTestDepsCounting is fleetTestDeps plus a countingAPI wrapped around
-// api as Deps.API, so a test can assert exactly how many core.API calls (if
-// any) a request actually caused -- Deps.Fleet/NodeAPI are wired to the
-// UNwrapped api (Fleet.* calls are expected and are a different interface
-// entirely; only core.API usage is what round-1 review's "never calls the
-// fake API" tests care about).
+// fleetTestDepsCounting is fleetTestDeps plus a countingAPI wrapped around api
+// as Deps.API, so a test can assert exactly how many core.API calls (if any) a
+// request actually caused -- Deps.Fleet/NodeAPI are wired to the UNwrapped api.
 func fleetTestDepsCounting(t *testing.T, api fakeAPI) (Deps, *countingAPI) {
 	t.Helper()
 	d := enrollTestDeps(t)
@@ -67,14 +64,13 @@ func withFakeUser(r *http.Request, role Role) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), userCtxKey{}, u))
 }
 
-// nodeAwareTestMux stands in for newHandler's real route table, just enough
-// to exercise withNodeRouter/nodeFrom/apiFor without depending on any real
-// page handler's internals (this task doesn't rewire any of them -- see the
-// brief's file list). GET /monitoring and GET /events (Task 4: /events is
-// node-routable) both write back the resolved nodeScope's ID/Prefix/Self as
-// headers, plus a body marker (MonitoringView.FailedUnits' first entry)
-// read through apiFor(r, d), so a test can tell "the master's fake API"
-// apart from "node child1's fake API".
+// nodeAwareTestMux stands in for newHandler's real route table, just enough to
+// exercise withNodeRouter/nodeFrom/apiFor without depending on any real page
+// handler's internals (this task doesn't rewire any of them -- see the file
+// list). GET /monitoring and GET /events both write back the resolved
+// nodeScope's ID/Prefix/Self as headers, plus a body marker
+// (MonitoringView.FailedUnits' first entry) read through apiFor(r, d), so a
+// test can tell "the master's fake API" apart from "node child1's fake API".
 func nodeAwareTestMux(d Deps) *http.ServeMux {
 	mux := http.NewServeMux()
 	scopeMarkerHandler := func(w http.ResponseWriter, r *http.Request) {
@@ -124,10 +120,10 @@ func masterFleetWithChild() *fakeFleet {
 
 // TestNodeRouterRoutesToNode pins the core plumbing: on a master, GET
 // /n/child1/monitoring must reach the mux with nodeFrom(r).ID=="child1",
-// Prefix=="/n/child1", and apiFor resolving to child1's own fake API (not
-// the master's) -- asserted by the distinct FailedUnits payload. Requires a
-// signed-in caller now (round-1 review): withNodeRouter redirects anonymous
-// master requests to /login before ever reaching a node lookup.
+// Prefix=="/n/child1", and apiFor resolving to child1's own fake API (not the
+// master's) -- asserted by the distinct FailedUnits payload. Requires a
+// signed-in caller now: withNodeRouter redirects anonymous master requests to
+// /login before ever reaching a node lookup.
 func TestNodeRouterRoutesToNode(t *testing.T) {
 	child := childFakeAPI("child1-svc")
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": child}))
@@ -227,12 +223,10 @@ func TestNodeRouterMasterLocalPaths404(t *testing.T) {
 	}
 }
 
-// TestNodeRouterSoloDaemon404 pins the solo case: every /n/... path 404s
-// (there's no fleet roster to resolve against, and -- round-1 review --
-// withNodeRouter must not intercept it at all: no rendering, no core.API
-// call), while the very same unprefixed route keeps working exactly as it
-// did before node routing existed. Deliberately anonymous: solo must not
-// require a session either, since it never even looks.
+// TestNodeRouterSoloDaemon404 pins the solo case: every /n/... path 404s, while
+// the very same unprefixed route keeps working exactly as it did before node
+// routing existed. Deliberately anonymous: solo must not require a session
+// either, since it never even looks.
 func TestNodeRouterSoloDaemon404(t *testing.T) {
 	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleSolo}}
 	d := fleetTestDeps(t, masterFakeAPI(fleet, nil))
@@ -279,16 +273,15 @@ func TestNodeRouterOldDaemonTreatedAsSolo(t *testing.T) {
 // TestNodeRouterRoutesToNode's doc) -- an anonymous POST here instead gets
 // redirected to /login, exactly like an anonymous GET would.
 //
-// round-1 review (task C6): the target paths here must NOT be the one
-// deliberate exception (POST /alerts/{key}/ack|unack, node_scope.go's
-// nodeScopedAlertAckPath) -- that path is asserted to reach downstream in
-// this same test, further down. A downstream mux is built with its own
-// COUNTING handlers (rather than reusing nodeAwareTestMux, which has no
-// route registered for these methods/paths at all) specifically so a 404
-// here is proven to come from withNodeRouter's own gate rejecting the
-// request before ever calling mux.ServeHTTP -- not merely from the stub
-// mux's own "no matching pattern" 404, which would look identical from the
-// response alone but prove nothing about the gate.
+// The target paths here must NOT be the one deliberate exception (POST
+// /alerts/{key}/ack|unack, node_scope.go's nodeScopedAlertAckPath) -- that path
+// is asserted to reach downstream in this same test, further down. A
+// downstream mux is built with its own COUNTING handlers (rather than reusing
+// nodeAwareTestMux, which has no route registered for these methods/paths at
+// all) specifically so a 404 here is proven to come from withNodeRouter's own
+// gate rejecting the request before ever calling mux.ServeHTTP -- not merely
+// from the stub mux's own "no matching pattern" 404, which would look
+// identical from the response alone but prove nothing about the gate.
 func TestNodeRouterRejectsNonGetMethod(t *testing.T) {
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
 
@@ -322,9 +315,9 @@ func TestNodeRouterRejectsNonGetMethod(t *testing.T) {
 		})
 	}
 
-	// The one deliberate exception (task C6) DOES reach downstream: proves
-	// the gate above is actually discriminating on path, not just eating
-	// every non-GET/HEAD method outright.
+	// The one deliberate exception DOES reach downstream: proves the gate above
+	// is actually discriminating on path, not just eating every non-GET/HEAD
+	// method outright.
 	t.Run("/n/child1/alerts/k/ack (exception) reaches downstream", func(t *testing.T) {
 		atomic.StoreInt32(&reached, 0)
 		rr := httptest.NewRecorder()
@@ -339,9 +332,8 @@ func TestNodeRouterRejectsNonGetMethod(t *testing.T) {
 	})
 }
 
-// TestNodeRouterRoutesEventsStream pins Task 4's reversal of the earlier
-// /events exclusion: GET /n/child1/events now reaches the mux with
-// nodeFrom(r) resolved to child1, the same as any other GET route --
+// TestNodeRouterRoutesEventsStream pins that GET /n/child1/events reaches the
+// mux with nodeFrom(r) resolved to child1, the same as any other GET route --
 // sse.go's eventsHandler is what actually keeps a routed request from ever
 // calling Deps.Subscribe (see sse_test.go's
 // TestEventsStreamRemoteNodePollsChildSnapshot), not this router. Requires
@@ -364,7 +356,7 @@ func TestNodeRouterRoutesEventsStream(t *testing.T) {
 	}
 }
 
-// TestNodeRouterRejectsDotDotPaths (round-1 review, IMPORTANT 1): a sub-path
+// TestNodeRouterRejectsDotDotPaths: a sub-path
 // that tries to smuggle a ".." segment past the master-local/events checks
 // -- whether written literally or percent-encoded -- must be rejected
 // outright (404), not resolved by path.Clean into something that then
@@ -389,9 +381,9 @@ func TestNodeRouterRejectsDotDotPaths(t *testing.T) {
 	}
 }
 
-// TestNodeRouterBareIDRedirects (round-1 review, MINOR): /n/{id} with no
-// trailing slash normalizes to /n/{id}/ via a 308, the same way a bare
-// directory path elsewhere in this app would.
+// TestNodeRouterBareIDRedirects: /n/{id} with no trailing slash normalizes to
+// /n/{id}/ via a 308, the same way a bare directory path elsewhere in this app
+// would.
 func TestNodeRouterBareIDRedirects(t *testing.T) {
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), nil))
 	h := withNodeRouter(d, nodeAwareTestMux(d))
@@ -408,11 +400,10 @@ func TestNodeRouterBareIDRedirects(t *testing.T) {
 	}
 }
 
-// TestNodeRouterAnonymousMasterRedirectsToLogin (round-1 review, CRITICAL
-// b/c/d): on a master, an anonymous request to ANY /n/... path redirects
-// straight to /login, before any node lookup or rendering -- and, pinned
-// with a counting fake, never calls into core.API at all (no
-// newPageData/renderNotFound, which would otherwise call
+// TestNodeRouterAnonymousMasterRedirectsToLogin: on a master, an anonymous
+// request to ANY /n/... path redirects straight to /login, before any node
+// lookup or rendering -- and, pinned with a counting fake, never calls into
+// core.API at all (no newPageData/renderNotFound, which would otherwise call
 // ActiveAlerts/Version even to render a 404).
 func TestNodeRouterAnonymousMasterRedirectsToLogin(t *testing.T) {
 	d, counting := fleetTestDepsCounting(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": childFakeAPI("child1-svc")}))
@@ -432,11 +423,10 @@ func TestNodeRouterAnonymousMasterRedirectsToLogin(t *testing.T) {
 	}
 }
 
-// TestNodeRouterAnonymousSoloNeverCallsAPI (round-1 review, CRITICAL d): on
-// a solo daemon, an anonymous request to any /n/... path must never call
-// into core.API either -- it's not intercepted at all (see
-// TestNodeRouterSoloDaemon404), so nothing downstream of withNodeRouter
-// touches the fake API.
+// TestNodeRouterAnonymousSoloNeverCallsAPI: on a solo daemon, an anonymous
+// request to any /n/... path must never call into core.API either -- it's not
+// intercepted at all (see TestNodeRouterSoloDaemon404), so nothing downstream
+// of withNodeRouter touches the fake API.
 func TestNodeRouterAnonymousSoloNeverCallsAPI(t *testing.T) {
 	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleSolo}}
 	d, counting := fleetTestDepsCounting(t, masterFakeAPI(fleet, nil))
@@ -469,13 +459,12 @@ func TestNewHandlerWiresNodeRouter(t *testing.T) {
 	}
 }
 
-// TestNewHandlerNodeRouterAuthFlow (round-1 review, IMPORTANT 2) drives the
-// real newHandler(d) -- full middleware chain, real monitoringHandler/
-// configPageHandler -- with a master fake plus a registered child node, to
-// pin the end-to-end auth story: anonymous is bounced to /login before
-// anything else; a signed-in viewer reaches the real /monitoring handler
-// (200); a signed-in admin still gets 404 for a master-local page
-// (/config) under a node prefix.
+// TestNewHandlerNodeRouterAuthFlow drives the real newHandler(d) -- full
+// middleware chain, real monitoringHandler/configPageHandler -- with a master
+// fake plus a registered child node, to pin the end-to-end auth story:
+// anonymous is bounced to /login before anything else; a signed-in viewer
+// reaches the real /monitoring handler (200); a signed-in admin still gets 404
+// for a master-local page (/config) under a node prefix.
 func TestNewHandlerNodeRouterAuthFlow(t *testing.T) {
 	child := childFakeAPI("child1-svc")
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": child}))
@@ -513,13 +502,12 @@ func TestNewHandlerNodeRouterAuthFlow(t *testing.T) {
 	})
 }
 
-// TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts pins round-2 review
-// finding I2's remote-node case: rendering GET /n/child1/ (the dashboard,
-// node-scoped) must call the child node's apiFor(r,d).Snapshot() and
-// ActiveAlerts() at most ONCE each per request. The review found
-// buildDashboardPageData's own Snapshot() read duplicated by
-// navCountsFor's node-scope branch (nav_counts.go:87-90) -- a fresh
-// control-socket round trip THIS task's own nav-count code added -- and
+// TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts pins that finding I2's
+// remote-node case: rendering GET /n/child1/ (the dashboard, node-scoped) must
+// call the child node's apiFor(r,d).Snapshot() and ActiveAlerts() at most ONCE
+// each per request. The review found buildDashboardPageData's own Snapshot()
+// read duplicated by navCountsFor's node-scope branch (nav_counts.go:87-90) --
+// a fresh control-socket round trip THIS task's own nav-count code added -- and
 // ActiveAlerts() read by both topbarStatus (newPageData) and navCountsFor's
 // sidebar badge.
 func TestDashboardRemoteNodeMemoizesSnapshotAndActiveAlerts(t *testing.T) {

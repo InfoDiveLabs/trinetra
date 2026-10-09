@@ -11,16 +11,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like
-// the real daemon's (see internal/trinetra/daemon.go's reload closure):
-// Cfg() returns whatever was last successfully applied, so a test can POST
-// /config or /channels and then assert against Cfg() the same way the real
-// web server would after a live SIGHUP-free reload. Both Deps.Reload (still
-// read directly by the /public settings save, handlers_public.go) and
-// Deps.API.ApplyConfig (task 8: what configSaveHandler/the channels handlers
-// now call instead) are wired to the SAME closure, so every existing test
-// asserting against the returned cfg/reloadCalled keeps working no matter
-// which of the two a given handler happens to call.
+// configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like the
+// real daemon's (see internal/trinetra/daemon.go's reload closure): Cfg()
+// returns whatever was last successfully applied, so a test can POST /config or
+// /channels and then assert against Cfg() the same way the real web server
+// would after a live SIGHUP-free reload. Both Deps.Reload (still read directly
+// by the /public settings save, handlers_public.go) and Deps.API.ApplyConfig
+// are wired to the SAME closure, so every existing test asserting against the
+// returned cfg/reloadCalled keeps working no matter which of the two a given
+// handler happens to call.
 func configTestDeps(t *testing.T) (d Deps, cfg **config.Config, reloadCalled *bool) {
 	t.Helper()
 	d = enrollTestDeps(t)
@@ -342,14 +341,13 @@ func TestConfigSaveIntervalsRoundTripAndRejectsBadCombo(t *testing.T) {
 	}
 }
 
-// TestConfigSaveAcceptsValidFinalIntervalCombo pins the fix for the
-// interval-validation-order bug: configSaveHandler must validate the FINAL
-// (fast_interval, sample_interval) pair as a whole, not each field against
-// the other's stale value. From defaults (fast=5, sample=60), POSTing
-// fast=7/sample=126 is a valid final combo (126%7==0) even though it fails
-// against either field's OLD value in isolation (60%7!=0, 126%5!=0) --
-// previously this was wrongly rejected with 400 no matter which field's
-// config.Set ran first.
+// TestConfigSaveAcceptsValidFinalIntervalCombo pins that configSaveHandler
+// validates the FINAL (fast_interval, sample_interval) pair as a whole, not
+// each field against the other's stale value. From defaults (fast=5,
+// sample=60), POSTing fast=7/sample=126 is a valid final combo (126%7==0) even
+// though it fails against either field's OLD value in isolation (60%7!=0,
+// 126%5!=0), so it must not be rejected with 400 no matter which field's
+// config.Set runs first.
 func TestConfigSaveAcceptsValidFinalIntervalCombo(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -663,13 +661,13 @@ func TestConfigRoutesAreAdminGated(t *testing.T) {
 	}
 }
 
-// TestConfigPageManagedFieldsDisabledAndPostRejected pins task 8's read-only
+// TestConfigPageManagedFieldsDisabledAndPostRejected pins the read-only
 // contract on a fleet child with a managed key: GET disables that field and
 // shows the fragment id; a POST that never touches it (a real browser never
-// submits a disabled field) still saves everything ELSE normally; a POST
-// that forges the managed field anyway (bypassing the disabled attribute)
-// is rejected outright, with nothing written -- even to an unrelated field
-// in the same request.
+// submits a disabled field) still saves everything ELSE normally; a POST that
+// forges the managed field anyway (bypassing the disabled attribute) is
+// rejected outright, with nothing written -- even to an unrelated field in the
+// same request.
 func TestConfigPageManagedFieldsDisabledAndPostRejected(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	(*cfg).Thresholds.CPUPct = 85
@@ -735,11 +733,11 @@ func TestConfigPageManagedFieldsDisabledAndPostRejected(t *testing.T) {
 	}
 }
 
-// TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt pins task 8's
-// secret-key contract for update.github_token (config.IsSecretKey): GET
-// /config never puts the raw secret in the page, and a POST that saves other
-// fields with the token input left blank keeps the stored value (rather than
-// clearing it, which a naive "always apply the posted value" edit would do).
+// TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt pins the secret-key
+// contract for update.github_token (config.IsSecretKey): GET /config never puts
+// the raw secret in the page, and a POST that saves other fields with the token
+// input left blank keeps the stored value (rather than clearing it, which a
+// naive "always apply the posted value" edit would do).
 func TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).Update.GitHubToken = "ghp_SECRET"

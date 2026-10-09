@@ -116,7 +116,7 @@ func TestPagesCarryWordmarkAndFavicons(t *testing.T) {
 }
 
 // externalAssetURL matches an absolute or protocol-relative URL
-// ("https://x", "http://x", "//x") used to LOAD something: an HTML src/href
+// ("https://x", "http://x", "//x") that LOADS something: an HTML src/href
 // attribute (or a JS .src= assignment), a CSS url(...), an @import, or a JS
 // fetch()/EventSource()/import(). Plain text such as a form
 // placeholder="https://ntfy.sh" is not an asset reference.
@@ -403,9 +403,9 @@ func dataSeriesTextUses(t *testing.T) []string {
 	return out
 }
 
-// TestChromeUsesNeutralTokens pins the round-1 review: links, the role
-// badge, the avatar and on-switches use neutral brand tokens, not the
-// data-series palette or verdigris (reserved for healthy/online).
+// TestChromeUsesNeutralTokens pins that links, the role badge, the avatar and
+// on-switches use neutral brand tokens, not the data-series palette or
+// verdigris (reserved for healthy/online).
 func TestChromeUsesNeutralTokens(t *testing.T) {
 	if got := dataSeriesTextUses(t); len(got) != 0 {
 		t.Errorf("data-series tokens used as text colour: %v", got)

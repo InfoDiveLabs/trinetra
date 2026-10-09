@@ -381,9 +381,7 @@ func TestWebAuthnConfigDerivesFromRequestOriginInProxyMode(t *testing.T) {
 	}
 }
 
-// Ceremony-stash-specific expiry/eviction/capacity tests used to live here
-// (Task 4's temporary in-memory ceremonyStash). That type is gone -- both
-// registration and login ceremonies now stash their SessionData in the real
-// SessionStore (session.go), whose equivalent expiry/GC/capacity behavior is
-// pinned in session_test.go (TestSessionGetTreatsExpiredAsAbsent,
-// TestSessionGCRemovesExpiredRecords, TestSessionNewRefusesWhenFull).
+// Expiry/eviction/capacity of the ceremony stash is pinned in session_test.go
+// (TestSessionGetTreatsExpiredAsAbsent, TestSessionGCRemovesExpiredRecords,
+// TestSessionNewRefusesWhenFull): both registration and login ceremonies stash
+// their SessionData in the real SessionStore (session.go).

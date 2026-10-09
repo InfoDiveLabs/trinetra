@@ -22,7 +22,7 @@ func enrollTestDeps(t *testing.T) Deps {
 // TestEnrollPageRendersBareLayout pins GET /enroll: it must render through
 // the bare/centered layout (base_bare.html), not the app shell -- no
 // sidebar/topbar nav, since there's no signed-in session yet -- while still
-// carrying the ported mockup markup and a CSP nonce on its boot script.
+// carrying a CSP nonce on its boot script.
 func TestEnrollPageRendersBareLayout(t *testing.T) {
 	h := newHandler(enrollTestDeps(t))
 	rr := httptest.NewRecorder()
@@ -45,14 +45,13 @@ func TestEnrollPageRendersBareLayout(t *testing.T) {
 	}
 }
 
-// TestEnrollPageClosedWithoutTokenShowsInviteMessage pins U8 (2026-09-25 UI
-// audit): once an account exists, loading /enroll with no ?token= used to
-// show the ordinary signup form, which only failed AFTER the user filled it
-// in and clicked "Create passkey" (a POST /enroll/begin 403, "enrollment is
-// closed"). GET /enroll must instead render a message that sign-up needs an
-// admin invite link, with a link to /login -- never the form, since
-// resolveEnrollRole (enroll_tokens.go) will refuse this exact request
-// unconditionally.
+// TestEnrollPageClosedWithoutTokenShowsInviteMessage pins that once an
+// account exists, loading /enroll with no ?token= must not show the signup
+// form, which would only fail AFTER the user filled it in and clicked "Create
+// passkey" (a POST /enroll/begin 403, "enrollment is closed"). GET /enroll must
+// instead render a message that sign-up needs an admin invite link, with a
+// link to /login, since resolveEnrollRole (enroll_tokens.go) will refuse this
+// exact request unconditionally.
 func TestEnrollPageClosedWithoutTokenShowsInviteMessage(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)

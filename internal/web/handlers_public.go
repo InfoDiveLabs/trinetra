@@ -253,7 +253,7 @@ func publicPanelSet(panels []string) map[string]bool {
 // buildPublicSettingsRows lists every panel the admin picker offers: the
 // fixed catalog above, plus one row per disk mount -- the UNION of mounts the
 // live snapshot currently reports and mounts already named in
-// cfg.Public.Panels (so a previously-curated mount that's temporarily
+// cfg.Public.Panels (so an already-curated mount that's temporarily
 // missing from the snapshot doesn't just vanish from the form and get
 // silently dropped on the next save), mirroring configTargetRows'
 // (handlers_config.go) same union approach for the monitors table.

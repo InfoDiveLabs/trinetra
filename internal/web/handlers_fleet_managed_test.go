@@ -31,9 +31,8 @@ func TestFleetManagedAnonymousRedirectsToLogin(t *testing.T) {
 	}
 }
 
-// TestFleetManagedViewerReadOnly pins the ruling: a viewer sees the page
-// (200), the fragments list and status table, but no create/edit/delete
-// controls at all.
+// TestFleetManagedViewerReadOnly pins that a viewer sees the page (200), the
+// fragments list and status table, but no create/edit/delete controls at all.
 func TestFleetManagedViewerReadOnly(t *testing.T) {
 	fleet := &fakeFleet{managed: []core.ManagedFragment{
 		{ID: "f1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "90"}, Version: 2, Author: "root"},
@@ -104,8 +103,8 @@ func TestFleetManagedMissingCSRFForbidden(t *testing.T) {
 
 // ---- key select allowlist --------------------------------------------------
 
-// TestFleetManagedKeySelectOffersOnlyAllowlistedKeys pins the ruling: the
-// key <select> offers exactly core.ManagedKeys, nothing more/less.
+// TestFleetManagedKeySelectOffersOnlyAllowlistedKeys pins that the key <select>
+// offers exactly core.ManagedKeys, nothing more/less.
 func TestFleetManagedKeySelectOffersOnlyAllowlistedKeys(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	body, _, _ := fleetAdminSessionGet(t, d, "/fleet/managed")
@@ -187,10 +186,9 @@ func TestFleetManagedCreateRoundTripsWithSessionUserAsAuthor(t *testing.T) {
 	}
 }
 
-// TestFleetManagedSaveUpsertsByTag pins task-5-brief.md's exact ruling:
-// saving a fresh draft (ID "") whose tag matches an EXISTING fragment
-// updates that fragment in place rather than creating a second one for the
-// same tag.
+// TestFleetManagedSaveUpsertsByTag pins that saving a fresh draft (ID "") whose
+// tag matches an EXISTING fragment updates that fragment in place rather than
+// creating a second one for the same tag.
 func TestFleetManagedSaveUpsertsByTag(t *testing.T) {
 	fleet := &fakeFleet{managed: []core.ManagedFragment{
 		{ID: "f1", Tag: "web", Values: map[string]string{"thresholds.cpu_pct": "80"}, Version: 1, Author: "root"},
@@ -403,8 +401,8 @@ func TestFleetManagedEditLoadsExistingFragment(t *testing.T) {
 
 // ---- status table -----------------------------------------------------------
 
-// TestFleetManagedStatusRendersDriftAndConflicts pins the per-node status
-// table's drift-keys-as-badges and conflicts-listed ruling.
+// TestFleetManagedStatusRendersDriftAndConflicts pins that the per-node
+// status table shows drift keys as badges and lists conflicts.
 func TestFleetManagedStatusRendersDriftAndConflicts(t *testing.T) {
 	fleet := &fakeFleet{managedStatus: []core.ManagedStatus{
 		{

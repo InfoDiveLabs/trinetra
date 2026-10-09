@@ -17,14 +17,13 @@ const gzipMinBytes = 1024
 // isEventsStreamPath reports whether p is a live SSE stream path that must
 // never be buffered by gzipMiddleware: the two unprefixed streams
 // (/events, /public/events) or a master's node-scoped counterpart
-// (/n/{id}/events, Task 4/fleet-web-a) -- the exact same request
-// withNodeRouter (node_scope.go) re-dispatches internally as a plain
-// /events once it resolves the node scope. The node-scoped match is
-// intentionally loose (any /n/.../events path, not a validated node id):
-// worst case a malformed /n/.../events path that withNodeRouter itself
-// would 404 just skips gzip too, which is harmless -- never a correctness
-// or security concern, only a missed compression opportunity on a path
-// that was never going to succeed anyway.
+// (/n/{id}/events) -- the exact same request withNodeRouter (node_scope.go)
+// re-dispatches internally as a plain /events once it resolves the node scope.
+// The node-scoped match is intentionally loose (any /n/.../events path, not a
+// validated node id): worst case a malformed /n/.../events path that
+// withNodeRouter itself would 404 just skips gzip too, which is harmless --
+// only a missed compression opportunity on a path that was never going to
+// succeed anyway.
 func isEventsStreamPath(p string) bool {
 	if p == "/events" || p == "/public/events" {
 		return true
@@ -34,8 +33,7 @@ func isEventsStreamPath(p string) bool {
 
 // gzipMiddleware compresses responses with gzip when the client advertises
 // support (Accept-Encoding: gzip) and the body turns out to exceed
-// gzipMinBytes, so the larger history/series JSON payloads (the whole point
-// of this task -- a congested uplink pays less for them) travel compressed
+// gzipMinBytes, so the larger history/series JSON payloads travel compressed
 // while small responses stay as-is.
 //
 // /events and /public/events are excluded unconditionally: both stream
@@ -43,12 +41,12 @@ func isEventsStreamPath(p string) bool {
 // gzipResponseWriter's buffer-then-decide strategy below would hold every
 // frame until either the 1KB threshold or the connection closes -- exactly
 // backwards for a live push stream, where the browser needs each frame the
-// moment it's written, not once several KB have accumulated. As of Task 4
-// (fleet-web-a), a master's node-scoped SSE stream (/n/{id}/events,
-// node_scope.go's withNodeRouter) is excluded too, via isEventsStreamPath --
-// this middleware runs OUTSIDE withNodeRouter (routes.go), so it always
-// sees the request's ORIGINAL, still-/n/{id}/-prefixed path, never the
-// prefix-stripped /events withNodeRouter re-dispatches internally.
+// moment it's written, not once several KB have accumulated. A master's
+// node-scoped SSE stream (/n/{id}/events) is excluded too, via
+// isEventsStreamPath -- this middleware runs OUTSIDE withNodeRouter
+// (routes.go), so it always sees the request's ORIGINAL, still-/n/{id}/-prefixed
+// path, never the prefix-stripped /events withNodeRouter re-dispatches
+// internally.
 func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isEventsStreamPath(r.URL.Path) {

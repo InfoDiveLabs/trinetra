@@ -16,34 +16,33 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fleetTokenTTLMin/Max/Default are task-7-brief.md's exact TTL bounds for
-// POST /fleet/tokens: a Go duration string, 5 minutes to 720 hours (30
-// days), defaulting to 1 hour when the field is left blank.
+// fleetTokenTTLMin/Max/Default bound the TTL for POST /fleet/tokens: a Go
+// duration string, 5 minutes to 720 hours (30 days), defaulting to 1 hour when
+// the field is left blank.
 const (
 	fleetTokenTTLMin     = 5 * time.Minute
 	fleetTokenTTLMax     = 720 * time.Hour
 	fleetTokenTTLDefault = "1h"
 )
 
-// fleetTokenUsesMin/Max are the brief's uses bounds: 1..100, default 1.
+// fleetTokenUsesMin/Max are the uses bounds: 1..100, default 1.
 const (
 	fleetTokenUsesMin = 1
 	fleetTokenUsesMax = 100
 )
 
-// fleetMaxTags is the brief's cap on how many tags a single tags= field may
-// carry (token creation and the node tags form both use it).
+// fleetMaxTags is the cap on how many tags a single tags= field may carry
+// (token creation and the node tags form both use it).
 const fleetMaxTags = 10
 
-// fleetTagRe is the brief's exact tag shape: lowercase letters, digits,
-// underscore, hyphen, 1-32 characters. Deliberately narrower than
-// internal/fleet.ValidTag (which also allows '.') -- this is the web
-// layer's OWN validation ahead of the daemon's, using the brief's literal
-// values rather than reusing that package's regex (internal/web doesn't
-// import internal/fleet).
+// fleetTagRe is the tag shape: lowercase letters, digits, underscore, hyphen,
+// 1-32 characters. Deliberately narrower than internal/fleet.ValidTag (which
+// also allows '.') -- this is the web layer's OWN validation ahead of the
+// daemon's, using the values rather than reusing that package's regex
+// (internal/web doesn't import internal/fleet).
 var fleetTagRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
-// fleetNodeNameMax is the brief's rename bound: 1..64 characters.
+// fleetNodeNameMax is the rename bound: 1..64 characters.
 const fleetNodeNameMax = 64
 
 // fleetResponderMutation is fleetAdminMutation with the role floor lowered to
@@ -56,15 +55,13 @@ func fleetResponderMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-// fleetAdminMutation: see fleetResponderMutation for the responder-level
-// variant (incident ack only); this one stays admin-only.
 // fleetAdminMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
 // exactly like usersMutation (handlers_users.go): every /fleet/tokens* and
-// /fleet/nodes/{id}/* mutation needs both gates. The "master only, else
-// 404" half of the brief's "admin + CSRF for POST; master only else 404"
-// ruling is enforced separately, inside each handler (fleetGateHTML) --
-// requireRole/requireCSRF only ever gate on session/role/CSRF, never on
-// this daemon's fleet role.
+// /fleet/nodes/{id}/* mutation needs both gates; see fleetResponderMutation
+// for the responder-level variant (incident ack only). The "master only, else
+// 404" half is enforced separately, inside each handler (fleetGateHTML) --
+// requireRole/requireCSRF only ever gate on session/role/CSRF, never on this
+// daemon's fleet role.
 func fleetAdminMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
@@ -135,10 +132,9 @@ func parseFleetTags(raw string) ([]string, error) {
 	return tags, nil
 }
 
-// validateNodeName validates POST /fleet/nodes/{id}/rename's "name" field
-// per the brief: 1..64 characters (runes, not bytes -- a multi-byte display
-// name shouldn't be penalized for its UTF-8 encoding), no control
-// characters.
+// validateNodeName validates POST /fleet/nodes/{id}/rename's "name" field:
+// 1..64 characters (runes, not bytes -- a multi-byte display name shouldn't be
+// penalized for its UTF-8 encoding), no control characters.
 func validateNodeName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
@@ -157,21 +153,20 @@ func validateNodeName(raw string) (string, error) {
 	return name, nil
 }
 
-// fleetAPIErrStatus maps a core.FleetAPI error to the 4xx status the brief
-// calls for ("FleetAPI errors ... render as a flash message ... with a 4xx
-// status where it fits. Never return a 500."): core.ErrNoSuchNode,
-// core.ErrNotMaster, and core.ErrNotFound (task C4 fix round 1 -- every
-// incident/silence/maintenance-window/managed-fragment "no such X" lookup
-// now wraps this) all mean "the thing this request named isn't there (any
-// more)", so 404; anything else (a validation error the daemon itself
-// rejected, e.g. registry.Update's "fleet: no node %s" for a stale id, or
-// fleet.TokenStore's "no such token") is treated as a bad request, 400.
+// fleetAPIErrStatus maps a core.FleetAPI error to a 4xx status (FleetAPI
+// errors render as a flash message, never a 500): core.ErrNoSuchNode,
+// core.ErrNotMaster, and core.ErrNotFound (every incident/silence/
+// maintenance-window/managed-fragment "no such X" lookup wraps this) all mean
+// "the thing this request named isn't there (any more)", so 404; anything else
+// (a validation error the daemon itself rejected, e.g. registry.Update's
+// "fleet: no node %s" for a stale id, or fleet.TokenStore's "no such token") is
+// treated as a bad request, 400.
 //
 // This errors.Is check works identically whether Deps.Fleet() is backed
 // in-process or by a control-socket control.Client: the latter's Client.call
 // reconstructs each of these sentinels from the wire's plain-text error
 // (internal/control/client.go's reconstructWireErr) precisely so this check
-// keeps working across that hop too -- see that function's own doc.
+// keeps working across that hop too.
 func fleetAPIErrStatus(err error) int {
 	if errors.Is(err, core.ErrNoSuchNode) || errors.Is(err, core.ErrNotMaster) || errors.Is(err, core.ErrNotFound) {
 		return http.StatusNotFound
@@ -194,10 +189,8 @@ func newTokenRow(t core.TokenView) TokenRow {
 		ID:       t.ID,
 		UsesLeft: t.Uses,
 		// Expires routes through silenceTimeText (handlers_fleet_silences.go,
-		// master-local zone with abbreviation) rather than its own RFC3339/
-		// UTC convention -- round-2 review finding M2, folded into the same
-		// cleanup as finding I1 so every absolute timestamp on the fleet
-		// surface uses the one convention.
+		// master-local zone with abbreviation) so every absolute timestamp on the
+		// fleet surface uses the one convention.
 		Expires: silenceTimeText(t.Expires),
 		Tags:    strings.Join(t.Tags, ","),
 		Creator: t.Creator,
@@ -222,18 +215,17 @@ type FleetAdminNodeRow struct {
 	// SkewText/SkewWarn/DropsWarn/OutboxText/OldestText mirror
 	// FleetRow's identically-named fields (handlers_fleet.go): the CLI's
 	// exact wording (fleetSkewText/fleetSkewWarnText/fleetDropsWarnText),
-	// reused verbatim rather than reimplemented, per the brief's "reuse the
-	// Task 5 helpers" ruling.
+	// reused verbatim rather than reimplemented.
 	SkewText   string
 	SkewWarn   string
 	DropsWarn  string
 	OutboxText string
 	OldestText string
 	// CanRemove reports whether this node is eligible for POST
-	// /fleet/nodes/{id}/remove: only a revoked or down node may be removed
-	// (the brief's ruling) -- the template hides the remove control
-	// entirely for anything else, and the handler re-checks this
-	// server-side (never trusts the hidden-control-implies-safe assumption).
+	// /fleet/nodes/{id}/remove: only a revoked or down node may be removed --
+	// the template hides the remove control entirely for anything else, and the
+	// handler re-checks this server-side (never trusts the
+	// hidden-control-implies-safe assumption).
 	CanRemove bool
 }
 
@@ -260,11 +252,10 @@ func newFleetAdminNodeRow(n core.NodeSummary) FleetAdminNodeRow {
 }
 
 // IssuedJoinToken is the freshly-minted join token's one-time render: the
-// full `sudo trinetra fleet join <code>` command (task-7-brief.md's exact
-// CLI shape, fleet_cmd.go's own fleetTokenCmd wording) plus the
-// human-readable TTL/uses/tags it was minted with. Never persisted or
-// logged anywhere beyond this one response -- see fleetTokenCreateHandler's
-// SECURITY note.
+// full `sudo trinetra fleet join <code>` command (fleet_cmd.go's own
+// fleetTokenCmd wording) plus the human-readable TTL/uses/tags it was minted
+// with. Never persisted or logged anywhere beyond this one response -- see
+// fleetTokenCreateHandler's SECURITY note.
 type IssuedJoinToken struct {
 	JoinCommand string
 	TTL         string
@@ -411,7 +402,7 @@ func renderFleetAdminPage(w http.ResponseWriter, data FleetAdminPageData, status
 // the page, the same in-page pattern users.html uses) can swap the whole
 // panel in place instead of a full page navigation. Also used to render an
 // error response (a validation failure or a FleetAPI error) at whatever 4xx
-// status the caller chooses -- never a redirect, per the brief.
+// status the caller chooses -- never a redirect.
 func renderFleetAdminFragment(w http.ResponseWriter, data FleetAdminPageData, status int) error {
 	tmpl, err := template.New("fleet_admin.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/fleet_admin.html")
@@ -424,9 +415,8 @@ func renderFleetAdminFragment(w http.ResponseWriter, data FleetAdminPageData, st
 }
 
 // renderFleetAdminError re-renders the admin fragment with a flash message
-// (FlashErr=true) at the given 4xx status -- the brief's "FleetAPI errors
-// ... render as a flash message ... Never return a 500" ruling's shared
-// implementation, used by every mutation handler's error path below.
+// (FlashErr=true) at the given 4xx status (FleetAPI errors never become a
+// 500); shared by every mutation handler's error path below.
 func renderFleetAdminError(w http.ResponseWriter, r *http.Request, d Deps, msg string, status int) {
 	data := buildFleetAdminPageData(r, d, fleetAdminOptions{Flash: msg, FlashErr: true})
 	if err := renderFleetAdminFragment(w, data, status); err != nil {
@@ -459,8 +449,7 @@ func fleetAdminPageHandler(d Deps) http.HandlerFunc {
 // rendered into THIS ONE response and nowhere else -- logAudit's New field
 // below carries only the ttl/uses/tags/creator summary, never JoinCode, and
 // the response itself carries Cache-Control: no-store so neither a shared
-// cache nor the browser's own back/forward cache retains a page holding it
-// (task-7-brief.md: "the join code shows once, in the POST response").
+// cache nor the browser's own back/forward cache retains a page holding it.
 func fleetTokenCreateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -559,9 +548,9 @@ func fleetTokenDeleteHandler(d Deps) http.HandlerFunc {
 }
 
 // fleetNodeRenameHandler serves POST /fleet/nodes/{id}/rename. Rejects
-// id=="self" with 400 (the brief: renaming this host happens through its
-// own config, not the fleet admin page); a validation failure re-renders
-// the fragment with the rejected value kept in the form.
+// id=="self" with 400 (renaming this host happens through its own config, not
+// the fleet admin page); a validation failure re-renders the fragment with the
+// rejected value kept in the form.
 func fleetNodeRenameHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -693,12 +682,11 @@ func fleetNodeRevokeHandler(d Deps) http.HandlerFunc {
 }
 
 // fleetNodeRemoveHandler serves POST /fleet/nodes/{id}/remove: only a
-// revoked or down node may be removed (the brief's ruling; the template
-// hides the control otherwise, but this is the actual enforcement). A node
-// this daemon's roster no longer recognizes falls through to
-// Fleet().RemoveNode itself, whose own error (core.ErrNoSuchNode or
-// equivalent) is what renders the 404 flash -- the state check only
-// applies when the id IS still a known node.
+// revoked or down node may be removed (the template hides the control
+// otherwise, but this is the actual enforcement). A node this daemon's roster
+// no longer recognizes falls through to Fleet().RemoveNode itself, whose own
+// error (core.ErrNoSuchNode or equivalent) is what renders the 404 flash --
+// the state check only applies when the id IS still a known node.
 func fleetNodeRemoveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

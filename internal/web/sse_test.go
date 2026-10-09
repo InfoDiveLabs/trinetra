@@ -254,10 +254,10 @@ func TestEventsStreamStopsPromptlyOnClientDisconnect(t *testing.T) {
 	}
 }
 
-// TestEventsStreamSubscribePushesSnapshotFrameOnSnapshotEvent pins Task 3's
-// core push-driven contract: when Deps.Subscribe is set, a Kind:"snapshot"
+// TestEventsStreamSubscribePushesSnapshotFrameOnSnapshotEvent pins the
+// push-driven contract: when Deps.Subscribe is set, a Kind:"snapshot"
 // LiveEvent fed on the returned channel makes eventsHandler write a fresh
-// snapshot SSE frame immediately, rather than waiting for the (now-fallback)
+// snapshot SSE frame immediately, rather than waiting for the (fallback)
 // ticker.
 func TestEventsStreamSubscribePushesSnapshotFrameOnSnapshotEvent(t *testing.T) {
 	d := eventsTestDeps(t, 60)
@@ -389,7 +389,7 @@ func TestEventsStreamFallsBackToTickerWhenSubscribeChannelCloses(t *testing.T) {
 	}
 }
 
-// ---- Task 4: /n/{node}/events (remote fleet node, poll-only) -----------
+// ---- /n/{node}/events (remote fleet node, poll-only) -------------------
 
 // nodeSnapshotAPI is a core.API test double whose Snapshot() reads a
 // mutable, mutex-guarded DashboardView, so a test can change what a
@@ -441,13 +441,12 @@ func nodeEventsTestDeps(t *testing.T, child core.API, fastIntervalSec int) Deps 
 	return d
 }
 
-// TestEventsStreamRemoteNodePollsChildSnapshot pins Task 4's core
-// contract: GET /n/child1/events streams an initial "snapshot" frame built
-// from the CHILD node's own core.API.Snapshot() (not the master's), then
-// re-polls on sseTickerInterval and emits a fresh frame once that child
-// snapshot actually changes -- and never calls Deps.Subscribe (there is no
-// per-node live push; remote alert events are never streamed, only
-// snapshot polling).
+// TestEventsStreamRemoteNodePollsChildSnapshot pins that GET /n/child1/events
+// streams an initial "snapshot" frame built from the CHILD node's own
+// core.API.Snapshot() (not the master's), then re-polls on sseTickerInterval
+// and emits a fresh frame once that child snapshot actually changes -- and
+// never calls Deps.Subscribe (there is no per-node live push; remote alert
+// events are never streamed, only snapshot polling).
 func TestEventsStreamRemoteNodePollsChildSnapshot(t *testing.T) {
 	child := &nodeSnapshotAPI{snap: core.DashboardView{CPU: 77}}
 	d := nodeEventsTestDeps(t, child, 1)
@@ -508,15 +507,14 @@ func TestEventsStreamRemoteNodePollsChildSnapshot(t *testing.T) {
 	}
 }
 
-// TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery pins
-// task C6's stale-indicator ruling: a remote node's poll holds the last
-// successful snapshot across transient errors (nothing is written to the
-// wire for the first two consecutive failures), emits one "stale" SSE event
-// naming the last-success time once errors reach remoteNodeStaleThreshold
-// (3), and clears back to a normal "snapshot" frame on the very next
-// successful poll -- even though that poll's data is unchanged from what
-// was already held, which the ordinary "only write on change" dedup would
-// otherwise have suppressed.
+// TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery pins the
+// stale indicator: a remote node's poll holds the last successful snapshot
+// across transient errors (nothing is written to the wire for the first two
+// consecutive failures), emits one "stale" SSE event naming the last-success
+// time once errors reach remoteNodeStaleThreshold (3), and clears back to a
+// normal "snapshot" frame on the very next successful poll -- even though that
+// poll's data is unchanged from what was already held, which the ordinary
+// "only write on change" dedup would otherwise have suppressed.
 func TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery(t *testing.T) {
 	child := &nodeSnapshotAPI{snap: core.DashboardView{CPU: 77}}
 	d := nodeEventsTestDeps(t, child, 1)
@@ -577,8 +575,8 @@ func TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery(t *testi
 // TestAppJSHandlesStaleSSEEvent is a static source test (this package's
 // established convention for app.js, e.g. templates_node_test.go's
 // TestAppJSDataFetchesGoThroughNodeURL) pinning that swBootSSE listens for
-// the "stale" SSE event, shows the exact banner text task C6's ruling
-// specifies, and clears it on the next "snapshot" event.
+// the "stale" SSE event, shows the exact banner text, and clears it on the
+// next "snapshot" event.
 func TestAppJSHandlesStaleSSEEvent(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -598,9 +596,8 @@ func TestAppJSHandlesStaleSSEEvent(t *testing.T) {
 
 // TestEventsStreamSelfUnaffectedByRemoteNodePolling is a narrow sanity
 // check that the plain, unprefixed /events request still takes the
-// original self-scope path (Deps.Snapshot, not apiFor/NodeAPI) even on a
-// Deps wired with node routing -- Task 4 must not have disturbed the
-// existing self behavior TestEventsStreamEmitsSnapshotFrame et al. already
+// self-scope path (Deps.Snapshot, not apiFor/NodeAPI) even on a Deps wired
+// with node routing, as TestEventsStreamEmitsSnapshotFrame et al. already
 // pin.
 func TestEventsStreamSelfUnaffectedByRemoteNodePolling(t *testing.T) {
 	master := masterFakeAPI(masterFleetWithChild(), map[string]core.API{

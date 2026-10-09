@@ -10,16 +10,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// ---- round 1 review fix: the /fleet checkbox selection must survive the
-// table's 5s htmx poll -----------------------------------------------------
+// ---- the /fleet checkbox selection must survive the table's 5s htmx poll ----
 
 // TestAppJSFleetCompareSurvivesTablePoll is a static source scan (same
 // convention as templates_node_test.go's TestAppJSDataFetchesGoThroughNodeURL:
 // read assets/app.js's embedded source, assert the expected code shapes are
-// present) pinning the round-1 review fix: a persisted selection Set that
-// survives #fleet-tbody's every-5s outerHTML swap (which replaces every
-// checkbox with a fresh, unchecked one), re-applied onto the fresh
-// checkboxes on htmx:afterSwap before the counter/button are refreshed.
+// present) pinning that a persisted selection Set survives #fleet-tbody's
+// every-5s outerHTML swap (which replaces every checkbox with a fresh,
+// unchecked one), re-applied onto the fresh checkboxes on htmx:afterSwap
+// before the counter/button are refreshed.
 func TestAppJSFleetCompareSurvivesTablePoll(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -71,9 +70,8 @@ func fleetCompareMasterDeps(t *testing.T, nodes []core.NodeSummary, pts []core.F
 }
 
 // TestFleetCompareRendersSingleFleetSeriesCall pins that a compare request
-// makes exactly one FleetSeries call (task-1b-brief.md: "Renders one uPlot
-// overlay from a single FleetSeries call"), with the chart's data embedded
-// in the page (no separate fetch needed).
+// makes exactly one FleetSeries call, with the chart's data embedded in the
+// page (no separate fetch needed).
 func TestFleetCompareRendersSingleFleetSeriesCall(t *testing.T) {
 	pts := []core.FleetSeriesPoint{
 		{Node: "web1", TS: 1000, Value: 10},
@@ -127,9 +125,9 @@ func TestFleetCompareCapErrorShownInline(t *testing.T) {
 	}
 }
 
-// TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall pins the round 1
-// review fix: an unknown ?nodes= id is validated against the roster BEFORE
-// FleetSeries is ever called, and shows every unknown id inline.
+// TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall pins that an unknown
+// ?nodes= id is validated against the roster BEFORE FleetSeries is ever called,
+// and shows every unknown id inline.
 func TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall(t *testing.T) {
 	d, fk := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), []core.FleetSeriesPoint{{Node: "web1", TS: 1000, Value: 1}}, nil)
 	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=web1,ghost1,ghost2&metric=cpu&range=6h")
@@ -162,9 +160,9 @@ func TestFleetCompareUnknownNodeAcceptsDisplayName(t *testing.T) {
 	}
 }
 
-// TestFleetCompareZeroPointsShowsEmptyMessage pins the round 1 review fix: a
-// successful FleetSeries call returning no points shows a specific message,
-// not a blank/empty panel.
+// TestFleetCompareZeroPointsShowsEmptyMessage pins that a successful
+// FleetSeries call returning no points shows a specific message, not a
+// blank/empty panel.
 func TestFleetCompareZeroPointsShowsEmptyMessage(t *testing.T) {
 	d, _ := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), nil, nil)
 	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=web1&metric=cpu&range=6h")

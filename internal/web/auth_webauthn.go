@@ -230,7 +230,7 @@ func finishRegistration(w http.ResponseWriter, r *http.Request, wa *webauthn.Web
 
 // beginLogin starts a WebAuthn login (assertion) ceremony using client-side
 // discoverable ("resident key") credentials: unlike beginRegistration, this
-// endpoint doesn't know which account is signing in yet -- the mockup's
+// endpoint doesn't know which account is signing in yet -- the
 // login page (templates/login.html) has no username field, just a single
 // "Continue with passkey" button -- so the authenticator itself surfaces
 // whichever of the user's stored discoverable credentials matches this RP,

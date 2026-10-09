@@ -8,10 +8,10 @@ import (
 
 // MonitoringPageData is what templates/monitoring.html renders against: the
 // shared PageData (nav/topbar/CSRF) embedded, the live MonitoringView, and a
-// handful of summary counts the mockup's top-of-page count tiles need
-// (computed here rather than in the template, since html/template has no
-// arithmetic -- mirroring DashboardPageData's TopCPUBars/TopMemBars
-// precomputation, handlers_dashboard.go).
+// handful of summary counts for the top-of-page count tiles (computed here
+// rather than in the template, since html/template has no arithmetic --
+// mirroring DashboardPageData's TopCPUBars/TopMemBars precomputation,
+// handlers_dashboard.go).
 type MonitoringPageData struct {
 	PageData
 	View MonitoringView

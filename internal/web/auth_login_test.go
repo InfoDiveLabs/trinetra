@@ -157,9 +157,9 @@ func assertionResponseBody(t *testing.T, priv *ecdsa.PrivateKey, challenge, orig
 	return body
 }
 
-// TestLoginRoundTripIssuesSessionCookie is this task's core positive pin:
+// TestLoginRoundTripIssuesSessionCookie is the core positive pin:
 // begin -> (virtual authenticator assertion) -> finish for a credential
-// registered via Task 4's ceremony must issue a signed-in sw_session
+// registered via the registration ceremony must issue a signed-in sw_session
 // cookie, and the credential's stored SignCount must advance to the
 // asserted counter.
 func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {

@@ -180,7 +180,7 @@ func TestSecurityHeadersSetsCSPNonceContentTypeReferrer(t *testing.T) {
 	}
 	// script-src must stay STRICT (nonce-based, never unsafe-inline) -- that's
 	// the directive that actually matters for XSS. style-src, by contrast,
-	// deliberately allows 'unsafe-inline' because the ported mockup uses
+	// deliberately allows 'unsafe-inline' because the templates use
 	// inline style="…" pervasively (see securityHeaders' comment).
 	scriptDir, styleDir := cspDirective(csp, "script-src"), cspDirective(csp, "style-src")
 	if strings.Contains(scriptDir, "unsafe-inline") {
@@ -272,10 +272,10 @@ func TestSecurityHeadersHSTSOnlyOverTLS(t *testing.T) {
 	}
 }
 
-// TestSecurityHeadersNoncePropagatesToTemplate is the end-to-end pin the
-// brief calls for: the nonce securityHeaders puts in the CSP header must be
-// the exact same value the rendered page's boot script carries, so the
-// browser actually executes it under the CSP that names it.
+// TestSecurityHeadersNoncePropagatesToTemplate is the end-to-end pin: the
+// nonce securityHeaders puts in the CSP header must be the exact same value
+// the rendered page's boot script carries, so the browser actually executes it
+// under the CSP that names it.
 func TestSecurityHeadersNoncePropagatesToTemplate(t *testing.T) {
 	// GET /enroll (an anonymous, always-reachable page that renders a
 	// nonce'd boot script) rather than GET /, which is now viewer+ and would

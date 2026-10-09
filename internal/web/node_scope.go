@@ -23,9 +23,9 @@ type nodeScopeCtxKey struct{}
 type nodeScope struct {
 	// ID is the registry id this request is scoped to: core.SelfNodeID
 	// ("self") for the master's own node -- true both for a plain
-	// unprefixed request (the implicit scope) and, briefly, for a
-	// /n/self/... request, which withNodeRouter 308-redirects to the bare
-	// path before any handler ever observes this scope.
+	// unprefixed request (the implicit scope) and for a /n/self/... request,
+	// which withNodeRouter 308-redirects to the bare path before any handler
+	// ever observes this scope.
 	ID string
 	// Name is the node's display name (NodeSummary.Name); "" for the
 	// implicit self scope, where there is no fleet roster lookup to name it
@@ -138,14 +138,14 @@ func findNode(nodes []core.NodeSummary, id string) (core.NodeSummary, bool) {
 // nodeScopedAlertAckPath reports whether p (already stripped of its
 // /n/{node} prefix, "/"-prefixed, NOT YET path.Clean'd) is EXACTLY
 // "/alerts/{key}/ack" or "/alerts/{key}/unack" for some non-empty {key} --
-// the one deliberate exception to "node-scoped routes are GET/HEAD only"
-// (task C6 ruling): remote alert ack/unack re-dispatches as a POST through
-// to POST /alerts/{key}/ack|unack (routes.go), same as every other
+// the one deliberate exception to "node-scoped routes are GET/HEAD only":
+// remote alert ack/unack re-dispatches as a POST through to
+// POST /alerts/{key}/ack|unack (routes.go), same as every other
 // node-scoped GET re-dispatches to its own top-level route, so the handler
 // resolves apiFor(r,d) to the right node. Every OTHER node-scoped path stays
-// GET/HEAD only. Checked against the RAW (uncleaned) sub path, mirroring
-// where the ".."-segment check already runs in withNodeRouter, before
-// path.Clean could normalize away something that looked like this shape.
+// GET/HEAD only. Checked against the RAW (uncleaned) sub path, like the
+// ".."-segment check in withNodeRouter, before path.Clean could normalize away
+// something that looked like this shape.
 func nodeScopedAlertAckPath(p string) bool {
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	return len(parts) == 3 && parts[0] == "alerts" && parts[1] != "" && (parts[2] == "ack" || parts[2] == "unack")
@@ -214,16 +214,15 @@ func isMasterLocalPath(p string) bool {
 // session/user the outer middleware already resolved, and this handler
 // itself can read userFromContext(r) the same way requireRole does.
 //
-// Node routing is deliberately narrow (global-constraints.md: remote nodes
-// are read-only in the UI), and -- following round-1 review -- deliberately
-// cheap/side-effect-free for anyone who shouldn't see it at all:
+// Node routing is deliberately narrow (remote nodes are read-only in the UI)
+// and cheap/side-effect-free for anyone who shouldn't see it at all:
 //
 //   - Non-master daemons (solo, child, or Deps without Fleet wired at all)
-//     never get intercepted, full stop: the request is hand off to mux
+//     never get intercepted, full stop: the request is handed off to mux
 //     completely untouched, with no rendering and no core.API call of any
-//     kind -- exactly the pre-fleet stdlib 404 an unmatched /n/... path
-//     already got, for any HTTP method, signed in or not. This is checked
-//     before anything else, via resolveMasterAndNodes.
+//     kind -- the stdlib 404 an unmatched /n/... path gets, for any HTTP
+//     method, signed in or not. This is checked before anything else, via
+//     resolveMasterAndNodes.
 //   - On a master, an anonymous caller (no session/user resolved by the
 //     outer middleware -- userFromContext(r)) is redirected 302 to /login
 //     for ANY /n/... path, before any node id is even parsed out of the
@@ -234,12 +233,12 @@ func isMasterLocalPath(p string) bool {
 //     calls newPageData, which calls into core.API).
 //   - A bare /n/{id} (no trailing slash) 308-redirects to /n/{id}/.
 //   - Only GET/HEAD are node-routable at all -- every other method 404s
-//     under a node prefix. GET /events IS node-routable as of Task 4
-//     (fleet-web-a): eventsHandler (sse.go) switches to a poll-only loop
-//     over apiFor(r,d).Snapshot() once it sees a non-self nodeFrom(r),
-//     rather than calling Deps.Subscribe (there is still no per-node live
-//     push over the control socket -- Subscribe stays scoped to this
-//     daemon's own event bus).
+//     under a node prefix (except the alert ack/unack POSTs, see
+//     nodeScopedAlertAckPath). GET /events IS node-routable: eventsHandler
+//     (sse.go) switches to a poll-only loop over apiFor(r,d).Snapshot() once
+//     it sees a non-self nodeFrom(r), rather than calling Deps.Subscribe
+//     (there is no per-node live push over the control socket -- Subscribe
+//     stays scoped to this daemon's own event bus).
 //   - The sub-path is rejected outright (404) if it contains a literal ".."
 //     segment (checked before any cleaning -- see containsDotDotSegment),
 //     then path.Clean'd, before the masterLocalPrefixes check runs against
@@ -249,8 +248,8 @@ func isMasterLocalPath(p string) bool {
 //   - masterLocalPrefixes never get node-scoped (see its own doc).
 //   - id == core.SelfNodeID ("self") redirects (308, preserving the query
 //     string) to the bare unprefixed path: /n/self/x is never a distinct
-//     page from /x, just an alternate spelling a future node switcher can
-//     link to uniformly.
+//     page from /x, just an alternate spelling a node switcher can link to
+//     uniformly.
 //   - a non-self id not found in the fleet roster (resolveMasterAndNodes'
 //     nodes, from the SAME Fleet().Nodes() call already used to confirm
 //     master status where possible -- see its own doc) 404s with reason
@@ -296,7 +295,7 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 
 		rawSubPath := "/" + sub
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			// The one deliberate exception (task C6): a POST to exactly
+			// The one deliberate exception: a POST to exactly
 			// /alerts/{key}/ack or /alerts/{key}/unack re-dispatches through,
 			// same as any other node-scoped path -- see
 			// nodeScopedAlertAckPath's doc. Checked against the raw
@@ -316,9 +315,8 @@ func withNodeRouter(d Deps, mux *http.ServeMux) http.Handler {
 		}
 		subPath = path.Clean(subPath)
 
-		// /events is node-routable as of Task 4 (see this function's doc):
-		// no exclusion here any more, it falls through to the ordinary
-		// masterLocalPrefixes/self-redirect/roster-lookup path below like
+		// /events is node-routable (see this function's doc): it falls through to
+		// the ordinary masterLocalPrefixes/self-redirect/roster-lookup path below like
 		// every other GET.
 		if isMasterLocalPath(subPath) {
 			renderNotFound(w, r, d, "not found")

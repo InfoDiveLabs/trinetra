@@ -32,15 +32,14 @@ type fleetMemoCtxKey struct{}
 // NodeFilter{}) results, each computed at most once no matter how many
 // different call sites ask for it (withNodeRouter's resolveMasterAndNodes,
 // fleetRole, templates.go's resolveFleetPageInfo, nav_counts.go's
-// navCountsFor, and every handlers_fleet.go handler all used to make their
-// own independent Fleet() round trip -- round-1 review of Task 5 found GET
-// /fleet alone making 2x Status() + 2x Nodes(); this is the fix).
+// navCountsFor, and every handlers_fleet.go handler), so e.g. GET /fleet
+// makes one Status() and one Nodes() round trip.
 //
-// sync.Once (rather than a plain bool+mutex) both makes "compute once,
-// cache forever for the life of this value" the obviously-correct behavior
-// and is safe even if a future caller ever invoked it from more than one
-// goroutine for the same request, which nothing here does today (request
-// handling in this package is single-goroutine per request).
+// sync.Once (rather than a plain bool+mutex) makes "compute once, cache
+// forever for the life of this value" obviously correct and is safe even if a
+// caller ever invoked it from more than one goroutine for the same request,
+// which nothing here does today (request handling in this package is
+// single-goroutine per request).
 type fleetMemo struct {
 	statusOnce sync.Once
 	status     core.FleetStatus
@@ -50,36 +49,31 @@ type fleetMemo struct {
 	nodes     []core.NodeSummary
 	nodesErr  error
 
-	// incidentsFiringOnce/incidentsFiringCount/incidentsFiringErr (task C2,
-	// fleet incidents) memoize fleetIncidentsFiringCount's own
-	// Incidents(State:"firing", Limit:fleetIncidentsFiringCap) call -- the
-	// "Incidents" nav badge's data source, computed at most once per request
-	// exactly like fleetStatus/fleetNodes above (task-2-brief.md's ruling:
-	// "Make it request-scoped cached like the fleet memo, so each page makes
-	// at most 1 call").
+	// incidentsFiringOnce/incidentsFiringCount/incidentsFiringErr memoize
+	// fleetIncidentsFiringCount's own Incidents(State:"firing",
+	// Limit:fleetIncidentsFiringCap) call -- the "Incidents" nav badge's data
+	// source, computed at most once per request exactly like
+	// fleetStatus/fleetNodes above.
 	incidentsFiringOnce  sync.Once
 	incidentsFiringCount int
 	incidentsFiringErr   error
 
-	// activeAlertsOnce/activeAlertsCache (round-2 review finding I2) memoize
-	// activeAlertsViaAPI's own apiFor(r,d).ActiveAlerts() call, computed at
-	// most once per request no matter how many call sites ask for it --
-	// topbarStatus (newPageData), the sidebar's Alerts badge (navCountsFor),
-	// and every page's own data-builder (buildDashboardPageData,
-	// buildAlertsPageData) used to each make their own independent round
-	// trip; GET /alerts alone made three. Exactly the same "compute once,
-	// share everywhere" fix fleetStatus/fleetNodes already got, extended
-	// beyond FleetAPI to core.API.
+	// activeAlertsOnce/activeAlertsCache memoize activeAlertsViaAPI's own
+	// apiFor(r,d).ActiveAlerts() call, computed at most once per request no
+	// matter how many call sites ask for it -- topbarStatus (newPageData), the
+	// sidebar's Alerts badge (navCountsFor), and every page's own data-builder
+	// (buildDashboardPageData, buildAlertsPageData). The same "compute once,
+	// share everywhere" approach as fleetStatus/fleetNodes, extended to
+	// core.API.
 	activeAlertsOnce  sync.Once
 	activeAlertsCache []activeAlertView
 
 	// snapshotOnce/snapshotCache/snapshotErr memoize apiFor(r,d).Snapshot()
-	// the same way -- the dashboard page's own live view and the sidebar's
-	// Monitoring badge (nav_counts.go's node-scope branch) used to each poll
-	// a remote node's Snapshot() independently on every request scoped to
-	// it. NOT used by remoteNodeSnapshot (sse.go)'s polling loop, which must
-	// keep reading live rather than caching a snapshot for an SSE
-	// connection's whole lifetime.
+	// the same way, so the dashboard page's own live view and the sidebar's
+	// Monitoring badge (nav_counts.go's node-scope branch) poll a remote node's
+	// Snapshot() once per request. NOT used by remoteNodeSnapshot (sse.go)'s
+	// polling loop, which must keep reading live rather than caching a snapshot
+	// for an SSE connection's whole lifetime.
 	snapshotOnce  sync.Once
 	snapshotCache DashboardView
 	snapshotErr   error

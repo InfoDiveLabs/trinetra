@@ -191,8 +191,8 @@ func TestFleetAdminMissingCSRFForbidden(t *testing.T) {
 	}
 }
 
-// TestFleetAdminSelfIDRejected pins the brief's "self id -> 400 on rename/
-// tags/revoke/remove" ruling.
+// TestFleetAdminSelfIDRejected pins that the "self" id is rejected with 400 on
+// rename/tags/revoke/remove.
 func TestFleetAdminSelfIDRejected(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	for _, tc := range []struct {
@@ -211,13 +211,12 @@ func TestFleetAdminSelfIDRejected(t *testing.T) {
 	}
 }
 
-// TestFleetAdminTokenCreate pins the create-token flow end to end: the
-// response renders the page directly (200, not a redirect) with the exact
-// `sudo trinetra fleet join <code>` command and a "shown once" note,
-// Cache-Control: no-store is set, Fleet().CreateToken received Creator ==
-// the acting admin's name, an audit record was written with the right
-// Action, and -- the brief's hard security requirement -- the join code
-// itself never appears anywhere in the audit log.
+// TestFleetAdminTokenCreate pins the create-token flow end to end: the response
+// renders the page directly (200, not a redirect) with the exact `sudo trinetra
+// fleet join <code>` command and a "shown once" note, Cache-Control: no-store
+// is set, Fleet().CreateToken received Creator == the acting admin's name, an
+// audit record was written with the right Action, and -- the security
+// requirement -- the join code itself never appears anywhere in the audit log.
 func TestFleetAdminTokenCreate(t *testing.T) {
 	fleet := &fakeFleet{createdToken: core.CreatedToken{
 		Token:    core.TokenView{ID: "tok-new", Uses: 5, Expires: 4102444800, Tags: []string{"web", "prod"}, Creator: "root"},
@@ -262,9 +261,8 @@ func TestFleetAdminTokenCreate(t *testing.T) {
 	}
 }
 
-// TestFleetAdminTokenCreateSetsCreator asserts Fleet().CreateToken is
-// called with Creator set to the acting admin's own user name (the brief:
-// "calls CreateToken with Creator = the admin's user name").
+// TestFleetAdminTokenCreateSetsCreator asserts Fleet().CreateToken is called
+// with Creator set to the acting admin's own user name.
 func TestFleetAdminTokenCreateSetsCreator(t *testing.T) {
 	fleet := &fakeFleet{createdToken: core.CreatedToken{Token: core.TokenView{ID: "tok-1"}, JoinCode: "swj1_x"}}
 	d := fleetAdminDeps(t, fleet)
@@ -286,12 +284,11 @@ func TestFleetAdminTokenCreateSetsCreator(t *testing.T) {
 	}
 }
 
-// TestNewTokenRowExpiresInMasterLocalZone pins round-2 review finding M2:
-// a join-token's Expires must render through the same master-local-zone-
-// with-abbreviation convention (silenceTimeText) as every other absolute
-// timestamp on the fleet surface, rather than its own RFC3339/UTC
-// convention -- a third distinct format the review flagged as worth folding
-// into the same cleanup as finding I1.
+// TestNewTokenRowExpiresInMasterLocalZone pins that a join-token's Expires must
+// render through the same master-local-zone- with-abbreviation convention
+// (silenceTimeText) as every other absolute timestamp on the fleet surface,
+// rather than its own RFC3339/UTC convention -- a third distinct format the
+// review flagged as worth folding into the same cleanup as finding I1.
 func TestNewTokenRowExpiresInMasterLocalZone(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	row := newTokenRow(core.TokenView{ID: "tok1", Expires: 1893456000})
@@ -304,8 +301,8 @@ func TestNewTokenRowExpiresInMasterLocalZone(t *testing.T) {
 	}
 }
 
-// TestFleetAdminTokenCreateValidation pins TTL/uses/tags bounds and the
-// "show errors inline and keep the form input" ruling.
+// TestFleetAdminTokenCreateValidation pins TTL/uses/tags bounds, and that
+// errors render inline with the form input kept.
 func TestFleetAdminTokenCreateValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -376,11 +373,9 @@ func TestFleetAdminNodeRename(t *testing.T) {
 	if fleet.renamed["web1"] != "web-1" {
 		t.Errorf("renamed[web1] = %q, want web-1", fleet.renamed["web1"])
 	}
-	// Actor plumbing (plan C task C5): RenameNode used to have no actor
-	// parameter at all -- every caller (in-process and over the control
-	// socket) recorded the literal placeholder "unknown" on the FleetAPI's
-	// own audit log. A web rename must now pass the SIGNED-IN user's own
-	// name (auditUser(r), seedAdmin's "root" here), never that placeholder.
+	// Actor plumbing: a web rename must pass the SIGNED-IN user's own name
+	// (auditUser(r), seedAdmin's "root" here) as the actor, never the literal
+	// placeholder "unknown" on the FleetAPI's own audit log.
 	if fleet.renamedActor != "root" {
 		t.Errorf("RenameNode actor = %q, want the signed-in admin's name (root), not a placeholder", fleet.renamedActor)
 	}
@@ -492,9 +487,9 @@ func TestFleetAdminNodeRevoke(t *testing.T) {
 	}
 }
 
-// TestFleetAdminNodeRemoveOnlyDownOrRevoked pins the brief's "remove only
-// for revoked or down nodes" ruling: an online node is refused (400, no
-// call to RemoveNode), a down node succeeds.
+// TestFleetAdminNodeRemoveOnlyDownOrRevoked pins that only revoked or down
+// nodes may be removed: an online node is refused (400, no call to
+// RemoveNode), a down node succeeds.
 func TestFleetAdminNodeRemoveOnlyDownOrRevoked(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -541,10 +536,10 @@ func TestFleetAdminNodeRemoveRevokedAllowed(t *testing.T) {
 	}
 }
 
-// TestFleetAdminFleetAPIErrorsRenderAsFlashNever500 pins the brief's
-// ruling: any FleetAPI error (ErrNoSuchNode, ErrNotMaster, or a generic
-// daemon-side rejection) renders as a flash message with a 4xx status,
-// never a 500 -- across every mutation route.
+// TestFleetAdminFleetAPIErrorsRenderAsFlashNever500 pins that any FleetAPI
+// error (ErrNoSuchNode, ErrNotMaster, or a generic daemon-side rejection)
+// renders as a flash message with a 4xx status, never a 500 -- across every
+// mutation route.
 func TestFleetAdminFleetAPIErrorsRenderAsFlashNever500(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

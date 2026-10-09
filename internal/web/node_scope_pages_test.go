@@ -26,7 +26,7 @@ func nodeScopedDeps(t *testing.T, master, child fakeAPI) Deps {
 
 // TestNodeScopedDashboardShowsChildData pins that GET /n/child1/ (the
 // dashboard, "/{$}") renders child1's own live snapshot and host info, not
-// the master's -- Task 2's core obligation for handlers_dashboard.go.
+// the master's.
 func TestNodeScopedDashboardShowsChildData(t *testing.T) {
 	master := fakeAPI{
 		snap:     core.DashboardView{TopCPUContainers: []core.ContainerView{{Name: "master-only-svc", State: "running"}}},
@@ -218,14 +218,14 @@ func TestNodeScopedDowntimeAPIShowsChildData(t *testing.T) {
 }
 
 // TestNodeScopedAlertsPageShowsChildDataAndDisablesAck pins the alerts page's
-// node-scope behavior: active alerts + history come from child1, and (task
-// C6 ruling) the Ack action for an unacked active alert renders disabled
-// with the exact "node is not connected" reason and no POST form action
-// when the roster reports the node as anything other than "online" --
-// masterFleetWithChild's child1 fixture carries State "up" (a placeholder
-// value, not the real "online"/"down"/... vocabulary), so it's treated as
-// disconnected here. TestNodeScopedAlertsAckSucceedsWhenNodeConnected /
-// TestNodeScopedAlertsAckDisabledWhenNodeOffline (handlers_alerts_test.go)
+// node-scope behavior: active alerts + history come from child1, and the Ack
+// action for an unacked active alert renders disabled with the exact "node is
+// not connected" reason and no POST form action when the roster reports the
+// node as anything other than "online" -- masterFleetWithChild's child1 fixture
+// carries State "up" (a placeholder value, not the real "online"/"down"/...
+// vocabulary), so it's treated as disconnected here.
+// TestNodeScopedAlertsAckSucceedsWhenNodeConnected
+// /TestNodeScopedAlertsAckDisabledWhenNodeOffline (handlers_alerts_test.go)
 // cover the connected-vs-offline distinction directly.
 func TestNodeScopedAlertsPageShowsChildDataAndDisablesAck(t *testing.T) {
 	master := fakeAPI{active: []core.AlertRecord{{Key: "master-only", Time: 1, Source: "master alert"}}}
@@ -264,10 +264,10 @@ func TestNodeScopedAlertsPageShowsChildDataAndDisablesAck(t *testing.T) {
 	}
 }
 
-// TestNodeScopedContainerLogsCallsThroughToChildAPI pins task C6's ruling:
-// the 409 short-circuit for a remote node is gone -- GET
-// /n/child1/api/container/logs now goes through apiFor(r,d), reaching
-// child1's own fake API exactly like every other node-scoped GET.
+// TestNodeScopedContainerLogsCallsThroughToChildAPI pins that the 409
+// short-circuit for a remote node is gone -- GET /n/child1/api/container/logs
+// now goes through apiFor(r,d), reaching child1's own fake API exactly like
+// every other node-scoped GET.
 func TestNodeScopedContainerLogsCallsThroughToChildAPI(t *testing.T) {
 	master := fakeAPI{}
 	child := fakeAPI{containerLogs: "child1's own log output"}
@@ -367,17 +367,11 @@ func TestNodeScopedTopbarAndAlertBadgeReflectNode(t *testing.T) {
 	}
 }
 
-// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins the fleet-web-a
-// task 3 ruling (task-3-brief.md's "the admin group is hidden for remote
-// scope"): on a remote node page, master-local admin nav entries (Channels,
-// Users, Configuration, Public view) don't render AT ALL -- they're
-// reachable only from the master's own (self-scoped) nav -- while
-// Monitoring (a daemon concept, node-scoped) still renders and follows the
-// node scope. This supersedes this test's original task-2-era assumption
-// (that Channels/Users would render on a remote page showing the master's
-// own counts); task 3's brief settled on hiding them outright instead, so
-// this test was updated to match rather than left asserting the superseded
-// behavior.
+// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins that on a remote
+// node page, master-local admin nav entries (Channels, Users, Configuration,
+// Public view) don't render AT ALL -- they're reachable only from the master's
+// own (self-scoped) nav -- while Monitoring (a daemon concept, node-scoped)
+// still renders and follows the node scope.
 func TestNodeScopedChannelsAndUsersBadgesStayMasterLocal(t *testing.T) {
 	master := fakeAPI{snap: core.DashboardView{ContainersTotal: 3}}
 	child := fakeAPI{snap: core.DashboardView{ContainersTotal: 9}}

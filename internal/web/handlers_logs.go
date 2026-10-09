@@ -9,14 +9,13 @@ import (
 
 // nodeNotConnectedReason is the fixed UI string this package uses wherever a
 // remote-node action is disabled/refused because the node's stream isn't
-// currently connected. It deliberately matches
-// internal/trinetra/fleet_rpc.go's errNodeNotConnected wording ("node is
-// not connected") on purpose -- internal/web cannot import internal/trinetra
-// (that would invert the module's dependency direction), so this is a
-// hardcoded literal kept in sync with that package's own text by
-// convention/tests rather than by importing it, but there's no reason for
-// the two to say anything different: both describe exactly the same
-// condition (task C6 ruling).
+// currently connected. It deliberately matches internal/trinetra/fleet_rpc.go's
+// errNodeNotConnected wording ("node is not connected") on purpose --
+// internal/web cannot import internal/trinetra (that would invert the module's
+// dependency direction), so this is a hardcoded literal kept in sync with that
+// package's own text by convention/tests rather than by importing it, but
+// there's no reason for the two to say anything different: both describe
+// exactly the same condition.
 const nodeNotConnectedReason = "node is not connected"
 
 // containerLogsErrStatus maps a remote node's ContainerLogs error text to
@@ -55,14 +54,12 @@ func containerLogsErrStatus(err error) (status int, fixed bool) {
 // this handler forwards the query verbatim and lets that layer refuse an
 // unknown or malformed name.
 //
-// As of task C6, a request scoped to a remote fleet node (node_scope.go) is
-// no longer short-circuited here: it goes through apiFor(r, d), exactly like
-// every other node-scoped GET, which resolves to the node's replicaAPI and
-// runs the "container_logs" RPC over the master-to-child stream
+// A request scoped to a remote fleet node (node_scope.go) goes through
+// apiFor(r, d) like every other node-scoped GET, which resolves to the node's
+// replicaAPI and runs the "container_logs" RPC over the master-to-child stream
 // (fleet_replica.go/fleet_rpc.go). A stream/RPC-level failure is reported as
 // JSON with a specific status (containerLogsErrStatus above); any other
-// error (self-scope docker error, unknown container) keeps the original
-// plain-text 404.
+// error (self-scope docker error, unknown container) is a plain-text 404.
 func containerLogsHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")

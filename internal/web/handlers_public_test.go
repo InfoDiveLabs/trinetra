@@ -548,7 +548,7 @@ func TestPublicEventsSetsNoStoreCacheControl(t *testing.T) {
 }
 
 // TestPublicEventsSubscribeIgnoresAlertEvents pins the security-relevant half
-// of Task 3's live-push wiring for the anonymous stream: publicEventsHandler
+// of the live-push wiring for the anonymous stream: publicEventsHandler
 // must never turn an alert-shaped LiveEvent (Kind other than "snapshot") into
 // a frame on /public/events, since core.Event/web.LiveEvent's Title/Source
 // fields can carry sensitive alert detail (see eventsHandler's writeAlertEvent

@@ -10,10 +10,9 @@ import (
 )
 
 // selfReq is a plain unscoped request (no /n/{node} routing attached), for
-// direct unit tests of functions node-scope.go's apiFor now threads through
+// direct unit tests of functions node-scope.go's apiFor threads through
 // (activeAlertsViaAPI, coreVersionViaAPI, ...): nodeFrom(selfReq()) is always
-// the implicit self scope, so these calls exercise exactly the same
-// Deps.API path they did before Task 2 (fleet-web-a).
+// the implicit self scope, so these calls go through the plain Deps.API path.
 func selfReq() *http.Request {
 	return httptest.NewRequest(http.MethodGet, "/", nil)
 }
