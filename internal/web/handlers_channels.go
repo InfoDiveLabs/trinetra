@@ -37,6 +37,42 @@ type channelRow struct {
 	MinSeverity string
 	Routes      string
 	Param       string // channelNameParam(Name), for this row's action URLs
+	Filtered    bool   // include/exclude kinds limit which alerts it gets
+}
+
+type deliveryRow struct {
+	Severity, Label string
+	Channels        []channelRow
+}
+
+// quietHoursText turns "23-8" into "23:00 to 08:00".
+func quietHoursText(v string) string {
+	from, to, ok := strings.Cut(v, "-")
+	a, errA := strconv.Atoi(from)
+	b, errB := strconv.Atoi(to)
+	if !ok || errA != nil || errB != nil {
+		return v
+	}
+	return fmt.Sprintf("%02d:00 to %02d:00", a, b)
+}
+
+var severityRank = map[string]int{"info": 0, "warning": 1, "critical": 2}
+
+// deliveryRows lists, per severity, the enabled channels that receive it.
+func deliveryRows(rows []channelRow) []deliveryRow {
+	out := []deliveryRow{
+		{Severity: "critical", Label: "Something is down or about to fail"},
+		{Severity: "warning", Label: "Needs attention soon"},
+		{Severity: "info", Label: "Recoveries, reports and notices"},
+	}
+	for i := range out {
+		for _, c := range rows {
+			if c.Enabled && severityRank[c.MinSeverity] <= severityRank[out[i].Severity] {
+				out[i].Channels = append(out[i].Channels, c)
+			}
+		}
+	}
+	return out
 }
 
 // channelTypes is the fixed set of channel types the add/edit modal offers
@@ -83,6 +119,7 @@ func channelRows(cfg *config.Config) []channelRow {
 			MinSeverity: sev,
 			Routes:      describeRoutesWeb(cc),
 			Param:       channelNameParam(cc.Name),
+			Filtered:    len(cc.IncludeKinds) > 0 || len(cc.ExcludeKinds) > 0,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
@@ -153,6 +190,8 @@ func channelModalFor(cc config.ChannelConfig) channelModalData {
 type ChannelsPageData struct {
 	PageData
 	Channels     []channelRow
+	Delivery     []deliveryRow
+	QuietHours   string
 	ChannelTypes []struct{ Value, Label string }
 	NewModal     channelModalData
 	EditModals   []channelModalData
@@ -174,9 +213,12 @@ func buildChannelsPageData(r *http.Request, d Deps, testResult string) ChannelsP
 		modals = append(modals, m)
 	}
 	sort.Slice(modals, func(i, j int) bool { return modals[i].Name < modals[j].Name })
+	rows := channelRows(cfg)
 	return ChannelsPageData{
 		PageData:     page,
-		Channels:     channelRows(cfg),
+		Channels:     rows,
+		Delivery:     deliveryRows(rows),
+		QuietHours:   quietHoursText(cfg.QuietHours),
 		ChannelTypes: channelTypes,
 		NewModal:     newModal,
 		EditModals:   modals,

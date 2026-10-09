@@ -413,3 +413,31 @@ func TestUpdatesApplyAndRollbackBusyFlash(t *testing.T) {
 		t.Fatalf("update-busy flash = %q, %v", text, isErr)
 	}
 }
+
+func TestUpdatesOverviewSaysWhatToDo(t *testing.T) {
+	for name, tc := range map[string]struct {
+		st   core.UpdateStatusView
+		want []string
+		not  []string
+	}{
+		"up to date": {core.UpdateStatusView{Running: "0.6.0", Channel: "beta"}, []string{"You're up to date", "on the beta channel"}, []string{`action="/updates/apply"`}},
+		"available":  {core.UpdateStatusView{Running: "0.5.0", Available: "0.6.0"}, []string{"Update available: 0.6.0", "Install 0.6.0"}, nil},
+		"pending": {core.UpdateStatusView{Running: "0.6.0", Pending: &core.UpdatePendingView{Version: "0.6.0", From: "0.5.0", Deadline: 1, RestoreFailed: "boom"}},
+			[]string{"Checking 0.6.0 is healthy", `id="update-restore-failed"`}, []string{`action="/updates/apply"`}},
+		"rollback offered": {core.UpdateStatusView{Running: "0.6.0", Previous: "0.5.0"}, []string{"Roll back to 0.5.0"}, nil},
+	} {
+		d := enrollTestDeps(t)
+		d.API = fakeAPI{updateStatus: tc.st}
+		_, body := getAsRole(t, d, RoleAdmin, "/updates")
+		for _, w := range tc.want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: missing %q", name, w)
+			}
+		}
+		for _, w := range tc.not {
+			if strings.Contains(body, w) {
+				t.Errorf("%s: should not contain %q", name, w)
+			}
+		}
+	}
+}

@@ -1,6 +1,11 @@
 {{define "content"}}
-<div id="channels-page">
+<div id="channels-page" data-tabs data-tabs-hash>
   {{if .TestResult}}<p class="note" style="margin-top:0">{{.TestResult}}</p>{{end}}
+  <div class="tabs settings-tabs" role="tablist" aria-label="Notification sections">
+    <button type="button" role="tab" data-tab="channels" class="on">Channels</button><button type="button" role="tab" data-tab="delivery">Who gets what</button>
+  </div>
+
+  <section class="tabpane on" data-pane="channels" role="tabpanel">
   <div class="toolbar"><span class="note">{{len .Channels}} channel{{if ne (len .Channels) 1}}s{{end}} · alerts fan out to every enabled channel that matches the alert's severity &amp; target.</span><span class="spacer"></span><button class="btn primary" type="button" data-modal="chanModal-new">+ Add channel</button></div>
 
   <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
@@ -44,7 +49,27 @@
       {{end}}
     </tbody></table></div></div>
 
-  <p class="note" style="margin-top:14px">Also active, separately: a <b>dead-man switch</b> URL, pinged on every heartbeat. Configured under <a href="/config">Configuration</a>.</p>
+  </section>
+
+  <section class="tabpane" data-pane="delivery" role="tabpanel">
+  <p class="note" style="margin:0 0 12px">Each alert goes to every enabled channel whose minimum level it reaches. Change a channel's level or filters with Edit on the Channels tab.</p>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Alert level</th><th>Sent to</th></tr></thead>
+    <tbody>
+      {{range .Delivery}}
+      <tr>
+        <td class="card-title"><span class="badge {{if eq .Severity "critical"}}crit{{else if eq .Severity "warning"}}warn{{end}}">{{.Severity}}</span> <span class="note">{{.Label}}</span></td>
+        <td data-label="Sent to"><span class="deliv-list">{{range $i, $c := .Channels}}{{if $i}}, {{end}}<b>{{$c.Name}}</b> <span class="note">{{$c.Type}}{{if $c.Filtered}}, some alert types only{{end}}</span>{{else}}<span class="field-err">Nobody: no enabled channel takes this level</span>{{end}}</span></td>
+      </tr>
+      {{end}}
+    </tbody></table></div></div>
+  <div class="grid g-2" style="margin-top:14px">
+    <div class="panel"><div class="head"><span class="eyebrow">Quiet hours</span><a href="/config#alerts" class="btn ghost">Change</a></div>
+      <p class="note" style="margin:0">{{if .QuietHours}}On, {{.QuietHours}}. Non-urgent alerts wait until it ends; channels set to let critical alerts through still get those right away.{{else}}Off. Alerts are sent at any hour.{{end}}</p></div>
+    <div class="panel"><div class="head"><span class="eyebrow">Offline check</span><a href="/config#reports" class="btn ghost">Change</a></div>
+      <p class="note" style="margin:0">If this server goes completely offline it can't send anything itself. An offline check URL lets an outside service notice the silence and alert you.</p></div>
+  </div>
+  </section>
 </div>
 
 {{template "chanModalBody" .NewModal}}

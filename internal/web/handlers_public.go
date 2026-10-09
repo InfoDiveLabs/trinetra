@@ -317,8 +317,8 @@ func rootHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// publicRouteRedirectHandler serves the now-canonicalized GET /public: old links/bookmarks
-// into the anonymous status page still work, they just land on / (rootHandler above).
+// publicRouteRedirectHandler sends old /public links to /status, which shows
+// the public page whether or not the visitor is signed in.
 func publicRouteRedirectHandler(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/", http.StatusMovedPermanently)
+	http.Redirect(w, r, "/status", http.StatusMovedPermanently)
 }
