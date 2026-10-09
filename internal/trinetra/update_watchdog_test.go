@@ -55,7 +55,7 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// TestSwapInRecordsPendingAndPinnedGuardBeforeFirstRename is R14/R15: by the
+// TestSwapInRecordsPendingAndPinnedGuardBeforeFirstRename: by the
 // time the first binary is replaced, previous/ holds the old build, the
 // pinned guard binary is a copy of the binary performing the apply, and
 // Pending (phase "swapping", with Files and From) is already on disk -- so a
@@ -145,7 +145,7 @@ func crashMidSwap(t *testing.T, p updatePaths, plan applyPlan) {
 	<-done
 }
 
-// TestCrashMidSwapThenGuardRollsBack is R15: a crash between renames leaves
+// TestCrashMidSwapThenGuardRollsBack: a crash between renames leaves
 // a mixed BinDir with Pending in phase "swapping"; the watchdog's guard
 // restores the previous build, restarts, clears Pending and records the
 // outcome -- consistently, without marking the version bad (it never ran).
@@ -200,7 +200,7 @@ func TestGuardLeavesLiveSwapAlone(t *testing.T) {
 	}
 }
 
-// TestGuardExitsQuietlyWhenAnotherGuardRuns is R14: guard.lock is taken
+// TestGuardExitsQuietlyWhenAnotherGuardRuns: guard.lock is taken
 // before state is read; a second guard (the watchdog firing while the
 // launched guard works) exits without touching anything.
 func TestGuardExitsQuietlyWhenAnotherGuardRuns(t *testing.T) {
@@ -220,7 +220,7 @@ func TestGuardExitsQuietlyWhenAnotherGuardRuns(t *testing.T) {
 	}
 }
 
-// TestGuardResumesPastDeadline is R24: a guard resumed long after
+// TestGuardResumesPastDeadline: a guard resumed long after
 // Pending.Deadline (the watchdog after a reboot, say) still gives the build
 // a full health window from its own restart: a healthy build commits, an
 // unhealthy one rolls back only after that window.
@@ -257,7 +257,7 @@ func (s slowHealth) Version() (string, error) {
 }
 func (s slowHealth) SampleTS() (int64, error) { s.clk.sleep(guardProbeTimeout); return 0, nil }
 
-// TestGuardProbesCannotOverrunDeadline is R14: probes are individually
+// TestGuardProbesCannotOverrunDeadline: probes are individually
 // bounded and none starts after the deadline, so the gate decides no later
 // than one probe timeout past its deadline.
 func TestGuardProbesCannotOverrunDeadline(t *testing.T) {
@@ -273,7 +273,7 @@ func TestGuardProbesCannotOverrunDeadline(t *testing.T) {
 	}
 }
 
-// TestRollbackPendingDedupsBadVersions is R24: a
+// TestRollbackPendingDedupsBadVersions: a
 // version that fails its gate twice is listed once, whatever its "v".
 func TestRollbackPendingDedupsBadVersions(t *testing.T) {
 	p := testUpdatePaths(t)
@@ -290,7 +290,7 @@ func TestRollbackPendingDedupsBadVersions(t *testing.T) {
 	}
 }
 
-// TestGuardLaunchRunsPinnedBinary is R14: the transient guard unit executes
+// TestGuardLaunchRunsPinnedBinary: the transient guard unit executes
 // the pinned guard binary -- never the new build in BinDir, never
 // update/previous.
 func TestGuardLaunchRunsPinnedBinary(t *testing.T) {
@@ -306,7 +306,7 @@ func TestGuardLaunchRunsPinnedBinary(t *testing.T) {
 	}
 }
 
-// TestWatchdogUnits is R14: a persistent oneshot service running the pinned
+// TestWatchdogUnits: a persistent oneshot service running the pinned
 // guard with --if-pending, and a timer firing 2 minutes after boot and
 // every minute after, enabled and started.
 func TestWatchdogUnits(t *testing.T) {
@@ -403,7 +403,7 @@ func TestApplyGuardLaunchFailure(t *testing.T) {
 	}
 }
 
-// TestRollbackFailurePaths is R16 (I9): if restoring previous/ fails the
+// TestRollbackFailurePaths: if restoring previous/ fails the
 // binaries may be half-restored, so Pending stays (phase "swapping") for the
 // watchdog to finish; if the restore worked but the guard cannot start,
 // Pending is cleared and the operator is told to restart.

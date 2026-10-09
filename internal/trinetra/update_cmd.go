@@ -39,9 +39,8 @@ type updater struct {
 	// actor names who asked for this apply/rollback in the audit log
 	// (cliActor() for the CLI, socketActor over the control socket).
 	actor string
-	// src overrides the source an operation fetches from; nil means "build
-	// it from config" (updateSource(c)) -- see Ruling R1 in
-	// .superpowers/sdd/2026-09-29-signed-releases-self-update/progress.md.
+	// src overrides the source an operation fetches from; nil means "build it
+	// from config" (updateSource(c)).
 	src update.Source
 }
 
@@ -67,7 +66,7 @@ type updateStatus struct {
 	LastCheck int64           `json:"last_check"`
 	// LastCheckError is the reason the most recent channel check failed to
 	// verify a pointer ("" once one has verified). Before any pointer has
-	// ever verified (R25), this is the only operator-facing trace of a
+	// ever verified, this is the only operator-facing trace of a
 	// misconfigured or unreachable update source -- no alert fires yet.
 	LastCheckError string   `json:"last_check_error,omitempty"`
 	KeysLoaded     bool     `json:"keys_loaded"`
@@ -151,7 +150,7 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 		}
 		st.LastCheck = now.Unix()
 		st.LastPointerIssued = ptr.Issued
-		// R18: Available drives the "update available" alert, the web Apply
+		// Available drives the "update available" alert, the web Apply
 		// button and Telegram /version, so it names only a release this host
 		// would actually accept (channel, floor, min_upgrade_from, not known
 		// bad); anything else clears it.
@@ -172,19 +171,15 @@ func (u updater) check(ctx context.Context, c *config.Config) (update.Manifest, 
 // offered as available (apply --force can still install it).
 var errKnownBad = errors.New("update: release failed its health check here before")
 
-// preflightApply runs apply's fast, synchronous-only checks (fix round 1,
-// Ruling R10): the channel/source settings apply itself would otherwise only
-// refuse on after resolving them again, and persisted state being both
-// readable and free of an already-pending update -- the same
-// already-pending refusal swapIn (update_apply.go) would otherwise only
-// discover AFTER a network fetch and local staging/smoke-test have already
-// run. The control-socket-facing UpdateApply (coreapi_inproc.go) calls this
-// synchronously before handing the rest of apply's work to a background
-// goroutine, so a caller that has no hope of succeeding (updates off, no
-// source configured, another update already pending) gets a fast, accurate
-// error instead of a false "started". It deliberately does NOT duplicate
-// apply's version-resolution/fetch/policy/plan/stage/smoke-test/swap steps --
-// those still only run inside apply itself, synchronously or not.
+// preflightApply runs apply's fast, synchronous-only checks: the
+// channel/source settings, and persisted state being readable and free of an
+// already-pending update (which swapIn would otherwise only discover AFTER a
+// network fetch and staging). The control-socket UpdateApply
+// (coreapi_inproc.go) calls it synchronously before backgrounding the rest of
+// apply, so a caller that cannot succeed (updates off, no source, another
+// update pending) gets a fast, accurate error instead of a false "started". It
+// does NOT duplicate apply's version-resolution/fetch/policy/plan/stage/
+// smoke-test/swap steps.
 func (u updater) preflightApply(c *config.Config, opts applyOptions) error {
 	channel := opts.Channel
 	if channel == "" {
@@ -209,15 +204,12 @@ func (u updater) preflightApply(c *config.Config, opts applyOptions) error {
 	return nil
 }
 
-// preflightRollback runs rollback's fast, synchronous-only checks (fix
-// round 1, Ruling R10): the exact same "is there a previous build" and
-// "is an update already pending" checks rollback itself runs first (see
-// rollback's own doc below) -- duplicated here (rather than factored out)
-// because rollback's version stays the single source of truth callers that
-// invoke it directly (the CLI's `trinetra update rollback`) rely on; this
-// copy exists purely so the control-socket-facing UpdateRollback
-// (coreapi_inproc.go) can run it synchronously before backgrounding the rest
-// (restorePrevious + launching the guard).
+// preflightRollback runs rollback's fast, synchronous-only checks: the same "is
+// there a previous build" and "is an update already pending" checks rollback
+// runs first. It is duplicated rather than factored out so rollback stays the
+// single source of truth for direct callers (the CLI), while the control-socket
+// UpdateRollback (coreapi_inproc.go) can run this synchronously before
+// backgrounding the rest (restorePrevious + launching the guard).
 func (u updater) preflightRollback() error {
 	if err := probeApplyLock(u.paths); err != nil {
 		return err
@@ -257,7 +249,7 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 		return update.Manifest{}, fmt.Errorf("update.source is none; use --bundle DIR")
 	}
 
-	// R16: one apply/rollback/install at a time per host, held until the
+	// one apply/rollback/install at a time per host, held until the
 	// swap is recorded and the guard launched (or this apply failed).
 	unlock, err := takeApplyLock(u.paths)
 	if err != nil {
@@ -289,11 +281,10 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 		return update.Manifest{}, err
 	}
 
-	// Ruling R7: update.channel=off only ever refuses the network source
-	// (checked above, before src is even resolved); an explicit --bundle
-	// install must still go through even with updates off. Once the bundle
-	// manifest is signature-verified (FetchRelease, just above), gate it on
-	// its own channel rather than refusing on "off" -- floor,
+	// update.channel=off only refuses the network source (checked above, before
+	// src is resolved); an explicit --bundle install must still go through. Once
+	// the bundle manifest is signature-verified (FetchRelease, just above), gate
+	// it on its own channel rather than refusing on "off"; floor,
 	// min_upgrade_from and the bad-version check below are unaffected.
 	policyChannel := channel
 	if channel == "off" && opts.Bundle != "" {
@@ -333,7 +324,7 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 		return update.Manifest{}, err
 	}
 
-	// R14: the watchdog timer is the safety net for everything after the
+	// the watchdog timer is the safety net for everything after the
 	// first rename (killed guard, crash mid-swap, reboot); never swap
 	// without it.
 	if u.sys != nil {
@@ -355,7 +346,7 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 }
 
 // undoUnguardedSwap is apply's path when the health guard could not be
-// launched after a successful swap (R16/M19). The daemon was never
+// launched after a successful swap. The daemon was never
 // restarted, so it still runs the old build: restore previous/ and clear
 // Pending, under guard.lock so it cannot race a guard the watchdog may have
 // started meanwhile -- if one holds the lock, that guard owns the update. A
@@ -379,12 +370,11 @@ func undoUnguardedSwap(p updatePaths, launchErr error) error {
 	return fmt.Errorf("update: health guard failed to start, restored the previous build: %w", launchErr)
 }
 
-// rollback restores the previously installed build (kept by the last
-// swapIn under paths.previous()), records a Pending{Rollback: true} marker
-// so the guard confirms it the same way it confirms a forward update, then
-// starts the guard. It refuses when an update is already pending (forward
-// or rollback) and when there is nothing to roll back to. It never lowers
-// the version floor.
+// rollback restores the previously installed build (kept by the last swapIn
+// under paths.previous()), records a Pending{Rollback: true} marker so the
+// guard confirms it as it confirms a forward update, then starts the guard. It
+// refuses when an update is already pending (forward or rollback) and when
+// there is nothing to roll back to. It never lowers the version floor.
 func (u updater) rollback() error {
 	unlock, err := takeApplyLock(u.paths)
 	if err != nil {
@@ -532,16 +522,11 @@ func (u updater) status() (updateStatus, error) {
 	}, nil
 }
 
-// toUpdateStatusView projects this package's own updateStatus (the
-// CLI/socket-agnostic `trinetra update status` shape, built by updater.status
-// plus the Channel/Source cmdUpdateStatus/core.API implementations both fill
-// in from config) into core.UpdateStatusView -- the DTO core.API.UpdateStatus/
-// UpdateCheck return, crossing the same trinetra->core boundary
-// buildDashboardView/buildMonitoringView already establish for the
-// dashboard/monitoring pages. Fingerprints is deliberately dropped: it isn't
-// part of core.UpdateStatusView's contract (task-8-brief.md's interface
-// list), and exposing raw key fingerprints over the control socket/web UI
-// wasn't asked for.
+// toUpdateStatusView projects this package's updateStatus (the
+// CLI/socket-agnostic `trinetra update status` shape) into
+// core.UpdateStatusView, the DTO core.API.UpdateStatus/UpdateCheck return.
+// Fingerprints is deliberately dropped: it is not part of the view's contract,
+// and raw key fingerprints are not exposed over the control socket/web UI.
 func toUpdateStatusView(st updateStatus) core.UpdateStatusView {
 	v := core.UpdateStatusView{
 		Running:        st.Running,
@@ -620,7 +605,7 @@ func keySetLoaded(k update.KeySet) bool {
 // is active; guard.lock is what actually keeps a second guard from working.
 const guardUnitName = "trinetra-update-guard"
 
-// guardLaunchCommand is how launchGuard starts the guard (R14): a detached
+// guardLaunchCommand is how launchGuard starts the guard: a detached
 // transient unit executing the PINNED guard binary -- never the new build in
 // BinDir and never update/previous/ (which may be on a noexec /var).
 func guardLaunchCommand(p updatePaths) (name string, args []string) {

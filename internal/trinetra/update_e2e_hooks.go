@@ -18,7 +18,7 @@ const e2eHooksEnabled = false
 
 // e2eCrashOnStart is a constant "" in a default build, so cmdDaemon's
 // crash-on-start branch is compiled out and no -ldflags -X stamp can turn it
-// on in a release binary (R22). The trinetra_testkeys build makes it a
+// on in a release binary. The trinetra_testkeys build makes it a
 // stampable variable (update_e2e_hooks_testkeys.go).
 const e2eCrashOnStart = ""
 

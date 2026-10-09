@@ -195,14 +195,13 @@ func containsEnv(env []string, kv string) bool {
 	return false
 }
 
-// TestStartWeb_SpawnsWithVerifiedPathAndEnv pins case A from the brief: on
-// startWeb, the supervisor resolves the plugin path via resolveWebPlugin and
-// spawns it via startWebProc with the control socket and token passed as the
-// TRINETRA_CONTROL_SOCKET / TRINETRA_CONTROL_TOKEN env vars, and ALSO (compat,
-// for one release, so a pre-rename serverwatch-web binary still works) the old
-// SERVERWATCH_CONTROL_SOCKET / SERVERWATCH_CONTROL_TOKEN names. Calling the
-// returned stop func kills the running child and blocks until the supervisor
-// loop has actually exited.
+// TestStartWeb_SpawnsWithVerifiedPathAndEnv: startWeb resolves the plugin path
+// via resolveWebPlugin and spawns it via startWebProc with the control socket
+// and token passed as TRINETRA_CONTROL_SOCKET / TRINETRA_CONTROL_TOKEN, and
+// ALSO (compat for one release, so a pre-rename serverwatch-web binary still
+// works) the old SERVERWATCH_CONTROL_SOCKET / SERVERWATCH_CONTROL_TOKEN names.
+// Calling the returned stop func kills the running child and blocks until the
+// supervisor loop has exited.
 func TestStartWeb_SpawnsWithVerifiedPathAndEnv(t *testing.T) {
 	h := setupWebTest(t)
 

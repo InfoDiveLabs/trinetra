@@ -128,12 +128,11 @@ func parseDF(s string) ([]DiskUsage, error) {
 }
 
 // parseDFTypes parses `df -PT -B1` output (POSIX 1-byte blocks, with the
-// filesystem-type column -T inserts after the device column): "Filesystem
-// Type 1-blocks Used Available Capacity Mounted on". Returns a map keyed by
-// mount, filling everything parseDF captures (device path is column 0,
-// implicitly) plus FsType, so it can be merged with parseDFInodes into a
-// Snapshot.DiskDetail map. Malformed lines (fewer than 7 fields) are skipped
-// rather than aborting the batch.
+// filesystem-type column -T inserts after the device): "Filesystem Type
+// 1-blocks Used Available Capacity Mounted on". Returns a map keyed by mount,
+// filling everything parseDF captures plus FsType, for merging with
+// parseDFInodes into Snapshot.DiskDetail. Lines with fewer than 7 fields are
+// skipped rather than aborting the batch.
 func parseDFTypes(s string) map[string]DiskDetail {
 	out := map[string]DiskDetail{}
 	sc := bufio.NewScanner(strings.NewReader(s))

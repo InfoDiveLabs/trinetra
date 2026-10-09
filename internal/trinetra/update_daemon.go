@@ -81,7 +81,7 @@ func updateAvailableAlert(st update.State, running update.Version) (Alert, bool)
 	}, true
 }
 
-// freezeVerdict decides whether the channel looks frozen (R17/R25), given
+// freezeVerdict decides whether the channel looks frozen, given
 // the error (if any) of the check that just ran and the Issued time of the
 // last pointer that verified (State.LastPointerIssued, RFC3339 or ""):
 //
@@ -89,7 +89,7 @@ func updateAvailableAlert(st update.State, running update.Version) (Alert, bool)
 //     never freezes: freeze detection only makes sense once there has been
 //     a good pointer to go stale, so a fresh, unconfigured install (e.g.
 //     update.source=github against a private repo with no
-//     update.github_token, which 404s) does not alert (R25). runDueCheck
+//     update.github_token, which 404s) does not alert. runDueCheck
 //     logs the cause instead -- see its doc;
 //   - once a pointer has verified once, an expired or missing pointer (or
 //     pointer signature) is the freeze signature itself and counts at once
@@ -269,7 +269,7 @@ func checkRefreshedState(err error) bool {
 
 // runDueCheck runs u.check when update.channel is on, the source is github,
 // and CheckInterval has elapsed since LastCheck, then applies the freeze
-// rule (freezeVerdict, R17/R25): a stale verdict alerts once per episode
+// rule: a stale verdict alerts once per episode
 // (the dedup, State.StaleNotified, is persisted so a restart does not
 // re-page), and a check that verified a fresh pointer ends the episode.
 //
@@ -306,7 +306,7 @@ func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(A
 		// has verified at some point before: log every tick, as before R25.
 		log.Printf("update: check: %v", checkErr)
 	case checkErr.Error() != st.LastCheckError:
-		// R25: never verified a pointer yet, and this check didn't either
+		// never verified a pointer yet, and this check didn't either
 		// -- log the cause once, not every tick, until it changes.
 		log.Printf("update: updates not configured: %v", checkErr)
 	}

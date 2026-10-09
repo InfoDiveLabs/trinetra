@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestReleaseBinariesCarryNoTestKeys is R22: a default (release) build of
+// TestReleaseBinariesCarryNoTestKeys: a default (release) build of
 // the daemon and of trinetra-release must contain neither the deterministic
 // test signers/key set nor the e2e crash-on-start hook, nor the name of any
 // TRINETRA_E2E_* hook variable (restart/guard commands, GitHub base URL,

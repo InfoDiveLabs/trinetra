@@ -1,5 +1,5 @@
 // Package trinetra: update_watchdog.go installs the persistent self-update
-// watchdog (R14): trinetra-update-watchdog.timer fires 2 minutes after boot
+// watchdog: trinetra-update-watchdog.timer fires 2 minutes after boot
 // and every minute after, running trinetra-update-watchdog.service, a
 // oneshot that executes the pinned guard binary with `update guard
 // --if-pending`. It is a no-op when nothing is pending or a guard already

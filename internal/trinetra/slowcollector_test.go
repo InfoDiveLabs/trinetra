@@ -7,18 +7,17 @@ import (
 	"time"
 )
 
-// TestSlowCollectorNeverOverlaps pins the fix for the Critical race in Task 6:
-// two slow collections must never run concurrently, or they would data-race on
-// the single-owner calculators (smartCache/NetRateCalc/ProcCPUCalc maps). It
-// parks the first collection open (blocked on a channel) past its deadline so
-// runOnce returns while the collection is still in flight, then hammers runOnce
-// concurrently and asserts collect is never entered more than once at a time.
+// TestSlowCollectorNeverOverlaps: two slow collections must never run
+// concurrently, or they would data-race on the single-owner calculators
+// (smartCache/NetRateCalc/ProcCPUCalc maps). It parks the first collection open
+// (blocked on a channel) past its deadline so runOnce returns while it is still
+// in flight, then hammers runOnce concurrently and asserts collect is never
+// entered more than once at a time.
 //
-// Without the in-flight guard in runOnce, each hammering call spawns its own
-// collect goroutine, driving max concurrency well above 1 -> this test fails
-// (and, in production, the unguarded map writes trip the race detector /
-// "concurrent map read and map write"). With the guard, every hammering call
-// CAS-fails and skips, so max concurrency stays 1.
+// Without runOnce's in-flight guard each call spawns its own collect goroutine
+// and max concurrency rises well above 1 (in production, the race detector /
+// "concurrent map read and map write"). With it, every hammering call CAS-fails
+// and skips.
 func TestSlowCollectorNeverOverlaps(t *testing.T) {
 	hub := &slowHub{}
 	var lastSlow atomic.Int64
@@ -89,12 +88,10 @@ func TestSlowCollectorNeverOverlaps(t *testing.T) {
 	}
 }
 
-// TestSlowCollectorSlowButCompletingAdvancesLiveness pins the fix for the
-// IMPORTANT finding: a collection that OVERRUNS its deadline but still completes
-// must publish + advance lastSlowSuccess (so a merely-slow collector keeps the
-// watchdog fed), even though runOnce already returned at the deadline for
-// pacing. Against the old discard-on-timeout behavior lastSlowSuccess never
-// advances here and this test fails.
+// TestSlowCollectorSlowButCompletingAdvancesLiveness: a collection that
+// OVERRUNS its deadline but still completes must publish + advance
+// lastSlowSuccess (so a merely-slow collector keeps the watchdog fed), even
+// though runOnce already returned at the deadline for pacing.
 func TestSlowCollectorSlowButCompletingAdvancesLiveness(t *testing.T) {
 	hub := &slowHub{}
 	var lastSlow atomic.Int64

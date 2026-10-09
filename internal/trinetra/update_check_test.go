@@ -39,7 +39,7 @@ func pointerSource(t *testing.T, channel, version, relChannel string, issued tim
 	}
 }
 
-// TestCheckSetsAvailableOnlyWhenPolicyPasses is R18: Available (which drives
+// TestCheckSetsAvailableOnlyWhenPolicyPasses: Available (which drives
 // the "update available" alert, the web Apply button and Telegram /version)
 // is set only for a release this host would actually accept -- right
 // channel, above the floor, not known-bad -- and cleared otherwise.

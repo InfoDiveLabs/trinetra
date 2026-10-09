@@ -5,7 +5,7 @@
 // apply/rollback swap a build in, and every minute by the persistent
 // trinetra-update-watchdog.timer (`update guard --if-pending`), which is what
 // resolves a pending update after a killed guard, a crash mid-swap or a
-// reboot (R14). It takes update/guard.lock before reading state, so only one
+// reboot. It takes update/guard.lock before reading state, so only one
 // guard ever works on a Pending. It restarts the daemon onto the pending
 // build, polls the running daemon's health until the deadline, then commits
 // (raises the floor, clears Pending) or rolls back (restores the previous
@@ -29,7 +29,7 @@ const guardHealthPollInterval = 2 * time.Second
 
 // guardProbeTimeout bounds each health probe (systemctl is-active, each
 // control-socket call), so the gate never overruns its deadline by more than
-// one probe timeout (R14).
+// one probe timeout.
 const guardProbeTimeout = 5 * time.Second
 
 // errGuardNotNeeded is runGuard's quiet "nothing for me to do right now":
@@ -175,7 +175,7 @@ func runGuard(d guardDeps) (update.Result, error) {
 }
 
 // resolveInterruptedSwap handles a forward update whose apply died mid-swap
-// (R15): BinDir may hold a mix of old and new binaries and the new build
+// : BinDir may hold a mix of old and new binaries and the new build
 // never passed its gate, so restore previous/, restart onto it, clear
 // Pending and record the outcome. The version is not marked bad -- it was
 // never tried. If the restore fails, Pending is kept for the next run.
@@ -390,7 +390,7 @@ func finishRollback(p updatePaths, pending update.Pending, detail string, now ti
 // systemdControlHealth is the production guardHealth: Active via `systemctl
 // is-active --quiet trinetra` (through x, a timeoutExec bounded by
 // guardProbeTimeout), Version/SampleTS via a fresh control-socket dial each
-// call, each bounded by guardProbeTimeout (R14) -- the guard runs standalone,
+// call, each bounded by guardProbeTimeout -- the guard runs standalone,
 // not inside the daemon process, so it cannot share a live control.Client.
 type systemdControlHealth struct{ x Exec }
 

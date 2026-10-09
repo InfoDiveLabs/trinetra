@@ -163,7 +163,7 @@ func staleAlerts(as []Alert) int {
 	return n
 }
 
-// TestRunDueCheckFreezeDetection is R17: the freeze alert must actually be
+// TestRunDueCheckFreezeDetection: the freeze alert must actually be
 // able to fire. An expired or missing pointer is the freeze signature and
 // alerts at once; a LastPointerIssued older than 14 days alerts whatever the
 // check's outcome; a plain network error alerts only once the last good
@@ -255,7 +255,7 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// TestRunDueCheckNeverVerifiedPointer is R25: freeze detection only makes
+// TestRunDueCheckNeverVerifiedPointer: freeze detection only makes
 // sense once a host has verified a channel pointer at least once
 // (State.LastPointerIssued). A fresh, unconfigured install (update.source=
 // github, private release repo, no update.github_token) 404s on every

@@ -34,7 +34,7 @@ func readAudit(t *testing.T, path string) []core.AuditEntry {
 	return out
 }
 
-// TestUpdateAuditTrail is R23 (spec §2 step 6): apply start, rollback start
+// TestUpdateAuditTrail: apply start, rollback start
 // and the guard's commit/rollback each leave an audit entry with the actor,
 // in the local update audit log (or the fleet master's audit log when this
 // host is a master).
@@ -83,7 +83,7 @@ func TestUpdateAuditTrail(t *testing.T) {
 	}
 }
 
-// TestUpdateStatusShowsLastCheck is R23: `update status` shows when the
+// TestUpdateStatusShowsLastCheck: `update status` shows when the
 // channel was last checked.
 func TestUpdateStatusShowsLastCheck(t *testing.T) {
 	p := testUpdatePaths(t)
@@ -107,7 +107,7 @@ func TestUpdateStatusShowsLastCheck(t *testing.T) {
 	}
 }
 
-// TestTelegramVersionShowsAvailableUpdate is R23 (spec §2 Commands):
+// TestTelegramVersionShowsAvailableUpdate:
 // Telegram /version reports the running version and, when a newer accepted
 // release is known, "update available: X".
 func TestTelegramVersionShowsAvailableUpdate(t *testing.T) {

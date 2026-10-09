@@ -65,8 +65,8 @@ func TestTelegramNotifierSendRespectsCancelledContext(t *testing.T) {
 	}
 }
 
-// TestTelegramNotifierSendWithButtonsSetsMarkup pins task 9's Send wiring:
-// an Alert carrying Buttons is sent with a reply_markup inline keyboard.
+// TestTelegramNotifierSendWithButtonsSetsMarkup pins that an Alert carrying
+// Buttons is sent with a reply_markup inline keyboard.
 func TestTelegramNotifierSendWithButtonsSetsMarkup(t *testing.T) {
 	var gotMarkup string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

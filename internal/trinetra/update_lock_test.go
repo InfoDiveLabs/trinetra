@@ -24,7 +24,7 @@ func holdApplyLock(t *testing.T, p updatePaths) {
 	t.Cleanup(unlock)
 }
 
-// TestConcurrentApplyRollbackRefused is R16: while another apply/rollback/
+// TestConcurrentApplyRollbackRefused: while another apply/rollback/
 // install holds update/apply.lock, every entry point refuses at once with
 // "update already in progress" and touches nothing.
 func TestConcurrentApplyRollbackRefused(t *testing.T) {
@@ -61,7 +61,7 @@ func TestConcurrentApplyRollbackRefused(t *testing.T) {
 	}
 }
 
-// TestInstallRefusedWhilePendingOrLocked is R16: install takes the same
+// TestInstallRefusedWhilePendingOrLocked: install takes the same
 // apply lock and refuses while an update is pending (finish or roll back
 // first), so it can never overwrite binaries under a live guard.
 func TestInstallRefusedWhilePendingOrLocked(t *testing.T) {

@@ -115,9 +115,9 @@ func TestDispatcherDispatchToWildcardActsLikeDispatch(t *testing.T) {
 	}
 }
 
-// TestDispatcherDispatchToStillGatesOnRouteAllows covers the task-5 ruling:
-// naming a channel never bypasses its own Route.Allows -- quiet hours and
-// severity gating still apply exactly as they do for Dispatch.
+// TestDispatcherDispatchToStillGatesOnRouteAllows: naming a channel never
+// bypasses its own Route.Allows; quiet hours and severity gating still apply
+// as for Dispatch.
 func TestDispatcherDispatchToStillGatesOnRouteAllows(t *testing.T) {
 	slack := &fakeNotifier{name: "slack"}
 	pager := &fakeNotifier{name: "pager"}
@@ -427,7 +427,7 @@ func TestNotifierQueueSetDispatcherReroutesDelivery(t *testing.T) {
 	}
 }
 
-// --- bounded retry (final-review engine I1 / ruling (a)) --------------------
+// --- bounded retry --------------------
 
 // withShortNotifierRetryTuning shrinks every retry knob for the duration of
 // one test, so an integration-style test exercising real backoff through
@@ -488,9 +488,9 @@ func TestNotifierBackoffDoublesAndCapsAtNotifierMaxDelay(t *testing.T) {
 	}
 }
 
-// TestNextRetryNarrowsToFailedChannelsOnly is the ruling's own
-// double-delivery guard, made concrete: a channel that already succeeded
-// must never appear in the next attempt's targetChannels.
+// TestNextRetryNarrowsToFailedChannelsOnly is the double-delivery guard: a
+// channel that already succeeded must never appear in the next attempt's
+// targetChannels.
 func TestNextRetryNarrowsToFailedChannelsOnly(t *testing.T) {
 	q := NewNotifierQueue(nil, 8)
 	now := time.Unix(1000, 0)

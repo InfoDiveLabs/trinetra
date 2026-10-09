@@ -11,13 +11,10 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// maxFailureDetailItems bounds every "only failures" detail list rendered
-// by renderStatus (failing disks, down containers, failed units, FAILED
-// SMART devices) to a sane count, with a "+N more" suffix for the rest --
-// the guarantee that no matter how broken a host is, the Telegram reply
-// can never balloon past the 4096-char message limit the way an
-// unfiltered/uncapped disk or container list used to (see
-// fix-disk-telegram-brief.md).
+// maxFailureDetailItems bounds every "only failures" detail list rendered by
+// renderStatus (failing disks, down containers, failed units, FAILED SMART
+// devices), with a "+N more" suffix for the rest, so the Telegram reply can
+// never balloon past the 4096-char message limit on a badly broken host.
 const maxFailureDetailItems = 10
 
 // maxDiskTableRows bounds the /disk command's full mount table. Part A
@@ -182,15 +179,13 @@ func plural(n int) string {
 	return "s"
 }
 
-// DiskDetail is the live per-mount filesystem detail beyond the plain
-// usage-percentage carried by Snapshot.Disks: device path, filesystem type,
-// inode usage, free/total bytes, and (when the SampleStore has enough
-// history) a linear fill-rate projection. Populated by collectSlow from
-// `df -PT -B1` (device/fstype/usage/size/free) merged with `df -Pi`
-// (inode%), keyed by mount -- see parseDFTypes/parseDFInodes in collect.go
-// and projectDaysToFull in projection.go. Additive/live only: the existing
-// Snapshot.Disks map is untouched since alerting (buildSlowChecks) and the
-// SampleStore series (slowMetricSet) both depend on it.
+// DiskDetail is the live per-mount filesystem detail beyond the usage
+// percentage in Snapshot.Disks: device path, filesystem type, inode usage,
+// free/total bytes, and (when the SampleStore has enough history) a linear
+// fill-rate projection. Populated by collectSlow from `df -PT -B1` merged with
+// `df -Pi`, keyed by mount (parseDFTypes/parseDFInodes, projectDaysToFull).
+// Additive/live only: Snapshot.Disks is untouched since alerting
+// (buildSlowChecks) and the SampleStore series (slowMetricSet) depend on it.
 type DiskDetail struct {
 	Device, FsType       string
 	UsagePct, InodePct   float64
@@ -292,16 +287,13 @@ type Snapshot struct {
 	collectorsAttempted map[string]bool
 }
 
-// renderStatus builds the /stats,/status overview: a header giving the
-// overall status at a glance, a compact resource table (CPU/Mem/Swap/Load/
-// Temp with an ok/warn/crit marker), one summary-count line per category
-// (disks/docker/systemd/smart/internet), and -- ONLY when something is
-// failing -- a bounded "only failures" detail section. This deliberately
-// does not enumerate every healthy mount/container/unit: on a real docker
-// host that list is what used to blow the message past Telegram's
-// 4096-char limit. c may be nil (e.g. a
-// caller without a config handy); it degrades to config.Default() rather
-// than panicking.
+// renderStatus builds the /stats,/status overview: a header giving the overall
+// status, a compact resource table (CPU/Mem/Swap/Load/Temp with an
+// ok/warn/crit marker), one summary-count line per category
+// (disks/docker/systemd/smart/internet), and, ONLY when something is failing, a
+// bounded "only failures" detail section. It does not enumerate every healthy
+// mount/container/unit: on a docker host that blows past Telegram's 4096-char
+// limit. c may be nil; it degrades to config.Default().
 func renderStatus(s Snapshot, c *config.Config) string {
 	if c == nil {
 		c = config.Default()

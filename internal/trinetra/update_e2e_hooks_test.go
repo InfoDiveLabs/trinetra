@@ -57,7 +57,7 @@ func TestE2EHooksIgnoredInReleaseBuild(t *testing.T) {
 	}
 }
 
-// e2eCrashOnStart must be a compile-time constant in a default build (R22):
+// e2eCrashOnStart must be a compile-time constant in a default build:
 // this declaration only compiles if it is one, so no -X stamp can enable the
 // crash-on-start hook in a release binary.
 const _ = e2eCrashOnStart

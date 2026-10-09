@@ -21,7 +21,7 @@ import (
 // stage a new build over a host that has not yet confirmed the last one.
 var errUpdateInProgress = errors.New("update: an update is already in progress (see trinetra update status)")
 
-// takeApplyLock claims update/apply.lock without blocking (R16): one apply,
+// takeApplyLock claims update/apply.lock without blocking: one apply,
 // rollback or install at a time per host, across processes. A held lock is
 // errUpdateInProgress. The kernel drops the lock if the holder dies.
 func takeApplyLock(p updatePaths) (unlock func(), err error) {
@@ -71,7 +71,7 @@ func healthDeadline() time.Duration {
 // UnitDir.
 type updatePaths struct{ BinDir, StateDir, GuardDir, UnitDir string }
 
-// defaultGuardDir holds the pinned guard binary (R14): a copy of the binary
+// defaultGuardDir holds the pinned guard binary: a copy of the binary
 // that performed the last apply (or install), on an exec-friendly root path
 // (not /var/lib, which is often noexec or labelled non-executable), so the
 // guard and the watchdog never execute the new, unproven build.
@@ -91,7 +91,7 @@ func (p updatePaths) applyLock() string       { return filepath.Join(p.dir(), "a
 func (p updatePaths) guardLock() string       { return filepath.Join(p.dir(), "guard.lock") }
 func (p updatePaths) guardBin() string        { return filepath.Join(p.GuardDir, "trinetra") }
 
-// Pending phases (R15): swapIn records Pending in phase pendingSwapping
+// Pending phases: swapIn records Pending in phase pendingSwapping
 // before its first rename and moves it to pendingSwapped once every binary
 // and plugins.json are in place. A guard that finds pendingSwapping with no
 // live apply holding apply.lock knows the swap was interrupted. A Pending
@@ -115,7 +115,7 @@ var selfExecutable = func() (string, error) {
 
 // writePinnedGuard copies the running binary to p.guardBin() (dir and file
 // 0755, same-directory temp file, fsync, rename, directory fsync): the code
-// that writes a Pending is the code that resolves it (R14).
+// that writes a Pending is the code that resolves it.
 func writePinnedGuard(p updatePaths) error {
 	if p.GuardDir == "" {
 		return errors.New("update: no guard directory configured")
@@ -323,7 +323,7 @@ var replaceFileFn = replaceFile
 func pluginManifestBase() string { return filepath.Base(pluginManifestPath()) }
 
 // swapIn is the only step that touches BinDir. The caller holds
-// update/apply.lock. Order matters for crash safety (R15): everything a
+// update/apply.lock. Order matters for crash safety: everything a
 // recovery needs is durable before the first rename, so a crash at any
 // point after that is resolved by the update watchdog's guard.
 //

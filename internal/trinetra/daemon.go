@@ -1289,7 +1289,7 @@ func cmdDaemon(args []string) int {
 	// (update_daemon.go). A Pending update left by a killed guard, a crash
 	// mid-swap or a reboot is NOT resumed from here: this may be the new, broken
 	// build. The persistent trinetra-update-watchdog.timer runs the pinned guard
-	// for that (update_watchdog.go, R14).
+	// for that.
 	// Update results/availability bypass quiet hours, like the boot report and
 	// scheduled digests: an operator waiting on a pending or rolled-back update
 	// needs to know regardless of the clock.

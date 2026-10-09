@@ -75,14 +75,12 @@ func TestGuardRollsBackOnEachFailedCondition(t *testing.T) {
 	}
 }
 
-// TestGuardNormalizesVPrefixedPendingVersion is fix-round-1 F1: Pending.Version
-// can carry a "v" prefix (e.g. update.rollback stored `version --json`'s raw
-// output before that call was normalised too -- see
-// TestUpdaterRollbackNormalizesVersion in update_cmd_test.go), while a
-// healthy daemon's control.Client.Version() reports without one (or vice
-// versa). checkGuardHealth must trim "v" on BOTH sides before comparing, the
-// same way smokeTest already does, or a perfectly healthy restart is
-// misdiagnosed as a version mismatch and wrongly rolled back.
+// TestGuardNormalizesVPrefixedPendingVersion: Pending.Version can carry a "v"
+// prefix (e.g. rollback stored `version --json`'s raw output; see
+// TestUpdaterRollbackNormalizesVersion) while a healthy daemon's
+// control.Client.Version() reports without one (or vice versa).
+// checkGuardHealth must trim "v" on BOTH sides, as smokeTest does, or a healthy
+// restart is misdiagnosed as a version mismatch and wrongly rolled back.
 func TestGuardNormalizesVPrefixedPendingVersion(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "v0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}})
 	h := &fakeHealth{active: true, version: "0.5.0", ts: 1002}
@@ -92,11 +90,10 @@ func TestGuardNormalizesVPrefixedPendingVersion(t *testing.T) {
 	}
 }
 
-// TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad is fix-round-1's
-// Rollback=true coverage: a healthy rollback confirmation must commit
-// without ever raising the floor (there is no prior floor here to leave
-// unchanged from -- Floor starts unset, so a buggy RaiseFloor call would be
-// directly observable) and without marking the rolled-back-to version bad.
+// TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad: a healthy rollback
+// confirmation must commit without raising the floor (Floor starts unset here,
+// so a buggy RaiseFloor call would be observable) and without marking the
+// rolled-back-to version bad.
 func TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -127,12 +124,11 @@ func TestGuardRollbackCommitDoesNotRaiseFloorOrMarkBad(t *testing.T) {
 	}
 }
 
-// TestGuardRollbackFailedGateDoesNotLoop is fix-round-1's Rollback=true
-// failure coverage: when a rollback confirmation never becomes healthy,
-// there is no older build to fall back to (previous/ already IS the build
-// currently running), so the guard must not attempt another
-// restorePrevious/restart and must not mark anything bad -- it just records
-// the failure and leaves the binaries as they are.
+// TestGuardRollbackFailedGateDoesNotLoop: when a rollback confirmation never
+// becomes healthy there is no older build to fall back to (previous/ already
+// IS the running build), so the guard must not attempt another
+// restorePrevious/restart and must not mark anything bad; it records the
+// failure and leaves the binaries as they are.
 func TestGuardRollbackFailedGateDoesNotLoop(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -368,10 +364,10 @@ func TestGuardCommitsDespiteRestartError(t *testing.T) {
 	}
 }
 
-// TestGuardRollsBackWhenRestartErrorsAndNeverHealthy is F2's other half: a
-// restart() error that turns out to reflect a real problem (the daemon
-// never comes up healthy) must still roll back by the deadline, exactly
-// like any other failed health gate -- not hang or leave Pending set.
+// TestGuardRollsBackWhenRestartErrorsAndNeverHealthy: a restart() error that
+// reflects a real problem (the daemon never comes up healthy) must still roll
+// back by the deadline, like any other failed health gate, not hang or leave
+// Pending set.
 func TestGuardRollsBackWhenRestartErrorsAndNeverHealthy(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}})
 	h := &fakeHealth{active: false, version: "0.5.0", ts: 1002}

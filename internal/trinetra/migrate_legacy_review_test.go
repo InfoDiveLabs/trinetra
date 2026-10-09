@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// Tests for the final-review findings on the serverwatch -> trinetra
-// migration (I1, M1, M2, M7).
+// Tests for the serverwatch -> trinetra migration's edge cases.
 
 // --- I1: a legacy plugin with no trinetra counterpart is called out ---
 

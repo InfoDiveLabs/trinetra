@@ -168,17 +168,13 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err != nil {
 		return err
 	}
-	// updatePaths -- NOT the bare package-level stateDir -- is where install's
-	// floor check/raise must read and write: the
-	// update state (floor, pending, last outcome) lives at
-	// defaultUpdatePaths().dir() == StateDir/update, exactly where
-	// `trinetra update`/the guard/status already read and write it
-	// (update_apply.go/update_cmd.go). Using bare stateDir here previously
-	// meant the floor was read from (and written to) a state.json that
-	// `trinetra update` never looks at, so a persisted floor was silently
-	// ignored and never actually raised -- and update.SaveState's
-	// MkdirAll+Chmod(0700) landed on stateDir itself (normally 0755) instead
-	// of its "update" subdirectory.
+	// updatePaths, NOT the bare package-level stateDir, is where install's floor
+	// check/raise must read and write: the update state (floor, pending, last
+	// outcome) lives at defaultUpdatePaths().dir() == StateDir/update, where
+	// `trinetra update`/the guard/status read and write it. The bare stateDir
+	// would use a state.json `trinetra update` never looks at, so a persisted
+	// floor would be ignored and never raised, and update.SaveState's
+	// MkdirAll+Chmod(0700) would land on stateDir itself (normally 0755).
 	paths := defaultUpdatePaths()
 	unlock, err := installPreflight(paths)
 	if err != nil {
@@ -228,7 +224,7 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 	if err := os.WriteFile(unitPath, []byte(renderUnit(dst)), 0o644); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
-	// The self-update safety net (R14): the pinned guard binary (a copy of
+	// The self-update safety net: the pinned guard binary (a copy of
 	// this binary) and the watchdog timer that runs it every minute to
 	// resolve any pending update, whatever state the new build is in.
 	if err := writePinnedGuard(paths); err != nil {
@@ -269,7 +265,7 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 }
 
 // installPreflight claims the self-update apply lock for the whole install
-// (R16) and refuses while an update is pending: install replacing the
+// and refuses while an update is pending: install replacing the
 // binaries under a live health guard would have the guard roll the
 // operator's install back and mark the pending version bad.
 func installPreflight(paths updatePaths) (unlock func(), err error) {
@@ -375,10 +371,9 @@ func verifyInstallBundle(keys update.KeySet, self string, names []string) (updat
 // verifyInstallSignature wraps verifyInstallBundle with cmdInstall's
 // present/absent/require-signed policy: a present-and-valid manifest returns
 // (m, true, nil); an absent manifest returns (Manifest{}, false, nil) after
-// printing the unsigned-install warning, unless requireSigned is set, in
-// which case it refuses with the exact wording task-8-brief.md specifies;
-// any other verification failure (tampered file, bad/missing signature)
-// always refuses, requireSigned or not.
+// printing the unsigned-install warning, unless requireSigned is set, in which
+// case it refuses; any other verification failure (tampered file, bad/missing
+// signature) always refuses.
 func verifyInstallSignature(self string, names []string, requireSigned bool) (update.Manifest, bool, error) {
 	m, err := verifyInstallBundle(update.ProductionKeys(), self, names)
 	switch {
@@ -395,28 +390,23 @@ func verifyInstallSignature(self string, names []string, requireSigned bool) (up
 	}
 }
 
-// checkInstallPolicy applies update.CheckPolicy to a verified install
-// manifest: AllowEqual true (reinstalling the currently installed version is
-// a legitimate repair), Channel set to the manifest's own channel (an
-// install is not read against the host's configured update.channel -- it
-// installs whatever signed release it was handed, mirroring apply()'s own
-// --bundle-with-updates-off ruling R7), and Floor from persisted update
-// state (paths.dir(), the SAME state.json `trinetra update`/the guard/status
-// already share -- see installBinaryAndUnit's doc, fix round 1 Ruling R8).
+// checkInstallPolicy applies update.CheckPolicy to a verified install manifest:
+// AllowEqual true (reinstalling the installed version is a legitimate repair),
+// Channel set to the manifest's own channel (an install is not read against the
+// host's update.channel; it installs whatever signed release it was handed,
+// like apply()'s --bundle-with-updates-off handling), and Floor from persisted
+// update state (paths.dir(), the SAME state.json `trinetra update`/the
+// guard/status share; see installBinaryAndUnit).
 //
-// running is the currently installed binary's own reported version, or the
-// zero Version when nothing is installed yet (a fresh host), a serverwatch
-// migration hasn't placed /usr/local/bin/trinetra yet, or the old binary
-// didn't answer `version --json`. Ruling R9:
-// when running is the zero Version, MinUpgradeFrom is deliberately NOT
-// enforced against it -- CheckPolicy's Running field is instead set to the
-// manifest's own MinUpgradeFrom, which trivially satisfies that sub-check --
-// because there is nothing real to compare against and refusing every real
-// release with ErrTooOld on a fresh/migrated host would be wrong. The floor
-// check (independent of Running) and both signature/hash checks
-// (verifyInstallBundle, already run before this is ever called) still fully
-// apply regardless: only the min-upgrade-from gate is skipped, and only when
-// running is genuinely unknown.
+// running is the currently installed binary's reported version, or the zero
+// Version when nothing is installed (a fresh host), a serverwatch migration
+// hasn't placed /usr/local/bin/trinetra yet, or the old binary didn't answer
+// `version --json`. When running is the zero Version, MinUpgradeFrom is
+// deliberately NOT enforced: CheckPolicy's Running is set to the manifest's own
+// MinUpgradeFrom, which trivially satisfies that sub-check, because there is
+// nothing real to compare against and refusing every release with ErrTooOld on
+// a fresh/migrated host would be wrong. The floor check and both
+// signature/hash checks (verifyInstallBundle) still fully apply.
 func checkInstallPolicy(paths updatePaths, m update.Manifest, running update.Version) error {
 	st, err := update.LoadState(paths.dir())
 	if err != nil {
@@ -463,14 +453,12 @@ func currentInstalledVersion() update.Version {
 }
 
 // raiseInstallFloor records m's version as the new update floor (in
-// paths.dir()'s state.json -- the same file checkInstallPolicy reads and
-// `trinetra update`/the guard/status share, fix round 1 Ruling R8) after a
-// successful signed install, mirroring what a successful `trinetra update
-// apply` does at the end of swapIn -- a floor-raise or state-save failure is
-// swallowed (best-effort, matching cmdInstall's other post-copy warnings):
-// the binaries and unit are already in place by the time this runs, and a
-// missed floor raise only means a future `update apply`/`install` could
-// re-verify a version this host already has, not a safety regression.
+// paths.dir()'s state.json, the file checkInstallPolicy reads) after a
+// successful signed install, as `trinetra update apply` does at the end of
+// swapIn. A floor-raise or state-save failure is swallowed (best-effort): the
+// binaries and unit are already in place, and a missed raise only means a
+// future `update apply`/`install` could re-verify a version this host already
+// has, not a safety regression.
 func raiseInstallFloor(paths updatePaths, version string) {
 	v, err := update.ParseVersion(version)
 	if err != nil {
@@ -651,7 +639,7 @@ func writePluginManifest(binDir string) error {
 	// it, renames it over plugins.json and fsyncs the directory, so a
 	// pre-existing manifest with looser perms never keeps them (the
 	// "root-only trust anchor" guarantee holds on every install) and a crash
-	// mid-swap never leaves a truncated manifest (R20).
+	// mid-swap never leaves a truncated manifest.
 	if err := update.WriteFileAtomic(pluginManifestPath(), b, 0o600); err != nil {
 		return fmt.Errorf("write plugin manifest %s: %w", pluginManifestPath(), err)
 	}
@@ -709,7 +697,7 @@ func cmdUninstall(args []string) int {
 // executable -- a plain truncating write (os.WriteFile over dst) fails there
 // with ETXTBSY "text file busy". This is what lets `trinetra install` and
 // self-update replace the binary of a live daemon in place, and the fsyncs
-// mean a power loss never leaves a zero-length binary behind (R20).
+// mean a power loss never leaves a zero-length binary behind.
 func copyFile(src, dst string, perm os.FileMode) error {
 	return update.CopyFile(src, dst, perm)
 }
@@ -745,10 +733,8 @@ const (
 )
 
 // fetchEnrollmentPINFn is the seam printEnrollmentPIN calls to learn the
-// daemon's current enrollment pin: the real implementation (below) dials
-// the control socket with a brief retry; tests override this var with a
-// canned result so cmdTelegram's print behavior can be exercised without a
-// real socket/daemon.
+// daemon's current enrollment pin: the real implementation dials the control
+// socket with a brief retry; tests override it with a canned result.
 var fetchEnrollmentPINFn = dialEnrollmentPIN
 
 // dialEnrollmentPIN resolves the control socket path/token the same way
@@ -911,10 +897,9 @@ func cmdQuietHours(args []string) int {
 		fmt.Fprintln(stderr, "usage: quiet-hours <HH-HH> | off")
 		return 2
 	}
-	// Round-1 review, IMPORTANT 2: this dedicated command is a second,
-	// separate path onto quiet_hours besides `config set`/the web config
-	// page (both already guarded) -- it must refuse identically when a
-	// fleet master manages it.
+	// This dedicated command is a second path onto quiet_hours besides `config
+	// set`/the web config page (both already guarded); it must refuse identically
+	// when a fleet master manages it.
 	if id, managed := ManagedFragmentFor(stateDir, "quiet_hours"); managed {
 		fmt.Fprintf(stderr, "quiet_hours: managed by the fleet master (fragment %s); change it on the master\n", id)
 		return 1

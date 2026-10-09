@@ -138,13 +138,10 @@ func TestSwapInRefusesStagedFileChangedAfterVerify(t *testing.T) {
 	}
 }
 
-// --- fix round 1 ---
-
-// TestTimeoutExecKillsSlowCommand pins F1: smokeTest must be bounded by its
-// own fixed timeout, not the shared 60s execTimeout. timeoutExec is what
-// gives it that bound; a command that outlives the timeout must be killed
-// (and Run must return an error) well before the command would finish on
-// its own.
+// TestTimeoutExecKillsSlowCommand: smokeTest must be bounded by its own fixed
+// timeout, not the shared 60s execTimeout. timeoutExec gives it that bound; a
+// command that outlives it must be killed (and Run must return an error) well
+// before the command would finish on its own.
 func TestTimeoutExecKillsSlowCommand(t *testing.T) {
 	if _, err := exec.LookPath("sleep"); err != nil {
 		t.Skip("sleep not on PATH")
@@ -205,14 +202,12 @@ func TestSmokeTest(t *testing.T) {
 	}
 }
 
-// TestSwapInJoinsRestoreFailureWithOriginalError pins F2: when a failure in
-// swapIn's replace phase triggers restorePrevious, and restorePrevious ALSO
-// fails, the error swapIn returns must surface both failures (not silently
-// discard the restore error), with wording that makes clear the host may be
-// left half-updated. Making BinDir unwritable after staging forces exactly
-// this: the first replaceFile call fails (can't create the temp file), and
-// the restorePrevious it triggers fails for the same reason (still can't
-// write into BinDir).
+// TestSwapInJoinsRestoreFailureWithOriginalError: when a failure in swapIn's
+// replace phase triggers restorePrevious, and restorePrevious ALSO fails, the
+// error swapIn returns must surface both failures, with wording that makes
+// clear the host may be left half-updated. Making BinDir unwritable after
+// staging forces this: the first replaceFile call fails (can't create the temp
+// file), and so does the restorePrevious it triggers.
 func TestSwapInJoinsRestoreFailureWithOriginalError(t *testing.T) {
 	p := testUpdatePaths(t)
 	newCore, newWeb := []byte("NEW-core"), []byte("NEW-web")

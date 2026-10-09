@@ -186,13 +186,12 @@ func (d *Dispatcher) Dispatch(a Alert, quiet bool) []DeliveryResult {
 	return d.dispatchMatched(a, matched)
 }
 
-// DispatchTo is Dispatch narrowed to a specific channel-name subset (fleet
-// routing/escalation, task 5): a channel is sent to only if it is enabled,
-// its own Route still Allows a (quiet hours/severity/kind gating is never
-// bypassed by routing), AND either names contains the literal "*" or its
-// Name() is in names. names with neither "*" nor any matching name delivers
-// to nothing (an empty result), which is a valid outcome (e.g. a policy step
-// naming a channel that was since removed from config).
+// DispatchTo is Dispatch narrowed to a channel-name subset (fleet
+// routing/escalation): a channel is sent to only if it is enabled, its own
+// Route still Allows a (quiet hours/severity/kind gating is never bypassed by
+// routing), AND names contains the literal "*" or the channel's Name().
+// Matching nothing delivers to nothing, which is valid (e.g. a policy step
+// naming a channel since removed from config).
 func (d *Dispatcher) DispatchTo(a Alert, quiet bool, names []string) []DeliveryResult {
 	all := false
 	set := make(map[string]bool, len(names))
@@ -267,14 +266,11 @@ func sendSafely(n Notifier, a Alert, timeout time.Duration) (err error) {
 }
 
 // notifierMaxAttempts/notifierUndroppableMaxAttempts and
-// notifierRetryWindow/notifierUndroppableRetryWindow bound how many times,
-// and for how long, NotifierQueue.Run retries a channel that failed to
-// deliver an alert before giving up and counting it permanently failed
-// (final-review engine I1/ruling (a)). Undroppable alerts (critical, or a
-// recover -- see undroppable) get the longer budget, since they already
-// bypass the capacity-drop path in Enqueue and so are the ones this
-// guarantee matters most for. Package vars, not consts, so a test can
-// shrink them instead of actually waiting out a real 30 minutes.
+// notifierRetryWindow/notifierUndroppableRetryWindow bound how many times, and
+// for how long, NotifierQueue.Run retries a failed channel before counting it
+// permanently failed. Undroppable alerts (critical, or a recover; see
+// undroppable) get the longer budget, since they already bypass the
+// capacity-drop path in Enqueue. Package vars so a test can shrink them.
 var (
 	notifierMaxAttempts            = 6
 	notifierUndroppableMaxAttempts = 10

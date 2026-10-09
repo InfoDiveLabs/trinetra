@@ -319,10 +319,10 @@ func TestWritePluginManifest_ForcesModeOnReinstall(t *testing.T) {
 	}
 }
 
-// TestCopyPluginsAlongsideCopiesPresentPlugins is the Task 1 (#92) failing
-// test: given a source dir containing both fake companion binaries,
-// copyPluginsAlongside must place identical, mode-0755 copies of both into
-// dstDir, so a subsequent writePluginManifest(dstDir) has something to find.
+// TestCopyPluginsAlongsideCopiesPresentPlugins: given a source dir containing
+// both fake companion binaries, copyPluginsAlongside must place identical,
+// mode-0755 copies of both into dstDir, so a subsequent
+// writePluginManifest(dstDir) has something to find.
 func TestCopyPluginsAlongsideCopiesPresentPlugins(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
@@ -427,10 +427,9 @@ func TestCopyPluginsAlongsideSkipsNonRegular(t *testing.T) {
 	}
 }
 
-// TestUninstallRemovesInstalledPlugins is the Task 1 (#92) failing test for
-// the uninstall side: removeInstalledPlugins must remove both companion
-// binaries from binDir, and be best-effort (no error) when one is already
-// absent -- symmetric with copyPluginsAlongside's per-plugin non-fatal style.
+// TestUninstallRemovesInstalledPlugins: removeInstalledPlugins must remove both
+// companion binaries from binDir, and be best-effort (no error) when one is
+// already absent, like copyPluginsAlongside's per-plugin non-fatal style.
 func TestUninstallRemovesInstalledPlugins(t *testing.T) {
 	binDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(binDir, "trinetra-ctl"), []byte("ctl"), 0o755); err != nil {
@@ -448,10 +447,9 @@ func TestUninstallRemovesInstalledPlugins(t *testing.T) {
 	}
 }
 
-// TestCmdUninstall_RemovesPluginManifest checks the other half of Task 2:
-// cmdUninstall removes <stateDir>/plugins.json (best-effort, like its other
-// cleanups) so a subsequent front-door invocation correctly reports the
-// plugins as not installed rather than checking against a stale manifest.
+// TestCmdUninstall_RemovesPluginManifest: cmdUninstall removes
+// <stateDir>/plugins.json (best-effort) so a later front-door invocation
+// reports the plugins as not installed rather than checking a stale manifest.
 func TestCmdUninstall_RemovesPluginManifest(t *testing.T) {
 	dir := t.TempDir()
 	prevStateDir := stateDir
@@ -481,12 +479,11 @@ func TestCmdUninstall_RemovesPluginManifest(t *testing.T) {
 	}
 }
 
-// TestCmdQuietHoursRefusedWhenManaged is the round-1 review's IMPORTANT-2
-// test: `trinetra quiet-hours` is a SECOND, dedicated path onto quiet_hours
-// besides `config set`/the web config page (both already guarded elsewhere)
-// -- it must refuse with the identical "managed by the fleet master"
-// message when a sidecar marks quiet_hours as managed, and never touch
-// config.json.
+// TestCmdQuietHoursRefusedWhenManaged: `trinetra quiet-hours` is a SECOND,
+// dedicated path onto quiet_hours besides `config set`/the web config page
+// (both already guarded); it must refuse with the identical "managed by the
+// fleet master" message when a sidecar marks quiet_hours as managed, and never
+// touch config.json.
 func TestCmdQuietHoursRefusedWhenManaged(t *testing.T) {
 	dir, _, errb := fleetCLIEnv(t)
 	if rc := Main([]string{"quiet-hours", "22-7"}); rc != 0 {

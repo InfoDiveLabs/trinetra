@@ -90,7 +90,7 @@ func inQuietHours(spec string, now time.Time) bool {
 	return h >= start || h < end // wraps midnight
 }
 
-// renderVersionReply is Telegram /version (spec §2 Commands, R23): the
+// renderVersionReply is Telegram /version: the
 // running version and, when the last check found a newer release this host
 // accepts (update.State.Available), "update available: X".
 func renderVersionReply(p updatePaths) string {

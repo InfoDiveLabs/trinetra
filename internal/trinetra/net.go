@@ -82,20 +82,16 @@ type NetRateCalc struct {
 }
 
 // Rates computes bytes/sec rates from cur against the previously stored
-// sample, then updates the stored sample to cur/nowUnix for the next call.
+// sample, then stores cur/nowUnix for the next call.
 //
-// The first call ever (no prior sample) has nothing to diff against, so it
-// returns an empty map -- this is also what makes the daemon's first slow
-// tick after startup skip appending net series, since there's no meaningful
-// rate yet.
+// The first call (no prior sample) returns an empty map, which also makes the
+// daemon's first slow tick skip appending net series.
 //
-// For interfaces present in both prev and cur: elapsed = nowUnix - prevTS;
-// elapsed <= 0 (clock didn't advance, or went backwards) skips that computation
-// entirely (avoids a divide-by-zero/negative-elapsed rate). A counter that
-// went backwards (cur < prev -- an interface reset, or the counter wrapped)
-// is also skipped rather than emitting a negative rate. Interfaces present
-// in only one of prev/cur (new interface appeared, or one disappeared) are
-// omitted from the result.
+// For interfaces in both prev and cur: elapsed <= 0 (clock didn't advance, or
+// went backwards) skips the computation (no divide-by-zero or negative
+// rate), and a counter that went backwards (interface reset or wrap) is
+// skipped rather than emitting a negative rate. Interfaces in only one of
+// prev/cur are omitted.
 func (n *NetRateCalc) Rates(cur map[string]IfaceCounters, nowUnix int64) map[string]IfaceRate {
 	out := map[string]IfaceRate{}
 	if n.prev != nil {

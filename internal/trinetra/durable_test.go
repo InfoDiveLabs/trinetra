@@ -8,7 +8,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-// TestCopyFileAndPluginManifestFsyncDir is R20: every binary replace
+// TestCopyFileAndPluginManifestFsyncDir: every binary replace
 // (install, swap, snapshot, restore) goes through copyFile, and the swap
 // rewrites plugins.json; both must fsync their directory after the rename so
 // a power loss never leaves a zero-length binary or manifest behind.

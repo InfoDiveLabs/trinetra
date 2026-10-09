@@ -905,8 +905,8 @@ func TestCheckNotAliased(t *testing.T) {
 	}
 }
 
-// IMPORTANT 2: a legacy dir that is a mount point is refused up front, before
-// the old service is touched, with "unmount it from the old path first".
+// A legacy dir that is a mount point is refused up front, before the old
+// service is touched, with "unmount it from the old path first".
 func TestLegacyMigrationRefusesMountPointUpFront(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)

@@ -103,12 +103,11 @@ func freshInstallManifest(version, minUpgradeFrom string) update.Manifest {
 		Published: "2026-10-01T10:00:00Z", MinUpgradeFrom: minUpgradeFrom}
 }
 
-// TestCheckInstallPolicyUsesUpdateStateDir pins fix round 1's Ruling R8: the
-// install floor check must read the SAME state.json `trinetra update`/the
-// guard/status already share (defaultUpdatePaths().dir(), i.e.
-// StateDir/update) -- not the bare state directory. A floor seeded directly
-// at paths.dir() must be honored: a release below it is refused, one above
-// it succeeds.
+// TestCheckInstallPolicyUsesUpdateStateDir pins that the install floor check
+// reads the SAME state.json `trinetra update`/the guard/status share
+// (defaultUpdatePaths().dir(), i.e. StateDir/update), not the bare state
+// directory. A floor seeded at paths.dir() must be honored: a release below it
+// is refused, one above it succeeds.
 func TestCheckInstallPolicyUsesUpdateStateDir(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
@@ -188,12 +187,11 @@ func TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir(t *testing.T) {
 	}
 }
 
-// TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown pins fix round
-// 1's Ruling R9: when running is the zero Version (a fresh host, or a
-// serverwatch migration with nothing at /usr/local/bin/trinetra yet), a
-// signed install must not be refused just because the manifest's
-// MinUpgradeFrom is above 0.0.0 -- only the floor (still zero/unset here)
-// and the caller's already-run signature/hash checks gate it.
+// TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown: when running is
+// the zero Version (a fresh host, or a serverwatch migration with nothing at
+// /usr/local/bin/trinetra yet), a signed install must not be refused because
+// the manifest's MinUpgradeFrom is above 0.0.0; only the floor and the
+// caller's signature/hash checks gate it.
 func TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}
@@ -208,9 +206,8 @@ func TestCheckInstallPolicySkipsMinUpgradeFromWhenRunningUnknown(t *testing.T) {
 }
 
 // TestCheckInstallPolicyEnforcesMinUpgradeFromWhenRunningKnown is the flip
-// side: once a real running version IS known, MinUpgradeFrom is still
-// enforced exactly as update.CheckPolicy always has -- Ruling R9 only skips
-// the check when running is genuinely unknown, it does not disable it.
+// side: once a real running version IS known, MinUpgradeFrom is enforced as
+// update.CheckPolicy always does.
 func TestCheckInstallPolicyEnforcesMinUpgradeFromWhenRunningKnown(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}

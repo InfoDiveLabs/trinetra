@@ -66,15 +66,11 @@ func writeBundle(t *testing.T, version string, files map[string][]byte) string {
 	return dir
 }
 
-// NOTE: testUpdatePaths (update_apply_test.go)
-// pre-populates BinDir with BOTH "trinetra" and "trinetra-web" as "installed"
-// binaries. planApply requires a release asset
-// for every binary planApply's `installed` closure reports present -- so a
-// release that only ships trinetra-linux-amd64 is rejected once trinetra-web
-// is also "installed". The brief's TestUpdaterApplyLaunchesGuardAndRefusesDowngrade
-// only supplied a core asset; that combination cannot pass planApply given
-// testUpdatePaths' fixture, so trinetra-web-linux-amd64 is added to the
-// release here to keep reusing the existing fixture rather than forking it.
+// NOTE: testUpdatePaths (update_apply_test.go) pre-populates BinDir with BOTH
+// "trinetra" and "trinetra-web" as "installed" binaries, and planApply requires
+// a release asset for every installed binary, so a release shipping only
+// trinetra-linux-amd64 is rejected. trinetra-web-linux-amd64 is added to the
+// release here to reuse the fixture rather than fork it.
 func TestUpdaterApplyLaunchesGuardAndRefusesDowngrade(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.5.0", map[string][]byte{
@@ -166,13 +162,12 @@ func TestUpdaterApplyRefusesBadVersionWithoutForce(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyBundleWorksWhenChannelOff pins Ruling R7: an operator with
-// update.channel=off (updates disabled from the network) must still be able
-// to install an explicit local bundle via --bundle DIR. Policy.Channel comes
-// from the verified bundle manifest's own channel in that case, not the
-// host's "off" -- CheckPolicy would otherwise always refuse with
-// ErrWrongChannel. Floor/min_upgrade_from/signature checks are unaffected
-// (this bundle's version and MinUpgradeFrom are set up to pass them).
+// TestUpdaterApplyBundleWorksWhenChannelOff: an operator with
+// update.channel=off (updates disabled from the network) must still be able to
+// install an explicit local bundle via --bundle DIR. Policy.Channel comes from
+// the verified bundle manifest's own channel in that case, not the host's
+// "off", which CheckPolicy would otherwise refuse with ErrWrongChannel.
+// Floor/min_upgrade_from/signature checks are unaffected.
 func TestUpdaterApplyBundleWorksWhenChannelOff(t *testing.T) {
 	p := testUpdatePaths(t)
 	bundleDir := writeBundle(t, "0.5.0", map[string][]byte{
@@ -209,10 +204,8 @@ func TestUpdaterApplyRefusesChannelOffWithoutBundle(t *testing.T) {
 	}
 }
 
-// TestConfigGetRedactsSecrets adapts task-6-brief.md's version (which called
-// a `run([]string{...})` helper and `withStdout`/`withTempConfig` that don't
-// exist in this codebase) to the real entry point: Main(), and the
-// cfgPath/stdout package vars main_test.go already overrides directly (see
+// TestConfigGetRedactsSecrets drives the real entry point, Main(), with the
+// cfgPath/stdout package vars main_test.go overrides directly (see
 // TestConfigSetGetViaCLI).
 func TestConfigGetRedactsSecrets(t *testing.T) {
 	dir := t.TempDir()
@@ -236,14 +229,12 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 	}
 }
 
-// TestUpdaterRollbackNormalizesVersion is fix-round-1 F1: `version --json`
-// against the previous binary can report a "v"-prefixed version (git
-// describe-style tags, e.g. "v0.4.1" -- see internal/version's Makefile
-// stamping), and rollback() used to store that raw string as
-// Pending.Version verbatim. The guard's health check compares Pending.Version
-// against the RUNNING daemon's reported version (also normalised), so an
-// un-normalised Pending.Version made every `trinetra update rollback`
-// misreport a version mismatch and roll back a perfectly healthy restart.
+// TestUpdaterRollbackNormalizesVersion: `version --json` against the previous
+// binary can report a "v"-prefixed version (git describe-style tags, e.g.
+// "v0.4.1"), and rollback() must not store that raw string as Pending.Version.
+// The guard compares Pending.Version against the RUNNING daemon's (normalised)
+// version, so an un-normalised value would make every `trinetra update
+// rollback` misreport a version mismatch and roll back a healthy restart.
 func TestUpdaterRollbackNormalizesVersion(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -271,12 +262,10 @@ func (f fakeVersionExec) Run(name string, args ...string) ([]byte, error) {
 
 func mustVer(s string) update.Version { v, _ := update.ParseVersion(s); return v }
 
-// TestUpdateStatusJSONWorksWithNoStateDir pins Ruling R2
-// (.superpowers/sdd/2026-09-29-signed-releases-self-update/progress.md):
-// `trinetra update status --json` must succeed for a non-root caller with
-// no /var/lib/trinetra present at all (a fresh CI runner before any update
-// has ever run), and the JSON must include a "fingerprints" field sourced
-// from update.Fingerprints(update.ProductionKeys()).
+// TestUpdateStatusJSONWorksWithNoStateDir: `trinetra update status --json`
+// must succeed for a non-root caller with no /var/lib/trinetra at all (a fresh
+// CI runner before any update has run), and the JSON must include a
+// "fingerprints" field sourced from update.Fingerprints(update.ProductionKeys()).
 func TestUpdateStatusJSONWorksWithNoStateDir(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")

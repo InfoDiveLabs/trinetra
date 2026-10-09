@@ -175,11 +175,10 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// pluginManifestPath is <stateDir>/plugins.json, the root-only,
-// install-time record of each companion binary's SHA-256 (written by
-// cmdInstall, Task 2). It is a package-level func rather than a const so it
-// picks up test overrides of the stateDir var, same as pidFile() in
-// util.go.
+// pluginManifestPath is <stateDir>/plugins.json, the root-only, install-time
+// record of each companion binary's SHA-256 (written by cmdInstall). It is a
+// func rather than a const so it picks up test overrides of the stateDir var,
+// like pidFile() in util.go.
 func pluginManifestPath() string { return filepath.Join(stateDir, "plugins.json") }
 
 // loadPluginManifest reads the install-time plugin checksum manifest. A
