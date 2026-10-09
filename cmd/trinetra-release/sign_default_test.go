@@ -11,10 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-// TestSignRoleMaintTestAbsentInDefaultBuild only applies to the default
-// build: "sign --role maint-test" must not exist unless this tool is built
-// with -tags trinetra_testkeys (see sign_testkeys.go). The testkeys build
-// intentionally makes this role work, so this assertion does not hold there.
+// TestSignRoleMaintTestAbsentInDefaultBuild only applies to the default build: "sign --role
+// maint-test" must not exist unless this tool is built with -tags trinetra_testkeys.
 func TestSignRoleMaintTestAbsentInDefaultBuild(t *testing.T) {
 	dir := t.TempDir()
 	in := filepath.Join(dir, "in")

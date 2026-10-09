@@ -9,16 +9,13 @@ import (
 	"strings"
 )
 
-// Version is a semantic version without build metadata. Pre is the
-// pre-release part after '-', e.g. "beta.2"; empty for a final release.
+// Version is a semantic version without build metadata.
 type Version struct {
 	Major, Minor, Patch int
 	Pre                 string
 }
 
 // ParseVersion parses "X.Y.Z" or "X.Y.Z-pre", with an optional leading "v".
-// Leading zeros, build metadata ("+...") and empty pre-release parts are
-// rejected so every version has exactly one spelling.
 func ParseVersion(s string) (Version, error) {
 	s = strings.TrimPrefix(s, "v")
 	core, pre, hasPre := strings.Cut(s, "-")
@@ -61,10 +58,8 @@ func (v Version) String() string {
 	return s
 }
 
-// CompareVersions returns -1, 0 or 1 using semver precedence: a pre-release
-// sorts before its final release; pre-release identifiers compare
-// numerically when both are numeric, else lexically, and a longer list wins
-// when all shared identifiers are equal.
+// CompareVersions returns -1, 0 or 1 using semver precedence: a pre-release sorts before
+// its final release; pre-release identifiers compare numerically when both are numeric.
 func CompareVersions(a, b Version) int {
 	for _, d := range [3][2]int{{a.Major, b.Major}, {a.Minor, b.Minor}, {a.Patch, b.Patch}} {
 		if d[0] != d[1] {

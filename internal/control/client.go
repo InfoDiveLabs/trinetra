@@ -15,44 +15,29 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// callTimeout bounds how long Client.call waits for a response. call holds the
-// client mutex for the whole round trip, so without a deadline one wedged server
-// method would hang every caller sharing the Client. A var so tests can shrink it.
+// callTimeout bounds how long Client.call waits for a response. call holds the client mutex
+// for the whole round trip.
 var callTimeout = 30 * time.Second
 
-// redialAfter is how long a connection may sit unused before call replaces
-// it. It must stay below the server's idleTimeout: past that the daemon has
-// already closed the connection, and the first call after a quiet spell
-// would fail.
+// redialAfter is how long a connection may sit unused before call replaces it.
 var redialAfter = idleTimeout / 2
 
 // Client is a core.API implementation backed by a control-socket connection.
-// It is safe for concurrent use; call serializes access so request/response
-// pairs and ids never interleave.
-//
-// The connection is self-healing: any transport failure (write error, read
-// error/timeout, mismatched response id) leaves the stream frame-misaligned, so
-// call closes the connection (poison) and the next call re-dials. Without this a
-// single slow daemon response would wedge a long-lived Client (trinetra-web holds
-// one for the whole process) with no reconnect of its own.
 type Client struct {
 	*clientConn
-	// node, when non-empty, routes every call to that fleet node instead of the
-	// daemon's own host (see ForNode). Views share clientConn with their parent, so
-	// closing one never closes the shared connection.
+	// node, when non-empty, routes every call to that fleet node instead of the daemon's own
+	// host (see ForNode).
 	node string
 }
 
-// clientConn is the connection state shared by a Client and its node views:
-// the socket, reader, dial parameters for reconnecting, and the mutex/id pair
-// that serializes round trips.
+// clientConn is the connection state shared by a Client and its node views: the socket,
+// reader, dial parameters for reconnecting.
 type clientConn struct {
 	conn net.Conn
 	r    *bufio.Reader
 
-	// path and token are kept from Dial so Subscribe can open its own dedicated
-	// connection and call can re-dial after a poisoned one is discarded. A stream
-	// sits in a long-lived read loop that would starve callers on the primary conn.
+	// path and token are kept from Dial so Subscribe can open its own dedicated connection and
+	// call can re-dial after a poisoned one is discarded.
 	path  string
 	token string
 
@@ -64,10 +49,8 @@ type clientConn struct {
 var _ core.API = (*Client)(nil)
 var _ core.FleetProvider = (*Client)(nil)
 
-// Dial connects to the control socket at path, exchanges the protocol hello and
-// presents token (pass "" when the server requires no auth). A wrong token and a
-// version mismatch fail the same way: the server writes an error response and
-// closes instead of echoing a valid hello.
+// Dial connects to the control socket at path, exchanges the protocol hello and presents
+// token (pass "" when the server requires no auth).
 func Dial(path, token string) (*Client, error) {
 	c := &Client{clientConn: &clientConn{path: path, token: token}}
 	if err := c.connect(); err != nil {
@@ -76,28 +59,21 @@ func Dial(path, token string) (*Client, error) {
 	return c, nil
 }
 
-// ForNode returns a view of c whose calls are routed to fleet node id. The view
-// shares c's clientConn, so Close on it is a no-op. core.SelfNodeID explicitly
-// asks for the daemon's own host through the same routing path as a real node.
+// ForNode returns a view of c whose calls are routed to fleet node id.
 func (c *Client) ForNode(id string) *Client {
 	return &Client{clientConn: c.clientConn, node: id}
 }
 
-// Node implements core.FleetProvider. It never fails locally: id is validated
-// server-side on the first call (core.ErrNoSuchNode).
+// Node implements core.FleetProvider.
 func (c *Client) Node(id string) (core.API, error) { return c.ForNode(id), nil }
 
-// Fleet implements core.FleetProvider. Fleet.* methods always run against the
-// master, so the returned API uses an unrouted view (node "").
+// Fleet implements core.FleetProvider.
 func (c *Client) Fleet() core.FleetAPI {
 	return fleetClient{c: &Client{clientConn: c.clientConn}}
 }
 
-// connect dials the socket and completes the hello handshake, leaving c.conn/c.r
-// nil on failure. Used by Dial and by call to re-establish a poisoned connection
-// (callers there hold c.mu). The handshake read is bounded by callTimeout so a
-// reconnect to a daemon that accepts but never answers fails fast instead of
-// blocking every caller.
+// connect dials the socket and completes the hello handshake, leaving c.conn/c.r nil on
+// failure.
 func (c *Client) connect() error {
 	conn, err := net.Dial("unix", c.path)
 	if err != nil {
@@ -141,8 +117,7 @@ func (c *Client) poison() {
 	}
 }
 
-// Close closes the connection. It is a no-op on a node view, which shares the
-// connection with the Client it came from.
+// Close closes the connection.
 func (c *Client) Close() error {
 	if c.node != "" {
 		return nil
@@ -155,10 +130,8 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// wireErrSentinels lists the core sentinel errors a control-socket caller may
-// need to recover via errors.Is, checked by reconstructWireErr in order. A new
-// sentinel wrapped by a Fleet.*/node method via fmt.Errorf("...: %w", s) must be
-// added here, or callers silently lose errors.Is against it.
+// wireErrSentinels lists the core sentinel errors a control-socket caller may need to
+// recover via errors.Is, checked by reconstructWireErr in order.
 var wireErrSentinels = []error{core.ErrNoSuchNode, core.ErrNotMaster, core.ErrConflict, core.ErrNotFound, core.ErrStatusPageOnChild}
 
 // wireErr preserves a method error's exact text while unwrapping to the core
@@ -171,10 +144,8 @@ type wireErr struct {
 func (e *wireErr) Error() string { return e.msg }
 func (e *wireErr) Unwrap() error { return e.target }
 
-// reconstructWireErr rebuilds a method error from resp.Error (plain text only):
-// a *wireErr unwrapping to a sentinel when the message ends with that sentinel's
-// text (the shape fmt.Errorf("...: %w", s) produces), else errors.New. Keeps
-// errors.Is(err, core.ErrNoSuchNode) working across the socket hop.
+// reconstructWireErr rebuilds a method error from resp.Error (plain text only): a *wireErr
+// unwrapping to a sentinel when the message ends with that sentinel's text.
 func reconstructWireErr(msg string) error {
 	if msg == "" {
 		return nil
@@ -187,13 +158,8 @@ func reconstructWireErr(msg string) error {
 	return errors.New(msg)
 }
 
-// call sends one request frame and unmarshals the matching response into result
-// (skipped if nil), holding mu for the whole round trip.
-//
-// A transport failure (dial, write, read/timeout, response id mismatch) poisons
-// the connection, since the stream can no longer be trusted to be frame-aligned.
-// A method-level error (ok=false) or an unmarshal failure consumed exactly one
-// frame, so the stream stays aligned and the connection is kept.
+// call sends one request frame and unmarshals the matching response into result (skipped if
+// nil), holding mu for the whole round trip.
 func (c *Client) call(method string, params any, result any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -238,9 +204,8 @@ func (c *Client) call(method string, params any, result any) error {
 		return fmt.Errorf("control: response id %d does not match request id %d", resp.ID, id)
 	}
 	c.lastUsed = time.Now()
-	// A daemon that predates fleet routing ignores req.Node, answers with its own
-	// host's data, and never echoes Node. Reject that before the ok check so its
-	// valid answer is not mistaken for the requested node's.
+	// A daemon that predates fleet routing ignores req.Node, answers with its own host's data,
+	// and never echoes Node.
 	if c.node != "" && resp.Node != c.node {
 		return errors.New("control: daemon does not support fleet node routing (upgrade trinetra)")
 	}
@@ -419,10 +384,8 @@ func (c *Client) ValidateChannel(cc config.ChannelConfig) error {
 	return c.call("ValidateChannel", params, nil)
 }
 
-// Subscribe implements core.API over its own DEDICATED connection so the
-// long-lived stream never blocks (or is blocked by) the mutex-serialized primary
-// conn. Cancelling ctx or the server ending the stream closes that connection
-// and the returned channel.
+// Subscribe implements core.API over its own DEDICATED connection so the long-lived stream
+// never blocks (or is blocked by) the mutex-serialized primary conn.
 func (c *Client) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	if c.node != "" && c.node != core.SelfNodeID {
 		return nil, errors.New("control: live event streams are not available for remote fleet nodes yet")

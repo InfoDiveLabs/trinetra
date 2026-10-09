@@ -7,12 +7,8 @@ import (
 	"testing"
 )
 
-// monitoringTestView is a distinctive fake MonitoringView: every value is
-// chosen so it can't collide with the template's original hard-coded demo
-// figures (jellyfin/nextcloud/postgres containers, docker.service/ssh.service
-// units, /, /data filesystems, postgres/php-fpm processes, 220 units, 214
-// processes, ...). If a rendered page still shows one of those, the template is
-// still using demo markup instead of the real Deps.Monitoring() value.
+// monitoringTestView is a distinctive fake MonitoringView: every value is chosen so it
+// can't collide with the template's original hard-coded demo figures.
 func monitoringTestView() MonitoringView {
 	return MonitoringView{
 		Containers: []MonitoringContainerView{
@@ -38,9 +34,8 @@ func monitoringTestDeps(t *testing.T) Deps {
 	return d
 }
 
-// TestMonitoringRendersRealValues pins that GET /monitoring (signed in)
-// renders actual values pulled from Deps.Monitoring(), not hard-coded demo
-// figures.
+// TestMonitoringRendersRealValues pins that GET /monitoring (signed in) renders actual
+// values pulled from Deps.Monitoring(), not hard-coded demo figures.
 func TestMonitoringRendersRealValues(t *testing.T) {
 	d := monitoringTestDeps(t)
 	h := newHandler(d)
@@ -72,10 +67,8 @@ func TestMonitoringRendersRealValues(t *testing.T) {
 	}
 }
 
-// TestMonitoringDisabledCollectorsShowNote pins the "collector disabled" note
-// requirement: when collect.services/collect.processes are off, the page
-// must render a note explaining that, not a 500 and not a table that looks
-// like "zero units/processes".
+// TestMonitoringDisabledCollectorsShowNote pins the "collector disabled" note requirement:
+// when collect.services/collect.processes are off.
 func TestMonitoringDisabledCollectorsShowNote(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{monitoring: MonitoringView{
@@ -101,9 +94,8 @@ func TestMonitoringDisabledCollectorsShowNote(t *testing.T) {
 	}
 }
 
-// TestMonitoringRouteIsViewerGated pins that GET /monitoring requires at
-// least a viewer session: anonymous is redirected to /login, exactly like
-// the other "Monitor" routes (dashboard/history/alerts).
+// TestMonitoringRouteIsViewerGated pins that GET /monitoring requires at least a viewer
+// session: anonymous is redirected to /login, exactly like the other "Monitor" routes.
 func TestMonitoringRouteIsViewerGated(t *testing.T) {
 	d := monitoringTestDeps(t)
 	h := newHandler(d)

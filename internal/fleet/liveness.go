@@ -70,8 +70,7 @@ func NewTracker(cfg TrackerConfig) *Tracker {
 	return &Tracker{cfg: cfg, nodes: map[string]*tracked{}}
 }
 
-// Seed registers ids as just seen at now. Called at master start so the
-// master's own downtime never counts against its nodes.
+// Seed registers ids as just seen at now.
 func (t *Tracker) Seed(ids []string, revoked map[string]bool, now int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -84,9 +83,8 @@ func (t *Tracker) Seed(ids []string, revoked map[string]bool, now int64) {
 	}
 }
 
-// Seen records contact from id (adding it if new). backlogAgeSec < 0 means
-// contact without outbox info (e.g. an ingest or backfill call) and leaves
-// the last reported backlog age unchanged.
+// Seen records contact from id (adding it if new). backlogAgeSec < 0 means contact without
+// outbox info.
 func (t *Tracker) Seen(id string, now int64, backlogAgeSec int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -220,9 +218,7 @@ func NewNodeAlerter() *NodeAlerter {
 	return &NodeAlerter{alerted: map[string]int64{}, massMembers: map[string]bool{}}
 }
 
-// Alerted reports whether id currently has an individual node-down alert
-// open. A node that is down as part of a mass disconnect (folded into the
-// fleet:connectivity incident) is not alerted individually.
+// Alerted reports whether id currently has an individual node-down alert open.
 func (a *NodeAlerter) Alerted(id string) bool {
 	_, ok := a.alerted[id]
 	return ok
@@ -244,9 +240,8 @@ func humanDur(sec int64) string {
 	return fmt.Sprintf("%dh%dm", m/60, m%60)
 }
 
-// Forget drops id from alerting (the node was removed from the fleet): an
-// open node-down page is resolved, and if id was the last member of an open
-// fleet-connectivity incident that is resolved too.
+// Forget drops id from alerting (the node was removed from the fleet): an open node-down
+// page is resolved.
 func (a *NodeAlerter) Forget(id, name string) []AlertIntent {
 	var out []AlertIntent
 	if _, ok := a.alerted[id]; ok {
@@ -263,13 +258,7 @@ func (a *NodeAlerter) Forget(id, name string) []AlertIntent {
 	return out
 }
 
-// Plan returns the alerts to raise/resolve for ev. A mass disconnect opens one
-// fleet:connectivity incident; nodes in it (or going stale/down while it is open,
-// even if they joined later) are not paged individually. Membership grows every
-// tick from ev.MassDown and new stale/down transitions, and a member leaves only
-// on transitioning to online, lagging or revoked. The incident resolves when all
-// members have left, so a node still lost when the originals recover keeps it
-// open rather than causing an early "restored" and a late individual page.
+// Plan returns the alerts to raise/resolve for ev.
 func (a *NodeAlerter) Plan(ev Evaluation, now int64, name func(id string) string) []AlertIntent {
 	var out []AlertIntent
 	if !a.massActive && len(ev.MassDown) > 0 {

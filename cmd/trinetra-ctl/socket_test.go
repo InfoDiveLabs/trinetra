@@ -69,10 +69,8 @@ func TestResolveTokenEnvIsValueNotPath(t *testing.T) {
 	}
 }
 
-// TestResolveTokenEnvFallsBackToOldName pins the compat side: with
-// TRINETRA_CONTROL_TOKEN unset, resolveToken still honors the old
-// SERVERWATCH_CONTROL_TOKEN name for one release, so a pre-rename core
-// spawning this (rebuilt) plugin still authenticates.
+// TestResolveTokenEnvFallsBackToOldName pins the compat side: with TRINETRA_CONTROL_TOKEN
+// unset, resolveToken still honors the old SERVERWATCH_CONTROL_TOKEN name for one release.
 func TestResolveTokenEnvFallsBackToOldName(t *testing.T) {
 	os.Unsetenv("TRINETRA_CONTROL_TOKEN")
 	t.Setenv("SERVERWATCH_CONTROL_TOKEN", "old-name-tok")
@@ -112,14 +110,10 @@ func TestResolveTokenMissingFileIsEmpty(t *testing.T) {
 	}
 }
 
-// TestEndToEndStatusOverRealSocket stands up a real control.Serve over a temp
-// unix socket + token file and drives realMain through the full path (resolve
-// -> Dial -> run status), proving the served snapshot reaches the printed
-// output over the wire.
+// TestEndToEndStatusOverRealSocket stands up a real control.Serve over a temp unix socket +
+// token file and drives realMain through the full path (resolve -> Dial -> run status).
 func TestEndToEndStatusOverRealSocket(t *testing.T) {
-	// chdir into the temp dir and use a relative socket name: unix socket
-	// paths are capped (104 bytes on darwin) and t.TempDir()'s absolute path
-	// alone can exceed that, so binding relative to cwd keeps sun_path short.
+	// chdir into the temp dir and use a relative socket name: unix socket paths are capped.
 	dir := t.TempDir()
 	prevWD, err := os.Getwd()
 	if err != nil {

@@ -11,15 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like the
-// real daemon's (see internal/trinetra/daemon.go's reload closure): Cfg()
-// returns whatever was last successfully applied, so a test can POST /config or
-// /channels and then assert against Cfg() the same way the real web server
-// would after a live SIGHUP-free reload. Both Deps.Reload (still read directly
-// by the /public settings save, handlers_public.go) and Deps.API.ApplyConfig
-// are wired to the SAME closure, so every existing test asserting against the
-// returned cfg/reloadCalled keeps working no matter which of the two a given
-// handler happens to call.
+// configTestDeps builds a Deps whose Cfg/Reload/API.ApplyConfig behave like the real
+// daemon's (see internal/trinetra/daemon.go's reload closure).
 func configTestDeps(t *testing.T) (d Deps, cfg **config.Config, reloadCalled *bool) {
 	t.Helper()
 	d = enrollTestDeps(t)
@@ -37,9 +30,8 @@ func configTestDeps(t *testing.T) (d Deps, cfg **config.Config, reloadCalled *bo
 	return d, cfgPtr, &called
 }
 
-// TestConfigSaveRejectsBadValueWithNoWrite pins the core TDD obligation: an
-// invalid field value rejects with 400, Reload is never called, and the
-// live config is completely untouched.
+// TestConfigSaveRejectsBadValueWithNoWrite pins the core TDD obligation: an invalid field
+// value rejects with 400, Reload is never called.
 func TestConfigSaveRejectsBadValueWithNoWrite(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -100,9 +92,8 @@ func baseConfigForm() url.Values {
 	}
 }
 
-// TestConfigSavePersistsReloadsAndAudits pins the success path: a valid POST
-// persists (Reload called with the new values), and an audit record is
-// written for each field that actually changed.
+// TestConfigSavePersistsReloadsAndAudits pins the success path: a valid POST persists
+// (Reload called with the new values).
 func TestConfigSavePersistsReloadsAndAudits(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -146,9 +137,8 @@ func TestConfigSavePersistsReloadsAndAudits(t *testing.T) {
 	}
 }
 
-// TestConfigIdentityPanelRendersAndSaves pins the identity setup UI (#101/#102):
-// the config page renders the server-name field + public-IP toggle, and a POST
-// applies both onto the live config.
+// TestConfigIdentityPanelRendersAndSaves pins the identity setup UI (#101/#102): the config
+// page renders the server-name field + public-IP toggle.
 func TestConfigIdentityPanelRendersAndSaves(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	h := newHandler(d)
@@ -230,11 +220,8 @@ func TestConfigSaveUnchangedFieldsWriteNoAudit(t *testing.T) {
 	}
 }
 
-// TestConfigSaveBaselineAlertsToggleRoundTrips pins the bool-toggle contract
-// for the important "turn anomaly alerting on/off" switch: on -> off -> on,
-// each persisting via Reload and each transition audited. Off is submitted by
-// omitting the field entirely, matching how a browser submits an unchecked
-// checkbox (never a present-but-empty value).
+// TestConfigSaveBaselineAlertsToggleRoundTrips pins the bool-toggle contract for the
+// important "turn anomaly alerting on/off" switch.
 func TestConfigSaveBaselineAlertsToggleRoundTrips(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	h := newHandler(d)
@@ -300,10 +287,7 @@ func TestConfigSaveBaselineAlertsToggleRoundTrips(t *testing.T) {
 }
 
 // TestConfigSaveIntervalsRoundTripAndRejectsBadCombo pins the int fields
-// (fast/sample/heartbeat interval): a valid, consistent combo round-trips,
-// and an inconsistent one (sample_interval not a multiple of fast_interval --
-// config.Config.Set's existing validator) rejects with 400 and writes
-// nothing, exactly like every other bad-value case.
+// (fast/sample/heartbeat interval): a valid, consistent combo round-trips.
 func TestConfigSaveIntervalsRoundTripAndRejectsBadCombo(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	h := newHandler(d)
@@ -341,13 +325,8 @@ func TestConfigSaveIntervalsRoundTripAndRejectsBadCombo(t *testing.T) {
 	}
 }
 
-// TestConfigSaveAcceptsValidFinalIntervalCombo pins that configSaveHandler
-// validates the FINAL (fast_interval, sample_interval) pair as a whole, not
-// each field against the other's stale value. From defaults (fast=5,
-// sample=60), POSTing fast=7/sample=126 is a valid final combo (126%7==0) even
-// though it fails against either field's OLD value in isolation (60%7!=0,
-// 126%5!=0), so it must not be rejected with 400 no matter which field's
-// config.Set runs first.
+// TestConfigSaveAcceptsValidFinalIntervalCombo pins that configSaveHandler validates the
+// FINAL (fast_interval, sample_interval) pair as a whole.
 func TestConfigSaveAcceptsValidFinalIntervalCombo(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -380,10 +359,8 @@ func TestConfigSaveAcceptsValidFinalIntervalCombo(t *testing.T) {
 	}
 }
 
-// TestConfigSaveRejectsInvalidFinalIntervalCombo is the flip side: a final
-// pair that's genuinely invalid (100%7!=0) still 400s with nothing written,
-// even though the fix now validates the pair together instead of
-// field-by-field.
+// TestConfigSaveRejectsInvalidFinalIntervalCombo is the flip side: a final pair that's
+// genuinely invalid (100%7!=0) still 400s with nothing written.
 func TestConfigSaveRejectsInvalidFinalIntervalCombo(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -408,9 +385,8 @@ func TestConfigSaveRejectsInvalidFinalIntervalCombo(t *testing.T) {
 	}
 }
 
-// TestConfigSaveFloatFieldsRoundTrip pins two float fields from different
-// panels: thresholds.cpu_pct (Thresholds) and baseline_min_pct (Anomaly
-// detection).
+// TestConfigSaveFloatFieldsRoundTrip pins two float fields from different panels:
+// thresholds.cpu_pct (Thresholds) and baseline_min_pct (Anomaly detection).
 func TestConfigSaveFloatFieldsRoundTrip(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	h := newHandler(d)
@@ -434,9 +410,7 @@ func TestConfigSaveFloatFieldsRoundTrip(t *testing.T) {
 }
 
 // TestConfigSaveRetentionDurationRejectsBadValue pins the duration fields
-// (storage.raw_retention/rollup_retention): an unparseable duration rejects
-// with 400 via config.Config.Set's existing validateRetentionDuration, and
-// writes nothing.
+// (storage.raw_retention/rollup_retention).
 func TestConfigSaveRetentionDurationRejectsBadValue(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -459,9 +433,8 @@ func TestConfigSaveRetentionDurationRejectsBadValue(t *testing.T) {
 	}
 }
 
-// TestConfigTargetEditsRoundTrip pins the monitors table: posting a target's
-// enabled flag and threshold round-trips into cfg.Targets, and clearing the
-// threshold field removes the override.
+// TestConfigTargetEditsRoundTrip pins the monitors table: posting a target's enabled flag
+// and threshold round-trips into cfg.Targets.
 func TestConfigTargetEditsRoundTrip(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	h := newHandler(d)
@@ -502,9 +475,8 @@ func TestConfigTargetEditsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestConfigTargetBadThresholdRejectedWithNoWrite pins that an unparseable
-// per-target threshold rejects with 400 and leaves Targets untouched, same
-// "no write on bad value" contract as the scalar fields.
+// TestConfigTargetBadThresholdRejectedWithNoWrite pins that an unparseable per-target
+// threshold rejects with 400 and leaves Targets untouched.
 func TestConfigTargetBadThresholdRejectedWithNoWrite(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -566,12 +538,8 @@ func TestConfigPageRendersFormAndCurrentValues(t *testing.T) {
 	}
 }
 
-// TestConfigPageWebPanelReadOnlyAndForgedFieldIgnored pins the "Access &
-// domain" panel's read-only contract: GET renders the current web.* values,
-// but no <input name="..."> in the page can ever Set a web.* key (a forged
-// POST field targeting one must be silently ignored) -- the whole point being
-// that editing origin/rp_id from the web UI risks locking an admin out of
-// passkey login, so it's CLI-only.
+// TestConfigPageWebPanelReadOnlyAndForgedFieldIgnored pins the "Access & domain" panel's
+// read-only contract: GET renders the current web.* values.
 func TestConfigPageWebPanelReadOnlyAndForgedFieldIgnored(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).Web.Enabled = true
@@ -617,9 +585,8 @@ func TestConfigPageWebPanelReadOnlyAndForgedFieldIgnored(t *testing.T) {
 		}
 	}
 
-	// Even if a form submission forges a web.* field (e.g. via a modified
-	// request, not something the real page ever sends), the handler must
-	// ignore it: it isn't in the scalarEdit list at all.
+	// Even if a form submission forges a web.* field (e.g. via a modified request, not
+	// something the real page ever sends), the handler must ignore it.
 	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
 	form := baseConfigForm()
 	form.Set("web.rp_id", "evil.example.com")
@@ -661,13 +628,8 @@ func TestConfigRoutesAreAdminGated(t *testing.T) {
 	}
 }
 
-// TestConfigPageManagedFieldsDisabledAndPostRejected pins the read-only
-// contract on a fleet child with a managed key: GET disables that field and
-// shows the fragment id; a POST that never touches it (a real browser never
-// submits a disabled field) still saves everything ELSE normally; a POST that
-// forges the managed field anyway (bypassing the disabled attribute) is
-// rejected outright, with nothing written -- even to an unrelated field in the
-// same request.
+// TestConfigPageManagedFieldsDisabledAndPostRejected pins the read-only contract on a fleet
+// child with a managed key: GET disables that field and shows the fragment id.
 func TestConfigPageManagedFieldsDisabledAndPostRejected(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	(*cfg).Thresholds.CPUPct = 85
@@ -695,9 +657,8 @@ func TestConfigPageManagedFieldsDisabledAndPostRejected(t *testing.T) {
 		t.Errorf("config page must show the managing fragment id and note:\n%s", body)
 	}
 
-	// A normal save (the managed field simply absent, as a real browser
-	// would send it) must succeed and leave the managed field untouched
-	// while everything else applies.
+	// A normal save (the managed field simply absent, as a real browser would send it) must
+	// succeed and leave the managed field untouched while everything else applies.
 	_, cookie, csrf := seedAdmin(t, "root", users, sessions)
 	form := baseConfigForm()
 	form.Del("cpu_pct")
@@ -733,11 +694,8 @@ func TestConfigPageManagedFieldsDisabledAndPostRejected(t *testing.T) {
 	}
 }
 
-// TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt pins the secret-key
-// contract for update.github_token (config.IsSecretKey): GET /config never puts
-// the raw secret in the page, and a POST that saves other fields with the token
-// input left blank keeps the stored value (rather than clearing it, which a
-// naive "always apply the posted value" edit would do).
+// TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt pins the secret-key contract for
+// update.github_token (config.IsSecretKey).
 func TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).Update.GitHubToken = "ghp_SECRET"
@@ -771,9 +729,8 @@ func TestConfigSecretTokenNeverRenderedAndBlankSubmitKeepsIt(t *testing.T) {
 	}
 }
 
-// TestConfigSecretTokenSetAndClear pins the other two paths: posting a
-// non-blank token sets it, and the explicit clear checkbox clears it -- both
-// audited with "(set)"/"(not set)" rather than the raw token value.
+// TestConfigSecretTokenSetAndClear pins the other two paths: posting a non-blank token sets
+// it, and the explicit clear checkbox clears it.
 func TestConfigSecretTokenSetAndClear(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	h := newHandler(d)

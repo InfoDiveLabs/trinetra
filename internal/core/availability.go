@@ -6,10 +6,8 @@ import (
 	"time"
 )
 
-// coalesceDownEvents merges overlapping or touching events of the SAME type into
-// single windows, so adjacent outages read as one incident and count their UNION,
-// not a double-counted sum, toward downtime and uptime % (#116). Input need not be
-// sorted; the result is sorted by Start.
+// coalesceDownEvents merges overlapping or touching events of the SAME type into single
+// windows, so adjacent outages read as one incident and count their UNION.
 func coalesceDownEvents(evs []DownEventView) []DownEventView {
 	if len(evs) < 2 {
 		return evs
@@ -51,45 +49,34 @@ var availabilityBlockCount = int(availabilityWindow / availabilityBlockDur)
 type AvailabilityBlock struct {
 	// Down is true when at least one downtime event overlaps this block.
 	Down bool `json:"down"`
-	// Label is the block's start time (server-local "HH:MM"), for the
-	// strip's hover title.
+	// Label is the block's start time (server-local "HH:MM"), for the strip's hover title.
 	Label string `json:"label"`
 }
 
-// Availability is the dashboard's 24h strip: up/down 15-min blocks plus the
-// header summary, computed from the downtime EventsSource. A block is either up
-// or down; there is no degraded state.
+// Availability is the dashboard's 24h strip: up/down 15-min blocks plus the header summary,
+// computed from the downtime EventsSource.
 type Availability struct {
 	// Blocks is availabilityBlockCount 15-min blocks, oldest first.
 	Blocks []AvailabilityBlock `json:"blocks"`
 	// UptimePct is (window - downtime) / window * 100 from each event's exact overlap
 	// with the window, not block-quantized.
 	UptimePct float64 `json:"uptime_pct"`
-	// Incidents is the number of downtime events overlapping the window. Each
-	// DownEventView is already one incident (the tracker never merges outages), so
-	// this is len(events).
+	// Incidents is the number of downtime events overlapping the window.
 	Incidents int `json:"incidents"`
 	// IncidentsLabel is Incidents pluralized for the strip's header line
 	// ("0 incidents", "1 incident", "2 incidents").
 	IncidentsLabel string `json:"incidents_label"`
-	// DowntimeStr is the total in-window downtime, human-formatted ("0m",
-	// "45m", "1h 20m").
+	// DowntimeStr is the total in-window downtime, human-formatted ("0m", "45m", "1h 20m").
 	DowntimeStr string `json:"downtime_str"`
 }
 
-// EventsSource is the seam ComputeAvailability needs onto a downtime event log:
-// Events returns events overlapping [from, to] (Unix seconds). internal/web's
-// EventsStore satisfies it without importing back into internal/web.
-//
-// A range with no events is not an error: it returns an empty (possibly
-// nil) slice and a nil error.
+// EventsSource is the seam ComputeAvailability needs onto a downtime event log: Events
+// returns events overlapping [from, to].
 type EventsSource interface {
 	Events(from, to int64) ([]DownEventView, error)
 }
 
-// ComputeAvailability builds the last-24h Availability ending at now (Unix
-// seconds). A nil events or a query error degrades to "no events" (100% up, 0
-// incidents).
+// ComputeAvailability builds the last-24h Availability ending at now (Unix seconds).
 func ComputeAvailability(events EventsSource, now int64) Availability {
 	to := now
 	from := to - int64(availabilityWindow/time.Second)

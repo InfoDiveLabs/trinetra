@@ -6,12 +6,7 @@ import (
 	"strings"
 )
 
-// defaultRuntimeDir mirrors internal/trinetra's constant of the same name:
-// where the control socket and its sibling token file live when systemd has
-// not exported RUNTIME_DIRECTORY (the by-hand case). Duplicated here rather
-// than imported because internal/trinetra is the daemon's own package
-// (untagged, but it pulls in the whole daemon) and this client only needs the
-// two path strings.
+// defaultRuntimeDir mirrors internal/trinetra's constant of the same name.
 const defaultRuntimeDir = "/run/trinetra"
 
 // resolveSocketPath decides which control socket to dial, highest priority
@@ -38,14 +33,8 @@ func resolveSocketPath(flagVal string) string {
 	return filepath.Join(dir, "control.sock")
 }
 
-// resolveTokenFile decides which token FILE to read, highest priority first:
-// the --token flag value (a file path), then the sibling "token" file next to
-// the resolved socket. Keying the default off the socket's own directory keeps
-// the pair consistent when --socket points somewhere non-default (mirroring
-// the daemon, which writes both into the same runtime directory).
-// $TRINETRA_CONTROL_TOKEN (or, as a compat fallback, $SERVERWATCH_CONTROL_TOKEN)
-// is NOT a path -- it carries the token VALUE and is handled directly in
-// resolveToken.
+// resolveTokenFile decides which token FILE to read, highest priority first: the --token
+// flag value (a file path), then the sibling "token" file next to the resolved socket.
 func resolveTokenFile(flagVal, socketPath string) string {
 	if flagVal != "" {
 		return flagVal

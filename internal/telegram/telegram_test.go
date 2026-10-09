@@ -50,9 +50,8 @@ func TestSendMessageSetsParseModeHTML(t *testing.T) {
 	}
 }
 
-// TestSendMessageChunksLongText: a message over the 4096-char limit is split
-// into several sendMessage calls, each within the limit, instead of failing with
-// an HTTP 400.
+// TestSendMessageChunksLongText: a message over the 4096-char limit is split into several
+// sendMessage calls, each within the limit, instead of failing with an HTTP 400.
 func TestSendMessageChunksLongText(t *testing.T) {
 	var mu sync.Mutex
 	var texts []string
@@ -149,9 +148,8 @@ func TestSendMessageReturnsErrorOnPartialChunkFailure(t *testing.T) {
 	}
 }
 
-// TestSendMessageIncludesAPIErrorDescription: a non-200 response's Telegram
-// "description" (e.g. "Bad Request: message is too long") is folded into the
-// returned error.
+// TestSendMessageIncludesAPIErrorDescription: a non-200 response's Telegram "description"
+// (e.g. "Bad Request: message is too long") is folded into the returned error.
 func TestSendMessageIncludesAPIErrorDescription(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
@@ -170,10 +168,8 @@ func TestSendMessageIncludesAPIErrorDescription(t *testing.T) {
 	}
 }
 
-// TestSendMessageChunkKeepsPreBalanced asserts that when a chunk boundary
-// falls inside a <pre>...</pre> block, each emitted chunk is individually
-// tag-balanced (the split closes </pre> and the next chunk reopens <pre>),
-// so no chunk reaches Telegram as unbalanced HTML → 400.
+// TestSendMessageChunkKeepsPreBalanced asserts that when a chunk boundary falls inside a
+// <pre>...</pre> block, each emitted chunk is individually tag-balanced.
 func TestSendMessageChunkKeepsPreBalanced(t *testing.T) {
 	var mu sync.Mutex
 	var texts []string
@@ -270,8 +266,7 @@ func TestGetUpdates(t *testing.T) {
 }
 
 // TestSendMessageWithButtonsEncodesMarkup pins the reply_markup shape
-// {"inline_keyboard":[[{"text":...,"callback_data":...}]]}, form encoded like
-// every other sendMessage field.
+// {"inline_keyboard":[[{"text":...,"callback_data":...}]]}.
 func TestSendMessageWithButtonsEncodesMarkup(t *testing.T) {
 	var gotText, gotMarkup string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -333,8 +328,7 @@ func TestSendMessagePlainHasNoMarkup(t *testing.T) {
 }
 
 // TestGetUpdatesDecodesCallbackQuery pins the callback_query shape:
-// id/data/from.id/message.chat.id decode into CallbackID/CallbackData/
-// CallbackChat, and a plain-message Update leaves them empty.
+// id/data/from.id/message.chat.id decode into CallbackID/CallbackData/ CallbackChat.
 func TestGetUpdatesDecodesCallbackQuery(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{
@@ -375,9 +369,8 @@ func TestGetUpdatesDecodesCallbackQuery(t *testing.T) {
 	}
 }
 
-// TestAnswerCallbackQuerySendsIDAndText pins AnswerCallbackQuery's request
-// shape: callback_query_id and text as form fields against
-// answerCallbackQuery.
+// TestAnswerCallbackQuerySendsIDAndText pins AnswerCallbackQuery's request shape:
+// callback_query_id and text as form fields against answerCallbackQuery.
 func TestAnswerCallbackQuerySendsIDAndText(t *testing.T) {
 	var gotPath, gotID, gotText string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -401,9 +394,8 @@ func TestAnswerCallbackQuerySendsIDAndText(t *testing.T) {
 	}
 }
 
-// TestAnswerCallbackQueryPropagatesError asserts a non-200 status is
-// surfaced as an error rather than silently swallowed, matching
-// sendOneContext's own error handling.
+// TestAnswerCallbackQueryPropagatesError asserts a non-200 status is surfaced as an error
+// rather than silently swallowed, matching sendOneContext's own error handling.
 func TestAnswerCallbackQueryPropagatesError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

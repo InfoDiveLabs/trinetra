@@ -36,9 +36,8 @@ type envelope struct {
 const (
 	maintKeyAAD = "trinetra-maint-key-v1"
 
-	// envelopeN/R/P are the only scrypt parameters this tool writes. readEncryptedKey
-	// requires an exact match instead of trusting N/r/p from the file: a huge N is an
-	// OOM vector and a tiny N silently weakens the KDF.
+	// envelopeN/R/P are the only scrypt parameters this tool writes. readEncryptedKey requires
+	// an exact match instead of trusting N/r/p from the file.
 	envelopeN       = 1 << 15
 	envelopeR       = 8
 	envelopeP       = 1
@@ -93,9 +92,7 @@ func writeEncryptedKey(path string, pass []byte) (ed25519.PublicKey, error) {
 	return pub, nil
 }
 
-// readEncryptedKey decrypts an envelope written by writeEncryptedKey. A wrong
-// passphrase or corrupted file fails closed, and every field is bounds-checked so
-// a malformed file is rejected, never a panic.
+// readEncryptedKey decrypts an envelope written by writeEncryptedKey.
 func readEncryptedKey(path string, pass []byte) (ed25519.PrivateKey, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -138,9 +135,8 @@ func readEncryptedKey(path string, pass []byte) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
-// writeKeyFile writes data to a new file at path (0600, O_EXCL so it never
-// overwrites a key), fsyncs it, and checks every error including Close. A
-// failure removes the partial file rather than leave a key never fully written.
+// writeKeyFile writes data to a new file at path (0600, O_EXCL so it never overwrites a
+// key), fsyncs it, and checks every error including Close.
 func writeKeyFile(path string, data []byte) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -164,8 +160,7 @@ func writeKeyFile(path string, data []byte) (err error) {
 	return nil
 }
 
-// openTTY opens the controlling terminal for interactive prompts. It is a
-// variable so tests can substitute a fake without touching a real terminal.
+// openTTY opens the controlling terminal for interactive prompts.
 var openTTY = func() (*os.File, error) {
 	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
 }
@@ -216,9 +211,7 @@ func readPassphrase(prompt string) ([]byte, error) {
 		}
 	}()
 	defer func() {
-		// Stop signal delivery BEFORE releasing the watcher goroutine: in the other order
-		// a SIGINT in between would be swallowed by the unwatched channel instead of
-		// killing the process.
+		// Stop signal delivery BEFORE releasing the watcher goroutine.
 		signal.Stop(sigCh)
 		close(restored)
 		sttyEcho(tty, true)
@@ -233,8 +226,7 @@ func readPassphrase(prompt string) ([]byte, error) {
 }
 
 // readNewPassphrase asks twice on the terminal and requires a match; when
-// TRINETRA_MAINT_PASSPHRASE_FILE is set it is read once. An empty passphrase is
-// always rejected: this protects the production maintainer signing key.
+// TRINETRA_MAINT_PASSPHRASE_FILE is set it is read once.
 func readNewPassphrase() ([]byte, error) {
 	var pass []byte
 	if os.Getenv("TRINETRA_MAINT_PASSPHRASE_FILE") != "" {

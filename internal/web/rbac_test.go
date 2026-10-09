@@ -20,12 +20,8 @@ func rbacTestDeps(t *testing.T) (Deps, UserStore, SessionStore) {
 	return d, newUserStore(d.StateDir), newSessionStore(d.StateDir)
 }
 
-// seedSignedInRequest creates a user with the given role plus a live
-// session for it, and returns a request carrying the sw_session cookie.
-// RBAC only cares what a resolved session/user look like, which sessions.New
-// + store.Put produce directly -- no need for a full WebAuthn ceremony here
-// (that's what auth_webauthn_test.go/auth_login_test.go's virtual
-// authenticator pins instead).
+// seedSignedInRequest creates a user with the given role plus a live session for it, and
+// returns a request carrying the sw_session cookie.
 func seedSignedInRequest(t *testing.T, users UserStore, sessions SessionStore, role Role, method, target string) *http.Request {
 	t.Helper()
 	u := &User{ID: mustNewUserID(t), Name: string(role) + "-user", Role: role, Created: 1}
@@ -41,9 +37,8 @@ func seedSignedInRequest(t *testing.T, users UserStore, sessions SessionStore, r
 	return req
 }
 
-// TestRequireRoleAnonRedirectsToLogin pins the anonymous case: no session at
-// all on an admin route must redirect to /login rather than 403 (there's no
-// "your role is wrong" to report -- there's no session to have a role).
+// TestRequireRoleAnonRedirectsToLogin pins the anonymous case: no session at all on an
+// admin route must redirect to /login rather than 403.
 func TestRequireRoleAnonRedirectsToLogin(t *testing.T) {
 	d, _, _ := rbacTestDeps(t)
 	h := newHandler(d)
@@ -58,10 +53,8 @@ func TestRequireRoleAnonRedirectsToLogin(t *testing.T) {
 	}
 }
 
-// TestRequireRoleViewerBlockedFromAdminRoute pins the RBAC matrix's core
-// negative case: a signed-in viewer hitting an admin route gets 403 and the
-// "Admin only" denied panel, not a redirect (they ARE authenticated, just not
-// authorized).
+// TestRequireRoleViewerBlockedFromAdminRoute pins the RBAC matrix's core negative case: a
+// signed-in viewer hitting an admin route gets 403 and the "Admin only" denied panel.
 func TestRequireRoleViewerBlockedFromAdminRoute(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -96,8 +89,7 @@ func TestRequireRoleAdminAllowed(t *testing.T) {
 }
 
 // TestRequireRoleAppliesAcrossAllAdminRoutes pins that every admin nav target
-// (config/channels/users/public-settings) is actually gated, not just
-// /config.
+// (config/channels/users/public-settings) is actually gated, not just /config.
 func TestRequireRoleAppliesAcrossAllAdminRoutes(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -159,8 +151,7 @@ func TestRoleRankAndValid(t *testing.T) {
 	}
 }
 
-// A responder may ack/unack alerts but must be denied every admin page and
-// mutation.
+// A responder may ack/unack alerts but must be denied every admin page and mutation.
 func TestResponderCanAckAlerts(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}}}

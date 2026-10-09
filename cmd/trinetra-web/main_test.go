@@ -17,9 +17,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
-// fakeAPI is a minimal core.API test double (core.API has no shared one): read
-// fields back one read method each, and the two write methods this test cares
-// about record their argument.
+// fakeAPI is a minimal core.API test double (core.API has no shared one): read fields back
+// one read method each.
 type fakeAPI struct {
 	snapshot core.DashboardView
 	events   []core.DownEventView
@@ -103,9 +102,7 @@ func envLookup(m map[string]string) func(string) string {
 }
 
 // TestResolveConnConfigDefaults pins resolution with no flags and no
-// TRINETRA_CONTROL_*/SERVERWATCH_CONTROL_* env: socket/token follow the daemon's
-// RUNTIME_DIRECTORY resolution, and stateDir/alertLogPath/alertStatePath fall
-// back to defaultStateDir and its two filenames.
+// TRINETRA_CONTROL_*/SERVERWATCH_CONTROL_* env.
 func TestResolveConnConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cc, err := resolveConnConfig(nil, envLookup(map[string]string{"RUNTIME_DIRECTORY": dir}))
@@ -163,9 +160,8 @@ func TestResolveConnConfigEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigEnvOverrides_OldNameFallback: with TRINETRA_CONTROL_* unset,
-// the old SERVERWATCH_CONTROL_* names still work for one release, so a
-// pre-rename core can still spawn this binary.
+// TestResolveConnConfigEnvOverrides_OldNameFallback: with TRINETRA_CONTROL_* unset, the old
+// SERVERWATCH_CONTROL_* names still work for one release.
 func TestResolveConnConfigEnvOverrides_OldNameFallback(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "elsewhere.sock")
@@ -210,12 +206,8 @@ func TestResolveConnConfigFlagsOverrideEnv(t *testing.T) {
 	}
 }
 
-// TestBuildDepsWiresLiveDataThroughSocket: a real control.Serve over a temp
-// socket, backed by a fakeAPI standing in for the daemon, proves buildDeps'
-// Deps.API and Deps.Events reflect data that exists only on the other side of
-// the socket. It pins the Deps wiring directly against the socket client, since
-// driving web.Start would mostly re-test internal/web;
-// TestPublicPageServesLiveSnapshotOverSocket covers one real HTTP path.
+// TestBuildDepsWiresLiveDataThroughSocket: a real control.Serve over a temp socket, backed
+// by a fakeAPI standing in for the daemon.
 func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	dir := t.TempDir()
 	api := &fakeAPI{
@@ -288,9 +280,8 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	}
 }
 
-// freeLoopbackAddr picks a free "127.0.0.1:port" by binding an ephemeral listener
-// and closing it (slightly racy but fine for tests), since web.Start binds its
-// own listener and ":0" would hide the real port.
+// freeLoopbackAddr picks a free "127.0.0.1:port" by binding an ephemeral listener and
+// closing it (slightly racy but fine for tests).
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -302,11 +293,8 @@ func freeLoopbackAddr(t *testing.T) string {
 	return addr
 }
 
-// TestPublicPageServesLiveSnapshotOverSocket is the one full unauthenticated
-// HTTP path: a control.Serve-backed fakeAPI, turned into web.Deps by buildDeps,
-// served by web.Start and hit with a real GET. cfg.Public lets an anonymous
-// request see snapshot-derived content without a passkey session; the
-// authenticated dashboard route is covered at the Deps layer instead.
+// TestPublicPageServesLiveSnapshotOverSocket is the one full unauthenticated HTTP path: a
+// control.Serve-backed fakeAPI, turned into web.Deps by buildDeps.
 func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 	dir := t.TempDir()
 	addr := freeLoopbackAddr(t)
@@ -339,9 +327,8 @@ func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	var resp *http.Response
-	// web.Start's listener bind happens synchronously inside Start, but poll
-	// briefly anyway rather than assume the first dial always lands -- cheap
-	// insurance against a flaky first connection.
+	// web.Start's listener bind happens synchronously inside Start, but poll briefly anyway
+	// rather than assume the first dial always lands.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		resp, err = httpClient.Get("http://" + addr + "/")

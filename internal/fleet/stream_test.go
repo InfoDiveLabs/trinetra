@@ -15,9 +15,8 @@ import (
 	"time"
 )
 
-// newMasterFixtureWithServerTimeout is newMasterFixture with the httptest
-// server's Read/WriteTimeout set to wt, to prove the stream handler survives a
-// server-wide timeout shorter than the stream by clearing its own deadlines.
+// newMasterFixtureWithServerTimeout is newMasterFixture with the httptest server's
+// Read/WriteTimeout set to wt.
 func newMasterFixtureWithServerTimeout(t *testing.T, wt time.Duration, opts ...func(*MasterConfig)) *masterFixture {
 	t.Helper()
 	ca, leaf := newTestPKI(t)
@@ -145,9 +144,8 @@ func TestStreamOnConnectFiresBeforeHandlerDrains(t *testing.T) {
 }
 
 func TestStreamPingKeepsConnectionAliveAndIsNotExposed(t *testing.T) {
-	// 100ms pings => 300ms idle timeout (3x): long enough that a loaded CI
-	// runner's scheduling pause can't drop the stream, short enough to
-	// exchange several pings in the wait below.
+	// 100ms pings => 300ms idle timeout (3x): long enough that a loaded CI runner's scheduling
+	// pause can't drop the stream, short enough to exchange several pings in the wait below.
 	old := setPingInterval(100 * time.Millisecond)
 	t.Cleanup(func() { setPingInterval(old) })
 
@@ -267,9 +265,8 @@ func TestHubCloseAllClosesEveryConnection(t *testing.T) {
 	default:
 		t.Fatal("n2's done channel was not closed by CloseAll")
 	}
-	// A later connect for the same id must not be shadowed by the closed
-	// connection: CloseAll must have removed it from the map, not just
-	// closed its done channel in place.
+	// A later connect for the same id must not be shadowed by the closed connection: CloseAll
+	// must have removed it from the map, not just closed its done channel in place.
 	c3 := hub.connect("n1")
 	select {
 	case <-c3.done:
@@ -471,11 +468,8 @@ func TestStreamNegotiatesHTTP2(t *testing.T) {
 	}
 }
 
-// streamOnlyFixture builds a masterFixture whose PathStream requests are
-// answered by stream, while every other request (join, renew, ...) goes to
-// a real Master.Handler(): enough for Join/LoadIdentity to work normally,
-// while giving a test full, direct control over what the stream connection
-// itself does.
+// streamOnlyFixture builds a masterFixture whose PathStream requests are answered by
+// stream, while every other request (join, renew, ...) goes to a real Master.Handler().
 func streamOnlyFixture(t *testing.T, stream http.HandlerFunc) *masterFixture {
 	t.Helper()
 	ca, leaf := newTestPKI(t)
@@ -501,15 +495,8 @@ func streamOnlyFixture(t *testing.T, stream http.HandlerFunc) *masterFixture {
 	return &masterFixture{ca: ca, reg: reg, toks: toks, sink: sink, srv: srv, pin: SPKIPin(ca.Cert)}
 }
 
-// TestStreamBackoffResetsAfterEstablishedConnection: streamLoop's attempt counter
-// must reset to 0 once a connection was established (read at least one frame)
-// even if it later ends in an error. Otherwise three failed attempts followed by
-// a connect-read-drop would drive the next backoff to attempt 3, and eventually
-// pin it at the ~60s ceiling.
-//
-// Uses the real backoffDelay with backoffBase scaled down. It asserts the
-// attempt sequence passed to backoff and that the post-reset delay lands in
-// [backoffBase, 2*backoffBase), which only attempt 0 can produce.
+// TestStreamBackoffResetsAfterEstablishedConnection: streamLoop's attempt counter must
+// reset to 0 once a connection was established.
 func TestStreamBackoffResetsAfterEstablishedConnection(t *testing.T) {
 	oldBase := backoffBase
 	backoffBase = 2 * time.Millisecond
@@ -597,9 +584,7 @@ func TestStreamBackoffResetsAfterEstablishedConnection(t *testing.T) {
 }
 
 // TestStreamOutlivesScaledDownClientTimeoutEquivalent: the stream must not die at
-// Shipper.client's 60s Timeout, so it uses a dedicated client with no cap. The
-// test shortens pingInterval, applies the same 3x ratio (60s / 20s) to it, and
-// keeps the stream alive several multiples past that point.
+// Shipper.client's 60s Timeout, so it uses a dedicated client with no cap.
 func TestStreamOutlivesScaledDownClientTimeoutEquivalent(t *testing.T) {
 	oldPing := setPingInterval(15 * time.Millisecond)
 	t.Cleanup(func() { setPingInterval(oldPing) })
@@ -630,9 +615,8 @@ func TestStreamOutlivesScaledDownClientTimeoutEquivalent(t *testing.T) {
 	}
 }
 
-// TestStreamReconnectsAfterPingsStop: the read-idle watchdog must abandon and
-// reconnect a connection that stays open but delivers nothing, pings included,
-// at roughly 3x the ping interval.
+// TestStreamReconnectsAfterPingsStop: the read-idle watchdog must abandon and reconnect a
+// connection that stays open but delivers nothing, pings included.
 func TestStreamReconnectsAfterPingsStop(t *testing.T) {
 	oldPing := setPingInterval(60 * time.Millisecond)
 	t.Cleanup(func() { setPingInterval(oldPing) })
@@ -657,11 +641,8 @@ func TestStreamReconnectsAfterPingsStop(t *testing.T) {
 		<-r.Context().Done() // hang until the child gives up and disconnects
 	})
 
-	// fast=true: the connect-to-connect gap under test is the idle-detection
-	// delay (~3x ping) plus whatever streamLoop's post-error backoff adds on
-	// top; a near-zero backoff keeps that addition negligible so the gap
-	// isolates idle detection instead of being dominated by backoffDelay's
-	// real (1s-60s) shape.
+	// fast=true: the connect-to-connect gap under test is the idle-detection delay (~3x ping)
+	// plus whatever streamLoop's post-error backoff adds on top.
 	_, _, _ = startShipperWithFrames(t, f, func(Frame) {}, true)
 
 	waitFor(t, "a second connection attempt (reconnect after pings stopped)", func() bool {
@@ -674,9 +655,8 @@ func TestStreamReconnectsAfterPingsStop(t *testing.T) {
 	defer mu.Unlock()
 	gap := connectTimes[1].Sub(connectTimes[0])
 	want := 3 * ping
-	// Generous window: detection can lag up to one more watchdog tick past
-	// want, and the reconnect itself (dial + TLS handshake) adds more on a
-	// loaded CI box, especially under -race.
+	// Generous window: detection can lag up to one more watchdog tick past want, and the
+	// reconnect itself (dial + TLS handshake) adds more on a loaded CI box.
 	lower := want - ping
 	upper := want + 5*ping + 500*time.Millisecond
 	if gap < lower || gap > upper {

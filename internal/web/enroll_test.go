@@ -9,9 +9,8 @@ import (
 	"testing"
 )
 
-// enrollTestDeps mirrors testDeps (server_test.go) but points StateDir at a
-// fresh temp dir, since these tests exercise the real newUserStore-backed
-// enroll handlers (unlike testDeps' callers, which never reach /enroll/*).
+// enrollTestDeps mirrors testDeps (server_test.go) but points StateDir at a fresh temp dir,
+// since these tests exercise the real newUserStore-backed enroll handlers.
 func enrollTestDeps(t *testing.T) Deps {
 	t.Helper()
 	d := testDeps(t)
@@ -19,10 +18,8 @@ func enrollTestDeps(t *testing.T) Deps {
 	return d
 }
 
-// TestEnrollPageRendersBareLayout pins GET /enroll: it must render through
-// the bare/centered layout (base_bare.html), not the app shell -- no
-// sidebar/topbar nav, since there's no signed-in session yet -- while still
-// carrying a CSP nonce on its boot script.
+// TestEnrollPageRendersBareLayout pins GET /enroll: it must render through the
+// bare/centered layout (base_bare.html), not the app shell -- no sidebar/topbar nav.
 func TestEnrollPageRendersBareLayout(t *testing.T) {
 	h := newHandler(enrollTestDeps(t))
 	rr := httptest.NewRecorder()
@@ -45,13 +42,8 @@ func TestEnrollPageRendersBareLayout(t *testing.T) {
 	}
 }
 
-// TestEnrollPageClosedWithoutTokenShowsInviteMessage pins that once an
-// account exists, loading /enroll with no ?token= must not show the signup
-// form, which would only fail AFTER the user filled it in and clicked "Create
-// passkey" (a POST /enroll/begin 403, "enrollment is closed"). GET /enroll must
-// instead render a message that sign-up needs an admin invite link, with a
-// link to /login, since resolveEnrollRole (enroll_tokens.go) will refuse this
-// exact request unconditionally.
+// TestEnrollPageClosedWithoutTokenShowsInviteMessage pins that once an account exists,
+// loading /enroll with no ?token= must not show the signup form.
 func TestEnrollPageClosedWithoutTokenShowsInviteMessage(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)
@@ -76,10 +68,8 @@ func TestEnrollPageClosedWithoutTokenShowsInviteMessage(t *testing.T) {
 	}
 }
 
-// TestEnrollPageWithTokenStillShowsFormAfterBootstrap pins the positive
-// case alongside the above: a genuine ?token= (an admin-issued invite)
-// still renders the ordinary signup form even once accounts exist --
-// only the TOKENLESS, post-bootstrap case is closed.
+// TestEnrollPageWithTokenStillShowsFormAfterBootstrap pins the positive case alongside the
+// above: a genuine ?token=.
 func TestEnrollPageWithTokenStillShowsFormAfterBootstrap(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)
@@ -98,11 +88,8 @@ func TestEnrollPageWithTokenStillShowsFormAfterBootstrap(t *testing.T) {
 	}
 }
 
-// TestEnrollBeginHandlerReturnsCreationOptionsAndCookie pins the HTTP
-// surface of enrollBeginHandler: given a JSON {"name":...} body, it must
-// respond with WebAuthn creation options (a "publicKey" object carrying a
-// challenge and the posted name) and set the ceremony cookie
-// finishRegistration needs later.
+// TestEnrollBeginHandlerReturnsCreationOptionsAndCookie pins the HTTP surface of
+// enrollBeginHandler: given a JSON {"name":...} body.
 func TestEnrollBeginHandlerReturnsCreationOptionsAndCookie(t *testing.T) {
 	h := newHandler(enrollTestDeps(t))
 	body, _ := json.Marshal(map[string]string{"name": "on-call"})
@@ -155,13 +142,7 @@ func TestEnrollBeginHandlerRejectsEmptyName(t *testing.T) {
 	}
 }
 
-// TestEnrollHandlersEndToEndPersistCredential drives the full HTTP surface
-// (GET /enroll's cousins POST /enroll/begin + POST /enroll/finish) using the
-// same virtual authenticator fixtures auth_webauthn_test.go uses to test the
-// ceremony functions directly, pinning that the handlers wire beginRegistration/
-// finishRegistration/newUserStore together correctly end-to-end: after a
-// successful finish, the user is discoverable by name in the on-disk store
-// with a real, non-empty credential public key.
+// TestEnrollHandlersEndToEndPersistCredential drives the full HTTP surface.
 func TestEnrollHandlersEndToEndPersistCredential(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
@@ -184,10 +165,8 @@ func TestEnrollHandlersEndToEndPersistCredential(t *testing.T) {
 	}
 	cookie := cookieFrom(t, beginRR, enrollSessionCookie)
 
-	// enrollTestDeps/testDeps leave Web.RPID/Origin empty (proxy-mode
-	// default, config.Default()), so webAuthnConfig derives both from the
-	// request's own Host -- httptest.NewRequest defaults that to
-	// "example.com" for a path-only target URL, giving "http://example.com".
+	// enrollTestDeps/testDeps leave Web.RPID/Origin empty (proxy-mode default,
+	// config.Default()), so webAuthnConfig derives both from the request's own Host.
 	finishBody, _ := creationResponseBody(t, beginResp.PublicKey.Challenge, "http://example.com", "example.com")
 	finishReq := httptest.NewRequest(http.MethodPost, "/enroll/finish", bytes.NewReader(finishBody))
 	finishReq.AddCookie(cookie)
@@ -210,11 +189,8 @@ func TestEnrollHandlersEndToEndPersistCredential(t *testing.T) {
 	}
 }
 
-// TestEnrollBeginHandlerRejectsExistingName pins the account-takeover fix:
-// the unauthenticated /enroll/begin endpoint must REJECT (409) a name that
-// already exists rather than run the ceremony against the existing account.
-// An earlier version reused the existing *User, which let an anonymous
-// caller bind their own passkey to (e.g.) the admin account.
+// TestEnrollBeginHandlerRejectsExistingName pins the account-takeover fix: the
+// unauthenticated /enroll/begin endpoint must REJECT.
 func TestEnrollBeginHandlerRejectsExistingName(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)
@@ -240,9 +216,8 @@ func TestEnrollBeginHandlerRejectsExistingName(t *testing.T) {
 	}
 }
 
-// TestEnrollDuplicateNameDoesNotTakeOverAccount is the end-to-end proof of
-// the same fix: a duplicate-name enrollment attempt must leave the existing
-// account completely untouched -- same role, zero injected credentials.
+// TestEnrollDuplicateNameDoesNotTakeOverAccount is the end-to-end proof of the same fix: a
+// duplicate-name enrollment attempt must leave the existing account completely untouched.
 func TestEnrollDuplicateNameDoesNotTakeOverAccount(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)

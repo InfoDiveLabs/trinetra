@@ -9,10 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestOnboardCheckEntersOnboardingWhenNoToken asserts Init's
-// fetchOnboardCheckCmd, once its onboardCheckMsg lands on a model still
-// sitting on Home, auto-enters the onboarding flow when telegram isn't
-// configured yet.
+// TestOnboardCheckEntersOnboardingWhenNoToken asserts Init's fetchOnboardCheckCmd, once its
+// onboardCheckMsg lands on a model still sitting on Home.
 func TestOnboardCheckEntersOnboardingWhenNoToken(t *testing.T) {
 	m := newModel(&fakeAPI{cfg: &config.Config{}})
 	var mm tea.Model = m
@@ -43,11 +41,8 @@ func TestOnboardCheckSkippedWhenEnrolled(t *testing.T) {
 	}
 }
 
-// TestOnboardCheckSkippedIfAlreadyNavigatedAway asserts the auto-entry
-// never fires once the user has already left Home (e.g. opened the web
-// wizard) by the time the async Config() fetch lands -- forcing them out of
-// what they're doing would be worse than just not offering onboarding this
-// launch.
+// TestOnboardCheckSkippedIfAlreadyNavigatedAway asserts the auto-entry never fires once the
+// user has already left Home.
 func TestOnboardCheckSkippedIfAlreadyNavigatedAway(t *testing.T) {
 	m := newModel(&fakeAPI{cfg: &config.Config{}})
 	m.step = stepSetupWeb
@@ -58,10 +53,8 @@ func TestOnboardCheckSkippedIfAlreadyNavigatedAway(t *testing.T) {
 	}
 }
 
-// TestOnboardTokenFlowShowsPIN drives the token step end to end: typing a
-// token and pressing enter issues applyOnboardTokenCmd; once that succeeds,
-// Update should move to the pin step and issue fetchOnboardPINCmd, and once
-// THAT lands, the pin should be visible and not yet enrolled.
+// TestOnboardTokenFlowShowsPIN drives the token step end to end: typing a token and
+// pressing enter issues applyOnboardTokenCmd; once that succeeds.
 func TestOnboardTokenFlowShowsPIN(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}, enrollPIN: "7734", enrollEnrolled: false}
 	var mm tea.Model = newModel(api)
@@ -107,9 +100,8 @@ func TestOnboardTokenFlowShowsPIN(t *testing.T) {
 	}
 }
 
-// TestOnboardPollDetectsEnrollment asserts a poll tick while on the pin
-// screen re-fetches EnrollmentPIN, and once the fake reports enrolled=true,
-// the model reflects it (and stops issuing further polls).
+// TestOnboardPollDetectsEnrollment asserts a poll tick while on the pin screen re-fetches
+// EnrollmentPIN, and once the fake reports enrolled=true, the model reflects it.
 func TestOnboardPollDetectsEnrollment(t *testing.T) {
 	api := &fakeAPI{enrollPIN: "1111", enrollEnrolled: false}
 	m := newModel(api)

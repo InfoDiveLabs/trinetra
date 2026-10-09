@@ -20,8 +20,7 @@ const defaultSegmentMax = 4 << 20
 var kindCode = map[string]byte{KindSamples: 1, KindDownEvent: 2, KindAlert: 3}
 var kindName = map[byte]string{1: KindSamples, 2: KindDownEvent, 3: KindAlert}
 
-// Gap is a run of records dropped by the outbox cap before the master acked
-// them. The shipper repairs it from the child's local store.
+// Gap is a run of records dropped by the outbox cap before the master acked them.
 type Gap struct {
 	FirstSeq uint64 `json:"first_seq"`
 	LastSeq  uint64 `json:"last_seq"`
@@ -37,9 +36,8 @@ type segment struct {
 	count        int
 }
 
-// Outbox is a child's durable, bounded, append-only spool of telemetry
-// records awaiting the master's ack. Safe for concurrent use: the store
-// writer goroutine appends while the shipper reads and acks.
+// Outbox is a child's durable, bounded, append-only spool of telemetry records awaiting the
+// master's ack.
 type Outbox struct {
 	dir    string
 	max    int64
@@ -53,16 +51,13 @@ type Outbox struct {
 	gaps   []Gap
 	notify chan struct{}
 
-	// oldestAck/oldestTS cache Stats' OldestUnackedTS: the ts of the first
-	// record after oldestAck. Valid while o.acked == oldestAck and oldestTS
-	// != 0 (a positive result never changes until the ack moves).
+	// oldestAck/oldestTS cache Stats' OldestUnackedTS: the ts of the first record after
+	// oldestAck.
 	oldestAck uint64
 	oldestTS  int64
 
-	// alertSeqs indexes the seq of every unacked KindAlert record so ReadPriority
-	// can find them without scanning the backlog. Built at open, kept current by
-	// Append and pruned by Ack/divergeLocked. A seq evicted into a Gap before being
-	// acked goes stale; ReadPriority drops those lazily.
+	// alertSeqs indexes the seq of every unacked KindAlert record so ReadPriority can find
+	// them without scanning the backlog.
 	alertSeqs map[uint64]struct{}
 
 	// writeFrame, when non-nil, replaces the active segment's Write so tests
@@ -92,9 +87,8 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 	if b, err := os.ReadFile(o.gapsPath()); err == nil {
 		_ = json.Unmarshal(b, &o.gaps)
 	}
-	// gaps.json is enforceCapLocked's commit point and is written before the
-	// cursor, so a crash between can leave the cursor behind a recorded gap. The
-	// cursor must never trail a gap: reconcile before anything uses o.acked.
+	// gaps.json is enforceCapLocked's commit point and is written before the cursor, so a
+	// crash between can leave the cursor behind a recorded gap.
 	if o.reconcileAckedWithGaps() {
 		if err := writeFileAtomic(o.cursorPath(), []byte(strconv.FormatUint(o.acked, 10)), 0o600); err != nil {
 			return nil, err
@@ -121,9 +115,8 @@ func openOutbox(dir string, maxBytes, segMax int64) (*Outbox, error) {
 			}
 		}
 	}
-	// A segment fully covered by the acked cursor is a leftover (Ack always keeps
-	// one segment to append into, or a crash hit after the gap/ack advance but
-	// before the delete). Read already skips it; clean it up here.
+	// A segment fully covered by the acked cursor is a leftover (Ack always keeps one segment
+	// to append into, or a crash hit after the gap/ack advance but before the delete).
 	for len(o.segs) > 1 && o.segs[0].last <= o.acked {
 		if err := os.Remove(o.segs[0].path); err != nil && !os.IsNotExist(err) {
 			return nil, err
@@ -160,9 +153,8 @@ func (o *Outbox) reconcileAckedWithGaps() bool {
 	return changed
 }
 
-// scanSegment reads every valid frame in path, truncating at the first torn or
-// corrupt frame (a crash mid-write), and returns its metadata plus the seq of
-// every KindAlert frame.
+// scanSegment reads every valid frame in path, truncating at the first torn or corrupt
+// frame (a crash mid-write).
 func scanSegment(path string) (*segment, []uint64, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -295,20 +287,8 @@ func (o *Outbox) Append(kind string, ts int64, data []byte) (uint64, error) {
 	return seq, nil
 }
 
-// recordFailedAppendLocked handles a failed (possibly partial) write of record
-// seq/ts into segment s (nil when opening a new segment failed).
-//
-// A partial frame is truncated and the segment closed, so torn bytes never sit
-// in front of later frames (Read stops at the first bad frame).
-//
-// The record is lost from the outbox, so every unacked record up to and
-// including seq becomes one Gap and the cursor moves to seq. Covering the whole
-// prefix, not just seq, keeps the invariants (the cursor never trails a gap; gaps
-// are repaired before later records ship), so the repair cannot land after newer
-// data and be dropped by the master's ordering guard.
-//
-// The write error is returned either way. If the gap cannot be persisted the
-// outbox is left as it was (seq is not issued).
+// recordFailedAppendLocked handles a failed (possibly partial) write of record seq/ts into
+// segment s (nil when opening a new segment failed).
 func (o *Outbox) recordFailedAppendLocked(s *segment, seq uint64, ts int64, werr error) error {
 	if s != nil && o.cur != nil {
 		if err := o.cur.Truncate(s.size); err != nil {
@@ -374,17 +354,8 @@ func (o *Outbox) totalLocked() int64 {
 	return t
 }
 
-// enforceCapLocked drops the oldest segments (never the active one) while over
-// the cap, recording any unacked records they held as a gap.
-//
-// The gap and cursor are persisted (gaps.json, then cursor) BEFORE any segment
-// is deleted, and o.segs is updated only after both succeed, so a failure leaves
-// the exact same drop set to be retried on the next Append. gaps.json is the
-// commit point: once it names a range as gone those records are never
-// re-served. A crash between the two writes leaves the cursor behind a gap, which
-// openOutbox reconciles; a crash before the deletes leaves a harmless leftover
-// segment that openOutbox removes. Either way no unacked record is lost without
-// a Gap.
+// enforceCapLocked drops the oldest segments (never the active one) while over the cap,
+// recording any unacked records they held as a gap.
 func (o *Outbox) enforceCapLocked() error {
 	total := o.totalLocked()
 	newGaps := append([]Gap(nil), o.gaps...)
@@ -499,8 +470,7 @@ func (o *Outbox) Read(after uint64, maxBytes, maxRecords int) ([]Record, error) 
 	return out, nil
 }
 
-// pruneAlertSeqsLocked drops indexed alert seqs <= upTo (acked or folded into a
-// Gap). Callers hold o.mu.
+// pruneAlertSeqsLocked drops indexed alert seqs <= upTo (acked or folded into a Gap).
 func (o *Outbox) pruneAlertSeqsLocked(upTo uint64) {
 	for seq := range o.alertSeqs {
 		if seq <= upTo {
@@ -509,10 +479,7 @@ func (o *Outbox) pruneAlertSeqsLocked(upTo uint64) {
 	}
 }
 
-// ReadPriority returns every unacked KindAlert record ascending by seq, capped
-// like Read, using the alertSeqs index so the shipper's priority lane avoids
-// scanning the whole backlog. A seq in no segment (evicted into a Gap) is dropped
-// from the index; that record is repaired via the ordinary GapFiller path.
+// ReadPriority returns every unacked KindAlert record ascending by seq, capped like Read.
 func (o *Outbox) ReadPriority(maxBytes, maxRecords int) ([]Record, error) {
 	o.mu.Lock()
 	if len(o.alertSeqs) == 0 {
@@ -562,8 +529,7 @@ func (o *Outbox) ReadPriority(maxBytes, maxRecords int) ([]Record, error) {
 		}
 	}
 	if len(want) > 0 {
-		// Stale entries: gone from every segment (cap-evicted into a Gap
-		// since indexed). Forget them so ReadPriority doesn't keep looking.
+		// Stale entries: gone from every segment (cap-evicted into a Gap since indexed).
 		o.mu.Lock()
 		for seq := range want {
 			delete(o.alertSeqs, seq)
@@ -583,9 +549,8 @@ func (o *Outbox) ReadPriority(maxBytes, maxRecords int) ([]Record, error) {
 	return out[:n], nil
 }
 
-// DivergenceError reports that the master acked a seq this outbox never issued
-// (the outbox was deleted or rolled back). Ack has already repaired the state;
-// it is returned so the caller can log it.
+// DivergenceError reports that the master acked a seq this outbox never issued (the outbox
+// was deleted or rolled back).
 type DivergenceError struct {
 	LocalNext   uint64 // the seq the outbox would have issued next
 	MasterAcked uint64 // the seq the master acked
@@ -600,14 +565,8 @@ func (e *DivergenceError) Error() string {
 	return msg
 }
 
-// Ack records that the master durably holds everything up to seq and deletes
-// fully-acked segments (except the active one).
-//
-// An ack beyond the last issued seq means the outbox and master diverged.
-// Clamping would lose data silently: the master drops every record with seq <=
-// its applied seq, so new records would be discarded until local numbering
-// caught up. Instead the unacked local records become a Gap, numbering resumes
-// at seq+1, and a *DivergenceError is returned once the state is persisted.
+// Ack records that the master durably holds everything up to seq and deletes fully-acked
+// segments (except the active one).
 func (o *Outbox) Ack(seq uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -663,8 +622,7 @@ func (o *Outbox) divergeLocked(seq uint64) error {
 	o.gaps = newGaps
 	o.acked = seq
 	o.next = seq + 1
-	// Every local segment now lies at or below the ack. Drop them all and
-	// start a fresh segment (named by the new first seq) on the next append.
+	// Every local segment now lies at or below the ack.
 	if o.cur != nil {
 		o.cur.Close()
 		o.cur = nil
@@ -717,9 +675,7 @@ func (o *Outbox) Stats() OutboxStats {
 	return st
 }
 
-// oldestUnackedTSLocked returns the ts of the first record with seq > o.acked
-// (0 if none). It is per record, not the segment's minTS, which would report an
-// already-acked record for a partly acked segment. Cached per ack change.
+// oldestUnackedTSLocked returns the ts of the first record with seq > o.acked (0 if none).
 func (o *Outbox) oldestUnackedTSLocked() int64 {
 	if o.oldestTS != 0 && o.oldestAck == o.acked {
 		return o.oldestTS

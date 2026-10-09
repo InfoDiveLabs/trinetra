@@ -22,9 +22,7 @@ import (
 // ErrRevoked means the master refused this node's certificate.
 var ErrRevoked = errors.New("fleet: this node was revoked by the master")
 
-// JoinResult is what the caller persists into config after a join. Name is
-// the name actually stored on the master (which may differ from what was
-// requested -- see JoinResponse's doc comment), for the CLI to print.
+// JoinResult is what the caller persists into config after a join.
 type JoinResult struct {
 	NodeID    string
 	Name      string
@@ -36,9 +34,8 @@ func identityPaths(dir string) (key, cert, ca string) {
 	return filepath.Join(dir, "node.key"), filepath.Join(dir, "node.crt"), filepath.Join(dir, "ca.crt")
 }
 
-// Join enrolls this host with the master named in code and writes the new
-// identity into dir. A previous identity in dir is used to prove continuity so
-// the master keeps the same node ID.
+// Join enrolls this host with the master named in code and writes the new identity into
+// dir.
 func Join(ctx context.Context, code, name, version string, hostinfo json.RawMessage, dir string) (JoinResult, error) {
 	info, err := DecodeJoin(code)
 	if err != nil {
@@ -126,11 +123,8 @@ func loadPair(certPath, keyPath string) (*tls.Certificate, *x509.Certificate, er
 	return &c, leaf, nil
 }
 
-// LoadIdentity reads the identity Join wrote, finishing an interrupted
-// renewal first: once the master has signed a renewal it only honours the
-// new certificate, so a staged pair that is newer than the installed one (or
-// the only one that loads) is promoted, as is a staged cert whose key was
-// already moved into place when the crash hit.
+// LoadIdentity reads the identity Join wrote, finishing an interrupted renewal first: once
+// the master has signed a renewal it only honours the new certificate.
 func LoadIdentity(dir string) (*Identity, error) {
 	kp, cp, _ := identityPaths(dir)
 	c, leaf, err := loadPair(cp, kp)
@@ -220,11 +214,7 @@ func (id *Identity) Renew(ctx context.Context, c *http.Client, masterURL string)
 	if err != nil {
 		return err
 	}
-	// Stage both files durably, then rename them into place. A crash at any
-	// point leaves either the old pair intact plus a complete staged pair,
-	// or the new key installed with the new cert still staged; LoadIdentity
-	// finishes the job either way. Writing node.key then node.crt in place
-	// could leave a key that does not match its cert.
+	// Stage both files durably, then rename them into place.
 	kp, cp, _ := identityPaths(id.dir)
 	if err := writeFileAtomic(kp+stagedSuffix, keyPEM, 0o600); err != nil {
 		return err
@@ -259,10 +249,8 @@ type ShipperConfig struct {
 	LiveEvery time.Duration
 	Now       func() time.Time
 	Logf      func(format string, args ...any)
-	// OnFrame, if set, starts a stream client goroutine in Run that hands every
-	// non-ping frame to OnFrame. Nil means no stream client.
-	// OnFrame runs synchronously on the stream's read loop: it must not block, or
-	// it stalls reading and trips the read-idle watchdog (streamIdleTimeout).
+	// OnFrame, if set, starts a stream client goroutine in Run that hands every non-ping frame
+	// to OnFrame.
 	OnFrame func(Frame)
 }
 
@@ -283,20 +271,15 @@ type LinkStatus struct {
 	Outbox    OutboxStats `json:"outbox"`
 }
 
-// gapFillMaxAttempts bounds how many consecutive GapFiller.Fill failures for
-// the same gap are tolerated before it is abandoned (resolved without being
-// repaired), so a permanently-broken local rebuild cannot block newer data
-// from ever reaching the master.
+// gapFillMaxAttempts bounds how many consecutive GapFiller.Fill failures for the same gap
+// are tolerated before it is abandoned (resolved without being repaired).
 const gapFillMaxAttempts = 5
 
 // Shipper moves outbox records and live updates to the master.
 type Shipper struct {
 	cfg    ShipperConfig
 	client *http.Client
-	// streamClient serves PathStream. It shares client's pinned-TLS HTTP/2
-	// Transport but sets no Timeout, which caps the whole exchange and would kill a
-	// healthy long-lived stream. Liveness is enforced by streamOnce's read-idle
-	// watchdog instead.
+	// streamClient serves PathStream.
 	streamClient *http.Client
 	revoked      atomic.Bool
 	mu           sync.Mutex
@@ -308,9 +291,8 @@ type Shipper struct {
 	// backoff computes the data-loop retry delay; tests shorten it.
 	backoff func(attempt int) time.Duration
 
-	// gapFailSeq/gapFailN count consecutive GapFiller.Fill failures for the gap
-	// being repaired (keyed by FirstSeq), reset when the oldest gap changes or Fill
-	// succeeds. Only touched from the dataLoop goroutine.
+	// gapFailSeq/gapFailN count consecutive GapFiller.Fill failures for the gap being repaired
+	// (keyed by FirstSeq), reset when the oldest gap changes or Fill succeeds.
 	gapFailSeq uint64
 	gapFailN   int
 }
@@ -345,10 +327,7 @@ func NewShipper(cfg ShipperConfig) *Shipper {
 // laneOK marks a lane whose last attempt succeeded.
 const laneOK = "ok"
 
-// Status returns the current link status. The state combines both lanes: it
-// is "linked" only while the data lane's last attempt succeeded (or nothing
-// is waiting to be sent), and "catching up" when live updates get through
-// but the data lane is backing off with records still unsent.
+// Status returns the current link status.
 func (s *Shipper) Status() LinkStatus {
 	ob := s.cfg.Outbox.Stats()
 	s.mu.Lock()
@@ -429,9 +408,8 @@ func (s *Shipper) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-// backoffBase is backoffDelay's unit: attempt 0 waits in [backoffBase,
-// 2*backoffBase), doubling per attempt up to 60*backoffBase. A var so tests can
-// scale the jittered shape down.
+// backoffBase is backoffDelay's unit: attempt 0 waits in [backoffBase, 2*backoffBase),
+// doubling per attempt up to 60*backoffBase.
 var backoffBase = time.Second
 
 func backoffDelay(attempt int) time.Duration {
@@ -446,9 +424,8 @@ func backoffDelay(attempt int) time.Duration {
 // with (streamLoop reuses it). A var so tests can shorten it.
 var defaultBackoff = backoffDelay
 
-// maxBackoffAttempt is where backoffDelay's cap saturates; streamLoop waits that
-// long against an old master with no stream endpoint, which will not change
-// until the master is upgraded.
+// maxBackoffAttempt is where backoffDelay's cap saturates; streamLoop waits that long
+// against an old master with no stream endpoint.
 const maxBackoffAttempt = 6
 
 // errStreamNotFound means the master has no PathStream route (an old master).
@@ -512,10 +489,8 @@ func (s *Shipper) streamLoop(ctx context.Context) {
 	}
 }
 
-// streamOnce opens PathStream and reads frames until the connection ends.
-// established reports whether at least one frame was read, which separates a
-// struggling master (keep backing off) from a healthy connection that simply
-// ended (reconnect promptly). A nil error means ctx is done.
+// streamOnce opens PathStream and reads frames until the connection ends. established
+// reports whether at least one frame was read, which separates a struggling master.
 func (s *Shipper) streamOnce(ctx context.Context) (established bool, err error) {
 	// streamCtx lets the watchdog abort a stuck read without cancelling ctx.
 	streamCtx, cancelStream := context.WithCancel(ctx)
@@ -656,8 +631,7 @@ func (s *Shipper) dataLoop(ctx context.Context) {
 	}
 }
 
-// shipOnce repairs the oldest gap or sends one batch, reporting whether it made
-// progress.
+// shipOnce repairs the oldest gap or sends one batch, reporting whether it made progress.
 func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 	if gaps := s.cfg.Outbox.Gaps(); len(gaps) > 0 {
 		g := gaps[0]
@@ -697,13 +671,8 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	// Priority lane: ship unacked KindAlert records via Backfill (unsequenced)
-	// before the general backlog, so a fired alert reaches the master promptly even
-	// behind a huge samples backlog. Backfill never advances the master's AppliedSeq
-	// and this call never Acks, so the ordinary batch below is unaffected; when it
-	// reaches the alert's seq, Ingest applies and Acks it, dropping it from the
-	// priority index. Until then every call re-sends it, which the master's replica
-	// alert guard (dedup by time + line) makes free.
+	// Priority lane: ship unacked KindAlert records via Backfill (unsequenced) before the
+	// general backlog.
 	prioritySent := false
 	precs, err := s.cfg.Outbox.ReadPriority(MaxBatchBytes, MaxBatchRecords)
 	if err != nil {
@@ -747,9 +716,8 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// batchSize returns how many leading recs fit MaxBatchRecords and MaxBatchBytes
-// of Data, like Outbox.Read. It returns at least 1 so an oversized record still
-// makes progress.
+// batchSize returns how many leading recs fit MaxBatchRecords and MaxBatchBytes of Data,
+// like Outbox.Read.
 func batchSize(recs []Record) int {
 	n, total := 0, 0
 	for _, r := range recs {
@@ -831,9 +799,8 @@ func (s *Shipper) liveLoop(ctx context.Context) {
 	}
 }
 
-// liveOnce runs one live tick. cfg.Live takes no context, so it runs in a
-// goroutine raced against ctx and timeout: a hung callback skips the tick instead
-// of wedging shutdown. The stuck goroutine is abandoned, which is unavoidable.
+// liveOnce runs one live tick. cfg.Live takes no context, so it runs in a goroutine raced
+// against ctx and timeout: a hung callback skips the tick instead of wedging shutdown.
 func (s *Shipper) liveOnce(ctx context.Context, timeout time.Duration) {
 	type result struct {
 		u   LiveUpdate

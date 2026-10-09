@@ -19,9 +19,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// settingsGroups returns the distinct groups named in config.Keys(), in the
-// catalog's own first-seen order, for the "all settings" screen's top level
-// group list.
+// settingsGroups returns the distinct groups named in config.Keys(), in the catalog's own
+// first-seen order, for the "all settings" screen's top level group list.
 func settingsGroups() []string {
 	var groups []string
 	seen := map[string]bool{}
@@ -34,9 +33,8 @@ func settingsGroups() []string {
 	return groups
 }
 
-// settingsGroupKeys returns the catalog entries belonging to group, in
-// catalog order, for the key list shown after a group is selected. An
-// unrecognized group name returns no rows.
+// settingsGroupKeys returns the catalog entries belonging to group, in catalog order, for
+// the key list shown after a group is selected.
 func settingsGroupKeys(group string) []config.KeyInfo {
 	var out []config.KeyInfo
 	for _, ki := range config.Keys() {
@@ -47,12 +45,8 @@ func settingsGroupKeys(group string) []config.KeyInfo {
 	return out
 }
 
-// applyConfigKey sets exactly one key on cfg via config.Set -- the same
-// validated setter `trinetra config set` and every other manage screen
-// ultimately use -- so the generic screen's value input gets each key's
-// real validation for free and can never disagree with config.go. Returns
-// config.Set's error unapplied: the caller must not persist an invalid
-// value or call ApplyConfig on it.
+// applyConfigKey sets exactly one key on cfg via config.Set -- the same validated setter
+// `trinetra config set` and every other manage screen ultimately use.
 func applyConfigKey(cfg *config.Config, key, raw string) error {
 	return cfg.Set(key, raw)
 }
@@ -78,9 +72,8 @@ func managedFragmentFor(api core.API, key string) (fragmentID string, managed bo
 	return id, ok
 }
 
-// managedFragmentError formats the standard refusal message for a managed
-// key, matching `trinetra config set`'s own wording (internal/trinetra/
-// main.go's cmdConfig) so the CLI and the TUI never disagree.
+// managedFragmentError formats the standard refusal message for a managed key, matching
+// `trinetra config set`'s own wording.
 func managedFragmentError(key, fragmentID string) error {
 	return fmt.Errorf("%s: managed by the fleet master (fragment %s); change it on the master", key, fragmentID)
 }

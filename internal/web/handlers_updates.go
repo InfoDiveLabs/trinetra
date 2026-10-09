@@ -21,17 +21,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// updatesMutation composes requireRole(RoleAdmin, ...) with requireCSRF,
-// mirroring configMutation (handlers_config.go): only an admin session may
-// POST /updates/*, and only with a valid CSRF token.
+// updatesMutation composes requireRole(RoleAdmin, ...) with requireCSRF, mirroring
+// configMutation (handlers_config.go): only an admin session may POST /updates/*.
 func updatesMutation(d Deps, next http.HandlerFunc) http.HandlerFunc {
 	return requireRole(RoleAdmin, d, func(w http.ResponseWriter, r *http.Request) {
 		requireCSRF(next).ServeHTTP(w, r)
 	})
 }
 
-// UpdatesPageData is what templates/updates.html's "content" block renders
-// against.
+// UpdatesPageData is what templates/updates.html's "content" block renders against.
 type UpdatesPageData struct {
 	PageData
 
@@ -51,10 +49,8 @@ type updatesPageOptions struct {
 	FlashErr bool
 }
 
-// resolveUpdatesFlash maps ?flash= to display text: a FIXED set of codes
-// only (this file's own top doc) -- every value below is a literal the
-// handler chose, never anything reflected from the request or from an
-// error's own text.
+// resolveUpdatesFlash maps ?flash= to display text: a FIXED set of codes only (this file's
+// own top doc) -- every value below is a literal the handler chose.
 func resolveUpdatesFlash(r *http.Request) (text string, isErr bool) {
 	switch r.URL.Query().Get("flash") {
 	case "update-checked":
@@ -161,12 +157,8 @@ func isUpToDateCheckErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "already installed")
 }
 
-// updatesCheckHandler handles POST /updates/check: fetch/verify the
-// channel's latest release and record the outcome (core.API.UpdateCheck),
-// then redirect back with a fixed flash code. "Already installed" is not a
-// failure -- the check ran fine and the page's own status panel shows what
-// it found -- so it flashes "update-checked" like any other successful
-// check; every other error flashes "update-error".
+// updatesCheckHandler handles POST /updates/check: fetch/verify the channel's latest
+// release and record the outcome (core.API.UpdateCheck).
 func updatesCheckHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.API == nil {
@@ -205,13 +197,8 @@ func updatesApplyHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// updatesRollbackHandler handles POST /updates/rollback: restore the
-// previous build and start its health guard (core.API.UpdateRollback), then
-// redirect back with a fixed flash code. The template only offers this
-// action once Status.Previous != "" (nothing to roll back to otherwise), but
-// this handler does not itself re-check that -- a forged POST with nothing
-// to roll back to is simply refused by UpdateRollback with its own error,
-// which redirects with "update-error" like any other failure.
+// updatesRollbackHandler handles POST /updates/rollback: restore the previous build and
+// start its health guard (core.API.UpdateRollback).
 func updatesRollbackHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.API == nil {

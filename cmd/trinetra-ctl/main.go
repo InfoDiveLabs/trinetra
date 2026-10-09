@@ -42,11 +42,8 @@ func realMain(args []string, out, errOut io.Writer) int {
 	fs.SetOutput(errOut)
 	socketFlag := fs.String("socket", "", "control socket path (overrides $TRINETRA_CONTROL_SOCKET (or $SERVERWATCH_CONTROL_SOCKET) and the default)")
 	tokenFlag := fs.String("token", "", "control token file path (overrides $TRINETRA_CONTROL_TOKEN (or $SERVERWATCH_CONTROL_TOKEN) and the default)")
-	// --json is accepted as a global flag here so it works BEFORE the
-	// subcommand (`--json status`); flag.Parse stops at the first non-flag
-	// arg, so the after-subcommand form (`status --json`) instead reaches run
-	// as a positional arg, which run strips itself. Normalizing both to a
-	// leading "--json" below means run handles the two orders identically.
+	// --json is accepted as a global flag here so it works BEFORE the subcommand (`--json
+	// status`); flag.Parse stops at the first non-flag arg, so the after-subcommand form.
 	jsonFlag := fs.Bool("json", false, "emit JSON for status/doctor/alerts")
 	if err := fs.Parse(args); err != nil {
 		return 2

@@ -13,9 +13,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
-// testPrivFromSeed builds the same ed25519.PrivateKey updatetest.NewTestSigner
-// would (a 32-byte seed filled with b), without needing access to
-// TestSigner's unexported private key field.
+// testPrivFromSeed builds the same ed25519.PrivateKey updatetest.NewTestSigner would (a
+// 32-byte seed filled with b).
 func testPrivFromSeed(b byte) ed25519.PrivateKey {
 	seed := make([]byte, ed25519.SeedSize)
 	for i := range seed {
@@ -81,9 +80,8 @@ func TestSummarizeManifestIncludesFiles(t *testing.T) {
 	}
 }
 
-// TestParseCosignArgs covers review F1: "cosign vX.Y.Z --key FILE" (the
-// brief's own documented order) and "cosign --key FILE vX.Y.Z" (what
-// flag.FlagSet forced before this fix) must both parse identically.
+// TestParseCosignArgs covers review F1: "cosign vX.Y.Z --key FILE" (the brief's own
+// documented order) and "cosign --key FILE vX.Y.Z".
 func TestParseCosignArgs(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -126,9 +124,8 @@ func TestParseCosignArgs(t *testing.T) {
 	}
 }
 
-// TestParseCosignArgsTestkeysRequiresRepo: a --testkeys co-sign must
-// name its (test) repository explicitly, so it can never default to the real
-// InfoDiveLabs/trinetra and publish a test-signed draft there.
+// TestParseCosignArgsTestkeysRequiresRepo: a --testkeys co-sign must name its (test)
+// repository explicitly.
 func TestParseCosignArgsTestkeysRequiresRepo(t *testing.T) {
 	if _, _, _, _, err := parseCosignArgs([]string{"v1.2.3", "--testkeys", "--key", "k.pem"}); err == nil || !strings.Contains(err.Error(), "--repo") {
 		t.Fatalf("--testkeys without --repo: %v", err)
@@ -144,12 +141,8 @@ func TestParseCosignArgsRequiresExactlyOneVersion(t *testing.T) {
 	}
 }
 
-// TestCosignAcceptsVersionBeforeOrAfterKeyFlag is the run()-level regression
-// test for review F1: it exercises the brief's exact documented usage
-// ("cosign vX.Y.Z --key FILE") end to end through run(), with an empty
-// --key value so it fails fast on the "--key is required" check before any
-// gh/network call, instead of misparsing the version as a flag value or
-// erroring out on "expected exactly one version argument".
+// TestCosignAcceptsVersionBeforeOrAfterKeyFlag is the run()-level regression test for
+// review F1: it exercises the brief's exact documented usage.
 func TestCosignAcceptsVersionBeforeOrAfterKeyFlag(t *testing.T) {
 	for _, args := range [][]string{
 		{"cosign", "v1.2.3", "--key", ""},
@@ -210,8 +203,7 @@ func TestCheckMaintKeyTrusted(t *testing.T) {
 	}
 }
 
-// fakeTTY is an injectable stand-in for the controlling terminal in tests
-// (review F2).
+// fakeTTY is an injectable stand-in for the controlling terminal in tests (review F2).
 type fakeTTY struct {
 	r io.Reader
 	w io.Writer
@@ -221,10 +213,8 @@ func (f fakeTTY) Read(p []byte) (int, error)  { return f.r.Read(p) }
 func (f fakeTTY) Write(p []byte) (int, error) { return f.w.Write(p) }
 func (f fakeTTY) Close() error                { return nil }
 
-// TestRequireInteractiveConfirmation covers review F2: the version retype
-// gate must come from a real terminal (injectable in tests via
-// openConfirmTTY), must refuse to run without one, and must be skipped only
-// when TRINETRA_MAINT_PASSPHRASE_FILE marks this as the automation/e2e path.
+// TestRequireInteractiveConfirmation covers review F2: the version retype gate must come
+// from a real terminal (injectable in tests via openConfirmTTY).
 func TestRequireInteractiveConfirmation(t *testing.T) {
 	origTTY := openConfirmTTY
 	t.Cleanup(func() { openConfirmTTY = origTTY })

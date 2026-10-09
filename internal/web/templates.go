@@ -18,12 +18,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
-// assetVersion is a short content hash over every embedded asset, appended as
-// a ?v= query to asset URLs (see the "asset" template helper). Because the
-// hash changes whenever any asset's bytes change, each build produces fresh
-// asset URLs -- defeating stale browser/CDN (Cloudflare) caching of old JS/CSS
-// that would otherwise persist for the CDN's edge-TTL. Computed once at
-// startup; embed.FS reads are in-memory.
+// assetVersion is a short content hash over every embedded asset, appended as a ?v= query
+// to asset URLs (see the "asset" template helper).
 var assetVersion = computeAssetVersion()
 
 func computeAssetVersion() string {
@@ -43,10 +39,8 @@ func computeAssetVersion() string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
-// assetURL appends the content-hash version to an asset path so the template
-// emits e.g. /assets/app.js?v=<hash>. Paired with the immutable Cache-Control
-// the asset handler sets, this gives correct long-lived caching: unchanged
-// assets stay cached forever, a changed asset gets a new URL.
+// assetURL appends the content-hash version to an asset path so the template emits e.g.
+// /assets/app.js?v=<hash>.
 func assetURL(path string) string { return path + "?v=" + assetVersion }
 
 // templatesFS embeds internal/web/templates: base.html (the app shell --
@@ -81,32 +75,23 @@ var funcMap = template.FuncMap{
 	// asset appends the build's content-hash to an asset path for cache-busting
 	// (see assetVersion); templates reference assets via {{asset "/assets/x"}}.
 	"asset": assetURL,
-	// nodeHref/nodeAgo/nodeDur/clockTime/linkUnreachable back every same-origin
-	// link's node prefix and the replica banner / child link badge's time and
-	// threshold formatting -- see each func's own doc below.
+	// nodeHref/nodeAgo/nodeDur/clockTime/linkUnreachable back every same-origin link's node
+	// prefix and the replica banner / child link badge's time and threshold formatting.
 	"nodeHref":        nodeHref,
 	"nodeAgo":         nodeAgoText,
 	"nodeDur":         nodeDurText,
 	"clockTime":       nodeClockTime,
 	"linkUnreachable": linkUnreachable,
-	// oneIndexed (U6, 2026-09-25 UI audit fix) renders a zero-based loop
-	// index as its 1-based display label -- fleet_alerting.html's Route/
-	// Policy/Step row headings only; the underlying 0-based index still
-	// backs every field name/op value.
+	// oneIndexed (U6, 2026-09-25 UI audit fix) renders a zero-based loop index as its 1-based
+	// display label -- fleet_alerting.html's Route/ Policy/Step row headings only.
 	"oneIndexed": oneIndexed,
 	// dict builds a map[string]any from alternating key/value arguments, for
 	// passing a small ad-hoc bundle of fields into a named template block
 	// ({{template "x" (dict "A" 1 "B" 2)}}) -- html/template has no map literal
 	// syntax of its own.
 	"dict": templateDict,
-	// managedKeyKnown reports whether key is one of core.ManagedKeys -- the
-	// create/edit form's key <select> uses it to add a visible, selected
-	// fallback option for a row whose Key came from a rejected raw POST naming
-	// something OUTSIDE the allowlist (bypassing the select entirely, as any
-	// raw HTTP client could): without this, that row's own <select> would
-	// silently show nothing selected on re-render, losing the very input the
-	// error message is about (global-constraints.md: "a validation error ...
-	// preserves ALL input").
+	// managedKeyKnown reports whether key is one of core.ManagedKeys -- the create/edit form's
+	// key <select> uses it to add a visible.
 	"managedKeyKnown": func(key string) bool {
 		for _, k := range core.ManagedKeys {
 			if k == key {
@@ -117,13 +102,8 @@ var funcMap = template.FuncMap{
 	},
 }
 
-// nodeHref joins a node scope's URL prefix (nodeScope.Prefix, node_scope.go: ""
-// for self, "/n/<id>" for a remote node) with a same-origin route path, for
-// every page-template link/form-action that must follow the current request's
-// node scope. path must start with "/" -- every caller passes a literal route
-// path, never a relative one, so this is plain concatenation: nodeHref("",
-// "/monitoring") == "/monitoring" (self, byte-identical to before this task),
-// nodeHref("/n/child1", "/monitoring") == "/n/child1/monitoring".
+// nodeHref joins a node scope's URL prefix (nodeScope.Prefix, node_scope.go: "" for self,
+// "/n/<id>" for a remote node) with a same-origin route path.
 func nodeHref(prefix, path string) string {
 	return prefix + path
 }
@@ -155,10 +135,8 @@ func nodeDurText(ts int64) string {
 	}
 }
 
-// nodeAgoText is nodeDurText with an " ago" suffix ("3s ago", "2m ago"),
-// except ts<=0 which stays the bare "never" (an "never ago" reading would be
-// wrong). Used for the replica banner's "updated Xs ago" and the child
-// link pill's healthy "ack Xs ago".
+// nodeAgoText is nodeDurText with an " ago" suffix ("3s ago", "2m ago"), except ts<=0 which
+// stays the bare "never" (an "never ago" reading would be wrong).
 func nodeAgoText(ts int64) string {
 	d := nodeDurText(ts)
 	if ts <= 0 {
@@ -167,9 +145,8 @@ func nodeAgoText(ts int64) string {
 	return d + " ago"
 }
 
-// nodeClockTime renders a Unix timestamp as a local HH:MM clock reading, for
-// the replica banner's "child1 is down since 14:02" text. ts<=0 renders
-// "unknown" (no last-seen timestamp to show).
+// nodeClockTime renders a Unix timestamp as a local HH:MM clock reading, for the replica
+// banner's "child1 is down since 14:02" text. ts<=0 renders "unknown".
 func nodeClockTime(ts int64) string {
 	if ts <= 0 {
 		return "unknown"
@@ -177,20 +154,11 @@ func nodeClockTime(ts int64) string {
 	return time.Unix(ts, 0).Local().Format("15:04")
 }
 
-// linkUnreachableThreshold is the cutoff for the topbar child-link pill: a
-// link retrying for longer than this renders the amber "Master unreachable"
-// pill instead of the healthy verdigris "Linked to master" one.
+// linkUnreachableThreshold is the cutoff for the topbar child-link pill.
 const linkUnreachableThreshold = 2 * time.Minute
 
-// linkUnreachable reports whether a child's link to its master (from
-// Fleet().Status().Link, core.LinkView) has been retrying for longer than
-// linkUnreachableThreshold. "retrying" is core.LinkView.State's literal
-// value for that condition (internal/fleet.LinkRetrying's own value --
-// internal/web must not import internal/fleet, so this compares the plain
-// string core.LinkView already carries, the same convention core.NodeSummary
-// .State comparisons use elsewhere in this package). A link with no
-// LastAck at all (never once acked) counts as unreachable outright, since
-// there is no better evidence it's healthy.
+// linkUnreachable reports whether a child's link to its master (from Fleet().Status().Link,
+// core.LinkView) has been retrying for longer than linkUnreachableThreshold.
 func linkUnreachable(l *core.LinkView) bool {
 	if l == nil || l.State != "retrying" {
 		return false
@@ -220,9 +188,7 @@ type navEntry struct {
 	MasterOnly bool
 }
 
-// navItems is the sidebar. Badges are computed per request (badgeFor). Some
-// admin-only entries (Alerting, Managed config) stay readable by viewers who
-// type the URL; routes.go owns that gating.
+// navItems is the sidebar.
 var navItems = []navEntry{
 	{NavItem: NavItem{Heading: "Fleet"}},
 	{NavItem: NavItem{Href: "/fleet", Icon: "fleet", Label: "Fleet"}, MasterOnly: true},
@@ -310,11 +276,8 @@ func dropEmptyHeadings(items []NavItem) []NavItem {
 	return out
 }
 
-// badgeFor maps a nav entry's Href to the NavCounts field it displays,
-// rendered through badgeText (nav_counts.go) so a zero/unknown count is an
-// empty string (no badge) rather than a stale "0". Hrefs with no counter
-// (Dashboard, History, Configuration, Public view) and section headings
-// (empty Href) fall through to "" harmlessly.
+// badgeFor maps a nav entry's Href to the NavCounts field it displays, rendered through
+// badgeText (nav_counts.go) so a zero/unknown count is an empty string.
 func badgeFor(href string, counts NavCounts) string {
 	switch href {
 	case "/monitoring":
@@ -334,12 +297,8 @@ func badgeFor(href string, counts NavCounts) string {
 	}
 }
 
-// currentRole returns the signed-in request's role ("admin"/"responder"/"viewer"), or
-// "" for an anonymous one. userMiddleware (middleware.go) is what actually
-// resolves the session into a *User this reads back via userFromContext;
-// this is purely the cosmetic input to nav filtering (navForRole) and the
-// topbar/sidebar role badge -- access control itself is requireRole's job,
-// not this function's.
+// currentRole returns the signed-in request's role ("admin"/"responder"/"viewer"), or ""
+// for an anonymous one. userMiddleware.
 func currentRole(r *http.Request) string {
 	if u, ok := userFromContext(r); ok {
 		return string(u.Role)
@@ -352,10 +311,7 @@ func currentRole(r *http.Request) string {
 type PageData struct {
 	// Title/Sub drive the topbar's <h1>/<p>.
 	Title, Sub string
-	// ServerName is this host's display name (config server.name, or the
-	// hostname when unset), shown as the sidebar brand subtitle so a multi-host
-	// operator can tell which host's panel they are looking at (#101). Replaces
-	// the old hardcoded MONITOR.HOME.LAN.
+	// ServerName is this host's display name (config server.name, or the hostname when unset).
 	ServerName string
 	// Status/StatusText drive the topbar's status pill (led color class +
 	// display text) and are ALWAYS computed by newPageData from the real
@@ -367,93 +323,57 @@ type PageData struct {
 	// old statusText helper mapped "crit"/"warn" to hardcoded text like "2
 	// alerts firing" no matter the real count).
 	Status, StatusText string
-	// Role is the current user's role ("admin", "responder" or "viewer"), from
-	// currentRole. Drives both nav filtering and the read-only pill/footer.
+	// Role is the current user's role ("admin", "responder" or "viewer"), from currentRole.
 	Role string
 	// CanRespond is true for responder and admin: gates ack/unack UI.
 	CanRespond bool
-	// Name/Initial are the signed-in user's display name (User.Name) and its
-	// uppercased first letter, rendered in the sidebar footer's identity block
-	// (#80). Empty for an anonymous request. Previously the footer showed a
-	// hardcoded name keyed only on Role ("Suraj"/"Aditi"), which misidentified
-	// every user; these carry the real value from userFromContext.
+	// Name/Initial are the signed-in user's display name (User.Name) and its uppercased first
+	// letter, rendered in the sidebar footer's identity block (#80).
 	Name, Initial string
-	// Active is the request path, used to mark the matching nav link
-	// class="active".
+	// Active is the request path, used to mark the matching nav link class="active".
 	Active string
 	// Nav is Role's filtered nav list, precomputed so the template doesn't
 	// need role-aware logic beyond the active-link comparison.
 	Nav []NavItem
 	// Nonce is this request's per-response CSP nonce (see security.go's
-	// securityHeaders/nonceFromContext), rendered onto the single htmx boot
-	// script tag in base.html so it's authorized under the CSP's
-	// script-src 'nonce-...' directive.
+	// securityHeaders/nonceFromContext).
 	Nonce string
-	// CSRF is the current session's anti-CSRF token (requireCSRF,
-	// middleware.go), rendered into base.html's csrf-token meta tag so
-	// app.js can read it into the X-CSRF-Token header of a mutating
-	// fetch()/htmx request (e.g. the topbar's sign-out button). Empty when
-	// there's no signed-in session in the request context.
+	// CSRF is the current session's anti-CSRF token (requireCSRF, middleware.go).
 	CSRF string
-	// CoreVersion is the running core daemon's version (fetched over the
-	// control socket), WebVersion is this web plugin's own compiled-in version,
-	// and VersionMismatch is true when they differ -- so a partial upgrade
-	// (plugin older than core, or vice versa) is legible in the sidebar footer
-	// rather than silent (#107).
+	// CoreVersion is the running core daemon's version (fetched over the control socket),
+	// WebVersion is this web plugin's own compiled-in version.
 	CoreVersion     string
 	WebVersion      string
 	VersionMismatch bool
-	// Node is this request's fleet node scope (node_scope.go's nodeFrom(r)):
-	// the zero value's ID=="self"/Self==true/Prefix=="" replica -- ordinary
-	// solo/master-self/child pages all render identically, since
-	// nodeHref(node.Prefix, path) with an empty Prefix is a no-op. Non-zero
-	// (Self==false, Prefix=="/n/<id>") only on a master's page for a genuinely
-	// remote node.
+	// Node is this request's fleet node scope (node_scope.go's nodeFrom(r)): the zero value's
+	// ID=="self"/Self==true/Prefix=="" replica.
 	Node nodeScope
-	// FleetRole is this daemon's fleet role for the CURRENT request:
-	// "solo"/"master"/"child" (config.RoleSolo/RoleMaster/RoleChild). Drives
-	// the topbar child-link pill (FleetRole=="child") -- see
-	// resolveFleetPageInfo's doc for how this is derived without an extra
-	// Fleet().Status() round trip on a page already known to be a master's
-	// (a node-scoped request, Node.Self==false).
+	// FleetRole is this daemon's fleet role for the CURRENT request: "solo"/"master"/"child"
+	// (config.RoleSolo/RoleMaster/RoleChild).
 	FleetRole string
 	// Banner is the replica banner for a page scoped to a genuinely remote
 	// fleet node -- nil for every self-scoped page (solo, a master's own view,
 	// a child's own view, or a node-scoped page redirected back to self). See
 	// buildNodeBanner's doc.
 	Banner *NodeBanner
-	// Link is a child daemon's link status to its master (core.LinkView,
-	// from Fleet().Status().Link), non-nil only when FleetRole=="child" and
-	// that Status() call actually reported one. Drives the topbar's "Linked
-	// to master"/"Master unreachable" pill.
+	// Link is a child daemon's link status to its master (core.LinkView, from
+	// Fleet().Status().Link).
 	Link *core.LinkView
-	// MasterURL is a child daemon's configured master address
-	// (core.FleetStatus.MasterURL), surfaced as the child-link pill's
-	// tooltip so an operator can see exactly where "master" points without
-	// following an external link out of this page.
+	// MasterURL is a child daemon's configured master address (core.FleetStatus.MasterURL).
 	MasterURL string
-	// Switcher is the topbar node switcher/Ctrl-K palette's node list: up to
-	// switcherNodeCap entries (self first, then down nodes, then the rest by
-	// name), each carrying this SPECIFIC page's link under that node's prefix
-	// -- see buildSwitcherNodes' doc. Nil (base.html renders neither the
-	// switcher button nor the #nodePalette markup at all) unless
-	// FleetRole==config.RoleMaster: solo and child daemons get no switcher and no
-	// palette.
+	// Switcher is the topbar node switcher/Ctrl-K palette's node list: up to switcherNodeCap
+	// entries (self first, then down nodes, then the rest by name).
 	Switcher []SwitcherNode
-	// NodeLabel is the switcher button's own text: "this server" for a
-	// self-scoped page (solo, a master's own view, a child's own view --
-	// Node.Self), the node's display name otherwise. See nodeLabelFor.
+	// NodeLabel is the switcher button's own text: "this server" for a self-scoped page (solo,
+	// a master's own view, a child's own view -- Node.Self).
 	NodeLabel string
 }
 
 // switcherNodeCap is the most nodes the topbar switcher/Ctrl-K palette lists.
 const switcherNodeCap = 20
 
-// SwitcherNode is one entry in the topbar node switcher dropdown and its Ctrl-K
-// palette counterpart: a fleet roster node projected for THIS request's own
-// page -- its Href already carries the current page's "type" (e.g. /monitoring)
-// under that node's own prefix, per switcherTargetPath's doc, so a
-// template/click handler never needs to re-derive it.
+// SwitcherNode is one entry in the topbar node switcher dropdown and its Ctrl-K palette
+// counterpart: a fleet roster node projected for THIS request's own page.
 type SwitcherNode struct {
 	// ID is the roster id (core.NodeSummary.ID; core.SelfNodeID for self).
 	ID string
@@ -476,13 +396,8 @@ type SwitcherNode struct {
 	Href string
 }
 
-// buildSwitcherNodes projects nodes (the full, unfiltered fleet roster) into
-// the switcher/palette's ordering and per-node Href: self first, then down
-// nodes (by name), then the rest (by name), capped at switcherNodeCap. current
-// is this request's own node scope (for the Current flag); targetPath is the
-// page-type path every entry links to under its own node's prefix
-// (switcherTargetPath's result -- already swapped to "/" for a master-local
-// current page).
+// buildSwitcherNodes projects nodes (the full, unfiltered fleet roster) into the
+// switcher/palette's ordering and per-node Href: self first, then down nodes (by name).
 func buildSwitcherNodes(nodes []core.NodeSummary, current nodeScope, targetPath string) []SwitcherNode {
 	var self *core.NodeSummary
 	var down, rest []core.NodeSummary
@@ -567,19 +482,13 @@ func nodeLabelFor(ns nodeScope, path string) string {
 	return ns.Name
 }
 
-// NodeBanner is the replica banner's render data: a compact summary of the
-// remote node's own last-known state, rendered by base.html's "nodebanner"
-// partial just under the topbar. Built by buildNodeBanner from the current
-// request's nodeScope (node_scope.go), which already carries the roster's
-// NodeSummary for the scoped node (fetched once by
-// withNodeRouter/resolveMasterAndNodes to validate the {node} path segment --
-// no extra Fleet() round trip here).
+// NodeBanner is the replica banner's render data: a compact summary of the remote node's
+// own last-known state, rendered by base.html's "nodebanner" partial just under the topbar.
 type NodeBanner struct {
 	// Name is the node's display name (NodeSummary.Name).
 	Name string
-	// State is NodeSummary.State verbatim: "online", "lagging", "catching
-	// up", "stale", "down", or "revoked" -- the banner's text and accent
-	// both switch on this.
+	// State is NodeSummary.State verbatim: "online", "lagging", "catching up", "stale",
+	// "down", or "revoked" -- the banner's text and accent both switch on this.
 	State string
 	// LastSeen is NodeSummary.LastSeen (Unix seconds): the online banner's
 	// "updated Xs ago" and the down/stale banner's "down since HH:MM".
@@ -587,25 +496,13 @@ type NodeBanner struct {
 	// OutboxBytes is NodeSummary.OutboxBytes verbatim (bytes still queued
 	// for this node), carried alongside the precomputed Behind text below.
 	OutboxBytes int64
-	// Behind is the catching-up/lagging banner's precomputed "N behind"
-	// clause, built from NodeSummary.OutboxBytes/OutboxOldest by
-	// behindText -- empty when neither is known, in which case the banner
-	// omits the clause entirely rather than rendering a bare ", behind".
+	// Behind is the catching-up/lagging banner's precomputed "N behind" clause, built from
+	// NodeSummary.OutboxBytes/OutboxOldest by behindText -- empty when neither is known.
 	Behind string
 }
 
-// newPageData builds the PageData every page handler needs, deriving Role
-// from the request and Active from its path, and Status/StatusText from the
-// real active-alert set (topbarStatus(activeAlertsViaAPI(d))) -- see
-// PageData's doc for why every page shares this one computation. d is also
-// used to compute the nav's live badge counts (navCountsFor); every other
-// field is unchanged from the request/session.
-//
-// Active carries the current node scope's prefix: a bare r.URL.Path would no
-// longer match a remote node's prefixed Nav hrefs (navForRole), breaking the
-// sidebar/mobile-nav "active" highlight on every node-scoped page --
-// reconstructing the full node-scoped path here keeps the comparison correct,
-// and is a no-op (Prefix=="") for every self-scoped page.
+// newPageData builds the PageData every page handler needs, deriving Role from the request
+// and Active from its path, and Status/StatusText from the real active-alert set.
 func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	role := currentRole(r)
 	name := ""
@@ -623,11 +520,8 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	fleetInfo := resolveFleetPageInfo(r, d)
 	var switcher []SwitcherNode
 	if fleetInfo.role == config.RoleMaster {
-		// fleetMemoFrom(r).fleetNodes(d) is the SAME cached Fleet().Nodes()
-		// result every other roster lookup this request makes already
-		// shares (fleet_memo.go) -- building the switcher here costs a real
-		// round trip only when nothing else in the request already paid for
-		// one.
+		// fleetMemoFrom(r).fleetNodes(d) is the SAME cached Fleet().Nodes() result every other
+		// roster lookup this request makes already shares (fleet_memo.go).
 		if nodes, err := fleetMemoFrom(r).fleetNodes(d); err == nil {
 			switcher = buildSwitcherNodes(nodes, node, switcherTargetPath(r.URL.Path, r.URL.RawQuery))
 		}
@@ -659,32 +553,16 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 	}
 }
 
-// fleetPageInfo is resolveFleetPageInfo's return shape: PageData's
-// FleetRole/Link/MasterURL fields, computed together so the (at most one)
-// Fleet().Status() call this request makes for page rendering serves all
-// three.
+// fleetPageInfo is resolveFleetPageInfo's return shape: PageData's FleetRole/Link/MasterURL
+// fields.
 type fleetPageInfo struct {
 	role      string
 	link      *core.LinkView
 	masterURL string
 }
 
-// resolveFleetPageInfo determines the current request's fleet role (and, for
-// a child, its link status/master URL) for newPageData: call Fleet().Status()
-// at most once per REQUEST (not per call site -- see fleet_memo.go), and only
-// when the role isn't already known from resolveMasterAndNodes.
-//
-// A request that reached here through withNodeRouter (node_scope.go) -- i.e.
-// nodeScopeCtxKey{} is set in its context -- already proved this daemon a
-// master (withNodeRouter only proceeds past resolveMasterAndNodes when
-// isMaster is true), so that case returns "master" outright with no further
-// round trip -- not even a memoized one, since resolveMasterAndNodes may well
-// have settled "master" from Nodes() alone without ever calling Status().
-// Every other request (the vast majority: every unprefixed page, since
-// withNodeRouter only inspects /n/... paths) falls through to r's fleetMemo,
-// collapsing every failure mode (nil Deps.Fleet, a nil FleetAPI, a Status()
-// error, or an empty Role -- an old daemon predating Fleet.Status) to "solo",
-// exactly like fleetRole's doc explains for the same failure set.
+// resolveFleetPageInfo determines the current request's fleet role (and, for a child, its
+// link status/master URL) for newPageData: call Fleet().Status() at most once per REQUEST.
 func resolveFleetPageInfo(r *http.Request, d Deps) fleetPageInfo {
 	if _, ok := r.Context().Value(nodeScopeCtxKey{}).(nodeScope); ok {
 		return fleetPageInfo{role: config.RoleMaster}
@@ -696,12 +574,8 @@ func resolveFleetPageInfo(r *http.Request, d Deps) fleetPageInfo {
 	return fleetPageInfo{role: status.Role, link: status.Link, masterURL: status.MasterURL}
 }
 
-// buildNodeBanner returns the replica banner (NodeBanner) for a page scoped
-// to a genuinely remote fleet node, nil for every self-scoped page (see
-// PageData.Node's doc). ns.Summary is the roster's NodeSummary for the
-// scoped node, already resolved by withNodeRouter/resolveMasterAndNodes to
-// validate the {node} path segment -- building the banner from it costs no
-// extra Fleet() round trip.
+// buildNodeBanner returns the replica banner (NodeBanner) for a page scoped to a genuinely
+// remote fleet node, nil for every self-scoped page.
 func buildNodeBanner(ns nodeScope) *NodeBanner {
 	if ns.Self {
 		return nil
@@ -715,12 +589,8 @@ func buildNodeBanner(ns nodeScope) *NodeBanner {
 	}
 }
 
-// behindText renders NodeBanner.Behind (the "catching up"/"lagging" banner's "N
-// behind" clause) from NodeSummary.OutboxBytes/OutboxOldest: the queued byte
-// count (humanBytes) and, when known, how long the oldest queued record has
-// been waiting ("oldest Xm ago", via nodeAgoText). Empty when neither is known,
-// so the banner can omit the clause entirely rather than render a bare trailing
-// ", behind".
+// behindText renders NodeBanner.Behind (the "catching up"/"lagging" banner's "N behind"
+// clause) from NodeSummary.OutboxBytes/OutboxOldest: the queued byte count.
 func behindText(n core.NodeSummary) string {
 	var parts []string
 	if n.OutboxBytes > 0 {
@@ -732,11 +602,8 @@ func behindText(n core.NodeSummary) string {
 	return strings.Join(parts, ", ")
 }
 
-// coreVersionViaAPI fetches the running core daemon's version over the control
-// socket (#107), degrading to "unknown" when the API is unset or errors so a
-// version hiccup never breaks page rendering. Reads through apiFor(r, d)
-// (node_scope.go), so a page scoped to a remote fleet node shows that node's
-// own reported version rather than the master's.
+// coreVersionViaAPI fetches the running core daemon's version over the control socket
+// (#107).
 func coreVersionViaAPI(r *http.Request, d Deps) string {
 	api := apiFor(r, d)
 	if api == nil {
@@ -780,11 +647,7 @@ func renderPageStatus(w http.ResponseWriter, page string, data PageData, status 
 }
 
 // renderDenied renders the "Higher role needed" denied panel (templates/denied.html)
-// through the full app-shell layout with a 403 status -- requireRole
-// (middleware.go) calls this when a signed-in user's role falls short of a
-// route's required minimum. It still renders through the normal PageData/
-// nav (the visitor IS signed in, so the shell should look like it does
-// everywhere else), just with the content block replaced.
+// through the full app-shell layout with a 403 status -- requireRole.
 func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
 	data := newPageData(r, d, "Higher role needed", "Access denied")
 	if err := renderPageStatus(w, "denied.html", data, http.StatusForbidden); err != nil {
@@ -792,11 +655,8 @@ func renderDenied(w http.ResponseWriter, r *http.Request, d Deps) {
 	}
 }
 
-// renderNotFound is renderDenied's 404 counterpart (templates/notfound.html,
-// same "panel denied" styling), through the full app-shell layout. reason is
-// a short, user-facing explanation rendered into the panel body (e.g. "no
-// such node") -- withNodeRouter (node_scope.go) is this task's caller, for
-// an unresolvable or rejected /n/{node}/... path.
+// renderNotFound is renderDenied's 404 counterpart (templates/notfound.html, same "panel
+// denied" styling), through the full app-shell layout. reason is a short.
 func renderNotFound(w http.ResponseWriter, r *http.Request, d Deps, reason string) {
 	data := newPageData(r, d, "Not found", reason)
 	if err := renderPageStatus(w, "notfound.html", data, http.StatusNotFound); err != nil {
@@ -804,35 +664,18 @@ func renderNotFound(w http.ResponseWriter, r *http.Request, d Deps, reason strin
 	}
 }
 
-// BarePageData is what a "bare"/centered page (enroll, login, the public
-// dashboard -- they use the centered `.card`/`.center` styling rather than the
-// app shell) renders against: just the title and the CSP nonce its boot script
-// needs, none of PageData's nav/topbar/role fields -- those pages render
-// before there's a signed-in session (or, for /public, deliberately without
-// one) so the sidebar/topbar shell has nothing to fill in.
+// BarePageData is what a "bare"/centered page (enroll, login, the public dashboard -- they
+// use the centered `.card`/`.center` styling rather than the app shell) renders against.
 type BarePageData struct {
 	// Title feeds the <title> tag, same as PageData.Title.
 	Title string
 	// Nonce is this request's CSP nonce (see security.go), threaded onto
 	// base_bare.html's boot script tag exactly like PageData.Nonce.
 	Nonce string
-	// EnrollToken is this request's ?token= query parameter, if any,
-	// threaded onto enroll.html's hidden #enrollToken field so app.js can
-	// echo it back as /enroll/begin's "token" field (resolveEnrollRole,
-	// enroll_tokens.go, is what actually validates/consumes it -- this is
-	// just carrying the value from the GET's URL to the POST's body).
-	// login.html doesn't reference this field; harmless there either way.
+	// EnrollToken is this request's ?token= query parameter, if any.
 	EnrollToken string
-	// EnrollClosed (U8, 2026-09-25 UI audit fix) is true when GET /enroll
-	// carries no ?token= AND the user store already has at least one
-	// account: resolveEnrollRole (enroll_tokens.go) will unconditionally
-	// refuse a POST /enroll/begin for exactly this request, so enroll.html
-	// renders a "you need an invite" message and a link to /login instead
-	// of a form that can only ever fail. Only enrollPageHandler sets this;
-	// every other bare page leaves it false. An unreadable user store also
-	// sets this (fail closed, same direction as resolveEnrollRole's own
-	// IsEmpty error handling) rather than showing a form that would only
-	// fail with a different, more confusing error.
+	// EnrollClosed (U8, 2026-09-25 UI audit fix) is true when GET /enroll carries no ?token=
+	// AND the user store already has at least one account: resolveEnrollRole.
 	EnrollClosed bool
 }
 
@@ -845,10 +688,8 @@ func newBarePageData(r *http.Request, title string) BarePageData {
 	}
 }
 
-// renderBarePage is renderPageStatus's counterpart for the bare/centered
-// layout: it parses base_bare.html together with the named page template
-// instead of base.html. See BarePageData's doc for why a page needs this
-// instead of renderPageStatus.
+// renderBarePage is renderPageStatus's counterpart for the bare/centered layout: it parses
+// base_bare.html together with the named page template instead of base.html.
 func renderBarePage(w http.ResponseWriter, page string, data BarePageData) error {
 	tmpl, err := template.New("base_bare.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base_bare.html", "templates/"+page)

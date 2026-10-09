@@ -16,10 +16,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// eventsTestDeps builds Deps for the SSE tests: a distinctive fake
-// Deps.Snapshot (so a test can assert its value round-trips onto the wire)
-// and a Cfg with a deliberately LARGE FastInterval -- see
-// TestEventsStreamStopsPromptlyOnClientDisconnect's doc for why that matters.
+// eventsTestDeps builds Deps for the SSE tests: a distinctive fake Deps.Snapshot.
 func eventsTestDeps(t *testing.T, fastIntervalSec int) Deps {
 	t.Helper()
 	d := enrollTestDeps(t)
@@ -30,13 +27,8 @@ func eventsTestDeps(t *testing.T, fastIntervalSec int) Deps {
 	return d
 }
 
-// readSSEFrame reads the next "event: <name>\ndata: <json>\n\n" frame off r
-// (the exact shape writeSnapshotEvent/writeAlertEvent/writePublicSnapshotEvent
-// all write), skipping any stray blank lines first, and returns the event
-// name and the data payload with the "data: " prefix and trailing newline
-// stripped. Used by every test that feeds Deps.Subscribe's fake channel
-// directly and needs to assert on the resulting frame's event name (not just
-// its JSON body).
+// readSSEFrame reads the next "event: <name>\ndata: <json>\n\n" frame off r (the exact
+// shape writeSnapshotEvent/writeAlertEvent/writePublicSnapshotEvent all write).
 func readSSEFrame(t *testing.T, r *bufio.Reader) (event, data string) {
 	t.Helper()
 	for {
@@ -56,9 +48,8 @@ func readSSEFrame(t *testing.T, r *bufio.Reader) (event, data string) {
 	}
 }
 
-// viewerCookie mints a live viewer session and returns its sw_session
-// cookie, for tests that need a real (non-httptest.NewRequest-scoped) HTTP
-// client request against an httptest.Server.
+// viewerCookie mints a live viewer session and returns its sw_session cookie, for tests
+// that need a real.
 func viewerCookie(t *testing.T, users UserStore, sessions SessionStore) *http.Cookie {
 	t.Helper()
 	u := &User{ID: mustNewUserID(t), Name: "viewer1", Role: RoleViewer, Created: 1}
@@ -72,10 +63,7 @@ func viewerCookie(t *testing.T, users UserStore, sessions SessionStore) *http.Co
 	return &http.Cookie{Name: sessionCookieName, Value: sess.ID}
 }
 
-// TestEventsStreamEmitsSnapshotFrame pins /events' core contract: a viewer
-// GET gets a text/event-stream response whose very first frame already
-// carries the current DashboardView (as JSON) -- no waiting for the fast-tier
-// ticker's first tick.
+// TestEventsStreamEmitsSnapshotFrame pins /events' core contract.
 func TestEventsStreamEmitsSnapshotFrame(t *testing.T) {
 	d := eventsTestDeps(t, 60) // a long tick period the test must not need to wait for
 	users := newUserStore(d.StateDir)
@@ -139,13 +127,8 @@ func TestEventsStreamEmitsSnapshotFrame(t *testing.T) {
 	}
 }
 
-// TestEventsStreamIncludesTopContainers pins that /events' SSE frame carries
-// the current top-containers CPU/mem data (DashboardView.TopCPUContainers/
-// TopMemContainers), not just the resource tiles' scalars -- app.js's
-// swBootSSE needs this on the wire to keep the "Top containers · CPU"/
-// "· Memory" hbar panels live between full page loads, matching the
-// server-rendered ones dashboardHandler builds via containerBars
-// (handlers_dashboard.go).
+// TestEventsStreamIncludesTopContainers pins that /events' SSE frame carries the current
+// top-containers CPU/mem data (DashboardView.TopCPUContainers/ TopMemContainers).
 func TestEventsStreamIncludesTopContainers(t *testing.T) {
 	d := eventsTestDeps(t, 60)
 	d.Snapshot = func() DashboardView {
@@ -197,13 +180,8 @@ func TestEventsStreamIncludesTopContainers(t *testing.T) {
 	}
 }
 
-// TestEventsStreamStopsPromptlyOnClientDisconnect pins that eventsHandler
-// notices r.Context().Done() (a client disconnect) immediately rather than
-// only discovering it the next time its ticker fires and a write fails.
-// FastInterval is set to 60s specifically so that if the implementation
-// only relied on the next tick's write erroring out, this test -- which
-// requires the handler to have returned within a couple of seconds of the
-// client going away -- would time out.
+// TestEventsStreamStopsPromptlyOnClientDisconnect pins that eventsHandler notices
+// r.Context().Done().
 func TestEventsStreamStopsPromptlyOnClientDisconnect(t *testing.T) {
 	d := eventsTestDeps(t, 60)
 	users := newUserStore(d.StateDir)
@@ -235,12 +213,7 @@ func TestEventsStreamStopsPromptlyOnClientDisconnect(t *testing.T) {
 	cancel()
 	resp.Body.Close()
 
-	// httptest.Server.Close() blocks until every outstanding request's
-	// handler has returned. If eventsHandler didn't select on
-	// r.Context().Done() and instead only noticed the disconnect via a
-	// failed write on the next tick (60s away), this would hang well past
-	// any reasonable deadline -- proving the ctx-cancellation path is what
-	// actually lets the handler return.
+	// httptest.Server.Close() blocks until every outstanding request's handler has returned.
 	done := make(chan struct{})
 	go func() {
 		srv.Close()
@@ -254,11 +227,8 @@ func TestEventsStreamStopsPromptlyOnClientDisconnect(t *testing.T) {
 	}
 }
 
-// TestEventsStreamSubscribePushesSnapshotFrameOnSnapshotEvent pins the
-// push-driven contract: when Deps.Subscribe is set, a Kind:"snapshot"
-// LiveEvent fed on the returned channel makes eventsHandler write a fresh
-// snapshot SSE frame immediately, rather than waiting for the (fallback)
-// ticker.
+// TestEventsStreamSubscribePushesSnapshotFrameOnSnapshotEvent pins the push-driven
+// contract: when Deps.Subscribe is set.
 func TestEventsStreamSubscribePushesSnapshotFrameOnSnapshotEvent(t *testing.T) {
 	d := eventsTestDeps(t, 60)
 	sub := make(chan LiveEvent)
@@ -297,10 +267,8 @@ func TestEventsStreamSubscribePushesSnapshotFrameOnSnapshotEvent(t *testing.T) {
 	}
 }
 
-// TestEventsStreamSubscribePushesAlertFrameOnAlertEvent pins that a
-// non-"snapshot" LiveEvent (an alert fire/recover) makes eventsHandler write
-// a distinct "alert" SSE frame carrying the event's fields, instead of a
-// snapshot frame.
+// TestEventsStreamSubscribePushesAlertFrameOnAlertEvent pins that a non-"snapshot"
+// LiveEvent.
 func TestEventsStreamSubscribePushesAlertFrameOnAlertEvent(t *testing.T) {
 	d := eventsTestDeps(t, 60)
 	sub := make(chan LiveEvent)
@@ -341,12 +309,8 @@ func TestEventsStreamSubscribePushesAlertFrameOnAlertEvent(t *testing.T) {
 	}
 }
 
-// TestEventsStreamFallsBackToTickerWhenSubscribeChannelCloses pins the safety
-// net: once the live channel closes (the daemon connection dropped, say),
-// eventsHandler must keep the SSE connection alive and fall back to polling
-// Deps.Snapshot() on sseFallbackInterval, rather than stalling or tearing the
-// stream down. sseFallbackInterval is shrunk for the duration of this test so
-// it doesn't need to wait 30 real seconds for the fallback tick.
+// TestEventsStreamFallsBackToTickerWhenSubscribeChannelCloses pins the safety net: once the
+// live channel closes (the daemon connection dropped, say).
 func TestEventsStreamFallsBackToTickerWhenSubscribeChannelCloses(t *testing.T) {
 	orig := sseFallbackInterval
 	sseFallbackInterval = 20 * time.Millisecond
@@ -391,11 +355,8 @@ func TestEventsStreamFallsBackToTickerWhenSubscribeChannelCloses(t *testing.T) {
 
 // ---- /n/{node}/events (remote fleet node, poll-only) -------------------
 
-// nodeSnapshotAPI is a core.API test double whose Snapshot() reads a
-// mutable, mutex-guarded DashboardView, so a test can change what a
-// "remote node" reports mid-stream and prove remoteNodeEventsLoop's poll
-// notices -- something the fixed fakeAPI.snap field can't do (it's a
-// constant, not a closure).
+// nodeSnapshotAPI is a core.API test double whose Snapshot() reads a mutable, mutex-guarded
+// DashboardView.
 type nodeSnapshotAPI struct {
 	fakeAPI
 	mu   sync.Mutex
@@ -418,20 +379,15 @@ func (n *nodeSnapshotAPI) setSnapshot(v core.DashboardView) {
 	n.snap = v
 }
 
-// setErr makes every subsequent Snapshot() call fail with err (nil clears
-// it) -- TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery's
-// way of simulating a transient control-plane hiccup on the remote node.
+// setErr makes every subsequent Snapshot() call fail with err (nil clears it).
 func (n *nodeSnapshotAPI) setErr(err error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.err = err
 }
 
-// nodeEventsTestDeps builds Deps for the node-scoped SSE tests: a master
-// daemon (masterFleetWithChild's roster, node_scope_test.go) whose child1
-// node resolves to child (read through apiFor once nodeFrom(r) is
-// non-self), with a short FastInterval so remoteNodeEventsLoop's poll
-// ticker fires promptly.
+// nodeEventsTestDeps builds Deps for the node-scoped SSE tests: a master daemon
+// (masterFleetWithChild's roster, node_scope_test.go) whose child1 node resolves to child.
 func nodeEventsTestDeps(t *testing.T, child core.API, fastIntervalSec int) Deps {
 	t.Helper()
 	d := fleetTestDeps(t, masterFakeAPI(masterFleetWithChild(), map[string]core.API{"child1": child}))
@@ -441,12 +397,8 @@ func nodeEventsTestDeps(t *testing.T, child core.API, fastIntervalSec int) Deps 
 	return d
 }
 
-// TestEventsStreamRemoteNodePollsChildSnapshot pins that GET /n/child1/events
-// streams an initial "snapshot" frame built from the CHILD node's own
-// core.API.Snapshot() (not the master's), then re-polls on sseTickerInterval
-// and emits a fresh frame once that child snapshot actually changes -- and
-// never calls Deps.Subscribe (there is no per-node live push; remote alert
-// events are never streamed, only snapshot polling).
+// TestEventsStreamRemoteNodePollsChildSnapshot pins that GET /n/child1/events streams an
+// initial "snapshot" frame built from the CHILD node's own core.API.Snapshot().
 func TestEventsStreamRemoteNodePollsChildSnapshot(t *testing.T) {
 	child := &nodeSnapshotAPI{snap: core.DashboardView{CPU: 77}}
 	d := nodeEventsTestDeps(t, child, 1)
@@ -507,14 +459,8 @@ func TestEventsStreamRemoteNodePollsChildSnapshot(t *testing.T) {
 	}
 }
 
-// TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery pins the
-// stale indicator: a remote node's poll holds the last successful snapshot
-// across transient errors (nothing is written to the wire for the first two
-// consecutive failures), emits one "stale" SSE event naming the last-success
-// time once errors reach remoteNodeStaleThreshold (3), and clears back to a
-// normal "snapshot" frame on the very next successful poll -- even though that
-// poll's data is unchanged from what was already held, which the ordinary
-// "only write on change" dedup would otherwise have suppressed.
+// TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery pins the stale
+// indicator.
 func TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery(t *testing.T) {
 	child := &nodeSnapshotAPI{snap: core.DashboardView{CPU: 77}}
 	d := nodeEventsTestDeps(t, child, 1)
@@ -547,10 +493,8 @@ func TestEventsStreamRemoteNodeStaleAfterThreeErrorsAndClearsOnRecovery(t *testi
 	}
 
 	child.setErr(errors.New("child unreachable"))
-	// The 3rd consecutive failed poll is the FIRST thing written to the wire
-	// after the initial frame (the 1st/2nd failures write nothing at all --
-	// the "hold" behavior) -- so this blocking read's very next frame is the
-	// stale event, not a snapshot.
+	// The 3rd consecutive failed poll is the FIRST thing written to the wire after the initial
+	// frame (the 1st/2nd failures write nothing at all -- the "hold" behavior).
 	event, data = readSSEFrame(t, r)
 	if event != "stale" {
 		t.Fatalf("event after 3 consecutive errors = %q, want stale (data: %s)", event, data)

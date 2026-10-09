@@ -18,10 +18,8 @@ const (
 	ReleasePrefix = "trinetra-release-v1\n"
 	ChannelPrefix = "trinetra-channel-v1\n"
 
-	// MaxPointerLifetime is the longest span a channel pointer's Expires may
-	// be set beyond its Issued time. A compromised pointer key must not be
-	// able to freeze a host on a stale release by self-declaring a far-future
-	// expiry.
+	// MaxPointerLifetime is the longest span a channel pointer's Expires may be set beyond its
+	// Issued time.
 	MaxPointerLifetime = 14 * 24 * time.Hour
 
 	// pointerClockSkew is the slack allowed for clock drift between the
@@ -43,7 +41,6 @@ var (
 )
 
 // KeySet is the trust anchor: public keys compiled into the running binary.
-// Each role holds its current and next key.
 type KeySet struct {
 	CI, Maint, Pointer []ed25519.PublicKey
 }
@@ -82,8 +79,7 @@ func Fingerprints(k KeySet) []string {
 	return out
 }
 
-// decodeSig reads a .sig file: base64 of a 64-byte signature, optional
-// trailing whitespace.
+// decodeSig reads a .sig file: base64 of a 64-byte signature, optional trailing whitespace.
 func decodeSig(b []byte) ([]byte, error) {
 	s := strings.TrimSpace(string(b))
 	if s == "" {
@@ -96,13 +92,8 @@ func decodeSig(b []byte) ([]byte, error) {
 	return sig, nil
 }
 
-// VerifySignature checks a single detached signature file against a set of
-// trusted keys for one domain-separated role (ReleasePrefix or
-// ChannelPrefix), without requiring a second, paired signature the way
-// VerifyRelease does. It exists for tooling that must verify one signature
-// before its counterpart exists yet — for example cmd/trinetra-release
-// cosign checking a release's CI signature before the maintainer signature
-// has been produced.
+// VerifySignature checks a single detached signature file against a set of trusted keys for
+// one domain-separated role (ReleasePrefix or ChannelPrefix), without requiring a second.
 func VerifySignature(keys []PublicKey, prefix string, msg, sigFile []byte) error {
 	return verifyAny(keys, prefix, msg, sigFile)
 }
@@ -121,9 +112,8 @@ func verifyAny(keys []ed25519.PublicKey, prefix string, msg, sigFile []byte) err
 	return ErrBadSignature
 }
 
-// VerifyRelease checks both signatures over the exact manifest bytes, then
-// decodes and validates the manifest. Signatures are checked first, so a
-// malformed-but-unsigned manifest reports a signature error.
+// VerifyRelease checks both signatures over the exact manifest bytes, then decodes and
+// validates the manifest.
 func VerifyRelease(keys KeySet, manifest, ciSig, maintSig []byte) (Manifest, error) {
 	if keys.empty() {
 		return Manifest{}, ErrNoKeys
@@ -137,11 +127,8 @@ func VerifyRelease(keys KeySet, manifest, ciSig, maintSig []byte) (Manifest, err
 	return DecodeManifest(manifest)
 }
 
-// VerifyPointer checks a channel pointer's signature, then its lifetime: it must
-// not be issued in the future (past clock-skew slack), claim a lifetime longer
-// than MaxPointerLifetime (plus slack), or have expired. These guard against a
-// compromised pointer key declaring a far-future expiry to freeze a host on a
-// stale release.
+// VerifyPointer checks a channel pointer's signature, then its lifetime: it must not be
+// issued in the future (past clock-skew slack).
 func VerifyPointer(keys KeySet, pointer, sig []byte, now time.Time) (Pointer, error) {
 	if keys.empty() {
 		return Pointer{}, ErrNoKeys
@@ -173,21 +160,14 @@ type Policy struct {
 	// Floor is the highest version ever committed on this host; only
 	// consulted when HasFloor is true.
 	Floor Version
-	// HasFloor reports whether Floor should be enforced. False means "no
-	// floor recorded and no known running version" -- a fresh host, or one
-	// where the running binary's version could not be determined -- and
-	// therefore no lower bound at all: CheckPolicy skips the floor
-	// comparison entirely rather than comparing against the zero Version,
-	// which would wrongly read as "already at 0.0.0" and refuse any
-	// pre-release of 0.0.0 (e.g. 0.0.0-rc.1) as a downgrade.
+	// HasFloor reports whether Floor should be enforced.
 	HasFloor   bool
 	Running    Version
 	AllowEqual bool // re-apply the installed version (repair)
 }
 
-// ChannelAccepts reports whether a host on channel host accepts a release
-// published on channel release: a stable host accepts only stable; a beta host
-// accepts beta and stable, so beta hosts also move on to final releases.
+// ChannelAccepts reports whether a host on channel host accepts a release published on
+// channel release: a stable host accepts only stable; a beta host accepts beta and stable.
 func ChannelAccepts(host, release string) bool {
 	switch host {
 	case "stable":

@@ -24,9 +24,8 @@ const (
 	brandAmber     = "#F2B23A"
 )
 
-// TestBrandAssetsServed pins that the copied brand kit files and the embedded
-// Outfit font are served from the embedded asset tree with a deterministic
-// Content-Type (not the host's mime.types).
+// TestBrandAssetsServed pins that the copied brand kit files and the embedded Outfit font
+// are served from the embedded asset tree with a deterministic Content-Type.
 func TestBrandAssetsServed(t *testing.T) {
 	h := newHandler(enrollTestDeps(t))
 	cases := map[string]string{
@@ -86,10 +85,8 @@ func brandPages(t *testing.T) map[string]string {
 	return out
 }
 
-// TestPagesCarryWordmarkAndFavicons pins the visual identity on every
-// branded surface: both theme variants of the wordmark (ash for dark, ink
-// for light) with alt="trinetra", the old .lamp dot gone, and the favicon /
-// apple-touch-icon links in the head -- without a web manifest.
+// TestPagesCarryWordmarkAndFavicons pins the visual identity on every branded surface: both
+// theme variants of the wordmark (ash for dark, ink for light) with alt="trinetra".
 func TestPagesCarryWordmarkAndFavicons(t *testing.T) {
 	for name, body := range brandPages(t) {
 		for _, want := range []string{
@@ -115,11 +112,8 @@ func TestPagesCarryWordmarkAndFavicons(t *testing.T) {
 	}
 }
 
-// externalAssetURL matches an absolute or protocol-relative URL
-// ("https://x", "http://x", "//x") that LOADS something: an HTML src/href
-// attribute (or a JS .src= assignment), a CSS url(...), an @import, or a JS
-// fetch()/EventSource()/import(). Plain text such as a form
-// placeholder="https://ntfy.sh" is not an asset reference.
+// externalAssetURL matches an absolute or protocol-relative URL ("https://x", "http://x",
+// "//x") that LOADS something: an HTML src/href attribute (or a JS .src= assignment).
 var externalAssetURL = regexp.MustCompile(`(?i)(\b(src|href)\s*=\s*["'\x60]?\s*(https?:)?//|url\(\s*["']?\s*(https?:)?//|@import\s+(url\()?\s*["']?\s*(https?:)?//|\b(fetch|EventSource|import)\s*\(\s*["'\x60](https?:)?//)`)
 
 // srcsetAttr captures a srcset attribute's value so every candidate -- not
@@ -145,10 +139,8 @@ func externalLoads(src string) []string {
 	return out
 }
 
-// TestNoExternalAssetURLs pins "no runtime external requests": every
-// template, stylesheet and app.js must load its fonts, images, scripts,
-// styles and data from this server (the embedded /assets/ tree or its own
-// same-origin API).
+// TestNoExternalAssetURLs pins "no runtime external requests": every template, stylesheet
+// and app.js must load its fonts, images, scripts, styles and data from this server.
 func TestNoExternalAssetURLs(t *testing.T) {
 	check := func(fsys fs.FS, root string, exts ...string) int {
 		n := 0
@@ -274,10 +266,8 @@ func readStyleCSS(t *testing.T) string {
 	return string(b)
 }
 
-// TestStyleCSSUsesBrandPalette pins the token remap: ink/graphite/ash
-// surfaces and text, ember for --signal/--crit, verdigris for --ok and amber
-// for --warn in the dark theme; the light theme keeps pure ember for the one
-// primary action (--signal) and ash as its page background.
+// TestStyleCSSUsesBrandPalette pins the token remap: ink/graphite/ash surfaces and text,
+// ember for --signal/--crit, verdigris for --ok and amber for --warn in the dark theme.
 func TestStyleCSSUsesBrandPalette(t *testing.T) {
 	css := readStyleCSS(t)
 	dark := cssThemeVars(t, css, "dark")
@@ -326,9 +316,8 @@ func TestStyleCSSContrast(t *testing.T) {
 				}
 			}
 		}
-		// The data-series tokens are allowed only where contrast doesn't
-		// apply (lines, fills, swatches); if one is ever used as text it
-		// must meet 4.5:1 like any other text token.
+		// The data-series tokens are allowed only where contrast doesn't apply (lines, fills,
+		// swatches); if one is ever used as text it must meet 4.5:1 like any other text token.
 		for _, tok := range dataSeriesTextUses(t) {
 			for _, surf := range []string{"--bg", "--surface", "--elev"} {
 				if r := contrast(t, v[tok], v[surf]); r < 4.5 {
@@ -348,9 +337,8 @@ func TestStyleCSSContrast(t *testing.T) {
 	}
 }
 
-// TestStyleCSSEmbedsOutfitForHeadings pins the display face: Outfit is
-// declared via @font-face from the embedded woff2 and used for headings only
-// (body text keeps --font-sans).
+// TestStyleCSSEmbedsOutfitForHeadings pins the display face: Outfit is declared via
+// @font-face from the embedded woff2 and used for headings only.
 func TestStyleCSSEmbedsOutfitForHeadings(t *testing.T) {
 	css := readStyleCSS(t)
 	for _, want := range []string{
@@ -372,10 +360,8 @@ func TestStyleCSSEmbedsOutfitForHeadings(t *testing.T) {
 // stop-color: / border-color:) of a data-series token.
 var dataSeriesText = regexp.MustCompile(`(?:^|[^-a-zA-Z])color\s*:\s*var\(\s*(--info|--violet|--cyan|--pink)\s*\)`)
 
-// dataSeriesTextUses returns the data-series tokens (--info/--violet/--cyan/
-// --pink) that style.css, a template or app.js uses as text colour. The
-// palette is documented as data-series only, so today this is empty; it
-// exists so TestStyleCSSContrast would hold any future text use to 4.5:1.
+// dataSeriesTextUses returns the data-series tokens (--info/--violet/--cyan/ --pink) that
+// style.css, a template or app.js uses as text colour.
 func dataSeriesTextUses(t *testing.T) []string {
 	t.Helper()
 	seen := map[string]bool{}
@@ -403,9 +389,8 @@ func dataSeriesTextUses(t *testing.T) []string {
 	return out
 }
 
-// TestChromeUsesNeutralTokens pins that links, the role badge, the avatar and
-// on-switches use neutral brand tokens, not the data-series palette or
-// verdigris (reserved for healthy/online).
+// TestChromeUsesNeutralTokens pins that links, the role badge, the avatar and on-switches
+// use neutral brand tokens, not the data-series palette or verdigris.
 func TestChromeUsesNeutralTokens(t *testing.T) {
 	if got := dataSeriesTextUses(t); len(got) != 0 {
 		t.Errorf("data-series tokens used as text colour: %v", got)
@@ -438,10 +423,8 @@ var fontURL = regexp.MustCompile(`url\(/assets/fonts/([^)]+)\)`)
 // hashedFontName captures the 12-hex content hash embedded in a font name.
 var hashedFontName = regexp.MustCompile(`\.([0-9a-f]{12})\.woff2$`)
 
-// TestOutfitFontNameIsContentHashed pins cache safety for the font:
-// /assets/ is served immutable and style.css (static) can't use the ?v=
-// helper, so every .woff2 is named with the first 12 hex of its sha256.
-// Replacing the file without renaming it fails here.
+// TestOutfitFontNameIsContentHashed pins cache safety for the font: /assets/ is served
+// immutable and style.css (static) can't use the ?v= helper.
 func TestOutfitFontNameIsContentHashed(t *testing.T) {
 	css := readStyleCSS(t)
 	refs := fontURL.FindAllStringSubmatch(css, -1)
@@ -531,11 +514,8 @@ func parseCSSRules(css string) []cssRule {
 	return out
 }
 
-// TestWordmarkThemeSwap evaluates style.css's wordmark display rules for
-// every theme state -- data-theme unset/dark/light x OS dark/light -- and
-// pins that exactly one wordmark shows: ash when the effective theme is
-// dark, ink when it is light. Any rule the evaluator can't interpret fails
-// the test, so a new selector can't slip past it.
+// TestWordmarkThemeSwap evaluates style.css's wordmark display rules for every theme state
+// -- data-theme unset/dark/light x OS dark/light.
 func TestWordmarkThemeSwap(t *testing.T) {
 	var rules []cssRule
 	for _, r := range parseCSSRules(readStyleCSS(t)) {

@@ -88,10 +88,8 @@ func TestNodeAlerterMassDisconnectIsOneIncident(t *testing.T) {
 	}
 }
 
-// TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers: a,b,c go silent and open
-// a mass incident; d,e,f then go stale while it is open; a,b,c reconnect. The
-// incident must NOT resolve while d,e,f are lost, no individual down alert may
-// fire for them, and exactly one connectivity-recover fires once all are back.
+// TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers: a,b,c go silent and open a mass
+// incident; d,e,f then go stale while it is open; a,b,c reconnect.
 func TestNodeAlerterMassDisconnectAbsorbsLateStaleMembers(t *testing.T) {
 	tr := NewTracker(cfgT())
 	ids := []string{"a", "b", "c", "d", "e", "f"}

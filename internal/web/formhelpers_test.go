@@ -8,23 +8,8 @@ import (
 	"golang.org/x/net/html"
 )
 
-// formValuesForButton parses a rendered page (body), finds the <form> that
-// contains a submit control named btnName with value btnValue (a <button>
-// or an <input type="submit">), and returns exactly the fields a browser
-// would submit for THAT form when THAT button is clicked: every enabled
-// <input>/<select>/<textarea> inside it (following normal HTML form-
-// submission semantics -- a disabled field is never submitted, an unchecked
-// checkbox/radio is never submitted, a <select> with no option explicitly
-// selected defaults to its first <option>), plus the clicked button's own
-// name=value pair. Every OTHER button/submit control in the form is
-// excluded, exactly like a real click only ever submits the one control
-// that was activated.
-//
-// This lets a test post precisely what the browser would, catching a button
-// living in one <form> that silently drops ANOTHER section's fields because
-// they live in a different <form> -- which a hand-built url.Values fixture
-// can't catch, since it reflects what the test AUTHOR assumed the form
-// contained, not what the rendered HTML actually wired up.
+// formValuesForButton parses a rendered page (body), finds the <form> that contains a
+// submit control named btnName with value btnValue.
 func formValuesForButton(t *testing.T, body, btnName, btnValue string) url.Values {
 	t.Helper()
 	doc, err := html.Parse(strings.NewReader(body))
@@ -42,9 +27,8 @@ func formValuesForButton(t *testing.T, body, btnName, btnValue string) url.Value
 	return values
 }
 
-// htmlAttr reads attribute key off n, reporting whether it was present at
-// all (a bare boolean attribute like `disabled`/`checked`/`selected` has an
-// empty Val but IS present).
+// htmlAttr reads attribute key off n, reporting whether it was present at all (a bare
+// boolean attribute like `disabled`/`checked`/`selected` has an empty Val but IS present).
 func htmlAttr(n *html.Node, key string) (string, bool) {
 	for _, a := range n.Attr {
 		if a.Key == key {
@@ -97,10 +81,8 @@ func containsMatchingButton(n *html.Node, btnName, btnValue string) bool {
 	return false
 }
 
-// findFormWithButton does a depth-first search for the first <form> element
-// whose subtree contains a submit control matching (btnName, btnValue).
-// Forms don't nest in valid HTML, so the first one found containing the
-// button is unambiguously the right one.
+// findFormWithButton does a depth-first search for the first <form> element whose subtree
+// contains a submit control matching (btnName, btnValue).
 func findFormWithButton(n *html.Node, btnName, btnValue string) *html.Node {
 	if n.Type == html.ElementNode && n.Data == "form" && containsMatchingButton(n, btnName, btnValue) {
 		return n
@@ -113,9 +95,8 @@ func findFormWithButton(n *html.Node, btnName, btnValue string) *html.Node {
 	return nil
 }
 
-// nodeText concatenates every text-node descendant of n, in document order
-// -- used for a <textarea>'s content and an <option>'s fallback value (an
-// <option> with no value attribute submits its text content instead).
+// nodeText concatenates every text-node descendant of n, in document order -- used for a
+// <textarea>'s content and an <option>'s fallback value.
 func nodeText(n *html.Node) string {
 	var sb strings.Builder
 	var walk func(*html.Node)
@@ -132,11 +113,7 @@ func nodeText(n *html.Node) string {
 }
 
 // collectFormValues walks form's subtree collecting every enabled, named
-// input/select/textarea's value exactly as a browser would submit it (see
-// formValuesForButton's doc for the exact semantics). The clicked button's
-// own name/value is NOT added here -- formValuesForButton adds it
-// separately, since collectFormValues has no notion of which button (if
-// any) was clicked.
+// input/select/textarea's value exactly as a browser would submit it.
 func collectFormValues(form *html.Node) url.Values {
 	values := url.Values{}
 	var walk func(n *html.Node)

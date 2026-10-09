@@ -12,9 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestUpdatesPageAdminGated pins RBAC: a viewer gets 403, an admin gets 200
-// with the available version and an Apply form carrying a CSRF hidden
-// field -- mirroring TestConfigRoutesAreAdminGated.
+// TestUpdatesPageAdminGated pins RBAC: a viewer gets 403, an admin gets 200 with the
+// available version and an Apply form carrying a CSRF hidden field.
 func TestUpdatesPageAdminGated(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{updateStatus: core.UpdateStatusView{Running: "0.5.0", Available: "0.5.1"}}
@@ -48,13 +47,8 @@ func TestUpdatesPageAdminGated(t *testing.T) {
 	}
 }
 
-// TestUpdatesPageRendersInProgressAndLastError pins that Ruling R10 web-side
-// requirement: /updates must show a banner while a background apply/rollback is
-// running (Status.InProgress) and, once it's finished, the daemon's own
-// last-error text (Status.LastError) -- rendered through html/template's normal
-// auto-escaping (never inserted unescaped), and suppressed while InProgress is
-// still true (a stale error from a PREVIOUS attempt must not be shown as if it
-// were this one's outcome).
+// TestUpdatesPageRendersInProgressAndLastError pins that Ruling R10 web-side requirement:
+// /updates must show a banner while a background apply/rollback is running.
 func TestUpdatesPageRendersInProgressAndLastError(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{updateStatus: core.UpdateStatusView{
@@ -105,13 +99,8 @@ func TestUpdatesPageRendersInProgressAndLastError(t *testing.T) {
 	}
 }
 
-// TestUpdatesPageRendersRestoreFailed is the web-facing half of #136:
-// when the guard's health-gate rollback itself failed to restore the
-// previous build, Pending.RestoreFailed (core.UpdatePendingView.RestoreFailed)
-// must show on the page -- explaining that the watchdog will retry -- and,
-// like Status.LastError, be rendered through html/template's normal
-// auto-escaping rather than inserted raw. Absent entirely when Pending has
-// no restore failure (the ordinary pending-update case).
+// TestUpdatesPageRendersRestoreFailed is the web-facing half of #136: when the guard's
+// health-gate rollback itself failed to restore the previous build, Pending.RestoreFailed.
 func TestUpdatesPageRendersRestoreFailed(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{updateStatus: core.UpdateStatusView{
@@ -175,9 +164,7 @@ func TestUpdatesPageAnonRedirectsToLogin(t *testing.T) {
 	}
 }
 
-// TestUpdatesApplyCallsAPIAndRedirects pins the success path: a valid admin
-// POST /updates/apply calls core.API.UpdateApply with the posted version and
-// redirects 303 to /updates?flash=update-started.
+// TestUpdatesApplyCallsAPIAndRedirects pins the success path.
 func TestUpdatesApplyCallsAPIAndRedirects(t *testing.T) {
 	var gotVersion string
 	var applyCalled bool
@@ -215,9 +202,8 @@ func TestUpdatesApplyCallsAPIAndRedirects(t *testing.T) {
 	}
 }
 
-// TestUpdatesApplyRequiresCSRF pins that a signed-in admin POST without a
-// valid CSRF token is rejected with 403 and the fake is never called,
-// matching every other mutation route (TestConfigSaveRequiresCSRF).
+// TestUpdatesApplyRequiresCSRF pins that a signed-in admin POST without a valid CSRF token
+// is rejected with 403 and the fake is never called, matching every other mutation route.
 func TestUpdatesApplyRequiresCSRF(t *testing.T) {
 	var applyCalled bool
 	d := enrollTestDeps(t)
@@ -242,10 +228,8 @@ func TestUpdatesApplyRequiresCSRF(t *testing.T) {
 	}
 }
 
-// TestUpdatesApplyViewerForbidden pins that a viewer session cannot POST
-// /updates/apply even with a form the page itself would never show them
-// (RoleAdmin gate runs before requireCSRF, mirroring updatesMutation's
-// composition).
+// TestUpdatesApplyViewerForbidden pins that a viewer session cannot POST /updates/apply
+// even with a form the page itself would never show them.
 func TestUpdatesApplyViewerForbidden(t *testing.T) {
 	var applyCalled bool
 	d := enrollTestDeps(t)
@@ -269,8 +253,7 @@ func TestUpdatesApplyViewerForbidden(t *testing.T) {
 	}
 }
 
-// TestUpdatesCheckCallsAPIAndRedirects pins POST /updates/check's success
-// path.
+// TestUpdatesCheckCallsAPIAndRedirects pins POST /updates/check's success path.
 func TestUpdatesCheckCallsAPIAndRedirects(t *testing.T) {
 	var checkCalled bool
 	d := enrollTestDeps(t)
@@ -296,9 +279,8 @@ func TestUpdatesCheckCallsAPIAndRedirects(t *testing.T) {
 	}
 }
 
-// TestUpdatesCheckErrorFlashesUpdateError pins the failure path: a real
-// UpdateCheck error (not the "already installed" case) redirects with the
-// fixed "update-error" code, never the error's own text.
+// TestUpdatesCheckErrorFlashesUpdateError pins the failure path: a real UpdateCheck error
+// (not the "already installed" case) redirects with the fixed "update-error" code.
 func TestUpdatesCheckErrorFlashesUpdateError(t *testing.T) {
 	d := enrollTestDeps(t)
 	fake := &fakeUpdateAPI{checkErr: errors.New("update: signature does not verify against any trusted key")}
@@ -317,9 +299,8 @@ func TestUpdatesCheckErrorFlashesUpdateError(t *testing.T) {
 	}
 }
 
-// TestUpdatesRollbackOnlyOfferedWithPrevious pins the "Roll back" button's
-// conditional rendering: absent when Status.Previous == "", present
-// (carrying CSRF) when it's set.
+// TestUpdatesRollbackOnlyOfferedWithPrevious pins the "Roll back" button's conditional
+// rendering: absent when Status.Previous == "", present (carrying CSRF) when it's set.
 func TestUpdatesRollbackOnlyOfferedWithPrevious(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{updateStatus: core.UpdateStatusView{Running: "0.5.1"}}
@@ -351,8 +332,7 @@ func TestUpdatesRollbackOnlyOfferedWithPrevious(t *testing.T) {
 	}
 }
 
-// TestUpdatesRollbackCallsAPIAndRedirects pins POST /updates/rollback's
-// success path.
+// TestUpdatesRollbackCallsAPIAndRedirects pins POST /updates/rollback's success path.
 func TestUpdatesRollbackCallsAPIAndRedirects(t *testing.T) {
 	var rollbackCalled bool
 	d := enrollTestDeps(t)
@@ -378,12 +358,8 @@ func TestUpdatesRollbackCallsAPIAndRedirects(t *testing.T) {
 	}
 }
 
-// fakeUpdateAPI is a minimal core.API test double focused on the four
-// self-update methods (embedding fakeAPI for every other method), used where
-// a test needs to observe UpdateCheck/UpdateRollback being called -- fakeAPI
-// itself only exposes optional func fields for UpdateApply/UpdateRollback,
-// not UpdateCheck, and its UpdateCheck always returns (f.updateStatus,
-// f.updateCheckErr) with no call-observation hook.
+// fakeUpdateAPI is a minimal core.API test double focused on the four self-update methods
+// (embedding fakeAPI for every other method).
 type fakeUpdateAPI struct {
 	fakeAPI
 	status     core.UpdateStatusView
@@ -412,10 +388,8 @@ func (f *fakeUpdateAPI) UpdateRollback() error {
 
 var _ core.API = (*fakeUpdateAPI)(nil)
 
-// TestUpdatesApplyAndRollbackBusyFlash is R16: when another apply/rollback/
-// install already holds the host's update lock (from the CLI, the socket or
-// another browser), the web actions say so plainly with the fixed
-// "update-busy" code instead of a generic failure.
+// TestUpdatesApplyAndRollbackBusyFlash is R16: when another apply/rollback/ install already
+// holds the host's update lock (from the CLI, the socket or another browser).
 func TestUpdatesApplyAndRollbackBusyFlash(t *testing.T) {
 	busy := errors.New("update: an update is already in progress (see trinetra update status)")
 	d := enrollTestDeps(t)

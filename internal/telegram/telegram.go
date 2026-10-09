@@ -22,9 +22,6 @@ type Client struct {
 func New(token, chatID string) *Client {
 	base := "https://api.telegram.org/bot" + token
 	// Test/validation override: point the client at a mock Telegram server.
-	// The env var holds the host only (e.g. "http://mocktg:8080"); the
-	// "/bot<token>" suffix is appended here so the mock sees the same paths
-	// the real API would.
 	if v := os.Getenv("TELEGRAM_BASE_URL"); v != "" {
 		base = v + "/bot" + token
 	}
@@ -36,17 +33,11 @@ func New(token, chatID string) *Client {
 	}
 }
 
-// telegramMaxMessageLen is Telegram's hard limit on one sendMessage text (4096
-// characters). Renderers stay well under it; this is the safety net for what does
-// not, since an oversized message returns an HTTP 400 that would otherwise leave
-// the user with no reply.
+// telegramMaxMessageLen is Telegram's hard limit on one sendMessage text (4096 characters).
 const telegramMaxMessageLen = 4096
 
 // SendMessage sends text as one or more Telegram messages (chunked past
-// telegramMaxMessageLen, see chunkMessage) with parse_mode=HTML. Callers MUST
-// html-escape dynamic content (mount names, container names) themselves:
-// SendMessage does not re-escape because it also carries pre-built <pre>/<b>
-// markup. If any chunk fails, that error is returned immediately.
+// telegramMaxMessageLen, see chunkMessage) with parse_mode=HTML.
 func (c *Client) SendMessage(text string) error {
 	return c.SendMessageContext(context.Background(), text)
 }
@@ -62,18 +53,15 @@ func (c *Client) SendMessageContext(ctx context.Context, text string) error {
 	return nil
 }
 
-// Button is one inline-keyboard button: Text is what the user sees, Data is
-// echoed back verbatim as the resulting callback_query's Data when tapped.
-// Keep Data at 64 bytes or less -- Telegram's own limit on callback_data.
+// Button is one inline-keyboard button: Text is what the user sees, Data is echoed back
+// verbatim as the resulting callback_query's Data when tapped.
 type Button struct {
 	Text string
 	Data string
 }
 
-// SendMessageWithButtons sends text with an inline keyboard: rows render top to
-// bottom, each inner slice one row left to right. Unlike SendMessage it never
-// chunks, since a reply_markup cannot span message bubbles and callers pass short
-// text.
+// SendMessageWithButtons sends text with an inline keyboard: rows render top to bottom,
+// each inner slice one row left to right.
 func (c *Client) SendMessageWithButtons(text string, rows [][]Button) error {
 	return c.SendMessageWithButtonsContext(context.Background(), text, rows)
 }
@@ -147,9 +135,8 @@ func (c *Client) sendFormContext(ctx context.Context, text, replyMarkup string) 
 	return nil
 }
 
-// AnswerCallbackQuery acknowledges a callback query: Telegram requires this
-// on every callback_query it delivers, or the tapped button's spinner never
-// stops on the user's client. text, if non-empty, is shown as a brief toast.
+// AnswerCallbackQuery acknowledges a callback query: Telegram requires this on every
+// callback_query it delivers.
 func (c *Client) AnswerCallbackQuery(ctx context.Context, id, text string) error {
 	form := url.Values{}
 	form.Set("callback_query_id", id)
@@ -180,15 +167,8 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, id, text string) error
 	return nil
 }
 
-// chunkMessage splits s into parts of at most limit characters on newline
-// boundaries; a single line longer than the budget is hard-split. It returns
-// []string{s} unchanged when s fits.
-//
-// Because parse_mode=HTML, a boundary inside <pre>...</pre> would leave unbalanced
-// tags that Telegram rejects with a 400. chunkMessage tracks <pre> nesting: a
-// chunk ending inside a block gets a synthetic </pre> and the continuation a
-// synthetic <pre>, so every chunk is tag-balanced. Only a single non-nested <pre>
-// block is expected; deeper nesting is tracked defensively.
+// chunkMessage splits s into parts of at most limit characters on newline boundaries; a
+// single line longer than the budget is hard-split.
 func chunkMessage(s string, limit int) []string {
 	if len(s) <= limit {
 		return []string{s}
@@ -201,9 +181,8 @@ func chunkMessage(s string, limit int) []string {
 	depth := 0       // <pre> nesting after all lines consumed so far
 	startedInPre := false
 
-	// reserve is the space a chunk must leave for synthetic tags: a leading
-	// "<pre>\n" if it continues a block opened earlier, and a trailing
-	// "\n</pre>" if it will still be inside a block when flushed.
+	// reserve is the space a chunk must leave for synthetic tags: a leading "<pre>\n" if it
+	// continues a block opened earlier.
 	reserve := func() int {
 		r := 0
 		if startedInPre {
@@ -280,9 +259,8 @@ func chunkMessage(s string, limit int) []string {
 	return chunks
 }
 
-// Update is one inbound item from GetUpdates: either a plain text message
-// (Text/ChatID) or a button tap (CallbackID/CallbackData/CallbackChat) --
-// never both. CallbackID is empty for a plain message.
+// Update is one inbound item from GetUpdates: either a plain text message (Text/ChatID) or
+// a button tap (CallbackID/CallbackData/CallbackChat) -- never both.
 type Update struct {
 	UpdateID int
 	Text     string
@@ -293,9 +271,8 @@ type Update struct {
 	CallbackID string
 	// CallbackData is the tapped button's Button.Data, verbatim.
 	CallbackData string
-	// CallbackChat is the chat the original message (carrying the inline
-	// keyboard) was sent to -- the same value ChatID carries for a plain
-	// message, used identically to authorize the sender.
+	// CallbackChat is the chat the original message (carrying the inline keyboard) was sent to
+	// -- the same value ChatID carries for a plain message.
 	CallbackChat string
 }
 

@@ -43,9 +43,7 @@ func TestManageMenuChannelsOpensListAndFetches(t *testing.T) {
 	}
 }
 
-// openChannelsList is TestManageMenuChannelsOpensListAndFetches's shared
-// setup: drives 'm' -> down x4 -> enter -> feeds the fetch's message back
-// in, returning a model sitting on the populated Channels list.
+// openChannelsList is TestManageMenuChannelsOpensListAndFetches's shared setup.
 func openChannelsList(t *testing.T, api *fakeAPI) tea.Model {
 	t.Helper()
 	var mm tea.Model = newModel(api)
@@ -59,10 +57,8 @@ func openChannelsList(t *testing.T, api *fakeAPI) tea.Model {
 	return mm
 }
 
-// TestChannelsAddFlowTelegram walks the full add flow -- name, type,
-// enabled, and telegram's two Settings fields -- and asserts the saved
-// config carries everything, with the #79 gate consulted along the way
-// since the channel is enabled.
+// TestChannelsAddFlowTelegram walks the full add flow -- name, type, enabled, and
+// telegram's two Settings fields -- and asserts the saved config carries everything.
 func TestChannelsAddFlowTelegram(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	mm := openChannelsList(t, api)
@@ -124,11 +120,8 @@ func TestChannelsAddFlowTelegram(t *testing.T) {
 	}
 }
 
-// TestChannelsAddFlowGateBlocksInvalidEnabledChannel asserts a failing
-// api.ValidateChannel surfaces on manageResult and leaves ApplyConfig
-// untouched -- the #79-safe path exercised end to end through the UI, not
-// just the pure saveChannel function (channels_test.go already covers
-// that directly).
+// TestChannelsAddFlowGateBlocksInvalidEnabledChannel asserts a failing api.ValidateChannel
+// surfaces on manageResult and leaves ApplyConfig untouched.
 func TestChannelsAddFlowGateBlocksInvalidEnabledChannel(t *testing.T) {
 	wantErr := errors.New("token not configured")
 	api := &fakeAPI{cfg: &config.Config{}, validateErr: wantErr}
@@ -161,10 +154,8 @@ func TestChannelsAddFlowGateBlocksInvalidEnabledChannel(t *testing.T) {
 	}
 }
 
-// TestChannelsEditFlowPrefillsExistingValues asserts 'e' on an existing
-// channel opens the type/enabled/field steps pre-filled from its current
-// config, not blank -- the same "never blind-wipe" concern the schedule/
-// quiet-hours/healthchecks screens' pre-fill fixes for their own fields.
+// TestChannelsEditFlowPrefillsExistingValues asserts 'e' on an existing channel opens the
+// type/enabled/field steps pre-filled from its current config, not blank.
 func TestChannelsEditFlowPrefillsExistingValues(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.AddChannel(config.ChannelConfig{

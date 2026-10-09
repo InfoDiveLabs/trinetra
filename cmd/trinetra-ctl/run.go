@@ -64,8 +64,7 @@ func run(api core.API, args []string, out io.Writer) int {
 	}
 }
 
-// emitJSON marshals v as indented JSON to out. Returns 1 on a marshal error
-// (never expected for the DTOs, which are all plain JSON-tagged structs).
+// emitJSON marshals v as indented JSON to out.
 func emitJSON(out io.Writer, v any) int {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -345,12 +344,8 @@ func runAlerts(api core.API, out io.Writer, jsonOut bool) int {
 	return 0
 }
 
-// runConfig implements the `config get`/`config set` scriptable verbs, the
-// non-interactive counterpart to the TUI's "all settings" screen. Both go
-// through the same config.Get/config.Set the TUI uses, so a value the CLI
-// rejects is exactly one the TUI would reject too; `set` commits with
-// ApplyConfig so the change is live (subject to the same restart-required
-// caveats for web.enabled/storage.* the handbook documents).
+// runConfig implements the `config get`/`config set` scriptable verbs, the non-interactive
+// counterpart to the TUI's "all settings" screen.
 func runConfig(api core.API, args []string, out io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(out, "usage: trinetra-ctl config get <key> | set <key> <value>\n")
@@ -404,9 +399,8 @@ func runConfig(api core.API, args []string, out io.Writer) int {
 	}
 }
 
-// runChannels implements the `channels test <name>` scriptable verb: it asks
-// the daemon to send a live test notification through the named channel, the
-// same TestChannel the TUI's Channels screen 't' action uses.
+// runChannels implements the `channels test <name>` scriptable verb: it asks the daemon to
+// send a live test notification through the named channel.
 func runChannels(api core.API, args []string, out io.Writer) int {
 	if len(args) == 0 || args[0] != "test" {
 		fmt.Fprint(out, "usage: trinetra-ctl channels test <name>\n")

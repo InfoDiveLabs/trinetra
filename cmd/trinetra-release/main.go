@@ -30,20 +30,14 @@ func main() {
 }
 
 // signMaintTest signs with the e2e-fixture maintainer test key
-// (updatetest.NewTestSigner(2)). It is nil in a default build and set by
-// sign_testkeys.go's init() only when built with the trinetra_testkeys tag,
-// so the "maint-test" sign role does not exist outside that build.
+// (updatetest.NewTestSigner(2)).
 var signMaintTest func(in, out string) error
 
-// testKeySet returns the deterministic test trust anchor
-// (updatetest.TestKeySet) for `verify --testkeys` and `cosign --testkeys`.
-// Like signMaintTest it is nil in a default build and set by
-// sign_testkeys.go only in a trinetra_testkeys build, so a release build of
-// this tool carries no test keys at all.
+// testKeySet returns the deterministic test trust anchor (updatetest.TestKeySet) for
+// `verify --testkeys` and `cosign --testkeys`.
 var testKeySet func() update.KeySet
 
-// errTestKeysUnavailable is returned by every --testkeys path in a default
-// build.
+// errTestKeysUnavailable is returned by every --testkeys path in a default build.
 var errTestKeysUnavailable = errors.New("--testkeys is only available in a trinetra_testkeys build")
 
 func run(args []string) int {
@@ -85,8 +79,7 @@ func newFlagSet(name string) *flag.FlagSet {
 	return fs
 }
 
-// printPublicKey prints only the public key and its fingerprint. The
-// corresponding private key must never reach stdout or stderr.
+// printPublicKey prints only the public key and its fingerprint.
 func printPublicKey(role string, pub ed25519.PublicKey) {
 	sum := sha256.Sum256(pub)
 	fmt.Printf("public: %s\n", base64.StdEncoding.EncodeToString(pub))
@@ -128,9 +121,8 @@ func cmdKeygen(args []string) error {
 	}
 }
 
-// writeSeedKey generates a fresh ed25519 key and writes its base64 seed to
-// path (0600, refusing to overwrite an existing file), for pasting into a
-// GitHub Actions secret. It returns the public key only.
+// writeSeedKey generates a fresh ed25519 key and writes its base64 seed to path (0600,
+// refusing to overwrite an existing file), for pasting into a GitHub Actions secret.
 func writeSeedKey(path string) (ed25519.PublicKey, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -143,10 +135,8 @@ func writeSeedKey(path string) (ed25519.PublicKey, error) {
 	return pub, nil
 }
 
-// releaseStems and releaseArches define the exact release set: three binaries
-// times three linux architectures, nine files. It is the single source of truth
-// for what cmdManifest requires and what it refuses as an unexpected
-// trinetra*-linux-* file.
+// releaseStems and releaseArches define the exact release set: three binaries times three
+// linux architectures, nine files.
 var (
 	releaseStems  = []string{"trinetra", "trinetra-ctl", "trinetra-web"}
 	releaseArches = []string{"amd64", "arm64", "arm"}
@@ -164,22 +154,8 @@ func expectedReleaseFiles() map[string][2]string {
 	return want
 }
 
-// cmdManifest implements: manifest --dir DIR --version V --channel C
-// --min-upgrade-from V --published RFC3339 [--keys-from-binary |
-// --keys-ci ... --keys-maint ... --keys-pointer ...]
-//
-// --keys-from-binary (used by the release workflow) fills manifest.keys with this
-// tool's own update.ProductionKeys(), built from the same commit as the release
-// binaries, so the manifest's key set equals the one the new binary compiles in
-// and cosign's rotation review is empty unless keys really changed.
-//
-// It requires the exact 9-file set: a missing file is an error, and so is any
-// trinetra*-linux-* file outside those 9 names (a stray
-// "trinetra-linux-amd64.sha256" or leftover "trinetra-old-linux-amd64" must never
-// get CI-signed). Files not named "trinetra*-linux-*" (checksums.txt, darwin
-// binaries) are ignored. The manifest goes through update.DecodeManifest before
-// it is written, so a malformed one is caught here, not at cosign time or on a
-// host.
+// cmdManifest implements: manifest --dir DIR --version V --channel C --min-upgrade-from V
+// --published RFC3339 [--keys-from-binary | --keys-ci ...
 func cmdManifest(args []string) error {
 	fs := newFlagSet("manifest")
 	dir := fs.String("dir", "", "directory containing the release files")
@@ -410,11 +386,6 @@ func cmdPointer(args []string) error {
 }
 
 // cmdVerify implements: verify DIR [--testkeys]
-//
-// The --testkeys flag may appear before or after DIR, so it is parsed by
-// hand rather than with flag.FlagSet (which would otherwise treat DIR as
-// ending flag parsing and misclassify a trailing --testkeys as a second
-// positional argument).
 func cmdVerify(args []string) error {
 	testkeys := false
 	var dirs []string

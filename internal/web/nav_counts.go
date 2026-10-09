@@ -7,37 +7,24 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// NavCounts holds the small per-request counts rendered as the sidebar nav's
-// badges (base.html's "nav" block, NavItem.Badge): Alerts/Channels/Users/
-// Monitoring. See navCountsFor's doc for exactly what each counts and how it
-// degrades.
+// NavCounts holds the small per-request counts rendered as the sidebar nav's badges
+// (base.html's "nav" block, NavItem.Badge): Alerts/Channels/Users/ Monitoring.
 type NavCounts struct {
-	// Alerts is the number of entries in the daemon's current active-alert
-	// set (Deps.API.ActiveAlerts, over the control socket), i.e. how many
-	// conditions are firing right
-	// now (regardless of ack state -- ack only changes notification/status
-	// pill behavior elsewhere, not whether the condition itself is active).
+	// Alerts is the number of entries in the daemon's current active-alert set
+	// (Deps.API.ActiveAlerts, over the control socket).
 	Alerts int
-	// Channels is len(Deps.Cfg().Channels): how many notification channels
-	// are configured.
+	// Channels is len(Deps.Cfg().Channels): how many notification channels are configured.
 	Channels int
-	// Users is the number of accounts in the web user store
-	// (<StateDir>/users.json).
+	// Users is the number of accounts in the web user store (<StateDir>/users.json).
 	Users int
-	// Monitoring is the live snapshot's container count
-	// (DashboardView.ContainersTotal) -- the "stable default" choice for a
-	// single meaningful number on the Monitoring nav entry.
+	// Monitoring is the live snapshot's container count (DashboardView.ContainersTotal) -- the
+	// "stable default" choice for a single meaningful number on the Monitoring nav entry.
 	Monitoring int
-	// FleetDown is how many fleet nodes are currently State=="down", for the
-	// "Fleet" nav entry's badge -- 0 (no badge) on every page where this daemon
-	// isn't a fleet master, since navCountsFor only computes it when
-	// fleetRole=="master" (see its doc).
+	// FleetDown is how many fleet nodes are currently State=="down", for the "Fleet" nav
+	// entry's badge -- 0 (no badge) on every page where this daemon isn't a fleet master.
 	FleetDown int
-	// IncidentsFiring is how many fleet incidents are currently
-	// State=="firing", for the "Incidents" nav entry's badge -- 0 (no badge)
-	// whenever this daemon isn't a fleet master, exactly like FleetDown. Read
-	// through the request-scoped fleetMemo's fleetIncidentsFiringCount
-	// (fleet_memo.go), so this costs a real round trip only once per request.
+	// IncidentsFiring is how many fleet incidents are currently State=="firing", for the
+	// "Incidents" nav entry's badge -- 0 (no badge) whenever this daemon isn't a fleet master.
 	IncidentsFiring int
 }
 
@@ -84,10 +71,8 @@ func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 			c.Monitoring = d.Snapshot().ContainersTotal
 		}
 	} else if v, err := snapshotViaAPI(r, d); err == nil {
-		// snapshotViaAPI is memoized per request, shared with
-		// buildDashboardPageData's own Snapshot read (handlers_dashboard.go)
-		// instead of this costing a second apiFor(r,d).Snapshot() round trip on
-		// every remote-node page load.
+		// snapshotViaAPI is memoized per request, shared with buildDashboardPageData's own
+		// Snapshot read.
 		c.Monitoring = v.ContainersTotal
 	}
 
@@ -107,9 +92,7 @@ func navCountsFor(r *http.Request, d Deps, fleetRole string) NavCounts {
 	return c
 }
 
-// badgeText renders a count as a nav badge string: empty for zero (or
-// negative/unknown) so base.html's `{{if .Badge}}` guard hides the badge
-// span entirely rather than showing a stale-looking literal "0".
+// badgeText renders a count as a nav badge string: empty for zero.
 func badgeText(n int) string {
 	if n <= 0 {
 		return ""

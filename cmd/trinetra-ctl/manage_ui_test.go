@@ -39,15 +39,7 @@ func TestManageMenuEscReturnsHome(t *testing.T) {
 	}
 }
 
-// openManageScreen drives 'm' plus downCount "down" presses plus enter, the
-// common prefix every schedule/quiet-hours/healthchecks screen test below
-// shares to reach its target menu row, then runs the resulting fetch
-// command and feeds its message back in -- the pre-fill round trip every
-// one of those screens now does on open (fix for the blind-apply/data-loss
-// bug: opening a screen used to reset it to zero/"off" with no visibility
-// into the CURRENT value, so a stray Enter could silently wipe an existing
-// setting). Returns the model already past that round trip, ready for the
-// test to assert the pre-filled state or drive further keys.
+// openManageScreen drives 'm' plus downCount "down" presses plus enter.
 func openManageScreen(t *testing.T, api core.API, downCount int) tea.Model {
 	t.Helper()
 	var mm tea.Model = newModel(api)
@@ -70,10 +62,8 @@ func openManageScreen(t *testing.T, api core.API, downCount int) tea.Model {
 	return mm
 }
 
-// TestManageScheduleDefaultsCursorToCurrentMode asserts opening the
-// Schedule screen positions the mode cursor on whatever schedule.daily/
-// schedule.weekly is ACTUALLY active, not always "off" -- the root cause of
-// the blind-apply bug (a stray Enter used to always select "off").
+// TestManageScheduleDefaultsCursorToCurrentMode asserts opening the Schedule screen
+// positions the mode cursor on whatever schedule.daily/ schedule.weekly is ACTUALLY active.
 func TestManageScheduleDefaultsCursorToCurrentMode(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Schedule.Daily = "03:30"
@@ -92,9 +82,7 @@ func TestManageScheduleDefaultsCursorToCurrentMode(t *testing.T) {
 }
 
 // TestManageScheduleDefaultsCursorToWeeklyMode is
-// TestManageScheduleDefaultsCursorToCurrentMode's weekly counterpart, and
-// also pins that the weekly value is what pre-fills the value screen when
-// the user accepts it.
+// TestManageScheduleDefaultsCursorToCurrentMode's weekly counterpart.
 func TestManageScheduleDefaultsCursorToWeeklyMode(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Schedule.Weekly = "mon@09:00"
@@ -115,9 +103,7 @@ func TestManageScheduleDefaultsCursorToWeeklyMode(t *testing.T) {
 }
 
 // TestManageScheduleStrayEnterKeepsCurrentDailyValue pins that with schedule.daily already
-// set, opening the Schedule screen and pressing Enter twice (accept the
-// pre-selected "daily" mode, then the pre-filled value) re-applies the SAME
-// value rather than wiping it to "off".
+// set, opening the Schedule screen and pressing Enter twice.
 func TestManageScheduleStrayEnterKeepsCurrentDailyValue(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Schedule.Daily = "03:30"
@@ -144,9 +130,8 @@ func TestManageScheduleStrayEnterKeepsCurrentDailyValue(t *testing.T) {
 	}
 }
 
-// TestManageScheduleOffWhenNothingConfigured asserts the off path still
-// works, and is harmless, when nothing was configured to begin with (the
-// cursor defaults to "off" precisely because that IS the current state).
+// TestManageScheduleOffWhenNothingConfigured asserts the off path still works, and is
+// harmless.
 func TestManageScheduleOffWhenNothingConfigured(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	mm := openManageScreen(t, api, 0)
@@ -168,11 +153,8 @@ func TestManageScheduleOffWhenNothingConfigured(t *testing.T) {
 	}
 }
 
-// TestManageScheduleDailySetsValue drives the daily path when nothing was
-// previously configured: mode cursor moves off the "off" default to
-// "daily" -> the (blank) value input -> type an HH:MM value -> enter
-// applies, and asserts the applied config's schedule.daily/weekly match
-// applySchedule's contract.
+// TestManageScheduleDailySetsValue drives the daily path when nothing was previously
+// configured.
 func TestManageScheduleDailySetsValue(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	mm := openManageScreen(t, api, 0)
@@ -202,10 +184,8 @@ func TestManageScheduleDailySetsValue(t *testing.T) {
 	}
 }
 
-// TestManageQuietHoursPrefillsCurrentValue asserts opening the Quiet hours
-// screen pre-fills valueIn with the CURRENT quiet_hours, and that a stray
-// Enter (no typing at all) re-applies that same value rather than clearing
-// it.
+// TestManageQuietHoursPrefillsCurrentValue asserts opening the Quiet hours screen pre-fills
+// valueIn with the CURRENT quiet_hours, and that a stray Enter.
 func TestManageQuietHoursPrefillsCurrentValue(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{QuietHours: "22-6"}}
 	mm := openManageScreen(t, api, 1) // menu cursor 1 = "quiet hours"
@@ -229,10 +209,8 @@ func TestManageQuietHoursPrefillsCurrentValue(t *testing.T) {
 	}
 }
 
-// TestManageQuietHoursPrefillsOffWhenUnset asserts the pre-fill falls back
-// to the literal "off" (the same clearing keyword applyQuietHours accepts)
-// when quiet_hours is not currently set, so a stray Enter here is a no-op
-// re-apply of "still off" rather than an error or a crash.
+// TestManageQuietHoursPrefillsOffWhenUnset asserts the pre-fill falls back to the literal
+// "off".
 func TestManageQuietHoursPrefillsOffWhenUnset(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	mm := openManageScreen(t, api, 1)
@@ -253,18 +231,14 @@ func TestManageQuietHoursPrefillsOffWhenUnset(t *testing.T) {
 	}
 }
 
-// TestManageQuietHoursExplicitOffClears drives an EXPLICIT edit: the
-// pre-filled current value is replaced (not just accepted) with "off",
-// which must still clear quiet_hours -- pre-filling must not prevent the
-// user from deliberately turning it off.
+// TestManageQuietHoursExplicitOffClears drives an EXPLICIT edit: the pre-filled current
+// value is replaced (not just accepted) with "off", which must still clear quiet_hours.
 func TestManageQuietHoursExplicitOffClears(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{QuietHours: "22-6"}}
 	mm := openManageScreen(t, api, 1)
 
-	// Replace the pre-filled "22-6" with "off": a real user would backspace
-	// it out; setting the field directly is equivalent and keeps this test
-	// focused on the mutation, not textinput's own (separately tested)
-	// keystroke handling.
+	// Replace the pre-filled "22-6" with "off": a real user would backspace it out; setting
+	// the field directly is equivalent and keeps this test focused on the mutation.
 	mo := mm.(model)
 	mo.mgr.valueIn.SetValue("off")
 	mo.mgr.valueIn.CursorEnd()
@@ -308,9 +282,8 @@ func TestManageHealthchecksPrefillsCurrentURL(t *testing.T) {
 	}
 }
 
-// TestManageHealthchecksSetsURL drives an explicit edit when nothing was
-// previously configured: the pre-fill is "off" (blank URL), and typing a
-// URL over it applies healthchecks.url.
+// TestManageHealthchecksSetsURL drives an explicit edit when nothing was previously
+// configured: the pre-fill is "off" (blank URL).
 func TestManageHealthchecksSetsURL(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	mm := openManageScreen(t, api, 2)
@@ -334,9 +307,8 @@ func TestManageHealthchecksSetsURL(t *testing.T) {
 	}
 }
 
-// TestManageValueApplyErrorSurfaces asserts a failing ApplyConfig reaches
-// manageResult's applyErr, mirroring TestWizardApplyErrorSurfaces for the
-// web-setup wizard.
+// TestManageValueApplyErrorSurfaces asserts a failing ApplyConfig reaches manageResult's
+// applyErr, mirroring TestWizardApplyErrorSurfaces for the web-setup wizard.
 func TestManageValueApplyErrorSurfaces(t *testing.T) {
 	wantErr := errors.New("quiet_hours rejected")
 	api := &fakeAPI{cfg: &config.Config{QuietHours: "22-6"}, applyErr: wantErr}
@@ -355,10 +327,8 @@ func TestManageValueApplyErrorSurfaces(t *testing.T) {
 	}
 }
 
-// TestManageConfigFetchErrorIsGraceful asserts a failing Config() fetch on
-// screen-open surfaces mgr.configErr (visible on the mode/value screen)
-// rather than crashing or silently defaulting to a screen the user can't
-// tell is stale.
+// TestManageConfigFetchErrorIsGraceful asserts a failing Config() fetch on screen-open
+// surfaces mgr.configErr.
 func TestManageConfigFetchErrorIsGraceful(t *testing.T) {
 	wantErr := errors.New("config fetch failed")
 	api := &fakeAPI{cfg: &config.Config{}, configErr: wantErr}
@@ -370,9 +340,8 @@ func TestManageConfigFetchErrorIsGraceful(t *testing.T) {
 	}
 }
 
-// TestManageResultAnyKeyReturnsToMenu asserts pressing a key on the result
-// screen goes back to the menu list, not Home (so the user can keep
-// managing other settings without re-entering via 'm').
+// TestManageResultAnyKeyReturnsToMenu asserts pressing a key on the result screen goes back
+// to the menu list, not Home.
 func TestManageResultAnyKeyReturnsToMenu(t *testing.T) {
 	m := newModel(&fakeAPI{})
 	m.step = stepManage
@@ -409,10 +378,8 @@ func TestMonitorTargetsMsgBuildsRows(t *testing.T) {
 	}
 }
 
-// TestMonitorToggleEnable drives the list screen's enter/space toggle: it
-// should issue applyMonitorEnableCmd flipping the row under the cursor, and
-// once the resulting monitorAppliedMsg lands, monRows reflects the saved
-// state (not just an optimistic local flip).
+// TestMonitorToggleEnable drives the list screen's enter/space toggle: it should issue
+// applyMonitorEnableCmd flipping the row under the cursor.
 func TestMonitorToggleEnable(t *testing.T) {
 	cfg := &config.Config{}
 	api := &fakeAPI{cfg: cfg}
@@ -487,12 +454,8 @@ func TestMonitorThresholdEdit(t *testing.T) {
 	}
 }
 
-// TestManageMonitorMenuEntryIssuesDiscoverCmd drives the menu -> "monitor
-// thresholds" path (menu cursor 3) and asserts it issues discoverMonitorCmd,
-// which calls api.MonitorTargets over the (fake) control socket rather than
-// running discovery itself -- so this is fully deterministic, unlike the
-// old sw.DiscoverLocal()-backed version of this test, which depended on
-// whatever docker/disks/smartctl the host running the test happened to have.
+// TestManageMonitorMenuEntryIssuesDiscoverCmd drives the menu -> "monitor thresholds" path
+// (menu cursor 3) and asserts it issues discoverMonitorCmd.
 func TestManageMonitorMenuEntryIssuesDiscoverCmd(t *testing.T) {
 	api := &fakeAPI{
 		cfg:            &config.Config{},
@@ -527,10 +490,8 @@ func TestManageMonitorMenuEntryIssuesDiscoverCmd(t *testing.T) {
 	}
 }
 
-// TestManageMonitorMenuEntrySurfacesDiscoverError asserts a MonitorTargets
-// error from the socket reaches monitorTargetsMsg.err rather than being
-// swallowed or crashing the flow (there is no Config() fallback to fall
-// back on when discovery itself fails).
+// TestManageMonitorMenuEntrySurfacesDiscoverError asserts a MonitorTargets error from the
+// socket reaches monitorTargetsMsg.err rather than being swallowed or crashing the flow.
 func TestManageMonitorMenuEntrySurfacesDiscoverError(t *testing.T) {
 	wantErr := errors.New("discovery failed")
 	api := &fakeAPI{cfg: &config.Config{}, monitorTargetsErr: wantErr}

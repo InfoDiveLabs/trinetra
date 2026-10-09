@@ -13,11 +13,9 @@ import (
 	"time"
 )
 
-// Config is persisted as JSON. Zero values mean "use default"; Get resolves
-// the effective value by falling back to Default() for unset scalar keys.
+// Config is persisted as JSON.
 type Config struct {
-	// Name is this host's display name/id (server.name). Empty by default so
-	// ServerName() tracks the system hostname; set it to tell hosts apart in alerts.
+	// Name is this host's display name/id (server.name).
 	Name string `json:"name,omitempty"`
 	// SampleInterval is the slow tier: seconds between full baseline samples.
 	SampleInterval int `json:"sample_interval,omitempty"`
@@ -26,31 +24,21 @@ type Config struct {
 	// HeartbeatInterval is the seconds between liveness heartbeats.
 	HeartbeatInterval int `json:"heartbeat_interval,omitempty"`
 	// ExecTimeout is the per-command hang-breaker for external collectors
-	// (df/docker/systemctl/smartctl), in seconds. Generous on purpose: it recovers
-	// from a wedged command, not caps slow-but-working ones. Takes effect on daemon
-	// (re)start.
+	// (df/docker/systemctl/smartctl), in seconds.
 	ExecTimeout   int     `json:"exec_timeout,omitempty"`
 	BaselineSigma float64 `json:"baseline_sigma,omitempty"`
-	// BaselineMinPct is the minimum relative deviation (fraction of the baseline
-	// mean, e.g. 0.15 = 15%) a value must also clear, alongside BaselineSigma, for a
-	// baseline anomaly to fire. A noisy-but-stable metric's EWMA variance can be
-	// underestimated, so a small wobble reads as many sigma; this suppresses that
-	// flapping. Threshold-based alerts are unaffected.
+	// BaselineMinPct is the minimum relative deviation (fraction of the baseline mean, e.g.
+	// 0.15 = 15%) a value must also clear, alongside BaselineSigma.
 	BaselineMinPct float64 `json:"baseline_min_pct,omitempty"`
-	// BaselineAlerts gates the baseline (z-score) deviation branch of anomaly
-	// evaluation; threshold-based alerting is unaffected and always on. Defaults to
-	// false because spiky host metrics with a low, unstable mean fired baseline alerts
-	// every minute even with the other gates. A plain bool is fine: the default is
-	// Go's zero value, so omitempty is correct (unlike Collect's default-true toggles,
-	// which need the nil-means-unset pointer).
+	// BaselineAlerts gates the baseline (z-score) deviation branch of anomaly evaluation;
+	// threshold-based alerting is unaffected and always on.
 	BaselineAlerts bool   `json:"baseline_alerts,omitempty"`
 	QuietHours     string `json:"quiet_hours,omitempty"` // "23-8" or ""
 	Telegram       struct {
 		Token  string `json:"token,omitempty"`
 		ChatID string `json:"chat_id,omitempty"`
-		// MaxEnrollAttempts is how many consecutive wrong "/start <pin>" guesses an
-		// unclaimed bot tolerates before the PIN cools down and rotates (#93). Unset/<=0
-		// means 5. Read via EnrollMaxAttempts().
+		// MaxEnrollAttempts is how many consecutive wrong "/start <pin>" guesses an unclaimed bot
+		// tolerates before the PIN cools down and rotates (#93).
 		MaxEnrollAttempts int `json:"enroll_max_attempts,omitempty"`
 		// EnrollCooldown is the seconds "/start" attempts are ignored after the threshold
 		// is hit, during which the PIN also rotates (#93). Unset/<=0 means 60.
@@ -61,10 +49,7 @@ type Config struct {
 	} `json:"healthchecks"`
 	Notify struct {
 		// BlockPrivateTargets, when true, refuses to dial loopback/link-local (incl.
-		// 169.254.169.254 metadata)/private targets for URLs the daemon calls for the
-		// operator (webhook/Slack/Discord/ntfy/gotify channels, healthchecks ping).
-		// Default false so intentionally-internal endpoints work; enable it to harden
-		// against SSRF via a channel URL (#97).
+		// 169.254.169.254 metadata)/private targets for URLs the daemon calls for the operator.
 		BlockPrivateTargets bool `json:"block_private_targets,omitempty"`
 	} `json:"notify"`
 	Schedule struct {
@@ -89,65 +74,47 @@ type Config struct {
 		// Backend selects the SampleStore implementation: one of validStorageBackends,
 		// default "tsfile".
 		Backend string `json:"backend,omitempty"`
-		// RawRetention/RollupRetention are time.ParseDuration strings for how long the
-		// tsfile backend keeps raw and 1m-rollup samples; event retention reuses
-		// RollupRetention. Defaults 48h / 720h.
+		// RawRetention/RollupRetention are time.ParseDuration strings for how long the tsfile
+		// backend keeps raw and 1m-rollup samples; event retention reuses RollupRetention.
 		RawRetention    string `json:"raw_retention,omitempty"`
 		RollupRetention string `json:"rollup_retention,omitempty"`
 	} `json:"storage"`
-	// Collect holds opt-in toggles for the expensive extended collectors. A nil
-	// pointer means "use the default" so an explicit false survives Save/Load: a
-	// plain bool with omitempty would drop false and Load would refill it with true.
+	// Collect holds opt-in toggles for the expensive extended collectors.
 	Collect struct {
-		// ContainerStats gates the slow-tier `docker stats` collector. Default true; nil
-		// reads as true.
+		// ContainerStats gates the slow-tier `docker stats` collector.
 		ContainerStats *bool `json:"container_stats,omitempty"`
 		// NetThroughput gates the slow-tier per-interface throughput collector
 		// (/proc/net/dev deltas). Default true; nil reads as true.
 		NetThroughput *bool `json:"net_throughput,omitempty"`
-		// Services gates the slow-tier full systemd unit inventory (snapshot-only, never
-		// a SampleStore series). Default true; nil reads as true. The `systemctl
-		// --failed` alerting collection is separate and always runs.
+		// Services gates the slow-tier full systemd unit inventory (snapshot-only, never a
+		// SampleStore series).
 		Services *bool `json:"services,omitempty"`
 		// Processes gates the slow-tier process-table overview (counts + top-N, for the
-		// Monitoring "processes" tab). Snapshot-only, never persisted as a series
-		// (per-process cardinality). Default true; nil reads as true.
+		// Monitoring "processes" tab).
 		Processes *bool `json:"processes,omitempty"`
-		// SmartAttrs gates the slow-tier per-device `smartctl -A` reads (the "smart:<dev>:
-		// temp" series), the heaviest optional call. Default true; nil reads as true. The
-		// cheaper `smartctl --scan`/`-H` checks always run.
+		// SmartAttrs gates the slow-tier per-device `smartctl -A` reads (the "smart:<dev>: temp"
+		// series), the heaviest optional call.
 		SmartAttrs *bool `json:"smart_attrs,omitempty"`
-		// SmartInterval is the minimum seconds between SMART scans. SMART health changes
-		// rarely and the scan is the heaviest slow-tier call, so it is throttled
-		// independently of sample_interval. Unset/0 means 1800s.
+		// SmartInterval is the minimum seconds between SMART scans.
 		SmartInterval int `json:"smart_interval,omitempty"`
-		// PublicIP gates the host's public-IP lookup (#102), an outbound call to a
-		// third-party echo service. Unlike the other toggles it defaults to FALSE
-		// (opt-in) since it reaches off-box; nil reads as false.
+		// PublicIP gates the host's public-IP lookup (#102), an outbound call to a third-party
+		// echo service.
 		PublicIP *bool `json:"public_ip,omitempty"`
 	} `json:"collect"`
-	// Web holds the web UI server's settings (trinetra-web). The trinetra binary
-	// never reads them, but they live here so `trinetra config set` can manage them.
+	// Web holds the web UI server's settings (trinetra-web).
 	Web struct {
-		// Enabled toggles the web server. Default false: the core daemon only supervises
-		// trinetra-web when this is set.
+		// Enabled toggles the web server.
 		Enabled bool `json:"enabled,omitempty"`
-		// Listen is the "host:port" the web server binds, validated with
-		// net.SplitHostPort. Default 127.0.0.1:8088 (localhost-only; use a reverse proxy
-		// for LAN/WAN).
+		// Listen is the "host:port" the web server binds, validated with net.SplitHostPort.
 		Listen string `json:"listen,omitempty"`
-		// Mode selects how internal/web serves: "proxy" (plain HTTP, origin trusted from
-		// a local reverse proxy's X-Forwarded-* headers), "autocert" (Let's Encrypt via
-		// autocert), or "manual" (TLSCert/TLSKey). One of validWebModes; default "proxy".
+		// Mode selects how internal/web serves: "proxy" (plain HTTP, origin trusted from a local
+		// reverse proxy's X-Forwarded-* headers), "autocert" (Let's Encrypt via autocert).
 		Mode string `json:"mode,omitempty"`
-		// RPID is the WebAuthn relying party ID: the public hostname passkeys are scoped
-		// to (no scheme/port). Required in autocert/manual modes; in proxy mode it and
-		// Origin may be empty and are derived per request from the proxy's forwarded
-		// headers.
+		// RPID is the WebAuthn relying party ID: the public hostname passkeys are scoped to (no
+		// scheme/port).
 		RPID string `json:"rp_id,omitempty"`
 		// Origin is the full public origin ("https://host[:port]") that passkey ceremonies
-		// validate the browser's origin against; its host must equal RPID. Required in
-		// autocert/manual modes.
+		// validate the browser's origin against; its host must equal RPID.
 		Origin string `json:"origin,omitempty"`
 		// AutocertDomains is a comma-separated allowlist of hostnames autocert's
 		// HostPolicy will request certificates for. Required in autocert mode.
@@ -155,38 +122,26 @@ type Config struct {
 		// TLSCert/TLSKey are PEM file paths for ServeTLS. Both required in manual mode.
 		TLSCert string `json:"tls_cert,omitempty"`
 		TLSKey  string `json:"tls_key,omitempty"`
-		// SessionTTL is a time.ParseDuration string for how long a web session stays
-		// valid. Default "24h".
+		// SessionTTL is a time.ParseDuration string for how long a web session stays valid.
 		SessionTTL string `json:"session_ttl,omitempty"`
 	} `json:"web"`
 	// Public holds the admin-curated settings for the anonymous /public status page.
-	// Both fields default to off/empty: nothing is exposed anonymously until an
-	// admin enables it and picks the visible panels.
 	Public struct {
-		// Enabled toggles GET /public. Default false; when false the route 404s so it
-		// does not reveal that a public page exists.
+		// Enabled toggles GET /public.
 		Enabled bool `json:"enabled,omitempty"`
 		// Panels is the server-side allowlist of panel ids shown on /public, e.g. "cpu",
-		// "disk:/", "uptime". Only ids validatePublicPanel accepts may be stored, and the
-		// page renders exactly this list, so an unlisted metric can never appear.
+		// "disk:/", "uptime".
 		Panels []string `json:"panels,omitempty"`
 	} `json:"public"`
-	// Status is the public status page (issue #157): the page title, how long
-	// a recovered automatic incident waits before resolving itself ("0" =
-	// never), and which notification channels receive a copy of each public
-	// update.
+	// Status is the public status page (issue #157): the page title, how long a recovered
+	// automatic incident waits before resolving itself ("0" = never).
 	Status struct {
 		Title            string   `json:"title,omitempty"`
 		AutoResolveAfter string   `json:"auto_resolve_after,omitempty"`
 		EchoChannels     []string `json:"echo_channels,omitempty"`
 	} `json:"status"`
 	// Fleet holds master/child fleet settings (fleet mode, see
-	// docs/handbook/02-architecture.md "Fleet mode"). Role empty or "solo" means
-	// no fleet code runs at all -- the default, and exactly today's behaviour.
-	// Role, Address, MasterURL, CAPin and NodeID are written only by the
-	// `trinetra fleet init|join|leave|disable` commands, never by
-	// `config set` (Set refuses them), because they must change together with
-	// the PKI files those commands create.
+	// docs/handbook/02-architecture.md "Fleet mode").
 	Fleet struct {
 		Role              string `json:"role,omitempty"`
 		Listen            string `json:"listen,omitempty"`
@@ -208,10 +163,8 @@ type Config struct {
 	} `json:"update"`
 }
 
-// KeepFleetIdentity copies the fleet identity keys (role, address, master URL, CA
-// pin, node id) from onDisk into c. Every save other than a `trinetra fleet`
-// command goes through it so only those commands change them; the tunables
-// (listen, outbox_max_mb, node_down_after) stay editable.
+// KeepFleetIdentity copies the fleet identity keys (role, address, master URL, CA pin, node
+// id) from onDisk into c.
 func (c *Config) KeepFleetIdentity(onDisk *Config) {
 	c.Fleet.Role = onDisk.Fleet.Role
 	c.Fleet.Address = onDisk.Fleet.Address
@@ -256,8 +209,7 @@ func (c *Config) SmartAttrsEnabled() bool {
 	return c.Collect.SmartAttrs == nil || *c.Collect.SmartAttrs
 }
 
-// SmartIntervalSec is the effective SMART-scan throttle in seconds; unset/<=0
-// means 1800. Set it as low as sample_interval to scan every slow tick.
+// SmartIntervalSec is the effective SMART-scan throttle in seconds; unset/<=0 means 1800.
 func (c *Config) SmartIntervalSec() int {
 	if c.Collect.SmartInterval <= 0 {
 		return 1800
@@ -344,9 +296,8 @@ func (c *Config) StatusAutoResolveAfter() time.Duration {
 	return 24 * time.Hour
 }
 
-// FleetFallbackAfter is how long a child waits for the master's receipt of a
-// routed alert before delivering locally ("via local fallback: master
-// unreachable"); default 2m. An unparsable stored value also falls back.
+// FleetFallbackAfter is how long a child waits for the master's receipt of a routed alert
+// before delivering locally ("via local fallback: master unreachable"); default 2m.
 func (c *Config) FleetFallbackAfter() time.Duration {
 	if d, err := time.ParseDuration(c.Fleet.FallbackAfter); err == nil && d > 0 {
 		return d
@@ -354,9 +305,8 @@ func (c *Config) FleetFallbackAfter() time.Duration {
 	return 2 * time.Minute
 }
 
-// FleetLinkDownWarnAfter is how long a child's link to the master must be down
-// before it raises its own "fleet link down" warning; default 10m. An unparsable
-// stored value also falls back.
+// FleetLinkDownWarnAfter is how long a child's link to the master must be down before it
+// raises its own "fleet link down" warning; default 10m.
 func (c *Config) FleetLinkDownWarnAfter() time.Duration {
 	if d, err := time.ParseDuration(c.Fleet.LinkDownWarnAfter); err == nil && d > 0 {
 		return d
@@ -373,8 +323,7 @@ func (c *Config) UpdateChannel() string {
 	return c.Update.Channel
 }
 
-// UpdateSource is the effective self-update source: unset ("") defaults to
-// "github". Set validates against github|none.
+// UpdateSource is the effective self-update source: unset ("") defaults to "github".
 func (c *Config) UpdateSource() string {
 	if c.Update.Source == "" {
 		return "github"
@@ -382,9 +331,8 @@ func (c *Config) UpdateSource() string {
 	return c.Update.Source
 }
 
-// UpdateCheckInterval is the effective interval between self-update checks:
-// unset, unparsable or below the 1h floor means 24h. A zero-value Config built
-// without Default()/Load() must still return something sane.
+// UpdateCheckInterval is the effective interval between self-update checks: unset,
+// unparsable or below the 1h floor means 24h.
 func (c *Config) UpdateCheckInterval() time.Duration {
 	if d, err := time.ParseDuration(c.Update.CheckInterval); err == nil && d >= time.Hour {
 		return d
@@ -392,8 +340,7 @@ func (c *Config) UpdateCheckInterval() time.Duration {
 	return 24 * time.Hour
 }
 
-// fleetManagedKeys are readable via Get but written only by the
-// `trinetra fleet` commands.
+// fleetManagedKeys are readable via Get but written only by the `trinetra fleet` commands.
 var fleetManagedKeys = map[string]bool{
 	"fleet.role": true, "fleet.address": true, "fleet.master_url": true,
 	"fleet.ca_pin": true, "fleet.node_id": true,
@@ -404,17 +351,14 @@ type TargetOverride struct {
 	Threshold *float64 `json:"threshold,omitempty"`
 }
 
-// ChannelConfig describes one notification channel. Type picks the delivery
-// mechanism, built elsewhere (buildNotifier); this package only stores and
-// validates the config.
+// ChannelConfig describes one notification channel.
 type ChannelConfig struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
 	Enabled bool   `json:"enabled"`
 	// Settings holds type-specific key/value config, e.g. {"chat_id": "..."}.
 	Settings map[string]string `json:"settings,omitempty"`
-	// MinSeverity is "info" | "warning" | "critical". Empty is treated as the
-	// permissive default ("info") wherever routing is evaluated.
+	// MinSeverity is "info" | "warning" | "critical".
 	MinSeverity            string   `json:"min_severity,omitempty"`
 	IncludeKinds           []string `json:"include_kinds,omitempty"`
 	ExcludeKinds           []string `json:"exclude_kinds,omitempty"`
@@ -476,19 +420,14 @@ func validateSessionTTL(s string) error {
 }
 
 // validPublicPanels is the fixed catalog of static ids public.panels may name.
-// "disk:<mount>" is validated separately in validatePublicPanel because the
-// mount suffix is dynamic. Ids like "availability" are plain allowlist entries
-// here; internal/web decides what to render.
 var validPublicPanels = map[string]bool{
 	"availability": true,
 	"cpu":          true, "mem": true, "swap": true, "load": true, "temp": true,
 	"uptime": true, "services": true, "containers": true, "net": true,
 }
 
-// validatePublicPanel rejects any panel id public.panels would not recognize: one
-// of validPublicPanels, or "disk:<mount>" with a non-empty mount. It is the single
-// source of truth for what may be written to public.panels; the unauthenticated
-// /public page only renders ids that passed it.
+// validatePublicPanel rejects any panel id public.panels would not recognize: one of
+// validPublicPanels, or "disk:<mount>" with a non-empty mount.
 func validatePublicPanel(s string) error {
 	if validPublicPanels[s] {
 		return nil
@@ -499,9 +438,8 @@ func validatePublicPanel(s string) error {
 	return fmt.Errorf("public panel %q invalid: want one of availability|cpu|mem|swap|load|temp|uptime|services|containers|net or disk:<mount>", s)
 }
 
-// parsePublicPanels parses a comma-separated public.panels value, trimming
-// whitespace and dropping empty entries, and returns the first validation error
-// so Set never persists a partially valid list.
+// parsePublicPanels parses a comma-separated public.panels value, trimming whitespace and
+// dropping empty entries.
 func parsePublicPanels(s string) ([]string, error) {
 	if s == "" {
 		return nil, nil
@@ -529,14 +467,12 @@ func validateMinSeverity(s string) error {
 	return fmt.Errorf("min_severity %q invalid: want info|warning|critical or empty", s)
 }
 
-// AddChannel appends a new channel. Callers are responsible for checking
-// for an existing channel of the same name first, if that matters to them.
+// AddChannel appends a new channel.
 func (c *Config) AddChannel(cc ChannelConfig) {
 	c.Channels = append(c.Channels, cc)
 }
 
-// RemoveChannel deletes the channel named name, reporting whether one was
-// found.
+// RemoveChannel deletes the channel named name, reporting whether one was found.
 func (c *Config) RemoveChannel(name string) bool {
 	for i, cc := range c.Channels {
 		if cc.Name == name {
@@ -559,9 +495,8 @@ func (c *Config) GetChannel(name string) (*ChannelConfig, bool) {
 	return nil, false
 }
 
-// splitKinds parses a comma-separated kind list, trimming whitespace and
-// dropping empty elements. An empty string yields a nil slice (clears the
-// field).
+// splitKinds parses a comma-separated kind list, trimming whitespace and dropping empty
+// elements.
 func splitKinds(s string) []string {
 	if s == "" {
 		return nil
@@ -576,10 +511,7 @@ func splitKinds(s string) []string {
 	return out
 }
 
-// SetChannelField updates one field of an existing channel by name. Valid
-// keys: enabled, type, min_severity, critical_overrides_quiet,
-// include_kinds, exclude_kinds (comma-separated), and setting.<k> which
-// writes into the channel's Settings map.
+// SetChannelField updates one field of an existing channel by name.
 func (c *Config) SetChannelField(name, key, value string) error {
 	cc, ok := c.GetChannel(name)
 	if !ok {
@@ -624,9 +556,8 @@ func (c *Config) SetChannelField(name, key, value string) error {
 	return nil
 }
 
-// ServerName returns the effective display name: server.name when set, else the
-// system hostname, else "trinetra". Resolved lazily so the name tracks a renamed
-// host and Default() does no I/O.
+// ServerName returns the effective display name: server.name when set, else the system
+// hostname, else "trinetra".
 func (c *Config) ServerName() string {
 	if c.Name != "" {
 		return c.Name
@@ -722,10 +653,7 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	// Atomic write: a crash mid-write must not corrupt the live file. Write a temp
-	// sibling, tighten perms (the file holds the plaintext telegram token), then
-	// rename (atomic on one filesystem). os.WriteFile applies the mode only on
-	// create, so Chmod the temp explicitly.
+	// Atomic write: a crash mid-write must not corrupt the live file.
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
@@ -1182,12 +1110,8 @@ func (c *Config) Set(key, val string) error {
 	return nil
 }
 
-// KeyInfo describes one flat, settable config key for trinetra-ctl's "all
-// settings" screen (#91): a display Group, a value-Kind hint, a one-line Help,
-// and whether a daemon restart is needed. Pure data with no new imports, to keep
-// cmd/trinetra's stdlib-only dependency graph. Kind ("int", "float", "bool",
-// "string", "enum", "csv", "duration") is only a presentation hint; Set remains
-// the single validated setter.
+// KeyInfo describes one flat, settable config key for trinetra-ctl's "all settings" screen
+// (#91): a display Group, a value-Kind hint, a one-line Help.
 type KeyInfo struct {
 	Name            string
 	Group           string
@@ -1210,18 +1134,14 @@ func IsSecretKey(name string) bool {
 	return false
 }
 
-// Keys returns the full catalog of flat, settable config keys, grouped for
-// display. TestKeyCatalogCoversEverySetKey keeps it in lockstep with Set's
-// switch. A copy is returned so callers cannot corrupt the catalog.
+// Keys returns the full catalog of flat, settable config keys, grouped for display.
 func Keys() []KeyInfo {
 	out := make([]KeyInfo, len(keyCatalog))
 	copy(out, keyCatalog)
 	return out
 }
 
-// keyCatalog is Keys' backing data, in the order the ctl settings screen shows
-// it. RestartRequired is set for storage.* and web.enabled/web.listen, which are
-// chosen or bound once at daemon startup.
+// keyCatalog is Keys' backing data, in the order the ctl settings screen shows it.
 var keyCatalog = []KeyInfo{
 	{Name: "sample_interval", Group: "Intervals", Kind: "int", Help: "Seconds between full baseline samples (the slow tier)."},
 	{Name: "fast_interval", Group: "Intervals", Kind: "int", Help: "Seconds between lightweight checks (the fast tier)."},

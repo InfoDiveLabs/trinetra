@@ -13,15 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// updateChannelsListKey handles the Channels screen's list: up/down (or
-// j/k) moves the cursor, 'a' starts the add flow, 'e' edits the channel
-// under the cursor, 'd'/'x' removes it (applied immediately, one
-// ApplyConfig per removal -- mirroring the Monitor thresholds list's
-// immediate-toggle pattern), 't' sends a live test notification via
-// api.TestChannel, esc/q returns to the menu. Ignores every key but esc
-// while the screen's pre-fill fetch is still in flight (mirrors
-// updateScheduleModeKey/updateManageValueKey's configLoading guard -- see
-// manageModel.configLoading's doc for why this matters).
+// updateChannelsListKey handles the Channels screen's list: up/down (or j/k) moves the
+// cursor, 'a' starts the add flow, 'e' edits the channel under the cursor.
 func (m model) updateChannelsListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mgr.configLoading {
 		if msg.String() == "esc" {
@@ -97,10 +90,8 @@ func (m model) updateChannelsNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateChannelsTypeKey handles the type-selection row (channelTypeChoices):
-// up/down moves the cursor, enter commits and moves on to the
-// enabled/disabled toggle, esc backs out (to the name step for add, or
-// straight to the list for edit, which has no name step to return to).
+// updateChannelsTypeKey handles the type-selection row (channelTypeChoices): up/down moves
+// the cursor, enter commits and moves on to the enabled/disabled toggle, esc backs out.
 func (m model) updateChannelsTypeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -145,14 +136,7 @@ func (m model) updateChannelsEnabledKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // enterChannelField sets up the next per-type Settings field input
-// (channelTypeFields[ans.Type][chanFieldIdx]), pre-filled from any existing
-// value (an edit's current setting, or a value already typed earlier this
-// same add/edit pass -- e.g. backing up with esc and returning). Once every
-// field for this type has been walked (chanFieldIdx reaches the end), it
-// saves the channel via saveChannelCmd instead of opening another field --
-// shared by the enabled-toggle step's "enter" (index 0) and the field
-// step's own "enter" (index+1), so both paths fall through to the same save
-// once the walk completes.
+// (channelTypeFields[ans.Type][chanFieldIdx]), pre-filled from any existing value.
 func (m model) enterChannelField() (tea.Model, tea.Cmd) {
 	fields := channelTypeFields[m.mgr.chanAns.Type]
 	if m.mgr.chanFieldIdx >= len(fields) {

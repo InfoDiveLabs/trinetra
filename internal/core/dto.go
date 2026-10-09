@@ -13,9 +13,8 @@ const (
 	ResAuto
 )
 
-// SeriesPoint is one time-series sample: TS is Unix seconds, Min/Avg/Max
-// are the same value for a raw point, or a real rollup for a downsampled
-// one.
+// SeriesPoint is one time-series sample: TS is Unix seconds, Min/Avg/Max are the same value
+// for a raw point, or a real rollup for a downsampled one.
 type SeriesPoint struct {
 	TS  int64   `json:"ts"`
 	Min float64 `json:"min"`
@@ -23,9 +22,8 @@ type SeriesPoint struct {
 	Max float64 `json:"max"`
 }
 
-// DownEventView is one downtime event as rendered to a consumer: Type says what
-// went down (e.g. "net_down"), Start/End are Unix seconds (End is 0 while open),
-// and DurationSec is its length.
+// DownEventView is one downtime event as rendered to a consumer: Type says what went down
+// (e.g. "net_down"), Start/End are Unix seconds (End is 0 while open).
 type DownEventView struct {
 	Type        string `json:"type"`
 	Start       int64  `json:"start"`
@@ -33,14 +31,8 @@ type DownEventView struct {
 	DurationSec int64  `json:"duration_sec"`
 }
 
-// DashboardView is core's projection of the daemon's live Snapshot: the fields
-// the dashboard template and the /events SSE stream need, with no trinetra import
-// (this package must not import internal/trinetra; see doc.go). It is built from a
-// trinetra.Snapshot by buildDashboardView and carried over the control socket.
-//
-// Every field is a copy, never a map/slice alias into the Snapshot: readers must
-// not mutate a published Snapshot's maps, which is what keeps snapshotHub's
-// atomic.Pointer safe without a lock.
+// DashboardView is core's projection of the daemon's live Snapshot: the fields the
+// dashboard template and the /events SSE stream need, with no trinetra import.
 type DashboardView struct {
 	// TS is the Unix-seconds timestamp the sampler stamped on the snapshot; it shows
 	// how stale the view is.
@@ -69,9 +61,8 @@ type DashboardView struct {
 	// -> state) for the dashboard's summary count tile.
 	ContainersRunning int `json:"containers_running"`
 	ContainersTotal   int `json:"containers_total"`
-	// TopCPUContainers/TopMemContainers are Snapshot.ContainerStats sorted desc by
-	// CPU%/MemMiB and capped to dashboardTopN. Empty when collect.container_stats is
-	// disabled.
+	// TopCPUContainers/TopMemContainers are Snapshot.ContainerStats sorted desc by CPU%/MemMiB
+	// and capped to dashboardTopN.
 	TopCPUContainers []ContainerView `json:"top_cpu_containers,omitempty"`
 	TopMemContainers []ContainerView `json:"top_mem_containers,omitempty"`
 
@@ -87,20 +78,17 @@ type DashboardView struct {
 	// the summary count tile.
 	DisksCritical int `json:"disks_critical"`
 
-	// NetIfaces is Snapshot.NetRates sorted by interface name; NetRxBps/
-	// NetTxBps are its sums, for the network tile/chart. Empty/zero whenever
-	// collect.net_throughput is disabled or hasn't produced a rate yet.
+	// NetIfaces is Snapshot.NetRates sorted by interface name; NetRxBps/ NetTxBps are its
+	// sums, for the network tile/chart.
 	NetIfaces []NetIfaceView `json:"net_ifaces,omitempty"`
 	NetRxBps  float64        `json:"net_rx_bps"`
 	NetTxBps  float64        `json:"net_tx_bps"`
 
-	// Availability is the dashboard's 24h up/down strip (ComputeAvailability). Zero
-	// when the builder has no downtime EventsSource.
+	// Availability is the dashboard's 24h up/down strip (ComputeAvailability).
 	Availability Availability `json:"availability"`
 
 	// DegradedCollectors lists slow-tier collectors that are failing (#110), with
-	// consecutive-failure count and last error, so an operator sees that monitoring
-	// itself is degraded. Empty when all are healthy.
+	// consecutive-failure count and last error.
 	DegradedCollectors []CollectorHealthView `json:"degraded_collectors,omitempty"`
 }
 
@@ -157,26 +145,20 @@ type NetIfaceView struct {
 const dashboardTopN = 4
 
 // DiskCriticalPct is the usage percentage at/above which a mount counts toward
-// DashboardView.DisksCritical and renders as "crit". It is display-only and
-// independent of the configurable alert thresholds in internal/config. Exported so
-// buildDashboardView counts with the same cutoff the template colors with.
+// DashboardView.DisksCritical and renders as "crit".
 const DiskCriticalPct = 90.0
 
 // DiskWarnPct is the warn-level counterpart to DiskCriticalPct, also display-only.
 const DiskWarnPct = 70.0
 
-// MonitoringView is core's projection of the live Snapshot for the /monitoring
-// page (Containers/Units/Processes/Filesystems tables), with no trinetra import.
-// Like DashboardView it must be built from copies, never map/slice aliases;
-// see buildMonitoringView.
+// MonitoringView is core's projection of the live Snapshot for the /monitoring page
+// (Containers/Units/Processes/Filesystems tables), with no trinetra import.
 type MonitoringView struct {
 	// Containers is every container in the daemon's state listing, each merged with
 	// its docker-stats row when present (see MonitoringContainerView.HasStats).
 	Containers []MonitoringContainerView `json:"containers,omitempty"`
 
-	// FailedUnits is the systemd units in a failed state. Always populated, since
-	// `systemctl --failed` is always collected (service:* checks use it), unlike the
-	// opt-in full inventory.
+	// FailedUnits is the systemd units in a failed state.
 	FailedUnits []string `json:"failed_units,omitempty"`
 	// Units is the full systemd unit inventory, populated only when UnitsEnabled; the
 	// page shows a "collector disabled" note otherwise rather than an empty table.
@@ -193,13 +175,11 @@ type MonitoringView struct {
 	ProcessesTotal int `json:"processes_total"`
 
 	// Disks is every mounted filesystem merged with its DiskDetail when present.
-	// Always collected, like DashboardView.Disks.
 	Disks []MonitoringDiskView `json:"disks,omitempty"`
 }
 
-// MonitoringContainerView is one container row. cpu%/mem/net are meaningful only
-// when HasStats is true (collect.container_stats on and docker reported the
-// container this tick).
+// MonitoringContainerView is one container row. cpu%/mem/net are meaningful only when
+// HasStats is true.
 type MonitoringContainerView struct {
 	Name     string  `json:"name"`
 	State    string  `json:"state"`
@@ -247,8 +227,7 @@ type MonitoringDiskView struct {
 }
 
 // DisksWarnCritCount is how many of v.Disks are at/above DiskWarnPct, shared with
-// internal/web's monitoringStatus. It lives here because methods must be declared
-// in the type's own package.
+// internal/web's monitoringStatus.
 func (v MonitoringView) DisksWarnCritCount() int {
 	n := 0
 	for _, d := range v.Disks {
@@ -259,12 +238,8 @@ func (v MonitoringView) DisksWarnCritCount() int {
 	return n
 }
 
-// TargetView is one monitorable target as core.API.MonitorTargets reports it,
-// mirroring trinetra.Target's exported fields so core need not import
-// internal/trinetra. ID is the namespaced identifier ("docker:web", "disk:/",
-// "iface:eth0", "temp", "smart:/dev/sda") that config.Config.SetTarget/
-// SetTargetThreshold/TargetEnabled/TargetThreshold key on, so a TargetView
-// round-trips straight into those setters.
+// TargetView is one monitorable target as core.API.MonitorTargets reports it, mirroring
+// trinetra.Target's exported fields so core need not import internal/trinetra.
 type TargetView struct {
 	ID        string `json:"id"`
 	Kind      string `json:"kind"`
@@ -272,17 +247,8 @@ type TargetView struct {
 	Available bool   `json:"available"`
 }
 
-// AlertRecord is one alert as rendered to a consumer, covering both an active
-// alert (trinetra.ActiveAlert, keyed by Key) and a historical fire/recover entry
-// (trinetra.AlertEvent). Key identifies the check (e.g. "cpu"), Kind is "fire" or
-// "recover" (empty for an active alert), Source says what raised it, Time is the
-// Unix-seconds it fired (or went active), and Acked mirrors a manual `trinetra
-// alerts ack <key>`.
-//
-// AckedAt/Title/Delivered are set only where the underlying record has them: an
-// active alert has an ack timestamp but no title or delivery outcome, while a
-// history entry has a title and delivery outcome but no ack timestamp. A field
-// with no source is left zero, not invented.
+// AlertRecord is one alert as rendered to a consumer, covering both an active alert
+// (trinetra.ActiveAlert, keyed by Key) and a historical fire/recover entry.
 type AlertRecord struct {
 	Key      string `json:"key"`
 	Severity string `json:"severity"`
@@ -294,20 +260,16 @@ type AlertRecord struct {
 	AckedAt int64 `json:"acked_at,omitempty"`
 	// Title is the alert-log AlertEvent's Title; empty for an active alert.
 	Title string `json:"title,omitempty"`
-	// Delivered is true when a history entry's dispatch reached at least one channel
-	// (a Delivery record with OK true); false if every attempt failed, none was
-	// recorded, or this is an active alert.
+	// Delivered is true when a history entry's dispatch reached at least one channel (a
+	// Delivery record with OK true); false if every attempt failed, none was recorded.
 	Delivered bool `json:"delivered,omitempty"`
-	// DeliveredTo names the channels that accepted a history entry's dispatch, in
-	// record order, so a consumer can show which channels were reached. Empty when
-	// Delivered is false and always empty for an active alert.
+	// DeliveredTo names the channels that accepted a history entry's dispatch, in record
+	// order, so a consumer can show which channels were reached.
 	DeliveredTo []string `json:"delivered_to,omitempty"`
 }
 
-// DoctorReport is core's projection of `trinetra doctor`'s output (cmdDoctor):
-// docker reachability, smartctl availability, discovered thermal zones and
-// targets, the on/off state of every opt-in collector, and a summary of the
-// SampleStore's series count and size (or "unavailable" if it failed to open).
+// DoctorReport is core's projection of `trinetra doctor`'s output (cmdDoctor): docker
+// reachability, smartctl availability, discovered thermal zones and targets.
 type DoctorReport struct {
 	// DockerAccess mirrors cmdDoctor's "docker: available=%v method=%s" line.
 	DockerAccess      string `json:"docker_access"`
@@ -326,15 +288,12 @@ type DoctorReport struct {
 	// StoreStats mirrors collectorSummary's "time-series: N series, X.X MB on disk
 	// (raw+1m)" line, or "time-series: unavailable" when the store failed to open.
 	StoreStats string `json:"store_stats"`
-	// StoreWarning is a non-empty guardrail message when the series count is
-	// abnormally high (#112), e.g. dead Swarm-task series accumulating faster
-	// than retention reaps them. Empty when cardinality is healthy.
+	// StoreWarning is a non-empty guardrail message when the series count is abnormally high
+	// (#112), e.g. dead Swarm-task series accumulating faster than retention reaps them.
 	StoreWarning string `json:"store_warning,omitempty"`
 }
 
-// Event is one live daemon event pushed to a core.API.Subscribe stream. Kind says
-// what happened (e.g. "alert_fire", "alert_recover"), Severity/Source/Title
-// mirror AlertRecord for alert events, and Time is Unix seconds.
+// Event is one live daemon event pushed to a core.API.Subscribe stream.
 type Event struct {
 	Kind     string `json:"kind"`
 	Severity string `json:"severity"`
@@ -343,10 +302,8 @@ type Event struct {
 	Time     int64  `json:"time"`
 }
 
-// HostInfoView is the static host hardware/OS inventory (#100): RAM, CPU model
-// and core/thread split, kernel and OS, per-disk hardware, plus the boot time
-// and the derived uptime. Served by API.HostInfo; it is static for a boot, so
-// it is a dedicated method rather than part of the per-tick DashboardView.
+// HostInfoView is the static host hardware/OS inventory (#100): RAM, CPU model and
+// core/thread split, kernel and OS, per-disk hardware.
 type HostInfoView struct {
 	Hostname      string         `json:"hostname"`
 	Kernel        string         `json:"kernel"`
@@ -390,35 +347,27 @@ type UpdateStatusView struct {
 	Last       *UpdateResultView  `json:"last,omitempty"`
 	KeysLoaded bool               `json:"keys_loaded"`
 	LastCheck  int64              `json:"last_check,omitempty"` // unix seconds of the last successful channel check; 0 = never
-	// LastCheckError is why the latest channel check failed to verify a pointer,
-	// cleared once one verifies. Before any pointer has verified R25 raises no
-	// freeze/stale alert, so this is the only visible trace of a misconfigured or
-	// unreachable update source (e.g. a private repo with no update.github_token).
+	// LastCheckError is why the latest channel check failed to verify a pointer, cleared once
+	// one verifies.
 	LastCheckError string `json:"last_check_error,omitempty"`
 	InProgress     bool   `json:"in_progress"`
 	LastError      string `json:"last_error,omitempty"`
 }
 
-// UpdatePendingView is core's projection of update.Pending: an update staged and
-// awaiting its health-guard deadline. Rollback is true while a rollback (CLI or
-// web "Roll back") is itself awaiting confirmation.
+// UpdatePendingView is core's projection of update.Pending: an update staged and awaiting
+// its health-guard deadline.
 type UpdatePendingView struct {
 	Version  string `json:"version"`
 	From     string `json:"from"`
 	Deadline int64  `json:"deadline"`
 	Rollback bool   `json:"rollback"`
-	// RestoreFailed mirrors update.Pending.RestoreFailed: set once the
-	// guard's health-gate rollback itself failed to restore the previous
-	// build, so this Pending is being kept (not cleared) for the update
-	// watchdog to retry (#136). "" the rest of the time, including for a
-	// rollback confirmation, which never retries a restore.
+	// RestoreFailed mirrors update.Pending.RestoreFailed: set once the guard's health-gate
+	// rollback itself failed to restore the previous build, so this Pending is being kept.
 	RestoreFailed string `json:"restore_failed,omitempty"`
 }
 
-// UpdateResultView is core's projection of update.Result: the outcome of the
-// most recently confirmed or rolled-back update attempt. Outcome is
-// "committed" or "rolled_back"; Detail carries the guard's reason for a
-// rollback (empty on a clean commit).
+// UpdateResultView is core's projection of update.Result: the outcome of the most recently
+// confirmed or rolled-back update attempt.
 type UpdateResultView struct {
 	Version string `json:"version"`
 	From    string `json:"from"`

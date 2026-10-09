@@ -37,9 +37,8 @@ const withManifest = `[{"name":"manifest.json"},{"name":"manifest.ci.sig"},{"nam
 // assets and no manifest at all (e.g. the old serverwatch-era v0.4.1).
 const noManifest = `[{"name":"serverwatch-linux-amd64"},{"name":"checksums.txt"}]`
 
-// TestLatestPicksHighestVersionNotNewestCreated covers review F2: a v0.6.0
-// release listed AFTER a v0.5.1 release in gh's (creation-date) order must
-// still win, because "latest" means highest version, not newest-created.
+// TestLatestPicksHighestVersionNotNewestCreated covers review F2: a v0.6.0 release listed
+// AFTER a v0.5.1 release in gh's (creation-date) order must still win.
 func TestLatestPicksHighestVersionNotNewestCreated(t *testing.T) {
 	input := `[
 		{"tag_name":"v0.5.1","prerelease":false,"draft":false,"assets":` + withManifest + `},
@@ -54,9 +53,8 @@ func TestLatestPicksHighestVersionNotNewestCreated(t *testing.T) {
 	}
 }
 
-// TestLatestBetaComparesPrereleaseAgainstFinal covers review F2: for the
-// beta channel, a final release outranks an earlier pre-release of the same
-// core version (0.6.0 > 0.6.0-beta.2 under semver precedence).
+// TestLatestBetaComparesPrereleaseAgainstFinal covers review F2: for the beta channel, a
+// final release outranks an earlier pre-release of the same core version.
 func TestLatestBetaComparesPrereleaseAgainstFinal(t *testing.T) {
 	input := `[
 		{"tag_name":"v0.6.0-beta.2","prerelease":true,"draft":false,"assets":` + withManifest + `},
@@ -71,9 +69,8 @@ func TestLatestBetaComparesPrereleaseAgainstFinal(t *testing.T) {
 	}
 }
 
-// TestLatestStableIgnoresPrereleases covers review F2: the stable channel
-// must never pick a pre-release, even one with a numerically higher core
-// version than the highest available final release.
+// TestLatestStableIgnoresPrereleases covers review F2: the stable channel must never pick a
+// pre-release.
 func TestLatestStableIgnoresPrereleases(t *testing.T) {
 	input := `[
 		{"tag_name":"v0.6.0-beta.1","prerelease":true,"draft":false,"assets":` + withManifest + `},
@@ -88,10 +85,8 @@ func TestLatestStableIgnoresPrereleases(t *testing.T) {
 	}
 }
 
-// TestLatestStableRequiresNoPreReleasePartEvenIfNotFlaggedPrerelease covers
-// the brief's "whose version has no pre-release part" clause independent of
-// gh's prerelease flag: a maintainer-mismarked "-rc.1" tag must still be
-// excluded from stable.
+// TestLatestStableRequiresNoPreReleasePartEvenIfNotFlaggedPrerelease covers the brief's
+// "whose version has no pre-release part" clause independent of gh's prerelease flag.
 func TestLatestStableRequiresNoPreReleasePartEvenIfNotFlaggedPrerelease(t *testing.T) {
 	input := `[
 		{"tag_name":"v0.6.0-rc.1","prerelease":false,"draft":false,"assets":` + withManifest + `},
@@ -122,9 +117,8 @@ func TestLatestIgnoresDrafts(t *testing.T) {
 	}
 }
 
-// TestLatestIgnoresUnparsableTags covers review F2: a non-semver tag (the
-// "channels" pointer-storage release) must be skipped, not crash the
-// comparison.
+// TestLatestIgnoresUnparsableTags covers review F2: a non-semver tag (the "channels"
+// pointer-storage release) must be skipped, not crash the comparison.
 func TestLatestIgnoresUnparsableTags(t *testing.T) {
 	input := `[
 		{"tag_name":"channels","prerelease":false,"draft":false,"assets":[]},
@@ -139,9 +133,8 @@ func TestLatestIgnoresUnparsableTags(t *testing.T) {
 	}
 }
 
-// TestLatestPrintsNothingWhenNoneMatch covers the brief's "print nothing and
-// exit 0 if none" requirement, both for a truly empty list and for a list
-// whose only entries are excluded by the channel filter.
+// TestLatestPrintsNothingWhenNoneMatch covers the brief's "print nothing and exit 0 if
+// none" requirement.
 func TestLatestPrintsNothingWhenNoneMatch(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -193,10 +186,8 @@ func TestLatestSkipsReleaseWithoutManifest(t *testing.T) {
 	}
 }
 
-// TestLatestPrintsNothingWhenOnlyReleaseLacksManifest covers B1: if v0.4.1
-// is the only release, latest must print nothing (not fall back to it), so
-// channels.yml skips signing rather than signing a pointer at an
-// unverifiable release.
+// TestLatestPrintsNothingWhenOnlyReleaseLacksManifest covers B1: if v0.4.1 is the only
+// release, latest must print nothing (not fall back to it).
 func TestLatestPrintsNothingWhenOnlyReleaseLacksManifest(t *testing.T) {
 	input := `[{"tag_name":"v0.4.1","prerelease":false,"draft":false,"assets":` + noManifest + `}]`
 	out, code := runLatest(t, "stable", input)
@@ -208,11 +199,8 @@ func TestLatestPrintsNothingWhenOnlyReleaseLacksManifest(t *testing.T) {
 	}
 }
 
-// TestLatestSkipsReleaseMissingOneManifestAsset covers B1: all three of
-// manifest.json, manifest.ci.sig and manifest.maint.sig are required. A
-// release missing only manifest.maint.sig (e.g. a CI-signed draft that was
-// never co-signed and published) is skipped just like one with no manifest
-// at all.
+// TestLatestSkipsReleaseMissingOneManifestAsset covers B1: all three of manifest.json,
+// manifest.ci.sig and manifest.maint.sig are required.
 func TestLatestSkipsReleaseMissingOneManifestAsset(t *testing.T) {
 	input := `[
 		{"tag_name":"v0.5.0","prerelease":false,"draft":false,"assets":[{"name":"manifest.json"},{"name":"manifest.ci.sig"}]},

@@ -16,23 +16,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fakeAPI is a minimal core.API test double for this package's handler tests:
-// each read field backs exactly one read method's return value (the zero
-// value/nil error when unset). The write methods delegate to an optional func
-// field each -- applyConfig/testChannel/ackAlert/unackAlert -- so a test that
-// cares (configTestDeps wiring applyConfig to the same cfg-mutating closure
-// Reload uses, or TestChannelsTestHandlerCallsTestChannel wiring testChannel to
-// capture its argument) can observe the call, while every other test gets a
-// harmless no-op (nil error) by leaving the field unset. Doctor/Subscribe stay
-// plain no-op stubs -- no handler in this package calls them yet.
+// fakeAPI is a minimal core.API test double for this package's handler tests: each read
+// field backs exactly one read method's return value (the zero value/nil error when unset).
 type fakeAPI struct {
 	snap       core.DashboardView
 	snapErr    error
 	monitoring core.MonitoringView
 	monErr     error
-	// series maps a metric name straight to the points Series should return
-	// for it (ignoring from/to/res unless seriesErr is set), mirroring the
-	// now-removed fakeSeriesStore's shape.
+	// series maps a metric name straight to the points Series should return for it (ignoring
+	// from/to/res unless seriesErr is set), mirroring the now-removed fakeSeriesStore's shape.
 	series        map[string][]core.SeriesPoint
 	seriesErr     error
 	events        []core.DownEventView
@@ -54,8 +46,7 @@ type fakeAPI struct {
 	updateStatusErr error
 	updateCheckErr  error
 	// updateApply/updateRollback let a test capture the call (mirroring
-	// applyConfig/testChannel's optional-func-field shape below); nil means a
-	// harmless no-op (nil error).
+	// applyConfig/testChannel's optional-func-field shape below); nil means a harmless no-op.
 	updateApply    func(ctx context.Context, version string) error
 	updateRollback func() error
 
@@ -64,12 +55,8 @@ type fakeAPI struct {
 	ackAlert    func(key string) error
 	unackAlert  func(key string) error
 
-	// fleet and nodes are optional fleet-routing fixtures: setting fleet makes
-	// Fleet() return it (nil -> Fleet() returns a literal nil core.FleetAPI,
-	// mirroring "no fleet support"), and nodes maps a node id straight to the
-	// core.API a test wants apiFor to resolve to for it (mirroring
-	// control.Client.ForNode's shape) -- neither is read by any handler test
-	// that predates fleet routing.
+	// fleet and nodes are optional fleet-routing fixtures: setting fleet makes Fleet() return
+	// it (nil -> Fleet() returns a literal nil core.FleetAPI, mirroring "no fleet support").
 	fleet *fakeFleet
 	nodes map[string]core.API
 }
@@ -156,23 +143,14 @@ func (f fakeAPI) TestChannel(name string) error {
 	return nil
 }
 
-// ValidateChannel is a plain no-op stub: this fakeAPI backs Deps.API (the
-// core.API boundary), which is distinct from Deps.ValidateChannel (the
-// local buildNotifier dry-run func field the #79 channel-editor tests
-// exercise directly, see handlers_channels_test.go's undeliverableTelegram)
-// -- no handler in this package's tests calls core.API.ValidateChannel
-// itself.
+// ValidateChannel is a plain no-op stub: this fakeAPI backs Deps.API (the core.API
+// boundary), which is distinct from Deps.ValidateChannel.
 func (f fakeAPI) ValidateChannel(cc config.ChannelConfig) error { return nil }
 
 func (f fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) { return nil, nil }
 
-// Fleet and Node make fakeAPI satisfy core.FleetProvider, mirroring
-// control.Client's own split: Fleet() is always this fake's canned f.fleet (a
-// literal nil core.FleetAPI when unset, not a typed-nil *fakeFleet, so callers'
-// `d.Fleet() == nil`-shaped checks behave like the real "no fleet support"
-// case); Node(id) mirrors (*control.Client).Node/ForNode -- "self"/""
-// resolves to this fake itself, any id present in f.nodes resolves to that
-// fixture, anything else is core.ErrNoSuchNode.
+// Fleet and Node make fakeAPI satisfy core.FleetProvider, mirroring control.Client's own
+// split: Fleet() is always this fake's canned f.fleet.
 func (f fakeAPI) Fleet() core.FleetAPI {
 	if f.fleet == nil {
 		return nil
@@ -227,21 +205,15 @@ type fakeFleet struct {
 	removedActor      string
 	deletedTokenActor string
 
-	// renameErr/tagsErr/revokeErr/removeErr/deleteTokenErr let a test force a
-	// mutation method to fail -- e.g. a bogus node id or a daemon that stopped
-	// being a master mid-request -- so handlers_fleet_admin_test.go can pin that
-	// FleetAPI errors render as a flash, never a 500. nil (the zero value) means
-	// these methods always succeed.
+	// renameErr/tagsErr/revokeErr/removeErr/deleteTokenErr let a test force a mutation method
+	// to fail -- e.g. a bogus node id or a daemon that stopped being a master mid-request.
 	renameErr      error
 	tagsErr        error
 	revokeErr      error
 	removeErr      error
 	deleteTokenErr error
 
-	// series/seriesErr let a test control FleetSeries' result/error;
-	// seriesCalls/lastSeries* record what it was called with, so
-	// handlers_fleet_compare_test.go can assert the compare page makes exactly
-	// one FleetSeries call per request.
+	// series/seriesErr let a test control FleetSeries' result/error.
 	series           []core.FleetSeriesPoint
 	seriesErr        error
 	seriesCalls      int
@@ -249,21 +221,15 @@ type fakeFleet struct {
 	lastSeriesFilter core.NodeFilter
 	lastSeriesAgg    core.Agg
 
-	// incidents/incidentsErr is Incidents' fixture -- Incidents itself applies
-	// filter (State/Node/Tag/Limit) in-memory, mirroring the real FleetAPI's
-	// own filtering contract closely enough for this package's handler tests
-	// without duplicating the whole engine. incidentsCalls/lastIncidentsFilter
-	// record every call, for the nav badge's "at most one call per request"
-	// test.
+	// incidents/incidentsErr is Incidents' fixture -- Incidents itself applies filter
+	// (State/Node/Tag/Limit) in-memory.
 	incidents           []core.Incident
 	incidentsErr        error
 	incidentsCalls      int
 	lastIncidentsFilter core.IncidentFilter
 
-	// incidentErr/ackIncidentErr let a test force Incident/AckIncident to
-	// fail; ackedIncidentID/ackedIncidentActor record AckIncident's last
-	// call, so a test can assert the ack recorded the SIGNED-IN web user
-	// (Review Focus 4), not some placeholder.
+	// incidentErr/ackIncidentErr let a test force Incident/AckIncident to fail;
+	// ackedIncidentID/ackedIncidentActor record AckIncident's last call.
 	incidentErr        error
 	ackIncidentErr     error
 	ackedIncidentID    string
@@ -274,30 +240,19 @@ type fakeFleet struct {
 	explainResults map[string][]core.IncidentEvent
 	explainErr     error
 
-	// auditEntries/auditErr back Audit(limit) as a settable fixture;
-	// lastAuditLimit records the limit the page passed, so a test can pin the
-	// "Audit(limit=5000)" call.
+	// auditEntries/auditErr back Audit(limit) as a settable fixture; lastAuditLimit records
+	// the limit the page passed, so a test can pin the "Audit(limit=5000)" call.
 	auditEntries   []core.AuditEntry
 	auditErr       error
 	lastAuditLimit int
 
-	// createSilenceErr lets a test force CreateSilence to fail (e.g. a
-	// validation rejection, rendered inline per global-constraints.md);
-	// createdSilences records every silence actually created, so a test can
-	// assert the silence-from-incident form's matchers/Author/window.
+	// createSilenceErr lets a test force CreateSilence to fail (e.g. a validation rejection,
+	// rendered inline per global-constraints.md).
 	createSilenceErr error
 	createdSilences  []core.Silence
 
-	// silences/maintenances back Silences()/Maintenances() as settable list
-	// fixtures -- CreateSilence/SaveMaintenance/ExpireSilence/DeleteMaintenance
-	// mutate these SAME slices (mirroring the real silenceStore,
-	// fleet_silences.go) so a create/expire/delete-then-list round trip through
-	// this fake behaves like the real backend, not just a canned passthrough.
-	// fakeValidateMatchers/fakeValidateMaintenance (below, same file) replicate
-	// the real validateMatchers/validateMaintenance checks (empty matcher, bad
-	// glob, missing name/weekday, bad HH:MM/TZ) closely enough for this
-	// package's handler tests without duplicating the whole engine -- the same
-	// convention Incidents' in-memory filtering above already uses.
+	// silences/maintenances back Silences()/Maintenances() as settable list fixtures --
+	// CreateSilence/SaveMaintenance/ExpireSilence/DeleteMaintenance mutate these SAME slices.
 	silences        []core.Silence
 	maintenances    []core.Maintenance
 	silencesErr     error
@@ -328,8 +283,7 @@ type fakeFleet struct {
 	setAlertingErr   error
 	setAlertingCalls int
 
-	// routeTestResult/routeTestErr/lastRouteTest/routeTestCalls back
-	// RouteTest.
+	// routeTestResult/routeTestErr/lastRouteTest/routeTestCalls back RouteTest.
 	routeTestResult core.RouteDecision
 	routeTestErr    error
 	lastRouteTest   core.TestAlert
@@ -339,12 +293,8 @@ type fakeFleet struct {
 	ruleStates    []core.RuleState
 	ruleStatesErr error
 
-	// managed/managedErr back Managed() as a settable fixture
-	// SaveManaged/DeleteManaged also mutate in place (see those methods' own
-	// doc, above); managedStatus/managedStatusErr back ManagedStatus().
-	// saveManagedErr/deleteManagedErr let a test force a rejection;
-	// savedManagedActor/deletedManagedID/deletedManagedActor record the last
-	// successful call.
+	// managed/managedErr back Managed() as a settable fixture SaveManaged/DeleteManaged also
+	// mutate in place (see those methods' own doc, above).
 	managed             []core.ManagedFragment
 	managedErr          error
 	saveManagedErr      error
@@ -461,10 +411,8 @@ func (f *fakeFleet) Incidents(filter core.IncidentFilter) ([]core.Incident, erro
 	return out, nil
 }
 
-// Incident looks id up in f.incidents by ID; an unknown id (or incidentErr)
-// mirrors the real FleetAPI's "not found" shape closely enough for this
-// package's handlers, which treat ANY Incident() error identically (a plain
-// 404 page, never a flash -- see renderIncidentNotFound).
+// Incident looks id up in f.incidents by ID; an unknown id (or incidentErr) mirrors the
+// real FleetAPI's "not found" shape closely enough for this package's handlers.
 func (f *fakeFleet) Incident(id string) (core.Incident, error) {
 	if f.incidentErr != nil {
 		return core.Incident{}, f.incidentErr
@@ -477,9 +425,8 @@ func (f *fakeFleet) Incident(id string) (core.Incident, error) {
 	return core.Incident{}, fmt.Errorf("no such incident: %s: %w", id, core.ErrNotFound)
 }
 
-// AckIncident records id/actor (ackedIncidentID/ackedIncidentActor) so a
-// test can assert the ack carried the SIGNED-IN web user's own name, not a
-// daemon-side placeholder (Review Focus 4).
+// AckIncident records id/actor (ackedIncidentID/ackedIncidentActor) so a test can assert
+// the ack carried the SIGNED-IN web user's own name, not a daemon-side placeholder.
 func (f *fakeFleet) AckIncident(id, actor string) error {
 	if f.ackIncidentErr != nil {
 		return f.ackIncidentErr
@@ -489,9 +436,8 @@ func (f *fakeFleet) AckIncident(id, actor string) error {
 	return nil
 }
 
-// Explain returns explainResults[key] (nil, not an error, for an unknown
-// key -- exactly like a genuinely empty pipeline trail), or explainErr if
-// set.
+// Explain returns explainResults[key] (nil, not an error, for an unknown key -- exactly
+// like a genuinely empty pipeline trail), or explainErr if set.
 func (f *fakeFleet) Explain(key string) ([]core.IncidentEvent, error) {
 	if f.explainErr != nil {
 		return nil, f.explainErr
@@ -504,18 +450,12 @@ func (f *fakeFleet) Audit(limit int) ([]core.AuditEntry, error) {
 	return f.auditEntries, f.auditErr
 }
 
-// Silences returns the settable f.silences fixture verbatim -- a test that
-// wants active/upcoming/expired tab coverage sets it directly (each entry's own
-// Start/End decides which tab it lands on), exactly like f.incidents backs
-// Incidents().
+// Silences returns the settable f.silences fixture verbatim -- a test that wants
+// active/upcoming/expired tab coverage sets it directly.
 func (f *fakeFleet) Silences() ([]core.Silence, error) { return f.silences, f.silencesErr }
 
 // CreateSilence validates via fakeValidateMatchers (empty matcher/bad glob) and
-// end-after-start, mints a fake ID, and records the created silence into BOTH
-// createdSilences and f.silences, so a create-then-list round trip through this
-// fake behaves like the real backend. Fails outright with createSilenceErr when
-// a test wants to pin that validation errors render inline, never a 500,
-// without exercising fakeValidateMatchers itself.
+// end-after-start, mints a fake ID.
 func (f *fakeFleet) CreateSilence(s core.Silence) (core.Silence, error) {
 	if f.createSilenceErr != nil {
 		return core.Silence{}, f.createSilenceErr
@@ -532,9 +472,8 @@ func (f *fakeFleet) CreateSilence(s core.Silence) (core.Silence, error) {
 	return s, nil
 }
 
-// ExpireSilence pulls id's End back to now (mirroring the real
-// silenceStore.Expire) and records actor/id, or fails with expireSilenceErr
-// /"no such silence" for an unknown id.
+// ExpireSilence pulls id's End back to now (mirroring the real silenceStore.Expire) and
+// records actor/id, or fails with expireSilenceErr /"no such silence" for an unknown id.
 func (f *fakeFleet) ExpireSilence(id, actor string) error {
 	if f.expireSilenceErr != nil {
 		return f.expireSilenceErr
@@ -558,11 +497,8 @@ func (f *fakeFleet) Maintenances() ([]core.Maintenance, error) {
 	return f.maintenances, f.maintenancesErr
 }
 
-// SaveMaintenance validates via fakeValidateMaintenance (name, weekdays,
-// From/To HH:MM, TZ, plus fakeValidateMatchers' own matcher checks), then mints
-// a fake ID (m.ID == "") or updates the existing window in place, mirroring the
-// real silenceStore.SaveMaintenance. Fails outright with saveMaintenanceErr
-// when a test wants to bypass fakeValidateMaintenance itself.
+// SaveMaintenance validates via fakeValidateMaintenance (name, weekdays, From/To HH:MM, TZ,
+// plus fakeValidateMatchers' own matcher checks), then mints a fake ID.
 func (f *fakeFleet) SaveMaintenance(m core.Maintenance) (core.Maintenance, error) {
 	if f.saveMaintenanceErr != nil {
 		return core.Maintenance{}, f.saveMaintenanceErr
@@ -601,10 +537,8 @@ func (f *fakeFleet) DeleteMaintenance(id, actor string) error {
 	return fmt.Errorf("no such maintenance %q: %w", id, core.ErrNotFound)
 }
 
-// fakeValidateMatchers mirrors internal/trinetra/fleet_silences.go's own
-// validateMatchers closely enough for this package's handler tests without
-// importing that package (module graph is one-way, internal/trinetra ->
-// internal/web, never back -- server.go's Deps doc).
+// fakeValidateMatchers mirrors internal/trinetra/fleet_silences.go's own validateMatchers
+// closely enough for this package's handler tests without importing that package.
 func fakeValidateMatchers(ms []core.Matcher) error {
 	if len(ms) == 0 {
 		return errors.New("a silence must match something")
@@ -668,15 +602,8 @@ func fakeValidateMaintenance(m core.Maintenance) error {
 	return nil
 }
 
-// Alerting/SetAlerting: alertingCfg/alertingErr back Alerting() directly;
-// SetAlerting records every call
-// (setAlertingCfg/setAlertingActor/setAlertingCalls) so a test can assert the
-// actor it received was the SIGNED-IN web user, then -- mirroring the real
-// alertingStore.Set exactly (internal/trinetra/fleet_routing.go) -- bumps
-// alertingCfg's Version to alertingCfg.Version+1 and stores the (now-canonical)
-// result, so a save-then-reload round trip through this same fake sees the new
-// version. setAlertingErr lets a test force a rejection without touching
-// alertingCfg at all.
+// Alerting/SetAlerting: alertingCfg/alertingErr back Alerting() directly; SetAlerting
+// records every call.
 func (f *fakeFleet) Alerting() (core.AlertingConfig, error) { return f.alertingCfg, f.alertingErr }
 
 func (f *fakeFleet) SetAlerting(cfg core.AlertingConfig, actor string) error {
@@ -692,10 +619,7 @@ func (f *fakeFleet) SetAlerting(cfg core.AlertingConfig, actor string) error {
 }
 
 // RouteTest records every call (lastRouteTest/routeTestCalls) and returns
-// routeTestResult/routeTestErr -- a canned core.RouteDecision (with as many
-// Policies as a test wants, for the "multiple matched policies via Continue
-// fan-out" case) rather than actually resolving anything, since this fake
-// carries no routing config of its own to resolve against.
+// routeTestResult/routeTestErr -- a canned core.RouteDecision.
 func (f *fakeFleet) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
 	f.routeTestCalls++
 	f.lastRouteTest = alert
@@ -705,21 +629,8 @@ func (f *fakeFleet) RouteTest(alert core.TestAlert) (core.RouteDecision, error) 
 // RuleStates: ruleStates/ruleStatesErr back GET /fleet/rules/state's fragment.
 func (f *fakeFleet) RuleStates() ([]core.RuleState, error) { return f.ruleStates, f.ruleStatesErr }
 
-// Managed/SaveManaged/DeleteManaged/ManagedStatus: f.managed is the settable
-// fragment-list fixture; SaveManaged mimics the real managedFragmentStore.Save
-// closely enough for handlers_fleet_managed_test.go to exercise the real
-// behavior this package's handler builds on, not just a canned passthrough --
-// reject any key outside core.ManagedKeys (naming it, in the SAME wording the
-// real backend uses, fleet_managed.go's validateManagedFragmentValues, so a
-// test can't tell the two apart), then upsert by TAG when frag.ID is "" (an
-// existing fragment with that same tag is updated in place, matching the real
-// "upsert by tag" contract) or by ID otherwise, bumping Version and setting
-// Author to actor. managedErr/saveManagedErr/deleteManagedErr let a test force
-// a lookup/mutation rejection;
-// savedManagedActor/deletedManagedID/deletedManagedActor record the last
-// successful call so a test can assert the actor was the SIGNED-IN web user,
-// never a placeholder -- the same convention this file's other mutation fakes
-// use.
+// Managed/SaveManaged/DeleteManaged/ManagedStatus: f.managed is the settable fragment-list
+// fixture.
 func (f *fakeFleet) Managed() ([]core.ManagedFragment, error) { return f.managed, f.managedErr }
 
 func (f *fakeFleet) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
@@ -789,24 +700,13 @@ func (f *fakeFleet) FleetSeries(metric string, filter core.NodeFilter, agg core.
 
 var _ core.FleetAPI = (*fakeFleet)(nil)
 
-// countingAPI wraps a core.API and counts every call made through it, so a
-// test can assert a request never touched the underlying (fake) daemon API
-// at all -- the property node_scope_test.go's tests pin:
-// withNodeRouter must reject/redirect an anonymous or non-master /n/...
-// request before any handler (and therefore before newPageData/
-// renderNotFound, which call ActiveAlerts/Version) ever calls into
-// core.API. Every core.API method increments the shared counter, then
-// delegates to the wrapped fake -- so count() reflects real usage, not just
-// the couple of methods newPageData happens to call today.
+// countingAPI wraps a core.API and counts every call made through it, so a test can assert
+// a request never touched the underlying (fake) daemon API at all.
 type countingAPI struct {
 	api   core.API
 	calls *int
-	// snapshotCalls/activeAlertsCalls are per-method counters alongside the
-	// aggregate calls above, so a test can pin "at most one
-	// Snapshot()/ActiveAlerts() round trip per request" -- the exact redundancy
-	// the request-memo extension fixes -- without that assertion being diluted
-	// by every OTHER core.API call a page also happens to make (e.g.
-	// coreVersionViaAPI's Version()).
+	// snapshotCalls/activeAlertsCalls are per-method counters alongside the aggregate calls
+	// above, so a test can pin "at most one Snapshot()/ActiveAlerts() round trip per request".
 	snapshotCalls     *int
 	activeAlertsCalls *int
 }
@@ -817,8 +717,7 @@ func newCountingAPI(api core.API) *countingAPI {
 	return &countingAPI{api: api, calls: &n, snapshotCalls: &s, activeAlertsCalls: &a}
 }
 
-// count returns how many core.API calls have gone through this wrapper so
-// far.
+// count returns how many core.API calls have gone through this wrapper so far.
 func (c *countingAPI) count() int { return *c.calls }
 
 // snapshotCallCount returns how many Snapshot() calls have gone through this
@@ -948,9 +847,8 @@ func (c *countingAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) 
 
 var _ core.API = (*countingAPI)(nil)
 
-// TestDashboardReadsFromAPI pins that once Deps.API is set, GET / renders the
-// fake API's Snapshot() data rather than Deps.Snapshot(); the dashboard handler
-// must read state through core.API.
+// TestDashboardReadsFromAPI pins that once Deps.API is set, GET / renders the fake API's
+// Snapshot() data rather than Deps.Snapshot().
 func TestDashboardReadsFromAPI(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{snap: core.DashboardView{CPU: 77}}
@@ -968,8 +866,7 @@ func TestDashboardReadsFromAPI(t *testing.T) {
 	}
 }
 
-// fakeStatusPage is an in-memory core.StatusPageAPI for web tests. It does
-// not evaluate anything; tests set svcs/evals/incs/pub directly.
+// fakeStatusPage is an in-memory core.StatusPageAPI for web tests.
 type fakeStatusPage struct {
 	mu      sync.Mutex
 	svcs    []core.StatusService

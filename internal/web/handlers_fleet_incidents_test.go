@@ -15,16 +15,7 @@ import (
 
 // ---- fixtures ---------------------------------------------------------
 
-// sampleFiringIncident is this file's main fixture: one firing incident with
-// members across three nodes exercising every field the detail page's member
-// table/silence form care about -- an open, delivered member (db1/disk_pct), a
-// suppressed (dependency-folded) open member (web1/cpu_pct), a silenced open
-// member (db2/mem_pct), and a RESOLVED member (web2/load1) that must never show
-// up in the silence-from-incident matcher list. Its Timeline covers every kind
-// the test bullet names: fired, grouped, suppressed (with reason), delivered
-// (via channels), escalated, acked (by), receipt, resolved -- a mix of
-// structured (Leg/Policy set) and one deliberately legacy (neither set) event,
-// so incidentEventText's fallback-to-Detail path is exercised too.
+// sampleFiringIncident is this file's main fixture.
 func sampleFiringIncident() core.Incident {
 	return core.Incident{
 		ID:       "inc1",
@@ -56,14 +47,8 @@ func sampleFiringIncident() core.Incident {
 
 // ---- list ---------------------------------------------------------------
 
-// TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips pins
-// state, title, severity, nodes, opened, duration, delivered/suppressed chips.
-// Uses a RESOLVED incident (fixed Opened/Resolved) so DurationText is
-// deterministic -- unlike a still-firing incident, whose duration depends on
-// time.Now(). Pins time.Local (withLocalTZ) since incidentTimeText renders
-// Opened in the master-local zone (silenceTimeText) -- see
-// TestIncidentTimeTextUsesMasterLocalZone below for the focused pin of that
-// convention itself.
+// TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips pins state, title,
+// severity, nodes, opened, duration, delivered/suppressed chips.
 func TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	resolved := core.Incident{
@@ -93,19 +78,8 @@ func TestFleetIncidentsListShowsStateTitleSeverityNodesOpenedDurationChips(t *te
 	}
 }
 
-// TestFleetIncidentsListChipsCountFromTimelineWhenMemberFlagsUnset pins B5
-// (2026-09-25 UI audit): "delivered N / suppressed N" showed "0/0" even
-// though the incident's own Timeline recorded 1 delivered + 1 suppressed
-// event. Root cause -- IncidentAlert.DeliveredLocally only ever gets set for
-// a CHILD's own local delivery (fleet_incidents.go's Apply/
-// MarkDeliveredLocally); the master's own dispatch, the common case
-// (fleetAlertEngine.deliverAndReceipt), records ONLY a Timeline "delivered"
-// event via AppendEvent and never touches any IncidentAlert field. Likewise
-// a silence (as opposed to a dependency fold) sets SilencedBy, not
-// Suppressed, which the old count ignored entirely. This fixture leaves
-// every member flag unset/empty -- exactly the master-delivered,
-// silence-suppressed shape -- so the chips must still read 1/1 off the
-// Timeline.
+// TestFleetIncidentsListChipsCountFromTimelineWhenMemberFlagsUnset pins B5 (2026-09-25 UI
+// audit).
 func TestFleetIncidentsListChipsCountFromTimelineWhenMemberFlagsUnset(t *testing.T) {
 	inc := core.Incident{
 		ID: "inc3", Title: "cpu high on api-01", Severity: "warning", State: "firing",
@@ -139,14 +113,8 @@ func TestFleetIncidentsListChipsCountFromTimelineWhenMemberFlagsUnset(t *testing
 	}
 }
 
-// TestIncidentTimeTextUsesMasterLocalZone pins that incidentTimeText must
-// render through the SAME master-local-zone-with- abbreviation convention
-// silenceTimeText (handlers_fleet_silences.go) already established for
-// Silences/Audit, rather than its own unlabeled-UTC format -- a user who just
-// learned "times on this fleet UI carry my server's zone" from Silences/Audit
-// must not then misread an Incidents timestamp as local when it was actually
-// bare UTC (the same string either way, since neither format carried a zone
-// marker).
+// TestIncidentTimeTextUsesMasterLocalZone pins that incidentTimeText must render through
+// the SAME master-local-zone-with- abbreviation convention silenceTimeText.
 func TestIncidentTimeTextUsesMasterLocalZone(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	got := incidentTimeText(1893456000)
@@ -159,9 +127,8 @@ func TestIncidentTimeTextUsesMasterLocalZone(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentsListStateBadgeEmberOnlyForFiring pins the ember
-// discipline: firing is ember (.badge.crit), acked is amber (.badge.warn),
-// resolved is verdigris (.badge.ok) -- never ember for anything but firing.
+// TestFleetIncidentsListStateBadgeEmberOnlyForFiring pins the ember discipline: firing is
+// ember (.badge.crit), acked is amber (.badge.warn), resolved is verdigris (.badge.ok).
 func TestFleetIncidentsListStateBadgeEmberOnlyForFiring(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{
 		{ID: "f1", Title: "firing one", State: "firing"},
@@ -238,10 +205,7 @@ func TestFleetIncidentsPagination(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentsListPollsEvery10sWithSync is a static template-source scan
-// (same convention TestAppJSFleetCompareSurvivesTablePoll uses for app.js)
-// pinning the polling requirement: the list's tbody self-polls every 10s with
-// hx-sync="this:replace".
+// TestFleetIncidentsListPollsEvery10sWithSync is a static template-source scan.
 func TestFleetIncidentsListPollsEvery10sWithSync(t *testing.T) {
 	b, err := templatesFS.ReadFile("templates/fleet_incidents.html")
 	if err != nil {
@@ -261,9 +225,8 @@ func TestFleetIncidentsListPollsEvery10sWithSync(t *testing.T) {
 
 // ---- nav badge ------------------------------------------------------------
 
-// TestFleetIncidentsNavBadgeSingleCall pins that the "Incidents" nav badge
-// comes from ONE Incidents(State:"firing", Limit:1000) call per request,
-// request-scoped cached like the fleet memo.
+// TestFleetIncidentsNavBadgeSingleCall pins that the "Incidents" nav badge comes from ONE
+// Incidents(State:"firing", Limit:1000) call per request.
 func TestFleetIncidentsNavBadgeSingleCall(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{
 		{ID: "a", State: "firing"},
@@ -332,9 +295,7 @@ func TestFleetIncidentDetailShowsMembersAndFullTimeline(t *testing.T) {
 	}
 
 	// Timeline: every kind, and human-readable text for the
-	// delivered/escalated/receipt/resolved events (channels/policy/leg) --
-	// U1 (2026-09-25 UI audit): no more raw "leg=... key=... policy=..."
-	// dumps with a duplicated prose Detail tacked on.
+	// delivered/escalated/receipt/resolved events (channels/policy/leg) -- U1.
 	for _, want := range []string{
 		">fired<", ">grouped<", ">suppressed<", ">delivered<", ">escalated<", ">acked<", ">receipt<", ">resolved<",
 		"grouped into inc1",                 // legacy Detail fallback
@@ -347,9 +308,8 @@ func TestFleetIncidentDetailShowsMembersAndFullTimeline(t *testing.T) {
 			t.Errorf("GET /fleet/incidents/inc1: missing timeline content %q\nbody:\n%s", want, body)
 		}
 	}
-	// "node=X rule=Y" is legitimate silence-matcher-preview syntax
-	// (fleet_incident.html's matcher line), not the timeline -- these
-	// checks target only the timeline's own old raw k=v dump.
+	// "node=X rule=Y" is legitimate silence-matcher-preview syntax (fleet_incident.html's
+	// matcher line), not the timeline.
 	for _, unwanted := range []string{"leg=fire", "policy=default", "channels=telegram", "step=0", "step=1"} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("GET /fleet/incidents/inc1: timeline still shows raw machine text %q\nbody:\n%s", unwanted, body)
@@ -357,12 +317,7 @@ func TestFleetIncidentDetailShowsMembersAndFullTimeline(t *testing.T) {
 	}
 }
 
-// TestIncidentEventTextHumanReadable pins U1 (2026-09-25 UI audit) directly:
-// incidentEventText must render a structured event as "<leg> · <node NAME>
-// · <key> · policy <p>, step <n> → <channels>" -- the node's own display
-// name (never its raw id), and no duplicated policy text (the old bug: both
-// the k=v dump AND policyStepDetail's prose "policy default step 0: *"
-// Detail were rendered, one right after the other).
+// TestIncidentEventTextHumanReadable pins U1 (2026-09-25 UI audit) directly.
 func TestIncidentEventTextHumanReadable(t *testing.T) {
 	nodeNames := map[string]string{"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4": "api-01"}
 	ev := core.IncidentEvent{
@@ -380,10 +335,8 @@ func TestIncidentEventTextHumanReadable(t *testing.T) {
 	}
 }
 
-// TestIncidentEventTextSuppressedNoLegDuplication pins the master-own
-// suppressed case: suppressedDetail prefixes the reason with "<leg>: " for
-// a master-own alert (fleet_incidents.go), which must not be shown twice
-// once the leg is already its own part.
+// TestIncidentEventTextSuppressedNoLegDuplication pins the master-own suppressed case:
+// suppressedDetail prefixes the reason with "<leg>: " for a master-own alert.
 func TestIncidentEventTextSuppressedNoLegDuplication(t *testing.T) {
 	ev := core.IncidentEvent{Leg: "fire", AlertKey: "disk_pct", Detail: "fire: dependency down"}
 	got := incidentEventText(ev, nil)
@@ -411,8 +364,7 @@ func TestFleetIncidentDetailResolvedDisablesAckAndSilence(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentUnknownID404s pins "no such incident" -> plain 404, not a
-// flash.
+// TestFleetIncidentUnknownID404s pins "no such incident" -> plain 404, not a flash.
 func TestFleetIncidentUnknownID404s(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	rr := fleetGetAsViewer(t, d, "/fleet/incidents/ghost")
@@ -423,9 +375,8 @@ func TestFleetIncidentUnknownID404s(t *testing.T) {
 
 // ---- ack --------------------------------------------------------------
 
-// TestFleetIncidentAckRecordsWebUser pins Review Focus 4: AckIncident must
-// see the SIGNED-IN web user's own name as actor, and the redirect carries a
-// flash back to the incident.
+// TestFleetIncidentAckRecordsWebUser pins Review Focus 4: AckIncident must see the
+// SIGNED-IN web user's own name as actor.
 func TestFleetIncidentAckRecordsWebUser(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
 	d := fleetAdminDeps(t, fleet)
@@ -445,9 +396,8 @@ func TestFleetIncidentAckRecordsWebUser(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentAckRejectsResolved pins the server-side re-check backing
-// "resolved incidents have no ack button" -- never trusting the
-// hidden-control-implies-safe assumption.
+// TestFleetIncidentAckRejectsResolved pins the server-side re-check backing "resolved
+// incidents have no ack button".
 func TestFleetIncidentAckRejectsResolved(t *testing.T) {
 	inc := sampleFiringIncident()
 	inc.State = "resolved"
@@ -477,8 +427,7 @@ func TestFleetIncidentAckViewerDenied(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentMutationsRequireCSRF pins requireCSRF on both mutation
-// routes.
+// TestFleetIncidentMutationsRequireCSRF pins requireCSRF on both mutation routes.
 func TestFleetIncidentMutationsRequireCSRF(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}})
 	h := newHandler(d)
@@ -496,9 +445,8 @@ func TestFleetIncidentMutationsRequireCSRF(t *testing.T) {
 
 // ---- silence ------------------------------------------------------------
 
-// TestFleetIncidentSilencePrefillsMatchersFromOpenMembers pins that matchers
-// are node id + rule (AlertKey), one per OPEN member, ORed -- recomputed
-// server-side, excluding the incident's already-resolved member (web2/load1).
+// TestFleetIncidentSilencePrefillsMatchersFromOpenMembers pins that matchers are node id +
+// rule (AlertKey), one per OPEN member, ORed -- recomputed server-side.
 func TestFleetIncidentSilencePrefillsMatchersFromOpenMembers(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
 	d := fleetAdminDeps(t, fleet)
@@ -556,9 +504,8 @@ func TestFleetIncidentSilenceRejectsBadDuration(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentSilenceNoOpenMembersRejected pins "the silence action is
-// disabled" for a resolved incident, at the handler level too (never
-// trusting the disabled control client-side).
+// TestFleetIncidentSilenceNoOpenMembersRejected pins "the silence action is disabled" for a
+// resolved incident, at the handler level too.
 func TestFleetIncidentSilenceNoOpenMembersRejected(t *testing.T) {
 	inc := sampleFiringIncident()
 	// Resolve every member.
@@ -579,9 +526,8 @@ func TestFleetIncidentSilenceNoOpenMembersRejected(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentSilenceFleetAPIErrorRendersInline pins "FleetAPI errors
-// render as a flash message ... Never return a 500" for a CreateSilence
-// rejection (e.g. the daemon's own "matcher must match something" check).
+// TestFleetIncidentSilenceFleetAPIErrorRendersInline pins "FleetAPI errors render as a
+// flash message ...
 func TestFleetIncidentSilenceFleetAPIErrorRendersInline(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}, createSilenceErr: errTestSilenceRejected}
 	d := fleetAdminDeps(t, fleet)
@@ -602,10 +548,8 @@ func (e *testError) Error() string { return e.msg }
 
 // ---- ?flash= must be a fixed code, never free text -----------------------
 
-// TestFleetIncidentFlashArbitraryTextRendersNothing pins that SECURITY fix: a
-// crafted ?flash=<arbitrary text> link must never render that text in the
-// trusted flash banner (message-spoofing via a link) -- only the two fixed
-// codes ("ack", "silenced") ever produce a flash.
+// TestFleetIncidentFlashArbitraryTextRendersNothing pins that SECURITY fix: a crafted
+// ?flash=<arbitrary text> link must never render that text in the trusted flash banner.
 func TestFleetIncidentFlashArbitraryTextRendersNothing(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
 	d := fleetAdminDeps(t, fleet)
@@ -626,11 +570,8 @@ func TestFleetIncidentFlashArbitraryTextRendersNothing(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentFlashFixedCodesRenderExpectedText pins that each of the
-// two fixed codes still renders its own text: "ack" recomputes the acting
-// user from the CURRENT session (never from the URL -- there is no name in
-// this URL at all), and "silenced" requires a "for" from the fixed duration
-// allowlist.
+// TestFleetIncidentFlashFixedCodesRenderExpectedText pins that each of the two fixed codes
+// still renders its own text: "ack" recomputes the acting user from the CURRENT session.
 func TestFleetIncidentFlashFixedCodesRenderExpectedText(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
 	d := fleetAdminDeps(t, fleet)
@@ -651,9 +592,8 @@ func TestFleetIncidentFlashFixedCodesRenderExpectedText(t *testing.T) {
 		t.Errorf("?flash=silenced&for=4h: missing expected text, body:\n%s", rr2.Body.String())
 	}
 
-	// An unrecognized "for" alongside the real "silenced" code still renders
-	// nothing -- the allowlist check applies to the parameter, not just the
-	// code.
+	// An unrecognized "for" alongside the real "silenced" code still renders nothing -- the
+	// allowlist check applies to the parameter, not just the code.
 	rr3 := fleetGetAsViewer(t, d, "/fleet/incidents/inc1?flash=silenced&for=3d")
 	if strings.Contains(rr3.Body.String(), "Silenced for") {
 		t.Errorf("?flash=silenced&for=3d: must render nothing (3d is not an allowlisted duration), body:\n%s", rr3.Body.String())
@@ -662,9 +602,8 @@ func TestFleetIncidentFlashFixedCodesRenderExpectedText(t *testing.T) {
 
 // ---- anonymous requests must redirect to /login --------------------------
 
-// TestFleetIncidentsAnonymousRedirectsToLogin pins the RBAC floor for every
-// GET route on this page: no session at all redirects to /login (302), the
-// same as every other requireRole(RoleViewer, ...)-gated route.
+// TestFleetIncidentsAnonymousRedirectsToLogin pins the RBAC floor for every GET route on
+// this page: no session at all redirects to /login (302).
 func TestFleetIncidentsAnonymousRedirectsToLogin(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}})
 	for _, target := range []string{"/fleet/incidents", "/fleet/incidents/table", "/fleet/incidents/inc1"} {
@@ -695,9 +634,8 @@ func TestFleetIncidentAckUnknownID404sWithNoMutation(t *testing.T) {
 	}
 }
 
-// TestFleetIncidentSilenceUnknownID404sWithNoMutation pins that a POST
-// silence for an id Fleet() doesn't recognize 404s and never calls
-// CreateSilence.
+// TestFleetIncidentSilenceUnknownID404sWithNoMutation pins that a POST silence for an id
+// Fleet() doesn't recognize 404s and never calls CreateSilence.
 func TestFleetIncidentSilenceUnknownID404sWithNoMutation(t *testing.T) {
 	fleet := &fakeFleet{incidents: []core.Incident{sampleFiringIncident()}}
 	d := fleetAdminDeps(t, fleet)

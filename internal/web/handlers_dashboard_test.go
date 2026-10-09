@@ -54,10 +54,8 @@ func dashboardTestView() DashboardView {
 	}
 }
 
-// dashboardMockupDemoNumbers are the template's original hard-coded demo
-// figures that must NOT survive into the real dashboard template once it's
-// bound to Deps.Snapshot() -- each is distinctive enough (in context) not to
-// collide with real formatted output from dashboardTestView above.
+// dashboardMockupDemoNumbers are the template's original hard-coded demo figures that must
+// NOT survive into the real dashboard template once it's bound to Deps.Snapshot().
 var dashboardMockupDemoNumbers = []string{
 	"6<span class=\"of\">/7", // containers running demo count
 	"220<span class=\"of\">", // systemd units demo count
@@ -74,9 +72,8 @@ func dashboardTestDeps(t *testing.T) Deps {
 	return d
 }
 
-// TestDashboardRendersRealSnapshotValues pins that GET / (signed in) renders
-// actual numbers pulled from Deps.Snapshot() (through the DashboardView
-// adapter), not hard-coded demo figures.
+// TestDashboardRendersRealSnapshotValues pins that GET / (signed in) renders actual numbers
+// pulled from Deps.Snapshot() (through the DashboardView adapter).
 func TestDashboardRendersRealSnapshotValues(t *testing.T) {
 	d := dashboardTestDeps(t)
 	h := newHandler(d)
@@ -118,10 +115,8 @@ func TestDashboardRendersRealSnapshotValues(t *testing.T) {
 	}
 }
 
-// TestDashboardRendersHiddenStaleBanner pins the markup half of the stale
-// indicator: the dashboard always renders #stale-banner, hidden by
-// default -- app.js's swBootSSE is what shows/hides it, purely client-side,
-// so there is no server-rendered "stale" state to assert beyond presence.
+// TestDashboardRendersHiddenStaleBanner pins the markup half of the stale indicator: the
+// dashboard always renders #stale-banner, hidden by default.
 func TestDashboardRendersHiddenStaleBanner(t *testing.T) {
 	d := dashboardTestDeps(t)
 	h := newHandler(d)
@@ -142,9 +137,8 @@ func TestDashboardRendersHiddenStaleBanner(t *testing.T) {
 	}
 }
 
-// TestDashboardShowsHostStrip pins the compact host strip (#100): when host
-// info is available, the dashboard renders the OS, a socket-aware CPU digest,
-// memory, uptime, and local IP, with a link through to the full /host page.
+// TestDashboardShowsHostStrip pins the compact host strip (#100): when host info is
+// available, the dashboard renders the OS, a socket-aware CPU digest, memory, uptime.
 func TestDashboardShowsHostStrip(t *testing.T) {
 	d := dashboardTestDeps(t)
 	d.API = fakeAPI{snap: dashboardTestView(), hostInfo: core.HostInfoView{
@@ -168,10 +162,8 @@ func TestDashboardShowsHostStrip(t *testing.T) {
 	}
 }
 
-// TestSidebarShowsCoreAndPluginVersions pins #107: the sidebar footer shows the
-// core daemon's version (over the socket) and the web plugin's own version, and
-// flags a mismatch when they differ. The web plugin's own version is "dev" in a
-// test binary, so a distinct core version must render as a mismatch.
+// TestSidebarShowsCoreAndPluginVersions pins #107: the sidebar footer shows the core
+// daemon's version (over the socket) and the web plugin's own version.
 func TestSidebarShowsCoreAndPluginVersions(t *testing.T) {
 	d := dashboardTestDeps(t)
 	d.API = fakeAPI{snap: dashboardTestView(), version: "v9.9.9"}

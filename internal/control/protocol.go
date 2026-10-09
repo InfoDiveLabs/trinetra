@@ -6,13 +6,10 @@ import (
 	"io"
 )
 
-// ProtocolVersion is the control-socket wire protocol version. The server
-// rejects a client hello with a different version.
+// ProtocolVersion is the control-socket wire protocol version.
 const ProtocolVersion = 1
 
-// request is one client-to-server call frame. Node, when non-empty, routes the
-// call to that fleet node (see resolveNode); it is omitted when empty so a daemon
-// that predates fleet routing sees unchanged frames.
+// request is one client-to-server call frame.
 type request struct {
 	ID     int             `json:"id"`
 	Method string          `json:"method"`
@@ -20,10 +17,7 @@ type request struct {
 	Node   string          `json:"node,omitempty"`
 }
 
-// response is one server-to-client reply frame. When OK is false, Error carries
-// the error text. Node echoes request.Node so the client can detect a daemon that
-// predates fleet routing: it answers with its own host's data but never echoes
-// Node (see Client.call, which treats that as a hard error).
+// response is one server-to-client reply frame.
 type response struct {
 	ID     int             `json:"id"`
 	OK     bool            `json:"ok"`
@@ -32,12 +26,10 @@ type response struct {
 	Node   string          `json:"node,omitempty"`
 }
 
-// streamID is the reserved response.ID for every event frame in Subscribe
-// streaming mode. Client.nextID starts at 1, so one-shot calls never see it.
+// streamID is the reserved response.ID for every event frame in Subscribe streaming mode.
 const streamID = -1
 
-// hello is the first frame in each direction. The client's carries Token, the
-// per-launch secret; the server's echo leaves it empty.
+// hello is the first frame in each direction.
 type hello struct {
 	Hello   string `json:"hello"`
 	Version int    `json:"version"`

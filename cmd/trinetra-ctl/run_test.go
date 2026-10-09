@@ -10,13 +10,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fakeAPI is a core.API stub returning canned values so run() (and, in
-// tui_test.go, the TUI model) can be driven without a real control socket.
-// Only the reads the ctl subcommands/wizard exercise are populated by
-// default; the rest satisfy the interface and are never called by most
-// tested paths. cfg/applyErr let a test control what Config() returns and
-// how ApplyConfig fails; applied/applyCalls record what a caller (the web
-// setup wizard) actually posted, for assertions.
+// fakeAPI is a core.API stub returning canned values so run() (and, in tui_test.go, the TUI
+// model) can be driven without a real control socket.
 type fakeAPI struct {
 	snapshot      core.DashboardView
 	doctor        core.DoctorReport
@@ -32,17 +27,13 @@ type fakeAPI struct {
 	applied   *config.Config
 	applyN    int
 
-	// monitorTargets/monitorTargetsErr back MonitorTargets, so the monitor-
-	// thresholds screen's tests (manage_ui_test.go) can drive it without a
-	// real socket or real docker/df/smartctl discovery.
+	// monitorTargets/monitorTargetsErr back MonitorTargets, so the monitor- thresholds
+	// screen's tests.
 	monitorTargets    []core.TargetView
 	monitorTargetsErr error
 
-	// validateErr/validateCalls back ValidateChannel for the Channels
-	// screen's #79-safe validate-before-save gate tests (channels_test.go,
-	// manage_channels_test.go): validateErr controls whether the gate
-	// passes or fails, validateCalls records every cc it was asked to check
-	// so a test can assert the gate was (or wasn't) actually consulted.
+	// validateErr/validateCalls back ValidateChannel for the Channels screen's #79-safe
+	// validate-before-save gate tests (channels_test.go, manage_channels_test.go).
 	validateErr   error
 	validateCalls []config.ChannelConfig
 
@@ -51,10 +42,8 @@ type fakeAPI struct {
 	testChannelErr   error
 	testChannelCalls []string
 
-	// enrollPIN/enrollEnrolled/enrollErr back EnrollmentPIN for the
-	// first-run onboarding flow's tests (onboarding_test.go,
-	// onboard_ui_test.go): enrollCalls records how many times it was
-	// polled, so a test can assert the poll loop actually re-fetches.
+	// enrollPIN/enrollEnrolled/enrollErr back EnrollmentPIN for the first-run onboarding
+	// flow's tests (onboarding_test.go, onboard_ui_test.go).
 	enrollPIN      string
 	enrollEnrolled bool
 	enrollErr      error
@@ -89,10 +78,8 @@ func (f *fakeAPI) ContainerLogs(name string, lines int) (string, error) {
 }
 func (f *fakeAPI) Version() (string, error) { return f.version, nil }
 
-// EnrollmentPIN returns the canned enrollPIN/enrollEnrolled/enrollErr a test
-// set up, recording every call in enrollCalls so onboarding's poll-until-
-// enrolled loop (onboard_ui.go) can be asserted to actually re-fetch rather
-// than just checking the first result forever.
+// EnrollmentPIN returns the canned enrollPIN/enrollEnrolled/enrollErr a test set up,
+// recording every call in enrollCalls so onboarding's poll-until- enrolled loop.
 func (f *fakeAPI) EnrollmentPIN(ctx context.Context) (string, bool, error) {
 	f.enrollCalls++
 	if f.enrollErr != nil {
@@ -119,9 +106,8 @@ func (f *fakeAPI) ApplyConfig(c *config.Config) error {
 func (f *fakeAPI) AckAlert(key string) error   { return nil }
 func (f *fakeAPI) UnackAlert(key string) error { return nil }
 
-// TestChannel records name in testChannelCalls and returns testChannelErr,
-// so the Channels screen's "test" action (manage_channels.go) can be
-// asserted against without a real notifier send.
+// TestChannel records name in testChannelCalls and returns testChannelErr, so the Channels
+// screen's "test" action.
 func (f *fakeAPI) TestChannel(name string) error {
 	f.testChannelCalls = append(f.testChannelCalls, name)
 	return f.testChannelErr

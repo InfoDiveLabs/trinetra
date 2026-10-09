@@ -30,9 +30,8 @@ func TestFleetAuditAnonymousRedirectsToLogin(t *testing.T) {
 	}
 }
 
-// TestFleetAuditViewerDenied pins admin-only end to end: unlike Managed
-// config/Alerting, a viewer gets no read access at all -- the route list has a
-// single admin GET, no viewer-readable variant.
+// TestFleetAuditViewerDenied pins admin-only end to end: unlike Managed config/Alerting, a
+// viewer gets no read access at all -- the route list has a single admin GET.
 func TestFleetAuditViewerDenied(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	rr := fleetGetAsViewer(t, d, "/fleet/audit")
@@ -142,8 +141,7 @@ func TestFleetAuditPagination(t *testing.T) {
 	}
 }
 
-// TestFleetAuditDetailEscaped pins that Detail is rendered escaped, never as
-// live markup.
+// TestFleetAuditDetailEscaped pins that Detail is rendered escaped, never as live markup.
 func TestFleetAuditDetailEscaped(t *testing.T) {
 	fleet := &fakeFleet{auditEntries: []core.AuditEntry{
 		{TS: 1000, Actor: "root", Action: "fleet.managed.save", Target: "f1", Detail: `<script>alert(1)</script>`},
@@ -162,9 +160,8 @@ func TestFleetAuditDetailEscaped(t *testing.T) {
 	}
 }
 
-// TestFleetAuditTimeInMasterLocalZone pins that times are shown in the master's
-// own local zone with its abbreviation, via silenceTimeText -- exactly like
-// every other datetime on the fleet pages.
+// TestFleetAuditTimeInMasterLocalZone pins that times are shown in the master's own local
+// zone with its abbreviation, via silenceTimeText.
 func TestFleetAuditTimeInMasterLocalZone(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	fleet := &fakeFleet{auditEntries: []core.AuditEntry{

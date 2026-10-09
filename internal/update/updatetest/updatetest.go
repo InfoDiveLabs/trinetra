@@ -37,9 +37,8 @@ func (t TestSigner) SignRelease(b []byte) []byte { return t.sign(update.ReleaseP
 // SignPointer signs a channel pointer (update.ChannelPrefix).
 func (t TestSigner) SignPointer(b []byte) []byte { return t.sign(update.ChannelPrefix, b) }
 
-// TestKeySet returns the deterministic test key set (signers 1/4 = CI,
-// 2/5 = maint, 3/6 = pointer): exactly what update.ProductionKeys() returns
-// in a trinetra_testkeys build.
+// TestKeySet returns the deterministic test key set (signers 1/4 = CI, 2/5 = maint, 3/6 =
+// pointer): exactly what update.ProductionKeys() returns in a trinetra_testkeys build.
 func TestKeySet() update.KeySet {
 	return update.KeySet{
 		CI:      []update.PublicKey{NewTestSigner(1).Public(), NewTestSigner(4).Public()},

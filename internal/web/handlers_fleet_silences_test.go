@@ -12,12 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// withLocalTZ temporarily replaces time.Local with the named IANA zone for
-// the duration of the calling test, restoring the original afterward
-// (t.Cleanup), so a test asserting the silence page's zone-labeled time
-// rendering (silenceTimeText/silenceTimeZoneNote, handlers_fleet_silences.go)
-// gets a deterministic zone/abbreviation instead of depending on whatever zone
-// the test machine happens to run in.
+// withLocalTZ temporarily replaces time.Local with the named IANA zone for the duration of
+// the calling test, restoring the original afterward (t.Cleanup).
 func withLocalTZ(t *testing.T, name string) {
 	t.Helper()
 	loc, err := time.LoadLocation(name)
@@ -129,11 +125,8 @@ func TestFleetSilencesMissingCSRFForbidden(t *testing.T) {
 
 // ---- create silence --------------------------------------------------------
 
-// TestFleetSilencesCreateRoundTripsWithSessionUserAsAuthor drives the real
-// rendered form (formValuesForButton, formhelpers_test.go), never a
-// hand-built payload, and pins that the created silence's Author is the
-// SIGNED-IN web user, not a placeholder -- landing on the Active tab since
-// the default Start (left blank, meaning "now") isn't in the future.
+// TestFleetSilencesCreateRoundTripsWithSessionUserAsAuthor drives the real rendered form
+// (formValuesForButton, formhelpers_test.go), never a hand-built payload.
 func TestFleetSilencesCreateRoundTripsWithSessionUserAsAuthor(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -167,13 +160,8 @@ func TestFleetSilencesCreateRoundTripsWithSessionUserAsAuthor(t *testing.T) {
 	}
 }
 
-// TestFleetSilencesDisplayedStartMatchesTypedWallClockPlusZone pins that
-// review's IMPORTANT finding: a silence's Start/End datetime-local inputs are
-// parsed in time.Local, so the list must render them back in THAT SAME zone,
-// with its abbreviation, rather than UTC with no zone label at all -- an admin
-// typing "12:00" must see "12:00" (plus the zone) back, never some UTC-shifted
-// reading. Asia/Kolkata (IST, no DST) gives a fixed, deterministic abbreviation
-// for the assertion.
+// TestFleetSilencesDisplayedStartMatchesTypedWallClockPlusZone pins that review's IMPORTANT
+// finding: a silence's Start/End datetime-local inputs are parsed in time.Local.
 func TestFleetSilencesDisplayedStartMatchesTypedWallClockPlusZone(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	fleet := &fakeFleet{}
@@ -200,10 +188,8 @@ func TestFleetSilencesDisplayedStartMatchesTypedWallClockPlusZone(t *testing.T) 
 	}
 }
 
-// TestFleetSilencesTimeZoneNotePresent pins a visible note next to the
-// create-silence form's Start/End inputs naming the zone. Driven as admin --
-// the note lives inside the create form itself, which (like every mutation
-// control on this page) a viewer never sees at all.
+// TestFleetSilencesTimeZoneNotePresent pins a visible note next to the create-silence
+// form's Start/End inputs naming the zone.
 func TestFleetSilencesTimeZoneNotePresent(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	fleet := &fakeFleet{}
@@ -233,9 +219,8 @@ func TestFleetSilencesCreateFutureStartLandsOnUpcoming(t *testing.T) {
 	}
 }
 
-// TestFleetSilencesCreateEmptyMatcherRejected pins the backend's "a silence
-// must match something" rejection surfacing inline, never a 500 -- the
-// default fresh form's one matcher row is left entirely blank.
+// TestFleetSilencesCreateEmptyMatcherRejected pins the backend's "a silence must match
+// something" rejection surfacing inline, never a 500.
 func TestFleetSilencesCreateEmptyMatcherRejected(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -254,10 +239,8 @@ func TestFleetSilencesCreateEmptyMatcherRejected(t *testing.T) {
 	}
 }
 
-// TestFleetSilencesCreateValidationErrorKeepsInput pins global-
-// constraints.md's "validation errors render inline ... ALL input
-// preserved": an end time before the start time is rejected, and the
-// matcher/comment/start/end the admin typed are all still on the page.
+// TestFleetSilencesCreateValidationErrorKeepsInput pins global- constraints.md's
+// "validation errors render inline ...
 func TestFleetSilencesCreateValidationErrorKeepsInput(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -286,9 +269,8 @@ func TestFleetSilencesCreateValidationErrorKeepsInput(t *testing.T) {
 	}
 }
 
-// TestFleetSilencesCreateAddMatcherRowRoundTrip pins the add/remove-row draft
-// pattern itself: clicking "Add matcher" must reshape the draft (now two rows)
-// and re-render at 200 WITHOUT saving anything.
+// TestFleetSilencesCreateAddMatcherRowRoundTrip pins the add/remove-row draft pattern
+// itself: clicking "Add matcher" must reshape the draft.
 func TestFleetSilencesCreateAddMatcherRowRoundTrip(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -307,11 +289,8 @@ func TestFleetSilencesCreateAddMatcherRowRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFleetSilencesAddThenRemoveMatcherPreservesOtherFields pins review's
-// requested browser-faithful test: fill Start/Duration/Comment, click "Add
-// matcher" (reshaping the draft, re-rendering at 200), then click "Remove
-// matcher" on the newly-added row -- every OTHER field (the first matcher's own
-// tag, Start, Duration, Comment) must survive both round trips unchanged.
+// TestFleetSilencesAddThenRemoveMatcherPreservesOtherFields pins review's requested
+// browser-faithful test: fill Start/Duration/Comment, click "Add matcher".
 func TestFleetSilencesAddThenRemoveMatcherPreservesOtherFields(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -355,9 +334,8 @@ func TestFleetSilencesAddThenRemoveMatcherPreservesOtherFields(t *testing.T) {
 	}
 }
 
-// TestFleetMaintenanceAddThenRemoveMatcherPreservesOtherFields is the same
-// browser-faithful add-then-remove test for the maintenance form: name,
-// weekdays, From/To, and a custom TZ must all survive both round trips.
+// TestFleetMaintenanceAddThenRemoveMatcherPreservesOtherFields is the same browser-faithful
+// add-then-remove test for the maintenance form: name, weekdays.
 func TestFleetMaintenanceAddThenRemoveMatcherPreservesOtherFields(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -518,10 +496,8 @@ func TestFleetSilencesPagination(t *testing.T) {
 
 // ---- maintenance ------------------------------------------------------------
 
-// TestFleetMaintenanceNextOccurrenceRendering pins that the list shows each
-// window's next occurrence, computed server-side from the SAME helper the
-// engine uses (core.NextMaintenanceOccurrence). A window covering every
-// weekday, all day, is always "active now" regardless of when this test runs.
+// TestFleetMaintenanceNextOccurrenceRendering pins that the list shows each window's next
+// occurrence, computed server-side from the SAME helper the engine uses.
 func TestFleetMaintenanceNextOccurrenceRendering(t *testing.T) {
 	fleet := &fakeFleet{maintenances: []core.Maintenance{
 		{ID: "mnt1", Name: "always-on", Matchers: []core.Matcher{{Tag: "web"}}, Weekdays: []int{0, 1, 2, 3, 4, 5, 6}, From: "00:00", To: "23:59", TZ: "UTC", Author: "root"},
@@ -540,9 +516,8 @@ func TestFleetMaintenanceNextOccurrenceRendering(t *testing.T) {
 	}
 }
 
-// TestFleetMaintenanceCreateRoundTripsWithAuthor drives the real rendered
-// form and pins Author == the signed-in web user, plus that the weekday
-// checkboxes/From/To/TZ all round-trip.
+// TestFleetMaintenanceCreateRoundTripsWithAuthor drives the real rendered form and pins
+// Author == the signed-in web user.
 func TestFleetMaintenanceCreateRoundTripsWithAuthor(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -575,9 +550,8 @@ func TestFleetMaintenanceCreateRoundTripsWithAuthor(t *testing.T) {
 	}
 }
 
-// TestFleetMaintenanceCreateValidationErrorKeepsInput pins "validation
-// errors render inline ... ALL input preserved" for the maintenance form: no
-// weekday checked.
+// TestFleetMaintenanceCreateValidationErrorKeepsInput pins "validation errors render inline
+// ...
 func TestFleetMaintenanceCreateValidationErrorKeepsInput(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -631,11 +605,8 @@ func TestFleetMaintenanceDeleteWithConfirm(t *testing.T) {
 
 // ---- 404 / escaping ---------------------------------------------------------
 
-// TestFleetSilencesUnknownIDsAre404 pins that expiring/deleting an id this
-// fake doesn't recognize surfaces as EXACTLY 404 (core.ErrNotFound,
-// fleetAPIErrStatus), never a 500: the fake's "no such X" errors wrap
-// core.ErrNotFound (deps_api_test.go), matching the real backend, so this
-// asserts the precise status rather than "any 4xx".
+// TestFleetSilencesUnknownIDsAre404 pins that expiring/deleting an id this fake doesn't
+// recognize surfaces as EXACTLY 404 (core.ErrNotFound, fleetAPIErrStatus), never a 500.
 func TestFleetSilencesUnknownIDsAre404(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)

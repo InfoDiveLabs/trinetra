@@ -24,17 +24,11 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fleetAuditQueryLimit is how many of the most recent audit entries this
-// page reads before filtering/paginating in memory. Filtering narrows this same
-// window; a filter matching something older than the 5000th-most-recent entry
-// simply won't show it, exactly like `fleet audit` CLI's own --limit.
+// fleetAuditQueryLimit is how many of the most recent audit entries this page reads before
+// filtering/paginating in memory.
 const fleetAuditQueryLimit = 5000
 
-// AuditRow is one row of the audit table: core.AuditEntry's fields
-// formatted for display. Time is rendered through silenceTimeText (task
-// C4's shared "master's own local zone, with abbreviation" helper) rather
-// than a bare timestamp -- every datetime this page shows follows that same
-// rule.
+// AuditRow is one row of the audit table: core.AuditEntry's fields formatted for display.
 type AuditRow struct {
 	TimeText string
 	Actor    string
@@ -53,9 +47,8 @@ func newAuditRow(e core.AuditEntry) AuditRow {
 	}
 }
 
-// auditQuery is GET /fleet/audit's parsed query: Actor/Action filters plus
-// Page, mirroring incidentQuery's shape (handlers_fleet.go) but over
-// core.AuditEntry's own fields.
+// auditQuery is GET /fleet/audit's parsed query: Actor/Action filters plus Page, mirroring
+// incidentQuery's shape (handlers_fleet.go) but over core.AuditEntry's own fields.
 type auditQuery struct {
 	Actor  string
 	Action string
@@ -75,9 +68,8 @@ func parseAuditQuery(r *http.Request) auditQuery {
 	}
 }
 
-// encode rebuilds q's own query string (actor/action, never page -- callers
-// append their own page= when building a specific page's link), for the
-// filter form's action and the pagination links' shared prefix.
+// encode rebuilds q's own query string (actor/action, never page -- callers append their
+// own page= when building a specific page's link).
 func (q auditQuery) encode() string {
 	v := url.Values{}
 	if q.Actor != "" {
@@ -112,10 +104,8 @@ func filterAuditEntries(all []core.AuditEntry, q auditQuery) []core.AuditEntry {
 	return out
 }
 
-// paginateAuditEntries slices all (already filtered, newest-first per
-// core.FleetAPI.Audit's own contract) into page's 50-row window, clamping
-// page into [1, totalPages] first -- mirrors paginateIncidents/
-// paginateSilences exactly, over core.AuditEntry.
+// paginateAuditEntries slices all (already filtered, newest-first per core.FleetAPI.Audit's
+// own contract) into page's 50-row window, clamping page into [1, totalPages] first.
 func paginateAuditEntries(all []core.AuditEntry, page int) (pageItems []core.AuditEntry, totalPages, clampedPage int) {
 	total := len(all)
 	totalPages = (total + fleetIncidentsPageSize - 1) / fleetIncidentsPageSize
@@ -139,8 +129,7 @@ func paginateAuditEntries(all []core.AuditEntry, page int) (pageItems []core.Aud
 	return all[start:end], totalPages, page
 }
 
-// AuditPageData is what templates/fleet_audit.html's "content" block
-// renders against.
+// AuditPageData is what templates/fleet_audit.html's "content" block renders against.
 type AuditPageData struct {
 	PageData
 

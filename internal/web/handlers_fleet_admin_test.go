@@ -14,18 +14,12 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// errFleetGeneric stands in for an ordinary daemon-side rejection that
-// isn't one of core.FleetAPI's typed sentinels (e.g. internal/fleet's
-// registry.Update/TokenStore.Delete return plain fmt.Errorf/errors.New
-// values for "no such node"/"no such token" -- see
-// TestFleetAdminFleetAPIErrorsRenderAsFlashNever500's doc).
+// errFleetGeneric stands in for an ordinary daemon-side rejection that isn't one of
+// core.FleetAPI's typed sentinels.
 var errFleetGeneric = errors.New("fleet: rejected")
 
-// fleetAdminNodeRoster is this file's fixture: self plus one node in every
-// state the admin page's rename/tags/revoke/remove/link-health rules care
-// about -- web1 online (a normal manageable node), db1 down (removable),
-// old1 revoked (removable), web2 lagging with skew/replica-drops set (so
-// the link-health table's warning chips have something to show).
+// fleetAdminNodeRoster is this file's fixture: self plus one node in every state the admin
+// page's rename/tags/revoke/remove/link-health rules care about -- web1 online.
 func fleetAdminNodeRoster() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: core.SelfNodeID, Name: "self", Self: true, State: "online"},
@@ -38,11 +32,8 @@ func fleetAdminNodeRoster() []core.NodeSummary {
 	}
 }
 
-// fleetAdminDeps builds a fleet-master Deps wired to a caller-supplied
-// *fakeFleet (defaulting its Status to config.RoleMaster if unset), so a
-// test can inject mutation-error fixtures (fakeFleet's renameErr/tagsErr/
-// revokeErr/removeErr/deleteTokenErr/createTokenErr, deps_api_test.go)
-// that fleetMasterDeps (handlers_fleet_test.go) has no way to configure.
+// fleetAdminDeps builds a fleet-master Deps wired to a caller-supplied *fakeFleet
+// (defaulting its Status to config.RoleMaster if unset).
 func fleetAdminDeps(t *testing.T, fleet *fakeFleet) Deps {
 	t.Helper()
 	if fleet.status.Role == "" {
@@ -54,9 +45,8 @@ func fleetAdminDeps(t *testing.T, fleet *fakeFleet) Deps {
 	return fleetTestDeps(t, masterFakeAPI(fleet, nil))
 }
 
-// fleetAdminPost issues an admin-signed-in, CSRF-valid POST against h,
-// mirroring handlers_users_test.go's postForm/seedAdmin pair (same
-// package, reused directly).
+// fleetAdminPost issues an admin-signed-in, CSRF-valid POST against h, mirroring
+// handlers_users_test.go's postForm/seedAdmin pair (same package, reused directly).
 func fleetAdminPost(t *testing.T, d Deps, target string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	h := newHandler(d)
@@ -85,11 +75,8 @@ func readAuditFileRaw(t *testing.T, stateDir string) string {
 	return string(b)
 }
 
-// TestFleetAdminPageRendersNodesAndTokens pins the page's basic shape: the
-// join-token table's columns, the node-management table (self excluded),
-// and the link-health table's CLI-worded warning chips + RemoteAddr
-// (admin-only page, so RemoteAddr is shown, unlike the viewer-facing
-// /fleet table).
+// TestFleetAdminPageRendersNodesAndTokens pins the page's basic shape: the join-token
+// table's columns, the node-management table (self excluded).
 func TestFleetAdminPageRendersNodesAndTokens(t *testing.T) {
 	fleet := &fakeFleet{tokens: []core.TokenView{
 		{ID: "tok1", Uses: 3, Expires: 4102444800, Tags: []string{"web"}, Creator: "root"},
@@ -130,9 +117,8 @@ func TestFleetAdminSoloDaemon404s(t *testing.T) {
 	}
 }
 
-// TestFleetAdminViewerDenied pins the RBAC floor: a viewer gets 403 on the
-// page AND on every mutation route, before any master-role/CSRF/id logic
-// ever runs.
+// TestFleetAdminViewerDenied pins the RBAC floor: a viewer gets 403 on the page AND on
+// every mutation route, before any master-role/CSRF/id logic ever runs.
 func TestFleetAdminViewerDenied(t *testing.T) {
 	d := fleetAdminDeps(t, &fakeFleet{})
 	h := newHandler(d)
@@ -152,10 +138,8 @@ func TestFleetAdminViewerDenied(t *testing.T) {
 		"/fleet/nodes/db1/remove",
 	}
 	for _, target := range targets {
-		// A genuine viewer session (seedSignedInRequest, rbac_test.go) --
-		// this exercises the SAME requireRole(RoleAdmin,...) gate the route
-		// wiring applies, before requireCSRF or any master/self-id check
-		// ever runs.
+		// A genuine viewer session (seedSignedInRequest, rbac_test.go) -- this exercises the SAME
+		// requireRole(RoleAdmin,...) gate the route wiring applies.
 		viewerReq := seedSignedInRequest(t, users, sessions, RoleViewer, http.MethodPost, target)
 		viewerReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rr := httptest.NewRecorder()
@@ -284,11 +268,8 @@ func TestFleetAdminTokenCreateSetsCreator(t *testing.T) {
 	}
 }
 
-// TestNewTokenRowExpiresInMasterLocalZone pins that a join-token's Expires must
-// render through the same master-local-zone- with-abbreviation convention
-// (silenceTimeText) as every other absolute timestamp on the fleet surface,
-// rather than its own RFC3339/UTC convention -- a third distinct format the
-// review flagged as worth folding into the same cleanup as finding I1.
+// TestNewTokenRowExpiresInMasterLocalZone pins that a join-token's Expires must render
+// through the same master-local-zone- with-abbreviation convention.
 func TestNewTokenRowExpiresInMasterLocalZone(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	row := newTokenRow(core.TokenView{ID: "tok1", Expires: 1893456000})
@@ -361,8 +342,7 @@ func TestFleetAdminTokenDelete(t *testing.T) {
 	}
 }
 
-// TestFleetAdminNodeRename pins rename success + its audit record's old/new
-// values.
+// TestFleetAdminNodeRename pins rename success + its audit record's old/new values.
 func TestFleetAdminNodeRename(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -373,9 +353,8 @@ func TestFleetAdminNodeRename(t *testing.T) {
 	if fleet.renamed["web1"] != "web-1" {
 		t.Errorf("renamed[web1] = %q, want web-1", fleet.renamed["web1"])
 	}
-	// Actor plumbing: a web rename must pass the SIGNED-IN user's own name
-	// (auditUser(r), seedAdmin's "root" here) as the actor, never the literal
-	// placeholder "unknown" on the FleetAPI's own audit log.
+	// Actor plumbing: a web rename must pass the SIGNED-IN user's own name (auditUser(r),
+	// seedAdmin's "root" here) as the actor.
 	if fleet.renamedActor != "root" {
 		t.Errorf("RenameNode actor = %q, want the signed-in admin's name (root), not a placeholder", fleet.renamedActor)
 	}
@@ -462,9 +441,7 @@ func TestFleetAdminNodeTagsValidation(t *testing.T) {
 	}
 }
 
-// TestFleetAdminNodeRevoke pins revoke success + its audit record. The
-// two-step confirm is UI-only (style.css's checkbox toggle); the endpoint
-// itself revokes on any valid POST that reaches it.
+// TestFleetAdminNodeRevoke pins revoke success + its audit record.
 func TestFleetAdminNodeRevoke(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)
@@ -487,9 +464,8 @@ func TestFleetAdminNodeRevoke(t *testing.T) {
 	}
 }
 
-// TestFleetAdminNodeRemoveOnlyDownOrRevoked pins that only revoked or down
-// nodes may be removed: an online node is refused (400, no call to
-// RemoveNode), a down node succeeds.
+// TestFleetAdminNodeRemoveOnlyDownOrRevoked pins that only revoked or down nodes may be
+// removed: an online node is refused (400, no call to RemoveNode), a down node succeeds.
 func TestFleetAdminNodeRemoveOnlyDownOrRevoked(t *testing.T) {
 	fleet := &fakeFleet{}
 	d := fleetAdminDeps(t, fleet)

@@ -26,10 +26,8 @@ func webCfg(mode, rpID, origin, autocertDomains, tlsCert, tlsKey string) *config
 	return c
 }
 
-// TestValidateOriginAllowsEmptyInProxyMode pins the proxy-mode exemption: an
-// operator fronting the daemon with a local reverse proxy (Cloudflare
-// Tunnel/nginx/Caddy) need not set rp_id/origin at all -- proxy mode derives
-// them per-request instead (see requestOrigin).
+// TestValidateOriginAllowsEmptyInProxyMode pins the proxy-mode exemption: an operator
+// fronting the daemon with a local reverse proxy.
 func TestValidateOriginAllowsEmptyInProxyMode(t *testing.T) {
 	cfg := webCfg("proxy", "", "", "", "", "")
 	if err := validateOrigin(cfg); err != nil {
@@ -37,9 +35,8 @@ func TestValidateOriginAllowsEmptyInProxyMode(t *testing.T) {
 	}
 }
 
-// TestValidateOriginAcceptsConsistentConfig pins the happy path for both
-// TLS-terminating modes: rp_id equal to origin's host, plus that mode's
-// other required fields present.
+// TestValidateOriginAcceptsConsistentConfig pins the happy path for both TLS-terminating
+// modes: rp_id equal to origin's host, plus that mode's other required fields present.
 func TestValidateOriginAcceptsConsistentConfig(t *testing.T) {
 	cases := []*config.Config{
 		webCfg("manual", "monitor.example.com", "https://monitor.example.com", "", "/etc/trinetra/tls.crt", "/etc/trinetra/tls.key"),
@@ -64,10 +61,8 @@ func TestValidateOriginRejectsMismatchedHost(t *testing.T) {
 	}
 }
 
-// TestValidateOriginRejectsEmptyInNonProxyModes covers both autocert and
-// manual: unlike proxy mode, both require rp_id and origin to be set
-// explicitly since there's no per-request reverse-proxy signal to derive
-// them from.
+// TestValidateOriginRejectsEmptyInNonProxyModes covers both autocert and manual: unlike
+// proxy mode.
 func TestValidateOriginRejectsEmptyInNonProxyModes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -105,10 +100,8 @@ func TestValidateOriginRequiresTLSCertAndKey(t *testing.T) {
 	}
 }
 
-// TestValidateOriginRejectsUnknownMode is a defensive check: validateOrigin
-// is also reachable with a *config.Config built directly (not through
-// Config.Set's own web.mode enum validation), so it must not silently treat
-// an unrecognized mode as one of the three known ones.
+// TestValidateOriginRejectsUnknownMode is a defensive check: validateOrigin is also
+// reachable with a *config.Config built directly.
 func TestValidateOriginRejectsUnknownMode(t *testing.T) {
 	cfg := webCfg("bogus", "monitor.example.com", "https://monitor.example.com", "", "", "")
 	if err := validateOrigin(cfg); err == nil {
@@ -116,11 +109,8 @@ func TestValidateOriginRejectsUnknownMode(t *testing.T) {
 	}
 }
 
-// TestRequestOriginTrustsForwardedHeadersOnlyWhenAllowed pins the proxy-mode
-// contract: X-Forwarded-Proto/Host are only honored when trustForwarded is
-// true (the caller's job to gate on the listener being loopback-bound, see
-// isLoopbackAddr), otherwise requestOrigin must fall back to the request's
-// own Host/TLS state so an untrusted client can't spoof its apparent origin.
+// TestRequestOriginTrustsForwardedHeadersOnlyWhenAllowed pins the proxy-mode contract:
+// X-Forwarded-Proto/Host are only honored when trustForwarded is true.
 func TestRequestOriginTrustsForwardedHeadersOnlyWhenAllowed(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Host = "127.0.0.1:8088"
@@ -158,12 +148,8 @@ func TestIsLoopbackAddr(t *testing.T) {
 	}
 }
 
-// TestSecurityHeadersSetsCSPNonceContentTypeReferrer pins securityHeaders'
-// always-on headers: a Content-Security-Policy scoped to self plus a
-// per-response nonce for the single htmx boot script, X-Content-Type-
-// Options, and Referrer-Policy. HSTS is covered separately (TLS-only, see
-// TestSecurityHeadersHSTSOnlyOverTLS) since httptest requests aren't TLS by
-// default.
+// TestSecurityHeadersSetsCSPNonceContentTypeReferrer pins securityHeaders' always-on
+// headers.
 func TestSecurityHeadersSetsCSPNonceContentTypeReferrer(t *testing.T) {
 	h := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
@@ -178,10 +164,8 @@ func TestSecurityHeadersSetsCSPNonceContentTypeReferrer(t *testing.T) {
 	if !strings.Contains(csp, "script-src 'self' 'nonce-") {
 		t.Errorf("CSP %q missing script-src 'self' 'nonce-...'", csp)
 	}
-	// script-src must stay STRICT (nonce-based, never unsafe-inline) -- that's
-	// the directive that actually matters for XSS. style-src, by contrast,
-	// deliberately allows 'unsafe-inline' because the templates use
-	// inline style="…" pervasively (see securityHeaders' comment).
+	// script-src must stay STRICT (nonce-based, never unsafe-inline) -- that's the directive
+	// that actually matters for XSS. style-src, by contrast.
 	scriptDir, styleDir := cspDirective(csp, "script-src"), cspDirective(csp, "style-src")
 	if strings.Contains(scriptDir, "unsafe-inline") {
 		t.Errorf("script-src %q must not contain unsafe-inline", scriptDir)
@@ -197,9 +181,8 @@ func TestSecurityHeadersSetsCSPNonceContentTypeReferrer(t *testing.T) {
 	}
 }
 
-// cspDirective returns the single CSP directive (e.g. "script-src") from a
-// full policy string, or "" if absent -- lets a test assert on one directive
-// without a false match from another directive's value.
+// cspDirective returns the single CSP directive (e.g. "script-src") from a full policy
+// string, or "" if absent.
 func cspDirective(csp, name string) string {
 	for _, d := range strings.Split(csp, ";") {
 		d = strings.TrimSpace(d)
@@ -210,21 +193,16 @@ func cspDirective(csp, name string) string {
 	return ""
 }
 
-// TestBaseTemplateHasNoInlineEventHandlers pins that the strict script-src
-// (no unsafe-inline) can actually hold: base.html must carry no inline
-// on*="..." event handlers (they'd be blocked by CSP and silently break),
-// and the theme button must instead expose the id app.js binds via
-// addEventListener. A regression here (someone re-adding onclick=) would
-// break the theme toggle under any CSP-enforcing browser.
+// TestBaseTemplateHasNoInlineEventHandlers pins that the strict script-src (no
+// unsafe-inline) can actually hold.
 func TestBaseTemplateHasNoInlineEventHandlers(t *testing.T) {
 	b, err := templatesFS.ReadFile("templates/base.html")
 	if err != nil {
 		t.Fatalf("read base.html: %v", err)
 	}
 	src := string(b)
-	// Match inline event-handler attributes (onclick=, onchange=, ...) while
-	// not tripping on unrelated attrs; the leading space/quote/> boundary
-	// avoids matching substrings inside other attribute values.
+	// Match inline event-handler attributes (onclick=, onchange=, ...) while not tripping on
+	// unrelated attrs.
 	re := regexp.MustCompile(`(?i)[\s"'>]on[a-z]+\s*=`)
 	if loc := re.FindString(src); loc != "" {
 		t.Errorf("base.html contains an inline event handler %q; move it to app.js (strict CSP blocks inline JS)", strings.TrimSpace(loc))
@@ -234,9 +212,8 @@ func TestBaseTemplateHasNoInlineEventHandlers(t *testing.T) {
 	}
 }
 
-// TestAppJSBindsThemeButton pins the other half of the theme-toggle move:
-// app.js must wire #themeBtn via addEventListener rather than relying on the
-// removed inline onclick.
+// TestAppJSBindsThemeButton pins the other half of the theme-toggle move: app.js must wire
+// #themeBtn via addEventListener rather than relying on the removed inline onclick.
 func TestAppJSBindsThemeButton(t *testing.T) {
 	b, err := assetsFS.ReadFile("assets/app.js")
 	if err != nil {
@@ -272,14 +249,10 @@ func TestSecurityHeadersHSTSOnlyOverTLS(t *testing.T) {
 	}
 }
 
-// TestSecurityHeadersNoncePropagatesToTemplate is the end-to-end pin: the
-// nonce securityHeaders puts in the CSP header must be the exact same value
-// the rendered page's boot script carries, so the browser actually executes it
-// under the CSP that names it.
+// TestSecurityHeadersNoncePropagatesToTemplate is the end-to-end pin.
 func TestSecurityHeadersNoncePropagatesToTemplate(t *testing.T) {
-	// GET /enroll (an anonymous, always-reachable page that renders a
-	// nonce'd boot script) rather than GET /, which is now viewer+ and would
-	// redirect an anonymous request to /login before rendering any page.
+	// GET /enroll (an anonymous, always-reachable page that renders a nonce'd boot script)
+	// rather than GET /.
 	h := newHandler(testDeps(t))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/enroll", nil))

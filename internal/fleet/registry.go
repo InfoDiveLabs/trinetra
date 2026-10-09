@@ -19,9 +19,7 @@ type Node struct {
 	Self       bool     `json:"self,omitempty"`
 	PubKey     string   `json:"pubkey,omitempty"`
 	CertSerial string   `json:"cert_serial,omitempty"`
-	// PrevCertSerial is the certificate a renewal replaced. It is still
-	// accepted until the node first presents CertSerial (so a renew response
-	// lost in transit cannot lock the node out), then cleared.
+	// PrevCertSerial is the certificate a renewal replaced.
 	PrevCertSerial string `json:"prev_cert_serial,omitempty"`
 	CertNotAfter   int64  `json:"cert_not_after,omitempty"`
 	Revoked        bool   `json:"revoked,omitempty"`
@@ -29,10 +27,8 @@ type Node struct {
 	Joined         int64  `json:"joined,omitempty"`
 	LastSeen       int64  `json:"last_seen,omitempty"`
 	RemoteAddr     string `json:"remote_addr,omitempty"`
-	// DependsOn is this node's dependency list: each entry is another node's id or
-	// "tag:<t>" for every node carrying tag t. While a dependency is down, this
-	// node's node-down alert is folded into the dependency's open incident as a
-	// suppressed member (see fleetAlertEngine).
+	// DependsOn is this node's dependency list: each entry is another node's id or "tag:<t>"
+	// for every node carrying tag t.
 	DependsOn []string `json:"depends_on,omitempty"`
 }
 
@@ -45,10 +41,7 @@ func NewNodeID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// Registry is the master's node list, persisted to one JSON file. LastSeen
-// and friends change every few seconds, so Touch only updates memory and a
-// periodic FlushIfDirty persists them; structural changes (Add/Update) save
-// immediately.
+// Registry is the master's node list, persisted to one JSON file.
 type Registry struct {
 	path  string
 	mu    sync.RWMutex
@@ -106,10 +99,7 @@ func (r *Registry) saveLocked() error {
 	return nil
 }
 
-// Add registers a new node; the ID must be unused. A name already used
-// (case-insensitively) by another node gets "-2", "-3", ... until unique, so
-// silence/maintenance Matcher.Node globs have a precise target. Get(n.ID) after
-// Add returns the stored name.
+// Add registers a new node; the ID must be unused.
 func (r *Registry) Add(n Node) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -129,9 +119,8 @@ func (r *Registry) Add(n Node) error {
 	return nil
 }
 
-// uniqueNameCap bounds the "-N" suffixes uniqueNameLocked tries, as a sanity cap
-// against a join flow racing many joins under one name. A var so a test can
-// shrink it.
+// uniqueNameCap bounds the "-N" suffixes uniqueNameLocked tries, as a sanity cap against a
+// join flow racing many joins under one name.
 var uniqueNameCap = 1000
 
 // uniqueNameLocked returns a name not colliding case-insensitively with any node
@@ -161,9 +150,8 @@ func (r *Registry) nameConflictLocked(name, excludeID string) (string, bool) {
 	return "", false
 }
 
-// NameConflict reports whether name is used case-insensitively by a node other
-// than excludeID. Read-only; use Rename to apply a rename, which checks under
-// the same lock (a separate check-then-act would race).
+// NameConflict reports whether name is used case-insensitively by a node other than
+// excludeID.
 func (r *Registry) NameConflict(name, excludeID string) (Node, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -178,10 +166,8 @@ func (r *Registry) NameConflict(name, excludeID string) (Node, bool) {
 	return c, true
 }
 
-// Rename checks name for a case-insensitive conflict with any node other than id
-// and, if none, sets it and persists, all in one critical section so concurrent
-// renames (or a rename racing a join) cannot both pass the check and leave a
-// duplicate. The error text is what RenameNode returns verbatim.
+// Rename checks name for a case-insensitive conflict with any node other than id and, if
+// none, sets it and persists, all in one critical section so concurrent renames.
 func (r *Registry) Rename(id, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -209,9 +195,8 @@ func ShortNodeID(id string) string {
 	return id
 }
 
-// DuplicateNames summarizes ("name (id1, id2)") names shared case-insensitively
-// by 2+ nodes, for a one-time startup warning: a registry from before names were
-// unique is loaded as-is, never auto-renamed.
+// DuplicateNames summarizes ("name (id1, id2)") names shared case-insensitively by 2+
+// nodes, for a one-time startup warning.
 func DuplicateNames(nodes []Node) []string {
 	type group struct {
 		name string

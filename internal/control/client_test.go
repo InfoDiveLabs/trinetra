@@ -248,8 +248,7 @@ func TestClientEnrollmentPINSurfacesError(t *testing.T) {
 	}
 }
 
-// TestClientMonitorTargetsSurfacesError: a discovery error must round-trip
-// unchanged.
+// TestClientMonitorTargetsSurfacesError: a discovery error must round-trip unchanged.
 func TestClientMonitorTargetsSurfacesError(t *testing.T) {
 	wantErr := "discovery failed"
 	fake := &fakeAPI{monitorTargetsErr: errors.New(wantErr)}
@@ -270,9 +269,8 @@ func TestClientMonitorTargetsSurfacesError(t *testing.T) {
 	}
 }
 
-// TestClientCallTimesOutWhenServerNeverResponds: the per-call read deadline must
-// fire when the server completes the handshake, reads the request, and never
-// answers.
+// TestClientCallTimesOutWhenServerNeverResponds: the per-call read deadline must fire when
+// the server completes the handshake, reads the request, and never answers.
 func TestClientCallTimesOutWhenServerNeverResponds(t *testing.T) {
 	orig := callTimeout
 	callTimeout = 100 * time.Millisecond
@@ -404,8 +402,7 @@ func TestDialWithWrongTokenRejected(t *testing.T) {
 	}
 }
 
-// TestDialWithEmptyTokenRejectedWhenAuthConfigured: an empty token must not skip
-// the check.
+// TestDialWithEmptyTokenRejectedWhenAuthConfigured: an empty token must not skip the check.
 func TestDialWithEmptyTokenRejectedWhenAuthConfigured(t *testing.T) {
 	fake := &fakeAPI{snapshot: core.DashboardView{CPU: 7}}
 	path := startTestServer(t, fake, "secret")
@@ -518,13 +515,8 @@ func TestClientNormalCallWorksWhileSubscriptionActive(t *testing.T) {
 	}
 }
 
-// TestClientReconnectsAfterTransportFailure: after a transport failure poisons
-// the connection, the next call must reconnect and succeed. Regression for
-// issue #105: trinetra-web holds one long-lived Client, and one late response
-// used to desync it until a core restart, leaving the dashboard all-zero.
-//
-// The server hands the first connection a mismatched id and drops it, then
-// serves later connections normally.
+// TestClientReconnectsAfterTransportFailure: after a transport failure poisons the
+// connection, the next call must reconnect and succeed.
 func TestClientReconnectsAfterTransportFailure(t *testing.T) {
 	path := shortSocketPath(t)
 	ln, err := net.Listen("unix", path)
@@ -597,9 +589,8 @@ func TestClientReconnectsAfterTransportFailure(t *testing.T) {
 	}
 }
 
-// coreErrSentinelTexts extracts the message of every exported
-// "var ErrXxx = errors.New(...)" in internal/core, so the sentinel coverage test
-// checks wireErrSentinels against core itself rather than a second hand-kept list.
+// coreErrSentinelTexts extracts the message of every exported "var ErrXxx =
+// errors.New(...)" in internal/core.
 func coreErrSentinelTexts(t *testing.T) map[string]string {
 	t.Helper()
 	files, err := filepath.Glob("../core/*.go")
@@ -660,9 +651,8 @@ func coreErrSentinelTexts(t *testing.T) map[string]string {
 	return texts
 }
 
-// TestWireErrSentinelsCoverEveryCoreSentinel: every exported core.Err* sentinel
-// declared via errors.New must appear in wireErrSentinels, or errors.Is is
-// silently lost over the control socket.
+// TestWireErrSentinelsCoverEveryCoreSentinel: every exported core.Err* sentinel declared
+// via errors.New must appear in wireErrSentinels.
 func TestWireErrSentinelsCoverEveryCoreSentinel(t *testing.T) {
 	want := coreErrSentinelTexts(t)
 	if len(want) == 0 {

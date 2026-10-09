@@ -58,9 +58,7 @@ func botToken(path string) string {
 	return rest
 }
 
-// newMux builds the mock Telegram API's handler. Split out from main so a
-// Go test can exercise it directly (over httptest) without spawning a
-// subprocess or binding a real port.
+// newMux builds the mock Telegram API's handler.
 func newMux() http.Handler {
 	var mu sync.Mutex
 	var sent []string
@@ -104,9 +102,8 @@ func newMux() http.Handler {
 				pending[""] = nil
 			}
 			mu.Unlock()
-			// Emulate a short long-poll so the daemon's poller does not spin in
-			// a tight loop when there is nothing to deliver, while staying
-			// responsive to freshly injected updates.
+			// Emulate a short long-poll so the daemon's poller does not spin in a tight loop when
+			// there is nothing to deliver, while staying responsive to freshly injected updates.
 			if len(out) == 0 {
 				time.Sleep(time.Second)
 			}

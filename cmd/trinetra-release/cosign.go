@@ -17,21 +17,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-// cmdCosign implements:
-// cosign vX.Y.Z [--repo InfoDiveLabs/trinetra] [--key FILE] [--testkeys]
-//
-// It downloads the CI-signed draft release, shows the maintainer what they
-// are about to co-sign (manifest summary plus any difference between the
-// manifest's declared keys and this tool's own trust anchor), refuses if
-// the manifest's version does not match the tag being co-signed, requires
-// the maintainer to retype the version on an actual terminal, asks for the
-// maintainer key passphrase, signs, uploads the maintainer signature,
-// re-verifies the full draft, and publishes it.
-//
-// --testkeys (trinetra_testkeys builds only) switches the trust anchor
-// to the deterministic test key set instead of update.ProductionKeys() and
-// skips the decrypted-key-is-a-known-maintainer-key check, which would
-// otherwise reject every test key.
+// cmdCosign implements: cosign vX.Y.Z [--repo InfoDiveLabs/trinetra] [--key FILE]
+// [--testkeys]
 func cmdCosign(args []string) error {
 	version, repo, keyFile, testkeys, err := parseCosignArgs(args)
 	if err != nil {
@@ -187,10 +174,8 @@ func ghRun(args ...string) error {
 	return cmd.Run()
 }
 
-// checkManifestVersionMatchesTag refuses to co-sign a manifest whose version
-// differs from the release tag it came from. Otherwise a CI-signed manifest for A
-// attached to draft tag B would be published under B and hosts would install A
-// believing it to be B.
+// checkManifestVersionMatchesTag refuses to co-sign a manifest whose version differs from
+// the release tag it came from.
 func checkManifestVersionMatchesTag(manifestVersion, tag string) error {
 	mv, err := update.ParseVersion(manifestVersion)
 	if err != nil {
@@ -206,11 +191,8 @@ func checkManifestVersionMatchesTag(manifestVersion, tag string) error {
 	return nil
 }
 
-// checkMaintKeyTrusted refuses to sign with a decrypted maintainer key that is
-// not one of prod's trusted maintainer keys. A wrong key would produce a
-// manifest.maint.sig that fails verification and, since upload has no --clobber,
-// blocks a clean re-run. Skipped on the --testkeys path, where prod is the test
-// key set.
+// checkMaintKeyTrusted refuses to sign with a decrypted maintainer key that is not one of
+// prod's trusted maintainer keys.
 func checkMaintKeyTrusted(priv ed25519.PrivateKey, prod update.KeySet, testkeys bool) error {
 	if testkeys {
 		return nil
@@ -227,9 +209,8 @@ func checkMaintKeyTrusted(priv ed25519.PrivateKey, prod update.KeySet, testkeys 
 	return errors.New("decrypted key's public half is not in ProductionKeys().Maint")
 }
 
-// diffManifestKeys reports any role whose manifest-declared keys (base64)
-// differ from prod's compiled-in keys, so a maintainer never co-signs a
-// manifest quietly pointing at different trust than their own tool.
+// diffManifestKeys reports any role whose manifest-declared keys (base64) differ from
+// prod's compiled-in keys.
 func diffManifestKeys(mk update.ManifestKeys, prod update.KeySet) []string {
 	var out []string
 	check := func(role string, manifestKeys []string, prodKeys []update.PublicKey) {
@@ -250,10 +231,8 @@ func diffManifestKeys(mk update.ManifestKeys, prod update.KeySet) []string {
 	return out
 }
 
-// keyReview is what cosign shows about manifest.keys: one quiet line when the
-// key set the new binary compiles in equals this tool's trust anchor, else a
-// prominent rotation block naming each changed role. It exists to catch a
-// malicious keys.go change, so it must not fire on every release.
+// keyReview is what cosign shows about manifest.keys: one quiet line when the key set the
+// new binary compiles in equals this tool's trust anchor.
 func keyReview(mk update.ManifestKeys, prod update.KeySet) string {
 	diffs := diffManifestKeys(mk, prod)
 	if len(diffs) == 0 {
@@ -270,8 +249,7 @@ func keyReview(mk update.ManifestKeys, prod update.KeySet) string {
 	return b.String()
 }
 
-// summarizeManifest formats the fields a maintainer must review before
-// co-signing.
+// summarizeManifest formats the fields a maintainer must review before co-signing.
 func summarizeManifest(m update.Manifest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "version: %s\n", m.Version)
@@ -284,16 +262,13 @@ func summarizeManifest(m update.Manifest) string {
 	return b.String()
 }
 
-// openConfirmTTY opens the controlling terminal for the version retype gate. A
-// variable so tests can substitute a fake.
+// openConfirmTTY opens the controlling terminal for the version retype gate.
 var openConfirmTTY = func() (io.ReadWriteCloser, error) {
 	return openTTY()
 }
 
-// requireInteractiveConfirmation reads the "type the version" gate from the
-// controlling terminal so a pipe on stdin cannot satisfy it. When
-// TRINETRA_MAINT_PASSPHRASE_FILE is set (automation/e2e, no human present) the
-// terminal requirement is waived and the gate skipped rather than failing closed.
+// requireInteractiveConfirmation reads the "type the version" gate from the controlling
+// terminal so a pipe on stdin cannot satisfy it.
 func requireInteractiveConfirmation(version string) error {
 	if os.Getenv("TRINETRA_MAINT_PASSPHRASE_FILE") != "" {
 		return nil
@@ -306,8 +281,7 @@ func requireInteractiveConfirmation(version string) error {
 	return confirmVersion(tty, tty, version)
 }
 
-// confirmVersion requires the operator to retype version exactly before a
-// co-sign proceeds.
+// confirmVersion requires the operator to retype version exactly before a co-sign proceeds.
 func confirmVersion(r io.Reader, w io.Writer, version string) error {
 	fmt.Fprint(w, "Type the version to co-sign: ")
 	line, err := bufio.NewReader(r).ReadString('\n')

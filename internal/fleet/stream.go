@@ -9,10 +9,8 @@ import (
 	"time"
 )
 
-// pingInterval is how often the master pings an idle stream, so the child's
-// read-idle watchdog (streamIdleTimeout) does not take it for dead. An
-// atomic.Int64 (nanoseconds) because background goroutines on both sides read
-// it while a test shortens it.
+// pingInterval is how often the master pings an idle stream, so the child's read-idle
+// watchdog (streamIdleTimeout) does not take it for dead.
 var pingInterval atomic.Int64
 
 func init() { pingInterval.Store(int64(20 * time.Second)) }
@@ -39,10 +37,8 @@ type nodeConn struct {
 	done chan struct{}
 }
 
-// Hub fans lease/receipt/silence/managed_config/rpc frames out to connected
-// children over their stream connection (GET PathStream) and receives RPC
-// results they POST back (PathRPC). At most one connection per node is kept:
-// a newer connection replaces (and closes) an older one from the same node.
+// Hub fans lease/receipt/silence/managed_config/rpc frames out to connected children over
+// their stream connection (GET PathStream) and receives RPC results they POST back.
 type Hub struct {
 	mu    sync.Mutex
 	conns map[string]*nodeConn
@@ -70,20 +66,16 @@ func NewHub(logf func(string, ...any)) *Hub {
 	}
 }
 
-// OnConnect sets the callback fired synchronously when a node's stream connects,
-// before delivery starts, so a Push from inside f reaches the new connection.
-// The master uses this to send lease, silences and managed_config on connect.
+// OnConnect sets the callback fired synchronously when a node's stream connects, before
+// delivery starts, so a Push from inside f reaches the new connection.
 func (h *Hub) OnConnect(f func(nodeID string)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.onConnect = f
 }
 
-// OnRPCResult sets the callback fired when a child posts an RPC result via
-// PathRPC. nodeID is authenticated (mTLS); id is whatever the child put in the
-// URL. This layer does NOT verify id was issued to nodeID, so the caller owns
-// the pending-RPC registry and MUST check that id names an RPC sent to this
-// exact node before trusting body, or a node could spoof results.
+// OnRPCResult sets the callback fired when a child posts an RPC result via PathRPC. nodeID
+// is authenticated (mTLS); id is whatever the child put in the URL.
 func (h *Hub) OnRPCResult(f func(nodeID, id string, body []byte)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -105,9 +97,7 @@ func (h *Hub) connect(nodeID string) *nodeConn {
 	return c
 }
 
-// release removes nodeID's connection if c is still current. If a newer
-// connection replaced it, this is a no-op so lastDrop is not pruned for a node
-// that is still reachable.
+// release removes nodeID's connection if c is still current.
 func (h *Hub) release(nodeID string, c *nodeConn) {
 	h.mu.Lock()
 	removed := h.conns[nodeID] == c
@@ -120,9 +110,7 @@ func (h *Hub) release(nodeID string, c *nodeConn) {
 	}
 }
 
-// Push queues f for nodeID's stream without blocking. It returns false if the
-// node is not connected or its queue is full (the frame is dropped and logged,
-// at most once per node per second).
+// Push queues f for nodeID's stream without blocking.
 func (h *Hub) Push(nodeID string, f Frame) bool {
 	h.mu.Lock()
 	c, ok := h.conns[nodeID]
@@ -182,8 +170,6 @@ func (h *Hub) Disconnect(nodeID string) {
 }
 
 // CloseAll closes every connected node's stream, as Disconnect does for one.
-// Used on graceful stop: Shutdown does not cancel a running handler's request
-// context, so handleStream would otherwise outlive Shutdown's deadline.
 func (h *Hub) CloseAll() {
 	h.mu.Lock()
 	conns := h.conns
@@ -202,10 +188,8 @@ func (h *Hub) fireRPCResult(nodeID, id string, body []byte) {
 	f(nodeID, id, body)
 }
 
-// handleStream serves GET PathStream: one JSON Frame per line (ndjson), flushed
-// per frame, until the client disconnects or the node's connection is replaced
-// or disconnected. The server-wide Read/WriteTimeout would kill a connection
-// this long-lived, so both deadlines are cleared for this request.
+// handleStream serves GET PathStream: one JSON Frame per line (ndjson), flushed per frame,
+// until the client disconnects or the node's connection is replaced or disconnected.
 func (m *Master) handleStream(w http.ResponseWriter, r *http.Request, nodeID string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -248,8 +232,7 @@ func (m *Master) handleStream(w http.ResponseWriter, r *http.Request, nodeID str
 	}
 }
 
-// handleRPC serves POST PathRPC+"{id}". The node id comes from requireNode
-// (mTLS); id itself is untrusted, see Hub.OnRPCResult.
+// handleRPC serves POST PathRPC+"{id}".
 func (m *Master) handleRPC(w http.ResponseWriter, r *http.Request, nodeID string) {
 	id := r.PathValue("id")
 	if id == "" {

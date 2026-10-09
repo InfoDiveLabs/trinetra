@@ -216,9 +216,8 @@ func joinNamed(t *testing.T, f *masterFixture, name string) (id, finalName strin
 	return jr.NodeID, jr.Name
 }
 
-// TestJoinDedupesNameCaseInsensitive: a join whose name collides
-// case-insensitively is registered under a suffixed name, and the JoinResponse
-// reports that final name.
+// TestJoinDedupesNameCaseInsensitive: a join whose name collides case-insensitively is
+// registered under a suffixed name, and the JoinResponse reports that final name.
 func TestJoinDedupesNameCaseInsensitive(t *testing.T) {
 	f := newMasterFixture(t)
 	id1, name1 := joinNamed(t, f, "Web1")
@@ -686,9 +685,8 @@ func liveStatus(t *testing.T, f *masterFixture, c *http.Client) int {
 	return resp.StatusCode
 }
 
-// After a renewal the old certificate keeps working only until the node
-// first uses the new one (so a lost renew response cannot lock it out);
-// from then on the superseded certificate is refused.
+// After a renewal the old certificate keeps working only until the node first uses the new
+// one (so a lost renew response cannot lock it out).
 func TestRequireNodeRejectsSupersededCertAfterRenew(t *testing.T) {
 	f := newMasterFixture(t)
 	id, oldC := f.join(t, nil)
@@ -802,10 +800,7 @@ func TestMasterLogsLiveSinkFailure(t *testing.T) {
 	}
 }
 
-// orderedLiveSink wraps a Sink and records the order Live calls enter/exit
-// it. The very first call to enter blocks (on release) until the test lets
-// it through, so a second, concurrent Live call for the same node can be
-// observed racing ahead of it (or not).
+// orderedLiveSink wraps a Sink and records the order Live calls enter/exit it.
 type orderedLiveSink struct {
 	Sink
 	mu      sync.Mutex
@@ -832,14 +827,11 @@ func (s *orderedLiveSink) Live(id string, u LiveUpdate) error {
 	return err
 }
 
-// TestHandleLiveSerializesConcurrentUpdatesForSameNode: handleLive must hold a
-// per-node lock around Sink.Live, as handleIngest/handleBackfill do, so
-// concurrent Live posts for one node never enter the sink together.
+// TestHandleLiveSerializesConcurrentUpdatesForSameNode: handleLive must hold a per-node
+// lock around Sink.Live, as handleIngest/handleBackfill do.
 func TestHandleLiveSerializesConcurrentUpdatesForSameNode(t *testing.T) {
 	sink := &orderedLiveSink{entered: make(chan struct{}), release: make(chan struct{})}
-	// Always unblock the first call before this test returns, even on a
-	// failed assertion: otherwise a blocked handleLive goroutine leaks past
-	// the test and stalls the fixture's httptest.Server.Close.
+	// Always unblock the first call before this test returns, even on a failed assertion.
 	defer func() {
 		select {
 		case <-sink.release:

@@ -50,9 +50,8 @@ func TestSetUnsetRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBaselineMinPctRoundTrip confirms baseline_min_pct sets, gets, validates
-// (>= 0), and unsets back to its 0.15 default -- the config-side plumbing
-// for the minimum-relative-deviation anomaly gate.
+// TestBaselineMinPctRoundTrip confirms baseline_min_pct sets, gets, validates (>= 0), and
+// unsets back to its 0.15 default.
 func TestBaselineMinPctRoundTrip(t *testing.T) {
 	c := Default()
 	if err := c.Set("baseline_min_pct", "0.2"); err != nil {
@@ -72,9 +71,8 @@ func TestBaselineMinPctRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBaselineAlertsDefaultOffRoundTrip pins that baseline-deviation alerting is
-// opt-in (default OFF) because spiky metrics flapped on sigma-deviation;
-// threshold alerting is unaffected and always on.
+// TestBaselineAlertsDefaultOffRoundTrip pins that baseline-deviation alerting is opt-in
+// (default OFF) because spiky metrics flapped on sigma-deviation.
 func TestBaselineAlertsDefaultOffRoundTrip(t *testing.T) {
 	c := Default()
 	if got, ok := c.Get("baseline_alerts"); !ok || got != "false" {
@@ -261,9 +259,7 @@ func TestFastIntervalRejectedIfBreaksExistingMultiple(t *testing.T) {
 }
 
 func TestFastIntervalCheckedAgainstEffectiveSampleIntervalOnBareConfig(t *testing.T) {
-	// A directly-constructed &Config{} has SampleInterval==0, which Load()
-	// back-fills to 60. Set("fast_interval","7") must reject rather than
-	// succeed silently and let Load() persist an inconsistent 60%7!=0 config.
+	// A directly-constructed &Config{} has SampleInterval==0, which Load() back-fills to 60.
 	c := &Config{}
 	if err := c.Set("fast_interval", "7"); err == nil {
 		t.Fatal("expected error: effective sample_interval 60 is not a multiple of 7")
@@ -1327,9 +1323,8 @@ func TestWebModeRPIDOriginPersistAcrossSaveLoad(t *testing.T) {
 	}
 }
 
-// TestPublicEnabledPanelsDefaultSetUnset pins public.enabled/public.panels
-// (issue #67): both default to "off"/empty, Set/Get round-trip, and Unset
-// restores the defaults -- mirroring TestWebEnabledListenDefaultSetUnset.
+// TestPublicEnabledPanelsDefaultSetUnset pins public.enabled/public.panels (issue #67):
+// both default to "off"/empty, Set/Get round-trip, and Unset restores the defaults.
 func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	c := Default()
 	if got, _ := c.Get("public.enabled"); got != "false" {
@@ -1366,9 +1361,8 @@ func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	}
 }
 
-// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist: only the
-// fixed catalog (or "disk:<mount>") may be stored in public.panels; anything
-// else, such as "users" or "config", is rejected with no write.
+// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist: only the fixed
+// catalog (or "disk:<mount>") may be stored in public.panels; anything else.
 func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {
 	c := Default()
 	for _, v := range []string{"bogus", "cpu,bogus", "disk:", "users", "config", "channels"} {
@@ -1433,10 +1427,6 @@ func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 }
 
 // --- config key catalog (KeyInfo/Keys) ---
-//
-// The catalog backs trinetra-ctl's generic "all settings" screen. These tests are
-// the drift guard: they fail if the catalog and the Set/Get switch fall out of
-// lockstep in either direction.
 
 // TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real key
 // (Set(key, Get(key)) on a fresh Default() succeeds) and that its Kind hint
@@ -1485,9 +1475,8 @@ func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	}
 }
 
-// setSwitchKeys extracts every string case label in (*Config).Set's switch from
-// config.go's source, so the coverage test checks the real implementation rather
-// than a second hand-kept list.
+// setSwitchKeys extracts every string case label in (*Config).Set's switch from config.go's
+// source.
 func setSwitchKeys(t *testing.T) []string {
 	t.Helper()
 	fset := token.NewFileSet()

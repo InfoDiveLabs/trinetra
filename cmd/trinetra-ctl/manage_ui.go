@@ -20,10 +20,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// manageScreen is the management menu's own sub-step, mirroring
-// webSetupStep's role for the web-setup wizard: a sub-state of the top
-// level tui step (stepManage) so navigating within the menu doesn't need a
-// top level step of its own for every screen.
+// manageScreen is the management menu's own sub-step, mirroring webSetupStep's role for the
+// web-setup wizard: a sub-state of the top level tui step.
 type manageScreen int
 
 const (
@@ -45,26 +43,15 @@ const (
 	manageResult
 )
 
-// manageItems are the management menu's rows, in the order shown; their
-// index is what updateManageMenuKey's "enter" case switches on. "all
-// settings" (issue #91) is the generic browse/edit screen over every flat
-// config key (config.Keys()), the catch-all that makes "no `config set`
-// needed" true even for keys none of the dedicated screens above cover
-// (sampling intervals, baseline/anomaly tuning, global thresholds,
-// critical_overrides_quiet, storage.*, collection toggles, the remaining
-// web.* keys, and public.*).
+// manageItems are the management menu's rows, in the order shown; their index is what
+// updateManageMenuKey's "enter" case switches on.
 var manageItems = []string{"schedule", "quiet hours", "healthchecks", "monitor thresholds", "channels", "all settings"}
 
 // scheduleModeChoices are the Schedule screen's mode-selection rows, index-
 // matched against scheduleMode's off/daily/weekly constants (manage_schedule.go).
 var scheduleModeChoices = []string{"off", "daily", "weekly"}
 
-// manageModel holds every management screen's state. Only one screen is
-// ever shown at a time (mgr.screen), but they all live on the same struct
-// (embedded on model as m.mgr) so switching between them, or back to the
-// menu, never has to reconstruct or re-fetch anything the previous screen
-// already had -- the same reasoning tui.go's model gives for keeping the
-// web-setup wizard's fields alongside the home screen's.
+// manageModel holds every management screen's state.
 type manageModel struct {
 	screen manageScreen
 	cursor int // menu cursor
@@ -86,23 +73,16 @@ type manageModel struct {
 	monLoading          bool
 	monErr              error
 
-	// configLoading/configErr cover the schedule/quiet-hours/healthchecks
-	// screens' pre-fill fetch (fetchScheduleConfigCmd/fetchQuietConfigCmd/
-	// fetchHealthConfigCmd): true/set from the moment the menu opens one of
-	// them until its *ConfigMsg lands, so a screen never shows (or lets the
-	// user blindly commit) a blank/default value while the CURRENT one is
-	// still in flight -- see the doc on updateScheduleModeKey/
-	// updateManageValueKey's configLoading guard for why this matters (a
-	// stray Enter must never wipe an existing setting).
+	// configLoading/configErr cover the schedule/quiet-hours/healthchecks screens' pre-fill
+	// fetch (fetchScheduleConfigCmd/fetchQuietConfigCmd/ fetchHealthConfigCmd).
 	configLoading bool
 	configErr     error
 
 	applying bool
 	applyErr error
 
-	// channels -- state lives here (not a separate top level model) for the
-	// same reason the schedule/quiet-hours/healthchecks/monitor fields do:
-	// see manageModel's own doc.
+	// channels -- state lives here (not a separate top level model) for the same reason the
+	// schedule/quiet-hours/healthchecks/monitor fields do: see manageModel's own doc.
 	chanList     []config.ChannelConfig // sorted (sortedChannels), fetched fresh on screen open and after every add/edit/remove
 	chanCursor   int
 	chanErr      error  // surfaced on the list: a failed fetch, remove, or test
@@ -116,11 +96,7 @@ type manageModel struct {
 	chanIsEdit   bool
 	chanSaving   bool
 
-	// settings -- the generic "all settings" screen (issue #91). Uses its
-	// own loading/error/cfg fields rather than configLoading/valueIn (the
-	// schedule/quiet-hours/healthchecks screens' shared fields) since this
-	// screen has its own group-list -> key-list -> value-input shape and no
-	// state to share with those screens.
+	// settings -- the generic "all settings" screen (issue #91).
 	setLoading  bool
 	setErr      error
 	setCfg      *config.Config // freshly fetched on open, source of each key's CURRENT value
@@ -133,10 +109,8 @@ type manageModel struct {
 	setRestart  bool   // setKey's RestartRequired, for the value/result screens' caveat line
 }
 
-// newManageValueInput builds a text input the same way newModel's wizard
-// inputs are built (tui.go), just as a free function since manage screens
-// construct one fresh per visit rather than keeping four permanently
-// allocated fields the way the web wizard does.
+// newManageValueInput builds a text input the same way newModel's wizard inputs are built
+// (tui.go).
 func newManageValueInput(placeholder string) textinput.Model {
 	ti := textinput.New()
 	ti.Placeholder = placeholder
@@ -154,12 +128,8 @@ type manageAppliedMsg struct {
 	err error
 }
 
-// scheduleConfigMsg carries a freshly fetched Config back into Update for
-// the Schedule screen's pre-fill: the CURRENT
-// schedule.daily/schedule.weekly values, so opening the screen defaults the
-// mode cursor to whatever is actually active and pre-fills its value,
-// instead of always defaulting to "off" with a blank value (which made a
-// stray Enter silently wipe an existing schedule).
+// scheduleConfigMsg carries a freshly fetched Config back into Update for the Schedule
+// screen's pre-fill: the CURRENT schedule.daily/schedule.weekly values.
 type scheduleConfigMsg struct {
 	cfg *config.Config
 	err error
@@ -179,30 +149,23 @@ type healthchecksConfigMsg struct {
 	err error
 }
 
-// monitorTargetsMsg carries api.MonitorTargets()'s result plus a freshly
-// fetched Config back into Update, so the Monitor thresholds screen can
-// merge them into display rows (buildMonitorRows, manage_monitor.go).
+// monitorTargetsMsg carries api.MonitorTargets()'s result plus a freshly fetched Config
+// back into Update, so the Monitor thresholds screen can merge them into display rows.
 type monitorTargetsMsg struct {
 	targets []core.TargetView
 	cfg     *config.Config
 	err     error
 }
 
-// monitorAppliedMsg carries the result of a single enable/disable or
-// threshold edit (fetch Config, mutate, ApplyConfig) back into Update; cfg
-// is the just-applied config (nil on error), used to rebuild monRows so the
-// screen reflects what was actually saved rather than an optimistic local
-// guess.
+// monitorAppliedMsg carries the result of a single enable/disable or threshold edit (fetch
+// Config, mutate, ApplyConfig) back into Update; cfg is the just-applied config.
 type monitorAppliedMsg struct {
 	cfg *config.Config
 	err error
 }
 
-// channelsConfigMsg carries a freshly fetched Config back into Update for
-// the Channels screen's list (fetchChannelsConfigCmd), mirroring
-// scheduleConfigMsg/quietHoursConfigMsg/healthchecksConfigMsg's pre-fill
-// role for their own screens (see manageModel.configLoading's doc for why
-// this fetch-on-open matters).
+// channelsConfigMsg carries a freshly fetched Config back into Update for the Channels
+// screen's list (fetchChannelsConfigCmd).
 type channelsConfigMsg struct {
 	cfg *config.Config
 	err error
@@ -226,9 +189,8 @@ type channelSavedMsg struct {
 	err error
 }
 
-// settingsConfigMsg carries a freshly fetched Config back into Update for
-// the "all settings" screen's group/key lists, mirroring
-// scheduleConfigMsg/channelsConfigMsg's pre-fill role for their own screens.
+// settingsConfigMsg carries a freshly fetched Config back into Update for the "all
+// settings" screen's group/key lists.
 type settingsConfigMsg struct {
 	cfg *config.Config
 	err error
@@ -245,9 +207,8 @@ type settingsAppliedMsg struct {
 
 // --- commands ---
 
-// fetchScheduleConfigCmd fetches Config fresh so the Schedule screen can
-// pre-fill its mode/value from whatever is currently active (see
-// scheduleConfigMsg's doc).
+// fetchScheduleConfigCmd fetches Config fresh so the Schedule screen can pre-fill its
+// mode/value from whatever is currently active (see scheduleConfigMsg's doc).
 func fetchScheduleConfigCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -255,8 +216,7 @@ func fetchScheduleConfigCmd(api core.API) tea.Cmd {
 	}
 }
 
-// fetchQuietConfigCmd is fetchScheduleConfigCmd's counterpart for the Quiet
-// hours screen.
+// fetchQuietConfigCmd is fetchScheduleConfigCmd's counterpart for the Quiet hours screen.
 func fetchQuietConfigCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -264,8 +224,7 @@ func fetchQuietConfigCmd(api core.API) tea.Cmd {
 	}
 }
 
-// fetchHealthConfigCmd is fetchScheduleConfigCmd's counterpart for the
-// Healthchecks screen.
+// fetchHealthConfigCmd is fetchScheduleConfigCmd's counterpart for the Healthchecks screen.
 func fetchHealthConfigCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -274,9 +233,7 @@ func fetchHealthConfigCmd(api core.API) tea.Cmd {
 }
 
 // applyScheduleCmd fetches Config fresh, applies ans via applySchedule
-// (manage_schedule.go), and posts the result with ApplyConfig -- the same
-// fetch/mutate/apply shape applyWebSetupCmd (tui.go) uses for the web-setup
-// wizard.
+// (manage_schedule.go), and posts the result with ApplyConfig.
 func applyScheduleCmd(api core.API, ans scheduleAnswers) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -349,10 +306,8 @@ func discoverMonitorCmd(api core.API) tea.Cmd {
 	}
 }
 
-// applyMonitorEnableCmd fetches Config fresh, flips target's enabled state
-// via applyMonitorEnable (manage_monitor.go), and posts it with
-// ApplyConfig -- one atomic apply per toggle, matching `trinetra
-// monitor enable|disable` doing one save per invocation.
+// applyMonitorEnableCmd fetches Config fresh, flips target's enabled state via
+// applyMonitorEnable (manage_monitor.go), and posts it with ApplyConfig.
 func applyMonitorEnableCmd(api core.API, target string, enabled bool) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -367,9 +322,8 @@ func applyMonitorEnableCmd(api core.API, target string, enabled bool) tea.Cmd {
 	}
 }
 
-// applyMonitorThresholdCmd is applyMonitorEnableCmd's counterpart for
-// editing a single target's threshold override (applyMonitorThreshold,
-// manage_monitor.go).
+// applyMonitorThresholdCmd is applyMonitorEnableCmd's counterpart for editing a single
+// target's threshold override (applyMonitorThreshold, manage_monitor.go).
 func applyMonitorThresholdCmd(api core.API, target, valueStr string) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -386,9 +340,8 @@ func applyMonitorThresholdCmd(api core.API, target, valueStr string) tea.Cmd {
 	}
 }
 
-// fetchChannelsConfigCmd fetches Config fresh so the Channels screen's list
-// always reflects the daemon's CURRENT channels, never a stale snapshot
-// (mirrors fetchScheduleConfigCmd's role for its own screen).
+// fetchChannelsConfigCmd fetches Config fresh so the Channels screen's list always reflects
+// the daemon's CURRENT channels, never a stale snapshot.
 func fetchChannelsConfigCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -396,11 +349,8 @@ func fetchChannelsConfigCmd(api core.API) tea.Cmd {
 	}
 }
 
-// removeChannelCmd fetches Config fresh, removes name via applyChannelRemove
-// (channels.go), and posts it with ApplyConfig -- one atomic apply per
-// removal, matching `trinetra channel remove` doing one save per
-// invocation. The freshly-applied cfg comes back on channelActionMsg so the
-// list can be rebuilt from what was actually saved.
+// removeChannelCmd fetches Config fresh, removes name via applyChannelRemove (channels.go),
+// and posts it with ApplyConfig -- one atomic apply per removal.
 func removeChannelCmd(api core.API, name string) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -429,11 +379,8 @@ func testChannelCmd(api core.API, name string) tea.Cmd {
 	}
 }
 
-// saveChannelCmd fetches Config fresh, gates + mutates it via saveChannel
-// (channels.go, the #79-safe validate-before-save path), and posts it with
-// ApplyConfig -- the same fetch/mutate/apply shape applyScheduleCmd uses,
-// except the mutate step here can itself fail a live api.ValidateChannel
-// check before anything is written.
+// saveChannelCmd fetches Config fresh, gates + mutates it via saveChannel (channels.go, the
+// #79-safe validate-before-save path), and posts it with ApplyConfig.
 func saveChannelCmd(api core.API, name string, ans channelAnswers, isEdit bool) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -450,9 +397,8 @@ func saveChannelCmd(api core.API, name string, ans channelAnswers, isEdit bool) 
 	}
 }
 
-// fetchSettingsConfigCmd fetches Config fresh so the "all settings" screen's
-// group/key lists always reflect the daemon's CURRENT values (mirrors
-// fetchScheduleConfigCmd/fetchChannelsConfigCmd's role for their screens).
+// fetchSettingsConfigCmd fetches Config fresh so the "all settings" screen's group/key
+// lists always reflect the daemon's CURRENT values.
 func fetchSettingsConfigCmd(api core.API) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := api.Config()
@@ -527,9 +473,8 @@ func (m model) updateManageKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateManageMenuKey handles the top level management menu: up/down (or
-// j/k) moves the cursor over manageItems, enter opens the selected screen,
-// esc/q returns to Home.
+// updateManageMenuKey handles the top level management menu: up/down (or j/k) moves the
+// cursor over manageItems, enter opens the selected screen, esc/q returns to Home.
 func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -544,12 +489,8 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mgr.applyErr = nil
 		m.mgr.configLoading = true
 		m.mgr.configErr = nil
-		// Clear any leftover settings-screen context (setKey/setRestart)
-		// from a PREVIOUS visit to "all settings": manageResult is shared
-		// across every screen, and without this a stale setKey from an
-		// earlier settings edit would wrongly show the restart caveat on
-		// an unrelated schedule/quiet-hours/healthchecks/monitor/channels
-		// result.
+		// Clear any leftover settings-screen context (setKey/setRestart) from a PREVIOUS visit to
+		// "all settings": manageResult is shared across every screen.
 		m.mgr.setKey = ""
 		m.mgr.setRestart = false
 		switch m.mgr.cursor {
@@ -593,15 +534,8 @@ func (m model) updateManageMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateScheduleModeKey handles the Schedule screen's mode-selection row:
-// off applies immediately (no further input needed); daily/weekly move on
-// to the value step for that mode's HH:MM/dow@HH:MM input, pre-filled from
-// m.mgr.schedAns.Daily/Weekly (populated by scheduleConfigMsg from the
-// CURRENT config, see that message's doc) so accepting the already-selected
-// mode re-applies the existing value rather than an empty one. Ignores
-// every key but esc while m.mgr.configLoading is still true (the pre-fill
-// fetch hasn't landed yet) so a stray Enter can't act on a not-yet-loaded
-// screen -- see manageModel.configLoading's doc.
+// updateScheduleModeKey handles the Schedule screen's mode-selection row: off applies
+// immediately (no further input needed).
 func (m model) updateScheduleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mgr.configLoading {
 		if msg.String() == "esc" {
@@ -649,16 +583,8 @@ func (m model) updateScheduleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateManageValueKey feeds msg into the single-line value input shared by
-// the schedule-value/quiet-hours/healthchecks screens: enter commits (via
-// the matching applyXCmd) and esc backs out (to the schedule mode screen
-// for the schedule value step, or straight to the menu for quiet-hours/
-// healthchecks, which have no intermediate mode step). Mirrors tui.go's
-// updateTextKey (see that function's doc for why mutation and return stay
-// on the same receiver copy throughout). Ignores every key but esc while
-// m.mgr.configLoading is still true (quiet-hours/healthchecks fetch their
-// pre-fill directly into this screen, unlike schedule's intermediate mode
-// step) -- see manageModel.configLoading's doc.
+// updateManageValueKey feeds msg into the single-line value input shared by the
+// schedule-value/quiet-hours/healthchecks screens: enter commits.
 func (m model) updateManageValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mgr.configLoading {
 		if msg.String() == "esc" {
@@ -699,10 +625,8 @@ func (m model) updateManageValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateMonitorListKey handles the Monitor thresholds list: up/down (or
-// j/k) moves the cursor, enter/space toggles the target under the cursor's
-// enabled state (applied immediately, one ApplyConfig per toggle), 't'
-// opens the threshold-edit input for that target, esc/q returns to the menu.
+// updateMonitorListKey handles the Monitor thresholds list: up/down (or j/k) moves the
+// cursor, enter/space toggles the target under the cursor's enabled state.
 func (m model) updateMonitorListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -762,11 +686,8 @@ func (m model) updateMonitorThresholdKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateSettingsGroupsKey handles the "all settings" screen's top level
-// group list: up/down (or j/k) moves the cursor over mgr.setGroups, enter
-// opens the selected group's key list, esc/q returns to the menu. Ignores
-// every key but esc while mgr.setLoading is still true (the pre-fill fetch
-// hasn't landed yet), mirroring updateScheduleModeKey's configLoading guard.
+// updateSettingsGroupsKey handles the "all settings" screen's top level group list: up/down
+// (or j/k) moves the cursor over mgr.setGroups, enter opens the selected group's key list.
 func (m model) updateSettingsGroupsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mgr.setLoading {
 		if msg.String() == "esc" {
@@ -797,11 +718,8 @@ func (m model) updateSettingsGroupsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateSettingsKeysKey handles the "all settings" screen's key list for
-// the currently selected group: up/down (or j/k) moves the cursor over
-// mgr.setKeys, enter opens the value input for the key under the cursor
-// (pre-filled with its CURRENT value from mgr.setCfg.Get, fetched when the
-// screen was opened), esc goes back to the group list.
+// updateSettingsKeysKey handles the "all settings" screen's key list for the currently
+// selected group: up/down (or j/k) moves the cursor over mgr.setKeys.
 func (m model) updateSettingsKeysKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -1011,9 +929,8 @@ func currentSettingsKeyHelp(keys []config.KeyInfo, cur int) string {
 	return keys[cur].Help
 }
 
-// manageApplyingOrHint is the value screens' trailing line: "applying..."
-// while the ApplyConfig round trip is in flight, otherwise the usual
-// enter/esc hint.
+// manageApplyingOrHint is the value screens' trailing line: "applying..." while the
+// ApplyConfig round trip is in flight, otherwise the usual enter/esc hint.
 func manageApplyingOrHint(applying bool) string {
 	if applying {
 		return "\napplying...\n"

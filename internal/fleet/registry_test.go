@@ -173,9 +173,8 @@ func TestRegistryNameConflict(t *testing.T) {
 	}
 }
 
-// TestRegistryRenameConcurrentExactlyOneWinner: N goroutines rename N different
-// nodes to the same name at once; Rename is atomic, so exactly one wins and no
-// duplicate remains.
+// TestRegistryRenameConcurrentExactlyOneWinner: N goroutines rename N different nodes to
+// the same name at once; Rename is atomic, so exactly one wins and no duplicate remains.
 func TestRegistryRenameConcurrentExactlyOneWinner(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "registry.json")
 	r, err := OpenRegistry(p)
@@ -222,9 +221,8 @@ func TestRegistryRenameConcurrentExactlyOneWinner(t *testing.T) {
 	}
 }
 
-// TestRegistryRenameRacesJoinNoDuplicateNames: a Rename racing concurrent Adds of
-// the same name either wins outright or is refused, so no case-insensitive
-// duplicate can result.
+// TestRegistryRenameRacesJoinNoDuplicateNames: a Rename racing concurrent Adds of the same
+// name either wins outright or is refused, so no case-insensitive duplicate can result.
 func TestRegistryRenameRacesJoinNoDuplicateNames(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "registry.json")
 	r, err := OpenRegistry(p)

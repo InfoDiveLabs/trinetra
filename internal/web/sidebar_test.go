@@ -9,14 +9,12 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestSidebarShowsSignedInUserNotHardcodedName is the #80 guard: the sidebar
-// footer must render the actual signed-in user's name (here "admin-user" from
-// seedSignedInRequest), never the hardcoded "Suraj"/"Aditi" placeholders.
+// TestSidebarShowsSignedInUserNotHardcodedName is the #80 guard: the sidebar footer must
+// render the actual signed-in user's name (here "admin-user" from seedSignedInRequest).
 func TestSidebarShowsSignedInUserNotHardcodedName(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	// Pin a fixed server.name so the brand subtitle (#101) is deterministic and
-	// doesn't render the dev machine's hostname, which could itself contain a
-	// name this test checks for absence of.
+	// Pin a fixed server.name so the brand subtitle (#101) is deterministic and doesn't render
+	// the dev machine's hostname.
 	cfg := config.Default()
 	cfg.Name = "test-host"
 	d.Cfg = func() *config.Config { return cfg }

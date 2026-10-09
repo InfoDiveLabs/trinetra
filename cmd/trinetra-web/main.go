@@ -31,9 +31,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
-// defaultRuntimeDir is where the control socket and token live when systemd or
-// the supervisor has not set RUNTIME_DIRECTORY. Duplicated from internal/trinetra
-// so this binary does not pull in the whole daemon's dependency surface.
+// defaultRuntimeDir is where the control socket and token live when systemd or the
+// supervisor has not set RUNTIME_DIRECTORY.
 const defaultRuntimeDir = "/run/trinetra"
 
 // defaultStateDir is the daemon's default state directory; duplicated for the
@@ -54,18 +53,13 @@ type connConfig struct {
 	// tokenFile is read when no token was given directly: the sibling "token" file
 	// next to the socket, written 0600 by the daemon.
 	tokenFile string
-	// stateDir backs web.Deps.StateDir: this plugin's OWN storage (user store,
-	// sessions, enrollment tokens). It is private auth material, not daemon state, so
-	// it is resolved locally rather than over the socket. Alert data all goes through
-	// the socket client.
+	// stateDir backs web.Deps.StateDir: this plugin's OWN storage (user store, sessions,
+	// enrollment tokens).
 	stateDir string
 }
 
-// resolveConnConfig parses args against a fresh FlagSet and layers environment
-// defaults: an explicit flag wins, then TRINETRA_CONTROL_SOCKET/TOKEN (as the
-// supervisor sets them), then the old SERVERWATCH_CONTROL_SOCKET/TOKEN names
-// (compat for one release), then the daemon's own RUNTIME_DIRECTORY /
-// defaultRuntimeDir resolution.
+// resolveConnConfig parses args against a fresh FlagSet and layers environment defaults: an
+// explicit flag wins, then TRINETRA_CONTROL_SOCKET/TOKEN (as the supervisor sets them).
 func resolveConnConfig(args []string, getenv func(string) string) (connConfig, error) {
 	fs := flag.NewFlagSet("trinetra-web", flag.ContinueOnError)
 	socket := fs.String("socket", "", "control socket path (default: $TRINETRA_CONTROL_SOCKET, else $SERVERWATCH_CONTROL_SOCKET, else $RUNTIME_DIRECTORY/control.sock, else /run/trinetra/control.sock)")
@@ -105,8 +99,7 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	if cc.tokenFile == "" {
 		cc.tokenFile = filepath.Join(runtimeDir, "token")
 	}
-	// Only read tokenFile when no token was given. A missing file just means no-auth
-	// (as in the daemon), so the error is intentionally ignored.
+	// Only read tokenFile when no token was given.
 	if cc.token == "" {
 		if b, err := os.ReadFile(cc.tokenFile); err == nil {
 			cc.token = string(bytesTrimNewline(b))
@@ -139,22 +132,13 @@ func bytesTrimNewline(b []byte) []byte {
 	return b
 }
 
-// buildDeps assembles web.Deps around client, the control-socket core.API.
-// api.Snapshot/api.Events back both Deps.API and the closure-based
-// Deps.Snapshot/Deps.Events (SSE, nav counts, /public, the alerts uptime tile).
-// client satisfies web.EventsStore directly because core.DownEventView and
-// web.DownEventView are the same alias type.
-//
-// cc's local fields (StateDir/AlertLogPath/AlertStatePath) name paths on THIS
-// machine that core.API cannot supply, so they come from cc; every other Deps
-// field is backed by a client call.
+// buildDeps assembles web.Deps around client.
 func buildDeps(client *control.Client, cc connConfig) web.Deps {
 	cfg := func() *config.Config {
 		c, err := client.Config()
 		if err != nil || c == nil {
 			// A Config() failure must not surface as a nil Cfg(): web handlers dereference it
-			// unconditionally, so degrade to defaults rather than panic on a transient socket
-			// error.
+			// unconditionally, so degrade to defaults rather than panic on a transient socket error.
 			return config.Default()
 		}
 		return c
@@ -178,15 +162,12 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 		StateDir:    cc.stateDir,
 		TestChannel: client.TestChannel,
 		// ValidateChannel dry-runs buildNotifier against the daemon's live config over the
-		// socket. The passed *config.Config is ignored: it validates against the daemon's
-		// config, not this process' copy (see core.API.ValidateChannel).
+		// socket.
 		ValidateChannel: func(cc config.ChannelConfig, _ *config.Config) error {
 			return client.ValidateChannel(cc)
 		},
-		// Subscribe wires web.Deps' live-push seam to client.Subscribe, adapting each
-		// core.Event into a web.LiveEvent. The goroutine exits when client's channel
-		// closes (daemon dropped) or ctx is done (browser disconnected), so it never
-		// outlives the subscription.
+		// Subscribe wires web.Deps' live-push seam to client.Subscribe, adapting each core.Event
+		// into a web.LiveEvent.
 		Subscribe: func(ctx context.Context) (<-chan web.LiveEvent, error) {
 			ch, err := client.Subscribe(ctx)
 			if err != nil {
@@ -205,13 +186,8 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 			}()
 			return out, nil
 		},
-		// Fleet/NodeAPI: client.Fleet is always
-		// unrouted (Fleet.* calls run against the master regardless of node
-		// scope, see internal/control's Client.Fleet doc); client.ForNode
-		// returns a routed view that never fails locally -- an unknown id
-		// only errors once a method is called through it, which is exactly
-		// why internal/web's node router validates {node} against
-		// Fleet().Nodes(...) itself before ever calling NodeAPI.
+		// Fleet/NodeAPI: client.Fleet is always unrouted (Fleet.* calls run against the master
+		// regardless of node scope, see internal/control's Client.Fleet doc).
 		Fleet:      client.Fleet,
 		StatusPage: client.StatusPage,
 		NodeAPI: func(id string) core.API {

@@ -20,8 +20,7 @@ import (
 	"time"
 )
 
-// Certificate lifetimes. The CA is long-lived because v1 has no CA rotation;
-// children pin it. Leaves are short enough that renewal is exercised.
+// Certificate lifetimes.
 const (
 	CALife         = 10 * 365 * 24 * time.Hour
 	ServerCertLife = 2 * 365 * 24 * time.Hour
@@ -172,9 +171,7 @@ func (ca *CA) IssueServer(hosts []string, now time.Time) (certPEM, keyPEM []byte
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), kp, nil
 }
 
-// parseCSR decodes and fully validates csrPEM (PEM, parse, self-signature, ECDSA
-// key). CheckCSR and SignClient share it so a caller can validate before
-// spending anything, such as a join token.
+// parseCSR decodes and fully validates csrPEM (PEM, parse, self-signature, ECDSA key).
 func parseCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
 	blk, _ := pem.Decode(csrPEM)
 	if blk == nil || blk.Type != "CERTIFICATE REQUEST" {
@@ -193,17 +190,13 @@ func parseCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
 	return csr, nil
 }
 
-// CheckCSR validates csrPEM (PEM, parse, signature, ECDSA key) without
-// issuing anything. Callers that must not spend a resource (like a
-// single-use join token) on a malformed CSR call this first.
+// CheckCSR validates csrPEM (PEM, parse, signature, ECDSA key) without issuing anything.
 func CheckCSR(csrPEM []byte) error {
 	_, err := parseCSR(csrPEM)
 	return err
 }
 
-// SignClient validates csrPEM and issues a client-auth-only cert with
-// CN=nodeID. It returns the cert PEM, the hex serial, and the base64 PKIX
-// public key (recorded in the registry for re-bind proofs).
+// SignClient validates csrPEM and issues a client-auth-only cert with CN=nodeID.
 func (ca *CA) SignClient(csrPEM []byte, nodeID string, now time.Time, life time.Duration) ([]byte, string, string, error) {
 	csr, err := parseCSR(csrPEM)
 	if err != nil {
@@ -239,8 +232,7 @@ func serialHex(serial *big.Int) string { return hex.EncodeToString(serial.Bytes(
 // registry stores (Node.CertSerial).
 func CertSerialHex(c *x509.Certificate) string { return serialHex(c.SerialNumber) }
 
-// NewKeyAndCSR generates a child keypair and a CSR for it. The private key
-// never leaves the child.
+// NewKeyAndCSR generates a child keypair and a CSR for it.
 func NewKeyAndCSR(commonName string) (keyPEM, csrPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -263,13 +255,8 @@ func SPKIPin(cert *x509.Certificate) string {
 	return "sha256:" + base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// PinnedClientTLS trusts exactly one CA: the one in the server's presented
-// chain whose SPKI pin equals pin. System roots are ignored and the hostname
-// is not checked (the private CA only ever issues one server-auth leaf, and
-// the ServerAuth EKU check below stops a child's client cert impersonating
-// the master), so a master reached by IP or a renamed host still verifies.
-// getCert supplies the client certificate (may return an empty one during
-// join, before the child has a cert).
+// PinnedClientTLS trusts exactly one CA: the one in the server's presented chain whose SPKI
+// pin equals pin.
 func PinnedClientTLS(pin string, getCert func() (*tls.Certificate, error)) *tls.Config {
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
@@ -302,10 +289,8 @@ func PinnedClientTLS(pin string, getCert func() (*tls.Certificate, error)) *tls.
 	}
 }
 
-// ServerTLS serves leaf (whose chain must include the CA cert so children can
-// pin it) and verifies client certs against ca when presented. Client certs
-// are optional at the TLS layer because /fleet/v1/join has none yet; every
-// other endpoint requires one via NodeIDFromRequest.
+// ServerTLS serves leaf (whose chain must include the CA cert so children can pin it) and
+// verifies client certs against ca when presented.
 func ServerTLS(leaf tls.Certificate, ca *x509.Certificate) *tls.Config {
 	pool := x509.NewCertPool()
 	pool.AddCert(ca)

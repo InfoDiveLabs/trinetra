@@ -10,8 +10,7 @@ import (
 	"io"
 )
 
-// Record kinds. Durable kinds travel through the outbox with a seq; the live
-// snapshot is not a Record (see LiveUpdate).
+// Record kinds.
 const (
 	KindSamples   = "samples"
 	KindDownEvent = "downevent"
@@ -40,9 +39,8 @@ const (
 	maxDecodedRecords = 2 * MaxBatchRecords
 )
 
-// Frame is one push on the master-to-child stream (PathStream): the response
-// body is application/x-ndjson, one JSON-encoded Frame per line, flushed as
-// soon as it is written.
+// Frame is one push on the master-to-child stream (PathStream): the response body is
+// application/x-ndjson, one JSON-encoded Frame per line, flushed as soon as it is written.
 type Frame struct {
 	Type string          `json:"type"` // lease|receipt|ack|unack|silences|managed_config|rpc|revoked|ping
 	Data json.RawMessage `json:"data,omitempty"`
@@ -103,11 +101,8 @@ type LiveUpdate struct {
 	Managed *ManagedReport `json:"managed,omitempty"`
 }
 
-// ManagedReport is a child's managed-config state, carried on every LiveUpdate
-// once it has received a "managed_config" frame. Version is the last
-// SUCCESSFULLY applied (a failed attempt leaves it unchanged); Values are the
-// CURRENT effective values of every allowlisted key, read fresh each report, so
-// the master can compute drift without trusting the child's idea of what it applied.
+// ManagedReport is a child's managed-config state, carried on every LiveUpdate once it has
+// received a "managed_config" frame.
 type ManagedReport struct {
 	Version int64             `json:"version"`
 	Applied bool              `json:"applied"`
@@ -132,9 +127,7 @@ type JoinRequest struct {
 	PrevSig    string          `json:"prev_sig,omitempty"`
 }
 
-// JoinResponse carries the new identity. Name is the name stored in the registry,
-// which Registry.Add suffixes ("-2", "-3", ...) if it collided case-insensitively
-// with an existing node; the child prints this one.
+// JoinResponse carries the new identity.
 type JoinResponse struct {
 	NodeID string `json:"node_id"`
 	Name   string `json:"name"`
@@ -166,8 +159,7 @@ func EncodeBatch(recs []Record) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// DecodeBatch reverses EncodeBatch with hard limits against oversized or
-// hostile input.
+// DecodeBatch reverses EncodeBatch with hard limits against oversized or hostile input.
 func DecodeBatch(r io.Reader) ([]Record, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {

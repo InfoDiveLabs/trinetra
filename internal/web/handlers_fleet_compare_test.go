@@ -39,9 +39,8 @@ func TestAppJSFleetCompareSurvivesTablePoll(t *testing.T) {
 		t.Fatal("app.js: reapplySelection must set each fresh checkbox's .checked from selectedNodeIds")
 	}
 
-	// The htmx:afterSwap handler for #fleet-tbody must call reapplySelection
-	// before refreshing the counter/button -- extract that handler's body
-	// and check both calls appear in it, in order.
+	// The htmx:afterSwap handler for #fleet-tbody must call reapplySelection before refreshing
+	// the counter/button -- extract that handler's body and check both calls appear in it.
 	swapIdx := strings.Index(src, "'htmx:afterSwap'")
 	if swapIdx < 0 {
 		t.Fatal("app.js: missing an htmx:afterSwap listener")
@@ -60,18 +59,16 @@ func TestAppJSFleetCompareSurvivesTablePoll(t *testing.T) {
 	}
 }
 
-// fleetCompareMasterDeps builds a master Deps whose Fleet().FleetSeries
-// returns pts (or seriesErr, if set) -- fleetMasterDeps's own fakeFleet
-// doesn't let a caller control FleetSeries, so this builds its own.
+// fleetCompareMasterDeps builds a master Deps whose Fleet().FleetSeries returns pts (or
+// seriesErr, if set).
 func fleetCompareMasterDeps(t *testing.T, nodes []core.NodeSummary, pts []core.FleetSeriesPoint, seriesErr error) (Deps, *fakeFleet) {
 	t.Helper()
 	fk := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: nodes, series: pts, seriesErr: seriesErr}
 	return fleetTestDeps(t, masterFakeAPI(fk, nil)), fk
 }
 
-// TestFleetCompareRendersSingleFleetSeriesCall pins that a compare request
-// makes exactly one FleetSeries call, with the chart's data embedded in the
-// page (no separate fetch needed).
+// TestFleetCompareRendersSingleFleetSeriesCall pins that a compare request makes exactly
+// one FleetSeries call, with the chart's data embedded in the page.
 func TestFleetCompareRendersSingleFleetSeriesCall(t *testing.T) {
 	pts := []core.FleetSeriesPoint{
 		{Node: "web1", TS: 1000, Value: 10},
@@ -125,9 +122,8 @@ func TestFleetCompareCapErrorShownInline(t *testing.T) {
 	}
 }
 
-// TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall pins that an unknown
-// ?nodes= id is validated against the roster BEFORE FleetSeries is ever called,
-// and shows every unknown id inline.
+// TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall pins that an unknown ?nodes= id
+// is validated against the roster BEFORE FleetSeries is ever called.
 func TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall(t *testing.T) {
 	d, fk := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), []core.FleetSeriesPoint{{Node: "web1", TS: 1000, Value: 1}}, nil)
 	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=web1,ghost1,ghost2&metric=cpu&range=6h")
@@ -144,8 +140,7 @@ func TestFleetCompareUnknownNodeRejectedBeforeFleetSeriesCall(t *testing.T) {
 }
 
 // TestFleetCompareUnknownNodeAcceptsDisplayName pins that validation, like
-// core.NodeFilter.Nodes itself, accepts either a node's id or its exact
-// display name.
+// core.NodeFilter.Nodes itself, accepts either a node's id or its exact display name.
 func TestFleetCompareUnknownNodeAcceptsDisplayName(t *testing.T) {
 	d, fk := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), []core.FleetSeriesPoint{{Node: "self", TS: 1000, Value: 1}}, nil)
 	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=self&metric=cpu&range=6h")
@@ -160,9 +155,8 @@ func TestFleetCompareUnknownNodeAcceptsDisplayName(t *testing.T) {
 	}
 }
 
-// TestFleetCompareZeroPointsShowsEmptyMessage pins that a successful
-// FleetSeries call returning no points shows a specific message, not a
-// blank/empty panel.
+// TestFleetCompareZeroPointsShowsEmptyMessage pins that a successful FleetSeries call
+// returning no points shows a specific message, not a blank/empty panel.
 func TestFleetCompareZeroPointsShowsEmptyMessage(t *testing.T) {
 	d, _ := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), nil, nil)
 	rr := fleetGetAsViewer(t, d, "/fleet/compare?nodes=web1&metric=cpu&range=6h")
@@ -174,9 +168,8 @@ func TestFleetCompareZeroPointsShowsEmptyMessage(t *testing.T) {
 	}
 }
 
-// TestFleetCompareNoSelectionShowsPrompt pins that visiting the page with no
-// ?nodes=/?tag= makes no FleetSeries call and shows a prompt instead of an
-// error.
+// TestFleetCompareNoSelectionShowsPrompt pins that visiting the page with no ?nodes=/?tag=
+// makes no FleetSeries call and shows a prompt instead of an error.
 func TestFleetCompareNoSelectionShowsPrompt(t *testing.T) {
 	d, fk := fleetCompareMasterDeps(t, fleetFiveNodeRoster(), nil, nil)
 	rr := fleetGetAsViewer(t, d, "/fleet/compare")

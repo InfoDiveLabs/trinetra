@@ -7,21 +7,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// style.go holds the interactive TUI's visual vocabulary: the colour palette
-// (kept in step with the web UI's), the two pure meter/sparkline renderers
-// the home dashboard draws with, and the small status glyph helpers. The
-// renderers (bar, spark) return plain runes and take no colour, so they are
-// deterministic and unit-testable (style_test.go); callers wrap their output
-// in one of the palette styles at draw time. lipgloss auto-detects the
-// terminal's colour support and emits no ANSI when stdout is not a tty (as
-// in tests), so styled home output still contains its literal label text for
-// substring assertions.
+// style.go holds the interactive TUI's visual vocabulary: the colour palette (kept in step
+// with the web UI's).
 
-// palette -- the Trinetra brand colours, matching the web UI's
-// internal/web/assets/style.css so the terminal and the web dashboard read as
-// the same product. Ember is reserved for the one thing that needs attention
-// (alerts, down); the neutral accent is ash on a dark terminal and ink on a
-// light one.
+// palette -- the Trinetra brand colours.
 var (
 	colOK     = lipgloss.Color("#3FBFA6")                                 // verdigris: healthy / online
 	colWarn   = lipgloss.Color("#F2B23A")                                 // amber: elevated / lagging
@@ -53,10 +42,8 @@ var (
 	sparkLevels = []rune("▁▂▃▄▅▆▇█")                        // 8 heights, low to high
 )
 
-// bar renders a horizontal meter for pct (0..100) that is ALWAYS exactly
-// `width` runes wide: full cells (█), one partial eighth-cell for the
-// fractional remainder, then empty cells (░). Out-of-range percentages are
-// clamped. width<=0 renders nothing.
+// bar renders a horizontal meter for pct (0..100) that is ALWAYS exactly `width` runes
+// wide: full cells (█), one partial eighth-cell for the fractional remainder.
 func bar(pct float64, width int) string {
 	if width <= 0 {
 		return ""
@@ -98,11 +85,8 @@ func bar(pct float64, width int) string {
 	return b.String()
 }
 
-// spark renders vals as a unicode block sparkline, one glyph per value,
-// scaled between the series min and max. When there are more values than
-// width, only the most recent `width` are shown (the graph scrolls left). A
-// flat series renders at a mid height rather than dividing by zero. Empty
-// input renders nothing.
+// spark renders vals as a unicode block sparkline, one glyph per value, scaled between the
+// series min and max.
 func spark(vals []float64, width int) string {
 	if len(vals) == 0 || width <= 0 {
 		return ""
@@ -172,9 +156,8 @@ func severityGlyph(sev string) string {
 // selectedRowStyle highlights the row under the cursor in menu/list screens.
 var selectedRowStyle = lipgloss.NewStyle().Bold(true).Foreground(colSignal)
 
-// menuRow renders a selectable list row: a caret + text, highlighted (bold,
-// accent colour) when it is the row under the cursor and plainly indented
-// otherwise, so the selection reads at a glance.
+// menuRow renders a selectable list row: a caret + text, highlighted (bold, accent colour)
+// when it is the row under the cursor and plainly indented otherwise.
 func menuRow(selected bool, text string) string {
 	if selected {
 		return selectedRowStyle.Render("▸ " + text)

@@ -10,10 +10,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fakeEventsStore is a minimal EventsStore test double: events is returned
-// verbatim from Events (ignoring the from/to filter unless err is set). It's
-// not used to build Deps.API here but serves availability_test.go, which
-// exercises core.ComputeAvailability directly against a core.EventsSource.
+// fakeEventsStore is a minimal EventsStore test double: events is returned verbatim from
+// Events (ignoring the from/to filter unless err is set).
 type fakeEventsStore struct {
 	events []DownEventView
 	err    error
@@ -36,9 +34,8 @@ func historyTestDeps(t *testing.T, api core.API) Deps {
 	return d
 }
 
-// TestSeriesAPIReturnsPointsForValidRange pins the core TDD obligation: a
-// valid metric/range against a populated fake store returns the points as
-// uPlot-shaped JSON (parallel arrays: ts, avg, min, max).
+// TestSeriesAPIReturnsPointsForValidRange pins the core TDD obligation: a valid
+// metric/range against a populated fake store returns the points as uPlot-shaped JSON.
 func TestSeriesAPIReturnsPointsForValidRange(t *testing.T) {
 	api := fakeAPI{series: map[string][]SeriesPoint{
 		"cpu": {
@@ -76,11 +73,8 @@ func TestSeriesAPIReturnsPointsForValidRange(t *testing.T) {
 	}
 }
 
-// TestSeriesAPIReturnsLoadAndDiskMetrics pins that the load5/load15 and
-// per-mount disk:<mount> series (the history page's 1m/5m/15m load chart and
-// per-filesystem disk-usage panel) come back through the same /api/series
-// endpoint just like cpu -- they are ordinary queryable metrics, nothing
-// special-cased.
+// TestSeriesAPIReturnsLoadAndDiskMetrics pins that the load5/load15 and per-mount
+// disk:<mount> series.
 func TestSeriesAPIReturnsLoadAndDiskMetrics(t *testing.T) {
 	api := fakeAPI{series: map[string][]SeriesPoint{
 		"load5":      {{TS: 1000, Avg: 0.5}},
@@ -115,9 +109,8 @@ func TestSeriesAPIReturnsLoadAndDiskMetrics(t *testing.T) {
 	}
 }
 
-// TestSeriesAPIUnknownMetricReturnsEmptyNot500 pins the "unknown metric ->
-// empty series, 200, NOT 500" requirement: a metric the fake store has no
-// data for must render as an empty series, never an error status.
+// TestSeriesAPIUnknownMetricReturnsEmptyNot500 pins the "unknown metric -> empty series,
+// 200, NOT 500" requirement.
 func TestSeriesAPIUnknownMetricReturnsEmptyNot500(t *testing.T) {
 	api := fakeAPI{series: map[string][]SeriesPoint{"cpu": {{TS: 1, Avg: 1}}}}
 	d := historyTestDeps(t, api)
@@ -165,9 +158,8 @@ func TestSeriesAPINilStoreReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestSeriesAPIInvalidRangeRejected pins the input-validation requirement:
-// from>=to, unparseable timestamps, and an absurdly large span all reject
-// with 400 rather than reaching the store at all.
+// TestSeriesAPIInvalidRangeRejected pins the input-validation requirement: from>=to,
+// unparseable timestamps.
 func TestSeriesAPIInvalidRangeRejected(t *testing.T) {
 	api := fakeAPI{series: map[string][]SeriesPoint{"cpu": {{TS: 1, Avg: 1}}}}
 	d := historyTestDeps(t, api)
@@ -199,10 +191,8 @@ func TestSeriesAPIInvalidRangeRejected(t *testing.T) {
 	}
 }
 
-// TestHistoryAndSeriesRoutesAreViewerGated mirrors
-// TestDashboardRoutesAreViewerGated (handlers_dashboard_test.go): an
-// anonymous request to either route must redirect to /login, exactly like
-// every other viewer+ route requireRole gates.
+// TestHistoryAndSeriesRoutesAreViewerGated mirrors TestDashboardRoutesAreViewerGated
+// (handlers_dashboard_test.go).
 func TestHistoryAndSeriesRoutesAreViewerGated(t *testing.T) {
 	d := historyTestDeps(t, nil)
 	h := newHandler(d)
@@ -218,11 +208,7 @@ func TestHistoryAndSeriesRoutesAreViewerGated(t *testing.T) {
 	}
 }
 
-// TestDowntimeAPIReturnsEventsForValidRange pins the /api/downtime endpoint:
-// a valid range against a populated fake EventsStore returns the downtime
-// events as JSON for the "Downtime · 30d" timeline/rows, newest
-// (largest Start) first -- net_down (2000) sorts ahead of power_down (1000)
-// even though power_down is listed first in the fake store.
+// TestDowntimeAPIReturnsEventsForValidRange pins the /api/downtime endpoint.
 func TestDowntimeAPIReturnsEventsForValidRange(t *testing.T) {
 	d := historyTestDeps(t, fakeAPI{events: []DownEventView{
 		{Type: "power_down", Start: 1000, End: 1600, DurationSec: 600},
@@ -324,13 +310,8 @@ func TestDowntimeRouteIsViewerGated(t *testing.T) {
 	}
 }
 
-// downtimeEventsFixture builds n synthetic downtime events spaced 100s
-// apart starting at base, each lasting durSec, for the pagination tests
-// below. Returned in ascending-start order (callers that need to assert
-// newest-first ordering shuffle or reverse as needed) -- store.Events has
-// no documented ordering guarantee, so tests feed the handler events out of
-// order to confirm it does its own newest-first sort rather than trusting
-// the store.
+// downtimeEventsFixture builds n synthetic downtime events spaced 100s apart starting at
+// base, each lasting durSec, for the pagination tests below.
 func downtimeEventsFixture(n int, base int64, durSec int64) []DownEventView {
 	evs := make([]DownEventView, n)
 	for i := 0; i < n; i++ {
@@ -340,9 +321,8 @@ func downtimeEventsFixture(n int, base int64, durSec int64) []DownEventView {
 	return evs
 }
 
-// TestDowntimeAPIDefaultsLimitAndOffset pins the paging defaults: no
-// limit/offset given -> limit=50, offset=0, and (since 5 < 50) every event
-// comes back on the one page, echoed as total=5.
+// TestDowntimeAPIDefaultsLimitAndOffset pins the paging defaults: no limit/offset given ->
+// limit=50, offset=0, and (since 5 < 50) every event comes back on the one page.
 func TestDowntimeAPIDefaultsLimitAndOffset(t *testing.T) {
 	evs := downtimeEventsFixture(5, 1000, 60)
 	d := historyTestDeps(t, fakeAPI{events: evs})
@@ -375,10 +355,8 @@ func TestDowntimeAPIDefaultsLimitAndOffset(t *testing.T) {
 	}
 }
 
-// TestDowntimeAPILimitOffsetSlicesNewestFirst pins the core paging
-// contract: events are sorted newest-first (by Start descending) and then
-// sliced by offset/limit, regardless of the order the store returned them
-// in.
+// TestDowntimeAPILimitOffsetSlicesNewestFirst pins the core paging contract: events are
+// sorted newest-first (by Start descending) and then sliced by offset/limit.
 func TestDowntimeAPILimitOffsetSlicesNewestFirst(t *testing.T) {
 	evs := downtimeEventsFixture(10, 1000, 60) // starts 1000,1100,...,1900
 	// Feed the fake store in reverse (oldest-last-in-store) to prove the
@@ -422,11 +400,8 @@ func TestDowntimeAPILimitOffsetSlicesNewestFirst(t *testing.T) {
 	}
 }
 
-// TestDowntimeAPITotalSecondsCoversFullRangeNotJustPage pins that
-// total_seconds (the "total Xs · YY.YY%" summary's basis) is computed over
-// every event in [from,to], not just the returned page -- so paging can't
-// change the summary the way it would if the client derived it from the
-// page alone.
+// TestDowntimeAPITotalSecondsCoversFullRangeNotJustPage pins that total_seconds (the "total
+// Xs · YY.YY%" summary's basis) is computed over every event in [from,to].
 func TestDowntimeAPITotalSecondsCoversFullRangeNotJustPage(t *testing.T) {
 	evs := downtimeEventsFixture(10, 1000, 60) // 10 events * 60s = 600s total
 	d := historyTestDeps(t, fakeAPI{events: evs})
@@ -527,8 +502,7 @@ func TestDowntimeAPIMaxLimitAccepted(t *testing.T) {
 }
 
 // TestNodeScopedDowntimeAPIPagination pins that the node-scoped route
-// (/n/<id>/api/downtime, fleet routing) honors limit/offset exactly like
-// the master route, since it shares downtimeAPIHandler via apiFor.
+// (/n/<id>/api/downtime, fleet routing) honors limit/offset exactly like the master route.
 func TestNodeScopedDowntimeAPIPagination(t *testing.T) {
 	child := fakeAPI{events: downtimeEventsFixture(5, 1000, 60)}
 	master := fakeAPI{events: downtimeEventsFixture(1, 1, 1)}
@@ -555,11 +529,8 @@ func TestNodeScopedDowntimeAPIPagination(t *testing.T) {
 	}
 }
 
-// TestDowntimeAPITimelineHasFixedBucketCount pins that the response's
-// Timeline always has exactly downtimeTimelineBuckets entries covering the
-// full requested range, whether there are zero events, a nil API, or many
-// -- the timeline bar's payload size is bounded independent of incident
-// count, unlike (pre-117) drawing one SVG segment per event.
+// TestDowntimeAPITimelineHasFixedBucketCount pins that the response's Timeline always has
+// exactly downtimeTimelineBuckets entries covering the full requested range.
 func TestDowntimeAPITimelineHasFixedBucketCount(t *testing.T) {
 	cases := []struct {
 		name string
@@ -599,13 +570,8 @@ func TestDowntimeAPITimelineHasFixedBucketCount(t *testing.T) {
 	}
 }
 
-// TestDowntimeAPITimelineClipsAtRangeAndBucketEdges pins the clipping
-// contract: an event that starts before `from`, an event that's still open
-// (End 0, clipped through `to`), and an event that spans a bucket boundary
-// all only contribute the portion of their duration that actually falls
-// inside [from,to] and inside each bucket -- not their raw duration_sec.
-// Uses from=0,to=1200 with the real downtimeTimelineBuckets(=120) so each
-// bucket is exactly 10s wide and the math is exact.
+// TestDowntimeAPITimelineClipsAtRangeAndBucketEdges pins the clipping contract: an event
+// that starts before `from`, an event that's still open (End 0, clipped through `to`).
 func TestDowntimeAPITimelineClipsAtRangeAndBucketEdges(t *testing.T) {
 	if 1200%downtimeTimelineBuckets != 0 {
 		t.Fatalf("test assumes 1200 divides evenly by downtimeTimelineBuckets(=%d)", downtimeTimelineBuckets)
@@ -616,9 +582,8 @@ func TestDowntimeAPITimelineClipsAtRangeAndBucketEdges(t *testing.T) {
 		// Starts before `from`(0): only [0,50) should count (clipped from
 		// [-100,50)), spread across the first 5 buckets (10s each).
 		{Type: "net_down", Start: -100, End: 50, DurationSec: 150},
-		// Crosses a bucket boundary at t=10: [5,25) contributes 5s to
-		// bucket 0 ([0,10)), 10s to bucket 1 ([10,20)), 5s to bucket 2
-		// ([20,30)).
+		// Crosses a bucket boundary at t=10: [5,25) contributes 5s to bucket 0 ([0,10)), 10s to
+		// bucket 1 ([10,20)), 5s to bucket 2 ([20,30)).
 		{Type: "power_down", Start: 5, End: 25, DurationSec: 20},
 		// Still open (End 0): clipped through `to`(1200), landing entirely
 		// in the last bucket ([1190,1200)).
@@ -648,8 +613,7 @@ func TestDowntimeAPITimelineClipsAtRangeAndBucketEdges(t *testing.T) {
 	if got := resp.Timeline[0].DownSeconds; got != bucketWidth+5 {
 		t.Errorf("timeline[0].DownSeconds = %d, want %d", got, bucketWidth+5)
 	}
-	// bucket 1 ([10,20)): 10s from the first event + 10s from the second
-	// event = 20s.
+	// bucket 1 ([10,20)): 10s from the first event + 10s from the second event = 20s.
 	if got := resp.Timeline[1].DownSeconds; got != 2*bucketWidth {
 		t.Errorf("timeline[1].DownSeconds = %d, want %d", got, 2*bucketWidth)
 	}
@@ -658,8 +622,7 @@ func TestDowntimeAPITimelineClipsAtRangeAndBucketEdges(t *testing.T) {
 	if got := resp.Timeline[2].DownSeconds; got != bucketWidth+5 {
 		t.Errorf("timeline[2].DownSeconds = %d, want %d", got, bucketWidth+5)
 	}
-	// buckets 3,4 ([30,50)): 10s each from the range-clipped first event
-	// only.
+	// buckets 3,4 ([30,50)): 10s each from the range-clipped first event only.
 	for _, i := range []int{3, 4} {
 		if got := resp.Timeline[i].DownSeconds; got != bucketWidth {
 			t.Errorf("timeline[%d].DownSeconds = %d, want %d", i, got, bucketWidth)
@@ -683,18 +646,15 @@ func TestDowntimeAPITimelineClipsAtRangeAndBucketEdges(t *testing.T) {
 		t.Errorf("timeline[1].Type = %q, want power_down (crit wins over warn)", resp.Timeline[1].Type)
 	}
 
-	// The event(s) fully or partly outside [from,to] must still be clipped
-	// the same way in TotalSeconds, not counted at raw duration_sec: total
-	// clipped seconds = 50 (event 1) + 20 (event 2) + 10 (event 3) = 80,
-	// NOT 150+20+999999.
+	// The event(s) fully or partly outside [from,to] must still be clipped the same way in
+	// TotalSeconds, not counted at raw duration_sec: total clipped seconds = 50.
 	if resp.TotalSeconds != 80 {
 		t.Errorf("total_seconds = %d, want 80 (clipped, not raw duration_sec)", resp.TotalSeconds)
 	}
 }
 
-// TestDowntimeAPITimelineSumMatchesTotalSeconds pins the invariant the
-// controller asked for explicitly: summing every bucket's DownSeconds must
-// equal TotalSeconds, for an arbitrary (non-trivial) event set.
+// TestDowntimeAPITimelineSumMatchesTotalSeconds pins the invariant the controller asked for
+// explicitly: summing every bucket's DownSeconds must equal TotalSeconds, for an arbitrary.
 func TestDowntimeAPITimelineSumMatchesTotalSeconds(t *testing.T) {
 	events := downtimeEventsFixture(37, 500, 42) // arbitrary, not aligned to bucket width
 	d := historyTestDeps(t, fakeAPI{events: events})
@@ -725,9 +685,7 @@ func TestDowntimeAPITimelineSumMatchesTotalSeconds(t *testing.T) {
 }
 
 // TestDowntimeAPITimelineIndependentOfLimitOffset pins that Timeline (and
-// TotalSeconds/Total) never changes with limit/offset -- the whole point of
-// computing it over every in-range event before any page slicing, so
-// paging can't hide part of the downtime picture from the timeline bar.
+// TotalSeconds/Total) never changes with limit/offset.
 func TestDowntimeAPITimelineIndependentOfLimitOffset(t *testing.T) {
 	events := downtimeEventsFixture(40, 1000, 60)
 	d := historyTestDeps(t, fakeAPI{events: events})
@@ -775,9 +733,8 @@ func TestDowntimeAPITimelineIndependentOfLimitOffset(t *testing.T) {
 	}
 }
 
-// TestHistoryPageRendersDiskAndDowntimeSections pins that the page carries a
-// per-mount disk panel driven off the current snapshot's mounts, and a
-// downtime panel the client fills from /api/downtime.
+// TestHistoryPageRendersDiskAndDowntimeSections pins that the page carries a per-mount disk
+// panel driven off the current snapshot's mounts.
 func TestHistoryPageRendersDiskAndDowntimeSections(t *testing.T) {
 	d := historyTestDeps(t, nil)
 	d.Snapshot = func() DashboardView {
@@ -809,10 +766,8 @@ func TestHistoryPageRendersDiskAndDowntimeSections(t *testing.T) {
 	}
 }
 
-// TestHistoryPageRendersAppShellAndChartHooks pins GET /history: it must
-// render through the full app-shell layout (base.html, nav/topbar) -- unlike
-// /login or /enroll's bare layout -- with the metric-picker/time-range chips
-// and one chart container per metric app.js's swBootHistoryCharts targets.
+// TestHistoryPageRendersAppShellAndChartHooks pins GET /history: it must render through the
+// full app-shell layout (base.html, nav/topbar) -- unlike /login or /enroll's bare layout.
 func TestHistoryPageRendersAppShellAndChartHooks(t *testing.T) {
 	d := historyTestDeps(t, nil)
 	h := newHandler(d)

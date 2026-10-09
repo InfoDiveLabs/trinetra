@@ -3,11 +3,8 @@
 // internal/update/keys.go
 package update
 
-// productionKeyB64 holds the base64 ed25519 public keys trusted by release
-// builds, current key first, next key second, per role. They are filled in
-// by the maintainer key ceremony (see docs/handbook/10-operations.md,
-// "Release keys"). While a role is empty every update and signed install
-// fails closed with ErrNoKeys.
+// productionKeyB64 holds the base64 ed25519 public keys trusted by release builds, current
+// key first, next key second, per role.
 var productionKeyB64 = struct{ CI, Maint, Pointer []string }{
 	CI: []string{
 		"qYrzYRct8xy9iJR6Xm8ow+u33GMc8fAoqaX9GZh4+N4=", // current, ci:12fa1a1532ab468b…

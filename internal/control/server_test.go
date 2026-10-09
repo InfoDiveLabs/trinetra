@@ -59,10 +59,8 @@ type fakeAPI struct {
 	// validateChannelErr, when set, is returned by ValidateChannel.
 	validateChannelErr error
 
-	// subscribeCh, when non-nil, makes Subscribe return it instead of the default
-	// "not implemented" error. subscribeCancelled, when also non-nil, is closed once
-	// the ctx passed to Subscribe is done, so tests can prove the server cancels it
-	// on client disconnect.
+	// subscribeCh, when non-nil, makes Subscribe return it instead of the default "not
+	// implemented" error. subscribeCancelled, when also non-nil.
 	subscribeCh        chan core.Event
 	subscribeCancelled chan struct{}
 }
@@ -159,9 +157,8 @@ func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 
 var _ core.API = (*fakeAPI)(nil)
 
-// dialTestConn runs handleConn on one end of a net.Pipe with fake as the API and
-// returns the other end plus a reader, past a valid hello. done closes when
-// handleConn returns.
+// dialTestConn runs handleConn on one end of a net.Pipe with fake as the API and returns
+// the other end plus a reader, past a valid hello. done closes when handleConn returns.
 func dialTestConn(t *testing.T, fake core.API) (net.Conn, *bufio.Reader, <-chan struct{}) {
 	t.Helper()
 	server, client := net.Pipe()
@@ -433,9 +430,8 @@ func TestStreamSubscribeSendsEventsInOrderAfterAck(t *testing.T) {
 	<-done
 }
 
-// TestStreamSubscribeDisconnectCancelsContext: the ctx passed to api.Subscribe
-// must derive from the connection's lifetime, so closing the client end cancels
-// it and Subscribe's unsubscribe runs instead of leaking a subscriber.
+// TestStreamSubscribeDisconnectCancelsContext: the ctx passed to api.Subscribe must derive
+// from the connection's lifetime.
 func TestStreamSubscribeDisconnectCancelsContext(t *testing.T) {
 	fake := &fakeAPI{subscribeCh: make(chan core.Event), subscribeCancelled: make(chan struct{})}
 	client, r, done := dialTestConn(t, fake)

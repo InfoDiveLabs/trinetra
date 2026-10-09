@@ -15,30 +15,24 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// helloMagic is the Hello value both ends must send, alongside a matching
-// ProtocolVersion.
+// helloMagic is the Hello value both ends must send, alongside a matching ProtocolVersion.
 const helloMagic = "serverwatch-control"
 
-// helloTimeout bounds the opening hello read and idleTimeout every request read
-// after it, so a peer that connects and never speaks cannot tie up a goroutine.
-// Unlike callTimeout these stay consts: handleConn goroutines can outlive the
-// test that started them, so a mutable var would be a data race.
+// helloTimeout bounds the opening hello read and idleTimeout every request read after it,
+// so a peer that connects and never speaks cannot tie up a goroutine.
 const (
 	helloTimeout = 10 * time.Second
 	idleTimeout  = 5 * time.Minute
 )
 
-// streamWriteTimeout bounds each stream-frame write. A stream may sit idle
-// between events, but a write must not block forever if the client stops reading.
+// streamWriteTimeout bounds each stream-frame write.
 const streamWriteTimeout = 30 * time.Second
 
 // emptyResult is the Result for write methods: success with nothing to return.
 var emptyResult = json.RawMessage("{}")
 
-// Serve accepts connections on ln and handles each in its own goroutine against
-// api. token is the per-launch secret each hello must present (constant-time
-// compared in handleConn); empty means no auth, for tests only. Serve returns
-// when ln is closed.
+// Serve accepts connections on ln and handles each in its own goroutine against api. token
+// is the per-launch secret each hello must present (constant-time compared in handleConn).
 func Serve(api core.API, ln net.Listener, token string) error {
 	for {
 		conn, err := ln.Accept()
@@ -49,9 +43,8 @@ func Serve(api core.API, ln net.Listener, token string) error {
 	}
 }
 
-// handleConn validates the client's hello (version, then token), echoes its own,
-// and services requests until the peer disconnects. A peer going away mid-read is
-// normal shutdown, not a fault worth logging.
+// handleConn validates the client's hello (version, then token), echoes its own, and
+// services requests until the peer disconnects.
 func handleConn(api core.API, conn net.Conn, token string) {
 	defer conn.Close()
 
@@ -95,9 +88,8 @@ func handleConn(api core.API, conn net.Conn, token string) {
 		}
 
 		if req.Method == "Subscribe" {
-			// Subscribe takes over the rest of the connection for streaming (or a single
-			// error response) and never returns to this loop; clients open a new connection
-			// per subscription.
+			// Subscribe takes over the rest of the connection for streaming (or a single error
+			// response) and never returns to this loop.
 			if req.Node != "" && req.Node != core.SelfNodeID {
 				_ = writeFrame(conn, response{ID: req.ID, Node: req.Node, OK: false, Error: "control: live event streams are not available for remote fleet nodes yet"})
 				return
@@ -136,14 +128,7 @@ func handleConn(api core.API, conn net.Conn, token string) {
 	}
 }
 
-// streamSubscribe switches conn into Subscribe streaming mode. It calls
-// api.Subscribe first and only then writes the ack, so a caller with no live bus
-// behind api gets a normal error response rather than a silent stream.
-//
-// The ctx given to api.Subscribe is tied to conn's lifetime: a goroutine that
-// only reads from conn (r now belongs solely to it) cancels ctx on EOF/error, so
-// a disconnect fires Subscribe's unsubscribe instead of leaking a subscriber. The
-// idleTimeout deadline does not apply since streams idle between events.
+// streamSubscribe switches conn into Subscribe streaming mode.
 func streamSubscribe(api core.API, conn net.Conn, r *bufio.Reader, reqID int) {
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return
@@ -184,11 +169,8 @@ func streamSubscribe(api core.API, conn net.Conn, r *bufio.Reader, reqID int) {
 	}
 }
 
-// dispatch decodes params for method, calls the matching core.API method and
-// marshals the result. Write methods return emptyResult. Config/ApplyConfig carry
-// the raw config.Config (not a display projection) so Collect.*bool omitempty
-// semantics survive the round trip. Subscribe never reaches here; handleConn
-// intercepts it.
+// dispatch decodes params for method, calls the matching core.API method and marshals the
+// result.
 func dispatch(api core.API, method string, params json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "Snapshot":
@@ -409,9 +391,8 @@ func dispatch(api core.API, method string, params json.RawMessage) (json.RawMess
 	}
 }
 
-// resolveNode maps a request's node field to the API serving it: "" or
-// core.SelfNodeID is api itself, anything else needs api to be a
-// core.FleetProvider.
+// resolveNode maps a request's node field to the API serving it: "" or core.SelfNodeID is
+// api itself, anything else needs api to be a core.FleetProvider.
 func resolveNode(api core.API, node string) (core.API, error) {
 	if node == "" || node == core.SelfNodeID {
 		return api, nil

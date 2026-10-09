@@ -53,12 +53,7 @@ type managedKeyRow struct {
 	Err   string
 }
 
-// managedDraft is the create/edit form's entire working copy. ID is "" for
-// a fresh "new fragment" draft (SaveManaged then upserts by Tag); non-empty
-// when the draft was loaded from an existing fragment via ?edit=<id> (see
-// this file's own top doc) or survived a validation round-trip, in which
-// case SaveManaged updates that EXACT fragment by ID regardless of what Tag
-// ends up being.
+// managedDraft is the create/edit form's entire working copy.
 type managedDraft struct {
 	ID   string
 	Tag  string
@@ -88,10 +83,8 @@ func managedDraftFromFragment(f core.ManagedFragment) managedDraft {
 	return d
 }
 
-// parseManagedDraftForm reads the posted draft off r: "id"/"tag" plus
-// "row_count" indexed "row_<i>_key"/"row_<i>_value" rows -- the same
-// indexed-field convention parseMatcherRows uses. Always returns at least
-// one (possibly blank) row.
+// parseManagedDraftForm reads the posted draft off r: "id"/"tag" plus "row_count" indexed
+// "row_<i>_key"/"row_<i>_value" rows.
 func parseManagedDraftForm(r *http.Request) managedDraft {
 	d := managedDraft{ID: r.FormValue("id"), Tag: r.FormValue("tag")}
 	count, _ := strconv.Atoi(r.FormValue("row_count"))
@@ -108,9 +101,8 @@ func parseManagedDraftForm(r *http.Request) managedDraft {
 	return d
 }
 
-// applyManagedRowOp reshapes rows in place for an "add_row"/"remove_row:<i>"
-// op token -- mirrors applyMatcherRowOp exactly, over this page's own row
-// shape.
+// applyManagedRowOp reshapes rows in place for an "add_row"/"remove_row:<i>" op token --
+// mirrors applyMatcherRowOp exactly, over this page's own row shape.
 func applyManagedRowOp(rows *[]managedKeyRow, op string) {
 	parts := strings.Split(op, ":")
 	switch parts[0] {
@@ -145,21 +137,12 @@ func managedRowsToValues(rows []managedKeyRow) map[string]string {
 	return out
 }
 
-// managedUnknownKeyErrRe matches fleet_managed.go's
-// validateManagedFragmentValues' exact "not a managed-config key" wording
-// (and this package's own fakeFleet.SaveManaged test double, which uses the
-// identical wording on purpose) so managedErrKey can pull the offending key
-// back out of the error text.
+// managedUnknownKeyErrRe matches fleet_managed.go's validateManagedFragmentValues' exact
+// "not a managed-config key" wording.
 var managedUnknownKeyErrRe = regexp.MustCompile(`^"([^"]+)" is not a managed-config key`)
 
-// managedErrKey extracts the ManagedFragment key a SaveManaged rejection
-// names, if any: either the exact key in an "unknown key" rejection
-// (managedUnknownKeyErrRe), or the key prefix of a "<key>: <value error>"
-// rejection (fleet_managed.go's validateManagedFragmentValues wraps a
-// config.Config.Set failure as fmt.Errorf("%s: %w", k, err)). Returns "" for
-// an error that names no specific key at all (e.g. "managed config is not
-// available", or a not-found id) -- the caller then falls back to the
-// page's top-level flash instead of an inline row error.
+// managedErrKey extracts the ManagedFragment key a SaveManaged rejection names, if any:
+// either the exact key in an "unknown key" rejection (managedUnknownKeyErrRe).
 func managedErrKey(err error) string {
 	if err == nil {
 		return ""
@@ -176,10 +159,8 @@ func managedErrKey(err error) string {
 	return ""
 }
 
-// applyManagedRowErr sets Err on every row of draft whose Key matches the
-// key managedErrKey extracted from err, and reports whether any row was
-// actually matched (so the caller knows whether to ALSO show err at the
-// top of the form, for a rejection naming no row at all).
+// applyManagedRowErr sets Err on every row of draft whose Key matches the key managedErrKey
+// extracted from err, and reports whether any row was actually matched.
 func applyManagedRowErr(rows []managedKeyRow, err error) (matched bool) {
 	key := managedErrKey(err)
 	if key == "" {
@@ -198,9 +179,8 @@ func applyManagedRowErr(rows []managedKeyRow, err error) (matched bool) {
 // verbatim, in that same closed order.
 func managedKeyOptions() []string { return core.ManagedKeys }
 
-// buildManagedRosterTags collects every DISTINCT tag currently carried by any
-// node in the roster (read through r's request-scoped fleetMemo, exactly like
-// buildSilenceNodeNames), sorted -- backs the tag field's <datalist>.
+// buildManagedRosterTags collects every DISTINCT tag currently carried by any node in the
+// roster (read through r's request-scoped fleetMemo, exactly like buildSilenceNodeNames).
 func buildManagedRosterTags(r *http.Request, d Deps) []string {
 	nodes, err := fleetMemoFrom(r).fleetNodes(d)
 	if err != nil {
@@ -220,9 +200,8 @@ func buildManagedRosterTags(r *http.Request, d Deps) []string {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// Fragments list
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Fragments
+// list ---------------------------------------------------------------------------
 
 // ManagedFragmentRow is one row of the fragments table.
 type ManagedFragmentRow struct {
@@ -234,9 +213,7 @@ type ManagedFragmentRow struct {
 	Author  string
 }
 
-// describeManagedChange renders f's tag + keys/values as the audit log's New
-// field. It mirrors newManagedFragmentRow's own TagText/KVText computation so
-// the audit trail and the fragments table describe a fragment identically.
+// describeManagedChange renders f's tag + keys/values as the audit log's New field.
 func describeManagedChange(f core.ManagedFragment) string {
 	row := newManagedFragmentRow(f)
 	if row.KVText == "" {
@@ -262,14 +239,10 @@ func newManagedFragmentRow(f core.ManagedFragment) ManagedFragmentRow {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Per-node status
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Per-node
+// status ---------------------------------------------------------------------------
 
-// ManagedStatusRow is one row of the per-node status table. Node is the
-// roster's display name (U2, 2026-09-25 UI audit fix); NodeID is the raw
-// registry id, kept only for the template's title/tooltip -- core.
-// ManagedStatus itself carries no display name, just the id.
+// ManagedStatusRow is one row of the per-node status table.
 type ManagedStatusRow struct {
 	Node        string
 	NodeID      string
@@ -280,10 +253,8 @@ type ManagedStatusRow struct {
 	Conflicts   []string // "key (frag1, frag2)" -- last fragment listed is the one that won
 }
 
-// newManagedStatusRow projects s into its row shape. nodeNames resolves
-// s.Node (a raw registry id) to its roster display name, falling back to
-// the id itself when the node isn't in the map (e.g. it's since left the
-// roster).
+// newManagedStatusRow projects s into its row shape. nodeNames resolves s.Node (a raw
+// registry id) to its roster display name.
 func newManagedStatusRow(s core.ManagedStatus, nodeNames map[string]string) ManagedStatusRow {
 	applied := "no"
 	if s.Applied {
@@ -308,9 +279,8 @@ func newManagedStatusRow(s core.ManagedStatus, nodeNames map[string]string) Mana
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Flash: a FIXED set of codes only (like resolveIncidentFlash).
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Flash: a
+// FIXED set of codes only (like resolveIncidentFlash).
 
 func resolveManagedFlash(r *http.Request) (text string, isErr bool) {
 	switch r.URL.Query().Get("flash") {
@@ -322,12 +292,10 @@ func resolveManagedFlash(r *http.Request) (text string, isErr bool) {
 	return "", false
 }
 
-// ---------------------------------------------------------------------------
-// Page data
+// --------------------------------------------------------------------------- Page data
 // ---------------------------------------------------------------------------
 
-// ManagedPageData is what templates/fleet_managed.html's "content" block
-// renders against.
+// ManagedPageData is what templates/fleet_managed.html's "content" block renders against.
 type ManagedPageData struct {
 	PageData
 
@@ -399,13 +367,8 @@ func buildManagedPageData(r *http.Request, d Deps, opts managedPageOptions) Mana
 	}
 }
 
-// loadManagedDraftFromQuery backs a fresh GET /fleet/managed?edit=<id>: when
-// edit names a fragment that actually exists, the draft is loaded from it
-// (managedDraftFromFragment); otherwise (no ?edit=, or an id that names
-// nothing) a blank newManagedDraft. A dangling/bad ?edit= id degrading to a
-// blank form (rather than a 404) matches this page's own read-mostly
-// nature -- the fragment may simply have just been deleted from another
-// tab.
+// loadManagedDraftFromQuery backs a fresh GET /fleet/managed?edit=<id>: when edit names a
+// fragment that actually exists, the draft is loaded from it (managedDraftFromFragment).
 func loadManagedDraftFromQuery(r *http.Request, frags []core.ManagedFragment) managedDraft {
 	id := r.URL.Query().Get("edit")
 	if id == "" {
@@ -419,8 +382,7 @@ func loadManagedDraftFromQuery(r *http.Request, frags []core.ManagedFragment) ma
 	return newManagedDraft()
 }
 
-// ---------------------------------------------------------------------------
-// Rendering
+// --------------------------------------------------------------------------- Rendering
 // ---------------------------------------------------------------------------
 
 func renderManagedPage(w http.ResponseWriter, data ManagedPageData, status int) error {
@@ -459,8 +421,7 @@ func redirectToManaged(w http.ResponseWriter, r *http.Request, flashCode string)
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
-// ---------------------------------------------------------------------------
-// Handlers
+// --------------------------------------------------------------------------- Handlers
 // ---------------------------------------------------------------------------
 
 // fleetManagedPageHandler serves GET /fleet/managed: viewer+ (read-only for
@@ -479,12 +440,7 @@ func fleetManagedPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetManagedSaveHandler serves POST /fleet/managed (admin+CSRF,
-// fleetAdminMutation): op=add_row/remove_row:<i> reshapes the draft in
-// place and re-renders at 200 without saving; op=""/"save" validates and
-// calls SaveManaged, and either re-renders the form with the backend's
-// error inline (on the offending row when it names one, else at the top of
-// the form) or, on success, redirects to GET /fleet/managed.
+// fleetManagedSaveHandler serves POST /fleet/managed (admin+CSRF, fleetAdminMutation).
 func fleetManagedSaveHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -531,9 +487,8 @@ func fleetManagedSaveHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetManagedDeleteHandler serves POST /fleet/managed/{id}/delete
-// (admin+CSRF, fleetAdminMutation), used with the in-page two-step confirm
-// (style.css's .confirm-toggle).
+// fleetManagedDeleteHandler serves POST /fleet/managed/{id}/delete (admin+CSRF,
+// fleetAdminMutation), used with the in-page two-step confirm.
 func fleetManagedDeleteHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -546,12 +501,8 @@ func fleetManagedDeleteHandler(d Deps) http.HandlerFunc {
 		}
 		id := r.PathValue("id")
 		actor := auditUser(r)
-		// Look up the fragment BEFORE deleting it so the audit record's New
-		// field can describe what was actually removed (tag + keys), not
-		// just its opaque id -- a dangling/unknown id (frags, _ finding
-		// nothing) degrades to describing just the id, matching this
-		// handler's existing tolerance for a not-found id being surfaced by
-		// DeleteManaged's own error instead.
+		// Look up the fragment BEFORE deleting it so the audit record's New field can describe
+		// what was actually removed (tag + keys), not just its opaque id.
 		desc := id
 		if frags, ferr := fleet.Managed(); ferr == nil {
 			for _, f := range frags {

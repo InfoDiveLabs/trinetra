@@ -11,10 +11,7 @@ import (
 )
 
 // TestNavBadgesRenderRealCounts pins that the sidebar nav's
-// Alerts/Channels/Users/Monitoring badges reflect real per-request counts
-// (Deps.AlertStatePath's active map, len(Cfg().Channels), the user store's
-// List(), and the live snapshot's container count) rather than hardcoded demo
-// values (220/2/5/3).
+// Alerts/Channels/Users/Monitoring badges reflect real per-request counts.
 func TestNavBadgesRenderRealCounts(t *testing.T) {
 	d := enrollTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}, {Key: "cpu", Time: 2, Source: "y"}}}
@@ -68,9 +65,6 @@ func TestNavBadgesRenderRealCounts(t *testing.T) {
 func TestNavBadgeHiddenWhenZero(t *testing.T) {
 	d := enrollTestDeps(t)
 	// No API set (nil) -> 0 active alerts.
-	// Default config -> zero channels.
-	// No users seeded -> zero users.
-	// Zero-value Snapshot -> zero containers.
 	h := newHandler(d)
 	users := newUserStore(d.StateDir)
 	sessions := newSessionStore(d.StateDir)

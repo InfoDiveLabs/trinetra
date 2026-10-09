@@ -10,11 +10,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// testDeps builds a minimal Deps for handler/Start tests: enabled, bound to
-// an ephemeral port, with just enough of the Cfg/Reload/Snapshot plumbing
-// wired for a zero value to be usable (newHandler's dashboard placeholder
-// doesn't read any of these yet, but a future page-handler test reusing this
-// helper will want them present).
+// testDeps builds a minimal Deps for handler/Start tests: enabled, bound to an ephemeral
+// port.
 func testDeps(t *testing.T) Deps {
 	t.Helper()
 	return Deps{
@@ -26,9 +23,8 @@ func testDeps(t *testing.T) Deps {
 	}
 }
 
-// TestBrandShowsServerName pins #101: the sidebar brand subtitle renders the
-// configured server.name (from Cfg().ServerName()) instead of the old
-// hardcoded MONITOR.HOME.LAN.
+// TestBrandShowsServerName pins #101: the sidebar brand subtitle renders the configured
+// server.name (from Cfg().ServerName()) instead of the old hardcoded MONITOR.HOME.LAN.
 func TestBrandShowsServerName(t *testing.T) {
 	d := enrollTestDeps(t)
 	cfg := config.Default()
@@ -78,12 +74,8 @@ func TestHostPageRendersInventory(t *testing.T) {
 	}
 }
 
-// TestServerServesDashboardAndAssets pins newHandler's routes: GET / is
-// viewer+ (requireRole(RoleViewer, ...)), so a SIGNED-IN request renders the
-// base layout (brand + nav) around the dashboard while an anonymous one
-// redirects to /login; and GET /assets/style.css serves the embedded CSS
-// verbatim (anonymously -- assets aren't gated) with a text/css content type.
-// httptest.NewRecorder exercises the handler directly, no real port bound.
+// TestServerServesDashboardAndAssets pins newHandler's routes: GET / is viewer+
+// (requireRole(RoleViewer, ...)), so a SIGNED-IN request renders the base layout.
 func TestServerServesDashboardAndAssets(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
@@ -128,11 +120,8 @@ func TestServerServesDashboardAndAssets(t *testing.T) {
 	}
 }
 
-// TestDashboardLinksToMonitoringPage pins the reverse of the earlier
-// /monitoring 404 fix (284abbd): now that /monitoring is a real, working
-// page, the dashboard's "Top containers"/"Filesystems" panels must link to
-// it again -- a dead link was worse than no link, but a live link that's
-// missing is just as much a regression once the target exists.
+// TestDashboardLinksToMonitoringPage pins the reverse of the earlier /monitoring 404 fix
+// (284abbd): now that /monitoring is a real, working page.
 func TestDashboardLinksToMonitoringPage(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
@@ -158,9 +147,8 @@ func TestDashboardLinksToMonitoringPage(t *testing.T) {
 	}
 }
 
-// TestServerServesJSAssetWithApplicationJavascriptType pins the JS content
-// type explicitly: http.FileServer's default mime lookup can vary by OS
-// mime.types, so newHandler must not rely on it for .js.
+// TestServerServesJSAssetWithApplicationJavascriptType pins the JS content type explicitly:
+// http.FileServer's default mime lookup can vary by OS mime.types.
 func TestServerServesJSAssetWithApplicationJavascriptType(t *testing.T) {
 	h := newHandler(testDeps(t))
 	rr := httptest.NewRecorder()
@@ -176,10 +164,8 @@ func TestServerServesJSAssetWithApplicationJavascriptType(t *testing.T) {
 	}
 }
 
-// TestAssetsDirectoryListingSuppressed pins that GET /assets/ (no filename)
-// does not leak an http.FileServer directory index of every embedded asset:
-// it must 404, while a concrete asset under it still serves 200 with its
-// content type.
+// TestAssetsDirectoryListingSuppressed pins that GET /assets/ (no filename) does not leak
+// an http.FileServer directory index of every embedded asset: it must 404.
 func TestAssetsDirectoryListingSuppressed(t *testing.T) {
 	h := newHandler(testDeps(t))
 
@@ -203,8 +189,7 @@ func TestAssetsDirectoryListingSuppressed(t *testing.T) {
 }
 
 // TestStartBindsWhenEnabled exercises the other half of Start not covered by
-// TestStartReturnsNoopStop: when Enabled is true, Start must actually bind a
-// listener on Listen and return a stop func that shuts it down cleanly.
+// TestStartReturnsNoopStop: when Enabled is true.
 func TestStartBindsWhenEnabled(t *testing.T) {
 	stop, err := Start(testDeps(t))
 	if err != nil {
@@ -216,11 +201,8 @@ func TestStartBindsWhenEnabled(t *testing.T) {
 	stop() // must not panic
 }
 
-// TestStartReturnsNoopStop pins Start's Enabled=false path (the disabled
-// half of the contract the trinetra-web binary's run func,
-// cmd/trinetra-web/main.go, relies on): no
-// listener is bound, and stop/err are still safe to use. See
-// TestStartBindsWhenEnabled above for the Enabled=true half.
+// TestStartReturnsNoopStop pins Start's Enabled=false path (the disabled half of the
+// contract the trinetra-web binary's run func, cmd/trinetra-web/main.go, relies on).
 func TestStartReturnsNoopStop(t *testing.T) {
 	stop, err := Start(Deps{
 		Enabled: false,

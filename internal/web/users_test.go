@@ -8,11 +8,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-// TestUserStorePutGetRoundTrip pins the core persistence contract: a user
-// (with a credential) written via Put comes back byte-for-byte equivalent
-// via Get, including through a brand-new jsonUserStore instance pointed at
-// the same file (i.e. this is actually reading the file back, not just an
-// in-memory cache).
+// TestUserStorePutGetRoundTrip pins the core persistence contract: a user (with a
+// credential) written via Put comes back byte-for-byte equivalent via Get.
 func TestUserStorePutGetRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := newUserStore(dir)
@@ -56,9 +53,8 @@ func TestUserStorePutGetRoundTrip(t *testing.T) {
 	}
 }
 
-// TestUserStorePersistsWith0600Perms pins the design doc's security
-// checklist expectation for on-disk secrets/credential material: users.json
-// must not be group/world-readable.
+// TestUserStorePersistsWith0600Perms pins the design doc's security checklist expectation
+// for on-disk secrets/credential material: users.json must not be group/world-readable.
 func TestUserStorePersistsWith0600Perms(t *testing.T) {
 	dir := t.TempDir()
 	store := newUserStore(dir)
@@ -113,9 +109,8 @@ func TestUserStoreByNameListDelete(t *testing.T) {
 	}
 }
 
-// TestUserStoreGetMissingIsNotFound pins the empty/nonexistent-file case: a
-// fresh StateDir with no users.json yet must behave as "not found", not
-// error out (e.g. a handler probing before any enrollment has happened).
+// TestUserStoreGetMissingIsNotFound pins the empty/nonexistent-file case: a fresh StateDir
+// with no users.json yet must behave as "not found", not error out.
 func TestUserStoreGetMissingIsNotFound(t *testing.T) {
 	store := newUserStore(t.TempDir())
 	if _, ok := store.Get("anything"); ok {

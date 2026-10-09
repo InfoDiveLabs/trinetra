@@ -8,12 +8,8 @@ import (
 	"time"
 )
 
-// EnrollToken is a single admin-issued, single-use, expiring invitation to
-// enroll a new web UI account. /enroll?token=... (routes.go's
-// enrollPageHandler/enrollBeginHandler) redeems it via tokenStore.Redeem,
-// and the Role it carries is what the resulting NEW account is created with
-// (see resolveEnrollRole, below). The user management page is what
-// actually issues these (tokenStore.Issue).
+// EnrollToken is a single admin-issued, single-use, expiring invitation to enroll a new web
+// UI account. /enroll?token=...
 type EnrollToken struct {
 	// Token is the opaque, unguessable value carried in the /enroll?token=
 	// query string and the /enroll/begin request body's "token" field.
@@ -23,37 +19,25 @@ type EnrollToken struct {
 	// Expires is the Unix seconds timestamp after which Redeem refuses this
 	// token even if it was never used.
 	Expires int64 `json:"expires"`
-	// Used marks a token permanently spent: Redeem sets this on its first
-	// (successful) call and refuses every call thereafter, regardless of
-	// Expires -- a token is single-use even within its TTL.
+	// Used marks a token permanently spent: Redeem sets this on its first (successful) call
+	// and refuses every call thereafter, regardless of Expires.
 	Used bool `json:"used"`
 }
 
-// tokenStore is a file-backed (<StateDir>/enroll_tokens.json) enrollment
-// token store, structured the same way as jsonUserStore/jsonSessionStore: no
-// in-memory cache, every method reloads from disk under the shared per-path
-// lock (fileStoreMutex, users.go) so Issue/Redeem's read-modify-write can't
-// race a concurrent goroutine within this process -- including one holding a
-// DIFFERENT tokenStore instance over the same file, which the handlers create
-// per request (a second OS process editing the file concurrently is out of
-// scope, same caveat as the other two stores).
+// tokenStore is a file-backed (<StateDir>/enroll_tokens.json) enrollment token store,
+// structured the same way as jsonUserStore/jsonSessionStore: no in-memory cache.
 type tokenStore struct {
 	path string
-	// now overrides the store's clock; nil (the production default) means
-	// time.Now. Tests set this directly to drive expiry deterministically,
-	// mirroring jsonSessionStore's own `now` field.
+	// now overrides the store's clock; nil (the production default) means time.Now.
 	now func() time.Time
 }
 
 // newTokenStore returns a tokenStore rooted at <stateDir>/enroll_tokens.json.
-// Like newUserStore/newSessionStore, this touches no disk until an
-// operation is actually performed.
 func newTokenStore(stateDir string) *tokenStore {
 	return &tokenStore{path: filepath.Join(stateDir, "enroll_tokens.json")}
 }
 
-// clock returns the store's time source, defaulting to time.Now when s.now
-// is unset.
+// clock returns the store's time source, defaulting to time.Now when s.now is unset.
 func (s *tokenStore) clock() time.Time {
 	if s.now != nil {
 		return s.now()
@@ -61,9 +45,8 @@ func (s *tokenStore) clock() time.Time {
 	return time.Now()
 }
 
-// loadLocked reads and parses the store file, returning (nil, nil) if it
-// doesn't exist yet (a fresh install/StateDir, or one where no token has
-// ever been issued). Callers must hold the store's fileStoreMutex.
+// loadLocked reads and parses the store file, returning (nil, nil) if it doesn't exist yet
+// (a fresh install/StateDir, or one where no token has ever been issued).
 func (s *tokenStore) loadLocked() ([]*EnrollToken, error) {
 	b, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
@@ -79,13 +62,8 @@ func (s *tokenStore) loadLocked() ([]*EnrollToken, error) {
 	return toks, nil
 }
 
-// saveLocked atomically rewrites the store file with toks, tightening perms
-// to 0600 -- an enrollment token is bearer-equivalent (whoever holds the
-// string can mint an account at the role it carries), so this file must
-// never be group/world-readable, the same reasoning as sessions.json.
-// Atomic (write-temp + rename) so a crash mid-write can never leave a
-// truncated/corrupt file behind, mirroring jsonUserStore/jsonSessionStore's
-// own saveLocked. Callers must hold the store's fileStoreMutex.
+// saveLocked atomically rewrites the store file with toks, tightening perms to 0600 -- an
+// enrollment token is bearer-equivalent.
 func (s *tokenStore) saveLocked(toks []*EnrollToken) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -99,9 +77,7 @@ func (s *tokenStore) saveLocked(toks []*EnrollToken) error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return fmt.Errorf("web: write %s: %w", tmp, err)
 	}
-	// Belt-and-suspenders: WriteFile only applies the mode when it CREATES
-	// the file, so an explicit Chmod re-tightens perms even if a stale tmp
-	// from a previous crash already existed with wider ones.
+	// Belt-and-suspenders: WriteFile only applies the mode when it CREATES the file.
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("web: chmod %s: %w", tmp, err)
@@ -113,13 +89,8 @@ func (s *tokenStore) saveLocked(toks []*EnrollToken) error {
 	return nil
 }
 
-// Issue mints a fresh, single-use enrollment token granting role, valid for
-// ttl, and persists it, returning the token string. The design doc's
-// interface fixes this signature to return just the string (no error): a
-// (rare, e.g. disk-full/permissions) persistence failure is swallowed and
-// Issue returns "" instead -- Redeem("") always fails with "unknown
-// enrollment token" like any other bogus value, so a caller that somehow
-// hits this can't mint a usable token, but nothing unsafe results either.
+// Issue mints a fresh, single-use enrollment token granting role, valid for ttl, and
+// persists it, returning the token string.
 func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 	tok, err := newRandomID(24)
 	if err != nil {
@@ -142,10 +113,8 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 	return tok
 }
 
-// Redeem looks up tok and, if it exists, is unexpired, and hasn't already
-// been used, marks it Used and returns its Role. Every other case -- unknown
-// token, expired, or already used -- returns an error and leaves the store
-// untouched.
+// Redeem looks up tok and, if it exists, is unexpired, and hasn't already been used, marks
+// it Used and returns its Role.
 func (s *tokenStore) Redeem(tok string) (Role, error) {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -174,9 +143,8 @@ func (s *tokenStore) Redeem(tok string) (Role, error) {
 	return "", fmt.Errorf("web: unknown enrollment token")
 }
 
-// GC removes every token whose Expires is <= now, whether or not it was ever
-// used -- the same eager disk-space-reclaim role as SessionStore.GC,
-// decoupled from Redeem's own immediate (lazy) expiry/used check.
+// GC removes every token whose Expires is <= now, whether or not it was ever used -- the
+// same eager disk-space-reclaim role as SessionStore.GC.
 func (s *tokenStore) GC(now int64) {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -196,9 +164,7 @@ func (s *tokenStore) GC(now int64) {
 	}
 }
 
-// startGC runs GC on a ticker every interval until the returned stop func is
-// called, mirroring jsonSessionStore.startGC. server.go's Start wires this
-// up alongside the session/ceremony GC tickers.
+// startGC runs GC on a ticker every interval until the returned stop func is called.
 func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 	done := make(chan struct{})
 	ticker := time.NewTicker(interval)
@@ -216,32 +182,7 @@ func (s *tokenStore) startGC(interval time.Duration) (stop func()) {
 	return func() { close(done) }
 }
 
-// resolveEnrollRole decides, at /enroll/begin, how a NEW registration should
-// proceed:
-//
-//   - a non-blank token: role is whatever tokens.Redeem(token) grants (Redeem
-//     enforces unknown/expired/used rejection, and burns the single-use
-//     token now); bootstrap is false. The role is final.
-//   - no token, and the user store has no accounts yet: this is a first-run
-//     bootstrap ATTEMPT -- bootstrap is true and role is left empty. The
-//     account's admin role is NOT decided here: two concurrent tokenless
-//     begins would both see an empty store, so the authoritative "0 users ⇒
-//     admin, else refuse" decision is deferred to finish time
-//     (jsonUserStore.CreateFirstAdmin, under the write lock). This begin-time
-//     check is only a fast-fail for the obviously-closed case below.
-//   - no token, and at least one account already exists: an error. Open,
-//     tokenless enrollment is only ever valid for the very first account;
-//     every subsequent one needs an admin-issued invite.
-//   - no token, and the user store cannot be READ (corrupt/unavailable
-//     users.json, not merely absent): an error -- fail CLOSED (#105). An
-//     unreadable store must never be mistaken for a genuinely empty one, or
-//     an attacker could tokenlessly bootstrap an admin during the window the
-//     store is unreadable. IsEmpty (not List) is used so this read error is
-//     surfaced rather than masked into an empty slice.
-//
-// A true bootstrap result is threaded through the ceremony (regCeremonyData.
-// Bootstrap) so finishRegistration knows to route through CreateFirstAdmin
-// rather than a plain Put.
+// resolveEnrollRole decides, at /enroll/begin, how a NEW registration should proceed:
 func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role Role, bootstrap bool, err error) {
 	if token != "" {
 		r, err := tokens.Redeem(token)
@@ -250,10 +191,8 @@ func resolveEnrollRole(tokens *tokenStore, users UserStore, token string) (role 
 		}
 		return r, false, err
 	}
-	// Fail CLOSED on an unreadable store (#105 secondary hardening): IsEmpty
-	// surfaces the read error that List() would have hidden as an empty slice,
-	// so a corrupt/unavailable users.json can never be mistaken for a genuine
-	// empty first-run store and open a tokenless-admin bootstrap window.
+	// Fail CLOSED on an unreadable store (#105 secondary hardening): IsEmpty surfaces the read
+	// error that List() would have hidden as an empty slice.
 	empty, err := users.IsEmpty()
 	if err != nil {
 		return "", false, fmt.Errorf("web: cannot verify user store is empty; refusing tokenless enrollment: %w", err)

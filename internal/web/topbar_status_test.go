@@ -9,14 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestTopbarStatusCriticalAlertsFiring pins Part 3 of the field-feedback fix:
-// N active CRITICAL alerts must drive the topbar to "crit" with real-count
-// text, not the old hardcoded "2 alerts firing" regardless of how many were
-// actually active. The count is the TOTAL active-alert count (B4, 2026-09-25
-// UI audit), not just the critical ones: /alerts, the dashboard's active
-// alerts panel and the sidebar Alerts badge all count every active alert
-// regardless of severity (NavCounts.Alerts, navCountsFor's doc), so the pill
-// must agree with them rather than silently dropping the warnings.
+// TestTopbarStatusCriticalAlertsFiring pins Part 3 of the field-feedback fix: N active
+// CRITICAL alerts must drive the topbar to "crit" with real-count text.
 func TestTopbarStatusCriticalAlertsFiring(t *testing.T) {
 	alerts := []activeAlertView{
 		{Key: "disk:/", Critical: true},
@@ -92,11 +86,8 @@ func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
 	}
 }
 
-// TestConfigPageTopbarReflectsRealActiveCriticalAlert pins that every page's
-// topbar is accurate: GET /config must not pass a literal "ok" status into
-// newPageData regardless of what's firing. With a critical alert active on
-// disk, the rendered topbar pill must show "crit" styling and a real "1 alert
-// firing" count -- not "All systems normal".
+// TestConfigPageTopbarReflectsRealActiveCriticalAlert pins that every page's topbar is
+// accurate.
 func TestConfigPageTopbarReflectsRealActiveCriticalAlert(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "disk full", Severity: "critical"}}}
@@ -121,11 +112,8 @@ func TestConfigPageTopbarReflectsRealActiveCriticalAlert(t *testing.T) {
 	}
 }
 
-// TestConfigPageTopbarCountMatchesNavBadge pins B4 (2026-09-25 UI audit)
-// end to end: with 1 critical + 1 warning alert active, the topbar pill's
-// count must equal navCountsFor's Alerts badge (both from the same
-// activeAlertsViaAPI read) -- "2 alerts firing", not "1 alert firing" from
-// counting only the critical one.
+// TestConfigPageTopbarCountMatchesNavBadge pins B4 (2026-09-25 UI audit) end to end: with 1
+// critical + 1 warning alert active.
 func TestConfigPageTopbarCountMatchesNavBadge(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{

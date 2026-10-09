@@ -54,11 +54,8 @@ type silenceMatcherRow struct {
 	Severity string
 }
 
-// parseMatcherRows reads prefix+"count" and prefix+"<i>_tag"/"node"/"rule"/
-// "severity" off r, rebuilding exactly what was posted -- the same indexed-
-// field convention parseAlertingDraftForm uses for a route's own matchers.
-// Always returns at least one (possibly blank) row, so the template always
-// has something to render an "Add matcher"/"Remove matcher" control around.
+// parseMatcherRows reads prefix+"count" and prefix+"<i>_tag"/"node"/"rule"/ "severity" off
+// r, rebuilding exactly what was posted.
 func parseMatcherRows(r *http.Request, prefix string) []silenceMatcherRow {
 	count, _ := strconv.Atoi(r.FormValue(prefix + "count"))
 	rows := make([]silenceMatcherRow, 0, count)
@@ -103,11 +100,8 @@ func applyMatcherRowOp(rows *[]silenceMatcherRow, op string) {
 	}
 }
 
-// matcherRowsToCore converts rows to core.Matchers, DROPPING an entirely
-// blank row (every field empty) rather than posting it as a Matcher{} --
-// exactly like AlertingDraft.toConfig's identical treatment of an untouched
-// freshly-added matcher row, so it never itself becomes "a silence must
-// match something" the instant a fresh row is added.
+// matcherRowsToCore converts rows to core.Matchers, DROPPING an entirely blank row (every
+// field empty) rather than posting it as a Matcher{}.
 func matcherRowsToCore(rows []silenceMatcherRow) []core.Matcher {
 	var out []core.Matcher
 	for _, m := range rows {
@@ -147,9 +141,8 @@ func matchersText(ms []core.Matcher) string {
 	return strings.Join(parts, " OR ")
 }
 
-// buildSilenceNodeNames reads the roster through r's request-scoped
-// fleetMemo (fleet_memo.go), exactly like buildAlertingTestNodeNames --
-// backs the matcher rows' Node field's <datalist> of roster display names.
+// buildSilenceNodeNames reads the roster through r's request-scoped fleetMemo
+// (fleet_memo.go), exactly like buildAlertingTestNodeNames.
 func buildSilenceNodeNames(r *http.Request, d Deps) []string {
 	nodes, err := fleetMemoFrom(r).fleetNodes(d)
 	if err != nil {
@@ -163,13 +156,8 @@ func buildSilenceNodeNames(r *http.Request, d Deps) []string {
 	return names
 }
 
-// ---------------------------------------------------------------------------
-// Silence tabs: GET ?tab=active|upcoming|expired (a closed three-value
-// enum). "Expired" shows the last 7 days, because the master's own
-// silenceStore.Prune (internal/trinetra/fleet_silences.go) already drops
-// anything older than that -- Silences() never returns an older one to filter
-// out here.
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Silence tabs:
+// GET ?tab=active|upcoming|expired (a closed three-value enum).
 
 type silenceTab string
 
@@ -179,9 +167,7 @@ const (
 	silenceTabExpired  silenceTab = "expired"
 )
 
-// parseSilenceTab reads ?tab= off r, defaulting to Active for anything
-// absent/unrecognized -- the same "unknown value degrades to the default"
-// convention parseFleetQuery's dir field uses.
+// parseSilenceTab reads ?tab= off r, defaulting to Active for anything absent/unrecognized.
 func parseSilenceTab(r *http.Request) silenceTab {
 	switch silenceTab(r.URL.Query().Get("tab")) {
 	case silenceTabUpcoming:
@@ -204,12 +190,7 @@ func parseSilencePage(r *http.Request) int {
 }
 
 // paginateSilences slices all (already tab-filtered/sorted) into page's
-// fleetIncidentsPageSize-row window, clamping page into [1, totalPages]
-// first -- mirrors paginateIncidents exactly (global-constraints.md: "Lists
-// are paginated (50 per page)"). The maintenance windows list is NOT
-// paginated: it's a small, admin-configured set of recurring rules (closer
-// in kind to the alerting page's routes/policies list, also unpaginated,
-// than to an unbounded event log like silences/incidents).
+// fleetIncidentsPageSize-row window, clamping page into [1, totalPages] first.
 func paginateSilences(all []core.Silence, page int) (pageItems []core.Silence, totalPages, clampedPage int) {
 	total := len(all)
 	totalPages = (total + fleetIncidentsPageSize - 1) / fleetIncidentsPageSize
@@ -258,10 +239,8 @@ func silenceTabLinks(tab silenceTab) []SilenceTabLink {
 	return out
 }
 
-// filterSilencesByTab returns the subset of all matching tab as of now (unix
-// seconds): active is Start<=now<End, upcoming is Start>now, expired is
-// End<=now (silenceStore.Prune already keeps this to the last 7 days -- see
-// this file's own doc).
+// filterSilencesByTab returns the subset of all matching tab as of now (unix seconds):
+// active is Start<=now<End, upcoming is Start>now, expired is End<=now.
 func filterSilencesByTab(all []core.Silence, tab silenceTab, now int64) []core.Silence {
 	out := make([]core.Silence, 0, len(all))
 	for _, s := range all {
@@ -291,15 +270,8 @@ func filterSilencesByTab(all []core.Silence, tab silenceTab, now int64) []core.S
 	return out
 }
 
-// silenceTimeText renders a unix timestamp in the MASTER's own local zone
-// (time.Local) with its abbreviation appended -- e.g. "2030-06-01 12:00
-// IST" -- "-" for <= 0. This is the ONE helper every silence time on this
-// page (the list's Start/End) renders through: a silence's Start/End
-// datetime-local inputs are parsed in time.Local (parseDatetimeLocal), so
-// rendering them back in UTC with no zone label would show an admin who typed
-// "12:00" for noon their own time some UTC-shifted reading with nothing
-// telling them why. See silenceTimeZoneNote for the form-side half (the
-// visible "Times are in ..." note next to Start/End).
+// silenceTimeText renders a unix timestamp in the MASTER's own local zone (time.Local) with
+// its abbreviation appended -- e.g. "2030-06-01 12:00 IST" -- "-" for <= 0.
 func silenceTimeText(ts int64) string {
 	if ts <= 0 {
 		return "-"
@@ -309,14 +281,8 @@ func silenceTimeText(ts int64) string {
 	return t.Format("2006-01-02 15:04") + " " + abbr
 }
 
-// silenceTimeZoneNote is the "Times are in <IANA name> (<abbrev>)" note
-// rendered next to the create-silence form's Start/Duration/End fields,
-// telling the admin which zone silenceTimeText (above) and
-// parseDatetimeLocal/formatDatetimeLocal (below) both use. time.Local's own
-// String() is the IANA name when the host has one configured (e.g. via the TZ
-// environment variable or /etc/localtime); on a host with no such name
-// configured it's the literal placeholder "Local", which is never shown
-// verbatim -- the abbreviation alone is shown instead.
+// silenceTimeZoneNote is the "Times are in <IANA name> (<abbrev>)" note rendered next to
+// the create-silence form's Start/Duration/End fields.
 func silenceTimeZoneNote() string {
 	now := time.Now()
 	name := now.Location().String()
@@ -356,13 +322,8 @@ func newSilenceRow(s core.Silence, now int64) SilenceRow {
 // Silence create form draft
 // ---------------------------------------------------------------------------
 
-// datetimeLocalLayout is the exact format an <input type="datetime-local">
-// posts/expects (no seconds, no timezone offset -- the browser's own local
-// wall clock). Parsed/formatted in the SERVER's local timezone (time.Local):
-// this is a self-hosted monitoring tool where the admin's browser and the
-// master daemon are conventionally in (or close enough to) the same
-// timezone, and there is no per-session timezone preference to draw on
-// instead -- documented here rather than silently assumed.
+// datetimeLocalLayout is the exact format an <input type="datetime-local"> posts/expects
+// (no seconds, no timezone offset -- the browser's own local wall clock).
 const datetimeLocalLayout = "2006-01-02T15:04"
 
 func formatDatetimeLocal(t time.Time) string {
@@ -410,11 +371,8 @@ type SilenceDurationOption struct {
 	Selected bool
 }
 
-// silenceDurationOptions reuses incidentSilenceDurationChoices verbatim
-// (handlers_fleet.go) -- the SAME 30m/1h/4h/24h presets the
-// silence-from-incident form offers -- plus a leading blank entry so a
-// duration selection is never forced when the admin means to use the explicit
-// end field instead.
+// silenceDurationOptions reuses incidentSilenceDurationChoices verbatim (handlers_fleet.go)
+// -- the SAME 30m/1h/4h/24h presets the silence-from-incident form offers.
 func silenceDurationOptions(selected string) []SilenceDurationOption {
 	opts := make([]SilenceDurationOption, 0, len(incidentSilenceDurationChoices)+1)
 	opts = append(opts, SilenceDurationOption{Key: "", Label: "(use explicit end below)", Selected: selected == ""})
@@ -491,11 +449,8 @@ var commonTZChoices = []string{
 	"Australia/Sydney", "Pacific/Auckland",
 }
 
-// masterLocalTZName returns this daemon's own local IANA zone name (e.g. set
-// via the TZ environment variable, or the system zone), or "" when it can't
-// be resolved to a loadable name at all (time.Local's own String() is the
-// literal "Local" on a host with no IANA name configured -- time.LoadLocation
-// would reject that verbatim, so it's treated the same as unresolvable).
+// masterLocalTZName returns this daemon's own local IANA zone name (e.g. set via the TZ
+// environment variable, or the system zone).
 func masterLocalTZName() string {
 	name := time.Now().Location().String()
 	if name == "" || name == "Local" || name == "UTC" {
@@ -527,10 +482,7 @@ func tzSelectOptions() []string {
 	return out
 }
 
-// maintenanceDraft is the create-maintenance form's entire working copy. TZ
-// is split into TZSelect (the <select>'s own value) and TZCustom (the
-// free-text override, which wins when non-blank) -- ResolvedTZ folds the two
-// back into the one string core.Maintenance.TZ actually stores.
+// maintenanceDraft is the create-maintenance form's entire working copy.
 type maintenanceDraft struct {
 	Name     string
 	Matchers []silenceMatcherRow
@@ -541,9 +493,8 @@ type maintenanceDraft struct {
 	TZCustom string
 }
 
-// newMaintenanceDraft is the fresh-GET default: one blank matcher row, no
-// weekdays checked, blank From/To, TZ defaulting to the master's own local
-// zone (or UTC when that can't be resolved).
+// newMaintenanceDraft is the fresh-GET default: one blank matcher row, no weekdays checked,
+// blank From/To, TZ defaulting to the master's own local zone.
 func newMaintenanceDraft() maintenanceDraft {
 	tz := masterLocalTZName()
 	if tz == "" {
@@ -593,11 +544,8 @@ func parseMaintenanceDraftForm(r *http.Request) maintenanceDraft {
 // weekdayAbbrev is Sun..Sat, index == time.Weekday's own int value.
 var weekdayAbbrev = [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 
-// WeekdayOption is one of the maintenance form's seven weekday checkboxes --
-// built server-side (rather than a template range over a literal) since
-// html/template's funcMap here has no general-purpose "slice" helper
-// (templates.go's funcMap only defines what an existing page already
-// needed).
+// WeekdayOption is one of the maintenance form's seven weekday checkboxes -- built
+// server-side.
 type WeekdayOption struct {
 	Day     int
 	Label   string
@@ -700,11 +648,8 @@ func maintenanceErrField(err error) string {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Flash: a FIXED set of codes only (like resolveIncidentFlash) -- every value
-// below is a literal the handler chose, never anything reflected from the
-// request.
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Flash: a
+// FIXED set of codes only (like resolveIncidentFlash).
 
 func resolveSilencesFlash(r *http.Request) (text string, isErr bool) {
 	switch r.URL.Query().Get("flash") {
@@ -720,12 +665,10 @@ func resolveSilencesFlash(r *http.Request) (text string, isErr bool) {
 	return "", false
 }
 
-// ---------------------------------------------------------------------------
-// Page data
+// --------------------------------------------------------------------------- Page data
 // ---------------------------------------------------------------------------
 
-// SilencesPageData is what templates/fleet_silences.html's "content" block
-// renders against.
+// SilencesPageData is what templates/fleet_silences.html's "content" block renders against.
 type SilencesPageData struct {
 	PageData
 
@@ -742,10 +685,8 @@ type SilencesPageData struct {
 
 	SilenceDraft           silenceDraft
 	SilenceDurationOptions []SilenceDurationOption
-	// TZNote is the "Times are in <IANA name> (<abbrev>)" note rendered next to
-	// the Start/Duration/End fields, so an admin knows which zone every silence
-	// time on this page (silenceTimeText) and the datetime-local inputs
-	// (parseDatetimeLocal) both use.
+	// TZNote is the "Times are in <IANA name> (<abbrev>)" note rendered next to the
+	// Start/Duration/End fields, so an admin knows which zone every silence time on this page.
 	TZNote          string
 	SilenceErr      string
 	SilenceErrField string
@@ -764,10 +705,8 @@ type SilencesPageData struct {
 	FlashErr bool
 }
 
-// silencesPageOptions is buildSilencesPageData's input: the page's
-// transient, this-response-only state, mirroring alertingPageOptions'
-// Loaded/Draft/Flash/ErrField shape but with two independent draft/error
-// pairs (one per form).
+// silencesPageOptions is buildSilencesPageData's input: the page's transient,
+// this-response-only state.
 type silencesPageOptions struct {
 	Tab silenceTab
 
@@ -804,8 +743,7 @@ func buildSilencesPageData(r *http.Request, d Deps, opts silencesPageOptions) Si
 		return "/fleet/silences?tab=" + string(opts.Tab) + "&page=" + strconv.Itoa(p)
 	}
 
-	// Maintenance windows are NOT paginated -- see paginateSilences' doc for
-	// the rationale.
+	// Maintenance windows are NOT paginated -- see paginateSilences' doc for the rationale.
 	mrows := make([]MaintenanceRow, 0, len(allMaint))
 	for _, m := range allMaint {
 		mrows = append(mrows, newMaintenanceRow(m))
@@ -854,8 +792,7 @@ func buildSilencesPageData(r *http.Request, d Deps, opts silencesPageOptions) Si
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Rendering
+// --------------------------------------------------------------------------- Rendering
 // ---------------------------------------------------------------------------
 
 func renderSilencesPage(w http.ResponseWriter, data SilencesPageData, status int) error {
@@ -869,10 +806,8 @@ func renderSilencesPage(w http.ResponseWriter, data SilencesPageData, status int
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
-// renderSilencesError re-renders the full page with a top-level flash
-// (FlashErr=true) at the given 4xx status (FleetAPI errors render as a flash,
-// never a 500), for an error that names no specific form field (a bad/missing
-// id, "fleet not available", an invalid form body).
+// renderSilencesError re-renders the full page with a top-level flash (FlashErr=true) at
+// the given 4xx status (FleetAPI errors render as a flash, never a 500).
 func renderSilencesError(w http.ResponseWriter, r *http.Request, d Deps, tab silenceTab, msg string, status int) {
 	data := buildSilencesPageData(r, d, silencesPageOptions{Tab: tab, Flash: msg, FlashErr: true})
 	if err := renderSilencesPage(w, data, status); err != nil {
@@ -880,9 +815,8 @@ func renderSilencesError(w http.ResponseWriter, r *http.Request, d Deps, tab sil
 	}
 }
 
-// redirectToSilences redirects to GET /fleet/silences with a fixed ?flash=
-// code and a server-computed ?tab= -- both closed enums, never anything the
-// client posted (see this file's own top doc).
+// redirectToSilences redirects to GET /fleet/silences with a fixed ?flash= code and a
+// server-computed ?tab= -- both closed enums, never anything the client posted.
 func redirectToSilences(w http.ResponseWriter, r *http.Request, tab silenceTab, flashCode string) {
 	v := url.Values{"tab": {string(tab)}}
 	if flashCode != "" {
@@ -891,8 +825,7 @@ func redirectToSilences(w http.ResponseWriter, r *http.Request, tab silenceTab, 
 	http.Redirect(w, r, "/fleet/silences?"+v.Encode(), http.StatusSeeOther)
 }
 
-// ---------------------------------------------------------------------------
-// Handlers
+// --------------------------------------------------------------------------- Handlers
 // ---------------------------------------------------------------------------
 
 // fleetSilencesPageHandler serves GET /fleet/silences: viewer+ (read-only
@@ -911,13 +844,7 @@ func fleetSilencesPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetSilenceCreateHandler serves POST /fleet/silences (admin+CSRF,
-// fleetAdminMutation): op=add_matcher/remove_matcher:<i> reshapes the draft
-// in place and re-renders at 200 without saving; op=""/"save" validates
-// (resolveSilenceWindow, then CreateSilence itself) and either re-renders
-// the form with its error inline (never a redirect, so the just-typed input
-// survives) or, on success, redirects to GET /fleet/silences?tab=<landing>
-// -- Upcoming when the new silence's Start is in the future, else Active.
+// fleetSilenceCreateHandler serves POST /fleet/silences (admin+CSRF, fleetAdminMutation).
 func fleetSilenceCreateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -1009,9 +936,7 @@ func fleetSilenceExpireHandler(d Deps) http.HandlerFunc {
 }
 
 // fleetMaintenanceCreateHandler serves POST /fleet/maintenance (admin+CSRF,
-// fleetAdminMutation): the same op-reshape/validate/save shape as
-// fleetSilenceCreateHandler, over the maintenance draft. Only ever creates a
-// NEW window -- SaveMaintenance is always called with ID "".
+// fleetAdminMutation).
 func fleetMaintenanceCreateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {
@@ -1062,9 +987,8 @@ func fleetMaintenanceCreateHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetMaintenanceDeleteHandler serves POST /fleet/maintenance/{id}/delete
-// (admin+CSRF, fleetAdminMutation), used with the same in-page two-step
-// confirm as fleetSilenceExpireHandler.
+// fleetMaintenanceDeleteHandler serves POST /fleet/maintenance/{id}/delete (admin+CSRF,
+// fleetAdminMutation).
 func fleetMaintenanceDeleteHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGateHTML(w, r, d) {

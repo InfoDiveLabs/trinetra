@@ -16,10 +16,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// effectiveWebMode returns cfg.Web.Mode, or "proxy" (the documented default,
-// see internal/config.Config.Default) if the config was built directly
-// (e.g. a bare *config.Config{} in a test) rather than through Default()/
-// Load(), which always backfill it.
+// effectiveWebMode returns cfg.Web.Mode, or "proxy" (the documented default, see
+// internal/config.Config.Default) if the config was built directly.
 func effectiveWebMode(cfg *config.Config) string {
 	if cfg.Web.Mode == "" {
 		return "proxy"
@@ -27,12 +25,8 @@ func effectiveWebMode(cfg *config.Config) string {
 	return cfg.Web.Mode
 }
 
-// validateOrigin fail-fasts at startup (called by Start before binding, see
-// server.go) on any config that would let the web server bind with a
-// passkey-unsafe rp_id/origin, or with a serving mode missing the fields it
-// needs to actually terminate TLS. Per the design doc's security checklist:
-// "rp_id/origin must match the public hostname in every mode ... validated
-// at startup -- refuse to start on mismatch."
+// validateOrigin fail-fasts at startup (called by Start before binding, see server.go) on
+// any config that would let the web server bind with a passkey-unsafe rp_id/origin.
 func validateOrigin(cfg *config.Config) error {
 	mode := effectiveWebMode(cfg)
 	switch mode {
@@ -43,10 +37,8 @@ func validateOrigin(cfg *config.Config) error {
 
 	rpID, origin := cfg.Web.RPID, cfg.Web.Origin
 
-	// proxy mode alone may leave rp_id/origin unset: it derives them
-	// per-request from the trusted local reverse proxy's forwarded headers
-	// instead (see requestOrigin). autocert/manual terminate TLS themselves
-	// against a fixed public hostname, so both must be configured explicitly.
+	// proxy mode alone may leave rp_id/origin unset: it derives them per-request from the
+	// trusted local reverse proxy's forwarded headers instead.
 	if mode != "proxy" {
 		if rpID == "" {
 			return fmt.Errorf("web.rp_id must be set in %s mode", mode)
@@ -56,11 +48,8 @@ func validateOrigin(cfg *config.Config) error {
 		}
 	}
 
-	// Whenever both are set (required above for non-proxy, optional but still
-	// checked for proxy), rp_id must equal origin's host: this is the same host
-	// WebAuthn's relying-party validation enforces at ceremony time, so a
-	// mismatch here would only be caught later, at the worst possible moment (a
-	// user's browser rejecting every passkey).
+	// Whenever both are set (required above for non-proxy, optional but still checked for
+	// proxy), rp_id must equal origin's host.
 	if rpID != "" && origin != "" {
 		u, err := url.Parse(origin)
 		if err != nil {
@@ -95,13 +84,8 @@ func validateOrigin(cfg *config.Config) error {
 	return nil
 }
 
-// isLoopbackAddr reports whether addr (a "host:port" listen address, e.g.
-// Deps.Listen) is bound to loopback -- the only case in which trusting
-// X-Forwarded-Proto/X-Forwarded-Host from an incoming request is safe,
-// because only a same-host process (a local reverse proxy: Cloudflare
-// Tunnel, nginx, Caddy) can dial loopback directly. A wildcard/public bind
-// address could receive those headers from any client on the network, which
-// would let it spoof its own apparent origin.
+// isLoopbackAddr reports whether addr (a "host:port" listen address, e.g. Deps.Listen) is
+// bound to loopback.
 func isLoopbackAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -119,12 +103,6 @@ func isLoopbackAddr(addr string) bool {
 }
 
 // requestOrigin derives the scheme+host a request effectively arrived as.
-// When trustForwarded is true (the listener is loopback-bound, see
-// isLoopbackAddr) it honors X-Forwarded-Proto/X-Forwarded-Host, the headers
-// a local reverse proxy sets to describe the original client-facing
-// request; otherwise it falls back to the request's own TLS state and Host
-// header, since an untrusted, directly-reachable listener must not let a
-// client spoof its origin via those headers.
 func requestOrigin(r *http.Request, trustForwarded bool) string {
 	scheme := "http"
 	if r.TLS != nil {
@@ -146,11 +124,8 @@ func requestOrigin(r *http.Request, trustForwarded bool) string {
 // stores the per-request derived origin under.
 type requestOriginCtxKey struct{}
 
-// withRequestOrigin wraps next so every request's derived origin (see
-// requestOrigin) is available to downstream handlers via
-// requestOriginFromContext -- a future task (WebAuthn ceremonies, #60/#61)
-// needs this to validate the browser-reported origin against what the
-// server itself considers authoritative in proxy mode.
+// withRequestOrigin wraps next so every request's derived origin (see requestOrigin) is
+// available to downstream handlers via requestOriginFromContext -- a future task.
 func withRequestOrigin(trustForwarded bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), requestOriginCtxKey{}, requestOrigin(r, trustForwarded))
@@ -158,18 +133,15 @@ func withRequestOrigin(trustForwarded bool, next http.Handler) http.Handler {
 	})
 }
 
-// requestOriginFromContext returns the origin withRequestOrigin stored for
-// this request, or "" if none was stored (e.g. a handler invoked directly in
-// a test without going through newHandler's middleware chain).
+// requestOriginFromContext returns the origin withRequestOrigin stored for this request, or
+// "" if none was stored.
 func requestOriginFromContext(r *http.Request) string {
 	v, _ := r.Context().Value(requestOriginCtxKey{}).(string)
 	return v
 }
 
-// listenAndServe binds and serves handler per cfg.Web.Mode, returning a stop
-// func that gracefully shuts down whatever it started. Start calls this
-// after validateOrigin has already confirmed the mode's required fields are
-// present, so the mode-specific branches below don't re-check them.
+// listenAndServe binds and serves handler per cfg.Web.Mode, returning a stop func that
+// gracefully shuts down whatever it started.
 func listenAndServe(d Deps, handler http.Handler) (stop func(), err error) {
 	cfg := d.Cfg()
 	switch effectiveWebMode(cfg) {
@@ -192,11 +164,8 @@ func shutdownServer(srv *http.Server) func() {
 	}
 }
 
-// serveProxy binds plain HTTP on d.Listen: the mode a local reverse proxy
-// (Cloudflare Tunnel/nginx/Caddy) fronts with its own TLS termination.
-// Forwarded headers are trusted only when d.Listen is loopback-bound (see
-// isLoopbackAddr), so requestOrigin can't be spoofed by a client reaching
-// the listener directly.
+// serveProxy binds plain HTTP on d.Listen: the mode a local reverse proxy (Cloudflare
+// Tunnel/nginx/Caddy) fronts with its own TLS termination.
 func serveProxy(d Deps, handler http.Handler) (stop func(), err error) {
 	ln, err := net.Listen("tcp", d.Listen)
 	if err != nil {
@@ -207,11 +176,8 @@ func serveProxy(d Deps, handler http.Handler) (stop func(), err error) {
 	return shutdownServer(srv), nil
 }
 
-// serveManual binds TLS on d.Listen using an operator-provided cert/key
-// pair. validateOrigin already confirmed both are non-empty; a missing or
-// unreadable file surfaces as ServeTLS's own error, logged the same way
-// serveProxy's net.Listen failures would be by the caller (web.Start,
-// invoked by the trinetra-web binary).
+// serveManual binds TLS on d.Listen using an operator-provided cert/key pair.
+// validateOrigin already confirmed both are non-empty.
 func serveManual(d Deps, handler http.Handler, certFile, keyFile string) (stop func(), err error) {
 	ln, err := net.Listen("tcp", d.Listen)
 	if err != nil {
@@ -222,12 +188,8 @@ func serveManual(d Deps, handler http.Handler, certFile, keyFile string) (stop f
 	return shutdownServer(srv), nil
 }
 
-// serveAutocert binds TLS on d.Listen using golang.org/x/crypto/acme/
-// autocert to automatically obtain and renew a Let's Encrypt certificate
-// for domainsCSV (a comma-separated allowlist -- validateOrigin already
-// confirmed it's non-empty). autocert.Manager's HTTP-01 challenge handler is
-// additionally served on :80, which this mode requires be reachable from
-// the public internet (see the design doc's "Serving modes" section).
+// serveAutocert binds TLS on d.Listen using golang.org/x/crypto/acme/ autocert to
+// automatically obtain and renew a Let's Encrypt certificate for domainsCSV.
 func serveAutocert(d Deps, handler http.Handler, domainsCSV string) (stop func(), err error) {
 	domains := splitCSV(domainsCSV)
 	m := &autocert.Manager{
@@ -264,9 +226,8 @@ func serveAutocert(d Deps, handler http.Handler, domainsCSV string) (stop func()
 	}, nil
 }
 
-// splitCSV parses a comma-separated list (web.autocert_domains' storage
-// shape, matching internal/config's other comma-separated keys like
-// channel include_kinds), trimming whitespace and dropping empty elements.
+// splitCSV parses a comma-separated list (web.autocert_domains' storage shape, matching
+// internal/config's other comma-separated keys like channel include_kinds).
 func splitCSV(s string) []string {
 	if s == "" {
 		return nil

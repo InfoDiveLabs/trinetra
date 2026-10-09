@@ -13,9 +13,8 @@ import (
 	"time"
 )
 
-// seedAdmin puts a RoleAdmin *User in store and mints a live session for it,
-// returning the session cookie plus that session's CSRF token -- everything a
-// test needs to act as that admin against a CSRF-protected /users/* mutation.
+// seedAdmin puts a RoleAdmin *User in store and mints a live session for it, returning the
+// session cookie plus that session's CSRF token.
 func seedAdmin(t *testing.T, name string, users UserStore, sessions SessionStore) (*User, *http.Cookie, string) {
 	t.Helper()
 	u := &User{ID: mustNewUserID(t), Name: name, Role: RoleAdmin, Created: 1}
@@ -29,10 +28,8 @@ func seedAdmin(t *testing.T, name string, users UserStore, sessions SessionStore
 	return u, &http.Cookie{Name: sessionCookieName, Value: sess.ID}, sess.CSRF
 }
 
-// postForm issues a form-encoded POST against h, optionally attaching a
-// session cookie and/or an X-CSRF-Token header -- the shape every /users/*
-// mutation test needs (some deliberately omit the CSRF header to pin the
-// requireCSRF gate).
+// postForm issues a form-encoded POST against h, optionally attaching a session cookie
+// and/or an X-CSRF-Token header -- the shape every /users/* mutation test needs.
 func postForm(h http.Handler, target string, form url.Values, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -47,9 +44,8 @@ func postForm(h http.Handler, target string, form url.Values, cookie *http.Cooki
 	return rr
 }
 
-// TestUsersPageListsUsers pins the admin roster view: names, role badges,
-// created dates, and passkey counts (including the zero-passkey case) all
-// show up for an admin viewing GET /users.
+// TestUsersPageListsUsers pins the admin roster view: names, role badges, created dates,
+// and passkey counts.
 func TestUsersPageListsUsers(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -84,10 +80,8 @@ func TestUsersPageListsUsers(t *testing.T) {
 	}
 }
 
-// TestUsersPageForbiddenForViewerAndAnon pins the RBAC gate at this specific
-// route: a signed-in viewer gets the 403 "Admin only" panel, an anonymous
-// visitor is redirected to /login -- the same matrix rbac_test.go already
-// pins generically across every admin route.
+// TestUsersPageForbiddenForViewerAndAnon pins the RBAC gate at this specific route: a
+// signed-in viewer gets the 403 "Admin only" panel.
 func TestUsersPageForbiddenForViewerAndAnon(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -123,10 +117,8 @@ func tokenFromEnrollLink(t *testing.T, body string) string {
 	return m[1]
 }
 
-// TestUsersInviteIssuesUsableEnrollLink pins the core invite contract: an
-// admin issuing a token for a role gets back a rendered, single-use
-// /enroll?token=... link, and that exact token actually redeems (via the
-// real /enroll/begin HTTP surface) to the role the admin picked.
+// TestUsersInviteIssuesUsableEnrollLink pins the core invite contract: an admin issuing a
+// token for a role gets back a rendered, single-use /enroll?token=... link.
 func TestUsersInviteIssuesUsableEnrollLink(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -151,19 +143,15 @@ func TestUsersInviteIssuesUsableEnrollLink(t *testing.T) {
 		t.Fatalf("POST /enroll/begin with issued token status = %d, want 200, body: %s", beginRR.Code, beginRR.Body.String())
 	}
 
-	// The role is only actually assigned at /enroll/finish, but
-	// resolveEnrollRole (which /enroll/begin calls) has already redeemed the
-	// token by now; redeeming it again must fail (single-use).
+	// The role is only actually assigned at /enroll/finish, but resolveEnrollRole (which
+	// /enroll/begin calls) has already redeemed the token by now.
 	if _, err := newTokenStore(d.StateDir).Redeem(tok); err == nil {
 		t.Error("issued token redeemed a second time, want single-use rejection")
 	}
 }
 
-// TestUsersInviteReissueAffordance pins the "re-issue" requirement: since a
-// single-use token is burned the moment /enroll/begin redeems it (or simply
-// expires), an admin must be able to mint a SECOND, independently-usable
-// token for the same role/ttl without the page choking on the first one
-// still being outstanding.
+// TestUsersInviteReissueAffordance pins the "re-issue" requirement: since a single-use
+// token is burned the moment /enroll/begin redeems it (or simply expires).
 func TestUsersInviteReissueAffordance(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -200,9 +188,8 @@ func TestUsersInviteRequiresCSRF(t *testing.T) {
 	}
 }
 
-// TestUsersChangeRoleRoundTrip pins role changes: viewer -> admin -> viewer
-// both persist, checked directly against the store (not just the HTTP
-// response), with two admins in play so the last-admin guard never fires.
+// TestUsersChangeRoleRoundTrip pins role changes: viewer -> admin -> viewer both persist,
+// checked directly against the store (not just the HTTP response).
 func TestUsersChangeRoleRoundTrip(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -231,11 +218,8 @@ func TestUsersChangeRoleRoundTrip(t *testing.T) {
 	}
 }
 
-// TestUsersDemoteRefusesLastAdmin pins the lockout guard on the ROLE-CHANGE
-// path: demoting the sole remaining admin to viewer must be refused, the
-// same as removing them would be -- otherwise the admin-only /users route
-// (and every other admin route) becomes permanently unreachable, since a
-// fresh bootstrap admin only happens against a fully EMPTY user store.
+// TestUsersDemoteRefusesLastAdmin pins the lockout guard on the ROLE-CHANGE path: demoting
+// the sole remaining admin to viewer must be refused, the same as removing them would be.
 func TestUsersDemoteRefusesLastAdmin(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -251,9 +235,8 @@ func TestUsersDemoteRefusesLastAdmin(t *testing.T) {
 	}
 }
 
-// TestUsersRemoveWorksForNonLastAdmin pins the positive removal case: with
-// two admins present, removing one succeeds and it disappears from the
-// store.
+// TestUsersRemoveWorksForNonLastAdmin pins the positive removal case: with two admins
+// present, removing one succeeds and it disappears from the store.
 func TestUsersRemoveWorksForNonLastAdmin(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -272,9 +255,8 @@ func TestUsersRemoveWorksForNonLastAdmin(t *testing.T) {
 	}
 }
 
-// TestUsersRemoveRefusesLastAdmin pins the headline guard: removing the sole
-// remaining admin must be refused with an error/4xx, and the account must still
-// be present afterward.
+// TestUsersRemoveRefusesLastAdmin pins the headline guard: removing the sole remaining
+// admin must be refused with an error/4xx, and the account must still be present afterward.
 func TestUsersRemoveRefusesLastAdmin(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -289,9 +271,8 @@ func TestUsersRemoveRefusesLastAdmin(t *testing.T) {
 	}
 }
 
-// TestUsersRevokeCredentialRemovesOnlyThatOne pins scoped revocation: a user
-// with two passkeys has exactly one removed by ID; the other survives
-// untouched.
+// TestUsersRevokeCredentialRemovesOnlyThatOne pins scoped revocation: a user with two
+// passkeys has exactly one removed by ID; the other survives untouched.
 func TestUsersRevokeCredentialRemovesOnlyThatOne(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -322,12 +303,8 @@ func TestUsersRevokeCredentialRemovesOnlyThatOne(t *testing.T) {
 	}
 }
 
-// TestUsersRevokeCredentialRefusesLastAdminsLastCredential pins the third
-// zero-admin lockout vector (issue #63 follow-up): revoking the sole
-// remaining admin's ONLY credential must be refused with a 409, leaving the
-// credential (and the admin role) untouched -- otherwise the admin has zero
-// usable passkeys and, with the store non-empty, no bootstrap or
-// admin-issued-invite path back in.
+// TestUsersRevokeCredentialRefusesLastAdminsLastCredential pins the third zero-admin
+// lockout vector (issue #63 follow-up).
 func TestUsersRevokeCredentialRefusesLastAdminsLastCredential(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -356,10 +333,8 @@ func TestUsersRevokeCredentialRefusesLastAdminsLastCredential(t *testing.T) {
 	}
 }
 
-// TestUsersRevokeCredentialWorksWhenAdminHasAnother pins the positive case
-// alongside the refusal above: revoking one of the sole admin's TWO
-// credentials succeeds (the guard only fires when it's their LAST one), and
-// the admin is left with the other, still able to log in.
+// TestUsersRevokeCredentialWorksWhenAdminHasAnother pins the positive case alongside the
+// refusal above: revoking one of the sole admin's TWO credentials succeeds.
 func TestUsersRevokeCredentialWorksWhenAdminHasAnother(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -386,25 +361,8 @@ func TestUsersRevokeCredentialWorksWhenAdminHasAnother(t *testing.T) {
 	}
 }
 
-// TestRevokeCredentialUnlessLastAdminConcurrentWithPut is the last-admin
-// safety pin for the revoke path under concurrency, mirroring
-// TestRemoveUnlessLastAdminConcurrent/TestSetRoleUnlessLastAdminConcurrent
-// below but pairing RevokeCredentialUnlessLastAdmin against a concurrent
-// Put shaped exactly like finishLogin's (auth_webauthn.go) Get-mutate-
-// signCount-Put: both goroutines go through their OWN newUserStore instance
-// on the same file (as concurrent HTTP requests would), so only the shared
-// path-keyed fileStoreMutex can serialize the individual store calls.
-//
-// This asserts the TRUE, interleaving-independent invariant: the sole
-// admin (u1) is NEVER locked out -- the store never ends credential-less,
-// and the credential the revoke was never asked to touch (credB) always
-// survives. It deliberately does NOT assert which of the two racing
-// read-modify-writes "wins" (whether credA ends up resurrected, or credB's
-// signCount bump persists): the store's Get/Put API is two separate locked
-// critical sections, not an atomic compare-and-swap, so a lost update
-// across the goroutine's own Get-then-Put is a legitimate outcome -- pinning
-// the exact winning order made this test flaky under -race with no
-// underlying data race or safety violation.
+// TestRevokeCredentialUnlessLastAdminConcurrentWithPut is the last-admin safety pin for the
+// revoke path under concurrency.
 func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
 	dir := t.TempDir()
 	seed := newUserStore(dir)
@@ -427,9 +385,8 @@ func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		// Mirrors finishLogin's Get -> mutate matched credential's SignCount
-		// -> Put sequence (auth_webauthn.go), against credB so it never
-		// collides with the revoke's own last-admin bookkeeping.
+		// Mirrors finishLogin's Get -> mutate matched credential's SignCount -> Put sequence
+		// (auth_webauthn.go).
 		s := newUserStore(dir)
 		got, ok := s.Get("u1")
 		if !ok {
@@ -458,10 +415,8 @@ func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
 	if len(final.Credentials) == 0 {
 		t.Fatal("admin left with zero credentials -- permanent lockout")
 	}
-	// Safety invariant #2: credB -- which the revoke was never asked to touch --
-	// always survives, so the admin always retains a usable credential. (credA's
-	// fate and credB's signCount depend on which racing write lands last and are
-	// intentionally not asserted; see the doc comment.)
+	// Safety invariant #2: credB -- which the revoke was never asked to touch -- always
+	// survives, so the admin always retains a usable credential.
 	var haveB bool
 	for _, c := range final.Credentials {
 		if string(c.ID) == string(credB.ID) {
@@ -473,16 +428,7 @@ func TestRevokeCredentialUnlessLastAdminConcurrentWithPut(t *testing.T) {
 	}
 }
 
-// TestRemoveUnlessLastAdminConcurrent is the TOCTOU regression pin for the
-// remove path. Two goroutines each try to remove one of the two (and only
-// two) admins, each through its OWN newUserStore instance pointed at the
-// same file -- exactly how concurrent HTTP requests hit the store in
-// production (every handler calls newUserStore per request, so a per-INSTANCE
-// mutex would not serialize them). The last-admin guard must be atomic
-// (check-then-delete under a single, process-wide-per-path lock) so exactly
-// one succeeds and one is rejected with errLastAdmin, leaving exactly one
-// admin. Before the fix, both could observe two admins and both delete,
-// yielding zero admins -- a permanent, unrecoverable lockout.
+// TestRemoveUnlessLastAdminConcurrent is the TOCTOU regression pin for the remove path.
 func TestRemoveUnlessLastAdminConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	seed := newUserStore(dir)
@@ -523,10 +469,8 @@ func TestRemoveUnlessLastAdminConcurrent(t *testing.T) {
 	}
 }
 
-// TestSetRoleUnlessLastAdminConcurrent is the same TOCTOU regression pin for
-// the role-change path: two goroutines demoting the two remaining admins to
-// viewer, each via its own newUserStore instance on the same file. Exactly
-// one demotion must be rejected so at least one admin survives.
+// TestSetRoleUnlessLastAdminConcurrent is the same TOCTOU regression pin for the
+// role-change path: two goroutines demoting the two remaining admins to viewer.
 func TestSetRoleUnlessLastAdminConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	seed := newUserStore(dir)
@@ -567,9 +511,8 @@ func TestSetRoleUnlessLastAdminConcurrent(t *testing.T) {
 	}
 }
 
-// TestUsersMutationsRequireAdminRole pins that the /users/* mutation routes
-// are gated by requireRole(RoleAdmin, ...) exactly like GET /users itself --
-// a signed-in viewer with an otherwise-valid CSRF token still gets 403.
+// TestUsersMutationsRequireAdminRole pins that the /users/* mutation routes are gated by
+// requireRole(RoleAdmin, ...) exactly like GET /users itself.
 func TestUsersMutationsRequireAdminRole(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
@@ -590,9 +533,8 @@ func TestUsersMutationsRequireAdminRole(t *testing.T) {
 	}
 }
 
-// TestUsersMutationsWriteAuditRecords pins that invite, role change, remove,
-// and credential revoke each append an AuditRecord with the expected
-// Action/Key (issue #66).
+// TestUsersMutationsWriteAuditRecords pins that invite, role change, remove, and credential
+// revoke each append an AuditRecord with the expected Action/Key (issue #66).
 func TestUsersMutationsWriteAuditRecords(t *testing.T) {
 	d, users, sessions := rbacTestDeps(t)
 	h := newHandler(d)
