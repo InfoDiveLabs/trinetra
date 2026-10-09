@@ -794,3 +794,41 @@ func TestClientRedialsAfterIdleClose(t *testing.T) {
 		t.Errorf("connections = %d, want 2", n)
 	}
 }
+
+func TestClientRereadsTokenAfterDaemonRestart(t *testing.T) {
+	orig := redialAfter
+	redialAfter = 10 * time.Millisecond
+	t.Cleanup(func() { redialAfter = orig })
+
+	path := shortSocketPath(t)
+	ln1, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go Serve(&fakeAPI{}, ln1, "first")
+	client, err := Dial(path, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	current := "first"
+	client.SetTokenSource(func() (string, error) { return current, nil })
+	if _, err := client.Snapshot(); err != nil {
+		t.Fatalf("before restart: %v", err)
+	}
+
+	ln1.Close()
+	os.Remove(path)
+	ln2, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln2.Close()
+	go Serve(&fakeAPI{}, ln2, "second")
+	current = "second"
+	time.Sleep(30 * time.Millisecond)
+
+	if _, err := client.Snapshot(); err != nil {
+		t.Fatalf("after the daemon restarted with a new token: %v", err)
+	}
+}

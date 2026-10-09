@@ -69,6 +69,9 @@ type clientConn struct {
 	// other caller sharing this Client.
 	path  string
 	token string
+	// tokenSource, when set, is re-read on every new connection: a restarted
+	// daemon writes a fresh token.
+	tokenSource func() (string, error)
 
 	mu       sync.Mutex
 	nextID   int
@@ -133,7 +136,25 @@ func (c *Client) Fleet() core.FleetAPI {
 // per-call read deadline in call rests on. The original Dial had no such
 // deadline because a brand-new process could afford to block on startup;
 // a mid-life reconnect cannot.
+// SetTokenSource makes reconnects re-read the token, so the client survives
+// a daemon restart.
+func (c *Client) SetTokenSource(f func() (string, error)) {
+	c.mu.Lock()
+	c.tokenSource = f
+	c.mu.Unlock()
+}
+
+func (c *clientConn) refreshToken() {
+	if c.tokenSource == nil {
+		return
+	}
+	if tok, err := c.tokenSource(); err == nil && tok != "" {
+		c.token = tok
+	}
+}
+
 func (c *Client) connect() error {
+	c.refreshToken()
 	conn, err := net.Dial("unix", c.path)
 	if err != nil {
 		return err
@@ -513,7 +534,11 @@ func (c *Client) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	if c.node != "" && c.node != core.SelfNodeID {
 		return nil, errors.New("control: live event streams are not available for remote fleet nodes yet")
 	}
-	dc, err := Dial(c.path, c.token)
+	c.mu.Lock()
+	c.refreshToken()
+	tok := c.token
+	c.mu.Unlock()
+	dc, err := Dial(c.path, tok)
 	if err != nil {
 		return nil, err
 	}
