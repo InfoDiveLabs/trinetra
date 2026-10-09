@@ -86,6 +86,7 @@ func (m model) enterFirstRunAdmin() (model, tea.Cmd) {
 
 func (m model) finishFirstRun() (tea.Model, tea.Cmd) {
 	m.firstRun.active = false
+	m.firstRunDone = true
 	m.step = stepHome
 	return m, applySetupCompletedCmd(m.api)
 }

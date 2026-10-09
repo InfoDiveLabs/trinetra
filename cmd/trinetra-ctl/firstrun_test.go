@@ -140,3 +140,22 @@ func TestHomeShowsNoChannelReminder(t *testing.T) {
 		t.Fatal("n should open the channel list")
 	}
 }
+
+func TestFirstRunSaveFailureIsShownNotLooped(t *testing.T) {
+	api := &fakeAPI{cfg: config.Default(), applyErr: errors.New("daemon said no")}
+	var mm tea.Model = newModel(api).startFirstRun()
+	mm, cmd := press(t, mm, keyType(tea.KeyEsc)) // skip setup
+	mm, next := mm.Update(runCmd(t, cmd))
+	if next != nil {
+		mm, _ = mm.Update(runCmd(t, next))
+	}
+	mm, _ = mm.Update(onboardCheckMsg{cfg: config.Default()})
+	mm, _ = mm.Update(snapshotMsg{})
+	got := mm.(model)
+	if got.step != stepHome {
+		t.Fatalf("step %v: a failed save must not restart the first run", got.step)
+	}
+	if !strings.Contains(mm.View(), "daemon said no") {
+		t.Fatalf("save error not shown on Home:\n%s", mm.View())
+	}
+}

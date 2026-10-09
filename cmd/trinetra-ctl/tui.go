@@ -117,6 +117,10 @@ type model struct {
 
 	firstRun  firstRunModel
 	noChannel bool
+	// firstRunDone keeps the first run from reappearing this session even
+	// if saving setup.completed failed; setupErr says why.
+	firstRunDone bool
+	setupErr     error
 
 	quitting bool
 }
@@ -416,7 +420,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.noChannel = msg.cfg != nil && !anyChannelEnabled(msg.cfg)
 		// Only start the first run from Home: this lands after Init, and the
 		// user may already have moved into another screen.
-		if m.step == stepHome && needsFirstRun(msg.cfg, msg.webUsers) {
+		if m.step == stepHome && !m.firstRunDone && needsFirstRun(msg.cfg, msg.webUsers) {
 			return m.startFirstRun(), nil
 		}
 		return m, nil
@@ -430,6 +434,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case setupCompletedMsg:
+		m.setupErr = msg.err
+		if msg.err != nil {
+			return m, nil
+		}
 		return m, fetchOnboardCheckCmd(m.api)
 
 	case onboardTokenAppliedMsg:
@@ -755,6 +763,9 @@ func (m model) homeHeader() string {
 
 func (m model) homeHints() string {
 	hints := faintStyle.Render("s setup   m manage   n alert channels   t telegram   r refresh   ? help   q quit")
+	if m.setupErr != nil {
+		hints = errStyle.Render("Couldn't save that setup is done: "+m.setupErr.Error()+" (it will show again next launch)") + "\n" + hints
+	}
 	if m.noChannel {
 		hints = warnStyle.Render("No alert channel yet: alerts only show here and in the web UI. Press n to add one.") + "\n" + hints
 	}
