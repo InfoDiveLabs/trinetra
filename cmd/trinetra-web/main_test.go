@@ -17,11 +17,9 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
-// fakeAPI is a minimal core.API test double, the same shape
-// internal/control/server_test.go and internal/web/deps_api_test.go each
-// keep their own copy of (core.API has no test-double package of its own to
-// share one from): every read field backs exactly one read method, and the
-// two write methods this test cares about record their argument.
+// fakeAPI is a minimal core.API test double (core.API has no shared one): read
+// fields back one read method each, and the two write methods this test cares
+// about record their argument.
 type fakeAPI struct {
 	snapshot core.DashboardView
 	events   []core.DownEventView
@@ -72,13 +70,8 @@ func (f *fakeAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	return nil, errors.New("not supported in fakeAPI")
 }
 
-// shortSocketPath returns a temp-dir socket path independent of the test
-// name, mirroring internal/control/client_test.go's helper of the same
-// name: t.TempDir() nests under a per-test-name directory that, combined
-// with a long test name and a long $TMPDIR (common on macOS, e.g. under
-// /var/folders/...), can exceed the ~104-byte sun_path limit unix domain
-// sockets are bound by. os.MkdirTemp with a short, fixed prefix keeps the
-// path well under that limit regardless of the calling test's name.
+// shortSocketPath returns a short temp socket path: t.TempDir() plus a long test
+// name and macOS $TMPDIR can exceed the ~104-byte sun_path limit.
 func shortSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "sw-web")
@@ -89,11 +82,8 @@ func shortSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "s.sock")
 }
 
-// startFakeServer serves api over a fresh, short-pathed unix socket,
-// protected by token, and returns the socket path. Mirrors how
-// internal/trinetra/control_socket.go wires up control.Serve, minus the
-// daemon-only pieces (runtime dir discovery, token file writing) this
-// test drives directly instead.
+// startFakeServer serves api over a short-pathed unix socket protected by token
+// and returns the socket path.
 func startFakeServer(t *testing.T, api core.API, token string) (socketPath string) {
 	t.Helper()
 	socketPath = shortSocketPath(t)
@@ -112,11 +102,10 @@ func envLookup(m map[string]string) func(string) string {
 	}
 }
 
-// TestResolveConnConfigDefaults pins the fully-default resolution path (no
-// flags, no TRINETRA_CONTROL_*/SERVERWATCH_CONTROL_* env set): socket/token
-// mirror internal/trinetra/control_socket.go's RUNTIME_DIRECTORY-based
-// resolution, and stateDir/alertLogPath/alertStatePath fall back to
-// defaultStateDir and its two well-known filenames.
+// TestResolveConnConfigDefaults pins resolution with no flags and no
+// TRINETRA_CONTROL_*/SERVERWATCH_CONTROL_* env: socket/token follow the daemon's
+// RUNTIME_DIRECTORY resolution, and stateDir/alertLogPath/alertStatePath fall
+// back to defaultStateDir and its two filenames.
 func TestResolveConnConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cc, err := resolveConnConfig(nil, envLookup(map[string]string{"RUNTIME_DIRECTORY": dir}))
@@ -137,10 +126,8 @@ func TestResolveConnConfigDefaults(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigReadsTokenFile pins that, absent an explicit token
-// (flag or env), resolveConnConfig reads the token from tokenFile and trims
-// a trailing newline (a token typed/echoed into a file by hand often has
-// one; writeTokenFile itself never writes one, see bytesTrimNewline's doc).
+// TestResolveConnConfigReadsTokenFile: with no explicit token, the token is read
+// from tokenFile with a trailing newline trimmed (see bytesTrimNewline).
 func TestResolveConnConfigReadsTokenFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("abc123\n"), 0o600); err != nil {
@@ -155,10 +142,8 @@ func TestResolveConnConfigReadsTokenFile(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigEnvOverrides pins that TRINETRA_CONTROL_SOCKET/
-// TRINETRA_CONTROL_TOKEN (the form Task 3's core supervisor launches this
-// binary with) take priority over the mirrored RUNTIME_DIRECTORY-based
-// default, and that a directly-set token skips reading tokenFile entirely.
+// TestResolveConnConfigEnvOverrides: TRINETRA_CONTROL_SOCKET/TOKEN take priority
+// over the RUNTIME_DIRECTORY default, and a directly set token skips tokenFile.
 func TestResolveConnConfigEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "elsewhere.sock")
@@ -178,10 +163,9 @@ func TestResolveConnConfigEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigEnvOverrides_OldNameFallback pins the compat side:
-// with TRINETRA_CONTROL_SOCKET/TOKEN unset, resolveConnConfig still honors
-// the old SERVERWATCH_CONTROL_SOCKET/TOKEN names for one release, so this
-// binary still works when spawned by a pre-rename core.
+// TestResolveConnConfigEnvOverrides_OldNameFallback: with TRINETRA_CONTROL_* unset,
+// the old SERVERWATCH_CONTROL_* names still work for one release, so a
+// pre-rename core can still spawn this binary.
 func TestResolveConnConfigEnvOverrides_OldNameFallback(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "elsewhere.sock")
@@ -201,8 +185,7 @@ func TestResolveConnConfigEnvOverrides_OldNameFallback(t *testing.T) {
 	}
 }
 
-// TestResolveConnConfigFlagsOverrideEnv pins that explicit flags win over
-// both env vars and the mirrored default, the documented top priority.
+// TestResolveConnConfigFlagsOverrideEnv: explicit flags win over env and defaults.
 func TestResolveConnConfigFlagsOverrideEnv(t *testing.T) {
 	dir := t.TempDir()
 	cc, err := resolveConnConfig(
@@ -227,23 +210,12 @@ func TestResolveConnConfigFlagsOverrideEnv(t *testing.T) {
 	}
 }
 
-// TestBuildDepsWiresLiveDataThroughSocket is this task's core TDD case: a
-// real control.Serve, over a temp unix socket, backed by a fakeAPI standing
-// in for the daemon -- exactly what Task 3's supervised trinetra-web
-// would dial in production. It proves buildDeps' Deps.API (what
-// dashboardHandler and friends read through, see web.Deps.API's doc) and
-// Deps.Events (used by the alerts page's uptime tile) both reflect data
-// that only exists on the OTHER side of the socket, i.e. the wiring this
-// task exists to build actually crosses the process boundary rather than
-// reading some local stub.
-//
-// Driving web.Start (a real listener + HTTP handshake, then the dashboard's
-// own auth-gated route) on top of this would mostly be re-testing
-// internal/web's own server_test.go; this test instead pins the
-// Deps-construction/handler-wiring seam directly against the socket
-// client, per this task's own allowance for a case where driving Start
-// would be heavy. TestPublicPageServesLiveSnapshotOverSocket below still
-// exercises one real end-to-end HTTP path through web.Start.
+// TestBuildDepsWiresLiveDataThroughSocket: a real control.Serve over a temp
+// socket, backed by a fakeAPI standing in for the daemon, proves buildDeps'
+// Deps.API and Deps.Events reflect data that exists only on the other side of
+// the socket. It pins the Deps wiring directly against the socket client, since
+// driving web.Start would mostly re-test internal/web;
+// TestPublicPageServesLiveSnapshotOverSocket covers one real HTTP path.
 func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	dir := t.TempDir()
 	api := &fakeAPI{
@@ -307,8 +279,7 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	}
 
 	// #79: the web editor must validate a channel through the daemon
-	// (client.ValidateChannel) at save time, not skip validation entirely
-	// (deps.ValidateChannel == nil) as it did before this task.
+	// (client.ValidateChannel) at save time, so deps.ValidateChannel must be set.
 	if deps.ValidateChannel == nil {
 		t.Fatal("deps.ValidateChannel is nil, want it wired to client.ValidateChannel (#79)")
 	}
@@ -317,12 +288,9 @@ func TestBuildDepsWiresLiveDataThroughSocket(t *testing.T) {
 	}
 }
 
-// freeLoopbackAddr picks an available "127.0.0.1:port" by binding an
-// ephemeral TCP listener and immediately closing it -- the standard,
-// slightly-racy-but-good-enough-for-tests trick for handing web.Start a
-// concrete address a test's own http.Client can then dial (web.Start binds
-// its own listener, so a "127.0.0.1:0" Deps.Listen wouldn't let this test
-// discover the real port afterward).
+// freeLoopbackAddr picks a free "127.0.0.1:port" by binding an ephemeral listener
+// and closing it (slightly racy but fine for tests), since web.Start binds its
+// own listener and ":0" would hide the real port.
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -334,17 +302,11 @@ func freeLoopbackAddr(t *testing.T) string {
 	return addr
 }
 
-// TestPublicPageServesLiveSnapshotOverSocket drives the one full,
-// unauthenticated, real-HTTP path through this binary's wiring: a
-// control.Serve-backed fakeAPI, dialed and turned into web.Deps by
-// buildDeps (same as TestBuildDepsWiresLiveDataThroughSocket), actually
-// bound and served by web.Start, then hit with a real HTTP GET. cfg.Public
-// is what lets an anonymous request see snapshot-derived content without
-// needing a signed-in session/passkey ceremony (see internal/web's
-// rootHandler/publicPageHandler) -- the authenticated dashboard route
-// (Deps.API.Snapshot, dashboardHandler) is covered at the Deps layer above
-// instead of here, per this task's note that driving a full authenticated
-// request through Start would be heavy.
+// TestPublicPageServesLiveSnapshotOverSocket is the one full unauthenticated
+// HTTP path: a control.Serve-backed fakeAPI, turned into web.Deps by buildDeps,
+// served by web.Start and hit with a real GET. cfg.Public lets an anonymous
+// request see snapshot-derived content without a passkey session; the
+// authenticated dashboard route is covered at the Deps layer instead.
 func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 	dir := t.TempDir()
 	addr := freeLoopbackAddr(t)

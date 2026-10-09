@@ -30,9 +30,8 @@ func TestSendMessage(t *testing.T) {
 	}
 }
 
-// TestSendMessageSetsParseModeHTML asserts SendMessage requests HTML
-// parsing, since renderers (internal/trinetra/status.go) now emit
-// <pre>/<b> tags and HTML-escape dynamic content to match.
+// TestSendMessageSetsParseModeHTML: SendMessage requests HTML parsing, since
+// renderers emit <pre>/<b> tags and HTML-escape dynamic content.
 func TestSendMessageSetsParseModeHTML(t *testing.T) {
 	var gotMode string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,11 +50,9 @@ func TestSendMessageSetsParseModeHTML(t *testing.T) {
 	}
 }
 
-// TestSendMessageChunksLongText asserts a message over Telegram's
-// 4096-char limit is split into multiple sendMessage calls, each within
-// the limit, so a long overview (or a runaway failure list) can never
-// silently fail with an HTTP 400 the way it used to (see
-// fix-disk-telegram-brief.md).
+// TestSendMessageChunksLongText: a message over the 4096-char limit is split
+// into several sendMessage calls, each within the limit, instead of failing with
+// an HTTP 400.
 func TestSendMessageChunksLongText(t *testing.T) {
 	var mu sync.Mutex
 	var texts []string
@@ -130,9 +127,8 @@ func TestSendMessageChunkNeverSplitsLine(t *testing.T) {
 	}
 }
 
-// TestSendMessageReturnsErrorOnPartialChunkFailure asserts that if any
-// chunk fails to send, SendMessage returns the error (rather than
-// swallowing a partial delivery).
+// TestSendMessageReturnsErrorOnPartialChunkFailure: a failed chunk returns the
+// error rather than swallowing a partial delivery.
 func TestSendMessageReturnsErrorOnPartialChunkFailure(t *testing.T) {
 	var n int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,10 +149,9 @@ func TestSendMessageReturnsErrorOnPartialChunkFailure(t *testing.T) {
 	}
 }
 
-// TestSendMessageIncludesAPIErrorDescription asserts a non-200 response's
-// Telegram "description" field (e.g. "Bad Request: message is too long")
-// is folded into the returned error, to help future debugging instead of
-// just a bare status code.
+// TestSendMessageIncludesAPIErrorDescription: a non-200 response's Telegram
+// "description" (e.g. "Bad Request: message is too long") is folded into the
+// returned error.
 func TestSendMessageIncludesAPIErrorDescription(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
@@ -217,10 +212,8 @@ func TestSendMessageChunkKeepsPreBalanced(t *testing.T) {
 	}
 }
 
-// TestSendMessageContextCancels asserts SendMessageContext aborts an
-// in-flight request as soon as its ctx is cancelled, rather than blocking
-// for the full HTTP client timeout (up to 65s) -- the leak this task
-// exists to close.
+// TestSendMessageContextCancels: SendMessageContext aborts an in-flight request
+// once its ctx is cancelled instead of blocking for the HTTP client timeout.
 func TestSendMessageContextCancels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2 * time.Second) // slow server
@@ -276,9 +269,9 @@ func TestGetUpdates(t *testing.T) {
 	}
 }
 
-// TestSendMessageWithButtonsEncodesMarkup pins the exact reply_markup shape
-// (task 9): {"inline_keyboard":[[{"text":...,"callback_data":...}]]}, form
-// encoded like every other sendMessage field.
+// TestSendMessageWithButtonsEncodesMarkup pins the reply_markup shape
+// {"inline_keyboard":[[{"text":...,"callback_data":...}]]}, form encoded like
+// every other sendMessage field.
 func TestSendMessageWithButtonsEncodesMarkup(t *testing.T) {
 	var gotText, gotMarkup string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -317,9 +310,8 @@ func TestSendMessageWithButtonsEncodesMarkup(t *testing.T) {
 	}
 }
 
-// TestSendMessagePlainHasNoMarkup asserts the ordinary SendMessage path
-// never sets reply_markup at all (not even an empty one), so solo/child
-// messages stay byte-for-byte as before this task.
+// TestSendMessagePlainHasNoMarkup: the ordinary SendMessage path never sets
+// reply_markup, not even an empty one.
 func TestSendMessagePlainHasNoMarkup(t *testing.T) {
 	var sawMarkup bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -340,9 +332,9 @@ func TestSendMessagePlainHasNoMarkup(t *testing.T) {
 	}
 }
 
-// TestGetUpdatesDecodesCallbackQuery pins the callback_query shape (task 9):
+// TestGetUpdatesDecodesCallbackQuery pins the callback_query shape:
 // id/data/from.id/message.chat.id decode into CallbackID/CallbackData/
-// CallbackChat, and a plain-message Update's callback fields stay empty.
+// CallbackChat, and a plain-message Update leaves them empty.
 func TestGetUpdatesDecodesCallbackQuery(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{

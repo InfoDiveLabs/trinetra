@@ -31,17 +31,13 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/web"
 )
 
-// defaultRuntimeDir mirrors internal/trinetra/control_socket.go's
-// defaultRuntimeDir: where the control socket + token live when systemd (or
-// a supervisor, see Task 3) hasn't set RUNTIME_DIRECTORY. Duplicated here
-// rather than imported so this binary doesn't need to pull in
-// internal/trinetra (which is untagged but carries the whole daemon's
-// dependency surface) just for two path constants.
+// defaultRuntimeDir is where the control socket and token live when systemd or
+// the supervisor has not set RUNTIME_DIRECTORY. Duplicated from internal/trinetra
+// so this binary does not pull in the whole daemon's dependency surface.
 const defaultRuntimeDir = "/run/trinetra"
 
-// defaultStateDir mirrors internal/trinetra.StateDir (main.go), the
-// daemon's default on-disk state directory. Same duplication rationale as
-// defaultRuntimeDir above.
+// defaultStateDir is the daemon's default state directory; duplicated for the
+// same reason as defaultRuntimeDir.
 const defaultStateDir = "/var/lib/trinetra"
 
 const daemonStartWait = 30 * time.Second
@@ -51,33 +47,25 @@ const daemonStartWait = 30 * time.Second
 type connConfig struct {
 	// socketPath is the control socket to dial (control.Dial's path arg).
 	socketPath string
-	// token is the control-socket auth token, either taken directly (flag
-	// or TRINETRA_CONTROL_TOKEN/SERVERWATCH_CONTROL_TOKEN env, the form
-	// Task 3's supervisor passes a spawned child) or read from tokenFile.
+	// token is the control-socket auth token, given directly (flag or
+	// TRINETRA_CONTROL_TOKEN/SERVERWATCH_CONTROL_TOKEN env, as the supervisor passes
+	// it) or read from tokenFile.
 	token string
-	// tokenFile is where to read the token from when it wasn't given
-	// directly. Mirrors internal/trinetra/control_socket.go's
-	// controlTokenPath: the sibling "token" file next to the socket,
-	// written 0600 by the daemon that created the socket.
+	// tokenFile is read when no token was given directly: the sibling "token" file
+	// next to the socket, written 0600 by the daemon.
 	tokenFile string
-	// stateDir backs web.Deps.StateDir: the web plugin's OWN local storage
-	// (its user store, sessions, enrollment tokens). It is not part of
-	// core.API (it is this plugin's private auth material, not daemon state),
-	// so it is resolved locally rather than over the socket. Alert data
-	// (active alerts, history, acks) is NOT sourced from disk anymore: it all
-	// goes through the socket client (core.API), so there are no alert-file
-	// paths to resolve here.
+	// stateDir backs web.Deps.StateDir: this plugin's OWN storage (user store,
+	// sessions, enrollment tokens). It is private auth material, not daemon state, so
+	// it is resolved locally rather than over the socket. Alert data all goes through
+	// the socket client.
 	stateDir string
 }
 
-// resolveConnConfig parses args against a fresh FlagSet and layers in
-// environment defaults: an explicit flag always wins, then the
-// TRINETRA_CONTROL_SOCKET/TRINETRA_CONTROL_TOKEN env vars (the form Task 3's
-// core supervisor launches this binary with), then (compat, for one release)
-// the old SERVERWATCH_CONTROL_SOCKET/SERVERWATCH_CONTROL_TOKEN names, then
-// finally the mirrored systemd/by-hand resolution (RUNTIME_DIRECTORY, or
-// defaultRuntimeDir) that internal/trinetra/control_socket.go uses for
-// the daemon side of the same socket.
+// resolveConnConfig parses args against a fresh FlagSet and layers environment
+// defaults: an explicit flag wins, then TRINETRA_CONTROL_SOCKET/TOKEN (as the
+// supervisor sets them), then the old SERVERWATCH_CONTROL_SOCKET/TOKEN names
+// (compat for one release), then the daemon's own RUNTIME_DIRECTORY /
+// defaultRuntimeDir resolution.
 func resolveConnConfig(args []string, getenv func(string) string) (connConfig, error) {
 	fs := flag.NewFlagSet("trinetra-web", flag.ContinueOnError)
 	socket := fs.String("socket", "", "control socket path (default: $TRINETRA_CONTROL_SOCKET, else $SERVERWATCH_CONTROL_SOCKET, else $RUNTIME_DIRECTORY/control.sock, else /run/trinetra/control.sock)")
@@ -117,10 +105,8 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	if cc.tokenFile == "" {
 		cc.tokenFile = filepath.Join(runtimeDir, "token")
 	}
-	// Only read tokenFile when no token was given directly (flag or env):
-	// a missing token file is fine in that case, it just means no-auth
-	// (mirroring control_socket.go's own no-token fallback), so the error
-	// is intentionally ignored here rather than propagated.
+	// Only read tokenFile when no token was given. A missing file just means no-auth
+	// (as in the daemon), so the error is intentionally ignored.
 	if cc.token == "" {
 		if b, err := os.ReadFile(cc.tokenFile); err == nil {
 			cc.token = string(bytesTrimNewline(b))
@@ -132,12 +118,8 @@ func resolveConnConfig(args []string, getenv func(string) string) (connConfig, e
 	return cc, nil
 }
 
-// adaptLiveEvent is THE ONLY place core.Event ever turns into a
-// web.LiveEvent (see web.Deps.Subscribe's doc: internal/web never imports
-// internal/core, so this adaptation has to happen here, in
-// cmd/trinetra-web, rather than inside internal/web itself). It's a
-// trivial field copy -- core.Event and web.LiveEvent share the same
-// Kind/Severity/Source/Title/Time shape by design.
+// adaptLiveEvent is the only place core.Event becomes web.LiveEvent: internal/web
+// never imports internal/core, so the field copy happens here.
 func adaptLiveEvent(ev core.Event) web.LiveEvent {
 	return web.LiveEvent{
 		Kind:     ev.Kind,
@@ -148,10 +130,8 @@ func adaptLiveEvent(ev core.Event) web.LiveEvent {
 	}
 }
 
-// bytesTrimNewline trims a single trailing newline (and any preceding
-// carriage return) from a token file's contents -- writeTokenFile
-// (internal/trinetra/control_socket.go) itself writes no trailing
-// newline, but a token typed/echoed into a file by hand often picks one up.
+// bytesTrimNewline trims one trailing newline (and preceding CR) from a token
+// file; writeTokenFile writes none, but a hand-edited file often has one.
 func bytesTrimNewline(b []byte) []byte {
 	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
 		b = b[:len(b)-1]
@@ -159,28 +139,22 @@ func bytesTrimNewline(b []byte) []byte {
 	return b
 }
 
-// buildDeps assembles web.Deps around client, the control-socket core.API
-// implementation client.Dial returns. api.Snapshot/api.Events back both
-// Deps.API (what dashboardHandler/monitoringHandler/etc. read through, task
-// 5's core.API boundary) and the still-closure-based Deps.Snapshot/Deps.Events
-// (SSE, nav counts, the /public page, the alerts page's uptime tile -- see
-// web.Deps' own doc) -- client already satisfies web.EventsStore directly,
-// since core.DownEventView and web.DownEventView are the same type (a Go
-// alias, events_store.go), so no adapter is needed there.
+// buildDeps assembles web.Deps around client, the control-socket core.API.
+// api.Snapshot/api.Events back both Deps.API and the closure-based
+// Deps.Snapshot/Deps.Events (SSE, nav counts, /public, the alerts uptime tile).
+// client satisfies web.EventsStore directly because core.DownEventView and
+// web.DownEventView are the same alias type.
 //
-// cc's local, on-disk fields (StateDir/AlertLogPath/AlertStatePath) can't be
-// sourced from the socket client -- they name paths on THIS machine that
-// core.API has no method for -- so they come from cc (flags/defaults)
-// instead; every other Deps field is backed by a client call.
+// cc's local fields (StateDir/AlertLogPath/AlertStatePath) name paths on THIS
+// machine that core.API cannot supply, so they come from cc; every other Deps
+// field is backed by a client call.
 func buildDeps(client *control.Client, cc connConfig) web.Deps {
 	cfg := func() *config.Config {
 		c, err := client.Config()
 		if err != nil || c == nil {
-			// A Config() failure must never surface as a nil Cfg(): every
-			// handler in internal/web calls d.Cfg() unconditionally and
-			// dereferences the result (see web.Deps.Cfg's doc), so this
-			// must degrade to defaults rather than let a transient socket
-			// error panic every request.
+			// A Config() failure must not surface as a nil Cfg(): web handlers dereference it
+			// unconditionally, so degrade to defaults rather than panic on a transient socket
+			// error.
 			return config.Default()
 		}
 		return c
@@ -188,16 +162,11 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 
 	deps := web.Deps{
 		Cfg: cfg,
-		// Reload backs the /public settings save path (see web.Deps.Reload's
-		// doc: config/channels writes go through API.ApplyConfig directly
-		// now, but Reload is still the /public page's own save path).
-		// ApplyConfig is the same validate-persist-apply write client.Config
-		// reads back, so wiring it here keeps that save path working too.
+		// Reload is the /public page's save path; ApplyConfig is the same
+		// validate-persist-apply write that client.Config reads back.
 		Reload: client.ApplyConfig,
 		API:    client,
-		// Events: client.Events already has the exact signature
-		// web.EventsStore wants (see this func's doc), so client is passed
-		// directly rather than through an adapter.
+		// client.Events already has web.EventsStore's signature, so it is passed directly.
 		Events: client,
 		Snapshot: func() web.DashboardView {
 			v, err := client.Snapshot()
@@ -208,25 +177,16 @@ func buildDeps(client *control.Client, cc connConfig) web.Deps {
 		},
 		StateDir:    cc.stateDir,
 		TestChannel: client.TestChannel,
-		// ValidateChannel is now a core.API method (core-contract-s1 task
-		// A1, #79): it dry-runs buildNotifier against the daemon's live
-		// config over the socket, the same check TestChannel above already
-		// crosses the socket for. The passed *config.Config is ignored --
-		// client.ValidateChannel validates against the daemon's own current
-		// config, not this process' copy (see core.API.ValidateChannel's
-		// doc for that accepted live-config-vs-in-flight-edit limitation).
+		// ValidateChannel dry-runs buildNotifier against the daemon's live config over the
+		// socket. The passed *config.Config is ignored: it validates against the daemon's
+		// config, not this process' copy (see core.API.ValidateChannel).
 		ValidateChannel: func(cc config.ChannelConfig, _ *config.Config) error {
 			return client.ValidateChannel(cc)
 		},
-		// Subscribe wires web.Deps' live-push seam (Task 3) to
-		// client.Subscribe -- internal/control's dedicated-connection
-		// streaming client (Task 2) -- adapting each core.Event it delivers
-		// into a web.LiveEvent (adaptLiveEvent, above) as it goes. The
-		// adapting goroutine exits (closing out) either when client's
-		// channel closes (the daemon connection dropped) or ctx is done
-		// (the SSE handler's request context, i.e. the browser
-		// disconnected) -- whichever happens first -- so it never leaks
-		// past the subscription it belongs to.
+		// Subscribe wires web.Deps' live-push seam to client.Subscribe, adapting each
+		// core.Event into a web.LiveEvent. The goroutine exits when client's channel
+		// closes (daemon dropped) or ctx is done (browser disconnected), so it never
+		// outlives the subscription.
 		Subscribe: func(ctx context.Context) (<-chan web.LiveEvent, error) {
 			ch, err := client.Subscribe(ctx)
 			if err != nil {
