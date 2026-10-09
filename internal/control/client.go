@@ -23,6 +23,12 @@ import (
 // fast.
 var callTimeout = 30 * time.Second
 
+// redialAfter is how long a connection may sit unused before call replaces
+// it. It must stay below the server's idleTimeout: past that the daemon has
+// already closed the connection, and the first call after a quiet spell
+// would fail.
+var redialAfter = idleTimeout / 2
+
 // Client is a core.API implementation backed by a control-socket connection:
 // every method sends one request frame and waits for the matching response
 // frame. A single Client is safe for concurrent use; call serializes access
@@ -64,8 +70,9 @@ type clientConn struct {
 	path  string
 	token string
 
-	mu     sync.Mutex
-	nextID int
+	mu       sync.Mutex
+	nextID   int
+	lastUsed time.Time
 }
 
 var _ core.API = (*Client)(nil)
@@ -155,6 +162,7 @@ func (c *Client) connect() error {
 	}
 
 	c.conn = conn
+	c.lastUsed = time.Now()
 	c.r = r
 	return nil
 }
@@ -257,6 +265,9 @@ func (c *Client) call(method string, params any, result any) error {
 		return err
 	}
 
+	if c.conn != nil && time.Since(c.lastUsed) > redialAfter {
+		c.poison()
+	}
 	if c.conn == nil {
 		if err := c.connect(); err != nil {
 			return err
@@ -289,6 +300,7 @@ func (c *Client) call(method string, params any, result any) error {
 		c.poison()
 		return fmt.Errorf("control: response id %d does not match request id %d", resp.ID, id)
 	}
+	c.lastUsed = time.Now()
 	// An old daemon that predates fleet routing has no idea req.Node exists:
 	// it answers every call with its own host's data and never echoes Node
 	// back. Catch that here, before the ok/error check below, so such a
