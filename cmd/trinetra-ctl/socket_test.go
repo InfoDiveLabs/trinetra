@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/control"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
@@ -161,6 +162,50 @@ func TestEndToEndStatusOverRealSocket(t *testing.T) {
 		t.Fatalf("realMain status = %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "77.7") || !strings.Contains(out.String(), "online") {
+		t.Errorf("status output missing served values:\n%s", out.String())
+	}
+}
+
+func TestRealMainWaitsForStartingDaemon(t *testing.T) {
+	dir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(prevWD)
+	os.Unsetenv("TRINETRA_CONTROL_SOCKET")
+	os.Unsetenv("TRINETRA_CONTROL_TOKEN")
+	os.Unsetenv("SERVERWATCH_CONTROL_SOCKET")
+	os.Unsetenv("SERVERWATCH_CONTROL_TOKEN")
+
+	const sockPath = "control.sock"
+	const token = "fresh-launch-token"
+	api := &fakeAPI{snapshot: core.DashboardView{Online: true, CPU: 12.5, Cores: 2}}
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Errorf("listen: %v", err)
+			return
+		}
+		t.Cleanup(func() { ln.Close() })
+		if err := os.WriteFile("token", []byte(token), 0o600); err != nil {
+			t.Error(err)
+		}
+		go control.Serve(api, ln, token)
+	}()
+
+	var out, errOut bytes.Buffer
+	if code := realMain([]string{"--socket", sockPath, "status"}, &out, &errOut); code != 0 {
+		t.Fatalf("realMain status = %d, want 0\nstderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "waiting for the trinetra daemon") {
+		t.Errorf("stderr lacks the waiting notice:\n%s", errOut.String())
+	}
+	if !strings.Contains(out.String(), "12.5") {
 		t.Errorf("status output missing served values:\n%s", out.String())
 	}
 }
