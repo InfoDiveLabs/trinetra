@@ -129,9 +129,7 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 	now := s.clock()
 	et := &EnrollToken{Token: tok, Role: role, Expires: now.Add(ttl).Unix()}
 
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return ""
@@ -143,14 +141,18 @@ func (s *tokenStore) Issue(role Role, ttl time.Duration) string {
 	return tok
 }
 
+// List returns every stored token, used or not.
+func (s *tokenStore) List() ([]*EnrollToken, error) {
+	defer lockStore(s.path)()
+	return s.loadLocked()
+}
+
 // Redeem looks up tok and, if it exists, is unexpired, and hasn't already
 // been used, marks it Used and returns its Role. Every other case -- unknown
 // token, expired, or already used -- returns an error and leaves the store
 // untouched.
 func (s *tokenStore) Redeem(tok string) (Role, error) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return "", err
@@ -179,9 +181,7 @@ func (s *tokenStore) Redeem(tok string) (Role, error) {
 // used -- the same eager disk-space-reclaim role as SessionStore.GC,
 // decoupled from Redeem's own immediate (lazy) expiry/used check.
 func (s *tokenStore) GC(now int64) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	toks, err := s.loadLocked()
 	if err != nil {
 		return

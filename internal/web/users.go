@@ -351,9 +351,7 @@ func (s *jsonUserStore) saveLocked(users []*User) error {
 // Get returns the user with the given WebAuthn user handle (User.ID), or
 // (nil, false) if none exists or the store can't be read.
 func (s *jsonUserStore) Get(id string) (*User, bool) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -374,9 +372,7 @@ func (s *jsonUserStore) Get(id string) (*User, bool) {
 // uniqueness constraint so two accounts can't share a name in the first
 // place.
 func (s *jsonUserStore) ByName(name string) (*User, bool) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -392,9 +388,7 @@ func (s *jsonUserStore) ByName(name string) (*User, bool) {
 // Put inserts u, or replaces the existing user with the same ID, and
 // persists the result.
 func (s *jsonUserStore) Put(u *User) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -422,9 +416,7 @@ func (s *jsonUserStore) Put(u *User) error {
 // store and is rejected (tokenless enrollment is closed the moment one
 // account exists).
 func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -439,9 +431,7 @@ func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
 
 // List returns every stored user, or nil if the store is empty/unreadable.
 func (s *jsonUserStore) List() []*User {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return nil
@@ -456,9 +446,7 @@ func (s *jsonUserStore) List() []*User {
 // bootstrap gate refuses tokenless enrollment rather than trusting a
 // masked-empty read (#105).
 func (s *jsonUserStore) IsEmpty() (bool, error) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return false, err
@@ -469,9 +457,7 @@ func (s *jsonUserStore) IsEmpty() (bool, error) {
 // Delete removes the user with the given ID, reporting an error if no such
 // user exists.
 func (s *jsonUserStore) Delete(id string) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -493,9 +479,7 @@ func (s *jsonUserStore) Delete(id string) error {
 // one admin left, sees itself as the last one, and is rejected with
 // errLastAdmin. Promotions and no-op same-role writes are never blocked.
 func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -522,9 +506,7 @@ func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
 // counterpart of SetRoleUnlessLastAdmin, with the identical atomicity
 // guarantee against a concurrent second remover.
 func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -562,9 +544,7 @@ func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
 // read-modify-write race: a concurrent revoke and login-finish now
 // serialize instead of one clobbering the other's write.
 func (s *jsonUserStore) RevokeCredentialUnlessLastAdmin(id, credID string) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	users, err := s.loadLocked()
 	if err != nil {
 		return err

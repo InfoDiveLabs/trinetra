@@ -262,9 +262,7 @@ func (s *jsonSessionStore) New(userID string, ttl time.Duration) (*Session, erro
 		CSRF:    csrf,
 	}
 
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return nil, err
@@ -283,9 +281,7 @@ func (s *jsonSessionStore) New(userID string, ttl time.Duration) (*Session, erro
 // Get returns the session with the given ID, or (nil, false) if absent or
 // expired per the store's clock.
 func (s *jsonSessionStore) Get(id string) (*Session, bool) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return nil, false
@@ -305,9 +301,7 @@ func (s *jsonSessionStore) Get(id string) (*Session, bool) {
 // Put persists sess, replacing any existing record with the same ID or
 // appending it if none matches.
 func (s *jsonSessionStore) Put(sess *Session) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -325,9 +319,7 @@ func (s *jsonSessionStore) Put(sess *Session) error {
 // Delete removes the session with the given ID. Absent is a no-op (see the
 // SessionStore doc).
 func (s *jsonSessionStore) Delete(id string) error {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -344,9 +336,7 @@ func (s *jsonSessionStore) Delete(id string) error {
 // GC removes every session whose Expires is <= now, saving only if that
 // actually dropped something.
 func (s *jsonSessionStore) GC(now int64) {
-	mu := fileStoreMutex(s.path)
-	mu.Lock()
-	defer mu.Unlock()
+	defer lockStore(s.path)()
 	sessions, err := s.loadLocked()
 	if err != nil {
 		return
