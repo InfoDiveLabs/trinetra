@@ -57,7 +57,10 @@ type Config struct {
 	// nil-means-unset pointer trick.
 	BaselineAlerts bool   `json:"baseline_alerts,omitempty"`
 	QuietHours     string `json:"quiet_hours,omitempty"` // "23-8" or ""
-	Telegram       struct {
+	Setup          struct {
+		Completed bool `json:"completed,omitempty"`
+	} `json:"setup"`
+	Telegram struct {
 		Token  string `json:"token,omitempty"`
 		ChatID string `json:"chat_id,omitempty"`
 		// MaxEnrollAttempts is how many consecutive wrong "/start <pin>" guesses
@@ -891,6 +894,8 @@ func (c *Config) Get(key string) (string, bool) {
 		return strconv.FormatBool(c.SmartAttrsEnabled()), true
 	case "collect.smart_interval":
 		return strconv.Itoa(c.SmartIntervalSec()), true
+	case "setup.completed":
+		return strconv.FormatBool(c.Setup.Completed), true
 	case "web.enabled":
 		return strconv.FormatBool(c.Web.Enabled), true
 	case "web.listen":
@@ -1151,6 +1156,12 @@ func (c *Config) Set(key, val string) error {
 			return fmt.Errorf("collect.smart_interval must be an integer >= 1")
 		}
 		c.Collect.SmartInterval = n
+	case "setup.completed":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("setup.completed: %w", err)
+		}
+		c.Setup.Completed = b
 	case "web.enabled":
 		b, err := strconv.ParseBool(val)
 		if err != nil {
@@ -1357,6 +1368,8 @@ var keyCatalog = []KeyInfo{
 	{Name: "collect.processes", Group: "Collection", Kind: "bool", Help: "Collect the process-table overview."},
 	{Name: "collect.smart_attrs", Group: "Collection", Kind: "bool", Help: "Collect per-device SMART attribute reads."},
 	{Name: "collect.smart_interval", Group: "Collection", Kind: "int", Help: "Minimum seconds between SMART scans."},
+
+	{Name: "setup.completed", Group: "Setup", Kind: "bool", Help: "Set once the guided first run in trinetra cli is finished or skipped."},
 
 	{Name: "web.enabled", Group: "Web", Kind: "bool", Help: "Enable the web UI server.", RestartRequired: true},
 	{Name: "web.listen", Group: "Web", Kind: "string", Help: "Web server bind address as host:port.", RestartRequired: true},

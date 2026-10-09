@@ -1673,3 +1673,26 @@ func TestStatusKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupCompletedKey(t *testing.T) {
+	c := Default()
+	if got, _ := c.Get("setup.completed"); got != "false" {
+		t.Fatalf("default = %q", got)
+	}
+	if err := c.Set("setup.completed", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Setup.Completed {
+		t.Fatal("not set")
+	}
+	if err := c.Unset("setup.completed"); err != nil || c.Setup.Completed {
+		t.Fatalf("unset: %v %v", err, c.Setup.Completed)
+	}
+	found := false
+	for _, k := range Keys() {
+		found = found || k.Name == "setup.completed"
+	}
+	if !found {
+		t.Fatal("missing from Keys()")
+	}
+}
