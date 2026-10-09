@@ -121,3 +121,24 @@ func TestFloorVersionTruthTable(t *testing.T) {
 		}
 	})
 }
+
+func TestRecordResultQueuesEveryOutcome(t *testing.T) {
+	var s State
+	s.RecordResult(Result{Version: "0.5.0", From: "0.4.1", Outcome: "committed", At: 1})
+	s.RecordResult(Result{Version: "0.5.1", From: "0.5.0", Outcome: "rolled_back", At: 2})
+	if s.Last == nil || s.Last.Version != "0.5.1" {
+		t.Fatalf("Last = %+v, want the newest outcome", s.Last)
+	}
+	if len(s.Unnotified) != 2 || s.Unnotified[0].Version != "0.5.0" || s.Unnotified[1].Version != "0.5.1" {
+		t.Fatalf("Unnotified = %+v, want both outcomes oldest first", s.Unnotified)
+	}
+	for i := 0; i < 3*maxUnnotified; i++ {
+		s.RecordResult(Result{Version: "0.6.0", Outcome: "committed", At: int64(10 + i)})
+	}
+	if len(s.Unnotified) != maxUnnotified {
+		t.Fatalf("queue length = %d, want capped at %d", len(s.Unnotified), maxUnnotified)
+	}
+	if got := s.Unnotified[len(s.Unnotified)-1].At; got != int64(10+3*maxUnnotified-1) {
+		t.Fatalf("newest queued At = %d, want the latest outcome kept", got)
+	}
+}

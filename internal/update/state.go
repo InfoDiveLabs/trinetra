@@ -84,6 +84,21 @@ type State struct {
 	LastCheckError    string  `json:"last_check_error,omitempty"`
 	AvailableNotified string  `json:"available_notified,omitempty"`
 	Last              *Result `json:"last,omitempty"`
+	// Unnotified holds outcomes not yet delivered, oldest first (#142).
+	Unnotified []Result `json:"unnotified,omitempty"`
+}
+
+// maxUnnotified caps Unnotified; the oldest outcomes are dropped first.
+const maxUnnotified = 8
+
+// RecordResult sets Last and queues r for notification.
+func (s *State) RecordResult(r Result) {
+	last := r
+	s.Last = &last
+	s.Unnotified = append(s.Unnotified, r)
+	if n := len(s.Unnotified); n > maxUnnotified {
+		s.Unnotified = append([]Result(nil), s.Unnotified[n-maxUnnotified:]...)
+	}
 }
 
 const stateFile = "state.json"
