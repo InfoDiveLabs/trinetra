@@ -22,9 +22,7 @@ import (
 // ErrRevoked means the master refused this node's certificate.
 var ErrRevoked = errors.New("fleet: this node was revoked by the master")
 
-// JoinResult is what the caller persists into config after a join. Name is
-// the name actually stored on the master (which may differ from what was
-// requested -- see JoinResponse's doc comment), for the CLI to print.
+// JoinResult is what the caller persists into config after a join.
 type JoinResult struct {
 	NodeID    string
 	Name      string
@@ -36,9 +34,8 @@ func identityPaths(dir string) (key, cert, ca string) {
 	return filepath.Join(dir, "node.key"), filepath.Join(dir, "node.crt"), filepath.Join(dir, "ca.crt")
 }
 
-// Join enrolls this host with the master named in code and writes the new
-// identity into dir. A previous identity in dir is used to prove continuity so
-// the master keeps the same node ID.
+// Join enrolls this host with the master named in code and writes the new identity into
+// dir.
 func Join(ctx context.Context, code, name, version string, hostinfo json.RawMessage, dir string) (JoinResult, error) {
 	info, err := DecodeJoin(code)
 	if err != nil {
@@ -126,11 +123,8 @@ func loadPair(certPath, keyPath string) (*tls.Certificate, *x509.Certificate, er
 	return &c, leaf, nil
 }
 
-// LoadIdentity reads the identity Join wrote, finishing an interrupted
-// renewal first: once the master has signed a renewal it only honours the
-// new certificate, so a staged pair that is newer than the installed one (or
-// the only one that loads) is promoted, as is a staged cert whose key was
-// already moved into place when the crash hit.
+// LoadIdentity reads the identity Join wrote, finishing an interrupted renewal first: once
+// the master has signed a renewal it only honours the new certificate.
 func LoadIdentity(dir string) (*Identity, error) {
 	kp, cp, _ := identityPaths(dir)
 	c, leaf, err := loadPair(cp, kp)
@@ -220,11 +214,7 @@ func (id *Identity) Renew(ctx context.Context, c *http.Client, masterURL string)
 	if err != nil {
 		return err
 	}
-	// Stage both files durably, then rename them into place. A crash at any
-	// point leaves either the old pair intact plus a complete staged pair,
-	// or the new key installed with the new cert still staged; LoadIdentity
-	// finishes the job either way. Writing node.key then node.crt in place
-	// could leave a key that does not match its cert.
+	// Stage both files durably, then rename them into place.
 	kp, cp, _ := identityPaths(id.dir)
 	if err := writeFileAtomic(kp+stagedSuffix, keyPEM, 0o600); err != nil {
 		return err
@@ -259,14 +249,8 @@ type ShipperConfig struct {
 	LiveEvery time.Duration
 	Now       func() time.Time
 	Logf      func(format string, args ...any)
-	// OnFrame, if set, starts a stream client goroutine in Run that reads
-	// PathStream and hands every non-ping frame to OnFrame. A nil OnFrame
-	// keeps phase-1 behaviour: no stream client at all.
-	//
-	// OnFrame runs synchronously on the stream's read loop: it must not
-	// block or do slow work. Doing so stalls reading further frames, and
-	// eventually trips the read-idle watchdog (streamIdleTimeout), causing
-	// an unnecessary reconnect out from under it.
+	// OnFrame, if set, starts a stream client goroutine in Run that hands every non-ping frame
+	// to OnFrame.
 	OnFrame func(Frame)
 }
 
@@ -287,22 +271,15 @@ type LinkStatus struct {
 	Outbox    OutboxStats `json:"outbox"`
 }
 
-// gapFillMaxAttempts bounds how many consecutive GapFiller.Fill failures for
-// the same gap are tolerated before it is abandoned (resolved without being
-// repaired), so a permanently-broken local rebuild cannot block newer data
-// from ever reaching the master.
+// gapFillMaxAttempts bounds how many consecutive GapFiller.Fill failures for the same gap
+// are tolerated before it is abandoned (resolved without being repaired).
 const gapFillMaxAttempts = 5
 
 // Shipper moves outbox records and live updates to the master.
 type Shipper struct {
 	cfg    ShipperConfig
 	client *http.Client
-	// streamClient serves PathStream. It shares client's pinned-TLS,
-	// HTTP/2-forcing Transport but, unlike client, carries no Timeout: that
-	// field is a wall-clock cap on the *whole* exchange (docs: "includes ...
-	// reading the response body"), which would kill a healthy, long-lived
-	// stream at a fixed age. Liveness is instead enforced inside streamOnce
-	// via a read-idle watchdog (see streamIdleTimeout).
+	// streamClient serves PathStream.
 	streamClient *http.Client
 	revoked      atomic.Bool
 	mu           sync.Mutex
@@ -311,16 +288,11 @@ type Shipper struct {
 	// laneOK after a success, otherwise the error text.
 	dataLane, liveLane string
 
-	// backoff computes the data-loop retry delay for a given attempt count.
-	// It defaults to backoffDelay; tests may shorten it so retry-heavy
-	// scenarios (e.g. gap-fill abandonment) run in milliseconds instead of
-	// real wall-clock backoff.
+	// backoff computes the data-loop retry delay; tests shorten it.
 	backoff func(attempt int) time.Duration
 
-	// gapFailSeq/gapFailN track consecutive GapFiller.Fill failures for the
-	// gap currently being repaired, keyed by its FirstSeq: reset to the new
-	// gap's key (and 0) whenever the oldest gap changes, and to 0 whenever
-	// Fill succeeds. Only ever touched from the single dataLoop goroutine.
+	// gapFailSeq/gapFailN count consecutive GapFiller.Fill failures for the gap being repaired
+	// (keyed by FirstSeq), reset when the oldest gap changes or Fill succeeds.
 	gapFailSeq uint64
 	gapFailN   int
 }
@@ -355,10 +327,7 @@ func NewShipper(cfg ShipperConfig) *Shipper {
 // laneOK marks a lane whose last attempt succeeded.
 const laneOK = "ok"
 
-// Status returns the current link status. The state combines both lanes: it
-// is "linked" only while the data lane's last attempt succeeded (or nothing
-// is waiting to be sent), and "catching up" when live updates get through
-// but the data lane is backing off with records still unsent.
+// Status returns the current link status.
 func (s *Shipper) Status() LinkStatus {
 	ob := s.cfg.Outbox.Stats()
 	s.mu.Lock()
@@ -439,10 +408,8 @@ func (s *Shipper) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-// backoffBase is backoffDelay's unit: attempt 0 waits in [backoffBase,
-// 2*backoffBase), doubling per attempt up to a cap of 60*backoffBase. A
-// package-level var (not a const) so a test can scale the whole jittered
-// shape down instead of faking it away with a fixed stub.
+// backoffBase is backoffDelay's unit: attempt 0 waits in [backoffBase, 2*backoffBase),
+// doubling per attempt up to 60*backoffBase.
 var backoffBase = time.Second
 
 func backoffDelay(attempt int) time.Duration {
@@ -453,36 +420,27 @@ func backoffDelay(attempt int) time.Duration {
 	return backoffBase + time.Duration(rand.Int64N(int64(ceil)))
 }
 
-// defaultBackoff is the jittered exponential backoff every new Shipper
-// starts with (Shipper.backoff, and so streamLoop's reconnect delay too,
-// since it reuses the same field). A package-level var, so tests can shorten
-// it for every Shipper built afterward instead of overriding each instance.
+// defaultBackoff is the jittered exponential backoff every new Shipper starts
+// with (streamLoop reuses it). A var so tests can shorten it.
 var defaultBackoff = backoffDelay
 
-// maxBackoffAttempt is the attempt count backoffDelay's cap saturates at;
-// streamLoop uses it to wait "the max backoff" against an old master that
-// has no stream endpoint at all, rather than backing off further and further
-// for a condition that will never change until the master is upgraded.
+// maxBackoffAttempt is where backoffDelay's cap saturates; streamLoop waits that long
+// against an old master with no stream endpoint.
 const maxBackoffAttempt = 6
 
-// errStreamNotFound means the master has no PathStream route (an old
-// master, from before phase 2).
+// errStreamNotFound means the master has no PathStream route (an old master).
 var errStreamNotFound = errors.New("fleet: master has no /fleet/v1/stream endpoint (old master)")
 
-// errStreamIdle means no frame -- pings included -- arrived within
-// streamIdleTimeout: the connection is presumed dead even though nothing
-// told us so explicitly (no error, no close, just silence).
+// errStreamIdle means no frame, pings included, arrived within
+// streamIdleTimeout: the connection is presumed dead.
 var errStreamIdle = errors.New("fleet: stream read timed out waiting for a frame (pings included)")
 
-// streamIdleTimeout is how long streamOnce will wait without reading
-// anything -- pings included -- before deciding the connection is dead and
-// reconnecting. Ping frames exist specifically to keep this from firing on a
-// healthy link that simply has nothing else to say.
+// streamIdleTimeout is how long streamOnce reads nothing, pings included, before
+// reconnecting. Pings keep it from firing on a healthy idle link.
 func streamIdleTimeout() time.Duration { return 3 * pingIntervalDuration() }
 
-// streamIdleCheckInterval is how often streamOnce's watchdog polls for
-// staleness. It doesn't need to be tight: streamIdleTimeout already has
-// slack (3x the ping cadence) built in.
+// streamIdleCheckInterval is how often the watchdog polls; it can be loose since
+// streamIdleTimeout has 3x the ping cadence of slack.
 func streamIdleCheckInterval() time.Duration {
 	iv := pingIntervalDuration()
 	if iv <= 0 {
@@ -491,10 +449,8 @@ func streamIdleCheckInterval() time.Duration {
 	return iv
 }
 
-// streamLoop reconnects to PathStream, handing every frame to cfg.OnFrame,
-// until ctx is done or the node is revoked. It reuses the same backoff field
-// the data loop uses (Shipper.backoff), so a test that shortens sh.backoff
-// speeds up both.
+// streamLoop reconnects to PathStream, handing frames to cfg.OnFrame, until ctx
+// is done or the node is revoked. It shares Shipper.backoff with the data loop.
 func (s *Shipper) streamLoop(ctx context.Context) {
 	attempt := 0
 	loggedOldMaster := false
@@ -503,9 +459,8 @@ func (s *Shipper) streamLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return // clean shutdown: streamOnce only returns a nil error here
 		}
-		// Past this point err is always non-nil: streamOnce returns a nil
-		// error only when ctx was already cancelled, which the check above
-		// just caught.
+		// Here err is non-nil: streamOnce returns nil only when ctx was cancelled,
+		// which the check above caught.
 		if errors.Is(err, ErrRevoked) {
 			s.revoked.Store(true)
 			s.cfg.Logf("fleet: %v; stream stopped", err)
@@ -521,10 +476,8 @@ func (s *Shipper) streamLoop(ctx context.Context) {
 			}
 			continue
 		}
-		// A connection that was actually established -- read at least one
-		// frame, pings included -- before it ended is not evidence the
-		// master is struggling: reconnect at the first-attempt delay, not
-		// one that kept growing from attempts before it connected.
+		// A connection that read at least one frame before ending is no sign the master
+		// is struggling: reconnect at the first-attempt delay.
 		if established {
 			attempt = 0
 		}
@@ -536,17 +489,10 @@ func (s *Shipper) streamLoop(ctx context.Context) {
 	}
 }
 
-// streamOnce opens PathStream and reads frames until the connection ends
-// (master drop, ctx cancellation, a read-idle timeout, or a revoked frame).
-// established reports whether at least one frame (pings included) was read
-// before it ended: callers use this to tell "the master is genuinely
-// struggling" (established == false, keep backing off) from "a healthy
-// connection that simply ended" (established == true, reconnect promptly).
-// A nil error means a clean shutdown (ctx done); any other return means
-// streamLoop should reconnect (or stop, for ErrRevoked/errStreamNotFound).
+// streamOnce opens PathStream and reads frames until the connection ends. established
+// reports whether at least one frame was read, which separates a struggling master.
 func (s *Shipper) streamOnce(ctx context.Context) (established bool, err error) {
-	// streamCtx lets the read-idle watchdog below abort a stuck read on its
-	// own, without waiting on (or needing) ctx itself to be cancelled.
+	// streamCtx lets the watchdog abort a stuck read without cancelling ctx.
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
 
@@ -573,10 +519,8 @@ func (s *Shipper) streamOnce(ctx context.Context) (established bool, err error) 
 		return false, fmt.Errorf("fleet: stream status %d: %s", resp.StatusCode, bytes.TrimSpace(body))
 	}
 
-	// The watchdog: if nothing (pings included) is read for
-	// streamIdleTimeout, cancel streamCtx so the blocked Decode below
-	// unblocks with an error instead of hanging on a connection that looks
-	// open but is not actually delivering anything anymore.
+	// Watchdog: if nothing is read for streamIdleTimeout, cancel streamCtx so the
+	// blocked Decode returns instead of hanging on a silently dead connection.
 	var lastRead atomic.Int64
 	lastRead.Store(time.Now().UnixNano())
 	watchdogDone := make(chan struct{})
@@ -605,8 +549,7 @@ func (s *Shipper) streamOnce(ctx context.Context) (established bool, err error) 
 				return established, nil
 			}
 			if streamCtx.Err() != nil {
-				// ctx itself is not done (checked above): only our own
-				// watchdog cancels streamCtx.
+				// Only our watchdog cancels streamCtx; ctx itself is not done (checked above).
 				return established, errStreamIdle
 			}
 			return established, err
@@ -688,9 +631,7 @@ func (s *Shipper) dataLoop(ctx context.Context) {
 	}
 }
 
-// shipOnce does one unit of work: repair the oldest gap, or send one batch.
-// It reports whether it made progress (true) so dataLoop knows whether to
-// immediately look for more work or fall back to waiting for one.
+// shipOnce repairs the oldest gap or sends one batch, reporting whether it made progress.
 func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 	if gaps := s.cfg.Outbox.Gaps(); len(gaps) > 0 {
 		g := gaps[0]
@@ -703,9 +644,8 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 			if recs, err = s.cfg.Gaps.Fill(g); err != nil {
 				s.gapFailN++
 				if s.gapFailN < gapFillMaxAttempts {
-					// A transient local failure: report it as an error so
-					// dataLoop backs off and retries the same gap, instead
-					// of losing it permanently on the first hiccup.
+					// A transient local failure: return an error so dataLoop backs off and retries
+					// the gap instead of losing it.
 					return false, fmt.Errorf("fleet: gap %d-%d fill attempt %d/%d failed: %w", g.FirstSeq, g.LastSeq, s.gapFailN, gapFillMaxAttempts, err)
 				}
 				s.cfg.Logf("fleet: gap %d-%d abandoned after %d failed local rebuilds: %v", g.FirstSeq, g.LastSeq, s.gapFailN, err)
@@ -731,23 +671,8 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	// Priority lane: ship any still-unacked KindAlert record(s) as their own
-	// ascending batch, via Backfill (unsequenced), *before* touching the
-	// general backlog below -- so a fired alert reaches the master's replica
-	// promptly even sitting behind a huge samples backlog. Backfill never
-	// advances the master's per-node AppliedSeq (that only moves on the
-	// sequenced Ingest path; see replicaNode.apply's `sequenced` flag in
-	// package trinetra), and this call never Acks the outbox either, so the
-	// ordinary Read/Ingest batch just below is completely unaffected: it
-	// still starts at Outbox.Acked(), and once it reaches this same alert's
-	// seq (as part of the ordinary backlog, since ReadPriority never removes
-	// it from Read's view), that Ingest applies -- and genuinely Acks -- it,
-	// which is what finally drops it from the priority index (Outbox.Ack).
-	// Until then, every shipOnce call re-sends it here; the master's replica
-	// alert guard (dedup by time + line) makes that free. A record the
-	// priority lane skipped past is therefore never lost, never permanently
-	// stuck: it is sent (and durably visible) here first, then re-sent and
-	// deduped once the backlog naturally reaches it.
+	// Priority lane: ship unacked KindAlert records via Backfill (unsequenced) before the
+	// general backlog.
 	prioritySent := false
 	precs, err := s.cfg.Outbox.ReadPriority(MaxBatchBytes, MaxBatchRecords)
 	if err != nil {
@@ -763,12 +688,8 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 
 	recs, err := s.cfg.Outbox.Read(s.cfg.Outbox.Acked(), MaxBatchBytes, MaxBatchRecords)
 	if err != nil {
-		// The priority send already made real progress (a durable Backfill
-		// the master has, dedup-safe even if resent) even though the
-		// backlog read that follows it failed: report that truthfully
-		// rather than as "no progress," even though dataLoop's own retry
-		// loop currently ignores worked on an error return -- this is about
-		// shipOnce's contract, which a direct caller/test can rely on.
+		// The priority send made durable progress even though the backlog read failed,
+		// so report that rather than "no progress" (shipOnce's contract).
 		return prioritySent, err
 	}
 	if len(recs) == 0 {
@@ -788,19 +709,15 @@ func (s *Shipper) shipOnce(ctx context.Context) (bool, error) {
 		if !errors.As(err, &div) {
 			return false, err
 		}
-		// Already repaired by Ack (gap recorded, numbering moved past the
-		// master's); say so loudly and carry on.
+		// Already repaired by Ack (gap recorded, numbering moved past the master's).
 		s.cfg.Logf("fleet: WARNING %v", div)
 	}
 	s.setOK(true)
 	return true, nil
 }
 
-// batchSize returns how many of recs's leading elements fit within
-// MaxBatchRecords and MaxBatchBytes of Data, mirroring the cap Outbox.Read
-// already applies on the ingest path. It always returns at least 1 (if recs
-// is non-empty) so a single oversized record still makes progress instead of
-// stalling forever.
+// batchSize returns how many leading recs fit MaxBatchRecords and MaxBatchBytes of Data,
+// like Outbox.Read.
 func batchSize(recs []Record) int {
 	n, total := 0, 0
 	for _, r := range recs {
@@ -882,12 +799,8 @@ func (s *Shipper) liveLoop(ctx context.Context) {
 	}
 }
 
-// liveOnce runs one live-update tick. cfg.Live takes no context, so it is
-// called in a goroutine and raced against ctx and timeout: a callback that
-// hangs (or a master that never responds) skips this tick instead of
-// wedging Run's shutdown forever. If cfg.Live never returns, that one
-// goroutine is abandoned rather than killed -- unavoidable given its
-// signature, and harmless since it can only happen once per stuck call.
+// liveOnce runs one live tick. cfg.Live takes no context, so it runs in a goroutine raced
+// against ctx and timeout: a hung callback skips the tick instead of wedging shutdown.
 func (s *Shipper) liveOnce(ctx context.Context, timeout time.Duration) {
 	type result struct {
 		u   LiveUpdate

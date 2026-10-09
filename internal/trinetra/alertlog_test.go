@@ -154,11 +154,8 @@ func TestPruneAlertLogMissingFileIsNoOp(t *testing.T) {
 	}
 }
 
-// TestEnqueueAndLogRecordsAlertEvent exercises the daemon glue: enqueueAndLog
-// must append an AlertEvent carrying the alert fields. Delivery is off-thread
-// now (the NotifierQueue worker owns it), so the log entry no longer carries a
-// per-channel Delivered[] -- that field stays nil, and this test pins that
-// contract change.
+// TestEnqueueAndLogRecordsAlertEvent exercises the daemon glue: enqueueAndLog must append
+// an AlertEvent carrying the alert fields.
 func TestEnqueueAndLogRecordsAlertEvent(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -183,12 +180,8 @@ func TestEnqueueAndLogRecordsAlertEvent(t *testing.T) {
 	}
 }
 
-// TestEnqueueAndLogPublishesAlertFireEvent pins enqueueAndLog's publish
-// side: an anomaly "fire" Alert (Source "anomaly") must also reach the event
-// bus as a core.Event, with Kind mapped to "alert_fire" (not the bare
-// Alert.Kind "fire") and Severity/Source/Title/Time carried straight across --
-// the shape inprocAPI.Subscribe's control-socket consumers (and, eventually,
-// the web UI's toast/refresh logic) key off.
+// TestEnqueueAndLogPublishesAlertFireEvent pins enqueueAndLog's publish side: an anomaly
+// "fire" Alert (Source "anomaly") must also reach the event bus as a core.Event.
 func TestEnqueueAndLogPublishesAlertFireEvent(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -211,9 +204,8 @@ func TestEnqueueAndLogPublishesAlertFireEvent(t *testing.T) {
 	}
 }
 
-// TestEnqueueAndLogPublishesAlertRecoverEvent is
-// TestEnqueueAndLogPublishesAlertFireEvent's mirror image for a "recover"
-// Alert.
+// TestEnqueueAndLogPublishesAlertRecoverEvent is TestEnqueueAndLogPublishesAlertFireEvent's
+// mirror image for a "recover" Alert.
 func TestEnqueueAndLogPublishesAlertRecoverEvent(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -236,12 +228,8 @@ func TestEnqueueAndLogPublishesAlertRecoverEvent(t *testing.T) {
 	}
 }
 
-// TestEnqueueAndLogPublishesDigestKindVerbatim pins the "digests keep
-// their kind" carve-out: a digest/boot-report Alert (Source != "anomaly")
-// always carries Kind "fire" as a structural necessity (Alert.Kind has to
-// be something), not because it's semantically a fire/recover anomaly
-// transition -- so, unlike the anomaly case above, its Event.Kind is NOT
-// remapped to "alert_fire"; it passes a.Kind straight through.
+// TestEnqueueAndLogPublishesDigestKindVerbatim pins the "digests keep their kind"
+// carve-out: a digest/boot-report Alert.
 func TestEnqueueAndLogPublishesDigestKindVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -264,9 +252,8 @@ func TestEnqueueAndLogPublishesDigestKindVerbatim(t *testing.T) {
 	}
 }
 
-// TestEnqueueAndLogNilBusIsSafe pins that a nil bus is a safe no-op, not a
-// nil-pointer panic -- enqueueAndLog must keep working when there's no bus at
-// all (mirroring eventBus.Publish's own nil-guard).
+// TestEnqueueAndLogNilBusIsSafe pins that a nil bus is a safe no-op, not a nil-pointer
+// panic -- enqueueAndLog must keep working when there's no bus at all.
 func TestEnqueueAndLogNilBusIsSafe(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -276,10 +263,8 @@ func TestEnqueueAndLogNilBusIsSafe(t *testing.T) {
 	enqueueAndLog(alog, nil, q, a, false)
 }
 
-// The sampler, the fleet master loop and the child link-alert goroutine all
-// append concurrently. Writes must be serialized, and the tee (which ships
-// alert history to the fleet master in outbox order) must see events in the
-// same order they landed in the file.
+// The sampler, the fleet master loop and the child link-alert goroutine all append
+// concurrently.
 func TestAlertLogConcurrentAppendsTeeInFileOrder(t *testing.T) {
 	l := NewAlertLog(filepath.Join(t.TempDir(), "alertlog.jsonl"))
 	var mu sync.Mutex

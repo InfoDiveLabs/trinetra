@@ -89,11 +89,8 @@ func TestFetchReleaseVerifies(t *testing.T) {
 	}
 }
 
-// TestFetchLatestBranches is R24/R17: FetchLatest's failure branches, which
-// the freeze alert classifies. A missing pointer or pointer signature is
-// ErrNoPointer (freeze signature), an expired pointer ErrExpired, a pointer
-// for another channel ErrWrongChannel, and a plain transport error is passed
-// through as neither.
+// TestFetchLatestBranches is R24/R17: FetchLatest's failure branches, which the freeze
+// alert classifies.
 func TestFetchLatestBranches(t *testing.T) {
 	ci, maint, ptr := NewTestSigner(1), NewTestSigner(2), NewTestSigner(3)
 	keys := keysFor(ci, maint, ptr)

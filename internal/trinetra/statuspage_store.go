@@ -52,9 +52,7 @@ type stateFileV1 struct {
 
 func statusPageDir(stateDir string) string { return filepath.Join(stateDir, "status") }
 
-// loadStatusJSON decodes path into v. A missing file leaves v untouched; a
-// corrupt one is renamed to <path>.corrupt-<unix>, logged, and v is left
-// untouched, so the caller starts from its zero value instead of failing.
+// loadStatusJSON decodes path into v.
 func loadStatusJSON(path string, v any, logf func(string, ...any)) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {

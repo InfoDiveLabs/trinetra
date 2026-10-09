@@ -10,10 +10,8 @@ import (
 	"testing"
 )
 
-// TestCopyFileAtomicReplace guards the rename-based copyFile: it must replace
-// an existing dst (the running-binary upgrade path) with the new content and
-// perm, and leave no ".tmp-install" scratch behind. rename(2) -- not a
-// truncating write -- is what makes this ETXTBSY-safe for a live daemon.
+// TestCopyFileAtomicReplace guards the rename-based copyFile: it must replace an existing
+// dst (the running-binary upgrade path) with the new content and perm.
 func TestCopyFileAtomicReplace(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
@@ -59,12 +57,8 @@ func TestRenderUnit(t *testing.T) {
 	}
 }
 
-// TestCmdDoctorPrintsCollectorSummary is a CLI-level smoke test for
-// cmdDoctor: it loads the configured store (via openConfiguredStore, same
-// helper migrate/dump use) and renders the collector on/off toggles plus
-// SampleStore stats via buildDoctorReport/renderDoctorReport (systemd.go).
-// Exercises the real tsfile-backend path end to end, not just those helpers
-// in isolation.
+// TestCmdDoctorPrintsCollectorSummary is a CLI-level smoke test for cmdDoctor: it loads the
+// configured store.
 func TestCmdDoctorPrintsCollectorSummary(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -111,11 +105,8 @@ func TestQuietHoursAndScheduleRequireArgs(t *testing.T) {
 	}
 }
 
-// TestWritePluginManifest_RecordsPresentCompanions is the core install-time
-// manifest test: given a bin directory with both companion binaries present,
-// writePluginManifest must record each one's exact SHA-256 under its
-// pluginPath-convention name ("ctl"/"web"), mode 0600, at
-// <stateDir>/plugins.json.
+// TestWritePluginManifest_RecordsPresentCompanions is the core install-time manifest test:
+// given a bin directory with both companion binaries present.
 func TestWritePluginManifest_RecordsPresentCompanions(t *testing.T) {
 	prevStateDir := stateDir
 	stateDir = t.TempDir()
@@ -175,10 +166,8 @@ func TestWritePluginManifest_RecordsPresentCompanions(t *testing.T) {
 	}
 }
 
-// TestWritePluginManifest_OmitsAbsentCompanion checks that when only one
-// companion binary is present next to the daemon (a `trinetra-ctl`-only
-// install with no `trinetra-web`, or vice versa), the manifest simply
-// omits the absent one rather than erroring or recording a bogus entry.
+// TestWritePluginManifest_OmitsAbsentCompanion checks that when only one companion binary
+// is present next to the daemon.
 func TestWritePluginManifest_OmitsAbsentCompanion(t *testing.T) {
 	prevStateDir := stateDir
 	stateDir = t.TempDir()
@@ -206,11 +195,8 @@ func TestWritePluginManifest_OmitsAbsentCompanion(t *testing.T) {
 	}
 }
 
-// TestWritePluginManifest_VerifyPluginAcceptsMatchAndRejectsTamper is the
-// end-to-end check that the manifest writePluginManifest produces is exactly
-// what verifyPlugin (plugin_launch.go, Task 1) expects: a companion file
-// that still matches what was recorded at install time verifies clean, and
-// the same file modified afterward (a swap/tamper) is rejected.
+// TestWritePluginManifest_VerifyPluginAcceptsMatchAndRejectsTamper is the end-to-end check
+// that the manifest writePluginManifest produces is exactly what verifyPlugin expects.
 func TestWritePluginManifest_VerifyPluginAcceptsMatchAndRejectsTamper(t *testing.T) {
 	prevStateDir := stateDir
 	stateDir = t.TempDir()
@@ -249,12 +235,8 @@ func TestWritePluginManifest_VerifyPluginAcceptsMatchAndRejectsTamper(t *testing
 	}
 }
 
-// TestWritePluginManifest_NonFatalStyle documents (and guards) the intended
-// call style in cmdInstall: writePluginManifest returns a plain error the
-// caller is expected to log as a warning and continue past, not a value that
-// forces cmdInstall to abort the daemon install over a manifest hiccup. This
-// test exercises the success path explicitly returns nil so callers know
-// "no error" means the manifest was written.
+// TestWritePluginManifest_NonFatalStyle documents (and guards) the intended call style in
+// cmdInstall.
 func TestWritePluginManifest_NonFatalStyle(t *testing.T) {
 	prevStateDir := stateDir
 	stateDir = t.TempDir()
@@ -273,23 +255,14 @@ func TestWritePluginManifest_NonFatalStyle(t *testing.T) {
 	}
 }
 
-// TestWritePluginManifest_ForcesModeOnReinstall guards against a gotcha
-// os.WriteFile has: it only applies its mode argument when CREATING the
-// file. On a re-install (`trinetra install` run again to upgrade), if
-// plugins.json already exists with looser permissions, a plain
-// os.WriteFile(path, b, 0o600) call would truncate and rewrite its content
-// but leave the existing (looser) mode untouched, silently weakening the
-// "root-only trust anchor" guarantee. This pre-creates the manifest at
-// 0o644 and asserts writePluginManifest forces it back down to exactly
-// 0o600, proving the mode is enforced on an EXISTING file, not just on
-// create.
+// TestWritePluginManifest_ForcesModeOnReinstall guards against a gotcha os.WriteFile has:
+// it only applies its mode argument when CREATING the file.
 func TestWritePluginManifest_ForcesModeOnReinstall(t *testing.T) {
 	prevStateDir := stateDir
 	stateDir = t.TempDir()
 	t.Cleanup(func() { stateDir = prevStateDir })
 
-	// Simulate a prior install that (somehow) left plugins.json world/group
-	// readable.
+	// Simulate a prior install that (somehow) left plugins.json world/group readable.
 	if err := os.WriteFile(pluginManifestPath(), []byte(`{"ctl":"stale"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -319,10 +292,8 @@ func TestWritePluginManifest_ForcesModeOnReinstall(t *testing.T) {
 	}
 }
 
-// TestCopyPluginsAlongsideCopiesPresentPlugins is the Task 1 (#92) failing
-// test: given a source dir containing both fake companion binaries,
-// copyPluginsAlongside must place identical, mode-0755 copies of both into
-// dstDir, so a subsequent writePluginManifest(dstDir) has something to find.
+// TestCopyPluginsAlongsideCopiesPresentPlugins: given a source dir containing both fake
+// companion binaries, copyPluginsAlongside must place identical.
 func TestCopyPluginsAlongsideCopiesPresentPlugins(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
@@ -358,10 +329,8 @@ func TestCopyPluginsAlongsideCopiesPresentPlugins(t *testing.T) {
 	}
 }
 
-// TestCopyPluginsAlongsideSkipsAbsentPlugin checks the per-plugin non-fatal
-// requirement: when only trinetra-ctl exists in srcDir, the call copies
-// ctl, skips web (no error), and a later writePluginManifest(dstDir) records
-// only ctl.
+// TestCopyPluginsAlongsideSkipsAbsentPlugin checks the per-plugin non-fatal requirement:
+// when only trinetra-ctl exists in srcDir, the call copies ctl, skips web (no error).
 func TestCopyPluginsAlongsideSkipsAbsentPlugin(t *testing.T) {
 	prevStateDir := stateDir
 	stateDir = t.TempDir()
@@ -400,9 +369,8 @@ func TestCopyPluginsAlongsideSkipsAbsentPlugin(t *testing.T) {
 	}
 }
 
-// TestCopyPluginsAlongsideSkipsNonRegular mirrors writePluginManifest's
-// IsRegular guard (systemd.go): a symlink or directory named
-// trinetra-web in the source must be skipped, not copied.
+// TestCopyPluginsAlongsideSkipsNonRegular mirrors writePluginManifest's IsRegular guard
+// (systemd.go): a symlink or directory named trinetra-web in the source must be skipped.
 func TestCopyPluginsAlongsideSkipsNonRegular(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
@@ -427,10 +395,8 @@ func TestCopyPluginsAlongsideSkipsNonRegular(t *testing.T) {
 	}
 }
 
-// TestUninstallRemovesInstalledPlugins is the Task 1 (#92) failing test for
-// the uninstall side: removeInstalledPlugins must remove both companion
-// binaries from binDir, and be best-effort (no error) when one is already
-// absent -- symmetric with copyPluginsAlongside's per-plugin non-fatal style.
+// TestUninstallRemovesInstalledPlugins: removeInstalledPlugins must remove both companion
+// binaries from binDir, and be best-effort (no error) when one is already absent.
 func TestUninstallRemovesInstalledPlugins(t *testing.T) {
 	binDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(binDir, "trinetra-ctl"), []byte("ctl"), 0o755); err != nil {
@@ -448,10 +414,7 @@ func TestUninstallRemovesInstalledPlugins(t *testing.T) {
 	}
 }
 
-// TestCmdUninstall_RemovesPluginManifest checks the other half of Task 2:
-// cmdUninstall removes <stateDir>/plugins.json (best-effort, like its other
-// cleanups) so a subsequent front-door invocation correctly reports the
-// plugins as not installed rather than checking against a stale manifest.
+// TestCmdUninstall_RemovesPluginManifest: cmdUninstall removes <stateDir>/plugins.json.
 func TestCmdUninstall_RemovesPluginManifest(t *testing.T) {
 	dir := t.TempDir()
 	prevStateDir := stateDir
@@ -481,12 +444,8 @@ func TestCmdUninstall_RemovesPluginManifest(t *testing.T) {
 	}
 }
 
-// TestCmdQuietHoursRefusedWhenManaged is the round-1 review's IMPORTANT-2
-// test: `trinetra quiet-hours` is a SECOND, dedicated path onto quiet_hours
-// besides `config set`/the web config page (both already guarded elsewhere)
-// -- it must refuse with the identical "managed by the fleet master"
-// message when a sidecar marks quiet_hours as managed, and never touch
-// config.json.
+// TestCmdQuietHoursRefusedWhenManaged: `trinetra quiet-hours` is a SECOND, dedicated path
+// onto quiet_hours besides `config set`/the web config page (both already guarded).
 func TestCmdQuietHoursRefusedWhenManaged(t *testing.T) {
 	dir, _, errb := fleetCLIEnv(t)
 	if rc := Main([]string{"quiet-hours", "22-7"}); rc != 0 {

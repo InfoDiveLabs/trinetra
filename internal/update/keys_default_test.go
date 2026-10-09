@@ -8,9 +8,8 @@ import (
 	"testing"
 )
 
-// productionFingerprints pins the release keys from the maintainer key
-// ceremony (2026-09-29). Changing keys.go without updating this list, or the
-// reverse, fails the build's tests, so a key swap is always deliberate.
+// productionFingerprints pins the release keys from the maintainer key ceremony
+// (2026-09-29).
 var productionFingerprints = []string{
 	"ci:12fa1a1532ab468b3c552db2021b267515bd548bc3e08a0ad4dbc7def3611bb6",
 	"ci:2fe78c6f6d7e40ea751cc401952174ffd6da7889a60abcf2949616d9b785d2eb",
@@ -26,8 +25,7 @@ func TestProductionKeysArePinned(t *testing.T) {
 	}
 }
 
-// With real keys compiled in, an unsigned or garbage-signed manifest must
-// still be refused.
+// With real keys compiled in, an unsigned or garbage-signed manifest must still be refused.
 func TestVerifyReleaseRefusesBadSignatureWithProductionKeys(t *testing.T) {
 	_, err := VerifyRelease(ProductionKeys(), []byte("manifest"), []byte("not-a-sig"), []byte("not-a-sig"))
 	if !errors.Is(err, ErrBadSignature) {

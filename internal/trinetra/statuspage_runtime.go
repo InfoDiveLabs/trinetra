@@ -258,8 +258,7 @@ func (r *statusPageRuntime) Public() (core.PublicStatus, error) {
 	return r.pubVal, nil
 }
 
-// buildPublicStatus is the ONLY producer of anonymous output. It copies
-// named, public fields explicitly; never add a struct copy here.
+// buildPublicStatus is the ONLY producer of anonymous output.
 func buildPublicStatus(title string, d *statusPageData, now time.Time) core.PublicStatus {
 	names := map[string]string{}
 	svcs := slices.Clone(d.Services)

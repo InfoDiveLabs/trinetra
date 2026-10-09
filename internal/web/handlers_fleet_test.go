@@ -16,10 +16,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fleetFiveNodeRoster is task-5-brief.md's exact Step 1 fixture: self
-// online, web1 online tagged "web", web2 lagging (also carrying a clock
-// skew and replica drops, to exercise the Link column's warning chips),
-// db1 down, old1 revoked.
+// fleetFiveNodeRoster is the Step 1 fixture: self online, web1 online tagged "web", web2
+// lagging.
 func fleetFiveNodeRoster() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: core.SelfNodeID, Name: "self", Self: true, State: "online", CPU: 5, MemPct: 20, WorstDiskPct: 30, Load1: 0.5, Version: "1.2.3"},
@@ -31,28 +29,24 @@ func fleetFiveNodeRoster() []core.NodeSummary {
 	}
 }
 
-// fleetMasterDeps builds a master Deps (fleetTestDeps, node_scope_test.go)
-// whose Fleet().Nodes/Status report the given roster -- config.RoleMaster,
-// so fleetRole(d)/resolveMasterAndNodes both agree this daemon is a fleet
-// master.
+// fleetMasterDeps builds a master Deps (fleetTestDeps, node_scope_test.go) whose
+// Fleet().Nodes/Status report the given roster -- config.RoleMaster.
 func fleetMasterDeps(t *testing.T, nodes []core.NodeSummary) Deps {
 	t.Helper()
 	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: nodes}
 	return fleetTestDeps(t, masterFakeAPI(fleet, nil))
 }
 
-// fleetSoloDeps builds a non-master Deps: Status reports solo and the
-// roster is just self, mirroring a genuinely solo daemon's Fleet().Nodes
-// (fleet_provider.go).
+// fleetSoloDeps builds a non-master Deps: Status reports solo and the roster is just self,
+// mirroring a genuinely solo daemon's Fleet().Nodes (fleet_provider.go).
 func fleetSoloDeps(t *testing.T) Deps {
 	t.Helper()
 	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleSolo}, nodes: []core.NodeSummary{{ID: core.SelfNodeID, Self: true, State: "online"}}}
 	return fleetTestDeps(t, masterFakeAPI(fleet, nil))
 }
 
-// fleetChildDeps builds a child Deps: Status reports child, roster is just
-// self (a child daemon's own Fleet().Nodes never lists siblings -- it only
-// knows its master).
+// fleetChildDeps builds a child Deps: Status reports child, roster is just self (a child
+// daemon's own Fleet().Nodes never lists siblings -- it only knows its master).
 func fleetChildDeps(t *testing.T) Deps {
 	t.Helper()
 	fleet := &fakeFleet{status: core.FleetStatus{Role: config.RoleChild}, nodes: []core.NodeSummary{{ID: core.SelfNodeID, Self: true, State: "online"}}}
@@ -74,9 +68,8 @@ func fleetGetAsViewer(t *testing.T, d Deps, target string) *httptest.ResponseRec
 	return fleetGetAsRole(t, d, RoleViewer, target)
 }
 
-// fleetGetAnonymous drives target through the full handler stack with no
-// session at all (no seedSignedInRequest cookie), for the RBAC-anonymous
-// negative cases.
+// fleetGetAnonymous drives target through the full handler stack with no session at all (no
+// seedSignedInRequest cookie), for the RBAC-anonymous negative cases.
 func fleetGetAnonymous(d Deps, target string) *httptest.ResponseRecorder {
 	h := newHandler(d)
 	rr := httptest.NewRecorder()
@@ -84,18 +77,15 @@ func fleetGetAnonymous(d Deps, target string) *httptest.ResponseRecorder {
 	return rr
 }
 
-// newCountingFleet builds a countingFleet (templates_node_test.go, shared
-// with the Task 4 Fleet().Status()-budget tests) with BOTH counters wired,
-// for this file's round-1 review test that cares about both Status() and
-// Nodes() call counts.
+// newCountingFleet builds a countingFleet (templates_node_test.go) with BOTH counters
+// wired, for the test that cares about both Status() and Nodes() call counts.
 func newCountingFleet(inner core.FleetAPI) (countingFleet, *int, *int) {
 	var statusCalls, nodesCalls int
 	return countingFleet{FleetAPI: inner, statusCalls: &statusCalls, nodesCalls: &nodesCalls}, &statusCalls, &nodesCalls
 }
 
-// TestFleetOverviewHealthStripAndTable pins the full Step 1 page shape: the
-// health strip's four counts, the table's columns/row content, self vs.
-// remote row links, and the Link column's CLI-worded warning chips.
+// TestFleetOverviewHealthStripAndTable pins the full Step 1 page shape: the health strip's
+// four counts, the table's columns/row content, self vs. remote row links.
 func TestFleetOverviewHealthStripAndTable(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet")
@@ -128,14 +118,8 @@ func TestFleetOverviewHealthStripAndTable(t *testing.T) {
 		t.Error(`GET /fleet: db1 row should link to "/n/db1/"`)
 	}
 
-	// Link column: CLI-worded warning chips for web2's skew and drops --
-	// asserted as the FULL verbatim sentence (round-1 review: a prefix
-	// match let a dropped "(fix NTP on that host)" suffix slip through
-	// undetected), against internal/trinetra/fleet_cmd.go:448's
-	// printNodeWarnings wording. html/template escapes both "'" and "+"
-	// (its default text escaper widens the replacement table beyond the
-	// bare minimum), so the literal wording is checked against the
-	// UNescaped body.
+	// Link column: CLI-worded warning chips for web2's skew and drops -- asserted as the FULL
+	// verbatim sentence.
 	unescaped := html.UnescapeString(body)
 	if !strings.Contains(unescaped, "clock differs from this master's by +45s (fix NTP on that host)") {
 		t.Errorf("GET /fleet: missing web2's full clock-skew warning sentence\nbody:\n%s", unescaped)
@@ -153,12 +137,7 @@ func TestFleetOverviewHealthStripAndTable(t *testing.T) {
 	}
 }
 
-// TestFleetSkewWarnTextVerbatim is a direct, exact-string unit test for
-// fleetSkewWarnText (round-1 review: the page-level test above only ever
-// asserted a substring/prefix, which didn't catch the missing "(fix NTP on
-// that host)" suffix -- this pins the FULL sentence against
-// internal/trinetra/fleet_cmd.go:448's printNodeWarnings wording with
-// strict equality, not Contains).
+// TestFleetSkewWarnTextVerbatim is a direct, exact-string unit test for fleetSkewWarnText.
 func TestFleetSkewWarnTextVerbatim(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -178,11 +157,8 @@ func TestFleetSkewWarnTextVerbatim(t *testing.T) {
 	}
 }
 
-// TestFleetDropsWarnTextIgnoresDuplicatesAlone pins U3 (2026-09-25 UI
-// audit): duplicates are explicitly "harmless re-sends" per this very
-// sentence's own wording, so they alone must never earn the amber
-// .fleet-link-warn styling on /fleet or /fleet/admin -- only an actual
-// out-of-order or over-the-series-limit drop does.
+// TestFleetDropsWarnTextIgnoresDuplicatesAlone pins U3 (2026-09-25 UI audit): duplicates
+// are explicitly "harmless re-sends" per this very sentence's own wording.
 func TestFleetDropsWarnTextIgnoresDuplicatesAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -205,11 +181,8 @@ func TestFleetDropsWarnTextIgnoresDuplicatesAlone(t *testing.T) {
 	}
 }
 
-// TestFleetOverviewFilters pins core.NodeFilter semantics applied through
-// the query string: ?tag=web&state=online&q=we narrows the 5-node roster
-// to exactly web1 (web2 is tagged "web" too but is state=lagging, not
-// online; "we" as a query substring matches "web1"/"web2" by name but the
-// state filter alone already excludes web2).
+// TestFleetOverviewFilters pins core.NodeFilter semantics applied through the query string:
+// ?tag=web&state=online&q=we narrows the 5-node roster to exactly web1.
 func TestFleetOverviewFilters(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?tag=web&state=online&q=we")
@@ -231,9 +204,8 @@ func TestFleetOverviewFilters(t *testing.T) {
 	}
 }
 
-// TestFleetOverviewBehindStateIncludesStale pins the ruling's documented
-// deviation: the health strip's "Behind" link (?state=lagging) must also
-// surface a "stale" node, not just "lagging" ones.
+// TestFleetOverviewBehindStateIncludesStale pins that the health strip's "Behind" link
+// (?state=lagging) also surfaces a "stale" node, not just "lagging" ones.
 func TestFleetOverviewBehindStateIncludesStale(t *testing.T) {
 	nodes := append(fleetFiveNodeRoster(), core.NodeSummary{ID: "cache1", Name: "cache1", State: "stale", LastSeen: 800})
 	d := fleetMasterDeps(t, nodes)
@@ -253,9 +225,8 @@ func TestFleetOverviewBehindStateIncludesStale(t *testing.T) {
 	}
 }
 
-// TestFleetOverviewSort pins explicit sort/dir query handling: ?sort=cpu
-// &dir=desc orders rows by descending CPU (web2 30 > web1 12 > self 5 >
-// db1 0, old1 has CPU 0 too but sorts stably after db1).
+// TestFleetOverviewSort pins explicit sort/dir query handling: ?sort=cpu &dir=desc orders
+// rows by descending CPU.
 func TestFleetOverviewSort(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?sort=cpu&dir=desc")
@@ -305,10 +276,8 @@ func TestFleetOverviewDefaultSort(t *testing.T) {
 	}
 }
 
-// TestFleetTableFragmentReturnsOnlyTbody pins GET /fleet/table's exact
-// output shape: a single <tbody id="fleet-tbody">...</tbody> fragment, no
-// surrounding page/base.html markup, and no loss of the same filter/sort
-// query semantics /fleet itself applies.
+// TestFleetTableFragmentReturnsOnlyTbody pins GET /fleet/table's exact output shape: a
+// single <tbody id="fleet-tbody">...</tbody> fragment.
 func TestFleetTableFragmentReturnsOnlyTbody(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet/table?tag=web&state=online")
@@ -331,10 +300,8 @@ func TestFleetTableFragmentReturnsOnlyTbody(t *testing.T) {
 	if strings.Contains(body, `<a href="/n/web2/">web2</a>`) {
 		t.Error("GET /fleet/table: web2 (state=lagging) must not match state=online")
 	}
-	// The fragment's own self-poll re-targets the SAME query string it was
-	// rendered with (url.Values.Encode() sorts keys alphabetically: state
-	// before tag), so a subsequent htmx swap-in keeps polling with the
-	// filter still applied.
+	// The fragment's own self-poll re-targets the SAME query string it was rendered with
+	// (url.Values.Encode() sorts keys alphabetically: state before tag).
 	if !strings.Contains(html.UnescapeString(body), `hx-get="/fleet/table?state=online&tag=web"`) {
 		t.Errorf("GET /fleet/table: fragment's self-poll hx-get should preserve the query string, got:\n%s", body)
 	}
@@ -343,10 +310,7 @@ func TestFleetTableFragmentReturnsOnlyTbody(t *testing.T) {
 	}
 }
 
-// TestFleetPageEmbedsPollingQueryString pins the full page's initial tbody
-// carrying the SAME query string the page itself was requested with -- the
-// htmx poll fragment must keep the current query string (global-
-// constraints.md/task-5-brief.md).
+// TestFleetPageEmbedsPollingQueryString pins the full page's initial tbody carrying.
 func TestFleetPageEmbedsPollingQueryString(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?state=down&sort=name&dir=asc")
@@ -359,10 +323,8 @@ func TestFleetPageEmbedsPollingQueryString(t *testing.T) {
 	}
 }
 
-// TestFleetNodesAPI pins GET /api/fleet/nodes' JSON contract: []core.NodeSummary,
-// filtered by tag/state/q using plain core.NodeFilter.Match semantics (NOT
-// the HTML page's "?state=lagging also matches stale" convenience -- see
-// fleetStateMatches' doc).
+// TestFleetNodesAPI pins GET /api/fleet/nodes' JSON contract: []core.NodeSummary, filtered
+// by tag/state/q using plain core.NodeFilter.Match semantics.
 func TestFleetNodesAPI(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/api/fleet/nodes?tag=web")
@@ -401,10 +363,8 @@ func TestFleetNodesAPI(t *testing.T) {
 	}
 }
 
-// TestFleetRoutesNotFoundOnSoloAndChild pins the "masters only" gate: on a
-// solo or child daemon, all three routes 404 and the nav carries no "Fleet"
-// entry (task-5-brief.md: "All 404 unless fleetRole(d)=='master'";
-// global-constraints.md: "no fleet nav" on solo/child).
+// TestFleetRoutesNotFoundOnSoloAndChild pins the "masters only" gate: on a solo or child
+// daemon, all three routes 404 and the nav carries no "Fleet" entry.
 func TestFleetRoutesNotFoundOnSoloAndChild(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -435,9 +395,8 @@ func TestFleetRoutesNotFoundOnSoloAndChild(t *testing.T) {
 	}
 }
 
-// TestFleetOverviewNavItemOnMaster is TestFleetRoutesNotFoundOnSoloAndChild's
-// positive counterpart: a master's nav DOES carry the "Fleet" entry, and a
-// down node's count shows as its badge.
+// TestFleetOverviewNavItemOnMaster is TestFleetRoutesNotFoundOnSoloAndChild's positive
+// counterpart: a master's nav DOES carry the "Fleet" entry.
 func TestFleetOverviewNavItemOnMaster(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/")
@@ -453,8 +412,7 @@ func TestFleetOverviewNavItemOnMaster(t *testing.T) {
 	}
 }
 
-// TestFleetOverviewViewerCanSee pins RBAC: /fleet is viewer-reachable, not
-// admin-only (task-5-brief.md: "GET /fleet (viewer)").
+// TestFleetOverviewViewerCanSee pins RBAC: /fleet is viewer-reachable, not admin-only.
 func TestFleetOverviewViewerCanSee(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet")
@@ -463,15 +421,8 @@ func TestFleetOverviewViewerCanSee(t *testing.T) {
 	}
 }
 
-// TestFleetRequestScopedMemoLimitsRoundTrips is round-1 review item 2: GET
-// /fleet was making 2x Status() + 2x Nodes() (fleetGateHTML's fleetRole
-// call plus newPageData's resolveFleetPageInfo; fetchFleetNodes plus
-// navCountsFor's FleetDown count). With the request-scoped fleetMemo
-// (fleet_memo.go) wired through every one of those call sites, both GET
-// /fleet (the master-local page) and GET /n/child1/monitoring (a
-// node-scoped page, exercising withNodeRouter's own resolveMasterAndNodes
-// call alongside newPageData's) must make at most one real Status() call
-// and one real Nodes() call each, for the whole request.
+// TestFleetRequestScopedMemoLimitsRoundTrips pins the request-scoped fleetMemo
+// (fleet_memo.go): GET /fleet would otherwise make 2x Status() + 2x Nodes().
 func TestFleetRequestScopedMemoLimitsRoundTrips(t *testing.T) {
 	fakeF := &fakeFleet{
 		status: core.FleetStatus{Role: config.RoleMaster},
@@ -501,10 +452,7 @@ func TestFleetRequestScopedMemoLimitsRoundTrips(t *testing.T) {
 	}
 }
 
-// TestFleetTablePollingSyncsThis pins round-1 review item 3: the polling
-// tbody must carry hx-sync="this:replace" so an in-flight poll is aborted/
-// replaced by the next one rather than letting two responses race and
-// apply out of order.
+// TestFleetTablePollingSyncsThis pins that item 3.
 func TestFleetTablePollingSyncsThis(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet")
@@ -524,9 +472,8 @@ func TestFleetTablePollingSyncsThis(t *testing.T) {
 	}
 }
 
-// TestFleetNodesAPIRedactsRemoteAddrForNonAdmin is round-1 review item 4:
-// GET /api/fleet/nodes blanks RemoteAddr for a viewer, but an admin session
-// still sees the real value.
+// TestFleetNodesAPIRedactsRemoteAddrForNonAdmin pins that GET /api/fleet/nodes blanks
+// RemoteAddr for a viewer, but an admin session still sees the real value.
 func TestFleetNodesAPIRedactsRemoteAddrForNonAdmin(t *testing.T) {
 	nodes := fleetFiveNodeRoster()
 	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
@@ -568,12 +515,8 @@ func TestFleetNodesAPIRedactsRemoteAddrForNonAdmin(t *testing.T) {
 	}
 }
 
-// TestFleetQueryNonAdminNeverMatchesRemoteAddr is the Task 6 review
-// carry-over from Task 5: a non-admin's q= must never match RemoteAddr --
-// on the HTML page (/fleet?q=) as well as the JSON API (already covered by
-// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr below) -- while an
-// admin session's q= still does (core.NodeFilter.Match's own semantics,
-// unchanged for admin).
+// TestFleetQueryNonAdminNeverMatchesRemoteAddr pins that a non-admin's q= never matches
+// RemoteAddr -- on the HTML page (/fleet?q=) as well as the JSON API.
 func TestFleetQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
 	nodes := fleetFiveNodeRoster()
 	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
@@ -596,10 +539,8 @@ func TestFleetQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
 	}
 }
 
-// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr is the JSON API's
-// counterpart to TestFleetQueryNonAdminNeverMatchesRemoteAddr: a viewer's
-// q= matching only a node's RemoteAddr returns zero nodes; an admin's same
-// query still finds it.
+// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr is the JSON API's counterpart to
+// TestFleetQueryNonAdminNeverMatchesRemoteAddr.
 func TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
 	nodes := fleetFiveNodeRoster()
 	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
@@ -636,9 +577,8 @@ func TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
 	}
 }
 
-// TestFleetQueryNonAdminStillMatchesTags pins the ruling's positive half:
-// a non-admin's q= still matches name/id/tags -- the RemoteAddr fix above
-// must not break ordinary search.
+// TestFleetQueryNonAdminStillMatchesTags pins the positive half: a non-admin's q= still
+// matches name/id/tags -- the RemoteAddr exclusion above must not break ordinary search.
 func TestFleetQueryNonAdminStillMatchesTags(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsRole(t, d, RoleViewer, "/api/fleet/nodes?q=web")
@@ -654,12 +594,7 @@ func TestFleetQueryNonAdminStillMatchesTags(t *testing.T) {
 	}
 }
 
-// TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr is round-1
-// review item (c): the /fleet/table htmx fragment applies the SAME
-// non-admin RemoteAddr query-match rule as /fleet and /api/fleet/nodes
-// (TestFleetQueryNonAdminNeverMatchesRemoteAddr/
-// TestFleetNodesAPIQueryNonAdminNeverMatchesRemoteAddr above) -- a direct
-// test on /fleet/table itself, not just its sibling endpoints.
+// TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr pins that the /fleet/table.
 func TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
 	nodes := fleetFiveNodeRoster()
 	nodes[1].RemoteAddr = "10.0.0.5:9443" // web1
@@ -682,10 +617,8 @@ func TestFleetTableFragmentQueryNonAdminNeverMatchesRemoteAddr(t *testing.T) {
 	}
 }
 
-// TestFleetRoutesAnonymousRedirectToLogin is the brief's "minor" ask:
-// /fleet/table and /api/fleet/nodes are viewer-gated exactly like /fleet
-// itself -- an anonymous caller is redirected to /login (302), not 404 or
-// 401.
+// TestFleetRoutesAnonymousRedirectToLogin is the "minor" ask: /fleet/table and
+// /api/fleet/nodes are viewer-gated exactly like /fleet itself.
 func TestFleetRoutesAnonymousRedirectToLogin(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	for _, target := range []string{"/fleet/table", "/api/fleet/nodes"} {
@@ -701,16 +634,11 @@ func TestFleetRoutesAnonymousRedirectToLogin(t *testing.T) {
 	}
 }
 
-// ===========================================================================
-// Task C1a: heatmap and top-N panels (task-1a-brief.md)
-// ===========================================================================
+// =========================================================================== Heatmap and
+// top-N panels ===========================================================================
 
-// fleetHeatBandRoster is task-1a-brief.md's fixture for the heatmap's
-// discrete colour ramp: a neutral CPU (50, below 70), an amber-low CPU (75,
-// 70<=x<85), an amber-full CPU (92, >=85), a down node (state overrides the
-// metric entirely, ember OUTLINE + "down" text) and a revoked node (neutral,
-// "revoked" text) -- the down/revoked nodes carry an extreme CPU (99/10) to
-// prove state always wins over the metric ramp.
+// fleetHeatBandRoster is the fixture for the heatmap's discrete colour ramp: a neutral CPU
+// (50, below 70), an amber-low CPU (75, 70<=x<85), an amber-full CPU (92, >=85).
 func fleetHeatBandRoster() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: "n1", Name: "n1", State: "online", CPU: 50},
@@ -721,11 +649,8 @@ func fleetHeatBandRoster() []core.NodeSummary {
 	}
 }
 
-// TestFleetHeatmapColorBandsAndOverrides pins the default (cpu) metric's
-// discrete ramp -- below 70% neutral, 70-85% amber (low intensity), 85%+
-// amber (full intensity) -- plus the down/revoked overrides, and that ember
-// never appears as a metric colour (only .heat-down's outline, which is the
-// ruling's one sanctioned "down" use).
+// TestFleetHeatmapColorBandsAndOverrides pins the default (cpu) metric's discrete ramp --
+// below 70% neutral, 70-85% amber (low intensity), 85%+ amber (full intensity).
 func TestFleetHeatmapColorBandsAndOverrides(t *testing.T) {
 	d := fleetMasterDeps(t, fleetHeatBandRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet")
@@ -756,9 +681,7 @@ func TestFleetHeatmapColorBandsAndOverrides(t *testing.T) {
 	}
 }
 
-// fleetLoadBandRoster exercises the load metric's absolute thresholds (1, 4
-// and 8 -- task-1a-brief.md: NodeSummary carries no core count, so the
-// heatmap can't compute a per-core ratio and falls back to these).
+// fleetLoadBandRoster exercises the load metric's absolute thresholds.
 func fleetLoadBandRoster() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: "lo", Name: "lo", State: "online", Load1: 0.5},
@@ -787,10 +710,8 @@ func TestFleetHeatmapLoadMetricAbsoluteThresholds(t *testing.T) {
 	}
 }
 
-// TestFleetHeatmapMetricSelectorPreservesFilters pins "the metric selector is
-// links, not a form; it preserves the other query params" -- ?tag=web&
-// metric=mem must render the OTHER metric links (cpu/disk/load) still
-// carrying tag=web, and the active metric's chip carries the "on" class.
+// TestFleetHeatmapMetricSelectorPreservesFilters pins "the metric selector is links, not a
+// form; it preserves the other query params".
 func TestFleetHeatmapMetricSelectorPreservesFilters(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?tag=web&metric=mem")
@@ -812,9 +733,7 @@ func TestFleetHeatmapMetricSelectorPreservesFilters(t *testing.T) {
 	}
 }
 
-// TestFleetHeatmapUnknownMetricFallsBackToCPU pins parseFleetMetric's
-// documented default: an unrecognized ?metric= value degrades to cpu rather
-// than 500ing or rendering an all-zero/blank ramp.
+// TestFleetHeatmapUnknownMetricFallsBackToCPU pins parseFleetMetric's documented default.
 func TestFleetHeatmapUnknownMetricFallsBackToCPU(t *testing.T) {
 	d := fleetMasterDeps(t, fleetHeatBandRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?metric=bogus")
@@ -822,9 +741,8 @@ func TestFleetHeatmapUnknownMetricFallsBackToCPU(t *testing.T) {
 		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	// n2's CPU is 75 (amber-low); n2 has no MemPct/WorstDiskPct/Load1 set,
-	// so this tile would render "0%"/neutral instead if ?metric=bogus fell
-	// through to anything other than cpu.
+	// n2's CPU is 75 (amber-low); n2 has no MemPct/WorstDiskPct/Load1 set, so this tile would
+	// render "0%"/neutral instead if ?metric=bogus fell through to anything other than cpu.
 	want := `<a class="heat-tile heat-amber-low" href="/n/n2/" data-heat-id="n2"><span class="heat-name">n2</span><span class="heat-val">75%</span></a>`
 	if !strings.Contains(body, want) {
 		t.Errorf("?metric=bogus: expected fallback to cpu, missing %q\nbody:\n%s", want, body)
@@ -834,11 +752,8 @@ func TestFleetHeatmapUnknownMetricFallsBackToCPU(t *testing.T) {
 	}
 }
 
-// TestFleetHeatmapMetricSelectorEscapesQueryValue pins that the metric
-// selector's links correctly re-encode a q= value containing characters
-// that are meaningful in a URL (a space and a literal "&") -- fq.encode()
-// followed by fleetPageQueryString's re-parse/re-encode round trip must not
-// corrupt or truncate the value.
+// TestFleetHeatmapMetricSelectorEscapesQueryValue pins that the metric selector's links
+// correctly re-encode a q= value containing characters that are meaningful in a URL.
 func TestFleetHeatmapMetricSelectorEscapesQueryValue(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	target := "/fleet?metric=mem&q=" + url.QueryEscape("a b&c")
@@ -853,11 +768,7 @@ func TestFleetHeatmapMetricSelectorEscapesQueryValue(t *testing.T) {
 	}
 }
 
-// fleetTopNRoster gives every online node a distinct, non-overlapping value
-// per metric (cpu/mem/disk) so a test can assert exactly which five nodes
-// rank into each top-N panel without cross-panel ambiguity. down/revoked
-// carry the highest raw values of all, to prove they're excluded from every
-// ranking despite that.
+// fleetTopNRoster gives every online node a distinct, non-overlapping value per metric.
 func fleetTopNRoster() []core.NodeSummary {
 	return []core.NodeSummary{
 		{ID: "a", Name: "a", State: "online", CPU: 10, MemPct: 95, WorstDiskPct: 5},
@@ -872,9 +783,8 @@ func fleetTopNRoster() []core.NodeSummary {
 	}
 }
 
-// TestFleetTopNPanelsRankAndExcludeDownRevoked pins the top-N panels' exact
-// contract: top 5 by CPU/mem/worst-disk, descending, down/revoked excluded
-// from every ranking regardless of their raw value.
+// TestFleetTopNPanelsRankAndExcludeDownRevoked pins the top-N panels' exact contract: top 5
+// by CPU/mem/worst-disk, descending.
 func TestFleetTopNPanelsRankAndExcludeDownRevoked(t *testing.T) {
 	d := fleetMasterDeps(t, fleetTopNRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet")
@@ -923,11 +833,8 @@ func TestFleetTopNPanelsRankAndExcludeDownRevoked(t *testing.T) {
 		}
 	}
 
-	// down/revoked never appear in ANY of the three metric ranking panels,
-	// despite the highest raw values of the whole roster -- scoped to the
-	// panels' own hbar markup (class="hbar"/"hbar mem") so this doesn't
-	// false-negative against downnode's legitimate appearance in the "Down
-	// now" list or either node's appearance in the table/heatmap.
+	// down/revoked never appear in ANY of the three metric ranking panels, despite the highest
+	// raw values of the whole roster -- scoped to the panels' own hbar markup.
 	for _, id := range []string{"downnode", "revoked1"} {
 		for _, class := range []string{"hbar", "hbar mem"} {
 			bad := `<a class="` + class + `" href="/n/` + id + `/">`
@@ -967,9 +874,8 @@ func TestFleetDownNowPanelListsDownNodesWithLastSeen(t *testing.T) {
 	}
 }
 
-// TestFleetHeatmapAndPanelsRespectFilters pins "the heatmap and the panels
-// respect the page's existing filters" -- ?tag=web narrows both the table
-// AND the heatmap to web1/web2 alone.
+// TestFleetHeatmapAndPanelsRespectFilters pins "the heatmap and the panels respect the
+// page's existing filters".
 func TestFleetHeatmapAndPanelsRespectFilters(t *testing.T) {
 	d := fleetMasterDeps(t, fleetFiveNodeRoster())
 	rr := fleetGetAsViewer(t, d, "/fleet?tag=web")
@@ -995,10 +901,8 @@ func TestFleetHeatmapAndPanelsRespectFilters(t *testing.T) {
 	}
 }
 
-// TestFleetHeatmapPanelsUseSingleNodesCall is task-1a-brief.md's own
-// requirement: "Both render from the request-scoped memo's single Nodes()
-// call. No extra Fleet() round trips; assert this with the existing
-// counting fake."
+// TestFleetHeatmapPanelsUseSingleNodesCall is the own requirement: "Both render from the
+// request-scoped memo's single Nodes() call.
 func TestFleetHeatmapPanelsUseSingleNodesCall(t *testing.T) {
 	fakeF := &fakeFleet{status: core.FleetStatus{Role: config.RoleMaster}, nodes: fleetFiveNodeRoster()}
 	cf, statusCalls, nodesCalls := newCountingFleet(fakeF)
@@ -1041,9 +945,8 @@ func fleetBigRoster(n int) []core.NodeSummary {
 	return nodes
 }
 
-// TestFleetOverviewPerformance200Nodes pins task-1a-brief.md's performance
-// bound: a 200-node fake renders /fleet in under 300ms server-side, measured
-// as the median over 3 runs (a generous, CI-safe bound).
+// TestFleetOverviewPerformance200Nodes pins the performance bound: a 200-node fake renders
+// /fleet in under 300ms server-side, measured as the median over 3 runs.
 func TestFleetOverviewPerformance200Nodes(t *testing.T) {
 	d := fleetMasterDeps(t, fleetBigRoster(200))
 	const runs = 3

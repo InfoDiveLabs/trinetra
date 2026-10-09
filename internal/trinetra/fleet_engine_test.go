@@ -15,32 +15,14 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// TestMain zeroes groupWait/groupInterval (task 6 part 2) for this package's
-// ENTIRE test binary run: every engine/daemon test that predates incident
-// grouping fires an alert (often via a bare newFleetAlertEngine, not just
-// the shared engineFixture/routingFixture constructors) and expects it
-// delivered immediately off a fixed fake clock that never advances, but
-// tryDeliverGroup now gates a fire's first notification on groupWait having
-// elapsed since the incident opened. Rather than hunt down every direct
-// construction site, the whole binary's baseline is 0 (immediate, exactly
-// today's pre-grouping behaviour); a grouping-timing-specific test sets
-// these package vars to whatever it wants to exercise directly and restores
-// them via t.Cleanup (disableGroupWaitForTest does this to explicitly
-// restore back to this 0 baseline, which also documents the intent at each
-// call site) -- they are package VARS, not consts, precisely so a test can
-// do this (task 6 brief).
+// TestMain zeroes groupWait/groupInterval for this package's ENTIRE test binary run: every
+// engine/daemon test that predates incident grouping fires an alert.
 func TestMain(m *testing.M) {
 	groupWait, groupInterval = 0, 0
 	os.Exit(m.Run())
 }
 
-// engineFixture wires a fleetAlertEngine over a real incidentStore (on disk,
-// like production) with fake push/deliver/connected so a test can assert
-// exactly what the engine decided without any network or dispatcher
-// machinery. deliver runs synchronously (matching deliverSyncAndLog's real
-// contract) but Submit still calls it off its own goroutine, so any test
-// that triggers an actual delivery attempt must call waitIdle before
-// asserting on delivered/pushed.
+// engineFixture wires a fleetAlertEngine over a real incidentStore.
 type engineFixture struct {
 	mu          sync.Mutex
 	delivered   []Alert
@@ -58,15 +40,8 @@ type pushedFrame struct {
 	f    fleet.Frame
 }
 
-// disableGroupWaitForTest zeroes groupWait/groupInterval for the duration of
-// a test (restored via t.Cleanup): every engine test that predates task 6's
-// incident grouping fires an alert and expects it delivered immediately, but
-// group_wait/group_interval now gate a fire's first/updated group
-// notification (tryDeliverGroup). groupWait/groupInterval are package VARS,
-// not consts, precisely so a test can do this (task 6 brief) -- a
-// grouping-specific test instead sets them to whatever it wants to exercise
-// directly, or leaves this disabled and drives timing through the fake
-// clock + an explicit TickGrouping call, exactly like escalation testing.
+// disableGroupWaitForTest zeroes groupWait/groupInterval for the duration of a test
+// (restored via t.Cleanup).
 func disableGroupWaitForTest(t *testing.T) {
 	t.Helper()
 	prevWait, prevInterval := groupWait, groupInterval
@@ -196,27 +171,8 @@ func TestEngineChildFireEnrichesDeliversAndReceipts(t *testing.T) {
 	}
 }
 
-// TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident reproduces
-// the docker fleet e2e's step 12 failure end to end: n1's cpu incident is
-// opened, delivered once, and left open forever (mirroring the real run's
-// step 10, which deliberately never recovers child1's mem incident). n2's
-// cpu alert shares the SAME incident (groupKeyFor's default bucket is
-// "rule=<key>|severity=<severity>", computed WITHOUT the node whenever no
-// route's GroupBy overrides it -- see fleet_engine.go's groupKeyFor/
-// groupKeyForRouted). n2 then fires once (T_A) and, before this fix, that
-// alert's SECOND, byte-identical-by-dedup-key resend (a child's own
-// fallback-delivery record -- see fleet_lease.go's deliverFallback --
-// hitting Submit's "alreadySeen" branch, which calls MarkDeliveredLocally)
-// poisons legDeliveredStatusFor for the WHOLE incident: MarkDeliveredLocally
-// appended a "delivered" timeline event with no Leg/Node/AlertKey/FiredAt,
-// so legDeliveredStatusFor's Leg=="" legacy-event fallback (pre-dating
-// per-member grouping) treated it as "the incident's fire leg is delivered"
-// full stop -- not just T_A's own member. T_A then recovers, and n2 fires
-// again (T_B, a genuinely new, unresolved, never-delivered member) -- which
-// tryDeliverGroup's `pending` computation must still deliver, but before
-// the fix silently treated as already covered by T_A's poisoned event and
-// never delivered at all (only ever reaching anyone, in the real system,
-// via that member's own local-fallback timer ~90s later).
+// TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident reproduces the docker fleet
+// e2e's step 12 failure end to end: n1's cpu incident is opened, delivered once.
 func TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -238,11 +194,8 @@ func TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident(t *testing.T) 
 		t.Fatalf("group key = %q, want the default node-less bucket", got)
 	}
 
-	// n2's cpu fires (T_A) -- delivered normally via the shared incident's
-	// group delivery, THEN a second, byte-identical-dedup-key record for
-	// the SAME (n2, cpu, 2000) arrives marked DeliveredLocally (the child's
-	// own fallback resend for this exact alert): Submit's alreadySeen
-	// branch calls MarkDeliveredLocally, which is the buggy call site.
+	// n2's cpu fires (T_A) -- delivered normally via the shared incident's group delivery,
+	// THEN a second, byte-identical-dedup-key record for the SAME.
 	tAFire := AlertEvent{Time: 2000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 2000}
 	ef.engine.HandleChildAlert("n2", "box2", []string{"web"}, tAFire)
 	ef.waitIdle()
@@ -277,8 +230,8 @@ func TestMarkDeliveredLocallyScopesToItsOwnMemberNotWholeIncident(t *testing.T) 
 	}
 }
 
-// TestEngineFireCarriesIncidentButtons pins task 9's wiring: a delivered
-// fire Alert carries Ack/Silence-1h buttons naming its own incident's id.
+// TestEngineFireCarriesIncidentButtons pins that a delivered fire Alert carries
+// Ack/Silence-1h buttons naming its own incident's id.
 func TestEngineFireCarriesIncidentButtons(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -297,7 +250,7 @@ func TestEngineFireCarriesIncidentButtons(t *testing.T) {
 }
 
 // TestEngineRecoverCarriesNoButtons: a recover notification never carries
-// Ack/Silence buttons (task-9 ruling: "only on incident fire messages").
+// Ack/Silence buttons (only incident fire messages do).
 func TestEngineRecoverCarriesNoButtons(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -343,9 +296,8 @@ func TestEngineDeliveredLocallyRecordIsNeverRedelivered(t *testing.T) {
 	ef.connect("n1")
 	ef.engine.PushLeaseNow("n1", ef.now.Add(-time.Minute))
 
-	// The fallback record: RoutedToMaster stays false (deliverFallback never
-	// sets it), DeliveredLocally true, FiredAt carries the ORIGINAL fire's
-	// time (see deliverFallback's doc comment).
+	// The fallback record: RoutedToMaster stays false (deliverFallback never sets it),
+	// DeliveredLocally true, FiredAt carries the ORIGINAL fire's time.
 	ev := AlertEvent{Time: 1200, Key: "cpu", Title: "via local fallback: master unreachable — cpu high",
 		Severity: "warning", Kind: "fire", Source: "anomaly", DeliveredLocally: true, FiredAt: 1000}
 	ef.engine.HandleChildAlert("n1", "box1", nil, ev)
@@ -367,10 +319,8 @@ func TestEngineRoutedToMasterFalseIsAlreadyDeliveredLocally(t *testing.T) {
 	ef.connect("n1")
 	ef.engine.PushLeaseNow("n1", ef.now.Add(-time.Minute))
 
-	// RoutedToMaster false (the child had no valid lease at fire time and
-	// delivered locally then and there) but DeliveredLocally is the
-	// zero-value false too -- there is no third case (see HandleChildAlert's
-	// doc comment): this must still be treated as already delivered.
+	// RoutedToMaster false (the child had no valid lease at fire time and delivered locally
+	// then and there) but DeliveredLocally is the zero-value false too.
 	ev := AlertEvent{Time: 1000, Key: "mem", Title: "mem high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: false, FiredAt: 1000}
 	ef.engine.HandleChildAlert("n1", "box1", nil, ev)
 
@@ -384,11 +334,8 @@ func TestEngineRoutedToMasterFalseIsAlreadyDeliveredLocally(t *testing.T) {
 
 func TestEngineNodeNeverHeldLeaseOverridesRoutedToMaster(t *testing.T) {
 	ef := newEngineFixture(t)
-	// n1 is connected, but never got a SUCCESSFUL lease push (no PushLeaseNow
-	// call, no TickLeases pass touched it): even though this record claims
-	// RoutedToMaster true, Review Focus 5 says the master must not trust
-	// that -- it never actually gave this node a lease, so the alert must be
-	// treated as already delivered locally.
+	// n1 is connected, but never got a SUCCESSFUL lease push (no PushLeaseNow call, no
+	// TickLeases pass touched it): even though this record claims RoutedToMaster true.
 	ef.connect("n1")
 
 	ev := AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000}
@@ -409,9 +356,8 @@ func TestEngineNodeNeverHeldLeaseOverridesRoutedToMaster(t *testing.T) {
 func TestEngineLeaseAfterFireStillCountsAsNeverHeld(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
-	// The node's FIRST successful lease happens AFTER this alert's fired_at:
-	// from the master's perspective it had not yet given this node a lease
-	// when the alert fired.
+	// The node's FIRST successful lease happens AFTER this alert's fired_at: from the master's
+	// perspective it had not yet given this node a lease when the alert fired.
 	ev := AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000}
 	ef.engine.PushLeaseNow("n1", time.Unix(1001, 0))
 	ef.engine.HandleChildAlert("n1", "box1", nil, ev)
@@ -476,16 +422,10 @@ func TestEngineMasterOwnAlertGoesThroughSubmitUnprefixed(t *testing.T) {
 	}
 }
 
-// --- B3 review round 2 1(a): master-own alert crash recovery -------------
+// --- master-own alert crash recovery -------------
 
-// TestEngineResurrectsMasterOwnAlertAfterCrash: the master records a
-// node-down fire (Submit's step 1) and then "crashes" before any delivery
-// goroutine ever ran (simulated here by calling incidentStore.Apply
-// directly, exactly what Submit's step 1 does, without ever reaching
-// step 2). A freshly constructed engine over the same file must redeliver
-// it exactly once, at construction, marking the incident "redelivered
-// after restart" -- and a SECOND restart, after that succeeds, must not
-// redeliver it again.
+// TestEngineResurrectsMasterOwnAlertAfterCrash: the master records a node-down fire
+// (Submit's step 1) and then "crashes" before any delivery goroutine ever ran.
 func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -527,18 +467,15 @@ func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 	if !ok {
 		t.Fatal("incident missing after resurrection")
 	}
-	// (task 6 fix round 1, IMPORTANT 3) A fire-leg resurrection now goes
-	// through the same grouped-delivery path (tryDeliverGroup) an ordinary
-	// fire would, rather than a solo "redelivered after restart" call, so
-	// several undelivered master-own members share ONE message on restart.
+	// A fire-leg resurrection now goes through the same grouped-delivery path
+	// (tryDeliverGroup) an ordinary fire would.
 	last := inc.Timeline[len(inc.Timeline)-1]
 	if last.Kind != "delivered" || !strings.HasPrefix(last.Detail, "fire: ") {
 		t.Fatalf("last timeline event = %+v, want a delivered event labeled fire", last)
 	}
 
-	// A THIRD restart, after the redelivery already succeeded, must not
-	// redeliver it again -- the incident's last event is now "delivered",
-	// not "fired".
+	// A THIRD restart, after the redelivery already succeeded, must not redeliver it again --
+	// the incident's last event is now "delivered", not "fired".
 	incidents3, err := loadIncidentStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -557,11 +494,8 @@ func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 	}
 }
 
-// TestEngineResurrectsBothLegsFireBeforeRecover covers the B3 review round 3
-// IMPORTANT fix: if the master crashed with BOTH the fire and its recover
-// recorded but neither delivered, resurrection must redeliver both -- not
-// just whichever leg the incident's current state happens to reflect -- and
-// the fire must go out before the recover.
+// TestEngineResurrectsBothLegsFireBeforeRecover: if the master crashed with BOTH the fire
+// and its recover recorded but neither delivered, resurrection must redeliver both.
 func TestEngineResurrectsBothLegsFireBeforeRecover(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -617,9 +551,8 @@ func TestEngineResurrectsBothLegsFireBeforeRecover(t *testing.T) {
 	}
 }
 
-// TestEngineResurrectsOnlyUndeliveredRecoverLeg: the fire already delivered
-// (labeled "fire: ...") before the crash; only the recover is missing its
-// "delivered" event, so only the recover is redelivered.
+// TestEngineResurrectsOnlyUndeliveredRecoverLeg: the fire already delivered (labeled "fire:
+// ...") before the crash; only the recover is missing its "delivered" event.
 func TestEngineResurrectsOnlyUndeliveredRecoverLeg(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -677,9 +610,8 @@ func TestEngineResurrectsOnlyUndeliveredRecoverLeg(t *testing.T) {
 	}
 }
 
-// TestEngineDoesNotResurrectMasterOwnAlertOlderThan24h covers the 24h cutoff:
-// an un-delivered master-own fire older than 24h is given up on, not
-// redelivered, and the incident records why.
+// TestEngineDoesNotResurrectMasterOwnAlertOlderThan24h covers the 24h cutoff: an
+// un-delivered master-own fire older than 24h is given up on, not redelivered.
 func TestEngineDoesNotResurrectMasterOwnAlertOlderThan24h(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -742,9 +674,8 @@ func TestEngineTickLeasesCadenceAndOnConnect(t *testing.T) {
 	if got := len(ef.framesFor("n1", "lease")); got != 2 {
 		t.Fatalf("leases after +31s = %d, want 2", got)
 	}
-	// A disconnected/removed/revoked node (simulated here by omitting it from
-	// the ids list, exactly as masterLoop.tick filters revoked nodes) gets no
-	// lease at all.
+	// A disconnected/removed/revoked node (simulated here by omitting it from the ids list,
+	// exactly as masterLoop.tick filters revoked nodes) gets no lease at all.
 	ef.engine.TickLeases(t0.Add(62*time.Second), nil)
 	if got := len(ef.framesFor("n1", "lease")); got != 2 {
 		t.Fatalf("leases after being excluded = %d, want still 2", got)
@@ -783,9 +714,8 @@ func TestEngineIncidentsReloadAfterRestart(t *testing.T) {
 
 	var delivered []Alert
 	engine2 := newFleetAlertEngine(func() time.Time { return now }, func(a Alert) bool { delivered = append(delivered, a); return true }, func(string, fleet.Frame) bool { return true }, func(string) bool { return true }, incidents2)
-	// The restarted engine's dedup set is seeded from the reloaded
-	// incidents, so re-processing the exact same (node, key, fired_at)
-	// record must not redeliver it.
+	// The restarted engine's dedup set is seeded from the reloaded incidents, so re-processing
+	// the exact same (node, key, fired_at) record must not redeliver it.
 	engine2.HandleChildAlert("n1", "box1", nil, AlertEvent{Time: 1000, Key: "cpu", Title: "cpu high", Severity: "warning", Kind: "fire", Source: "anomaly", RoutedToMaster: true, FiredAt: 1000})
 	if len(delivered) != 0 {
 		t.Fatalf("delivered after restart replay = %+v, want none", delivered)
@@ -810,10 +740,7 @@ func TestEnginePushAckAndUnackFrames(t *testing.T) {
 }
 
 // TestReplicaSinkOnAlertHookDedupsByteIdenticalRecord covers the wiring from
-// replicaSink.apply's KindAlert branch into the engine: the SAME alert
-// record arriving via Backfill (unsequenced, gap repair) and again via
-// Ingest -- byte-identical -- must reach onAlert exactly once, per the
-// replica's own existing (Time, line) dedup.
+// replicaSink.apply's KindAlert branch into the engine.
 func TestReplicaSinkOnAlertHookDedupsByteIdenticalRecord(t *testing.T) {
 	dir := t.TempDir()
 	var mu sync.Mutex
@@ -833,9 +760,8 @@ func TestReplicaSinkOnAlertHookDedupsByteIdenticalRecord(t *testing.T) {
 	if err := sink.Apply(testNodeID, []fleet.Record{rec}); err != nil {
 		t.Fatal(err)
 	}
-	// The exact same record again via Backfill (as gap repair or a retried
-	// batch would send it): byte-identical, so the replica's own dedup must
-	// swallow it before onAlert ever sees it a second time.
+	// The exact same record again via Backfill (as gap repair or a retried batch would send
+	// it): byte-identical.
 	if err := sink.Backfill(testNodeID, []fleet.Record{rec}); err != nil {
 		t.Fatal(err)
 	}
@@ -847,12 +773,10 @@ func TestReplicaSinkOnAlertHookDedupsByteIdenticalRecord(t *testing.T) {
 	}
 }
 
-// --- B3 review round 2: keyed dispatch ordering + bounded concurrency -----
+// --- keyed dispatch ordering + bounded concurrency -----
 
-// TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel exercises the
-// keyed dispatcher (fleet_dispatch.go) through Submit/HandleChildAlert
-// directly: a fire on a slow channel must still be delivered before its
-// later recover, never raced.
+// TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel exercises the keyed dispatcher
+// (fleet_dispatch.go) through Submit/HandleChildAlert directly.
 func TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel(t *testing.T) {
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
@@ -896,10 +820,7 @@ func TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel(t *testing.T) {
 }
 
 // TestEngineBoundsConcurrentDispatches is the engine-level counterpart of
-// TestKeyedDispatcherBoundsGlobalConcurrency: 200 concurrent Submits (each
-// its own node/key, so nothing serializes them against each other on
-// ordering grounds) must never exceed dispatchConcurrency dispatches
-// actually running through the engine's own deliver hook at once.
+// TestKeyedDispatcherBoundsGlobalConcurrency: 200 concurrent Submits.
 func TestEngineBoundsConcurrentDispatches(t *testing.T) {
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
@@ -953,11 +874,8 @@ func TestEngineBoundsConcurrentDispatches(t *testing.T) {
 	}
 }
 
-// TestEngineStopLeavesUndeliveredJobCleanForResurrection is the B3 review
-// round 3 minor 2's engine-level check: a job still in flight when Stop's
-// timeout expires leaves the incident exactly as step 1 recorded it -- no
-// "delivered" event -- so resurrectMasterAlerts at the next start (a fresh
-// engine over the same store) is what actually redelivers it.
+// TestEngineStopLeavesUndeliveredJobCleanForResurrection: a job still in flight when Stop's
+// timeout expires leaves the incident as step 1 recorded it (no "delivered" event).
 func TestEngineStopLeavesUndeliveredJobCleanForResurrection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -979,9 +897,8 @@ func TestEngineStopLeavesUndeliveredJobCleanForResurrection(t *testing.T) {
 		t.Fatal("Stop reported everything drained, but the job is deliberately stuck")
 	}
 
-	// While the job is STILL stuck (block not yet closed): the durable
-	// record from step 1 shows no "delivered" event, exactly what
-	// resurrectMasterAlerts needs to see to redeliver it.
+	// While the job is STILL stuck (block not yet closed): the durable record from step 1
+	// shows no "delivered" event.
 	inc, ok := incidents.FindByAlertKey("fleet:node:x:down")
 	if !ok {
 		t.Fatal("incident missing")
@@ -993,10 +910,7 @@ func TestEngineStopLeavesUndeliveredJobCleanForResurrection(t *testing.T) {
 		t.Fatal("fire leg shows delivered, but the job is deliberately still stuck")
 	}
 
-	// A "restart" (a fresh engine, over the SAME store -- same effect as
-	// reloading from disk, since resurrectMasterAlerts reads through
-	// incidentStore.List, not a snapshot) resurrects it while the original
-	// is still stuck.
+	// A fresh engine over the same store resurrects it while the original is stuck.
 	var delivered []Alert
 	engine2 := newFleetAlertEngine(
 		func() time.Time { return time.Unix(600, 0) },
@@ -1010,8 +924,7 @@ func TestEngineStopLeavesUndeliveredJobCleanForResurrection(t *testing.T) {
 		t.Fatalf("delivered after restart = %+v, want exactly one redelivery", delivered)
 	}
 
-	// Clean up: let the original stuck job finish so nothing leaks past
-	// this test.
+	// Clean up: let the original stuck job finish so nothing leaks past this test.
 	close(block)
 	engine.waitIdleForTest()
 }
@@ -1032,15 +945,10 @@ func TestEngineHandleChildAckSyncAcksOpenIncident(t *testing.T) {
 	}
 }
 
-// --- B3 review round 1: ordering (record -> deliver -> receipt) ----------
+// --- ordering (record -> deliver -> receipt) ----------
 
-// TestEngineReceiptFollowsDeliveredEventOnSuccess is the ruling's "success"
-// case: the receipt goes out only AFTER the "delivered" timeline event is
-// durably recorded, never before. The fake push callback checks the
-// incident's OWN on-disk-backed state at the moment it is invoked (both run
-// in the same goroutine, in program order, inside deliverAndReceipt), so if
-// the ordering were ever reversed this test would see no "delivered" event
-// yet when the receipt frame arrives.
+// TestEngineReceiptFollowsDeliveredEventOnSuccess: the receipt goes out only AFTER the
+// "delivered" timeline event is durably recorded.
 func TestEngineReceiptFollowsDeliveredEventOnSuccess(t *testing.T) {
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))
@@ -1089,10 +997,8 @@ func TestEngineReceiptFollowsDeliveredEventOnSuccess(t *testing.T) {
 	}
 }
 
-// TestEngineAllChannelsFailSendsNoReceipt is the ruling's "all channels
-// fail" case: no receipt goes out, the incident stays firing with no
-// "delivered" event, and (per HandleChildAlert's contract) the child's own
-// fallback remains the only path to actual delivery.
+// TestEngineAllChannelsFailSendsNoReceipt: when all channels fail, no receipt goes out and
+// the incident stays firing with no "delivered" event.
 func TestEngineAllChannelsFailSendsNoReceipt(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -1125,21 +1031,14 @@ func TestEngineAllChannelsFailSendsNoReceipt(t *testing.T) {
 	}
 }
 
-// TestEngineCrashBetweenRecordAndReceiptThenChildFallback is the ruling's
-// "crash between record and receipt" case: incidents.Apply records the fire
-// durably (step 1), then the process is gone before delivery ever runs (no
-// receipt is ever sent). A restarted engine, built fresh over the same
-// file, then receives the child's OWN later fallback delivery (the receipt
-// never arrived, so the child fell back on schedule) for the exact same
-// (node, key, fired_at) -- the master must record delivered_locally and
-// must NOT attempt delivery again.
+// TestEngineCrashBetweenRecordAndReceiptThenChildFallback: incidents.Apply records the fire
+// durably, then the process dies before delivery (no receipt sent).
 func TestEngineCrashBetweenRecordAndReceiptThenChildFallback(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
 
-	// Step 1 only, exactly what Submit does before ever attempting delivery
-	// -- simulating a crash immediately after this, before any goroutine
-	// for delivery ever ran.
+	// Step 1 only, exactly what Submit does before ever attempting delivery -- simulating a
+	// crash immediately after this, before any goroutine for delivery ever ran.
 	incidents1, err := loadIncidentStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1154,8 +1053,7 @@ func TestEngineCrashBetweenRecordAndReceiptThenChildFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// "Restart": a fresh incidentStore/engine over the same file. Its dedup
-	// set is seeded from disk, so (n1, cpu, 1000) is already known.
+	// "Restart": a fresh incidentStore/engine over the same file.
 	incidents2, err := loadIncidentStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1170,9 +1068,8 @@ func TestEngineCrashBetweenRecordAndReceiptThenChildFallback(t *testing.T) {
 		incidents2,
 	)
 
-	// The child's fallback: same (node, key, fired_at), DeliveredLocally
-	// true, RoutedToMaster left at its zero value (deliverFallback never
-	// sets it) -- exactly the shape fleet_lease.go's deliverFallback logs.
+	// The child's fallback: same (node, key, fired_at), DeliveredLocally true, RoutedToMaster
+	// left at its zero value (deliverFallback never sets it).
 	engine2.HandleChildAlert("n1", "box1", nil, AlertEvent{
 		Time: 1300, Key: "cpu", Title: "via local fallback: master unreachable — cpu high",
 		Severity: "warning", Kind: "fire", Source: "anomaly", DeliveredLocally: true, FiredAt: 1000,
@@ -1203,13 +1100,10 @@ func TestEngineCrashBetweenRecordAndReceiptThenChildFallback(t *testing.T) {
 	}
 }
 
-// --- rotation + restart dedup memory (B3 review round 1) ------------------
+// --- rotation + restart dedup memory ------------------
 
-// TestEngineDedupSurvivesRotationAndReplay covers: an incident resolves,
-// incidents.jsonl rotates (the resolved incident's only record of it moves
-// to incidents.jsonl.1), the engine restarts, and the SAME original fire
-// record (now stale) is replayed. It must not be redelivered, and no orphan
-// incident may be recreated for that (node, key).
+// TestEngineDedupSurvivesRotationAndReplay covers: an incident resolves, incidents.jsonl
+// rotates (the resolved incident's only record of it moves to incidents.jsonl.1).
 func TestEngineDedupSurvivesRotationAndReplay(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
@@ -1226,10 +1120,8 @@ func TestEngineDedupSurvivesRotationAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Force rotation: pad the file past the threshold with harmless
-	// newline-delimited filler (long lines, not one giant token -- see
-	// TestIncidentStoreRotatesAt50MB), then append one more (unrelated)
-	// record to trigger appendLine's rotation check.
+	// Force rotation: pad the file past the threshold with harmless newline-delimited filler
+	// (long lines, not one giant token -- see TestIncidentStoreRotatesAt50MB).
 	line := append(bytes.Repeat([]byte("x"), 4096), '\n')
 	pad := bytes.Repeat(line, incidentRotateBytes/len(line)+1)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)

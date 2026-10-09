@@ -12,10 +12,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-// Role is a web UI account's access level. requireRole (middleware.go)
-// enforces it at the route level; resolveEnrollRole (enroll_tokens.go)
-// decides what a newly-enrolled account's Role is (first-run bootstrap or
-// an admin-issued enrollment token).
+// Role is a web UI account's access level. requireRole (middleware.go) enforces it at the
+// route level; resolveEnrollRole.
 type Role string
 
 const (
@@ -40,57 +38,41 @@ func roleRank(r Role) int {
 
 func validRole(r Role) bool { return roleRank(r) > 0 }
 
-// Credential is one registered passkey, in the flattened shape the design
-// doc's "Users store" section specifies (users.json: id, name, role,
-// created, credentials[]{id, publicKey, signCount, transports}). It mirrors
-// the fields of *webauthn.Credential this package actually persists --
-// AttestationType/Flags/Authenticator.AAGUID aren't needed after the
-// ceremony completes, so they're dropped rather than round-tripped.
+// Credential is one registered passkey, in the flattened shape the design doc's "Users
+// store" section specifies.
 type Credential struct {
 	// ID is the credential ID the authenticator generated, used to look the
-	// credential up again during login (Task 5/#61).
+	// credential up again during login.
 	ID []byte `json:"id"`
-	// PublicKey is the COSE-encoded public key bytes go-webauthn extracted
-	// from the attestation object; the private key never leaves the
-	// authenticator.
+	// PublicKey is the COSE-encoded public key bytes go-webauthn extracted from the
+	// attestation object; the private key never leaves the authenticator.
 	PublicKey []byte `json:"publicKey"`
-	// SignCount is the authenticator's signature counter at registration
-	// time (usually 0); login ceremonies (#61) update and persist it to
-	// detect cloned authenticators (a signCount that goes backwards).
+	// SignCount is the authenticator's signature counter at registration time (usually 0);
+	// login ceremonies (#61) update and persist it to detect cloned authenticators.
 	SignCount uint32 `json:"signCount"`
-	// Transports hints at how the browser may reach this authenticator
-	// again (e.g. "internal", "usb", "hybrid"), used to skip transport
-	// probing on a later login ceremony.
+	// Transports hints at how the browser may reach this authenticator again (e.g. "internal",
+	// "usb", "hybrid"), used to skip transport probing on a later login ceremony.
 	Transports []string `json:"transports,omitempty"`
 }
 
-// User is a web UI account. It implements webauthn.User (see the
-// WebAuthn... methods below) so it can be passed directly to
-// *webauthn.WebAuthn's registration/login ceremonies.
+// User is a web UI account.
 type User struct {
-	// ID is this user's WebAuthn user handle: an opaque, random identifier
-	// (see newUserID), never the display Name -- go-webauthn's User.WebAuthnID
-	// doc warns identity decisions must key off this, not Name.
+	// ID is this user's WebAuthn user handle: an opaque, random identifier (see newUserID),
+	// never the display Name.
 	ID string `json:"id"`
 	// Name is the human-palatable account name (display name and username
-	// are the same value here; the mockup/design doc doesn't distinguish
-	// them for this app).
+	// are the same value here).
 	Name string `json:"name"`
-	// Role is this account's access level (RoleAdmin/RoleResponder/RoleViewer, ranked viewer < responder < admin), assigned by
-	// resolveEnrollRole (enroll_tokens.go) at enrollment time: first-run
-	// bootstrap or an admin-issued enrollment token's Role.
+	// Role is this account's access level (RoleAdmin/RoleResponder/RoleViewer, ranked viewer <
+	// responder < admin), assigned by resolveEnrollRole (enroll_tokens.go) at enrollment time.
 	Role Role `json:"role"`
 	// Created is the Unix seconds timestamp the account was first enrolled.
 	Created int64 `json:"created"`
-	// Credentials holds every passkey this user has registered. A single
-	// user may hold more than one (e.g. a phone + a security key), so
-	// registration appends rather than replaces.
+	// Credentials holds every passkey this user has registered.
 	Credentials []Credential `json:"credentials,omitempty"`
 }
 
-// WebAuthnID returns u.ID as raw bytes: the WebAuthn user handle. Must stay
-// stable for the lifetime of the account (it's what BeginRegistration's
-// SessionData.UserID and FinishRegistration's equality check key off of).
+// WebAuthnID returns u.ID as raw bytes: the WebAuthn user handle.
 func (u *User) WebAuthnID() []byte { return []byte(u.ID) }
 
 // WebAuthnName satisfies webauthn.User; see User.Name's doc.
@@ -100,16 +82,10 @@ func (u *User) WebAuthnName() string { return u.Name }
 // a separate display name from the account name.
 func (u *User) WebAuthnDisplayName() string { return u.Name }
 
-// WebAuthnIcon satisfies webauthn.User. The interface's doc marks this
-// deprecated by the spec; go-webauthn still requires the method, so it's a
-// permanent blank stub.
+// WebAuthnIcon satisfies webauthn.User.
 func (u *User) WebAuthnIcon() string { return "" }
 
-// WebAuthnCredentials adapts u.Credentials (this package's flattened
-// storage shape) into the []webauthn.Credential shape go-webauthn's login
-// ceremony (Task 5/#61) needs to match an assertion against. Registration
-// doesn't consult this (a brand-new user has none yet), but it's part of
-// the webauthn.User interface contract regardless.
+// WebAuthnCredentials adapts u.Credentials (this package's flattened storage shape) into.
 func (u *User) WebAuthnCredentials() []webauthn.Credential {
 	out := make([]webauthn.Credential, len(u.Credentials))
 	for i, c := range u.Credentials {
@@ -125,16 +101,12 @@ func (u *User) WebAuthnCredentials() []webauthn.Credential {
 	return out
 }
 
-// var _ webauthn.User = (*User)(nil) pins the interface implementation at
-// compile time: if a go-webauthn upgrade adds/changes a User method, the
-// trinetra-web build (this package is compiled into that binary, no
-// build tag) fails loudly here instead of failing obscurely inside
-// BeginRegistration.
+// var _ webauthn.User = (*User)(nil) pins the interface implementation at compile time: if
+// a go-webauthn upgrade adds/changes a User method, the trinetra-web build.
 var _ webauthn.User = (*User)(nil)
 
-// transportsFromStrings converts the stored string transport hints back
-// into go-webauthn's protocol.AuthenticatorTransport, the type
-// webauthn.Credential.Transport expects.
+// transportsFromStrings converts the stored string transport hints back into go-webauthn's
+// protocol.AuthenticatorTransport, the type webauthn.Credential.Transport expects.
 func transportsFromStrings(ss []string) []protocol.AuthenticatorTransport {
 	if len(ss) == 0 {
 		return nil
@@ -146,9 +118,7 @@ func transportsFromStrings(ss []string) []protocol.AuthenticatorTransport {
 	return out
 }
 
-// transportsToStrings is transportsFromStrings' inverse: what
-// finishRegistration calls to flatten a freshly-verified *webauthn.Credential's
-// Transport field into this package's storage shape.
+// transportsToStrings is transportsFromStrings' inverse.
 func transportsToStrings(ts []protocol.AuthenticatorTransport) []string {
 	if len(ts) == 0 {
 		return nil
@@ -160,60 +130,32 @@ func transportsToStrings(ts []protocol.AuthenticatorTransport) []string {
 	return out
 }
 
-// UserStore is how the web package persists/looks up accounts. The only
-// implementation today is jsonUserStore (below); it's an interface so a
-// future task can swap backends (or a test can fake one) without touching
-// callers.
+// UserStore is how the web package persists/looks up accounts.
 type UserStore interface {
 	Get(id string) (*User, bool)
 	ByName(name string) (*User, bool)
 	Put(u *User) error
 	List() []*User
-	// IsEmpty reports whether the store holds zero accounts, distinguishing a
-	// genuinely empty store (absent file -> true, nil) from one that exists
-	// but cannot be read (corrupt/permission/IO -> false, err). List() cannot
-	// make this distinction (it collapses an unreadable store to nil), so the
-	// first-run bootstrap gate (resolveEnrollRole) uses this instead and fails
-	// CLOSED on error rather than treating an unreadable store as empty and
-	// opening a tokenless-admin window (#105 secondary hardening).
+	// IsEmpty reports whether the store holds zero accounts, distinguishing a genuinely empty
+	// store (absent file -> true, nil) from one that exists but cannot be read.
 	IsEmpty() (bool, error)
 	Delete(id string) error
-	// CreateFirstAdmin atomically persists u as the very first account (role
-	// forced to RoleAdmin) IFF the store is still empty, else fails -- the
-	// first-run bootstrap decision made under the same lock as the write.
+	// CreateFirstAdmin atomically persists u as the very first account (role forced to
+	// RoleAdmin) IFF the store is still empty, else fails.
 	CreateFirstAdmin(u *User) error
-	// SetRoleUnlessLastAdmin sets user id's role, but refuses (errLastAdmin)
-	// to demote the sole remaining admin -- the load, the last-admin check,
-	// and the write all happen under ONE critical section so two concurrent
-	// demotions can't both pass the check and both commit (the zero-admin
-	// lockout TOCTOU). Returns errUserNotFound if id is unknown.
+	// SetRoleUnlessLastAdmin sets user id's role, but refuses (errLastAdmin) to demote the
+	// sole remaining admin -- the load, the last-admin check.
 	SetRoleUnlessLastAdmin(id string, role Role) error
-	// RemoveUnlessLastAdmin deletes user id, but refuses (errLastAdmin) to
-	// remove the sole remaining admin -- same single-critical-section
-	// atomicity guarantee as SetRoleUnlessLastAdmin. Returns errUserNotFound
-	// if id is unknown.
+	// RemoveUnlessLastAdmin deletes user id, but refuses (errLastAdmin) to remove the sole
+	// remaining admin.
 	RemoveUnlessLastAdmin(id string) error
-	// RevokeCredentialUnlessLastAdmin removes credential credID from user
-	// id's Credentials, but refuses (errLastAdminCredential) if id is the
-	// sole remaining admin AND credID is their last credential -- closing the
-	// third zero-admin lockout vector (a sole admin with zero usable
-	// passkeys can never sign in again: re-enrollment needs either an empty
-	// store or an admin-issued token, neither of which is available). Same
-	// single-critical-section atomicity guarantee as SetRoleUnlessLastAdmin/
-	// RemoveUnlessLastAdmin, which also closes the read-modify-write race
-	// against a concurrent finishLogin (auth_webauthn.go), whose
-	// Get-mutate-signCount-Put on the same file shares this store's
-	// path-keyed fileStoreMutex. Returns errUserNotFound if id is unknown,
-	// errCredentialNotFound if credID isn't among id's Credentials.
+	// RevokeCredentialUnlessLastAdmin removes credential credID from user id's Credentials,
+	// but refuses.
 	RevokeCredentialUnlessLastAdmin(id, credID string) error
 }
 
-// errLastAdmin/errUserNotFound/errLastAdminCredential/errCredentialNotFound
-// are the sentinel errors the atomic guard methods
-// (SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin/
-// RevokeCredentialUnlessLastAdmin) return so callers (handlers_users.go) can
-// map them to the right HTTP status (409/404) via errors.Is without
-// string-matching.
+// errLastAdmin/errUserNotFound/errLastAdminCredential/errCredentialNotFound are the
+// sentinel errors the atomic guard methods.
 var (
 	errLastAdmin           = errors.New("web: refusing to leave the store with no admin")
 	errUserNotFound        = errors.New("web: user not found")
@@ -233,45 +175,20 @@ func countAdmins(users []*User) int {
 	return n
 }
 
-// jsonUserStore is UserStore backed by a single JSON file
-// (<StateDir>/users.json). It intentionally does not cache the parsed
-// users in memory between calls: every method reloads from disk under
-// the store's fileStoreMutex, so concurrent goroutines within this process
-// always see the latest persisted state and Put/Delete's read-modify-write
-// can't race each other (a second process editing the file concurrently is
-// out of scope -- nothing else in this process does that). Given the low
-// request volume of an enrollment/login ceremony, the extra disk I/O per
-// call is not a concern.
+// jsonUserStore is UserStore backed by a single JSON file (<StateDir>/users.json).
 type jsonUserStore struct {
 	path string
 }
 
-// fileStoreMutexes holds one *sync.Mutex per absolute file path, so every
-// file-backed store instance (jsonUserStore, jsonSessionStore, tokenStore)
-// pointing at the SAME file shares a single lock -- fetched via fileStoreMutex
-// at lock time rather than held in a struct field, so it works even for the
-// stores constructed as bare struct literals in tests. Guarded by
-// fileStoreMutexesMu (a plain lock over the map itself, held only briefly to
-// fetch/create the per-path mutex -- never while doing store I/O).
-//
-// This is what makes these stores' long-standing read-modify-write safety
-// (and jsonUserStore's atomic last-admin guard) actually hold: every handler
-// constructs a FRESH store per request (newUserStore/newSessionStore/
-// newCeremonyStore/newTokenStore), so a per-INSTANCE mutex would serialize
-// nothing across concurrent requests -- two writers would each load→modify→
-// save the whole file (last-writer-wins lost updates) and collide on the
-// shared "<path>.tmp" temp file. A path-keyed, process-wide lock closes both.
+// fileStoreMutexes holds one *sync.Mutex per absolute file path, so every file-backed store
+// instance.
 var (
 	fileStoreMutexes   = map[string]*sync.Mutex{}
 	fileStoreMutexesMu sync.Mutex
 )
 
-// fileStoreMutex returns the process-wide mutex for path (creating it on
-// first use). filepath.Abs canonicalizes the key so two spellings of the same
-// path share the lock; on the (essentially impossible) Abs error it falls
-// back to the raw path, which still shares a lock among identical spellings.
-// Distinct paths (e.g. sessions.json vs ceremonies.json) get distinct locks,
-// which is correct -- they are independent files.
+// fileStoreMutex returns the process-wide mutex for path (creating it on first use).
+// filepath.Abs canonicalizes the key so two spellings of the same path share the lock.
 func fileStoreMutex(path string) *sync.Mutex {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -287,11 +204,7 @@ func fileStoreMutex(path string) *sync.Mutex {
 	return mu
 }
 
-// newUserStore returns a UserStore rooted at <stateDir>/users.json. This
-// does not touch disk (no file is created, no error is possible) until an
-// operation is actually performed, so it is always safe to construct even
-// when stateDir doesn't exist yet or is "" (e.g. a test/handler that never
-// reaches an auth route).
+// newUserStore returns a UserStore rooted at <stateDir>/users.json.
 func newUserStore(stateDir string) *jsonUserStore {
 	return &jsonUserStore{path: filepath.Join(stateDir, "users.json")}
 }
@@ -313,12 +226,8 @@ func (s *jsonUserStore) loadLocked() ([]*User, error) {
 	return users, nil
 }
 
-// saveLocked atomically rewrites the store file with users, tightening
-// perms to 0600: users.json holds WebAuthn public keys and account
-// metadata, not a secret by itself, but there's no reason to leave it
-// group/world-readable either. Atomic (write-temp + rename) so a crash
-// mid-write can never leave a truncated/corrupt file behind, mirroring
-// internal/config.Config.Save's approach. Callers must hold the store's fileStoreMutex.
+// saveLocked atomically rewrites the store file with users, tightening perms to 0600:
+// users.json holds WebAuthn public keys and account metadata, not a secret by itself.
 func (s *jsonUserStore) saveLocked(users []*User) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -332,11 +241,8 @@ func (s *jsonUserStore) saveLocked(users []*User) error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return fmt.Errorf("web: write %s: %w", tmp, err)
 	}
-	// Explicit Chmod after a 0600 WriteFile is belt-and-suspenders: WriteFile
-	// only applies the mode when it CREATES the file, so on the (rare) path
-	// where a stale tmp from a previous crash already exists with wider
-	// perms, this tightens it back to 0600. 0600 has no group/world bits to
-	// widen, so it can never loosen perms.
+	// Explicit Chmod after a 0600 WriteFile is belt-and-suspenders: WriteFile only applies the
+	// mode when it CREATES the file.
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("web: chmod %s: %w", tmp, err)
@@ -366,13 +272,7 @@ func (s *jsonUserStore) Get(id string) (*User, bool) {
 	return nil, false
 }
 
-// ByName returns the first user with the given Name, or (nil, false) if
-// none exists. TODO(#62): this store does not (yet) enforce Name uniqueness
-// on Put; enrollBeginHandler uses ByName only to REJECT a duplicate-name
-// enrollment (never to attach to an existing account), so the takeover risk
-// is closed regardless, but Task 6's user-management/Put path should add a
-// uniqueness constraint so two accounts can't share a name in the first
-// place.
+// ByName returns the first user with the given Name, or (nil, false) if none exists.
 func (s *jsonUserStore) ByName(name string) (*User, bool) {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -389,8 +289,7 @@ func (s *jsonUserStore) ByName(name string) (*User, bool) {
 	return nil, false
 }
 
-// Put inserts u, or replaces the existing user with the same ID, and
-// persists the result.
+// Put inserts u, or replaces the existing user with the same ID, and persists the result.
 func (s *jsonUserStore) Put(u *User) error {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -409,18 +308,8 @@ func (s *jsonUserStore) Put(u *User) error {
 	return s.saveLocked(users)
 }
 
-// CreateFirstAdmin atomically persists u as the first-ever account, forcing
-// its role to RoleAdmin -- but ONLY if the store is still empty; otherwise it
-// returns an error and writes nothing. Both the emptiness check and the
-// append happen under the SAME fileStoreMutex lock, which is what closes the first-run
-// bootstrap TOCTOU: an earlier design decided "0 users ⇒ admin" at
-// /enroll/begin (before the WebAuthn round-trip) and only wrote the account
-// at /enroll/finish, so two tokenless enrollments started before either
-// finished both observed an empty store and both became admin. Deciding it
-// here, at finish, under the write lock means whichever finish acquires the
-// lock first becomes the sole admin and every later one sees a non-empty
-// store and is rejected (tokenless enrollment is closed the moment one
-// account exists).
+// CreateFirstAdmin atomically persists u as the first-ever account, forcing its role to
+// RoleAdmin -- but ONLY if the store is still empty.
 func (s *jsonUserStore) CreateFirstAdmin(u *User) error {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -449,12 +338,7 @@ func (s *jsonUserStore) List() []*User {
 	return users
 }
 
-// IsEmpty reports whether the store holds zero accounts. Unlike List (which
-// hides a read failure as nil), it surfaces the loadLocked error so callers
-// can fail closed: an absent file is a genuine empty first-run store (true,
-// nil), but an existing-but-unreadable one returns (false, err) so the
-// bootstrap gate refuses tokenless enrollment rather than trusting a
-// masked-empty read (#105).
+// IsEmpty reports whether the store holds zero accounts.
 func (s *jsonUserStore) IsEmpty() (bool, error) {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -466,8 +350,7 @@ func (s *jsonUserStore) IsEmpty() (bool, error) {
 	return len(users) == 0, nil
 }
 
-// Delete removes the user with the given ID, reporting an error if no such
-// user exists.
+// Delete removes the user with the given ID, reporting an error if no such user exists.
 func (s *jsonUserStore) Delete(id string) error {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -485,13 +368,8 @@ func (s *jsonUserStore) Delete(id string) error {
 	return fmt.Errorf("web: user %q not found", id)
 }
 
-// SetRoleUnlessLastAdmin sets user id's Role to role, all under a SINGLE
-// fileStoreMutex critical section: it loads the current users, and only if demoting id
-// (admin -> non-admin) would NOT leave the store admin-less does it write.
-// Two concurrent demotions of the two remaining admins therefore serialize --
-// whichever acquires the lock first commits, the second reloads a store with
-// one admin left, sees itself as the last one, and is rejected with
-// errLastAdmin. Promotions and no-op same-role writes are never blocked.
+// SetRoleUnlessLastAdmin sets user id's Role to role, all under a SINGLE fileStoreMutex
+// critical section: it loads the current users, and only if demoting id.
 func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -518,9 +396,7 @@ func (s *jsonUserStore) SetRoleUnlessLastAdmin(id string, role Role) error {
 }
 
 // RemoveUnlessLastAdmin deletes user id under a SINGLE fileStoreMutex critical section,
-// refusing (errLastAdmin) to delete the sole remaining admin -- the removal
-// counterpart of SetRoleUnlessLastAdmin, with the identical atomicity
-// guarantee against a concurrent second remover.
+// refusing (errLastAdmin) to delete the sole remaining admin.
 func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()
@@ -546,21 +422,8 @@ func (s *jsonUserStore) RemoveUnlessLastAdmin(id string) error {
 	return s.saveLocked(users)
 }
 
-// RevokeCredentialUnlessLastAdmin removes credential credID from user id's
-// Credentials under a SINGLE fileStoreMutex critical section -- load, last-admin
-// check, and write all happen while holding the lock, exactly like
-// SetRoleUnlessLastAdmin/RemoveUnlessLastAdmin. It refuses
-// (errLastAdminCredential) only when id is the sole remaining admin (fewer
-// than 2 admins in the store) AND credID is the last entry in their
-// Credentials -- removing it would leave that admin, and therefore the
-// system, with no admin able to complete a login ceremony, and
-// re-enrollment is closed the moment the store is non-empty. Revoking a
-// non-last credential, or a credential belonging to a non-last admin (one
-// among two-or-more), is never blocked. Sharing s's fileStoreMutex with
-// every other jsonUserStore method (in particular Put, which is what
-// finishLogin's signCount update calls) is what closes the companion
-// read-modify-write race: a concurrent revoke and login-finish now
-// serialize instead of one clobbering the other's write.
+// RevokeCredentialUnlessLastAdmin removes credential credID from user id's Credentials
+// under a SINGLE fileStoreMutex critical section -- load, last-admin check.
 func (s *jsonUserStore) RevokeCredentialUnlessLastAdmin(id, credID string) error {
 	mu := fileStoreMutex(s.path)
 	mu.Lock()

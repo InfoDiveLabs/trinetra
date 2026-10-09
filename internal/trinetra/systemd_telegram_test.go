@@ -1,7 +1,5 @@
-// Package trinetra: systemd_telegram_test.go covers cmdTelegram
-// set-token's #90 behavior: printing the enrollment pin (or a graceful
-// fallback) after saving the token, via the injectable fetchEnrollmentPINFn
-// seam (systemd.go) so these tests need no real control socket/daemon.
+// Package trinetra: systemd_telegram_test.go covers cmdTelegram set-token's #90 behavior:
+// printing the enrollment pin (or a graceful fallback) after saving the token.
 package trinetra
 
 import (
@@ -14,10 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// setTokenTestEnv wires cfgPath to a temp file (seeded with config.Default),
-// captures stdout, and restores every overridden package var on cleanup --
-// mirrors coreapi_write_test.go's cfgPath seam and channel_cli_test.go's
-// stdout capture.
+// setTokenTestEnv wires cfgPath to a temp file (seeded with config.Default), captures
+// stdout, and restores every overridden package var on cleanup.
 func setTokenTestEnv(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	dir := t.TempDir()
@@ -40,8 +36,7 @@ func setTokenTestEnv(t *testing.T) *bytes.Buffer {
 }
 
 // TestCmdTelegramSetTokenPrintsPINOnSuccess is the #90 happy path: when
-// fetchEnrollmentPINFn yields a pin, set-token must print the exact
-// "/start <pin>" instruction to stdout and exit 0.
+// fetchEnrollmentPINFn yields a pin.
 func TestCmdTelegramSetTokenPrintsPINOnSuccess(t *testing.T) {
 	out := setTokenTestEnv(t)
 	fetchEnrollmentPINFn = func() (string, bool, error) { return "424242", false, nil }
@@ -63,11 +58,8 @@ func TestCmdTelegramSetTokenPrintsPINOnSuccess(t *testing.T) {
 	}
 }
 
-// TestCmdTelegramSetTokenFallsBackWhenPINFetchFails is the #90 degraded
-// path: when the pin fetch errors (daemon unreachable, e.g. not
-// installed/running), set-token must still exit 0 -- the token is already
-// saved by the time the fetch runs -- and print the graceful journalctl
-// fallback instead of a pin instruction.
+// TestCmdTelegramSetTokenFallsBackWhenPINFetchFails is the #90 degraded path: when the pin
+// fetch errors (daemon unreachable, e.g. not installed/running).
 func TestCmdTelegramSetTokenFallsBackWhenPINFetchFails(t *testing.T) {
 	out := setTokenTestEnv(t)
 	fetchEnrollmentPINFn = func() (string, bool, error) { return "", false, errors.New("dial unix: no such file or directory") }
@@ -92,11 +84,8 @@ func TestCmdTelegramSetTokenFallsBackWhenPINFetchFails(t *testing.T) {
 	}
 }
 
-// TestCmdTelegramSetTokenAlreadyEnrolledSkipsPINInstruction: a successful
-// fetch that reports enrolled=true (bot already claimed) must not print a
-// /start instruction -- there is nothing left to enroll -- but must still
-// exit 0 and avoid the "daemon will log it" fallback, which would be
-// misleading once already enrolled.
+// TestCmdTelegramSetTokenAlreadyEnrolledSkipsPINInstruction: a successful fetch that
+// reports enrolled=true (bot already claimed) must not print a /start instruction.
 func TestCmdTelegramSetTokenAlreadyEnrolledSkipsPINInstruction(t *testing.T) {
 	out := setTokenTestEnv(t)
 	fetchEnrollmentPINFn = func() (string, bool, error) { return "", true, nil }

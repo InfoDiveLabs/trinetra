@@ -26,9 +26,8 @@ func TestTryLockIsExclusive(t *testing.T) {
 	unlock2()
 }
 
-// TestWithStateSerializesReadModifyWrite is R16: every LoadState-modify-
-// SaveState runs under the state lock, so concurrent writers never lose
-// each other's changes.
+// TestWithStateSerializesReadModifyWrite is R16: every LoadState-modify- SaveState runs
+// under the state lock, so concurrent writers never lose each other's changes.
 func TestWithStateSerializesReadModifyWrite(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "update")
 	var wg sync.WaitGroup

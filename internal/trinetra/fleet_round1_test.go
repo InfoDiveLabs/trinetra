@@ -1,9 +1,5 @@
-// Package trinetra: fleet_round1_test.go covers the fleet phase 2 task 6
-// review's fix round 1: per-member silence suppression (CRITICAL 1), a
-// dependency-folded member's recover finding the right bucket (CRITICAL 2),
-// grouped resurrection (IMPORTANT 3), a release sweep on SetNodeDeps
-// (IMPORTANT 4), and the group-interval/fallback-after interaction
-// (IMPORTANT 5).
+// Package trinetra: fleet_round1_test.go covers per-member silence suppression, a
+// dependency-folded member's recover finding the right bucket, grouped resurrection.
 package trinetra
 
 import (
@@ -20,13 +16,8 @@ import (
 
 // --- CRITICAL 1: per-member silence suppression ---------------------------
 
-// TestEngineSilencedMemberFirstThenUnsilencedSiblingIsDelivered: a silenced
-// member alone puts the incident in state "suppressed"; an unsilenced
-// sibling joining afterward must still be delivered immediately (not
-// starved because ITS sibling is silenced), and flips the incident back to
-// "firing" (a per-member computation, not "whichever member fired last").
-// Once the silence ends, the first member is delivered on its own, and the
-// incident stays "firing" throughout.
+// TestEngineSilencedMemberFirstThenUnsilencedSiblingIsDelivered: a silenced member alone
+// puts the incident in state "suppressed".
 func TestEngineSilencedMemberFirstThenUnsilencedSiblingIsDelivered(t *testing.T) {
 	ef := newEngineFixture(t)
 	ef.connect("n1")
@@ -96,13 +87,8 @@ func TestEngineSilencedMemberFirstThenUnsilencedSiblingIsDelivered(t *testing.T)
 	}
 }
 
-// TestEngineSilencedSiblingDoesNotFreezeEscalation: an unsilenced member
-// fires first and starts escalating; a silenced sibling joining afterward
-// must not disturb its escalation (previously: ANY later fire unconditionally
-// overwrote the whole incident's State, freezing escalation the moment a
-// silenced fire landed, since TickEscalations only ever considers
-// state=="firing"). After the silenced sibling's own silence ends, it is
-// delivered and the incident state is (still) "firing".
+// TestEngineSilencedSiblingDoesNotFreezeEscalation: an unsilenced member fires first and
+// starts escalating; a silenced sibling joining afterward must not disturb its escalation.
 func TestEngineSilencedSiblingDoesNotFreezeEscalation(t *testing.T) {
 	rf := newRoutingFixture(t, twoStepPolicy("5m", "10m")) // step 1 @5m, repeat every 10m
 	rf.engine.PushLeaseNow("n1", rf.now)
@@ -123,9 +109,8 @@ func TestEngineSilencedSiblingDoesNotFreezeEscalation(t *testing.T) {
 		t.Fatalf("dispatchedTo after step 1 due = %d, want 1 (n1's own escalation)", rf.dispatchedCount())
 	}
 
-	// A silence now matches n2 only; n2 fires and joins the SAME incident
-	// (same rule/severity), silenced -- it must not disturb n1's ongoing
-	// escalation or the incident's overall state.
+	// A silence now matches n2 only; n2 fires and joins the SAME incident (same
+	// rule/severity), silenced.
 	sil, err := store.Create(core.Silence{Matchers: []core.Matcher{{Node: "box2"}}, Start: 0, End: rf.now.Unix() + 3600, Author: "cli"})
 	if err != nil {
 		t.Fatal(err)
@@ -141,18 +126,15 @@ func TestEngineSilencedSiblingDoesNotFreezeEscalation(t *testing.T) {
 		t.Fatalf("delivered after n2's (silenced) fire = %d, want still 1", rf.deliveredCount())
 	}
 
-	// n1's escalation keeps running: its RepeatEvery (10m, due at +16m) still
-	// fires, keyed off n1 (latestActiveAlert must not switch to n2 just
-	// because n2 fired more recently -- n2 is silenced, so it is never
-	// "active").
+	// n1's escalation keeps running: its RepeatEvery (10m, due at +16m) still fires, keyed off
+	// n1.
 	rf.now = rf.now.Add(10*time.Minute + time.Second) // total +16m1s since n1 fired
 	rf.tick()
 	if rf.dispatchedCount() != 2 {
 		t.Fatalf("dispatchedTo after the repeat is due = %d, want 2 (n1's repeat notification)", rf.dispatchedCount())
 	}
 
-	// n2's silence ends: it is delivered alone, and the incident is (still)
-	// firing.
+	// n2's silence ends: it is delivered alone, and the incident is (still) firing.
 	if err := store.Expire(sil.ID, rf.now.Unix()); err != nil {
 		t.Fatal(err)
 	}
@@ -171,17 +153,8 @@ func TestEngineSilencedSiblingDoesNotFreezeEscalation(t *testing.T) {
 
 // --- CRITICAL 2: a folded dependent's own recover must find its real bucket
 
-// TestEngineFoldedChildRecoverResolvesCorrectBucket: a child folded into its
-// down parent's incident recovers on its own WHILE the parent is still
-// down. Before the openMember index existed, Apply's recover branch found
-// the incident to update by recomputing a group key for the recover
-// itself -- the child's own DEFAULT bucket, which has nothing to do with
-// the parent's incident it actually lives in -- so the fold entry was never
-// actually resolved, and a LATER parent recover would find it still open
-// and deliver a false "child down" re-fire for an alert that had already
-// recovered. openMember fixes this: a recover locates its member by
-// (node, key) directly, regardless of what bucket its own key/severity
-// would otherwise compute.
+// TestEngineFoldedChildRecoverResolvesCorrectBucket: a child folded into its down parent's
+// incident recovers on its own WHILE the parent is still down.
 func TestEngineFoldedChildRecoverResolvesCorrectBucket(t *testing.T) {
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(dir + "/incidents.jsonl")
@@ -284,13 +257,10 @@ func TestEngineFoldedChildRecoverResolvesCorrectBucket(t *testing.T) {
 	}
 }
 
-// --- IMPORTANT 3: grouped resurrection -------------------------------------
+// --- grouped resurrection -------------------------------------
 
-// TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage: two
-// master-own members of the SAME incident are both undelivered when the
-// master "crashes" (recorded via direct Apply calls, never reaching
-// delivery). Resurrection must send ONE grouped message listing both,
-// rather than two separate solo redeliveries.
+// TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage: two master-own
+// members of the SAME incident are both undelivered when the master "crashes".
 func TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/incidents.jsonl"
@@ -356,13 +326,10 @@ func TestEngineResurrectionGroupsMultipleMastersOwnMembersIntoOneMessage(t *test
 	}
 }
 
-// --- IMPORTANT 4: SetNodeDeps must release a folded member itself ---------
+// --- SetNodeDeps must release a folded member itself ---------
 
-// TestSetNodeDepsReleasesFoldedChildImmediately: a child is folded into its
-// down parent's incident; removing the dependency (not waiting for the
-// parent to recover, which never happens in this test) must release and
-// promptly deliver the still-down child. Runs against a REAL master
-// (startFleet), since SetNodeDeps only exists on fleetAPIImpl/masterState.
+// TestSetNodeDepsReleasesFoldedChildImmediately: a child is folded into its down parent's
+// incident; removing the dependency.
 func TestSetNodeDepsReleasesFoldedChildImmediately(t *testing.T) {
 	dir := t.TempDir()
 	d, alerts := testDeps(t, dir)
@@ -399,9 +366,8 @@ func TestSetNodeDepsReleasesFoldedChildImmediately(t *testing.T) {
 		t.Fatalf("delivered after both fires = %+v, want 1 (child folded into the parent's incident)", *alerts)
 	}
 
-	// Remove the dependency (the parent is STILL down -- nothing ever
-	// recovers): the still-down child must be released and delivered
-	// promptly, not stranded waiting for a recover that will never come.
+	// Remove the dependency (the parent is STILL down -- nothing ever recovers): the
+	// still-down child must be released and delivered promptly.
 	if err := fa.SetNodeDeps(child, nil, "op"); err != nil {
 		t.Fatal(err)
 	}

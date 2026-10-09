@@ -25,13 +25,8 @@ func TestDumpCLISmokeEmptyStateDir(t *testing.T) {
 	}
 }
 
-// TestDumpCLIRoutesThroughFileAPIPreservesFormat is a golden-style test for
-// the task-6 routing: cmdDump now calls newFileAPI(...).Series(...) instead
-// of opening a SampleStore and calling dumpSeries directly, and this pins
-// that the CSV and JSON output stay byte-identical to before -- in
-// particular, the JSON keys must stay capitalized ("TS"/"Min"/"Avg"/"Max",
-// Point's bare field names) rather than the lowercase "ts"/"min"/"avg"/"max"
-// core.SeriesPoint's own json tags would produce if marshaled directly.
+// TestDumpCLIRoutesThroughFileAPIPreservesFormat pins that cmdDump's CSV and JSON output
+// stays byte-identical when routed through newFileAPI(...).Series.
 func TestDumpCLIRoutesThroughFileAPIPreservesFormat(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -85,22 +80,8 @@ func TestDumpCLIRequiresMetric(t *testing.T) {
 	}
 }
 
-// TestDumpCLIStoreOpenFailurePreservesErrorText is a regression guard added
-// after a coordinator-flagged review finding: before cmdDump was routed
-// through newFileAPI(...).Series(...), a store-open failure printed
-// "open sample store: <err>" (cmdDump wrapped openConfiguredStore's error
-// itself). Routing through Series moved the openConfiguredStore call inside
-// newFileAPI, and the wrap moved with it (coreapi_file.go) -- this test
-// exercises the full CLI path end to end to confirm cmdDump's stderr text
-// is still exactly what it was before that move, not just that Series'
-// returned error happens to carry the right prefix (covered separately by
-// TestFileAPISeriesStoreOpenFailureWrapsErrorText, coreapi_file_test.go).
-//
-// The config file is written directly (bypassing config.Set's
-// validateStorageBackend) with an invalid storage.backend, since
-// config.Load itself performs no such validation -- only Set does -- so
-// this is the way to get an invalid backend through to openConfiguredStore
-// via the normal loadCfg() path a running CLI would take.
+// TestDumpCLIStoreOpenFailurePreservesErrorText pins, end to end, that cmdDump's stderr on
+// a store-open failure is "open sample store: <err>".
 func TestDumpCLIStoreOpenFailurePreservesErrorText(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")

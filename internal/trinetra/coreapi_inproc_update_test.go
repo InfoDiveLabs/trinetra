@@ -1,7 +1,5 @@
-// coreapi_inproc_update_test.go: fix round 1, Ruling R10 -- inprocAPI's
-// control-socket-facing UpdateApply/UpdateRollback must return quickly
-// (fast preflight only, the slow work continues in a background goroutine)
-// and only one apply/rollback may run at a time.
+// coreapi_inproc_update_test.go: inprocAPI's control-socket UpdateApply and UpdateRollback
+// must return quickly.
 package trinetra
 
 import (
@@ -16,11 +14,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-// blockingReleaseSource is an update.Source whose ReleaseAsset blocks until
-// release is closed (or ctx is cancelled), then always fails -- exactly
-// enough to park apply's FetchRelease call for as long as a test wants,
-// without needing a full signed-release fixture (planApply/stage/smokeTest
-// are never reached, since FetchRelease never succeeds).
+// blockingReleaseSource is an update.Source whose ReleaseAsset blocks until release is
+// closed (or ctx is cancelled), then always fails.
 type blockingReleaseSource struct {
 	release chan struct{}
 }
@@ -38,10 +33,8 @@ func (s blockingReleaseSource) ChannelAsset(ctx context.Context, name string) (i
 	return nil, update.ErrNoChannel
 }
 
-// newBlockingUpdateAPI builds an *inprocAPI wired (via the newUpdaterFn test
-// seam, coreapi_inproc.go) to a blockingReleaseSource and isolated temp
-// paths, for the async-apply tests below. release, when closed, lets the
-// background goroutine's FetchRelease call fail and return.
+// newBlockingUpdateAPI builds an *inprocAPI wired (via the newUpdaterFn test seam,
+// coreapi_inproc.go) to a blockingReleaseSource and isolated temp paths.
 func newBlockingUpdateAPI(t *testing.T, release chan struct{}) *inprocAPI {
 	t.Helper()
 	root := t.TempDir()
@@ -64,10 +57,8 @@ func newBlockingUpdateAPI(t *testing.T, release chan struct{}) *inprocAPI {
 	}
 }
 
-// TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes pins Ruling R10's
-// core contract: UpdateApply must return almost immediately, well before a
-// slow (here: permanently blocked, never released) Source finishes -- the
-// slow work runs in a background goroutine, not inline.
+// TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes pins that UpdateApply returns almost
+// immediately, well before a permanently blocked Source finishes.
 func TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes(t *testing.T) {
 	release := make(chan struct{}) // never closed in this test
 	api := newBlockingUpdateAPI(t, release)
@@ -97,18 +88,13 @@ func TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes(t *testing.T) {
 	}
 }
 
-// TestInprocUpdateApplyRefusesConcurrentSecondCall pins the "only one
-// apply/rollback may run at a time" half of Ruling R10: a second UpdateApply
-// while the first is still running (blocked on the Source) must be refused
-// with a clear, fixed error, not queued or silently ignored -- and the fake
-// source must not have been asked for a second release (only ONE goroutine
-// is ever running).
+// TestInprocUpdateApplyRefusesConcurrentSecondCall pins that a second UpdateApply while the
+// first is blocked on the Source is refused with a fixed error, not queued.
 func TestInprocUpdateApplyRefusesConcurrentSecondCall(t *testing.T) {
 	release := make(chan struct{})
 	api := newBlockingUpdateAPI(t, release)
 	// Release the blocked goroutine and wait for it before the TempDirs that
-	// newBlockingUpdateAPI registered are removed (cleanups run LIFO, so this
-	// one runs first); otherwise its late state write races the RemoveAll.
+	// newBlockingUpdateAPI registered are removed (cleanups run LIFO, so this one runs first).
 	t.Cleanup(func() {
 		close(release)
 		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
@@ -127,19 +113,15 @@ func TestInprocUpdateApplyRefusesConcurrentSecondCall(t *testing.T) {
 		t.Fatalf("second concurrent UpdateApply = %v, want errUpdateAlreadyRunning", err)
 	}
 
-	// Same refusal for a concurrent Rollback: the in-flight slot is shared
-	// across apply/rollback (Ruling R10: "only one apply/rollback may run at
-	// a time"), not per-method.
+	// Same refusal for a concurrent Rollback: the in-flight slot is shared across
+	// apply/rollback, not per-method.
 	if err := api.UpdateRollback(); !errors.Is(err, errUpdateAlreadyRunning) {
 		t.Fatalf("concurrent UpdateRollback while an apply is in flight = %v, want errUpdateAlreadyRunning", err)
 	}
 }
 
-// TestInprocUpdateApplyClearsInProgressAndRecordsLastError pins the
-// goroutine's completion side: once the Source is released (and therefore
-// apply's FetchRelease call fails), InProgress must go back to false and
-// LastError must carry the failure -- and a fresh UpdateApply must then be
-// accepted again (the slot was actually released, not left stuck).
+// TestInprocUpdateApplyClearsInProgressAndRecordsLastError pins the goroutine's completion
+// side: once the Source is released (and therefore apply's FetchRelease call fails).
 func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 	release := make(chan struct{})
 	api := newBlockingUpdateAPI(t, release)
@@ -172,8 +154,7 @@ func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 		t.Error("LastError is empty after a failed apply, want the failure recorded")
 	}
 
-	// The slot is free again: a fresh call must be accepted (not refused as
-	// still-running).
+	// The slot is free again: a fresh call must be accepted (not refused as still-running).
 	release2 := make(chan struct{})
 	api.newUpdaterFn = func(c *config.Config) updater {
 		return updater{
@@ -191,9 +172,8 @@ func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 		t.Fatalf("UpdateApply after the previous one finished: %v", err)
 	}
 
-	// Let the second apply finish before returning: its goroutine writes
-	// update state into this test's TempDirs, and t.TempDir's cleanup fails
-	// ("directory not empty") if that write races the RemoveAll.
+	// Let the second apply finish before returning: its goroutine writes update state into
+	// this test's TempDirs, and t.TempDir's cleanup fails.
 	close(release2)
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if v, err := api.UpdateStatus(); err == nil && !v.InProgress {

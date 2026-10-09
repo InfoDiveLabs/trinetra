@@ -17,15 +17,10 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-// --- login (assertion) virtual authenticator fixtures. These extend
-// auth_webauthn_test.go's registration fixtures: a login assertion must be
-// signed with the SAME private key whose public half was registered, so --
-// unlike cosePublicKeyCBOR, which discards its key -- these fixtures keep the
-// *ecdsa.PrivateKey around across a register-then-login test.
+// --- login (assertion) virtual authenticator fixtures.
 
-// cosePublicKeyCBORForKey is cosePublicKeyCBOR (auth_webauthn_test.go) with
-// the EC key supplied rather than freshly generated, so the same key can
-// later sign a login assertion.
+// cosePublicKeyCBORForKey is cosePublicKeyCBOR (auth_webauthn_test.go) with the EC key
+// supplied rather than freshly generated, so the same key can later sign a login assertion.
 func cosePublicKeyCBORForKey(t *testing.T, priv *ecdsa.PrivateKey) []byte {
 	t.Helper()
 	x := priv.X.Bytes()
@@ -47,13 +42,7 @@ func cosePublicKeyCBORForKey(t *testing.T, priv *ecdsa.PrivateKey) []byte {
 	return b
 }
 
-// registerVirtualCredentialDirect runs a full begin->finish registration
-// ceremony (beginRegistration/finishRegistration, auth_webauthn.go) for u
-// against a freshly generated EC key pair, using the same "none"-attestation
-// shape auth_webauthn_test.go's creationResponseBody builds but pointed at
-// THIS key rather than a throwaway one -- so the private key can go on to
-// sign a login assertion in the same test. Returns the credential ID and
-// private key.
+// registerVirtualCredentialDirect runs a full begin->finish registration ceremony.
 func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store UserStore, ceremonies SessionStore, u *User, origin, rpID string) (credID []byte, priv *ecdsa.PrivateKey) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -106,11 +95,8 @@ func registerVirtualCredentialDirect(t *testing.T, wa *webauthn.WebAuthn, store 
 	return credID, priv
 }
 
-// assertionResponseBody builds the full JSON body a browser's
-// navigator.credentials.get() would POST to /login/finish: a real
-// ECDSA-P256/ES256 signature over authenticatorData||sha256(clientDataJSON),
-// matching what go-webauthn's protocol.ParsedCredentialAssertionData.Verify
-// checks (see protocol/assertion.go, webauthncose.EC2PublicKeyData.Verify).
+// assertionResponseBody builds the full JSON body a browser's navigator.credentials.get()
+// would POST to /login/finish.
 func assertionResponseBody(t *testing.T, priv *ecdsa.PrivateKey, challenge, origin, rpID string, credID, userHandle []byte, counter uint32) []byte {
 	t.Helper()
 	rpIDHash := sha256.Sum256([]byte(rpID))
@@ -157,11 +143,7 @@ func assertionResponseBody(t *testing.T, priv *ecdsa.PrivateKey, challenge, orig
 	return body
 }
 
-// TestLoginRoundTripIssuesSessionCookie is this task's core positive pin:
-// begin -> (virtual authenticator assertion) -> finish for a credential
-// registered via Task 4's ceremony must issue a signed-in sw_session
-// cookie, and the credential's stored SignCount must advance to the
-// asserted counter.
+// TestLoginRoundTripIssuesSessionCookie is the core positive pin.
 func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
@@ -178,10 +160,8 @@ func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {
 		t.Fatalf("beginLogin: %v", err)
 	}
 
-	// The registration fixture's authenticatorData (auth_webauthn_test.go's
-	// authenticatorData helper) hardcodes counter=1, so the stored SignCount
-	// after registration is already 1 -- the login assertion's counter must
-	// exceed that to count as a legitimate (non-regressed) advance.
+	// The registration fixture's authenticatorData (auth_webauthn_test.go's authenticatorData
+	// helper) hardcodes counter=1, so the stored SignCount after registration is already 1.
 	loginBody := assertionResponseBody(t, priv, assertion.Response.Challenge.String(), testOrigin, testRPID, credID, []byte(u.ID), 2)
 	finishReq := httptest.NewRequest(http.MethodPost, "/login/finish", bytes.NewReader(loginBody))
 	finishReq.AddCookie(cookieFrom(t, beginRR, loginCeremonyCookie))
@@ -218,18 +198,13 @@ func TestLoginRoundTripIssuesSessionCookie(t *testing.T) {
 	}
 }
 
-// TestCeremonyFloodDoesNotStarveValidLogin is the availability pin for the
-// separate ceremony store (session.go): an unauthenticated flood of ceremony
-// begins fills only the bounded CEREMONY store, and must never prevent a user
-// presenting a VALID passkey from minting an authenticated session -- the
-// bug that would exist if ceremony placeholders and real sessions shared one
-// capped store.
+// TestCeremonyFloodDoesNotStarveValidLogin is the availability pin for the separate
+// ceremony store (session.go).
 func TestCeremonyFloodDoesNotStarveValidLogin(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
-	// Small ceremony cap so the flood is a handful of cheap writes rather
-	// than ceremonyMaxEntries of them; the authenticated-session store is a
-	// distinct instance (distinct file, distinct cap).
+	// Small ceremony cap so the flood is a handful of cheap writes rather than
+	// ceremonyMaxEntries of them; the authenticated-session store is a distinct instance.
 	const ceremonyCap = 8
 	ceremonies := &jsonSessionStore{path: t.TempDir() + "/ceremonies.json", maxEntries: ceremonyCap}
 	sessions := newSessionStore(t.TempDir())
@@ -247,8 +222,7 @@ func TestCeremonyFloodDoesNotStarveValidLogin(t *testing.T) {
 	}
 	loginCookie := cookieFrom(t, beginRR, loginCeremonyCookie)
 
-	// Flood the ceremony store to its cap. Once full, further ceremony begins
-	// are refused (that part is fine -- it only rate-limits new ceremonies).
+	// Flood the ceremony store to its cap.
 	flooded := false
 	for i := 0; i < ceremonyCap*2; i++ {
 		if _, err := ceremonies.New("", ceremonyTTL); err != nil {
@@ -263,9 +237,8 @@ func TestCeremonyFloodDoesNotStarveValidLogin(t *testing.T) {
 		t.Fatal("ceremony store is not actually full after the flood")
 	}
 
-	// The valid, already-begun login must STILL finish and issue a session:
-	// finishLogin mints it in the authenticated-session store, which the
-	// ceremony flood cannot touch.
+	// The valid, already-begun login must STILL finish and issue a session: finishLogin mints
+	// it in the authenticated-session store, which the ceremony flood cannot touch.
 	loginBody := assertionResponseBody(t, priv, assertion.Response.Challenge.String(), testOrigin, testRPID, credID, []byte(u.ID), 2)
 	finishReq := httptest.NewRequest(http.MethodPost, "/login/finish", bytes.NewReader(loginBody))
 	finishReq.AddCookie(loginCookie)
@@ -279,12 +252,8 @@ func TestCeremonyFloodDoesNotStarveValidLogin(t *testing.T) {
 	}
 }
 
-// TestLoginRejectsSignCountRegression pins clone detection: a second login
-// whose assertion counter does not exceed the credential's last stored
-// SignCount must be rejected outright (no session issued), and the stored
-// SignCount must be left exactly as the first, legitimate login left it --
-// an attacker replaying a cloned authenticator's earlier counter value must
-// not get to consume it.
+// TestLoginRejectsSignCountRegression pins clone detection: a second login whose assertion
+// counter does not exceed the credential's last stored SignCount must be rejected outright.
 func TestLoginRejectsSignCountRegression(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
@@ -335,17 +304,14 @@ func TestLoginRejectsSignCountRegression(t *testing.T) {
 	}
 }
 
-// TestLoginRejectsExpiredCeremonySession pins that a login ceremony whose
-// stashed Session has expired (the sw_login cookie references an ID the
-// store now treats as absent) is rejected -- the assertion-side counterpart
-// of finishRegistration's "enrollment session not found" behavior.
+// TestLoginRejectsExpiredCeremonySession pins that a login ceremony whose stashed Session
+// has expired.
 func TestLoginRejectsExpiredCeremonySession(t *testing.T) {
 	wa := testWebAuthn(t, testRPID, testOrigin)
 	store := newUserStore(t.TempDir())
 	now := time.Unix(1_700_000_000, 0)
-	// Clock-controlled ceremony store so the ceremony placeholder can be
-	// aged past ceremonyTTL; the authenticated-session store is separate and
-	// never reached (finishLogin fails at the ceremony Get).
+	// Clock-controlled ceremony store so the ceremony placeholder can be aged past
+	// ceremonyTTL; the authenticated-session store is separate and never reached.
 	ceremonies := &jsonSessionStore{path: t.TempDir() + "/ceremonies.json", now: func() time.Time { return now }, maxEntries: ceremonyMaxEntries}
 	sessions := newSessionStore(t.TempDir())
 
@@ -378,22 +344,13 @@ func TestLoginRejectsExpiredCeremonySession(t *testing.T) {
 	}
 }
 
-// TestLoginHTTPHandlersAndLogoutCSRFFlow drives the full HTTP surface (POST
-// /login/begin, /login/finish, /logout through newHandler) rather than
-// calling beginLogin/finishLogin directly, pinning that routes.go's wiring --
-// webAuthnConfig derivation, sessionMiddleware/requireCSRF composition, and
-// the sw_session cookie's actual Set-Cookie header -- all work together.
-// Covers this task's CSRF requirement end-to-end: missing token -> 403,
-// mismatched token -> 403 (session left intact), matching token -> 204
-// (session deleted, cookie cleared).
+// TestLoginHTTPHandlersAndLogoutCSRFFlow drives the full HTTP surface.
 func TestLoginHTTPHandlersAndLogoutCSRFFlow(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
 
-	// enrollTestDeps/testDeps leave Web.RPID/Origin empty (proxy-mode
-	// default), so webAuthnConfig derives both from the request's own Host --
-	// httptest.NewRequest defaults that to "example.com", same as
-	// TestEnrollHandlersEndToEndPersistCredential relies on.
+	// enrollTestDeps/testDeps leave Web.RPID/Origin empty (proxy-mode default), so
+	// webAuthnConfig derives both from the request's own Host.
 	wa, err := webAuthnConfig(d.Cfg(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if err != nil {
 		t.Fatalf("webAuthnConfig: %v", err)
@@ -475,11 +432,8 @@ func TestLoginHTTPHandlersAndLogoutCSRFFlow(t *testing.T) {
 	}
 }
 
-// TestLogoutRejectsExpiredSession pins "expired session -> unauthenticated"
-// at the HTTP layer: a sw_session cookie naming an already-expired record
-// (SessionStore.Get treats it as absent) must be rejected by requireCSRF --
-// which sees no session in context at all -- even though the caller supplies
-// that session's own (otherwise-correct) CSRF token.
+// TestLogoutRejectsExpiredSession pins "expired session -> unauthenticated" at the HTTP
+// layer: a sw_session cookie naming an already-expired record.
 func TestLogoutRejectsExpiredSession(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)

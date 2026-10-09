@@ -1,7 +1,5 @@
-// setup_web_test.go unit-tests setup_web.go's PURE logic (applyWebSetup,
-// webSetupSummary, validateManualPath) against plain values, no terminal
-// involved. The Bubble Tea glue that drives a user through these screens
-// (tui.go) is exercised end to end in tui_test.go.
+// setup_web_test.go unit-tests setup_web.go's PURE logic (applyWebSetup, webSetupSummary,
+// validateManualPath) against plain values, no terminal involved.
 package main
 
 import (
@@ -11,11 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestApplyWebSetupManualSetsCertAndKey asserts manual mode's tls_cert/
-// tls_key are applied via config.Set alongside the existing mode/listen/
-// rp_id/origin sets: without this, web.mode=manual would be applied with
-// no cert/key at all, and the web listener refuses to start (the bug this
-// task exists to close).
+// TestApplyWebSetupManualSetsCertAndKey asserts manual mode's tls_cert/ tls_key are applied
+// via config.Set alongside the existing mode/listen/ rp_id/origin sets: without this.
 func TestApplyWebSetupManualSetsCertAndKey(t *testing.T) {
 	cfg := &config.Config{}
 	ans := webSetupAnswers{
@@ -40,9 +35,8 @@ func TestApplyWebSetupManualSetsCertAndKey(t *testing.T) {
 	}
 }
 
-// TestApplyWebSetupProxyLeavesCertAndKeyUnset asserts proxy mode (which
-// never collects cert/key) does not set them, even if ans carries stale
-// values from an earlier manual-mode attempt in the same wizard session.
+// TestApplyWebSetupProxyLeavesCertAndKeyUnset asserts proxy mode (which never collects
+// cert/key) does not set them.
 func TestApplyWebSetupProxyLeavesCertAndKeyUnset(t *testing.T) {
 	cfg := &config.Config{}
 	ans := webSetupAnswers{
@@ -62,9 +56,8 @@ func TestApplyWebSetupProxyLeavesCertAndKeyUnset(t *testing.T) {
 	}
 }
 
-// TestApplyWebSetupAutocertLeavesCertAndKeyUnset mirrors the proxy case for
-// autocert mode, which gets its certificate from Let's Encrypt, not a
-// manually supplied file pair.
+// TestApplyWebSetupAutocertLeavesCertAndKeyUnset mirrors the proxy case for autocert mode,
+// which gets its certificate from Let's Encrypt, not a manually supplied file pair.
 func TestApplyWebSetupAutocertLeavesCertAndKeyUnset(t *testing.T) {
 	cfg := &config.Config{}
 	ans := webSetupAnswers{
@@ -96,10 +89,8 @@ func TestValidateManualPathRejectsBlank(t *testing.T) {
 	}
 }
 
-// TestValidateManualPathAcceptsNonBlank asserts any non-blank path passes:
-// the wizard's guard only checks presence, not that the file exists or is
-// readable (that is internal/web's job at startup, as documented on
-// validateManualPath).
+// TestValidateManualPathAcceptsNonBlank asserts any non-blank path passes: the wizard's
+// guard only checks presence, not that the file exists or is readable.
 func TestValidateManualPathAcceptsNonBlank(t *testing.T) {
 	if err := validateManualPath("cert path", "/etc/trinetra/tls/cert.pem"); err != nil {
 		t.Errorf("validateManualPath() error = %v, want nil", err)

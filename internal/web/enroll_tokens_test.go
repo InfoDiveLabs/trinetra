@@ -12,13 +12,8 @@ import (
 	"time"
 )
 
-// TestTokenStoreConcurrentIssueNoLostUpdate is the shared-per-path-lock
-// regression pin for enrollment tokens: like sessions, each handler builds a
-// fresh tokenStore per request (newTokenStore), so concurrent Issue calls
-// through separate instances on the same file must all persist -- a
-// per-instance mutex would let two Issues load→append→save the whole file,
-// last-writer-wins, silently dropping a token (and colliding on the shared
-// .tmp path). With fileStoreMutex they serialize and every token redeems.
+// TestTokenStoreConcurrentIssueNoLostUpdate is the shared-per-path-lock regression pin for
+// enrollment tokens: like sessions, each handler builds a fresh tokenStore per request.
 func TestTokenStoreConcurrentIssueNoLostUpdate(t *testing.T) {
 	dir := t.TempDir()
 	const n = 8
@@ -48,11 +43,8 @@ func TestTokenStoreConcurrentIssueNoLostUpdate(t *testing.T) {
 	}
 }
 
-// TestTokenStoreConcurrentRedeemSingleUse pins single-use enforcement under
-// concurrency: many goroutines racing to redeem the SAME token (each via its
-// own tokenStore instance) must yield exactly one success -- the shared
-// per-path lock serializes the load→mark-used→save so no two callers can both
-// observe it unused and both consume it.
+// TestTokenStoreConcurrentRedeemSingleUse pins single-use enforcement under concurrency:
+// many goroutines racing to redeem the SAME token.
 func TestTokenStoreConcurrentRedeemSingleUse(t *testing.T) {
 	dir := t.TempDir()
 	tok := newTokenStore(dir).Issue(RoleAdmin, time.Hour)
@@ -118,9 +110,8 @@ func TestTokenStoreRedeemIsSingleUse(t *testing.T) {
 	}
 }
 
-// TestTokenStoreRedeemUnknownFails pins the "no such token" case: a value
-// that was never Issued must be rejected, not silently treated as some
-// default role.
+// TestTokenStoreRedeemUnknownFails pins the "no such token" case: a value that was never
+// Issued must be rejected, not silently treated as some default role.
 func TestTokenStoreRedeemUnknownFails(t *testing.T) {
 	store := newTokenStore(t.TempDir())
 	if _, err := store.Redeem("not-a-real-token"); err == nil {
@@ -128,10 +119,8 @@ func TestTokenStoreRedeemUnknownFails(t *testing.T) {
 	}
 }
 
-// TestTokenStoreRedeemExpiredFails pins expiry: a token whose TTL has
-// elapsed must be rejected even though it was never used, using a
-// clock-controlled store (mirroring jsonSessionStore's `now` field pattern
-// in session_test.go) so the test doesn't need a real sleep.
+// TestTokenStoreRedeemExpiredFails pins expiry: a token whose TTL has elapsed must be
+// rejected even though it was never used, using a clock-controlled store.
 func TestTokenStoreRedeemExpiredFails(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store := &tokenStore{path: filepath.Join(t.TempDir(), "enroll_tokens.json"), now: func() time.Time { return now }}
@@ -144,9 +133,8 @@ func TestTokenStoreRedeemExpiredFails(t *testing.T) {
 	}
 }
 
-// TestTokenStorePersistsWith0600Perms pins the design doc's security
-// checklist expectation: a bearer-equivalent enrollment token file must not
-// be group/world-readable, same as sessions.json/users.json.
+// TestTokenStorePersistsWith0600Perms pins the design doc's security checklist expectation:
+// a bearer-equivalent enrollment token file must not be group/world-readable.
 func TestTokenStorePersistsWith0600Perms(t *testing.T) {
 	dir := t.TempDir()
 	store := newTokenStore(dir)
@@ -163,9 +151,8 @@ func TestTokenStorePersistsWith0600Perms(t *testing.T) {
 	}
 }
 
-// TestTokenStoreGCRemovesExpiredRecords pins that GC actually rewrites the
-// file without expired entries (used or not), distinct from Redeem's lazy
-// (non-mutating on failure) expiry check.
+// TestTokenStoreGCRemovesExpiredRecords pins that GC actually rewrites the file without
+// expired entries (used or not), distinct from Redeem's lazy.
 func TestTokenStoreGCRemovesExpiredRecords(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store := &tokenStore{path: filepath.Join(t.TempDir(), "enroll_tokens.json"), now: func() time.Time { return now }}
@@ -196,10 +183,8 @@ func TestTokenStoreGCRemovesExpiredRecords(t *testing.T) {
 	}
 }
 
-// TestResolveEnrollRoleBootstrapsFirstUserAsAdmin pins the first-run
-// bootstrap rule directly against resolveEnrollRole: an empty store with no
-// token supplied resolves to a bootstrap attempt (role deferred to finish,
-// not decided here -- see the TOCTOU fix), not a rejection.
+// TestResolveEnrollRoleBootstrapsFirstUserAsAdmin pins the first-run bootstrap rule
+// directly against resolveEnrollRole.
 func TestResolveEnrollRoleBootstrapsFirstUserAsAdmin(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
@@ -219,9 +204,8 @@ func TestResolveEnrollRoleBootstrapsFirstUserAsAdmin(t *testing.T) {
 	}
 }
 
-// TestResolveEnrollRoleClosedAfterBootstrap pins the flip side: once a user
-// exists, an empty token must be refused rather than silently granted
-// RoleViewer.
+// TestResolveEnrollRoleClosedAfterBootstrap pins the flip side: once a user exists, an
+// empty token must be refused rather than silently granted RoleViewer.
 func TestResolveEnrollRoleClosedAfterBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
@@ -235,21 +219,14 @@ func TestResolveEnrollRoleClosedAfterBootstrap(t *testing.T) {
 	}
 }
 
-// TestResolveEnrollRoleFailsClosedOnUnreadableStore pins the #105 secondary
-// hardening: an UNREADABLE user store (corrupt/partially-written users.json,
-// I/O error) must NOT be treated as a genuine empty first-run store. If it
-// were, an attacker could tokenlessly bootstrap an admin during any window
-// the store is unreadable. resolveEnrollRole must fail closed -- return an
-// error, never bootstrap=true -- rather than trust List() swallowing the read
-// error into an empty slice.
+// TestResolveEnrollRoleFailsClosedOnUnreadableStore pins the #105 secondary hardening: an
+// UNREADABLE user store.
 func TestResolveEnrollRoleFailsClosedOnUnreadableStore(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
 	users := newUserStore(dir)
 
 	// Corrupt the users store so it exists but cannot be read as valid JSON.
-	// (An absent file is the genuine first-run case and must still bootstrap;
-	// a present-but-unreadable file is the takeover window we close here.)
 	if err := os.WriteFile(filepath.Join(dir, "users.json"), []byte("{ this is not json"), 0o600); err != nil {
 		t.Fatalf("seed corrupt store: %v", err)
 	}
@@ -266,9 +243,8 @@ func TestResolveEnrollRoleFailsClosedOnUnreadableStore(t *testing.T) {
 	}
 }
 
-// TestResolveEnrollRoleHonorsValidToken pins that a valid token's role wins
-// even when the store already has users (the normal post-bootstrap path),
-// and that it is NOT a bootstrap attempt.
+// TestResolveEnrollRoleHonorsValidToken pins that a valid token's role wins even when the
+// store already has users (the normal post-bootstrap path).
 func TestResolveEnrollRoleHonorsValidToken(t *testing.T) {
 	dir := t.TempDir()
 	tokens := newTokenStore(dir)
@@ -290,17 +266,10 @@ func TestResolveEnrollRoleHonorsValidToken(t *testing.T) {
 	}
 }
 
-// --- HTTP-level bootstrap/token enrollment flow. These drive the full
-// /enroll/begin + /enroll/finish surface (using auth_webauthn_test.go's
-// virtual-authenticator fixtures for the ceremonies that need to actually
-// persist a user to check its resulting Role), pinning that routes.go's
-// enrollBeginHandler wiring of resolveEnrollRole actually behaves per the
-// design doc's first-run-bootstrap/enrollment-token rules end-to-end, not
-// just at the resolveEnrollRole unit level above.
+// --- HTTP-level bootstrap/token enrollment flow.
 
-// TestEnrollBootstrapFirstUserBecomesAdmin drives the full HTTP /enroll
-// surface (no token) against a fresh, empty StateDir: the resulting FIRST
-// account must be admin, per the design doc's first-run bootstrap rule.
+// TestEnrollBootstrapFirstUserBecomesAdmin drives the full HTTP /enroll surface (no token)
+// against a fresh, empty StateDir: the resulting FIRST account must be admin.
 func TestEnrollBootstrapFirstUserBecomesAdmin(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)
@@ -342,9 +311,8 @@ func TestEnrollBootstrapFirstUserBecomesAdmin(t *testing.T) {
 	}
 }
 
-// TestEnrollWithoutTokenClosedAfterBootstrap pins the flip side: once a
-// first user exists, a second tokenless /enroll/begin must be refused
-// outright -- no ceremony cookie set, no account created.
+// TestEnrollWithoutTokenClosedAfterBootstrap pins the flip side: once a first user exists,
+// a second tokenless /enroll/begin must be refused outright -- no ceremony cookie set.
 func TestEnrollWithoutTokenClosedAfterBootstrap(t *testing.T) {
 	d := enrollTestDeps(t)
 	store := newUserStore(d.StateDir)
@@ -502,15 +470,8 @@ func enrollFinishRR(t *testing.T, h http.Handler, challenge string, cookie *http
 	return rr.Code
 }
 
-// TestBootstrapRaceYieldsExactlyOneAdmin is the TOCTOU regression pin: two
-// tokenless enrollments that BOTH begin against an empty store (each reads
-// zero users, each is a bootstrap attempt) must not both become admin. The
-// admin-or-refuse decision is made atomically at finish time
-// (jsonUserStore.CreateFirstAdmin, under the write lock), so whichever finish
-// commits first becomes the sole admin and the second -- now seeing a
-// non-empty store -- is rejected. This reproduces the reviewer's live repro
-// (two /enroll/begin, then two /enroll/finish) and asserts exactly one
-// account exists afterward and it is admin.
+// TestBootstrapRaceYieldsExactlyOneAdmin is the TOCTOU regression pin: two tokenless
+// enrollments that BOTH begin against an empty store.
 func TestBootstrapRaceYieldsExactlyOneAdmin(t *testing.T) {
 	d := enrollTestDeps(t)
 	h := newHandler(d)

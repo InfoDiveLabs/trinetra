@@ -8,10 +8,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestHostPrefixNotifierPrefixesTitle pins #101's multi-host disambiguation:
-// the decorator prepends "[server.name]" to the title the inner notifier sees,
-// while leaving the caller's Alert untouched (so the on-disk log stays
-// host-neutral). An empty name passes the title straight through.
+// TestHostPrefixNotifierPrefixesTitle pins #101's multi-host disambiguation: the decorator
+// prepends "[server.name]" to the title the inner notifier sees.
 func TestHostPrefixNotifierPrefixesTitle(t *testing.T) {
 	inner := &fakeNotifier{name: "inner"}
 	orig := Alert{Title: "disk:/ = 91.0"}
@@ -39,9 +37,8 @@ func TestHostPrefixNotifierPrefixesTitle(t *testing.T) {
 	}
 }
 
-// TestSendTestNotificationUnknownChannel pins sendTestNotification's
-// "unknown channel" error path (issue #66's inprocAPI.TestChannel and
-// cmdChannelTest both route through this).
+// TestSendTestNotificationUnknownChannel pins sendTestNotification's "unknown channel"
+// error path.
 func TestSendTestNotificationUnknownChannel(t *testing.T) {
 	c := config.Default()
 	if err := sendTestNotification(c, "does-not-exist", "web"); err == nil {
@@ -49,9 +46,8 @@ func TestSendTestNotificationUnknownChannel(t *testing.T) {
 	}
 }
 
-// TestSendTestNotificationSurfacesBuildNotifierError pins that an
-// incomplete channel config (buildNotifier itself fails) surfaces as
-// sendTestNotification's error rather than a panic or silent success.
+// TestSendTestNotificationSurfacesBuildNotifierError pins that an incomplete channel
+// config.
 func TestSendTestNotificationSurfacesBuildNotifierError(t *testing.T) {
 	c := config.Default()
 	c.AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"}) // no token, no chat_id
@@ -142,10 +138,8 @@ func TestChannelsFromConfigSkipsUnavailableNotifiers(t *testing.T) {
 		Name: "tg", Type: "telegram", Enabled: true,
 		MinSeverity: "warning", IncludeKinds: []string{"disk"},
 	})
-	// The telegram channel has no token/chat_id available (neither in
-	// Settings nor in config.Telegram), so buildNotifier errors and
-	// channelsFromConfig must build zero Channels (and not panic on the nil
-	// Notifier).
+	// The telegram channel has no token/chat_id available (neither in Settings nor in
+	// config.Telegram).
 	got := channelsFromConfig(c)
 	if len(got) != 0 {
 		t.Fatalf("expected 0 channels (telegram channel missing secrets), got %d", len(got))
@@ -169,9 +163,7 @@ func TestMigrateTelegramChannelAddsWhenTokenSetAndNoneExists(t *testing.T) {
 	if got.Settings["chat_id"] != "chat1" {
 		t.Errorf("chat_id = %q, want chat1", got.Settings["chat_id"])
 	}
-	// config.Default() sets the legacy global CriticalOverridesQuiet to true;
-	// the migrated channel must carry it over so back-compat users see no
-	// change in whether critical alerts bypass quiet hours.
+	// config.Default() sets the legacy global CriticalOverridesQuiet to true.
 	if !got.CriticalOverridesQuiet {
 		t.Error("migrated channel should carry over CriticalOverridesQuiet=true from the legacy global default")
 	}
@@ -190,9 +182,8 @@ func TestMigrateTelegramChannelNoopWithoutToken(t *testing.T) {
 func TestMigrateTelegramChannelNoopWhenNameTakenByOtherType(t *testing.T) {
 	c := config.Default()
 	c.Telegram.Token = "tok"
-	// A channel already NAMED "telegram" but of a different type (e.g. a
-	// hand-edited/restored webhook). Name is the unique key everywhere, so
-	// migration must not append a second {Name:"telegram"}.
+	// A channel already NAMED "telegram" but of a different type (e.g. a hand-edited/restored
+	// webhook).
 	c.AddChannel(config.ChannelConfig{Name: "telegram", Type: "webhook", Enabled: true})
 	before := len(c.Channels)
 

@@ -185,9 +185,8 @@ func TestBuildSlowChecksOnlyExpensiveMetrics(t *testing.T) {
 	}
 }
 
-// TestBuildSlowChecksBinaryWording confirms docker/service/smart checks
-// carry human FireMsg/RecoverMsg wording (issue #5) while numeric checks
-// (disk) are left alone with no FireMsg/RecoverMsg set.
+// TestBuildSlowChecksBinaryWording confirms docker/service/smart checks carry human
+// FireMsg/RecoverMsg wording (issue #5) while numeric checks.
 func TestBuildSlowChecksBinaryWording(t *testing.T) {
 	c := config.Default()
 	snap := Snapshot{
@@ -246,10 +245,7 @@ func TestBuildSlowChecksBinaryWording(t *testing.T) {
 	}
 }
 
-// TestBuildSlowChecksRecoverySweepWording confirms the value=0 recovery-sweep
-// sites (for a service no longer failed, or a docker/smart target that
-// disappeared from the snapshot) also carry the human RecoverMsg, so a
-// recovery emitted from any of these sites still reads humanely.
+// TestBuildSlowChecksRecoverySweepWording confirms the value=0 recovery-sweep sites.
 func TestBuildSlowChecksRecoverySweepWording(t *testing.T) {
 	c := config.Default()
 	snap := Snapshot{
@@ -286,10 +282,8 @@ func keysOf(m map[string]bool) []string {
 	return ks
 }
 
-// TestFastSlowUnionMatchesBuildChecks guards against a check silently
-// dropping out of both tiers during future edits: the union of
-// buildFastChecks and buildSlowChecks must always contain exactly the same
-// keys as the combined buildChecks (kept as a thin fast+slow wrapper).
+// TestFastSlowUnionMatchesBuildChecks guards against a check silently dropping out of both
+// tiers during future edits.
 func TestFastSlowUnionMatchesBuildChecks(t *testing.T) {
 	c := config.Default()
 	snap := Snapshot{
@@ -402,14 +396,8 @@ func TestEventToAlert(t *testing.T) {
 	}
 }
 
-// TestEventToAlertEscapesHTML is the Critical regression: anomaly alerts are
-// dispatched via SendMessage (now parse_mode=HTML), and Event.Text embeds
-// live container/unit/device names (via buildSlowChecks' FireMsg/RecoverMsg
-// and breach()). A name containing <, >, or & would produce unbalanced HTML,
-// Telegram would 400, and the alert -- the core alerting path -- would be
-// silently dropped. eventToAlert must HTML-escape e.Text at the source (it's
-// plain text), leaving the intentional-HTML boot/digest paths untouched (see
-// TestBootReportKeepsIntentionalHTML).
+// TestEventToAlertEscapesHTML is the Critical regression: anomaly alerts are dispatched via
+// SendMessage (now parse_mode=HTML).
 func TestEventToAlertEscapesHTML(t *testing.T) {
 	a := eventToAlert(Event{Key: "docker:web", Kind: "fire", Text: "container <b>x</b> is down (&exited)", Critical: true}, 0)
 	if strings.Contains(a.Title, "<b>") || strings.Contains(a.Title, "</b>") {
@@ -426,11 +414,8 @@ func TestEventToAlertEscapesHTML(t *testing.T) {
 	}
 }
 
-// TestBootReportKeepsIntentionalHTML proves the escaping in eventToAlert did
-// NOT over-reach into the boot-report path: formatBootReport wraps
-// renderStatus' deliberate <pre>/<b> markup, which must survive verbatim (not
-// become visible &lt;pre&gt;). This is the counterpart guard to
-// TestEventToAlertEscapesHTML.
+// TestBootReportKeepsIntentionalHTML proves the escaping in eventToAlert did NOT over-reach
+// into the boot-report path.
 func TestBootReportKeepsIntentionalHTML(t *testing.T) {
 	snap := Snapshot{CPU: 10, Online: true, Disks: map[string]float64{"/": 30}}
 	report := formatBootReport([]DownEvent{{Type: "power_down", Start: 0, End: 60, DurationSec: 60}}, renderStatus(snap, config.Default()))
@@ -541,11 +526,8 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 	}
 }
 
-// TestCollectSlowPopulatesDiskDetailAndSmartAttrs asserts collectSlow merges
-// `df -PT -B1` (device/fstype/usage/size) with `df -Pi` (inode%) into
-// snap.DiskDetail keyed by mount, alongside snap.Disks, and fills
-// snap.SmartAttrs from `smartctl -A <dev>` for every discovered SMART
-// device (alongside snap.SmartHealth).
+// TestCollectSlowPopulatesDiskDetailAndSmartAttrs asserts collectSlow merges `df -PT -B1`
+// with `df -Pi` into snap.DiskDetail keyed by mount.
 func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -600,14 +582,7 @@ func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 	}
 }
 
-// TestCollectSlowFiltersDockerOverlayAndPseudoMounts is the regression test
-// for the field bug (fix-disk-telegram-brief.md): a root daemon on a real
-// docker host sees dozens of `overlay` mounts (one per container) plus
-// squashfs/tmpfs/nsfs pseudo-mounts in `df -PT -B1`. collectSlow must derive
-// BOTH snap.Disks and snap.DiskDetail from the typed df output, gated by
-// isRealMount && isRealFsType, so only the real ext4 mounts survive in
-// either map -- not the ~70+ junk entries that used to blow past Telegram's
-// 4096-char message limit.
+// TestCollectSlowFiltersDockerOverlayAndPseudoMounts is the regression test for a root.
 func TestCollectSlowFiltersDockerOverlayAndPseudoMounts(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -658,10 +633,8 @@ func TestCollectSlowFiltersDockerOverlayAndPseudoMounts(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsSmartAttrsWhenDisabled asserts collect.smart_attrs=false
-// suppresses the `smartctl -A <dev>` call (the fake Exec fails the test if
-// it's requested) while the cheaper `--scan`/`-H` health check still runs and
-// still populates snap.SmartHealth.
+// TestCollectSlowSkipsSmartAttrsWhenDisabled asserts collect.smart_attrs=false suppresses
+// the `smartctl -A <dev>` call.
 func TestCollectSlowSkipsSmartAttrsWhenDisabled(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -689,9 +662,8 @@ func TestCollectSlowSkipsSmartAttrsWhenDisabled(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsSmartAttrsOnNilConfig mirrors the container-stats/units
-// nil-config guard: collectSlow must not panic (or call `smartctl -A`) with
-// a nil *config.Config.
+// TestCollectSlowSkipsSmartAttrsOnNilConfig mirrors the container-stats/units nil-config
+// guard: collectSlow must not panic (or call `smartctl -A`) with a nil *config.Config.
 func TestCollectSlowSkipsSmartAttrsOnNilConfig(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -712,9 +684,8 @@ func TestCollectSlowSkipsSmartAttrsOnNilConfig(t *testing.T) {
 	}
 }
 
-// smartScanFakeExec returns a fakeExec that serves canned smartctl/df output
-// and counts every `smartctl --scan` invocation via *scans, so throttle tests
-// can assert whether a real scan happened.
+// smartScanFakeExec returns a fakeExec that serves canned smartctl/df output and counts
+// every `smartctl --scan` invocation via *scans.
 func smartScanFakeExec(scans *int) fakeExec {
 	return fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -730,10 +701,8 @@ func smartScanFakeExec(scans *int) fakeExec {
 	}}
 }
 
-// TestCollectSlowSmartThrottleReusesCache asserts that a second collectSlow
-// call sharing one *smartCache within smartIntervalSec of the first does NOT
-// re-invoke smartctl, yet still returns the cached SmartHealth so status.json
-// and the recovery sweep keep seeing current values every slow tick.
+// TestCollectSlowSmartThrottleReusesCache asserts that a second collectSlow call sharing
+// one *smartCache within smartIntervalSec of the first does NOT re-invoke smartctl.
 func TestCollectSlowSmartThrottleReusesCache(t *testing.T) {
 	var scans int
 	x := smartScanFakeExec(&scans)
@@ -758,9 +727,8 @@ func TestCollectSlowSmartThrottleReusesCache(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSmartRescansAfterInterval asserts that once nowUnix has
-// advanced past smartIntervalSec since the last real scan, collectSlow scans
-// again rather than reusing the cache indefinitely.
+// TestCollectSlowSmartRescansAfterInterval asserts that once nowUnix has advanced past
+// smartIntervalSec since the last real scan.
 func TestCollectSlowSmartRescansAfterInterval(t *testing.T) {
 	var scans int
 	x := smartScanFakeExec(&scans)
@@ -794,11 +762,7 @@ func TestCollectSlowSmartNilCacheAlwaysScans(t *testing.T) {
 	}
 }
 
-// TestCollectSlowDiskDetailProjectsDaysToFull asserts that when a store IS
-// supplied, collectSlow fills DiskDetail.DaysToFull/DaysToFullKnown from a
-// rising "disk:<mount>" history in that store, exercising the
-// projectMountDaysToFull wiring end-to-end (not just projectDaysToFull in
-// isolation).
+// TestCollectSlowDiskDetailProjectsDaysToFull asserts that when a store IS supplied.
 func TestCollectSlowDiskDetailProjectsDaysToFull(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -839,9 +803,8 @@ func TestCollectSlowDiskDetailProjectsDaysToFull(t *testing.T) {
 	}
 }
 
-// TestSmartMetricSet asserts smartMetricSet emits one "smart:<dev>:temp"
-// entry per device with a known (>0) temperature, and omits devices whose
-// attribute set didn't report one.
+// TestSmartMetricSet asserts smartMetricSet emits one "smart:<dev>:temp" entry per device
+// with a known (>0) temperature, and omits devices whose attribute set didn't report one.
 func TestSmartMetricSet(t *testing.T) {
 	snap := Snapshot{SmartAttrs: map[string]SmartAttr{
 		"/dev/sda": {TempC: 37, WearPct: 5, ReallocSectors: 2},
@@ -865,10 +828,8 @@ func TestSmartMetricSetEmpty(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsContainerStatsWhenDisabled asserts the
-// collect.container_stats=false opt-out actually suppresses the
-// `docker stats` call: the fake Exec fails the test if "stats" is
-// requested, so ContainerStats staying nil is proof the call was skipped.
+// TestCollectSlowSkipsContainerStatsWhenDisabled asserts the collect.container_stats=false
+// opt-out actually suppresses the `docker stats` call.
 func TestCollectSlowSkipsContainerStatsWhenDisabled(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "docker" && len(args) > 0 && args[0] == "stats" {
@@ -891,9 +852,8 @@ func TestCollectSlowSkipsContainerStatsWhenDisabled(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsContainerStatsWhenDockerUnavailable mirrors the
-// existing container-list guard: da.available=false must skip the stats
-// call entirely, not just leave the result empty.
+// TestCollectSlowSkipsContainerStatsWhenDockerUnavailable mirrors the existing
+// container-list guard: da.available=false must skip the stats call entirely.
 func TestCollectSlowSkipsContainerStatsWhenDockerUnavailable(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "docker" {
@@ -909,10 +869,8 @@ func TestCollectSlowSkipsContainerStatsWhenDockerUnavailable(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsContainerStatsOnNilConfig asserts collectSlow never
-// panics when called with a nil *config.Config (defensive: any future
-// one-shot caller without a config handy should degrade gracefully rather
-// than crash).
+// TestCollectSlowSkipsContainerStatsOnNilConfig asserts collectSlow never panics when
+// called with a nil *config.Config.
 func TestCollectSlowSkipsContainerStatsOnNilConfig(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "docker" && len(args) > 0 && args[0] == "stats" {
@@ -928,10 +886,7 @@ func TestCollectSlowSkipsContainerStatsOnNilConfig(t *testing.T) {
 	}
 }
 
-// TestCollectSlowContainerStatsErrorDegradesGracefully asserts a docker
-// stats error (daemon busy, container churn mid-call, etc.) leaves
-// ContainerStats nil for this tick rather than propagating the error or
-// crashing the rest of collectSlow.
+// TestCollectSlowContainerStatsErrorDegradesGracefully asserts a docker stats error.
 func TestCollectSlowContainerStatsErrorDegradesGracefully(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "docker" && len(args) > 0 && args[0] == "stats" {
@@ -954,10 +909,8 @@ func TestCollectSlowContainerStatsErrorDegradesGracefully(t *testing.T) {
 	}
 }
 
-// TestCollectSlowPopulatesUnits asserts collect.services (default true, and
-// unrelated to docker availability/config) fills snap.Units with the full
-// systemd unit inventory, alongside (not instead of) the existing
-// FailedUnits alerting collection.
+// TestCollectSlowPopulatesUnits asserts collect.services (default true, and unrelated to
+// docker availability/config) fills snap.Units with the full systemd unit inventory.
 func TestCollectSlowPopulatesUnits(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch name {
@@ -989,9 +942,8 @@ func TestCollectSlowPopulatesUnits(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsUnitsWhenDisabled asserts collect.services=false
-// suppresses the `systemctl list-units` call (the fake Exec fails the test
-// if it's requested), while the --failed alerting call still runs.
+// TestCollectSlowSkipsUnitsWhenDisabled asserts collect.services=false suppresses the
+// `systemctl list-units` call (the fake Exec fails the test if it's requested).
 func TestCollectSlowSkipsUnitsWhenDisabled(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "systemctl" && len(args) > 0 && args[0] == "list-units" {
@@ -1017,9 +969,8 @@ func TestCollectSlowSkipsUnitsWhenDisabled(t *testing.T) {
 	}
 }
 
-// TestCollectSlowSkipsUnitsOnNilConfig mirrors the container-stats nil-config
-// guard: collectSlow must not panic (or call list-units) with a nil
-// *config.Config.
+// TestCollectSlowSkipsUnitsOnNilConfig mirrors the container-stats nil-config guard:
+// collectSlow must not panic (or call list-units) with a nil *config.Config.
 func TestCollectSlowSkipsUnitsOnNilConfig(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "systemctl" && len(args) > 0 && args[0] == "list-units" {
@@ -1061,10 +1012,8 @@ func TestContainerMetricSetEmpty(t *testing.T) {
 	}
 }
 
-// TestEventToAlertDispatchRespectsQuietHours exercises eventToAlert feeding
-// straight into a Dispatcher built from fake, in-memory Channels (rather than
-// going through config), asserting that quiet-hours gating is honored
-// per-channel exactly like the direct Dispatch tests in notifier_test.go.
+// TestEventToAlertDispatchRespectsQuietHours exercises eventToAlert feeding straight into a
+// Dispatcher built from fake, in-memory Channels (rather than going through config).
 func TestEventToAlertDispatchRespectsQuietHours(t *testing.T) {
 	always := &fakeNotifier{name: "critical-overrides-quiet"}
 	quietAware := &fakeNotifier{name: "quiet-respecting"}
@@ -1078,9 +1027,8 @@ func TestEventToAlertDispatchRespectsQuietHours(t *testing.T) {
 	critical := eventToAlert(Event{Key: "disk:/", Kind: "fire", Text: "disk:/ full", Critical: true}, now)
 	warning := eventToAlert(Event{Key: "cpu", Kind: "fire", Text: "cpu high", Critical: false}, now)
 
-	// During quiet hours: only the critical-overrides-quiet channel should
-	// receive the critical alert; the warning must reach neither channel,
-	// and the quiet-respecting channel must receive nothing at all.
+	// During quiet hours: only the critical-overrides-quiet channel should receive the
+	// critical alert; the warning must reach neither channel.
 	d.Dispatch(critical, true)
 	d.Dispatch(warning, true)
 
@@ -1091,8 +1039,7 @@ func TestEventToAlertDispatchRespectsQuietHours(t *testing.T) {
 		t.Errorf("quiet-respecting channel received %d alerts during quiet hours, want 0", got)
 	}
 
-	// Outside quiet hours the warning should now reach the quiet-respecting
-	// channel too.
+	// Outside quiet hours the warning should now reach the quiet-respecting channel too.
 	d.Dispatch(warning, false)
 	if got := len(quietAware.received()); got != 1 {
 		t.Errorf("quiet-respecting channel received %d alerts outside quiet hours, want 1", got)
@@ -1167,10 +1114,8 @@ func TestNetRateMetricSetEmpty(t *testing.T) {
 	}
 }
 
-// TestDigestNowFromStore seeds a memory SampleStore with cpu/mem points and a
-// downtime event inside the digest window, and asserts digestNow (reading
-// exclusively via store.Query/store.Events, no legacy Store involved)
-// reports the right peaks, sample count, and downtime summary.
+// TestDigestNowFromStore seeds a memory SampleStore with cpu/mem points and a downtime
+// event inside the digest window, and asserts digestNow.
 func TestDigestNowFromStore(t *testing.T) {
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	store := newMemStore(StoreOptions{})
@@ -1213,12 +1158,8 @@ func TestDigestNowFromStore(t *testing.T) {
 	}
 }
 
-// TestDigestNowRes1m covers a weekly-style window (days=7) whose start is
-// older than raw retention, so PickResolution selects Res1m for peaks. The
-// sample count is always taken at Res1m regardless, so it stays cadence-stable
-// (~per-minute) rather than inflating to the ~5s raw cadence. memStore ignores
-// res and serves one series, so this exercises the code path and asserts the
-// count reflects the points inside the window.
+// TestDigestNowRes1m covers a weekly-style window (days=7) whose start is older than raw
+// retention, so PickResolution selects Res1m for peaks.
 func TestDigestNowRes1m(t *testing.T) {
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	store := newMemStore(StoreOptions{})
@@ -1258,9 +1199,8 @@ func TestDigestNowNilStore(t *testing.T) {
 }
 
 func TestSamplerMetricSetsWriteThroughToStore(t *testing.T) {
-	// Integration-style: exercise the actual write path a fast/slow tick
-	// takes -- fastMetricSet/slowMetricSet feeding SampleStore.Append -- against
-	// a real (memory) backend, then read it back via Query.
+	// Integration-style: exercise the actual write path a fast/slow tick takes --
+	// fastMetricSet/slowMetricSet feeding SampleStore.Append -- against a real.
 	store, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -1317,13 +1257,8 @@ func TestSlowHubVersioning(t *testing.T) {
 	}
 }
 
-// TestReloadOnHUPRestoresManagedValueAfterExternalEdit is the round-2
-// review's second required test: a SIGHUP after an external edit to
-// config.json (simulated by writing a diverged config directly -- the same
-// effect a hand edit, a restored backup, or an offline write would have)
-// must restore the managed value rather than adopting the drift, because
-// reloadOnHUP (extracted from the SIGHUP handler, daemon.go) routes through
-// reload, which reimposes managed-config values before persisting.
+// TestReloadOnHUPRestoresManagedValueAfterExternalEdit: a SIGHUP after an external edit to
+// config.json.
 func TestReloadOnHUPRestoresManagedValueAfterExternalEdit(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
@@ -1369,13 +1304,11 @@ func TestReloadOnHUPRestoresManagedValueAfterExternalEdit(t *testing.T) {
 	}
 }
 
-// TestReloadOnHUPSilentOnLoadFailure pins the extraction's preserved
-// behaviour: a cfgPath that fails to load is silently ignored (no message,
-// no error), exactly like the pre-round-2 handler.
+// TestReloadOnHUPSilentOnLoadFailure pins that a cfgPath that fails to load is
+// silently ignored (no message, no error).
 func TestReloadOnHUPSilentOnLoadFailure(t *testing.T) {
-	// A MISSING cfgPath is not a Load failure at all (config.Load treats it
-	// as "use defaults", exactly like the pre-round-2 handler always did);
-	// a genuine Load failure needs a file that exists but fails to parse.
+	// A MISSING cfgPath is not a Load failure (config.Load treats it as "use
+	// defaults"); a genuine failure needs a file that exists but fails to parse.
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(cfgPath, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1392,9 +1325,7 @@ func TestReloadOnHUPSilentOnLoadFailure(t *testing.T) {
 }
 
 // TestReloadOnHUPSurfacesReloadError: a reload failure (e.g. saveDaemonCfg's
-// write erroring) is returned for the caller to report -- something that
-// could never happen before round 2 routed SIGHUP through reload instead of
-// a direct, always-succeeding applyConfig call.
+// write erroring) is returned for the caller to report.
 func TestReloadOnHUPSurfacesReloadError(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")

@@ -11,11 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// undeliverableTelegram simulates buildNotifier's rule that a telegram channel
-// with no resolvable chat id cannot deliver. It is what the trinetra-web
-// binary's buildDeps wires Deps.ValidateChannel to in production (via
-// client.ValidateChannel, which dry-runs the real buildNotifier on the
-// daemon side).
+// undeliverableTelegram simulates buildNotifier's rule that a telegram channel with no
+// resolvable chat id cannot deliver.
 func undeliverableTelegram(cc config.ChannelConfig, _ *config.Config) error {
 	if cc.Type == "telegram" && cc.Settings["chat_id"] == "" {
 		return fmt.Errorf("telegram channel %q: chat_id not configured", cc.Name)
@@ -23,11 +20,8 @@ func undeliverableTelegram(cc config.ChannelConfig, _ *config.Config) error {
 	return nil
 }
 
-// TestChannelsAddRejectsUndeliverableEnabledChannel is the #79 guard: the web
-// editor must not silently create an enabled channel that will be dropped at
-// delivery. A telegram channel with a token but no chat id (the trap the old
-// "auto-captured on first message" placeholder invited) is rejected with 400,
-// not persisted, and Reload is never called.
+// TestChannelsAddRejectsUndeliverableEnabledChannel is the #79 guard: the web editor must
+// not silently create an enabled channel that will be dropped at delivery.
 func TestChannelsAddRejectsUndeliverableEnabledChannel(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	d.ValidateChannel = undeliverableTelegram
@@ -143,9 +137,8 @@ func TestChannelsUpdateRejectsUndeliverableEnabledChannel(t *testing.T) {
 	}
 }
 
-// TestChannelsAddRoundTripsToConfig pins the core CRUD obligation: POSTing
-// /channels creates a channel that shows up in cfg.Channels with the posted
-// fields, is Reload()ed, and is audited.
+// TestChannelsAddRoundTripsToConfig pins the core CRUD obligation: POSTing /channels
+// creates a channel that shows up in cfg.Channels with the posted fields, is Reload()ed.
 func TestChannelsAddRoundTripsToConfig(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -211,9 +204,8 @@ func TestChannelsAddDuplicateNameRejected(t *testing.T) {
 	}
 }
 
-// TestChannelsAddBadMinSeverityRejectedWithNoWrite pins the validation
-// contract: an invalid min_severity rejects 400 and writes nothing (reusing
-// config.validateMinSeverity via SetChannelField).
+// TestChannelsAddBadMinSeverityRejectedWithNoWrite pins the validation contract: an invalid
+// min_severity rejects 400 and writes nothing.
 func TestChannelsAddBadMinSeverityRejectedWithNoWrite(t *testing.T) {
 	d, cfg, reloadCalled := configTestDeps(t)
 	h := newHandler(d)
@@ -233,9 +225,8 @@ func TestChannelsAddBadMinSeverityRejectedWithNoWrite(t *testing.T) {
 	}
 }
 
-// TestChannelsUpdateRoundTripsToConfig pins editing an existing channel:
-// the posted fields replace the old ones, and an audit record captures the
-// old->new summary.
+// TestChannelsUpdateRoundTripsToConfig pins editing an existing channel: the posted fields
+// replace the old ones, and an audit record captures the old->new summary.
 func TestChannelsUpdateRoundTripsToConfig(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram", Enabled: false, MinSeverity: "info"})
@@ -323,9 +314,8 @@ func TestChannelsRemoveRoundTrips(t *testing.T) {
 	}
 }
 
-// TestChannelsTestHandlerCallsTestChannel pins the "send test" wiring: it
-// calls Deps.API.TestChannel (task 8; previously Deps.TestChannel directly)
-// with the decoded name and renders its result.
+// TestChannelsTestHandlerCallsTestChannel pins the "send test" wiring: it calls
+// Deps.API.TestChannel with the decoded name and renders its result.
 func TestChannelsTestHandlerCallsTestChannel(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"})
@@ -351,11 +341,8 @@ func TestChannelsTestHandlerCallsTestChannel(t *testing.T) {
 	}
 }
 
-// TestChannelsTestHandlerNilTestChannelDoesNotPanic pins the "not yet
-// wired" fallback: a nil Deps.API renders a clear message instead of
-// panicking (task 8: the guard moved from checking Deps.TestChannel to
-// checking Deps.API, since that's what channelsTestHandler now calls
-// through).
+// TestChannelsTestHandlerNilTestChannelDoesNotPanic pins the "not yet wired"
+// fallback: a nil Deps.API renders a clear message instead of panicking.
 func TestChannelsTestHandlerNilTestChannelDoesNotPanic(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram"})
@@ -394,9 +381,8 @@ func TestChannelsTestHandlerSurfacesError(t *testing.T) {
 	}
 }
 
-// TestChannelsPageRendersTableAndModals pins GET /channels: it lists
-// existing channels and renders an edit modal per channel plus the add
-// modal.
+// TestChannelsPageRendersTableAndModals pins GET /channels: it lists existing channels and
+// renders an edit modal per channel plus the add modal.
 func TestChannelsPageRendersTableAndModals(t *testing.T) {
 	d, cfg, _ := configTestDeps(t)
 	(*cfg).AddChannel(config.ChannelConfig{Name: "tg", Type: "telegram", Enabled: true, MinSeverity: "info"})
@@ -475,10 +461,8 @@ type errTest string
 
 func (e errTest) Error() string { return string(e) }
 
-// secretChannelFixture is one channel type's #139 fixture: a channel whose
-// secret setting (per channelSecretSettingKeys) holds a unique, greppable
-// sentinel value, plus whatever other settings that type needs to exist as
-// a sensible (if disabled) draft.
+// secretChannelFixture is one channel type's #139 fixture: a channel whose secret setting
+// (per channelSecretSettingKeys) holds a unique, greppable sentinel value.
 type secretChannelFixture struct {
 	typ        string
 	secretKey  string
@@ -488,11 +472,7 @@ type secretChannelFixture struct {
 }
 
 // secretChannelFixtures covers every channel type buildNotifier implements
-// (internal/trinetra/channels.go), per #139's "define which per-channel
-// settings are secret for every channel type". discord/gotify are included
-// even though the modal's Type <select> can't create them (only the CLI
-// can) -- a channel of either type can still exist in config and reach the
-// edit modal, so its secret must never render either.
+// (internal/trinetra/channels.go).
 func secretChannelFixtures() []secretChannelFixture {
 	return []secretChannelFixture{
 		{typ: "telegram", secretKey: "token", sentinel: "SEKRIT-telegram-tok", otherOK: map[string]string{"chat_id": "555"}, uiEditable: true},
@@ -513,9 +493,8 @@ func (f secretChannelFixture) channelConfig(name string) config.ChannelConfig {
 	return config.ChannelConfig{Name: name, Type: f.typ, Settings: settings}
 }
 
-// TestChannelsPageNeverRendersSecretValue is #139's core RED/GREEN case:
-// for every channel type's secret setting, GET /channels' HTML (the table
-// AND every edit modal) must never contain the stored secret value.
+// TestChannelsPageNeverRendersSecretValue is #139's core RED/GREEN case: for every channel
+// type's secret setting, GET /channels' HTML.
 func TestChannelsPageNeverRendersSecretValue(t *testing.T) {
 	for _, f := range secretChannelFixtures() {
 		t.Run(f.typ, func(t *testing.T) {
@@ -543,11 +522,8 @@ func TestChannelsPageNeverRendersSecretValue(t *testing.T) {
 	}
 }
 
-// TestChannelsPageShowsSetPlaceholderForSecretField pins the "(set)" /
-// "(not set)" placeholder contract (secretPlaceholder's style,
-// handlers_config.go) for every type whose secret field the modal actually
-// renders: a channel with the secret configured shows "(set)"; one without
-// it shows "(not set)".
+// TestChannelsPageShowsSetPlaceholderForSecretField pins the "(set)" / "(not set)"
+// placeholder contract.
 func TestChannelsPageShowsSetPlaceholderForSecretField(t *testing.T) {
 	for _, f := range secretChannelFixtures() {
 		if !f.uiEditable {
@@ -586,10 +562,8 @@ func TestChannelsPageShowsSetPlaceholderForSecretField(t *testing.T) {
 	}
 }
 
-// modalSlice returns the body's substring for the modal <div> starting at
-// start, up to (but not including) the next "<div class=\"modal\"" -- good
-// enough to scope an assertion to one channel's modal among several
-// concatenated ones without a full HTML parser.
+// modalSlice returns the body's substring for the modal <div> starting at start, up to (but
+// not including) the next "<div class=\"modal\"".
 func modalSlice(body string, start int) string {
 	rest := body[start:]
 	if next := strings.Index(rest[1:], `<div class="modal"`); next >= 0 {
@@ -598,10 +572,8 @@ func modalSlice(body string, start int) string {
 	return rest
 }
 
-// TestChannelsUpdateBlankSecretPreservesStoredValue pins "blank keeps": a
-// POST /channels/{name}/update that leaves the secret field blank (posts no
-// settings.<key> at all, the real form's behavior when an admin doesn't
-// touch that field) must not change the stored secret.
+// TestChannelsUpdateBlankSecretPreservesStoredValue pins "blank keeps": a POST
+// /channels/{name}/update that leaves the secret field blank.
 func TestChannelsUpdateBlankSecretPreservesStoredValue(t *testing.T) {
 	for _, f := range secretChannelFixtures() {
 		if !f.uiEditable {
@@ -634,8 +606,7 @@ func TestChannelsUpdateBlankSecretPreservesStoredValue(t *testing.T) {
 }
 
 // TestChannelsUpdateClearCheckboxClearsSecret pins "clear removes": posting
-// settings.<key>.clear=1 (with the value field still blank) explicitly
-// wipes the stored secret rather than leaving it in place.
+// settings.<key>.clear=1.
 func TestChannelsUpdateClearCheckboxClearsSecret(t *testing.T) {
 	for _, f := range secretChannelFixtures() {
 		if !f.uiEditable {
@@ -667,9 +638,8 @@ func TestChannelsUpdateClearCheckboxClearsSecret(t *testing.T) {
 	}
 }
 
-// TestChannelsUpdateNewSecretValueReplacesStored pins "new value replaces":
-// posting a non-blank settings.<key> overwrites the stored secret, clear
-// checkbox or not.
+// TestChannelsUpdateNewSecretValueReplacesStored pins "new value replaces": posting a
+// non-blank settings.<key> overwrites the stored secret, clear checkbox or not.
 func TestChannelsUpdateNewSecretValueReplacesStored(t *testing.T) {
 	for _, f := range secretChannelFixtures() {
 		if !f.uiEditable {
@@ -702,13 +672,8 @@ func TestChannelsUpdateNewSecretValueReplacesStored(t *testing.T) {
 	}
 }
 
-// TestChannelsUpdateBlankSecretStillValidatesWithStoredValue pins that a
-// blank secret submission (kept, not cleared) still validates the REAL
-// stored value through Deps.ValidateChannel -- the "validation must still
-// receive the real stored value when the field was left blank" #139
-// requirement. tokenRequiredValidator rejects an enabled telegram channel
-// whose Settings["token"] is empty; posting a blank token on an ALREADY
-// -tokened channel must not trip that rejection.
+// TestChannelsUpdateBlankSecretStillValidatesWithStoredValue pins that a blank secret
+// submission.
 func TestChannelsUpdateBlankSecretStillValidatesWithStoredValue(t *testing.T) {
 	tokenRequiredValidator := func(cc config.ChannelConfig, _ *config.Config) error {
 		if cc.Type == "telegram" && cc.Settings["token"] == "" {
@@ -744,9 +709,8 @@ func TestChannelsUpdateBlankSecretStillValidatesWithStoredValue(t *testing.T) {
 	}
 }
 
-// TestChannelsAuditNeverContainsSecretValue pins that neither channel.add
-// nor channel.update audit records (channelSummary) ever carry a secret
-// value in Old or New, for every type.
+// TestChannelsAuditNeverContainsSecretValue pins that neither channel.add nor
+// channel.update audit records (channelSummary) ever carry a secret value in Old or New.
 func TestChannelsAuditNeverContainsSecretValue(t *testing.T) {
 	for _, f := range secretChannelFixtures() {
 		if !f.uiEditable {

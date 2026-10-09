@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// #82: install must also expose the binary on a directory that sudo's
-// secure_path includes (e.g. /usr/bin), so `sudo trinetra ...` resolves on
-// distros (RHEL/CentOS family) whose secure_path omits /usr/local/bin.
-// linkOnPath/unlinkOnPath are the testable core of that, exercised here with
-// temp paths instead of the real /usr/bin.
+// #82: install must also expose the binary on a directory that sudo's secure_path includes
+// (e.g. /usr/bin), so `sudo trinetra ...` resolves on distros.
 
 func TestLinkOnPathCreatesSymlink(t *testing.T) {
 	dir := t.TempDir()

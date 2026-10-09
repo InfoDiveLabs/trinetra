@@ -10,9 +10,8 @@ import (
 
 const joinPrefix = "swj1_"
 
-// JoinInfo is everything a child needs to enroll: where the master is, the
-// one-time token, and the CA pin that authenticates the master before the
-// token is sent.
+// JoinInfo is everything a child needs to enroll: where the master is, the one-time token,
+// and the CA pin that authenticates the master before the token is sent.
 type JoinInfo struct {
 	URL   string `json:"u"`
 	Token string `json:"t"`

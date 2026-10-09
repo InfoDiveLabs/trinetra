@@ -7,11 +7,8 @@ import (
 	"syscall"
 )
 
-// TryLock takes an exclusive, non-blocking flock on path (created 0600, its
-// directory 0700 if missing). ok is false, with a nil error, when another
-// process (or another open of the same file) holds it. The lock is released
-// by unlock, or by the kernel when the holder exits or is killed -- which is
-// what lets the update watchdog tell a live apply from a crashed one.
+// TryLock takes an exclusive, non-blocking flock on path (created 0600, its directory 0700
+// if missing). ok is false, with a nil error, when another process.
 func TryLock(path string) (unlock func(), ok bool, err error) {
 	return lock(path, syscall.LOCK_EX|syscall.LOCK_NB)
 }
@@ -49,11 +46,8 @@ func lock(path string, how int) (func(), bool, error) {
 
 const stateLockFile = "state.lock"
 
-// WithState runs fn on the current state under dir/state.lock and saves the
-// result when fn returns nil (fn's error is returned unchanged, with nothing
-// written). Every read-modify-write of state.json -- CLI, daemon loop, guard,
-// install -- goes through here, so none of them can clobber another's change
-// (R16). Hold it only briefly: it is a blocking lock.
+// WithState runs fn on the current state under dir/state.lock and saves the result when fn
+// returns nil (fn's error is returned unchanged, with nothing written).
 func WithState(dir string, fn func(*State) error) error {
 	unlock, err := Lock(filepath.Join(dir, stateLockFile))
 	if err != nil {
