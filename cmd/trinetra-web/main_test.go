@@ -409,3 +409,28 @@ func TestPublicPageServesLiveSnapshotOverSocket(t *testing.T) {
 		t.Errorf("GET / body missing the live snapshot's cpu value (77%%), the socket-side fakeAPI's data never reached the served page:\n%s", body)
 	}
 }
+
+func TestUsersWorksWithDaemonStopped(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgFile, []byte(`{"web":{"origin":"https://ops.example.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := configPath
+	configPath = cfgFile
+	t.Cleanup(func() { configPath = orig })
+	out, err := os.CreateTemp(dir, "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(string) string { return "" }
+	args := []string{"-socket", filepath.Join(dir, "missing.sock"), "-state-dir", dir, "users", "invite", "--role", "admin"}
+	if code := runTo(args, getenv, out, out); code != 0 {
+		b, _ := os.ReadFile(out.Name())
+		t.Fatalf("exit %d: %s", code, b)
+	}
+	b, _ := os.ReadFile(out.Name())
+	if !strings.Contains(string(b), "https://ops.example.com/enroll?token=") {
+		t.Fatalf("no enroll URL from config.json: %s", b)
+	}
+}
