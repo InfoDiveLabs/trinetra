@@ -24,7 +24,7 @@ No agent zoo, no cloud, no Prometheus, no external database.
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/fleet-hero.webp" alt="Fleet overview: node counts, a CPU heatmap across twelve servers, top-5 CPU, memory and disk, and a down-now list" width="100%">
+  <img src="docs/assets/media/fleet.gif" alt="Fleet overview: node counts, a CPU heatmap across twelve servers, top CPU, memory and disk, then the node table with state, link health, version and tags" width="100%">
 </p>
 
 ```bash
@@ -38,52 +38,173 @@ chmod +x trinetra trinetra-ctl trinetra-web
 # 2. Verify the signatures and install: one systemd service
 sudo ./trinetra install --require-signed
 
-# 3. Set up the Telegram bot (or: sudo trinetra telegram set-token <token>)
+# 3. Guided setup: web UI, your admin account, where alerts go
 sudo trinetra cli
-# then, from your phone:  /start <pin>  ->  /stats
 ```
+
+<p align="center">
+  <img src="docs/assets/media/first-run.gif" alt="sudo trinetra cli on a new server: the web UI step, a one-time admin enroll link, choosing where alerts go, then the live home screen" width="100%">
+</p>
 
 Details in [Quick start](#quick-start).
 
----
-
-## See it in action
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/media/first-run.gif" alt="sudo trinetra cli on a new server: web UI step, a one-time admin enroll link, choosing where alerts go, then the live home screen"><br><sub><b>Guided first run</b> in the terminal</sub></td>
-<td width="50%"><img src="docs/assets/media/status-page.gif" alt="Monitoring page: tick two containers, add them to a new status page service called Checkout, then see it on the public status page"><br><sub><b>Status page from Monitoring</b>: tick containers, publish a service</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/assets/media/dashboard-ctrl-k.gif" alt="Dashboard tour, then Ctrl K opens the node switcher and jumps to db-01's dashboard"><br><sub><b>Dashboard</b>, and any server in the fleet with <kbd>Ctrl</kbd> <kbd>K</kbd></sub></td>
-<td width="50%"><img src="docs/assets/media/who-gets-what.gif" alt="Notifications: the channel list, then the Who gets what tab showing which channels receive each alert level, plus quiet hours"><br><sub><b>Who gets what</b>: every alert level and its channels</sub></td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="40%"><a href="docs/assets/media/fleet-mode.mp4"><img src="docs/assets/media/fleet-mode.jpg" alt="Play: fleet mode explained, 47 seconds with narration"></a><br><sub><b>Fleet mode</b> · 47 s, narrated</sub></td>
-<td width="40%"><a href="docs/assets/media/self-update.mp4"><img src="docs/assets/media/self-update.jpg" alt="Play: how self-update works, 39 seconds with narration"></a><br><sub><b>Self-update and rollback</b> · 39 s, narrated</sub></td>
-<td width="20%"><a href="docs/assets/media/launch-reel.mp4"><img src="docs/assets/media/launch-reel.jpg" alt="Play: the 25-second trinetra launch reel"></a><br><sub><b>In 25 seconds</b></sub></td>
-</tr>
-</table>
+<br>
 
 ## Contents
 
-- [See it in action](#see-it-in-action)
-- [Small by design](#small-by-design)
-- [Feature tour](#feature-tour): [dashboard](#live-dashboard) ·
-  [monitoring](#containers-services-filesystems-processes) ·
-  [history](#history) · [alerts](#alerts-and-channels) ·
-  [fleet](#fleet-overview) · [incidents](#incidents) ·
-  [routing](#routing-and-escalation) · [rules](#fleet-wide-rules) ·
-  [silences](#silences-and-maintenance-windows) ·
-  [managed config](#managed-config) · [admin and audit](#fleet-admin-and-audit) ·
-  [status page](#public-status-page) · [security](#security) · [any screen](#any-screen-any-theme)
-- [How it works](#how-it-works)
+- [What you get](#what-you-get): [dashboard](#a-live-dashboard-for-every-server) ·
+  [monitoring](#containers-services-disks-and-processes) · [history](#history) ·
+  [alerts](#alerts-where-your-team-already-is) · [fleet](#fleet-mode) ·
+  [incidents](#incidents) · [silences](#silences-and-maintenance-windows) ·
+  [status page](#a-public-status-page) · [updates](#updates-that-roll-themselves-back) ·
+  [users](#users-and-passkeys) · [phone](#on-your-phone)
+- [Small by design](#small-by-design) · [Security](#security) · [How it works](#how-it-works)
 - [Quick start](#quick-start) · [Build a fleet](#build-a-fleet) ·
   [Upgrading from serverwatch](#upgrading-from-serverwatch)
 - [Documentation](#documentation)
+
+<br>
+
+## What you get
+
+### A live dashboard for every server
+
+Live CPU, memory, load, temperature and network, the containers and services that
+are up or down, disk usage, a 24-hour availability bar and the alerts firing right
+now. In a fleet, <kbd>Ctrl</kbd> <kbd>K</kbd> jumps to any server.
+
+<p align="center">
+  <img src="docs/assets/media/dashboard.gif" alt="Dashboard tour: live tiles and the CPU and load chart, then Ctrl K opens the node switcher and jumps to db-01's dashboard" width="100%">
+</p>
+
+<br>
+
+### Containers, services, disks and processes
+
+Every Docker container, systemd service, filesystem and top process, discovered on
+its own. Click a row for details and actions, filter as you type.
+
+<p align="center">
+  <img src="docs/assets/media/monitoring.gif" alt="Monitoring: the container table, a row opening its detail drawer, then the services and filesystems tabs and a filter" width="100%">
+</p>
+
+<br>
+
+### History
+
+CPU, memory, load and temperature for any range from the last hour to 30 days, disk
+use per filesystem, and a downtime bar that shows exactly when the server was away.
+
+<p align="center">
+  <img src="docs/assets/media/history.gif" alt="History: charts for 24 hours, switching to 7 and 30 days, then disk usage per filesystem and the 30-day downtime bar" width="100%">
+</p>
+
+<br>
+
+### Alerts where your team already is
+
+Thresholds and a rolling per-server baseline ("not normal for this box") decide when
+to alert. Each channel has its own minimum level and quiet-hours behaviour, and
+**Who gets what** shows exactly which channels receive each kind of alert. Telegram
+also works as a bot: `/stats`, history, ack and silence from your phone.
+
+<p align="center">
+  <img src="docs/assets/media/who-gets-what.gif" alt="Notifications: the channel list, then the Who gets what tab with each alert level and its channels, quiet hours and the offline check" width="100%">
+</p>
+
+Add a channel from the browser or straight from the terminal:
+
+<p align="center">
+  <img src="docs/assets/media/add-channel.gif" alt="trinetra cli: from the no-channel reminder, press n, add a channel named ops-slack, choose Slack, paste the webhook URL; back on Home the reminder is gone" width="100%">
+</p>
+
+<br>
+
+### Fleet mode
+
+One server becomes the master with `sudo trinetra fleet init`; every other server
+joins with one token. Each keeps monitoring and alerting on its own, streams its data
+to the master over mutual TLS, and catches up after a network split without losing a
+sample.
+
+https://github.com/user-attachments/assets/8ba51154-faf6-4a01-b116-1c01fb26e760
+
+Also in fleet mode: aggregate rules across servers, routing and escalation policies,
+config managed from the master by tag, and an audit log of every change. See the
+[fleet chapter](docs/handbook/13-fleet.md).
+
+<br>
+
+### Incidents
+
+Related alerts from many servers become one incident, routed to the right people and
+escalated if nobody acknowledges it. Each incident shows its member nodes, what was
+delivered or held, and a full timeline.
+
+<p align="center">
+  <img src="docs/assets/media/incidents.gif" alt="Fleet incidents list, then an incident's detail page with ack and silence controls, member nodes and its timeline" width="100%">
+</p>
+
+<br>
+
+### Silences and maintenance windows
+
+Planned work? Silence by node, tag, rule or severity for as long as you need, or set
+up recurring maintenance windows so nobody is paged for a reboot.
+
+<p align="center">
+  <img src="docs/assets/media/silence.gif" alt="Silences: matching node edge-01 for four hours, then the recurring maintenance windows" width="100%">
+</p>
+
+<br>
+
+### A public status page
+
+Pick the containers and services your customers depend on and publish them as named
+services; visitors see the service and its state, never your container names.
+
+<p align="center">
+  <img src="docs/assets/media/status-page.gif" alt="Monitoring: tick two containers, add them to a new status page service called Checkout in group Storefront, then see it on the public status page" width="100%">
+</p>
+
+When something breaks, post an incident and keep customers updated:
+
+<p align="center">
+  <img src="docs/assets/media/status-incident.gif" alt="Status updates: a new incident titled Slow checkouts affecting Payments with a first update, published, then shown on the public status page" width="100%">
+</p>
+
+<br>
+
+### Updates that roll themselves back
+
+Every release is signed twice, by the build pipeline and offline by a maintainer.
+A new build is staged, smoke-tested, swapped in and watched; if it isn't healthy,
+the previous build comes back on its own and you're told why.
+
+https://github.com/user-attachments/assets/70dd5ce9-b896-4d7d-96f8-f5761783620a
+
+<br>
+
+### Users and passkeys
+
+Sign in with a passkey (phone, laptop or security key); no passwords. Invite people
+as admin, responder or viewer from the web UI or the terminal.
+
+<p align="center">
+  <img src="docs/assets/media/invite.gif" alt="sudo trinetra users invite --role responder prints a single-use enroll link" width="100%">
+</p>
+
+<br>
+
+### On your phone
+
+Every page works on a phone, with a bottom tab bar for the main sections.
+
+<p align="center">
+  <img src="docs/assets/media/mobile.gif" alt="The dashboard on a phone, the alerts tab, and the More sheet with every section" width="360">
+</p>
+
+<br>
 
 ## Small by design
 
@@ -119,156 +240,9 @@ is lighter still. Binaries are built with `-trimpath -ldflags "-s -w"`.</sub>
   In a fleet, a child hands alerts to the master, and falls back to
   delivering them itself if the master is unreachable.
 
-## Feature tour
+<br>
 
-Screens below are the real web UI (`trinetra-web`) with a demo fleet of twelve
-servers.
-
-### Live dashboard
-
-The whole box on one screen, streamed live: containers, systemd units,
-filesystems, reachability, a 24-hour availability strip, CPU, memory, swap,
-load, temperature, network and processes, plus whatever is firing right now.
-
-<img src="docs/assets/screenshots/dashboard-hero.webp" alt="Dashboard: host strip, container and systemd counts, availability blocks, live resource tiles and active alerts" width="100%">
-
-### Containers, services, filesystems, processes
-
-Drill into every Docker container, systemd unit, mount and process, with
-live charts and actions from the row detail.
-
-<img src="docs/assets/screenshots/monitoring.webp" alt="Monitoring: container table with state, CPU, memory and network I/O" width="100%">
-
-### History
-
-Every metric is kept locally in a compact time-series store with tiered
-retention, from 1 hour to 30 days, plus a downtime record that survives
-reboots and power cuts.
-
-<img src="docs/assets/screenshots/history.webp" alt="History: CPU, memory, load and temperature charts over 24 hours, disk usage per filesystem and a 30-day downtime bar" width="100%">
-
-### Alerts and channels
-
-Static thresholds and baselines, with boot and recovery reports, a daily
-digest and a weekly rollup. Deliver to **Telegram** (with a full bot: `/stats`,
-history, controls), **email, webhook, Slack, Discord, ntfy and Gotify**, each
-with its own severity floor and quiet-hours behaviour.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/screenshots/alerts.webp" alt="Alerts: firing now with ack, recent history with sources and notified channels"></td>
-<td width="50%"><img src="docs/assets/screenshots/channels.webp" alt="Channels: Telegram, Slack and webhook channels with severity and routing"></td>
-</tr>
-</table>
-
-<img src="docs/assets/media/add-channel.gif" alt="trinetra cli: from the no-channel reminder, press n, add a channel named ops-slack, choose Slack, paste the webhook URL, saved; back on Home the reminder is gone" width="100%">
-<sub>Adding a Slack channel from <code>trinetra cli</code>.</sub>
-
-### Fleet overview
-
-Turn one host into a master and enroll the rest with a join code. The
-`/fleet` page shows every node at a glance: online, lagging, down and revoked
-counts, a heatmap you can switch between CPU, memory, disk and load, top-5
-lists, what is down right now, and link health with clock skew and outbox
-depth.
-
-<img src="docs/assets/screenshots/fleet-overview.webp" alt="Fleet overview: counts, heatmap, top-5 CPU, memory and disk, down-now list and the node table with state, version, tags and link health" width="100%">
-
-**Every node is one click away.** The node switcher (or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd>)
-opens any child's full dashboard, monitoring and history, served from the
-master's replica of its data. **Compare** overlays any metric across the
-nodes you tick.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/screenshots/node-dashboard.webp" alt="A child's dashboard viewed through the master: db-01 with a filesystem at 93 percent"></td>
-<td width="50%"><img src="docs/assets/screenshots/fleet-compare.webp" alt="Compare: CPU of four nodes overlaid on one chart"></td>
-</tr>
-</table>
-
-### Incidents
-
-Alerts from across the fleet are grouped into incidents, so ten web servers
-with the same problem page you once, not ten times. A dependency map folds
-downstream noise under its cause (api nodes under a database outage). Each
-incident has a timeline that shows exactly what fired, who was notified,
-what was suppressed and why. Ack or silence it from the page, or straight
-from Telegram with the **Ack** and **Silence 1h** buttons.
-
-<img src="docs/assets/screenshots/fleet-incidents.webp" alt="Incidents list: firing, acked, resolved and suppressed incidents with severity, nodes, duration and delivered/suppressed counts" width="100%">
-
-<img src="docs/assets/screenshots/incident-detail.webp" alt="Incident detail: ack and silence controls, members per node, and a timeline of fire, grouped, delivered and escalated events" width="100%">
-
-### Routing and escalation
-
-Routes match on tag, node, rule and severity and send each incident to a
-policy. A policy is a list of escalation steps (Telegram ops now, on-call
-after 5 minutes, everyone after 15), with repeat and resolved notifications.
-Routes can continue to fan out to several policies, and every one escalates
-on its own. Edit in the form or as JSON, and check any path with the route
-tester before you save.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/screenshots/alerting-routes.webp" alt="Routes: ordered routes with tag, node, rule and severity matchers and a continue toggle"></td>
-<td width="50%"><img src="docs/assets/screenshots/alerting-policies.webp" alt="Policies: escalation steps with delays and channel checkboxes"></td>
-</tr>
-</table>
-
-### Fleet-wide rules
-
-Alert on the fleet as a whole with a small, readable expression language:
-
-```text
-avg(tag:api, cpu) > 75 for 5m            # the api tier is running hot
-online(tag:prod) < 8 for 2m              # lost production capacity
-absent(tag:staging, 10m)                 # staging went quiet
-count(tag:web, disk > 90) >= 1 for 5m    # any web node nearly full
-```
-
-<img src="docs/assets/screenshots/alerting-rules.webp" alt="Aggregate rules editor with four rules, and the full alerting config as JSON" width="100%">
-
-### Silences and maintenance windows
-
-One-off silences for a node, tag, rule or severity, and recurring
-maintenance windows by weekday and time zone, so planned work never pages
-anyone.
-
-<img src="docs/assets/screenshots/silences.webp" alt="Silences: active silence for edge-01, new-silence form, and two recurring maintenance windows" width="100%">
-
-### Managed config
-
-Push settings from the master to every node, or to all nodes with a tag:
-thresholds, quiet hours, baseline alerts. Each node reports what it applied,
-and drift or conflicts show up per node.
-
-<img src="docs/assets/screenshots/managed-config.webp" alt="Managed config: fragments by tag and per-node applied, drift and conflict status" width="100%">
-
-### Fleet admin and audit
-
-Mint join tokens (TTL, uses, tags), rename, re-tag, revoke or remove nodes,
-and watch link health. Every change to the fleet, from the web, the CLI or
-Telegram, lands in the audit log with who did it.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/screenshots/fleet-admin.webp" alt="Fleet admin: join tokens, node rename, tag and revoke, and link health"></td>
-<td width="50%"><img src="docs/assets/screenshots/audit-log.webp" alt="Audit log: time, actor, action, target and detail"></td>
-</tr>
-</table>
-
-### Public status page
-
-Publish named services (an API, a database, a tag of nodes) whose status comes
-straight from monitoring, with a 90-day history, an Atom feed and a JSON API.
-Incidents open on their own when a service goes down, and your team posts
-updates as a `responder`, a role that can work incidents without admin rights.
-Internal names, IPs and alert keys never appear publicly. See the
-[handbook](docs/handbook/08-web-ui.md#public-status-page).
-
-<img src="docs/assets/screenshots/status-public.webp" alt="Public status page: banner, active incident, services with 90-day bars" width="100%">
-
-### Security
+## Security
 
 - **Passkey sign-in** for the web UI (Touch ID, Windows Hello or a security
   key), with admin and viewer roles; after the first admin, new accounts need
@@ -300,24 +274,10 @@ Internal names, IPs and alert keys never appear publicly. See the
 
 The whole model, key by key, is in the [Security chapter](docs/handbook/14-security.md).
 
-<img src="docs/assets/screenshots/login.webp" alt="Passkey sign-in screen" width="100%">
-
-### Any screen, any theme
-
-Light and dark themes, a tablet layout with an icon rail, and a phone layout
-with a bottom tab bar.
-
-<table>
-<tr>
-<td width="46%"><img src="docs/assets/screenshots/dashboard-light.webp" alt="Dashboard in the light theme"></td>
-<td width="32%"><img src="docs/assets/screenshots/tablet-fleet.webp" alt="Fleet page on a tablet with the icon rail"></td>
-<td width="22%"><img src="docs/assets/screenshots/mobile-fleet.webp" alt="Fleet page on a phone with the bottom tab bar"></td>
-</tr>
-</table>
+<br>
 
 ## How it works
 
-<img src="docs/assets/art/how-it-works.webp" alt="Collectors for CPU, memory, disk, Docker and services feed the core daemon, which keeps a local store and alert state and serves Telegram, the web UI and the terminal UI" width="100%">
 
 Trinetra is a lean **core** daemon with optional **plugins** around it. The
 core runs the sampler, keeps the live picture and the history, decides and
@@ -347,12 +307,7 @@ network outage only delays delivery and loses nothing. The child hands each
 alert to the master, which groups, routes and escalates it. If the master
 doesn't take it in time, the child delivers the alert itself.
 
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/art/fleet.webp" alt="A master connected to four children over mTLS; one child is cut off and buffers in its outbox"></td>
-<td width="50%"><img src="docs/assets/art/alert-flow.webp" alt="Alert lifecycle: detect, route, deliver, ack, recover, with a local fallback path from detect"></td>
-</tr>
-</table>
+<br>
 
 ## Quick start
 
@@ -371,7 +326,7 @@ for f in manifest.json manifest.ci.sig manifest.maint.sig; do
 done
 
 sudo ./trinetra install --require-signed   # installs the daemon AND both plugins, enables the systemd service
-sudo trinetra cli                          # guided first-run setup: bot token, enrollment PIN, web UI
+sudo trinetra cli                          # guided setup: web UI, first admin, where alerts go
 ```
 
 `trinetra install --require-signed` verifies both signatures on the manifest
@@ -380,18 +335,22 @@ and every binary's hash (and refuses on any mismatch), copies the binaries to
 trinetra itself, see [Verify a download
 yourself](docs/handbook/14-security.md#verify-a-download-yourself). `trinetra cli` opens the
 [trinetra-ctl](docs/handbook/plugins/trinetra-ctl.md#managing-with-trinetra-ctl)
-terminal UI, which walks you through the Telegram bot token, `/start <pin>`
-enrollment and, optionally, the web UI. Prefer plain commands? The one
-required setting is the bot token:
+terminal UI. On a new server it walks you through the web UI, prints a one-time
+enroll link for your admin account, and asks where alerts go: Telegram, Slack,
+Discord, email, ntfy, Gotify or a webhook, or later from the web UI. Every step
+can be skipped. Prefer plain commands?
 
 ```bash
-sudo trinetra telegram set-token <token>   # token from @BotFather
-sudo trinetra web                          # optional: the browser UI
+sudo trinetra users invite --role admin               # enroll link for the first admin
+sudo trinetra channel add ops --type slack --set url=<webhook>   # or telegram, email, ...
+sudo trinetra telegram set-token <token>              # Telegram, then /start <pin> to the bot
 ```
 
 The two plugins are optional: leave them out of the download loop if you only
-want the Telegram daemon. Full steps are in [Installation and first
+want the daemon and its alerts. Full steps are in [Installation and first
 run](docs/handbook/03-installation.md).
+
+<br>
 
 ## Build a fleet
 
