@@ -250,7 +250,7 @@ func TestGuardKeepsPendingWhenRestoreFails(t *testing.T) {
 	}
 }
 
-// TestGuardRetryDoesNotReRunHealthGate is #136 fix round 1: once a Pending
+// TestGuardRetryDoesNotReRunHealthGate pins #136: once a Pending
 // has already failed its health gate AND a restore attempt, the rollback
 // decision is final. A later guard run (the watchdog retrying) must retry
 // ONLY the restore -- never restart the still-pending build and re-poll its
@@ -347,13 +347,11 @@ func TestGuardRestoreFailureRollbackDoesNotAffectRollbackConfirmation(t *testing
 	}
 }
 
-// TestGuardCommitsDespiteRestartError is fix-round-1 F2: osExec's own
-// timeout (60s, execTimeout) is shorter than systemd's default 90s
-// TimeoutStopSec, so `systemctl restart trinetra` can genuinely return an
-// error (the command's own wait timed out) even though systemd goes on to
-// finish the restart successfully a few seconds later. runGuard must not
-// treat restart()'s error as fatal -- it must still poll for health, and
-// commit if the daemon does come up healthy within the deadline.
+// TestGuardCommitsDespiteRestartError pins that runGuard does not
+// treat restart()'s error as fatal: osExec's 60s execTimeout is shorter than
+// systemd's default 90s TimeoutStopSec, so `systemctl restart` can return an
+// error though systemd finishes the restart moments later. runGuard must
+// still poll for health and commit if the daemon comes up healthy.
 func TestGuardCommitsDespiteRestartError(t *testing.T) {
 	p, clk := guardFixture(t, update.Pending{Version: "0.5.0", From: "0.4.1", Deadline: 1090, Files: []string{"trinetra"}})
 	h := &fakeHealth{active: true, version: "0.5.0", ts: 1002}

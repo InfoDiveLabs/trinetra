@@ -148,12 +148,9 @@ func (lx *ruleLexer) next() (ruleToken, error) {
 		}
 		return ruleToken{kind: tokWord, text: lx.s[start:lx.pos], pos: start}, nil
 	}
-	// Round-1 review fix: c is only the first BYTE of whatever is here, so a
-	// non-ASCII character (a UTF-8 multi-byte rune) must be decoded properly
-	// rather than reported as the raw byte value reinterpreted as a rune
-	// (string(byte) treats it as a Latin-1 code point, which garbles anything
-	// outside ASCII). A genuinely invalid encoding still advances by one byte
-	// so the lexer can't loop forever on it.
+	// c is only the first BYTE, so decode a full UTF-8 rune (string(byte)
+	// would read it as a Latin-1 code point and garble non-ASCII). An invalid
+	// encoding still advances one byte so the lexer can't loop forever.
 	r, size := utf8.DecodeRuneInString(lx.s[lx.pos:])
 	if r == utf8.RuneError && size <= 1 {
 		lx.pos++
@@ -306,12 +303,9 @@ func (p *ruleParser) parseNumber() (float64, error) {
 	if err != nil {
 		return 0, perr(pos, "invalid number %q", text)
 	}
-	// Round-1 review fix: strconv.ParseFloat happily accepts "NaN"/"Inf"/
-	// "+Inf"/"-Inf"/"Infinity" (case-insensitively) as valid float64 literals,
-	// but none of those are a sane threshold for a metric comparison (every
-	// compare() against one is either always true, always false, or
-	// undefined) -- reject them the same way an unparseable number is
-	// rejected, at the same position.
+	// ParseFloat accepts "NaN"/"Inf"/"Infinity" (any case, signed), none of
+	// which is a sane threshold: every compare() against one is constant or
+	// undefined. Reject them like an unparseable number.
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0, perr(pos, "invalid number %q", text)
 	}

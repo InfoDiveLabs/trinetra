@@ -131,7 +131,7 @@ func runGuard(d guardDeps) (update.Result, error) {
 		}
 	}
 
-	// #136 fix round 1: once this Pending has already failed its health
+	// #136: once this Pending has already failed its health
 	// gate AND a restore attempt, the rollback decision is final. Retry
 	// ONLY the restore -- never restart the still-pending (already
 	// condemned) build and re-run the health gate again, or a retry whose
@@ -325,7 +325,7 @@ func rollbackPending(p updatePaths, pending update.Pending, detail string, resta
 }
 
 // retryFailedRestore is runGuard's path for a Pending whose restore has
-// already failed once (#136 fix round 1): the guard's decision to roll back
+// already failed once (#136): the guard's decision to roll back
 // is final, so this retries ONLY restorePrevious -- it deliberately never
 // restarts the still-pending, already-condemned build and re-polls its
 // health the way rollbackPending's caller does, because a retry whose

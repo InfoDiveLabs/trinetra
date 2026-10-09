@@ -78,7 +78,7 @@ func (l *leaseHolder) Valid() bool {
 }
 
 // Revoke marks the lease permanently invalid: Valid() returns false from
-// this call onward. Revocation is terminal per spec §3.4 -- re-enrollment
+// this call onward. Revocation is terminal -- re-enrollment
 // requires a fresh `fleet join`, which restarts the daemon and builds a
 // brand-new leaseHolder from scratch -- so there is no corresponding
 // "un-revoke", and this is safe to call every tick once the link is seen as

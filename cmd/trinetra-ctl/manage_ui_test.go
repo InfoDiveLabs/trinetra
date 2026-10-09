@@ -114,11 +114,10 @@ func TestManageScheduleDefaultsCursorToWeeklyMode(t *testing.T) {
 	}
 }
 
-// TestManageScheduleStrayEnterKeepsCurrentDailyValue is the #review-fix-1
-// regression test: with schedule.daily already set, opening the Schedule
-// screen and pressing Enter twice in a row (accept the pre-selected
-// "daily" mode, then accept the pre-filled value) must re-apply the SAME
-// value, not wipe it to "off" the way a stray double-Enter used to.
+// TestManageScheduleStrayEnterKeepsCurrentDailyValue pins that with schedule.daily already
+// set, opening the Schedule screen and pressing Enter twice (accept the
+// pre-selected "daily" mode, then the pre-filled value) re-applies the SAME
+// value rather than wiping it to "off".
 func TestManageScheduleStrayEnterKeepsCurrentDailyValue(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Schedule.Daily = "03:30"
@@ -206,7 +205,7 @@ func TestManageScheduleDailySetsValue(t *testing.T) {
 // TestManageQuietHoursPrefillsCurrentValue asserts opening the Quiet hours
 // screen pre-fills valueIn with the CURRENT quiet_hours, and that a stray
 // Enter (no typing at all) re-applies that same value rather than clearing
-// it -- the #review-fix-1 regression test for this screen.
+// it.
 func TestManageQuietHoursPrefillsCurrentValue(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{QuietHours: "22-6"}}
 	mm := openManageScreen(t, api, 1) // menu cursor 1 = "quiet hours"

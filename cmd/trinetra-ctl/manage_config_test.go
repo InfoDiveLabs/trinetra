@@ -362,8 +362,7 @@ func eqFold(a, b string) bool {
 	return true
 }
 
-// --- round-1 review, IMPORTANT 2: managed-key refusal across every ---------
-// --- dedicated ctl edit path (not just the generic "all settings" screen) -
+// --- managed-key refusal across every dedicated ctl edit path ---------------
 
 // stubFleetAPI satisfies core.FleetAPI by embedding a nil core.FleetAPI and
 // overriding only Status -- the one method managedFragmentFor ever calls --
@@ -396,7 +395,7 @@ func managedStatus(key, fragmentID string) core.FleetStatus {
 }
 
 // TestApplyQuietHoursCmdRefusedWhenManaged pins the ctl Quiet Hours screen's
-// refusal (round-1 review IMPORTANT 2): identical message to `config set`/
+// refusal: identical message to `config set`/
 // the web config page, and ApplyConfig/Config are never even called.
 func TestApplyQuietHoursCmdRefusedWhenManaged(t *testing.T) {
 	base := &fakeAPI{cfg: config.Default()}

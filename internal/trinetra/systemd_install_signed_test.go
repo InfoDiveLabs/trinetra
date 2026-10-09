@@ -153,12 +153,11 @@ func TestCheckInstallPolicyUnparsableFloorFailsClosed(t *testing.T) {
 	}
 }
 
-// TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir pins the other half of
-// Ruling R8: raiseInstallFloor must write state.json under paths.dir()
-// (StateDir/update), never directly in StateDir -- and must never touch
-// StateDir's own permissions (update.SaveState chmods the directory IT is
-// given to 0700; passing the bare StateDir previously re-permissioned
-// /var/lib/trinetra itself, which normally stays 0755).
+// TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir pins that
+// raiseInstallFloor writes state.json under paths.dir() (StateDir/update),
+// never directly in StateDir, and never touches StateDir's own permissions
+// (update.SaveState chmods the directory it is given to 0700, and
+// /var/lib/trinetra itself normally stays 0755).
 func TestRaiseInstallFloorWritesOnlyUnderUpdateStateDir(t *testing.T) {
 	root := t.TempDir()
 	paths := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state")}

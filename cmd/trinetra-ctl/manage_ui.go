@@ -155,7 +155,7 @@ type manageAppliedMsg struct {
 }
 
 // scheduleConfigMsg carries a freshly fetched Config back into Update for
-// the Schedule screen's pre-fill (#review-fix-1): the CURRENT
+// the Schedule screen's pre-fill: the CURRENT
 // schedule.daily/schedule.weekly values, so opening the screen defaults the
 // mode cursor to whatever is actually active and pre-fills its value,
 // instead of always defaulting to "off" with a blank value (which made a

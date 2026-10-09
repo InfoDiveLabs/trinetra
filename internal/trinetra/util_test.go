@@ -36,11 +36,9 @@ func TestWriteFileAtomicConcurrentWritersSamePath(t *testing.T) {
 	}
 }
 
-// TestWriteFileAtomicSyncedConcurrentWritersSamePath mirrors
-// TestWriteFileAtomicConcurrentWritersSamePath but for the fsync'd variant
-// that replaces the old, independent writeFileSynced helper (final review
-// engine I2): concurrent writers of one path must never race on the
-// rename, and must fsync before the rename lands.
+// TestWriteFileAtomicSyncedConcurrentWritersSamePath is the fsync'd variant
+// of TestWriteFileAtomicConcurrentWritersSamePath: concurrent writers of one
+// path must never race on the rename, and must fsync before it lands.
 func TestWriteFileAtomicSyncedConcurrentWritersSamePath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "silences.json")
 	var wg sync.WaitGroup

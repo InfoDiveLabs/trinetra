@@ -104,7 +104,7 @@ func TestRunConfigSetInvalidNotApplied(t *testing.T) {
 }
 
 // TestRunConfigSetRefusedWhenManaged pins `trinetra-ctl config set`'s
-// managed-key refusal (round-1 review IMPORTANT 2's audit): identical
+// managed-key refusal: identical
 // message to the CLI/web/TUI, and neither Config() nor ApplyConfig is ever
 // called.
 func TestRunConfigSetRefusedWhenManaged(t *testing.T) {

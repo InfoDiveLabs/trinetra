@@ -189,9 +189,9 @@ func TestUpdaterApplyBundleWorksWhenChannelOff(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyRefusesChannelOffWithoutBundle is R7's other half: without
-// --bundle, update.channel=off must still refuse -- "off" only ever yields
-// to an explicit local bundle, never to the network source.
+// TestUpdaterApplyRefusesChannelOffWithoutBundle: without --bundle,
+// update.channel=off must still refuse -- "off" only ever yields to an
+// explicit local bundle, never to the network source.
 func TestUpdaterApplyRefusesChannelOffWithoutBundle(t *testing.T) {
 	p := testUpdatePaths(t)
 	u := updater{paths: p, keys: testKeys(), running: mustVer("0.4.1"), launchGuard: func() error { return nil }}

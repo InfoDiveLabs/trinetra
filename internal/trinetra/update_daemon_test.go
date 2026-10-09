@@ -294,8 +294,8 @@ func TestRunDueCheckNeverVerifiedPointer(t *testing.T) {
 }
 
 // TestRunDueCheckSeenOnceThenExpired: once a pointer has verified once
-// (State.LastPointerIssued set), R17 applies unchanged -- an expired pointer
-// is the freeze signature and alerts at once, unlike
+// (State.LastPointerIssued set), an expired pointer is the freeze signature
+// and alerts at once, unlike
 // TestRunDueCheckNeverVerifiedPointer's silence before that.
 func TestRunDueCheckSeenOnceThenExpired(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)

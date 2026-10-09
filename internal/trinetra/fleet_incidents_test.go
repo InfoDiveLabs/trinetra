@@ -193,9 +193,8 @@ func TestIncidentStoreSeenKeysCoversFireAndRecover(t *testing.T) {
 	}
 }
 
-// TestIncidentStoreAckGuardsResolvedIncidents is a MINOR from the B3 review
-// round 1: acking an already-resolved incident must do nothing (return an
-// error), not silently flip it back to "acked" while leaving Resolved set.
+// TestIncidentStoreAckGuardsResolvedIncidents pins that acking an
+// already-resolved incident must do nothing (return an error), not silently flip it back to "acked" while leaving Resolved set.
 func TestIncidentStoreAckGuardsResolvedIncidents(t *testing.T) {
 	dir := t.TempDir()
 	s, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))

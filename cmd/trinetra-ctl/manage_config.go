@@ -58,7 +58,7 @@ func applyConfigKey(cfg *config.Config, key, raw string) error {
 }
 
 // managedFragmentFor reports the fragment id currently managing key on the
-// daemon api talks to (task 8): api must implement core.FleetProvider AND
+// daemon api talks to: api must implement core.FleetProvider AND
 // report a non-nil Status().Link.Managed entry for key -- true only for a
 // fleet CHILD with that key currently under management (a master/solo
 // daemon's Status has no Link at all). Used by runConfig's "set" verb and

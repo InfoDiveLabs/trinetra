@@ -277,11 +277,11 @@ func checkRefreshedState(err error) bool {
 // freezeVerdict never returns stale, so a failing check (404, missing
 // pointer, network error, no keys, ...) is not alerted; it is logged once
 // per distinct cause, not every tick, as "update: updates not configured:
-// <reason>" (R25 -- a fresh, unconfigured install must not page on its
-// first tick). The cause is also kept in State.LastCheckError, which
+// <reason>" (a fresh, unconfigured install must not page on its first
+// tick). The cause is also kept in State.LastCheckError, which
 // `update status` reports, and is cleared once a check verifies a pointer.
 // Once a pointer has verified once, other check errors are logged every
-// tick as before ("update: check: <err>"), unchanged from R17.
+// tick ("update: check: <err>").
 func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(Alert)) {
 	channel := c.UpdateChannel()
 	if channel == "off" || c.UpdateSource() != "github" {
@@ -303,7 +303,7 @@ func runDueCheck(ctx context.Context, u updater, c *config.Config, notify func(A
 		// Either a fresh pointer just verified fine (checkErr is only a
 		// policy verdict -- already installed, downgrade, wrong channel,
 		// known bad -- not a freeze/configuration problem), or a pointer
-		// has verified at some point before: log every tick, as before R25.
+		// has verified at some point before: log every tick.
 		log.Printf("update: check: %v", checkErr)
 	case checkErr.Error() != st.LastCheckError:
 		// never verified a pointer yet, and this check didn't either

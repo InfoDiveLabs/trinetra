@@ -105,7 +105,7 @@ func gatherMaster(m *masterState, selfActive map[string]ActiveAlert, snap Snapsh
 		case t.Node == "":
 			return selfKnown(t)
 		default:
-			return known[t.Node] // remote container/unit/mount existence not verified (Ruling 6)
+			return known[t.Node] // remote container/unit/mount existence not verified
 		}
 	}
 	return in

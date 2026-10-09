@@ -443,7 +443,7 @@ func (u updater) rollback() error {
 	}
 	auditUpdate(u.paths, u.actor, "update.rollback", prevVersion, "from "+pending.From, u.clock())
 
-	// R16 (I9): a failed restore may leave the binaries half-restored, so
+	// A failed restore may leave the binaries half-restored, so
 	// Pending stays (phase swapping) and the watchdog's guard finishes the
 	// restore once this command has exited and released apply.lock.
 	if err := restorePrevious(u.paths); err != nil {

@@ -369,7 +369,7 @@ func TestApplyEnsuresWatchdogFirst(t *testing.T) {
 	}
 }
 
-// TestApplyGuardLaunchFailure is R16/M19: when the guard cannot be
+// TestApplyGuardLaunchFailure pins that when the guard cannot be
 // launched, apply restores the previous build and clears Pending -- unless
 // a guard is already running (the watchdog got there first), which then
 // owns the pending update.

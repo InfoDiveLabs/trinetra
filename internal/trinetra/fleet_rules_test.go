@@ -767,10 +767,6 @@ func TestRuleAlertRoutedNormallyWhenNotSilenced(t *testing.T) {
 	}
 }
 
-// =====================================================================
-// Round-1 review fixes
-// =====================================================================
-
 // ---- an in-place edit of a firing rule is not a silent no-op ----
 
 func TestRuleInPlaceEditWhileFiringRecoversThenRefires(t *testing.T) {
