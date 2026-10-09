@@ -59,3 +59,11 @@ func TestTokenIssueSurvivesConcurrentWriters(t *testing.T) {
 		t.Fatalf("tokens = %d (%v), want 40", len(toks), err)
 	}
 }
+
+func TestLockStoreLeavesNoFileForRelativePath(t *testing.T) {
+	lockStore("relative-store.json")()
+	if _, err := os.Stat("relative-store.json.lock"); err == nil {
+		os.Remove("relative-store.json.lock")
+		t.Fatal("lock file created next to the package for a relative store path")
+	}
+}
