@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"sort"
+
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
 // activeAlertView is one row of the dashboard's "Active alerts" panel,
@@ -154,6 +156,7 @@ type DashboardPageData struct {
 	Alerts     []activeAlertView
 	TopCPUBars []containerBar
 	TopMemBars []containerBar
+	NoChannels bool
 }
 
 // buildDashboardPageData assembles DashboardPageData from Deps: the live
@@ -184,10 +187,11 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	}
 	alerts := activeAlertsViaAPI(r, d)
 	return DashboardPageData{
-		PageData: newPageData(r, d, "Dashboard", "Overview · live"),
-		View:     view,
-		Host:     buildHostSummary(r, d),
-		Alerts:   alerts,
+		NoChannels: currentRole(r) == string(RoleAdmin) && !anyChannelEnabled(d.Cfg()),
+		PageData:   newPageData(r, d, "Dashboard", "Overview · live"),
+		View:       view,
+		Host:       buildHostSummary(r, d),
+		Alerts:     alerts,
 		TopCPUBars: containerBars(view.TopCPUContainers,
 			func(c ContainerView) float64 { return c.CPUPct },
 			func(v float64) string { return fmt.Sprintf("%.0f%%", v) }),
@@ -325,3 +329,12 @@ func loadLedClass(load1 float64, cores int) string {
 // summary count tile's "N down" = total-running); html/template has no
 // built-in arithmetic.
 func subInt(a, b int) int { return a - b }
+
+func anyChannelEnabled(c *config.Config) bool {
+	for _, ch := range c.Channels {
+		if ch.Enabled {
+			return true
+		}
+	}
+	return false
+}
