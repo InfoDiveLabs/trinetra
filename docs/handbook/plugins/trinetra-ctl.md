@@ -3,8 +3,8 @@
 `trinetra-ctl` is a separate client binary that dials the daemon's control
 socket. It is the primary, recommended way to manage a running trinetra day
 to day: it wraps the schedule, quiet hours, healthchecks, monitor thresholds,
-and notification channels in guided, validated screens, plus a first-run
-onboarding flow for Telegram, and its generic **all settings** screen reaches
+and notification channels in guided, validated screens, plus a guided first
+run on new servers, and its generic **all settings** screen reaches
 every remaining flat config key on top of those, so there is no config key
 you have to drop to `trinetra config set` for. It is a complete, supported
 management tool: every config key is reachable through its screens. Nothing
@@ -21,16 +21,18 @@ install location.
 ## At a glance
 
 Where each feature lives in the TUI: launch with `sudo trinetra cli`, and
-from the Home screen `m` opens the management menu and `s` opens the web-setup
-wizard. If Telegram is not configured or enrolled yet, launching drops you
-straight into first-run onboarding instead.
+from the Home screen `m` opens the management menu, `s` the web-setup wizard,
+`n` the alert channels and `t` Telegram setup. On a server nobody has set up
+yet, launching opens the first run instead.
 
 ```mermaid
 flowchart TD
-    launch["sudo trinetra cli"] --> chk{"Telegram configured<br/>and enrolled?"}
-    chk -->|no| onboard["First-run onboarding:<br/>bot token, then /start pin, until enrolled"]
+    launch["sudo trinetra cli"] --> chk{"Server already set up?"}
+    chk -->|no| first["First run (each step skippable):<br/>web UI, admin enroll link, where alerts go"]
     chk -->|yes| home["Home: live status<br/>(r refresh, q quit)"]
-    onboard --> home
+    first --> home
+    home -->|"press t"| tg["Telegram setup:<br/>bot token, then /start pin"]
+    home -->|"press n"| chan
     home -->|"press s"| web["Web-setup wizard:<br/>mode, listen, domain, rp_id, origin<br/>(plus cert and key in manual mode)"]
     home -->|"press m"| menu["Management menu"]
     menu --> sched["Schedule"]
@@ -172,9 +174,8 @@ dismisses it. The sub-screens carry a breadcrumb heading (`trinetra ▸ Web
 setup`, `trinetra ▸ Manage`, and so on) so you always see where you sit
 relative to Home.
 
-If Telegram is not yet configured, or is configured but not yet enrolled,
-Home opens straight into first-run onboarding instead (below), rather than
-showing a dashboard with nothing to alert you.
+While no alert channel is enabled, Home shows a one-line reminder; press `n`
+to add one.
 
 **The web setup wizard (`s`).** Walks mode -> listen -> domain -> rp_id ->
 origin -> confirm, and is a complete, functional flow for all three serving
@@ -237,23 +238,27 @@ Home uses.
 > or a headless box, see [Daemon-only config
 > management](../11-command-reference.md#3-daemon-only-config-management).
 
-**First-run onboarding.** The first time `trinetra-ctl` runs against a
-daemon whose Telegram bot has no token, or has a token but is not yet
-enrolled, Home opens into a guided flow instead of the dashboard:
+**First run.** On a server nobody has set up yet (no `setup.completed`, no
+enrolled Telegram chat, no enabled channel and no web user), `trinetra cli`
+opens a short guided setup instead of Home. Every step can be skipped with
+`esc`, and `esc` on the first screen skips the whole thing:
 
-1. **Bot token.** Paste the token from @BotFather. `enter` saves it; `esc`
-   skips onboarding for now, since the token can always be set later from the
-   Channels screen or `trinetra telegram set-token`.
-2. **Enrollment PIN.** Once the token is saved, the screen fetches the
-   daemon's current enrollment PIN over the socket and shows it with the
-   `/start <pin>` instruction, the exact PIN `trinetra telegram set-token`
-   itself now prints (see #90 in [Daemon-only config
-   management](../11-command-reference.md#3-daemon-only-config-management)). It
-   then polls every two seconds until the daemon reports the chat enrolled.
+1. **Web UI.** `enter` opens the web-setup wizard; when it finishes you come
+   back to the next step.
+2. **Your admin account.** If there are no web users yet, it runs
+   `trinetra users invite --role admin` and shows the single-use enroll link.
+   Open it on the device you will sign in from.
+3. **Where alerts go.** `t` starts Telegram setup (bot token, then the
+   `/start <pin>` enrollment, polled until the chat is enrolled), `c` opens the
+   channel editor for Slack, Discord, email, ntfy, Gotify or a webhook, `esc`
+   leaves it for later (the web UI's Notifications page works too).
 
-See [Installation and first run](../03-installation.md#5-connect-telegram-and-enroll-as-owner)
-for the enrollment flow diagram, which covers both this screen and
-`telegram set-token`.
+Finishing or skipping sets `setup.completed`, so the flow is shown once.
+Servers that already had an enrolled Telegram chat, a channel or a web user
+before upgrading never see it.
+
+See [Installation and first run](../03-installation.md#5-web-ui-your-admin-account-and-where-alerts-go)
+for the same steps with plain commands and the Telegram enrollment diagram.
 
 ---
 

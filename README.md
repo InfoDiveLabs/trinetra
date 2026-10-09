@@ -38,9 +38,8 @@ chmod +x trinetra trinetra-ctl trinetra-web
 # 2. Verify the signatures and install: one systemd service
 sudo ./trinetra install --require-signed
 
-# 3. Set up the Telegram bot (or: sudo trinetra telegram set-token <token>)
+# 3. Guided setup: web UI, your admin account, where alerts go
 sudo trinetra cli
-# then, from your phone:  /start <pin>  ->  /stats
 ```
 
 Details in [Quick start](#quick-start).
@@ -355,17 +354,19 @@ and every binary's hash (and refuses on any mismatch), copies the binaries to
 trinetra itself, see [Verify a download
 yourself](docs/handbook/14-security.md#verify-a-download-yourself). `trinetra cli` opens the
 [trinetra-ctl](docs/handbook/plugins/trinetra-ctl.md#managing-with-trinetra-ctl)
-terminal UI, which walks you through the Telegram bot token, `/start <pin>`
-enrollment and, optionally, the web UI. Prefer plain commands? The one
-required setting is the bot token:
+terminal UI. On a new server it walks you through the web UI, prints a one-time
+enroll link for your admin account, and asks where alerts go: Telegram, Slack,
+Discord, email, ntfy, Gotify or a webhook, or later from the web UI. Every step
+can be skipped. Prefer plain commands?
 
 ```bash
-sudo trinetra telegram set-token <token>   # token from @BotFather
-sudo trinetra web                          # optional: the browser UI
+sudo trinetra users invite --role admin               # enroll link for the first admin
+sudo trinetra channel add ops --type slack --set url=<webhook>   # or telegram, email, ...
+sudo trinetra telegram set-token <token>              # Telegram, then /start <pin> to the bot
 ```
 
 The two plugins are optional: leave them out of the download loop if you only
-want the Telegram daemon. Full steps are in [Installation and first
+want the daemon and its alerts. Full steps are in [Installation and first
 run](docs/handbook/03-installation.md).
 
 ## Build a fleet
