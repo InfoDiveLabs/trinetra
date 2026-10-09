@@ -11,7 +11,7 @@ import (
 
 // Tests for the serverwatch -> trinetra migration's edge cases.
 
-// --- I1: a legacy plugin with no trinetra counterpart is called out ---
+// --- a legacy plugin with no trinetra counterpart is called out ---
 
 func TestLegacyMigrationWarnsWhenPluginHasNoTrinetraCounterpart(t *testing.T) {
 	webNote := "serverwatch-web was installed but no trinetra-web was found next to trinetra"
@@ -78,7 +78,7 @@ func TestLegacyMigrationWarnsWhenPluginHasNoTrinetraCounterpart(t *testing.T) {
 	}
 }
 
-// --- M1: a serverwatch daemon running outside the unit blocks the move ---
+// --- a serverwatch daemon running outside the unit blocks the move ---
 
 func writeLegacyPID(t *testing.T, p migrationPaths, pid int) {
 	t.Helper()
@@ -202,7 +202,7 @@ func TestLegacyMigrationStrayDaemonForce(t *testing.T) {
 	}
 }
 
-// --- M2: the guard ignores empty legacy dirs; CLI writes run it ---
+// --- the guard ignores empty legacy dirs; CLI writes run it ---
 
 func TestLegacyDaemonGuardIgnoresEmptyLegacyDirs(t *testing.T) {
 	p := testMigrationPaths(t)
@@ -320,7 +320,7 @@ func TestCLIWritesWorkOnFreshHost(t *testing.T) {
 	}
 }
 
-// --- M7: a symlinked legacy dir moves, and a resume recognises it ---
+// --- a symlinked legacy dir moves, and a resume recognises it ---
 
 // symlinkedLegacyState makes OldStateDir a symlink to a real dir elsewhere
 // (e.g. /var/lib/serverwatch -> /data/sw) and returns that dir.

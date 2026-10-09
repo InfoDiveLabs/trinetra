@@ -23,7 +23,7 @@ func mountOrSkip(t *testing.T, args ...string) {
 	t.Cleanup(func() { _ = exec.Command("umount", "-l", target).Run() })
 }
 
-// Review repro B: the legacy state dir is a mount point. The first run must
+// the legacy state dir is a mount point. The first run must
 // refuse before touching anything; bind-mounting it at the new path as well
 // (what the old hint suggested) must not lead to the shared volume being
 // emptied.

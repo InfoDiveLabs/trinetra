@@ -778,7 +778,7 @@ func assertLegacyIntact(t *testing.T, p migrationPaths, want map[string]string) 
 	}
 }
 
-// Review repro A: crash at move-state, then the operator starts a manual copy
+// crash at move-state, then the operator starts a manual copy
 // (cp -a) that brings the in-progress marker and one file into the new dir.
 // The re-run must refuse and delete nothing.
 func TestLegacyMigrationRefusesManualPartialCopy(t *testing.T) {
@@ -849,7 +849,7 @@ func TestLegacyMigrationRefusesIncompleteVerifiedCopy(t *testing.T) {
 	assertLegacyIntact(t, p, wantState)
 }
 
-// Review repro C: the new path is a symlink to the old dir, before any run
+// the new path is a symlink to the old dir, before any run
 // and after a crash. Refuse, delete nothing.
 func TestLegacyMigrationRefusesSymlinkedNewDir(t *testing.T) {
 	for _, crashFirst := range []bool{false, true} {

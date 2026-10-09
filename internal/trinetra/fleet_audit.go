@@ -68,7 +68,7 @@ const auditRecentChunkGrowth = 4
 // is not an error (nothing audited yet).
 //
 // Bounded read: rather than scanning the file
-// forward from byte 0 (the old implementation), this seeks backward from
+// forward from byte 0, this seeks backward from
 // EOF in growing chunks (auditRecentChunkSize, doubling by
 // auditRecentChunkGrowth each step) until it has accumulated at least limit
 // COMPLETE lines or reached the start of the file -- so a 50-entry page
@@ -106,8 +106,7 @@ func (a *auditLog) Recent(limit int) ([]core.AuditEntry, error) {
 
 	// parseLines turns buf's complete '\n'-terminated lines into entries,
 	// newest-last (append order == file order for this buf), skipping any
-	// blank or unparseable line exactly like the old scanner-based version
-	// did.
+	// blank or unparseable line like a forward scan would.
 	parseLines := func(buf []byte) []core.AuditEntry {
 		var out []core.AuditEntry
 		for _, line := range bytes.Split(buf, []byte("\n")) {

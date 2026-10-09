@@ -622,7 +622,7 @@ func TestNextRetryUndroppableGetsLongerBudget(t *testing.T) {
 // TestNotifierQueueRunRetriesFailedChannelThenSucceeds is the end-to-end
 // wiring test: a channel that fails once must be retried (with real, but
 // shrunk, backoff) and eventually deliver -- exactly once, not zero times
-// (I1's genuine gap) and not more than the actual number of attempts it
+// and not more than the actual number of attempts it
 // took.
 func TestNotifierQueueRunRetriesFailedChannelThenSucceeds(t *testing.T) {
 	withShortNotifierRetryTuning(t)

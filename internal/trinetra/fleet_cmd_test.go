@@ -1407,7 +1407,7 @@ func TestFleetManagedSetDefaultsToMerge(t *testing.T) {
 }
 
 // TestFleetManagedSetReplaceFlagDisablesMerge pins --replace: it sends
-// Merge:false, restoring the old wholesale-replace behavior.
+// Merge:false (wholesale replace).
 func TestFleetManagedSetReplaceFlagDisablesMerge(t *testing.T) {
 	_, _, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{}
