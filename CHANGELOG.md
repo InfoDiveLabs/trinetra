@@ -8,6 +8,46 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
+## [0.6.0-beta.3] - 2026-10-09
+
+Third beta of 0.6.0: a guided first run that doesn't need Telegram, user
+management from the terminal, and fixes for the web UI after idling or a
+daemon restart.
+
+### Added
+
+- **Guided first run.** `sudo trinetra cli` on a new server walks through the
+  web UI, the first admin's enroll link and where alerts go. Every step can be
+  skipped, and Telegram is now just one of the alert channels, not a
+  requirement.
+- **`trinetra users`.** `list`, `invite`, `set-role` and `remove` from the
+  terminal. They also work while the daemon is stopped, and `invite` prints the
+  enroll URL.
+- **No-channel reminders.** When no alert channel is enabled, the dashboard,
+  `trinetra status` and `trinetra cli` say so and point to where to add one.
+- The Notifications and Updates pages are split into tabs.
+
+### Changed
+
+- **First admin sign-up.** It needs an invite link
+  (`sudo trinetra users invite --role admin`) unless the web UI is local-only:
+  listening on loopback, with a loopback origin if one is set.
+- `trinetra install` ends with next steps instead of a Telegram prompt. A new
+  install has the scheduled report off.
+- Enrolling a Telegram chat adds the telegram alert channel right away.
+- "View public page" opens the public status page at `/status`, signed in or
+  not; old `/public` links redirect there.
+- The README is rebuilt around short clips of each feature.
+
+### Fixed
+
+- The web UI no longer shows an empty dashboard after sitting idle: the
+  control socket connection is re-dialed once the daemon drops it for idling.
+- After a daemon restart, the web UI keeps the real config instead of falling
+  back to defaults. It re-reads the control token on reconnect.
+- The user, invite and session stores are locked across processes, so the
+  terminal and the web UI can't overwrite each other's changes.
+
 ## [0.6.0-beta.2] - 2026-10-09
 
 Second beta of 0.6.0: easier status page setup, a reworked web UI, passkey
@@ -586,7 +626,8 @@ and management tooling move out of process.
 - Initial release: the stdlib-only `serverwatch` daemon with core metric
   collection, threshold and anomaly detection, and Telegram alerting.
 
-[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.6.0-beta.2...HEAD
+[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.6.0-beta.3...HEAD
+[0.6.0-beta.3]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.3
 [0.6.0-beta.2]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.2
 [0.6.0-beta.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.1
 [0.5.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.5.0
