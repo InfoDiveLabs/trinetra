@@ -72,11 +72,9 @@ func TestBaselineMinPctRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBaselineAlertsDefaultOffRoundTrip pins Part 1 of the field-feedback
-// fix: baseline-deviation alerting is opt-in, default OFF (spiky cpu/mem/temp
-// metrics were flapping constantly on sigma-deviation in the field; threshold
-// alerting is unaffected and always on). Mirrors
-// TestBaselineMinPctRoundTrip's set/get/unset shape.
+// TestBaselineAlertsDefaultOffRoundTrip pins that baseline-deviation alerting is
+// opt-in (default OFF) because spiky metrics flapped on sigma-deviation;
+// threshold alerting is unaffected and always on.
 func TestBaselineAlertsDefaultOffRoundTrip(t *testing.T) {
 	c := Default()
 	if got, ok := c.Get("baseline_alerts"); !ok || got != "false" {
@@ -1368,11 +1366,9 @@ func TestPublicEnabledPanelsDefaultSetUnset(t *testing.T) {
 	}
 }
 
-// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist at the
-// config layer: only the fixed catalog (or "disk:<mount>") may be stored in
-// public.panels -- anything else (typos, or someone trying to smuggle a
-// non-metric identifier like "users"/"config" into the curated list) is
-// rejected with no write, exactly like the other validated config keys.
+// TestPublicPanelsRejectsUnknownPanel pins the server-side allowlist: only the
+// fixed catalog (or "disk:<mount>") may be stored in public.panels; anything
+// else, such as "users" or "config", is rejected with no write.
 func TestPublicPanelsRejectsUnknownPanel(t *testing.T) {
 	c := Default()
 	for _, v := range []string{"bogus", "cpu,bogus", "disk:", "users", "config", "channels"} {
@@ -1436,18 +1432,15 @@ func TestLoadBackfillsMissingRetentionKeys(t *testing.T) {
 	}
 }
 
-// --- Task 2 (#91): config key catalog (KeyInfo/Keys) ---
+// --- config key catalog (KeyInfo/Keys) ---
 //
-// The catalog exists so trinetra-ctl's generic "all settings" screen
-// (cmd/trinetra-ctl) can browse and edit every flat key without a
-// dedicated screen per key. These tests are the drift guard: they fail if
-// the catalog and the Set/Get switch (config.go) ever fall out of lockstep,
-// in either direction.
+// The catalog backs trinetra-ctl's generic "all settings" screen. These tests are
+// the drift guard: they fail if the catalog and the Set/Get switch fall out of
+// lockstep in either direction.
 
-// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real
-// Set/Get key (a round trip of Set(key, Get(key)) on a fresh Default()
-// config must succeed) and that its Kind hint is self-consistent with the
-// value Get actually returns.
+// TestKeyCatalogMatchesSetAndGet asserts every catalog entry names a real key
+// (Set(key, Get(key)) on a fresh Default() succeeds) and that its Kind hint
+// matches the value Get returns.
 func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	for _, ki := range Keys() {
 		c := Default()
@@ -1492,11 +1485,9 @@ func TestKeyCatalogMatchesSetAndGet(t *testing.T) {
 	}
 }
 
-// setSwitchKeys parses config.go's own source and extracts every string
-// case label in (*Config).Set's switch statement, so
-// TestKeyCatalogCoversEverySetKey checks the catalog against the actual
-// Set implementation rather than a second hand-maintained list that could
-// drift right alongside it.
+// setSwitchKeys extracts every string case label in (*Config).Set's switch from
+// config.go's source, so the coverage test checks the real implementation rather
+// than a second hand-kept list.
 func setSwitchKeys(t *testing.T) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -1531,10 +1522,8 @@ func setSwitchKeys(t *testing.T) []string {
 	return keys
 }
 
-// TestKeyCatalogCoversEverySetKey asserts the catalog's key names are
-// EXACTLY the set of keys (*Config).Set accepts: no key Set handles is
-// missing from the catalog, no catalog entry names a key Set doesn't
-// handle (a typo or a stale entry), and no key is listed twice.
+// TestKeyCatalogCoversEverySetKey asserts the catalog's keys are exactly the keys
+// Set accepts: none missing, none stale, none duplicated.
 func TestKeyCatalogCoversEverySetKey(t *testing.T) {
 	setKeys := setSwitchKeys(t)
 	if len(setKeys) == 0 {
