@@ -24,7 +24,7 @@ func TestSignRoleMaintTestAbsentInDefaultBuild(t *testing.T) {
 	}
 }
 
-// TestTestKeysFlagsRefusedInDefaultBuild is R22: a release build of this
+// TestTestKeysFlagsRefusedInDefaultBuild: a release build of this
 // tool carries no test trust anchor, so verify/cosign --testkeys refuse.
 func TestTestKeysFlagsRefusedInDefaultBuild(t *testing.T) {
 	if testKeySet != nil {
@@ -38,7 +38,7 @@ func TestTestKeysFlagsRefusedInDefaultBuild(t *testing.T) {
 	}
 }
 
-// TestManifestKeysFromBinaryFillsProductionKeys is R19: --keys-from-binary
+// TestManifestKeysFromBinaryFillsProductionKeys: --keys-from-binary
 // copies this tool's compiled-in ProductionKeys into manifest.keys, so the
 // maintainer's cosign sees "keys: unchanged" unless a rotation ships.
 func TestManifestKeysFromBinaryFillsProductionKeys(t *testing.T) {

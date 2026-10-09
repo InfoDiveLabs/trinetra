@@ -28,7 +28,7 @@ import (
 // maintainer key passphrase, signs, uploads the maintainer signature,
 // re-verifies the full draft, and publishes it.
 //
-// --testkeys (trinetra_testkeys builds only, R22) switches the trust anchor
+// --testkeys (trinetra_testkeys builds only) switches the trust anchor
 // to the deterministic test key set instead of update.ProductionKeys() and
 // skips the decrypted-key-is-a-known-maintainer-key check, which would
 // otherwise reject every test key.

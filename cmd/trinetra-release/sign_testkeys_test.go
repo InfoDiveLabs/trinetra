@@ -79,7 +79,7 @@ func TestVerifyTestKeysPrintsWarningBanner(t *testing.T) {
 	}
 }
 
-// TestManifestKeysFromBinary is R19: manifest --keys-from-binary fills
+// TestManifestKeysFromBinary: manifest --keys-from-binary fills
 // manifest.keys with exactly the compiled-in key set (base64), so cosign's
 // rotation review compares like with like.
 func TestManifestKeysFromBinary(t *testing.T) {

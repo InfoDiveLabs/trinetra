@@ -39,7 +39,7 @@ var signMaintTest func(in, out string) error
 // (updatetest.TestKeySet) for `verify --testkeys` and `cosign --testkeys`.
 // Like signMaintTest it is nil in a default build and set by
 // sign_testkeys.go only in a trinetra_testkeys build, so a release build of
-// this tool carries no test keys at all (R22).
+// this tool carries no test keys at all.
 var testKeySet func() update.KeySet
 
 // errTestKeysUnavailable is returned by every --testkeys path in a default

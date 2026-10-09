@@ -126,7 +126,7 @@ func TestParseCosignArgs(t *testing.T) {
 	}
 }
 
-// TestParseCosignArgsTestkeysRequiresRepo is R24: a --testkeys co-sign must
+// TestParseCosignArgsTestkeysRequiresRepo: a --testkeys co-sign must
 // name its (test) repository explicitly, so it can never default to the real
 // InfoDiveLabs/trinetra and publish a test-signed draft there.
 func TestParseCosignArgsTestkeysRequiresRepo(t *testing.T) {
@@ -268,7 +268,7 @@ func TestRequireInteractiveConfirmation(t *testing.T) {
 	})
 }
 
-// TestKeyReview is R19: cosign states plainly whether the manifest's key
+// TestKeyReview: cosign states plainly whether the manifest's key
 // set is unchanged, and shows a prominent rotation block otherwise.
 func TestKeyReview(t *testing.T) {
 	prod := update.KeySet{
