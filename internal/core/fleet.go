@@ -7,11 +7,9 @@ import (
 	"strings"
 )
 
-// SelfNodeID is the node id a caller uses to mean "this daemon", both in
-// core.FleetProvider.Node and in the control-socket request.Node field. A
-// solo daemon (no fleet role) still recognizes it: control.Client.ForNode's
-// self-view routes through unchanged, since resolveNode (internal/control/
-// server.go) treats "" and SelfNodeID identically.
+// SelfNodeID is the node id a caller uses to mean "this daemon", in
+// FleetProvider.Node and the control-socket request.Node field. resolveNode
+// treats it the same as "", so a solo daemon recognizes it too.
 const SelfNodeID = "self"
 
 // ErrNotMaster is returned by a FleetAPI implementation for a call that only
@@ -24,22 +22,12 @@ var ErrNotMaster = errors.New("this trinetra is not a fleet master")
 // fleet node.
 var ErrNoSuchNode = errors.New("no such fleet node")
 
-// ErrNotFound is a generic "no such thing" sentinel (fleet phase 2 web UI
-// plan C, task C4 fix round 1): wrapped via fmt.Errorf("...: %w",
-// ErrNotFound) by every FleetAPI lookup/mutation that fails because id names
-// nothing this master knows about -- an incident, a silence, a maintenance
-// window, or a managed-config fragment (ErrNoSuchNode stays its own,
-// earlier, more specific sentinel for a fleet NODE id, unchanged). Callers
-// (internal/web's fleetAPIErrStatus) use errors.Is against this to map any
-// of those rejections to 404 uniformly, without needing to know or guess
-// which specific "no such X" message produced it.
-//
-// A caller on the OTHER side of the control socket (internal/control's
-// Client) still sees this correctly via errors.Is too: the wire only ever
-// carries the error's plain text (control/protocol.go's response.Error has
-// no separate code field), so Client.call reconstructs it by matching that
-// text's suffix against ErrNotFound.Error() (and every other FleetAPI
-// sentinel) -- see internal/control/client.go's reconstructWireErr.
+// ErrNotFound is a generic "no such thing" sentinel, wrapped via
+// fmt.Errorf("...: %w", ErrNotFound) by every FleetAPI lookup or mutation that
+// names an unknown incident, silence, maintenance window or managed fragment
+// (ErrNoSuchNode stays the sentinel for a fleet NODE id). internal/web maps
+// errors.Is against it to 404. Across the control socket the error is plain text,
+// so Client.call rebuilds the sentinel by suffix match (reconstructWireErr).
 var ErrNotFound = errors.New("not found")
 
 // NodeSummary is a fleet master's projection of one node (itself included,
@@ -62,8 +50,8 @@ type NodeSummary struct {
 	OutboxBytes  int64    `json:"outbox_bytes,omitempty"`
 	OutboxOldest int64    `json:"outbox_oldest,omitempty"`
 	OutboxGaps   int      `json:"outbox_gaps,omitempty"`
-	// SkewSec is the master's filtered estimate of server_time - sent_at for
-	// this node: negative means the node's clock is ahead of the master's.
+	// SkewSec is the master's filtered estimate of server_time - sent_at for this
+	// node: negative means the node's clock is ahead of the master's.
 	SkewSec int64 `json:"skew_sec,omitempty"`
 	// DroppedOutOfOrder / DroppedCardinality count points the master's
 	// replica refused because they were older than the series' last stored
@@ -81,11 +69,9 @@ type NodeFilter struct {
 	Tag   string `json:"tag"`
 	State string `json:"state"`
 	Query string `json:"query"`
-	// Nodes, when non-empty, restricts Match to exactly the named nodes (by
-	// id, e.g. core.SelfNodeID, or exact display name) -- the fleet compare
-	// view's explicit ?nodes=a,b,c selection (plan C, task 1b). When set,
-	// Tag/State/Query are ignored: an explicit list is exact, not another
-	// filter dimension to AND against.
+	// Nodes, when non-empty, restricts Match to exactly the named nodes (by id or
+	// exact display name), for the compare view's ?nodes=a,b,c. Tag/State/Query are
+	// then ignored: an explicit list is exact.
 	Nodes []string `json:"nodes,omitempty"`
 }
 
@@ -122,15 +108,11 @@ type LinkView struct {
 	Unacked       uint64 `json:"unacked"`
 	OldestUnacked int64  `json:"oldest_unacked"`
 	Gaps          int    `json:"gaps"`
-	// Managed is this child's own managed-config keys, from the master's
-	// last received managed_config push: config key -> the id of the
-	// fragment currently supplying it. Populated only on a child (nil on a
-	// master/solo daemon's own Status, which has no Link at all). Used by
-	// this same daemon's `trinetra config set`/`unset` and by the web
-	// config page (internal/web/handlers_config.go) to show these keys
-	// read-only and reject an edit naming one -- never grown onto core.API
-	// itself (task 8 ruling): this is the one seam that already exists for
-	// exactly this purpose.
+	// Managed is this child's own managed-config keys from the master's last
+	// managed_config push: config key -> id of the fragment supplying it. Only set on
+	// a child. `trinetra config set`/`unset` and the web config page use it to show
+	// these keys read-only and reject edits to them; it lives here rather than on
+	// core.API because this is the one existing seam for that.
 	Managed map[string]string `json:"managed,omitempty"`
 }
 
@@ -174,10 +156,9 @@ type CreatedToken struct {
 	JoinCode string    `json:"join_code"`
 }
 
-// Incident is one (node, alert key) fire→recover episode as the master's
-// alerting engine tracks it: opened on the first "fire", updated as more
-// alerts join it (grouping arrives in a later task; for now one incident
-// covers exactly one (node, key) pair), and resolved on "recover".
+// Incident is one (node, alert key) fire-to-recover episode as the master's
+// alerting engine tracks it: opened on the first "fire", joined by more alerts,
+// and resolved on "recover".
 type Incident struct {
 	ID       string          `json:"id"`
 	GroupKey string          `json:"group_key"`
@@ -203,53 +184,37 @@ type IncidentAlert struct {
 	FiredAt          int64  `json:"fired_at"`
 	ResolvedAt       int64  `json:"resolved_at,omitempty"`
 	DeliveredLocally bool   `json:"delivered_locally,omitempty"`
-	// Suppressed, when non-empty, means this member alert is folded into the
-	// incident but was never (and, while this stays set, will never be)
-	// delivered on its own -- currently only a node-dependency fold (task 6
-	// part 3): "suppressed: parent <name> down". Cleared (and the member
-	// delivered as its own incident) when the dependency releases -- see
-	// fleetAlertEngine's dependency handling.
+	// Suppressed, when non-empty, means this member is folded into the incident but
+	// never delivered on its own while set: currently only a node-dependency fold
+	// ("suppressed: parent <name> down"). Cleared, and the member delivered as its
+	// own incident, when the dependency releases (see fleetAlertEngine).
 	Suppressed string `json:"suppressed,omitempty"`
-	// SilencedBy, when non-empty, is the silence/maintenance-window reason
-	// this specific member's own fire matched (task 6 fix round 1, CRITICAL
-	// 1): kept per member, NOT as incident-wide state, so one silenced
-	// member can never starve an unsilenced sibling's delivery/escalation,
-	// and an unsilenced sibling can never mask a silenced member from ever
-	// being delivered once its silence ends. Cleared, and that member
-	// delivered alone, once no silence matches it any more -- see
-	// fleetAlertEngine.tryDeliverUnsilenced. Kept separate from Suppressed
-	// (a dependency fold): the two are independent reasons a member can be
-	// held back, and a member is never both at once in practice.
+	// SilencedBy, when non-empty, is the silence/maintenance reason this member's own
+	// fire matched. Kept per member, not incident-wide, so a silenced member never
+	// starves an unsilenced sibling's delivery and vice versa. Cleared, and the
+	// member delivered alone, once no silence matches (fleetAlertEngine.
+	// tryDeliverUnsilenced). Independent of Suppressed.
 	SilencedBy string `json:"silenced_by,omitempty"`
 }
 
 // IncidentEvent is one entry in an Incident's pipeline trail (fleet explain
 // prints these): fired|grouped|suppressed|delivered|escalated|acked|resolved|receipt.
 //
-// Leg/AlertKey/Node/FiredAt/Policy/Step/Channels (fleet phase 2 task 6,
-// "structured timeline events") are the machine-readable form of what Detail
-// otherwise only records as free text: which member alert (Node, AlertKey,
-// FiredAt) and which leg ("fire" or "recover") this event covers, and, for a
-// routed delivery/escalation/repeat, which policy/step/channels produced it.
-// Every event this codebase writes from here on sets them; Detail is kept
-// too, for display. An event with neither Leg nor Policy set is a LEGACY
-// event recorded before this existed -- every reader of these fields must
-// fall back to parsing Detail only for such an event, never for one that has
-// them (see e.g. legDeliveredStatusFor, stepEventInfo in the trinetra
-// package).
+// Leg/AlertKey/Node/FiredAt/Policy/Step/Channels are the machine-readable form
+// of what Detail records as free text. An event with neither Leg nor Policy set
+// is a LEGACY event; only for those may a reader fall back to parsing Detail
+// (see legDeliveredStatusFor, stepEventInfo).
 type IncidentEvent struct {
 	TS     int64  `json:"ts"`
 	Kind   string `json:"kind"`
 	Detail string `json:"detail,omitempty"`
 	Actor  string `json:"actor,omitempty"`
 
-	// Leg is "fire" or "recover": which half of an alert's lifecycle this
-	// event covers. Empty for an event that isn't leg-specific (acked,
-	// grouped) or a legacy event recorded before this field existed.
+	// Leg is "fire" or "recover". Empty for events that are not leg-specific
+	// (acked, grouped) and for legacy events.
 	Leg string `json:"leg,omitempty"`
-	// AlertKey/Node/FiredAt identify the specific IncidentAlert member this
-	// event is about, exactly like alertDedupKey: Node is "" for a
-	// master-own alert.
+	// AlertKey/Node/FiredAt identify the IncidentAlert member this event is about,
+	// like alertDedupKey; Node is "" for a master-own alert.
 	AlertKey string `json:"alert_key,omitempty"`
 	Node     string `json:"node,omitempty"`
 	FiredAt  int64  `json:"fired_at,omitempty"`
@@ -270,28 +235,19 @@ type IncidentFilter struct {
 }
 
 // Matcher narrows a silence or maintenance window to the alerts it covers:
-// every non-empty field must match (AND); an entirely empty Matcher matches
-// anything, which is why a Silence/Maintenance must reject one (see
-// Matcher.Empty) -- though an explicit wildcard like Rule:"*" is fine and
-// deliberate (it still has a non-empty field; Empty is about a matcher with
-// NO fields set at all). Rule is a shell glob (path.Match); Tag matches if
-// the node carries it exactly; Severity is an exact, case-insensitive match.
+// every non-empty field must match (AND). An entirely empty Matcher matches
+// everything, so a Silence/Maintenance must reject one (see Matcher.Empty); an
+// explicit wildcard like Rule:"*" is fine. Rule is a shell glob (path.Match);
+// Tag matches if the node carries it; Severity is an exact, case-insensitive match.
 //
-// Node matches if it globs (path.Match) the node's DISPLAY NAME (what
-// `fleet nodes` shows, e.g. "db1"), OR if it EXACTLY equals the node's
-// internal id: the name is what an operator can type and glob
-// (`--match node=db*`), but names are not immutable (`fleet node rename`),
-// so the exact-id form gives a precise, rename-proof target when that
-// matters more than typability. Renaming a node stops a name-based silence
-// from matching it (its old name no longer globs the new one) -- an
-// id-based silence keeps matching regardless. THE MASTER IS THE ONLY PLACE
-// Node is ever evaluated (Submit's suppression check, and per-node
-// filtering before the "silences" push): node names are enforced unique on
-// the registry (Registry.Add/RenameNode, review round 2) specifically so
-// this glob has one precise target, and the child trusts whatever the
-// master already filtered for it rather than re-deriving anything (a child
-// only reliably knows its OWN identity, and by the time it hears about a
-// rename its cached copy is stale anyway -- see pushedSilences.Suppressed).
+// Node matches if it globs the node's DISPLAY NAME (e.g. "db1") or EXACTLY
+// equals its internal id. Names are what an operator can type, but they change
+// on rename (a name-based silence then stops matching); the id form is
+// rename-proof. The master is the only place Node is evaluated (Submit's
+// suppression check and per-node filtering before the "silences" push); node
+// names are unique in the registry so the glob has one target. The child trusts
+// what the master already filtered, since it only knows its own identity and its
+// cached rename would be stale.
 type Matcher struct {
 	Tag      string `json:"tag,omitempty"`
 	Node     string `json:"node,omitempty"`
@@ -299,18 +255,16 @@ type Matcher struct {
 	Severity string `json:"severity,omitempty"`
 }
 
-// Empty reports whether m has no fields set -- such a Matcher matches every
-// alert on every node, which a Silence/Maintenance must never be allowed to
-// contain (see the "a silence must match something" validation).
+// Empty reports whether m has no fields set; such a Matcher matches every alert
+// and must be rejected for a Silence/Maintenance.
 func (m Matcher) Empty() bool {
 	return m.Tag == "" && m.Node == "" && m.Rule == "" && m.Severity == ""
 }
 
-// Matches reports whether m applies to an alert with the given rule
-// (typically the alert's Key) and severity, on a node with the given
-// id/display name/tags (all "" / nil for a master-own alert, which no
-// Node/Tag matcher ever pins down but a Rule/Severity-only matcher still
-// can). See Matcher's doc comment for how Node matches nodeID/nodeName.
+// Matches reports whether m applies to an alert with the given rule (typically
+// the alert's Key) and severity on a node with the given id/name/tags (all
+// ""/nil for a master-own alert, which only a Rule/Severity-only matcher can
+// match). See Matcher for how Node matches.
 func (m Matcher) Matches(nodeID, nodeName string, nodeTags []string, rule, severity string) bool {
 	if m.Node != "" && m.Node != nodeID {
 		if ok, _ := path.Match(m.Node, nodeName); !ok {
@@ -331,14 +285,10 @@ func (m Matcher) Matches(nodeID, nodeName string, nodeTags []string, rule, sever
 	return true
 }
 
-// CouldApplyToNode reports whether m might match some alert on this node
-// (identified by its id/display name/tags), checking only the Node/Tag
-// fields (Rule/Severity describe the alert, not the node, so a Rule- or
-// Severity-only matcher always could apply). Used to decide which nodes a
-// silence/maintenance window -- and which of its OR'd Matchers -- are worth
-// pushing to a given node; the master is the only place this (or Matches)
-// is ever called, and the exact set of Matchers it decides applies here is
-// what the child trusts verbatim (see Matcher's doc comment).
+// CouldApplyToNode reports whether m might match some alert on this node,
+// checking only Node/Tag (Rule/Severity describe the alert, so a matcher with
+// only those always could apply). The master uses it to choose which silences
+// and maintenance windows to push to a node.
 func (m Matcher) CouldApplyToNode(nodeID, nodeName string, nodeTags []string) bool {
 	if m.Node != "" && m.Node != nodeID {
 		if ok, _ := path.Match(m.Node, nodeName); !ok {
@@ -351,11 +301,10 @@ func (m Matcher) CouldApplyToNode(nodeID, nodeName string, nodeTags []string) bo
 	return true
 }
 
-// Silence mutes matching alerts between Start and End (unix seconds):
-// recorded, never delivered, while active. Matchers is ORed (the silence
-// applies if ANY entry matches); the fields WITHIN one Matcher are ANDed
-// (see Matcher.Matches) -- a Silence with several Matchers is really
-// several independent silences sharing one ID/window/author.
+// Silence mutes matching alerts between Start and End (unix seconds): recorded,
+// never delivered, while active. Matchers is ORed; fields within one Matcher are
+// ANDed, so several Matchers are several independent silences sharing one
+// ID/window/author.
 type Silence struct {
 	ID       string    `json:"id"`
 	Matchers []Matcher `json:"matchers"`
@@ -365,13 +314,11 @@ type Silence struct {
 	Comment  string    `json:"comment,omitempty"`
 }
 
-// Maintenance is a recurring window that acts exactly like a silence
-// (reason "maintenance <name>") whenever it is active: Weekdays are
-// time.Weekday ints (Sunday=0), From/To are "HH:MM" in TZ (an IANA name
-// loaded with time.LoadLocation), and From > To means the window crosses
-// midnight (owned by the weekday of its START, i.e. a Sunday 22:00 -> Monday
-// 02:00 window fires on Sunday, not Monday). Matchers is ORed, its fields
-// ANDed, exactly like Silence.Matchers.
+// Maintenance is a recurring window that acts like a silence (reason
+// "maintenance <name>") while active: Weekdays are time.Weekday ints (Sunday=0),
+// From/To are "HH:MM" in TZ (an IANA name), and From > To crosses midnight, owned
+// by the weekday of its START (Sunday 22:00 to Monday 02:00 fires on Sunday).
+// Matchers is ORed, its fields ANDed, like Silence.Matchers.
 type Maintenance struct {
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
@@ -383,19 +330,12 @@ type Maintenance struct {
 	Author   string    `json:"author"`
 }
 
-// ManagedKeys is the exact, closed set of config.Config keys a managed-
-// config fragment (ManagedFragment.Values) may set (task 8 ruling): five
-// thresholds, the three baseline/anomaly-tuning keys, quiet_hours and
-// critical_overrides_quiet. internal/core cannot import internal/config (it
-// would be a dependency cycle -- config imports nothing from core, but
-// core.ManagedFragment/ManagedKeys must be usable from internal/web, which
-// cannot import internal/trinetra at all), so this is a plain string slice
-// mirroring config.Config's dotted key names, not a typed reference to
-// them. internal/trinetra's own managedFragmentAllowlistKeys (fleet_managed.
-// go) is this SAME slice (it delegates here rather than defining a second,
-// possibly-drifting copy); internal/web's managed-config page (task C5) uses
-// it directly to build the fragment editor's key <select> options, so the
-// allowlist is defined exactly once.
+// ManagedKeys is the closed set of config.Config keys a managed-config fragment
+// may set: five thresholds, the three baseline/anomaly keys, quiet_hours and
+// critical_overrides_quiet. core cannot import internal/config (cycle), so these
+// are plain dotted key names. internal/trinetra's allowlist delegates here and
+// internal/web builds the fragment editor's key options from it, so the
+// allowlist is defined once.
 var ManagedKeys = []string{
 	"thresholds.cpu_pct", "thresholds.mem_pct", "thresholds.swap_pct",
 	"thresholds.temp_c", "thresholds.disk_pct",
@@ -403,62 +343,40 @@ var ManagedKeys = []string{
 	"quiet_hours", "critical_overrides_quiet",
 }
 
-// ManagedFragment is one master-pushed config fragment (task 8, spec 6): a
-// set of allowlisted config.Config keys/values targeted at either every
-// node (Tag "") or every node carrying Tag, merged with every other
-// applicable fragment into that node's DESIRED set (see the trinetra
-// package's managedFragmentStore.Desired) and pushed down the
-// master-to-child stream as a "managed_config" frame. Version is bumped by
-// SaveManaged on every save (the same counter used for the store's
-// desired-set generation, so a fragment's own Version also tells you which
-// generation last touched it); Author is the actor that saved it.
-//
-// Only ten keys are ever allowed in Values (thresholds.cpu_pct/mem_pct/
-// swap_pct/temp_c/disk_pct, baseline_sigma, baseline_min_pct,
-// baseline_alerts, quiet_hours, critical_overrides_quiet) -- SaveManaged
-// rejects anything else, naming the key. Pushing a fallback channel set is
-// explicitly OUT of scope for this fragment mechanism; it is deferred to a
-// later task.
+// ManagedFragment is one master-pushed config fragment: allowlisted
+// config.Config keys/values for every node (Tag "") or every node carrying Tag,
+// merged with other applicable fragments into that node's DESIRED set and pushed
+// as a "managed_config" frame. Version is bumped by SaveManaged on every save;
+// Author is the actor that saved it. SaveManaged rejects any key outside
+// ManagedKeys, naming it. Pushing a fallback channel set is out of scope.
 type ManagedFragment struct {
 	ID      string            `json:"id"`
 	Tag     string            `json:"tag,omitempty"` // "" = every node
 	Values  map[string]string `json:"values"`
 	Version int64             `json:"version"`
 	Author  string            `json:"author,omitempty"`
-	// Merge, when true, tells SaveManaged to MERGE Values into the existing
-	// fragment's Values (this fragment's own new keys winning key-by-key)
-	// rather than replacing the fragment's Values wholesale -- the C5 review
-	// carry-over ruling for `trinetra fleet managed set --tag X k=v`
-	// (fleetManagedSet, cmd/trinetra's fleet_cmd.go), which defaults to this
-	// merge behavior unless `--replace` is given. It is never set by the web
-	// UI's save handler (fleetManagedSaveHandler, internal/web) -- that form
-	// always posts the full draft, so wholesale replacement is exactly what
-	// it means. Not persisted (the store clears it before saving), and
-	// meaningless for a brand-new fragment (nothing to merge into yet).
+	// Merge, when true, makes SaveManaged merge Values into the existing fragment
+	// (new keys winning) instead of replacing them wholesale. `trinetra fleet managed
+	// set --tag X k=v` defaults to it; the web save handler never sets it, since its
+	// form posts the full draft. Not persisted, and meaningless for a new fragment.
 	Merge bool `json:"merge,omitempty"`
 }
 
-// ManagedConflict records that more than one applicable ManagedFragment set
-// the same key for a node: Fragments lists every fragment id that set Key,
-// in the order they were applied (so the LAST entry is the one that
-// actually won -- see managedFragmentStore.Desired's "later wins" rule).
-// Recorded, never an error: a conflict does not block the desired set from
-// being computed or pushed, it is only surfaced for an operator to notice
-// and resolve.
+// ManagedConflict records that more than one applicable ManagedFragment set the
+// same key for a node: Fragments lists every fragment id that set Key in
+// application order, so the LAST one won. It is surfaced for an operator, never
+// an error.
 type ManagedConflict struct {
 	Key       string   `json:"key"`
 	Fragments []string `json:"fragments"`
 }
 
-// ManagedStatus is one node's managed-config status, as FleetAPI.
-// ManagedStatus reports it: Version is the version the node itself last
-// reported having successfully applied (0/Applied=false if it never has, or
-// its last attempt failed -- see Error); Desired is the master's CURRENT
-// desired-set generation for this node, which may be ahead of Version if a
-// push is still in flight or the node is unreachable. Drift lists every
-// currently-desired key whose child-reported effective value does not match
-// the desired value (computed from the node's last LiveUpdate.Managed,
-// which may itself be stale if the node is unreachable).
+// ManagedStatus is one node's managed-config status. Version is what the node
+// last reported applying successfully (0/Applied=false if never or the last
+// attempt failed; see Error); Desired is the master's current desired generation,
+// which may be ahead of Version while a push is in flight or the node is
+// unreachable. Drift lists desired keys whose child-reported effective value
+// differs (from its last LiveUpdate.Managed, possibly stale).
 type ManagedStatus struct {
 	Node      string            `json:"node"`
 	Version   int64             `json:"version"`
@@ -479,14 +397,12 @@ type AuditEntry struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// Route picks a Policy for an alert matching any of its Matchers (OR'd,
-// exactly like Silence.Matchers -- each field within one Matcher is ANDed,
-// see Matcher.Matches). Routes are evaluated in order: the first match wins,
-// unless Continue is true, in which case evaluation keeps going into later
-// routes too and every matched route's Policy contributes its own steps
-// (fan-out) -- see the trinetra package's resolveRoute, the one function
-// both the alerting engine's real delivery and RouteTest ever call. GroupBy
-// is reserved for B6 (grouping); it is stored but not yet interpreted.
+// Route picks a Policy for an alert matching any of its Matchers (ORed; fields
+// within one are ANDed). Routes are evaluated in order: the first match wins,
+// unless Continue is true, in which case later routes are evaluated too and every
+// matched Policy contributes steps (fan-out). resolveRoute in package trinetra
+// is the one function both real delivery and RouteTest use. GroupBy is reserved
+// and not yet interpreted.
 type Route struct {
 	Name     string    `json:"name"`
 	Matchers []Matcher `json:"matchers"`
@@ -520,23 +436,20 @@ type Policy struct {
 	SendResolved *bool        `json:"send_resolved,omitempty"`
 }
 
-// AggregateRule names a grouping/aggregation rule (task 7 fills in Expr's
-// grammar/evaluation, trinetra package's parseRuleExpr); AlertingConfig
-// stores it, validated at Set time.
+// AggregateRule names a grouping/aggregation rule; AlertingConfig stores it,
+// validated at Set time.
 type AggregateRule struct {
 	Name     string `json:"name"`
 	Expr     string `json:"expr"`
 	Severity string `json:"severity,omitempty"`
 }
 
-// AlertingConfig is the fleet master's routing/escalation configuration
-// (spec 6), persisted to fleet/alerting.json. Version is an optimistic-
-// concurrency token: SetAlerting rejects a stale Version with ErrConflict,
-// except Version 0, which is unconditional (used by `fleet alerting apply`,
-// which does not do optimistic locking). An absent alerting.json behaves
+// AlertingConfig is the fleet master's routing/escalation configuration,
+// persisted to fleet/alerting.json. Version is an optimistic-concurrency token:
+// SetAlerting rejects a stale Version with ErrConflict, except Version 0, which
+// is unconditional (`fleet alerting apply`). An absent alerting.json behaves
 // exactly like {DefaultPolicy:"default", Policies:[{Name:"default",
-// Steps:[{After:"0s",Channels:["*"]}], SendResolved:true}]} -- today's
-// behaviour, byte for byte.
+// Steps:[{After:"0s",Channels:["*"]}], SendResolved:true}]}.
 type AlertingConfig struct {
 	Version       int64           `json:"version"`
 	Routes        []Route         `json:"routes,omitempty"`
@@ -545,15 +458,12 @@ type AlertingConfig struct {
 	Rules         []AggregateRule `json:"rules,omitempty"`
 }
 
-// RuleState is one aggregate rule's current value/firing state (task 7),
-// returned by FleetAPI.RuleStates in AlertingConfig.Rules order. Value is
-// meaningless when HasValue is false (the rule has never produced a value
-// yet); NoData is true when the rule's last evaluation found nothing to
-// compute from (task-7 ruling: "no data does not fire and does not recover;
-// it holds the previous state") -- Firing/Since then still reflect whatever
-// they were before that. Error is set when the rule's Expr currently fails
-// to parse (should not happen: SetAlerting validates every Expr before
-// saving it), in which case the rule is treated as "no data" too.
+// RuleState is one aggregate rule's current state, returned by
+// FleetAPI.RuleStates in AlertingConfig.Rules order. Value is meaningless when
+// HasValue is false. NoData means the last evaluation found nothing to compute
+// from: the rule neither fires nor recovers and Firing/Since keep their previous
+// values. Error is set when Expr fails to parse (SetAlerting validates, so this
+// should not happen); the rule is then treated as no data.
 type RuleState struct {
 	Name     string  `json:"name"`
 	Expr     string  `json:"expr"`
@@ -565,9 +475,8 @@ type RuleState struct {
 	NoData   bool    `json:"no_data,omitempty"`
 }
 
-// ErrConflict is returned by FleetAPI.SetAlerting when the config's Version
-// no longer matches what is actually stored (someone else saved a change
-// since it was loaded) -- Version 0 bypasses this check unconditionally.
+// ErrConflict is returned by FleetAPI.SetAlerting when the config's Version no
+// longer matches what is stored; Version 0 bypasses the check.
 var ErrConflict = errors.New("the alerting config changed since it was loaded")
 
 // TestAlert is a synthetic alert FleetAPI.RouteTest evaluates against the
@@ -581,12 +490,10 @@ type TestAlert struct {
 	Severity string   `json:"severity"`
 }
 
-// RouteDecision is FleetAPI.RouteTest's result: which route matched (empty
-// when none did -- DefaultPolicy was used), EVERY policy that applies (more
-// than one when Continue chained several matched routes together -- B5
-// fix round 1: each matched policy escalates independently, so there is no
-// single merged policy/step list any more), and, if a current silence/
-// maintenance window would suppress this exact alert, why.
+// RouteDecision is FleetAPI.RouteTest's result: which route matched (empty when
+// none did and DefaultPolicy was used), EVERY policy that applies (several when
+// Continue chained routes; each escalates independently), and, if a current
+// silence or maintenance window would suppress this alert, why.
 type RouteDecision struct {
 	Route      string   `json:"route,omitempty"`
 	Policies   []Policy `json:"policies"`
@@ -600,23 +507,16 @@ type FleetAPI interface {
 	Status() (FleetStatus, error)
 	Nodes(NodeFilter) ([]NodeSummary, error)
 	// RenameNode renames id, recording a "fleet.node.rename" audit entry under
-	// actor (plan C task C5: this used to have no actor parameter at all --
-	// every caller, in-process and over the control socket, recorded the
-	// literal placeholder "unknown". Every caller now threads through the
-	// real acting identity: the CLI's "cli", or the signed-in web user's own
-	// name, auditUser(r)).
+	// actor (the CLI's "cli", or the signed-in web user).
 	RenameNode(id, name, actor string) error
-	// SetNodeTags replaces id's tag set, recording a "fleet.node.tags" audit
-	// entry under actor (see RenameNode's doc for why this gained an actor
-	// parameter).
+	// SetNodeTags replaces id's tag set, recording a "fleet.node.tags" audit entry
+	// under actor.
 	SetNodeTags(id string, tags []string, actor string) error
-	// RevokeNode revokes id, recording a "fleet.node.revoke" audit entry under
-	// actor (see RenameNode's doc).
+	// RevokeNode revokes id, recording a "fleet.node.revoke" audit entry under actor.
 	RevokeNode(id, actor string) error
-	// RemoveNode deletes id from the fleet (registry and liveness), resolving
-	// any open node-down alert; its replicated history stays on disk.
-	// Records a "fleet.node.remove" audit entry under actor (see RenameNode's
-	// doc).
+	// RemoveNode deletes id from the fleet (registry and liveness), resolving any
+	// open node-down alert; its replicated history stays on disk. Records a
+	// "fleet.node.remove" audit entry under actor.
 	RemoveNode(id, actor string) error
 	// SetNodeDeps replaces id's dependency list (node ids or "tag:<t>"
 	// entries): every referenced node id must exist and id may not depend on
@@ -624,16 +524,11 @@ type FleetAPI interface {
 	// "fleet.node.deps" audit entry naming actor.
 	SetNodeDeps(id string, deps []string, actor string) error
 	Tokens() ([]TokenView, error)
-	// CreateToken mints a join token. Unlike RenameNode/SetNodeTags/
-	// RevokeNode/RemoveNode/DeleteToken, this does NOT gain a separate actor
-	// parameter (plan C task C5 ruling): TokenSpec.Creator already carries
-	// the acting identity end to end (it is what's recorded as the token's
-	// own Creator AND, via CreatedToken.Token.Creator, audited), so adding a
-	// second, redundant actor parameter here would just be two names for the
-	// same value.
+	// CreateToken mints a join token. It takes no separate actor: TokenSpec.Creator
+	// already carries the acting identity and is audited via CreatedToken.Token.Creator.
 	CreateToken(TokenSpec) (CreatedToken, error)
-	// DeleteToken removes join token id, recording a "fleet.token.delete" audit
-	// entry under actor (see RenameNode's doc).
+	// DeleteToken removes join token id, recording a "fleet.token.delete" audit entry
+	// under actor.
 	DeleteToken(id, actor string) error
 
 	// Incidents lists incidents matching filter, newest-updated first.
@@ -680,12 +575,11 @@ type FleetAPI interface {
 	// the alerting engine uses for real delivery, plus a current-silence
 	// check, without firing anything.
 	RouteTest(alert TestAlert) (RouteDecision, error)
-	// RuleStates returns every aggregate rule's current value/firing state
-	// (task 7), in AlertingConfig.Rules order.
+	// RuleStates returns every aggregate rule's current state, in
+	// AlertingConfig.Rules order.
 	RuleStates() ([]RuleState, error)
 
-	// Managed lists every managed-config fragment (task 8), in no
-	// particular guaranteed order.
+	// Managed lists every managed-config fragment, in no guaranteed order.
 	Managed() ([]ManagedFragment, error)
 	// SaveManaged validates and stores a fragment: a new one (fresh random
 	// id) if frag.ID is "", otherwise an in-place update of the existing
@@ -705,24 +599,19 @@ type FleetAPI interface {
 	// it last reported applying, and any drift/conflicts.
 	ManagedStatus() ([]ManagedStatus, error)
 
-	// FleetSeries reads metric's time series across every node matching
-	// filter (plan C, task 1b: the fleet-wide series API backing the web
-	// compare view). agg "none" returns one series per node (Node set to
-	// the node's display name), capped at 10 nodes -- above the cap nothing
-	// is returned and the error is "compare at most 10 nodes" (a caller
-	// wanting more must narrow filter). agg avg/max/min instead return ONE
-	// series (Node "") aggregating every matching node's value at each
-	// timestamp bucket the underlying stores share. The master's own node
-	// (self) is included exactly the way the aggregate-rule engine includes
-	// it (fleet_rules.go's ruleSelfSource), via its local store. Metrics:
-	// cpu, mem, swap, load1, temp, disk (worst mount, exactly like
-	// NodeSummary.WorstDiskPct/the aggregate rules' "disk" metric).
+	// FleetSeries reads metric's time series across every node matching filter,
+	// backing the web compare view. agg "none" returns one series per node (Node set
+	// to its display name), capped at 10 nodes: above that nothing is returned and
+	// the error is "compare at most 10 nodes". agg avg/max/min return ONE series
+	// (Node "") aggregating matching nodes per shared timestamp bucket. The master's
+	// own node is included the way the aggregate-rule engine includes it
+	// (ruleSelfSource). Metrics: cpu, mem, swap, load1, temp, disk (worst mount, as
+	// in NodeSummary.WorstDiskPct).
 	FleetSeries(metric string, filter NodeFilter, agg Agg, from, to int64, res Resolution) ([]FleetSeriesPoint, error)
 }
 
-// Agg picks how FleetSeries combines several nodes' series into its result:
-// "none" keeps one series per node, "avg"/"max"/"min" collapse every
-// matching node into a single aggregated series.
+// Agg picks how FleetSeries combines nodes: "none" keeps one series per node,
+// "avg"/"max"/"min" collapse them into one.
 type Agg string
 
 const (

@@ -6,12 +6,10 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// API is the single boundary through which every consumer (the web UI, the
-// CLI, and the control-socket client) reads daemon state and applies
-// changes. Implementations: an in-process one inside the daemon, a
-// file-backed one for CLI subcommands with no live daemon connection, and
-// control.Client (internal/control), which trinetra-ctl and
-// trinetra-web use to reach a running daemon over its control socket.
+// API is the boundary through which the web UI, the CLI and the control-socket
+// client read daemon state and apply changes. Implementations: in-process in the
+// daemon, file-backed for CLI subcommands with no live daemon, and control.Client
+// for reaching a running daemon over its socket.
 type API interface {
 	// reads
 	Snapshot() (DashboardView, error)
@@ -22,91 +20,63 @@ type API interface {
 	AlertHistory(since int64, limit int) ([]AlertRecord, error)
 	Config() (*config.Config, error)
 	Doctor() (DoctorReport, error)
-	// HostInfo returns the static host hardware/OS inventory (#100): RAM, CPU,
-	// kernel/OS, per-disk hardware, plus boot time and derived uptime. Static
-	// for a boot, so callers fetch it once rather than per tick.
+	// HostInfo returns the static host hardware/OS inventory (#100), fetched once
+	// rather than per tick.
 	HostInfo() (HostInfoView, error)
-	// Version returns the core daemon's build-stamped product version (#107),
-	// e.g. "v0.4.1-beta.3" or "dev". A plugin dials this over the socket to
-	// show the running core version and to detect a core/plugin version drift
-	// against its own compiled-in version.
+	// Version returns the core daemon's build-stamped version (#107), e.g.
+	// "v0.4.1-beta.3" or "dev", so a plugin can detect version drift.
 	Version() (string, error)
-	// ContainerLogs returns the last `lines` log lines of the named docker
-	// container (a `docker logs --tail N` snapshot, newest at the bottom).
-	// name must match a container the daemon currently sees; an unknown or
-	// malformed name is refused rather than shelled out, so a caller cannot use
-	// this to run arbitrary docker arguments. Implementations without docker
-	// access return an error.
+	// ContainerLogs returns the last `lines` log lines of the named docker container
+	// (`docker logs --tail N`). name must match a container the daemon sees; unknown
+	// or malformed names are refused rather than shelled out, so callers cannot inject
+	// docker arguments. Implementations without docker access return an error.
 	ContainerLogs(name string, lines int) (string, error)
-	// EnrollmentPIN returns the Telegram bot's current enrollment pin -- the
-	// same pin the daemon's poll loop accepts via "/start <pin>" (#90) -- and
-	// whether the bot is already enrolled (chat id known). pin is "" when
-	// enrolled is true, or when telegram isn't configured at all.
-	// Implementations without a live daemon process to ask (the file-backed
-	// CLI path) return an error instead of a meaningless pin.
+	// EnrollmentPIN returns the Telegram bot's current enrollment pin (accepted via
+	// "/start <pin>", #90) and whether the bot is already enrolled. pin is "" when
+	// enrolled or when telegram is unconfigured. Implementations with no live daemon
+	// (the file-backed CLI path) return an error.
 	EnrollmentPIN(ctx context.Context) (pin string, enrolled bool, err error)
-	// MonitorTargets lists every monitorable target the host currently
-	// exposes (docker containers, disk mounts, network interfaces, the
-	// thermal zone, smart devices -- trinetra.Discover), independent of
-	// any config.Config.Targets override: enable/disable and threshold
-	// state live in Config()/ApplyConfig(), not here (mirroring how
-	// MonitorTargets and TargetEnabled/TargetThreshold are already split in
-	// internal/config). Unlike Monitoring(), which internal/web's
-	// Monitoring page polls on every page load, this runs live discovery
-	// (docker ps / df / smartctl --scan) via trinetra.DiscoverLocal, so
-	// implementations only call it when a caller (ctl's monitor-thresholds
-	// screen) deliberately asks, never as part of another read's hot path.
+	// MonitorTargets lists every monitorable target the host exposes (docker
+	// containers, disk mounts, interfaces, thermal zone, smart devices;
+	// trinetra.Discover), independent of any config.Config.Targets override: enable
+	// and threshold state live in Config()/ApplyConfig(). It runs live discovery
+	// (docker ps / df / smartctl --scan) via trinetra.DiscoverLocal, so call it only
+	// on deliberate request, never in another read's hot path.
 	MonitorTargets(ctx context.Context) ([]TargetView, error)
-	// UpdateStatus reports this host's current self-update posture (channel,
-	// floor, available/previous versions, any pending update, the last
-	// apply/rollback outcome, and whether release keys are compiled in) from
-	// persisted state -- it never fetches over the network, so it is cheap
-	// enough for the web Updates page to call on every render.
+	// UpdateStatus reports this host's self-update posture from persisted state. It
+	// never touches the network, so the web Updates page may call it on every render.
 	UpdateStatus() (UpdateStatusView, error)
 
 	// writes
-	// UpdateCheck fetches and verifies the channel pointer and the release it
-	// names (network I/O, hence ctx), records the outcome in persisted state,
-	// and returns the resulting UpdateStatus view. An error here (a fetch/
-	// verify failure, updates being off, or the release already being
-	// installed) still returns whatever status view could be built.
+	// UpdateCheck fetches and verifies the channel pointer and the release it names
+	// (network I/O, hence ctx), records the outcome, and returns the resulting
+	// UpdateStatus view. On an error (fetch/verify failure, updates off, release
+	// already installed) it still returns whatever view could be built.
 	UpdateCheck(ctx context.Context) (UpdateStatusView, error)
-	// UpdateApply installs the given version (or, when version is "", the
-	// channel's latest): fetch, verify, policy-check, stage, smoke-test, and
-	// swap the build in, then launch the health guard -- the guard, not this
-	// call, is what restarts the daemon and confirms or rolls back the new
-	// build. A synchronous implementation (the CLI's direct path) returns
-	// once the swap has happened and the guard has been asked to start (or
-	// once staging/verification/the swap itself failed). The control-socket-
-	// facing implementation (fix round 1, Ruling R10) instead runs only its
-	// fast checks (settings, no update already pending or already running)
-	// synchronously, then continues the rest in a background goroutine and
-	// returns immediately -- a caller on that path must poll UpdateStatus's
-	// InProgress/LastError to observe the outcome. Either way, a returned
-	// error here means the operation never started (or refused outright,
-	// e.g. a second call while one is already running); it never means the
-	// swap itself failed once started asynchronously -- that surfaces via
-	// UpdateStatus.LastError instead.
+	// UpdateApply installs the given version (or the channel's latest when version is
+	// ""): fetch, verify, policy-check, stage, smoke-test, swap the build in, then
+	// launch the health guard, which restarts the daemon and confirms or rolls back.
+	// A synchronous implementation (the CLI path) returns after the swap and guard
+	// start, or when staging/verification/the swap failed. The control-socket
+	// implementation runs only fast checks (settings, nothing already pending or
+	// running) synchronously and continues in a background goroutine; callers poll
+	// UpdateStatus's InProgress/LastError. Either way a returned error means the
+	// operation never started (or was refused, e.g. a second concurrent call); a
+	// failure after an async start surfaces via UpdateStatus.LastError.
 	UpdateApply(ctx context.Context, version string) error
-	// UpdateRollback restores the previously installed build (kept by the
-	// last successful UpdateApply) and starts the health guard to confirm it,
-	// mirroring `trinetra update rollback`. Same synchronous-vs-background
-	// split as UpdateApply (fix round 1, Ruling R10): a returned error means
-	// the rollback never started; once started asynchronously, its outcome
-	// surfaces via UpdateStatus's InProgress/LastError, not this call's
-	// return value.
+	// UpdateRollback restores the previously installed build (kept by the last
+	// UpdateApply) and starts the health guard, like `trinetra update rollback`. It
+	// has the same synchronous-vs-background split as UpdateApply: an error means the
+	// rollback never started; later outcomes surface via UpdateStatus.
 	UpdateRollback() error
 	ApplyConfig(*config.Config) error
 	AckAlert(key string) error
 	UnackAlert(key string) error
 	TestChannel(name string) error
-	// ValidateChannel reports whether cc could actually build a working
-	// notifier -- the same check TestChannel/`channel test` deliver against,
-	// minus the network send. It is checked against the daemon's current
-	// live config, not any unsaved in-flight edit a caller may be building
-	// cc as part of: a channel referencing another field of that in-flight
-	// edit (rare in practice) could pass or fail this check against stale
-	// state. That is an accepted limitation, not a bug.
+	// ValidateChannel reports whether cc could build a working notifier, the same
+	// check TestChannel/`channel test` use minus the network send. It runs against the
+	// daemon's live config, not an unsaved in-flight edit, so a channel referencing
+	// another field of that edit could pass or fail against stale state (accepted).
 	ValidateChannel(cc config.ChannelConfig) error
 	Subscribe(ctx context.Context) (<-chan Event, error)
 }
