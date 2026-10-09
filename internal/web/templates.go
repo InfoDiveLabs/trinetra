@@ -843,6 +843,7 @@ type BarePageData struct {
 	// just carrying the value from the GET's URL to the POST's body).
 	// login.html doesn't reference this field; harmless there either way.
 	EnrollToken string
+	SignedIn    bool
 	// EnrollClosed (U8, 2026-09-25 UI audit fix) is true when GET /enroll
 	// carries no ?token= AND the user store already has at least one
 	// account: resolveEnrollRole (enroll_tokens.go) will unconditionally
@@ -862,7 +863,13 @@ func newBarePageData(r *http.Request, title string) BarePageData {
 		Title:       title,
 		Nonce:       nonceFromContext(r),
 		EnrollToken: r.URL.Query().Get("token"),
+		SignedIn:    signedIn(r),
 	}
+}
+
+func signedIn(r *http.Request) bool {
+	_, ok := userFromContext(r)
+	return ok
 }
 
 // renderBarePage is renderPageStatus's counterpart for the bare/centered

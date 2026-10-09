@@ -142,6 +142,9 @@ func TestStatusShowsPublicPageToSignedInUsers(t *testing.T) {
 	if code != http.StatusOK || strings.Contains(body, `class="side"`) || !strings.Contains(body, "pub-") {
 		t.Fatalf("signed-in GET /status = %d, want the public page, not the app shell:\n%s", code, body)
 	}
+	if !strings.Contains(body, `href="/" class="status-login">Dashboard`) && strings.Contains(body, "status-login") {
+		t.Error("signed-in visitor is offered Sign in instead of Dashboard")
+	}
 	if code, body := getAsRole(t, d, RoleAdmin, "/"); code != http.StatusOK || !strings.Contains(body, `class="side"`) {
 		t.Errorf("signed-in GET / should stay the dashboard: %d", code)
 	}
