@@ -337,3 +337,72 @@ func TestUpdateAvailableAlertSkipsInstalledVersion(t *testing.T) {
 		t.Fatal("alerted that the running version is available")
 	}
 }
+
+func TestNotifyPendingResultDeliversEveryOutcome(t *testing.T) {
+	p := testUpdatePaths(t)
+	var st update.State
+	st.RecordResult(update.Result{Version: "0.5.0", From: "0.4.1", Outcome: "committed", At: 100})
+	st.RecordResult(update.Result{Version: "0.5.1", From: "0.5.0", Outcome: "rolled_back", Detail: "not active", At: 200})
+	if err := update.SaveState(p.dir(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []Alert
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 2 {
+		t.Fatalf("alerts = %d, want 2: %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].Title, "0.4.1 → 0.5.0") || !strings.Contains(got[1].Title, "0.5.1") || got[1].Severity != SevCritical {
+		t.Fatalf("alerts out of order or wrong: %+v", got)
+	}
+
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 2 {
+		t.Fatalf("re-notified on the next tick: %+v", got[2:])
+	}
+	after, err := update.LoadState(p.dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Unnotified) != 0 || after.Last == nil || !after.Last.Notified {
+		t.Fatalf("queue not drained or Last not marked: %+v / %+v", after.Unnotified, after.Last)
+	}
+}
+
+func TestNotifyPendingResultKeepsOutcomeRecordedMeanwhile(t *testing.T) {
+	p := testUpdatePaths(t)
+	var st update.State
+	st.RecordResult(update.Result{Version: "0.5.0", From: "0.4.1", Outcome: "committed", At: 100})
+	if err := update.SaveState(p.dir(), st); err != nil {
+		t.Fatal(err)
+	}
+	var got []Alert
+	notifyPendingResult(p, func(a Alert) {
+		got = append(got, a)
+		if len(got) == 1 {
+			if err := update.WithState(p.dir(), func(s *update.State) error {
+				s.RecordResult(update.Result{Version: "0.5.1", From: "0.5.0", Outcome: "rolled_back", At: 200})
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 2 || !strings.Contains(got[1].Title, "0.5.1") {
+		t.Fatalf("outcome recorded during delivery was lost: %+v", got)
+	}
+}
+
+func TestNotifyPendingResultLegacyLast(t *testing.T) {
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Last: &update.Result{Version: "0.5.0", From: "0.4.1", Outcome: "committed", At: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	var got []Alert
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 1 {
+		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
+	}
+}

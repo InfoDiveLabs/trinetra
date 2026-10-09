@@ -93,6 +93,9 @@ sudo trinetra update rollback           # go back to the previously installed bu
 4. **Stages and re-verifies** every binary file's size and SHA-256 against
    the signed manifest as it downloads, then **smoke-tests** the staged core
    binary (`trinetra version --json`) before touching anything installed.
+   If `/var/lib` is mounted `noexec` (or SELinux refuses to run files
+   there), the smoke test runs a temporary copy from `/usr/local/lib/trinetra`
+   instead, so that directory must stay executable.
 5. **Swaps it in** atomically -- the same rename-based, live-file-safe,
    fsynced swap `install` uses. Before the first binary is replaced it keeps
    a copy of the current build in `update/previous/`, copies the binary

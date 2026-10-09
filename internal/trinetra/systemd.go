@@ -135,10 +135,22 @@ func cmdInstall(args []string) int {
 	// configured (and possibly enrolled), re-printing the set-token line
 	// wrongly implies setup is needed again (#106), so report the existing
 	// state instead.
-	fmt.Fprint(stdout, installedPluginsMessage()+" installed and started. ")
-	fmt.Fprintln(stdout, telegramInstallHint())
+	waitErr := waitForDaemonFn()
+	switch {
+	case waitErr == nil:
+		fmt.Fprint(stdout, installedPluginsMessage()+" installed and started. ")
+		fmt.Fprintln(stdout, telegramInstallHint())
+	case errors.Is(waitErr, errServiceSlow):
+		fmt.Fprintln(stdout, installedPluginsMessage()+" installed; the daemon is still starting. Give it a moment before `trinetra cli` (systemctl status trinetra).")
+	default:
+		fmt.Fprintln(stdout, installedPluginsMessage()+" installed.")
+	}
 	if summary != nil {
 		fmt.Fprint(stdout, summary.String())
+	}
+	if waitErr != nil && !errors.Is(waitErr, errServiceSlow) {
+		fmt.Fprintf(stderr, "%v: see `journalctl -u trinetra -n 50` for why it failed to start\n", waitErr)
+		return 1
 	}
 	return 0
 }

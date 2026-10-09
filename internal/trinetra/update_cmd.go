@@ -329,7 +329,7 @@ func (u updater) apply(ctx context.Context, c *config.Config, opts applyOptions)
 	}
 
 	stagedCore := filepath.Join(u.paths.staging(m.Version), "trinetra-linux-"+u.arch)
-	if err := smokeTest(u.x, stagedCore, m.Version); err != nil {
+	if err := smokeTest(probeExec{u.paths, u.x}, stagedCore, m.Version); err != nil {
 		return update.Manifest{}, err
 	}
 
@@ -406,7 +406,7 @@ func (u updater) rollback() error {
 	}
 
 	prevVersion := "unknown"
-	if out, rerr := u.x.Run(prevCore, "version", "--json"); rerr == nil {
+	if out, rerr := runProbe(u.paths, u.x, prevCore, "version", "--json"); rerr == nil {
 		var v struct {
 			Version string `json:"version"`
 		}
@@ -495,7 +495,7 @@ func (u updater) status() (updateStatus, error) {
 	previous := ""
 	prevCore := filepath.Join(u.paths.previous(), "trinetra")
 	if fi, err := os.Stat(prevCore); err == nil && fi.Mode().IsRegular() && u.x != nil {
-		if out, rerr := u.x.Run(prevCore, "version", "--json"); rerr == nil {
+		if out, rerr := runProbe(u.paths, u.x, prevCore, "version", "--json"); rerr == nil {
 			var v struct {
 				Version string `json:"version"`
 			}
