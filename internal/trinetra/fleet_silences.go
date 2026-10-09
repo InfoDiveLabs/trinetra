@@ -1,5 +1,5 @@
 // Package trinetra: fleet_silences.go is the master's silence and
-// maintenance-window store (spec 6/task 4): explicit silences and recurring
+// maintenance-window store: explicit silences and recurring
 // maintenance windows, both persisted to silences.json, both suppressing a
 // matching alert exactly the same way (a maintenance window's reason is
 // simply "maintenance <name>"). It also builds the "silences" stream frame
@@ -47,7 +47,7 @@ func randomSilenceID() (string, error) {
 // validateMatchers rejects an empty matcher list, one containing a
 // completely empty Matcher (either would let the silence/maintenance window
 // match every alert on every node, which is never intentional), or one whose
-// Node/Rule glob doesn't even parse -- task C4 (fleet phase 2 web UI plan C):
+// Node/Rule glob doesn't even parse -- task C4:
 // the web silences/maintenance page's own brief documents "a bad glob" as
 // one of the backend rejections its inline-error UI surfaces, mirroring
 // validGlob's identical check for a Route's own matchers
@@ -86,7 +86,7 @@ func matchersApply(ms []core.Matcher, nodeID, nodeName string, tags []string, ru
 // any single matcher applies to would leak an unrelated matcher (e.g. one
 // meant only for a different node, with no Rule/Severity of its own) to a
 // node it was never meant to cover. The MASTER is the only place this
-// filtering happens (review round 2): it resolves nodeID/nodeName from its
+// filtering happens: it resolves nodeID/nodeName from its
 // own registry, where names are kept unique, so this is a precise, one-node
 // decision -- the child (pushedSilences.Suppressed) trusts the result
 // verbatim and never re-derives it.
@@ -153,13 +153,13 @@ type occurrence = core.Occurrence
 
 // maintenanceOccurrencesInRange returns every occurrence of m that overlaps
 // [from, until), expanded in m's own TZ -- a thin wrapper over
-// core.MaintenanceOccurrences (task C4): that function now holds the one
+// core.MaintenanceOccurrences: that function now holds the one
 // real implementation (moved out of this package so internal/web's fleet
 // silences page can compute the SAME "next occurrence" this engine uses,
 // without internal/web ever importing internal/trinetra -- server.go's Deps
 // doc: the module graph is deliberately one-way). See
 // core.MaintenanceOccurrences' own doc for the full DST-safety rationale
-// (review round 1, item 2) and the crossing-midnight ownership rule (review
+// and the crossing-midnight ownership rule (review
 // round 1, item 2 also covers this).
 func maintenanceOccurrencesInRange(m core.Maintenance, from, until time.Time) []occurrence {
 	return core.MaintenanceOccurrences(m, from, until)
@@ -415,7 +415,7 @@ func (s *silenceStore) Suppressed(now int64, nodeID, nodeName string, tags []str
 // matchers are sent, not the whole OR'd list -- review round 1, item 1(a)),
 // plus every occurrence of a maintenance window (likewise filtered) in the
 // next 24h, each expanded to a concrete [Start,End) instant. The master is
-// the only place Node is ever resolved/matched (review round 2): the child
+// the only place Node is ever resolved/matched: the child
 // applies whatever comes out of this verbatim.
 func (s *silenceStore) silencesForNode(now int64, nodeID, nodeName string, tags []string) []pushedSilence {
 	s.mu.Lock()
@@ -470,7 +470,7 @@ func childSilencesPath(stateDir string) string {
 // routed anything to the master is unaffected by anything the master ever
 // pushed.
 //
-// The child never re-derives Node/Tag applicability (review round 2): an
+// The child never re-derives Node/Tag applicability: an
 // earlier round added a Node re-check keyed off this child's own
 // config.ServerName, but that name is not reliably the same string the
 // master's registry has for this node (a fresh join's `--name` is never
@@ -478,7 +478,7 @@ func childSilencesPath(stateDir string) string {
 // the master until this round) -- so the re-check could reject an entry the
 // master correctly meant for this exact node, silently letting a SILENCED
 // alert fall back and deliver. The master is the only place with the
-// authoritative registry (unique names, per round 2) to resolve Node
+// authoritative registry to resolve Node
 // against, and it already filters `silencesForNode` down to exactly the
 // matchers that apply to THIS node before ever sending them -- the child
 // simply applies whatever it was pushed.
@@ -512,7 +512,7 @@ func loadPushedSilences(path string) *pushedSilences {
 
 // pushedSilencesWriteHook, when set by a test, runs synchronously
 // immediately before Set's disk write -- used to prove the write happens
-// while p.mu is still held (final-review engine I2), by blocking one
+// while p.mu is still held, by blocking one
 // caller mid-write and observing whether a second, concurrent Set can
 // still race ahead of it.
 var pushedSilencesWriteHook func()

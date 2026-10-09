@@ -132,7 +132,7 @@ type replicaSink struct {
 	// hook most of them never exercise.
 	onAckSync func(nodeID string, as json.RawMessage)
 
-	// hub/rpc/incidents (task 9) wire remote ack/unack and remote container
+	// hub/rpc/incidents wire remote ack/unack and remote container
 	// logs into NodeAPI's replicaAPI. Like onAckSync, these are set
 	// directly on the field by startMaster rather than threaded through
 	// newReplicaSink, for the same reason: most existing (and future)
@@ -584,7 +584,7 @@ func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 	if err != nil {
 		return fmt.Errorf("write alerts.json: %w", err)
 	}
-	// onAckSync (task 3): a child's own AlertState.Ack -- via a manual
+	// onAckSync: a child's own AlertState.Ack -- via a manual
 	// `trinetra alerts ack` on that node, or the master's own AckIncident
 	// push applied there -- reaches the master purely through this same
 	// LiveUpdate.AlertState channel (nothing else ships alerts.json). Only
@@ -784,7 +784,7 @@ func (r *replicaSink) NodeAPI(id string, getCfg func() *config.Config) (core.API
 
 // replicaAPI serves reads from a replica and refuses what still needs the
 // live child directly (config writes, channel tests): ack/unack and
-// container logs (task 9) instead go out over the master-to-child stream
+// container logs instead go out over the master-to-child stream
 // via hub/rpc, so they work for a remote node exactly like they do locally,
 // just with a round trip.
 type replicaAPI struct {
@@ -815,7 +815,7 @@ func (a *replicaAPI) Doctor() (core.DoctorReport, error) { return core.DoctorRep
 func (a *replicaAPI) ApplyConfig(*config.Config) error   { return errRemoteNode }
 func (a *replicaAPI) TestChannel(string) error           { return errRemoteNode }
 
-// AckAlert/UnackAlert (task 9): push an ack/unack frame down this node's
+// AckAlert/UnackAlert: push an ack/unack frame down this node's
 // stream connection -- the child applies it locally via AlertState.Ack/
 // Unack (fleet_lease.go's applyAckFrame), exactly as a local `trinetra
 // alerts ack/unack` would. Neither waits for the child to actually apply
@@ -840,7 +840,7 @@ func (a *replicaAPI) remoteAck(key string, unack bool) error {
 	a.hub.Push(a.nodeID, fleet.Frame{Type: frameType, Data: data})
 	if !unack && a.incidents != nil {
 		// Also record the ack on the master's own incident view immediately
-		// (task-9 ruling), so the UI need not wait for anything to come
+		//so the UI need not wait for anything to come
 		// back over the stream. The actor isn't known at this layer -- this
 		// package has no notion of "which web user clicked ack", and
 		// core.API.AckAlert(key) (the interface replicaAPI implements here)
@@ -856,7 +856,7 @@ func (a *replicaAPI) remoteAck(key string, unack bool) error {
 		// through this apiFor(r,d)-resolved core.API): the AUTHORITATIVE path
 		// for a web user's ack, with the real signed-in actor
 		// (auditUser(r)), is already POST /fleet/incidents/{id}/ack ->
-		// FleetAPI.AckIncident(id, actor) (task C2), which updates this same
+		// FleetAPI.AckIncident(id, actor), which updates this same
 		// incident and pushes the ack frame itself. This remoteAck path only
 		// runs as a SECONDARY sync when a remote node's alert is acked from
 		// the plain /alerts page instead (apiFor(r,d) resolving to this
@@ -873,7 +873,7 @@ func (a *replicaAPI) remoteAck(key string, unack bool) error {
 	return nil
 }
 
-// ContainerLogs (task 9) runs `docker logs` on the remote node via an RPC
+// ContainerLogs runs `docker logs` on the remote node via an RPC
 // over the master-to-child stream (fleet_rpc.go): the master pushes an
 // "rpc" frame naming this call's id/method/args and waits up to 10s for the
 // child to POST a matching result. See rpcRegistry.Call for the exact error
@@ -911,7 +911,7 @@ func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
 }
 func (a *replicaAPI) ValidateChannel(config.ChannelConfig) error { return errRemoteNode }
 
-// UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback (task 8) are not
+// UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback are not
 // available for a remote fleet node yet -- self-update is a per-node
 // operation with no RPC plumbing (fleet_rpc.go) built for it, unlike
 // ContainerLogs above. Mirrors ValidateChannel/EnrollmentPIN/MonitorTargets/

@@ -552,7 +552,7 @@ func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
 	}
 }
 
-// --- replicaAPI: remote ack/unack and container logs (task 9) --------------
+// --- replicaAPI: remote ack/unack and container logs --------------
 //
 // These use the real fleet.Hub/Master harness from fleet_rpc_test.go
 // (rpcTestMaster), since AckAlert/UnackAlert/ContainerLogs all need a
@@ -632,7 +632,7 @@ func TestReplicaAPIUnackAlertPushesFrame(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIAckAlertNotConnected pins the exact wording (task-9 ruling)
+// TestReplicaAPIAckAlertNotConnected pins the exact wording
 // for a node with no open stream connection.
 func TestReplicaAPIAckAlertNotConnected(t *testing.T) {
 	m := newRPCTestMaster(t)
@@ -696,7 +696,7 @@ func TestReplicaAPIContainerLogsNotConnected(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIContainerLogsTimeout pins the exact wording (task-9 ruling)
+// TestReplicaAPIContainerLogsTimeout pins the exact wording
 // when a connected node never answers.
 func TestReplicaAPIContainerLogsTimeout(t *testing.T) {
 	withShortRPCTimeout(t, 100*time.Millisecond)
@@ -714,7 +714,7 @@ func TestReplicaAPIContainerLogsTimeout(t *testing.T) {
 }
 
 // TestReplicaAPIContainerLogsChildErrorPassesThrough pins "the child's own
-// error, passed through" (task-9 ruling) -- wrapped (final-review transport
+// error, passed through" -- wrapped (final-review transport
 // I1) so its text can never come out as a bare sentinel suffix, but still
 // containing the child's original message for display/logging.
 func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {

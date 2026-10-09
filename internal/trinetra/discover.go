@@ -79,18 +79,11 @@ func parseFailedUnits(s string) []string {
 }
 
 // DiscoverLocal enumerates monitorable targets on THIS host using the real
-// OS-backed Exec/FileSource (os/exec, os.ReadFile, filepath.Glob) -- the
-// same probes cmdMonitor (systemd.go) runs for `trinetra monitor list`.
-// Exported so a caller guaranteed to run on the same host as the daemon it
-// is managing -- trinetra-ctl, whose control socket is always a local
-// unix socket (internal/control), never a network one -- can list targets
-// for its monitor-thresholds screen without duplicating Discover's exec/fs
-// plumbing or routing target discovery through core.API (which would mean
-// running these same df/docker/smartctl probes on every core.API.Monitoring()
-// call, including the web dashboard's Monitoring page poll -- see the
-// beta-2 B2 task 2 report for why that path was rejected). See Discover for
-// the general, dependency-injected form cmdMonitor and this package's own
-// tests use.
+// OS-backed Exec/FileSource, the same probes cmdMonitor runs. Exported for
+// callers guaranteed to share the daemon's host (trinetra-ctl, over the local
+// control socket) so they need not route discovery through core.API, which
+// would re-run the df/docker/smartctl probes on every Monitoring() poll. See
+// Discover for the dependency-injected form.
 func DiscoverLocal() []Target {
 	return Discover(osExec{}, osFS{})
 }
@@ -117,7 +110,7 @@ func Discover(x Exec, fs FileSource) []Target {
 	// one `disk:<overlay>` target per container (plus squashfs/tmpfs/nsfs
 	// pseudo-mounts) in `monitor list`/`monitor threshold`, none of which
 	// ever populate snap.Disks -- the two paths must agree on what a real
-	// disk is (see collectSlow and fix-disk-telegram-brief.md).
+	// disk is.
 	if out, err := x.Run("df", "-PT"); err == nil {
 		typed := parseDFTypes(string(out))
 		mounts := make([]string, 0, len(typed))
@@ -172,7 +165,7 @@ func isRealMount(m string) bool {
 	// bind-mount or future overlay driver reporting a real-looking fstype).
 	// A root daemon on a docker host otherwise sees one mount per container
 	// under /var/lib/docker/overlay2/<hash>/merged -- this is the field bug
-	// that motivated this whole filter (see fix-disk-telegram-brief.md).
+	// that motivated this whole filter.
 	for _, p := range []string{
 		"/var/lib/docker/", "/var/lib/containers/", "/var/lib/kubelet/",
 		"/snap/", "/var/snap/",

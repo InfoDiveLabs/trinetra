@@ -14,13 +14,13 @@ import (
 )
 
 // rpcMaxLines bounds the "lines" a container_logs RPC will ever ask
-// core.API.ContainerLogs for (task-9 ruling), regardless of what the master
+// core.API.ContainerLogs for, regardless of what the master
 // requested: a compromised or misbehaving master cannot make a child read
 // an unbounded amount of log data.
 const rpcMaxLines = 2000
 
 // rpcMaxOutputBytes bounds the RESULT this child will ever ship back over a
-// single RPC (task-9 ruling): truncated from the start (the OLDEST lines
+// single RPC: truncated from the start (the OLDEST lines
 // are dropped, keeping the most recent output, which is what a log tail is
 // almost always wanted for), with a marker line saying so.
 const rpcMaxOutputBytes = 512 << 10
@@ -37,7 +37,7 @@ const rpcTruncatedMarker = "... (truncated to the last 512 KiB) ...\n"
 const rpcPostTimeout = 30 * time.Second
 
 // rpcMaxConcurrent bounds how many RPC executions this child runs at once
-// (round-1 review fix, IMPORTANT 2): each one shells out to `docker logs`
+// each one shells out to `docker logs`
 // (dispatchContainerLogs -> collectContainerLogs), so a master pushing rpc
 // frames faster than they complete -- buggy or hostile -- must not be able
 // to spawn an unbounded pile of concurrent subprocesses/goroutines. Beyond

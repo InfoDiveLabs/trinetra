@@ -35,7 +35,7 @@ type masterState struct {
 	audit    *auditLog
 	silences *silenceStore
 	alerting *alertingStore
-	// managed/managedPush (task 8) are the master's managed-config fragment
+	// managed/managedPush are the master's managed-config fragment
 	// store and its push cadence, nil-safe like silences/alerting for a
 	// bare-bones masterState built by an older test suite.
 	managed     *managedFragmentStore
@@ -54,7 +54,7 @@ type fleetProvider struct {
 	link      *fleet.Shipper
 	nodeID    string
 	masterURL string
-	// managed (task 8) is this CHILD's own managed-config state (nil for a
+	// managed is this CHILD's own managed-config state (nil for a
 	// master/solo daemon): fleetAPIImpl.Status() reads it directly (this is
 	// the live daemon process itself, not a separate CLI invocation) to
 	// populate core.LinkView.Managed.
@@ -210,7 +210,7 @@ func (f fleetAPIImpl) RenameNode(id, name, actor string) error {
 		return fmt.Errorf("node name must be 1-64 characters")
 	}
 	// Names must stay unique (case-insensitively) so a Matcher.Node glob has
-	// a precise target (review round 2, item b): unlike a join, a rename is
+	// a precise target: unlike a join, a rename is
 	// a deliberate operator action, so a collision is refused rather than
 	// silently suffixed. Registry.Rename checks and applies this atomically
 	// under one lock (review round 3, item 2: a separate NameConflict-then-
@@ -582,7 +582,7 @@ func (f fleetAPIImpl) DeleteMaintenance(id, actor string) error {
 	return nil
 }
 
-// Alerting returns the current routing/escalation config (task 5):
+// Alerting returns the current routing/escalation config:
 // defaultAlertingConfig if nothing has ever been saved (m.alerting == nil
 // covers a masterState built by an older test suite that never wired one).
 func (f fleetAPIImpl) Alerting() (core.AlertingConfig, error) {
@@ -677,7 +677,7 @@ func (f fleetAPIImpl) RouteTest(alert core.TestAlert) (core.RouteDecision, error
 }
 
 // RuleStates returns every aggregate rule's current value/firing state
-// (task 7); nil (never an error) when the engine has no rule evaluator
+// nil (never an error) when the engine has no rule evaluator
 // wired (m.engine == nil never happens once startMaster has run, but keeps
 // a bare-bones masterState test working, exactly RuleStates' sibling
 // Alerting/Incidents accessors' own nil-safety pattern).
@@ -692,7 +692,7 @@ func (f fleetAPIImpl) RuleStates() ([]core.RuleState, error) {
 	return m.engine.RuleStates(), nil
 }
 
-// Managed lists every managed-config fragment (task 8).
+// Managed lists every managed-config fragment.
 func (f fleetAPIImpl) Managed() ([]core.ManagedFragment, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -954,7 +954,7 @@ func fleetSeriesAggregate(agg core.Agg, vals []float64) float64 {
 	}
 }
 
-// FleetSeries implements core.FleetAPI (plan C, task 1b): metric's time
+// FleetSeries implements core.FleetAPI: metric's time
 // series across every node matching filter, either one series per node
 // (agg="none", capped at fleetSeriesCap nodes) or one aggregated series
 // (agg avg/max/min, Node ""). The master's own node is included the same
@@ -1030,7 +1030,7 @@ func (f fleetAPIImpl) FleetSeries(metric string, filter core.NodeFilter, agg cor
 		return out, nil
 	}
 
-	// avg/max/min (task-1b review round 1, item 3): every source's points
+	// avg/max/min: every source's points
 	// are floored onto ONE shared bucket grid (fleetSeriesBucketSeconds) --
 	// 60s at 1m resolution, the master's configured raw sample interval (or
 	// 10s) at raw resolution -- taking each node's LAST value within a

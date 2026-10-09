@@ -566,14 +566,14 @@ func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 	}
 	loop.tick(now)
 	// Submit's actual delivery (steps 2-4) runs off its own goroutine now
-	// (B3 review round 1); wait for it before asserting on *alerts.
+	//wait for it before asserting on *alerts.
 	engine.waitIdleForTest()
 
 	if len(*alerts) != 1 {
 		t.Fatalf("alerts = %+v, want one node-down (delivered via the engine)", *alerts)
 	}
 	incs := incidents.List(core.IncidentFilter{}, nil)
-	// (task 6 part 2) The default group key is (rule, severity) -- a
+	// The default group key is (rule, severity) -- a
 	// master-own node-down alert's key already embeds the target node id,
 	// so this bucket is still unique to this one node (see ruleFromKey's doc
 	// comment), just no longer formatted as the old "self:<key>" per-alert
@@ -1092,7 +1092,7 @@ func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
 	// always was in this test) online.
 	key := "fleet:node:" + nodeID + ":down"
 	// groupKey matches EXACTLY what a real fire through the engine would
-	// have computed (groupKeyFor's default, task 6 part 2) -- this direct
+	// have computed -- this direct
 	// Apply call is simulating "recorded before a restart", and the
 	// reconciling recover below goes through the real engine/Submit, which
 	// must find this exact incident open under that same bucket.

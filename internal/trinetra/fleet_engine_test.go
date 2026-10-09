@@ -15,7 +15,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// TestMain zeroes groupWait/groupInterval (task 6 part 2) for this package's
+// TestMain zeroes groupWait/groupInterval for this package's
 // ENTIRE test binary run: every engine/daemon test that predates incident
 // grouping fires an alert (often via a bare newFleetAlertEngine, not just
 // the shared engineFixture/routingFixture constructors) and expects it
@@ -28,7 +28,7 @@ import (
 // them via t.Cleanup (disableGroupWaitForTest does this to explicitly
 // restore back to this 0 baseline, which also documents the intent at each
 // call site) -- they are package VARS, not consts, precisely so a test can
-// do this (task 6 brief).
+// do this.
 func TestMain(m *testing.M) {
 	groupWait, groupInterval = 0, 0
 	os.Exit(m.Run())
@@ -63,7 +63,7 @@ type pushedFrame struct {
 // incident grouping fires an alert and expects it delivered immediately, but
 // group_wait/group_interval now gate a fire's first/updated group
 // notification (tryDeliverGroup). groupWait/groupInterval are package VARS,
-// not consts, precisely so a test can do this (task 6 brief) -- a
+// not consts, precisely so a test can do this -- a
 // grouping-specific test instead sets them to whatever it wants to exercise
 // directly, or leaves this disabled and drives timing through the fake
 // clock + an explicit TickGrouping call, exactly like escalation testing.
@@ -527,7 +527,7 @@ func TestEngineResurrectsMasterOwnAlertAfterCrash(t *testing.T) {
 	if !ok {
 		t.Fatal("incident missing after resurrection")
 	}
-	// (task 6 fix round 1, IMPORTANT 3) A fire-leg resurrection now goes
+	// A fire-leg resurrection now goes
 	// through the same grouped-delivery path (tryDeliverGroup) an ordinary
 	// fire would, rather than a solo "redelivered after restart" call, so
 	// several undelivered master-own members share ONE message on restart.
@@ -1203,7 +1203,7 @@ func TestEngineCrashBetweenRecordAndReceiptThenChildFallback(t *testing.T) {
 	}
 }
 
-// --- rotation + restart dedup memory (B3 review round 1) ------------------
+// --- rotation + restart dedup memory ------------------
 
 // TestEngineDedupSurvivesRotationAndReplay covers: an incident resolves,
 // incidents.jsonl rotates (the resolved incident's only record of it moves

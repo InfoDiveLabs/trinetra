@@ -54,7 +54,7 @@ func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
 // routing config, ingest state). It replaces the old, independent
 // writeFileSynced helper, which used a fixed (non-unique) temp filename and
 // reintroduced the exact concurrent-rename race writeFileAtomic was fixed
-// for (final-review engine I2).
+// for.
 func writeFileAtomicSynced(path string, b []byte, perm os.FileMode) error {
 	return writeFileAtomicImpl(path, b, perm, true)
 }

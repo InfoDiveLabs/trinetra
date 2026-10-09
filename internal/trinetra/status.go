@@ -299,7 +299,7 @@ type Snapshot struct {
 // failing -- a bounded "only failures" detail section. This deliberately
 // does not enumerate every healthy mount/container/unit: on a real docker
 // host that list is what used to blow the message past Telegram's
-// 4096-char limit (see fix-disk-telegram-brief.md). c may be nil (e.g. a
+// 4096-char limit. c may be nil (e.g. a
 // caller without a config handy); it degrades to config.Default() rather
 // than panicking.
 func renderStatus(s Snapshot, c *config.Config) string {

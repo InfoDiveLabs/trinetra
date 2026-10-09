@@ -99,19 +99,10 @@ func (a *fileAPI) Monitoring() (core.MonitoringView, error) {
 	return buildMonitoringView(snap, a.cfg), nil
 }
 
-// Series implements core.API: it opens the configured SampleStore fresh
-// (openConfiguredStore(a.cfg), rooted at the package-level stateDir the CLI
-// process already has set -- see openConfiguredStore's doc) for this one
-// call and closes it before returning, mirroring what cmdDump does today.
-// Resolution mapping and the nil/failed-store degrade-to-empty behavior are
-// the same as inprocAPI.Series (see that method's doc); a store open
-// failure, unlike a nil store, IS surfaced as an error here since it
-// reflects a real misconfiguration the CLI caller should see, not a daemon
-// running in a deliberately degraded mode. The error is wrapped with the
-// same "open sample store: " prefix cmdDump/cmdMigrate have always used
-// (migrate.go) so a caller that just Fprintln's the returned error -- as
-// cmdDump does -- keeps producing that exact wording, whether the store
-// open happens here or, previously, directly at the call site.
+// Series implements core.API: it opens the configured SampleStore for this
+// one call and closes it before returning. Unlike a nil store (degrades to
+// empty, as in inprocAPI.Series), a store open failure is surfaced, wrapped
+// with the "open sample store: " prefix that cmdDump/cmdMigrate print.
 func (a *fileAPI) Series(metric string, from, to int64, res core.Resolution) ([]core.SeriesPoint, error) {
 	store, err := openConfiguredStore(a.cfg)
 	if err != nil {
@@ -237,7 +228,7 @@ func (a *fileAPI) ContainerLogs(name string, lines int) (string, error) {
 // Version implements core.API: this process's own build-stamped version (#107).
 func (a *fileAPI) Version() (string, error) { return version.String(), nil }
 
-// UpdateStatus implements core.API (task 8): this host's persisted
+// UpdateStatus implements core.API: this host's persisted
 // self-update posture, via the shared coreUpdateStatus helper
 // (update_cmd.go) built from this fileAPI's own cfg.
 func (a *fileAPI) UpdateStatus() (core.UpdateStatusView, error) {
@@ -253,7 +244,7 @@ func (a *fileAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error
 // exactly like `trinetra update apply` itself -- synchronously, blocking
 // until the swap (or a failure) happens. This is the "synchronous CLI path"
 // core.API.UpdateApply's doc contrasts with inprocAPI.UpdateApply's
-// background-goroutine behavior (fix round 1, Ruling R10): fileAPI is never
+// background-goroutine behavior: fileAPI is never
 // served over the control socket (see coreapi_file.go's own top doc -- it is
 // the separate CLI process' file-backed reader), so there is no shared
 // connection/mutex for a long call to block, and nothing else needs this

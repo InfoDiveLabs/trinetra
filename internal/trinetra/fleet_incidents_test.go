@@ -226,7 +226,7 @@ func TestIncidentStoreAckGuardsResolvedIncidents(t *testing.T) {
 
 // TestIncidentStoreAppendEventAndMarkDeliveredLocally exercises the two
 // primitives fleetAlertEngine.deliverAndReceipt/Submit's alreadySeen branch
-// use directly, independent of the engine (B3 review round 1).
+// use directly, independent of the engine.
 func TestIncidentStoreAppendEventAndMarkDeliveredLocally(t *testing.T) {
 	dir := t.TempDir()
 	s, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))

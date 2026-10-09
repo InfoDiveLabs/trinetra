@@ -1175,7 +1175,7 @@ func fleetAlertingApply(args []string) int {
 	})
 }
 
-// fleetRulesCmd is `trinetra fleet rules` (task 7): a table of every
+// fleetRulesCmd is `trinetra fleet rules`: a table of every
 // configured aggregate rule's current value/firing state.
 func fleetRulesCmd(args []string) int {
 	if rejectPositionals("fleet rules", "trinetra fleet rules", args) {
@@ -1208,7 +1208,7 @@ func ruleStateLabel(s core.RuleState) string {
 	return "ok"
 }
 
-// fleetManagedCmd is `trinetra fleet managed` (task 8): CRUD + status over
+// fleetManagedCmd is `trinetra fleet managed`: CRUD + status over
 // the master's managed-config fragments.
 func fleetManagedCmd(args []string) int {
 	if len(args) == 0 {

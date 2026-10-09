@@ -90,7 +90,7 @@ func fleetSeriesValues(pts []core.FleetSeriesPoint, node string) map[int64]float
 }
 
 // TestFleetSeriesNoneReturnsOneSeriesPerNode pins agg="none"'s per-node
-// shape (task-1b-brief.md): both fake replica nodes' own points come back,
+// shape: both fake replica nodes' own points come back,
 // each tagged with that node's display name.
 func TestFleetSeriesNoneReturnsOneSeriesPerNode(t *testing.T) {
 	f := newFleetSeriesFixture(t)

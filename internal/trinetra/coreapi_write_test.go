@@ -1,7 +1,6 @@
-// Package trinetra: coreapi_write_test.go covers the task-8 write methods
+// Package trinetra: coreapi_write_test.go covers the write methods
 // (ApplyConfig/AckAlert/UnackAlert/TestChannel) on both core.API
-// implementations -- the counterpart to coreapi_inproc_test.go/
-// coreapi_file_test.go's read-method coverage.
+// implementations.
 package trinetra
 
 import (
@@ -12,12 +11,9 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestFileAPIApplyConfigPersists is the task-8 brief's Step 1 test: the
-// file-backed ApplyConfig must persist the posted config to cfgPath (via
-// saveCfg) so a later config.Load(cfgPath) sees it -- the same behavior
-// every existing `channel`/`target` CLI setter gets from saveCfg directly.
-// cfgPath is overridden via the package-level test seam (mirrors
-// channel_cli_test.go/dump_test.go/main_test.go's own use of it).
+// TestFileAPIApplyConfigPersists checks the file-backed ApplyConfig persists
+// the posted config to cfgPath (via saveCfg) so a later config.Load sees it.
+// cfgPath is overridden via the package-level test seam.
 func TestFileAPIApplyConfigPersists(t *testing.T) {
 	dir := t.TempDir()
 	prevCfgPath := cfgPath
@@ -79,11 +75,9 @@ func TestInprocApplyConfigPropagatesReloadError(t *testing.T) {
 	}
 }
 
-// TestFileAPIAckAlertUnackAlertRoundTrip pins fileAPI's Ack/Unack: they must
-// load alerts.json, flip Acked/AckedAt via AlertState.Ack/Unack, and save it
-// back -- readable afterward via LoadAlertState, exactly like
-// cmdAlertsAck's pre-task-8 inline sequence (now delegated to this method,
-// see alerts_cli.go).
+// TestFileAPIAckAlertUnackAlertRoundTrip pins fileAPI's Ack/Unack: they load
+// alerts.json, flip Acked/AckedAt via AlertState.Ack/Unack and save it back,
+// readable afterward via LoadAlertState.
 func TestFileAPIAckAlertUnackAlertRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	state := NewAlertState()

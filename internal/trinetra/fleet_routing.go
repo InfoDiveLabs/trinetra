@@ -1,5 +1,5 @@
 // Package trinetra: fleet_routing.go is the master's routing/escalation
-// config store (spec 6/task 5): validated, versioned persistence of
+// config store: validated, versioned persistence of
 // AlertingConfig to alerting.json, and resolveRoute -- the ONE function both
 // the alerting engine's real delivery (fleet_engine.go) and
 // FleetAPI.RouteTest (fleet_provider.go) call to decide which policy applies
@@ -74,7 +74,7 @@ func validDuration(s string) bool {
 func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name string) bool) error {
 	// A totally empty ROUTING config (no routes, no policies, no default) is
 	// the explicit "reset to the built-in default" case -- always valid, and
-	// skips every routing-specific check below. Rules (task 7) are a
+	// skips every routing-specific check below. Rules are a
 	// separate concern validated unconditionally further down: a config that
 	// only sets Rules, leaving routing untouched/default, must not be forced
 	// to also supply a DefaultPolicy just to save its rules.
@@ -165,7 +165,7 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 }
 
 // validGroupByField reports whether g is one of the incident-grouping
-// (task 6 part 2) GroupBy fields a route may list: "node", "rule",
+// GroupBy fields a route may list: "node", "rule",
 // "severity", or "tag:<key>" for any non-empty key.
 func validGroupByField(g string) bool {
 	switch g {
@@ -274,7 +274,7 @@ func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name stri
 type routeResolution struct {
 	Route    string
 	Policies []core.Policy
-	// GroupBy is the FIRST matched route's own GroupBy (task 6 part 2),
+	// GroupBy is the FIRST matched route's own GroupBy,
 	// exactly mirroring how Route itself is only ever set from the first
 	// match: an empty GroupBy (no route matched, or the matched route didn't
 	// set one) means "use the default (rule, severity) group key" -- see

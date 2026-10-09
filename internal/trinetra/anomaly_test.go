@@ -175,8 +175,8 @@ func TestAnomalyEvaluatePassesIntervalToObserve(t *testing.T) {
 func TestBaselineMinPctGateSuppressesNoisyStableMetric(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
-	// Build a tight baseline around 43 (tiny alternating wobble keeps
-	// variance small so a 45 reads as a large z-score).
+	// Tight baseline around 43; the tiny wobble keeps variance small so a 45
+	// reads as a large z-score.
 	for i := 0; i < 400; i++ {
 		v := 43.0
 		if i%2 == 0 {
@@ -244,13 +244,9 @@ func TestBreachMinPctGateNearZeroMeanDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestEvaluateFireRecordsCriticalOnActiveAlert pins Part 3 of the
-// baseline/strip/status fix: the topbar's status pill needs to distinguish
-// critical from warning severity among CURRENTLY ACTIVE alerts, but
-// ActiveAlert previously carried no severity at all (only Since/Reason/
-// Acked/AckedAt) -- once a Check fired, its Critical flag was lost. Evaluate
-// must now carry each firing Check's Critical flag onto the ActiveAlert it
-// records, for both critical and non-critical (warning) checks.
+// TestEvaluateFireRecordsCriticalOnActiveAlert pins that Evaluate carries each
+// firing Check's Critical flag onto its ActiveAlert, so the topbar status pill
+// can tell critical from warning among currently active alerts.
 func TestEvaluateFireRecordsCriticalOnActiveAlert(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()

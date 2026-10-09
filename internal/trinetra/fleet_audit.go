@@ -67,7 +67,7 @@ const auditRecentChunkGrowth = 4
 // no way to know "how far back is enough" without a limit). A missing file
 // is not an error (nothing audited yet).
 //
-// Bounded read (C5 review carry-over): rather than scanning the file
+// Bounded read: rather than scanning the file
 // forward from byte 0 (the old implementation), this seeks backward from
 // EOF in growing chunks (auditRecentChunkSize, doubling by
 // auditRecentChunkGrowth each step) until it has accumulated at least limit

@@ -171,7 +171,7 @@ type liveBuilder struct {
 	snap           func() Snapshot
 	alertStatePath string
 	host           func() HostInfo
-	// managed (task 8) reports this child's managed-config state on every
+	// managed reports this child's managed-config state on every
 	// LiveUpdate (nil until it has ever received a "managed_config" frame
 	// -- see managedChild.Report).
 	managed  *managedChild

@@ -294,11 +294,10 @@ func httpPingGuarded(url string, block bool) error {
 	return nil
 }
 
-// collectFast gathers the cheap, high-frequency resources: /proc reads for
-// CPU/mem/swap/load, plus the /sys thermal read (also cheap). prev is the
-// caller's single-goroutine-owned CPUStat used to compute CPU% as a delta
-// across ticks; it is mutated in place. collectFast never shells out, so it
-// is safe to call every fast_interval tick without load on the host.
+// collectFast gathers the cheap, high-frequency resources (/proc reads and the
+// /sys thermal read). prev is the caller's single-goroutine-owned CPUStat,
+// mutated in place to compute CPU% as a delta across ticks. It never shells
+// out.
 func collectFast(x Exec, fs FileSource, prev *CPUStat) Snapshot {
 	var snap Snapshot
 	if b, err := fs.Read("/proc/stat"); err == nil {
@@ -370,20 +369,12 @@ func collectSlow(x Exec, fs FileSource, da dockerAccess, c *config.Config, store
 	// healthy target flipped to gone.
 	snap.collectorsAttempted = map[string]bool{"disk": true, "services": true}
 	// snap.Disks and snap.DiskDetail are BOTH derived from the single typed
-	// `df -PT -B1` call (device/fstype/usage/size/free per mount), gated by
-	// isRealMount && isRealFsType. This used to be two separate df calls --
-	// snap.Disks from untyped `df -PB1` (path-prefix filtering only) and
-	// snap.DiskDetail from the typed call -- which meant snap.Disks had no
-	// fstype to filter on. On a root daemon on a real docker host, `df`
-	// lists one `overlay` mount per container (plus squashfs/tmpfs/nsfs
-	// pseudo-mounts), so snap.Disks silently exploded to 70+ junk entries:
-	// this fed 70+ bogus "disk:<mount>" series into the tsfile store, and
-	// blew the /stats,/status,/disk Telegram replies past the 4096-char
-	// limit (see fix-disk-telegram-brief.md). Deriving both maps from the
-	// same typed+filtered source keeps them in lockstep and closes that gap.
+	// `df -PT -B1` call, gated by isRealMount && isRealFsType. An untyped df
+	// lists one `overlay` mount per container (plus squashfs/tmpfs/nsfs) on a
+	// docker host, which blew snap.Disks up to 70+ junk entries, bogus
+	// "disk:<mount>" series and Telegram replies past the 4096-char limit.
 	// `df -Pi` (inode-used%) is a separate call since -T and -i are mutually
-	// exclusive df flags; either call failing just narrows what this tick
-	// can report rather than failing collectSlow.
+	// exclusive; either call failing just narrows what this tick reports.
 	if out, err := x.Run("df", "-PT", "-B1"); err == nil {
 		types := parseDFTypes(string(out))
 		var inodes map[string]float64
@@ -631,11 +622,9 @@ const storeMaintenanceInterval = 15 * time.Minute
 // without racing a concurrent read from the sampler goroutine.
 var alertRoute atomic.Pointer[func(Alert) bool]
 
-// setAlertRoute installs f (nil clears it) as alertRoute and returns a
-// restore func that puts back whatever was installed before -- so
-// startChild's shutdown, and a test's t.Cleanup, can undo exactly their own
-// wiring rather than unconditionally clearing a route something else in the
-// same process installed.
+// setAlertRoute installs f (nil clears it) as alertRoute and returns a restore
+// func that puts back whatever was installed before, so shutdown and test
+// cleanup undo only their own wiring.
 func setAlertRoute(f func(Alert) bool) (restore func()) {
 	var prev *func(Alert) bool
 	if f == nil {
@@ -646,18 +635,11 @@ func setAlertRoute(f func(Alert) bool) (restore func()) {
 	return func() { alertRoute.Store(prev) }
 }
 
-// reloadOnHUP is the SIGHUP handler's actual logic, extracted from its
-// goroutine (below, in the daemon's own startup function) so it is testable
-// without spinning the whole daemon: read cfgPath and, if that succeeds,
-// apply it via reload -- which reimposes any managed-config values before
-// persisting (round-2 review, IMPORTANT: an operator's SIGHUP after a
-// direct config.json edit, a restored backup, or an offline write must not
-// silently adopt a diverged managed key) and then applies in-process,
-// exactly as this handler always has. A Load failure is silently ignored
-// (msg == "", err == nil), matching this handler's behaviour before this
-// extraction; a reload failure (e.g. saveDaemonCfg's write failing) is
-// returned for the caller to report, which could not happen before reload
-// replaced a direct, always-succeeding applyConfig call here.
+// reloadOnHUP is the SIGHUP handler's logic, split out so it is testable: read
+// cfgPath and apply it via reload, which reimposes managed-config values
+// before persisting so an external edit cannot silently adopt a diverged
+// managed key. A Load failure is silently ignored (msg == "", err == nil); a
+// reload failure (e.g. saveDaemonCfg's write failing) is returned.
 func reloadOnHUP(cfgPath string, reload func(*config.Config) error) (msg string, err error) {
 	c, loadErr := config.Load(cfgPath)
 	if loadErr != nil {
@@ -715,23 +697,16 @@ func enqueueAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, qui
 	}
 }
 
-// deliverSyncAndLog is enqueueAndLog's synchronous twin, used ONLY as the
-// fleet master's alerting-engine delivery hook (fleetDeps.alert,
-// fleetAlertEngine.deliver in fleet_engine.go). The engine must know
-// whether at least one channel actually accepted the alert before it pushes
-// a receipt down to a child node (B3 review round 1: a receipt must never
-// go out before delivery has actually completed) -- something
-// enqueueAndLog's fire-and-forget NotifierQueue.Enqueue cannot report. It
-// logs and publishes exactly like enqueueAndLog (so the master's own
-// alertlog.jsonl/live event bus stay a complete history for its own alerts,
-// same as before this existed), then dispatches synchronously against q's
-// CURRENT Dispatcher -- bypassing the async queue and its drop policy
-// entirely, which exists for the high-volume local anomaly path this isn't
-// -- and reports whether at least one channel succeeded.
+// deliverSyncAndLog is enqueueAndLog's synchronous twin, used ONLY as the fleet
+// master's alerting-engine delivery hook (fleetDeps.alert). The engine must
+// know whether at least one channel accepted the alert before it pushes a
+// receipt to a child, which the fire-and-forget NotifierQueue.Enqueue cannot
+// report. It logs and publishes like enqueueAndLog, then dispatches
+// synchronously against q's CURRENT Dispatcher (bypassing the async queue and
+// its drop policy) and reports whether at least one channel succeeded.
 //
-// The engine already runs this off its own goroutine per alert (see
-// Submit), so blocking here for up to the Dispatcher's ~15s-per-channel
-// timeout does not stall the engine's caller.
+// The engine already runs this off its own goroutine per alert, so blocking
+// for up to the Dispatcher's ~15s-per-channel timeout stalls no caller.
 func deliverSyncAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert, quiet bool) bool {
 	if alog != nil {
 		_ = alog.AppendAlertEvent(AlertEvent{
@@ -755,7 +730,7 @@ func deliverSyncAndLog(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Alert,
 }
 
 // deliverSyncAndLogTo is deliverSyncAndLog narrowed to a specific
-// channel-name subset (fleet routing, task 5): identical alert-log/live-bus
+// channel-name subset: identical alert-log/live-bus
 // recording, but dispatches via the Dispatcher's DispatchTo rather than
 // Dispatch -- used as fleetAlertEngine.SetRouting's deliverNamed once a
 // routing config is wired (fleetDeps.deliverSyncTo below).
@@ -782,7 +757,7 @@ func deliverSyncAndLogTo(alog *AlertLog, bus *eventBus, q *NotifierQueue, a Aler
 }
 
 // dispatchOnlyTo dispatches to a channel-name subset WITHOUT any
-// alert-log/live-bus recording (fleet routing, task 5): used as
+// alert-log/live-bus recording: used as
 // fleetAlertEngine.SetRouting's dispatchOnly for escalation/repeat
 // notifications, which re-send an alert that was already recorded once (at
 // its own fire) rather than logging a new record every time.
@@ -929,7 +904,7 @@ func cmdDaemon(args []string) int {
 	// under mu (mirroring setChatID's pointer-swap pattern below). It does
 	// NOT persist and does NOT reimpose managed-config values -- reload
 	// (below) is the one path that does both, and every caller with reason
-	// to do either (including the SIGHUP handler, round 2 review) goes
+	// to do either goes
 	// through it instead of calling this directly any more.
 	applyConfig := func(c *config.Config) {
 		nd := NewDispatcher(channelsFromConfig(c), dispatcherTimeout)
@@ -963,7 +938,7 @@ func cmdDaemon(args []string) int {
 		os.Exit(0)
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
-	// managedRef (task 8, round-1 review IMPORTANT 1) holds this child's
+	// managedRef holds this child's
 	// managedChild once startFleet/startChild has built one (nil forever on
 	// solo/master, and briefly nil on a child too, until the Store below
 	// runs) -- reload reads it fresh on every call via an atomic pointer
@@ -978,7 +953,7 @@ func cmdDaemon(args []string) int {
 	// in-memory config (or a plugin's) may predate a `trinetra fleet`
 	// command, which must be the only thing that changes them.
 	//
-	// reimposeManagedValues (round-1 review IMPORTANT 1) runs FIRST: reload
+	// reimposeManagedValues runs FIRST: reload
 	// is the ONE shared full-config apply path every ApplyConfig caller goes
 	// through (the web channels/public-settings pages, every ctl "manage"
 	// screen, a child's own managed-config apply) -- none of the ordinary
@@ -994,22 +969,11 @@ func cmdDaemon(args []string) int {
 		applyConfig(newCfg)
 		return nil
 	}
-	// SIGHUP: re-read cfgPath and apply it. Routed through reload (round-2
-	// review, IMPORTANT), not applyConfig directly as before: an external
-	// edit to config.json (a direct edit, a restored backup, an offline
-	// write) can diverge a managed key from its committed value, and SIGHUP
-	// is exactly the mechanism an operator would use to pick such an edit
-	// up -- without going through reload's reimpose, that divergence would
-	// be picked up VERBATIM (including the diverged managed key) and then
-	// PERSIST there forever, since it's now what's on disk AND in memory.
-	// reload's reimpose forces any managed key straight back and, if that
-	// actually changed anything, saveDaemonCfg writes the corrected file
-	// back out -- so a SIGHUP after an external edit self-heals instead of
-	// adopting the drift. This preserves the handler's existing observable
-	// behaviour otherwise (read cfgPath, apply in-process, print "config
-	// reloaded"; a Load error stays silent, exactly as before) -- reload
-	// adds only the reimpose-then-save step in front of the same
-	// applyConfig call it already made.
+	// SIGHUP: re-read cfgPath and apply it via reload, not applyConfig directly:
+	// an external edit can diverge a managed key from its committed value, and
+	// without reload's reimpose that drift would be adopted verbatim and persist.
+	// reload forces the managed key back and saveDaemonCfg rewrites the file, so
+	// a SIGHUP after an external edit self-heals. A Load error stays silent.
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, sighup)
 	go func() {
@@ -1266,7 +1230,7 @@ func cmdDaemon(args []string) int {
 		func() error { return sdNotify("WATCHDOG=1") })
 
 	// boot/recovery report from heartbeat gap, deduped against a previous start
-	// (Task 5): the same gap, recomputed from an unchanged heartbeat on a
+	// the same gap, recomputed from an unchanged heartbeat on a
 	// restart, reports only once. A clean-stop marker written by the SIGTERM
 	// handler suppresses the report entirely (the stop was intentional).
 	c0 := getCfg()
@@ -1320,19 +1284,15 @@ func cmdDaemon(args []string) int {
 	// stop after this point IS reported on the next boot.
 	_ = os.Remove(cleanStopPath)
 
-	// self-update: start the background loop that checks for a new release
-	// on the configured cadence and turns update.State transitions into
-	// Alerts (update_daemon.go). alog/bus/q all exist by this point. A
-	// Pending update left by a killed guard, a crash mid-swap or a reboot is
-	// NOT resumed from here: this may be the new, broken build. The
-	// persistent trinetra-update-watchdog.timer runs the pinned guard for
-	// that (update_watchdog.go, R14).
-	// Update results/availability bypass quiet hours (task-7 brief), same as
-	// the boot report and scheduled digests above: an operator waiting on a
-	// pending update -- or one that just rolled back -- needs to know
-	// regardless of the clock (fix-round-1 F3: this used to route through
-	// inQuietHours like an ordinary anomaly alert, which could silently
-	// suppress it).
+	// self-update: start the background loop that checks for a new release on the
+	// configured cadence and turns update.State transitions into Alerts
+	// (update_daemon.go). A Pending update left by a killed guard, a crash
+	// mid-swap or a reboot is NOT resumed from here: this may be the new, broken
+	// build. The persistent trinetra-update-watchdog.timer runs the pinned guard
+	// for that (update_watchdog.go, R14).
+	// Update results/availability bypass quiet hours, like the boot report and
+	// scheduled digests: an operator waiting on a pending or rolled-back update
+	// needs to know regardless of the clock.
 	go startUpdateLoop(daemonCtx, getCfg, newUpdater(getCfg()), func(a Alert) {
 		enqueueAndLog(alog, bus, q, a, false)
 	})
@@ -1516,11 +1476,9 @@ func cmdDaemon(args []string) int {
 			lastWeekly = now
 			enqueueAndLog(alog, bus, q, Alert{Title: digestNow(store, now, 7, "📆 weekly rollup", configuredRawRetention(c)), Severity: SevInfo, Kind: "fire", Source: "digest", Time: now.Unix()}, false)
 		}
-		// alerts.json only changes when a fire/recover transition happened;
-		// baseline.json's stats are updated every fast tick in memory but only
-		// need to hit disk at the slow cadence. Both were previously saved
-		// unconditionally every fast tick, which is 12x today's default
-		// (fast=5s, slow=60s) write volume for no benefit.
+		// alerts.json only changes on a fire/recover transition; baseline.json's
+		// stats change every fast tick in memory but only need to hit disk at the
+		// slow cadence.
 		if stateChanged {
 			// Pull any CLI-written ack flags back onto the in-memory state
 			// before saving, or this save would clobber a `trinetra alerts
@@ -1674,14 +1632,11 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 			setChatID(id)
 			enroll.Reset()
 		}
-		// onCallback (task 9) answers a button tap: unlike reply, it is
-		// invoked for EVERY callback_query processUpdates sees, authorized
-		// or not, since Telegram requires an answer either way. On solo/
-		// child, fleetAPI is that role's own core.FleetAPI (never nil --
-		// fleetProvider.Fleet always returns one), whose write methods all
-		// fail closed with core.ErrNotMaster, so telegramCallbackAnswer's
-		// action branches simply never succeed there -- matching the
-		// ruling that solo/child callbacks are ignored beyond the answer.
+		// onCallback answers a button tap: unlike reply, it runs for EVERY
+		// callback_query processUpdates sees, authorized or not, since Telegram
+		// requires an answer either way. On solo/child, fleetAPI is that role's own
+		// core.FleetAPI (never nil), whose write methods fail closed with
+		// core.ErrNotMaster, so the action branches never succeed there.
 		onCallback := func(cc *config.Config, u telegram.Update) {
 			text := telegramCallbackAnswer(fleetAPI, cc.Telegram.ChatID, u, time.Now)
 			client := telegram.New(cc.Telegram.Token, cc.Telegram.ChatID)
@@ -1696,11 +1651,9 @@ func pollLoop(getCfg func() *config.Config, setChatID func(string), store Sample
 // processUpdates handles one batch of inbound Telegram updates. It advances
 // the offset, enrolls the owner from a correct "/start <pin>" while the bot is
 // unclaimed, drops any update whose sender is not the owner chat, and invokes
-// reply for authorized text commands or onCallback for a button tap (task 9;
-// onCallback runs for EVERY callback_query, authorized or not -- it decides
-// authorization itself and always answers). It returns the new offset and
-// the (possibly reloaded) config so the caller can carry both into the next
-// GetUpdates cycle.
+// reply for authorized text commands or onCallback for a button tap
+// (onCallback runs for EVERY callback_query and decides authorization itself).
+// It returns the new offset and the (possibly reloaded) config.
 func processUpdates(ups []telegram.Update, offset int, c *config.Config, enroll *enrollState, now func() time.Time, getCfg func() *config.Config, setChatID func(string), reply func(*config.Config, telegram.Update), onCallback func(*config.Config, telegram.Update)) (int, *config.Config) {
 	for _, u := range ups {
 		offset = u.UpdateID + 1

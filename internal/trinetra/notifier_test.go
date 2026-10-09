@@ -81,7 +81,7 @@ func TestDispatcherFansOutToAll(t *testing.T) {
 	}
 }
 
-// TestDispatcherDispatchToNamedSubset covers fleet routing (task 5): only
+// TestDispatcherDispatchToNamedSubset covers fleet routing: only
 // the named channel receives the alert, even though every channel is
 // enabled and would otherwise allow it.
 func TestDispatcherDispatchToNamedSubset(t *testing.T) {

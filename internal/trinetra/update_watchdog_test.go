@@ -273,7 +273,7 @@ func TestGuardProbesCannotOverrunDeadline(t *testing.T) {
 	}
 }
 
-// TestRollbackPendingDedupsBadVersions is R24 (rehearsal finding c): a
+// TestRollbackPendingDedupsBadVersions is R24: a
 // version that fails its gate twice is listed once, whatever its "v".
 func TestRollbackPendingDedupsBadVersions(t *testing.T) {
 	p := testUpdatePaths(t)

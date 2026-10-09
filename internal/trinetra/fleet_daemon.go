@@ -50,13 +50,13 @@ type fleetDeps struct {
 	// that must not block.
 	deliverSync func(Alert) bool
 	// deliverSyncTo is deliverSync narrowed to a specific channel-name subset
-	// (fleet routing, task 5): same synchronous, completion-reporting
+	// same synchronous, completion-reporting
 	// contract, used for the fire/recover legs once a routing config is
 	// wired (fleetAlertEngine.SetRouting's deliverNamed) -- it also logs to
 	// the alert log/live bus, exactly like deliverSync.
 	deliverSyncTo func(a Alert, channels []string) bool
 	// dispatchOnly delivers to a channel-name subset WITHOUT logging to the
-	// alert log/live bus (fleet routing, task 5): used for escalation/repeat
+	// alert log/live bus: used for escalation/repeat
 	// notifications (fleetAlertEngine.SetRouting's dispatchOnly), which are
 	// not new alert records -- only the fire/recover legs are.
 	dispatchOnly func(a Alert, channels []string) bool
@@ -66,7 +66,7 @@ type fleetDeps struct {
 	// deliverFallback instead of enqueueAndLog, since that delivery must be
 	// unconditional (see deliverFallback's doc comment). Only startChild
 	// ever calls it; solo and master never construct a handoff to call it
-	// from. silences is startChild's own pushedSilences (task 4): passed
+	// from. silences is startChild's own pushedSilences: passed
 	// through opaquely here since daemon.go builds this closure once, before
 	// any child-specific state exists, and forwarded to deliverFallback so a
 	// fallback delivery still covered by a pushed silence is suppressed.
@@ -234,7 +234,7 @@ type masterLoop struct {
 	// incidents/dedup cover both producers uniformly. It also owns the lease
 	// push cadence (TickLeases, called from tick below).
 	engine *fleetAlertEngine
-	// managed (task 8) drives the periodic managed-config push cadence
+	// managed drives the periodic managed-config push cadence
 	// (TickManaged); nil-safe (a bare-bones masterLoop from an older test
 	// suite never calls it).
 	managed *managedPusher
@@ -375,7 +375,7 @@ func (l *masterLoop) tick(now time.Time) {
 	if runOrphanCheck {
 		l.checkOrphanedIncidents(now, ev)
 	}
-	// Lease cadence (global-constraints/task-3 ruling): push lease{until:
+	// Lease cadence: push lease{until:
 	// now+90s} to every connected, non-revoked node at least every 30s.
 	// Revoked/removed nodes are simply absent from nodeIDs. A freshly
 	// connected node also gets one immediately via Hub.OnConnect
@@ -386,11 +386,11 @@ func (l *masterLoop) tick(now time.Time) {
 		l.engine.TickSilences(now, nodeIDs)
 		l.engine.TickEscalations(now)
 		l.engine.TickGrouping(now)
-		// TickRules (task 7) self-gates to ruleTickInterval (30s); called
+		// TickRules self-gates to ruleTickInterval (30s); called
 		// every 5s tick exactly like the others above, cheap no-op otherwise.
 		l.engine.TickRules(now)
 	}
-	// TickManaged (task 8) self-gates to managedPushInterval (10m); nil-safe.
+	// TickManaged self-gates to managedPushInterval (10m); nil-safe.
 	l.managed.TickManaged(now, nodeIDs)
 	if now.Sub(l.lastFlush) >= 30*time.Second {
 		l.lastFlush = now
@@ -420,7 +420,7 @@ func (l *masterLoop) tick(now time.Time) {
 // stillActive reports whether the condition key names is still true, so
 // checkOrphanedIncidents knows whether an open master-own incident for it
 // should be recovered. It is deliberately small and generic (a plain
-// switch on the key's shape) so a later task's rule alerts (B7) can extend
+// switch on the key's shape) so a later task's rule alerts can extend
 // it with their own keys without touching the reconciliation logic itself;
 // an unrecognized key defaults to "still active" (leave it alone) rather
 // than guessing it should be auto-resolved.
@@ -463,7 +463,7 @@ func (l *masterLoop) checkOrphanedIncidents(now time.Time, ev fleet.Evaluation) 
 		if !isOpenState(inc.State) || len(inc.Alerts) == 0 {
 			continue // not open, or nothing recorded on it
 		}
-		// (task 6 part 2) A grouped or dependency-folded incident can hold
+		// A grouped or dependency-folded incident can hold
 		// several independent master-own members (e.g. two down nodes
 		// sharing one incident, or a dependency fold): each is reconciled on
 		// its own condition, not just the incident's last-appended alert. A
@@ -573,7 +573,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		return err
 	}
 	// Node names are required to be unique for every NEW join or rename
-	// (review round 2, item b), but an existing registry from before that
+	// but an existing registry from before that
 	// requirement is loaded as-is, with no migration -- just a one-time
 	// warning naming the duplicates, so the operator knows a
 	// silence/maintenance Matcher.Node glob on one of these names may hit
@@ -612,11 +612,11 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		return id, nil
 	})
 	engine.SetRouting(alerting, d.deliverSyncTo, d.dispatchOnly)
-	// SetConfig (task 6 fix round 1, IMPORTANT 5): lets tryDeliverGroup read
+	// SetConfig: lets tryDeliverGroup read
 	// the LIVE fleet.fallback_after (config can change at runtime via `set`)
 	// for effectiveGroupInterval's cap.
 	engine.SetConfig(d.getCfg)
-	// SetDependencies (task 6 part 3): expand a node's DependsOn ("tag:<t>"
+	// SetDependencies: expand a node's DependsOn ("tag:<t>"
 	// entries resolved against the registry's CURRENT tag membership, read
 	// fresh on every call so a tag added/removed after the fact takes effect
 	// immediately) into a concrete node-id list the engine can check for
@@ -649,7 +649,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		}
 		return out
 	})
-	// managedPusher (task 8) drives the master's managed_config push: on
+	// managedPusher drives the master's managed_config push: on
 	// change (SaveManaged/DeleteManaged, fleetAPIImpl), on connect (below),
 	// and every managedPushInterval (masterLoop.tick's TickManaged).
 	managedPush := newManagedPusher(hub.Push, hub.Connected, managed, func(id string) []string {
@@ -678,7 +678,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		engine.HandleChildAlert(nodeID, name, tags, ev)
 	})
 	sink.onAckSync = engine.HandleChildAckSync
-	// rpcReg (task 9) is the master's pending-RPC registry for remote calls
+	// rpcReg is the master's pending-RPC registry for remote calls
 	// (currently just container_logs) over the master-to-child stream:
 	// wired into both the hub (to receive results) and the sink (so
 	// replicaAPI.ContainerLogs/AckAlert/UnackAlert can reach hub/rpcReg/
@@ -696,7 +696,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		revoked[n.ID] = n.Revoked
 	}
 	tracker.Seed(ids, revoked, time.Now().Unix())
-	// SetRules (task 7): reg/sink/tracker now all exist, so the aggregate-
+	// SetRules: reg/sink/tracker now all exist, so the aggregate-
 	// rule evaluator can read tags/LastSeen, snapshots/1m series and
 	// liveness state directly (fleet-phase2-map.md section 8). started is
 	// this master start's own timestamp -- absent(...)'s blind window
@@ -779,7 +779,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		// handler's own request context, so handleStream's select loop would
 		// otherwise only end once the client disconnects -- Shutdown's
 		// deadline would silently elapse without ever closing a connected
-		// child's stream (final-review transport I2).
+		// child's stream.
 		hub.CloseAll()
 		deadline := time.Now().Add(masterShutdownDeadline)
 		sctx, scancel := context.WithDeadline(context.Background(), deadline)
@@ -816,7 +816,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 		return fmt.Errorf("open outbox: %w", err)
 	}
 	tee := newOutboxTee(ob, d.logf)
-	// managedState (task 8) is this child's managed-config state, restored
+	// managedState is this child's managed-config state, restored
 	// from its sidecar (fleet-child/managed.json) so a restart while the
 	// master is unreachable keeps enforcing whatever was last applied.
 	managedState := loadManagedChild(managedChildPath(d.stateDir), d.getCfg, d.self, time.Now)
@@ -873,7 +873,6 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	// sh is declared with var (rather than :=) so OnFrame's closure -- which
 	// runs only later, off the stream's read loop, well after this literal
 	// finishes constructing it -- can reference it to post an RPC's result
-	// (handleRPCFrame/fleet_rpc_child.go, task 9).
 	var sh *fleet.Shipper
 	sh = fleet.NewShipper(fleet.ShipperConfig{
 		MasterURL: cfg.Fleet.MasterURL, Pin: cfg.Fleet.CAPin, Identity: id, Outbox: ob,

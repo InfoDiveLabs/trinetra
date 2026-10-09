@@ -1,5 +1,5 @@
 // Package trinetra: fleet_telegram.go is the master's side of a Telegram
-// inline-button tap (task 9): daemon.go's pollLoop/processUpdates route a
+// inline-button tap: daemon.go's pollLoop/processUpdates route a
 // callback_query here instead of through handleCommand's text-command
 // router. Solo and child never reach telegramCallbackAnswer's action
 // branches for a real reason to act on -- their core.FleetAPI (via
@@ -19,7 +19,7 @@ import (
 )
 
 // telegramCallbackAnswer decides how the master responds to one inbound
-// Telegram callback_query (task 9 ruling):
+// Telegram callback_query:
 //
 //   - a callback from any chat other than the configured, enrolled owner
 //     (including "no owner enrolled yet", ownerChatID == "") is answered

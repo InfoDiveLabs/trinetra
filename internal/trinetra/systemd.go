@@ -169,7 +169,7 @@ func installBinaryAndUnit(self string, requireSigned bool) error {
 		return err
 	}
 	// updatePaths -- NOT the bare package-level stateDir -- is where install's
-	// floor check/raise must read and write (fix round 1, Ruling R8): the
+	// floor check/raise must read and write: the
 	// update state (floor, pending, last outcome) lives at
 	// defaultUpdatePaths().dir() == StateDir/update, exactly where
 	// `trinetra update`/the guard/status already read and write it
@@ -407,7 +407,7 @@ func verifyInstallSignature(self string, names []string, requireSigned bool) (up
 // running is the currently installed binary's own reported version, or the
 // zero Version when nothing is installed yet (a fresh host), a serverwatch
 // migration hasn't placed /usr/local/bin/trinetra yet, or the old binary
-// didn't answer `version --json`. Ruling R9 (fix round 1, Important #1):
+// didn't answer `version --json`. Ruling R9:
 // when running is the zero Version, MinUpgradeFrom is deliberately NOT
 // enforced against it -- CheckPolicy's Running field is instead set to the
 // manifest's own MinUpgradeFrom, which trivially satisfies that sub-check --

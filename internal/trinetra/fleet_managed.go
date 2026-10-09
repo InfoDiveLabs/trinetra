@@ -1,5 +1,5 @@
 // Package trinetra: fleet_managed.go is the master's managed-config
-// fragment store and push (spec 6, task 8) plus the child's counterpart
+// fragment store and push plus the child's counterpart
 // that applies whatever the master last pushed, live, with no restart, and
 // makes the ten allowlisted keys read-only locally while under management.
 //
@@ -26,16 +26,16 @@ import (
 )
 
 // managedFragmentAllowlistKeys is the exact, closed set of config.Config
-// keys a managed-config fragment may set (task-8 ruling): five thresholds,
+// keys a managed-config fragment may set: five thresholds,
 // the three baseline/anomaly-tuning keys, quiet_hours and
 // critical_overrides_quiet. Every one of these is already a live-apply key
 // (not RestartRequired -- see config.Keys()/keyCatalog), which is what lets
 // the child apply a pushed fragment through the existing ApplyConfig/reload
-// path with no restart. Pushing a fallback CHANNEL set (spec 5.4) is
+// path with no restart. Pushing a fallback CHANNEL set is
 // explicitly OUT of scope for this fragment mechanism -- deferred to a
 // later task.
 //
-// This delegates to core.ManagedKeys (plan C task C5) rather than defining
+// This delegates to core.ManagedKeys rather than defining
 // its own literal copy: internal/web's managed-config page needs this exact
 // allowlist too (to build the fragment editor's key <select>), and
 // internal/web cannot import internal/trinetra, so the one true copy lives
@@ -182,7 +182,7 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 	defer s.mu.Unlock()
 
 	// Round-1 review MINOR: an empty ID is a server-side UPSERT by tag, not
-	// just a create -- "one fragment per tag" (task-8 ruling) is enforced
+	// just a create -- "one fragment per tag" is enforced
 	// HERE, atomically under this same lock, rather than by a caller
 	// (`fleet managed set`) first listing fragments and then deciding
 	// whether to create or update: that list-then-write was a TOCTOU (two
@@ -200,7 +200,7 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 		}
 	}
 
-	// Merge carry-over (C5 review): when the caller asked to merge (`fleet
+	// Merge carry-over: when the caller asked to merge (`fleet
 	// managed set --tag X k=v`'s default), fold frag.Values into the
 	// EXISTING fragment's Values -- found by whichever id resolution above
 	// landed on -- rather than replacing them wholesale. This runs under
@@ -305,7 +305,7 @@ func (s *managedFragmentStore) ByTag(tag string) (core.ManagedFragment, bool) {
 // Desired computes the effective (values, key->fragment-id, conflicts) for a
 // node carrying nodeTags: the "" (all-nodes) fragment applies first, then
 // every fragment whose Tag the node carries, in ALPHABETICAL tag order,
-// later values winning key by key (task-8 ruling). A key set by more than
+// later values winning key by key. A key set by more than
 // one applicable fragment is recorded in conflicts, Fragments listing every
 // contributing fragment id in application order (its last entry is the one
 // that actually won).
@@ -517,7 +517,7 @@ type managedChildFileV1 struct {
 //
 // values is the set of key/value pairs THIS child currently COMMITS to
 // enforcing -- i.e. the last successfully validated managed-config values
-// (round-1 review, IMPORTANT 1). It exists separately from whatever the
+// It exists separately from whatever the
 // live config happens to hold right now because it is the input to
 // reimposeManagedValues, which the daemon's shared full-config reload path
 // (daemon.go) calls on EVERY ApplyConfig -- from the channels page, the
@@ -619,7 +619,7 @@ func cloneConfigJSON(c *config.Config) (*config.Config, error) {
 // config is left completely untouched and the error is recorded for the
 // next report.
 //
-// Round-1 review, MINOR (tightened by round-2 review, IMPORTANT): an
+// Round-1 review, MINOR: an
 // incoming frame identical to what is already applied (same version AND
 // same values) is a complete no-op -- no re-validation, no ApplyConfig
 // call, no sidecar rewrite -- so the periodic (every managedPushInterval)
@@ -711,7 +711,7 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 
 // managedChildWriteHook, when set by a test, runs synchronously immediately
 // before setApplied's disk write -- used to prove the write happens while
-// mc.mu is still held (final-review engine I2), the same way
+// mc.mu is still held, the same way
 // pushedSilencesWriteHook proves it for pushedSilences.Set.
 var managedChildWriteHook func()
 
@@ -774,7 +774,7 @@ func (mc *managedChild) CurrentValues() map[string]string {
 }
 
 // reimposeManagedValues re-forces every one of mc's currently-committed
-// managed-config values onto c via config.Set (round-1 review, IMPORTANT 1).
+// managed-config values onto c via config.Set.
 // The daemon's ONE shared full-config apply path -- the reload closure in
 // daemon.go, which inprocAPI.ApplyConfig calls for every control-socket
 // ApplyConfig (the web channels page, the public-settings page, every ctl
@@ -805,7 +805,7 @@ func reimposeManagedValues(mc *managedChild, c *config.Config) {
 }
 
 // configMatchesValues reports whether c's current effective value for every
-// key in values matches it exactly (round-2 review, IMPORTANT): used both to
+// key in values matches it exactly: used both to
 // tighten managedChild.Apply's short-circuit (see its doc comment) and by
 // reconcileManagedValuesAtStart to decide whether a startup reconciliation
 // write is actually needed. A nil c never matches (vacuously "diverged",
@@ -827,9 +827,9 @@ func configMatchesValues(c *config.Config, values map[string]string) bool {
 // reconcileManagedValuesAtStart re-imposes mc's committed managed values (if
 // any) onto the live config immediately at child startup, persisting the
 // correction via the normal reload path if the live config had actually
-// diverged (round-2 review, IMPORTANT): a child's config can drift from its
+// diverged: a child's config can drift from its
 // committed values between restarts -- a direct config.json edit, a
-// restored backup, an offline write, or (before round 2) a SIGHUP that
+// restored backup, an offline write, or a SIGHUP that
 // bypassed reload's reimpose -- and, combined with Apply's short-circuit,
 // that divergence would otherwise be permanent: every subsequent push at
 // the SAME version would short-circuit forever without this reconciliation

@@ -1,7 +1,6 @@
-// coreapi_inproc_update_test.go: fix round 1, Ruling R10 -- inprocAPI's
-// control-socket-facing UpdateApply/UpdateRollback must return quickly
-// (fast preflight only, the slow work continues in a background goroutine)
-// and only one apply/rollback may run at a time.
+// coreapi_inproc_update_test.go: inprocAPI's control-socket UpdateApply and
+// UpdateRollback must return quickly (fast preflight only, slow work continues
+// in a background goroutine) and only one may run at a time.
 package trinetra
 
 import (
@@ -64,10 +63,9 @@ func newBlockingUpdateAPI(t *testing.T, release chan struct{}) *inprocAPI {
 	}
 }
 
-// TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes pins Ruling R10's
-// core contract: UpdateApply must return almost immediately, well before a
-// slow (here: permanently blocked, never released) Source finishes -- the
-// slow work runs in a background goroutine, not inline.
+// TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes pins that UpdateApply
+// returns almost immediately, well before a permanently blocked Source
+// finishes: the slow work runs in a background goroutine.
 func TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes(t *testing.T) {
 	release := make(chan struct{}) // never closed in this test
 	api := newBlockingUpdateAPI(t, release)
@@ -97,12 +95,10 @@ func TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes(t *testing.T) {
 	}
 }
 
-// TestInprocUpdateApplyRefusesConcurrentSecondCall pins the "only one
-// apply/rollback may run at a time" half of Ruling R10: a second UpdateApply
-// while the first is still running (blocked on the Source) must be refused
-// with a clear, fixed error, not queued or silently ignored -- and the fake
-// source must not have been asked for a second release (only ONE goroutine
-// is ever running).
+// TestInprocUpdateApplyRefusesConcurrentSecondCall pins that a second
+// UpdateApply while the first is blocked on the Source is refused with a
+// fixed error, not queued, and the fake source is not asked for a second
+// release.
 func TestInprocUpdateApplyRefusesConcurrentSecondCall(t *testing.T) {
 	release := make(chan struct{})
 	api := newBlockingUpdateAPI(t, release)
@@ -127,9 +123,8 @@ func TestInprocUpdateApplyRefusesConcurrentSecondCall(t *testing.T) {
 		t.Fatalf("second concurrent UpdateApply = %v, want errUpdateAlreadyRunning", err)
 	}
 
-	// Same refusal for a concurrent Rollback: the in-flight slot is shared
-	// across apply/rollback (Ruling R10: "only one apply/rollback may run at
-	// a time"), not per-method.
+	// Same refusal for a concurrent Rollback: the in-flight slot is shared across
+	// apply/rollback, not per-method.
 	if err := api.UpdateRollback(); !errors.Is(err, errUpdateAlreadyRunning) {
 		t.Fatalf("concurrent UpdateRollback while an apply is in flight = %v, want errUpdateAlreadyRunning", err)
 	}

@@ -542,10 +542,8 @@ func TestCollectSlowPopulatesExpensiveFields(t *testing.T) {
 }
 
 // TestCollectSlowPopulatesDiskDetailAndSmartAttrs asserts collectSlow merges
-// `df -PT -B1` (device/fstype/usage/size) with `df -Pi` (inode%) into
-// snap.DiskDetail keyed by mount, alongside snap.Disks, and fills
-// snap.SmartAttrs from `smartctl -A <dev>` for every discovered SMART
-// device (alongside snap.SmartHealth).
+// `df -PT -B1` with `df -Pi` into snap.DiskDetail keyed by mount, and fills
+// snap.SmartAttrs from `smartctl -A <dev>` for every discovered SMART device.
 func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -601,13 +599,9 @@ func TestCollectSlowPopulatesDiskDetailAndSmartAttrs(t *testing.T) {
 }
 
 // TestCollectSlowFiltersDockerOverlayAndPseudoMounts is the regression test
-// for the field bug (fix-disk-telegram-brief.md): a root daemon on a real
-// docker host sees dozens of `overlay` mounts (one per container) plus
-// squashfs/tmpfs/nsfs pseudo-mounts in `df -PT -B1`. collectSlow must derive
-// BOTH snap.Disks and snap.DiskDetail from the typed df output, gated by
-// isRealMount && isRealFsType, so only the real ext4 mounts survive in
-// either map -- not the ~70+ junk entries that used to blow past Telegram's
-// 4096-char message limit.
+// for a root daemon on a docker host seeing dozens of `overlay` mounts plus
+// squashfs/tmpfs/nsfs pseudo-mounts in `df -PT -B1`: only the real ext4
+// mounts may survive in snap.Disks and snap.DiskDetail.
 func TestCollectSlowFiltersDockerOverlayAndPseudoMounts(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		switch {
@@ -1317,13 +1311,10 @@ func TestSlowHubVersioning(t *testing.T) {
 	}
 }
 
-// TestReloadOnHUPRestoresManagedValueAfterExternalEdit is the round-2
-// review's second required test: a SIGHUP after an external edit to
-// config.json (simulated by writing a diverged config directly -- the same
-// effect a hand edit, a restored backup, or an offline write would have)
-// must restore the managed value rather than adopting the drift, because
-// reloadOnHUP (extracted from the SIGHUP handler, daemon.go) routes through
-// reload, which reimposes managed-config values before persisting.
+// TestReloadOnHUPRestoresManagedValueAfterExternalEdit: a SIGHUP after an
+// external edit to config.json (simulated by writing a diverged config
+// directly) must restore the managed value rather than adopt the drift,
+// because reloadOnHUP routes through reload, which reimposes managed values.
 func TestReloadOnHUPRestoresManagedValueAfterExternalEdit(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
@@ -1369,13 +1360,11 @@ func TestReloadOnHUPRestoresManagedValueAfterExternalEdit(t *testing.T) {
 	}
 }
 
-// TestReloadOnHUPSilentOnLoadFailure pins the extraction's preserved
-// behaviour: a cfgPath that fails to load is silently ignored (no message,
-// no error), exactly like the pre-round-2 handler.
+// TestReloadOnHUPSilentOnLoadFailure pins that a cfgPath that fails to load is
+// silently ignored (no message, no error).
 func TestReloadOnHUPSilentOnLoadFailure(t *testing.T) {
-	// A MISSING cfgPath is not a Load failure at all (config.Load treats it
-	// as "use defaults", exactly like the pre-round-2 handler always did);
-	// a genuine Load failure needs a file that exists but fails to parse.
+	// A MISSING cfgPath is not a Load failure (config.Load treats it as "use
+	// defaults"); a genuine failure needs a file that exists but fails to parse.
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(cfgPath, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1392,9 +1381,7 @@ func TestReloadOnHUPSilentOnLoadFailure(t *testing.T) {
 }
 
 // TestReloadOnHUPSurfacesReloadError: a reload failure (e.g. saveDaemonCfg's
-// write erroring) is returned for the caller to report -- something that
-// could never happen before round 2 routed SIGHUP through reload instead of
-// a direct, always-succeeding applyConfig call.
+// write erroring) is returned for the caller to report.
 func TestReloadOnHUPSurfacesReloadError(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")

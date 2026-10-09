@@ -286,7 +286,7 @@ func (t timeoutExec) Run(name string, args ...string) ([]byte, error) {
 // smokeTest runs the freshly staged core binary (`path version --json`) and
 // checks it reports the version we just staged, before it is ever trusted to
 // run as the daemon. x is expected to be timeoutExec{smokeTestTimeout} in
-// production (Task 6 wires this up); smokeTest itself applies no timeout of
+// production; smokeTest itself applies no timeout of
 // its own, so the bound comes entirely from x.
 func smokeTest(x Exec, path, want string) error {
 	out, err := x.Run(path, "version", "--json")

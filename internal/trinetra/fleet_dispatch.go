@@ -1,5 +1,5 @@
 // Package trinetra: fleet_dispatch.go is the master alerting engine's keyed
-// dispatcher (B3 review round 2): replaces a bare goroutine-per-alert with
+// dispatcher: replaces a bare goroutine-per-alert with
 // one FIFO lane per dispatch key (so a recover is never run before its own
 // fire) and a global semaphore bounding how many dispatches run at once.
 // Enqueue never blocks its caller.
@@ -29,7 +29,7 @@ type dispatchLane struct {
 // a global semaphore of dispatchConcurrency bounds total concurrency across
 // all keys. Enqueue itself never blocks: it only appends to a mutex-guarded
 // slice and, at most, starts one goroutine for a lane that was idle. A lane
-// with an empty queue is removed from d.lanes (B3 review round 3 minor 1),
+// with an empty queue is removed from d.lanes,
 // so a long-lived dispatcher with high key churn holds no more lanes than
 // are currently active.
 type keyedDispatcher struct {

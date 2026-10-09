@@ -190,7 +190,7 @@ func TestMaintenanceOccurrenceFallBackLastsExactlyOneHour(t *testing.T) {
 }
 
 // TestMaintenanceOccurrenceSpringForwardDocumented documents the accepted
-// trade-off on the other DST transition (review round 1, item 2): on
+// trade-off on the other DST transition: on
 // 2024-03-10 in America/New_York (spring-forward: clocks jump from 02:00
 // EST straight to 03:00 EDT, so wall-clock 02:00-02:59 never happens that
 // day), a 01:30-02:30 window's real elapsed duration still comes out to

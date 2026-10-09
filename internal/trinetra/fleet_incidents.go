@@ -66,14 +66,14 @@ type incidentApply struct {
 	suppressed *suppressionInfo
 	now        int64
 
-	// groupKey, when non-empty, is the (task 6 part 2) grouping bucket this
+	// groupKey, when non-empty, is the grouping bucket this
 	// alert joins/opens, computed by fleetAlertEngine.groupKeyFor: an alert
 	// whose bucket matches an open incident's own GroupKey joins it instead
 	// of opening a new one. Empty (every caller that predates grouping,
 	// including a test that builds an incidentApply directly) falls back to
 	// the original per-(node, key) bucket (incidentGroupKey) -- see Apply.
 	groupKey string
-	// dependencyFold, when non-empty (task 6 part 3), means this FIRE is a
+	// dependencyFold, when non-empty, means this FIRE is a
 	// node-down alert folded into an already-open incident because one of
 	// its node's dependencies is down: recorded as a suppressed member (its
 	// own IncidentAlert.Suppressed set to this exact reason, e.g.
@@ -87,7 +87,7 @@ type incidentApply struct {
 // suppressedDetail formats u.suppressed's reason for the incident timeline:
 // leg-labelled ("fire: "/"recover: ") for a master-own alert (so a restart's
 // resurrection check can tell which leg it covers), plain for a
-// child-sourced one (per the task-4 ruling's literal example).
+// child-sourced one.
 func suppressedDetail(u incidentApply) string {
 	if u.src.NodeID == "" {
 		return legLabel(u.alert) + ": " + u.suppressed.Reason
@@ -97,7 +97,7 @@ func suppressedDetail(u incidentApply) string {
 
 // memberKey identifies one (node, alert key) member slot, independent of
 // which incident/grouping-bucket it currently lives in -- see
-// incidentStore.openMember (task 6 fix round 1, CRITICAL 2).
+// incidentStore.openMember.
 type memberKey struct{ node, key string }
 
 // incidentStore is the master's durable incident history: an in-memory
@@ -303,7 +303,7 @@ func (s *incidentStore) Apply(u incidentApply) (core.Incident, error) {
 	mk := memberKey{u.src.NodeID, u.alert.Key}
 
 	if u.alert.Kind == "recover" {
-		// (task 6 fix round 1, CRITICAL 2) A recover finds its OWN member by
+		// A recover finds its OWN member by
 		// (node, key), via openMember -- NEVER by recomputing a group key for
 		// the recover itself: a dependency-folded member lives in its
 		// PARENT's incident, under the parent's own bucket, which has nothing
@@ -489,7 +489,7 @@ func recomputeState(inc *core.Incident, now int64) {
 }
 
 // hasSilencedOpenMember reports whether inc has any unresolved member whose
-// SilencedBy is set -- the (task 6 fix round 1) predicate behind the
+// SilencedBy is set -- the predicate behind the
 // incidentStore.suppressed index, deliberately NOT the same as
 // inc.State == "suppressed" (which requires EVERY open member to be
 // silenced/folded): an incident with one silenced member and one ordinary
@@ -521,7 +521,7 @@ func (s *incidentStore) syncIndexesLocked(inc core.Incident) {
 }
 
 // allAlertsResolved reports whether every member alert has recovered --
-// (task 6 part 2) an incident with 1+ members resolves only once ALL of them
+// an incident with 1+ members resolves only once ALL of them
 // have. An incident with no alerts at all (should not happen) is treated as
 // not resolved, matching the pre-grouping behaviour of always requiring an
 // explicit recover.
@@ -576,7 +576,7 @@ func (s *incidentStore) AppendEvent(id string, ev core.IncidentEvent) (core.Inci
 	}
 	inc.Timeline = append(inc.Timeline, ev)
 	inc.Updated = ev.TS
-	// (task 6 fix round 1, CRITICAL 1) State is always DERIVED from members,
+	// State is always DERIVED from members,
 	// never set ad hoc here: an ordinary "delivered"/"escalated"/etc. event
 	// doesn't itself change any member's SilencedBy/Suppressed/ResolvedAt, so
 	// this is usually a no-op refresh -- the per-member unsilence delivery
@@ -610,7 +610,7 @@ func (s *incidentStore) MarkDeliveredLocally(node, key string, firedAt, now int6
 			}
 			al.DeliveredLocally = true
 			cand.Updated = now
-			// Leg/AlertKey/Node/FiredAt (task 6 part 1's structured fields)
+			// Leg/AlertKey/Node/FiredAt
 			// MUST be set here, exactly like every other "delivered" event
 			// Apply/deliverGroup/deliverUnsilencedMember append: without
 			// them, legDeliveredStatusFor's Leg=="" legacy-event branch
@@ -671,7 +671,7 @@ func (s *incidentStore) Get(id string) (core.Incident, bool) {
 // cloneIncident returns a copy of inc whose slice fields (Nodes, Alerts,
 // Timeline) do NOT share a backing array with whatever is stored in
 // s.byID: every incidentStore method that hands an Incident to a caller
-// runs this first (review round 1, item 3's race finding). Without it, a
+// runs this first. Without it, a
 // caller holding a Get/List/etc. result -- e.g. fleetAlertEngine.
 // tryDeliverUnsilenced, reading inc.Alerts from a background dispatcher
 // goroutine, entirely outside s.mu -- could race a LATER in-place mutation

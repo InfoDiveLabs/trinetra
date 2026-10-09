@@ -578,7 +578,7 @@ func TestManagedChildEmptyValuesClearsSidecarKeepsLocalConfig(t *testing.T) {
 	if appliedCPU != 77 {
 		t.Fatalf("sanity: the earlier apply should have set CPUPct=77, got %v", appliedCPU)
 	}
-	// Local values are left exactly as they were (task-8 ruling): nothing
+	// Local values are left exactly as they were: nothing
 	// un-applies them, ApplyConfig is not called again with a reverted value.
 	if self.applied.Thresholds.CPUPct != 77 {
 		t.Fatalf("CPUPct after clearing = %v, want unchanged 77 (local values stay at their last managed values)", self.applied.Thresholds.CPUPct)

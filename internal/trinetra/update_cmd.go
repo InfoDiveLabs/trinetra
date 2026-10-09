@@ -415,7 +415,7 @@ func (u updater) rollback() error {
 		// compares this Pending.Version against a daemon-reported version
 		// that is itself normalised, so storing it un-normalised here made
 		// every rollback's health gate misreport a version mismatch and roll
-		// back a perfectly healthy restart (fix-round-1 F1).
+		// back a perfectly healthy restart.
 		if jerr := json.Unmarshal(out, &v); jerr == nil && v.Version != "" {
 			prevVersion = strings.TrimPrefix(v.Version, "v")
 		}

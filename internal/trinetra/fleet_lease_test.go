@@ -794,7 +794,7 @@ func TestReconcilePendingFromLogNilAlogReturnsNil(t *testing.T) {
 	}
 }
 
-// --- full restart flow (the review's three required scenarios) -------------
+// --- full restart flow -------------
 
 // Scenario 1: the child restarts mid-handoff with no receipt ever logged.
 // After restart, once fallback_after has passed (judged against the
@@ -938,7 +938,7 @@ func TestRestartWithDeliveredLocallyAlreadyPresentNoSecondDelivery(t *testing.T)
 	}
 }
 
-// Scenario 4 (recovers, review round 2): a routed RECOVER that restarts
+// Scenario 4: a routed RECOVER that restarts
 // with no receipt ever logged is delivered locally exactly once, with the
 // prefix -- exactly like scenario 1, but for a recover.
 func TestRestartRecoverWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.T) {
@@ -1115,7 +1115,7 @@ func TestHandoffReconcileDoesNotOverwriteAlreadyPendingEntry(t *testing.T) {
 	}
 }
 
-// --- pushed silences (child side, task 4) -----------------------------------
+// --- pushed silences -----------------------------------
 
 func TestPushedSilencesSuppressedMatchesRuleAndSeverity(t *testing.T) {
 	p := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
@@ -1205,7 +1205,7 @@ func TestLoadPushedSilencesMissingFileStartsEmpty(t *testing.T) {
 	}
 }
 
-// --- deliverFallback honours a pushed silence (task 4) ----------------------
+// --- deliverFallback honours a pushed silence ----------------------
 
 func TestDeliverFallbackHonoursPushedSilenceSuppressesLocalDelivery(t *testing.T) {
 	dir := t.TempDir()
@@ -1261,7 +1261,7 @@ func TestDeliverFallbackWithoutMatchingSilenceStillDelivers(t *testing.T) {
 	}
 }
 
-// --- onStreamFrame applies a "silences" frame (task 4) ----------------------
+// --- onStreamFrame applies a "silences" frame ----------------------
 
 func TestOnStreamFrameSilencesUpdatesPushedSetAndPersists(t *testing.T) {
 	dir := t.TempDir()

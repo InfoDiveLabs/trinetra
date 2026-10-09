@@ -156,7 +156,7 @@ func TestFleetAPIMutationsAudited(t *testing.T) {
 	m.joinURL = "https://master.example:9443" // required for CreateToken
 	api := fleetAPIFor(m)
 
-	// Actor plumbing (plan C task C5): every one of these used to have no
+	// Actor plumbing: every one of these used to have no
 	// actor parameter at all and always audited the literal placeholder
 	// "unknown", regardless of who actually made the call. Each now records
 	// whatever the caller passes -- exercised here with a real per-call
@@ -351,7 +351,7 @@ func TestFleetAPIAlertingShowApplyRoundTrip(t *testing.T) {
 }
 
 // TestFleetAPIRouteTestMatchesResolveRoute is the test-enforced invariant
-// (task-5 brief): RouteTest must be a thin wrapper around the exact same
+// RouteTest must be a thin wrapper around the exact same
 // resolveRoute function the alerting engine's real delivery uses, so a dry
 // run can never disagree with what actually happens for the same input.
 func TestFleetAPIRouteTestMatchesResolveRoute(t *testing.T) {

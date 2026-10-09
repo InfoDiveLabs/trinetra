@@ -66,9 +66,9 @@ func writeBundle(t *testing.T, version string, files map[string][]byte) string {
 	return dir
 }
 
-// NOTE (deviation from task-6-brief.md): testUpdatePaths (update_apply_test.go)
+// NOTE: testUpdatePaths (update_apply_test.go)
 // pre-populates BinDir with BOTH "trinetra" and "trinetra-web" as "installed"
-// binaries. planApply (task 5, already committed) requires a release asset
+// binaries. planApply requires a release asset
 // for every binary planApply's `installed` closure reports present -- so a
 // release that only ships trinetra-linux-amd64 is rejected once trinetra-web
 // is also "installed". The brief's TestUpdaterApplyLaunchesGuardAndRefusesDowngrade

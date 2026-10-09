@@ -12,9 +12,9 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestBuildDoctorReport is the focused TDD test the task-7 brief specifies:
-// buildDoctorReport must report the discovered-target count and collector
-// toggles for a fake Exec/FileSource, without touching the real host.
+// TestBuildDoctorReport: buildDoctorReport must report the discovered-target
+// count and collector toggles for a fake Exec/FileSource, without touching the
+// real host.
 func TestBuildDoctorReport(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "smartctl" {
@@ -160,16 +160,11 @@ func TestRenderDoctorReportUnavailable(t *testing.T) {
 	}
 }
 
-// TestCmdDoctorOutputUnchanged is the CLI-level golden test the task-7
-// brief's behavior-preservation gate calls for: it runs the real `doctor`
-// command (real osExec{}/osFS{}, same as before this refactor) and checks
-// every line renderDoctorReport now produces is present with the exact same
-// wording cmdDoctor printed inline before extraction -- guarding against the
-// refactor silently changing cmdDoctor's output shape. Docker/smartctl/
-// thermal-zone availability itself is host-dependent, so this only pins the
-// literal, host-independent parts of each line (labels/format), the same
-// scope TestCmdDoctorPrintsCollectorSummary already covers for the
-// collectors/time-series lines.
+// TestCmdDoctorOutputUnchanged runs the real `doctor` command and checks every
+// line renderDoctorReport produces is present with the wording cmdDoctor has
+// always printed. Docker/smartctl/thermal availability is host-dependent, so
+// only the literal, host-independent parts of each line (labels/format) are
+// pinned.
 func TestCmdDoctorOutputUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")

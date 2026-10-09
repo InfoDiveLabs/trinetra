@@ -1,5 +1,5 @@
 // Package trinetra: fleet_lease.go implements the child side of the
-// master's lease-based alert handoff (spec 4.8/6): while the master holds a
+// master's lease-based alert handoff: while the master holds a
 // delivery lease, a firing (or recovering) alert is routed to it instead of
 // delivered locally, and only falls back to local delivery if the master's
 // receipt never arrives, or the lease itself expires, before
@@ -536,7 +536,7 @@ func reconcilePendingFromLog(alog *AlertLog, receiptsPath string, fallbackAfter 
 // alert produced -- the earlier "routed_to_master" one Route's caller
 // logged, and this one -- as the same alert.
 //
-// silences (task 4) is checked ONLY here -- a fallback delivery -- never for
+// silences is checked ONLY here -- a fallback delivery -- never for
 // an ordinary local alert that never routed to the master: if a pushed
 // silence or maintenance occurrence still covers this alert, the record is
 // still logged (DeliveredLocally true, so the master never redelivers it

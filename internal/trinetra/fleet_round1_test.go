@@ -1,9 +1,8 @@
 // Package trinetra: fleet_round1_test.go covers the fleet phase 2 task 6
-// review's fix round 1: per-member silence suppression (CRITICAL 1), a
-// dependency-folded member's recover finding the right bucket (CRITICAL 2),
-// grouped resurrection (IMPORTANT 3), a release sweep on SetNodeDeps
-// (IMPORTANT 4), and the group-interval/fallback-after interaction
-// (IMPORTANT 5).
+// review's fix round 1: per-member silence suppression, a
+// dependency-folded member's recover finding the right bucket,
+// grouped resurrection, a release sweep on SetNodeDeps
+// and the group-interval/fallback-after interaction
 package trinetra
 
 import (

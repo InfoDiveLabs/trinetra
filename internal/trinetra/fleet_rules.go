@@ -1,5 +1,5 @@
 // Package trinetra: fleet_rules.go is the master's aggregate-rule engine
-// (spec 6/task 7): a small, hand-written grammar (NOT PromQL) parsed by
+// a small, hand-written grammar (NOT PromQL) parsed by
 // parseRuleExpr, evaluated every ruleTickInterval by fleetAlertEngine.TickRules
 // against the same data sources fleet_provider.go's Nodes() and the child's
 // own gap-filler already use -- the replica sink's latest snapshot
@@ -7,7 +7,7 @@
 // tracker's state, and the registry's tags/LastSeen (see
 // fleet-phase2-map.md section 8).
 //
-// Grammar (exactly as specified, verbatim from the task brief):
+// Grammar:
 //
 //	count(<sel>, <metric> <op> <num>) <op> <int> for <dur>
 //	avg|max|min(<sel>, <metric>) <op> <num> for <dur>
@@ -209,7 +209,7 @@ func (e *ruleExpr) forDuration() time.Duration {
 }
 
 // ruleMetrics are the only metric names a count/avg/max/min rule may name
-// (task-7 ruling); disk is the WORST mount, not a specific one.
+// disk is the WORST mount, not a specific one.
 var ruleMetrics = map[string]bool{
 	"cpu": true, "mem": true, "swap": true, "disk": true, "load1": true, "temp": true,
 }
@@ -513,7 +513,7 @@ var ruleNameValid = func(name string) bool {
 }
 
 // validateRules is validateAlertingConfig's Validate hook for
-// AlertingConfig.Rules (task 7): names must be unique and match
+// AlertingConfig.Rules: names must be unique and match
 // [a-z0-9_-]{1,64}, every Expr must parse, and Severity (when set) must be
 // "warning" or "critical" -- "" defaults to warning at evaluation time
 // (ruleRuntimeSeverity), so it is accepted here too.
@@ -578,7 +578,7 @@ type ruleEvalResult struct {
 }
 
 // ruleSelfSource bundles the master's own node data for aggregate rules
-// (round-1 review fix, IMPORTANT 2): `all` and `node:<glob>` selectors must
+// `all` and `node:<glob>` selectors must
 // include the master's own node ("self" never appears in the registry, so
 // without this it was silently excluded from every aggregate rule). Every
 // field is nil-safe (a fleetRuleEvaluator built with the zero value, e.g. by
@@ -734,7 +734,7 @@ func (r *fleetRuleEvaluator) evaluate(now time.Time, rules []core.AggregateRule)
 	}
 
 	// A rule removed (or renamed) since the last evaluation while it was
-	// firing recovers on this tick (task-7 ruling); everything about it is
+	// firing recovers on this tick; everything about it is
 	// then forgotten.
 	for name, st := range r.states {
 		if seen[name] {
@@ -777,7 +777,7 @@ func (r *fleetRuleEvaluator) snapshot(rules []core.AggregateRule) []core.RuleSta
 }
 
 // matchNodes returns whether sel matches the master's own "self" node
-// (round-1 review fix, IMPORTANT 2 -- see selfMatches) and every non-revoked
+// and every non-revoked
 // REGISTRY node matching sel. A revoked node is excluded from every rule's
 // selector match, consistently across count/online/avg/max/min/absent: it
 // is effectively gone from the fleet (fleet_provider.go's Nodes/RevokeNode's
@@ -938,7 +938,7 @@ func (r *fleetRuleEvaluator) evalExpr(expr *ruleExpr, now time.Time) ruleEvalRes
 // per-node condition (metric compared against InnerNum) counted across
 // every selector-matching node currently online or lagging (task-7 ruling:
 // "For count, stale, down and revoked nodes are skipped"), then that COUNT
-// compared against OuterNum. Self (round-1 review fix, IMPORTANT 2) is
+// compared against OuterNum. Self is
 // always eligible -- its "state" is definitionally always online -- so it
 // contributes whenever it matches sel and a current snapshot is available.
 func (r *fleetRuleEvaluator) evalCount(expr *ruleExpr) ruleEvalResult {
@@ -1037,7 +1037,7 @@ type seriesMetricLister interface {
 // res, or ok=false when store's backend can't enumerate its series at all
 // (see seriesMetricLister) -- shared by diskSeriesAverage (single-value,
 // used by the aggregate-rule engine) and fleet_provider.go's diskSeriesPoints
-// (bucketed, used by FleetSeries/plan C task 1b), so both read the exact
+// so both read the exact
 // same "which mounts does this node have" answer instead of duplicating the
 // enumeration.
 func diskMountMetrics(store SampleStore, res Resolution) ([]string, bool) {
@@ -1092,7 +1092,7 @@ func diskSeriesAverage(store SampleStore, from, to int64) (float64, bool) {
 // then the rule's own aggregation function (avg/max/min) applied across
 // those per-node averages. If NO node has any data, the result is "no data"
 // (task-7 ruling: "does not fire and does not recover; it holds the
-// previous state"). Self (round-1 review fix, IMPORTANT 2) contributes its
+// previous state"). Self contributes its
 // own local-store average exactly like any other node's replicated one, via
 // ruleSelfSource.Store; a nil Store (or a backend that has never collected
 // this metric) simply excludes self, same as a node with no points.
@@ -1141,9 +1141,9 @@ func (r *fleetRuleEvaluator) evalAggSeries(expr *ruleExpr, now time.Time) ruleEv
 // evalAbsent implements absent(<sel>, <dur>): fires when no selector-matching
 // node (including the case where none match at all) has a LastSeen within
 // AbsentFor of now, but only once the master itself has been up at least
-// AbsentFor (task-7 ruling's blind window) -- during that window condTrue is
+// AbsentFor -- during that window condTrue is
 // forced false, not "no data" (the state is known: deliberately not yet
-// judged). Self (round-1 review fix, IMPORTANT 2) contributes `now` as its
+// judged). Self contributes `now` as its
 // own LastSeen whenever it matches sel (the ruling: "LastSeen: now") -- it
 // can never itself be the reason an absent() rule fires. value is the number
 // of seconds since the most recently seen matching node last reported (or
@@ -1187,7 +1187,7 @@ func formatRuleValue(v float64, hasValue bool) string {
 
 // ---- fleetAlertEngine wiring -------------------------------------------
 
-// SetRules wires the aggregate-rule evaluator (task 7), mirroring
+// SetRules wires the aggregate-rule evaluator, mirroring
 // SetSilences/SetRouting/SetDependencies's own "called once from
 // startMaster, after both the engine and its data sources exist" pattern. A
 // nil e.rules (no SetRules call, every existing engine test) makes
@@ -1216,7 +1216,7 @@ func (e *fleetAlertEngine) TickRules(now time.Time) {
 }
 
 // ruleAlertKey is the one place "fleet:rule:<name>"'s exact format is built
-// (task-7 ruling), matched by masterLoop.stillActive's own case.
+// matched by masterLoop.stillActive's own case.
 func ruleAlertKey(name string) string { return "fleet:rule:" + name }
 
 // submitRuleAlert builds and submits one rule's fire/recover alert (task-7

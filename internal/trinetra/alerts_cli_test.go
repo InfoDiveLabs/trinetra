@@ -92,24 +92,15 @@ func TestAlertsListShowsActiveAndHistoryViaCLI(t *testing.T) {
 	}
 }
 
-// TestAlertsListGoldenOutput is the task-6 golden test: it pins `trinetra
-// alerts list`'s exact rendered output against a fixture exercising both
-// output paths core.AlertRecord cannot fully reproduce --
+// TestAlertsListGoldenOutput pins `trinetra alerts list`'s exact output for
+// two paths core.AlertRecord cannot reproduce:
 //
-//   - an ACKED active alert ("[acked X ago]" needs ActiveAlert.AckedAt,
-//     which core.AlertRecord does not carry -- only Acked bool);
+//   - an ACKED active alert ("[acked X ago]" needs ActiveAlert.AckedAt);
 //   - a history event with Delivered channel results (the "-> channel
-//     status" lines need AlertEvent.Delivered/.Title, neither of which
-//     core.AlertRecord carries either).
+//     status" lines need AlertEvent.Delivered/.Title).
 //
-// Per the task-6 brief: cmdAlerts list may only be routed through
-// core.API.ActiveAlerts()/AlertHistory() if doing so keeps this output
-// byte-identical. It cannot (see the missing fields above), so cmdAlerts
-// stays reading AlertState/AlertLog directly (alertStateAndLogPaths) --
-// this test's job is to guard that decision: if a future change routes
-// cmdAlerts through core.API without also widening AlertRecord, this test
-// fails loudly rather than silently dropping ack-age/delivery-status lines
-// from real CLI output.
+// So cmdAlerts list reads AlertState/AlertLog directly; this test fails if a
+// change routes it through core.API without widening AlertRecord.
 func TestAlertsListGoldenOutput(t *testing.T) {
 	dir := t.TempDir()
 	stateDir = dir

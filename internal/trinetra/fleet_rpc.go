@@ -1,6 +1,6 @@
 // Package trinetra: fleet_rpc.go is the master's side of an on-demand,
 // request/response call to a connected child over the master-to-child
-// stream (spec 6, task 9): today the only method is "container_logs", used
+// stream: today the only method is "container_logs", used
 // by replicaAPI.ContainerLogs (fleet_replica.go) so a remote node's Docker
 // logs can be fetched exactly like a local one's, without a direct
 // connection to the child at all.
@@ -33,7 +33,7 @@ import (
 var rpcCallTimeout = 10 * time.Second
 
 // rpcSweepAfter/rpcMaxPendingPerNode are rpcRegistry's other two bounds
-// (task-9 ruling): an entry is swept once it has been sitting unanswered for
+// an entry is swept once it has been sitting unanswered for
 // this long past its own timeout (defense in depth -- Call already deletes
 // its own entry the moment it times out; this only matters if that never
 // happens, e.g. a future caller that doesn't wait), and no node may have
@@ -43,19 +43,19 @@ var rpcSweepAfter = 60 * time.Second
 const rpcMaxPendingPerNode = 32
 
 var (
-	// errNodeNotConnected is replicaAPI's exact wording (task-9 ruling) for
+	// errNodeNotConnected is replicaAPI's exact wording for
 	// both the remote-ack and the remote-RPC paths: the target node has no
 	// open stream connection right now.
 	errNodeNotConnected = errors.New("node is not connected")
-	// errRPCTimeout is Call's exact wording (task-9 ruling) when no result
+	// errRPCTimeout is Call's exact wording when no result
 	// arrives within rpcCallTimeout.
 	errRPCTimeout = errors.New("node did not answer in 10s")
-	// errTooManyPendingRPCs is Call's exact wording (task-9 ruling) once a
+	// errTooManyPendingRPCs is Call's exact wording once a
 	// node already has rpcMaxPendingPerNode calls outstanding.
 	errTooManyPendingRPCs = errors.New("too many pending requests for this node")
 )
 
-// rpcFrameData is the "rpc" stream Frame's Data shape (task-9 ruling):
+// rpcFrameData is the "rpc" stream Frame's Data shape:
 // {"id","method","args"}. args is opaque to the transport -- its shape
 // depends entirely on method (see rpcContainerLogsArgs).
 type rpcFrameData struct {
@@ -135,7 +135,7 @@ func (r *rpcRegistry) logRejectRateLimited(nodeID, format string, args ...any) {
 	r.logf(format, args...)
 }
 
-// randomRPCID returns 16 random bytes, hex-encoded (task-9 ruling).
+// randomRPCID returns 16 random bytes, hex-encoded.
 func randomRPCID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -145,7 +145,7 @@ func randomRPCID() (string, error) {
 }
 
 // sweepLocked drops every entry that expired (its own rpcCallTimeout has
-// already passed) more than rpcSweepAfter ago (task-9 ruling). Called with
+// already passed) more than rpcSweepAfter ago. Called with
 // mu held.
 func (r *rpcRegistry) sweepLocked() {
 	cutoff := r.now().Add(-(rpcCallTimeout + rpcSweepAfter))

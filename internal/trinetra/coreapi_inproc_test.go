@@ -12,10 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestInprocSnapshotProjectsScalars is the Step 1 failing test from the
-// task-4 brief: newInprocAPI's Snapshot() must project a Snapshot's scalar
-// fields into a core.DashboardView, same as buildDashboardView already does
-// for the web build.
+// TestInprocSnapshotProjectsScalars checks Snapshot() projects a Snapshot's
+// scalar fields into a core.DashboardView, as buildDashboardView does.
 func TestInprocSnapshotProjectsScalars(t *testing.T) {
 	snap := Snapshot{TS: 42, CPU: 12.5, MemPct: 30, Online: true}
 	api := newInprocAPI(func() Snapshot { return snap }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})

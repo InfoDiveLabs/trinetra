@@ -545,7 +545,7 @@ func TestFleetUnknownSubcommand(t *testing.T) {
 	}
 }
 
-// --- purge failure reporting (fix round 1, item 1) ---
+// --- purge failure reporting ---
 
 func TestFleetLeavePurgeReportsUnremovablePath(t *testing.T) {
 	dir, out, errb := fleetCLIEnv(t)
@@ -607,7 +607,7 @@ func TestFleetDisablePurgeReportsUnremovablePath(t *testing.T) {
 	}
 }
 
-// --- daemon-backed status/nodes/node/token (fix round 1, item 2) ---
+// --- daemon-backed status/nodes/node/token ---
 
 func TestFleetStatusMaster(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
@@ -810,7 +810,7 @@ func TestFleetTokenDelete(t *testing.T) {
 	}
 }
 
-// --- stray positional arguments (fix round 1, item 3) ---
+// --- stray positional arguments ---
 
 func TestFleetInitRejectsExtraPositional(t *testing.T) {
 	fleetCLIEnv(t)

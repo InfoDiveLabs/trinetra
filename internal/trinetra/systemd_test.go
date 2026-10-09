@@ -208,7 +208,7 @@ func TestWritePluginManifest_OmitsAbsentCompanion(t *testing.T) {
 
 // TestWritePluginManifest_VerifyPluginAcceptsMatchAndRejectsTamper is the
 // end-to-end check that the manifest writePluginManifest produces is exactly
-// what verifyPlugin (plugin_launch.go, Task 1) expects: a companion file
+// what verifyPlugin expects: a companion file
 // that still matches what was recorded at install time verifies clean, and
 // the same file modified afterward (a swap/tamper) is rejected.
 func TestWritePluginManifest_VerifyPluginAcceptsMatchAndRejectsTamper(t *testing.T) {

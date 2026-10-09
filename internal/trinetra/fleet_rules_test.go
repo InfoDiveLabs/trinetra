@@ -676,7 +676,7 @@ func TestRuleDeletedWhileFiringRecovers(t *testing.T) {
 
 // TestRuleOrphanRecoverViaStillActive proves masterLoop.stillActive's
 // "fleet:rule:<name>" case recovers a stale open incident after a restart:
-// the fresh engine's in-memory rule state starts over (task-7 ruling), so
+// the fresh engine's in-memory rule state starts over, so
 // even though the rule still exists and its condition is (from a fresh
 // evaluator's point of view) unknown, stillActive must say "not still
 // active" -- there is nothing in the restarted process that remembers it

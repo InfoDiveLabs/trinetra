@@ -415,7 +415,7 @@ func TestRPCRegistryCapPerNode(t *testing.T) {
 }
 
 // TestRPCRegistrySweepDropsOldEntries pins the 60s-past-expiry sweep
-// (task-9 ruling): an entry sitting well past rpcCallTimeout+rpcSweepAfter
+// an entry sitting well past rpcCallTimeout+rpcSweepAfter
 // is dropped the next time sweepLocked runs (triggered here by another
 // Call for the same node), freeing its slot even though nothing ever
 // resolved or timed it out through the normal Call path.
@@ -438,7 +438,7 @@ func TestRPCRegistrySweepDropsOldEntries(t *testing.T) {
 // --- child-side dispatch (fleet_rpc_child.go) -------------------------------
 
 // TestDispatchContainerLogsTruncatesFromStart pins the exact truncation
-// contract (task-9 ruling): output over rpcMaxOutputBytes is capped,
+// contract: output over rpcMaxOutputBytes is capped,
 // prefixed with a marker, and keeps the END of the original (the most
 // recent log lines), not the start.
 func TestDispatchContainerLogsTruncatesFromStart(t *testing.T) {
@@ -461,7 +461,7 @@ func TestDispatchContainerLogsTruncatesFromStart(t *testing.T) {
 }
 
 // TestDispatchContainerLogsBoundsLines pins the "at most 2000 lines" bound
-// (task-9 ruling): whatever the master asked for, self.ContainerLogs never
+// whatever the master asked for, self.ContainerLogs never
 // sees more than rpcMaxLines.
 func TestDispatchContainerLogsBoundsLines(t *testing.T) {
 	var gotLines int
@@ -499,7 +499,7 @@ func TestDispatchContainerLogsPassesThroughChildError(t *testing.T) {
 	}
 }
 
-// TestDispatchRPCUnknownMethod pins the exact wording (task-9 ruling) for a
+// TestDispatchRPCUnknownMethod pins the exact wording for a
 // method this child doesn't implement.
 func TestDispatchRPCUnknownMethod(t *testing.T) {
 	res := dispatchRPC(fakeLogsAPI{}, rpcFrameData{ID: "x", Method: "reboot"})
@@ -509,7 +509,7 @@ func TestDispatchRPCUnknownMethod(t *testing.T) {
 }
 
 // TestHandleRPCFrameRunsOffTheReadLoop pins the "own goroutine, never on the
-// read loop" requirement (task-9 ruling), end to end over a real connected
+// read loop" requirement, end to end over a real connected
 // child: a first rpc frame whose self.ContainerLogs blocks must not stall
 // the child's stream read loop -- a second rpc frame sent to the very same
 // node must still be read and answered while the first is still stuck.

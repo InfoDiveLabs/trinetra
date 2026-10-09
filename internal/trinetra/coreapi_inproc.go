@@ -1,7 +1,7 @@
 // Package trinetra: coreapi_inproc.go implements core.API in-process,
 // adapting the running daemon's live state (Snapshot, SampleStore, config,
 // alert files) directly -- no HTTP/socket round-trip. This is the daemon's
-// own consumer of the core.API contract (internal/core/api.go, task 3): the
+// own consumer of the core.API contract: the
 // trinetra-web binary, over the control socket, and, eventually, an
 // in-process CLI path both read through this contract rather than reaching
 // into trinetra internals themselves.
@@ -32,26 +32,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
-// buildDashboardView adapts a trinetra.Snapshot (native to this package)
-// into a core.DashboardView -- the Task 8 (#64) resolution of the Task 1
-// placeholder that made Deps.Snapshot return `any`, re-homed here (task 4)
-// so the default build can construct one too, not just the trinetra-web
-// binary.
+// buildDashboardView adapts a trinetra.Snapshot into a core.DashboardView.
 //
-// CONCURRENCY: snap is a value the caller (d.Snapshot(), ultimately
-// latestSnapshot(), or inprocAPI.getSnap) already copied out of snapshotHub
-// -- see that function's doc. Its map fields (Disks/Containers/
-// ContainerStats/etc.), however, are still the very maps the sampler loop's
-// last-published *Snapshot points at: copying a struct copies map HEADERS,
-// not their contents. That's exactly what snapshotHub's "collectors replace
-// map fields wholesale, never mutate in place" contract makes safe -- but
-// only as long as every reader, including this function, is READ-ONLY
-// against those maps. Every access below is a plain read (range/index);
-// nothing here ever assigns into snap.Disks, snap.Containers,
-// snap.ContainerStats, snap.NetRates, or snap.DiskDetail -- doing so would
-// race against the sampler loop the next time it replaces that field. New
-// slices built here (v.Disks, v.NetIfaces, v.TopCPUContainers, ...) are this
-// function's own, never aliases into snap.
+// CONCURRENCY: snap is a value copied out of snapshotHub, but its map fields
+// are still the maps the sampler loop last published (copying a struct copies
+// map headers, not contents). That is safe only because collectors replace
+// map fields wholesale and every reader, including this function, is
+// READ-ONLY against them: never assign into snap.Disks, snap.Containers,
+// snap.ContainerStats, snap.NetRates or snap.DiskDetail. Slices built here are
+// this function's own, never aliases into snap.
 func buildDashboardView(snap Snapshot) core.DashboardView {
 	v := core.DashboardView{
 		TS:      snap.TS,
@@ -386,7 +375,7 @@ type inprocAPI struct {
 	// reads through it, so a socket caller sees the exact pin the poll loop
 	// is matching /start <pin> against, not a separately generated one.
 	enroll *enrollState
-	// updateMu/updateInProgress/updateLastErr (fix round 1, Ruling R10) track
+	// updateMu/updateInProgress/updateLastErr track
 	// a background UpdateApply/UpdateRollback goroutine: UpdateApply and
 	// UpdateRollback below run their fast checks synchronously, then hand the
 	// slow work (fetch/stage/smoke-test/swap or restore+launch-guard) to a
@@ -399,7 +388,7 @@ type inprocAPI struct {
 	updateMu         sync.Mutex
 	updateInProgress bool
 	updateLastErr    string
-	// newUpdaterFn is a test seam (fix round 1, Ruling R10): it lets a test
+	// newUpdaterFn is a test seam: it lets a test
 	// substitute a fully-controlled updater -- e.g. one whose Source blocks
 	// until the test releases it, or one pointed at isolated test paths --
 	// for what UpdateApply/UpdateRollback below build and run in their
@@ -423,15 +412,11 @@ func (a *inprocAPI) newUpdaterFor(c *config.Config) updater {
 	return u
 }
 
-// errUpdateAlreadyRunning is returned by UpdateApply/UpdateRollback when a
-// previous call's background goroutine (beginUpdateWork below) hasn't
-// finished yet -- fix round 1, Ruling R10's "only one apply/rollback may run
-// at a time" requirement. Distinct from update_apply.go's errUpdateInProgress
-// (which reports a PERSISTED Pending marker -- an update already staged and
-// awaiting its health-guard deadline, possibly from a previous process or
-// even `trinetra update apply` run directly): this one is purely in-memory,
-// catching two socket callers racing each other before either has gotten far
-// enough to write that persisted marker.
+// errUpdateAlreadyRunning is returned by UpdateApply/UpdateRollback while a
+// previous call's background goroutine (beginUpdateWork) is unfinished. It is
+// purely in-memory, unlike update_apply.go's errUpdateInProgress (a PERSISTED
+// Pending marker, possibly from another process), and catches two socket
+// callers racing before either writes that marker.
 var errUpdateAlreadyRunning = errors.New("update: an update is already in progress")
 
 // beginUpdateWork claims the single in-flight apply/rollback slot, refusing
@@ -636,21 +621,15 @@ func (a *inprocAPI) HostInfo() (core.HostInfoView, error) {
 // Version implements core.API: the daemon's own build-stamped version (#107).
 func (a *inprocAPI) Version() (string, error) { return version.String(), nil }
 
-// updateCheckTimeout bounds UpdateCheck over the control socket (fix round
-// 1, Ruling R10): strictly below control.Client's 30s callTimeout, so a slow
-// channel-pointer/release fetch times out server-side and returns a normal
-// error instead of running past the client's read deadline -- which would
-// otherwise poison that Client's shared connection (every other request
-// sharing it, e.g. the dashboard, nav counts, SSE refreshes) while the
-// daemon kept fetching regardless.
+// updateCheckTimeout bounds UpdateCheck over the control socket. It is
+// strictly below control.Client's 30s callTimeout so a slow release fetch fails
+// server-side instead of running past the client's read deadline, which would
+// poison the Client's shared connection.
 const updateCheckTimeout = 20 * time.Second
 
-// UpdateStatus implements core.API (task 8): this host's persisted
-// self-update posture, via the shared coreUpdateStatus helper
-// (update_cmd.go) built from a.getCfg() -- the same race-safe config
-// accessor every other method here reads through -- plus (fix round 1,
-// Ruling R10) this instance's own in-memory InProgress/LastError from any
-// background UpdateApply/UpdateRollback goroutine (updateProgress above).
+// UpdateStatus implements core.API: this host's persisted self-update posture
+// via coreUpdateStatus, plus this instance's in-memory InProgress/LastError
+// from any background UpdateApply/UpdateRollback goroutine (updateProgress).
 func (a *inprocAPI) UpdateStatus() (core.UpdateStatusView, error) {
 	view, err := coreUpdateStatus(a.getCfg())
 	if err != nil {
@@ -660,36 +639,25 @@ func (a *inprocAPI) UpdateStatus() (core.UpdateStatusView, error) {
 	return view, nil
 }
 
-// UpdateCheck implements core.API: fetch/verify the channel's latest
-// release, record the outcome, and return the resulting status view, via the
-// shared coreUpdateCheck helper -- bounded by updateCheckTimeout (fix round
-// 1, Ruling R10) rather than whatever ctx the caller passed (dispatch,
-// server.go, always passes context.Background(), which never times out on
-// its own).
+// UpdateCheck implements core.API: fetch/verify the channel's latest release,
+// record the outcome and return the status view. It is bounded by
+// updateCheckTimeout rather than the caller's ctx (dispatch passes
+// context.Background(), which never times out).
 func (a *inprocAPI) UpdateCheck(ctx context.Context) (core.UpdateStatusView, error) {
 	ctx, cancel := context.WithTimeout(ctx, updateCheckTimeout)
 	defer cancel()
 	return coreUpdateCheck(ctx, a.getCfg())
 }
 
-// UpdateApply implements core.API over the control socket (fix round 1,
-// Ruling R10): it FIRST claims the single in-flight slot (beginUpdateWork --
-// see that func's doc for why this runs before, not after, the checks
-// below), then runs updater.preflightApply synchronously -- the same
-// settings/pending checks apply itself would otherwise only discover after a
-// network fetch -- releasing the slot again (abortUpdateWork) without
-// starting anything if that fails. Once both pass, it hands the rest of
-// apply's work (fetch, verify, policy-check, stage, smoke-test, swap, launch
-// the guard) to a background goroutine using a fresh context.Background()
-// (NOT ctx, which is tied to nothing longer-lived than this one dispatch
-// call and must not cancel work that is meant to keep running after
-// UpdateApply itself has already returned). It returns as soon as EITHER
-// check refuses, or once the goroutine has been started -- never once the
-// goroutine finishes. A caller polls UpdateStatus's InProgress/LastError to
-// observe the outcome. See core.API.UpdateApply's doc for the
-// synchronous-CLI-vs-background-socket contract this implements one half of;
-// fileAPI.UpdateApply (coreapi_file.go) implements the other, synchronous,
-// half.
+// UpdateApply implements core.API over the control socket. It FIRST claims the
+// single in-flight slot (beginUpdateWork; see its doc for why before the
+// checks), then runs updater.preflightApply synchronously, releasing the slot
+// (abortUpdateWork) if that fails. Otherwise the rest of apply runs in a
+// background goroutine on a fresh context.Background() (NOT ctx, which must
+// not cancel work meant to outlive this dispatch call). It returns once a
+// check refuses or the goroutine has started, never when it finishes; callers
+// poll UpdateStatus's InProgress/LastError. fileAPI.UpdateApply is the
+// synchronous CLI half of the contract.
 func (a *inprocAPI) UpdateApply(ctx context.Context, version string) error {
 	c := a.getCfg()
 	u := a.newUpdaterFor(c)
@@ -898,14 +866,10 @@ func (a *inprocAPI) ValidateChannel(cc config.ChannelConfig) error {
 	return err
 }
 
-// Subscribe implements core.API: it registers a new subscription on a's
-// live daemon bus (a.bus.Subscribe(), eventbus.go) and returns the channel.
-// A nil a.bus (no live daemon behind this inprocAPI -- see the field's doc)
-// reports errStreamRequiresDaemon rather than panicking. Otherwise, a
-// goroutine is spawned that waits for ctx to be done and then calls cancel:
-// this is what ties the subscription's lifetime to the caller's context (the
-// control socket's per-connection ctx, cancelled when that connection
-// closes -- task 2) without Subscribe itself blocking on ctx here.
+// Subscribe implements core.API: it registers a subscription on the live
+// daemon bus. A nil a.bus (no live daemon) reports errStreamRequiresDaemon. A
+// goroutine cancels the subscription when ctx (the control socket's
+// per-connection ctx) is done, so Subscribe itself never blocks on ctx.
 func (a *inprocAPI) Subscribe(ctx context.Context) (<-chan core.Event, error) {
 	if a.bus == nil {
 		return nil, errStreamRequiresDaemon
