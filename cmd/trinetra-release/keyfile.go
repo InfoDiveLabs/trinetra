@@ -36,10 +36,9 @@ type envelope struct {
 const (
 	maintKeyAAD = "trinetra-maint-key-v1"
 
-	// envelopeN/R/P are the only scrypt parameters this tool ever writes.
-	// readEncryptedKey requires an exact match rather than trusting
-	// attacker-controlled N/r/p from the file: a huge N is an OOM vector and
-	// a tiny N silently weakens the KDF (review M3).
+	// envelopeN/R/P are the only scrypt parameters this tool writes. readEncryptedKey
+	// requires an exact match instead of trusting N/r/p from the file: a huge N is an
+	// OOM vector and a tiny N silently weakens the KDF.
 	envelopeN       = 1 << 15
 	envelopeR       = 8
 	envelopeP       = 1
@@ -94,10 +93,9 @@ func writeEncryptedKey(path string, pass []byte) (ed25519.PublicKey, error) {
 	return pub, nil
 }
 
-// readEncryptedKey decrypts a maintainer key envelope written by
-// writeEncryptedKey. A wrong passphrase or corrupted file fails closed, and
-// every field read from the file is bounds-checked before use so a
-// malformed file can only be rejected, never cause a panic (review M3).
+// readEncryptedKey decrypts an envelope written by writeEncryptedKey. A wrong
+// passphrase or corrupted file fails closed, and every field is bounds-checked so
+// a malformed file is rejected, never a panic.
 func readEncryptedKey(path string, pass []byte) (ed25519.PrivateKey, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -140,10 +138,9 @@ func readEncryptedKey(path string, pass []byte) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
-// writeKeyFile writes data to a new file at path (0600, O_EXCL — refuses to
-// overwrite an existing key file), fsyncs it, and checks every error
-// including Close. Any failure removes the partial file rather than leaving
-// a key file on disk that was never durably (or fully) written (review M2).
+// writeKeyFile writes data to a new file at path (0600, O_EXCL so it never
+// overwrites a key), fsyncs it, and checks every error including Close. A
+// failure removes the partial file rather than leave a key never fully written.
 func writeKeyFile(path string, data []byte) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -173,14 +170,12 @@ var openTTY = func() (*os.File, error) {
 	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
 }
 
-// readPassphrase returns a maintainer key passphrase, either from the file
-// named by TRINETRA_MAINT_PASSPHRASE_FILE (mode 0600, for automation) or by
-// prompting on /dev/tty with echo disabled. It never reads argv and never
-// echoes the passphrase to any log. Terminal echo is restored both when the
-// read completes and, via a signal handler installed only for the duration
-// of the prompt, if the process is killed by SIGINT/SIGTERM while the
-// passphrase is being typed (review M4 — a plain `defer` does not run when a
-// signal kills the process).
+// readPassphrase returns a maintainer key passphrase, from the file named by
+// TRINETRA_MAINT_PASSPHRASE_FILE (mode 0600, for automation) or by prompting on
+// /dev/tty with echo off. It never reads argv or logs the passphrase. Terminal
+// echo is restored on completion and, via a signal handler installed only during
+// the prompt, on SIGINT/SIGTERM (a plain defer does not run when a signal kills
+// the process).
 func readPassphrase(prompt string) ([]byte, error) {
 	if p := os.Getenv("TRINETRA_MAINT_PASSPHRASE_FILE"); p != "" {
 		fi, err := os.Stat(p)
@@ -221,10 +216,9 @@ func readPassphrase(prompt string) ([]byte, error) {
 		}
 	}()
 	defer func() {
-		// Stop signal delivery BEFORE releasing the watcher goroutine: in
-		// the other order a SIGINT landing between the two would be
-		// swallowed by the (now unwatched) channel instead of killing the
-		// process (R24).
+		// Stop signal delivery BEFORE releasing the watcher goroutine: in the other order
+		// a SIGINT in between would be swallowed by the unwatched channel instead of
+		// killing the process.
 		signal.Stop(sigCh)
 		close(restored)
 		sttyEcho(tty, true)
@@ -238,11 +232,9 @@ func readPassphrase(prompt string) ([]byte, error) {
 	return []byte(strings.TrimRight(line, "\r\n")), nil
 }
 
-// readNewPassphrase asks for a new passphrase twice on the terminal and
-// requires the two entries to match; when TRINETRA_MAINT_PASSPHRASE_FILE is
-// set it is read once (the file is already the single source of truth). An
-// empty passphrase is always rejected (review M1): this protects a
-// production maintainer signing key, not a convenience credential.
+// readNewPassphrase asks twice on the terminal and requires a match; when
+// TRINETRA_MAINT_PASSPHRASE_FILE is set it is read once. An empty passphrase is
+// always rejected: this protects the production maintainer signing key.
 func readNewPassphrase() ([]byte, error) {
 	var pass []byte
 	if os.Getenv("TRINETRA_MAINT_PASSPHRASE_FILE") != "" {

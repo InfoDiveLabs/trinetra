@@ -14,13 +14,10 @@ type ghAsset struct {
 }
 
 // ghRelease is the subset of a release object, as returned by `gh api
-// repos/{owner}/{repo}/releases --paginate`, that cmdLatest needs.
-//
-// This reads the REST releases endpoint rather than `gh release list --json
-// tagName,isPrerelease,isDraft`, because that list projection has no assets
-// field at all: it cannot tell a release with a signed manifest apart from
-// one without (review B1). The REST fields are snake_case
-// (tag_name/prerelease/draft), unlike gh's list projection.
+// repos/{owner}/{repo}/releases --paginate`, that cmdLatest needs. The REST
+// endpoint is used because `gh release list --json` has no assets field and so
+// cannot tell a release with a signed manifest from one without. REST fields are
+// snake_case (tag_name/prerelease/draft).
 type ghRelease struct {
 	TagName    string    `json:"tag_name"`
 	Prerelease bool      `json:"prerelease"`
@@ -28,13 +25,10 @@ type ghRelease struct {
 	Assets     []ghAsset `json:"assets"`
 }
 
-// requiredManifestAssets are the asset names a release must carry, all
-// three, before cmdLatest will consider it. Without every one of them, no
-// host can verify a signed manifest for that version
-// (internal/trinetra/systemd.go installSignature and
-// internal/update/fetch.go FetchRelease both require all three), so signing
-// a channel pointer at such a release (review B1) would point every host at
-// a version it can never actually apply.
+// requiredManifestAssets are the asset names a release must carry, all three,
+// before cmdLatest considers it. Hosts need all three to verify a signed manifest
+// (installSignature and FetchRelease both require them), so a channel pointer at
+// a release lacking any would point every host at a version it can never apply.
 var requiredManifestAssets = []string{"manifest.json", "manifest.ci.sig", "manifest.maint.sig"}
 
 // hasSignedManifest reports whether assets includes every name in
@@ -55,28 +49,24 @@ func hasSignedManifest(assets []ghAsset) bool {
 // cmdLatest implements: latest --channel stable|beta
 //
 // It reads a JSON array shaped like `gh api repos/{owner}/{repo}/releases
-// --paginate` from stdin and prints the HIGHEST version among the matching
-// releases, using update.ParseVersion/CompareVersions ordering rather than
-// gh's list order (which is by creation date, not version — review F2/I2: a
-// backport or an out-of-order publish must not move a channel pointer
-// backwards or skip a higher version).
+// --paginate` from stdin and prints the HIGHEST matching version by
+// update.ParseVersion/CompareVersions ordering, not gh's creation-date order, so
+// a backport or out-of-order publish cannot move a channel pointer backwards.
 //
-// A tag that isn't a valid "vX.Y.Z" or "vX.Y.Z-pre" (e.g. the "channels"
-// release used to store signed pointers) is skipped rather than treated as
-// an error. A draft is always skipped. A release whose assets do not
-// include all of manifest.json, manifest.ci.sig and manifest.maint.sig is
-// also skipped (review B1): no host could verify or install it, so it must
-// never become a signed channel pointer.
+// A tag that is not a valid "vX.Y.Z" or "vX.Y.Z-pre" (e.g. the "channels"
+// release holding signed pointers) is skipped, as is any draft and any release
+// missing one of manifest.json, manifest.ci.sig and manifest.maint.sig, since no
+// host could install it.
 //
-//   - --channel stable additionally requires !Prerelease AND that the
-//     parsed version has no pre-release part, so a tag a maintainer forgot
-//     to mark as a GitHub prerelease still cannot reach stable.
-//   - --channel beta considers every remaining tag, final or pre-release,
-//     and picks the highest under full semver precedence (a final release
-//     outranks an equal or lower pre-release of the same core version).
+//   - --channel stable also requires !Prerelease AND no pre-release part in the
+//     parsed version, so a tag wrongly left unmarked as a prerelease cannot
+//     reach stable.
+//   - --channel beta considers every remaining tag and picks the highest under
+//     full semver precedence (a final release outranks a pre-release of the same
+//     core version).
 //
-// Prints nothing and exits 0 if no tag matches; the caller (channels.yml)
-// skips signing a pointer for that channel in that case.
+// Prints nothing and exits 0 if no tag matches; channels.yml then skips signing a
+// pointer for that channel.
 func cmdLatest(args []string) error {
 	fs := newFlagSet("latest")
 	channel := fs.String("channel", "", "stable or beta")
