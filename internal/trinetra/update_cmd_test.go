@@ -320,3 +320,23 @@ func TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing(t *testing.T) {
 		t.Fatalf("Floor = %q, want it to show the bad floor value", st.Floor)
 	}
 }
+
+// A release recorded as available stops being offered once it is the
+// running version, without waiting for the next channel check.
+func TestStatusHidesAvailableOnceInstalled(t *testing.T) {
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Available: "0.6.0-beta.1"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := updater{paths: p, running: mustVer("0.6.0-beta.1")}.status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Available != "" {
+		t.Fatalf("Available = %q while running it", st.Available)
+	}
+	st, _ = updater{paths: p, running: mustVer("0.5.0")}.status()
+	if st.Available != "0.6.0-beta.1" {
+		t.Fatalf("Available = %q, want it offered to 0.5.0", st.Available)
+	}
+}

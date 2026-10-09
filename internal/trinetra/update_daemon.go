@@ -66,13 +66,14 @@ func updateResultAlert(r update.Result) (Alert, bool) {
 // st.AvailableNotified (so the same available version is never re-alerted,
 // but a later, still-newer version -- or the same version becoming
 // available again after an intervening notified one -- alerts again).
-func updateAvailableAlert(st update.State) (Alert, bool) {
-	if st.Available == "" || st.Available == st.AvailableNotified {
+func updateAvailableAlert(st update.State, running update.Version) (Alert, bool) {
+	avail := st.AvailableOver(running)
+	if avail == "" || avail == st.AvailableNotified {
 		return Alert{}, false
 	}
 	return Alert{
 		Key:      "update:available",
-		Title:    "trinetra " + st.Available + " is available (run: sudo trinetra update apply)",
+		Title:    "trinetra " + avail + " is available (run: sudo trinetra update apply)",
 		Severity: SevInfo,
 		Kind:     "fire",
 		Source:   "update",
@@ -343,7 +344,7 @@ func notifyAvailable(p updatePaths, notify func(Alert)) {
 	if err != nil {
 		return
 	}
-	a, ok := updateAvailableAlert(st)
+	a, ok := updateAvailableAlert(st, runningVersion())
 	if !ok {
 		return
 	}

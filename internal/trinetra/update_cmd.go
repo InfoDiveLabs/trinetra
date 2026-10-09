@@ -521,7 +521,7 @@ func (u updater) status() (updateStatus, error) {
 	return updateStatus{
 		Running:        u.running.String(),
 		Floor:          floorStr,
-		Available:      st.Available,
+		Available:      st.AvailableOver(u.running),
 		Previous:       previous,
 		Pending:        st.Pending,
 		Last:           st.Last,
@@ -647,7 +647,7 @@ func launchGuardUnit(p updatePaths) error {
 // parsed from the build stamp, and the real launchGuard (systemd-run into
 // `trinetra update guard`). src is left nil so check/apply build it from c.
 func newUpdater(c *config.Config) updater {
-	running, _ := update.ParseVersion(version.String()) // unparsable (e.g. "dev") -> zero Version; tolerated for a dev build
+	running := runningVersion()
 	return updater{
 		paths:       defaultUpdatePaths(),
 		keys:        update.ProductionKeys(),
@@ -819,3 +819,10 @@ func cmdUpdateRollback(args []string) int {
 // update's deadline, confirm or roll back, resume across a crash) that
 // launchGuard starts via systemd-run right after apply/rollback swap a
 // build in.
+
+// runningVersion is this build's version; a dev build that does not parse is
+// the zero Version.
+func runningVersion() update.Version {
+	v, _ := update.ParseVersion(version.String())
+	return v
+}

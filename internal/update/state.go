@@ -227,3 +227,15 @@ func (s *State) MarkBad(v string) {
 		s.Bad = append(s.Bad, strings.TrimPrefix(v, "v"))
 	}
 }
+
+// AvailableOver returns Available only while it is newer than running.
+// Available is recorded at check time, so once that release is installed
+// (by apply or a manual install) it would otherwise keep being offered
+// until the next check.
+func (s State) AvailableOver(running Version) string {
+	v, err := ParseVersion(s.Available)
+	if err != nil || CompareVersions(v, running) <= 0 {
+		return ""
+	}
+	return s.Available
+}
