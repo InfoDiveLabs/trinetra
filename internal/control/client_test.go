@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -726,5 +727,70 @@ func TestWireErrSentinelsCoverEveryCoreSentinel(t *testing.T) {
 		if !have[text] {
 			t.Errorf("core.%s (%q) is not in wireErrSentinels -- a control-socket caller's errors.Is(err, core.%s) would silently stop working for a %%w-wrapped instance of it", name, text, name)
 		}
+	}
+}
+
+// serveClosingAfterOne answers one request per connection and then closes
+// it, the way the daemon drops a connection that sat past idleTimeout.
+func serveClosingAfterOne(t *testing.T, want core.DashboardView) (path string, accepts *atomic.Int32) {
+	t.Helper()
+	path = shortSocketPath(t)
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	accepts = new(atomic.Int32)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepts.Add(1)
+			go func(conn net.Conn) {
+				defer conn.Close()
+				r := bufio.NewReader(conn)
+				var h hello
+				if readFrame(r, &h) != nil || writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion}) != nil {
+					return
+				}
+				var req request
+				if readFrame(r, &req) != nil {
+					return
+				}
+				b, _ := json.Marshal(want)
+				_ = writeFrame(conn, response{ID: req.ID, OK: true, Result: b})
+			}(conn)
+		}
+	}()
+	return path, accepts
+}
+
+func TestClientRedialsAfterIdleClose(t *testing.T) {
+	orig := redialAfter
+	redialAfter = 50 * time.Millisecond
+	t.Cleanup(func() { redialAfter = orig })
+
+	want := core.DashboardView{CPU: 12, Cores: 64, Online: true}
+	path, accepts := serveClosingAfterOne(t, want)
+	client, err := Dial(path, "")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+	if _, err := client.Snapshot(); err != nil {
+		t.Fatalf("first Snapshot: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	got, err := client.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot after an idle gap failed instead of re-dialing: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+	if n := accepts.Load(); n != 2 {
+		t.Errorf("connections = %d, want 2", n)
 	}
 }
