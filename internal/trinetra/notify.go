@@ -27,10 +27,8 @@ func formatFire(e Event) string {
 	return fmt.Sprintf("%s ALERT: %s", prefix, e.Text)
 }
 
-// formatAlert renders a channel-agnostic Alert as a plain, phone-friendly
-// message: a severity marker, the Title, then the Body on its own line. A
-// "recover" Alert always gets the ✅ marker regardless of Severity; "fire"
-// Alerts get a marker scaled to Severity (🚨 critical, ⚠️ warning, ℹ️ info).
+// formatAlert renders a channel-agnostic Alert as a plain, phone-friendly message: a
+// severity marker, the Title, then the Body on its own line.
 func formatAlert(a Alert) string {
 	return fmt.Sprintf("%s %s\n%s", alertMarker(a), a.Title, a.Body)
 }

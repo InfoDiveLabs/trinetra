@@ -12,9 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestBuildDoctorReport: buildDoctorReport must report the discovered-target
-// count and collector toggles for a fake Exec/FileSource, without touching the
-// real host.
+// TestBuildDoctorReport: buildDoctorReport must report the discovered-target count and
+// collector toggles for a fake Exec/FileSource, without touching the real host.
 func TestBuildDoctorReport(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "smartctl" {
@@ -77,9 +76,8 @@ func TestBuildDoctorReportStoreStats(t *testing.T) {
 	}
 }
 
-// TestBuildDoctorReportWarnsOnHighCardinality pins #112: a store whose series
-// count is at/above the guardrail threshold produces a StoreWarning, and a
-// healthy store does not.
+// TestBuildDoctorReportWarnsOnHighCardinality pins #112: a store whose series count is
+// at/above the guardrail threshold produces a StoreWarning, and a healthy store does not.
 func TestBuildDoctorReportWarnsOnHighCardinality(t *testing.T) {
 	noExec := fakeExec{fn: func(string, ...string) ([]byte, error) { return nil, errNotExist }}
 
@@ -105,10 +103,8 @@ func TestBuildDoctorReportWarnsOnHighCardinality(t *testing.T) {
 	}
 }
 
-// TestRenderDoctorReport is the golden test for the print format
-// cmdDoctor has always emitted: given a hand-built core.DoctorReport, it
-// pins the exact byte-for-byte output, independent of buildDoctorReport's
-// probe logic or the host this test runs on.
+// TestRenderDoctorReport is the golden test for the print format cmdDoctor has always
+// emitted: given a hand-built core.DoctorReport, it pins the exact byte-for-byte output.
 func TestRenderDoctorReport(t *testing.T) {
 	rep := core.DoctorReport{
 		DockerAccess:      "available=true method=socket",
@@ -137,9 +133,8 @@ func TestRenderDoctorReport(t *testing.T) {
 	}
 }
 
-// TestRenderDoctorReportUnavailable pins the "smartctl: unavailable" /
-// "time-series: unavailable" branches, the counterparts to the "ok" /
-// store-stats branches TestRenderDoctorReport covers.
+// TestRenderDoctorReportUnavailable pins the "smartctl: unavailable" / "time-series:
+// unavailable" branches.
 func TestRenderDoctorReportUnavailable(t *testing.T) {
 	rep := core.DoctorReport{
 		DockerAccess: "available=false method=",
@@ -160,11 +155,8 @@ func TestRenderDoctorReportUnavailable(t *testing.T) {
 	}
 }
 
-// TestCmdDoctorOutputUnchanged runs the real `doctor` command and checks every
-// line renderDoctorReport produces is present with the wording cmdDoctor has
-// always printed. Docker/smartctl/thermal availability is host-dependent, so
-// only the literal, host-independent parts of each line (labels/format) are
-// pinned.
+// TestCmdDoctorOutputUnchanged runs the real `doctor` command and checks every line
+// renderDoctorReport produces is present with the wording cmdDoctor has always printed.
 func TestCmdDoctorOutputUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -195,9 +187,8 @@ func TestCmdDoctorOutputUnchanged(t *testing.T) {
 	}
 }
 
-// TestDoctorInprocAPI asserts inprocAPI.Doctor() (the core.API entry point
-// added by this task) delegates to buildDoctorReport and returns no error,
-// using the live store held by the API rather than opening a fresh one.
+// TestDoctorInprocAPI asserts inprocAPI.Doctor() (the core.API entry point added by this
+// task) delegates to buildDoctorReport and returns no error.
 func TestDoctorInprocAPI(t *testing.T) {
 	store, err := OpenStore("memory", t.TempDir(), StoreOptions{})
 	if err != nil {
@@ -240,20 +231,16 @@ func TestDoctorFileAPI(t *testing.T) {
 	}
 }
 
-// TestDoctorFileAPINilStoreDegrades asserts a store that fails to open
-// degrades Doctor() to StoreStats "unavailable" rather than returning an
-// error -- read-only diagnostics shouldn't fail over, the same reasoning
-// cmdDoctor's own corrupt-config/store-open fallback already applies.
+// TestDoctorFileAPINilStoreDegrades asserts a store that fails to open degrades Doctor() to
+// StoreStats "unavailable" rather than returning an error.
 func TestDoctorFileAPINilStoreDegrades(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Default()
 	if err := cfg.Set("storage.backend", "tsfile"); err != nil {
 		t.Fatal(err)
 	}
-	// openConfiguredStore always opens the backend rooted at the
-	// package-level stateDir (migrate.go), not a config field -- point that
-	// at a regular file (rather than a directory) so tsfile's MkdirAll
-	// fails and Doctor() must degrade instead of erroring.
+	// openConfiguredStore always opens the backend rooted at the package-level stateDir
+	// (migrate.go), not a config field -- point that at a regular file.
 	blocked := filepath.Join(dir, "blocked")
 	if err := os.WriteFile(blocked, []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)

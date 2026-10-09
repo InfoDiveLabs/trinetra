@@ -81,9 +81,8 @@ func TestDispatcherFansOutToAll(t *testing.T) {
 	}
 }
 
-// TestDispatcherDispatchToNamedSubset covers fleet routing: only
-// the named channel receives the alert, even though every channel is
-// enabled and would otherwise allow it.
+// TestDispatcherDispatchToNamedSubset covers fleet routing: only the named channel receives
+// the alert, even though every channel is enabled and would otherwise allow it.
 func TestDispatcherDispatchToNamedSubset(t *testing.T) {
 	slack := &fakeNotifier{name: "slack"}
 	pager := &fakeNotifier{name: "pager"}
@@ -115,9 +114,8 @@ func TestDispatcherDispatchToWildcardActsLikeDispatch(t *testing.T) {
 	}
 }
 
-// TestDispatcherDispatchToStillGatesOnRouteAllows: naming a channel never
-// bypasses its own Route.Allows; quiet hours and severity gating still apply
-// as for Dispatch.
+// TestDispatcherDispatchToStillGatesOnRouteAllows: naming a channel never bypasses its own
+// Route.Allows; quiet hours and severity gating still apply as for Dispatch.
 func TestDispatcherDispatchToStillGatesOnRouteAllows(t *testing.T) {
 	slack := &fakeNotifier{name: "slack"}
 	pager := &fakeNotifier{name: "pager"}
@@ -126,8 +124,7 @@ func TestDispatcherDispatchToStillGatesOnRouteAllows(t *testing.T) {
 		{N: pager, Route: Route{MinSeverity: SevWarning, CriticalOverridesQuiet: true}, Enabled: true},
 	}, time.Second)
 
-	// During quiet hours, a non-critical alert is gated out on EVERY channel,
-	// named or not.
+	// During quiet hours, a non-critical alert is gated out on EVERY channel, named or not.
 	results := d.DispatchTo(Alert{Key: "cpu", Severity: SevWarning, Kind: "fire"}, true, []string{"slack", "pager"})
 	if len(results) != 0 {
 		t.Fatalf("results during quiet hours = %+v, want none (severity below critical)", results)
@@ -226,9 +223,8 @@ func TestDispatcherRecoversPanic(t *testing.T) {
 }
 
 func TestDispatcherTimeoutsRunConcurrentlyNotSerially(t *testing.T) {
-	// Regression guard: if Dispatch ever waited out each notifier's timeout
-	// one at a time instead of racing them all in parallel, N slow
-	// notifiers would take N*timeout instead of ~timeout.
+	// Regression guard: if Dispatch ever waited out each notifier's timeout one at a time
+	// instead of racing them all in parallel.
 	const n = 8
 	channels := make([]Channel, n)
 	for i := range channels {
@@ -340,9 +336,8 @@ func TestNotifierQueueAllUndroppableGrowsPastCapForUndroppableNewcomer(t *testin
 
 	q.Enqueue(Alert{Key: "crit1", Severity: SevCritical, Kind: "fire"}, false)
 	q.Enqueue(Alert{Key: "recover1", Severity: SevInfo, Kind: "recover"}, false)
-	// queue full (cap 2) and every item is undroppable; an undroppable
-	// newcomer must be admitted even though that grows the queue past cap,
-	// since nothing droppable exists to make room and nothing may be dropped.
+	// queue full (cap 2) and every item is undroppable; an undroppable newcomer must be
+	// admitted even though that grows the queue past cap.
 	q.Enqueue(Alert{Key: "crit2", Severity: SevCritical, Kind: "fire"}, false)
 
 	keys := q.snapshotKeysForTest()
@@ -385,18 +380,8 @@ func TestNotifierQueueRunDelivers(t *testing.T) {
 	t.Fatal("alert was not delivered")
 }
 
-// TestNotifierQueueSetDispatcherReroutesDelivery guards the mechanism the
-// daemon's dispatcher rebuilds (applyConfig AND setChatID) depend on: because
-// delivery runs off the queue's OWN dispatcher pointer, a rebuild must call
-// q.SetDispatcher or alerts keep going to the stale dispatcher. This was the
-// setChatID bug -- a chat id auto-captured via /start enrollment rebuilt the
-// shared dispatcher but never told the queue, so every alert after a fresh
-// zero-config enrollment dispatched to the stale channel-less dispatcher and
-// silently didn't deliver. Here the "old" dispatcher stands in for that stale
-// pre-enrollment one and the "new" one for the freshly-enrolled channel: after
-// SetDispatcher, an enqueued alert must reach the NEW notifier and never the
-// old. If SetDispatcher didn't actually swap the active dispatcher, the alert
-// would land on oldN and this test fails.
+// TestNotifierQueueSetDispatcherReroutesDelivery guards the mechanism the daemon's
+// dispatcher rebuilds.
 func TestNotifierQueueSetDispatcherReroutesDelivery(t *testing.T) {
 	oldN := &fakeNotifier{name: "stale-pre-enrollment"}
 	newN := &fakeNotifier{name: "freshly-enrolled"}
@@ -429,9 +414,7 @@ func TestNotifierQueueSetDispatcherReroutesDelivery(t *testing.T) {
 
 // --- bounded retry --------------------
 
-// withShortNotifierRetryTuning shrinks every retry knob for the duration of
-// one test, so an integration-style test exercising real backoff through
-// NotifierQueue.Run never waits real minutes -- only a few milliseconds.
+// withShortNotifierRetryTuning shrinks every retry knob for the duration of one test.
 func withShortNotifierRetryTuning(t *testing.T) {
 	t.Helper()
 	oldMax, oldUndroppableMax := notifierMaxAttempts, notifierUndroppableMaxAttempts
@@ -447,9 +430,7 @@ func withShortNotifierRetryTuning(t *testing.T) {
 	})
 }
 
-// flakyNotifier fails its first failUntil sends, then succeeds forever
-// after. Thread-safe: attemptDelivery's own channels can run concurrently
-// with other channels in the same Dispatch/DispatchTo call.
+// flakyNotifier fails its first failUntil sends, then succeeds forever after.
 type flakyNotifier struct {
 	name      string
 	failUntil int32
@@ -488,9 +469,8 @@ func TestNotifierBackoffDoublesAndCapsAtNotifierMaxDelay(t *testing.T) {
 	}
 }
 
-// TestNextRetryNarrowsToFailedChannelsOnly is the double-delivery guard: a
-// channel that already succeeded must never appear in the next attempt's
-// targetChannels.
+// TestNextRetryNarrowsToFailedChannelsOnly is the double-delivery guard: a channel that
+// already succeeded must never appear in the next attempt's targetChannels.
 func TestNextRetryNarrowsToFailedChannelsOnly(t *testing.T) {
 	q := NewNotifierQueue(nil, 8)
 	now := time.Unix(1000, 0)
@@ -532,9 +512,8 @@ func TestNextRetryNoFailuresNeverRetries(t *testing.T) {
 	}
 }
 
-// TestNextRetryGivesUpAfterMaxAttempts is the exhaustion path: once attempt
-// count would reach notifierMaxAttempts, nextRetry gives up (retry=false)
-// and counts permanentlyFailed, rather than retrying forever.
+// TestNextRetryGivesUpAfterMaxAttempts is the exhaustion path: once attempt count would
+// reach notifierMaxAttempts, nextRetry gives up (retry=false) and counts permanentlyFailed.
 func TestNextRetryGivesUpAfterMaxAttempts(t *testing.T) {
 	old := notifierMaxAttempts
 	notifierMaxAttempts = 3
@@ -564,9 +543,8 @@ func TestNextRetryGivesUpAfterMaxAttempts(t *testing.T) {
 	}
 }
 
-// TestNextRetryGivesUpAfterRetryWindowEvenWithAttemptsLeft: the time-window
-// budget is independent of the attempt-count budget -- either one
-// exhausting is enough to give up.
+// TestNextRetryGivesUpAfterRetryWindowEvenWithAttemptsLeft: the time-window budget is
+// independent of the attempt-count budget -- either one exhausting is enough to give up.
 func TestNextRetryGivesUpAfterRetryWindowEvenWithAttemptsLeft(t *testing.T) {
 	old := notifierRetryWindow
 	notifierRetryWindow = 10 * time.Minute
@@ -652,10 +630,8 @@ func TestNotifierQueueRunRetriesFailedChannelThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestNotifierQueueRunGivesUpAfterMaxAttemptsAndStopsRetrying is the other
-// end-to-end half: a channel that never succeeds is retried up to
-// notifierMaxAttempts times, counted permanentlyFailed, and then left
-// alone -- not retried forever.
+// TestNotifierQueueRunGivesUpAfterMaxAttemptsAndStopsRetrying is the other end-to-end half:
+// a channel that never succeeds is retried up to notifierMaxAttempts times.
 func TestNotifierQueueRunGivesUpAfterMaxAttemptsAndStopsRetrying(t *testing.T) {
 	withShortNotifierRetryTuning(t)
 	n := &flakyNotifier{name: "always-fails", failUntil: 1 << 30}

@@ -21,9 +21,8 @@ func newTgConfig(token, chatID string) *config.Config {
 // callback_query update, so this is never actually invoked).
 func noopCallback(*config.Config, telegram.Update) {}
 
-// TestProcessUpdatesIgnoresUnauthorizedSender is the core #78 guard: once a
-// chat id is known, an update from any OTHER chat must be dropped entirely,
-// so an unknown sender can neither trigger host collection nor cause a reply.
+// TestProcessUpdatesIgnoresUnauthorizedSender is the core #78 guard: once a chat id is
+// known, an update from any OTHER chat must be dropped entirely.
 func TestProcessUpdatesIgnoresUnauthorizedSender(t *testing.T) {
 	cfg := newTgConfig("tok", "111")
 	getCfg := func() *config.Config { return cfg }
@@ -63,9 +62,8 @@ func TestProcessUpdatesRepliesToAuthorizedSender(t *testing.T) {
 	}
 }
 
-// TestProcessUpdatesEnrollsOnCorrectPINThenReplies is the #78 Scenario A fix:
-// with no chat id set, ownership is claimed ONLY by a correct "/start <pin>",
-// and that now-authorized sender is answered.
+// TestProcessUpdatesEnrollsOnCorrectPINThenReplies is the #78 Scenario A fix: with no chat
+// id set, ownership is claimed ONLY by a correct "/start <pin>".
 func TestProcessUpdatesEnrollsOnCorrectPINThenReplies(t *testing.T) {
 	cur := newTgConfig("tok", "") // chat id not yet known
 	getCfg := func() *config.Config { return cur }

@@ -8,10 +8,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-// TestCopyFileAndPluginManifestFsyncDir: every binary replace
-// (install, swap, snapshot, restore) goes through copyFile, and the swap
-// rewrites plugins.json; both must fsync their directory after the rename so
-// a power loss never leaves a zero-length binary or manifest behind.
+// TestCopyFileAndPluginManifestFsyncDir: every binary replace (install, swap, snapshot,
+// restore) goes through copyFile, and the swap rewrites plugins.json.
 func TestCopyFileAndPluginManifestFsyncDir(t *testing.T) {
 	dir := t.TempDir()
 	prevState := stateDir

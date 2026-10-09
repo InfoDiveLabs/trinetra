@@ -43,8 +43,7 @@ func TestIncidentStoreFireOpensThenRecoverCloses(t *testing.T) {
 		t.Fatal("group key still marked open after resolve")
 	}
 
-	// A later fire for the same (node, key) opens a FRESH incident, not the
-	// resolved one.
+	// A later fire for the same (node, key) opens a FRESH incident, not the resolved one.
 	inc3, err := s.Apply(incidentApply{src: src, alert: fire, firedAt: 2000, now: 2000})
 	if err != nil {
 		t.Fatal(err)
@@ -77,8 +76,7 @@ func TestIncidentStoreLoadLastLineWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Reload: the LAST line for id (the ack) must win over the earlier fire
-	// snapshot.
+	// Reload: the LAST line for id (the ack) must win over the earlier fire snapshot.
 	s2, err := loadIncidentStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -96,11 +94,8 @@ func TestIncidentStoreLoadLastLineWins(t *testing.T) {
 func TestIncidentStoreRotatesAt50MB(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "incidents.jsonl")
-	// Pre-create a file already at the rotation threshold: harmless
-	// (non-JSON, silently skipped by load), newline-delimited, reasonably
-	// long lines -- fast to scan, unlike one huge token or millions of tiny
-	// ones -- but still a real newline-delimited file, like the genuine
-	// incidents.jsonl this stands in for.
+	// Pre-create a file already at the rotation threshold: harmless (non-JSON, silently
+	// skipped by load), newline-delimited, reasonably long lines -- fast to scan.
 	line := append(bytes.Repeat([]byte("x"), 4096), '\n')
 	buf := bytes.Repeat(line, incidentRotateBytes/len(line)+1)
 	if err := os.WriteFile(path, buf, 0o600); err != nil {
@@ -223,9 +218,8 @@ func TestIncidentStoreAckGuardsResolvedIncidents(t *testing.T) {
 	}
 }
 
-// TestIncidentStoreAppendEventAndMarkDeliveredLocally exercises the two
-// primitives fleetAlertEngine.deliverAndReceipt/Submit's alreadySeen branch
-// use directly, independent of the engine.
+// TestIncidentStoreAppendEventAndMarkDeliveredLocally exercises the two primitives
+// fleetAlertEngine.deliverAndReceipt/Submit's alreadySeen branch use directly.
 func TestIncidentStoreAppendEventAndMarkDeliveredLocally(t *testing.T) {
 	dir := t.TempDir()
 	s, err := loadIncidentStore(filepath.Join(dir, "incidents.jsonl"))

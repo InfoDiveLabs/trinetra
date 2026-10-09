@@ -37,9 +37,7 @@ func alertStateAndLogPaths() (statePath, logPath string) {
 	return s.AlertStatePath(), s.AlertLogPath()
 }
 
-// cmdAlertsAck implements `alerts ack <key>` and `alerts unack <key>` (ack
-// distinguishes them) via the file-backed core.API. cfg is nil since neither
-// AckAlert nor UnackAlert touches it.
+// cmdAlertsAck implements `alerts ack <key>` and `alerts unack <key>`.
 func cmdAlertsAck(args []string, ack bool) int {
 	verb := "ack"
 	if !ack {

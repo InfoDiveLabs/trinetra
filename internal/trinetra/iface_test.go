@@ -5,11 +5,8 @@ import (
 	"time"
 )
 
-// A child (sh) that spawns a grandchild (sleep) which inherits the stdout
-// pipe and outlives a naive CommandContext kill. Run must still return at
-// the deadline, not block ~30s waiting on the grandchild. The deadline is the
-// package-level execTimeout (configurable via exec_timeout); shorten it here
-// so the test doesn't wait the generous production default.
+// A child (sh) that spawns a grandchild (sleep) which inherits the stdout pipe and outlives
+// a naive CommandContext kill.
 func TestOsExecRunKillsProcessGroupOnTimeout(t *testing.T) {
 	orig := execTimeout
 	execTimeout = 2 * time.Second

@@ -36,10 +36,8 @@ func testKeys() update.KeySet {
 	return update.KeySet{CI: []update.PublicKey{updatetest.NewTestSigner(1).Public()}, Maint: []update.PublicKey{updatetest.NewTestSigner(2).Public()}, Pointer: []update.PublicKey{updatetest.NewTestSigner(3).Public()}}
 }
 
-// writeBundle writes a signed release bundle directory to disk (manifest,
-// both signatures, and the given asset files side by side), the on-disk
-// shape update.DirSource reads -- unlike signedRelease/mapSource, which only
-// exist in memory and can't back a real --bundle DIR.
+// writeBundle writes a signed release bundle directory to disk (manifest, both signatures,
+// and the given asset files side by side), the on-disk shape update.DirSource reads.
 func writeBundle(t *testing.T, version string, files map[string][]byte) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -66,11 +64,8 @@ func writeBundle(t *testing.T, version string, files map[string][]byte) string {
 	return dir
 }
 
-// NOTE: testUpdatePaths (update_apply_test.go) pre-populates BinDir with BOTH
-// "trinetra" and "trinetra-web" as "installed" binaries, and planApply requires
-// a release asset for every installed binary, so a release shipping only
-// trinetra-linux-amd64 is rejected. trinetra-web-linux-amd64 is added to the
-// release here to reuse the fixture rather than fork it.
+// NOTE: testUpdatePaths (update_apply_test.go) pre-populates BinDir with BOTH "trinetra"
+// and "trinetra-web" as "installed" binaries.
 func TestUpdaterApplyLaunchesGuardAndRefusesDowngrade(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.5.0", map[string][]byte{
@@ -96,11 +91,8 @@ func TestUpdaterApplyLaunchesGuardAndRefusesDowngrade(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyNoFloorFallsBackToRunning pins #138 truth-table case (b):
-// with nothing persisted in state.json, FloorVersion falls back to the
-// running version as the floor, so a pre-release of that same version
-// (0.5.0-rc.1 sorts below 0.5.0 by semver precedence) is refused as a
-// downgrade even though no floor was ever written.
+// TestUpdaterApplyNoFloorFallsBackToRunning pins #138 truth-table case (b): with nothing
+// persisted in state.json, FloorVersion falls back to the running version as the floor.
 func TestUpdaterApplyNoFloorFallsBackToRunning(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.5.0-rc.1", map[string][]byte{
@@ -131,10 +123,7 @@ func TestUpdaterApplyNoFloorFallsBackToRunning(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyUnparsableFloorFailsClosed is #138 truth-table case (d)'s
-// apply half: a persisted floor that is valid JSON but not a valid version
-// must refuse `trinetra update apply` with a clear error, never silently act
-// as "no floor".
+// TestUpdaterApplyUnparsableFloorFailsClosed is #138 truth-table case (d)'s apply half.
 func TestUpdaterApplyUnparsableFloorFailsClosed(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.7.0", map[string][]byte{
@@ -162,12 +151,7 @@ func TestUpdaterApplyRefusesBadVersionWithoutForce(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyBundleWorksWhenChannelOff: an operator with
-// update.channel=off (updates disabled from the network) must still be able to
-// install an explicit local bundle via --bundle DIR. Policy.Channel comes from
-// the verified bundle manifest's own channel in that case, not the host's
-// "off", which CheckPolicy would otherwise refuse with ErrWrongChannel.
-// Floor/min_upgrade_from/signature checks are unaffected.
+// TestUpdaterApplyBundleWorksWhenChannelOff: an operator with update.channel=off.
 func TestUpdaterApplyBundleWorksWhenChannelOff(t *testing.T) {
 	p := testUpdatePaths(t)
 	bundleDir := writeBundle(t, "0.5.0", map[string][]byte{
@@ -189,9 +173,8 @@ func TestUpdaterApplyBundleWorksWhenChannelOff(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyRefusesChannelOffWithoutBundle: without --bundle,
-// update.channel=off must still refuse -- "off" only ever yields to an
-// explicit local bundle, never to the network source.
+// TestUpdaterApplyRefusesChannelOffWithoutBundle: without --bundle, update.channel=off must
+// still refuse -- "off" only ever yields to an explicit local bundle.
 func TestUpdaterApplyRefusesChannelOffWithoutBundle(t *testing.T) {
 	p := testUpdatePaths(t)
 	u := updater{paths: p, keys: testKeys(), running: mustVer("0.4.1"), launchGuard: func() error { return nil }}
@@ -204,9 +187,8 @@ func TestUpdaterApplyRefusesChannelOffWithoutBundle(t *testing.T) {
 	}
 }
 
-// TestConfigGetRedactsSecrets drives the real entry point, Main(), with the
-// cfgPath/stdout package vars main_test.go overrides directly (see
-// TestConfigSetGetViaCLI).
+// TestConfigGetRedactsSecrets drives the real entry point, Main(), with the cfgPath/stdout
+// package vars main_test.go overrides directly (see TestConfigSetGetViaCLI).
 func TestConfigGetRedactsSecrets(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -229,12 +211,8 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 	}
 }
 
-// TestUpdaterRollbackNormalizesVersion: `version --json` against the previous
-// binary can report a "v"-prefixed version (git describe-style tags, e.g.
-// "v0.4.1"), and rollback() must not store that raw string as Pending.Version.
-// The guard compares Pending.Version against the RUNNING daemon's (normalised)
-// version, so an un-normalised value would make every `trinetra update
-// rollback` misreport a version mismatch and roll back a healthy restart.
+// TestUpdaterRollbackNormalizesVersion: `version --json` against the previous binary can
+// report a "v"-prefixed version (git describe-style tags, e.g. "v0.4.1").
 func TestUpdaterRollbackNormalizesVersion(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -262,10 +240,8 @@ func (f fakeVersionExec) Run(name string, args ...string) ([]byte, error) {
 
 func mustVer(s string) update.Version { v, _ := update.ParseVersion(s); return v }
 
-// TestUpdateStatusJSONWorksWithNoStateDir: `trinetra update status --json`
-// must succeed for a non-root caller with no /var/lib/trinetra at all (a fresh
-// CI runner before any update has run), and the JSON must include a
-// "fingerprints" field sourced from update.Fingerprints(update.ProductionKeys()).
+// TestUpdateStatusJSONWorksWithNoStateDir: `trinetra update status --json` must succeed for
+// a non-root caller with no /var/lib/trinetra at all.
 func TestUpdateStatusJSONWorksWithNoStateDir(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -291,10 +267,8 @@ func TestUpdateStatusJSONWorksWithNoStateDir(t *testing.T) {
 	}
 }
 
-// TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing is #138: `trinetra
-// update status` must still display when the persisted floor is unparsable
-// -- showing the error rather than refusing to run entirely, unlike
-// check/apply/install which refuse the operation outright.
+// TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing is #138: `trinetra update status`
+// must still display when the persisted floor is unparsable.
 func TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing(t *testing.T) {
 	p := testUpdatePaths(t)
 	if err := update.SaveState(p.dir(), update.State{Floor: "not-a-version"}); err != nil {

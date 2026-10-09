@@ -7,17 +7,8 @@ import (
 	"time"
 )
 
-// TestSlowCollectorNeverOverlaps: two slow collections must never run
-// concurrently, or they would data-race on the single-owner calculators
-// (smartCache/NetRateCalc/ProcCPUCalc maps). It parks the first collection open
-// (blocked on a channel) past its deadline so runOnce returns while it is still
-// in flight, then hammers runOnce concurrently and asserts collect is never
-// entered more than once at a time.
-//
-// Without runOnce's in-flight guard each call spawns its own collect goroutine
-// and max concurrency rises well above 1 (in production, the race detector /
-// "concurrent map read and map write"). With it, every hammering call CAS-fails
-// and skips.
+// TestSlowCollectorNeverOverlaps: two slow collections must never run concurrently, or they
+// would data-race on the single-owner calculators.
 func TestSlowCollectorNeverOverlaps(t *testing.T) {
 	hub := &slowHub{}
 	var lastSlow atomic.Int64
@@ -49,8 +40,7 @@ func TestSlowCollectorNeverOverlaps(t *testing.T) {
 		},
 	}
 
-	// First collection: enters collect and parks on release. Its inner goroutine
-	// keeps running, so inFlight stays set even after runOnce eventually returns.
+	// First collection: enters collect and parks on release.
 	go sc.runOnce()
 	<-entered
 
@@ -88,10 +78,8 @@ func TestSlowCollectorNeverOverlaps(t *testing.T) {
 	}
 }
 
-// TestSlowCollectorSlowButCompletingAdvancesLiveness: a collection that
-// OVERRUNS its deadline but still completes must publish + advance
-// lastSlowSuccess (so a merely-slow collector keeps the watchdog fed), even
-// though runOnce already returned at the deadline for pacing.
+// TestSlowCollectorSlowButCompletingAdvancesLiveness: a collection that OVERRUNS its
+// deadline but still completes must publish + advance lastSlowSuccess.
 func TestSlowCollectorSlowButCompletingAdvancesLiveness(t *testing.T) {
 	hub := &slowHub{}
 	var lastSlow atomic.Int64
@@ -128,10 +116,8 @@ func TestSlowCollectorSlowButCompletingAdvancesLiveness(t *testing.T) {
 	}
 }
 
-// TestSlowCollectorWedgedDoesNotAdvanceLiveness pins the other half of the
-// contract: a genuinely wedged collect (never returns) must NOT advance
-// lastSlowSuccess, so the watchdog still trips after collectorStaleSec and
-// systemd restarts a truly stuck daemon.
+// TestSlowCollectorWedgedDoesNotAdvanceLiveness pins the other half of the contract: a
+// genuinely wedged collect (never returns) must NOT advance lastSlowSuccess.
 func TestSlowCollectorWedgedDoesNotAdvanceLiveness(t *testing.T) {
 	hub := &slowHub{}
 	var lastSlow atomic.Int64

@@ -149,10 +149,8 @@ func (m *incidentManager) markRecovered(i int) {
 	m.addUpdate(i, core.IncidentMonitoring, fmt.Sprintf("%s %s recovered. We're monitoring.", m.names(inc.Services), verb), core.SystemAuthor)
 }
 
-// sweepRecovered recovers open automatic incidents whose services are no
-// longer a problem without a change event having arrived (a service deleted
-// or edited out from under the incident). Services missing from State count
-// as recovered.
+// sweepRecovered recovers open automatic incidents whose services are no longer a problem
+// without a change event having arrived.
 func (m *incidentManager) sweepRecovered() bool {
 	changed := false
 	for i, inc := range m.data.Incidents {

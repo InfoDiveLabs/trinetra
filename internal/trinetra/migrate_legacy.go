@@ -20,36 +20,8 @@ import (
 	"time"
 )
 
-// Migration of a pre-rename serverwatch install to trinetra, run by
-// `trinetra install` before the normal install (see cmdInstall and the
-// "Migration" section of the rename spec).
-//
-// Safety model, since this runs as root against live data:
-//
-//   - planLegacyMigration only looks; it never changes anything. It refuses
-//     (never merges) when a legacy dir and its trinetra counterpart both hold
-//     data it cannot prove it produced, when a legacy dir is a mount point, or
-//     when the new path aliases the old one.
-//   - Before any data moves, an in-progress marker (migratingMarker) holding a
-//     random run token is written into each legacy dir.
-//   - A directory moves by rename(2) (atomic: the marker moves with it and the
-//     old path is gone, so nothing is ever deleted on this path). On EXDEV it
-//     is copied into a staging sibling of the destination (without the
-//     in-progress marker) and the copy is verified entry by entry (type, mode,
-//     owner, size, symlink target, SHA-256). Only then is a DISTINCT
-//     copy-verified marker carrying the same token written into it, and the
-//     staging dir renamed into place.
-//   - A source is deleted only when the new dir carries a copy-verified marker
-//     whose token matches the source's in-progress marker, the two are not
-//     the same directory by any route (same file, symlink, bind mount,
-//     nested alias), and, when resuming, every entry of the source is
-//     re-verified as present and identical in the new dir. The source's
-//     marker is deleted last, so a partly deleted source is still recognised.
-//   - Every step is safe to re-run after a crash at any point; the markers in
-//     the new dirs are removed only as the very last step.
-//   - On any error the migration stops (no automatic rollback that could
-//     itself fail half-way) and reports the exact state plus how to finish or
-//     roll back by hand.
+// Migration of a pre-rename serverwatch install to trinetra, run by `trinetra install`
+// before the normal install.
 
 // Legacy (pre-rename) and new install paths, without any root prefix.
 const (
@@ -68,8 +40,7 @@ const (
 	newConfigDirPath = "/etc/trinetra"
 	newBinFilePath   = "/usr/local/bin/trinetra"
 
-	// migratingMarker is written into each legacy dir before it moves. Its
-	// first line is the run token. After a rename it sits in the new dir.
+	// migratingMarker is written into each legacy dir before it moves.
 	migratingMarker = ".migrating-from-serverwatch"
 	// copyVerifiedMarker is written into a staging copy only after the copy
 	// verified; its first line is the token of the source it copies.
@@ -139,11 +110,8 @@ func migrationPathsAt(root string) migrationPaths {
 
 func defaultMigrationPaths() migrationPaths { return migrationPathsAt(legacyRoot) }
 
-// migrationOps is everything the migration does that tests must fake:
-// systemctl, the primary directory rename (to inject EXDEV/EBUSY), chown (not
-// possible to other ids without root), a checkpoint before each step (to
-// simulate a crash there) and reading a process's executable (to find a
-// serverwatch daemon running outside its unit).
+// migrationOps is everything the migration does that tests must fake: systemctl, the
+// primary directory rename (to inject EXDEV/EBUSY), chown.
 type migrationOps interface {
 	Systemctl(args ...string) (string, error)
 	Rename(oldpath, newpath string) error
@@ -167,9 +135,7 @@ func (osMigrationOps) ProcExe(pid int) (string, error) {
 	return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 }
 
-// migrationSteps, in order. Each is preceded by ops.Checkpoint(step).
-// remove-old-install comes after install so a failed install leaves the old
-// unit and plugins in place.
+// migrationSteps, in order.
 var migrationSteps = []string{
 	"stop-old-service",
 	"mark-in-progress",
@@ -205,17 +171,12 @@ type legacyPlan struct {
 
 // planOptions are the operator's explicit choices for planLegacyMigration.
 type planOptions struct {
-	// stateAtNewPath (install --state-already-at-new-path): the operator
-	// moved the serverwatch state volume to the trinetra state path, so an
-	// existing trinetra state dir next to the legacy config is adopted. It
-	// is never inferred.
+	// stateAtNewPath (install --state-already-at-new-path): the operator moved the serverwatch
+	// state volume to the trinetra state path.
 	stateAtNewPath bool
 }
 
-// planLegacyMigration inspects the host without changing anything. It returns
-// (nil, nil) when there is nothing to migrate (fresh host, trinetra-only host,
-// or a finished migration), a plan when a serverwatch install is present (or a
-// previous migration was interrupted), and an error when it must refuse.
+// planLegacyMigration inspects the host without changing anything.
 func planLegacyMigration(p migrationPaths, opts planOptions) (*legacyPlan, error) {
 	plan := &legacyPlan{paths: p}
 	type pairInfo struct {
@@ -237,9 +198,8 @@ func planLegacyMigration(p migrationPaths, opts planOptions) (*legacyPlan, error
 			oldFound = append(oldFound, d.old)
 		}
 	}
-	// A legacy dir that exists but is empty is suspicious, never "absent":
-	// most likely its volume is not mounted this boot, and migrating the rest
-	// would strand the real data there.
+	// A legacy dir that exists but is empty is suspicious, never "absent": most likely its
+	// volume is not mounted this boot.
 	for _, in := range infos {
 		if !in.exists || in.data {
 			continue
@@ -330,8 +290,7 @@ func planLegacyMigration(p migrationPaths, opts planOptions) (*legacyPlan, error
 	return plan, nil
 }
 
-// legacyDirPresent reports whether a legacy dir holds anything. An empty dir
-// is not data, but the planner treats it as suspicious (see above).
+// legacyDirPresent reports whether a legacy dir holds anything.
 func legacyDirPresent(path string) (bool, error) {
 	if !lexists(path) {
 		return false, nil
@@ -362,14 +321,7 @@ type newDirStatus struct {
 
 func (s newDirStatus) ours() bool { return s.kind == newDirRenamed || s.kind == newDirCopied }
 
-// inspectNewDir classifies a new (trinetra) path. A symlink is newDirSymlink,
-// except when it points at a directory carrying exactly one of our markers:
-// that is a symlinked legacy dir (e.g. /var/lib/serverwatch -> /data/sw)
-// that rename(2) moved as a link, so it is classified by its marker (link
-// set) and an interrupted run resumes. This never makes a symlink safe to
-// delete a source through: a newDirCopied still has to pass checkNotAliased,
-// which refuses symlinks, and a newDirRenamed next to a legacy dir that still
-// holds data is a conflict.
+// inspectNewDir classifies a new (trinetra) path.
 func inspectNewDir(path string) newDirStatus {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -435,9 +387,8 @@ func readMarkerToken(path string) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-// isMountPoint reports whether dir (not a symlink) is a mount point: its
-// device differs from its parent's, or the mount table lists it (a bind
-// mount from the same filesystem keeps the device number).
+// isMountPoint reports whether dir (not a symlink) is a mount point: its device differs
+// from its parent's, or the mount table lists it.
 func isMountPoint(dir string) bool {
 	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() {
@@ -472,9 +423,8 @@ func isMountPoint(dir string) bool {
 	return false
 }
 
-// isMountTarget reports whether dir is configured to have something mounted
-// on it: a mount point in /etc/fstab (second field) or a systemd
-// <escaped-path>.mount / .automount unit.
+// isMountTarget reports whether dir is configured to have something mounted on it: a mount
+// point in /etc/fstab (second field) or a systemd <escaped-path>.mount / .automount unit.
 func isMountTarget(dir string) bool {
 	clean := filepath.Clean(dir)
 	if b, err := os.ReadFile(fstabPath); err == nil {
@@ -552,11 +502,8 @@ func devIno(fi fs.FileInfo) ([2]uint64, bool) {
 	return [2]uint64{uint64(st.Dev), uint64(st.Ino)}, true
 }
 
-// checkNotAliased returns an error unless oldDir and newDir are genuinely two
-// different directory trees: newDir must not be a symlink, must not be the
-// same directory as oldDir (by path resolution or device+inode, which also
-// catches bind mounts), must not resolve inside oldDir or contain it, and no
-// directory inside one may be the same directory as one inside the other.
+// checkNotAliased returns an error unless oldDir and newDir are genuinely two different
+// directory trees: newDir must not be a symlink, must not be the same directory as oldDir.
 func checkNotAliased(oldDir, newDir string) error {
 	nfi, err := os.Lstat(newDir)
 	if err != nil {
@@ -621,9 +568,8 @@ func walkDirs(root string, fn func(path string, id [2]uint64) error) error {
 	})
 }
 
-// verifySubset requires every entry of oldDir (except its migration marker)
-// to exist in newDir with the same type, mode, owner, size, link target and
-// content, so deleting oldDir loses nothing.
+// verifySubset requires every entry of oldDir (except its migration marker) to exist in
+// newDir with the same type, mode, owner, size, link target and content.
 func verifySubset(oldDir, newDir string) error {
 	return filepath.WalkDir(oldDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -801,12 +747,8 @@ func describeMigrationState(p migrationPaths) string {
 	return b.String()
 }
 
-// copyProvablyComplete: newDir is a verified copy made from oldDir's run
-// (tokens match), is a separate tree, and holds everything oldDir holds, so
-// deleting oldDir loses nothing.
-// stagingSafeToDelete reports whether d's staging copy may be deleted by hand:
-// only while the source still exists as a separate directory, since otherwise
-// the staging copy may be the only one left.
+// copyProvablyComplete: newDir is a verified copy made from oldDir's run (tokens match), is
+// a separate tree, and holds everything oldDir holds.
 func stagingSafeToDelete(d dirPair) bool {
 	st := d.new + stagingSuffix
 	return lexists(st) && lexists(d.old) && checkNotAliased(d.old, st) == nil
@@ -818,11 +760,8 @@ func copyProvablyComplete(oldDir, newDir, newTok string) bool {
 		checkNotAliased(oldDir, newDir) == nil && verifySubset(oldDir, newDir) == nil
 }
 
-// applyLegacyMigration carries out plan. install runs the normal install
-// (binary, plugins, manifest, trinetra.service) at its place in the sequence;
-// the old unit/plugins are removed only after it succeeded, and the compat
-// symlink comes after it because the binary running `install` may itself
-// live at /usr/local/bin/serverwatch.
+// applyLegacyMigration carries out plan. install runs the normal install (binary, plugins,
+// manifest, trinetra.service) at its place in the sequence.
 func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() error) (*migrationSummary, error) {
 	p := plan.paths
 	sum := &migrationSummary{notes: append([]string(nil), plan.notes...)}
@@ -835,10 +774,8 @@ func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() err
 		}
 		return nil
 	}
-	// A serverwatch daemon running outside serverwatch.service (by hand, in
-	// tmux, in a container without systemd) is invisible to systemctl. If the
-	// unit is not running, that daemon cannot be the unit's, so refuse now,
-	// before anything (the unit included) is touched.
+	// A serverwatch daemon running outside serverwatch.service (by hand, in tmux, in a
+	// container without systemd) is invisible to systemctl.
 	if !plan.force {
 		if pid, exe := strayLegacyDaemon(p, ops); pid != 0 {
 			out, _ := ops.Systemctl("is-active", legacyServiceName)
@@ -849,7 +786,6 @@ func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() err
 					pid, exe, legacyServiceName, legacyStateDirPath, pid, legacyStateDirPath, errMigrationRefusedF)
 			}
 			// The unit is (or may be) running: this may be its own daemon.
-			// Stop the unit, then look again (stop-old-service).
 		}
 	}
 	moves := map[string]string{}
@@ -990,11 +926,8 @@ func applyLegacyMigration(plan *legacyPlan, ops migrationOps, install func() err
 	return sum, nil
 }
 
-// installCompatLinks points /usr/local/bin/serverwatch at trinetra, but only
-// replaces what is there when it is our own serverwatch binary (or already
-// our link); anything else is kept and noted. /usr/bin/serverwatch stays (or
-// becomes) a symlink to /usr/local/bin/serverwatch so `sudo serverwatch`
-// keeps working on hosts whose secure_path omits /usr/local/bin.
+// installCompatLinks points /usr/local/bin/serverwatch at trinetra, but only replaces what
+// is there when it is our own serverwatch binary (or already our link).
 func installCompatLinks(p migrationPaths, sum *migrationSummary) error {
 	ours := false
 	fi, err := os.Lstat(p.OldBin)
@@ -1068,10 +1001,8 @@ func symlinksIntoLegacyDirs(p migrationPaths) []string {
 	return out
 }
 
-// stopLegacyService stops and disables serverwatch.service (absent unit is
-// fine) and then insists systemd confirms it is not running: moving the state
-// dir out from under a live daemon would lose writes or recreate the old dir.
-// When systemctl cannot give an answer, only force proceeds.
+// stopLegacyService stops and disables serverwatch.service (absent unit is fine) and then
+// insists systemd confirms it is not running.
 func stopLegacyService(ops migrationOps, force bool) (string, error) {
 	_, _ = ops.Systemctl("stop", legacyServiceName)
 	_, _ = ops.Systemctl("disable", legacyServiceName)
@@ -1127,8 +1058,7 @@ func moveOne(d dirPair, ops migrationOps, moves map[string]string) error {
 	return nil
 }
 
-// moveLegacyDir moves old to new, resuming whatever an interrupted earlier run
-// left behind. It returns a summary line ("" when there was nothing to move).
+// moveLegacyDir moves old to new, resuming whatever an interrupted earlier run left behind.
 func moveLegacyDir(old, newp string, ops migrationOps) (string, error) {
 	staging := newp + stagingSuffix
 	present, err := legacyDirPresent(old)
@@ -1137,9 +1067,7 @@ func moveLegacyDir(old, newp string, ops migrationOps) (string, error) {
 	}
 	ns := inspectNewDir(newp)
 	if !present {
-		// Nothing (left) to move. An empty old dir (a verified source whose
-		// removal was interrupted after its marker went, or an unmounted
-		// mount point) is removed; rmdir never removes anything with data.
+		// Nothing (left) to move.
 		if lexists(old) && !isMountPointFn(old) && !isMountTargetFn(old) {
 			if err := os.Remove(old); err != nil {
 				return "", err
@@ -1227,8 +1155,6 @@ func moveLegacyDir(old, newp string, ops migrationOps) (string, error) {
 }
 
 // removeVerifiedSource deletes a legacy dir whose verified copy is in place.
-// The in-progress marker goes last, so a crash part-way leaves a dir a re-run
-// still recognises as ours to finish removing.
 func removeVerifiedSource(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -1257,11 +1183,8 @@ type treeEntry struct {
 	sum      [sha256.Size]byte
 }
 
-// copyTreeVerified copies src to dst (which must not exist), preserving
-// modes (including setuid/setgid/sticky), ownership, symlinks and mtimes, then
-// re-reads dst and checks every entry against src. Sockets and FIFOs hold no
-// data and are skipped. It returns the number of non-directory entries and
-// the total bytes of regular files copied.
+// copyTreeVerified copies src to dst (which must not exist), preserving modes (including
+// setuid/setgid/sticky), ownership, symlinks and mtimes.
 func copyTreeVerified(src, dst string, ops migrationOps) (int, int64, error) {
 	want := map[string]treeEntry{}
 	var dirs []string
@@ -1278,9 +1201,8 @@ func copyTreeVerified(src, dst string, ops migrationOps) (int, int64, error) {
 		if err != nil {
 			return err
 		}
-		// The source's own migration markers are not data: the in-progress
-		// marker stays with the source (it goes last when the source is
-		// removed) and the copy gets its own copy-verified marker.
+		// The source's own migration markers are not data: the in-progress marker stays with the
+		// source.
 		if rel == migratingMarker || rel == copyVerifiedMarker {
 			return nil
 		}
@@ -1322,9 +1244,8 @@ func copyTreeVerified(src, dst string, ops migrationOps) (int, int64, error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	// Directory ownership, modes and times last (deepest first), so a
-	// read-only dir does not block creating its children and child writes do
-	// not bump the parent's mtime afterwards.
+	// Directory ownership, modes and times last (deepest first), so a read-only dir does not
+	// block creating its children and child writes do not bump the parent's mtime afterwards.
 	for i := len(dirs) - 1; i >= 0; i-- {
 		rel := dirs[i]
 		info := dirInfo[rel]
@@ -1480,11 +1401,8 @@ func rewriteLegacyPath(v string) string {
 	return v
 }
 
-// rewriteLegacyConfigPaths rewrites the path-valued keys of the config at
-// path that point inside the legacy dirs. It edits the JSON generically (not
-// through config.Config) so keys this build does not know are kept, and
-// writes atomically with the original mode and owner. The file is left
-// untouched when nothing needs rewriting. It returns "key: old -> new" lines.
+// rewriteLegacyConfigPaths rewrites the path-valued keys of the config at path that point
+// inside the legacy dirs.
 func rewriteLegacyConfigPaths(path string, ops migrationOps) ([]string, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -1567,8 +1485,7 @@ func rewriteLegacyConfigPaths(path string, ops migrationOps) ([]string, error) {
 	return changed, nil
 }
 
-// configParseError: the config is not valid JSON. The migration leaves such a
-// file exactly as it is and notes it, rather than failing.
+// configParseError: the config is not valid JSON.
 type configParseError struct {
 	path string
 	err  error
@@ -1594,12 +1511,8 @@ func writeFileSync(path string, data []byte, perm fs.FileMode) error {
 	return f.Close()
 }
 
-// legacyInstallGuard stops the daemon from starting empty on a host that
-// still has only the serverwatch paths: the operator must migrate first. A
-// fresh host (neither old nor new paths) is the normal first run and passes,
-// and so does one whose legacy dirs exist but are empty (for example what an
-// old `uninstall --purge` leaves), which the planner also treats as nothing
-// to migrate.
+// legacyInstallGuard stops the daemon from starting empty on a host that still has only the
+// serverwatch paths: the operator must migrate first.
 func legacyInstallGuard(p migrationPaths) error {
 	found := legacyInstallFound(p)
 	if len(found) == 0 {
@@ -1608,9 +1521,8 @@ func legacyInstallGuard(p migrationPaths) error {
 	return fmt.Errorf("found a serverwatch install at %s; run `sudo trinetra install` to migrate", strings.Join(found, " and "))
 }
 
-// legacyWriteGuard is legacyInstallGuard for CLI commands that write the
-// config or state: on a legacy-only host they would create /etc/trinetra or
-// /var/lib/trinetra, which then blocks the migration ("found both").
+// legacyWriteGuard is legacyInstallGuard for CLI commands that write the config or state:
+// on a legacy-only host they would create /etc/trinetra or /var/lib/trinetra.
 func legacyWriteGuard(p migrationPaths) error {
 	found := legacyInstallFound(p)
 	if len(found) == 0 {

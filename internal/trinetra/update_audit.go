@@ -44,7 +44,6 @@ func cliActor() string {
 // guardActor is the actor of the guard's own commit/rollback entries.
 const guardActor = "guard"
 
-// socketActor is the actor for apply/rollback requested over the control
-// socket (the web UI and trinetra-ctl); the web UI's own audit log names the
-// signed-in user for the same action.
+// socketActor is the actor for apply/rollback requested over the control socket (the web UI
+// and trinetra-ctl).
 const socketActor = "socket"

@@ -33,37 +33,24 @@ type AlertEvent struct {
 	Source    string     `json:"source"`
 	Delivered []Delivery `json:"delivered,omitempty"`
 
-	// RoutedToMaster is true when a child held a valid lease for this alert
-	// at enqueue time, so it was NOT enqueued for local delivery (the master
-	// is expected to deliver it instead). Always false for solo and master.
+	// RoutedToMaster is true when a child held a valid lease for this alert at enqueue time,
+	// so it was NOT enqueued for local delivery.
 	RoutedToMaster bool `json:"routed_to_master,omitempty"`
-	// DeliveredLocally is true on the second AlertEvent a child's handoff
-	// records when a routed alert's receipt never arrived (or the lease
-	// expired) and it fell back to local delivery. That second event shares
-	// FiredAt with the original routed one -- see FiredAt.
+	// DeliveredLocally is true on the second AlertEvent a child's handoff records when a
+	// routed alert's receipt never arrived.
 	DeliveredLocally bool `json:"delivered_locally,omitempty"`
-	// FiredAt is the original fire (or recover) event's unix time. For an
-	// ordinary (non-fallback) AlertEvent it always equals Time. A fallback's
-	// recover record carries the ORIGINAL alert's FiredAt here (not the
-	// fallback's own Time), so the master's dedup key (node_id, key,
-	// fired_at) still lines up with the alert it is a late local delivery
-	// of.
+	// FiredAt is the original fire (or recover) event's unix time.
 	FiredAt int64 `json:"fired_at,omitempty"`
 }
 
 // AlertLog is a thin wrapper around a single JSONL file holding AlertEvents.
-// Safe for concurrent use: the sampler, the fleet master loop and the fleet
-// child's link-alert goroutine all append. mu serializes every write (append
-// plus tee, and prune), so lines land in call order and the tee, which ships
-// alert history to the fleet master, sees them in exactly that order too.
 type AlertLog struct {
 	path string
 	mu   sync.Mutex
 	tee  atomic.Pointer[func(AlertEvent)]
 }
 
-// NewAlertLog returns an AlertLog backed by path. The file is created lazily
-// on first append; it is fine for path not to exist yet.
+// NewAlertLog returns an AlertLog backed by path.
 func NewAlertLog(path string) *AlertLog { return &AlertLog{path: path} }
 
 // SetTee installs f to receive every event after it is appended (the fleet
@@ -89,10 +76,8 @@ func (l *AlertLog) AppendAlertEvent(ev AlertEvent) error {
 	return nil
 }
 
-// AlertEventsSince returns every AlertEvent with Time >= sinceUnix, in
-// on-disk (chronological append) order. A missing log file is not an error:
-// it simply yields no events. Corrupt/malformed lines are skipped rather
-// than failing the whole read, mirroring Store.DownSince.
+// AlertEventsSince returns every AlertEvent with Time >= sinceUnix, in on-disk
+// (chronological append) order.
 func (l *AlertLog) AlertEventsSince(sinceUnix int64) ([]AlertEvent, error) {
 	f, err := os.Open(l.path)
 	if os.IsNotExist(err) {
@@ -122,10 +107,8 @@ func (l *AlertLog) AlertEventsSince(sinceUnix int64) ([]AlertEvent, error) {
 	return out, sc.Err()
 }
 
-// PruneAlertLog rewrites the log keeping only events with Time >= beforeUnix,
-// dropping everything older. Intended to be called periodically (e.g. on the
-// daemon's slow tick) to bound the log to roughly the caller's chosen
-// retention window; it is a no-op (not an error) if the log doesn't exist yet.
+// PruneAlertLog rewrites the log keeping only events with Time >= beforeUnix, dropping
+// everything older.
 func (l *AlertLog) PruneAlertLog(beforeUnix int64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -146,10 +129,8 @@ func (l *AlertLog) PruneAlertLog(beforeUnix int64) error {
 	return writeFileAtomic(l.path, []byte(buf.String()), 0o644)
 }
 
-// deliveriesFrom converts the Dispatcher's []DeliveryResult into the
-// []Delivery shape persisted in the alert log: OK is true iff Err was nil,
-// and Err carries Err.Error() otherwise. Pure and side-effect free so it's
-// trivially unit-testable apart from any actual dispatch.
+// deliveriesFrom converts the Dispatcher's []DeliveryResult into the []Delivery shape
+// persisted in the alert log: OK is true iff Err was nil.
 func deliveriesFrom(results []DeliveryResult) []Delivery {
 	if len(results) == 0 {
 		return nil

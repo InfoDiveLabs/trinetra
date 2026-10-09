@@ -9,10 +9,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// fakeProc is a concurrency-safe fake of supervisedProc. Wait blocks until
-// the test calls exit (simulating the child process exiting on its own) or
-// Kill is called (simulating the supervisor killing it on stop); either one
-// unblocks Wait exactly once.
+// fakeProc is a concurrency-safe fake of supervisedProc.
 type fakeProc struct {
 	exitCh chan error
 
@@ -56,10 +53,8 @@ type spawnCall struct {
 	env  []string
 }
 
-// webTestHarness wires fake seams (startWebProc, resolveWebPlugin,
-// supervisorSleep, supervisorLog) for a single test and records everything
-// observable through them, all guarded by one mutex so it is safe under
-// -race with the supervisor goroutine running concurrently.
+// webTestHarness wires fake seams (startWebProc, resolveWebPlugin, supervisorSleep,
+// supervisorLog) for a single test and records everything observable through them.
 type webTestHarness struct {
 	mu     sync.Mutex
 	spawns []spawnCall
@@ -72,9 +67,6 @@ type webTestHarness struct {
 }
 
 // setupWebTest installs fake seams and restores the real ones on cleanup.
-// The default resolveWebPlugin resolves to a fixed verified path; the
-// default supervisorSleep is instant (records the requested duration and
-// returns immediately) so tests never wait on real backoff.
 func setupWebTest(t *testing.T) *webTestHarness {
 	t.Helper()
 
@@ -120,9 +112,6 @@ func setupWebTest(t *testing.T) *webTestHarness {
 }
 
 // nextSpawn waits for the next startWebProc call and returns its fakeProc.
-// It never sleeps to wait: it blocks on the harness's spawnCh, which the
-// fake startWebProc feeds synchronously, and only times out (failing the
-// test) if a spawn that should happen never does.
 func (h *webTestHarness) nextSpawn(t *testing.T) *fakeProc {
 	t.Helper()
 	select {
@@ -295,10 +284,8 @@ func TestStartWeb_BackoffGrowsAndCaps(t *testing.T) {
 	stop()
 }
 
-// TestStartWeb_VerifyFailureThenRecovers pins case D: if resolveWebPlugin
-// fails (e.g. the plugin fails the front-door trust check), the supervisor
-// must NOT call startWebProc, must log a refusal, and must keep retrying so
-// it recovers once resolveWebPlugin starts succeeding again.
+// TestStartWeb_VerifyFailureThenRecovers pins case D: if resolveWebPlugin fails (e.g. the
+// plugin fails the front-door trust check), the supervisor must NOT call startWebProc.
 func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 	h := setupWebTest(t)
 
@@ -316,16 +303,14 @@ func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 
 	stop := startWeb("/run/trinetra/control.sock", "tok123")
 
-	// The only spawn that will ever arrive is the one after resolve
-	// recovers; if startWebProc had been called during the failed first
-	// attempt, spawnCount would already be 2 by the time this one arrives.
+	// The only spawn that will ever arrive is the one after resolve recovers; if startWebProc
+	// had been called during the failed first attempt.
 	h.nextSpawn(t)
 	if h.spawnCount() != 1 {
 		t.Fatalf("spawnCount = %d, want 1 (startWebProc must not be called until resolve succeeds)", h.spawnCount())
 	}
-	// Guard against the failed first attempt's (empty) path sneaking
-	// through as this "only" spawn: it must be the recovered, verified
-	// path, not whatever resolveWebPlugin returned alongside its error.
+	// Guard against the failed first attempt's (empty) path sneaking through as this "only"
+	// spawn: it must be the recovered, verified path.
 	if call := h.lastSpawn(); call.path != "/opt/trinetra/trinetra-web" {
 		t.Fatalf("spawn path = %q, want the recovered verified path (an unverified/empty path means a verify error reached startWebProc)", call.path)
 	}
@@ -336,10 +321,8 @@ func TestStartWeb_VerifyFailureThenRecovers(t *testing.T) {
 	stop()
 }
 
-// TestStop_DuringBackoffReturnsPromptly pins case E: if stop() is called
-// while the loop is asleep in a backoff wait, it must return promptly
-// (without waiting for the sleep to finish) and no further spawn must
-// occur.
+// TestStop_DuringBackoffReturnsPromptly pins case E: if stop() is called while the loop is
+// asleep in a backoff wait, it must return promptly.
 func TestStop_DuringBackoffReturnsPromptly(t *testing.T) {
 	h := setupWebTest(t)
 

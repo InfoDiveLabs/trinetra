@@ -23,10 +23,7 @@ func cmdDowntime(args []string) int {
 	}
 }
 
-// cmdDowntimePurge removes downtime events of a given type below a duration
-// threshold. The default (power_down shorter than 300s) targets the short
-// restart-storm artifacts #116 describes without touching a genuine multi-
-// minute outage. --max-seconds 0 removes every event of the type.
+// cmdDowntimePurge removes downtime events of a given type below a duration threshold.
 func cmdDowntimePurge(args []string) int {
 	fs := flag.NewFlagSet("downtime purge", flag.ContinueOnError)
 	fs.SetOutput(stderr)

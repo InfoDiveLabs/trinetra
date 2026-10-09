@@ -14,10 +14,8 @@ import (
 // deliverAndReceipt calls) run at once, across every key.
 const dispatchConcurrency = 8
 
-// dispatchLane is one key's FIFO queue and whether a pump goroutine is
-// currently draining it. Both fields are guarded by the owning
-// keyedDispatcher's mu, never independently -- see keyedDispatcher's doc
-// comment.
+// dispatchLane is one key's FIFO queue and whether a pump goroutine is currently draining
+// it.
 type dispatchLane struct {
 	queue   []func()
 	pumping bool
@@ -35,25 +33,16 @@ type dispatchLane struct {
 type keyedDispatcher struct {
 	sem chan struct{}
 
-	// mu guards both lanes AND every dispatchLane's own fields (queue,
-	// pumping) -- a dispatchLane has no mutex of its own; every access to
-	// one goes through this single mutex. Enqueue and pump both hold it for
-	// the ENTIRE lookup/create-or-retire-plus-append/dequeue decision, never
-	// just part of it: this is what makes "is the lane now empty, so should
-	// it be retired from d.lanes" and "is there already a pump for this
-	// lane, so this job just gets appended to it" fully race-free against
-	// each other (see Enqueue's and pump's doc comments for the failure mode
-	// two separate critical sections would allow).
+	// mu guards both lanes AND every dispatchLane's own fields (queue, pumping) -- a
+	// dispatchLane has no mutex of its own.
 	mu    sync.Mutex
 	lanes map[string]*dispatchLane
 
-	// stopped, once true (Stop), makes Enqueue silently drop new jobs
-	// instead of queuing them.
+	// stopped, once true (Stop), makes Enqueue silently drop new jobs instead of queuing them.
 	stopped bool
 
-	// wg tracks every job that has been enqueued but not yet run, purely so
-	// a test (or Stop) can deterministically wait for the dispatcher to
-	// drain instead of racing it.
+	// wg tracks every job that has been enqueued but not yet run, purely so a test (or Stop)
+	// can deterministically wait for the dispatcher to drain instead of racing it.
 	wg sync.WaitGroup
 }
 
@@ -61,19 +50,8 @@ func newKeyedDispatcher() *keyedDispatcher {
 	return &keyedDispatcher{sem: make(chan struct{}, dispatchConcurrency), lanes: map[string]*dispatchLane{}}
 }
 
-// Enqueue appends job to key's FIFO and, if key's lane was idle (or didn't
-// exist), starts exactly one goroutine to drain it. A no-op (job dropped) once
-// Stop has been called.
-//
-// mu is held for the whole lookup-or-create + append, matching pump's locking
-// order (mu outer, then the lane's own state). Otherwise a lane that pump sees
-// empty and is about to retire could be handed a job by an Enqueue holding a
-// stale reference, orphaning it, and the next Enqueue would create a second
-// lane for the key and break per-key ordering. Jobs themselves run with
-// neither lock held.
-// enqueueAfterUnlockHook, when set by a test, runs in Enqueue right after mu
-// is released: the window in which a running pump can already take and
-// finish the new job.
+// Enqueue appends job to key's FIFO and, if key's lane was idle (or didn't exist), starts
+// exactly one goroutine to drain it.
 var enqueueAfterUnlockHook func()
 
 func (d *keyedDispatcher) Enqueue(key string, job func()) {
@@ -92,10 +70,8 @@ func (d *keyedDispatcher) Enqueue(key string, job func()) {
 	if start {
 		l.pumping = true
 	}
-	// Count the job before releasing mu: once it is on the queue a running
-	// pump can dequeue, run and Done() it immediately, so an Add after
-	// Unlock could drive the counter negative (panic). Holding mu also
-	// orders this Add before Stop's Wait, which checks stopped under mu.
+	// Count the job before releasing mu: once it is on the queue a running pump can dequeue,
+	// run and Done() it immediately, so an Add after Unlock could drive the counter negative.
 	d.wg.Add(1)
 	d.mu.Unlock()
 	if enqueueAfterUnlockHook != nil {
@@ -135,16 +111,14 @@ func (d *keyedDispatcher) pump(key string, l *dispatchLane) {
 	}
 }
 
-// runJob calls job with its own panic recovery, so one broken alert
-// delivery can never crash the dispatcher's long-lived pump goroutine or
-// leak its semaphore slot.
+// runJob calls job with its own panic recovery, so one broken alert delivery can never
+// crash the dispatcher's long-lived pump goroutine or leak its semaphore slot.
 func runJob(job func()) {
 	defer func() { _ = recover() }()
 	job()
 }
 
-// waitIdleForTest blocks until every job Enqueue has accepted so far has
-// actually run. Test-only.
+// waitIdleForTest blocks until every job Enqueue has accepted so far has actually run.
 func (d *keyedDispatcher) waitIdleForTest() { d.wg.Wait() }
 
 // laneCountForTest reports how many lanes are currently tracked (idle lanes
@@ -155,18 +129,8 @@ func (d *keyedDispatcher) laneCountForTest() int {
 	return len(d.lanes)
 }
 
-// Stop stops accepting new jobs (every Enqueue call after this is a no-op)
-// and waits up to timeout for every already-queued or in-flight job to
-// finish, reporting whether it fully drained in time.
-//
-// Anything still undelivered when timeout expires is NOT retried here by
-// design: a fleet master's shutdown must stay bounded and never wait
-// forever for one stuck channel. What makes that safe is that the decision
-// to deliver was already durably recorded (fleetAlertEngine.Submit's step 1,
-// incidents.Apply/AppendEvent) before the job was ever enqueued -- an
-// incident with no "delivered" event for a leg is exactly what
-// resurrectMasterAlerts looks for and redelivers at the next engine start,
-// so a job cut short here is recovered then, not lost.
+// Stop stops accepting new jobs (every Enqueue call after this is a no-op) and waits up to
+// timeout for every already-queued or in-flight job to finish.
 func (d *keyedDispatcher) Stop(timeout time.Duration) bool {
 	d.mu.Lock()
 	d.stopped = true

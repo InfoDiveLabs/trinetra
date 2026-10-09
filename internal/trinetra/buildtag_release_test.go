@@ -39,9 +39,8 @@ func TestReleaseBinariesCarryNoTestKeys(t *testing.T) {
 		if err != nil {
 			t.Fatalf("go tool nm %s: %v\n%s", pkg, err, syms)
 		}
-		// No update-e2e hook can be read from the environment by a release
-		// binary: the default-build hooks never look a TRINETRA_E2E_*
-		// variable up, so none of their names is even in the binary.
+		// No update-e2e hook can be read from the environment by a release binary: the
+		// default-build hooks never look a TRINETRA_E2E_* variable up.
 		raw, err := os.ReadFile(bin)
 		if err != nil {
 			t.Fatal(err)

@@ -11,14 +11,12 @@ import (
 	"time"
 )
 
-// pushRequestTimeout bounds how long the underlying http.Client will wait
-// for a push request when ctx doesn't itself carry a shorter deadline. Same
-// rationale as webhookRequestTimeout in notify_webhook.go.
+// pushRequestTimeout bounds how long the underlying http.Client will wait for a push
+// request when ctx doesn't itself carry a shorter deadline.
 const pushRequestTimeout = 10 * time.Second
 
-// defaultNtfyServer is used when an "ntfy" channel doesn't configure its own
-// "server" setting: ntfy.sh is the public instance run by the ntfy project,
-// and is the natural default for anyone who hasn't self-hosted their own.
+// defaultNtfyServer is used when an "ntfy" channel doesn't configure its own "server"
+// setting: ntfy.sh is the public instance run by the ntfy project.
 const defaultNtfyServer = "https://ntfy.sh"
 
 // pushClient is the shared *http.Client used by both push notifiers,
@@ -40,9 +38,7 @@ func ntfyPriority(s Severity) string {
 	}
 }
 
-// ntfyTags maps an Alert's Severity to an ntfy emoji-shortcode tag (see
-// https://docs.ntfy.sh/publish/#tags-emojis) so the notification gets a
-// severity-appropriate icon on the phone.
+// ntfyTags maps an Alert's Severity to an ntfy emoji-shortcode tag.
 func ntfyTags(s Severity) string {
 	switch s {
 	case SevCritical:
@@ -54,31 +50,21 @@ func ntfyTags(s Severity) string {
 	}
 }
 
-// ntfyNotifier delivers Alerts via ntfy (https://ntfy.sh, or a self-hosted
-// instance): a plain HTTP POST of the message body to <server>/<topic>,
-// with metadata carried in headers. It's the Notifier implementation
-// registered for the "ntfy" ChannelConfig type in buildNotifier
-// (channels.go).
+// ntfyNotifier delivers Alerts via ntfy (https://ntfy.sh, or a self-hosted instance): a
+// plain HTTP POST of the message body to <server>/<topic>.
 type ntfyNotifier struct {
 	name   string
 	server string // e.g. https://ntfy.sh (no trailing slash)
 	topic  string
 	token  string // optional access-token for protected topics
-	// client performs the request. Defaults to newPushClient() when nil (see
-	// Send); overridable in tests.
+	// client performs the request.
 	client *http.Client
 }
 
 func (n *ntfyNotifier) Name() string { return n.name }
 
-// Send POSTs formatAlert's rendering of a as the request body to
-// <server>/<topic>, with Title/Priority/Tags headers describing it. It
-// honors ctx: an already-cancelled ctx returns immediately without touching
-// the network, and ctx otherwise governs the request via
-// http.NewRequestWithContext. Any non-2xx response is reported as an error
-// naming only the status code, never the response body (ntfy instances may
-// be third-party/self-hosted and their response bodies must not be trusted
-// or leaked into logs/alerts).
+// Send POSTs formatAlert's rendering of a as the request body to <server>/<topic>, with
+// Title/Priority/Tags headers describing it.
 func (n *ntfyNotifier) Send(ctx context.Context, a Alert) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -92,12 +78,8 @@ func (n *ntfyNotifier) Send(ctx context.Context, a Alert) error {
 		return fmt.Errorf("ntfy %s: build request: %w", n.name, err)
 	}
 
-	// Title is a short, single-line summary derived from system-provided
-	// Alert.Title (unit names, container names, file paths, ...), which can
-	// legally contain CR/LF. HTTP header values can't contain raw CR/LF
-	// (net/http would error or a proxy could smuggle a second header/request
-	// off it), so sanitizeHeader (notify_email.go) collapses it to one line
-	// first, exactly like the email notifier does for its Subject header.
+	// Title is a short, single-line summary derived from system-provided Alert.Title (unit
+	// names, container names, file paths, ...), which can legally contain CR/LF.
 	title := sanitizeHeader(fmt.Sprintf("%s %s", a.Severity, a.Title))
 	req.Header.Set("Title", title)
 	req.Header.Set("Priority", ntfyPriority(a.Severity))
@@ -125,8 +107,6 @@ func (n *ntfyNotifier) Send(ctx context.Context, a Alert) error {
 }
 
 // gotifyPriority maps an Alert's Severity to a Gotify message priority.
-// Gotify treats priority >= 4 as worth a default-channel notification (vs.
-// silent) on most clients; see https://gotify.net/docs/msgprio.
 func gotifyPriority(s Severity) int {
 	switch s {
 	case SevCritical:
@@ -139,35 +119,25 @@ func gotifyPriority(s Severity) int {
 }
 
 // gotifyMessage is the JSON body Gotify's message API expects.
-// See https://gotify.net/api-docs#/message/createMessage.
 type gotifyMessage struct {
 	Title    string `json:"title"`
 	Message  string `json:"message"`
 	Priority int    `json:"priority"`
 }
 
-// gotifyNotifier delivers Alerts via a self-hosted Gotify server: a JSON
-// POST to <server>/message, authenticated with a Gotify application token
-// passed as a query parameter. It's the Notifier implementation registered
-// for the "gotify" ChannelConfig type in buildNotifier (channels.go).
+// gotifyNotifier delivers Alerts via a self-hosted Gotify server: a JSON POST to
+// <server>/message.
 type gotifyNotifier struct {
 	name   string
 	server string // e.g. https://gotify.example.com (no trailing slash)
 	token  string // Gotify application token
-	// client performs the request. Defaults to newPushClient() when nil (see
-	// Send); overridable in tests.
+	// client performs the request.
 	client *http.Client
 }
 
 func (g *gotifyNotifier) Name() string { return g.name }
 
-// Send JSON-encodes a as a gotifyMessage and POSTs it to
-// <server>/message?token=<token>. Title/Message are built with
-// encoding/json (rather than string concatenation) so arbitrary
-// system-derived text -- quotes, backslashes, newlines -- is automatically
-// escaped into valid JSON. It honors ctx the same way ntfyNotifier.Send
-// does. The token is never included in any returned error string, since
-// buildNotifier errors and Dispatch results can end up in logs.
+// Send JSON-encodes a as a gotifyMessage and POSTs it to <server>/message?token=<token>.
 func (g *gotifyNotifier) Send(ctx context.Context, a Alert) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -190,9 +160,8 @@ func (g *gotifyNotifier) Send(ctx context.Context, a Alert) error {
 	reqURL := fmt.Sprintf("%s/message?token=%s", g.server, url.QueryEscape(g.token))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
 	if err != nil {
-		// err is a *url.Error that embeds reqURL (token and all) when
-		// g.server is malformed, so it must not be wrapped: return a static,
-		// token-free message just like the client.Do branch below.
+		// err is a *url.Error that embeds reqURL (token and all) when g.server is malformed, so
+		// it must not be wrapped: return a static.
 		return fmt.Errorf("gotify %s: invalid server URL", g.name)
 	}
 	req.Header.Set("Content-Type", "application/json")

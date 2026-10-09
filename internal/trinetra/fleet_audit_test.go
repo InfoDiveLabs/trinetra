@@ -71,10 +71,8 @@ func TestAuditLogMissingFileIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead: against a 50k-line
-// audit log, Recent(50) returns exactly the newest 50 entries, newest first,
-// via a small backward read from EOF rather than a forward scan. The bound is
-// asserted by wall time instead of instrumenting the file descriptor.
+// TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead: against a 50k-line audit log,
+// Recent(50) returns exactly the newest 50 entries, newest first.
 func TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")
@@ -108,19 +106,15 @@ func TestAuditLogRecentOnLargeFileReturnsNewestBoundedRead(t *testing.T) {
 			t.Fatalf("entries[%d].Target = %q, want %q (newest first)", i, e.Target, want)
 		}
 	}
-	// A bounded backward read of 50 lines out of 50000 completes in
-	// milliseconds; a full forward scan of the file would too on most
-	// hardware, but comfortably inside this generous ceiling either way --
-	// this is a coarse regression guard, not a tight benchmark.
+	// A bounded backward read of 50 lines out of 50000 completes in milliseconds; a full
+	// forward scan of the file would too on most hardware.
 	if elapsed > 2*time.Second {
 		t.Fatalf("Recent(%d) on a %d-line file took %s, want well under 2s", limit, total, elapsed)
 	}
 }
 
-// TestAuditLogRecentEdgeCases is a table test of the backward-chunked Recent():
-// each case writes a raw fixture directly (not through Append) so the byte
-// layout (trailing newline or not, a line straddling a chunk boundary) is
-// fully controlled, and asserts the EXACT newest-first Action sequence.
+// TestAuditLogRecentEdgeCases is a table test of the backward-chunked Recent(): each case
+// writes a raw fixture directly (not through Append) so the byte layout.
 func TestAuditLogRecentEdgeCases(t *testing.T) {
 	// line builds one raw JSONL line (no trailing newline of its own --
 	// callers join with "\n" or append one explicitly) for action act.
@@ -136,10 +130,7 @@ func TestAuditLogRecentEdgeCases(t *testing.T) {
 		wantActions []string // newest first
 	}{
 		{
-			// Forces several backward doublings (8 -> 32 -> 128 -> ...)
-			// before a single read window covers enough complete lines to
-			// satisfy limit=10 against a file no single 8-byte read could
-			// ever hold even one whole line of.
+			// Forces several backward doublings.
 			name:        "multi-iteration chunk growth",
 			content:     joinLines(line, 10),
 			chunkSize:   8,
@@ -165,16 +156,7 @@ func TestAuditLogRecentEdgeCases(t *testing.T) {
 			wantActions: reversedActions(5),
 		},
 		{
-			// Each line here is a fixed 40 bytes on the wire (39 bytes of
-			// JSON + "\n"); chunkSize=25 is smaller than that, so every
-			// backward read's start offset falls strictly INSIDE a line
-			// rather than landing on a line boundary -- exercising the
-			// "drop the partial leading line, re-read a larger window on
-			// the next step" path multiple times (verified by hand: the
-			// 25-byte and 100-byte reads each land mid-line and are
-			// discarded before the final whole-file read succeeds) before
-			// the line that spans each of those boundaries is ever
-			// returned whole.
+			// Each line here is a fixed 40 bytes on the wire (39 bytes of JSON + "\n").
 			name:        "line spanning a chunk boundary",
 			content:     joinLines(line, 5),
 			chunkSize:   25,
@@ -211,9 +193,8 @@ func TestAuditLogRecentEdgeCases(t *testing.T) {
 	}
 }
 
-// joinLines builds n lines (ts=1000+i, action="aI") via mk, joined with "\n"
-// plus a final trailing "\n" -- TestAuditLogRecentEdgeCases' well-formed
-// fixture shape.
+// joinLines builds n lines (ts=1000+i, action="aI") via mk, joined with "\n" plus a final
+// trailing "\n" -- TestAuditLogRecentEdgeCases' well-formed fixture shape.
 func joinLines(mk func(ts int64, act string) string, n int) string {
 	var sb strings.Builder
 	for i := 0; i < n; i++ {

@@ -15,11 +15,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-// blockingReleaseSource is an update.Source whose ReleaseAsset blocks until
-// release is closed (or ctx is cancelled), then always fails -- exactly
-// enough to park apply's FetchRelease call for as long as a test wants,
-// without needing a full signed-release fixture (planApply/stage/smokeTest
-// are never reached, since FetchRelease never succeeds).
+// blockingReleaseSource is an update.Source whose ReleaseAsset blocks until release is
+// closed (or ctx is cancelled), then always fails.
 type blockingReleaseSource struct {
 	release chan struct{}
 }
@@ -37,10 +34,8 @@ func (s blockingReleaseSource) ChannelAsset(ctx context.Context, name string) (i
 	return nil, update.ErrNoChannel
 }
 
-// newBlockingUpdateAPI builds an *inprocAPI wired (via the newUpdaterFn test
-// seam, coreapi_inproc.go) to a blockingReleaseSource and isolated temp
-// paths, for the async-apply tests below. release, when closed, lets the
-// background goroutine's FetchRelease call fail and return.
+// newBlockingUpdateAPI builds an *inprocAPI wired (via the newUpdaterFn test seam,
+// coreapi_inproc.go) to a blockingReleaseSource and isolated temp paths.
 func newBlockingUpdateAPI(t *testing.T, release chan struct{}) *inprocAPI {
 	t.Helper()
 	root := t.TempDir()
@@ -63,9 +58,8 @@ func newBlockingUpdateAPI(t *testing.T, release chan struct{}) *inprocAPI {
 	}
 }
 
-// TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes pins that UpdateApply
-// returns almost immediately, well before a permanently blocked Source
-// finishes: the slow work runs in a background goroutine.
+// TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes pins that UpdateApply returns almost
+// immediately, well before a permanently blocked Source finishes.
 func TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes(t *testing.T) {
 	release := make(chan struct{}) // never closed in this test
 	api := newBlockingUpdateAPI(t, release)
@@ -95,16 +89,13 @@ func TestInprocUpdateApplyReturnsBeforeSlowSourceFinishes(t *testing.T) {
 	}
 }
 
-// TestInprocUpdateApplyRefusesConcurrentSecondCall pins that a second
-// UpdateApply while the first is blocked on the Source is refused with a
-// fixed error, not queued, and the fake source is not asked for a second
-// release.
+// TestInprocUpdateApplyRefusesConcurrentSecondCall pins that a second UpdateApply while the
+// first is blocked on the Source is refused with a fixed error, not queued.
 func TestInprocUpdateApplyRefusesConcurrentSecondCall(t *testing.T) {
 	release := make(chan struct{})
 	api := newBlockingUpdateAPI(t, release)
 	// Release the blocked goroutine and wait for it before the TempDirs that
-	// newBlockingUpdateAPI registered are removed (cleanups run LIFO, so this
-	// one runs first); otherwise its late state write races the RemoveAll.
+	// newBlockingUpdateAPI registered are removed (cleanups run LIFO, so this one runs first).
 	t.Cleanup(func() {
 		close(release)
 		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
@@ -130,11 +121,8 @@ func TestInprocUpdateApplyRefusesConcurrentSecondCall(t *testing.T) {
 	}
 }
 
-// TestInprocUpdateApplyClearsInProgressAndRecordsLastError pins the
-// goroutine's completion side: once the Source is released (and therefore
-// apply's FetchRelease call fails), InProgress must go back to false and
-// LastError must carry the failure -- and a fresh UpdateApply must then be
-// accepted again (the slot was actually released, not left stuck).
+// TestInprocUpdateApplyClearsInProgressAndRecordsLastError pins the goroutine's completion
+// side: once the Source is released (and therefore apply's FetchRelease call fails).
 func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 	release := make(chan struct{})
 	api := newBlockingUpdateAPI(t, release)
@@ -167,8 +155,7 @@ func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 		t.Error("LastError is empty after a failed apply, want the failure recorded")
 	}
 
-	// The slot is free again: a fresh call must be accepted (not refused as
-	// still-running).
+	// The slot is free again: a fresh call must be accepted (not refused as still-running).
 	release2 := make(chan struct{})
 	api.newUpdaterFn = func(c *config.Config) updater {
 		return updater{
@@ -186,9 +173,8 @@ func TestInprocUpdateApplyClearsInProgressAndRecordsLastError(t *testing.T) {
 		t.Fatalf("UpdateApply after the previous one finished: %v", err)
 	}
 
-	// Let the second apply finish before returning: its goroutine writes
-	// update state into this test's TempDirs, and t.TempDir's cleanup fails
-	// ("directory not empty") if that write races the RemoveAll.
+	// Let the second apply finish before returning: its goroutine writes update state into
+	// this test's TempDirs, and t.TempDir's cleanup fails.
 	close(release2)
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if v, err := api.UpdateStatus(); err == nil && !v.InProgress {

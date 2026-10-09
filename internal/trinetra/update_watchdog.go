@@ -22,8 +22,7 @@ const (
 	watchdogTimerName   = "trinetra-update-watchdog.timer"
 )
 
-// renderWatchdogService is the oneshot the timer runs. TimeoutStartSec
-// bounds a wedged guard (a full gate is about two minutes).
+// renderWatchdogService is the oneshot the timer runs.
 func renderWatchdogService(guardBin string) string {
 	return fmt.Sprintf(`[Unit]
 Description=Trinetra self-update watchdog (confirms or rolls back a pending update)
@@ -38,14 +37,8 @@ StandardError=journal
 `, guardBin)
 }
 
-// renderWatchdogTimer fires the watchdog 2 minutes after boot, every minute
-// after the previous run finished, and shortly (1 minute) after the timer
-// itself is (re)started -- e.g. by an uninstall+reinstall within the same
-// boot, when OnBootSec has already elapsed and would otherwise wait a full
-// boot cycle to fire again. Persistent= is deliberately not set: it only
-// applies to OnCalendar= timers and is a no-op (some systemd versions warn
-// about it) on a monotonic timer like this one; OnActiveSec= covers the
-// same "don't miss a run" concern here.
+// renderWatchdogTimer fires the watchdog 2 minutes after boot, every minute after the
+// previous run finished, and shortly (1 minute) after the timer itself is (re)started.
 func renderWatchdogTimer() string {
 	return `[Unit]
 Description=Run the Trinetra self-update watchdog every minute
@@ -61,12 +54,8 @@ WantedBy=timers.target
 `
 }
 
-// ensureWatchdog makes the watchdog present and running: it writes the two
-// unit files under p.UnitDir when missing or different (daemon-reload only
-// then) and enables and starts the timer. install calls it after writing the
-// pinned guard; apply calls it before swapping anything, so a host installed
-// by an older build still gets its safety net before the first update. The
-// pinned guard binary itself is written separately (writePinnedGuard).
+// ensureWatchdog makes the watchdog present and running: it writes the two unit files under
+// p.UnitDir when missing or different.
 func ensureWatchdog(p updatePaths, x Exec) error {
 	if p.UnitDir == "" {
 		return fmt.Errorf("update: no systemd unit directory configured")

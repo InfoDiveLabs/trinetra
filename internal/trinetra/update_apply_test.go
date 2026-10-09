@@ -38,11 +38,8 @@ func mf(name string, b []byte) update.File {
 	return update.File{Name: name, OS: "linux", Arch: "amd64", Size: int64(len(b)), SHA256: hex.EncodeToString(s[:])}
 }
 
-// testUpdatePaths sets up a temp BinDir/StateDir with an "installed" core and
-// web binary, and points the package-level stateDir at the fixture's
-// StateDir (restored on cleanup) so writePluginManifest -- called by swapIn
-// -- writes plugins.json inside the temp dir rather than the real
-// /var/lib/trinetra.
+// testUpdatePaths sets up a temp BinDir/StateDir with an "installed" core and web binary,
+// and points the package-level stateDir at the fixture's StateDir.
 func testUpdatePaths(t *testing.T) updatePaths {
 	root := t.TempDir()
 	p := updatePaths{BinDir: filepath.Join(root, "bin"), StateDir: filepath.Join(root, "state"),
@@ -138,10 +135,8 @@ func TestSwapInRefusesStagedFileChangedAfterVerify(t *testing.T) {
 	}
 }
 
-// TestTimeoutExecKillsSlowCommand: smokeTest must be bounded by its own fixed
-// timeout, not the shared 60s execTimeout. timeoutExec gives it that bound; a
-// command that outlives it must be killed (and Run must return an error) well
-// before the command would finish on its own.
+// TestTimeoutExecKillsSlowCommand: smokeTest must be bounded by its own fixed timeout, not
+// the shared 60s execTimeout. timeoutExec gives it that bound.
 func TestTimeoutExecKillsSlowCommand(t *testing.T) {
 	if _, err := exec.LookPath("sleep"); err != nil {
 		t.Skip("sleep not on PATH")
@@ -157,9 +152,8 @@ func TestTimeoutExecKillsSlowCommand(t *testing.T) {
 	}
 }
 
-// TestSmokeTest pins smokeTest's own logic (version match, mismatch,
-// non-JSON output, exec failure) independent of any real timeout, using the
-// package's existing fakeExec (docker_test.go) fake.
+// TestSmokeTest pins smokeTest's own logic (version match, mismatch, non-JSON output, exec
+// failure) independent of any real timeout, using the package's existing fakeExec.
 func TestSmokeTest(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -202,12 +196,8 @@ func TestSmokeTest(t *testing.T) {
 	}
 }
 
-// TestSwapInJoinsRestoreFailureWithOriginalError: when a failure in swapIn's
-// replace phase triggers restorePrevious, and restorePrevious ALSO fails, the
-// error swapIn returns must surface both failures, with wording that makes
-// clear the host may be left half-updated. Making BinDir unwritable after
-// staging forces this: the first replaceFile call fails (can't create the temp
-// file), and so does the restorePrevious it triggers.
+// TestSwapInJoinsRestoreFailureWithOriginalError: when a failure in swapIn's replace phase
+// triggers restorePrevious, and restorePrevious ALSO fails.
 func TestSwapInJoinsRestoreFailureWithOriginalError(t *testing.T) {
 	p := testUpdatePaths(t)
 	newCore, newWeb := []byte("NEW-core"), []byte("NEW-web")

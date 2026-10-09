@@ -27,8 +27,7 @@ type fakeMigrationOps struct {
 	installed int
 	// procs maps a pid to what /proc/<pid>/exe reads (absent: no process).
 	procs map[int]string
-	// unitPIDs are the processes serverwatch.service runs; `systemctl stop`
-	// ends them.
+	// unitPIDs are the processes serverwatch.service runs; `systemctl stop` ends them.
 	unitPIDs []int
 	// activeUntilStop: `is-active` prints "active" until `stop` was called.
 	activeUntilStop bool
@@ -390,9 +389,8 @@ func TestLegacyMigrationNoLegacyIsNoop(t *testing.T) {
 	}
 }
 
-// TestLegacyMigrationResumesAfterCrashAtEveryStep stops the migration at
-// each step boundary (as a crash would), then re-runs install: the end state
-// must be exactly the clean one, with no data lost.
+// TestLegacyMigrationResumesAfterCrashAtEveryStep stops the migration at each step boundary
+// (as a crash would), then re-runs install: the end state must be exactly the clean one.
 func TestLegacyMigrationResumesAfterCrashAtEveryStep(t *testing.T) {
 	for _, exdev := range []bool{false, true} {
 		for _, step := range migrationSteps {
@@ -440,9 +438,8 @@ func TestLegacyMigrationDiscardsPartialCopy(t *testing.T) {
 	assertMigrated(t, p, wantCfg, wantState)
 }
 
-// A crash while removing the verified source leaves the new dir complete and
-// the old one partly deleted (its marker is removed last). The re-run finishes
-// the removal and keeps the new copy.
+// A crash while removing the verified source leaves the new dir complete and the old one
+// partly deleted (its marker is removed last).
 func TestLegacyMigrationFinishesSourceRemoval(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
@@ -778,9 +775,8 @@ func assertLegacyIntact(t *testing.T, p migrationPaths, want map[string]string) 
 	}
 }
 
-// crash at move-state, then the operator starts a manual copy
-// (cp -a) that brings the in-progress marker and one file into the new dir.
-// The re-run must refuse and delete nothing.
+// crash at move-state, then the operator starts a manual copy (cp -a) that brings the
+// in-progress marker and one file into the new dir.
 func TestLegacyMigrationRefusesManualPartialCopy(t *testing.T) {
 	for _, exdev := range []bool{false, true} {
 		t.Run(fmt.Sprintf("exdev=%v", exdev), func(t *testing.T) {
@@ -849,8 +845,7 @@ func TestLegacyMigrationRefusesIncompleteVerifiedCopy(t *testing.T) {
 	assertLegacyIntact(t, p, wantState)
 }
 
-// the new path is a symlink to the old dir, before any run
-// and after a crash. Refuse, delete nothing.
+// the new path is a symlink to the old dir, before any run and after a crash.
 func TestLegacyMigrationRefusesSymlinkedNewDir(t *testing.T) {
 	for _, crashFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("crashFirst=%v", crashFirst), func(t *testing.T) {
@@ -930,10 +925,8 @@ func TestLegacyMigrationRefusesMountPointUpFront(t *testing.T) {
 	}
 }
 
-// Following that advice (volume now mounted at the new path, old path left
-// empty) needs the explicit --state-already-at-new-path opt-in: without it,
-// refuse with nothing changed; with it, migrate the rest, adopt the volume's
-// data where it is, and say so.
+// Following that advice (volume now mounted at the new path, old path left empty) needs the
+// explicit --state-already-at-new-path opt-in: without it, refuse with nothing changed.
 func TestLegacyMigrationAfterVolumeRemountedAtNewPath(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
@@ -1132,8 +1125,7 @@ func refuseNothingChanged(t *testing.T, p migrationPaths, f *fakeMigrationOps, w
 	}
 }
 
-// P1/P4: the legacy state volume is not mounted this boot. Config present,
-// state dir empty: refuse, change nothing (no rmdir either).
+// P1/P4: the legacy state volume is not mounted this boot.
 func TestLegacyMigrationRefusesEmptyStateDirNextToConfig(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
@@ -1250,9 +1242,7 @@ func assertNoUnsafeDeleteAdvice(t *testing.T, p migrationPaths, text string) {
 	}
 }
 
-// N1: with a matching token but an incomplete copy (e.g. serverwatch was
-// started by hand after a crash and wrote new samples into the old dir) the
-// rollback advice must not delete the old dir.
+// N1: with a matching token but an incomplete copy.
 func TestRollbackAdviceNeverDeletesAnUnprovenSource(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
@@ -1302,8 +1292,7 @@ func TestRollbackAdviceKeepsProvenCopy(t *testing.T) {
 	}
 }
 
-// A leftover staging dir that is really the old dir (a symlink to it) is not
-// deleted.
+// A leftover staging dir that is really the old dir (a symlink to it) is not deleted.
 func TestLegacyMigrationRefusesAliasedStagingDir(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
@@ -1345,8 +1334,7 @@ func TestMigrationPrintsVerifyProgress(t *testing.T) {
 	}
 }
 
-// A staging dir whose source is gone may hold the only copy: never advise
-// deleting it.
+// A staging dir whose source is gone may hold the only copy: never advise deleting it.
 func TestRollbackAdviceKeepsStagingWhenSourceMissing(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)

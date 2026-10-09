@@ -62,14 +62,7 @@ func fullyPopulatedSnapshot() Snapshot {
 	}
 }
 
-// TestInprocSnapshotMatchesBuildDashboardView is the Step 5 parity test:
-// newInprocAPI(...).Snapshot() must project a fully-populated Snapshot
-// identically to the re-homed buildDashboardView, guarding against any
-// behavior change from moving that function out of daemon_web.go. The two
-// are compared with Availability zeroed on both sides first, since
-// Snapshot() additionally computes Availability fresh on top of
-// buildDashboardView's projection (see its doc) -- that wiring isn't what
-// this test is pinning.
+// TestInprocSnapshotMatchesBuildDashboardView is the Step 5 parity test.
 func TestInprocSnapshotMatchesBuildDashboardView(t *testing.T) {
 	snap := fullyPopulatedSnapshot()
 	cfg := config.Default()
@@ -89,9 +82,8 @@ func TestInprocSnapshotMatchesBuildDashboardView(t *testing.T) {
 	}
 }
 
-// TestInprocMonitoringMatchesBuildMonitoringView is Monitoring()'s
-// counterpart to the Snapshot parity test above -- buildMonitoringView takes
-// no Availability-style extra step, so this is a straight equality check.
+// TestInprocMonitoringMatchesBuildMonitoringView is Monitoring()'s counterpart to the
+// Snapshot parity test above -- buildMonitoringView takes no Availability-style extra step.
 func TestInprocMonitoringMatchesBuildMonitoringView(t *testing.T) {
 	snap := fullyPopulatedSnapshot()
 	cfg := config.Default() // Collect.Services/Processes nil -> both enabled (ServicesEnabled/ProcessesEnabled default true)
@@ -109,22 +101,8 @@ func TestInprocMonitoringMatchesBuildMonitoringView(t *testing.T) {
 	}
 }
 
-// TestSeriesResolutionMapping exercises Series against a real tsfile
-// SampleStore (not a mock) seeded with genuinely distinct raw and 1m data,
-// pinning all three of: the explicit core.ResRaw/core.Res1m mapping onto
-// their trinetra.Resolution counterparts, and core.ResAuto's delegation
-// to PickResolution.
-//
-// Timestamps are computed relative to the start of the current minute
-// (nowKey) rather than "now" directly, so the test's pass/fail never
-// depends on which second within a minute it happens to run at:
-//   - recentTS sits exactly at nowKey -- its 1-minute bucket can never be
-//     "completed" (key+60 > now always holds for the bucket containing
-//     now), so Downsample never sweeps it into the 1m file regardless of
-//     timing.
-//   - oldTS1/oldTS2 sit inside the same 1-minute bucket exactly 2 hours
-//     before nowKey -- always long since completed, so Downsample always
-//     rolls both into one 1m record.
+// TestSeriesResolutionMapping exercises Series against a real tsfile SampleStore (not a
+// mock) seeded with genuinely distinct raw and 1m data.
 func TestSeriesResolutionMapping(t *testing.T) {
 	dir := t.TempDir()
 	store, err := OpenStore("tsfile", dir, StoreOptions{RawRetention: time.Hour})
@@ -185,10 +163,8 @@ func TestSeriesResolutionMapping(t *testing.T) {
 		t.Fatalf("Res1m point = %+v, want {TS:%d Min:40 Avg:50 Max:60}", oneM[0], oldKey)
 	}
 
-	// core.ResAuto over a RECENT window (from within the last hour) must
-	// pick raw -- PickResolution(from, to, now, 1h) returns ResRaw here --
-	// and so must match the explicit-raw result restricted to that window:
-	// just recentTS.
+	// core.ResAuto over a RECENT window (from within the last hour) must pick raw --
+	// PickResolution(from, to, now, 1h) returns ResRaw here.
 	autoRecent, err := api.Series("cpu", nowKey-10, now+10, core.ResAuto)
 	if err != nil {
 		t.Fatalf("Series(ResAuto, recent window): %v", err)
@@ -197,12 +173,8 @@ func TestSeriesResolutionMapping(t *testing.T) {
 		t.Fatalf("ResAuto (recent window) = %+v, want [{TS:%d Avg:99}] (i.e. picked raw)", autoRecent, recentTS)
 	}
 
-	// core.ResAuto over an OLD window (from more than 1h ago) must pick 1m
-	// -- and so must match the explicit-1m result: the single aggregated
-	// bucket, NOT the two raw points that also exist in this window. This
-	// is the real proof ResAuto delegated to PickResolution rather than
-	// always reading raw: an explicit-raw query over the same window
-	// returns 2 points, but ResAuto here must return the 1 aggregated one.
+	// core.ResAuto over an OLD window (from more than 1h ago) must pick 1m -- and so must
+	// match the explicit-1m result: the single aggregated bucket.
 	autoOld, err := api.Series("cpu", oldKey-10, oldKey+70, core.ResAuto)
 	if err != nil {
 		t.Fatalf("Series(ResAuto, old window): %v", err)
@@ -212,10 +184,8 @@ func TestSeriesResolutionMapping(t *testing.T) {
 	}
 }
 
-// TestSeriesNilStoreReturnsEmptyNoPanic pins the nil-store guard: a daemon
-// running in store-writes-disabled mode (openConfiguredStore failed at
-// startup) must still answer Series calls with an empty result, never a nil
-// pointer panic.
+// TestSeriesNilStoreReturnsEmptyNoPanic pins the nil-store guard: a daemon running in
+// store-writes-disabled mode.
 func TestSeriesNilStoreReturnsEmptyNoPanic(t *testing.T) {
 	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})
 	got, err := api.Series("cpu", 0, 1000, core.ResAuto)
@@ -240,9 +210,8 @@ func TestEventsNilStoreReturnsEmptyNoPanic(t *testing.T) {
 	}
 }
 
-// TestEventsMapsStoreEvents exercises Events against a real (memory-backend)
-// SampleStore holding one downtime event, pinning the DownEvent ->
-// core.DownEventView field mapping.
+// TestEventsMapsStoreEvents exercises Events against a real (memory-backend) SampleStore
+// holding one downtime event, pinning the DownEvent -> core.DownEventView field mapping.
 func TestEventsMapsStoreEvents(t *testing.T) {
 	store, err := OpenStore("memory", "", StoreOptions{})
 	if err != nil {
@@ -265,12 +234,8 @@ func TestEventsMapsStoreEvents(t *testing.T) {
 	}
 }
 
-// TestActiveAlertsMapsFields exercises ActiveAlerts against a real
-// alerts.json written via AlertState.Save (not a hand-built fixture),
-// pinning the ActiveAlert -> core.AlertRecord mapping: Source comes from
-// Reason, Severity is rendered via severityString(Critical), Kind is always
-// "", and results are sorted by key for a deterministic order (map
-// iteration order is not).
+// TestActiveAlertsMapsFields exercises ActiveAlerts against a real alerts.json written via
+// AlertState.Save (not a hand-built fixture).
 func TestActiveAlertsMapsFields(t *testing.T) {
 	stateDir := t.TempDir()
 
@@ -413,13 +378,8 @@ func TestBuildDashboardViewCopiesScalarsAndDerivedCounts(t *testing.T) {
 	}
 }
 
-// TestBuildDashboardViewTopContainersSortedAndCapped pins the "top
-// containers by CPU/memory" derivation: sorted descending, capped to 4 rows
-// (the mockup dashboard.html's hbar panels), and each row's State comes from
-// the separate Containers state map (docker stats and the plain state
-// listing are two different shell-outs). Moved here from the removed
-// daemon_web_dashboard_test.go -- see the doc on
-// TestBuildDashboardViewCopiesScalarsAndDerivedCounts above.
+// TestBuildDashboardViewTopContainersSortedAndCapped pins the "top containers by
+// CPU/memory" derivation: sorted descending, capped to 4 rows.
 func TestBuildDashboardViewTopContainersSortedAndCapped(t *testing.T) {
 	stats := map[string]ContainerStat{
 		"a": {Name: "a", CPUPct: 1, MemMiB: 500},
@@ -457,19 +417,14 @@ func TestBuildDashboardViewTopContainersSortedAndCapped(t *testing.T) {
 			t.Fatalf("TopMemContainers[%d].Name = %q, want %q (full: %+v)", i, got.TopMemContainers[i].Name, name, got.TopMemContainers)
 		}
 	}
-	// "a" (index 2 in the mem-sorted order above) has a known state in the
-	// separate Containers map ("running") -- pins that TopMemContainers'
-	// State field is looked up from there, not left zero-valued.
+	// "a" (index 2 in the mem-sorted order above) has a known state in the separate Containers
+	// map ("running") -- pins that TopMemContainers' State field is looked up from there.
 	if a := got.TopMemContainers[2]; a.Name != "a" || a.State != "running" {
 		t.Fatalf("TopMemContainers[2] = %+v, want {Name:a State:running ...}", a)
 	}
 }
 
-// TestBuildDashboardViewDiskDetailAndNetRates pins DiskDetail merge (device/
-// free/size/fill-projection layered onto the plain Disks usage%) and the
-// NetRates -> NetIfaces/NetRxBps/NetTxBps summation. Moved here from the
-// removed daemon_web_dashboard_test.go -- see the doc on
-// TestBuildDashboardViewCopiesScalarsAndDerivedCounts above.
+// TestBuildDashboardViewDiskDetailAndNetRates pins DiskDetail merge.
 func TestBuildDashboardViewDiskDetailAndNetRates(t *testing.T) {
 	snap := Snapshot{
 		Disks: map[string]float64{"/": 91},
@@ -500,20 +455,8 @@ func TestBuildDashboardViewDiskDetailAndNetRates(t *testing.T) {
 	}
 }
 
-// TestBuildDashboardViewNoMapMutationUnderConcurrentPublish is the hard
-// map-safety requirement pinned since the web-dashboard task: buildDashboardView
-// is a concurrent reader of snapshotHub, and the whole atomic.Pointer[Snapshot]
-// design (see snapshot_hub.go's doc) depends on every reader treating a
-// loaded Snapshot's map fields as read-only, since a copy of the Snapshot
-// struct still aliases the same underlying maps the publisher just replaced
-// a field with. This test runs a publisher goroutine that keeps replacing
-// snapshotHub's Snapshot (via a brand-new map each time, mirroring
-// mergeSlowFields' "replace wholesale" contract) concurrently with many
-// readers calling latestSnapshot()+buildDashboardView() -- go test -race is
-// what actually proves no race; the assertions here just guard against the
-// adapter silently corrupting values in a way -race wouldn't catch. Moved
-// here from the removed daemon_web_dashboard_test.go -- see the doc on
-// TestBuildDashboardViewCopiesScalarsAndDerivedCounts above.
+// TestBuildDashboardViewNoMapMutationUnderConcurrentPublish is the hard map-safety
+// requirement pinned since the web-dashboard task.
 func TestBuildDashboardViewNoMapMutationUnderConcurrentPublish(t *testing.T) {
 	old := snapshotHub.Load()
 	t.Cleanup(func() { snapshotHub.Store(old) })
@@ -568,10 +511,8 @@ func TestBuildDashboardViewNoMapMutationUnderConcurrentPublish(t *testing.T) {
 	wg.Wait()
 }
 
-// TestInprocSubscribeDeliversPublishedEvents pins Subscribe's happy path:
-// the channel it returns must be a live subscription onto the inprocAPI's
-// own bus -- publishing directly on that bus (as dispatchAndLog/the sampler
-// loop, daemon.go, do in production) must deliver the event to the caller.
+// TestInprocSubscribeDeliversPublishedEvents pins Subscribe's happy path: the channel it
+// returns must be a live subscription onto the inprocAPI's own bus.
 func TestInprocSubscribeDeliversPublishedEvents(t *testing.T) {
 	bus := newEventBus()
 	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, bus, nil)
@@ -596,15 +537,8 @@ func TestInprocSubscribeDeliversPublishedEvents(t *testing.T) {
 	}
 }
 
-// TestInprocSubscribeCtxCancelUnsubscribes pins Subscribe's cleanup path:
-// cancelling the ctx passed to Subscribe must unsubscribe from the bus (a
-// later Publish is not delivered) and close the returned channel -- proven
-// by receiving from it after cancellation and observing ok==false, the same
-// closed-channel signal eventBus.Subscribe's own cancel produces
-// (eventbus_test.go). This is a blocking receive on purpose: it waits for
-// the actual close event Subscribe's ctx.Done() goroutine produces rather
-// than assuming any particular timing, guarded by a time.After fallback so
-// a broken implementation fails the test instead of hanging forever.
+// TestInprocSubscribeCtxCancelUnsubscribes pins Subscribe's cleanup path: cancelling the
+// ctx passed to Subscribe must unsubscribe from the bus.
 func TestInprocSubscribeCtxCancelUnsubscribes(t *testing.T) {
 	bus := newEventBus()
 	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, bus, nil)

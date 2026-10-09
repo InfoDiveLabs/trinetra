@@ -40,12 +40,8 @@ import (
 // e2eHooksEnabled is true only in a trinetra_testkeys build.
 const e2eHooksEnabled = true
 
-// e2eCrashOnStart is empty unless the e2e harness's "crashes on start"
-// fixture stamps it with
-// -ldflags "-X github.com/InfoDiveLabs/trinetra/internal/trinetra.e2eCrashOnStart=1",
-// in which case `trinetra daemon` exits immediately (a release that must
-// fail its self-update health check). Default builds make it a constant ""
-// (update_e2e_hooks.go), so this exists only in trinetra_testkeys builds.
+// e2eCrashOnStart is empty unless the e2e harness's "crashes on start" fixture stamps it
+// with -ldflags "-X github.com/InfoDiveLabs/trinetra/internal/trinetra.e2eCrashOnStart=1".
 var e2eCrashOnStart string
 
 // e2eRestartCmd reports the shell command TRINETRA_E2E_RESTART_CMD names, if
@@ -70,8 +66,7 @@ func e2eUpdateLoopInterval() (time.Duration, bool) {
 	return envDuration("TRINETRA_E2E_UPDATE_LOOP_INTERVAL")
 }
 
-// e2eHealthDeadline reports TRINETRA_E2E_HEALTH_DEADLINE when it is a
-// positive duration.
+// e2eHealthDeadline reports TRINETRA_E2E_HEALTH_DEADLINE when it is a positive duration.
 func e2eHealthDeadline() (time.Duration, bool) {
 	return envDuration("TRINETRA_E2E_HEALTH_DEADLINE")
 }
@@ -91,10 +86,8 @@ func shCmd(v string) (cmd string, args []string, ok bool) {
 	return "sh", []string{"-c", v}, true
 }
 
-// e2eAfterFirstRename, when TRINETRA_E2E_SWAP_PAUSE_FILE names a path,
-// creates that file right after swapIn's first binary rename and then waits
-// (up to two minutes) so the harness can SIGKILL the apply mid-swap -- the
-// "kill mid-swap, then resume" scenario.
+// e2eAfterFirstRename, when TRINETRA_E2E_SWAP_PAUSE_FILE names a path, creates that file
+// right after swapIn's first binary rename and then waits.
 func e2eAfterFirstRename() {
 	path := os.Getenv("TRINETRA_E2E_SWAP_PAUSE_FILE")
 	if path == "" {

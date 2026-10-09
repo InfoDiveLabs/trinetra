@@ -11,9 +11,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestFileAPIApplyConfigPersists checks the file-backed ApplyConfig persists
-// the posted config to cfgPath (via saveCfg) so a later config.Load sees it.
-// cfgPath is overridden via the package-level test seam.
+// TestFileAPIApplyConfigPersists checks the file-backed ApplyConfig persists the posted
+// config to cfgPath.
 func TestFileAPIApplyConfigPersists(t *testing.T) {
 	dir := t.TempDir()
 	prevCfgPath := cfgPath
@@ -62,9 +61,8 @@ func TestInprocApplyConfigInvokesReloadClosure(t *testing.T) {
 	}
 }
 
-// TestInprocApplyConfigPropagatesReloadError pins that a reload failure
-// (e.g. the daemon's own validation) surfaces back through ApplyConfig
-// rather than being swallowed.
+// TestInprocApplyConfigPropagatesReloadError pins that a reload failure (e.g. the daemon's
+// own validation) surfaces back through ApplyConfig rather than being swallowed.
 func TestInprocApplyConfigPropagatesReloadError(t *testing.T) {
 	wantErr := errNotExist
 	reload := func(*config.Config) error { return wantErr }
@@ -75,9 +73,8 @@ func TestInprocApplyConfigPropagatesReloadError(t *testing.T) {
 	}
 }
 
-// TestFileAPIAckAlertUnackAlertRoundTrip pins fileAPI's Ack/Unack: they load
-// alerts.json, flip Acked/AckedAt via AlertState.Ack/Unack and save it back,
-// readable afterward via LoadAlertState.
+// TestFileAPIAckAlertUnackAlertRoundTrip pins fileAPI's Ack/Unack: they load alerts.json,
+// flip Acked/AckedAt via AlertState.Ack/Unack and save it back.
 func TestFileAPIAckAlertUnackAlertRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	state := NewAlertState()
@@ -105,9 +102,8 @@ func TestFileAPIAckAlertUnackAlertRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFileAPIAckAlertUnknownKeyReturnsError pins the same "no active alert
-// for key %q" error AlertState.Ack itself returns for a never-fired key --
-// the exact message cmdAlertsAck has always printed to stderr on a bad ack.
+// TestFileAPIAckAlertUnknownKeyReturnsError pins the same "no active alert for key %q"
+// error AlertState.Ack itself returns for a never-fired key.
 func TestFileAPIAckAlertUnknownKeyReturnsError(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 	err := api.AckAlert("nope")
@@ -145,14 +141,8 @@ func TestInprocAckAlertUnackAlertRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFileAPITestChannelDelegatesToSendTestNotification and its in-process
-// counterpart below pin that TestChannel routes through the shared
-// sendTestNotification (channel.go) rather than reimplementing it: an
-// unknown channel name surfaces sendTestNotification's own "unknown channel"
-// error, proving the call actually reached it (a real send is out of scope
-// for a unit test -- see channel_cli_test.go's TestChannelAddListSetRemoveTestViaCLI
-// for the equivalent CLI-level proof against a real, if undeliverable,
-// channel).
+// TestFileAPITestChannelDelegatesToSendTestNotification and its in-process counterpart
+// below pin that TestChannel routes through the shared sendTestNotification.
 func TestFileAPITestChannelDelegatesToSendTestNotification(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 	err := api.TestChannel("does-not-exist")
@@ -169,12 +159,8 @@ func TestInprocTestChannelDelegatesToSendTestNotification(t *testing.T) {
 	}
 }
 
-// TestFileAPIValidateChannelRejectsUndeliverable and its in-process
-// counterpart below pin that ValidateChannel routes through the shared
-// buildNotifier (channels.go) -- the same check TestChannel/`channel test`
-// use, minus the network send -- against this API's own config: a telegram
-// channel with no chat id and no global fallback is rejected, and a
-// deliverable channel (a webhook with a url) passes.
+// TestFileAPIValidateChannelRejectsUndeliverable and its in-process counterpart below pin
+// that ValidateChannel routes through the shared buildNotifier (channels.go).
 func TestFileAPIValidateChannelRejectsUndeliverable(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 

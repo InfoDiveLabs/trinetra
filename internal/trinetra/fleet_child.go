@@ -18,16 +18,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
-// outboxTee appends local writes to the fleet outbox. Failures are counted
-// and logged once per minute, never propagated: the local store is the
-// source of truth. A record the outbox cannot write is not silently lost:
-// Outbox.Append truncates any torn frame, moves to a fresh segment, and
-// records the unsent range (including the failed record) as a gap that the
-// shipper rebuilds from the local store (localGapFiller) before shipping
-// anything newer. Only if the outbox cannot even persist that gap (for
-// example the disk is completely unwritable) is the record left to the
-// local store alone, and that failure is what the log line reports. A
-// marshal failure is also only counted and logged.
+// outboxTee appends local writes to the fleet outbox.
 type outboxTee struct {
 	ob       *fleet.Outbox
 	logf     func(string, ...any)
@@ -165,15 +156,13 @@ func (g *localGapFiller) Fill(gap fleet.Gap) ([]fleet.Record, error) {
 	return recs, nil
 }
 
-// liveBuilder assembles the latest-wins LiveUpdate. Host inventory is static
-// for a boot and relatively expensive, so it rides along only every 10 min.
+// liveBuilder assembles the latest-wins LiveUpdate.
 type liveBuilder struct {
 	snap           func() Snapshot
 	alertStatePath string
 	host           func() HostInfo
-	// managed reports this child's managed-config state on every
-	// LiveUpdate (nil until it has ever received a "managed_config" frame
-	// -- see managedChild.Report).
+	// managed reports this child's managed-config state on every LiveUpdate (nil until it has
+	// ever received a "managed_config" frame -- see managedChild.Report).
 	managed  *managedChild
 	mu       sync.Mutex
 	lastHost time.Time
@@ -212,12 +201,8 @@ type childLinkAlerts struct {
 	revokedRaised  bool
 }
 
-// Plan decides the child's local link alerts. warnAfterSec is how long the
-// link must be unreachable before the "fleet link down" warning fires --
-// config.Config.FleetLinkDownWarnAfter(), in seconds (default 10m; see
-// config.go). It is passed in rather than read from a captured config
-// snapshot so a live config change (fleet.link_down_warn_after is not
-// RestartRequired) takes effect on the very next call.
+// Plan decides the child's local link alerts. warnAfterSec is how long the link must be
+// unreachable before the "fleet link down" warning fires.
 func (c *childLinkAlerts) Plan(st fleet.LinkStatus, masterURL string, startedAt, now, warnAfterSec int64) []Alert {
 	var out []Alert
 	if st.State == "revoked" {
@@ -249,17 +234,8 @@ func (c *childLinkAlerts) Plan(st fleet.LinkStatus, masterURL string, startedAt,
 	return out
 }
 
-// handleLinkRevocation is called once per childLinkAlerts tick, BEFORE la.Plan,
-// when the child sees its own link reported as revoked. It permanently
-// invalidates the lease (leaseHolder.Revoke), so handoff.Route always returns
-// true (deliver locally) and la.Plan's "fleet:link:revoked" notice is
-// delivered directly without deliverFallback's misleading "master
-// unreachable" prefix: this node was deliberately cut off.
-//
-// It also drains (handoff.Drain) every alert still routed to the revoked
-// master, delivering each locally via fallback with revokedFallbackPrefix
-// instead of waiting out its fallbackAfter countdown. Revoke and Drain are
-// idempotent, so it is a cheap no-op after the first call.
+// handleLinkRevocation is called once per childLinkAlerts tick, BEFORE la.Plan, when the
+// child sees its own link reported as revoked.
 func handleLinkRevocation(st fleet.LinkStatus, lease *leaseHolder, handoffState *handoff, silences *pushedSilences, fallback func(a Alert, silences *pushedSilences, prefix string)) {
 	if st.State != fleet.LinkRevoked {
 		return

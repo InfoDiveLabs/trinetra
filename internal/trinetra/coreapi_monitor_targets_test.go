@@ -12,10 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestTargetViewsFromTargetsMaps pins the field-for-field mapping from
-// Target (this package's discovery result) to core.TargetView (the DTO
-// exposed over core.API/the control socket): every exported field carries
-// straight across.
+// TestTargetViewsFromTargetsMaps pins the field-for-field mapping from Target (this
+// package's discovery result) to core.TargetView.
 func TestTargetViewsFromTargetsMaps(t *testing.T) {
 	targets := []Target{
 		{ID: "disk:/", Kind: "disk", Display: "/", Available: true},
@@ -33,10 +31,8 @@ func TestTargetViewsFromTargetsMaps(t *testing.T) {
 	}
 }
 
-// TestInprocMonitorTargetsReturnsSlice is a smoke test: inprocAPI.MonitorTargets
-// runs real (osExec{}/osFS{}-backed) discovery, so this only asserts it
-// completes without error and without panicking -- the mapping itself is
-// pinned by TestTargetViewsFromTargetsMaps above.
+// TestInprocMonitorTargetsReturnsSlice is a smoke test: inprocAPI.MonitorTargets runs real
+// (osExec{}/osFS{}-backed) discovery.
 func TestInprocMonitorTargetsReturnsSlice(t *testing.T) {
 	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return config.Default() }, nil, t.TempDir(), nil, nil, &enrollState{})
 	got, err := api.MonitorTargets(context.Background())
@@ -46,9 +42,8 @@ func TestInprocMonitorTargetsReturnsSlice(t *testing.T) {
 	_ = got // possibly empty on a sandboxed host with no docker/disks/smartctl
 }
 
-// TestFileAPIMonitorTargetsReturnsSlice mirrors
-// TestInprocMonitorTargetsReturnsSlice for fileAPI: same real discovery, run
-// from the separate CLI process' code path.
+// TestFileAPIMonitorTargetsReturnsSlice mirrors TestInprocMonitorTargetsReturnsSlice for
+// fileAPI: same real discovery, run from the separate CLI process' code path.
 func TestFileAPIMonitorTargetsReturnsSlice(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 	got, err := api.MonitorTargets(context.Background())

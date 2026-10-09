@@ -12,11 +12,8 @@ type Target struct {
 	Available bool
 }
 
-// UnitInfo is one systemd service unit's live state, as parsed from
-// `systemctl list-units --type=service --all --plain --no-legend`. This is a
-// full inventory (not just failures) for the Monitoring "services" tab, kept
-// deliberately snapshot-only: see listUnits/collectSlow for why it is never
-// persisted to the SampleStore as a series.
+// UnitInfo is one systemd service unit's live state, as parsed from `systemctl list-units
+// --type=service --all --plain --no-legend`.
 type UnitInfo struct {
 	Name        string
 	Load        string
@@ -25,13 +22,7 @@ type UnitInfo struct {
 	Description string
 }
 
-// parseUnits parses `systemctl list-units --type=service --all --plain
-// --no-legend` output. Each line is UNIT LOAD ACTIVE SUB DESCRIPTION,
-// whitespace-separated with DESCRIPTION free-form (may itself contain
-// spaces), so only the first 4 fields are split out positionally and the
-// remainder of the line is joined back as Description. Blank/whitespace-only
-// lines and any line with fewer than 5 fields (malformed/truncated output)
-// are skipped rather than aborting the whole batch.
+// parseUnits parses `systemctl list-units --type=service --all --plain --no-legend` output.
 func parseUnits(s string) []UnitInfo {
 	var out []UnitInfo
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
@@ -78,12 +69,8 @@ func parseFailedUnits(s string) []string {
 	return out
 }
 
-// DiscoverLocal enumerates monitorable targets on THIS host using the real
-// OS-backed Exec/FileSource, the same probes cmdMonitor runs. Exported for
-// callers guaranteed to share the daemon's host (trinetra-ctl, over the local
-// control socket) so they need not route discovery through core.API, which
-// would re-run the df/docker/smartctl probes on every Monitoring() poll. See
-// Discover for the dependency-injected form.
+// DiscoverLocal enumerates monitorable targets on THIS host using the real OS-backed
+// Exec/FileSource, the same probes cmdMonitor runs.
 func DiscoverLocal() []Target {
 	return Discover(osExec{}, osFS{})
 }
@@ -104,13 +91,8 @@ func Discover(x Exec, fs FileSource) []Target {
 		ts = append(ts, Target{ID: "docker", Kind: "docker", Display: "docker (unavailable)", Available: false})
 	}
 
-	// filesystems: use the TYPED df (`df -PT`) so we can apply the same
-	// isRealMount && isRealFsType gate collectSlow uses to fill snap.Disks.
-	// Without the fstype gate, a root daemon on a docker host would surface
-	// one `disk:<overlay>` target per container (plus squashfs/tmpfs/nsfs
-	// pseudo-mounts) in `monitor list`/`monitor threshold`, none of which
-	// ever populate snap.Disks -- the two paths must agree on what a real
-	// disk is.
+	// filesystems: use the TYPED df (`df -PT`) so we can apply the same isRealMount &&
+	// isRealFsType gate collectSlow uses to fill snap.Disks.
 	if out, err := x.Run("df", "-PT"); err == nil {
 		typed := parseDFTypes(string(out))
 		mounts := make([]string, 0, len(typed))
@@ -132,10 +114,8 @@ func Discover(x Exec, fs FileSource) []Target {
 		}
 	}
 
-	// thermal: collectSnapshot only reads zone[0] into a single snap.TempC, and
-	// buildChecks keys the anomaly check on the plain id "temp". Emit exactly ONE
-	// target with that same id so `monitor disable temp` / `monitor threshold
-	// temp 70` line up with the check (per-zone ids were a silent no-op).
+	// thermal: collectSnapshot only reads zone[0] into a single snap.TempC, and buildChecks
+	// keys the anomaly check on the plain id "temp".
 	if zones, _ := fs.Glob("/sys/class/thermal/thermal_zone*/temp"); len(zones) > 0 {
 		display := "cpu-thermal"
 		if zones[0] != "" {
@@ -160,12 +140,8 @@ func isRealMount(m string) bool {
 			return false
 		}
 	}
-	// Defense-in-depth: reject known container/snap runtime mount roots even
-	// if isRealFsType's fstype denylist somehow doesn't catch them (e.g. a
-	// bind-mount or future overlay driver reporting a real-looking fstype).
-	// A root daemon on a docker host otherwise sees one mount per container
-	// under /var/lib/docker/overlay2/<hash>/merged -- this is the field bug
-	// that motivated this whole filter.
+	// Defense-in-depth: reject known container/snap runtime mount roots even if isRealFsType's
+	// fstype denylist somehow doesn't catch them.
 	for _, p := range []string{
 		"/var/lib/docker/", "/var/lib/containers/", "/var/lib/kubelet/",
 		"/snap/", "/var/snap/",

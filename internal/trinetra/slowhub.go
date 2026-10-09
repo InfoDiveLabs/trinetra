@@ -2,10 +2,8 @@ package trinetra
 
 import "sync/atomic"
 
-// slowHub carries the latest successful slow-tier Snapshot from the
-// slow-collector goroutine to the sampler loop, with a monotonically
-// increasing version so the sampler can evaluate slow checks only when the
-// data actually changed.
+// slowHub carries the latest successful slow-tier Snapshot from the slow-collector
+// goroutine to the sampler loop.
 type slowHub struct {
 	snap    atomic.Pointer[Snapshot]
 	version atomic.Uint64

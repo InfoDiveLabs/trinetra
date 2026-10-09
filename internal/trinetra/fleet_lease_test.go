@@ -33,10 +33,8 @@ func TestLeaseHolderGrantAndValid(t *testing.T) {
 	}
 }
 
-// A skewed or misbehaving master's far-future lease grant must be clamped
-// to leaseMaxDuration from this side's own clock, not trusted verbatim --
-// otherwise it could grant an effectively endless lease that silently
-// swallows every future alert.
+// A skewed or misbehaving master's far-future lease grant must be clamped to
+// leaseMaxDuration from this side's own clock, not trusted verbatim.
 func TestLeaseHolderGrantCapsAtMax(t *testing.T) {
 	now := time.Unix(1000, 0)
 	l := newLeaseHolder(func() time.Time { return now })
@@ -62,10 +60,8 @@ func TestLeaseHolderRevokeInvalidatesImmediately(t *testing.T) {
 	}
 }
 
-// TestHandoffDrainReturnsAllPendingRegardlessOfTiming: unlike Tick,
-// handoff.Drain must return every pending alert right away, even when neither
-// the lease has expired nor fallbackAfter elapsed, and be idempotent (a second
-// call returns nothing).
+// TestHandoffDrainReturnsAllPendingRegardlessOfTiming: unlike Tick, handoff.Drain must
+// return every pending alert right away.
 func TestHandoffDrainReturnsAllPendingRegardlessOfTiming(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -94,11 +90,8 @@ func TestHandoffDrainReturnsAllPendingRegardlessOfTiming(t *testing.T) {
 	}
 }
 
-// TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix: it must (1)
-// revoke the lease, (2) deliver every pending alert exactly once via the given
-// fallback func with revokedFallbackPrefix (not fallbackPrefix: "master
-// unreachable" would be false for a revoked node), and (3) be a no-op on a
-// second call.
+// TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix: it must (1) revoke the
+// lease.
 func TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -129,8 +122,7 @@ func TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix(t *testing.T)
 		t.Fatalf("prefix = %q, want revokedFallbackPrefix %q", prefixes[0], revokedFallbackPrefix)
 	}
 
-	// A second call (every subsequent tick, while still revoked) must not
-	// redeliver anything.
+	// A second call (every subsequent tick, while still revoked) must not redeliver anything.
 	handleLinkRevocation(fleet.LinkStatus{State: fleet.LinkRevoked}, lease, h, nil, fallback)
 	if len(delivered) != 1 {
 		t.Fatalf("delivered after second call = %+v, want still just 1 (no double-delivery)", delivered)
@@ -148,10 +140,8 @@ func TestHandleLinkRevocationRevokesDrainsOnceAndUsesRevokedPrefix(t *testing.T)
 	}
 }
 
-// TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix: once
-// lease.Revoke has run, Route returns true unconditionally, and the fallback
-// prefixes are only applied inside deliverFallback, which a Route()==true
-// (local) delivery never goes through, so no alert title gets a prefix.
+// TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix: once lease.Revoke has run,
+// Route returns true unconditionally.
 func TestRouteAfterRevokeAlwaysDeliversLocallyWithNoFallbackPrefix(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -197,9 +187,8 @@ func TestHandoffRouteWhileLeaseValidHoldsBackLocalDelivery(t *testing.T) {
 	}
 }
 
-// child with no stream at all (an old master) or before the first lease
-// frame ever arrives from a new one: leaseHolder.until stays 0, so Route
-// must behave exactly like today -- always deliver locally.
+// child with no stream at all (an old master) or before the first lease frame ever arrives
+// from a new one: leaseHolder.until stays 0, so Route must behave exactly like today.
 func TestHandoffRouteWithoutAnyLeaseEverGrantedDeliversLocally(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -277,9 +266,8 @@ func TestHandoffTickImmediateOnLeaseExpiry(t *testing.T) {
 	}
 }
 
-// A recover sharing a fire's key but with its own Time is tracked (and can
-// fall back) independently: acking the fire must not silently ack the
-// recover too.
+// A recover sharing a fire's key but with its own Time is tracked (and can fall back)
+// independently: acking the fire must not silently ack the recover too.
 func TestHandoffRecoverFollowsSamePathAsFireIndependently(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -313,10 +301,8 @@ func TestHandoffRecoverFollowsSamePathAsFireIndependently(t *testing.T) {
 
 // --- enqueueAndLog x alertRoute -------------------------------------------
 
-// Solo and master never call setAlertRoute, so alertRoute stays nil: this
-// pins that enqueueAndLog's default (no hook installed) is exactly today's
-// behaviour -- local delivery, RoutedToMaster false -- which is what makes
-// leaving every other enqueueAndLog call site untouched safe.
+// Solo and master never call setAlertRoute, so alertRoute stays nil: this pins that
+// enqueueAndLog's default (no hook installed) is exactly today's behaviour.
 func TestEnqueueAndLogDeliversLocallyWhenNoRouteInstalled(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -360,9 +346,8 @@ func TestEnqueueAndLogRoutesToMasterWhenAlertRouteReturnsFalse(t *testing.T) {
 	}
 }
 
-// setAlertRoute's restore func must put back the PREVIOUS hook, not
-// unconditionally clear it -- so nested installs (e.g. a test wrapping
-// another) don't clobber each other.
+// setAlertRoute's restore func must put back the PREVIOUS hook, not unconditionally clear
+// it -- so nested installs (e.g. a test wrapping another) don't clobber each other.
 func TestSetAlertRouteRestoresPrevious(t *testing.T) {
 	restore1 := setAlertRoute(func(Alert) bool { return false })
 	restore2 := setAlertRoute(func(Alert) bool { return true })
@@ -448,9 +433,8 @@ func TestOnStreamFrameReceipt(t *testing.T) {
 		t.Fatalf("Tick after a receipt frame = %v, want none", got)
 	}
 
-	// The receipt must also be durably recorded in the SIDECAR (never
-	// alertlog.jsonl), so a restart doesn't resurrect this alert as pending
-	// (reconcilePendingFromLog).
+	// The receipt must also be durably recorded in the SIDECAR (never alertlog.jsonl), so a
+	// restart doesn't resurrect this alert as pending (reconcilePendingFromLog).
 	receipts, err := readHandoffReceipts(receiptsPath, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -464,9 +448,8 @@ func TestOnStreamFrameReceipt(t *testing.T) {
 	}
 }
 
-// A receipt for something not (or no longer) pending must not be recorded
-// in the sidecar at all: there is nothing meaningful to resolve, and
-// h.Receipt already reports ok=false for exactly this case.
+// A receipt for something not (or no longer) pending must not be recorded in the sidecar at
+// all: there is nothing meaningful to resolve.
 func TestOnStreamFrameReceiptForNothingPendingRecordsNothing(t *testing.T) {
 	receiptsPath := filepath.Join(t.TempDir(), "handoff-receipts.jsonl")
 	lease := newLeaseHolder(nil)
@@ -496,10 +479,8 @@ func TestOnStreamFrameIgnoresGarbageAndUnknownTypes(t *testing.T) {
 	}
 }
 
-// deliverFallback must not mutate the caller's Alert (Title/Time are
-// rewritten on a local copy): Go passes Alert by value, but this pins that
-// contract so a future refactor to a pointer receiver doesn't silently
-// break the caller's own copy (e.g. handoff.Tick's returned slice).
+// deliverFallback must not mutate the caller's Alert (Title/Time are rewritten on a local
+// copy): Go passes Alert by value.
 func TestDeliverFallbackDoesNotMutateCallersAlert(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -514,11 +495,6 @@ func TestDeliverFallbackDoesNotMutateCallersAlert(t *testing.T) {
 }
 
 // --- reconcilePendingFromLog (restart safety) -------------------------------
-//
-// handoff.pending lives only in memory: these tests pin the fix for the gap
-// where a child restarting between Route (lease valid, so nothing delivered
-// locally) and a receipt would otherwise lose the alert -- delivered by
-// neither the master nor, ever, locally.
 
 func routedFireEvent(key, title string, firedAt int64) AlertEvent {
 	return AlertEvent{
@@ -534,9 +510,8 @@ func routedRecoverEvent(key, title string, firedAt int64) AlertEvent {
 	}
 }
 
-// noReceiptsPath is a receipts-sidecar path for tests that don't need any
-// receipts recorded: readHandoffReceipts treats a missing file as "none",
-// exactly like AlertLog.AlertEventsSince treats a missing alertlog.
+// noReceiptsPath is a receipts-sidecar path for tests that don't need any receipts
+// recorded: readHandoffReceipts treats a missing file as "none".
 func noReceiptsPath(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "handoff-receipts.jsonl")
 }
@@ -574,10 +549,8 @@ func TestReconcilePendingFromLogFindsUnresolvedRoutedRecover(t *testing.T) {
 	}
 }
 
-// A fire that was NOT routed to the master (RoutedToMaster=false: solo,
-// master, or a child with no lease at the time) was delivered locally
-// already, synchronously, when it first fired -- it must never be treated
-// as still pending.
+// A fire that was NOT routed to the master (RoutedToMaster=false: solo, master, or a child
+// with no lease at the time) was delivered locally already, synchronously.
 func TestReconcilePendingFromLogIgnoresUnroutedFire(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -677,9 +650,7 @@ func TestReconcilePendingFromLogSkipsRecoveredAfterFire(t *testing.T) {
 }
 
 // The unrouted recover above still gets its OWN entry properly resolved
-// (RoutedToMaster=false means it was never pending in the first place); this
-// pins that a plain recover resolving an earlier fire doesn't, itself,
-// somehow get treated as pending.
+// (RoutedToMaster=false means it was never pending in the first place).
 func TestReconcilePendingFromLogUnroutedRecoverIsNotItselfPending(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -717,9 +688,8 @@ func TestReconcilePendingFromLogRecoverBeforeFireDoesNotResolveIt(t *testing.T) 
 	}
 }
 
-// A routed recover must NOT resolve another pending recover for the same
-// key (recovers don't chain/resolve each other -- only a fire is resolved
-// by a later recover).
+// A routed recover must NOT resolve another pending recover for the same key (recovers
+// don't chain/resolve each other -- only a fire is resolved by a later recover).
 func TestReconcilePendingFromLogRecoverDoesNotResolveAnotherPendingRecover(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -736,9 +706,8 @@ func TestReconcilePendingFromLogRecoverDoesNotResolveAnotherPendingRecover(t *te
 	}
 }
 
-// The scan is bounded to the last fallbackAfter*10 window: a routed fire far
-// outside it must not slow startup or resurrect a years-old, long-resolved
-// alert.
+// The scan is bounded to the last fallbackAfter*10 window: a routed fire far outside it
+// must not slow startup or resurrect a years-old, long-resolved alert.
 func TestReconcilePendingFromLogBoundedByWindow(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -758,10 +727,8 @@ func TestReconcilePendingFromLogBoundedByWindow(t *testing.T) {
 	}
 }
 
-// A receipt whose own TS falls outside the scan window is treated as if it
-// were never recorded: the fire it would have resolved -- itself still
-// inside the window -- is reported as still pending (redelivered, not
-// silently lost; the safe direction per "never zero times").
+// A receipt whose own TS falls outside the scan window is treated as if it were never
+// recorded: the fire it would have resolved -- itself still inside the window.
 func TestReconcilePendingFromLogReceiptOutsideWindowIsIgnored(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -788,9 +755,6 @@ func TestReconcilePendingFromLogNilAlogReturnsNil(t *testing.T) {
 // --- full restart flow -------------
 
 // Scenario 1: the child restarts mid-handoff with no receipt ever logged.
-// After restart, once fallback_after has passed (judged against the
-// ORIGINAL fire time, not restart time), the alert is delivered locally
-// exactly once, with the fallback prefix.
 func TestRestartWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -874,9 +838,8 @@ func TestRestartWithReceiptLoggedBeforeRestartNeverDeliversLocally(t *testing.T)
 	}
 }
 
-// Scenario 2b: the same, but for a routed RECOVER instead of a fire -- the
-// "never zero times" rule covers recovers too, so reconciliation and its
-// receipt resolution must work identically for them.
+// Scenario 2b: the same, but for a routed RECOVER instead of a fire -- the "never zero
+// times" rule covers recovers too.
 func TestRestartWithRecoverReceiptLoggedBeforeRestartNeverDeliversLocally(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -929,9 +892,8 @@ func TestRestartWithDeliveredLocallyAlreadyPresentNoSecondDelivery(t *testing.T)
 	}
 }
 
-// Scenario 4: a routed RECOVER that restarts
-// with no receipt ever logged is delivered locally exactly once, with the
-// prefix -- exactly like scenario 1, but for a recover.
+// Scenario 4: a routed RECOVER that restarts with no receipt ever logged is delivered
+// locally exactly once, with the prefix -- exactly like scenario 1, but for a recover.
 func TestRestartRecoverWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -986,12 +948,8 @@ func TestRestartRecoverWithNoReceiptDeliversLocallyOnceAfterFallback(t *testing.
 	}
 }
 
-// Receipts must never leak into alertlog.jsonl (which feeds
-// alertHistoryRecords -- the web UI's /alerts history, `trinetra alerts
-// list`) or the outbox (shipped to the master's replica, re-shipped by
-// localGapFiller): only the routed fire/recover itself, and any eventual
-// delivered_locally fallback, may appear there. Receipts live solely in the
-// sidecar.
+// Receipts must never leak into alertlog.jsonl (which feeds alertHistoryRecords -- the web
+// UI's /alerts history, `trinetra alerts list`) or the outbox.
 func TestReceiptNeverLeaksIntoAlertlogOrOutbox(t *testing.T) {
 	dir := t.TempDir()
 	alog := NewAlertLog(filepath.Join(dir, "alertlog.jsonl"))
@@ -1083,9 +1041,8 @@ func TestPruneHandoffReceiptsMissingFileIsNoop(t *testing.T) {
 	}
 }
 
-// Reconcile must not clobber a pending entry Route already created after
-// construction but before the reconciliation scan ran (e.g. a fresh fire
-// racing startup).
+// Reconcile must not clobber a pending entry Route already created after construction but
+// before the reconciliation scan ran (e.g. a fresh fire racing startup).
 func TestHandoffReconcileDoesNotOverwriteAlreadyPendingEntry(t *testing.T) {
 	now := time.Unix(1000, 0)
 	nowFn := func() time.Time { return now }
@@ -1148,9 +1105,8 @@ func TestPushedSilencesSuppressedMatchesRuleAndSeverity(t *testing.T) {
 // the master resolved for some OTHER node.
 func TestPushedSilencesAppliesWhateverWasPushed(t *testing.T) {
 	p := newPushedSilences(filepath.Join(t.TempDir(), "silences.json"))
-	// A matcher that would only ever have been resolved for a DIFFERENT
-	// node (Node:"db1") on the real master -- included here to prove the
-	// child does not care and does not re-derive that decision itself.
+	// A matcher that would only ever have been resolved for a DIFFERENT node (Node:"db1") on
+	// the real master.
 	if err := p.Set([]pushedSilence{
 		{ID: "s1", Start: 0, End: 5000, Reason: "silence s1 by cli", Matchers: []core.Matcher{{Node: "db1", Rule: "mem*"}}},
 	}); err != nil {

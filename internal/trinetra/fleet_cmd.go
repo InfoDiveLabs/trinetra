@@ -242,9 +242,8 @@ func fleetJoinCmd(args []string) int {
 		fmt.Fprintln(stderr, "fleet join: save config:", err)
 		return 1
 	}
-	// An older master's JoinResponse has no "name" field, which decodes as "";
-	// that must read as "the master didn't report a final name" (fall back to the
-	// requested one), never as "registered under the empty string".
+	// An older master's JoinResponse has no "name" field, which decodes as ""; that must read
+	// as "the master didn't report a final name" (fall back to the requested one).
 	finalName := res.Name
 	if finalName == "" {
 		finalName = n
@@ -281,10 +280,8 @@ func fleetLeave(args []string) int {
 		fmt.Fprintln(stderr, "fleet leave: save config:", err)
 		return 1
 	}
-	// The last managed values stay as ordinary local config (c was never touched
-	// for them); only the managed-config sidecar is removed, so this host stops
-	// treating them as master-managed/read-only. Best-effort: a missing sidecar
-	// (never managed) is not an error.
+	// The last managed values stay as ordinary local config (c was never touched for them);
+	// only the managed-config sidecar is removed.
 	_ = os.Remove(managedChildPath(stateDir))
 	ok := true
 	if *purge {
@@ -349,13 +346,7 @@ type purgeTarget struct {
 	what string
 }
 
-// purgeAll removes each target's path with os.RemoveAll. Config has already
-// been switched back to solo by the time this runs, so a removal failure is
-// reported (which path, why) without pretending the role change failed too;
-// it just means the operator has cleanup left to do. verb is the sentence
-// prefix used in a failure line ("left the fleet" / "disabled the fleet
-// master"). The success line lists only the targets that were actually
-// removed. It reports whether every target was removed.
+// purgeAll removes each target's path with os.RemoveAll.
 func purgeAll(verb string, targets []purgeTarget) bool {
 	var deleted []string
 	ok := true
@@ -481,9 +472,8 @@ func printNodes(w io.Writer, ns []core.NodeSummary) {
 	tw.Flush()
 }
 
-// printNodeWarnings lists (on a master's fleet status) every node whose
-// replica has refused points, with the counts, and warns about every node
-// whose clock is off by more than 30 s.
+// printNodeWarnings lists (on a master's fleet status) every node whose replica has refused
+// points, with the counts, and warns about every node whose clock is off by more than 30 s.
 func printNodeWarnings(w io.Writer, ns []core.NodeSummary) {
 	for _, n := range ns {
 		if n.Self {
@@ -761,8 +751,7 @@ func fleetExplainCmd(args []string) int {
 // --- silence / maintenance -------------------------------------------------
 
 // parseMatchSpec parses a comma-separated "key=value" matcher spec, e.g.
-// "tag=web,node=db*,rule=cpu*,severity=critical", into a single core.Matcher
-// (AND semantics across its fields; empty fields match anything).
+// "tag=web,node=db*,rule=cpu*,severity=critical", into a single core.Matcher.
 func parseMatchSpec(spec string) (core.Matcher, error) {
 	var m core.Matcher
 	if strings.TrimSpace(spec) == "" {
@@ -1185,10 +1174,8 @@ func fleetRulesCmd(args []string) int {
 	})
 }
 
-// ruleStateLabel renders one rule's STATE column: an Error takes priority (the
-// Expr fails to parse; SetAlerting validates it, so this is surfaced rather
-// than hidden), then "no data" (never fires/recovers, holds the previous
-// firing/since), then firing/ok.
+// ruleStateLabel renders one rule's STATE column: an Error takes priority (the Expr fails
+// to parse; SetAlerting validates it, so this is surfaced rather than hidden).
 func ruleStateLabel(s core.RuleState) string {
 	switch {
 	case s.Error != "":
@@ -1250,8 +1237,7 @@ func printManagedFragments(w io.Writer, frags []core.ManagedFragment) {
 }
 
 // formatManagedValues renders values as "key=value,key=value,..." in
-// managedFragmentAllowlistKeys order, so the same fragment always prints
-// identically regardless of Go's randomized map iteration.
+// managedFragmentAllowlistKeys order.
 func formatManagedValues(values map[string]string) string {
 	var parts []string
 	for _, k := range managedFragmentAllowlistKeys {
@@ -1262,9 +1248,8 @@ func formatManagedValues(values map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
-// parseManagedKV parses one or more "key=value" positional arguments into a
-// map, rejecting anything malformed (no "=") -- the value itself is
-// whatever config.Set will ultimately validate, so no parsing happens here.
+// parseManagedKV parses one or more "key=value" positional arguments into a map, rejecting
+// anything malformed (no "=").
 func parseManagedKV(args []string) (map[string]string, error) {
 	if len(args) == 0 {
 		return nil, errors.New("at least one key=value is required")
@@ -1280,12 +1265,8 @@ func parseManagedKV(args []string) (map[string]string, error) {
 	return out, nil
 }
 
-// fleetManagedSet is `trinetra fleet managed set [--tag T] [--replace]
-// key=value ...`: creates a fragment for --tag ("" = every node), or updates
-// the existing one for that tag (one fragment per tag). By default it MERGES
-// the given pairs into the fragment's existing Values, so a second `set --tag
-// web cpu=95` keeps keys from an earlier `set --tag web mem=80`. --replace
-// drops every key not named on this call.
+// fleetManagedSet is `trinetra fleet managed set [--tag T] [--replace] key=value ...`:
+// creates a fragment for --tag ("" = every node), or updates the existing one for that tag.
 func fleetManagedSet(args []string) int {
 	fs := newFlags("fleet managed set")
 	tag := fs.String("tag", "", "target only nodes carrying this tag (default: every node)")
@@ -1301,9 +1282,7 @@ func fleetManagedSet(args []string) int {
 	}
 	return withDaemon(func(c *control.Client) error {
 		// No list-then-decide here: an empty ID is a server-side upsert-by-tag
-		// (managedFragmentStore.Save, atomic under its own lock), so a concurrent
-		// `fleet managed set --tag X` can never create two fragments for one tag.
-		// The merge (Merge: !*replace) also happens under that lock.
+		// (managedFragmentStore.Save, atomic under its own lock).
 		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{Tag: *tag, Values: values, Merge: !*replace}, "cli")
 		if err != nil {
 			return err

@@ -5,18 +5,8 @@ import (
 	"testing"
 )
 
-// TestAlphaFor checks alphaFor's shape: both values land in (0,1), a
-// shorter sampling interval produces a SMALLER alpha, and non-positive
-// intervals fall back to the 60s default.
-//
-// Why smaller, not larger: an EW mean/var's "memory" in units of *samples*
-// is ~1/alpha, so its memory in units of *time* is (1/alpha)*intervalSec.
-// To keep that time-based window constant (~7 days) across tiers, a metric
-// sampled more often (smaller interval) needs a smaller alpha so it takes
-// proportionally more samples to span the same wall-clock window. Using one
-// global alpha for both tiers is exactly the bug this issue fixes: a fast
-// metric (5s) inherited the 60s-tuned alpha and ended up with a real-time
-// window ~12x too short.
+// TestAlphaFor checks alphaFor's shape: both values land in (0,1), a shorter sampling
+// interval produces a SMALLER alpha.
 func TestAlphaFor(t *testing.T) {
 	fast := alphaFor(5)
 	slow := alphaFor(60)
@@ -101,10 +91,8 @@ func TestBaselineNotReadyEarly(t *testing.T) {
 	}
 }
 
-// TestBaselinePerIntervalWindow feeds varying data at both the fast tier
-// (5s) and the slow tier (60s) and asserts each metric independently
-// becomes ready and produces sane, finite z-scores for in-range values and
-// a large z-score for a genuine outlier -- regardless of its interval.
+// TestBaselinePerIntervalWindow feeds varying data at both the fast tier (5s) and the slow
+// tier (60s) and asserts each metric independently becomes ready and produces sane.
 func TestBaselinePerIntervalWindow(t *testing.T) {
 	b := NewBaseline()
 	vals := []float64{8, 9, 10, 11, 12}
@@ -145,11 +133,8 @@ func TestBaselinePerIntervalWindow(t *testing.T) {
 	}
 }
 
-// TestBaselineBackCompatZeroAlpha simulates a stat loaded from an old
-// baseline.json (persisted before Alpha existed), which will unmarshal with
-// Alpha==0. Since the stat already exists, Observe must not stomp on it (per
-// spec, Alpha is only ever set when a stat is first created) -- instead both
-// Observe and Z must treat a stored Alpha==0 as alphaFor(60) at use time.
+// TestBaselineBackCompatZeroAlpha simulates a stat loaded from an old baseline.json
+// (persisted before Alpha existed), which will unmarshal with Alpha==0.
 func TestBaselineBackCompatZeroAlpha(t *testing.T) {
 	b := NewBaseline()
 	b.Stats["mem"] = &stat{Mean: 10, Count: 0, Alpha: 0} // as if loaded from pre-Alpha JSON

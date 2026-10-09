@@ -20,11 +20,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// severityString renders an ActiveAlert.Critical bool as the same
-// "critical"/"warning" strings Severity.String() (notifier.go) produces, so
-// core.AlertRecord.Severity uses one consistent vocabulary across active
-// alerts and alert-log history (whose AlertEvent.Severity already comes
-// pre-rendered the same way from the dispatcher).
+// severityString renders an ActiveAlert.Critical bool as the same "critical"/"warning"
+// strings Severity.String() (notifier.go) produces.
 func severityString(critical bool) string {
 	if critical {
 		return SevCritical.String()
@@ -32,18 +29,8 @@ func severityString(critical bool) string {
 	return SevWarning.String()
 }
 
-// activeAlertRecords maps state.Active into []core.AlertRecord: Kind is
-// left "" (an active alert has no fire/recover distinction of its own --
-// see core.AlertRecord's doc), Source carries the human Reason text (the
-// closest ActiveAlert field to "what raised it"), AckedAt carries
-// ActiveAlert.AckedAt, and results are sorted by key for a deterministic
-// result (map iteration order is not). Title and Delivered are left at
-// their zero value: ActiveAlert has no title or delivery-outcome field of
-// its own to source them from (that data only exists on the alert-log's
-// AlertEvent, see alertHistoryRecords below). Shared by
-// inprocAPI.ActiveAlerts and fileAPI.ActiveAlerts -- both just call
-// LoadAlertState against their own alertStatePath() and hand the result
-// here.
+// activeAlertRecords maps state.Active into []core.AlertRecord: Kind is left "" (an active
+// alert has no fire/recover distinction of its own -- see core.AlertRecord's doc).
 func activeAlertRecords(state *AlertState) []core.AlertRecord {
 	keys := make([]string, 0, len(state.Active))
 	for k := range state.Active {
@@ -67,9 +54,8 @@ func activeAlertRecords(state *AlertState) []core.AlertRecord {
 	return out
 }
 
-// anyDelivered reports whether at least one of an AlertEvent's Delivery
-// records actually reached its channel (OK true); false when every attempt
-// failed or none was recorded (ds empty/nil).
+// anyDelivered reports whether at least one of an AlertEvent's Delivery records actually
+// reached its channel (OK true); false when every attempt failed or none was recorded.
 func anyDelivered(ds []Delivery) bool {
 	for _, d := range ds {
 		if d.OK {
@@ -79,11 +65,8 @@ func anyDelivered(ds []Delivery) bool {
 	return false
 }
 
-// deliveredChannels returns the names of the channels that actually accepted
-// delivery (Delivery.OK true), in record order -- the per-channel detail
-// behind anyDelivered's bool, for core.AlertRecord.DeliveredTo. It returns
-// nil (not an empty slice) when none succeeded, so the field omits cleanly
-// under its json:"...,omitempty" tag.
+// deliveredChannels returns the names of the channels that actually accepted delivery
+// (Delivery.OK true), in record order -- the per-channel detail behind anyDelivered's bool.
 func deliveredChannels(ds []Delivery) []string {
 	var out []string
 	for _, d := range ds {

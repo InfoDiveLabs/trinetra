@@ -26,7 +26,6 @@ import (
 )
 
 // rpcCallTimeout is how long Call waits for a child's result before giving up.
-// A package-level var, not a const, so a test can shorten it.
 var rpcCallTimeout = 10 * time.Second
 
 // rpcSweepAfter/rpcMaxPendingPerNode are rpcRegistry's other two bounds
@@ -40,21 +39,18 @@ var rpcSweepAfter = 60 * time.Second
 const rpcMaxPendingPerNode = 32
 
 var (
-	// errNodeNotConnected is replicaAPI's exact wording for
-	// both the remote-ack and the remote-RPC paths: the target node has no
-	// open stream connection right now.
+	// errNodeNotConnected is replicaAPI's exact wording for both the remote-ack and the
+	// remote-RPC paths: the target node has no open stream connection right now.
 	errNodeNotConnected = errors.New("node is not connected")
-	// errRPCTimeout is Call's exact wording when no result
-	// arrives within rpcCallTimeout.
+	// errRPCTimeout is Call's exact wording when no result arrives within rpcCallTimeout.
 	errRPCTimeout = errors.New("node did not answer in 10s")
 	// errTooManyPendingRPCs is Call's exact wording once a
 	// node already has rpcMaxPendingPerNode calls outstanding.
 	errTooManyPendingRPCs = errors.New("too many pending requests for this node")
 )
 
-// rpcFrameData is the "rpc" stream Frame's Data shape:
-// {"id","method","args"}. args is opaque to the transport -- its shape
-// depends entirely on method (see rpcContainerLogsArgs).
+// rpcFrameData is the "rpc" stream Frame's Data shape: {"id","method","args"}. args is
+// opaque to the transport -- its shape depends entirely on method.
 type rpcFrameData struct {
 	ID     string          `json:"id"`
 	Method string          `json:"method"`
@@ -82,12 +78,7 @@ type pendingCall struct {
 	ch      chan rpcResultData
 }
 
-// rpcRegistry is the master's pending-RPC registry: id -> {node, created, ch}.
-// now is injected so a test can control sweep timing without sleeping. logf
-// receives one line per rejected result (unknown id, wrong node, or a
-// duplicate/completed id), never silently, since a rejected result is a bug or
-// an attempted spoof; it is rate-limited per node (logRejectRateLimited) so a
-// wedged or hostile child retrying a bad id cannot flood the log.
+// rpcRegistry is the master's pending-RPC registry: id -> {node, created.
 type rpcRegistry struct {
 	now  func() time.Time
 	logf func(format string, args ...any)
@@ -99,8 +90,7 @@ type rpcRegistry struct {
 	lastReject map[string]time.Time
 }
 
-// newRPCRegistry builds an rpcRegistry. A nil now defaults to time.Now, a
-// nil logf discards log lines.
+// newRPCRegistry builds an rpcRegistry.
 func newRPCRegistry(now func() time.Time, logf func(string, ...any)) *rpcRegistry {
 	if now == nil {
 		now = time.Now
@@ -111,12 +101,8 @@ func newRPCRegistry(now func() time.Time, logf func(string, ...any)) *rpcRegistr
 	return &rpcRegistry{now: now, logf: logf, pending: map[string]*pendingCall{}, lastReject: map[string]time.Time{}}
 }
 
-// logRejectRateLimited logs one Deliver-rejection line for nodeID, at most
-// once per second per node -- the same rate-limit shape as fleet.Hub's own
-// logDrop (internal/fleet/stream.go), for the same reason: a rejected
-// result is attacker- or bug-triggerable on every single POST a child (or
-// something impersonating one) makes, so without this a fast retry loop
-// could flood the master's log.
+// logRejectRateLimited logs one Deliver-rejection line for nodeID, at most once per second
+// per node -- the same rate-limit shape as fleet.Hub's own logDrop.
 func (r *rpcRegistry) logRejectRateLimited(nodeID, format string, args ...any) {
 	now := r.now()
 	r.rejectMu.Lock()
@@ -139,9 +125,8 @@ func randomRPCID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// sweepLocked drops every entry that expired (its own rpcCallTimeout has
-// already passed) more than rpcSweepAfter ago. Called with
-// mu held.
+// sweepLocked drops every entry that expired (its own rpcCallTimeout has already passed)
+// more than rpcSweepAfter ago.
 func (r *rpcRegistry) sweepLocked() {
 	cutoff := r.now().Add(-(rpcCallTimeout + rpcSweepAfter))
 	for id, p := range r.pending {
@@ -151,8 +136,7 @@ func (r *rpcRegistry) sweepLocked() {
 	}
 }
 
-// countForNodeLocked returns how many calls are currently pending for
-// nodeID. Called with mu held.
+// countForNodeLocked returns how many calls are currently pending for nodeID.
 func (r *rpcRegistry) countForNodeLocked(nodeID string) int {
 	n := 0
 	for _, p := range r.pending {
@@ -163,14 +147,8 @@ func (r *rpcRegistry) countForNodeLocked(nodeID string) int {
 	return n
 }
 
-// Call pushes an "rpc" frame for method/args to nodeID over hub and waits up
-// to rpcCallTimeout for the child's result, delivered via Deliver (wired to
-// hub.OnRPCResult by startMaster). It returns errNodeNotConnected if nodeID
-// has no open stream connection (checked both before registering the call
-// and, defensively, if the push itself reports the node gone -- Hub.Push
-// can race a disconnect that happened between the two), errTooManyPendingRPCs
-// if nodeID already has rpcMaxPendingPerNode calls outstanding, and
-// errRPCTimeout if no result arrives in time.
+// Call pushes an "rpc" frame for method/args to nodeID over hub and waits up to
+// rpcCallTimeout for the child's result, delivered via Deliver.
 func (r *rpcRegistry) Call(hub *fleet.Hub, nodeID, method string, args json.RawMessage) (rpcResultData, error) {
 	if hub == nil || !hub.Connected(nodeID) {
 		return rpcResultData{}, errNodeNotConnected
@@ -219,13 +197,8 @@ func (r *rpcRegistry) remove(id string) {
 	r.mu.Unlock()
 }
 
-// Deliver is wired as hub.OnRPCResult: nodeID is authenticated (mTLS), id
-// and body come straight off the wire and are untrusted (see Hub.
-// OnRPCResult's doc comment). A result is only ever delivered once: id must
-// name a call this registry actually sent, still pending, and sent to this
-// exact nodeID -- anything else (an unknown id, a result posted by a node
-// other than the one the call was sent to, or a second result for an id
-// already delivered/removed) is rejected and logged, never delivered.
+// Deliver is wired as hub.OnRPCResult: nodeID is authenticated (mTLS), id and body come
+// straight off the wire and are untrusted (see Hub.
 func (r *rpcRegistry) Deliver(nodeID, id string, body []byte) {
 	r.mu.Lock()
 	p, ok := r.pending[id]

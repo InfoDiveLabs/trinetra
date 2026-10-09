@@ -16,9 +16,7 @@ import (
 	"time"
 )
 
-// HostInfo is the static (per-boot) host inventory. It is collected once at
-// daemon startup and cached; uptime is NOT stored (it is derived from BootTime
-// at read time so a cached value stays correct across reads).
+// HostInfo is the static (per-boot) host inventory.
 type HostInfo struct {
 	Hostname      string
 	Kernel        string // /proc/sys/kernel/osrelease
@@ -38,8 +36,7 @@ type HostInfo struct {
 	PublicIP string
 }
 
-// lookupLocalIP/lookupPublicIP are seams so tests inject IPs without touching
-// the network. Production uses the defaults below.
+// lookupLocalIP/lookupPublicIP are seams so tests inject IPs without touching the network.
 var (
 	lookupLocalIP  = defaultLocalIP
 	lookupPublicIP = defaultPublicIP
@@ -76,13 +73,11 @@ func defaultLocalIP() string {
 	return ""
 }
 
-// publicIPEndpoint is the third-party echo service the opt-in public-IP lookup
-// dials. It returns the caller's IP as plain text.
+// publicIPEndpoint is the third-party echo service the opt-in public-IP lookup dials.
 const publicIPEndpoint = "https://api.ipify.org"
 
-// defaultPublicIP fetches the host's internet-facing IP from publicIPEndpoint,
-// bounded by a short timeout and a tiny response cap. Any failure (offline,
-// timeout, non-2xx, unparseable) yields "".
+// defaultPublicIP fetches the host's internet-facing IP from publicIPEndpoint, bounded by a
+// short timeout and a tiny response cap.
 func defaultPublicIP() string {
 	client := &http.Client{Timeout: 4 * time.Second}
 	resp, err := client.Get(publicIPEndpoint)
@@ -114,16 +109,12 @@ type HostDisk struct {
 	Mount      string
 }
 
-// parseCPUInfo extracts the CPU model, physical core count, logical thread
-// count, and an approximate base MHz from /proc/cpuinfo. It tolerates the ARM
-// layout (Raspberry Pi and friends), which has no "model name"/"cpu cores"
-// lines: model falls back to the "Model" line and cores to the logical count.
+// parseCPUInfo extracts the CPU model, physical core count, logical thread count, and an
+// approximate base MHz from /proc/cpuinfo.
 func parseCPUInfo(s string) (model string, sockets, cores, threads int, baseMHz float64) {
 	var armModel string
-	// physical id -> cpu cores, so a multi-socket box counts each socket's
-	// cores once rather than summing per logical thread. physIDs is the set of
-	// distinct sockets seen, so a dual-socket box reports Sockets=2 even when
-	// the two sockets are identical.
+	// physical id -> cpu cores, so a multi-socket box counts each socket's cores once rather
+	// than summing per logical thread. physIDs is the set of distinct sockets seen.
 	coresByPhys := map[string]int{}
 	physIDs := map[string]bool{}
 	curPhys := ""
@@ -211,9 +202,8 @@ func baseBlockDevice(dev string) (string, bool) {
 	if strings.HasPrefix(name, "dm-") || strings.HasPrefix(name, "mapper/") {
 		return "", false
 	}
-	// nvme/mmcblk/loop base devices END in a digit (nvme0n1, mmcblk0) and use a
-	// "p<N>" partition suffix, so trailing digits are part of the base name and
-	// must NOT be stripped -- only a "p<digits>" suffix is a partition.
+	// nvme/mmcblk/loop base devices END in a digit (nvme0n1, mmcblk0) and use a "p<N>"
+	// partition suffix, so trailing digits are part of the base name and must NOT be stripped.
 	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") || strings.HasPrefix(name, "loop") {
 		if i := strings.LastIndexByte(name, 'p'); i > 0 && isDigit(name[i-1]) && allDigits(name[i+1:]) {
 			return name[:i], true // nvme0n1p2 -> nvme0n1, mmcblk0p1 -> mmcblk0
@@ -244,11 +234,7 @@ func allDigits(s string) bool {
 	return true
 }
 
-// collectHostInfo assembles the static host inventory from the injected
-// Exec/FileSource. Every read is best-effort: a missing file or command leaves
-// the corresponding field zero rather than failing the whole collection, so
-// this works on a minimal container, an ARM box, or a non-Linux dev host
-// (where it simply returns mostly-empty).
+// collectHostInfo assembles the static host inventory from the injected Exec/FileSource.
 func collectHostInfo(x Exec, fs FileSource) HostInfo {
 	var h HostInfo
 	h.Hostname, _ = os.Hostname()
@@ -275,10 +261,8 @@ func collectHostInfo(x Exec, fs FileSource) HostInfo {
 	return h
 }
 
-// pseudoFSTypes are the kernel/virtual/container filesystems that back no real
-// storage and would otherwise clutter the disk list: docker's overlay layers,
-// RAM-backed mounts, snap's squashfs loops, and the /proc-family pseudo mounts.
-// They are dropped from the host disk inventory.
+// pseudoFSTypes are the kernel/virtual/container filesystems that back no real storage and
+// would otherwise clutter the disk list: docker's overlay layers, RAM-backed mounts.
 var pseudoFSTypes = map[string]bool{
 	"overlay": true, "tmpfs": true, "devtmpfs": true, "squashfs": true,
 	"ramfs": true, "aufs": true, "proc": true, "sysfs": true, "cgroup": true,
@@ -288,19 +272,16 @@ var pseudoFSTypes = map[string]bool{
 	"devpts": true, "securityfs": true, "fuse.lxcfs": true, "none": true,
 }
 
-// networkFSTypes are remote filesystems that ARE real storage even though they
-// are not local block devices; they are kept (per the "also keep network
-// mounts" choice).
+// networkFSTypes are remote filesystems that ARE real storage even though they are not
+// local block devices; they are kept (per the "also keep network mounts" choice).
 var networkFSTypes = map[string]bool{
 	"nfs": true, "nfs4": true, "cifs": true, "smbfs": true, "smb3": true,
 	"ceph": true, "glusterfs": true, "9p": true, "fuse.sshfs": true,
 	"fuse.rclone": true, "beegfs": true, "lustre": true,
 }
 
-// keepDisk decides whether a df row is a real disk worth showing: a network
-// filesystem (kept regardless of device), or a genuine local block device
-// (a /dev/ path that is not a snap/loop mount). Everything else -- overlay,
-// tmpfs, squashfs, and the other pseudo filesystems -- is dropped.
+// keepDisk decides whether a df row is a real disk worth showing: a network filesystem
+// (kept regardless of device), or a genuine local block device.
 func keepDisk(device, fstype string) bool {
 	if networkFSTypes[fstype] {
 		return true
@@ -317,11 +298,8 @@ func keepDisk(device, fstype string) bool {
 	return !strings.HasPrefix(base, "loop")
 }
 
-// collectHostDisks runs df -PT -B1 once and enriches each mount with its base
-// block device's model and rotational flag from /sys/block. Only real disks are
-// kept (see keepDisk): local block devices and network mounts, not docker
-// overlay / tmpfs / snap squashfs. Deduplicated per base device so several
-// partitions of one disk report once.
+// collectHostDisks runs df -PT -B1 once and enriches each mount with its base block
+// device's model and rotational flag from /sys/block.
 func collectHostDisks(x Exec, fs FileSource) []HostDisk {
 	out, err := x.Run("df", "-PT", "-B1")
 	if err != nil {

@@ -6,13 +6,8 @@ import (
 	"testing"
 )
 
-// TestActiveAlertRecordsMapsAckedAtNotTitleOrDelivered exercises
-// activeAlertRecords directly against a seeded AlertState: AckedAt must
-// carry ActiveAlert.AckedAt for an acked entry (and stay 0 for an unacked
-// one), while Title and Delivered must stay zero-valued -- ActiveAlert has
-// no title or delivery-outcome field to source them from (that data only
-// exists on AlertEvent, the alert-log entry), so activeAlertRecords must not
-// invent one.
+// TestActiveAlertRecordsMapsAckedAtNotTitleOrDelivered exercises activeAlertRecords
+// directly against a seeded AlertState.
 func TestActiveAlertRecordsMapsAckedAtNotTitleOrDelivered(t *testing.T) {
 	state := NewAlertState()
 	state.Active["cpu"] = ActiveAlert{Since: 1000, Reason: "cpu = 95.0 >= threshold 90.0", Critical: true, Acked: false}
@@ -47,13 +42,8 @@ func TestActiveAlertRecordsMapsAckedAtNotTitleOrDelivered(t *testing.T) {
 	}
 }
 
-// TestAlertHistoryRecordsMapsTitleAndDelivered exercises alertHistoryRecords
-// directly against a seeded AlertLog: Title is a direct copy of
-// AlertEvent.Title, Delivered is true when at least one channel actually
-// took delivery (a Delivery with OK true) and false when every attempt
-// failed or none was recorded, and AckedAt stays 0 -- AlertEvent (a
-// fire/recover dispatch record) carries no ack timestamp of its own, so
-// alertHistoryRecords must not invent one.
+// TestAlertHistoryRecordsMapsTitleAndDelivered exercises alertHistoryRecords directly
+// against a seeded AlertLog: Title is a direct copy of AlertEvent.Title.
 func TestAlertHistoryRecordsMapsTitleAndDelivered(t *testing.T) {
 	dir := t.TempDir()
 	log := NewAlertLog(dir + "/alertlog.jsonl")
@@ -108,13 +98,8 @@ func TestAlertHistoryRecordsMapsTitleAndDelivered(t *testing.T) {
 	}
 }
 
-// TestAlertHistoryRecordsMapsDeliveredChannels pins the DeliveredTo field:
-// the names of the channels that actually accepted an AlertEvent's delivery
-// (Delivery.OK true), in record order, so the web alerts page can show which
-// channels a notification reached WITHOUT reading the alert log off disk.
-// Channels whose delivery failed are excluded, and an event with no
-// successful (or no recorded) delivery yields a nil slice, matching the bool
-// Delivered's own false in those cases.
+// TestAlertHistoryRecordsMapsDeliveredChannels pins the DeliveredTo field: the names of the
+// channels that actually accepted an AlertEvent's delivery (Delivery.OK true).
 func TestAlertHistoryRecordsMapsDeliveredChannels(t *testing.T) {
 	dir := t.TempDir()
 	log := NewAlertLog(dir + "/alertlog.jsonl")

@@ -15,9 +15,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// setGroupTimingForTest sets groupWait/groupInterval for the duration of a
-// test, restoring the previous values (TestMain's 0, 0 baseline, unless a
-// caller nests this) via t.Cleanup -- see TestMain's doc comment.
+// setGroupTimingForTest sets groupWait/groupInterval for the duration of a test, restoring
+// the previous values (TestMain's 0, 0 baseline, unless a caller nests this) via t.Cleanup.
 func setGroupTimingForTest(t *testing.T, wait, interval time.Duration) {
 	t.Helper()
 	prevWait, prevInterval := groupWait, groupInterval
@@ -25,9 +24,8 @@ func setGroupTimingForTest(t *testing.T, wait, interval time.Duration) {
 	t.Cleanup(func() { groupWait, groupInterval = prevWait, prevInterval })
 }
 
-// TestGroupingTwoNodesWithinWaitProduceOneDelivery: two nodes firing the same
-// rule/severity within group_wait join ONE incident, and its first
-// notification, sent once group_wait has elapsed since it opened, lists both.
+// TestGroupingTwoNodesWithinWaitProduceOneDelivery: two nodes firing the same rule/severity
+// within group_wait join ONE incident, and its first notification.
 func TestGroupingTwoNodesWithinWaitProduceOneDelivery(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
@@ -81,16 +79,12 @@ func TestGroupingTwoNodesWithinWaitProduceOneDelivery(t *testing.T) {
 	}
 }
 
-// TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval: a member joining
-// AFTER the first delivery produces exactly one "update" notification, sent
-// once group_interval has elapsed since the last group delivery.
+// TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval: a member joining AFTER the
+// first delivery produces exactly one "update" notification.
 func TestGroupingThirdMemberAfterDeliveryUpdatesAtNextInterval(t *testing.T) {
 	ef := newEngineFixture(t)
 	setGroupTimingForTest(t, 30*time.Second, 5*time.Minute)
-	// This exercises groupInterval itself (5m) in isolation: the fallback_after
-	// cap (effectiveGroupInterval) would otherwise shrink it to fallback_after/2
-	// since every pending member is child-sourced (see
-	// TestGroupingLateChildUpdateRespectsFallbackCap).
+	// This exercises groupInterval itself (5m) in isolation: the fallback_after cap.
 	ef.engine.SetConfig(func() *config.Config {
 		c := config.Default()
 		c.Fleet.FallbackAfter = "24h"
@@ -300,9 +294,8 @@ func TestGroupingLateChildUpdateRespectsFallbackCap(t *testing.T) {
 	}
 }
 
-// TestGroupingRouteGroupByNodeKeepsNodesSeparate: a route's GroupBy overrides
-// the default (rule, severity) bucket; GroupBy: ["node"] means two nodes never
-// share an incident even for identical rule/severity.
+// TestGroupingRouteGroupByNodeKeepsNodesSeparate: a route's GroupBy overrides the default
+// (rule, severity) bucket; GroupBy.
 func TestGroupingRouteGroupByNodeKeepsNodesSeparate(t *testing.T) {
 	sendResolved := true
 	cfg := core.AlertingConfig{
@@ -320,10 +313,8 @@ func TestGroupingRouteGroupByNodeKeepsNodesSeparate(t *testing.T) {
 		DefaultPolicy: "p",
 	}
 	rf := newRoutingFixture(t, cfg)
-	// A Submit call carries its own alertSource (unlike HandleChildAlert,
-	// which fills DeliveredLocally/RoutedToMaster from the wire record):
-	// without a pushed lease, hadLeaseBefore reports false and Submit would
-	// treat this as already delivered locally by the child.
+	// A Submit call carries its own alertSource (unlike HandleChildAlert, which fills
+	// DeliveredLocally/RoutedToMaster from the wire record): without a pushed lease.
 	rf.engine.PushLeaseNow("n1", rf.now)
 	rf.engine.PushLeaseNow("n2", rf.now)
 
@@ -345,10 +336,8 @@ func TestGroupingRouteGroupByNodeKeepsNodesSeparate(t *testing.T) {
 	}
 }
 
-// TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover: within one
-// incident, member A's fire is delivered before its recover is considered
-// (even though member B joins in between), and the incident stays open, with
-// no "resolved" notification, until member B ALSO recovers.
+// TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover: within one incident,
+// member A's fire is delivered before its recover is considered.
 func TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover(t *testing.T) {
 	ef := newEngineFixture(t) // group_wait/interval are 0 here: immediate grouped delivery.
 	ef.connect("n1")
@@ -356,10 +345,8 @@ func TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover(t *testing.T)
 	ef.engine.PushLeaseNow("n1", ef.now)
 	ef.engine.PushLeaseNow("n2", ef.now)
 
-	// Every call advances the fake clock first, so each alert record gets a
-	// distinct FiredAt -- the master's dedup key is (node, key, fired_at);
-	// reusing the same instant for a member's fire AND its own recover would
-	// collide with its own fire's dedup entry and be silently dropped.
+	// Every call advances the fake clock first, so each alert record gets a distinct FiredAt
+	// -- the master's dedup key is (node, key, fired_at).
 	fire := func(node, name string) {
 		ef.now = ef.now.Add(10 * time.Second)
 		ef.engine.HandleChildAlert(node, name, nil, AlertEvent{
@@ -390,9 +377,8 @@ func TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover(t *testing.T)
 	id := incs[0].ID
 	receiptsBefore := len(ef.framesFor("n1", "receipt"))
 
-	// Member A recovers: no NEW human notification (the incident is not
-	// over -- B is still firing), but the incident stays open, and A's own
-	// receipt still goes out (so A's child does not fall back locally).
+	// Member A recovers: no NEW human notification (the incident is not over -- B is still
+	// firing), but the incident stays open, and A's own receipt still goes out.
 	recover("n1", "box1")
 	ef.waitIdle()
 	if ef.deliveredCount() != 2 {
@@ -427,9 +413,8 @@ func TestGroupingMemberOrderingAndIncidentStaysOpenUntilAllRecover(t *testing.T)
 	}
 }
 
-// TestEngineResurrectionOnlyResendsUndeliveredMember: a grouped incident with
-// two members where only ONE fire was recorded as delivered before a "crash"
-// must, on resurrection, resend only the OTHER member.
+// TestEngineResurrectionOnlyResendsUndeliveredMember: a grouped incident with two members
+// where only ONE fire was recorded as delivered before a "crash" must, on resurrection.
 func TestEngineResurrectionOnlyResendsUndeliveredMember(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/incidents.jsonl"
@@ -482,10 +467,8 @@ func TestEngineResurrectionOnlyResendsUndeliveredMember(t *testing.T) {
 	}
 }
 
-// TestEngineDependencyFoldAndRelease: a child node's node-down alert folds
-// silently into its down parent's incident (one delivery, the parent's), and is
-// delivered separately as its own new incident once the parent recovers while
-// the child is still down.
+// TestEngineDependencyFoldAndRelease: a child node's node-down alert folds silently into
+// its down parent's incident (one delivery, the parent's).
 func TestEngineDependencyFoldAndRelease(t *testing.T) {
 	dir := t.TempDir()
 	incidents, err := loadIncidentStore(dir + "/incidents.jsonl")
@@ -523,8 +506,7 @@ func TestEngineDependencyFoldAndRelease(t *testing.T) {
 		t.Fatalf("delivered after parent down = %d, want 1", n)
 	}
 
-	// Child goes down while the parent is still down: folded, NOT delivered
-	// separately.
+	// Child goes down while the parent is still down: folded, NOT delivered separately.
 	engine.Submit(alertSource{}, Alert{Key: childKey, Title: "🔴 web-2 is down", Severity: SevCritical, Kind: "fire", Time: now.Unix()})
 	engine.waitIdleForTest()
 	mu.Lock()
@@ -548,10 +530,8 @@ func TestEngineDependencyFoldAndRelease(t *testing.T) {
 		t.Fatalf("child member = %+v found=%v, want folded with reason 'suppressed: parent web-1 down'", childAlert, found)
 	}
 
-	// Parent recovers while the child is still down: the child is released
-	// and delivered, as its own incident. now must advance first -- the
-	// dedup key is (node, key, fired_at), and a recover sharing its own
-	// fire's exact instant would collide with that fire's own dedup entry.
+	// Parent recovers while the child is still down: the child is released and delivered, as
+	// its own incident. now must advance first -- the dedup key is (node, key, fired_at).
 	now = now.Add(time.Minute)
 	engine.Submit(alertSource{}, Alert{Key: parentKey, Title: "web-1 is back", Severity: SevCritical, Kind: "recover", Time: now.Unix()})
 	engine.waitIdleForTest()

@@ -31,21 +31,7 @@ type ProcSnapshot struct {
 // process on a host with hundreds of them would be noise, not signal.
 const procTopN = 15
 
-// parseProcPidStat parses the content of one /proc/<pid>/stat file. The comm
-// field (2nd whitespace-separated field per proc(5)) is wrapped in parens
-// and may itself contain spaces and/or parens (e.g. "(sd-pam)"-style kernel
-// thread names, or a process renamed to include punctuation), so it cannot
-// be split positionally by whitespace like the rest of the line: this locates
-// the FIRST '(' and the LAST ')' to bound comm, then splits whatever follows
-// the closing paren by whitespace to recover the remaining fields.
-//
-// Per proc(5), the 1-indexed field positions are 3=state, 14=utime,
-// 15=stime, 20=num_threads, 24=rss (in pages). Fields 1 (pid) and 2 (comm)
-// are consumed above, so in the post-comm remainder (0-indexed) those become
-// state=rest[0], utime=rest[11], stime=rest[12], num_threads=rest[17],
-// rss=rest[21]. Returns ok=false for anything malformed or too short to
-// contain all of these -- callers should skip that pid rather than trust
-// zero-valued output.
+// parseProcPidStat parses the content of one /proc/<pid>/stat file.
 func parseProcPidStat(content string) (comm, state string, utime, stime uint64, numThreads int, rssPages int64, ok bool) {
 	openIdx := strings.IndexByte(content, '(')
 	closeIdx := strings.LastIndexByte(content, ')')
@@ -75,31 +61,15 @@ func parseProcPidStat(content string) (comm, state string, utime, stime uint64, 
 	return comm, state, utime, stime, numThreads, rssPages, true
 }
 
-// ProcCPUCalc turns cumulative per-process CPU jiffies (utime+stime from
-// /proc/<pid>/stat) into a CPU% by diffing against the previous slow-tier
-// sample, mirroring NetRateCalc's stateful prev-delta pattern (net.go). It
-// is meant to be owned by a single goroutine (the sampler loop) and called
-// once per slow tick -- no locking, since only one goroutine ever touches it.
+// ProcCPUCalc turns cumulative per-process CPU jiffies (utime+stime from /proc/<pid>/stat)
+// into a CPU% by diffing against the previous slow-tier sample.
 type ProcCPUCalc struct {
 	prev      map[int]uint64
 	prevTotal uint64
 }
 
-// Pct computes CPUPct = (procJiffiesDelta / totalCPUDelta) * 100 for each
-// pid in cur (pid -> utime+stime jiffies), against the previous sample.
-// curTotal is the current /proc/stat CPUStat.Total jiffies (all CPUs, all
-// states) -- the same system-wide denominator cpuBusyPct uses, just applied
-// per-process here.
-//
-// The very first call ever (no prior sample) has nothing to diff against,
-// so every pid is absent from the result (reads as 0 via the zero value).
-// totalDelta<=0 (clock didn't advance, or a /proc/stat counter went
-// backwards) also yields 0 for every pid that tick, rather than a
-// divide-by-zero or a misleading spike. A pid absent from the previous
-// sample (spawned since the last tick) likewise gets 0 for this tick: its
-// jiffies-since-birth would overstate a single-tick percentage, so it's
-// deferred to the next tick, where a proper delta exists. prev/prevTotal are
-// updated to cur/curTotal for the next call regardless of any of the above.
+// Pct computes CPUPct = (procJiffiesDelta / totalCPUDelta) * 100 for each pid in cur (pid
+// -> utime+stime jiffies).
 func (p *ProcCPUCalc) Pct(cur map[int]uint64, curTotal uint64) map[int]float64 {
 	out := make(map[int]float64, len(cur))
 	totalDelta := float64(curTotal) - float64(p.prevTotal)
@@ -117,15 +87,8 @@ func (p *ProcCPUCalc) Pct(cur map[int]uint64, curTotal uint64) map[int]float64 {
 	return out
 }
 
-// collectProcesses gathers the live process-table overview from
-// /proc/<pid>/stat entries: per-state counts and a bounded top-N by CPU%
-// (falling back to top-N by mem when every process reads 0% CPU -- i.e. the
-// very first slow tick, before cpucalc has a prior sample to diff against).
-// pageSizeKB converts /proc/<pid>/stat's rss (in pages) to MiB.
-//
-// Robust to processes disappearing mid-scan, a normal race on any real
-// host: a Read error or a malformed/short stat line for a given pid just
-// skips that pid rather than failing the whole snapshot.
+// collectProcesses gathers the live process-table overview from /proc/<pid>/stat entries:
+// per-state counts and a bounded top-N by CPU%.
 func collectProcesses(fs FileSource, cpucalc *ProcCPUCalc, pageSizeKB int) ProcSnapshot {
 	var snap ProcSnapshot
 	paths, _ := fs.Glob("/proc/[0-9]*/stat")
@@ -164,9 +127,8 @@ func collectProcesses(fs FileSource, cpucalc *ProcCPUCalc, pageSizeKB int) ProcS
 		}
 	}
 
-	// System-wide CPU total for the per-process % denominator: same file/
-	// parser collectFast uses for system CPU%, read independently here since
-	// this runs on its own (slow-tier) cadence.
+	// System-wide CPU total for the per-process % denominator: same file/ parser collectFast
+	// uses for system CPU%, read independently here since this runs on its own.
 	var curTotal uint64
 	if b, err := fs.Read("/proc/stat"); err == nil {
 		if st, err := parseProcStat(string(b)); err == nil {

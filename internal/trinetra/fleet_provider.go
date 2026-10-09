@@ -25,19 +25,14 @@ type masterState struct {
 	sink    *replicaSink
 	tracker *fleet.Tracker
 	loop    *masterLoop
-	// hub fans lease/receipt/ack/rpc frames out to connected nodes; engine
-	// is the alerting engine (fleet_engine.go), and audit the fleet audit
-	// log (fleet_audit.go). All three are nil-safe to call through
-	// fleetAPIImpl's helpers when absent (should not happen once startMaster
-	// has run, but keeps older tests that build a bare masterState working).
+	// hub fans lease/receipt/ack/rpc frames out to connected nodes; engine is the alerting
+	// engine (fleet_engine.go), and audit the fleet audit log (fleet_audit.go).
 	hub      *fleet.Hub
 	engine   *fleetAlertEngine
 	audit    *auditLog
 	silences *silenceStore
 	alerting *alertingStore
-	// managed/managedPush are the master's managed-config fragment
-	// store and its push cadence, nil-safe like silences/alerting for a
-	// bare-bones masterState built by an older test suite.
+	// managed/managedPush are the master's managed-config fragment store and its push cadence.
 	managed     *managedFragmentStore
 	managedPush *managedPusher
 	joinURL     string
@@ -166,12 +161,8 @@ func (f fleetAPIImpl) requireMaster() (*masterState, error) {
 	return f.p.master, nil
 }
 
-// audit appends an entry to m's audit log (nil-safe: see auditLog.Append).
-// actor is normalized to "unknown" when the caller passed "" (a request
-// this daemon could not resolve any acting identity for at all -- should
-// not happen for a live web/CLI caller, both of which always resolve to
-// something (auditUser(r), "cli"), but keeps the audit log's Actor column
-// never blank for an older wire client or a defensive future caller).
+// audit appends an entry to m's audit log (nil-safe: see auditLog.Append). actor is
+// normalized to "unknown" when the caller passed "".
 func (m *masterState) audited(actor, action, target, detail string) {
 	if actor == "" {
 		actor = "unknown"
@@ -190,9 +181,8 @@ func nonRevokedNodeIDs(reg *fleet.Registry) []string {
 	return ids
 }
 
-// pushSilencesToAll immediately refreshes every connected node's pushed
-// silence set -- called after any silence/maintenance mutation ("on
-// change").
+// pushSilencesToAll immediately refreshes every connected node's pushed silence set --
+// called after any silence/maintenance mutation ("on change").
 func (m *masterState) pushSilencesToAll(now time.Time) {
 	if m.engine == nil {
 		return
@@ -209,11 +199,8 @@ func (f fleetAPIImpl) RenameNode(id, name, actor string) error {
 	if name == "" || utf8.RuneCountInString(name) > 64 {
 		return fmt.Errorf("node name must be 1-64 characters")
 	}
-	// Names must stay unique (case-insensitively) so a Matcher.Node glob has a
-	// precise target: unlike a join, a rename is a deliberate operator action, so
-	// a collision is refused rather than suffixed. Registry.Rename checks and
-	// applies this atomically under one lock; a separate NameConflict-then-Update
-	// would be a TOCTOU race between two renames, or a rename and a join.
+	// Names must stay unique (case-insensitively) so a Matcher.Node glob has a precise target:
+	// unlike a join, a rename is a deliberate operator action.
 	if err := m.reg.Rename(id, name); err != nil {
 		return err
 	}
@@ -238,9 +225,8 @@ func (f fleetAPIImpl) SetNodeTags(id string, tags []string, actor string) error 
 	return nil
 }
 
-// validDepEntry reports whether an entry in Node.DependsOn is well-formed:
-// either a bare node id (validated against the registry by the caller) or
-// "tag:<t>" naming a valid tag.
+// validDepEntry reports whether an entry in Node.DependsOn is well-formed: either a bare
+// node id (validated against the registry by the caller) or "tag:<t>" naming a valid tag.
 func validDepEntry(entry string) (tag string, isTag bool) {
 	if t, ok := strings.CutPrefix(entry, "tag:"); ok {
 		return t, true
@@ -488,9 +474,8 @@ func (f fleetAPIImpl) Silences() ([]core.Silence, error) {
 	return m.silences.List(), nil
 }
 
-// CreateSilence validates and stores s, audits it under s.Author (the CLI
-// always sets this to "cli"; a caller with none is recorded as "unknown"),
-// and immediately pushes the updated silence set to every connected node.
+// CreateSilence validates and stores s, audits it under s.Author (the CLI always sets this
+// to "cli"; a caller with none is recorded as "unknown").
 func (f fleetAPIImpl) CreateSilence(s core.Silence) (core.Silence, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -539,9 +524,8 @@ func (f fleetAPIImpl) Maintenances() ([]core.Maintenance, error) {
 	return m.silences.Maintenances(), nil
 }
 
-// SaveMaintenance validates and stores mw (new if mw.ID is "", else an
-// update to the existing window), audits it under mw.Author, and
-// immediately pushes the updated silence set to every connected node.
+// SaveMaintenance validates and stores mw (new if mw.ID is "", else an update to the
+// existing window), audits it under mw.Author.
 func (f fleetAPIImpl) SaveMaintenance(mw core.Maintenance) (core.Maintenance, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -579,9 +563,8 @@ func (f fleetAPIImpl) DeleteMaintenance(id, actor string) error {
 	return nil
 }
 
-// Alerting returns the current routing/escalation config:
-// defaultAlertingConfig if nothing has ever been saved (m.alerting == nil
-// covers a masterState built by an older test suite that never wired one).
+// Alerting returns the current routing/escalation config: defaultAlertingConfig if nothing
+// has ever been saved.
 func (f fleetAPIImpl) Alerting() (core.AlertingConfig, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -593,9 +576,8 @@ func (f fleetAPIImpl) Alerting() (core.AlertingConfig, error) {
 	return m.alerting.Get(), nil
 }
 
-// validChannelName reports whether name is a configured channel (used by
-// SetAlerting's validation): "*" itself is checked separately by
-// validateAlertingConfig, never passed here.
+// validChannelName reports whether name is a configured channel (used by SetAlerting's
+// validation): "*" itself is checked separately by validateAlertingConfig.
 func (m *masterState) validChannelName(name string) bool {
 	if m.getCfg == nil {
 		return false
@@ -633,15 +615,8 @@ func (f fleetAPIImpl) SetAlerting(cfg core.AlertingConfig, actor string) error {
 	return nil
 }
 
-// RouteTest dry-runs alert through resolveRoute -- the exact same function
-// the alerting engine's real delivery uses (fleet_engine.go's
-// deliverAndReceiptDetail/tryEscalate) -- plus a current-silence check,
-// without firing anything. alert.Node is resolved against the registry (by
-// id or display name) when it names a known node, so Matcher.Node's
-// exact-id-or-name-glob semantics apply exactly as they would for a real
-// alert from that node; an unrecognized Node is tried as a display name only
-// (a dry run against a node that doesn't exist yet, or a typo, is still a
-// useful "what would this match" answer, not an error).
+// RouteTest dry-runs alert through resolveRoute -- the exact same function the alerting
+// engine's real delivery uses (fleet_engine.go's deliverAndReceiptDetail/tryEscalate).
 func (f fleetAPIImpl) RouteTest(alert core.TestAlert) (core.RouteDecision, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -673,11 +648,8 @@ func (f fleetAPIImpl) RouteTest(alert core.TestAlert) (core.RouteDecision, error
 	return core.RouteDecision{Route: res.Route, Policies: res.Policies, Suppressed: suppressed}, nil
 }
 
-// RuleStates returns every aggregate rule's current value/firing state
-// nil (never an error) when the engine has no rule evaluator
-// wired (m.engine == nil never happens once startMaster has run, but keeps
-// a bare-bones masterState test working, exactly RuleStates' sibling
-// Alerting/Incidents accessors' own nil-safety pattern).
+// RuleStates returns every aggregate rule's current value/firing state nil (never an error)
+// when the engine has no rule evaluator wired.
 func (f fleetAPIImpl) RuleStates() ([]core.RuleState, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -701,9 +673,8 @@ func (f fleetAPIImpl) Managed() ([]core.ManagedFragment, error) {
 	return m.managed.List(), nil
 }
 
-// SaveManaged validates and stores frag, audits it under actor, and
-// immediately pushes the updated desired set to every non-revoked,
-// connected node.
+// SaveManaged validates and stores frag, audits it under actor, and immediately pushes the
+// updated desired set to every non-revoked, connected node.
 func (f fleetAPIImpl) SaveManaged(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -747,12 +718,8 @@ func (f fleetAPIImpl) DeleteManaged(id, actor string) error {
 	return nil
 }
 
-// ManagedStatus reports every node with at least one applicable fragment (or
-// an unresolved conflict): its desired-set generation, what it last
-// reported applying (from its most recent LiveUpdate.Managed), and any
-// drift/conflicts. A node that has never reported anything managed yet
-// (never connected, or connected before ever being targeted) shows every
-// currently-desired key as drift, since nothing is confirmed applied.
+// ManagedStatus reports every node with at least one applicable fragment (or an unresolved
+// conflict): its desired-set generation, what it last reported applying.
 func (f fleetAPIImpl) ManagedStatus() ([]core.ManagedStatus, error) {
 	m, err := f.requireMaster()
 	if err != nil {
@@ -795,10 +762,8 @@ func (f fleetAPIImpl) ManagedStatus() ([]core.ManagedStatus, error) {
 // bounds the web compare page's checkbox selection.
 const fleetSeriesCap = 10
 
-// fleetSeriesRawWindowCapSeconds bounds how wide a [from, to] window
-// FleetSeries serves at raw resolution (24h): a raw query over a much wider
-// span reads and returns a huge number of points for no benefit over 1m; a
-// wider view should ask for core.Res1m.
+// fleetSeriesRawWindowCapSeconds bounds how wide a [from, to] window FleetSeries serves at
+// raw resolution (24h).
 const fleetSeriesRawWindowCapSeconds int64 = 24 * 3600
 
 // toSeriesResolution maps a core.Resolution onto this package's own
@@ -814,16 +779,8 @@ func toSeriesResolution(res core.Resolution) Resolution {
 	return Res1m
 }
 
-// diskSeriesPoints returns, for every timestamp bucket present in ANY of
-// store's disk:<mount> series over [from, to] at res, that bucket's WORST
-// (highest) mount value -- the bucketed counterpart of fleet_rules.go's
-// diskSeriesAverage (a single window-wide worst-mount average), used by
-// FleetSeries' "disk" metric so a compare chart sees the same "disk (worst)"
-// framing NodeSummary.WorstDiskPct/the aggregate rules already use, just
-// across a whole series instead of one instant or one window average. A
-// mount missing a point at a given bucket simply doesn't contribute to that
-// bucket's max, exactly like diskSeriesAverage excluding a mount with no
-// points from its own average.
+// diskSeriesPoints returns, for every timestamp bucket present in ANY of store's
+// disk:<mount> series over [from, to] at res, that bucket's WORST (highest) mount value.
 func diskSeriesPoints(store SampleStore, from, to int64, res Resolution) ([]Point, error) {
 	metrics, ok := diskMountMetrics(store, res)
 	if !ok || len(metrics) == 0 {
@@ -850,11 +807,8 @@ func diskSeriesPoints(store SampleStore, from, to int64, res Resolution) ([]Poin
 	return out, nil
 }
 
-// querySeriesPoints reads metric's points from store over [from, to] at res,
-// special-casing "disk" to diskSeriesPoints' worst-mount-per-bucket series
-// (see its doc); a nil store (no data source at all for this node -- e.g.
-// self before the aggregate-rule evaluator has ever been wired) degrades to
-// no points rather than panicking.
+// querySeriesPoints reads metric's points from store over [from, to] at res, special-casing
+// "disk" to diskSeriesPoints' worst-mount-per-bucket series (see its doc); a nil store.
 func querySeriesPoints(store SampleStore, metric string, from, to int64, res Resolution) ([]Point, error) {
 	if store == nil {
 		return nil, nil
@@ -865,13 +819,8 @@ func querySeriesPoints(store SampleStore, metric string, from, to int64, res Res
 	return store.Query(metric, from, to, res)
 }
 
-// fleetSeriesBucketSeconds picks the fixed bucket width FleetSeries'
-// avg/max/min aggregation groups every source's points into: 60s at 1m
-// resolution (the rollup's granularity), or at raw resolution the master's
-// configured fast-tier sample interval when known (getCfg non-nil and
-// Config.FastInterval > 0), otherwise 10s. Exactly ONE width is used per
-// request, computed once: every node's points must land on the SAME grid for
-// the across-node aggregation to combine them meaningfully.
+// fleetSeriesBucketSeconds picks the fixed bucket width FleetSeries' avg/max/min
+// aggregation groups every source's points into: 60s at 1m resolution.
 func fleetSeriesBucketSeconds(res Resolution, getCfg func() *config.Config) int64 {
 	if res == Res1m {
 		return 60
@@ -895,10 +844,8 @@ func floorToBucket(ts, bucketSeconds int64) int64 {
 	return (ts / bucketSeconds) * bucketSeconds
 }
 
-// bucketNodeSeries floors every point in pts into its bucketSeconds-wide bucket
-// and, where several points land in one (raw resolution with a bucket coarser
-// than the data's cadence), keeps only the LAST by actual (unfloored) TS.
-// Returns one value per bucket this node has data in.
+// bucketNodeSeries floors every point in pts into its bucketSeconds-wide bucket and, where
+// several points land in one.
 func bucketNodeSeries(pts []Point, bucketSeconds int64) map[int64]float64 {
 	lastTS := map[int64]int64{}
 	out := map[int64]float64{}
@@ -1016,11 +963,8 @@ func (f fleetAPIImpl) FleetSeries(metric string, filter core.NodeFilter, agg cor
 		return out, nil
 	}
 
-	// avg/max/min: every source's points
-	// are floored onto ONE shared bucket grid (fleetSeriesBucketSeconds) --
-	// 60s at 1m resolution, the master's configured raw sample interval (or
-	// 10s) at raw resolution -- taking each node's LAST value within a
-	// bucket (bucketNodeSeries), before combining across nodes with agg.
+	// avg/max/min: every source's points are floored onto ONE shared bucket grid
+	// (fleetSeriesBucketSeconds) -- 60s at 1m resolution.
 	bucketSeconds := fleetSeriesBucketSeconds(storeRes, m.getCfg)
 	buckets := map[int64][]float64{}
 	for _, s := range sources {

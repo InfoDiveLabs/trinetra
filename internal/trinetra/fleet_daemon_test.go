@@ -37,10 +37,8 @@ func testDeps(t *testing.T, dir string) (fleetDeps, *[]Alert) {
 	}, &alerts
 }
 
-// TestStartMasterWarnsOnceAboutDuplicateRegistryNames: an EXISTING
-// registry.json from before names were unique is loaded as-is (no migration,
-// no auto-rename), but startMaster logs one warning line naming the
-// duplicates.
+// TestStartMasterWarnsOnceAboutDuplicateRegistryNames: an EXISTING registry.json from
+// before names were unique is loaded as-is (no migration, no auto-rename).
 func TestStartMasterWarnsOnceAboutDuplicateRegistryNames(t *testing.T) {
 	dir := t.TempDir()
 	if err := fleetInitPKI(dir, []string{"127.0.0.1"}, "test", time.Now()); err != nil {
@@ -535,11 +533,8 @@ func TestMasterLoopAlertsNeverContactedNode(t *testing.T) {
 	}
 }
 
-// TestMasterLoopNodeDownAlertGoesThroughEngine: masterLoop's own fleet alerts
-// go through the same engine as a child's. With a real fleetAlertEngine wired
-// as loop.alert, a node-down fire must reach d.alert (via the engine's
-// deliver) AND create a firing incident keyed "self:<alert key>", since a
-// master-generated alert has no source node.
+// TestMasterLoopNodeDownAlertGoesThroughEngine: masterLoop's own fleet alerts go through
+// the same engine as a child's.
 func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 	disableGroupWaitForTest(t)
 	dir := t.TempDir()
@@ -573,11 +568,8 @@ func TestMasterLoopNodeDownAlertGoesThroughEngine(t *testing.T) {
 		t.Fatalf("alerts = %+v, want one node-down (delivered via the engine)", *alerts)
 	}
 	incs := incidents.List(core.IncidentFilter{}, nil)
-	// The default group key is (rule, severity) -- a
-	// master-own node-down alert's key already embeds the target node id,
-	// so this bucket is still unique to this one node (see ruleFromKey's doc
-	// comment), just no longer formatted as the old "self:<key>" per-alert
-	// identity.
+	// The default group key is (rule, severity) -- a master-own node-down alert's key already
+	// embeds the target node id, so this bucket is still unique to this one node.
 	wantGroupKey := "rule=fleet:node:" + oldID + ":down|severity=critical"
 	if len(incs) != 1 || incs[0].GroupKey != wantGroupKey || incs[0].State != "firing" {
 		t.Fatalf("incidents = %+v, want one firing incident with group key %q", incs, wantGroupKey)
@@ -651,10 +643,8 @@ func TestFleetStopIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestFleetStopClosesLiveStreamConnections: rt.stop must force-close every
-// live /fleet/v1/stream connection (Hub.CloseAll) BEFORE m.Shutdown's
-// deadline wait, not rely on the client disconnecting. masterShutdownDeadline
-// is shrunk so a regression fails fast instead of waiting the full deadline.
+// TestFleetStopClosesLiveStreamConnections: rt.stop must force-close every live
+// /fleet/v1/stream connection (Hub.CloseAll) BEFORE m.Shutdown's deadline wait.
 func TestFleetStopClosesLiveStreamConnections(t *testing.T) {
 	old := masterShutdownDeadline
 	masterShutdownDeadline = 300 * time.Millisecond
@@ -869,9 +859,8 @@ func (f *dropWarnFixture) warnings() int {
 	return n
 }
 
-// The master logs a warning when a node's replica drops points out of
-// order (or over the series limit) during a maintenance interval, once per
-// increase; duplicates from refills are not warned about.
+// The master logs a warning when a node's replica drops points out of order (or over the
+// series limit) during a maintenance interval, once per increase.
 func TestMasterWarnsWhenOutOfOrderDropsGrow(t *testing.T) {
 	f := newDropWarnFixture(t)
 	now := time.Now()
@@ -908,9 +897,8 @@ func TestMasterWarnsWhenOutOfOrderDropsGrow(t *testing.T) {
 	}
 }
 
-// The warning baseline is persisted: drops that happen after the last
-// check but before a master restart are still warned about after it, and
-// drops already warned about are not warned about again.
+// The warning baseline is persisted: drops that happen after the last check but before a
+// master restart are still warned about after it.
 func TestMasterDropWarningSurvivesRestart(t *testing.T) {
 	f := newDropWarnFixture(t)
 	now := time.Now()
@@ -965,8 +953,7 @@ func TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch(t *testing.T) {
 	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
 		t.Fatalf("alert() took %s -- it must enqueue asynchronously, not block on dispatch", elapsed)
 	}
-	// ... but the alert IS eventually actually dispatched by the queue's own
-	// worker goroutine.
+	// ... but the alert IS eventually actually dispatched by the queue's own worker goroutine.
 	deadline := time.Now().Add(2 * time.Second)
 	for len(notifier.received()) != 1 {
 		if time.Now().After(deadline) {
@@ -987,10 +974,8 @@ func TestFleetDepsAlertGoesThroughAsyncQueueNotSyncDispatch(t *testing.T) {
 	}
 }
 
-// TestMasterLoopStillActiveVariants covers stillActive's per-key rules: a down
-// node's key is active, an online/revoked/removed node's key is not,
-// fleet:connectivity follows MassDown, and an unrecognized key defaults to
-// "still active" (left alone).
+// TestMasterLoopStillActiveVariants covers stillActive's per-key rules: a down node's key
+// is active, an online/revoked/removed node's key is not.
 func TestMasterLoopStillActiveVariants(t *testing.T) {
 	dir := t.TempDir()
 	d, _ := testDeps(t, dir)
@@ -1046,12 +1031,8 @@ func TestMasterLoopStillActiveVariants(t *testing.T) {
 	}
 }
 
-// TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow: an incident left
-// "firing" for a node that is online again (e.g. recorded before a restart
-// wiped the tracker state that would have emitted the recover) must be
-// reconciled, but only once the blind window (node_down_after since this
-// masterLoop started) has passed, so the tracker has observed the node's true
-// state first.
+// TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow: an incident left "firing" for
+// a node that is online again.
 func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
 	disableGroupWaitForTest(t)
 	dir := t.TempDir()
@@ -1080,15 +1061,11 @@ func TestMasterLoopRecoversOrphanedDownIncidentAfterBlindWindow(t *testing.T) {
 	if err := reg.Add(fleet.Node{ID: nodeID, Name: "web1", Joined: started.Unix()}); err != nil {
 		t.Fatal(err)
 	}
-	// An orphaned incident: recorded as firing, as if from before a
-	// restart, while the node itself is (and, per tracker.Seen below,
-	// always was in this test) online.
+	// An orphaned incident: recorded as firing, as if from before a restart, while the node
+	// itself is (and, per tracker.Seen below, always was in this test) online.
 	key := "fleet:node:" + nodeID + ":down"
-	// groupKey matches EXACTLY what a real fire through the engine would
-	// have computed -- this direct
-	// Apply call is simulating "recorded before a restart", and the
-	// reconciling recover below goes through the real engine/Submit, which
-	// must find this exact incident open under that same bucket.
+	// groupKey matches EXACTLY what a real fire through the engine would have computed -- this
+	// direct Apply call is simulating "recorded before a restart".
 	if _, err := incidents.Apply(incidentApply{
 		src: alertSource{}, alert: Alert{Key: key, Title: "🔴 web1 is down", Severity: SevCritical, Kind: "fire", Time: started.Unix()},
 		firedAt: started.Unix(), now: started.Unix(),

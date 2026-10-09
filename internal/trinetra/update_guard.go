@@ -27,35 +27,24 @@ import (
 // waiting out a pending update's health-gate deadline.
 const guardHealthPollInterval = 2 * time.Second
 
-// guardProbeTimeout bounds each health probe (systemctl is-active, each
-// control-socket call), so the gate never overruns its deadline by more than
-// one probe timeout.
+// guardProbeTimeout bounds each health probe (systemctl is-active, each control-socket
+// call), so the gate never overruns its deadline by more than one probe timeout.
 const guardProbeTimeout = 5 * time.Second
 
-// errGuardNotNeeded is runGuard's quiet "nothing for me to do right now":
-// another guard holds guard.lock, or an apply/rollback is still swapping in
-// a live process (it holds apply.lock). The watchdog timer fires every
-// minute, so the next run picks up anything still pending.
+// errGuardNotNeeded is runGuard's quiet "nothing for me to do right now": another guard
+// holds guard.lock, or an apply/rollback is still swapping in a live process.
 var errGuardNotNeeded = errors.New("update guard: another guard or update is already working on the pending update")
 
-// guardHealth is what runGuard polls to decide whether the freshly-restarted
-// daemon is healthy: the systemd unit is active, it reports the version this
-// Pending update expects, and its sampler loop has produced a fresh sample
-// since the restart. The production implementation (systemdControlHealth,
-// below) shells out to systemctl for Active and dials the control socket
-// fresh for Version/SampleTS -- the guard runs as its own systemd-run unit,
-// not inside the daemon process, so it cannot share a live control.Client.
+// guardHealth is what runGuard polls to decide whether the freshly-restarted daemon is
+// healthy: the systemd unit is active, it reports the version this Pending update expects.
 type guardHealth interface {
 	Active() bool
 	Version() (string, error)
 	SampleTS() (int64, error)
 }
 
-// guardDeps bundles everything runGuard needs, all of it injectable for
-// tests. x is carried alongside health for symmetry with the rest of this
-// package's dependency bundles (updater.x, e.g.) and is available to a
-// caller building guardDeps in production; runGuard's own state machine
-// only ever calls health/now/sleep/restart.
+// guardDeps bundles everything runGuard needs, all of it injectable for tests. x is carried
+// alongside health for symmetry with the rest of this package's dependency bundles.
 type guardDeps struct {
 	paths   updatePaths
 	x       Exec
@@ -66,27 +55,6 @@ type guardDeps struct {
 }
 
 // runGuard is the whole guarded-restart state machine:
-//
-//  1. Take guard.lock (non-blocking; held -> errGuardNotNeeded), then load
-//     state; no Pending means there is nothing to guard -- return a zero
-//     Result.
-//  2. Pending in phase "swapping": if apply.lock is held an apply/rollback
-//     is still swapping (errGuardNotNeeded). Otherwise it died mid-swap: a
-//     forward update is rolled back at once (resolveInterruptedSwap); an
-//     interrupted rollback has its restore finished and is then gated below.
-//  3. Restart the daemon onto the pending build.
-//  4. Poll every guardHealthPollInterval until the deadline
-//     (max(Pending.Deadline, restart-time+90s), so a guard resumed after a
-//     crash or reboot always gets the full window from ITS restart):
-//     healthy iff the unit is active, reports the pending version, and has
-//     produced a sample since the restart. Each probe is bounded and none
-//     starts after the deadline.
-//  5. Healthy -> commit: raise the floor (unless this Pending is itself a
-//     rollback), clear Pending, remove the staged download, record Last.
-//  6. Deadline passed -> roll back: restore the previous build and restart
-//     onto it (unless this Pending is itself a rollback -- see
-//     rollbackPending), mark the version bad (again, unless a rollback),
-//     clear Pending, record Last with the first failing health condition.
 func runGuard(d guardDeps) (update.Result, error) {
 	unlock, ok, err := update.TryLock(d.paths.guardLock())
 	if err != nil {
@@ -131,24 +99,15 @@ func runGuard(d guardDeps) (update.Result, error) {
 		}
 	}
 
-	// #136: once this Pending has already failed its health
-	// gate AND a restore attempt, the rollback decision is final. Retry
-	// ONLY the restore -- never restart the still-pending (already
-	// condemned) build and re-run the health gate again, or a retry whose
-	// restart happens to look healthy would commit a build the guard
-	// already decided to roll back.
+	// #136: once this Pending has already failed its health gate AND a restore attempt, the
+	// rollback decision is final.
 	if !pending.Rollback && pending.RestoreFailed != "" {
 		return retryFailedRestore(d, pending)
 	}
 
 	restartedAt := d.now()
-	// A restart() error is recorded as a failure detail but is NOT fatal:
-	// osExec's own timeout (60s, execTimeout) is shorter than systemd's
-	// default TimeoutStopSec (90s), so `systemctl restart trinetra` can
-	// return an error purely because the command itself timed out waiting,
-	// while systemd goes on to finish the restart successfully a few
-	// seconds later. Keep polling: a genuinely healthy restart still
-	// commits, and a genuinely broken one still rolls back at the deadline.
+	// A restart() error is recorded as a failure detail but is NOT fatal: osExec's own timeout
+	// (60s, execTimeout) is shorter than systemd's default TimeoutStopSec (90s).
 	var lastDetail string
 	if err := d.restart(); err != nil {
 		lastDetail = "restart: " + err.Error()
@@ -174,11 +133,8 @@ func runGuard(d guardDeps) (update.Result, error) {
 	return rollbackPending(d.paths, pending, lastDetail, d.restart, d.now())
 }
 
-// resolveInterruptedSwap handles a forward update whose apply died mid-swap
-// : BinDir may hold a mix of old and new binaries and the new build
-// never passed its gate, so restore previous/, restart onto it, clear
-// Pending and record the outcome. The version is not marked bad -- it was
-// never tried. If the restore fails, Pending is kept for the next run.
+// resolveInterruptedSwap handles a forward update whose apply died mid-swap : BinDir may
+// hold a mix of old and new binaries and the new build never passed its gate.
 func resolveInterruptedSwap(d guardDeps, pending update.Pending) (update.Result, error) {
 	if err := restorePrevious(d.paths); err != nil {
 		return update.Result{}, fmt.Errorf("update guard: restoring the previous build after an interrupted swap failed (the watchdog will retry): %w", err)
@@ -212,11 +168,8 @@ func guardAuditDetail(pending update.Pending, detail string) string {
 	return out
 }
 
-// checkGuardHealth reports whether h looks healthy for a Pending targeting
-// wantVersion restarted at restartedAt, and -- when it isn't -- the first
-// failing condition, for Result.Detail. Once expired() reports the deadline
-// has passed, no further probe is started (detail is then "" and the
-// caller keeps the last real failure).
+// checkGuardHealth reports whether h looks healthy for a Pending targeting wantVersion
+// restarted at restartedAt, and -- when it isn't -- the first failing condition.
 func checkGuardHealth(h guardHealth, wantVersion string, restartedAt time.Time, expired func() bool) (ok bool, detail string) {
 	if !h.Active() {
 		return false, "trinetra.service is not active"
@@ -247,10 +200,8 @@ func checkGuardHealth(h guardHealth, wantVersion string, restartedAt time.Time, 
 	return true, ""
 }
 
-// commitPending marks a healthy Pending committed: raises the floor (unless
-// it is itself a rollback confirmation -- rollback semantics never raise the
-// floor), clears Pending, removes the now-consumed staged download, and
-// records Last.
+// commitPending marks a healthy Pending committed: raises the floor (unless it is itself a
+// rollback confirmation -- rollback semantics never raise the floor), clears Pending.
 func commitPending(p updatePaths, pending update.Pending, now time.Time) (update.Result, error) {
 	result := update.Result{Version: pending.Version, From: pending.From, Outcome: "committed", At: now.Unix()}
 	err := update.WithState(p.dir(), func(st *update.State) error {
@@ -271,31 +222,8 @@ func commitPending(p updatePaths, pending update.Pending, now time.Time) (update
 	return result, nil
 }
 
-// rollbackPending handles a Pending that just failed its health gate (the
-// restart-and-poll loop above has just run).
-//
-// For a forward update (pending.Rollback == false): restore the previous
-// build, restart onto it, mark the version bad, and never raise the floor.
-// If restoring the previous build itself fails (#136), Pending is kept --
-// not cleared like every other outcome here -- with the failure recorded in
-// Pending.RestoreFailed (the display detail) and Pending.RestoreFailedReason
-// (the original health-gate failure, kept separate so a later retry's
-// Detail explains the real reason rather than an ever-growing chain of
-// "restoring also failed" text), so the next watchdog tick retries the
-// restore via retryFailedRestore below rather than re-entering this
-// restart-and-poll path; nothing is marked bad and no Last/audit entry is
-// written, because this update has not actually finished rolling back yet.
-// The critical alert for that failure is raised once by the daemon's update
-// loop (notifyRestoreFailed), deduped via Pending.RestoreFailedNotified --
-// the guard itself is a separate, short-lived process launched fresh for
-// each retry and cannot notify directly or remember across runs.
-//
-// For a rollback confirmation (pending.Rollback == true): there is no older
-// build to fall back to -- previous/ holds exactly the build that is
-// already running (rollback() restored it before launching the guard) -- so
-// this leaves the binaries as they are and does not loop: no further
-// restore, no bad-version mark (rollback semantics never mark a version
-// bad), just record the failure.
+// rollbackPending handles a Pending that just failed its health gate (the restart-and-poll
+// loop above has just run).
 func rollbackPending(p updatePaths, pending update.Pending, detail string, restart func() error, now time.Time) (update.Result, error) {
 	if !pending.Rollback {
 		reason := detail
@@ -324,22 +252,8 @@ func rollbackPending(p updatePaths, pending update.Pending, detail string, resta
 	return finishRollback(p, pending, detail, now)
 }
 
-// retryFailedRestore is runGuard's path for a Pending whose restore has
-// already failed once (#136): the guard's decision to roll back
-// is final, so this retries ONLY restorePrevious -- it deliberately never
-// restarts the still-pending, already-condemned build and re-polls its
-// health the way rollbackPending's caller does, because a retry whose
-// restart happens to come up looking healthy must not resurrect and commit
-// a build the guard already decided to roll back.
-//
-// Success proceeds exactly like an ordinary rollback: restart onto the
-// now-restored build, mark the version bad, clear Pending, audit -- using
-// pending.RestoreFailedReason (the ORIGINAL health-gate failure recorded
-// when this episode began) as the Result's Detail, not the restore-failure
-// text layered onto it since. Failure refreshes Pending.RestoreFailed with
-// the latest error (RestoreFailedReason and RestoreFailedNotified are left
-// as they are) and keeps Pending; no restart is attempted, since there is
-// nothing new to restart onto.
+// retryFailedRestore is runGuard's path for a Pending whose restore has already failed once
+// (#136): the guard's decision to roll back is final, so this retries ONLY restorePrevious.
 func retryFailedRestore(d guardDeps, pending update.Pending) (update.Result, error) {
 	reason := pending.RestoreFailedReason
 	if err := restorePrevious(d.paths); err != nil {
@@ -387,11 +301,8 @@ func finishRollback(p updatePaths, pending update.Pending, detail string, now ti
 	return result, nil
 }
 
-// systemdControlHealth is the production guardHealth: Active via `systemctl
-// is-active --quiet trinetra` (through x, a timeoutExec bounded by
-// guardProbeTimeout), Version/SampleTS via a fresh control-socket dial each
-// call, each bounded by guardProbeTimeout -- the guard runs standalone,
-// not inside the daemon process, so it cannot share a live control.Client.
+// systemdControlHealth is the production guardHealth: Active via `systemctl is-active
+// --quiet trinetra` (through x, a timeoutExec bounded by guardProbeTimeout).
 type systemdControlHealth struct{ x Exec }
 
 func (h systemdControlHealth) Active() bool {
@@ -399,9 +310,7 @@ func (h systemdControlHealth) Active() bool {
 	return err == nil
 }
 
-// boundedProbe runs fn with guardProbeTimeout. On timeout the call is
-// abandoned (its goroutine finishes, or hits the control client's own
-// deadline, in the background of this short-lived guard process).
+// boundedProbe runs fn with guardProbeTimeout.
 func boundedProbe[T any](fn func() (T, error)) (T, error) {
 	type res struct {
 		v   T
@@ -452,9 +361,8 @@ func (h systemdControlHealth) SampleTS() (int64, error) {
 	})
 }
 
-// realGuardDeps builds the production guardDeps: real paths, the real
-// (timeout-bounded) Exec, systemdControlHealth, the real clock/sleep, and a
-// restart that shells out to `systemctl restart trinetra`.
+// realGuardDeps builds the production guardDeps: real paths, the real (timeout-bounded)
+// Exec, systemdControlHealth, the real clock/sleep.
 func realGuardDeps() guardDeps {
 	x := osExec{}
 	return guardDeps{
@@ -478,13 +386,8 @@ func realGuardDeps() guardDeps {
 	}
 }
 
-// cmdUpdateGuard is `trinetra update guard [--if-pending]`, run from the
-// pinned guard binary: by the transient unit launchGuard starts right after
-// apply/rollback swap a build in, and (with --if-pending) every minute by
-// trinetra-update-watchdog.service. It runs the health-gate state machine to
-// completion (confirm or roll back) and prints the outcome. --if-pending is
-// silent (exit 0) when nothing is pending or another guard/update is
-// already on it, so the timer's runs stay quiet and never "fail".
+// cmdUpdateGuard is `trinetra update guard [--if-pending]`, run from the pinned guard
+// binary.
 func cmdUpdateGuard(args []string) int {
 	ifPending := false
 	for _, a := range args {

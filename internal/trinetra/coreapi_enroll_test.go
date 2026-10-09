@@ -33,9 +33,8 @@ func TestInprocEnrollmentPINReadsThroughHolder(t *testing.T) {
 	}
 }
 
-// TestInprocEnrollmentPINReflectsEnrolledState pins the enrolled=true path:
-// once the config's chat id is set, EnrollmentPIN must report "" and
-// enrolled=true, mirroring enrollState.PIN's own contract.
+// TestInprocEnrollmentPINReflectsEnrolledState pins the enrolled=true path: once the
+// config's chat id is set, EnrollmentPIN must report "" and enrolled=true.
 func TestInprocEnrollmentPINReflectsEnrolledState(t *testing.T) {
 	cfg := newTgConfig("tok", "555")
 	api := newInprocAPI(func() Snapshot { return Snapshot{} }, func() *config.Config { return cfg }, nil, t.TempDir(), nil, nil, &enrollState{})
@@ -49,9 +48,8 @@ func TestInprocEnrollmentPINReflectsEnrolledState(t *testing.T) {
 	}
 }
 
-// TestFileAPIEnrollmentPINReturnsClearError pins fileAPI's contract: a
-// separate CLI process has no live enrollState to ask, so it always returns
-// errEnrollNeedsDaemon rather than a stale or fabricated pin.
+// TestFileAPIEnrollmentPINReturnsClearError pins fileAPI's contract: a separate CLI process
+// has no live enrollState to ask.
 func TestFileAPIEnrollmentPINReturnsClearError(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 

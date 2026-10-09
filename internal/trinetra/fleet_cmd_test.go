@@ -42,11 +42,8 @@ func loadTestCfg(t *testing.T) *config.Config {
 	return c
 }
 
-// chmodUnwritable makes it impossible to remove entries inside dir (an
-// existing directory containing at least one file) without touching dir's
-// parent, so os.RemoveAll(dir) fails partway through with a real OS
-// permission error -- the CLI's purge-failure path under test. It restores
-// permissions in cleanup so the enclosing t.TempDir() can still remove it.
+// chmodUnwritable makes it impossible to remove entries inside dir (an existing directory
+// containing at least one file) without touching dir's parent.
 func chmodUnwritable(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -55,10 +52,8 @@ func chmodUnwritable(t *testing.T, dir string) {
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })
 }
 
-// fleetCLIFakeAPI is a minimal core.API stub: the fleet CLI's daemon-backed
-// subcommands never call these methods directly (they go through
-// core.FleetAPI via Client.Fleet()), but control.Serve requires its api
-// argument to satisfy the full core.API interface.
+// fleetCLIFakeAPI is a minimal core.API stub: the fleet CLI's daemon-backed subcommands
+// never call these methods directly (they go through core.FleetAPI via Client.Fleet()).
 type fleetCLIFakeAPI struct{}
 
 func (fleetCLIFakeAPI) Snapshot() (core.DashboardView, error)      { return core.DashboardView{}, nil }
@@ -95,9 +90,8 @@ func (fleetCLIFakeAPI) Subscribe(context.Context) (<-chan core.Event, error) {
 	return nil, errors.New("not implemented")
 }
 
-// fleetCLIFake implements core.FleetProvider on top of fleetCLIFakeAPI, with
-// every Fleet.* call recorded so a test can assert what the CLI sent, and
-// every response settable so a test can assert what the CLI printed.
+// fleetCLIFake implements core.FleetProvider on top of fleetCLIFakeAPI, with every Fleet.*
+// call recorded so a test can assert what the CLI sent.
 type fleetCLIFake struct {
 	fleetCLIFakeAPI
 
@@ -340,14 +334,7 @@ func (a fleetCLIFakeFleetAPI) FleetSeries(string, core.NodeFilter, core.Agg, int
 }
 
 // startFleetDaemon stands up a real control.Serve loop at
-// controlSocketPath/controlTokenPath, so withDaemon's control.Dial in
-// fleet_cmd.go reaches it precisely as it would a real daemon. It points
-// RUNTIME_DIRECTORY at a freshly made short-prefix temp dir rather than
-// reusing fleetCLIEnv's: a plain t.TempDir() nests under the test's name,
-// which combined with a long test name and a long $TMPDIR (common on
-// macOS) can exceed unix domain sockets' ~104-byte sun_path limit --
-// mirroring internal/control/server_test.go's shortSocketPath fix for the
-// same problem.
+// controlSocketPath/controlTokenPath.
 func startFleetDaemon(t *testing.T, api core.API) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "sw-fleet")
@@ -448,13 +435,8 @@ func TestFleetJoinAndLeave(t *testing.T) {
 	}
 }
 
-// testOldMasterForCLI stands up a bare-bones fake master that answers
-// POST /fleet/v1/join with a JoinResponse containing no "name" field at
-// all -- exactly what an older master (from before JoinResponse.Name
-// existed) would send. It signs the child's CSR for real (via the same CA
-// fleet.Join validates the returned cert against), but has none of the real
-// master's token/registry bookkeeping: it exists purely to test the CLI's
-// handling of a response with the name field entirely absent.
+// testOldMasterForCLI stands up a bare-bones fake master that answers POST /fleet/v1/join
+// with a JoinResponse containing no "name" field at all -- exactly what an older master.
 func testOldMasterForCLI(t *testing.T) (code string) {
 	t.Helper()
 	mdir := t.TempDir()
@@ -507,10 +489,8 @@ func testOldMasterForCLI(t *testing.T) (code string) {
 	return fleet.EncodeJoin(fleet.JoinInfo{URL: srv.URL, Token: "swt_unused", Pin: fleet.SPKIPin(ca.Cert)})
 }
 
-// TestFleetJoinAgainstOlderMasterPrintsRequestedName: an older master's
-// JoinResponse has no "name" field (decodes as ""); the CLI must treat that as
-// "not reported" and fall back to the requested name, not print a false
-// "registered as \"\" instead" note.
+// TestFleetJoinAgainstOlderMasterPrintsRequestedName: an older master's JoinResponse has no
+// "name" field (decodes as "").
 func TestFleetJoinAgainstOlderMasterPrintsRequestedName(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
 	code := testOldMasterForCLI(t)
@@ -1188,9 +1168,8 @@ func TestFleetMaintenanceDelete(t *testing.T) {
 	}
 }
 
-// TestFleetRouteTestPrintsDecision: every matched policy (here two, as a
-// Continue chain produces) prints its own steps and repeat_every separately,
-// since each escalates independently.
+// TestFleetRouteTestPrintsDecision: every matched policy (here two, as a Continue chain
+// produces) prints its own steps and repeat_every separately.
 func TestFleetRouteTestPrintsDecision(t *testing.T) {
 	_, out, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{routeTestResult: core.RouteDecision{
@@ -1370,10 +1349,7 @@ func TestFleetManagedSetCreatesWhenNoExistingTag(t *testing.T) {
 }
 
 // TestFleetManagedSetNeverListsFirstLettingServerUpsert: the CLI does not call
-// Fleet().Managed() to choose create-vs-update (a list-then-write TOCTOU); it
-// always sends an empty ID and lets the server's atomic upsert-by-tag
-// (managedFragmentStore.Save) decide, even when a fragment for the same tag
-// is already in fake.managed.
+// Fleet().Managed() to choose create-vs-update (a list-then-write TOCTOU).
 func TestFleetManagedSetNeverListsFirstLettingServerUpsert(t *testing.T) {
 	_, _, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{managed: []core.ManagedFragment{
@@ -1391,9 +1367,8 @@ func TestFleetManagedSetNeverListsFirstLettingServerUpsert(t *testing.T) {
 	}
 }
 
-// TestFleetManagedSetDefaultsToMerge pins that a plain `fleet managed set` (no
-// --replace) sends Merge:true, so the server merges into the tag's existing
-// fragment.
+// TestFleetManagedSetDefaultsToMerge pins that a plain `fleet managed set` (no --replace)
+// sends Merge:true, so the server merges into the tag's existing fragment.
 func TestFleetManagedSetDefaultsToMerge(t *testing.T) {
 	_, _, errb := fleetCLIEnv(t)
 	fake := &fleetCLIFake{}
@@ -1460,10 +1435,8 @@ func TestFleetManagedStatusShowsDriftAndConflicts(t *testing.T) {
 	}
 }
 
-// TestConfigSetRefusedOnManagedChild pins the read-only enforcement `config
-// set`/`config unset` must show on a fleet child once a key is managed: the
-// plain one-shot CLI reads the durable sidecar directly (no running daemon
-// required), refuses with the fragment id, and never touches config.json.
+// TestConfigSetRefusedOnManagedChild pins the read-only enforcement `config set`/`config
+// unset` must show on a fleet child once a key is managed.
 func TestConfigSetRefusedOnManagedChild(t *testing.T) {
 	dir, out, errb := fleetCLIEnv(t)
 	if rc := Main([]string{"config", "set", "thresholds.cpu_pct", "70"}); rc != 0 {
@@ -1513,10 +1486,8 @@ func TestConfigSetRefusedOnManagedChild(t *testing.T) {
 	}
 }
 
-// TestFleetLeaveKeepsManagedValuesRemovesSidecar pins `fleet leave`: the last
-// managed values stay as ordinary local config, only the managed-config
-// sidecar is removed so this host stops enforcing them as read-only. A plain
-// (non --purge) leave isolates the assertion to the sidecar.
+// TestFleetLeaveKeepsManagedValuesRemovesSidecar pins `fleet leave`: the last managed
+// values stay as ordinary local config.
 func TestFleetLeaveKeepsManagedValuesRemovesSidecar(t *testing.T) {
 	dir, _, errb := fleetCLIEnv(t)
 	code := testMasterForCLI(t)
@@ -1525,8 +1496,7 @@ func TestFleetLeaveKeepsManagedValuesRemovesSidecar(t *testing.T) {
 	}
 
 	// Simulate a managed value already applied and persisted (exactly what
-	// managedChild.setApplied does in production): an ordinary config field
-	// plus the sidecar recording it as managed.
+	// managedChild.setApplied does in production).
 	c := loadTestCfg(t)
 	if err := c.Set("thresholds.cpu_pct", "77"); err != nil {
 		t.Fatal(err)

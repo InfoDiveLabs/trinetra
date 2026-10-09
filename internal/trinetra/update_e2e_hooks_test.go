@@ -8,16 +8,8 @@ import (
 	"time"
 )
 
-// TestE2EHooksIgnoredInReleaseBuild pins that a default (non-testkeys) build
-// never honours the update-e2e harness's environment hooks, even when they
-// are set: e2eRestartCmd/e2eGuardCmd/e2eGitHubBaseURL are hard-coded no-ops
-// in update_e2e_hooks.go, with no env lookup at all, so a real release
-// binary cannot be steered by TRINETRA_E2E_RESTART_CMD, TRINETRA_E2E_GUARD_CMD,
-// TRINETRA_E2E_GITHUB_BASE_URL, TRINETRA_E2E_UPDATE_LOOP_INTERVAL or
-// TRINETRA_E2E_HEALTH_DEADLINE under any circumstances: the self-update
-// loop keeps its 5-minute tick and the guard its 90s health window. The
-// trinetra_testkeys build (update_e2e_hooks_testkeys.go, exercised by
-// test/docker/update) is the only one that reads them.
+// TestE2EHooksIgnoredInReleaseBuild pins that a default (non-testkeys) build never honours
+// the update-e2e harness's environment hooks, even when they are set.
 func TestE2EHooksIgnoredInReleaseBuild(t *testing.T) {
 	t.Setenv("TRINETRA_E2E_RESTART_CMD", "pkill -f 'trinetra daemon'")
 	t.Setenv("TRINETRA_E2E_GUARD_CMD", "trinetra update guard &")
@@ -57,7 +49,6 @@ func TestE2EHooksIgnoredInReleaseBuild(t *testing.T) {
 	}
 }
 
-// e2eCrashOnStart must be a compile-time constant in a default build:
-// this declaration only compiles if it is one, so no -X stamp can enable the
-// crash-on-start hook in a release binary.
+// e2eCrashOnStart must be a compile-time constant in a default build: this declaration only
+// compiles if it is one.
 const _ = e2eCrashOnStart

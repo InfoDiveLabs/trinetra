@@ -231,10 +231,8 @@ func TestReplicaApplyEvictsNodeOnWriteFailure(t *testing.T) {
 	}
 }
 
-// TestReplicaAlertLogFailureThenRetryWritesOnce covers the alert-log write
-// specifically (a separate append-only file from the tsfile series): a
-// failed alert-log append must not leave behind a poisoned dedup guard that
-// makes the identical retry silently drop the alert as "already seen".
+// TestReplicaAlertLogFailureThenRetryWritesOnce covers the alert-log write specifically (a
+// separate append-only file from the tsfile series).
 func TestReplicaAlertLogFailureThenRetryWritesOnce(t *testing.T) {
 	root := t.TempDir()
 	r := newReplicaSink(root, StoreOptions{}, nil)
@@ -269,9 +267,8 @@ func TestReplicaAlertLogFailureThenRetryWritesOnce(t *testing.T) {
 	}
 }
 
-// Replica maintenance (Downsample+Prune, fsync-heavy) runs on the same
-// cadence as the local store's (storeMaintenanceInterval), staggered so each
-// 5s master tick handles only a slice of the nodes.
+// Replica maintenance (Downsample+Prune, fsync-heavy) runs on the same cadence as the local
+// store's (storeMaintenanceInterval).
 func TestReplicaMaintenanceSliceSize(t *testing.T) {
 	cases := []struct {
 		total          int
@@ -312,9 +309,8 @@ func TestReplicaMaintenanceVisitsEveryNodeOncePerInterval(t *testing.T) {
 	}
 }
 
-// Live updates arrive every few seconds per node: they must not rewrite the
-// snapshot and alert state files each time. The node API still serves the
-// latest snapshot (from memory / live.json).
+// Live updates arrive every few seconds per node: they must not rewrite the snapshot and
+// alert state files each time.
 func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
 	root := t.TempDir()
 	r := newReplicaSink(root, StoreOptions{}, nil)
@@ -348,9 +344,8 @@ func TestReplicaLiveWritesOnlyWhatChanged(t *testing.T) {
 	}
 }
 
-// Clock skew (server_time - sent_at) is estimated per node from the sample
-// closest to zero over a short window, persisted in ingest.state, and only
-// reported over the 30s line after three consecutive over-line estimates.
+// Clock skew (server_time - sent_at) is estimated per node from the sample closest to zero
+// over a short window, persisted in ingest.state.
 func TestReplicaSkewFilteredAndPersisted(t *testing.T) {
 	root := t.TempDir()
 	r := newReplicaSink(root, StoreOptions{}, nil)
@@ -385,9 +380,8 @@ func TestReplicaSkewFilteredAndPersisted(t *testing.T) {
 	}
 }
 
-// Network delay only ever inflates server_time - sent_at: a burst of
-// requests held in a partition and then delivered (sent_at 60s old) must
-// not read as a clock 60s behind.
+// Network delay only ever inflates server_time - sent_at: a burst of requests held in a
+// partition and then delivered (sent_at 60s old) must not read as a clock 60s behind.
 func TestReplicaSkewIgnoresDelayedBurst(t *testing.T) {
 	r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 	for i := 0; i < 6; i++ {
@@ -423,10 +417,8 @@ func TestReplicaSkewGenuineBothDirections(t *testing.T) {
 	}
 }
 
-// A failed apply re-seeds the ordering guards on the SAME replicaNode and
-// store rather than dropping it from the cache: replacing it would put a
-// second tsFileStore on the same directory while maintenance may still hold
-// the first.
+// A failed apply re-seeds the ordering guards on the SAME replicaNode and store rather than
+// dropping it from the cache.
 func TestReplicaFailedApplyReseedsSameNode(t *testing.T) {
 	r := newReplicaSink(t.TempDir(), StoreOptions{}, nil)
 	before, err := r.node(testNodeID)
@@ -456,9 +448,7 @@ func TestReplicaFailedApplyReseedsSameNode(t *testing.T) {
 	}
 }
 
-// Several alerts can share the newest timestamp. After a master restart the
-// dedupe set must hold all of them, not just the last line, or a re-sent
-// batch (e.g. gap repair) duplicates the others.
+// Several alerts can share the newest timestamp.
 func TestReplicaAlertDedupeSeedsAllLinesAtLastTimestamp(t *testing.T) {
 	root := t.TempDir()
 	recs := []fleet.Record{alertRec(1, 110, "cpu"), alertRec(2, 110, "mem"), alertRec(3, 110, "disk")}
@@ -475,9 +465,8 @@ func TestReplicaAlertDedupeSeedsAllLinesAtLastTimestamp(t *testing.T) {
 	}
 }
 
-// Re-sent copies of what the replica already holds (a refill, a retried
-// batch) count as duplicates; only points older than the series' last one
-// count as out of order. Both persist across a restart.
+// Re-sent copies of what the replica already holds (a refill, a retried batch) count as
+// duplicates; only points older than the series' last one count as out of order.
 func TestReplicaSplitsDuplicateFromOutOfOrder(t *testing.T) {
 	root := t.TempDir()
 	r := newReplicaSink(root, StoreOptions{}, nil)
@@ -525,9 +514,8 @@ func TestReplicaLoadsOldDropCounter(t *testing.T) {
 	}
 }
 
-// A failed alerts.json write is retried by the next live update even when
-// the alert state has not changed since: the comparison is against what was
-// last written successfully, not what was last received.
+// A failed alerts.json write is retried by the next live update even when the alert state
+// has not changed since: the comparison is against what was last written successfully.
 func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
 	root := t.TempDir()
 	r := newReplicaSink(root, StoreOptions{}, nil)
@@ -553,10 +541,6 @@ func TestReplicaLiveRetriesFailedAlertsWrite(t *testing.T) {
 }
 
 // --- replicaAPI: remote ack/unack and container logs --------------
-//
-// These use the real fleet.Hub/Master harness from fleet_rpc_test.go
-// (rpcTestMaster), since AckAlert/UnackAlert/ContainerLogs all need a
-// genuinely connected node.
 
 // TestReplicaAPIAckAlertPushesFrameAndRecordsIncident: on a connected node,
 // AckAlert pushes an "ack" frame down that node's stream (a real, joined child
@@ -606,9 +590,8 @@ func TestReplicaAPIAckAlertPushesFrameAndRecordsIncident(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIUnackAlertPushesFrame: UnackAlert on a connected node pushes
-// an "unack" frame -- it does not touch the incident store (there is no
-// "unack" concept on an incident's own AckedBy).
+// TestReplicaAPIUnackAlertPushesFrame: UnackAlert on a connected node pushes an "unack"
+// frame -- it does not touch the incident store.
 func TestReplicaAPIUnackAlertPushesFrame(t *testing.T) {
 	m := newRPCTestMaster(t)
 	frames := make(chan fleet.Frame, 4)
@@ -636,9 +619,8 @@ func TestReplicaAPIUnackAlertPushesFrame(t *testing.T) {
 // for a node with no open stream connection.
 func TestReplicaAPIAckAlertNotConnected(t *testing.T) {
 	m := newRPCTestMaster(t)
-	// NodeAPI needs the node to exist in the registry, but it need never
-	// have connected: seed it via node() directly (mirrors how other
-	// replica tests build a node without a real join).
+	// NodeAPI needs the node to exist in the registry, but it need never have connected: seed
+	// it via node() directly.
 	if _, err := m.sink.node(testNodeID); err != nil {
 		t.Fatal(err)
 	}
@@ -713,9 +695,8 @@ func TestReplicaAPIContainerLogsTimeout(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIContainerLogsChildErrorPassesThrough pins that the child's own
-// error is passed through, wrapped so its text can never come out as a bare
-// sentinel suffix, yet still containing the child's message.
+// TestReplicaAPIContainerLogsChildErrorPassesThrough pins that the child's own error is
+// passed through, wrapped so its text can never come out as a bare sentinel suffix.
 func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 	m := newRPCTestMaster(t)
 	var sh *fleet.Shipper
@@ -743,13 +724,8 @@ func TestReplicaAPIContainerLogsChildErrorPassesThrough(t *testing.T) {
 	}
 }
 
-// TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix: a
-// compromised or buggy child can POST back any error text in its RPC result
-// (Hub.handleRPC only authenticates the node). If it ended in one of
-// control.wireErrSentinels' texts (e.g. "not found"), a control-socket caller's
-// errors.Is(err, core.ErrNotFound) would misreport an RPC/docker error as a
-// 404. ContainerLogs must wrap the child's text so it never ends in a bare
-// sentinel suffix, for every sentinel control.wireErrSentinels lists.
+// TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix: a compromised or buggy
+// child can POST back any error text in its RPC result.
 func TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix(t *testing.T) {
 	// Mirrors internal/control/client.go's wireErrSentinels list -- kept as
 	// literal texts here (not an import of internal/control, to stay out of
@@ -765,9 +741,8 @@ func TestReplicaAPIContainerLogsChildErrorNeverEndsInSentinelSuffix(t *testing.T
 		t.Run(sentinel, func(t *testing.T) {
 			m := newRPCTestMaster(t)
 			var sh *fleet.Shipper
-			// A child error text that legitimately, innocently ends in the
-			// sentinel's own text -- e.g. a generic docker/tool error whose
-			// wording happens to coincide, not deliberate malice.
+			// A child error text that legitimately, innocently ends in the sentinel's own text --
+			// e.g. a generic docker/tool error whose wording happens to coincide.
 			childText := "container inspect failed: " + sentinel
 			self := fakeLogsAPI{err: errors.New(childText)}
 			nodeID, childSh, stop := m.connect("sentinel-logs-"+sentinel, func(f fleet.Frame) {

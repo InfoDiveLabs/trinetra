@@ -62,36 +62,21 @@ func realDial(host string) bool {
 }
 
 // connDial is the dial function collectSlow uses for the connectivity check.
-// Overridable for tests (mirrors the cfgPath/stateDir/stdout/stderr pattern
-// in main.go): swapping it out lets tests exercise collectSlow's Online
-// field with a fake instead of hitting the real network.
 var connDial = realDial
 
 // IfaceRate is one interface's computed throughput (bytes/sec), derived by
 // NetRateCalc from two consecutive IfaceCounters samples.
 type IfaceRate struct{ RxBps, TxBps float64 }
 
-// NetRateCalc turns the cumulative counters parseNetDev reads from
-// /proc/net/dev into per-interface rates, by diffing against the previous
-// sample. It is meant to be owned by a single goroutine (the sampler loop,
-// mirroring the *CPUStat pattern in collectFast) and called once per slow
-// tick -- no locking, since only one goroutine ever touches it.
+// NetRateCalc turns the cumulative counters parseNetDev reads from /proc/net/dev into
+// per-interface rates, by diffing against the previous sample.
 type NetRateCalc struct {
 	prev   map[string]IfaceCounters
 	prevTS int64
 }
 
-// Rates computes bytes/sec rates from cur against the previously stored
-// sample, then stores cur/nowUnix for the next call.
-//
-// The first call (no prior sample) returns an empty map, which also makes the
-// daemon's first slow tick skip appending net series.
-//
-// For interfaces in both prev and cur: elapsed <= 0 (clock didn't advance, or
-// went backwards) skips the computation (no divide-by-zero or negative
-// rate), and a counter that went backwards (interface reset or wrap) is
-// skipped rather than emitting a negative rate. Interfaces in only one of
-// prev/cur are omitted.
+// Rates computes bytes/sec rates from cur against the previously stored sample, then stores
+// cur/nowUnix for the next call.
 func (n *NetRateCalc) Rates(cur map[string]IfaceCounters, nowUnix int64) map[string]IfaceRate {
 	out := map[string]IfaceRate{}
 	if n.prev != nil {

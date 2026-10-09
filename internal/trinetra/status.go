@@ -11,23 +11,15 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// maxFailureDetailItems bounds every "only failures" detail list rendered by
-// renderStatus (failing disks, down containers, failed units, FAILED SMART
-// devices), with a "+N more" suffix for the rest, so the Telegram reply can
-// never balloon past the 4096-char message limit on a badly broken host.
+// maxFailureDetailItems bounds every "only failures" detail list rendered by renderStatus
+// (failing disks, down containers, failed units, FAILED SMART devices).
 const maxFailureDetailItems = 10
 
-// maxDiskTableRows bounds the /disk command's full mount table. Part A
-// already keeps the real-mount count small (docker overlay/pseudo mounts
-// filtered out), but this cap is kept as a hard guarantee independent of
-// that filtering.
+// maxDiskTableRows bounds the /disk command's full mount table.
 const maxDiskTableRows = 15
 
-// severity classifies val against a graduated warn/crit pair: crit if
-// val >= critAt, warn if val >= warnAt (a softer threshold below critAt),
-// else ok. critAt <= 0 means "no meaningful threshold configured" (a
-// zeroed/unset config value), so the metric is reported ok rather than a
-// spurious critical.
+// severity classifies val against a graduated warn/crit pair: crit if val >= critAt, warn
+// if val >= warnAt (a softer threshold below critAt).
 func severity(val, warnAt, critAt float64) (warn, crit bool) {
 	if critAt <= 0 {
 		return false, false
@@ -41,12 +33,8 @@ func severity(val, warnAt, critAt float64) (warn, crit bool) {
 	return false, false
 }
 
-// pctSeverity is severity for the common case of a single crit threshold
-// (as config.Thresholds stores): warn kicks in at 90% of crit. This 90%
-// warn band is a display-only heuristic (the alerting system in daemon.go's
-// buildFastChecks/buildSlowChecks only has a single crit-style threshold
-// per metric) so the overview can show "getting close" before an alert
-// actually fires.
+// pctSeverity is severity for the common case of a single crit threshold (as
+// config.Thresholds stores): warn kicks in at 90% of crit.
 func pctSeverity(val, critAt float64) (warn, crit bool) {
 	return severity(val, critAt*0.9, critAt)
 }
@@ -62,9 +50,8 @@ func markStr(warn, crit bool) string {
 	}
 }
 
-// capList bounds items to max entries, appending a "+N more" summary of the
-// rest instead of silently truncating, so callers can tell "this is
-// everything" from "there's more than shown."
+// capList bounds items to max entries, appending a "+N more" summary of the rest instead of
+// silently truncating.
 func capList(items []string, max int) []string {
 	if len(items) <= max {
 		return items
@@ -83,11 +70,8 @@ type diskFailure struct {
 	crit  bool
 }
 
-// diskSeverityCounts classifies every mount in s.Disks against its
-// configured threshold (a per-target override via c.TargetThreshold, or the
-// global c.Thresholds.DiskPct), for renderStatus's disk summary line and
-// only-failures detail. failures is sorted by usage% descending so the
-// worst offenders lead when the list is capped.
+// diskSeverityCounts classifies every mount in s.Disks against its configured threshold (a
+// per-target override via c.TargetThreshold, or the global c.Thresholds.DiskPct).
 func diskSeverityCounts(s Snapshot, c *config.Config) (ok, warn, crit int, failures []diskFailure) {
 	mounts := make([]string, 0, len(s.Disks))
 	for m := range s.Disks {
@@ -116,9 +100,8 @@ func diskSeverityCounts(s Snapshot, c *config.Config) (ok, warn, crit int, failu
 	return
 }
 
-// dockerSummary counts running vs total containers and lists (name-sorted)
-// the non-running ones, for renderStatus's docker summary + only-failures
-// detail.
+// dockerSummary counts running vs total containers and lists (name-sorted) the non-running
+// ones, for renderStatus's docker summary + only-failures detail.
 func dockerSummary(cs map[string]string) (running, total int, down []string) {
 	names := make([]string, 0, len(cs))
 	for n := range cs {
@@ -136,11 +119,8 @@ func dockerSummary(cs map[string]string) (running, total int, down []string) {
 	return
 }
 
-// smartSummary counts PASSED vs FAILED SMART devices and lists (device-
-// sorted) the FAILED ones, for renderStatus's smart summary + only-failures
-// detail. A device reporting neither PASSED nor FAILED (e.g. "UNKNOWN")
-// counts toward ok rather than failed, matching buildSlowChecks' own
-// bad := health == "FAILED" test.
+// smartSummary counts PASSED vs FAILED SMART devices and lists (device- sorted) the FAILED
+// ones, for renderStatus's smart summary + only-failures detail.
 func smartSummary(h map[string]string) (ok int, failed []string) {
 	devs := make([]string, 0, len(h))
 	for d := range h {
@@ -179,30 +159,20 @@ func plural(n int) string {
 	return "s"
 }
 
-// DiskDetail is the live per-mount filesystem detail beyond the usage
-// percentage in Snapshot.Disks: device path, filesystem type, inode usage,
-// free/total bytes, and (when the SampleStore has enough history) a linear
-// fill-rate projection. Populated by collectSlow from `df -PT -B1` merged with
-// `df -Pi`, keyed by mount (parseDFTypes/parseDFInodes, projectDaysToFull).
-// Additive/live only: Snapshot.Disks is untouched since alerting
-// (buildSlowChecks) and the SampleStore series (slowMetricSet) depend on it.
+// DiskDetail is the live per-mount filesystem detail beyond the usage percentage in
+// Snapshot.Disks: device path, filesystem type, inode usage, free/total bytes.
 type DiskDetail struct {
 	Device, FsType       string
 	UsagePct, InodePct   float64
 	FreeBytes, SizeBytes uint64
-	// DaysToFull/DaysToFullKnown are a linear-projection estimate of how many
-	// days remain until the mount reaches 100% used, computed by
-	// projectDaysToFull from the mount's "disk:<mount>" SampleStore series.
-	// DaysToFullKnown is false when the projection isn't meaningful (a nil
-	// store, fewer than 2 history points, or a flat/declining trend).
+	// DaysToFull/DaysToFullKnown are a linear-projection estimate of how many days remain
+	// until the mount reaches 100% used.
 	DaysToFull      float64
 	DaysToFullKnown bool
 }
 
-// SmartAttr is a device's parsed `smartctl -A` attributes: temperature,
-// wear/life-remaining percentage, and reallocated-sector count. See
-// parseSmartAttrs in smart.go. Fields are tolerant of absence (0 = not
-// reported by this device) since attribute sets vary by vendor/SSD vs HDD.
+// SmartAttr is a device's parsed `smartctl -A` attributes: temperature, wear/life-remaining
+// percentage, and reallocated-sector count.
 type SmartAttr struct {
 	TempC          int
 	WearPct        int
@@ -220,29 +190,21 @@ type Snapshot struct {
 	TempC   float64            `json:"temp_c"`
 	Disks   map[string]float64 `json:"disks"`
 	Online  bool               `json:"online"`
-	// SlowStale is set when the slow-collector goroutine missed its deadline
-	// and the slow-tier fields on this snapshot are the last-good values, not
-	// freshly collected this cycle.
+	// SlowStale is set when the slow-collector goroutine missed its deadline and the slow-tier
+	// fields on this snapshot are the last-good values, not freshly collected this cycle.
 	SlowStale    bool              `json:"slow_stale,omitempty"`
 	DockerAccess string            `json:"docker_access"`
 	Containers   map[string]string `json:"containers,omitempty"`   // name -> state (e.g. "running","exited")
 	FailedUnits  []string          `json:"failed_units,omitempty"` // systemctl --failed unit names
 	SmartHealth  map[string]string `json:"smart_health,omitempty"` // device -> "PASSED"|"FAILED"|"UNKNOWN"
-	// DiskDetail is the live per-mount device/fstype/inode%/size detail (see
-	// the DiskDetail type doc comment above), keyed by mount. Additive to
-	// Disks, always collected in collectSlow (no config toggle -- matches how
-	// Disks itself has no toggle).
+	// DiskDetail is the live per-mount device/fstype/inode%/size detail (see the DiskDetail
+	// type doc comment above), keyed by mount.
 	DiskDetail map[string]DiskDetail `json:"disk_detail,omitempty"`
-	// SmartAttrs is the live per-device SMART attribute detail (temperature,
-	// wear%, reallocated sectors; see the SmartAttr type doc comment above),
-	// keyed by device path. Populated alongside SmartHealth for every
-	// discovered SMART device.
+	// SmartAttrs is the live per-device SMART attribute detail (temperature, wear%,
+	// reallocated sectors; see the SmartAttr type doc comment above), keyed by device path.
 	SmartAttrs map[string]SmartAttr `json:"smart_attrs,omitempty"`
-	// ContainerStats is the live per-container cpu%/mem/net snapshot from
-	// `docker stats --no-stream` (opt-in via collect.container_stats,
-	// slow-tier only). Keyed by container name. See docker.go/daemon.go
-	// (dockerAccess.stats, containerMetricSet) for the collector and the
-	// bounded (cpu+mem only) series this feeds into the SampleStore.
+	// ContainerStats is the live per-container cpu%/mem/net snapshot from `docker stats
+	// --no-stream` (opt-in via collect.container_stats, slow-tier only).
 	ContainerStats map[string]ContainerStat `json:"container_stats,omitempty"`
 	// NetRates is the live per-interface network throughput (bytes/sec),
 	// computed by NetRateCalc from consecutive /proc/net/dev samples
@@ -251,12 +213,8 @@ type Snapshot struct {
 	// prior sample to diff against yet) and whenever the collector is
 	// disabled. Keyed by interface name.
 	NetRates map[string]IfaceRate `json:"net_rates,omitempty"`
-	// Units is the live, full systemd service-unit inventory (opt-in via
-	// collect.services, slow-tier only, see daemon.go collectSlow and
-	// discover.go listUnits/parseUnits), for the Monitoring "services" tab.
-	// Deliberately a snapshot only -- NOT fed into the SampleStore as a
-	// series (unit-name cardinality) -- unlike FailedUnits above, which
-	// continues to drive service:* alerting unchanged.
+	// Units is the live, full systemd service-unit inventory (opt-in via collect.services,
+	// slow-tier only, see daemon.go collectSlow and discover.go listUnits/parseUnits).
 	Units []UnitInfo `json:"units,omitempty"`
 	// Processes is the live process-table overview (counts + top-N by
 	// CPU/mem), computed by collectProcesses (opt-in via collect.processes,
@@ -266,34 +224,19 @@ type Snapshot struct {
 	// short-lived pids per host) is exactly the trap this design avoids,
 	// mirroring Units above.
 	Processes ProcSnapshot `json:"processes,omitempty"`
-	// CollectorErrors is the set of slow-tier collectors that were ATTEMPTED
-	// this cycle but failed (key -> error text), e.g. "docker"/"disk"/
-	// "services"/"smart" (#110). A collector that was disabled or not attempted
-	// has no entry, so this distinguishes "command errored/timed out" from
-	// "ran and returned a legitimately empty result". Transient: used to carry
-	// last-known values forward and to update CollectorHealth; not persisted.
+	// CollectorErrors is the set of slow-tier collectors that were ATTEMPTED this cycle but
+	// failed (key -> error text), e.g. "docker"/"disk"/ "services"/"smart" (#110).
 	CollectorErrors map[string]string `json:"collector_errors,omitempty"`
-	// CollectorHealth is the rolling per-collector health (#110): consecutive
-	// failure count, last-success time, and last error. A collector failing for
-	// collectorAlertThreshold consecutive cycles drives a `collector:<name>`
-	// alert; it recovers on the first success. Surfaced in status.json/web so a
-	// degraded collector is observable, not just inferred from missing data.
+	// CollectorHealth is the rolling per-collector health (#110): consecutive failure count,
+	// last-success time, and last error.
 	CollectorHealth map[string]CollectorStat `json:"collector_health,omitempty"`
-	// collectorsAttempted is the set of slow-tier collectors collectSlow
-	// actually ran this cycle (#110), used by the slow-collector goroutine to
-	// distinguish "attempted and succeeded" from "not attempted" when updating
-	// CollectorHealth. Unexported: an internal collectSlow->goroutine handoff,
-	// never serialized or part of the public snapshot.
+	// collectorsAttempted is the set of slow-tier collectors collectSlow actually ran this
+	// cycle (#110).
 	collectorsAttempted map[string]bool
 }
 
-// renderStatus builds the /stats,/status overview: a header giving the overall
-// status, a compact resource table (CPU/Mem/Swap/Load/Temp with an
-// ok/warn/crit marker), one summary-count line per category
-// (disks/docker/systemd/smart/internet), and, ONLY when something is failing, a
-// bounded "only failures" detail section. It does not enumerate every healthy
-// mount/container/unit: on a docker host that blows past Telegram's 4096-char
-// limit. c may be nil; it degrades to config.Default().
+// renderStatus builds the /stats,/status overview: a header giving the overall status, a
+// compact resource table (CPU/Mem/Swap/Load/Temp with an ok/warn/crit marker).
 func renderStatus(s Snapshot, c *config.Config) string {
 	if c == nil {
 		c = config.Default()
@@ -324,11 +267,8 @@ func renderStatus(s Snapshot, c *config.Config) string {
 		addRow("Swap", fmt.Sprintf("%.0f%%", s.SwapPct), w, cr)
 	}
 	{
-		// Load has no configured threshold anywhere else in this codebase
-		// (unlike cpu/mem/swap/temp/disk, which all have a config.Thresholds
-		// field): heuristically compare load1 against this host's own CPU
-		// count (1x = warn, 2x = crit) -- a common rule of thumb for "how
-		// saturated is this box," display-only and independent of alerting.
+		// Load has no configured threshold anywhere else in this codebase (unlike
+		// cpu/mem/swap/temp/disk, which all have a config.Thresholds field).
 		nc := float64(runtime.NumCPU())
 		if nc < 1 {
 			nc = 1
@@ -445,12 +385,8 @@ func renderStatus(s Snapshot, c *config.Config) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// renderDisks builds the /disk command's compact table: a summary count
-// line, then a <pre> table of mount/use%/free sorted by use% descending,
-// capped to maxDiskTableRows with a "+N more" suffix. detail supplies the
-// free-byte column via DiskDetail.FreeBytes (snap.DiskDetail, keyed by
-// mount); a mount missing from detail (or a nil detail map) just shows "?"
-// rather than failing to render.
+// renderDisks builds the /disk command's compact table: a summary count line, then a <pre>
+// table of mount/use%/free sorted by use% descending.
 func renderDisks(disks map[string]float64, detail map[string]DiskDetail) string {
 	if len(disks) == 0 {
 		return "no filesystems discovered"

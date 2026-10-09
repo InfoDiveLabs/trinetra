@@ -22,9 +22,7 @@ type auditLog struct {
 
 func newAuditLog(path string) *auditLog { return &auditLog{path: path} }
 
-// Append records one audit entry. A nil *auditLog is a no-op (mirrors
-// AlertLog's nil-degrades-gracefully convention), so tests and callers that
-// have no audit log wired need not nil-check before calling.
+// Append records one audit entry.
 func (a *auditLog) Append(actor, action, target, detail string, now int64) error {
 	if a == nil {
 		return nil
@@ -44,18 +42,8 @@ func (a *auditLog) Append(actor, action, target, detail string, now int64) error
 	return appendSynced(a.path, append(b, '\n'))
 }
 
-// auditRecentChunkSize is how many bytes Recent reads back from wherever it
-// currently is in the file on each backward step, doubling on every
-// subsequent step (auditRecentChunkGrowth) -- a small first read satisfies
-// the overwhelmingly common "give me the last 50" call in one or two seeks
-// without ever reading the whole file, while a caller asking for a much
-// larger limit against a small file still terminates in a handful of
-// doublings rather than one read per line.
-//
-// A package var, not a const (mirrors sse.go's sseFallbackInterval for the
-// identical reason): a test can shrink it to force Recent's multi-iteration
-// chunk-growth path against a small fixture file, rather than needing a
-// multi-megabyte file to observe more than one backward step.
+// auditRecentChunkSize is how many bytes Recent reads back from wherever it currently is in
+// the file on each backward step, doubling on every subsequent step.
 var auditRecentChunkSize int64 = 64 * 1024
 
 // auditRecentChunkGrowth is Recent's backward-read doubling factor (see
@@ -104,9 +92,8 @@ func (a *auditLog) Recent(limit int) ([]core.AuditEntry, error) {
 		return nil, err
 	}
 
-	// parseLines turns buf's complete '\n'-terminated lines into entries,
-	// newest-last (append order == file order for this buf), skipping any
-	// blank or unparseable line like a forward scan would.
+	// parseLines turns buf's complete '\n'-terminated lines into entries, newest-last (append
+	// order == file order for this buf).
 	parseLines := func(buf []byte) []core.AuditEntry {
 		var out []core.AuditEntry
 		for _, line := range bytes.Split(buf, []byte("\n")) {
@@ -124,9 +111,8 @@ func (a *auditLog) Recent(limit int) ([]core.AuditEntry, error) {
 	}
 
 	if limit <= 0 {
-		// Unlimited: there's no target line count to stop early at, so this
-		// is the one case that still reads the whole file -- exactly the old
-		// implementation's behavior, just expressed via parseLines.
+		// Unlimited: there's no target line count to stop early at, so this is the one case that
+		// still reads the whole file -- exactly the old implementation's behavior.
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
@@ -152,10 +138,8 @@ func (a *auditLog) Recent(limit int) ([]core.AuditEntry, error) {
 		if _, err := f.ReadAt(buf, start); err != nil && err != io.EOF {
 			return nil, err
 		}
-		// Drop a partial line at the very front of this read (unless we've
-		// already reached byte 0, where there's nothing earlier to complete
-		// it from): the next, larger step re-reads this same tail from an
-		// earlier start and parses it whole.
+		// Drop a partial line at the very front of this read (unless we've already reached byte
+		// 0, where there's nothing earlier to complete it from): the next.
 		if start > 0 {
 			if i := bytes.IndexByte(buf, '\n'); i >= 0 {
 				buf = buf[i+1:]

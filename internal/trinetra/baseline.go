@@ -6,9 +6,6 @@ import (
 )
 
 // stat tracks an exponentially weighted mean and variance (West's method).
-// Alpha is derived per-metric from its sampling interval (see alphaFor) so
-// every metric's effective baseline window is ~7 days, regardless of
-// whether it's sampled at the fast tier (5s) or slow tier (60s).
 type stat struct {
 	Mean  float64 `json:"mean"`
 	Var   float64 `json:"var"`
@@ -19,15 +16,8 @@ type stat struct {
 const baselineWindowSeconds = 7 * 86400 // ~7-day baseline window
 const baselineReady = 30
 
-// alphaFor derives the EW smoothing factor for a metric sampled every
-// intervalSec seconds, targeting an effective window of ~7 days:
-// alpha = 2/(N+1), N = window / intervalSec. A shorter interval means more
-// samples fall inside the same 7-day window, so N is larger and alpha is
-// smaller -- that's what keeps the real-time (wall-clock) window equal
-// across the fast (5s) and slow (60s) tiers, which is exactly what a single
-// fixed alpha got wrong. A non-positive interval is treated as the
-// historical default of 60s (also used as the back-compat fallback for
-// stats persisted before Alpha existed).
+// alphaFor derives the EW smoothing factor for a metric sampled every intervalSec seconds,
+// targeting an effective window of ~7 days: alpha = 2/(N+1), N = window / intervalSec.
 func alphaFor(intervalSec int) float64 {
 	if intervalSec <= 0 {
 		intervalSec = 60

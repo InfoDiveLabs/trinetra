@@ -34,10 +34,8 @@ func readAudit(t *testing.T, path string) []core.AuditEntry {
 	return out
 }
 
-// TestUpdateAuditTrail: apply start, rollback start
-// and the guard's commit/rollback each leave an audit entry with the actor,
-// in the local update audit log (or the fleet master's audit log when this
-// host is a master).
+// TestUpdateAuditTrail: apply start, rollback start and the guard's commit/rollback each
+// leave an audit entry with the actor, in the local update audit log.
 func TestUpdateAuditTrail(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.5.0", map[string][]byte{"trinetra-linux-amd64": []byte("NEW-core"), "trinetra-web-linux-amd64": []byte("NEW-web")})
@@ -83,8 +81,7 @@ func TestUpdateAuditTrail(t *testing.T) {
 	}
 }
 
-// TestUpdateStatusShowsLastCheck: `update status` shows when the
-// channel was last checked.
+// TestUpdateStatusShowsLastCheck: `update status` shows when the channel was last checked.
 func TestUpdateStatusShowsLastCheck(t *testing.T) {
 	p := testUpdatePaths(t)
 	update.SaveState(p.dir(), update.State{LastCheck: 1700000000})
@@ -107,9 +104,8 @@ func TestUpdateStatusShowsLastCheck(t *testing.T) {
 	}
 }
 
-// TestTelegramVersionShowsAvailableUpdate:
-// Telegram /version reports the running version and, when a newer accepted
-// release is known, "update available: X".
+// TestTelegramVersionShowsAvailableUpdate: Telegram /version reports the running version
+// and, when a newer accepted release is known, "update available: X".
 func TestTelegramVersionShowsAvailableUpdate(t *testing.T) {
 	p := testUpdatePaths(t)
 	if got := handleCommand("/version", nil, Snapshot{}, nil); !strings.Contains(got, "trinetra ") || strings.Contains(got, "update available") {

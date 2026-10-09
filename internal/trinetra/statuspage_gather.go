@@ -16,8 +16,7 @@ func localSignals(active map[string]ActiveAlert) []statusSignal {
 	return out
 }
 
-// gatherStandalone builds inputs for a solo host. Units are always "known":
-// the snapshot only lists failed units.
+// gatherStandalone builds inputs for a solo host.
 func gatherStandalone(active map[string]ActiveAlert, snap Snapshot) statusInputs {
 	return statusInputs{
 		Signals: localSignals(active),
@@ -57,9 +56,8 @@ func maintenanceActiveForNode(s *silenceStore, now time.Time, id, name string, t
 	return false
 }
 
-// gatherMaster builds inputs on a fleet master: its own alerts (node "")
-// plus every non-revoked node's replica alerts, minus silenced/maintenance-
-// suppressed ones, plus liveness and maintenance flags.
+// gatherMaster builds inputs on a fleet master: its own alerts (node "") plus every
+// non-revoked node's replica alerts, minus silenced/maintenance- suppressed ones.
 func gatherMaster(m *masterState, selfActive map[string]ActiveAlert, snap Snapshot, now time.Time) statusInputs {
 	in := gatherStandalone(selfActive, snap)
 	selfKnown := in.Known
@@ -111,10 +109,8 @@ func gatherMaster(m *masterState, selfActive map[string]ActiveAlert, snap Snapsh
 	return in
 }
 
-// nodeDownForStatus reports whether the node counts as down for the public
-// page: the tracker says down, it was alerted individually (a fleet-wide
-// connectivity drop raises one fleet:connectivity alert instead, and does not
-// mark nodes down), and its node-down alert is not silenced.
+// nodeDownForStatus reports whether the node counts as down for the public page: the
+// tracker says down, it was alerted individually.
 func nodeDownForStatus(m *masterState, id string, now time.Time) bool {
 	if m.tracker.State(id) != fleet.StateDown {
 		return false

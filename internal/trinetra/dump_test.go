@@ -25,10 +25,8 @@ func TestDumpCLISmokeEmptyStateDir(t *testing.T) {
 	}
 }
 
-// TestDumpCLIRoutesThroughFileAPIPreservesFormat pins that cmdDump's CSV and
-// JSON output stays byte-identical when routed through newFileAPI(...).Series:
-// in particular the JSON keys stay capitalized ("TS"/"Min"/"Avg"/"Max", Point's
-// field names), not the lowercase tags core.SeriesPoint would marshal to.
+// TestDumpCLIRoutesThroughFileAPIPreservesFormat pins that cmdDump's CSV and JSON output
+// stays byte-identical when routed through newFileAPI(...).Series.
 func TestDumpCLIRoutesThroughFileAPIPreservesFormat(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -82,13 +80,8 @@ func TestDumpCLIRequiresMetric(t *testing.T) {
 	}
 }
 
-// TestDumpCLIStoreOpenFailurePreservesErrorText pins, end to end, that
-// cmdDump's stderr on a store-open failure is "open sample store: <err>"
-// (Series' prefix is covered by TestFileAPISeriesStoreOpenFailureWrapsErrorText).
-//
-// The config is written directly, bypassing config.Set's
-// validateStorageBackend, because config.Load does no such validation; that is
-// how an invalid storage.backend reaches openConfiguredStore via loadCfg().
+// TestDumpCLIStoreOpenFailurePreservesErrorText pins, end to end, that cmdDump's stderr on
+// a store-open failure is "open sample store: <err>".
 func TestDumpCLIStoreOpenFailurePreservesErrorText(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")

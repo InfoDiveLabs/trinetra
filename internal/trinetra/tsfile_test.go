@@ -259,9 +259,8 @@ func TestTSFileEventsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTSFilePurgeEvents pins the #116 purge tool: it removes only the events
-// the predicate rejects (short power_downs), leaving longer power_downs and
-// other types intact, and reports the correct removed count.
+// TestTSFilePurgeEvents pins the #116 purge tool: it removes only the events the predicate
+// rejects (short power_downs), leaving longer power_downs and other types intact.
 func TestTSFilePurgeEvents(t *testing.T) {
 	dir := t.TempDir()
 	s := openTSFile(t, dir, StoreOptions{})
@@ -367,12 +366,8 @@ func TestTSFilePrune(t *testing.T) {
 	}
 }
 
-// TestTSFilePruneReleasesLockBetweenFiles pins the #113 fix: Prune must take
-// the store write lock PER FILE, not once for the whole pass, so that Query
-// reads can interleave between files instead of blocking for the entire
-// (potentially multi-second) maintenance pass. It drives the between-files hook
-// and asserts the store lock is free at that point; under the old whole-pass
-// lock it would have been held and the TryLock would fail.
+// TestTSFilePruneReleasesLockBetweenFiles pins the #113 fix: Prune must take the store
+// write lock PER FILE, not once for the whole pass.
 func TestTSFilePruneReleasesLockBetweenFiles(t *testing.T) {
 	dir := t.TempDir()
 	// Concrete *tsFileStore (not the SampleStore interface) so the test can
@@ -397,8 +392,6 @@ func TestTSFilePruneReleasesLockBetweenFiles(t *testing.T) {
 	pruneBetweenFilesHook = func() {
 		calls++
 		// This runs BETWEEN per-file prunes; the store lock must be free here.
-		// (Single-threaded test, so a successful TryLock means Prune released
-		// the lock rather than holding it across the whole pass.)
 		if s.mu.TryLock() {
 			acquired++
 			s.mu.Unlock()
@@ -417,11 +410,8 @@ func TestTSFilePruneReleasesLockBetweenFiles(t *testing.T) {
 	}
 }
 
-// A series whose every sample has aged out past retention must be DELETED by
-// Prune, not rewritten as an empty file -- otherwise dead targets (removed
-// containers/mounts/devices) accumulate .tsd files forever, which is what made
-// Prune fsync thousands of files and starved the daemon. This is the
-// cardinality-bounding guarantee.
+// A series whose every sample has aged out past retention must be DELETED by Prune, not
+// rewritten as an empty file -- otherwise dead targets.
 func TestTSFilePruneReapsDeadSeries(t *testing.T) {
 	dir := t.TempDir()
 	s := openTSFile(t, dir, StoreOptions{})
@@ -707,9 +697,8 @@ func TestTSFilePerResolutionRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1m: one bucket older than RollupRetention (24h), one within it but
-	// outside RawRetention (2h) -- both produced via Downsample so the
-	// on-disk encoding matches what Downsample itself writes.
+	// 1m: one bucket older than RollupRetention (24h), one within it but outside RawRetention
+	// (2h).
 	oldBucket := ((now - 30*hour) / 60) * 60
 	recentBucket := ((now - 10*hour) / 60) * 60
 	if err := s.Append(oldBucket, MetricSet{"mem": 5}); err != nil {
@@ -805,10 +794,8 @@ func TestTSFileStoreStats(t *testing.T) {
 	}
 }
 
-// TestTSFileStoreStatsEmptyDir asserts Stats on a freshly-opened store (no
-// Append yet) reports zero series and zero bytes rather than erroring -- the
-// ts/raw and ts/1m directories exist (created by newTSFileStore) but are
-// empty, and events.tsd doesn't exist yet.
+// TestTSFileStoreStatsEmptyDir asserts Stats on a freshly-opened store (no Append yet)
+// reports zero series and zero bytes rather than erroring.
 func TestTSFileStoreStatsEmptyDir(t *testing.T) {
 	s := openTSFile(t, t.TempDir(), StoreOptions{})
 	defer s.Close()

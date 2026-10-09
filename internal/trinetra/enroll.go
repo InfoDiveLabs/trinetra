@@ -17,31 +17,21 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// enrollState holds the current Telegram enrollment PIN and the brute-force
-// bookkeeping for the unclaimed-bot "/start <pin>" path (#93). The daemon's
-// poll loop and the control socket's EnrollmentPIN both read the pin, so
-// `set-token` (or ctl) can display the exact pin the daemon will accept in
-// /start <pin>. The zero value is ready to use.
+// enrollState holds the current Telegram enrollment PIN and the brute-force bookkeeping for
+// the unclaimed-bot "/start <pin>" path (#93).
 type enrollState struct {
 	mu  sync.Mutex
 	pin string
-	// failures counts consecutive wrong "/start <pin>" guesses since the last
-	// success or rotation; on reaching cfg.EnrollMaxAttempts the pin cools
-	// down (cooldownUntil) and rotates, then failures resets.
+	// failures counts consecutive wrong "/start <pin>" guesses since the last success or
+	// rotation; on reaching cfg.EnrollMaxAttempts the pin cools down.
 	failures int
-	// cooldownUntil is the instant before which every "/start" attempt is
-	// ignored (the rate-limit half of the brute-force bound). Zero means no
-	// cooldown is active.
+	// cooldownUntil is the instant before which every "/start" attempt is ignored (the
+	// rate-limit half of the brute-force bound).
 	cooldownUntil time.Time
 }
 
-// PIN returns the active enrollment pin for cfg: if telegram is configured
-// (token set) AND not yet enrolled (chat id empty), it returns the pin,
-// generating and caching it on first call so repeated calls against the
-// same not-yet-enrolled config keep returning the identical value. Once
-// enrolled (chat id set) it returns "" and enrolled=true; if telegram isn't
-// configured at all it returns "" and enrolled=false -- there is nothing to
-// enroll into yet. A nil cfg is treated the same as "not configured".
+// PIN returns the active enrollment pin for cfg: if telegram is configured (token set) AND
+// not yet enrolled (chat id empty), it returns the pin.
 func (e *enrollState) PIN(cfg *config.Config) (pin string, enrolled bool) {
 	if cfg == nil {
 		return "", false
@@ -61,11 +51,7 @@ func (e *enrollState) PIN(cfg *config.Config) (pin string, enrolled bool) {
 	return e.pin, false
 }
 
-// Reset clears the cached pin and the brute-force counters. Call it once
-// enrollment completes (the chat id becomes set), so a later re-enrollment
-// (e.g. after `telegram set-token` swaps to a new bot) starts from a fresh pin
-// and a clean attempt count rather than reusing state that was already
-// consumed.
+// Reset clears the cached pin and the brute-force counters.
 func (e *enrollState) Reset() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -74,18 +60,8 @@ func (e *enrollState) Reset() {
 	e.cooldownUntil = time.Time{}
 }
 
-// Attempt evaluates one inbound message text against the current enrollment
-// PIN while the bot is unclaimed, updating brute-force state, and reports
-// whether text is a correct "/start <pin>" so the caller should enroll the
-// sender (#93). now is injected so the cooldown clock is testable.
-//
-// Only a well-formed "/start <arg>" counts as an enrollment attempt: unrelated
-// chatter never advances the failure counter or trips the cooldown. After
-// cfg.EnrollMaxAttempts consecutive wrong guesses the pin enters a cooldown
-// (cfg.EnrollCooldownSec, during which every "/start" is ignored) and is
-// ROTATED to a fresh value, so an attacker's partial brute force is voided and
-// can never converge on the 10^6 space; the operator re-reads the rotated pin
-// from the daemon log. A correct guess resets the failure counter.
+// Attempt evaluates one inbound message text against the current enrollment PIN while the
+// bot is unclaimed, updating brute-force state.
 func (e *enrollState) Attempt(cfg *config.Config, text string, now time.Time) bool {
 	// PIN applies the "configured AND not yet enrolled" gate and generates and
 	// caches the pin on first call; an empty pin (not configured, already
@@ -94,9 +70,8 @@ func (e *enrollState) Attempt(cfg *config.Config, text string, now time.Time) bo
 		return false
 	}
 
-	// A message that is not a "/start <arg>" command is not an enrollment
-	// attempt at all: ignore it without counting it, so ordinary chatter or
-	// probing on other commands can never rotate the pin or start a cooldown.
+	// A message that is not a "/start <arg>" command is not an enrollment attempt at all:
+	// ignore it without counting it.
 	f := strings.Fields(text)
 	if len(f) != 2 || f[0] != "/start" {
 		return false

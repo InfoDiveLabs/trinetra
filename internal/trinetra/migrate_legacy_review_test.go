@@ -119,9 +119,8 @@ func TestLegacyMigrationRefusesStrayDaemonBeforeChangingAnything(t *testing.T) {
 	}
 }
 
-// A daemon still alive after `systemctl stop` (the unit was running AND a
-// second daemon was started by hand) is refused after the stop; the message
-// says the service was stopped and no data moved.
+// A daemon still alive after `systemctl stop` (the unit was running AND a second daemon was
+// started by hand) is refused after the stop.
 func TestLegacyMigrationRefusesDaemonStillAliveAfterStop(t *testing.T) {
 	p := testMigrationPaths(t)
 	makeLegacyInstall(t, p)
