@@ -8,6 +8,45 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-13
+
+The stable cut of the `0.6.0-beta.1`…`beta.3` line. Everything below is the
+beta content promoted unchanged; see the beta entries for full detail.
+Highlights:
+
+- **Public status page.** Publish the containers, services and servers your
+  customers depend on as named services, with a plain-language banner, 90-day
+  uptime bars, incidents with team-posted updates, and Atom and JSON feeds.
+  Add services straight from Monitoring. Internal names never appear publicly.
+  (#157)
+- **Guided first run, Telegram optional.** `sudo trinetra cli` on a new server
+  walks through the web UI, the first admin's enroll link and where alerts go.
+  Every step can be skipped, and Telegram is one alert channel among the
+  others, not a requirement.
+- **Users from the terminal.** `trinetra users list`, `invite`, `set-role` and
+  `remove`, also while the daemon is stopped. A new `responder` role sits
+  between viewer and admin.
+- **Reworked web UI.** Grouped sidebar, tabbed Settings, Notifications and
+  Updates, every page usable on a phone, and channel secrets no longer shown
+  (#139).
+- **Passkeys that show up everywhere.** Discoverable credentials, sign-in by
+  name for older keys, and no more false clone rejections (#170).
+- **Sturdier self-update.** Works on `noexec` and SELinux hosts (#141), keeps
+  retrying a failed restore (#136), fails closed on an unreadable version floor
+  (#138), reports every outcome (#142), no longer offers the installed release
+  (#167), and the watchdog fires after reinstall (#140).
+- **Reliability.** `trinetra cli` right after install waits for the daemon
+  (#162); the web UI recovers after sitting idle and keeps its real config
+  across a daemon restart; user, invite and session stores are locked across
+  processes; downtime history is paged server-side (#117).
+
+### Upgrading from 0.5.0
+
+- The first admin sign-up now needs an invite link
+  (`sudo trinetra users invite --role admin`) unless the web UI is local-only.
+  Existing accounts are unaffected.
+- "View public page" now opens `/status`; old `/public` links redirect there.
+
 ## [0.6.0-beta.3] - 2026-10-09
 
 Third beta of 0.6.0: a guided first run that doesn't need Telegram, user
@@ -32,8 +71,8 @@ daemon restart.
 - **First admin sign-up.** It needs an invite link
   (`sudo trinetra users invite --role admin`) unless the web UI is local-only:
   listening on loopback, with a loopback origin if one is set.
-- `trinetra install` ends with next steps instead of a Telegram prompt. A new
-  install has the scheduled report off.
+- `trinetra install` ends with next steps instead of a Telegram prompt, and
+  `trinetra schedule off` turns the scheduled reports off.
 - Enrolling a Telegram chat adds the telegram alert channel right away.
 - "View public page" opens the public status page at `/status`, signed in or
   not; old `/public` links redirect there.
@@ -626,7 +665,8 @@ and management tooling move out of process.
 - Initial release: the stdlib-only `serverwatch` daemon with core metric
   collection, threshold and anomaly detection, and Telegram alerting.
 
-[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.6.0-beta.3...HEAD
+[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0
 [0.6.0-beta.3]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.3
 [0.6.0-beta.2]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.2
 [0.6.0-beta.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.1
