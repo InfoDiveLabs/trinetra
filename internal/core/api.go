@@ -35,8 +35,10 @@ type API interface {
 	// UpdateStatus reports this host's self-update posture from persisted state.
 	UpdateStatus() (UpdateStatusView, error)
 
-	// writes UpdateCheck fetches and verifies the channel pointer and the release it names
-	// (network I/O, hence ctx), records the outcome.
+	// writes
+
+	// UpdateCheck fetches and verifies the channel pointer and the release it names
+	// (network I/O, hence ctx), and records the outcome.
 	UpdateCheck(ctx context.Context) (UpdateStatusView, error)
 	// UpdateApply installs the given version (or the channel's latest when version is ""):
 	// fetch, verify, policy-check, stage, smoke-test.
