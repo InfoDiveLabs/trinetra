@@ -185,8 +185,8 @@ is the scriptable equivalent for automation.
 ### Telegram
 
 The original always-on notification channel (see [Alerting and notification
-channels](06-alerting-and-channels.md)). A token is the one required setting for
-a fresh install.
+channels](06-alerting-and-channels.md)). Optional: alerts can go to any channel,
+and Telegram is only needed if you want it.
 
 | Key | Default | Validation |
 |-----|---------|------------|
@@ -204,7 +204,7 @@ to a `journalctl` pointer if the daemon cannot be reached yet). In
 (token entry, then the same `/start <pin>` shown and polled for you); once
 onboarding is complete, the token can be changed later from the **Channels**
 screen. See
-[Installation and first run](03-installation.md#5-connect-telegram-and-enroll-as-owner)
+[Installation and first run](03-installation.md#telegram-optional)
 for the full enrollment flow and diagram.
 
 ### Healthchecks
@@ -326,6 +326,18 @@ The `public.panels` list is the server-side-enforced source of truth for what
 the anonymous page can render. A metric absent from this list can never appear
 on `/public` even though it exists elsewhere, so curating this list is the whole
 of the public page's exposure surface.
+
+### Status page
+
+Settings for the public status page; see [Public status
+page](08-web-ui.md#public-status-page) for how services and incidents work.
+Services themselves are managed with `trinetra status-page`, not `config set`.
+
+| Key | Default | Validation |
+|-----|---------|------------|
+| `status.title` | `Status` | At most 60 characters. Heading of the public page. Applied live (public data is cached for a few seconds). |
+| `status.auto_resolve_after` | `24h` | Duration string. `0` disables auto-resolve; any other value must be at least `1h`. |
+| `status.echo_channels` | empty | Comma-separated channel names. Each new incident update is sent to these. |
 
 ---
 

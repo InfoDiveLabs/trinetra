@@ -60,16 +60,13 @@ func decodeStrict(b []byte, v any) error {
 
 func validChannel(c string) bool { return c == "stable" || c == "beta" }
 
-// validAssetName reports whether name is safe to use as a bare release asset
-// or file name: non-empty, not "." or "..", and free of path separators. It
-// is the single check shared by manifest file-name validation and by
-// DirSource, which joins names directly onto a directory path.
+// validAssetName reports whether name is safe to use as a bare release asset or file name:
+// non-empty, not "." or "..", and free of path separators.
 func validAssetName(name string) bool {
 	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`)
 }
 
-// DecodeManifest parses and validates a manifest. It does NOT check
-// signatures; VerifyRelease does both.
+// DecodeManifest parses and validates a manifest.
 func DecodeManifest(b []byte) (Manifest, error) {
 	var m Manifest
 	if err := decodeStrict(b, &m); err != nil {

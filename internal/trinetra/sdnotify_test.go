@@ -8,9 +8,8 @@ import (
 	"time"
 )
 
-// TestSdNotifyUnsetIsNoop asserts sdNotify is a silent no-op when
-// $NOTIFY_SOCKET is unset (i.e. not running under systemd), so callers may
-// invoke it unconditionally.
+// TestSdNotifyUnsetIsNoop asserts sdNotify is a silent no-op when $NOTIFY_SOCKET is unset
+// (i.e. not running under systemd), so callers may invoke it unconditionally.
 func TestSdNotifyUnsetIsNoop(t *testing.T) {
 	t.Setenv("NOTIFY_SOCKET", "")
 	if err := sdNotify("WATCHDOG=1"); err != nil {

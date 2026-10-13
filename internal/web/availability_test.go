@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestComputeAvailabilityNoEventsIsFullyUp pins Part 2's baseline case: an
-// empty (or nil) downtime event store must report 100% up, 0 incidents, and
-// every block up -- the strip's "nothing has ever gone down" state.
+// TestComputeAvailabilityNoEventsIsFullyUp pins Part 2's baseline case: an empty (or nil)
+// downtime event store must report 100% up, 0 incidents, and every block up.
 func TestComputeAvailabilityNoEventsIsFullyUp(t *testing.T) {
 	now := int64(1_700_100_000)
 
@@ -33,12 +32,8 @@ func TestComputeAvailabilityNoEventsIsFullyUp(t *testing.T) {
 	}
 }
 
-// TestComputeAvailabilityMarksDownBlocksAndSummarizes pins the core
-// obligation: given fake downtime events inside the last 24h, the resulting
-// strip data classifies exactly the overlapping 15-min blocks as down,
-// counts one incident per distinct event, and computes an exact uptime%/
-// total-downtime figure from the events' real overlap durations (not
-// block-quantized).
+// TestComputeAvailabilityMarksDownBlocksAndSummarizes pins the core obligation: given fake
+// downtime events inside the last 24h.
 func TestComputeAvailabilityMarksDownBlocksAndSummarizes(t *testing.T) {
 	const day = 86400
 	now := int64(1_700_100_000)
@@ -79,10 +74,8 @@ func TestComputeAvailabilityMarksDownBlocksAndSummarizes(t *testing.T) {
 	}
 }
 
-// TestComputeAvailabilityClipsEventsToWindow confirms an event that started
-// before the 24h window (e.g. an outage that's still ongoing, or one that
-// began earlier and only partly falls in-window) only counts its in-window
-// portion toward downtime/uptime%, not its full real-world duration.
+// TestComputeAvailabilityClipsEventsToWindow confirms an event that started before the 24h
+// window.
 func TestComputeAvailabilityClipsEventsToWindow(t *testing.T) {
 	const day = 86400
 	now := int64(1_700_100_000)

@@ -12,19 +12,25 @@ import (
 	"strings"
 )
 
-// Pending describes an update install that is in progress or awaiting
-// confirmation. Rollback marks a `trinetra update rollback` in progress; it
-// never raises the floor and never marks a version bad.
+// Pending describes an update install that is in progress or awaiting confirmation.
 type Pending struct {
 	Version  string   `json:"version"`
 	From     string   `json:"from"`
 	Deadline int64    `json:"deadline"`
 	Files    []string `json:"files"`
 	Rollback bool     `json:"rollback,omitempty"`
-	// Phase is "swapping" from just before the first binary is replaced
-	// until every binary and plugins.json are in place, then "swapped"
-	// (empty in state written before phases existed: treat as swapped).
+	// Phase is "swapping" from just before the first binary is replaced until every binary and
+	// plugins.json are in place, then "swapped".
 	Phase string `json:"phase,omitempty"`
+	// RestoreFailed is set by the guard's rollbackPending when a Pending has failed its health
+	// gate AND restoring the previous build itself then fails: the failure detail.
+	RestoreFailed string `json:"restore_failed,omitempty"`
+	// RestoreFailedReason is the health-gate failure that started this RestoreFailed episode
+	// (e.g. "trinetra.service is not active").
+	RestoreFailedReason string `json:"restore_failed_reason,omitempty"`
+	// RestoreFailedNotified dedups the critical alert for RestoreFailed: the daemon's update
+	// loop (notifyRestoreFailed) sets it once the alert has been delivered.
+	RestoreFailedNotified bool `json:"restore_failed_notified,omitempty"`
 }
 
 // Result records the outcome of the most recent update attempt.
@@ -37,9 +43,8 @@ type Result struct {
 	Notified bool   `json:"notified"`
 }
 
-// State is Trinetra's persisted self-update bookkeeping: the version floor
-// (which never lowers), any pending update, versions known bad, and
-// notification state.
+// State is Trinetra's persisted self-update bookkeeping: the version floor (which never
+// lowers), any pending update, versions known bad, and notification state.
 type State struct {
 	Floor             string   `json:"floor,omitempty"`
 	Pending           *Pending `json:"pending,omitempty"`
@@ -47,27 +52,34 @@ type State struct {
 	LastCheck         int64    `json:"last_check,omitempty"`
 	LastPointerIssued string   `json:"last_pointer_issued,omitempty"`
 	Available         string   `json:"available,omitempty"`
-	// StaleNotified dedups the freeze ("no fresh signed pointer") alert:
-	// set when it fires, cleared once a fresh pointer verifies, so one
-	// episode alerts once even across daemon restarts.
+	// StaleNotified dedups the freeze ("no fresh signed pointer") alert: set when it fires,
+	// cleared once a fresh pointer verifies.
 	StaleNotified bool `json:"stale_notified,omitempty"`
-	// LastCheckError is the reason the most recent channel check failed to
-	// verify a pointer (e.g. a 404 with no update.github_token configured),
-	// cleared once a check verifies one. It is what `update status` shows
-	// and what the daemon's periodic loop compares against to log a
-	// changed cause only once (R25) rather than every tick, which matters
-	// most before LastPointerIssued is ever set: see freezeVerdict.
+	// LastCheckError is the reason the most recent channel check failed to verify a pointer
+	// (e.g. a 404 with no update.github_token configured), cleared once a check verifies one.
 	LastCheckError    string  `json:"last_check_error,omitempty"`
 	AvailableNotified string  `json:"available_notified,omitempty"`
 	Last              *Result `json:"last,omitempty"`
+	// Unnotified holds outcomes not yet delivered, oldest first (#142).
+	Unnotified []Result `json:"unnotified,omitempty"`
+}
+
+// maxUnnotified caps Unnotified; the oldest outcomes are dropped first.
+const maxUnnotified = 8
+
+// RecordResult sets Last and queues r for notification.
+func (s *State) RecordResult(r Result) {
+	last := r
+	s.Last = &last
+	s.Unnotified = append(s.Unnotified, r)
+	if n := len(s.Unnotified); n > maxUnnotified {
+		s.Unnotified = append([]Result(nil), s.Unnotified[n-maxUnnotified:]...)
+	}
 }
 
 const stateFile = "state.json"
 
-// LoadState reads dir/state.json. A missing file is an empty state; any
-// other read or parse error is returned, never mapped to empty, because an
-// unreadable floor must not look like "no floor" (that would re-open
-// downgrades).
+// LoadState reads dir/state.json.
 func LoadState(dir string) (State, error) {
 	b, err := os.ReadFile(filepath.Join(dir, stateFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -83,8 +95,7 @@ func LoadState(dir string) (State, error) {
 	return s, nil
 }
 
-// SaveState writes dir/state.json atomically: unique temp file, fsync,
-// rename. The directory is created (and forced to) 0700, the file 0600.
+// SaveState writes dir/state.json atomically: unique temp file, fsync, rename.
 func SaveState(dir string, s State) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -123,31 +134,27 @@ func SaveState(dir string, s State) error {
 		os.Remove(tmp)
 		return err
 	}
-	// The directory fsync is what makes the rename durable; a failure here
-	// is returned so a caller never believes Pending/floor were persisted
-	// when they may not survive a power loss.
+	// The directory fsync makes the rename durable; return its failure so a caller
+	// never believes Pending/floor were persisted when a power loss could lose them.
 	return SyncDir(dir)
 }
 
-// FloorVersion returns the effective floor version -- the persisted Floor,
-// or fallback (typically the running version) if that's higher, or fallback
-// if Floor is unset or unparsable -- and whether a floor actually applies.
-//
-// No floor applies (hasFloor false) only when both are true: nothing is
-// persisted in Floor, and fallback is the zero Version (no known running
-// version -- a fresh host, or a serverwatch migration/old binary that
-// couldn't report one). A persisted Floor is always enforced once set, even
-// if that happens to be "0.0.0" (a real committed release): only the
-// "nothing recorded at all" case means no lower bound. See Policy.HasFloor.
-func (s State) FloorVersion(fallback Version) (v Version, hasFloor bool) {
+// FloorVersion returns the effective floor version -- the persisted Floor, or fallback
+// (typically the running version) if that's higher, or fallback if Floor is unset.
+func (s State) FloorVersion(fallback Version) (v Version, hasFloor bool, err error) {
 	v, hasFloor = fallback, fallback != (Version{})
-	if pv, err := ParseVersion(s.Floor); err == nil {
-		hasFloor = true
-		if CompareVersions(pv, v) > 0 {
-			v = pv
-		}
+	if s.Floor == "" {
+		return v, hasFloor, nil
 	}
-	return v, hasFloor
+	pv, perr := ParseVersion(s.Floor)
+	if perr != nil {
+		return Version{}, false, fmt.Errorf("update: state.json floor %q is not a valid version", s.Floor)
+	}
+	hasFloor = true
+	if CompareVersions(pv, v) > 0 {
+		v = pv
+	}
+	return v, hasFloor, nil
 }
 
 // RaiseFloor sets the floor to v, unless the current floor is already >= v.
@@ -175,4 +182,13 @@ func (s *State) MarkBad(v string) {
 	if !s.IsBad(v) {
 		s.Bad = append(s.Bad, strings.TrimPrefix(v, "v"))
 	}
+}
+
+// AvailableOver returns Available only while it is newer than running.
+func (s State) AvailableOver(running Version) string {
+	v, err := ParseVersion(s.Available)
+	if err != nil || CompareVersions(v, running) <= 0 {
+		return ""
+	}
+	return s.Available
 }

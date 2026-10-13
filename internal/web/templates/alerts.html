@@ -12,7 +12,7 @@
 
   <div class="section-label"><span class="eyebrow">Firing</span></div>
   <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
-    <thead><tr><th>Severity</th><th>Alert</th><th>Since</th>{{if eq .Role "admin"}}<th></th>{{end}}</tr></thead>
+    <thead><tr><th>Severity</th><th>Alert</th><th>Since</th>{{if .CanRespond}}<th></th>{{end}}</tr></thead>
     <tbody>
       {{range $a := .ActiveAlerts}}
       <tr>
@@ -21,7 +21,7 @@
         </td>
         <td class="card-title"><b>{{$a.Key}}</b><div class="note">{{$a.Reason}}</div></td>
         <td class="mono note" data-label="Since">{{$a.Since}}</td>
-        {{if eq $.Role "admin"}}
+        {{if $.CanRespond}}
         <td class="card-actions" style="text-align:right">
           {{if and $.NodeRemote (not $.NodeConnected)}}
           <button class="btn ghost" type="button" disabled title="{{$.RemoteReason}}">{{$.RemoteReason}}</button>

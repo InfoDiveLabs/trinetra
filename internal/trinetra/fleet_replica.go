@@ -1,7 +1,4 @@
-// Package trinetra: fleet_replica.go is the master's side of fleet
-// ingest: a fleet.Sink that writes each child's records into its own tsfile
-// store under <stateDir>/fleet/nodes/<id>/, plus a core.API view over that
-// replica so every existing per-server read works for a remote node.
+// Package trinetra: fleet_replica.go is the master's side of fleet ingest.
 package trinetra
 
 import (
@@ -48,15 +45,11 @@ type ingestState struct {
 	DroppedOutOfOrder  int64 `json:"dropped_out_of_order,omitempty"`
 	DroppedDuplicate   int64 `json:"dropped_duplicate,omitempty"`
 	DroppedCardinality int64 `json:"dropped_cardinality,omitempty"`
-	// WarnedOutOfOrder / WarnedCardinality are the drop counters as of the
-	// master's last drop check (see masterLoop.checkDrops), persisted so
-	// growth that a restart interrupts is still warned about. Not
-	// omitempty: an absent key means an ingest.state from before these
-	// existed (see seedLocked).
+	// WarnedOutOfOrder / WarnedCardinality are the drop counters as of the master's last drop
+	// check (see masterLoop.checkDrops).
 	WarnedOutOfOrder  int64 `json:"warned_out_of_order"`
 	WarnedCardinality int64 `json:"warned_cardinality"`
-	// SkewSec is the filtered server_time - sent_at (see RecordSkew). It is
-	// persisted with the next applied batch, not on every sample.
+	// SkewSec is the filtered server_time - sent_at (see RecordSkew).
 	SkewSec float64 `json:"skew_sec,omitempty"`
 }
 
@@ -64,9 +57,7 @@ type ingestState struct {
 // above 30 s; the tracker marks it lagging at the same line).
 const skewWarnSec = 30
 
-// skewWindow is how many recent skew samples RecordSkew filters over, and
-// skewConfirm how many consecutive over-the-line estimates it takes before
-// a node's skew is reported as over skewWarnSec.
+// skewWindow is how many recent skew samples RecordSkew filters over.
 const (
 	skewWindow  = 10
 	skewConfirm = 3
@@ -79,26 +70,16 @@ type replicaNode struct {
 	st     ingestState
 	last   map[string]int64
 	series int
-	// lastAlertTS/alertLines are the KindAlert ordering/dedupe guard, scoped
-	// PER ALERT KEY (map keyed by AlertEvent.Key) -- NOT a single value
-	// shared across every alert on the node. A single shared guard let one
-	// alert key's delayed record (a child's fallback-delivery AlertEvent
-	// carries its OWN, LATER decision time in Time -- see fleet_lease.go's
-	// deliverFallback -- not the original alert's FiredAt) silently advance
-	// the node's guard past a genuinely newer, unrelated alert on a
-	// DIFFERENT key, which the ordering check ("ev.Time < n.lastAlertTS")
-	// then silently dropped -- never calling onAlert, so the master's
-	// alerting engine never even saw it. See
-	// TestReplicaApplyCrossAlertKeyOrderingDropRepro.
+	// lastAlertTS/alertLines are the KindAlert ordering/dedupe guard, scoped PER ALERT KEY
+	// (map keyed by AlertEvent.Key).
 	lastAlertTS map[string]int64
 	alertLines  map[string]map[string]bool
 	// lastEventStart guards downtime events (appended in Start order); it is
 	// seeded from the store on open so the guard survives a master restart.
 	lastEventStart int64
 	live           atomic.Pointer[fleet.LiveUpdate]
-	// alertsWritten is the alert state last written to alerts.json
-	// successfully (guarded by mu); Live compares against it, not against
-	// the last update received, so a failed write is retried.
+	// alertsWritten is the alert state last written to alerts.json successfully (guarded by
+	// mu); Live compares against it, not against the last update received.
 	alertsWritten []byte
 	skewInit      bool    // st.SkewSec holds at least one sample
 	skewWarned    bool    // the reported skew is currently over skewWarnSec
@@ -106,39 +87,22 @@ type replicaNode struct {
 	skewOverRun   int     // consecutive filtered estimates over skewWarnSec
 }
 
-// replicaSink implements fleet.Sink over per-node tsfile stores. tsfile opens
-// and closes files per operation, so keeping every node's handle in memory
-// holds no file descriptors.
+// replicaSink implements fleet.Sink over per-node tsfile stores. tsfile opens and closes
+// files per operation, so keeping every node's handle in memory holds no file descriptors.
 type replicaSink struct {
 	root  string
 	opts  StoreOptions
 	mu    sync.Mutex
 	nodes map[string]*replicaNode
-	// onAlert, if set, is called once for every genuinely new (not a
-	// byte-identical re-send) KindAlert record applied for a node -- the
-	// master alerting engine's entry point for child-shipped alerts (see
-	// fleet_engine.go's HandleChildAlert). nil is a valid no-op (a child or
-	// solo daemon never constructs a replicaSink at all; kept nil-safe here
-	// too so a replicaSink built without one, e.g. in older tests, still
-	// works).
+	// onAlert, if set, is called once for every genuinely new (not a byte-identical re-send)
+	// KindAlert record applied for a node.
 	onAlert func(nodeID string, ev AlertEvent)
-	// onAckSync, if set, is called whenever a node's alerts.json actually
-	// changes (see Live below): the master alerting engine's entry point
-	// for a child-side ack/unack reaching the master (fleet_engine.go's
-	// HandleChildAckSync). Unlike onAlert, it is not a constructor
-	// parameter -- it is set directly on the field by startMaster, since it
-	// is task-3-only wiring and every existing newReplicaSink call site
-	// (tests included) would otherwise need updating a second time for a
-	// hook most of them never exercise.
+	// onAckSync, if set, is called whenever a node's alerts.json actually changes (see Live):
+	// the master alerting engine's entry point for a child-side ack/unack.
 	onAckSync func(nodeID string, as json.RawMessage)
 
-	// hub/rpc/incidents (task 9) wire remote ack/unack and remote container
-	// logs into NodeAPI's replicaAPI. Like onAckSync, these are set
-	// directly on the field by startMaster rather than threaded through
-	// newReplicaSink, for the same reason: most existing (and future)
-	// callers/tests never exercise them, and a nil value degrades every
-	// method that needs it to errRemoteNode/errNodeNotConnected rather than
-	// panicking.
+	// hub/rpc/incidents wire remote ack/unack and remote container logs into NodeAPI's
+	// replicaAPI.
 	hub       *fleet.Hub
 	rpc       *rpcRegistry
 	incidents *incidentStore
@@ -148,25 +112,8 @@ func newReplicaSink(root string, opts StoreOptions, onAlert func(nodeID string, 
 	return &replicaSink{root: root, opts: opts, nodes: map[string]*replicaNode{}, onAlert: onAlert}
 }
 
-// reseed rebuilds every in-memory ordering guard of n from what is actually
-// durable on disk: the per-series last-ts cache (cleared, so it is re-read
-// from the store on demand), lastEventStart, the alert-log dedupe state, the
-// series count and the ingest counters/AppliedSeq from ingest.state. The
-// clock-skew estimate is kept (it is not an ordering guard).
-//
-// Apply/Backfill call this after any error from n.apply: apply may have
-// already written some of the batch's records (an earlier metric/record in
-// the loop can succeed before a later one fails) without ever reaching
-// SyncMetrics/the AppliedSeq write, so the in-memory guard state built up
-// while assuming the whole batch would succeed can be ahead of what's
-// actually on disk. Left alone, that poisoned guard would silently reject
-// the child's identical retry as duplicates -- permanent silent data loss.
-//
-// It re-seeds the SAME replicaNode (and its tsFileStore) rather than
-// dropping it from the cache: a fresh node() would open a second
-// tsFileStore on the same directory while a maintenance slice may still be
-// using the first. The fleet master serializes Apply/Backfill/Live per node
-// (Master.nodeLock), and n.mu is held here, so no apply runs concurrently.
+// reseed rebuilds every in-memory ordering guard of n from what is actually durable on
+// disk: the per-series last-ts cache (cleared, so it is re-read from the store on demand).
 func (n *replicaNode) reseed() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -192,9 +139,7 @@ func (n *replicaNode) seedLocked() {
 			OutOfOrder *int64 `json:"warned_out_of_order"`
 		}
 		if json.Unmarshal(b, &w) == nil && w.OutOfOrder == nil {
-			// Written before the drop-warning baseline existed: its counts
-			// (the out-of-order one also held duplicates) are taken as
-			// already reported rather than warned about on upgrade.
+			// Written before the drop-warning baseline existed: its counts.
 			n.st.WarnedOutOfOrder, n.st.WarnedCardinality = n.st.DroppedOutOfOrder, n.st.DroppedCardinality
 		}
 	}
@@ -206,14 +151,8 @@ func (n *replicaNode) seedLocked() {
 	if ms, err := n.store.Metrics(ResRaw); err == nil {
 		n.series = len(ms)
 	}
-	// The dedupe set is scoped PER ALERT KEY (see the struct field doc
-	// comment): several alerts, of possibly different keys, can share the
-	// newest timestamp within the tail window, so this is a full two-pass
-	// scan of it -- first the newest Time per key, then every line at that
-	// key's own newest Time -- rather than a single backward walk that stops
-	// at the first differing Time (which is what a single shared guard could
-	// do, but a per-key one cannot: an older key's newest line can sit
-	// anywhere behind a newer key's).
+	// The dedupe set is scoped PER ALERT KEY (see the struct field doc comment): several
+	// alerts, of possibly different keys.
 	n.lastAlertTS, n.alertLines = map[string]int64{}, map[string]map[string]bool{}
 	lines := tailLines(filepath.Join(n.dir, "alertlog.jsonl"))
 	type parsed struct {
@@ -246,15 +185,8 @@ func (n *replicaNode) seedLocked() {
 	}
 }
 
-// replicaWriteFailHook, when non-nil, lets a test force one of
-// replicaNode.apply's durable writes to fail as if the real I/O had failed.
-// op identifies which one is about to happen ("append" raw samples,
-// "rollup" 1m AppendRollup, "event" AppendEvent, "alertlog" the alert log
-// append, "alerts" Live's alerts.json rewrite).
-// This is how the ordering-guard-survives-a-failed-batch tests
-// (TestReplicaApplyEvictsNodeOnWriteFailure,
-// TestReplicaAlertLogFailureThenRetryWritesOnce) inject a failure partway
-// through a batch. nil (a no-op) in production.
+// replicaWriteFailHook, when non-nil, lets a test force one of replicaNode.apply's durable
+// writes to fail as if the real I/O had failed. op identifies which one is about to happen.
 var replicaWriteFailHook func(op string) error
 
 func checkReplicaWriteFail(op string) error {
@@ -293,8 +225,7 @@ func (r *replicaSink) node(id string) (*replicaNode, error) {
 	return n, nil
 }
 
-// tailLines returns the complete non-empty lines in the last 64 KiB of path,
-// oldest first.
+// tailLines returns the complete non-empty lines in the last 64 KiB of path, oldest first.
 func tailLines(path string) [][]byte {
 	f, err := os.Open(path)
 	if err != nil {
@@ -337,9 +268,7 @@ func (r *replicaSink) AppliedSeq(id string) (uint64, error) {
 	return n.st.AppliedSeq, nil
 }
 
-// Apply implements fleet.Sink. On any error from n.apply the node's
-// ordering guards are re-seeded from disk (see reseed), so the child's retry
-// is judged against what was actually written.
+// Apply implements fleet.Sink.
 func (r *replicaSink) Apply(id string, recs []fleet.Record) error {
 	n, err := r.node(id)
 	if err != nil {
@@ -365,12 +294,8 @@ func (r *replicaSink) Backfill(id string, recs []fleet.Record) error {
 	return nil
 }
 
-// admit reports whether a point at ts may be appended to (res, metric),
-// updating the cached last ts when it may. A non-nil error means LastTS
-// itself failed (disk read error) -- the caller must abort apply with that
-// error rather than silently treating the metric as rejected, which would
-// otherwise black-hole it (a transient read error is not the same thing as
-// "already have this point").
+// admit reports whether a point at ts may be appended to (res, metric), updating the cached
+// last ts when it may.
 func (n *replicaNode) admit(metric string, res Resolution, ts int64) (bool, error) {
 	key := string(res) + "|" + metric
 	last, ok := n.last[key]
@@ -484,22 +409,15 @@ func (n *replicaNode) apply(id string, recs []fleet.Record, sequenced bool, onAl
 			if json.Compact(&line, rec.Data) != nil {
 				continue
 			}
-			// Scoped per ALERT KEY (never a single guard shared across every
-			// key on the node): a delayed fallback record for one key (its
-			// Time is the LATER fallback-decision moment, not the alert's
-			// own FiredAt -- see fleet_lease.go's deliverFallback) must
-			// never be able to advance the ordering guard past a genuinely
-			// newer, unrelated alert on a DIFFERENT key and cause it to be
-			// silently dropped here (see
-			// TestReplicaApplyCrossAlertKeyOrderingDropRepro).
+			// Scoped per ALERT KEY (never a single guard shared across every key on the node): a
+			// delayed fallback record for one key.
 			lastTS := n.lastAlertTS[ev.Key]
 			if ev.Time == lastTS && n.alertLines[ev.Key][line.String()] {
 				n.st.DroppedDuplicate++
 				continue
 			}
-			// An older alert is skipped uncounted: the dedupe set only holds
-			// the newest timestamp's lines, so it cannot tell a re-sent copy
-			// from a genuinely late alert.
+			// An older alert is skipped uncounted: the dedupe set only holds the newest timestamp's
+			// lines, so it cannot tell a re-sent copy from a genuinely late alert.
 			if ev.Time < lastTS {
 				continue
 			}
@@ -510,13 +428,8 @@ func (n *replicaNode) apply(id string, recs []fleet.Record, sequenced bool, onAl
 			n.alertLines[ev.Key][line.String()] = true
 			alerts.Write(line.Bytes())
 			alerts.WriteByte('\n')
-			// The master alerting engine's entry point for a genuinely new
-			// (not a byte-identical re-send) alert record: see
-			// fleet_engine.go's HandleChildAlert. Called with n.mu still
-			// held, same as every other durable write in this method --
-			// HandleChildAlert must not call back into this replicaSink or
-			// it will deadlock; it doesn't (it only touches the engine's own
-			// state, the hub and the master's dispatcher).
+			// The master alerting engine's entry point for a genuinely new (not a byte-identical
+			// re-send) alert record: see fleet_engine.go's HandleChildAlert.
 			if onAlert != nil {
 				onAlert(id, ev)
 			}
@@ -561,15 +474,7 @@ func appendSynced(path string, b []byte) error {
 	return f.Close()
 }
 
-// Live implements fleet.Sink. Every node posts one of these every few
-// seconds, so this is the master's hottest write path and it is kept cheap:
-// the latest view lives in memory (the node API reads the snapshot from
-// there), live.json is rewritten for continuity across a master restart
-// with a plain temp-file + rename and NO fsync (it is regenerated every few
-// seconds, so losing the last one to a crash costs nothing), and alerts.json
-// (read by the node API's ActiveAlerts) is rewritten only when the child's
-// alert state differs from what it last wrote successfully (so a failed
-// write is retried by the next update even if the state has not changed).
+// Live implements fleet.Sink.
 func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 	n, err := r.node(id)
 	if err != nil {
@@ -584,13 +489,8 @@ func (r *replicaSink) Live(id string, u fleet.LiveUpdate) error {
 	if err != nil {
 		return fmt.Errorf("write alerts.json: %w", err)
 	}
-	// onAckSync (task 3): a child's own AlertState.Ack -- via a manual
-	// `trinetra alerts ack` on that node, or the master's own AckIncident
-	// push applied there -- reaches the master purely through this same
-	// LiveUpdate.AlertState channel (nothing else ships alerts.json). Only
-	// worth re-scanning when the state actually changed: writeAlertState's
-	// own dedup already limits this to real transitions, not every few-
-	// second heartbeat.
+	// onAckSync: a child's own AlertState.Ack -- via a manual `trinetra alerts ack` on that
+	// node, or the master's own AckIncident push applied there.
 	if changed && r.onAckSync != nil {
 		r.onAckSync(id, u.AlertState)
 	}
@@ -619,18 +519,8 @@ func (n *replicaNode) writeAlertState(as json.RawMessage) (bool, error) {
 	return true, nil
 }
 
-// RecordSkew adds one clock-skew sample (server_time - sent_at, seconds,
-// server_time taken at request arrival) for id and returns the node's
-// reported skew, plus whether this sample took it over skewWarnSec (true
-// once per excursion, so the caller warns once).
-//
-// Network delay only ever makes a sample larger than the true offset (a
-// request held in a partition and delivered later carries an old sent_at),
-// so the estimate is the sample closest to zero over the last skewWindow
-// samples rather than an average that a burst of delayed requests would
-// drag off. An estimate over the line is only reported once it has held
-// for skewConfirm consecutive samples; until then the previous reported
-// value is kept.
+// RecordSkew adds one clock-skew sample (server_time - sent_at, seconds, server_time taken
+// at request arrival) for id and returns the node's reported skew.
 func (r *replicaSink) RecordSkew(id string, sampleSec int64) (int64, bool) {
 	n, err := r.node(id)
 	if err != nil {
@@ -660,9 +550,8 @@ func (r *replicaSink) RecordSkew(id string, sampleSec int64) (int64, bool) {
 	return est, crossed
 }
 
-// MarkDropsChecked records outOfOrder/cardinality as id's drop-warning
-// baseline and persists it in ingest.state (only when it changed), so the
-// next check, even after a master restart, warns only about growth beyond it.
+// MarkDropsChecked records outOfOrder/cardinality as id's drop-warning baseline and
+// persists it in ingest.state (only when it changed), so the next check.
 func (r *replicaSink) MarkDropsChecked(id string, outOfOrder, cardinality int64) error {
 	n, err := r.node(id)
 	if err != nil {
@@ -698,11 +587,8 @@ func (r *replicaSink) LiveOf(id string) *fleet.LiveUpdate {
 	return n.live.Load()
 }
 
-// maintSliceSize is how many of total replicas one master tick maintains so
-// that each is maintained about once per interval: replica maintenance
-// (Downsample + Prune, which rewrite and fsync series files) runs on the same
-// cadence as the local store's (storeMaintenanceInterval), staggered across
-// ticks instead of every node at once.
+// maintSliceSize is how many of total replicas one master tick maintains so that each is
+// maintained about once per interval: replica maintenance.
 func maintSliceSize(total int, tick, interval time.Duration) int {
 	if total <= 0 {
 		return 0
@@ -745,9 +631,7 @@ func (r *replicaSink) nodeIDs() []string {
 	return ids
 }
 
-// maintainNode downsamples and prunes one replica. Downsampling uses the
-// node's newest ingested sample time as "now", so a child whose backlog is
-// still arriving never has a half-received minute rolled up early.
+// maintainNode downsamples and prunes one replica.
 func (r *replicaSink) maintainNode(id string, now int64) {
 	n, err := r.node(id)
 	if err != nil {
@@ -782,11 +666,8 @@ func (r *replicaSink) NodeAPI(id string, getCfg func() *config.Config) (core.API
 	}, nil
 }
 
-// replicaAPI serves reads from a replica and refuses what still needs the
-// live child directly (config writes, channel tests): ack/unack and
-// container logs (task 9) instead go out over the master-to-child stream
-// via hub/rpc, so they work for a remote node exactly like they do locally,
-// just with a round trip.
+// replicaAPI serves reads from a replica and refuses what still needs the live child
+// directly (config writes, channel tests).
 type replicaAPI struct {
 	core.API
 	n         *replicaNode
@@ -815,13 +696,8 @@ func (a *replicaAPI) Doctor() (core.DoctorReport, error) { return core.DoctorRep
 func (a *replicaAPI) ApplyConfig(*config.Config) error   { return errRemoteNode }
 func (a *replicaAPI) TestChannel(string) error           { return errRemoteNode }
 
-// AckAlert/UnackAlert (task 9): push an ack/unack frame down this node's
-// stream connection -- the child applies it locally via AlertState.Ack/
-// Unack (fleet_lease.go's applyAckFrame), exactly as a local `trinetra
-// alerts ack/unack` would. Neither waits for the child to actually apply
-// it: Push either lands in the node's stream queue or the node isn't
-// connected at all, and there is no receipt for ack/unack the way there is
-// for a delivered alert.
+// AckAlert/UnackAlert: push an ack/unack frame down this node's stream connection -- the
+// child applies it locally via AlertState.Ack/ Unack (fleet_lease.go's applyAckFrame).
 func (a *replicaAPI) AckAlert(key string) error   { return a.remoteAck(key, false) }
 func (a *replicaAPI) UnackAlert(key string) error { return a.remoteAck(key, true) }
 
@@ -839,33 +715,8 @@ func (a *replicaAPI) remoteAck(key string, unack bool) error {
 	}
 	a.hub.Push(a.nodeID, fleet.Frame{Type: frameType, Data: data})
 	if !unack && a.incidents != nil {
-		// Also record the ack on the master's own incident view immediately
-		// (task-9 ruling), so the UI need not wait for anything to come
-		// back over the stream. The actor isn't known at this layer -- this
-		// package has no notion of "which web user clicked ack", and
-		// core.API.AckAlert(key) (the interface replicaAPI implements here)
-		// has no actor parameter to carry one, on purpose: it's shared by
-		// every core.API backend (file/inproc/replica), and adding one would
-		// mean touching every implementation and every existing caller for a
-		// path this method is not the primary one for.
-		//
-		// Deliberately kept as "web" (plan C task C5 ruling -- the smaller of
-		// the two options the brief offered, the other being a new
-		// FleetAPI.AckNodeAlert(node, key, actor) plus rewiring the web's
-		// alertsAckHandler to call it for a remote node instead of going
-		// through this apiFor(r,d)-resolved core.API): the AUTHORITATIVE path
-		// for a web user's ack, with the real signed-in actor
-		// (auditUser(r)), is already POST /fleet/incidents/{id}/ack ->
-		// FleetAPI.AckIncident(id, actor) (task C2), which updates this same
-		// incident and pushes the ack frame itself. This remoteAck path only
-		// runs as a SECONDARY sync when a remote node's alert is acked from
-		// the plain /alerts page instead (apiFor(r,d) resolving to this
-		// replicaAPI) -- a narrower, legacy surface that predates the
-		// incidents page. Threading a real actor through it would need a
-		// second FleetAPI method and a web-side special case for a cosmetic
-		// improvement to a path AckIncident's own audit trail already covers
-		// for the common case, so it's left as "web" and documented here
-		// instead.
+		// Also record the ack on the master's own incident view immediately, so the UI need not
+		// wait for anything to come back over the stream.
 		if inc, ok := a.incidents.OpenAlertIncident(a.nodeID, key); ok {
 			_, _ = a.incidents.Ack(inc.ID, "web", time.Now().Unix())
 		}
@@ -873,11 +724,8 @@ func (a *replicaAPI) remoteAck(key string, unack bool) error {
 	return nil
 }
 
-// ContainerLogs (task 9) runs `docker logs` on the remote node via an RPC
-// over the master-to-child stream (fleet_rpc.go): the master pushes an
-// "rpc" frame naming this call's id/method/args and waits up to 10s for the
-// child to POST a matching result. See rpcRegistry.Call for the exact error
-// wording on each failure mode.
+// ContainerLogs runs `docker logs` on the remote node via an RPC over the master-to-child
+// stream (fleet_rpc.go).
 func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
 	if a.hub == nil || a.rpc == nil {
 		return "", errRemoteNode
@@ -891,31 +739,16 @@ func (a *replicaAPI) ContainerLogs(name string, lines int) (string, error) {
 		return "", err
 	}
 	if !res.OK {
-		// res.Error is authored end-to-end by the remote child (Hub.handleRPC
-		// only authenticates the node, it never validates the RPC result
-		// body's content -- a buggy or compromised child can POST back any
-		// text it likes). A plain prefix ("container_logs: "+res.Error) would
-		// NOT be enough: control.wireErrSentinels is matched by SUFFIX, and
-		// res.Error still ends the resulting string, so a child error that
-		// happens to end in, say, "not found" would still let a
-		// control-socket caller's errors.Is(err, core.ErrNotFound)
-		// misclassify a real RPC/docker error as a 404 (final-review
-		// transport I1). %q instead, like the local docker-error paths in
-		// this same function already do, always ends the message in a
-		// literal '"' -- none of the sentinels' texts end in one, so this
-		// can never coincide with a bare sentinel suffix, while still
-		// keeping the child's own text visible for display/logging.
+		// res.Error is authored end-to-end by the remote child (Hub.handleRPC only authenticates
+		// the node), so a buggy or compromised child can send any text.
 		return "", fmt.Errorf("container_logs: child reported %q", res.Error)
 	}
 	return res.Output, nil
 }
 func (a *replicaAPI) ValidateChannel(config.ChannelConfig) error { return errRemoteNode }
 
-// UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback (task 8) are not
-// available for a remote fleet node yet -- self-update is a per-node
-// operation with no RPC plumbing (fleet_rpc.go) built for it, unlike
-// ContainerLogs above. Mirrors ValidateChannel/EnrollmentPIN/MonitorTargets/
-// Subscribe's identical "not yet" degrade.
+// UpdateStatus/UpdateCheck/UpdateApply/UpdateRollback are not available for a remote fleet
+// node yet -- self-update is a per-node operation with no RPC plumbing.
 func (a *replicaAPI) UpdateStatus() (core.UpdateStatusView, error) {
 	return core.UpdateStatusView{}, errRemoteNode
 }

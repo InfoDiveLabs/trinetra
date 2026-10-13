@@ -32,7 +32,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-LEGACY_REF=${LEGACY_REF:-8ed65c9}
+LEGACY_REF=${LEGACY_REF:-c1b8b92}
 IMAGE=trmig-e2e:latest
 T_START=$(date +%s)
 STEP=""
@@ -260,6 +260,9 @@ sh_on 'mkdir -p /etc/systemd/system/trinetra.service.d && printf "[Service]\nExe
 OUT=$(on /opt/trinetra/trinetra install 2>&1) || fail "trinetra install: $OUT"
 sed 's/^/  | /' <<<"$OUT"
 grep -qF 'found a serverwatch install; migrating it to trinetra' <<<"$OUT" || fail "install did not migrate"
+# The held unit never opens the control socket: install says so rather
+# than claiming "started" (#162).
+grep -qF 'the daemon is still starting' <<<"$OUT" || fail "install claimed a held daemon started: $OUT"
 # dirs
 sh_on '! test -e /etc/serverwatch && ! test -e /var/lib/serverwatch' || fail "old dirs still present"
 sh_on 'test -d /etc/trinetra && test -d /var/lib/trinetra' || fail "new dirs missing"
@@ -374,6 +377,11 @@ pass
 step "8 re-run install is a normal install"
 OUT=$(on /opt/trinetra/trinetra install 2>&1) || fail "second install: $OUT"
 grep -qF 'migrating' <<<"$OUT" && fail "second install tried to migrate again: $OUT"
+grep -qF 'installed and started' <<<"$OUT" || fail "install did not wait for the daemon: $OUT"
+# #162: the operator's next command, run straight after install with no
+# wait, must reach the daemon over the control socket.
+CLI=$(on trinetra cli status 2>&1) || fail "trinetra cli right after install: $CLI"
+echo "  ok: trinetra cli status answered straight after install"
 wait_until 30 "trinetra.service active" active trinetra
 wait_until 30 "trinetra status after reinstall" on trinetra status
 sh_on '! test -e /etc/serverwatch && ! test -e /var/lib/serverwatch' || fail "old dirs reappeared"

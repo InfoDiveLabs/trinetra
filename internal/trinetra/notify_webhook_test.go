@@ -178,8 +178,7 @@ func TestBuildNotifierWebhook(t *testing.T) {
 		t.Error("expected error for malformed template")
 	}
 
-	// Valid config with no method/content_type/template picks the
-	// documented defaults.
+	// Valid config with no method/content_type/template picks the documented defaults.
 	cc := config.ChannelConfig{Name: "wh", Type: "webhook", Settings: map[string]string{
 		"url": "http://example.com/hook",
 	}}

@@ -12,11 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestFileAPIReadsStatusJSON is the Step 1 failing test from the task-6
-// brief: newFileAPI must read a status.json written to stateDir back as a
-// projected DashboardView (via the same buildDashboardView the in-process
-// impl uses), proving the file-backed core.API can serve a separate CLI
-// process that has no access to the daemon's live memory.
+// TestFileAPIReadsStatusJSON checks newFileAPI reads status.json from stateDir back as a
+// DashboardView, so a separate CLI process can serve it without the daemon's live memory.
 func TestFileAPIReadsStatusJSON(t *testing.T) {
 	dir := t.TempDir()
 	st := NewStore(dir, realClock{})
@@ -28,10 +25,8 @@ func TestFileAPIReadsStatusJSON(t *testing.T) {
 	}
 }
 
-// TestFileAPISnapshotMissingStatusJSONErrors pins that, unlike the alert
-// state/log reads below (which degrade a missing file to "empty"),
-// Snapshot() surfaces a real error when status.json hasn't been written yet
-// -- there is no meaningful "empty Snapshot" to project.
+// TestFileAPISnapshotMissingStatusJSONErrors pins that, unlike the alert state/log reads
+// below (which degrade a missing file to "empty").
 func TestFileAPISnapshotMissingStatusJSONErrors(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 	if _, err := api.Snapshot(); err == nil {
@@ -40,10 +35,7 @@ func TestFileAPISnapshotMissingStatusJSONErrors(t *testing.T) {
 }
 
 // TestFileAPISnapshotMatchesBuildDashboardView is fileAPI's counterpart to
-// TestInprocSnapshotMatchesBuildDashboardView (coreapi_inproc_test.go): a
-// fully-populated Snapshot round-tripped through status.json must project
-// identically to the re-homed buildDashboardView, proving the file-backed
-// path shares the exact same projection as the in-process one.
+// TestInprocSnapshotMatchesBuildDashboardView (coreapi_inproc_test.go).
 func TestFileAPISnapshotMatchesBuildDashboardView(t *testing.T) {
 	dir := t.TempDir()
 	snap := fullyPopulatedSnapshot()
@@ -95,10 +87,7 @@ func TestFileAPIMonitoringMatchesBuildMonitoringView(t *testing.T) {
 }
 
 // TestFileAPISeriesResolutionMapping is fileAPI.Series' counterpart to
-// TestSeriesResolutionMapping (coreapi_inproc_test.go), against a real
-// tsfile SampleStore opened via openConfiguredStore -- which reads the
-// package-level stateDir var, so this test points it at dir (mirroring how
-// dump_test.go/alerts_cli_test.go point stateDir at their own temp dirs).
+// TestSeriesResolutionMapping (coreapi_inproc_test.go).
 func TestFileAPISeriesResolutionMapping(t *testing.T) {
 	dir := t.TempDir()
 	prevStateDir := stateDir
@@ -129,9 +118,8 @@ func TestFileAPISeriesResolutionMapping(t *testing.T) {
 	if err := store.Downsample(now); err != nil {
 		t.Fatalf("Downsample: %v", err)
 	}
-	// fileAPI opens the store fresh per call (openConfiguredStore) rather
-	// than holding a long-lived handle, so close this one before querying
-	// through the API to avoid two backends fighting over the same files.
+	// fileAPI opens the store fresh per call (openConfiguredStore) rather than holding a
+	// long-lived handle.
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -279,13 +267,8 @@ func TestFileAPIConfigReturnsPassedCfg(t *testing.T) {
 	}
 }
 
-// TestFileAPISubscribeReturnsSentinel pins that Subscribe -- fileAPI has no
-// live daemon behind it to stream from, so this is a permanent limitation,
-// not a deferred-to-later stub like the rest of core.API once was -- always
-// returns errStreamRequiresDaemon. Every other method (including Doctor,
-// task 7, and ApplyConfig/AckAlert/UnackAlert/TestChannel, task 8) is
-// implemented for real and covered by its own test elsewhere in this
-// file/coreapi_write_test.go.
+// TestFileAPISubscribeReturnsSentinel pins that fileAPI.Subscribe always
+// returns errStreamRequiresDaemon: there is no live daemon to stream from.
 func TestFileAPISubscribeReturnsSentinel(t *testing.T) {
 	api := newFileAPI(t.TempDir(), config.Default())
 	if _, err := api.Subscribe(nil); err != errStreamRequiresDaemon { //nolint:staticcheck // nil context: exercising the stub only
@@ -293,16 +276,8 @@ func TestFileAPISubscribeReturnsSentinel(t *testing.T) {
 	}
 }
 
-// TestFileAPISeriesStoreOpenFailureWrapsErrorText is a regression guard
-// added after a coordinator-flagged review finding: routing cmdDump through
-// newFileAPI(...).Series(...) had silently dropped the "open sample store: "
-// prefix cmdDump always printed on a store-open failure (it used to wrap
-// openConfiguredStore's error itself; now that open happens inside Series,
-// nothing re-added the prefix). This pins that Series wraps a store-open
-// failure with that exact prefix, so any caller that just prints the
-// returned error -- as cmdDump does -- reproduces the original wording.
-// An invalid storage backend ("bogus") is used to force openConfiguredStore
-// to fail deterministically, without needing filesystem permission tricks.
+// TestFileAPISeriesStoreOpenFailureWrapsErrorText pins that Series wraps a store-open
+// failure with the "open sample store: " prefix, so cmdDump, which just prints the error.
 func TestFileAPISeriesStoreOpenFailureWrapsErrorText(t *testing.T) {
 	cfg := config.Default()
 	cfg.Storage.Backend = "bogus"
@@ -317,9 +292,8 @@ func TestFileAPISeriesStoreOpenFailureWrapsErrorText(t *testing.T) {
 	}
 }
 
-// TestFileAPIEventsStoreOpenFailureWrapsErrorText is Events' counterpart to
-// the Series test above, same reasoning: Events opens the store the same
-// way and must wrap a failure with the same prefix.
+// TestFileAPIEventsStoreOpenFailureWrapsErrorText is Events' counterpart to the Series test
+// above, same reasoning.
 func TestFileAPIEventsStoreOpenFailureWrapsErrorText(t *testing.T) {
 	cfg := config.Default()
 	cfg.Storage.Backend = "bogus"
@@ -334,17 +308,8 @@ func TestFileAPIEventsStoreOpenFailureWrapsErrorText(t *testing.T) {
 	}
 }
 
-// TestFileAPISeriesQueryFailureWrapsErrorText is a regression guard added
-// after a second coordinator-flagged review finding, sibling to the
-// store-open wrap tests above: the pre-routing dumpSeries (dump.go) wrapped
-// a store.Query failure as fmt.Errorf("query %s: %w", metric, err); once
-// Series took over the store.Query call, that wrap needed to move with it
-// or cmdDump's stderr on a query failure (a corrupt tsfile, a permission
-// error) would silently lose the "query <metric>: " prefix. This forces a
-// real store.Query failure -- not a store-open failure -- by opening a real
-// tsfile store once (to create its on-disk layout), then overwriting the
-// "cpu" metric's raw .tsd file with garbage so a subsequent Query fails at
-// the file's header check, and asserts the wrap is present.
+// TestFileAPISeriesQueryFailureWrapsErrorText pins that Series wraps a store.Query failure
+// as "query <metric>: ".
 func TestFileAPISeriesQueryFailureWrapsErrorText(t *testing.T) {
 	dir := t.TempDir()
 	prevStateDir := stateDir

@@ -62,10 +62,8 @@ func TestNoPowerDownWhenBootEqualsLastBeat(t *testing.T) {
 	}
 }
 
-// TestNoPowerDownForMonitorRestart is the core #116 fix: a long heartbeat gap
-// where the HOST stayed up (host boot time is older than the last heartbeat)
-// is a monitor/process restart, not host downtime, so nothing is recorded --
-// no matter how long the gap.
+// TestNoPowerDownForMonitorRestart is the core #116 fix: a long heartbeat gap where the
+// HOST stayed up.
 func TestNoPowerDownForMonitorRestart(t *testing.T) {
 	last := time.Unix(10_000, 0)
 	daemonStart := time.Unix(14_000, 0) // 4000s gap (a crash-loop restart)
@@ -75,9 +73,8 @@ func TestNoPowerDownForMonitorRestart(t *testing.T) {
 	}
 }
 
-// TestPowerDownWhenHostRebooted: the host actually rebooted during the gap, so
-// it IS host downtime, and the window ends at the host boot instant (the real
-// recovery), not at the later daemon-start.
+// TestPowerDownWhenHostRebooted: the host actually rebooted during the gap, so it IS host
+// downtime, and the window ends at the host boot instant (the real recovery).
 func TestPowerDownWhenHostRebooted(t *testing.T) {
 	last := time.Unix(10_000, 0)
 	hostBoot := time.Unix(12_500, 0)    // host came back mid-gap

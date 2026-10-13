@@ -12,9 +12,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestAlertsPageListsLogEvents pins the core TDD obligation: a populated
-// alert log (served through the control socket, Deps.API.AlertHistory)
-// renders as history rows on GET /alerts.
+// TestAlertsPageListsLogEvents pins the core TDD obligation: a populated alert log.
 func TestAlertsPageListsLogEvents(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{history: []core.AlertRecord{
@@ -39,12 +37,7 @@ func TestAlertsPageListsLogEvents(t *testing.T) {
 	}
 }
 
-// TestAlertHistoryRowsUsesMasterLocalZone pins round-2 review finding I1's
-// second half: alertHistoryRows' "When" column must render through the same
-// master-local-zone-with-abbreviation convention silenceTimeText
-// (handlers_fleet_silences.go) established for Silences/Audit/Incidents,
-// not its own unlabeled-UTC format -- see TestIncidentTimeTextUsesMasterLocalZone
-// (handlers_fleet_incidents_test.go) for the sibling pin on incidentTimeText.
+// TestAlertHistoryRowsUsesMasterLocalZone pins that finding I1's second half.
 func TestAlertHistoryRowsUsesMasterLocalZone(t *testing.T) {
 	withLocalTZ(t, "Asia/Kolkata")
 	rows := alertHistoryRows([]core.AlertRecord{{Time: 1893456000, Key: "disk:/"}})
@@ -60,11 +53,8 @@ func TestAlertHistoryRowsUsesMasterLocalZone(t *testing.T) {
 	}
 }
 
-// TestAlertsPageMemoizesActiveAlerts pins round-2 review finding I2: GET
-// /alerts must call apiFor(r,d).ActiveAlerts() at most ONCE per request --
-// the review found it called three separate times (topbarStatus's
-// newPageData, navCountsFor's sidebar badge, and buildAlertsPageData's own
-// read), each a redundant control-socket round trip on a fleet node.
+// TestAlertsPageMemoizesActiveAlerts pins that GET /alerts must call
+// apiFor(r,d).ActiveAlerts() at most ONCE per request.
 func TestAlertsPageMemoizesActiveAlerts(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	counting := newCountingAPI(fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1700000000}}})
@@ -124,9 +114,8 @@ func TestAlertsPageGarbageLogRendersEmptyNot500(t *testing.T) {
 	}
 }
 
-// TestAlertsPageListsActiveAlerts pins the "Firing" panel: an active,
-// unacked alert (via the control socket) renders with an Ack button for an
-// admin.
+// TestAlertsPageListsActiveAlerts pins the "Firing" panel: an active, unacked alert (via
+// the control socket) renders with an Ack button for an admin.
 func TestAlertsPageListsActiveAlerts(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1700000000, Source: "disk:/ = 91.0 >= threshold 90.0"}}}
@@ -168,9 +157,8 @@ func TestAlertsPageViewerHasNoAckButton(t *testing.T) {
 	}
 }
 
-// TestAlertsAckRoundTripsToAlertState pins the core ack obligation: POSTing
-// ack acks the named active alert THROUGH the control socket
-// (Deps.API.AckAlert) and writes an audit record.
+// TestAlertsAckRoundTripsToAlertState pins the core ack obligation: POSTing ack acks the
+// named active alert THROUGH the control socket.
 func TestAlertsAckRoundTripsToAlertState(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	var ackedKey string
@@ -212,11 +200,8 @@ func TestAlertsAckRoundTripsToAlertState(t *testing.T) {
 	}
 }
 
-// TestAlertsUnackRoundTripsToAlertState is TestAlertsAckRoundTripsToAlertState's
-// unack counterpart (self scope): POSTing unack for an already-acked active
-// alert calls Deps.API.UnackAlert and re-renders the page in place at 200
-// (no redirect -- self scope is unchanged by task C6), plus writes an
-// "alert.unack" audit record.
+// TestAlertsUnackRoundTripsToAlertState is TestAlertsAckRoundTripsToAlertState's unack
+// counterpart (self scope).
 func TestAlertsUnackRoundTripsToAlertState(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	var unackedKey string
@@ -272,9 +257,8 @@ func TestAlertsAckUnknownKeyNotFound(t *testing.T) {
 	}
 }
 
-// TestAlertsAckMissingStateFileNotFound pins that when alerting has never
-// fired (no active alerts over the socket) an ack degrades to "no active
-// alert" (404), not a 500.
+// TestAlertsAckMissingStateFileNotFound pins that when alerting has never fired (no active
+// alerts over the socket) an ack degrades to "no active alert" (404), not a 500.
 func TestAlertsAckMissingStateFileNotFound(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{}
@@ -289,9 +273,8 @@ func TestAlertsAckMissingStateFileNotFound(t *testing.T) {
 	}
 }
 
-// TestAlertsRouteViewerGatedAckAdminOnly pins RBAC: /alerts itself is
-// viewer+ (anon redirects to /login), while ack is admin-only (viewer gets
-// 403).
+// TestAlertsRouteViewerGatedAckAdminOnly pins RBAC: /alerts itself is viewer+ (anon
+// redirects to /login), while ack is admin-only (viewer gets 403).
 func TestAlertsRouteViewerGatedAckAdminOnly(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}}}
@@ -319,8 +302,7 @@ func TestAlertsRouteViewerGatedAckAdminOnly(t *testing.T) {
 	}
 }
 
-// seedViewerWithCSRF mirrors seedAdmin (handlers_users_test.go) for a
-// viewer-role account.
+// seedViewerWithCSRF mirrors seedAdmin (handlers_users_test.go) for a viewer-role account.
 func seedViewerWithCSRF(t *testing.T, users UserStore, sessions SessionStore) (*User, *http.Cookie, string) {
 	t.Helper()
 	u := &User{ID: mustNewUserID(t), Name: "viewer", Role: RoleViewer, Created: 1}
@@ -334,14 +316,10 @@ func seedViewerWithCSRF(t *testing.T, users UserStore, sessions SessionStore) (*
 	return u, &http.Cookie{Name: sessionCookieName, Value: sess.ID}, sess.CSRF
 }
 
-// ---- task C6: remote node ack/unack ----------------------------------------
+// ---- remote node ack/unack ----------------------------------------
 
-// nodeScopedAlertsDeps builds a master Deps with a single fleet node
-// (child1) whose roster State is childState -- "online" for a connected
-// node, anything else (e.g. "down") for a disconnected one -- and child as
-// its core.API, exactly like node_scope_test.go's masterFleetWithChild/
-// nodeScopedDeps but with a caller-controlled State so these tests can
-// exercise both sides of nodeConnectedFor's "online" check.
+// nodeScopedAlertsDeps builds a master Deps with a single fleet node (child1) whose roster
+// State is childState -- "online" for a connected node, anything else.
 func nodeScopedAlertsDeps(t *testing.T, childState string, child fakeAPI) Deps {
 	t.Helper()
 	fleet := &fakeFleet{
@@ -354,10 +332,8 @@ func nodeScopedAlertsDeps(t *testing.T, childState string, child fakeAPI) Deps {
 	return fleetTestDeps(t, masterFakeAPI(fleet, map[string]core.API{"child1": child}))
 }
 
-// TestNodeScopedAlertsAckSucceedsWhenNodeConnected pins the core remote-ack
-// obligation (task C6 ruling 1): a connected node's Ack button is enabled,
-// and clicking it (via formValuesForButton, the browser-faithful helper)
-// calls THAT node's own core.API.AckAlert -- not the master's.
+// TestNodeScopedAlertsAckSucceedsWhenNodeConnected pins the core remote-ack obligation: a
+// connected node's Ack button is enabled, and clicking it.
 func TestNodeScopedAlertsAckSucceedsWhenNodeConnected(t *testing.T) {
 	var ackCalled bool
 	var ackedKey string
@@ -387,9 +363,8 @@ func TestNodeScopedAlertsAckSucceedsWhenNodeConnected(t *testing.T) {
 	}
 }
 
-// TestNodeScopedAlertsAckDisabledWhenNodeOffline pins the disabled side: an
-// offline node's active-alert row has no live Ack form at all, only a
-// disabled button carrying the fixed "node is not connected" reason.
+// TestNodeScopedAlertsAckDisabledWhenNodeOffline pins the disabled side: an offline node's
+// active-alert row has no live Ack form at all.
 func TestNodeScopedAlertsAckDisabledWhenNodeOffline(t *testing.T) {
 	child := fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}}}
 	d := nodeScopedAlertsDeps(t, "down", child)
@@ -403,19 +378,15 @@ func TestNodeScopedAlertsAckDisabledWhenNodeOffline(t *testing.T) {
 	}
 }
 
-// TestNodeScopedAlertsAckFailureFlashesRemoteOffline pins the redirect+flash
-// contract for a remote ack that fails: a race where the node drops between
-// page load and the POST (AckAlert now returning "node is not connected")
-// redirects back to the node-scoped page with ?flash=remote-offline, never
-// free-form error text.
+// TestNodeScopedAlertsAckFailureFlashesRemoteOffline pins the redirect+flash contract for a
+// remote ack that fails: a race where the node drops between page load and the POST.
 func TestNodeScopedAlertsAckFailureFlashesRemoteOffline(t *testing.T) {
 	child := fakeAPI{
 		active:   []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}},
 		ackAlert: func(string) error { return errors.New(nodeNotConnectedReason) },
 	}
-	// Roster says "online" so the button renders live -- the failure is
-	// simulated purely via AckAlert's own returned error, exercising the
-	// server-side race/error path independent of the client-side disable.
+	// Roster says "online" so the button renders live -- the failure is simulated purely via
+	// AckAlert's own returned error.
 	d := nodeScopedAlertsDeps(t, "online", child)
 	body, h, cookie := fleetAdminSessionGet(t, d, "/n/child1/alerts")
 	values := formValuesForButton(t, body, "", "")
@@ -429,10 +400,8 @@ func TestNodeScopedAlertsAckFailureFlashesRemoteOffline(t *testing.T) {
 	}
 }
 
-// TestNodeScopedAlertsAckPostMissingCSRFForbidden pins that a node-scoped
-// ack POST still requires CSRF -- withNodeRouter's new POST exception
-// (node_scope.go) re-dispatches to the SAME admin+CSRF-gated route, it
-// doesn't bypass either gate.
+// TestNodeScopedAlertsAckPostMissingCSRFForbidden pins that a node-scoped ack POST still
+// requires CSRF -- withNodeRouter's new POST exception.
 func TestNodeScopedAlertsAckPostMissingCSRFForbidden(t *testing.T) {
 	child := fakeAPI{
 		active:   []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "x"}},
@@ -469,9 +438,8 @@ func TestNodeScopedAlertsAckPostViewerForbidden(t *testing.T) {
 	}
 }
 
-// TestNodeScopedPostToOtherPathsStillRefused pins that the new POST
-// exception in withNodeRouter is narrow: a node-scoped POST to any path
-// OTHER than exactly /alerts/{key}/ack|unack still 404s, admin+CSRF or not.
+// TestNodeScopedPostToOtherPathsStillRefused pins that the new POST exception in
+// withNodeRouter is narrow.
 func TestNodeScopedPostToOtherPathsStillRefused(t *testing.T) {
 	child := fakeAPI{}
 	d := nodeScopedAlertsDeps(t, "online", child)

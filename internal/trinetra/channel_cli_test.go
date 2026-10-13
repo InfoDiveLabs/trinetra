@@ -17,13 +17,8 @@ func TestChannelAddListSetRemoveTestViaCLI(t *testing.T) {
 	stdout = &out
 	stderr = &errb
 
-	// Staged disabled: this channel has a chat_id but no token, which would
-	// fail the #83 up-front validation gate if added enabled. Adding it
-	// disabled skips that gate (it can't misdeliver while off), then `channel
-	// set enabled` below flips it on WITHOUT re-validating (channel set
-	// mutates a single field, same as ctl's generic key edits) -- exactly
-	// what lets this test still exercise `channel test`'s own failure path
-	// below on a channel that is enabled but incomplete.
+	// Staged disabled: this channel has a chat_id but no token, which would fail the #83
+	// up-front validation gate if added enabled.
 	if code := Main([]string{"channel", "add", "tg", "--type", "telegram", "--set", "chat_id=123", "--disabled"}); code != 0 {
 		t.Fatalf("add exit=%d stderr=%s", code, errb.String())
 	}
@@ -54,9 +49,8 @@ func TestChannelAddListSetRemoveTestViaCLI(t *testing.T) {
 		t.Fatalf("settings.chat_id = %q, want 123", got.Settings["chat_id"])
 	}
 
-	// test: telegram is implemented now, but this channel has a chat_id and
-	// no token (neither in Settings nor in config.Telegram), so buildNotifier
-	// must fail clearly and non-zero rather than panic or silently no-op.
+	// test: telegram is implemented now, but this channel has a chat_id and no token (neither
+	// in Settings nor in config.Telegram).
 	errb.Reset()
 	if code := Main([]string{"channel", "test", "tg"}); code == 0 {
 		t.Fatalf("expected non-zero exit for missing token, stderr=%s", errb.String())
@@ -93,12 +87,7 @@ func TestChannelAddRequiresType(t *testing.T) {
 	}
 }
 
-// TestChannelAddRejectsIncompleteEnabledChannel is the #83 "cheap standalone
-// win": an ENABLED channel added via the flag-based CLI with settings that
-// cannot build a working notifier (buildNotifier would fail) must be
-// rejected up front, with nothing persisted -- matching the ctl Channels
-// screen's validate-before-save gate (manage_ui.go's saveChannel), which
-// this test's daemon-side counterpart mirrors.
+// TestChannelAddRejectsIncompleteEnabledChannel is the #83 "cheap standalone win".
 func TestChannelAddRejectsIncompleteEnabledChannel(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -123,9 +112,8 @@ func TestChannelAddRejectsIncompleteEnabledChannel(t *testing.T) {
 	}
 }
 
-// TestChannelAddAcceptsCompleteChannel is the positive counterpart: an
-// enabled channel whose settings DO build a working notifier is accepted
-// and persisted, same as before this task.
+// TestChannelAddAcceptsCompleteChannel is the positive counterpart: an enabled channel
+// whose settings DO build a working notifier is accepted and persisted.
 func TestChannelAddAcceptsCompleteChannel(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -146,11 +134,8 @@ func TestChannelAddAcceptsCompleteChannel(t *testing.T) {
 	}
 }
 
-// TestChannelAddErrorNamesMissingSetting pins that the rejection error is
-// actionable -- built from buildNotifier's own real failure message (which
-// names the missing setting), not a generic "invalid channel" -- so no
-// required-field list is duplicated here or anywhere else (channels.go's
-// buildNotifier stays the single source of truth).
+// TestChannelAddErrorNamesMissingSetting pins that the rejection error is actionable --
+// built from buildNotifier's own real failure message (which names the missing setting).
 func TestChannelAddErrorNamesMissingSetting(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -166,12 +151,8 @@ func TestChannelAddErrorNamesMissingSetting(t *testing.T) {
 	}
 }
 
-// TestChannelAddAcceptsDisabledIncompleteChannel is the staging case: a
-// DISABLED channel can't misdeliver (it's never wired into the Dispatcher
-// while off, see channelsFromConfig/daemon.go), so it may be added with
-// incomplete settings -- exactly the ctl Channels screen's
-// channelNeedsValidation behavior (channels.go), now mirrored here via the
-// new --disabled flag.
+// TestChannelAddAcceptsDisabledIncompleteChannel is the staging case: a DISABLED channel
+// can't misdeliver.
 func TestChannelAddAcceptsDisabledIncompleteChannel(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")

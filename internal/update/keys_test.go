@@ -17,8 +17,8 @@ func TestFingerprintsAreRoleTagged(t *testing.T) {
 }
 
 func TestProductionKeysDecode(t *testing.T) {
-	// Must not panic; an empty set is allowed until the key ceremony (Task 12)
-	// and makes every verification fail closed with ErrNoKeys.
+	// Must not panic; an empty set is allowed until the key ceremony and makes every
+	// verification fail closed with ErrNoKeys.
 	k := ProductionKeys()
 	for _, pk := range append(append(append([]PublicKey{}, k.CI...), k.Maint...), k.Pointer...) {
 		if len(pk) != 32 {

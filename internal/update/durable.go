@@ -8,7 +8,6 @@ import (
 )
 
 // SyncDir fsyncs a directory, making a rename or create inside it durable.
-// It is a variable only so tests can observe or fail it.
 var SyncDir = func(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
@@ -18,9 +17,8 @@ var SyncDir = func(dir string) error {
 	return d.Sync()
 }
 
-// writeTemp streams r into a fresh O_EXCL temp file next to path, fsyncs and
-// closes it, and sets perm. It returns the temp file's name; the caller
-// renames it into place (or removes it on failure).
+// writeTemp streams r into a fresh O_EXCL temp file next to path, fsyncs and closes it, and
+// sets perm.
 func writeTemp(path string, r io.Reader, perm os.FileMode) (string, error) {
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -58,11 +56,8 @@ func replaceWith(tmp, path string) error {
 	return SyncDir(filepath.Dir(path))
 }
 
-// CopyFile copies src onto dst durably and atomically: a random same-directory
-// temp file (O_EXCL), write, fsync, close, chmod, rename over dst, then fsync
-// dst's directory. rename(2) swaps the directory entry without truncating the
-// old file, so this works even when dst is a running executable, and after a
-// crash dst is either the complete old file or the complete new one.
+// CopyFile copies src onto dst durably and atomically: a random same-directory temp file
+// (O_EXCL), write, fsync, close, chmod, rename over dst.
 func CopyFile(src, dst string, perm os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {

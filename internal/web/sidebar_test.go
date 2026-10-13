@@ -9,14 +9,12 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// TestSidebarShowsSignedInUserNotHardcodedName is the #80 guard: the sidebar
-// footer must render the actual signed-in user's name (here "admin-user" from
-// seedSignedInRequest), never the hardcoded "Suraj"/"Aditi" placeholders.
+// TestSidebarShowsSignedInUserNotHardcodedName is the #80 guard: the sidebar footer must
+// render the actual signed-in user's name (here "admin-user" from seedSignedInRequest).
 func TestSidebarShowsSignedInUserNotHardcodedName(t *testing.T) {
 	d, _, _ := configTestDeps(t)
-	// Pin a fixed server.name so the brand subtitle (#101) is deterministic and
-	// doesn't render the dev machine's hostname, which could itself contain a
-	// name this test checks for absence of.
+	// Pin a fixed server.name so the brand subtitle (#101) is deterministic and doesn't render
+	// the dev machine's hostname.
 	cfg := config.Default()
 	cfg.Name = "test-host"
 	d.Cfg = func() *config.Config { return cfg }
@@ -41,13 +39,8 @@ func TestSidebarShowsSignedInUserNotHardcodedName(t *testing.T) {
 	}
 }
 
-// TestSidebarNavLinksCarryTitleAndLabelSpan pins U10b (2026-09-25 UI audit):
-// the icon-rail breakpoint (641-1024px, style.css) hides each nav link's
-// label text via CSS and relies on title/aria-label for its accessible
-// name/tooltip, and on a dedicated .lb span to target the label text with
-// CSS (a bare text node can't be display:none'd). Both must be present at
-// every width, not just the rail's -- they're harmless (a native tooltip,
-// a wrapping span) above and below it.
+// TestSidebarNavLinksCarryTitleAndLabelSpan pins U10b (2026-09-25 UI audit): the icon-rail
+// breakpoint.
 func TestSidebarNavLinksCarryTitleAndLabelSpan(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	h := newHandler(d)
@@ -74,5 +67,31 @@ func TestFirstInitial(t *testing.T) {
 		if got := firstInitial(in); got != want {
 			t.Errorf("firstInitial(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestSidebarMinRoleResponder(t *testing.T) {
+	saved := navItems
+	defer func() { navItems = saved }()
+	navItems = []navEntry{
+		{NavItem: NavItem{Href: "/resp", Label: "RespOnly"}, MinRole: RoleResponder},
+		{NavItem: NavItem{Href: "/adm", Label: "AdmOnly"}, AdminOnly: true},
+	}
+	has := func(role, label string) bool {
+		for _, n := range navForRole(role, NavCounts{}, nodeScope{Self: true}, "solo") {
+			if n.Label == label {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("responder", "RespOnly") || has("responder", "AdmOnly") {
+		t.Error("responder should see MinRole item but not AdminOnly")
+	}
+	if has("viewer", "RespOnly") || has("viewer", "AdmOnly") {
+		t.Error("viewer should see neither")
+	}
+	if !has("admin", "RespOnly") || !has("admin", "AdmOnly") {
+		t.Error("admin should see both")
 	}
 }

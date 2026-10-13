@@ -1,7 +1,10 @@
 {{define "content"}}
 <div class="center"><div class="card">
   <div class="logo"><img class="wordmark wm-ash" src="{{asset "/assets/brand/trinetra-wordmark-ash.png"}}" alt="trinetra" width="144" height="39"><img class="wordmark wm-ink" src="{{asset "/assets/brand/trinetra-wordmark-ink.png"}}" alt="trinetra" width="144" height="39"></div>
-  {{if .EnrollClosed}}
+  {{if .EnrollNeedsSetup}}
+  <h2>Finish setup on the server</h2>
+  <p class="sub">This server has no admin yet. On the server, run <code>sudo trinetra web users invite --role admin</code> and open the link it prints.</p>
+  {{else if .EnrollClosed}}
   <h2>Invite required</h2>
   <p class="sub">Sign-up needs an invite link from an admin — ask one for a link, or <a href="/login">sign in</a> if you already have a passkey.</p>
   {{else}}

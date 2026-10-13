@@ -29,11 +29,8 @@ func TestAnomalyThresholdFireOnceThenRecover(t *testing.T) {
 	}
 }
 
-// TestBreachUsesFireMsgWhenSet confirms a threshold breach returns the
-// Check's FireMsg verbatim (for binary health checks like docker/service/
-// smart, which want human wording instead of the numeric comparison), and
-// falls back to the numeric string when FireMsg is empty (regression guard
-// for the existing numeric checks).
+// TestBreachUsesFireMsgWhenSet confirms a threshold breach returns the Check's FireMsg
+// verbatim.
 func TestBreachUsesFireMsgWhenSet(t *testing.T) {
 	withMsg := Check{Key: "docker:web", Value: 1, Threshold: 1, HasThreshold: true, FireMsg: "container web is down (exited)"}
 	if breach, reason := withMsg.breach(NewBaseline(), 3, 0, true); !breach || reason != "container web is down (exited)" {
@@ -46,9 +43,8 @@ func TestBreachUsesFireMsgWhenSet(t *testing.T) {
 	}
 }
 
-// TestEvaluateRecoverUsesRecoverMsgWhenSet confirms a recover transition's
-// Event.Text is the Check's RecoverMsg when set, otherwise the default
-// "<key> back to normal".
+// TestEvaluateRecoverUsesRecoverMsgWhenSet confirms a recover transition's Event.Text is
+// the Check's RecoverMsg when set, otherwise the default "<key> back to normal".
 func TestEvaluateRecoverUsesRecoverMsgWhenSet(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
@@ -84,13 +80,8 @@ func TestAnomalyBaselineDeviation(t *testing.T) {
 	}
 }
 
-// TestBaselineAlertsOffSuppressesDeviationButNotThreshold replays the field
-// complaint (Part 1 of the baseline/strip/status fix): cpu/mem/temp have a
-// low, unstable mean and were flapping fire/recover every minute on
-// sigma-deviation alone. With baseline_alerts=false the z-score branch must
-// be skipped entirely -- a huge-sigma deviation produces NO baseline Event --
-// while a genuine threshold breach on the very same check still fires,
-// confirming threshold alerting is unaffected by the toggle.
+// TestBaselineAlertsOffSuppressesDeviationButNotThreshold replays the field complaint (Part
+// 1 of the baseline/strip/status fix): cpu/mem/temp have a low.
 func TestBaselineAlertsOffSuppressesDeviationButNotThreshold(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
@@ -117,9 +108,8 @@ func TestBaselineAlertsOffSuppressesDeviationButNotThreshold(t *testing.T) {
 	}
 }
 
-// TestBaselineAlertsOnFiresSubjectToSigmaAndMinPct confirms baseline_alerts=
-// true reproduces the pre-existing sigma+minPct-gated behavior exactly (a
-// materially-far outlier fires, a near-mean-but-many-sigma wobble does not).
+// TestBaselineAlertsOnFiresSubjectToSigmaAndMinPct confirms baseline_alerts= true
+// reproduces the pre-existing sigma+minPct-gated behavior exactly.
 func TestBaselineAlertsOnFiresSubjectToSigmaAndMinPct(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
@@ -145,10 +135,8 @@ func TestBaselineAlertsOnFiresSubjectToSigmaAndMinPct(t *testing.T) {
 	}
 }
 
-// TestAnomalyEvaluatePassesIntervalToObserve confirms Evaluate forwards each
-// Check's Interval into Baseline.Observe, so the fast tier (short interval)
-// and slow tier (long interval) each accumulate their own alpha rather than
-// sharing one global constant.
+// TestAnomalyEvaluatePassesIntervalToObserve confirms Evaluate forwards each Check's
+// Interval into Baseline.Observe, so the fast tier (short interval) and slow tier.
 func TestAnomalyEvaluatePassesIntervalToObserve(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
@@ -165,18 +153,12 @@ func TestAnomalyEvaluatePassesIntervalToObserve(t *testing.T) {
 	}
 }
 
-// TestBaselineMinPctGateSuppressesNoisyStableMetric replays the field
-// complaint: a metric like temp cycling tightly around ~43 with low
-// variance produces a huge z-score for a completely normal ~2-degree
-// wobble (the EWMA variance underestimates real-world noise), so pure
-// sigma-gating flaps constantly. The minPct relative-deviation gate must
-// require the value to ALSO be materially far from the mean (>= minPct *
-// mean) before firing a baseline alert.
+// TestBaselineMinPctGateSuppressesNoisyStableMetric replays the field complaint.
 func TestBaselineMinPctGateSuppressesNoisyStableMetric(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
-	// Build a tight baseline around 43 (tiny alternating wobble keeps
-	// variance small so a 45 reads as a large z-score).
+	// Tight baseline around 43; the tiny wobble keeps variance small so a 45
+	// reads as a large z-score.
 	for i := 0; i < 400; i++ {
 		v := 43.0
 		if i%2 == 0 {
@@ -211,10 +193,8 @@ func TestBaselineMinPctGateSuppressesNoisyStableMetric(t *testing.T) {
 	}
 }
 
-// TestBaselineMinPctZeroPreservesPureSigmaBehavior is a regression guard:
-// minPct=0 must reproduce the exact pre-existing pure-sigma behavior (the
-// relative-deviation gate is then trivially satisfied by any nonzero
-// deviation), matching TestAnomalyBaselineDeviation's fire-on-spike case.
+// TestBaselineMinPctZeroPreservesPureSigmaBehavior is a regression guard: minPct=0 must
+// reproduce the exact pre-existing pure-sigma behavior.
 func TestBaselineMinPctZeroPreservesPureSigmaBehavior(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
@@ -227,11 +207,8 @@ func TestBaselineMinPctZeroPreservesPureSigmaBehavior(t *testing.T) {
 	}
 }
 
-// TestBreachMinPctGateNearZeroMeanDoesNotPanic confirms the relative gate's
-// division uses max(|mean|, meanFloor) so a metric whose baseline mean sits
-// near zero (e.g. a rarely-nonzero counter) doesn't divide by a tiny number
-// (which would make the relative-gate trivially satisfied by any nonzero
-// value, or, if unguarded, panic/produce NaN/Inf).
+// TestBreachMinPctGateNearZeroMeanDoesNotPanic confirms the relative gate's division uses
+// max(|mean|, meanFloor) so a metric whose baseline mean sits near zero.
 func TestBreachMinPctGateNearZeroMeanDoesNotPanic(t *testing.T) {
 	b := NewBaseline()
 	for i := 0; i < 200; i++ {
@@ -244,13 +221,8 @@ func TestBreachMinPctGateNearZeroMeanDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestEvaluateFireRecordsCriticalOnActiveAlert pins Part 3 of the
-// baseline/strip/status fix: the topbar's status pill needs to distinguish
-// critical from warning severity among CURRENTLY ACTIVE alerts, but
-// ActiveAlert previously carried no severity at all (only Since/Reason/
-// Acked/AckedAt) -- once a Check fired, its Critical flag was lost. Evaluate
-// must now carry each firing Check's Critical flag onto the ActiveAlert it
-// records, for both critical and non-critical (warning) checks.
+// TestEvaluateFireRecordsCriticalOnActiveAlert pins that Evaluate carries each firing
+// Check's Critical flag onto its ActiveAlert.
 func TestEvaluateFireRecordsCriticalOnActiveAlert(t *testing.T) {
 	s := NewAlertState()
 	b := NewBaseline()
@@ -307,9 +279,8 @@ func TestUnackOfNonActiveKeyErrors(t *testing.T) {
 	}
 }
 
-// TestAckPersistsViaSaveLoadBackCompat confirms the new Acked/AckedAt fields
-// round-trip through Save/LoadAlertState, and that an old alerts.json written
-// before these fields existed still loads fine (back-compat).
+// TestAckPersistsViaSaveLoadBackCompat confirms the new Acked/AckedAt fields round-trip
+// through Save/LoadAlertState.
 func TestAckPersistsViaSaveLoadBackCompat(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "alerts.json")
@@ -343,10 +314,8 @@ func TestAckPersistsViaSaveLoadBackCompat(t *testing.T) {
 	}
 }
 
-// TestMergeAckFromDiskPreservesCLIAck replays the durability bug: the daemon
-// holds AlertState in memory and re-saves on a fire/recover; a CLI `alerts
-// ack` written to disk in between must survive that save rather than being
-// clobbered. MergeAckFromDisk (called just before Save) is what preserves it.
+// TestMergeAckFromDiskPreservesCLIAck replays the durability bug: the daemon holds
+// AlertState in memory and re-saves on a fire/recover.
 func TestMergeAckFromDiskPreservesCLIAck(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "alerts.json")
@@ -382,9 +351,8 @@ func TestMergeAckFromDiskPreservesCLIAck(t *testing.T) {
 	}
 }
 
-// TestMergeAckFromDiskIgnoresRemovedKeys confirms merge only touches keys
-// still active in memory: a stale on-disk ack for a recovered/removed alert
-// must not resurrect it.
+// TestMergeAckFromDiskIgnoresRemovedKeys confirms merge only touches keys still active in
+// memory: a stale on-disk ack for a recovered/removed alert must not resurrect it.
 func TestMergeAckFromDiskIgnoresRemovedKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "alerts.json")

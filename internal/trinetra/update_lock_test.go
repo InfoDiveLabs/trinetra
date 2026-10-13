@@ -24,9 +24,8 @@ func holdApplyLock(t *testing.T, p updatePaths) {
 	t.Cleanup(unlock)
 }
 
-// TestConcurrentApplyRollbackRefused is R16: while another apply/rollback/
-// install holds update/apply.lock, every entry point refuses at once with
-// "update already in progress" and touches nothing.
+// TestConcurrentApplyRollbackRefused: while another apply/rollback/ install holds
+// update/apply.lock.
 func TestConcurrentApplyRollbackRefused(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -61,9 +60,8 @@ func TestConcurrentApplyRollbackRefused(t *testing.T) {
 	}
 }
 
-// TestInstallRefusedWhilePendingOrLocked is R16: install takes the same
-// apply lock and refuses while an update is pending (finish or roll back
-// first), so it can never overwrite binaries under a live guard.
+// TestInstallRefusedWhilePendingOrLocked: install takes the same apply lock and refuses
+// while an update is pending (finish or roll back first).
 func TestInstallRefusedWhilePendingOrLocked(t *testing.T) {
 	p := testUpdatePaths(t)
 	update.SaveState(p.dir(), update.State{Pending: &update.Pending{Version: "0.5.0", From: "0.4.1"}})

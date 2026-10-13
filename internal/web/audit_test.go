@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// readAuditRecords reads back every line of <stateDir>/audit.jsonl as
-// AuditRecords, for tests to assert against. A missing file yields an empty
-// (not error) slice, mirroring the log-reading conventions elsewhere in this
-// codebase (e.g. AlertLog.AlertEventsSince).
+// readAuditRecords reads back every line of <stateDir>/audit.jsonl as AuditRecords, for
+// tests to assert against.
 func readAuditRecords(t *testing.T, stateDir string) []AuditRecord {
 	t.Helper()
 	f, err := os.Open(auditLogPath(stateDir))
@@ -37,9 +35,8 @@ func readAuditRecords(t *testing.T, stateDir string) []AuditRecord {
 	return out
 }
 
-// TestAppendAuditWritesExpectedFields pins the core contract: an appended
-// record round-trips with its Action/Key/Old/New intact and a non-zero
-// Time auto-filled.
+// TestAppendAuditWritesExpectedFields pins the core contract: an appended record
+// round-trips with its Action/Key/Old/New intact and a non-zero Time auto-filled.
 func TestAppendAuditWritesExpectedFields(t *testing.T) {
 	dir := t.TempDir()
 	if err := appendAudit(dir, AuditRecord{User: "root", Action: "config.set", Key: "thresholds.disk_pct", Old: "90", New: "95"}); err != nil {
@@ -78,19 +75,16 @@ func TestAppendAuditAppendsAcrossCalls(t *testing.T) {
 	}
 }
 
-// TestAppendAuditEmptyStateDirIsNoop pins that an empty StateDir (some
-// minimal test Deps) is a silent no-op, never an error -- the audit trail
-// must never fail the mutation it's describing just because no state
-// directory was configured.
+// TestAppendAuditEmptyStateDirIsNoop pins that an empty StateDir (some minimal test Deps)
+// is a silent no-op, never an error.
 func TestAppendAuditEmptyStateDirIsNoop(t *testing.T) {
 	if err := appendAudit("", AuditRecord{Action: "test"}); err != nil {
 		t.Fatalf("appendAudit with empty stateDir: %v", err)
 	}
 }
 
-// TestAppendAuditCreatesStateDir pins that a not-yet-existing StateDir (a
-// fresh install with no config/channel edits yet) is created rather than
-// erroring.
+// TestAppendAuditCreatesStateDir pins that a not-yet-existing StateDir (a fresh install
+// with no config/channel edits yet) is created rather than erroring.
 func TestAppendAuditCreatesStateDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "state")
 	if err := appendAudit(dir, AuditRecord{Action: "test"}); err != nil {

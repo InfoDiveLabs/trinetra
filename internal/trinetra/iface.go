@@ -21,16 +21,7 @@ type Exec interface {
 
 type osExec struct{}
 
-// execTimeout bounds each external command. It is a HANG-BREAKER, not a
-// performance limit: a monitor must not drop legitimately-slow df/docker/
-// systemctl/smartctl output just because a host is big or busy. Since slow
-// collection now runs on its own goroutine (it can no longer starve the
-// watchdog), a slow command only makes that cycle's data late -- it never
-// crashes the daemon -- so this is deliberately generous and operator-tunable
-// via the exec_timeout config key. The process-group kill below still recovers
-// from a genuinely wedged command. Set once from config at daemon startup
-// before any collector goroutine spawns (write-once-before-reads, like
-// connDial), so concurrent reads need no lock.
+// execTimeout bounds each external command.
 var execTimeout = 60 * time.Second
 
 func (osExec) Run(name string, args ...string) ([]byte, error) {
@@ -39,14 +30,8 @@ func (osExec) Run(name string, args ...string) ([]byte, error) {
 	return runWithTimeout(execTimeout, name, args...)
 }
 
-// runWithTimeout runs name with args under a hard deadline, killing the
-// whole process group on expiry -- otherwise a grandchild (e.g. smartctl
-// under sudo) keeps the stdout pipe open and CombinedOutput blocks past the
-// deadline. Shared by osExec, bound by the package-level execTimeout (a
-// generous, operator-tunable ceiling for legitimately slow host commands),
-// and timeoutExec (update_apply.go), bound by its own fixed duration for
-// callers -- like a self-update smoke test -- that need a much tighter,
-// non-configurable bound.
+// runWithTimeout runs name with args under a hard deadline, killing the whole process group
+// on expiry -- otherwise a grandchild.
 func runWithTimeout(d time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()

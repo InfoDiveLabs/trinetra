@@ -1,18 +1,5 @@
-// Command tscmp compares a child's raw tsfile series with the master's
-// replica of it, for the fleet Docker end-to-end test (run.sh).
-//
-// A tsfile is a 16-byte header followed by fixed 32-byte records
-// (ts int64, min, avg, max float64, big-endian); see
-// internal/trinetra/tsfile.go. The replica must be a byte-for-byte prefix
-// of the child's file (same header, same records, in order), lag behind it by
-// at most -maxlag records, and hold strictly increasing timestamps (no
-// duplicates). With -from/-to it also checks that the replica has no hole in
-// that window: the largest gap between consecutive timestamps whose interval
-// overlaps [from, to] must be at most -maxgap seconds.
-//
-// Exit status 0 means every check passed, 2 means only the lag check failed
-// (the caller may retry: a batch can be in flight), 1 means anything else
-// failed. It prints one summary line either way ("ok ..." or "FAIL ...").
+// Command tscmp compares a child's raw tsfile series with the master's replica of it, for
+// the fleet Docker end-to-end test (run.sh).
 package main
 
 import (

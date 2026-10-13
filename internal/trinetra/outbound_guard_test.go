@@ -46,10 +46,8 @@ func TestIsBlockedIP(t *testing.T) {
 	}
 }
 
-// TestGuardedClientBlocksLoopbackButPlainAllows drives real DNS/dial: a
-// guarded client must refuse to connect to the loopback test server, while a
-// plain client (guard off) reaches it -- proving the guard is wired end to end
-// through the dialer, not just the classifier.
+// TestGuardedClientBlocksLoopbackButPlainAllows drives real DNS/dial: a guarded client must
+// refuse to connect to the loopback test server, while a plain client.
 func TestGuardedClientBlocksLoopbackButPlainAllows(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -71,9 +69,7 @@ func TestGuardedClientBlocksLoopbackButPlainAllows(t *testing.T) {
 	}
 }
 
-// TestBuildNotifierAppliesGuard proves the flag is wired through buildNotifier:
-// a webhook channel pointed at a loopback server sends fine with the guard off
-// and is refused with it on.
+// TestBuildNotifierAppliesGuard proves the flag is wired through buildNotifier.
 func TestBuildNotifierAppliesGuard(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

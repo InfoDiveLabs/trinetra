@@ -9,12 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
-// init wires up "sign --role maint-test", which exists only in a
-// trinetra_testkeys build: it signs with the deterministic maintainer test
-// key (seed 2) so the e2e fixtures can produce a maintainer signature
-// without a real maintainer key ceremony.
-//
-// It also provides testKeySet for `verify --testkeys` / `cosign --testkeys`.
+// init wires up "sign --role maint-test", which exists only in a trinetra_testkeys build:
+// it signs with the deterministic maintainer test key.
 func init() {
 	testKeySet = updatetest.TestKeySet
 	signMaintTest = func(in, out string) error {

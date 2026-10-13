@@ -20,14 +20,12 @@ type Source interface {
 
 var ErrNoChannel = errors.New("update: source has no channel pointers")
 
-// ErrNotFound marks a source answer that the asset (or its release) does not
-// exist, as opposed to a transport failure: FetchLatest turns it into
-// ErrNoPointer, which the freeze alert treats as a withheld pointer.
+// ErrNotFound marks a source answer that the asset (or its release) does not exist, as
+// opposed to a transport failure: FetchLatest turns it into ErrNoPointer.
 var ErrNotFound = errors.New("update: not found")
 
-// GitHubSource reads release assets through the GitHub REST API, so it works
-// for a private repo with a read-only token and for a public one without.
-// Authenticity never comes from here: every byte is verified by the caller.
+// GitHubSource reads release assets through the GitHub REST API, so it works for a private
+// repo with a read-only token and for a public one without.
 type GitHubSource struct {
 	Repo    string // "InfoDiveLabs/trinetra"
 	Token   string
@@ -108,9 +106,8 @@ func (g GitHubSource) ChannelAsset(ctx context.Context, name string) (io.ReadClo
 	return g.asset(ctx, "channels", name)
 }
 
-// DirSource reads a local release bundle directory (manifest, both
-// signatures and binaries side by side). The version argument is ignored:
-// a bundle holds exactly one release, and its manifest says which.
+// DirSource reads a local release bundle directory (manifest, both signatures and binaries
+// side by side).
 type DirSource struct{ Dir string }
 
 func (d DirSource) ReleaseAsset(_ context.Context, _ string, name string) (io.ReadCloser, error) {

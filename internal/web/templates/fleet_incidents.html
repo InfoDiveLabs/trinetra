@@ -38,7 +38,7 @@
       <th>Nodes</th>
       <th>Opened</th>
       <th>Duration</th>
-      <th>Delivered / Suppressed</th>
+      <th title="notifications sent / held back">Notifications</th>
     </tr></thead>
     {{template "incident_rows" .}}
   </table>
@@ -61,7 +61,7 @@
   <td data-label="Nodes">{{if .Nodes}}{{.Nodes}}{{else}}<span class="note">-</span>{{end}}</td>
   <td class="mono note" data-label="Opened">{{.OpenedText}}</td>
   <td class="mono note" data-label="Duration">{{.DurationText}}</td>
-  <td data-label="Delivered / Suppressed"><span class="badge ok">delivered {{.DeliveredCount}}</span> <span class="badge">suppressed {{.SuppressedCount}}</span></td>
+  <td class="nowrap" data-label="Notifications"><span class="badge ok" title="notifications delivered to channels">{{.DeliveredCount}} sent</span> <span class="badge" title="notifications held back by a silence, maintenance window or grouping">{{.SuppressedCount}} held</span></td>
 </tr>
 {{else}}
 <tr><td colspan="7" class="note">no incidents match this filter</td></tr>

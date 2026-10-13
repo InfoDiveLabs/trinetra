@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,10 +39,7 @@ func pointerSource(t *testing.T, channel, version, relChannel string, issued tim
 	}
 }
 
-// TestCheckSetsAvailableOnlyWhenPolicyPasses is R18: Available (which drives
-// the "update available" alert, the web Apply button and Telegram /version)
-// is set only for a release this host would actually accept -- right
-// channel, above the floor, not known-bad -- and cleared otherwise.
+// Available is set only for a release this host would accept.
 func TestCheckSetsAvailableOnlyWhenPolicyPasses(t *testing.T) {
 	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
 	issued := now.Add(-time.Hour)
@@ -79,5 +77,21 @@ func TestCheckSetsAvailableOnlyWhenPolicyPasses(t *testing.T) {
 				t.Fatalf("Available = %q, want %q", got.Available, c.want)
 			}
 		})
+	}
+}
+
+// TestUpdaterCheckUnparsableFloorFailsClosed is #138: a persisted floor that is valid JSON.
+func TestUpdaterCheckUnparsableFloorFailsClosed(t *testing.T) {
+	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	issued := now.Add(-time.Hour)
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Floor: "not-a-version"}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	cfg := config.Default()
+	u := updater{paths: p, keys: testKeys(), src: pointerSource(t, "stable", "0.5.0", "stable", issued),
+		now: func() time.Time { return now }, arch: "amd64", running: mustVer("0.4.1")}
+	if _, err := u.check(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "not-a-version") {
+		t.Fatalf("check() = %v, want an error naming the bad floor value", err)
 	}
 }

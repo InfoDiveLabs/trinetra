@@ -1,7 +1,5 @@
-// Package trinetra: downtime_cmd.go implements the `trinetra downtime`
-// CLI, whose only subcommand today is `purge` -- an operator tool to clear
-// bogus downtime events from the store, e.g. the short fabricated power_downs a
-// daemon crash loop wrote before the #116 classification fix stopped them.
+// Package trinetra: downtime_cmd.go implements the `trinetra downtime` CLI, whose only
+// subcommand today is `purge`.
 package trinetra
 
 import (
@@ -23,10 +21,7 @@ func cmdDowntime(args []string) int {
 	}
 }
 
-// cmdDowntimePurge removes downtime events of a given type below a duration
-// threshold. The default (power_down shorter than 300s) targets the short
-// restart-storm artifacts #116 describes without touching a genuine multi-
-// minute outage. --max-seconds 0 removes every event of the type.
+// cmdDowntimePurge removes downtime events of a given type below a duration threshold.
 func cmdDowntimePurge(args []string) int {
 	fs := flag.NewFlagSet("downtime purge", flag.ContinueOnError)
 	fs.SetOutput(stderr)

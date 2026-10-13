@@ -34,10 +34,8 @@ func probeDocker(x Exec, fs FileSource) dockerAccess {
 	return dockerAccess{available: false}
 }
 
-// probeSwarm reports whether this node is an ACTIVE Swarm member (#118), via
-// `docker info --format {{.Swarm.LocalNodeState}}` == "active". Gates the
-// task->service collapse so a plain-docker host is unaffected. Any error (old
-// docker, format unsupported) is treated as not-swarm.
+// probeSwarm reports whether this node is an ACTIVE Swarm member (#118), via `docker info
+// --format {{.Swarm.LocalNodeState}}` == "active".
 func probeSwarm(x Exec, sudo bool) bool {
 	args := []string{"info", "--format", "{{.Swarm.LocalNodeState}}"}
 	var out []byte
@@ -88,9 +86,8 @@ func parseDockerPS(s string) []Container {
 	return cs
 }
 
-// dockerStatsFormat mirrors dockerPSFormat above: a --format string for
-// `docker stats --no-stream` that produces one tab-separated line per
-// container, parsed by parseDockerStats.
+// dockerStatsFormat mirrors dockerPSFormat above: a --format string for `docker stats
+// --no-stream` that produces one tab-separated line per container.
 const dockerStatsFormat = "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"
 
 // ContainerStat is one container's point-in-time resource usage, as parsed
@@ -119,13 +116,8 @@ func (a dockerAccess) stats(x Exec) ([]ContainerStat, error) {
 	return parseDockerStats(string(out)), nil
 }
 
-// validContainerName reports whether name is a plausible docker container name
-// or id: docker's own charset ([A-Za-z0-9][A-Za-z0-9_.-]*). Everything the
-// logs path shells out is validated against this AND against the live
-// container list (see inprocAPI.ContainerLogs), so a caller cannot smuggle a
-// flag ("--since", "-f") or another argument through the name. Belt and
-// suspenders on top of exec.Command's no-shell argv, which already prevents
-// shell metacharacter injection.
+// validContainerName reports whether name is a plausible docker container name or id:
+// docker's own charset ([A-Za-z0-9][A-Za-z0-9_.-]*).
 func validContainerName(name string) bool {
 	if name == "" || len(name) > 128 {
 		return false
@@ -145,11 +137,8 @@ func validContainerName(name string) bool {
 	return true
 }
 
-// logs returns the last `lines` log lines of container name via
-// `docker logs --tail N`, dispatching plain/sudo like list and stats. The
-// caller is responsible for having validated name (validContainerName) and
-// confirmed it is a live container; logs merges stdout+stderr because docker
-// writes container output to both.
+// logs returns the last `lines` log lines of container name via `docker logs --tail N`,
+// dispatching plain/sudo like list and stats.
 func (a dockerAccess) logs(x Exec, name string, lines int) (string, error) {
 	if lines <= 0 {
 		lines = 200
@@ -168,12 +157,8 @@ func (a dockerAccess) logs(x Exec, name string, lines int) (string, error) {
 	return string(out), nil
 }
 
-// parseDockerStats parses dockerStatsFormat output ("name\tcpu%\tmemUsage\t
-// netIO" per line) into ContainerStat values. Tolerant of odd/missing
-// fields: any line that doesn't have all 4 tab-separated fields, or whose
-// CPU%/mem/net sub-fields don't parse, is skipped rather than aborting the
-// whole batch (a single misbehaving container must not blank out every
-// other container's stats).
+// parseDockerStats parses dockerStatsFormat output ("name\tcpu%\tmemUsage\t netIO" per
+// line) into ContainerStat values.
 func parseDockerStats(s string) []ContainerStat {
 	var out []ContainerStat
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
@@ -252,10 +237,7 @@ func splitSlash(s string) (left, right string, ok bool) {
 	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
 }
 
-// binarySizeUnits maps docker's binary (1024-based) size suffixes to their
-// value in MiB. Ordered longest-suffix-first: every shorter suffix here is
-// also a suffix of the longer ones (e.g. "B" ends "GiB"/"MiB"/"KiB" too), so
-// callers checking in this order find the correct (longest) match first.
+// binarySizeUnits maps docker's binary (1024-based) size suffixes to their value in MiB.
 var binarySizeUnits = []struct {
 	suffix string
 	toMiB  float64
@@ -281,9 +263,8 @@ func parseBinarySize(s string) (float64, bool) {
 	return 0, false
 }
 
-// decimalSizeUnits maps docker's decimal (1000-based) NetIO size suffixes to
-// their value in MB. Ordered longest-suffix-first for the same reason as
-// binarySizeUnits above ("B" is a suffix of "kB"/"MB"/"GB" too).
+// decimalSizeUnits maps docker's decimal (1000-based) NetIO size suffixes to their value in
+// MB.
 var decimalSizeUnits = []struct {
 	suffix string
 	toMB   float64

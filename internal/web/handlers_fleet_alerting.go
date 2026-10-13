@@ -1,15 +1,5 @@
-// handlers_fleet_alerting.go (task C3, fleet phase 2 web UI plan C): the
-// fleet alerting admin page -- GET/POST /fleet/alerting (routes/policies/
-// rules editor, structured form or "edit as JSON"), POST
-// /fleet/alerting/test (the route tester), and GET /fleet/rules/state (the
-// htmx-polled rule-state fragment) -- over core.FleetAPI's Alerting/
-// SetAlerting/RouteTest/RuleStates (internal/core/fleet.go). Master-only
-// (fleetGateHTML/fleetGatePlain, exactly like every other /fleet* page);
-// GET is viewer+ (read-only for a viewer, per the brief), the save POST is
-// admin+CSRF (fleetAdminMutation), and the route tester POST is viewer+CSRF
-// (routes.go) -- it never mutates the saved config, but still requires a
-// valid CSRF token like any other signed-in POST (fix round 1 IMPORTANT 1,
-// the /channels/{name}/test precedent).
+// handlers_fleet_alerting.go: the fleet alerting admin page -- GET/POST /fleet/alerting
+// (routes/policies/rules editor, structured form or "edit as JSON").
 package web
 
 import (
@@ -27,19 +17,12 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// oneIndexed renders a zero-based loop index (route/policy/step) as its
-// 1-based display label (U6, 2026-09-25 UI audit fix): "Route 0"/"Policy 0"/
-// "Step 0" read as bugs to an operator, even though the SAME index is still
-// used 0-based everywhere it matters functionally -- the row's own form
-// field names (route_0_name, policy_0_step_0_after, ...), which
-// parseAlertingDraftForm indexes off verbatim, and every add/remove/move-row
-// button's op value (e.g. "remove_route:0"). Only the visible label changes.
+// oneIndexed renders a zero-based loop index (route/policy/step) as its 1-based display
+// label (U6, 2026-09-25 UI audit fix).
 func oneIndexed(i int) int { return i + 1 }
 
-// templateDict builds a map[string]any from alternating key/value
-// arguments -- fleet_alerting.html's own funcMap entry ("dict",
-// templates.go), used to pass a small ad-hoc bundle of fields into a named
-// template block since html/template has no map literal syntax of its own.
+// templateDict builds a map[string]any from alternating key/value arguments --
+// fleet_alerting.html's own funcMap entry ("dict", templates.go).
 func templateDict(pairs ...any) (map[string]any, error) {
 	if len(pairs)%2 != 0 {
 		return nil, fmt.Errorf("dict: odd number of arguments")
@@ -55,24 +38,11 @@ func templateDict(pairs ...any) (map[string]any, error) {
 	return m, nil
 }
 
-// ---------------------------------------------------------------------------
-// Draft model: the structured form's row shapes, convertible both ways with
-// core.AlertingConfig, so the SAME rows back a fresh GET (loaded from
-// Alerting()), a validation-error/conflict re-render (rebuilt from exactly
-// what was posted, per global-constraints.md's "preserve all user input"),
-// and an add/remove/reorder op's in-place reshape (never itself saved).
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Draft model:
+// the structured form's row shapes, convertible both ways with core.AlertingConfig.
 
-// alertingRowLabel is the display/match label for a row's name: "(unnamed)"
-// for a blank one. Route names are REQUIRED and unique as of the C3 fix
-// round 1 (validateAlertingConfig, internal/trinetra/fleet_routing.go), so
-// this only ever matters for a route mid-edit (before the user has typed a
-// name in, pre-save) -- a SAVED route's own field-path errors always carry
-// its real name. Policy/rule names stay optional in the backend's own
-// vocabulary ("every policy needs a name" is a top-level message naming no
-// row; a blank rule name's own error is `rule "": ...` -- see
-// alertingErrField's rule patterns, which run a name through this same
-// function so both sides of the match agree).
+// alertingRowLabel is the display/match label for a row's name: "(unnamed)" for a blank
+// one.
 func alertingRowLabel(name string) string {
 	if strings.TrimSpace(name) == "" {
 		return "(unnamed)"
@@ -80,17 +50,12 @@ func alertingRowLabel(name string) string {
 	return name
 }
 
-// alertingFieldKey builds the field-path key a validation error's field name
-// (route/policy/rule) resolves to, and that AlertingRouteRow/AlertingPolicyRow/
-// AlertingRuleRow.FieldKey stores for the template's inline-error match
-// (AlertingPageData.ErrField) -- see alertingErrField's doc for where the
-// other half of this comes from.
+// alertingFieldKey builds the field-path key a validation error's field name.
 func alertingFieldKey(kind, name string) string {
 	return kind + ":" + alertingRowLabel(name)
 }
 
-// AlertingMatcherRow is one OR'd matcher row within a route (core.Matcher's
-// four fields).
+// AlertingMatcherRow is one OR'd matcher row within a route (core.Matcher's four fields).
 type AlertingMatcherRow struct {
 	Tag      string
 	Node     string
@@ -105,9 +70,8 @@ type AlertingRouteRow struct {
 	Policy   string
 	GroupBy  string // comma-joined core.Route.GroupBy
 	Continue bool
-	// FieldKey is this row's inline-error match key ("route:<name-or-
-	// (unnamed)>"), computed alongside Name every time a row is built/
-	// reshaped -- see alertingFieldKey.
+	// FieldKey is this row's inline-error match key ("route:<name-or- (unnamed)>"), computed
+	// alongside Name every time a row is built/ reshaped -- see alertingFieldKey.
 	FieldKey string
 }
 
@@ -117,9 +81,8 @@ type AlertingStepRow struct {
 	Channels []string
 }
 
-// HasChannel reports whether name (a channel name, or "*") is selected on
-// this step -- the channel-checkboxes template calls this to mark each
-// checkbox's checked state.
+// HasChannel reports whether name (a channel name, or "*") is selected on this step -- the
+// channel-checkboxes template calls this to mark each checkbox's checked state.
 func (s AlertingStepRow) HasChannel(name string) bool {
 	for _, c := range s.Channels {
 		if c == name {
@@ -197,12 +160,8 @@ func draftFromConfig(cfg core.AlertingConfig) AlertingDraft {
 	return d
 }
 
-// toConfig converts the draft back into a core.AlertingConfig for
-// SetAlerting -- a blank matcher row (every field empty) is dropped rather
-// than posted as a Matcher{} (which core.Matcher.Empty would reject as
-// "must match something" the instant a route gains even one placeholder
-// row), so an untouched freshly-added matcher row doesn't itself become a
-// validation error.
+// toConfig converts the draft back into a core.AlertingConfig for SetAlerting -- a blank
+// matcher row (every field empty) is dropped rather than posted as a Matcher{}.
 func (d AlertingDraft) toConfig() core.AlertingConfig {
 	cfg := core.AlertingConfig{Version: d.Version, DefaultPolicy: strings.TrimSpace(d.DefaultPolicy)}
 	for _, r := range d.Routes {
@@ -257,14 +216,8 @@ func alertingConfigJSON(cfg core.AlertingConfig) string {
 	return string(b)
 }
 
-// ---------------------------------------------------------------------------
-// Form parsing: the structured editor posts every row as indexed fields
-// (route_<i>_name, route_<i>_matcher_<j>_tag, policy_<i>_step_<j>_after,
-// policy_<i>_step_<j>_channels, ...) plus a *_count hidden field per level,
-// so parseAlertingDraftForm can rebuild the exact posted shape (including a
-// row a validation failure must echo back unchanged) without depending on
-// r.Form's key ordering.
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Form parsing:
+// the structured editor posts every row as indexed fields.
 
 func parseAlertingDraftForm(r *http.Request) AlertingDraft {
 	var d AlertingDraft
@@ -334,9 +287,8 @@ func parseAlertingDraftForm(r *http.Request) AlertingDraft {
 	return d
 }
 
-// opIndexAt parses parts[i] as a non-negative int, ok=false if i is out of
-// range or the value doesn't parse -- applyAlertingOp's shared guard for
-// every "<verb>:<i>[:<j>]" op token.
+// opIndexAt parses parts[i] as a non-negative int, ok=false if i is out of range or the
+// value doesn't parse.
 func opIndexAt(parts []string, i int) (int, bool) {
 	if i >= len(parts) {
 		return 0, false
@@ -348,17 +300,8 @@ func opIndexAt(parts []string, i int) (int, bool) {
 	return n, true
 }
 
-// applyAlertingOp reshapes d in place for every add/remove/reorder op the
-// structured editor's row buttons post (op's value, e.g. "add_route",
-// "remove_route:2", "move_route_up:2", "add_matcher:0",
-// "remove_matcher:0:1", "add_policy", "remove_policy:1", "add_step:1",
-// "remove_step:1:2", "add_rule", "remove_rule:2"). Never itself saves --
-// fleetAlertingSaveHandler re-renders the reshaped draft at 200 and waits
-// for an explicit "save" op. An out-of-range index, or removing a route/
-// policy/rule/step/matcher's last remaining row, is a silent no-op rather
-// than a panic or a 400: the buttons themselves never post one (they're
-// only rendered when the row exists / more than one remains), so this only
-// ever guards against a stale/tampered form.
+// applyAlertingOp reshapes d in place for every add/remove/reorder op the structured
+// editor's row buttons post.
 func applyAlertingOp(d *AlertingDraft, op string) {
 	parts := strings.Split(op, ":")
 	switch parts[0] {
@@ -413,23 +356,8 @@ func applyAlertingOp(d *AlertingDraft, op string) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Field-path error mapping: internal/trinetra's validateAlertingConfig
-// returns plain English errors naming a route/policy/rule by its own name
-// ("route %q: ...", "policy %q step %d: ...", "default_policy: ...", "rule
-// %q: ...") -- never a machine field path. alertingErrField parses those
-// known shapes back into the SAME "kind:name" (or "kind:name:step:N") key
-// alertingFieldKey computes for each row, so the template can highlight the
-// one row/step a message names; anything that doesn't match a known shape
-// (e.g. "every policy needs a name" or "every route needs a name", which
-// name no specific row) renders at the top only (ErrField==""). A route's
-// own name is required and unique (C3 fix round 1), so a route field-path
-// error's captured name is never blank in practice; a policy's/rule's can
-// still be blank pre-save, and each capture is run through alertingRowLabel
-// so both sides of the match agree on "(unnamed)" for a blank name (fix
-// round 1 MINOR: `rule "": ...` -- validateRules names a blank rule
-// literally as "" via r.Name, unlike the old routeLabel convention).
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- Field-path
+// error mapping.
 
 var alertingErrPatterns = []struct {
 	re    *regexp.Regexp
@@ -458,16 +386,11 @@ func alertingErrField(err error) string {
 	return ""
 }
 
-// ---------------------------------------------------------------------------
-// Page data
+// --------------------------------------------------------------------------- Page data
 // ---------------------------------------------------------------------------
 
-// RuleStateRow is one row of the /fleet/rules/state fragment (core.RuleState
-// projected for display): Value is "no data" whenever the rule has never
-// produced a value or its last evaluation found nothing to compute from
-// (core.RuleState's own "no data does not fire and does not recover" doc),
-// State is the plain-text firing/ok/error reading (never color-only), and
-// Since is "-" for a rule with no Since yet.
+// RuleStateRow is one row of the /fleet/rules/state fragment (core.RuleState projected for
+// display).
 type RuleStateRow struct {
 	Name      string
 	Expr      string
@@ -519,9 +442,8 @@ type AlertingTestStep struct {
 	Channels string
 }
 
-// AlertingTestPolicy is one matched policy of a route-test result --
-// core.RouteDecision carries several when a Continue chain fanned out
-// (core.RouteDecision's own doc).
+// AlertingTestPolicy is one matched policy of a route-test result -- core.RouteDecision
+// carries several when a Continue chain fanned out (core.RouteDecision's own doc).
 type AlertingTestPolicy struct {
 	Name         string
 	Steps        []AlertingTestStep
@@ -548,25 +470,17 @@ func buildAlertingTestResult(dec core.RouteDecision) *AlertingTestResult {
 	return res
 }
 
-// AlertingPageData is what templates/fleet_alerting.html's "content" block
-// renders against.
+// AlertingPageData is what templates/fleet_alerting.html's "content" block renders against.
 type AlertingPageData struct {
 	PageData
 
 	Draft      AlertingDraft
 	JSONConfig string
-	// JSONErr is a "edit as JSON" mode-specific error (a JSON parse failure,
-	// an unknown field, trailing data, or a SetAlerting rejection while in
-	// JSON mode) rendered right next to the textarea, in addition to the
-	// generic top Flash banner every rejection also gets.
+	// JSONErr is a "edit as JSON" mode-specific error.
 	JSONErr string
 
-	// Channels are the master's configured channel names (d.Cfg().Channels),
-	// offered alongside the literal "*" in every step's channel checkboxes.
-	// PolicyNames back the route/default-policy fields' <datalist> --
-	// free-text inputs with autocomplete, not a <select>, so a reference to
-	// a policy not yet added (still being typed) is never silently
-	// discarded (see the routes-editor doc in the template).
+	// Channels are the master's configured channel names (d.Cfg().Channels), offered alongside
+	// the literal "*" in every step's channel checkboxes.
 	Channels    []string
 	PolicyNames []string
 
@@ -586,10 +500,8 @@ type AlertingPageData struct {
 	TestErr      string
 }
 
-// alertingPageOptions is buildAlertingPageData's input: Loaded distinguishes
-// a fresh GET (load Alerting() fresh) from a POST re-render (Draft/
-// JSONConfig already hold exactly what was posted/reshaped, per
-// global-constraints.md's "preserve all user input").
+// alertingPageOptions is buildAlertingPageData's input: Loaded distinguishes a fresh GET
+// (load Alerting() fresh) from a POST re-render.
 type alertingPageOptions struct {
 	Loaded     bool
 	Draft      AlertingDraft
@@ -629,13 +541,8 @@ func buildAlertingPolicyNames(draft AlertingDraft) []string {
 	return names
 }
 
-// buildAlertingTestNodeNames reads the roster through r's request-scoped
-// fleetMemo (fleet_memo.go) rather than a fresh Fleet().Nodes() call: this
-// same roster is very likely already cached from newPageData's own
-// switcher-building read (resolveFleetPageInfo/buildSwitcherNodes) earlier
-// in this same request, so this costs a real round trip only when nothing
-// else in the request already paid for one -- the same convention every
-// other roster read in this package follows.
+// buildAlertingTestNodeNames reads the roster through r's request-scoped fleetMemo
+// (fleet_memo.go) rather than a fresh Fleet().Nodes() call.
 func buildAlertingTestNodeNames(r *http.Request, d Deps) []string {
 	nodes, err := fleetMemoFrom(r).fleetNodes(d)
 	if err != nil {
@@ -683,8 +590,7 @@ func buildAlertingPageData(r *http.Request, d Deps, opts alertingPageOptions) Al
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Rendering
+// --------------------------------------------------------------------------- Rendering
 // ---------------------------------------------------------------------------
 
 func renderAlertingPage(w http.ResponseWriter, data AlertingPageData, status int) error {
@@ -717,12 +623,7 @@ func renderRuleStatesFragment(w http.ResponseWriter, rows []RuleStateRow) error 
 	return tmpl.ExecuteTemplate(w, "rule_rows", struct{ Rows []RuleStateRow }{rows})
 }
 
-// AlertingTestResultData is what fleet_alerting.html's "test_result" block
-// renders against -- field names deliberately match AlertingPageData's own
-// TestResult/TestErr so the SAME block renders identically whether it's
-// reached via {{template "test_result" .}} from the full page (a fresh GET,
-// no test run yet) or as POST /fleet/alerting/test's own htmx fragment
-// response.
+// AlertingTestResultData is what fleet_alerting.html's "test_result" block renders against.
 type AlertingTestResultData struct {
 	TestResult *AlertingTestResult
 	TestErr    string
@@ -739,8 +640,7 @@ func renderAlertingTestFragment(w http.ResponseWriter, data AlertingTestResultDa
 	return tmpl.ExecuteTemplate(w, "test_result", data)
 }
 
-// ---------------------------------------------------------------------------
-// Handlers
+// --------------------------------------------------------------------------- Handlers
 // ---------------------------------------------------------------------------
 
 // fleetAlertingPageHandler serves GET /fleet/alerting: read-only for a
@@ -757,23 +657,15 @@ func fleetAlertingPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// alertingConflictMessage is the brief's exact wording for a stale-Version
-// SetAlerting rejection (core.ErrConflict).
+// alertingConflictMessage is the wording for a stale-Version SetAlerting
+// rejection (core.ErrConflict).
 const alertingConflictMessage = "the alerting config changed since you loaded it — reload to see the latest"
 
-// alertingMaxBodyBytes caps POST /fleet/alerting's request body (fix round 1
-// MINOR): the JSON textarea in particular could otherwise post an
-// arbitrarily large body. 256 KiB comfortably fits even a large structured
-// config or its JSON mirror; anything past it is rejected with 413 before
-// r.ParseForm ever buffers it into memory.
+// alertingMaxBodyBytes caps POST /fleet/alerting's request body.
 const alertingMaxBodyBytes = 256 * 1024
 
-// decodeAlertingJSON decodes raw as exactly one core.AlertingConfig JSON
-// value (fix round 1 IMPORTANT 2): DisallowUnknownFields rejects an unknown
-// field by name (e.g. a typo'd "send_resolve"), and the second Decode call
-// (expecting io.EOF) rejects any trailing data after that one value -- the
-// standard idiom for "this body must contain exactly one JSON value", since
-// a bare json.Decoder.Decode call alone happily ignores trailing garbage.
+// decodeAlertingJSON decodes raw as exactly one core.AlertingConfig JSON value:
+// DisallowUnknownFields rejects an unknown field by name (e.g. a typo'd "send_resolve").
 func decodeAlertingJSON(raw string) (core.AlertingConfig, error) {
 	var cfg core.AlertingConfig
 	dec := json.NewDecoder(strings.NewReader(raw))
@@ -787,24 +679,8 @@ func decodeAlertingJSON(raw string) (core.AlertingConfig, error) {
 	return cfg, nil
 }
 
-// fleetAlertingSaveHandler serves POST /fleet/alerting (admin+CSRF,
-// fleetAdminMutation): mode=json submits the "edit as JSON" textarea
-// verbatim as a full AlertingConfig; mode=form (the default) submits the
-// structured editor's rows, EITHER reshaping them in place for an add/
-// remove/reorder op (never saved -- re-rendered at 200 so the user keeps
-// editing) or, for op=save (or no op), converting them to a
-// core.AlertingConfig and calling SetAlerting. A validation error re-renders
-// at 400 with the error inline next to the field it names (alertingErrField)
-// where possible, else at the top; core.ErrConflict re-renders at 409 with
-// the fixed reload message; a body over alertingMaxBodyBytes re-renders at
-// 413. Either way the user's own input is preserved exactly (the JSON
-// textarea echoed verbatim, or the form's rows rebuilt from what was
-// posted) -- never a 500.
-// limitBody caps a request body before any middleware reads it: requireCSRF
-// parses the form to find a body-embedded token, so a limit applied inside the
-// final handler would come too late. An oversized declared Content-Length is
-// refused outright; a chunked body is cut off by MaxBytesReader, which then
-// fails the CSRF parse.
+// fleetAlertingSaveHandler serves POST /fleet/alerting (admin+CSRF, fleetAdminMutation):
+// mode=json submits the "edit as JSON" textarea verbatim as a full AlertingConfig.
 func limitBody(n int64, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > n {
@@ -843,9 +719,8 @@ func fleetAlertingSaveHandler(d Deps) http.HandlerFunc {
 			cfg, jerr := decodeAlertingJSON(raw)
 			if jerr != nil {
 				msg := "invalid JSON: " + jerr.Error()
-				// The structured panel reloads the untouched canonical
-				// config (nothing was saved) -- only the JSON textarea and
-				// its own inline error reflect what was actually posted.
+				// The structured panel reloads the untouched canonical config (nothing was saved) --
+				// only the JSON textarea and its own inline error reflect what was actually posted.
 				data := buildAlertingPageData(r, d, alertingPageOptions{})
 				data.JSONConfig, data.JSONErr = raw, msg
 				data.Flash, data.FlashErr = msg, true
@@ -890,10 +765,8 @@ func fleetAlertingSaveHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// alertingSaveErrorStatus maps a SetAlerting error to its render status/
-// flash text: core.ErrConflict is the brief's exact 409 + fixed message;
-// anything else is a validation rejection, 400, shown verbatim (it already
-// names the offending field in plain English -- see alertingErrField).
+// alertingSaveErrorStatus maps a SetAlerting error to its render status/flash text:
+// core.ErrConflict is the 409 + fixed message; anything else is a validation rejection.
 func alertingSaveErrorStatus(err error) (status int, flash string) {
 	if errors.Is(err, core.ErrConflict) {
 		return http.StatusConflict, alertingConflictMessage
@@ -901,11 +774,7 @@ func alertingSaveErrorStatus(err error) (status int, flash string) {
 	return http.StatusBadRequest, err.Error()
 }
 
-// fleetAlertingTestHandler serves POST /fleet/alerting/test: the route
-// tester (viewer+CSRF, routes.go -- it never mutates the saved config, only
-// dry-runs RouteTest, but is still CSRF-gated like any other signed-in
-// POST). Renders just the "test_result" fragment, so the page's own tester
-// form can htmx-swap it in place without a full reload.
+// fleetAlertingTestHandler serves POST /fleet/alerting/test: the route tester.
 func fleetAlertingTestHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGatePlain(w, r, d) {
@@ -934,10 +803,7 @@ func fleetAlertingTestHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// fleetRulesStateHandler serves GET /fleet/rules/state: the htmx poll
-// target (every 10s, hx-sync="this:replace" like every other self-polling
-// fragment in this package) backing the Rules panel's live value/firing
-// state.
+// fleetRulesStateHandler serves GET /fleet/rules/state: the htmx poll target.
 func fleetRulesStateHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if fleetGatePlain(w, r, d) {

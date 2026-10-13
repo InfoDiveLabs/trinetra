@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// procStatLine builds a realistic /proc/<pid>/stat line for tests, matching
-// the field layout parseProcPidStat expects (proc(5) positions 3/14/15/20/24
-// for state/utime/stime/num_threads/rss).
+// procStatLine builds a realistic /proc/<pid>/stat line for tests, matching the field
+// layout parseProcPidStat expects.
 func procStatLine(pid int, comm, state string, utime, stime uint64, threads int, rss int64) string {
 	rest := []string{
 		state,                         // 3 state
@@ -137,9 +136,8 @@ func TestCollectProcesses(t *testing.T) {
 	if len(snap.Top) != 3 {
 		t.Fatalf("len(Top) = %d, want 3", len(snap.Top))
 	}
-	// First call to calc: no prior sample, so every pid's CPU% is 0 -> Top
-	// falls back to sorting by mem descending: pid1 (100*4/1024 MiB) first,
-	// then pid2, then pid3 (0 MiB).
+	// First call to calc: no prior sample, so every pid's CPU% is 0 -> Top falls back to
+	// sorting by mem descending: pid1 (100*4/1024 MiB) first, then pid2, then pid3 (0 MiB).
 	if snap.Top[0].PID != 1 || snap.Top[1].PID != 2 || snap.Top[2].PID != 3 {
 		t.Fatalf("Top order = %+v, want pids [1,2,3] by mem desc on first tick", snap.Top)
 	}

@@ -8,10 +8,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestClientUpdateStatusAndApplyRoundTrip pins the four new control-socket
-// self-update methods (task 8): a Client dialed against a real Serve loop
-// must round-trip UpdateStatus unmodified and must have UpdateApply reach
-// the daemon-side api with the exact version requested.
+// TestClientUpdateStatusAndApplyRoundTrip: over a real Serve loop, UpdateStatus
+// round-trips unmodified and UpdateApply reaches the api with the requested version.
 func TestClientUpdateStatusAndApplyRoundTrip(t *testing.T) {
 	fake := &fakeAPI{updateStatus: core.UpdateStatusView{Running: "0.5.0", Available: "0.5.1"}}
 	path := startTestServer(t, fake, "")
@@ -38,10 +36,8 @@ func TestClientUpdateStatusAndApplyRoundTrip(t *testing.T) {
 	}
 }
 
-// TestClientUpdateCheckAndRollbackRoundTrip covers the remaining two methods
-// (UpdateCheck, UpdateRollback) plus a status-view field the apply/status
-// test above doesn't exercise (Pending), and pins that UpdateRollback
-// reaches the fake with no arguments to check.
+// TestClientUpdateCheckAndRollbackRoundTrip covers UpdateCheck and
+// UpdateRollback (no arguments), plus the status field Pending.
 func TestClientUpdateCheckAndRollbackRoundTrip(t *testing.T) {
 	fake := &fakeAPI{updateStatus: core.UpdateStatusView{
 		Running: "0.5.0",
@@ -71,11 +67,8 @@ func TestClientUpdateCheckAndRollbackRoundTrip(t *testing.T) {
 	}
 }
 
-// TestClientUpdateMethodsSurfaceErrors proves an error the daemon-side api
-// returns from any of the four Update* methods comes back over the wire with
-// its exact message -- the same error-propagation proof
-// TestClientValidateChannelSurfacesError gives ValidateChannel, here for the
-// self-update surface (#122, task 8).
+// TestClientUpdateMethodsSurfaceErrors: an error from any Update* method comes
+// back over the wire with its exact message (#122).
 func TestClientUpdateMethodsSurfaceErrors(t *testing.T) {
 	wantErr := "update: signature does not verify against any trusted key"
 	fake := &fakeAPI{

@@ -1,12 +1,5 @@
-// Package trinetra: fleet_managed.go is the master's managed-config
-// fragment store and push (spec 6, task 8) plus the child's counterpart
-// that applies whatever the master last pushed, live, with no restart, and
-// makes the ten allowlisted keys read-only locally while under management.
-//
-// Naming: this is a DIFFERENT concept from config.go's existing
-// fleetManagedKeys (fleet identity keys -- role/address/master_url/ca_pin/
-// node_id -- writable only by `trinetra fleet init|join|leave|disable`).
-// Every identifier here is named managedFragment* to keep the two apart.
+// Package trinetra: fleet_managed.go is the master's managed-config fragment store and push
+// plus the child's counterpart that applies whatever the master last pushed, live.
 package trinetra
 
 import (
@@ -25,21 +18,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// managedFragmentAllowlistKeys is the exact, closed set of config.Config
-// keys a managed-config fragment may set (task-8 ruling): five thresholds,
-// the three baseline/anomaly-tuning keys, quiet_hours and
-// critical_overrides_quiet. Every one of these is already a live-apply key
-// (not RestartRequired -- see config.Keys()/keyCatalog), which is what lets
-// the child apply a pushed fragment through the existing ApplyConfig/reload
-// path with no restart. Pushing a fallback CHANNEL set (spec 5.4) is
-// explicitly OUT of scope for this fragment mechanism -- deferred to a
-// later task.
-//
-// This delegates to core.ManagedKeys (plan C task C5) rather than defining
-// its own literal copy: internal/web's managed-config page needs this exact
-// allowlist too (to build the fragment editor's key <select>), and
-// internal/web cannot import internal/trinetra, so the one true copy lives
-// in internal/core, which both packages can see.
+// managedFragmentAllowlistKeys is the exact, closed set of config.Config keys a
+// managed-config fragment may set: five thresholds, the three baseline/anomaly-tuning keys.
 var managedFragmentAllowlistKeys = core.ManagedKeys
 
 // managedFragmentAllowlist is managedFragmentAllowlistKeys as a set, for O(1)
@@ -62,11 +42,7 @@ func randomManagedFragmentID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// validateManagedFragmentValues rejects any key outside the allowlist
-// (naming it) and validates every remaining value by applying it to a
-// scratch copy of config.Default() via config.Set -- the exact same
-// validated setter `trinetra config set` uses, so a fragment can never hold
-// a value the child itself would ever reject.
+// validateManagedFragmentValues rejects any key outside the allowlist.
 func validateManagedFragmentValues(values map[string]string) error {
 	for k := range values {
 		if !managedFragmentAllowlist[k] {
@@ -106,14 +82,8 @@ type managedFragmentsFileV1 struct {
 	Generation int64                  `json:"generation"`
 }
 
-// managedFragmentStore is the master's managed-config fragment store,
-// persisted atomically (temp + rename + fsync, via writeFileAtomicSynced) to one
-// JSON file, 0600 (global-constraints: fleet/managed.json). generation is a
-// single monotonically increasing counter, bumped on every successful
-// save/delete: it is both a saved fragment's own Version (task-8 ruling:
-// "Version increments on each save") and the desired-set version pushed to
-// children in a "managed_config" frame, so a node's push version always
-// tells you exactly how fresh its desired set is relative to the store.
+// managedFragmentStore is the master's managed-config fragment store, persisted atomically
+// (temp + rename + fsync, via writeFileAtomicSynced) to one 0600 JSON file.
 type managedFragmentStore struct {
 	path string
 
@@ -122,8 +92,7 @@ type managedFragmentStore struct {
 	generation int64
 }
 
-// loadManagedFragmentStore opens (or creates) the store at path. A missing
-// file is not an error: a fresh master has no fragments yet.
+// loadManagedFragmentStore opens (or creates) the store at path.
 func loadManagedFragmentStore(path string) (*managedFragmentStore, error) {
 	s := &managedFragmentStore{path: path}
 	b, err := os.ReadFile(path)
@@ -163,12 +132,8 @@ func (s *managedFragmentStore) Version() int64 {
 	return s.generation
 }
 
-// Save validates and stores frag: a new fragment (fresh random id) if
-// frag.ID is "", otherwise an in-place update of the existing fragment with
-// that id. Every key in frag.Values must be allowlisted and itself valid
-// (validateManagedFragmentValues); an unknown ID on an update is an error.
-// On success frag.Version is set to the store's new generation and
-// frag.Author to actor.
+// Save validates and stores frag: a new fragment (fresh random id) if frag.ID is "",
+// otherwise an in-place update of the existing fragment with that id.
 func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (core.ManagedFragment, error) {
 	if frag.Tag != "" && !fleet.ValidTag(frag.Tag) {
 		return core.ManagedFragment{}, fmt.Errorf("invalid tag %q (lowercase letters, digits, _ . -; max 32)", frag.Tag)
@@ -181,15 +146,8 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Round-1 review MINOR: an empty ID is a server-side UPSERT by tag, not
-	// just a create -- "one fragment per tag" (task-8 ruling) is enforced
-	// HERE, atomically under this same lock, rather than by a caller
-	// (`fleet managed set`) first listing fragments and then deciding
-	// whether to create or update: that list-then-write was a TOCTOU (two
-	// concurrent `set --tag web ...` calls could both see no existing
-	// fragment and both create one, leaving two fragments for the same
-	// tag). An explicit, non-empty ID is always a plain update-by-id
-	// instead (unchanged behavior).
+	// An empty ID is a server-side UPSERT by tag, not just a create: "one fragment per tag" is
+	// enforced HERE, atomically under this lock.
 	explicitID := frag.ID
 	if explicitID == "" {
 		for _, f := range s.fragments {
@@ -200,15 +158,8 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 		}
 	}
 
-	// Merge carry-over (C5 review): when the caller asked to merge (`fleet
-	// managed set --tag X k=v`'s default), fold frag.Values into the
-	// EXISTING fragment's Values -- found by whichever id resolution above
-	// landed on -- rather than replacing them wholesale. This runs under
-	// the store's own lock, so it's atomic with the write below: no other
-	// Save can interleave between reading the old Values and writing the
-	// merged result. A brand-new fragment (no existing id) has nothing to
-	// merge into, so Merge is a no-op there. frag.Merge itself is cleared
-	// so it never round-trips into the persisted fragment.
+	// Merge carry-over: when the caller asked to merge (`fleet managed set --tag X k=v`'s
+	// default), fold frag.Values into the EXISTING fragment's Values.
 	if frag.Merge && frag.ID != "" {
 		for _, f := range s.fragments {
 			if f.ID != frag.ID {
@@ -259,9 +210,8 @@ func (s *managedFragmentStore) Save(frag core.ManagedFragment, actor string) (co
 		}
 		return frag, nil
 	}
-	// Only reachable for an explicit, non-empty ID that names nothing (the
-	// tag-derived branch above can never produce an ID that isn't already
-	// in s.fragments).
+	// Only reachable for an explicit, non-empty ID that names nothing (the tag-derived branch
+	// above can never produce an ID that isn't already in s.fragments).
 	return core.ManagedFragment{}, fmt.Errorf("no such managed-config fragment %q: %w", explicitID, core.ErrNotFound)
 }
 
@@ -287,10 +237,7 @@ func (s *managedFragmentStore) Delete(id string) error {
 	return fmt.Errorf("no such managed-config fragment %q: %w", id, core.ErrNotFound)
 }
 
-// ByTag returns the fragment with the given tag ("" for the all-nodes
-// fragment), if any -- used by `fleet managed set` to decide whether to
-// create a new fragment or update the existing one for that tag (task-8
-// ruling: "one fragment per tag, simplest").
+// ByTag returns the fragment with the given tag ("" for the all-nodes fragment), if any.
 func (s *managedFragmentStore) ByTag(tag string) (core.ManagedFragment, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -302,13 +249,8 @@ func (s *managedFragmentStore) ByTag(tag string) (core.ManagedFragment, bool) {
 	return core.ManagedFragment{}, false
 }
 
-// Desired computes the effective (values, key->fragment-id, conflicts) for a
-// node carrying nodeTags: the "" (all-nodes) fragment applies first, then
-// every fragment whose Tag the node carries, in ALPHABETICAL tag order,
-// later values winning key by key (task-8 ruling). A key set by more than
-// one applicable fragment is recorded in conflicts, Fragments listing every
-// contributing fragment id in application order (its last entry is the one
-// that actually won).
+// Desired computes the effective (values, key->fragment-id, conflicts) for a node carrying
+// nodeTags: the "" (all-nodes) fragment applies first.
 func (s *managedFragmentStore) Desired(nodeTags []string) (values map[string]string, keyFragment map[string]string, conflicts []core.ManagedConflict) {
 	s.mu.Lock()
 	fragments := append([]core.ManagedFragment(nil), s.fragments...)
@@ -370,30 +312,19 @@ func (s *managedFragmentStore) Desired(nodeTags []string) (values map[string]str
 
 // --- master-side push -----------------------------------------------------
 
-// managedConfigFrameData is the "managed_config" stream frame's Data shape:
-// Version is the store's desired-set generation for the node this was built
-// for; Values is that node's full desired set; Fragments maps each key in
-// Values to the id of the fragment that supplied it (task-8 ruling calls
-// for "fragments:[ids]" -- the contributing fragment ids -- which this
-// carries PER KEY rather than as a flat list, since both the child's
-// read-only refusal message and core.LinkView.Managed need to name exactly
-// which fragment owns a given key, not just which fragments exist).
+// managedConfigFrameData is the "managed_config" stream frame's Data shape.
 type managedConfigFrameData struct {
 	Version   int64             `json:"version"`
 	Values    map[string]string `json:"values"`
 	Fragments map[string]string `json:"fragments"`
 }
 
-// managedPushInterval is how often TickManaged refreshes every connected
-// node's pushed managed-config set unconditionally, mirroring
-// silencePushInterval's role for pushed silences.
+// managedPushInterval is how often TickManaged refreshes every connected node's pushed
+// managed-config set unconditionally.
 const managedPushInterval = 10 * time.Minute
 
-// managedPusher drives the master's managed_config stream frame to every
-// node: on any fragment change (PushToAll, called by fleetAPIImpl after a
-// successful Save/Delete), on connect (PushOne, called from hub.OnConnect),
-// and unconditionally every managedPushInterval (TickManaged, called from
-// masterLoop.tick).
+// managedPusher drives the master's managed_config stream frame to every node: on any
+// fragment change (PushToAll, called by fleetAPIImpl after a successful Save/Delete).
 type managedPusher struct {
 	push      func(nodeID string, f fleet.Frame) bool
 	connected func(nodeID string) bool
@@ -425,9 +356,8 @@ func (p *managedPusher) PushOne(id string) bool {
 	return p.push(id, fleet.Frame{Type: "managed_config", Data: data})
 }
 
-// PushToAll pushes every connected id in ids its current desired set
-// (skipping any not currently connected) -- called after any
-// Save/Delete ("on change").
+// PushToAll pushes every connected id in ids its current desired set (skipping any not
+// currently connected) -- called after any Save/Delete ("on change").
 func (p *managedPusher) PushToAll(ids []string) {
 	if p == nil {
 		return
@@ -458,14 +388,8 @@ func (p *managedPusher) TickManaged(now time.Time, ids []string) {
 	p.PushToAll(ids)
 }
 
-// ManagedFragmentFor reports the fragment id currently managing key on THIS
-// child, read from its durable sidecar (fleet-child/managed.json) under
-// stateDir. This is the exported helper `trinetra config set`/`config
-// unset` (cmdConfig, main.go) use: that CLI subcommand is a plain one-shot
-// process with no connection to a running daemon's in-memory state, so it
-// reads the same durable sidecar managedChild persists to (see
-// managedChild.setApplied/clear) -- the one place both a live daemon
-// process and this one-shot CLI can agree on what is currently managed.
+// ManagedFragmentFor reports the fragment id currently managing key on THIS child, read
+// from its durable sidecar (fleet-child/managed.json) under stateDir.
 func ManagedFragmentFor(stateDir, key string) (fragmentID string, managed bool) {
 	b, err := os.ReadFile(managedChildPath(stateDir))
 	if err != nil {
@@ -489,13 +413,8 @@ func managedChildPath(stateDir string) string {
 	return filepath.Join(fleetChildDir(stateDir), "managed.json")
 }
 
-// managedChildFileV1 is the sidecar's on-disk shape. Values/AppliedAt match
-// the task-8 ruling verbatim ({version, values, applied_at}); Fragments
-// (key -> fragment id) is an additive extension beyond that literal triple,
-// needed so a restarted process (and the plain `trinetra config set`
-// one-shot CLI, via ManagedFragmentFor above) can still name the owning
-// fragment in a read-only refusal before the next push ever arrives --
-// documented as a deviation in the task report.
+// managedChildFileV1 is the sidecar's on-disk shape: {version, values, applied_at} plus
+// Fragments (key -> fragment id), which lets a restarted process.
 type managedChildFileV1 struct {
 	Version   int64             `json:"version"`
 	Values    map[string]string `json:"values"`
@@ -503,28 +422,8 @@ type managedChildFileV1 struct {
 	AppliedAt int64             `json:"applied_at"`
 }
 
-// managedChild is the child's live state for the master's pushed managed
-// config: getCfg/self are the same accessors startChild already has
-// (fleetDeps.getCfg, fleetDeps.self); now is injected for tests. version/
-// applied/lastErr reflect the LAST APPLY ATTEMPT's outcome (version is only
-// advanced on success -- an invalid fragment "rejects the whole fragment:
-// keep the old config and report the error", task-8 ruling, so version
-// stays at the last GOOD value); fragments is the master's current
-// declared key->fragment-id attribution from the last received frame
-// (updated regardless of apply success, since it describes what the master
-// intends, not whether this child accepted it) -- in-memory only, restored
-// best-effort from the sidecar (see loadManagedChild).
-//
-// values is the set of key/value pairs THIS child currently COMMITS to
-// enforcing -- i.e. the last successfully validated managed-config values
-// (round-1 review, IMPORTANT 1). It exists separately from whatever the
-// live config happens to hold right now because it is the input to
-// reimposeManagedValues, which the daemon's shared full-config reload path
-// (daemon.go) calls on EVERY ApplyConfig -- from the channels page, the
-// public-settings page, any ctl "manage" screen, none of which know
-// anything about managed-config -- to re-force these exact values onto
-// whatever config those callers are about to persist, so a stale read (or a
-// race with a fresh master push) can never silently revert a managed key.
+// managedChild is the child's live state for the master's pushed managed config:
+// getCfg/self are startChild's accessors (fleetDeps.getCfg, fleetDeps.self).
 type managedChild struct {
 	path   string
 	getCfg func() *config.Config
@@ -547,9 +446,8 @@ func newManagedChild(path string, getCfg func() *config.Config, self core.API, n
 	return &managedChild{path: path, getCfg: getCfg, self: self, now: now}
 }
 
-// loadManagedChild restores the sidecar written by a previous process: a
-// missing or corrupt file just starts fresh (never managed yet), exactly
-// like a child that has never received a "managed_config" frame.
+// loadManagedChild restores the sidecar written by a previous process: a missing or corrupt
+// file just starts fresh (never managed yet).
 func loadManagedChild(path string, getCfg func() *config.Config, self core.API, now func() time.Time) *managedChild {
 	mc := newManagedChild(path, getCfg, self, now)
 	b, err := os.ReadFile(path)
@@ -593,10 +491,7 @@ func cloneStringMap(m map[string]string) map[string]string {
 	return out
 }
 
-// cloneConfigJSON returns a deep, independent copy of c via a JSON round
-// trip (mirrors internal/web's cloneConfig; duplicated here rather than
-// shared since internal/web must not be imported by this package and vice
-// versa).
+// cloneConfigJSON returns a deep, independent copy of c via a JSON round trip.
 func cloneConfigJSON(c *config.Config) (*config.Config, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -609,41 +504,8 @@ func cloneConfigJSON(c *config.Config) (*config.Config, error) {
 	return nc, nil
 }
 
-// Apply handles one received "managed_config" frame: an empty Values (every
-// fragment deleted) means the child stops enforcing -- local values stay at
-// their last managed values, the sidecar is cleared (clear); otherwise every
-// value is validated against a clone of the live config via config.Set
-// (never the live config directly), and only if EVERY value passes is the
-// clone applied via self.ApplyConfig (the existing live-apply/reload path,
-// no restart). A single invalid value rejects the whole fragment: the old
-// config is left completely untouched and the error is recorded for the
-// next report.
-//
-// Round-1 review, MINOR (tightened by round-2 review, IMPORTANT): an
-// incoming frame identical to what is already applied (same version AND
-// same values) is a complete no-op -- no re-validation, no ApplyConfig
-// call, no sidecar rewrite -- so the periodic (every managedPushInterval)
-// re-push does not thrash the disk or the dispatcher on every otherwise-
-// unchanged refresh. Round 2 tightened this: version+values matching is no
-// longer sufficient on its own -- the LIVE config's effective value for
-// every managed key must ALSO already equal what was committed
-// (configMatchesValues), or the push re-applies anyway. Without this, a
-// child whose live config diverged from its committed values (a direct
-// config.json edit, a restored backup, an offline write, or -- before round
-// 2 -- a SIGHUP that bypassed reload's reimpose) would short-circuit every
-// subsequent same-version push forever: the version/values match on their
-// own prove nothing about what the live config currently holds.
-//
-// Round-1 review, IMPORTANT 1: mc.values (the committed set
-// reimposeManagedValues re-forces onto every OTHER full-config apply) is
-// updated to the NEW values BEFORE self.ApplyConfig is called, not after --
-// self.ApplyConfig ultimately runs the shared reload closure (daemon.go),
-// which calls reimposeManagedValues on its way in; committing first means
-// THIS push's own new values are what get (redundantly, harmlessly)
-// re-imposed onto its own clone, not the stale ones still in mc.values.
-// Rolled back to the previous committed values if ApplyConfig itself then
-// fails (a downstream reload error unrelated to the values' own validity,
-// which already passed above).
+// Apply handles one received "managed_config" frame: an empty Values (every fragment
+// deleted) means the child stops enforcing.
 func (mc *managedChild) Apply(p managedConfigFrameData) {
 	if mc == nil {
 		return
@@ -682,16 +544,8 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 			return
 		}
 	}
-	// Defensive: a key outside the allowlist should never arrive from a
-	// well-behaved master (Save validates it), but a stray one must still
-	// reject the whole fragment rather than being silently ignored or
-	// (worse) applied through config.Set's own "unknown key" error path
-	// under a key config.Set doesn't recognize -- Set already returns an
-	// error for any key it doesn't know, so the loop above already covers
-	// this for every key actually present in the allowlist range; keys
-	// present in p.Values but outside the allowlist are simply never
-	// looked at, which is the intended no-op for something a validating
-	// master would never send.
+	// Defensive: a key outside the allowlist should never arrive from a well-behaved master
+	// (Save validates it).
 	if mc.self == nil {
 		mc.setError(fmt.Errorf("no core API available to apply config"))
 		return
@@ -709,16 +563,12 @@ func (mc *managedChild) Apply(p managedConfigFrameData) {
 	mc.setApplied(p.Version, p.Values)
 }
 
-// managedChildWriteHook, when set by a test, runs synchronously immediately
-// before setApplied's disk write -- used to prove the write happens while
-// mc.mu is still held (final-review engine I2), the same way
-// pushedSilencesWriteHook proves it for pushedSilences.Set.
+// managedChildWriteHook, when set by a test, runs synchronously right before setApplied's
+// disk write, to prove the write happens while mc.mu is held.
 var managedChildWriteHook func()
 
-// setApplied holds mc.mu for the entire call, including the disk write:
-// otherwise two concurrent Apply calls (a stacked "managed_config" push
-// arriving before the previous one's write lands) can complete their writes
-// out of order, leaving the sidecar stale relative to mc's in-memory state.
+// setApplied holds mc.mu for the entire call, including the disk write: otherwise two
+// concurrent Apply calls.
 func (mc *managedChild) setApplied(version int64, values map[string]string) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
@@ -740,9 +590,8 @@ func (mc *managedChild) setError(err error) {
 	mc.mu.Unlock()
 }
 
-// clear resets to "nothing managed" (every fragment deleted on the master)
-// and removes the sidecar. Local config values are left exactly as they
-// are -- they simply stop being enforced/read-only.
+// clear resets to "nothing managed" (every fragment deleted on the master) and removes the
+// sidecar.
 func (mc *managedChild) clear(version int64) {
 	mc.mu.Lock()
 	mc.version, mc.applied, mc.lastErr, mc.fragments, mc.values = version, true, "", map[string]string{}, map[string]string{}
@@ -761,9 +610,8 @@ func (mc *managedChild) FragmentsSnapshot() map[string]string {
 	return cloneStringMap(mc.fragments)
 }
 
-// CurrentValues returns a copy of the managed-config values this child
-// currently commits to enforcing (nil if mc is nil or nothing is currently
-// managed), for reimposeManagedValues. Nil-safe.
+// CurrentValues returns a copy of the managed-config values this child currently commits to
+// enforcing (nil if mc is nil or nothing is currently managed), for reimposeManagedValues.
 func (mc *managedChild) CurrentValues() map[string]string {
 	if mc == nil {
 		return nil
@@ -773,23 +621,8 @@ func (mc *managedChild) CurrentValues() map[string]string {
 	return cloneStringMap(mc.values)
 }
 
-// reimposeManagedValues re-forces every one of mc's currently-committed
-// managed-config values onto c via config.Set (round-1 review, IMPORTANT 1).
-// The daemon's ONE shared full-config apply path -- the reload closure in
-// daemon.go, which inprocAPI.ApplyConfig calls for every control-socket
-// ApplyConfig (the web channels page, the public-settings page, every ctl
-// "manage" screen) -- calls this on every incoming config, right before
-// persisting/applying it: none of those callers know anything about
-// managed-config, so without this a full-config round trip built from a
-// stale read (or racing a fresh master push) could silently revert a
-// managed key back to whatever value it happened to carry.
-//
-// mc nil (solo, master, or before a child's managedChild is wired at daemon
-// startup) or nothing currently managed is a complete no-op. A Set failure
-// here should not happen (these values were already validated once by
-// managedChild.Apply), but is deliberately swallowed rather than failing
-// the whole apply: an unrelated, unmanaged edit (e.g. a channel change)
-// must never be rejected outright because of it.
+// reimposeManagedValues re-forces every one of mc's currently-committed managed-config
+// values onto c via config.Set.
 func reimposeManagedValues(mc *managedChild, c *config.Config) {
 	if c == nil {
 		return
@@ -804,13 +637,8 @@ func reimposeManagedValues(mc *managedChild, c *config.Config) {
 	}
 }
 
-// configMatchesValues reports whether c's current effective value for every
-// key in values matches it exactly (round-2 review, IMPORTANT): used both to
-// tighten managedChild.Apply's short-circuit (see its doc comment) and by
-// reconcileManagedValuesAtStart to decide whether a startup reconciliation
-// write is actually needed. A nil c never matches (vacuously "diverged",
-// forcing a caller to treat it as needing correction rather than silently
-// trusting an absent config).
+// configMatchesValues reports whether c's current effective value for every key in values
+// matches it exactly: used both to tighten managedChild.Apply's short-circuit.
 func configMatchesValues(c *config.Config, values map[string]string) bool {
 	if c == nil {
 		return false
@@ -824,22 +652,8 @@ func configMatchesValues(c *config.Config, values map[string]string) bool {
 	return true
 }
 
-// reconcileManagedValuesAtStart re-imposes mc's committed managed values (if
-// any) onto the live config immediately at child startup, persisting the
-// correction via the normal reload path if the live config had actually
-// diverged (round-2 review, IMPORTANT): a child's config can drift from its
-// committed values between restarts -- a direct config.json edit, a
-// restored backup, an offline write, or (before round 2) a SIGHUP that
-// bypassed reload's reimpose -- and, combined with Apply's short-circuit,
-// that divergence would otherwise be permanent: every subsequent push at
-// the SAME version would short-circuit forever without this reconciliation
-// ever running. Called once, from startChild, right after loadManagedChild
-// and before the shipper starts.
-//
-// A nil mc, nothing currently managed, or a live config that already
-// matches is a complete no-op (no clone, no ApplyConfig call). Errors are
-// logged, never returned or panicked on: this must never prevent the child
-// from starting.
+// reconcileManagedValuesAtStart re-imposes mc's committed managed values (if any) onto the
+// live config immediately at child startup.
 func reconcileManagedValuesAtStart(mc *managedChild, logf func(string, ...any)) {
 	if mc == nil {
 		return
@@ -870,13 +684,8 @@ func reconcileManagedValuesAtStart(mc *managedChild, logf func(string, ...any)) 
 	}
 }
 
-// Report builds this child's fleet.ManagedReport for its next LiveUpdate:
-// nil if no "managed_config" frame has ever been received (an old master,
-// or simply not yet connected to a phase-2 one) -- leaves the child
-// completely unaffected, matching every other task-8 mechanism's
-// nil-is-a-no-op convention. Values are read fresh from the live config on
-// every call, never cached, so the master always sees this child's true
-// current effective values regardless of whether the last apply succeeded.
+// Report builds this child's fleet.ManagedReport for its next LiveUpdate: nil if no
+// "managed_config" frame has ever been received.
 func (mc *managedChild) Report() *fleet.ManagedReport {
 	if mc == nil {
 		return nil
@@ -898,12 +707,8 @@ func (mc *managedChild) Report() *fleet.ManagedReport {
 	return &fleet.ManagedReport{Version: version, Applied: applied, Error: lastErr, Values: values}
 }
 
-// applyManagedConfigFrame decodes and applies f if it is a "managed_config"
-// frame, ignoring anything else -- called from startChild's OnFrame
-// closure alongside onStreamFrame/applyAckFrame. A malformed payload is
-// dropped rather than panicking, exactly like onStreamFrame's other frame
-// types: this runs synchronously on the stream's read loop and must never
-// block or crash on hostile/garbled input from the wire.
+// applyManagedConfigFrame decodes and applies f if it is a "managed_config" frame, ignoring
+// anything else.
 func applyManagedConfigFrame(mc *managedChild, f fleet.Frame) {
 	if mc == nil || f.Type != "managed_config" {
 		return

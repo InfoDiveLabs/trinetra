@@ -1,11 +1,5 @@
-// Package trinetra: fleet_routing.go is the master's routing/escalation
-// config store (spec 6/task 5): validated, versioned persistence of
-// AlertingConfig to alerting.json, and resolveRoute -- the ONE function both
-// the alerting engine's real delivery (fleet_engine.go) and
-// FleetAPI.RouteTest (fleet_provider.go) call to decide which policy applies
-// to a given (node, tags, rule, severity). Keeping route selection in this
-// single function is what makes RouteTest a trustworthy dry run: it can never
-// diverge from what the engine itself would do for the same input.
+// Package trinetra: fleet_routing.go is the master's routing/escalation config store:
+// validated, versioned persistence of AlertingConfig to alerting.json, and resolveRoute.
 package trinetra
 
 import (
@@ -21,10 +15,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// defaultPolicyName is the name of the built-in policy used when
-// alerting.json has never been saved (or was saved as a totally empty
-// config): a single immediate step delivering to every enabled channel,
-// resolved always sent -- today's pre-routing behaviour, byte for byte.
+// defaultPolicyName is the name of the built-in policy used when alerting.json has never
+// been saved (or was saved as a totally empty config).
 const defaultPolicyName = "default"
 
 // builtinDefaultPolicy returns the policy defaultAlertingConfig uses when no
@@ -38,9 +30,8 @@ func builtinDefaultPolicy() core.Policy {
 	}
 }
 
-// defaultAlertingConfig is what FleetAPI.Alerting reports, and what
-// resolveRoute falls back to, when the store has no saved config (Version 0,
-// never persisted).
+// defaultAlertingConfig is what FleetAPI.Alerting reports, and what resolveRoute falls back
+// to, when the store has no saved config (Version 0, never persisted).
 func defaultAlertingConfig() core.AlertingConfig {
 	return core.AlertingConfig{
 		Version:       0,
@@ -51,33 +42,24 @@ func defaultAlertingConfig() core.AlertingConfig {
 
 // --- validation ----------------------------------------------------------
 
-// validGlob reports whether pattern is a syntactically valid path.Match
-// glob, checked against "" per the task-5 ruling (path.Match's error, not
-// its match result, is what a bad pattern like "[" produces).
+// validGlob reports whether pattern is a syntactically valid path.Match glob, checked
+// against "".
 func validGlob(pattern string) bool {
 	_, err := path.Match(pattern, "")
 	return err == nil
 }
 
-// validDuration reports whether s parses with time.ParseDuration. "" is
-// valid wherever a duration is optional (Policy.RepeatEvery); callers that
-// require a duration (PolicyStep.After) reject "" themselves first.
+// validDuration reports whether s parses with time.ParseDuration.
 func validDuration(s string) bool {
 	_, err := time.ParseDuration(s)
 	return err == nil
 }
 
-// validateAlertingConfig checks cfg atomically: every error it can find is
-// worth reporting, but the first one found is returned (SetAlerting never
-// saves a partially-valid config either way). validChannel reports whether a
-// channel name exists in the master's current config.Channels.
+// validateAlertingConfig checks cfg atomically: every error it can find is worth reporting,
+// but the first one found is returned.
 func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name string) bool) error {
-	// A totally empty ROUTING config (no routes, no policies, no default) is
-	// the explicit "reset to the built-in default" case -- always valid, and
-	// skips every routing-specific check below. Rules (task 7) are a
-	// separate concern validated unconditionally further down: a config that
-	// only sets Rules, leaving routing untouched/default, must not be forced
-	// to also supply a DefaultPolicy just to save its rules.
+	// A totally empty ROUTING config (no routes, no policies, no default) is the explicit
+	// "reset to the built-in default" case -- always valid.
 	if len(cfg.Routes) == 0 && len(cfg.Policies) == 0 && cfg.DefaultPolicy == "" {
 		return validateRules(cfg.Rules)
 	}
@@ -121,13 +103,8 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 
 	routeNames := map[string]bool{}
 	for _, r := range cfg.Routes {
-		// Route names are REQUIRED and unique (fleet-ui-c task C3 fix round
-		// 1): the web editor's inline field-error matching needs a stable,
-		// unambiguous key per row, and an unnamed route's daemon-side
-		// messages used to all collapse onto the same synthetic
-		// "(unnamed)" label (routeLabel's old fallback), which made two
-		// unnamed routes indistinguishable. Nothing has shipped a routing
-		// config yet, so this is not a breaking migration.
+		// Route names are REQUIRED and unique: the web editor's inline field-error matching needs
+		// a stable, unambiguous key per row.
 		if strings.TrimSpace(r.Name) == "" {
 			return errors.New("every route needs a name")
 		}
@@ -164,9 +141,8 @@ func validateAlertingConfig(cfg core.AlertingConfig, validChannel func(name stri
 	return validateRules(cfg.Rules)
 }
 
-// validGroupByField reports whether g is one of the incident-grouping
-// (task 6 part 2) GroupBy fields a route may list: "node", "rule",
-// "severity", or "tag:<key>" for any non-empty key.
+// validGroupByField reports whether g is one of the incident-grouping GroupBy fields a
+// route may list: "node", "rule", "severity", or "tag:<key>" for any non-empty key.
 func validGroupByField(g string) bool {
 	switch g {
 	case "node", "rule", "severity":
@@ -178,15 +154,11 @@ func validGroupByField(g string) bool {
 
 // --- store -----------------------------------------------------------------
 
-// alertingFileV1 is alerting.json's on-disk shape -- identical to
-// core.AlertingConfig; kept as its own type only so a future on-disk
-// migration has somewhere to hang a V2 without touching the wire/API type.
+// alertingFileV1 is alerting.json's on-disk shape -- identical to core.AlertingConfig.
 type alertingFileV1 = core.AlertingConfig
 
-// alertingStore is the master's routing/escalation config store, persisted
-// atomically (temp + rename + fsync, via writeFileAtomicSynced) to one JSON file,
-// 0600. A missing file behaves exactly like defaultAlertingConfig -- see
-// Get.
+// alertingStore is the master's routing/escalation config store, persisted atomically (temp
+// + rename + fsync, via writeFileAtomicSynced) to one JSON file, 0600.
 type alertingStore struct {
 	path string
 
@@ -195,9 +167,7 @@ type alertingStore struct {
 	set bool                // true once cfg has been loaded from disk or saved at least once
 }
 
-// loadAlertingStore opens (or creates) the store at path. A missing file is
-// not an error: a fresh master has no custom routing yet, and Get reports
-// defaultAlertingConfig until the first SetAlerting.
+// loadAlertingStore opens (or creates) the store at path.
 func loadAlertingStore(path string) (*alertingStore, error) {
 	s := &alertingStore{path: path}
 	b, err := os.ReadFile(path)
@@ -215,8 +185,7 @@ func loadAlertingStore(path string) (*alertingStore, error) {
 	return s, nil
 }
 
-// Get returns the current config: defaultAlertingConfig() if nothing has
-// ever been saved.
+// Get returns the current config: defaultAlertingConfig() if nothing has ever been saved.
 func (s *alertingStore) Get() core.AlertingConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -233,10 +202,8 @@ func cloneAlertingConfig(cfg core.AlertingConfig) core.AlertingConfig {
 	return cfg
 }
 
-// Set validates cfg (atomically: nothing is saved on any error) and, if
-// cfg.Version is 0 (unconditional) or matches the currently stored version,
-// persists it with Version bumped to storedVersion+1. A non-zero,
-// non-matching cfg.Version is rejected with core.ErrConflict, unchanged.
+// Set validates cfg (atomically: nothing is saved on any error) and, if cfg.Version is 0
+// (unconditional) or matches the currently stored version.
 func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name string) bool) (core.AlertingConfig, error) {
 	if err := validateAlertingConfig(cfg, validChannel); err != nil {
 		return core.AlertingConfig{}, err
@@ -264,37 +231,18 @@ func (s *alertingStore) Set(cfg core.AlertingConfig, validChannel func(name stri
 
 // --- route selection ---------------------------------------------------
 
-// routeResolution is resolveRoute's result: which route matched (if any) and
-// EVERY policy that applies. B5 fix round 1 ruling: a Continue chain that
-// matches several routes escalates each matched policy independently (its
-// own steps, its own RepeatEvery, its own SendResolved) rather than merging
-// them into one synthetic policy -- so there is nothing left to compute here
-// beyond the ordered list of policies themselves; the engine and RouteTest
-// both iterate Policies directly.
+// routeResolution is resolveRoute's result: which route matched (if any) and EVERY policy
+// that applies.
 type routeResolution struct {
 	Route    string
 	Policies []core.Policy
-	// GroupBy is the FIRST matched route's own GroupBy (task 6 part 2),
-	// exactly mirroring how Route itself is only ever set from the first
-	// match: an empty GroupBy (no route matched, or the matched route didn't
-	// set one) means "use the default (rule, severity) group key" -- see
-	// groupKeyFor.
+	// GroupBy is the FIRST matched route's own GroupBy, exactly mirroring how Route itself is
+	// only ever set from the first match: an empty GroupBy.
 	GroupBy []string
 }
 
-// resolveRoute evaluates cfg's routes against an alert on the given node
-// (id/display name/tags, "" / nil for a master-own alert) with the given
-// rule (the alert's Key) and severity: routes are evaluated in order, the
-// FIRST match sets Route, and Continue:true on a matched route keeps
-// evaluating LATER routes too, each further match's policy appended to
-// Policies too -- exactly Alertmanager's well-known "continue" semantics.
-// No match at all uses cfg.DefaultPolicy (or the built-in default if that
-// isn't set either, e.g. cfg is the zero/empty value); either way exactly
-// one policy is returned in that case.
-//
-// This is the ONE function both the alerting engine's real delivery and
-// FleetAPI.RouteTest call: RouteTest can never disagree with what the engine
-// would actually do for the same input.
+// resolveRoute evaluates cfg's routes against an alert on the given node (id/display
+// name/tags, "" / nil for a master-own alert) with the given rule.
 func resolveRoute(cfg core.AlertingConfig, nodeID, nodeName string, tags []string, rule, severity string) routeResolution {
 	byName := map[string]core.Policy{}
 	for _, p := range cfg.Policies {
@@ -348,11 +296,8 @@ func sendResolvedOf(p core.Policy) bool {
 	return *p.SendResolved
 }
 
-// unionStepChannels returns the deduplicated, order-preserving union of
-// step-`step`'s Channels across every policy that has that many steps
-// (policies with fewer steps simply don't contribute at that index). Used
-// for the FIRE leg's single physical dispatch to step 0 across every matched
-// policy at once (B5 fix round 1 ruling: "in one dispatch, as now").
+// unionStepChannels returns the deduplicated, order-preserving union of step-`step`'s
+// Channels across every policy that has that many steps.
 func unionStepChannels(policies []core.Policy, step int) []string {
 	var all []string
 	for _, p := range policies {

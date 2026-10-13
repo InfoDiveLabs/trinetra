@@ -2,9 +2,8 @@ package core
 
 import "testing"
 
-// staticEvents is a minimal EventsSource test double: events is returned
-// verbatim from Events, ignoring the requested [from, to] range, mirroring
-// internal/web/handlers_history_test.go's fakeEventsStore.
+// staticEvents is a minimal EventsSource test double: events is returned verbatim from
+// Events, ignoring the requested [from, to] range.
 type staticEvents []DownEventView
 
 func (s staticEvents) Events(from, to int64) ([]DownEventView, error) {

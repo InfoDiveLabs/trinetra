@@ -6,10 +6,7 @@ import (
 	"testing"
 )
 
-// TestCollectorHealthAlertsAfterThresholdAndRecovers pins #110's alerting
-// contract: a collector must fail collectorAlertThreshold consecutive cycles
-// before it raises a collector:<name> alert, and the alert recovers on the
-// first success.
+// TestCollectorHealthAlertsAfterThresholdAndRecovers pins #110's alerting contract.
 func TestCollectorHealthAlertsAfterThresholdAndRecovers(t *testing.T) {
 	h := newCollectorHealth()
 	attempted := map[string]bool{"docker": true}
@@ -68,9 +65,7 @@ func snapshotWith(h *collectorHealth) Snapshot {
 	return Snapshot{CollectorHealth: h.snapshot()}
 }
 
-// TestCarryForwardFailedCollectors pins #110's carry-forward: a collector that
-// errors this cycle preserves the previous cycle's values rather than
-// publishing a healthy target flipped to gone, and the snapshot is marked stale.
+// TestCarryForwardFailedCollectors pins #110's carry-forward.
 func TestCarryForwardFailedCollectors(t *testing.T) {
 	prev := Snapshot{
 		Containers:     map[string]string{"web": "running", "db": "running"},
@@ -98,9 +93,8 @@ func TestCarryForwardFailedCollectors(t *testing.T) {
 	}
 }
 
-// TestCollectSlowRecordsCollectorError pins that a failed slow-tier command is
-// recorded in CollectorErrors (attempted-and-failed), and does NOT leave a
-// healthy field falsely empty for callers that carry forward.
+// TestCollectSlowRecordsCollectorError pins that a failed slow-tier command is recorded in
+// CollectorErrors (attempted-and-failed).
 func TestCollectSlowRecordsCollectorError(t *testing.T) {
 	// docker is "available" but `docker ps -a` fails this cycle.
 	da := dockerAccess{available: true, method: "socket"}

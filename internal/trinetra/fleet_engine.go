@@ -1,14 +1,5 @@
-// Package trinetra: fleet_engine.go is the master's alerting engine: the
-// single place a child's shipped alert (via replicaSink's OnAlert hook) and
-// the master's own fleet alerts (node-down, masterLoop.fleetAlert) both
-// funnel through on their way to delivery. It enriches, dedups, decides
-// whether the alert still needs delivering (a child that already delivered
-// it locally must never be redelivered), folds it into an incident, and --
-// for a routed alert -- pushes a receipt back down the node's stream.
-//
-// Routing/silences/dependency/grouping/escalation (the rest of spec
-// section 6's pipeline) arrive in later tasks; this is the core the rest of
-// that pipeline is built on.
+// Package trinetra: fleet_engine.go is the master's alerting engine: the single place a
+// child's shipped alert (via replicaSink's OnAlert hook) and the master's own fleet alerts.
 package trinetra
 
 import (
@@ -27,15 +18,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/telegram"
 )
 
-// incidentButtons builds the inline keyboard attached to an incident's fire
-// notification (task 9): Ack and a 1-hour silence, both carrying the
-// incident id verbatim in their callback data (see daemon.go's pollLoop/
-// processUpdates for the master-side handler). Both stay well under
-// Telegram's 64-byte callback_data limit even though incident ids here are
-// only 12 hex characters (randomIncidentID). Only the telegram Notifier
-// looks at Alert.Buttons at all -- every other channel ignores it -- so
-// this is set unconditionally on a fire Alert without knowing (or caring)
-// which channels it will actually be routed to.
+// incidentButtons builds the inline keyboard attached to an incident's fire notification:
+// Ack and a 1-hour silence, both carrying the incident id verbatim in their callback data.
 func incidentButtons(incidentID string) [][]telegram.Button {
 	if incidentID == "" {
 		return nil
@@ -53,65 +37,33 @@ const (
 	leaseValidFor = 90 * time.Second
 )
 
-// groupWait/groupInterval are task 6 part 2's incident-grouping timers
-// (global-constraints: 30s/5m): the first delivery of a brand new incident
-// waits groupWait since it opened, collecting members that fire in the
-// meantime into ONE notification; a member that joins an already-delivered
-// incident triggers at most one further "update" notification per
-// groupInterval. Package VARS, not consts (task 6 brief: "so tests can
-// shorten them") -- see tryDeliverGroup.
-//
-// groupInterval's DEFAULT (5m) is longer than fleet.fallback_after's default
-// (2m, config.FleetFallbackAfter) -- task 6 fix round 1, IMPORTANT 5: taken
-// literally, a child joining an already-delivered incident could wait a full
-// group_interval for its update, but its OWN local fallback would give up
-// and deliver locally well before that, defeating grouping for every
-// late-joining child. tryDeliverGroup's update gate therefore uses
-// effectiveGroupInterval, not groupInterval directly, whenever any pending
-// member is child-sourced: min(groupInterval, fallback_after/2), read from
-// the LIVE config (fleet.fallback_after can change at runtime via `set`).
-// Halving fallback_after leaves real headroom for the update to actually
-// reach and get applied by the child before its own fallback timer would
-// otherwise fire.
+// groupWait/groupInterval are the incident-grouping timers: the first delivery of a new
+// incident waits groupWait since it opened.
 var (
 	groupWait     = 30 * time.Second
 	groupInterval = 5 * time.Minute
 )
 
-// alertSource identifies who an alert reaching the engine is about: a fleet
-// node (NodeID set, enriched with its name/tags for the delivered title and
-// future routing) or the master's own synthetic alerts (NodeID "").
+// alertSource identifies who an alert reaching the engine is about: a fleet node.
 type alertSource struct {
 	NodeID   string
 	NodeName string
 	Tags     []string
-	// DeliveredLocally is true when the record itself says the child already
-	// delivered this alert locally (the fallback record, or -- see
-	// hadLeaseBefore -- a node that never held a lease at all): the engine
-	// must record it but never call deliver for it.
+	// DeliveredLocally is true when the record itself says the child already delivered this
+	// alert locally.
 	DeliveredLocally bool
 }
 
-// alertDedupKey is the master's dedup key for one alert record:
-// (node_id, alert_key, fired_at), per global-constraints. node is "" for the
-// master's own alerts.
+// alertDedupKey is the master's dedup key for one alert record: (node_id, alert_key,
+// fired_at), per global-constraints. node is "" for the master's own alerts.
 type alertDedupKey struct {
 	node    string
 	key     string
 	firedAt int64
 }
 
-// fleetAlertEngine is the master's alerting engine core (spec 6): enrich ->
-// dedup -> decide local-vs-master delivery -> record -> deliver -> receipt.
-//
-// deliver is synchronous and reports whether at least one channel actually
-// accepted the alert (see Submit's doc comment for why the ORDER of
-// record/deliver/receipt matters): the master's own wiring
-// (fleetDeps.alert, daemon.go) is deliverSyncAndLog, which calls the
-// existing Dispatcher directly rather than going through the async
-// NotifierQueue -- the queue's own drop policy exists for the high-volume
-// local anomaly path, not this one, and reporting completion is the whole
-// point here.
+// fleetAlertEngine is the master's alerting engine core: enrich -> dedup -> decide
+// local-vs-master delivery -> record -> deliver -> receipt.
 type fleetAlertEngine struct {
 	now       func() time.Time
 	deliver   func(Alert) bool
@@ -126,68 +78,40 @@ type fleetAlertEngine struct {
 	lastLeasePush map[string]int64 // node id -> unix time of the last push attempt
 	firstLeaseAt  map[string]int64 // node id -> unix time of the first ever SUCCESSFUL push
 
-	// sendResolved gates whether a recover is actually delivered (still
-	// always recorded in the incident either way). Hard-coded true for now:
-	// per-route policy (alerting.json) arrives in a later task.
+	// sendResolved gates whether a recover is actually delivered (still always recorded in the
+	// incident either way).
 	sendResolved bool
 
-	// dispatch runs every deliverAndReceipt call off Submit's own goroutine
-	// (see Submit), keyed per (node, key) so a recover is never dispatched
-	// before its own fire, and globally bounded to dispatchConcurrency
-	// concurrent dispatches (B3 review round 2).
+	// dispatch runs every deliverAndReceipt call off Submit's own goroutine (see Submit),
+	// keyed per (node, key) so a recover is never dispatched before its own fire.
 	dispatch *keyedDispatcher
 
-	// silences and nodeInfo are wired once, after construction, via
-	// SetSilences (task 4): a nil silences (the default) makes every
-	// suppression check and TickSilences call a no-op, so every existing
-	// call site/test that never calls SetSilences keeps behaving exactly as
-	// before silences existed.
+	// silences and nodeInfo are wired once, after construction, via SetSilences: a nil
+	// silences (the default) makes every suppression check and TickSilences call a no-op.
 	silences        *silenceStore
 	nodeInfo        func(nodeID string) (name string, tags []string)
 	lastSilencePush int64 // unix time of the last push-to-all pass; 0 means never
 
-	// alerting, deliverNamed and dispatchOnly (task 5) are wired once, after
-	// construction, via SetRouting -- exactly SetSilences's pattern (see its
-	// doc comment): a nil alerting keeps every existing call site/test that
-	// never calls SetRouting behaving exactly as before routing existed (a
-	// single e.deliver call per leg, no escalation, sendResolved hard-coded
-	// true above). deliverNamed logs to the alert log/live bus AND dispatches
-	// (fire/recover legs, the same role e.deliver plays when alerting is
-	// nil); dispatchOnly only dispatches, no logging (escalation/repeat
-	// notifications are not new alert records).
+	// alerting, deliverNamed and dispatchOnly are wired once, after construction, via
+	// SetRouting -- exactly SetSilences's pattern (see its doc comment).
 	alerting     *alertingStore
 	deliverNamed func(a Alert, channels []string) bool
 	dispatchOnly func(a Alert, channels []string) bool
 
-	// depsOf (task 6 part 3), wired once via SetDependencies, returns the
-	// EXPANDED list of node ids a given node id depends on (any "tag:<t>"
-	// entry already resolved against the current registry). A nil depsOf
-	// (every existing call site/test that never calls SetDependencies) makes
-	// dependencyFoldReason always report "no fold", exactly SetSilences's
-	// nil-is-a-no-op pattern.
+	// depsOf, wired once via SetDependencies, returns the EXPANDED list of node ids a given
+	// node id depends on (any "tag:<t>" entry already resolved against the current registry).
 	depsOf func(nodeID string) []string
 
-	// getCfg (task 6 fix round 1, IMPORTANT 5), wired once via SetConfig,
-	// reads the master's LIVE config -- specifically fleet.fallback_after --
-	// so tryDeliverGroup's update cadence for an incident with a child-
-	// sourced pending member never exceeds half of it (effectiveGroupInterval).
-	// A nil getCfg (every existing call site/test that never calls
-	// SetConfig) falls back to fleetFallbackAfterDefault, mirroring
-	// masterLoop's own "no getCfg" fallback (newMasterLoop).
+	// getCfg, wired once via SetConfig, reads the master's LIVE config -- specifically
+	// fleet.fallback_after.
 	getCfg func() *config.Config
 
-	// rules (task 7), wired once via SetRules, is the aggregate-rule
-	// evaluator TickRules drives every ruleTickInterval. A nil rules (every
-	// existing call site/test that never calls SetRules) makes
-	// TickRules/RuleStates/ruleStillFiring all no-ops -- see fleet_rules.go.
+	// rules, wired once via SetRules, is the aggregate-rule evaluator TickRules drives every
+	// ruleTickInterval.
 	rules *fleetRuleEvaluator
 }
 
-// newFleetAlertEngine builds a fleetAlertEngine. now defaults to time.Now if
-// nil. The dedup set is seeded from incidents' own history (current file AND
-// its previous rotation, see incidentStore.seenKeys), so a restarted master
-// never redelivers an alert it already processed before restarting, even
-// across a rotation.
+// newFleetAlertEngine builds a fleetAlertEngine. now defaults to time.Now if nil.
 func newFleetAlertEngine(now func() time.Time, deliver func(Alert) bool, push func(string, fleet.Frame) bool, connected func(string) bool, incidents *incidentStore) *fleetAlertEngine {
 	if now == nil {
 		now = time.Now
@@ -207,39 +131,11 @@ func newFleetAlertEngine(now func() time.Time, deliver func(Alert) bool, push fu
 	return e
 }
 
-// ruleFromKey returns key's "rule" component for the default (rule,
-// severity) group key (task 6 part 2's "the alert key with the node part
-// stripped", defined precisely here): the part of the key that identifies
-// WHICH NODE this specific alert instance is about, if any, stripped out, so
-// the same underlying condition firing on different nodes shares one group.
-//
-// In this codebase, no alert key actually embeds the node it is ABOUT: a
-// child-shipped alert's key (e.g. "cpu", "disk:/") names only the rule that
-// fired, with its node carried separately as alertSource.NodeID, never as
-// part of Key. The master's own per-target synthetic keys (e.g.
-// "fleet:node:<id>:down") DO embed an id, but that id identifies which node
-// the alert reports on, not "the node the alert came from" (a master-own
-// alert has no source node at all: alertSource.NodeID is always "") -- so it
-// is not "the node part" of an alert's own identity in the sense this
-// grouping default cares about, and stripping it would silently default-
-// group every currently-down node into one incident, which is not this
-// codebase's behaviour (see the explicit, opt-in node-dependency fold in
-// dependencyFoldReason for the one case where two different nodes' down
-// alerts really do belong in the same incident). So ruleFromKey is the
-// identity function today; it stays a named, precisely-defined seam so a
-// future alert source whose key DOES embed its own node id has one obvious
-// place to extend.
+// ruleFromKey returns key's "rule" component for the default (rule, severity) group key.
 func ruleFromKey(key string) string { return key }
 
-// groupKeyFor computes the (task 6 part 2) grouping bucket an alert with the
-// given source/key/severity joins: an open incident whose OWN GroupKey
-// equals this exact string is joined; otherwise a new incident opens with
-// it. groupBy overrides the default (rule, severity) bucket with the
-// caller-given field list (a matched route's GroupBy) -- each entry is one
-// of "node", "rule", "severity", or "tag:<key>" (a boolean: does this
-// alert's node carry that tag), rendered "field=value" and joined with "|"
-// in the ORDER given, so the same fields always produce the same string
-// regardless of any other alert's occurrence order.
+// groupKeyFor computes the grouping bucket an alert with the given source/key/severity
+// joins: an open incident whose OWN GroupKey equals this exact string is joined.
 func groupKeyFor(groupBy []string, src alertSource, a Alert) string {
 	if len(groupBy) == 0 {
 		return "rule=" + ruleFromKey(a.Key) + "|severity=" + a.Severity.String()
@@ -262,10 +158,8 @@ func groupKeyFor(groupBy []string, src alertSource, a Alert) string {
 	return strings.Join(parts, "|")
 }
 
-// groupKeyForRouted resolves src/a's matched route (exactly like real
-// delivery -- resolveRoute) to find its GroupBy override, if any, then
-// computes groupKeyFor. Used by Submit for every alert, so grouping and
-// delivery routing can never disagree about which route matched.
+// groupKeyForRouted resolves src/a's matched route (exactly like real delivery --
+// resolveRoute) to find its GroupBy override, if any, then computes groupKeyFor.
 func (e *fleetAlertEngine) groupKeyForRouted(src alertSource, a Alert) string {
 	var cfg core.AlertingConfig
 	if e.alerting != nil {
@@ -275,22 +169,12 @@ func (e *fleetAlertEngine) groupKeyForRouted(src alertSource, a Alert) string {
 	return groupKeyFor(res.GroupBy, src, a)
 }
 
-// nodeDownKey returns the node-down alert key for nodeID -- the one place
-// this exact format is built, matched by masterLoop.stillActive/
-// checkOrphanedIncidents (fleet_daemon.go) and dependencyFoldReason below.
+// nodeDownKey returns the node-down alert key for nodeID -- the one place this exact format
+// is built, matched by masterLoop.stillActive/ checkOrphanedIncidents.
 func nodeDownKey(nodeID string) string { return "fleet:node:" + nodeID + ":down" }
 
-// dependencyFoldReason reports whether a node-down FIRE for nodeID (task 6
-// part 3) should be folded into a dependency's own open node-down incident
-// instead of delivered on its own: true when any of nodeID's (already
-// tag-expanded) dependencies currently has an unresolved node-down alert.
-// reason is the exact suppressed-member text ("suppressed: parent <name>
-// down"); parentGroupKey is that dependency's own node-down alert's default
-// group bucket (computed the SAME deterministic way its own fire opened/
-// joined an incident with, since a node-down alert is never itself matched
-// by a custom GroupBy route in any test/deployment this task covers), so the
-// fold joins EXACTLY that incident. The first down dependency (in the
-// node's own DependsOn order) wins if more than one currently qualifies.
+// dependencyFoldReason reports whether a node-down FIRE for nodeID should be folded into a
+// dependency's open node-down incident instead of delivered on its own.
 func (e *fleetAlertEngine) dependencyFoldReason(nodeID string) (reason, parentGroupKey string, ok bool) {
 	if e.depsOf == nil || e.incidents == nil {
 		return "", "", false
@@ -309,29 +193,15 @@ func (e *fleetAlertEngine) dependencyFoldReason(nodeID string) (reason, parentGr
 				name = n
 			}
 		}
-		// SevCritical is hardcoded here (task 6 fix round 1, MINOR): every
-		// node-down alert this codebase ever fires uses it (fleetAlert,
-		// fleet_daemon.go), and the default group bucket depends on
-		// severity, so this MUST match that exact value to compute the
-		// dependency's OWN bucket correctly -- if node-down severity is ever
-		// made configurable, this has to change with it (or resolve the
-		// dependency's incident directly instead of recomputing its bucket).
+		// SevCritical is hardcoded here: every node-down alert this codebase ever fires uses it
+		// (fleetAlert, fleet_daemon.go), and the default group bucket depends on severity.
 		gk := groupKeyFor(nil, alertSource{}, Alert{Key: key, Severity: SevCritical})
 		return "suppressed: parent " + name + " down", gk, true
 	}
 	return "", "", false
 }
 
-// releaseFoldedDependents runs after a node-down RECOVER is applied (task 6
-// part 3): every currently folded (Suppressed != "", unresolved) member
-// across every open incident is re-checked against dependencyFoldReason --
-// if NONE of its dependencies are down any more, it is released ("mark the
-// folded member as released") and delivered as its own, brand-new incident,
-// exactly as if it had just fired on its own (task 6 part 3: "deliver the
-// dependent's alert then, as its own incident"). recoveredNodeID is used
-// only for the release reason text; the actual "still down?" check always
-// re-derives from current incident state, so a member with MULTIPLE down
-// dependencies is correctly left folded until every one of them clears.
+// releaseFoldedDependents runs after a node-down RECOVER is applied: every folded.
 func (e *fleetAlertEngine) releaseFoldedDependents(recoveredNodeID string, now int64) {
 	if e.incidents == nil || e.depsOf == nil {
 		return
@@ -364,17 +234,8 @@ func (e *fleetAlertEngine) releaseFoldedDependents(recoveredNodeID string, now i
 	}
 }
 
-// ReleaseIfDependenciesClear re-checks whether nodeID's own node-down alert
-// -- if currently folded into a dependency's incident -- can be released
-// right now, given nodeID's CURRENT DependsOn list (task 6 fix round 1,
-// IMPORTANT 4). Unlike releaseFoldedDependents (triggered by a specific
-// dependency's own recover), this is triggered by SetNodeDeps: waiting for
-// a dependency to merely recover would otherwise strand a folded child
-// whose dependency relationship was simply changed (the down dependency
-// REMOVED from its list, or its whole DependsOn cleared) -- from nodeID's
-// own point of view nothing "recovered", but it is no longer waiting on
-// anything either. now is used for the release reason's timestamp and the
-// resulting fresh incident's Opened.
+// ReleaseIfDependenciesClear re-checks whether nodeID's node-down alert, if folded into a
+// dependency's incident, can be released given nodeID's CURRENT DependsOn list.
 func (e *fleetAlertEngine) ReleaseIfDependenciesClear(nodeID string, now int64) {
 	if e.incidents == nil || e.depsOf == nil {
 		return
@@ -399,10 +260,7 @@ func (e *fleetAlertEngine) ReleaseIfDependenciesClear(nodeID string, now int64) 
 	}
 }
 
-// deliverReleasedMember opens a BRAND NEW incident for a just-released
-// dependency fold and enqueues its (grouped, but freshly opened so it never
-// re-joins its former parent's bucket) delivery -- see
-// releaseFoldedDependents's doc comment.
+// deliverReleasedMember opens a BRAND NEW incident for a just-released dependency fold.
 func (e *fleetAlertEngine) deliverReleasedMember(al core.IncidentAlert, now int64) {
 	freshKey := fmt.Sprintf("released:%s:%s:%d", al.Node, al.Key, now)
 	inc, err := e.incidents.Apply(incidentApply{
@@ -427,34 +285,7 @@ func mustSeverity(s string) Severity {
 }
 
 // Submit is the engine's single entry point: every child-shipped alert (via
-// HandleChildAlert) and every master-generated alert (masterLoop's own
-// fleetAlert, src is the zero alertSource) reaches delivery/incidents only
-// through here.
-//
-// Ordering (B3 review round 1 fix): the decision is durably recorded via
-// incidents.Apply BEFORE any delivery is attempted, so a crash between
-// recording and a receipt going out is always recoverable from disk -- the
-// incident already shows "fired". A receipt is pushed to the child ONLY
-// after delivery has actually completed with at least one channel
-// succeeding (never before, and never for an alert that already delivered
-// locally). If every channel fails (or none matched), no receipt is sent:
-// the child's own fallback then fires on schedule, producing a SECOND
-// record for the exact same (node, key, fired_at) with
-// DeliveredLocally=true -- Submit's dedup keys off precisely that tuple, so
-// this second record is recognized as "the same alert, now known to have
-// been delivered locally" (see the alreadySeen branch below) rather than
-// either silently dropped (global-constraints: a delivered_locally record
-// must be RECORDED) or redelivered (it must never trigger a second delivery
-// attempt).
-//
-// Delivery (steps 2-4) runs off Submit's own goroutine, through the keyed
-// dispatcher (fleet_dispatch.go, B3 review round 2): Enqueue itself never
-// blocks Submit's caller (replicaNode.apply holds n.mu across this call, and
-// masterLoop.tick calls it inline), the (node, key) lane keeps a fire and
-// its later recover in order regardless of how long the fire's own dispatch
-// takes, and the dispatcher's global semaphore bounds how many dispatches
-// (each up to the Dispatcher's ~15s-per-channel timeout) run at once across
-// every key.
+// HandleChildAlert) and every master-generated alert.
 func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 	firedAt := a.Time
 	key := alertDedupKey{node: src.NodeID, key: a.Key, firedAt: firedAt}
@@ -470,38 +301,22 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 	deliveredLocally := src.DeliveredLocally || !hadLease
 
 	if alreadySeen {
-		// We already made the fire/recover decision for this exact (node,
-		// key, fired_at) once. Most of the time this is a byte-identical
-		// resend (backfill + ingest both delivering the same record) and
-		// there is nothing left to do. The one case worth a further durable
-		// update is a LATER record for the same key that newly reveals
-		// deliveredLocally -- e.g. this master crashed (or a receipt was
-		// simply lost) between recording the original fire and its receipt
-		// reaching the child, the child's fallback then delivered it
-		// locally on its own, and that fallback record is what just
-		// arrived here. That must be recorded (never silently dropped) but
-		// must NEVER trigger a delivery attempt: this Submit call already
-		// decided that, the first time it saw this key.
+		// We already made the fire/recover decision for this exact (node, key, fired_at) once.
 		if deliveredLocally && e.incidents != nil {
 			_, _, _ = e.incidents.MarkDeliveredLocally(src.NodeID, a.Key, firedAt, e.now().Unix())
 		}
 		return
 	}
 
-	// A silence/maintenance window check only matters when this alert would
-	// otherwise actually be delivered by the master: a record the child
-	// already delivered locally has nothing left to suppress. Matcher.Node
-	// matches src.NodeID exactly, or globs src.NodeName -- see core.Matcher's
-	// doc comment.
+	// A silence/maintenance window check only matters when this alert would otherwise actually
+	// be delivered by the master.
 	var supp *suppressionInfo
 	if !deliveredLocally && e.silences != nil {
 		supp = e.silences.Suppressed(e.now().Unix(), src.NodeID, src.NodeName, src.Tags, a.Key, a.Severity.String())
 	}
 
-	// (task 6 part 3) A node-down FIRE is folded into a down dependency's own
-	// incident, silently, instead of grouped/delivered on its own -- checked
-	// only for an otherwise-deliverable fire (a locally-delivered or
-	// silenced record has nothing left to fold).
+	// A node-down FIRE is folded into a down dependency's own incident, silently, instead of
+	// grouped/delivered on its own -- checked only for an otherwise-deliverable fire.
 	var depFold, depGroupKey string
 	if a.Kind != "recover" && !deliveredLocally && supp == nil {
 		if key, ok := nodeDownTarget(a.Key); ok {
@@ -511,11 +326,8 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 		}
 	}
 
-	// (task 6 part 2) The grouping bucket this alert joins/opens: a
-	// dependency fold always targets its parent's own incident's bucket
-	// directly (see dependencyFoldReason), never the alert's OWN default/
-	// routed bucket (which -- since ruleFromKey never merges different
-	// node-down targets -- would otherwise always open a separate incident).
+	// The grouping bucket this alert joins/opens: a dependency fold always targets its
+	// parent's own incident's bucket directly (see dependencyFoldReason).
 	groupKey := depGroupKey
 	if groupKey == "" {
 		groupKey = e.groupKeyForRouted(src, a)
@@ -534,10 +346,7 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 		}
 	}
 
-	// (task 6 part 3) A node-down RECOVER may free up other nodes that were
-	// folded into it: re-check every currently folded member regardless of
-	// whether THIS recover itself ends up delivered/suppressed (the
-	// underlying "is it still down" fact just changed either way).
+	// A node-down RECOVER may free up other nodes that were folded into it.
 	if a.Kind == "recover" {
 		if recoveredID, ok := nodeDownTarget(a.Key); ok {
 			e.releaseFoldedDependents(recoveredID, e.now().Unix())
@@ -549,23 +358,14 @@ func (e *fleetAlertEngine) Submit(src alertSource, a Alert) {
 	}
 
 	if supp != nil {
-		// Suppressed: recorded above, never dispatched. A child-sourced
-		// alert still gets its receipt, so it does not fall back and
-		// deliver the silenced alert locally instead.
+		// Suppressed: recorded above, never dispatched.
 		if src.NodeID != "" && e.push != nil {
 			e.pushReceipt(src.NodeID, a.Key, firedAt)
 		}
 		return
 	}
 
-	// The dispatcher lane key is the incident id (task 6 part 2: "the keyed
-	// lane key becomes the incident ID"), so every job touching this
-	// incident -- this fire/recover, another member's fire/recover, a group
-	// notification, an escalation -- runs strictly in the order it was
-	// enqueued, never just this one (node, key)'s own legs. incidentID can
-	// only be "" when e.incidents itself is nil (no store at all, e.g. a
-	// bare-bones test): incidentGroupKey is then just a stable, arbitrary
-	// per-(node,key) lane so ordering still holds for that one pair.
+	// The dispatcher lane key is the incident id, so every job touching this incident.
 	lane := incidentID
 	if lane == "" {
 		lane = incidentGroupKey(src.NodeID, a.Key)
@@ -598,21 +398,14 @@ func nodeDownTarget(key string) (string, bool) {
 	return "", false
 }
 
-// deliverAndReceipt is Submit's steps 2-4, run off Submit's own goroutine
-// (via the keyed dispatcher): attempt delivery, and ONLY on success record
-// the "delivered" timeline event and push the receipt.
+// deliverAndReceipt is Submit's steps 2-4, run off Submit's own goroutine (via the keyed
+// dispatcher): attempt delivery.
 func (e *fleetAlertEngine) deliverAndReceipt(src alertSource, a Alert, firedAt int64, incidentID string) {
 	e.deliverAndReceiptDetail(src, a, firedAt, incidentID, "sent via the master's dispatcher")
 }
 
-// handleRecover is a recover leg's own dispatch job (task 6 part 2): an
-// incident with a still-open OTHER member is not over yet, so this member's
-// own recover gets no human-facing notification -- only its receipt, so its
-// own child does not fall back and re-deliver a duplicate local recover
-// (the at-least-once/dedup contract is per (node, key, fired_at), not per
-// incident). Only once EVERY member has recovered (incidentStore.Apply
-// already decided this: inc.State == "resolved") does the ordinary,
-// immediate ("as today", no group_wait/interval) resolved delivery happen.
+// handleRecover is a recover leg's own dispatch job: an incident with a still-open OTHER
+// member is not over yet, so this member's own recover gets no human-facing notification.
 func (e *fleetAlertEngine) handleRecover(src alertSource, a Alert, firedAt int64, incidentID string) {
 	resolved := incidentID == "" // no incident store at all: behave as before grouping existed.
 	if incidentID != "" && e.incidents != nil {
@@ -631,20 +424,12 @@ func (e *fleetAlertEngine) handleRecover(src alertSource, a Alert, firedAt int64
 	}
 }
 
-// fleetFallbackAfterDefault mirrors config.Default()'s own fleet.fallback_after
-// (2m) for effectiveGroupInterval's use when the engine has no getCfg wired
-// (SetConfig never called, e.g. every pre-existing engine test) --
-// newMasterLoop's own "no getCfg" fallback follows the identical pattern for
-// fleet.node_down_after.
+// fleetFallbackAfterDefault mirrors config.Default()'s own fleet.fallback_after (2m) for
+// effectiveGroupInterval's use when the engine has no getCfg wired.
 const fleetFallbackAfterDefault = 2 * time.Minute
 
-// effectiveGroupInterval is tryDeliverGroup's actual update cadence (task 6
-// fix round 1, IMPORTANT 5): groupInterval itself, UNLESS pending holds any
-// child-sourced member (Node != ""), in which case it is capped to half the
-// LIVE fleet.fallback_after -- see groupInterval's doc comment for why. A
-// purely master-own incident (no child members at all) is never capped: a
-// master-own alert has no local-fallback child racing it, so groupInterval's
-// configured value applies unchanged.
+// effectiveGroupInterval is tryDeliverGroup's update cadence: groupInterval, UNLESS pending
+// holds a child-sourced member (Node != "").
 func (e *fleetAlertEngine) effectiveGroupInterval(pending []core.IncidentAlert) time.Duration {
 	hasChildPending := false
 	for _, al := range pending {
@@ -668,25 +453,8 @@ func (e *fleetAlertEngine) effectiveGroupInterval(pending []core.IncidentAlert) 
 	return groupInterval
 }
 
-// tryDeliverGroup runs INSIDE id's own keyed lane (enqueued by Submit for
-// every fire, and by TickGrouping's periodic re-check): the master's
-// incident-grouping delivery (task 6 part 2). It re-reads the incident
-// fresh -- by the time this job runs, an arbitrary amount of time may have
-// passed and another job for the same incident (another member's fire, this
-// one's own eventual recover) may already have run ahead of it, exactly like
-// tryDeliverUnsilenced/tryEscalate.
-//
-// pending is every member that has never had a fire delivered for it yet
-// (legDeliveredStatusFor), excluding a dependency-suppressed one (never
-// delivered via grouping at all -- see dependencyFoldReason). If there is
-// nothing pending, there is nothing to do (a plain re-fire of an
-// already-delivered member, or every member already covered). Otherwise:
-// with NO delivery yet at all, this is the incident's very first
-// notification, gated by groupWait since it opened; with at least one
-// already delivered, this is an "update" adding pending's members, gated by
-// groupInterval since the LAST group delivery -- both durably derived from
-// the timeline (lastGroupDeliveryTS), never from in-memory state, so a
-// restarted master picks up exactly where it left off.
+// tryDeliverGroup runs INSIDE id's own keyed lane (enqueued by Submit for every fire, and
+// by TickGrouping's periodic re-check): the master's incident-grouping delivery.
 func (e *fleetAlertEngine) tryDeliverGroup(id string) {
 	if id == "" || e.incidents == nil {
 		return
@@ -695,23 +463,8 @@ func (e *fleetAlertEngine) tryDeliverGroup(id string) {
 	if !ok || inc.State == "suppressed" {
 		return // every open member silenced or folded: never group-delivered.
 	}
-	// pending is deliberately NOT filtered by ResolvedAt (B3-style race, see
-	// TestEngineFireThenRecoverDeliveredInOrderEvenOnSlowChannel): Apply
-	// records a recover SYNCHRONOUSLY, in the caller's own goroutine, the
-	// instant Submit is called for it -- entirely independent of when this
-	// deferred, lane-queued job happens to run. A member that has ALREADY
-	// recovered by the time its OWN fire notification finally goes out must
-	// still get that fire notification (its keyed lane guarantees the
-	// recover's own dispatch job runs strictly after this one, so ordering
-	// is preserved regardless) -- only a member whose fire was already
-	// delivered is excluded.
-	//
-	// A dependency-folded (Suppressed) or silenced (SilencedBy) member is
-	// excluded directly by its own field (task 6 fix round 1: "legDeliveredStatusFor
-	// treats a silenced member as handled ONLY for resurrection" -- grouped
-	// delivery must never rely on the timeline's leg-labelled "suppressed"
-	// event standing in for "delivered" the way resurrection does, or a
-	// member unsilenced later would look like it needs no delivery at all).
+	// pending is deliberately NOT filtered by ResolvedAt: Apply records a recover
+	// SYNCHRONOUSLY in the caller's goroutine when Submit is called.
 	var pending []core.IncidentAlert
 	anyDelivered := false
 	for _, al := range inc.Alerts {
@@ -738,9 +491,8 @@ func (e *fleetAlertEngine) tryDeliverGroup(id string) {
 	e.deliverGroup(inc, pending, now.Unix())
 }
 
-// lastGroupDeliveryTS returns the most recent timestamp among every member's
-// fire-leg "delivered" event -- the reference point tryDeliverGroup measures
-// groupInterval's cadence from, entirely derived from the timeline.
+// lastGroupDeliveryTS returns the most recent timestamp among every member's fire-leg
+// "delivered" event.
 func lastGroupDeliveryTS(inc core.Incident) int64 {
 	var ts int64
 	for _, ev := range inc.Timeline {
@@ -751,12 +503,8 @@ func lastGroupDeliveryTS(inc core.Incident) int64 {
 	return ts
 }
 
-// memberNodeName returns al's node's display name: al.NodeName as recorded
-// AT FIRE TIME (task 6 part 2 -- the exact name Submit's caller passed in,
-// matching how a single, non-grouped alert's title was always built from
-// src.NodeName directly, never a registry lookup), falling back to
-// e.nodeInfo (a CURRENT registry lookup, for a legacy IncidentAlert with no
-// NodeName recorded) and finally the bare node id.
+// memberNodeName returns al's node display name: al.NodeName as recorded AT FIRE TIME (the
+// name Submit's caller passed in), falling back to e.nodeInfo.
 func (e *fleetAlertEngine) memberNodeName(al core.IncidentAlert) string {
 	if al.NodeName != "" {
 		return al.NodeName
@@ -769,11 +517,8 @@ func (e *fleetAlertEngine) memberNodeName(al core.IncidentAlert) string {
 	return al.Node
 }
 
-// groupAlertTitle builds the single notification's title for pending's
-// members: a lone member keeps today's exact "<node>: <title>" shape (or the
-// bare title for a master-own alert); 2+ members are listed by name, so one
-// notification covers all of them (task 6 part 2: "sends ONE message listing
-// all member nodes" / "...listing the new members").
+// groupAlertTitle builds the notification title for pending's members: a lone member keeps
+// the "<node>: <title>" shape (or the bare title for a master-own alert).
 func (e *fleetAlertEngine) groupAlertTitle(inc core.Incident, pending []core.IncidentAlert) string {
 	if len(pending) == 1 {
 		al := pending[0]
@@ -793,12 +538,8 @@ func (e *fleetAlertEngine) groupAlertTitle(inc core.Incident, pending []core.Inc
 	return fmt.Sprintf("%s (%d nodes): %s", inc.Title, len(pending), strings.Join(names, ", "))
 }
 
-// deliverGroup is tryDeliverGroup's actual send: ONE physical delivery
-// covering every member in pending, and, only on success, one structured
-// "delivered" timeline event PER member (so legDeliveredStatusFor/
-// resurrection/further grouping checks see each of them as covered) and one
-// receipt pushed to each member's own node (task 6 part 2: "receipts are
-// still per child alert... after the delivery that included it").
+// deliverGroup is tryDeliverGroup's actual send: ONE physical delivery covering every
+// member in pending and, only on success.
 func (e *fleetAlertEngine) deliverGroup(inc core.Incident, pending []core.IncidentAlert, now int64) {
 	sev, err := ParseSeverity(inc.Severity)
 	if err != nil {
@@ -867,30 +608,15 @@ func legLabel(a Alert) string {
 	return "fire"
 }
 
-// deliverAndReceiptDetail is deliverAndReceipt with a caller-chosen note on
-// the "delivered" timeline event -- resurrectMasterAlerts uses this to mark
-// a post-restart redelivery distinctly ("redelivered after restart") from an
-// ordinary first delivery ("sent via the master's dispatcher"). The event's
-// Detail is always prefixed with WHICH LEG it covers ("fire: " or
-// "recover: ", B3 review round 3): a master-own incident's fire and recover
-// share one IncidentAlert entry, so without this label there would be no way
-// to tell, from the incident alone, whether an undelivered leg is the fire,
-// the recover, or (before this existed) either -- see legDeliveredStatus,
-// which resurrectMasterAlerts uses to tell them apart on restart.
-//
-// incidentID may be "" if step 1's Apply (or, for a resurrection, the
-// incident itself) failed to record anything -- delivery still proceeds
-// (the alert must still reach its channels), but there is nothing to append
-// a "delivered" event to.
+// deliverAndReceiptDetail is deliverAndReceipt with a caller-chosen note on the "delivered"
+// timeline event.
 func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, firedAt int64, incidentID, note string) {
 	da := a
 	if src.NodeID != "" {
 		da.Title = src.NodeName + ": " + a.Title
 	}
 	if a.Kind == "fire" && incidentID != "" {
-		// task 9: only an incident's fire notification carries Ack/Silence
-		// buttons -- a recover never does, matching the ruling's "only on
-		// incident fire messages".
+		// only an incident's fire notification carries Ack/Silence buttons; a recover never does.
 		da.Buttons = incidentButtons(incidentID)
 	}
 
@@ -918,10 +644,8 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 		return
 	}
 
-	// Routing/escalation (B5 fix round 1): resolve the SAME way RouteTest
-	// does (resolveRoute) -- EVERY matched policy applies independently (see
-	// routeResolution's doc comment), so from here on there is no single
-	// "the" policy/step list any more.
+	// Routing/escalation: resolve the SAME way RouteTest does (resolveRoute) -- EVERY matched
+	// policy applies independently (see routeResolution's doc comment).
 	if e.deliverNamed == nil {
 		return
 	}
@@ -933,10 +657,8 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 		return
 	}
 
-	// fire: one physical dispatch to the union of every matched policy's
-	// step 0 (ruling: "in one dispatch, as now"), but one timeline event PER
-	// policy, so later escalation/repeat/resolved-union bookkeeping can
-	// attribute each channel to the policy that actually asked for it.
+	// fire: one physical dispatch to the union of every matched policy's step 0, but one
+	// timeline event PER policy.
 	channels := unionStepChannels(res.Policies, 0)
 	if !e.deliverNamed(da, channels) {
 		return // no channel accepted it: no receipt, no "delivered" event.
@@ -959,15 +681,8 @@ func (e *fleetAlertEngine) deliverAndReceiptDetail(src alertSource, a Alert, fir
 	}
 }
 
-// deliverResolved delivers the recover leg once routing is wired: the
-// resolved message goes to the union of every channel that received a step
-// (fire, escalated or repeated) from a policy whose SendResolved is true
-// (default true) -- task-5/B5 ruling. If history has nothing to derive that
-// from (e.g. a resurrection edge case), it falls back to the union of step
-// 0 across every SendResolved-true matched policy, so a legitimate resolved
-// message is never silently dropped just because history was incomplete. If
-// NO matched policy wants it sent at all, nothing is delivered (matching the
-// old single-policy !SendResolved early return).
+// deliverResolved delivers the recover leg: the resolved message goes to the union of every
+// channel that received a step.
 func (e *fleetAlertEngine) deliverResolved(src alertSource, da Alert, firedAt int64, incidentID string, policies []core.Policy) {
 	channels := e.unionResolvedChannels(incidentID, policies)
 	if len(channels) == 0 {
@@ -996,42 +711,21 @@ func (e *fleetAlertEngine) deliverResolved(src alertSource, da Alert, firedAt in
 	}
 }
 
-// policyStepDetail formats a step-N delivery/escalation/repeat timeline
-// event's Detail: "policy P step N: chan1, chan2" (B5 fix round 1 ruling) --
-// used for every routed per-policy delivery (fire's own step 0, escalated,
-// repeated) so stepEventInfo can parse them all the same way and attribute
-// each to the policy that produced it.
+// policyStepDetail formats a step-N delivery/escalation/repeat timeline event's Detail:
+// "policy P step N: chan1, chan2" -- used for every routed per-policy delivery.
 func policyStepDetail(policy string, step int, channels []string) string {
 	return fmt.Sprintf("policy %s step %d: %s", policy, step, strings.Join(channels, ", "))
 }
 
-// stepEventDetailRe/legacyStepDetailRe parse policyStepDetail's format, and
-// its PRE-fix-round-1 predecessor ("step N: chan1, chan2", no policy name --
-// B5 ruling: "legacy events with no policy prefix: treat them as belonging
-// to the first matched policy"). A policy name is taken greedily up to the
-// LAST " step N: " it could possibly precede, so a policy name that
-// contained the literal substring " step " (unlikely -- policy names are
-// short identifiers) would still parse correctly.
+// stepEventDetailRe/legacyStepDetailRe parse policyStepDetail's format and its legacy
+// predecessor.
 var (
 	stepEventDetailRe  = regexp.MustCompile(`^policy (.+) step (\d+): (.*)$`)
 	legacyStepDetailRe = regexp.MustCompile(`^step (\d+): (.*)$`)
 )
 
-// stepEventInfo extracts (policy, step, channels) from a "delivered" (fire
-// leg only), "escalated" or "repeated" timeline event. Every event this
-// engine writes now carries this structurally (Policy/Step/Channels, task 6
-// part 1): when ev.Policy is set, it is used directly, with no text parsing
-// at all -- this is what fixes the review finding that a policy or channel
-// name containing the literal substring " step N: " could confuse the old
-// text-only parser (see policyStepDetail's format). Detail is still written
-// for display, but never consulted here for a structured event.
-//
-// ev.Policy == "" falls back to parsing Detail exactly as this engine did
-// before structured fields existed, for a LEGACY event recorded by an older
-// build: policy is "" for one recorded before per-policy labelling existed
-// at all (caller attributes it to the first matched policy -- see
-// escalatedTo/lastStepEventTS). ok is false for anything else (a recover's
-// own "delivered" event, an unrelated event kind, or a malformed detail).
+// stepEventInfo extracts (policy, step, channels) from a "delivered" (fire leg only),
+// "escalated" or "repeated" timeline event.
 func stepEventInfo(ev core.IncidentEvent) (policy string, step int, channels []string, ok bool) {
 	if ev.Policy != "" {
 		switch ev.Kind {
@@ -1088,12 +782,8 @@ func splitChannelList(s string) []string {
 	return out
 }
 
-// unionResolvedChannels returns the deduplicated, order-preserving union of
-// every channel from a step-event (the fire leg's own step 0, any
-// escalation, any repeat) whose OWNING POLICY has SendResolved true --
-// default true for a policy no longer present in the current matched set
-// (e.g. the config changed mid-incident): B5 ruling, "the union of channels
-// that received steps from policies with SendResolved=true".
+// unionResolvedChannels returns the deduplicated, order-preserving union of every channel
+// from a step-event.
 func (e *fleetAlertEngine) unionResolvedChannels(incidentID string, policies []core.Policy) []string {
 	if incidentID == "" || e.incidents == nil {
 		return nil
@@ -1134,21 +824,8 @@ func (e *fleetAlertEngine) unionResolvedChannels(incidentID string, policies []c
 	return out
 }
 
-// legDeliveredStatus scans inc's timeline for "delivered" events and reports
-// which leg(s) (fire, recover) they cover, per deliverAndReceiptDetail's
-// "fire: "/"recover: " labeling. A "delivered" event with neither prefix
-// predates this labeling (B3 review round 2 and earlier) and, per the
-// ruling, counts as fire-delivered -- the only leg that could possibly have
-// existed before per-leg tracking was added.
-//
-// A leg-labelled "suppressed" event (task 4: a silence or maintenance window
-// covered this leg) counts as delivered too -- the master decided, on
-// purpose, never to deliver it, so resurrectMasterAlerts must not try to
-// deliver it now either. An UNLABELLED "suppressed" event (e.g.
-// resurrectMasterAlerts's own "not delivered: master restarted", recorded
-// once a resurrection attempt itself gives up) explicitly means the
-// opposite and must never be treated as delivered, so only the leg-labelled
-// form is recognized here.
+// legDeliveredStatus scans inc's timeline for "delivered" events and reports which leg(s)
+// (fire, recover) they cover, per deliverAndReceiptDetail's "fire: "/"recover: " labeling.
 func legDeliveredStatus(inc core.Incident) (fireDelivered, recoverDelivered bool) {
 	for _, ev := range inc.Timeline {
 		if ev.Kind != "delivered" && ev.Kind != "suppressed" {
@@ -1166,19 +843,8 @@ func legDeliveredStatus(inc core.Incident) (fireDelivered, recoverDelivered bool
 	return fireDelivered, recoverDelivered
 }
 
-// legDeliveredStatusFor is legDeliveredStatus scoped to ONE member alert
-// (task 6 part 2: "delivery status... must work PER IncidentAlert, matched
-// by (Node, AlertKey, FiredAt) through the structured fields"), for a
-// grouped incident whose members may have independent delivery histories
-// (see TestEngineResurrectionOnlyResendsUndeliveredMember). Every event this
-// engine writes now carries Leg/AlertKey/Node/FiredAt (task 6 part 1); an
-// event with Leg set is matched against exactly this member and ignored
-// otherwise. An event with Leg == "" is a LEGACY event (recorded before
-// these fields existed) and is matched the OLD, incident-wide way
-// (legDeliveredStatus's exact rule) with no node/key/firedAt filtering at
-// all -- correct because a legacy incident, recorded before grouping
-// existed, always has exactly one member, so "the incident's timeline" and
-// "this member's timeline" are the same thing.
+// legDeliveredStatusFor is legDeliveredStatus scoped to ONE member alert, matched by (Node,
+// AlertKey, FiredAt).
 func legDeliveredStatusFor(inc core.Incident, node, key string, firedAt int64) (fireDelivered, recoverDelivered bool) {
 	for _, ev := range inc.Timeline {
 		if ev.Kind != "delivered" && ev.Kind != "suppressed" {
@@ -1208,31 +874,7 @@ func legDeliveredStatusFor(inc core.Incident, node, key string, firedAt int64) (
 	return fireDelivered, recoverDelivered
 }
 
-// resurrectMasterAlerts runs once, at engine construction ("at engine
-// start"): master-own alerts (Node == "" on the IncidentAlert itself, e.g.
-// node-down/connectivity) have no child-side fallback if the master crashes
-// between recording a fire/recover (Submit's step 1) and actually delivering
-// it -- unlike a child's own alert, nothing else will ever retry it.
-//
-// It checks EVERY master-own member of EVERY incident independently (task 6
-// part 2: a grouped or dependency-folded incident can hold several master-own
-// members with entirely independent delivery histories -- see
-// TestEngineResurrectionOnlyResendsUndeliveredMember), skipping a
-// dependency-suppressed one entirely (Suppressed != "": deliberately never
-// delivered on its own -- see dependencyFoldReason/releaseFoldedDependents).
-// For each remaining member, the FIRE and RECOVER legs are checked
-// independently (B3 review round 3: a single check based only on the
-// incident's current state/last timeline entry could miss an undelivered
-// fire when the recover, recorded later, is the one that happens to look
-// "undelivered"): for a member younger than 24h, any leg with no matching
-// "delivered" event (legDeliveredStatusFor -- structured-first, task 6 part
-// 1) is re-enqueued on the incident's own keyed lane (its id), fire before
-// recover, so ordering is preserved exactly as an ordinary Submit call would
-// produce it. 24h or older, it gives up on whichever leg(s) are still
-// undelivered and records why, once, without delivering anything -- this
-// give-up event deliberately carries no Leg (see legDeliveredStatusFor's
-// legacy-fallback branch: an unlabelled event is never mistaken for
-// "delivered"), exactly matching its pre-structured-fields shape.
+// resurrectMasterAlerts runs once, at engine construction: master-own alerts.
 func (e *fleetAlertEngine) resurrectMasterAlerts() {
 	if e.incidents == nil {
 		return
@@ -1241,23 +883,8 @@ func (e *fleetAlertEngine) resurrectMasterAlerts() {
 	cutoff := now.Add(-24 * time.Hour).Unix()
 	for _, inc := range e.incidents.List(core.IncidentFilter{}, nil) {
 		id := inc.ID
-		// (task 6 fix round 1, IMPORTANT 3) Every member whose FIRE needs
-		// resurrecting is batched into ONE tryDeliverGroup job on the
-		// incident's lane, rather than one deliverAndReceiptDetail call per
-		// member -- an incident with several undelivered master-own members
-		// (e.g. two nodes that went down before a crash) gets ONE grouped
-		// "N nodes down" message on restart, exactly like an ordinary fire
-		// would, not N separate solo messages. A member's RECOVER leg is a
-		// distinct, already-singular notification (only sent once, when the
-		// WHOLE incident resolves -- see handleRecover) and stays a direct
-		// per-member redelivery.
-		// Pass 1: decide what needs doing, and give up on/skip anything
-		// stale, WITHOUT enqueueing any recover redelivery yet -- the
-		// group-fire job (if any) must be enqueued on this lane BEFORE any
-		// recover job, or a lone member needing both legs redelivered would
-		// have its recover run first (the two are never both due unless the
-		// fire was never delivered at all, since a recover only happens once
-		// its own fire fired).
+		// Every member whose FIRE needs resurrecting is batched into ONE tryDeliverGroup job on
+		// the incident's lane, rather than one deliverAndReceiptDetail call per member.
 		needsGroupDelivery := false
 		var pendingRecovers []core.IncidentAlert
 		for _, al := range inc.Alerts {
@@ -1299,35 +926,16 @@ func (e *fleetAlertEngine) resurrectMasterAlerts() {
 	}
 }
 
-// waitIdleForTest blocks until every deliverAndReceipt job Submit has
-// enqueued so far has actually run. Test-only: production code never needs
-// Submit's delivery to be synchronous from the caller's point of view.
+// waitIdleForTest blocks until every deliverAndReceipt job Submit has enqueued so far has
+// actually run.
 func (e *fleetAlertEngine) waitIdleForTest() { e.dispatch.waitIdleForTest() }
 
-// Stop stops the engine's keyed dispatcher accepting new work and waits up
-// to timeout for everything already queued or in flight to finish (see
-// keyedDispatcher.Stop's doc comment for what happens to anything left
-// undelivered when it expires -- resurrectMasterAlerts at the next start).
+// Stop stops the engine's keyed dispatcher accepting new work and waits up to timeout for
+// everything already queued or in flight to finish.
 func (e *fleetAlertEngine) Stop(timeout time.Duration) bool { return e.dispatch.Stop(timeout) }
 
-// HandleChildAlert converts a child's shipped AlertEvent (as decoded by the
-// replica from a KindAlert record) into an Alert and submits it, using
-// FiredAt (falling back to Time for an event logged before that field
-// existed) as the alert's own time throughout -- dedup, delivery and the
-// incident all key off when the alert actually fired, not when a fallback
-// record for it happened to be appended.
-//
-// The record itself is treated as already delivered locally by the child
-// whenever ev.DeliveredLocally is set (the fallback record) OR
-// ev.RoutedToMaster is NOT set: RoutedToMaster false means the child's own
-// Route() decided, at fire time, that it held no valid lease and delivered
-// locally right then (see fleet_lease.go's handoff.Route) -- there is no
-// third case. Submit applies a further, engine-side override on top of this
-// (hadLeaseBefore, Review Focus 5): even a record claiming RoutedToMaster
-// true is still treated as delivered locally if THIS master's own
-// bookkeeping shows it never actually got a lease to this node before
-// firedAt, which can happen if the child's own lease validity outlived a
-// master restart that wiped the new process's lease history.
+// HandleChildAlert converts a child's shipped AlertEvent (as decoded by the replica from a
+// KindAlert record) into an Alert and submits it, using FiredAt.
 func (e *fleetAlertEngine) HandleChildAlert(nodeID, nodeName string, tags []string, ev AlertEvent) {
 	sev, err := ParseSeverity(ev.Severity)
 	if err != nil {
@@ -1342,11 +950,8 @@ func (e *fleetAlertEngine) HandleChildAlert(nodeID, nodeName string, tags []stri
 	e.Submit(alertSource{NodeID: nodeID, NodeName: nodeName, Tags: tags, DeliveredLocally: deliveredLocally}, a)
 }
 
-// hadLeaseBefore reports whether nodeID had ever been successfully pushed a
-// lease at or before firedAt (Review Focus 5: a node that never held a
-// lease -- e.g. it was not connected to the stream at fire time -- cannot
-// have routed this alert to the master, so it must be treated as already
-// delivered locally, never redelivered).
+// hadLeaseBefore reports whether nodeID had ever been successfully pushed a lease at or
+// before firedAt.
 func (e *fleetAlertEngine) hadLeaseBefore(nodeID string, firedAt int64) bool {
 	e.leaseMu.Lock()
 	defer e.leaseMu.Unlock()
@@ -1362,10 +967,8 @@ func (e *fleetAlertEngine) pushReceipt(nodeID, key string, firedAt int64) {
 	e.push(nodeID, fleet.Frame{Type: "receipt", Data: data})
 }
 
-// TickLeases pushes a fresh lease to every connected node in ids whose last
-// lease push was leaseInterval or more ago (or never pushed). Revoked or
-// removed nodes must simply not be in ids -- the caller (masterLoop.tick)
-// owns that filtering against the registry.
+// TickLeases pushes a fresh lease to every connected node in ids whose last lease push was
+// leaseInterval or more ago (or never pushed).
 func (e *fleetAlertEngine) TickLeases(now time.Time, ids []string) {
 	for _, id := range ids {
 		if e.connected != nil && !e.connected(id) {
@@ -1388,9 +991,8 @@ func (e *fleetAlertEngine) maybePushLease(id string, now time.Time) {
 	}
 }
 
-// PushLeaseNow pushes a lease to id unconditionally, bypassing the 30s
-// cadence gate -- used on Hub.OnConnect, so a freshly (re)connected node
-// gets a lease immediately rather than waiting up to one masterTickInterval.
+// PushLeaseNow pushes a lease to id unconditionally, bypassing the 30s cadence gate -- used
+// on Hub.OnConnect, so a freshly.
 func (e *fleetAlertEngine) PushLeaseNow(id string, now time.Time) {
 	e.leaseMu.Lock()
 	e.lastLeasePush[id] = now.Unix()
@@ -1415,13 +1017,8 @@ func (e *fleetAlertEngine) pushLease(id string, now time.Time) {
 	}
 }
 
-// HandleChildAckSync is the master's entry point for a child-side ack/unack
-// reaching it: it is called whenever a node's alerts.json actually changed
-// (replicaSink.Live -> onAckSync), the only channel a child's own
-// AlertState.Ack/Unack -- whether from a manual `trinetra alerts ack` on
-// that node, or the master's own AckIncident push applied there -- reaches
-// the master through. Every currently-acked active alert acks the incident
-// it belongs to, if that incident is still open and not already acked.
+// HandleChildAckSync is the master's entry point for a child-side ack/unack reaching it: it
+// is called whenever a node's alerts.json actually changed (replicaSink.Live -> onAckSync).
 func (e *fleetAlertEngine) HandleChildAckSync(nodeID string, as json.RawMessage) {
 	if e.incidents == nil {
 		return
@@ -1435,9 +1032,8 @@ func (e *fleetAlertEngine) HandleChildAckSync(nodeID string, as json.RawMessage)
 		if !active.Acked {
 			continue
 		}
-		// (task 6 part 2) Looked up by the specific (node, key) MEMBER, not
-		// the incident's own grouping bucket: a grouped incident's bucket key
-		// no longer has anything to do with (node, key) by default.
+		// Looked up by the specific (node, key) MEMBER, not the incident's own grouping bucket: a
+		// grouped incident's bucket key no longer has anything to do with (node, key) by default.
 		inc, ok := e.incidents.OpenAlertIncident(nodeID, key)
 		if !ok || inc.State == "acked" || inc.State == "resolved" {
 			continue
@@ -1446,62 +1042,34 @@ func (e *fleetAlertEngine) HandleChildAckSync(nodeID string, as json.RawMessage)
 	}
 }
 
-// SetSilences wires the engine to the master's silence/maintenance store and
-// a node info lookup (name, tags), used by Submit's suppression check,
-// TickSilences's unsilence-delivery pass and the periodic/on-connect
-// "silences" frame push. Called once from startMaster, after both the
-// engine and the store exist -- a constructor parameter would force every
-// existing (and future) test call site to thread through a store even when
-// it never exercises silences at all.
+// SetSilences wires the engine to the master's silence/maintenance store and a node info
+// lookup (name, tags), used by Submit's suppression check.
 func (e *fleetAlertEngine) SetSilences(store *silenceStore, nodeInfo func(id string) (string, []string)) {
 	e.silences = store
 	e.nodeInfo = nodeInfo
 }
 
-// SetRouting wires the engine to the master's routing/escalation config
-// store and its channel-scoped delivery functions (task 5), mirroring
-// SetSilences's pattern: called once from startMaster, after the engine
-// exists. A nil store (never called, e.g. every pre-existing engine test)
-// keeps Submit's delivery, resurrection and unsilenced-redelivery paths
-// exactly as they behaved before routing existed -- see
-// deliverAndReceiptDetail's alerting==nil branch. deliverNamed is used for
-// the fire/recover legs (it also logs to the alert log/live bus, like
-// e.deliver); dispatchOnly is used for escalation/repeat notifications
-// (dispatch only, no logging -- they are not new alert records).
+// SetRouting wires the engine to the master's routing/escalation config store and its
+// channel-scoped delivery functions, mirroring SetSilences's pattern.
 func (e *fleetAlertEngine) SetRouting(store *alertingStore, deliverNamed, dispatchOnly func(a Alert, channels []string) bool) {
 	e.alerting = store
 	e.deliverNamed = deliverNamed
 	e.dispatchOnly = dispatchOnly
 }
 
-// SetDependencies wires the engine to a node-dependency resolver (task 6
-// part 3), mirroring SetSilences/SetRouting's pattern: called once from
-// startMaster, after the engine exists. depsOf(id) must return id's
-// DependsOn list already expanded (every "tag:<t>" entry resolved to the
-// concrete node ids currently carrying that tag). A nil depsOf (never
-// called, e.g. every pre-existing engine test) keeps Submit's node-down
-// handling exactly as it behaved before dependencies existed.
+// SetDependencies wires the engine to a node-dependency resolver.
 func (e *fleetAlertEngine) SetDependencies(depsOf func(nodeID string) []string) {
 	e.depsOf = depsOf
 }
 
-// SetConfig wires the engine to the master's live config (task 6 fix round
-// 1, IMPORTANT 5), mirroring SetDependencies/SetSilences's pattern: called
-// once from startMaster, after the engine exists. A nil getCfg (every
-// existing call site/test that never calls SetConfig) makes
-// effectiveGroupInterval fall back to fleetFallbackAfterDefault.
+// SetConfig wires the engine to the master's live config, called once from startMaster
+// after the engine exists.
 func (e *fleetAlertEngine) SetConfig(getCfg func() *config.Config) {
 	e.getCfg = getCfg
 }
 
-// TickSilences prunes long-expired silences, delivers any incident that was
-// suppressed but should no longer be (its silence lapsed, or the
-// maintenance window ended, while the alert kept firing), and refreshes
-// every id's pushed silence set at most once every silencePushInterval (so a
-// maintenance window's next-24h expansion stays current even with no
-// silence ever changing). ids is the master's current non-revoked node list
-// (masterLoop.tick already computes this for TickLeases); a not-actually-
-// connected id is simply skipped, exactly like TickLeases.
+// TickSilences prunes long-expired silences, delivers any incident that was suppressed but
+// should no longer be.
 func (e *fleetAlertEngine) TickSilences(now time.Time, ids []string) {
 	if e.silences == nil {
 		return
@@ -1521,13 +1089,7 @@ func (e *fleetAlertEngine) TickSilences(now time.Time, ids []string) {
 	e.PushSilencesToAll(now, ids)
 }
 
-// deliverUnsilenced scans the incidents currently indexed as suppressed-and-
-// open (incidentStore.SuppressedOpen -- a small, maintained index, not a
-// full List() scan every 5s, review round 1, item 3's second half) and, for
-// each one whose most recent alert has no ResolvedAt yet, enqueues a
-// RE-CHECK job on that incident's own keyed lane. The actual "is it still
-// suppressed, still unresolved, still silenced?" decision is made inside
-// that job (tryDeliverUnsilenced), not here -- see its doc comment for why.
+// deliverUnsilenced scans the incidents indexed as suppressed-and-open.
 func (e *fleetAlertEngine) deliverUnsilenced(now time.Time) {
 	if e.incidents == nil || e.silences == nil {
 		return
@@ -1538,22 +1100,8 @@ func (e *fleetAlertEngine) deliverUnsilenced(now time.Time) {
 	}
 }
 
-// tryDeliverUnsilenced runs INSIDE id's keyed lane (enqueued by
-// deliverUnsilenced above): by the time a lane job actually executes, an
-// arbitrary amount of time may have passed and other jobs for the very same
-// incident -- most importantly a member's own recover -- may have already
-// run ahead of it in that same lane's FIFO order (review round 1, item 3:
-// deliverUnsilenced's OLD behaviour decided everything at scan time and
-// could deliver a stale "fire" for a member that had since recovered).
-//
-// (task 6 fix round 1, CRITICAL 1) EVERY open member with SilencedBy set is
-// re-checked independently, not just "the incident" or "the last alert":
-// incidentStore.SuppressedOpen now indexes any incident with at least one
-// silenced-and-open member, which may sit alongside an ordinary, unsilenced,
-// still-escalating sibling -- silencing one member must never freeze or mask
-// the other. Unsilencing decides purely from each member's OWN SilencedBy
-// field, never from the timeline (a leg-labelled "suppressed" event is
-// resurrection's signal, not this one's).
+// tryDeliverUnsilenced runs INSIDE id's keyed lane (enqueued by deliverUnsilenced): by the
+// time it executes, other jobs for the same incident.
 func (e *fleetAlertEngine) tryDeliverUnsilenced(id string) {
 	inc, ok := e.incidents.Get(id)
 	if !ok {
@@ -1574,14 +1122,8 @@ func (e *fleetAlertEngine) tryDeliverUnsilenced(id string) {
 	}
 }
 
-// deliverUnsilencedMember delivers al -- and ONLY al, not the rest of its
-// incident -- once its silence has lifted, recording a structured
-// "delivered" event for that member alone and then clearing its SilencedBy
-// (incidentStore.DeliverUnsilencedMember does both atomically). No receipt
-// is pushed: a silenced CHILD member already got its receipt at fire time
-// (Submit's supp != nil branch pushes it unconditionally), so there is
-// nothing left to push here for any member that could ever reach this
-// function.
+// deliverUnsilencedMember delivers al -- and ONLY al, not the rest of its incident -- once
+// its silence has lifted.
 func (e *fleetAlertEngine) deliverUnsilencedMember(id string, al core.IncidentAlert, name string, tags []string) {
 	a := alertOf(al)
 	if al.Node != "" {
@@ -1622,9 +1164,8 @@ func (e *fleetAlertEngine) deliverUnsilencedMember(id string, al core.IncidentAl
 	_, _, _ = e.incidents.DeliverUnsilencedMember(id, al.Node, al.Key, al.FiredAt, events...)
 }
 
-// PushSilencesToAll immediately refreshes every id's pushed silence set
-// (skipping any not currently connected), bypassing TickSilences's periodic
-// cadence gate -- called on any silence/maintenance mutation ("on change").
+// PushSilencesToAll immediately refreshes every id's pushed silence set (skipping any not
+// currently connected), bypassing TickSilences's periodic cadence gate.
 func (e *fleetAlertEngine) PushSilencesToAll(now time.Time, ids []string) {
 	for _, id := range ids {
 		if e.connected != nil && !e.connected(id) {
@@ -1634,10 +1175,8 @@ func (e *fleetAlertEngine) PushSilencesToAll(now time.Time, ids []string) {
 	}
 }
 
-// PushSilencesNow pushes id's current filtered silence set unconditionally
-// -- used on Hub.OnConnect, mirroring PushLeaseNow, so a freshly
-// (re)connected node's fallback path honours the master's current silences
-// immediately rather than up to silencePushInterval late.
+// PushSilencesNow pushes id's current filtered silence set unconditionally -- used on
+// Hub.OnConnect, mirroring PushLeaseNow, so a freshly.
 func (e *fleetAlertEngine) PushSilencesNow(id string, now time.Time) {
 	e.pushSilencesNow(id, now)
 }
@@ -1657,18 +1196,8 @@ func (e *fleetAlertEngine) pushSilencesNow(id string, now time.Time) {
 	e.push(id, fleet.Frame{Type: "silences", Data: data})
 }
 
-// TickEscalations evaluates every currently firing (state=="firing" -- not
-// acked, suppressed or resolved) incident's escalation schedule, called from
-// masterLoop.tick alongside TickLeases/TickSilences. A no-op entirely when
-// routing has never been wired (e.alerting == nil): escalation is a
-// routing-config-driven feature with nothing to evaluate otherwise.
-//
-// The actual work runs inside a job enqueued on the incident's OWN keyed
-// lane (fleet_dispatch.go), exactly like deliverUnsilenced/
-// tryDeliverUnsilenced: by the time the job runs, the incident may have been
-// acked or resolved by something else already queued ahead of it on that
-// lane, so tryEscalate re-checks everything against the incident's CURRENT
-// state, not this scan's snapshot.
+// TickEscalations evaluates every currently firing (state=="firing" -- not acked,
+// suppressed or resolved) incident's escalation schedule.
 func (e *fleetAlertEngine) TickEscalations(now time.Time) {
 	if e.alerting == nil || e.incidents == nil {
 		return
@@ -1680,16 +1209,8 @@ func (e *fleetAlertEngine) TickEscalations(now time.Time) {
 	}
 }
 
-// TickGrouping re-checks every open (firing or acked) incident's pending
-// group notification (task 6 part 2): a fire always tries tryDeliverGroup
-// itself immediately (Submit), but that first attempt can find group_wait
-// (or group_interval, for an update) not yet elapsed and give up -- nothing
-// else would ever retry it without this periodic sweep, called from
-// masterLoop.tick alongside TickLeases/TickSilences/TickEscalations.
-// tryDeliverGroup itself is cheap to call speculatively (it is a fast no-op
-// whenever there is nothing pending or nothing due yet), so this scans every
-// open incident rather than maintaining a separate "has a pending
-// notification" index.
+// TickGrouping re-checks every open (firing or acked) incident's pending group
+// notification: a fire always tries tryDeliverGroup itself immediately (Submit).
 func (e *fleetAlertEngine) TickGrouping(now time.Time) {
 	if e.incidents == nil {
 		return
@@ -1703,13 +1224,7 @@ func (e *fleetAlertEngine) TickGrouping(now time.Time) {
 	}
 }
 
-// escalatedTo reports whether inc's timeline already records (policy, step)
-// as escalated -- the escalation state is entirely durable, derived from the
-// timeline (task-5 ruling), so a restarted master never re-sends a step it
-// already reached. isFirst attributes a legacy, pre-policy-labelling event
-// (B5 fix round 1: recorded by an engine build before per-policy escalation
-// existed) to policy when policy is the first matched policy -- see
-// stepEventInfo.
+// escalatedTo reports whether inc's timeline already records (policy, step) as escalated.
 func escalatedTo(inc core.Incident, policy string, step int, isFirst bool) bool {
 	for _, ev := range inc.Timeline {
 		if ev.Kind != "escalated" {
@@ -1726,15 +1241,8 @@ func escalatedTo(inc core.Incident, policy string, step int, isFirst bool) bool 
 	return false
 }
 
-// firstFireDeliveryTS returns the timestamp of inc's fire leg's own step-0
-// "delivered" event (task-5 ruling: escalation timers are measured from the
-// incident's first successful delivery -- ONE shared reference time across
-// every matched policy, per B5's ruling), and whether one exists at all --
-// it may not yet, if the fire itself hasn't been delivered (e.g. still
-// queued behind a slow channel, or every channel is currently failing).
-// Every matched policy's own step-0 "delivered" event is appended with the
-// SAME timestamp (deliverAndReceiptDetail's fire branch), so it does not
-// matter which one this happens to find first.
+// firstFireDeliveryTS returns the timestamp of inc's fire leg's step-0 "delivered" event,
+// and whether one exists.
 func firstFireDeliveryTS(inc core.Incident) (int64, bool) {
 	for _, ev := range inc.Timeline {
 		if ev.Kind != "delivered" {
@@ -1753,12 +1261,7 @@ func firstFireDeliveryTS(inc core.Incident) (int64, bool) {
 	return 0, false
 }
 
-// lastStepEventTS returns the most recent timestamp among: policy reaching
-// step (its step-0 "delivered" event, or its "escalated" event otherwise)
-// and any later "repeated" event recorded for that same (policy, step) --
-// the reference point maybeRepeat measures RepeatEvery's cadence from,
-// itself entirely derived from the timeline. isFirst is escalatedTo's
-// legacy-event attribution rule.
+// lastStepEventTS returns the most recent timestamp among: policy reaching step.
 func lastStepEventTS(inc core.Incident, policy string, step int, isFirst bool) int64 {
 	var ts int64
 	for _, ev := range inc.Timeline {
@@ -1776,31 +1279,15 @@ func lastStepEventTS(inc core.Incident, policy string, step int, isFirst bool) i
 	return ts
 }
 
-// tryEscalate runs INSIDE id's keyed lane (enqueued by TickEscalations):
-// re-reads the incident fresh (see TickEscalations's doc comment), and, if
-// it is still firing with its fire leg delivered, walks EVERY matched
-// policy independently (B5 fix round 1 ruling: each policy has its own
-// steps, After durations, RepeatEvery and SendResolved -- there is no
-// merging), delivering any step whose After has elapsed since the shared
-// first-delivery time and that is not already recorded as escalated for
-// THAT policy, then considers a RepeatEvery notification for whichever step
-// that policy most recently reached.
-//
-// PARKED (B5 review, same precedent as unsilence's tryDeliverUnsilenced): an
-// ack or resolve can land on this incident, from a different code path,
-// between the state check above and an escalateStep/dispatchOnly call
-// below -- a step already in flight can still be delivered a moment after
-// the operator acked it. Accepted, not fixed here.
+// tryEscalate runs INSIDE id's keyed lane (enqueued by TickEscalations): it re-reads the
+// incident fresh, and if still firing with its fire leg delivered.
 func (e *fleetAlertEngine) tryEscalate(id string, cfg core.AlertingConfig, now time.Time) {
 	inc, ok := e.incidents.Get(id)
 	if !ok || inc.State != "firing" || len(inc.Alerts) == 0 {
 		return
 	}
-	// (task 6 part 2) A grouped incident's escalation is driven by its most
-	// recently fired member that is still active (unresolved and not
-	// dependency-suppressed) -- NOT necessarily the last-appended Alerts
-	// entry, which for a grouped incident may already have recovered while
-	// an earlier member is still open.
+	// A grouped incident's escalation is driven by its most recently fired member that is
+	// still active (unresolved and not dependency-suppressed).
 	al, ok := latestActiveAlert(inc)
 	if !ok {
 		return
@@ -1842,11 +1329,7 @@ func (e *fleetAlertEngine) tryEscalate(id string, cfg core.AlertingConfig, now t
 	}
 }
 
-// escalateStep delivers channels for (policy, step) through the same keyed
-// dispatch (dispatchOnly: no alert-log/live-bus record -- an escalation is
-// not a new alert), and, only on success, durably records
-// {Kind:"escalated", Detail:"policy P step N: chan1, chan2"} (B5 fix round 1
-// ruling) so a restarted master never resends it (escalatedTo).
+// escalateStep delivers channels for (policy, step) through the keyed dispatch.
 func (e *fleetAlertEngine) escalateStep(id string, al core.IncidentAlert, policy string, step int, channels []string, now time.Time) bool {
 	if e.dispatchOnly == nil {
 		return false
@@ -1863,13 +1346,8 @@ func (e *fleetAlertEngine) escalateStep(id string, al core.IncidentAlert, policy
 	return true
 }
 
-// maybeRepeat re-notifies p's last-reached step's channels once p's OWN
-// RepeatEvery has elapsed since that step was last reached or last repeated
-// for p (lastStepEventTS -- durable, timeline-derived), while inc is still
-// firing and unacked (tryEscalate's caller already confirmed
-// inc.State=="firing"). Recorded as {Kind:"repeated"} (task-5 ruling); each
-// matched policy is considered independently (B5 fix round 1), with its own
-// cadence and its own last-reached step.
+// maybeRepeat re-notifies p's last-reached step's channels once p's OWN RepeatEvery has
+// elapsed since that step was last reached or last repeated for p.
 func (e *fleetAlertEngine) maybeRepeat(id string, inc core.Incident, al core.IncidentAlert, p core.Policy, isFirst bool, lastReached int, now time.Time) {
 	if p.RepeatEvery == "" || e.dispatchOnly == nil {
 		return
@@ -1900,26 +1378,14 @@ func (e *fleetAlertEngine) maybeRepeat(id string, inc core.Incident, al core.Inc
 	})
 }
 
-// alertOf rebuilds the ordinary "fire" Alert an escalation/repeat/unsilence
-// notification re-sends from a recorded IncidentAlert (an escalation only
-// ever fires while the incident is still firing). Simplified (task 6 fix
-// round 1, MINOR) from an earlier (Alert, bool) form: a malformed severity
-// can never actually fail here -- mustSeverity already falls back to
-// SevWarning -- so there was never a real failure case to report.
+// alertOf rebuilds the ordinary "fire" Alert an escalation/repeat/unsilence notification
+// re-sends from a recorded IncidentAlert.
 func alertOf(al core.IncidentAlert) Alert {
 	return Alert{Key: al.Key, Title: al.Title, Severity: mustSeverity(al.Severity), Kind: "fire", Time: al.FiredAt}
 }
 
-// latestActiveAlert returns inc's most recently fired member alert that is
-// still active -- unresolved, not dependency-suppressed (task 6 part 3), and
-// not silenced (task 6 fix round 1, CRITICAL 1): what escalation/repeat
-// notifications and tryEscalate's route resolution key off, since a grouped
-// incident's LAST-APPENDED Alerts entry is not necessarily the one still
-// open (an earlier member can still be firing after a later one already
-// recovered) NOR the one actually driving escalation (a later-arriving
-// SILENCED sibling must never hijack an already-escalating unsilenced
-// member's representative-alert role -- see
-// TestEngineSilencedSiblingDoesNotFreezeEscalation).
+// latestActiveAlert returns inc's most recently fired member alert that is still active --
+// unresolved, not dependency-suppressed, and not silenced.
 func latestActiveAlert(inc core.Incident) (core.IncidentAlert, bool) {
 	var best core.IncidentAlert
 	found := false
@@ -1934,11 +1400,8 @@ func latestActiveAlert(inc core.Incident) (core.IncidentAlert, bool) {
 	return best, found
 }
 
-// PushAck pushes an "ack" (unack=false) or "unack" (unack=true) frame for
-// key to nodeID, applied on the child via AlertState.Ack/Unack (see
-// applyAckFrame in fleet_lease.go). Failure (node not connected) is silent:
-// the child's own state is what AckIncident is really updating on the
-// master side; the frame is best-effort propagation.
+// PushAck pushes an "ack" (unack=false) or "unack" (unack=true) frame for key to nodeID,
+// applied on the child via AlertState.Ack/Unack (see applyAckFrame in fleet_lease.go).
 func (e *fleetAlertEngine) PushAck(nodeID, key string, unack bool) {
 	if e.push == nil {
 		return

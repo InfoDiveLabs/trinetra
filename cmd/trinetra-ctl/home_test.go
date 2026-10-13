@@ -42,9 +42,8 @@ func homeFixture() model {
 	}
 }
 
-// TestHomeHeaderShowsServerName pins #101 parity in ctl: the Home header shows
-// the host's display name (matching the web sidebar brand), and renders no
-// stray separator when the name is empty.
+// TestHomeHeaderShowsServerName pins #101 parity in ctl: the Home header shows the host's
+// display name (matching the web sidebar brand).
 func TestHomeHeaderShowsServerName(t *testing.T) {
 	m := homeFixture()
 	m.serverName = "attic-pi"
@@ -83,8 +82,7 @@ func TestHomeViewShowsDetail(t *testing.T) {
 	}
 }
 
-// TestHomeViewFiringCount: with alerts present the ALERTS panel shows the
-// firing count.
+// TestHomeViewFiringCount: with alerts present the ALERTS panel shows the firing count.
 func TestHomeViewFiringCount(t *testing.T) {
 	m := homeFixture()
 	m.alerts = []core.AlertRecord{
@@ -116,9 +114,8 @@ func TestHomeViewOffline(t *testing.T) {
 	}
 }
 
-// TestSnapshotMsgAppendsCPUHistory: each snapshot pushes its CPU onto the
-// rolling history (bounded to cpuHistCap) so the sparkline stays live and
-// never grows without bound.
+// TestSnapshotMsgAppendsCPUHistory: each snapshot pushes its CPU onto the rolling history
+// (bounded to cpuHistCap) so the sparkline stays live and never grows without bound.
 func TestSnapshotMsgAppendsCPUHistory(t *testing.T) {
 	// feed cpuHistCap+5 snapshots
 	cur := model{step: stepHome}

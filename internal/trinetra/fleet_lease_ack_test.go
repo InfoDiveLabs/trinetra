@@ -1,8 +1,5 @@
-// fleet_lease_ack_test.go covers applyAckFrame (fleet_lease.go): the child's
-// handling of the master's "ack"/"unack" stream frames (AckIncident's
-// PushAck). Kept in its own file rather than fleet_lease_test.go so the
-// existing lease/handoff test file's call sites to onStreamFrame need not
-// change.
+// fleet_lease_ack_test.go covers applyAckFrame (fleet_lease.go): the child's handling of
+// the master's "ack"/"unack" stream frames (AckIncident's PushAck).
 package trinetra
 
 import (

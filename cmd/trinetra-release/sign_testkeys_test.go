@@ -12,9 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/update/updatetest"
 )
 
-// TestSignRoleMaintTestSignsWithTestSigner2 only applies to the
-// trinetra_testkeys build: "sign --role maint-test" must sign with the
-// deterministic maintainer test key (seed 2), matching the e2e fixtures.
+// TestSignRoleMaintTestSignsWithTestSigner2 only applies to the trinetra_testkeys build:
+// "sign --role maint-test" must sign with the deterministic maintainer test key (seed 2).
 func TestSignRoleMaintTestSignsWithTestSigner2(t *testing.T) {
 	dir := t.TempDir()
 	in := filepath.Join(dir, "manifest.json")
@@ -79,9 +78,8 @@ func TestVerifyTestKeysPrintsWarningBanner(t *testing.T) {
 	}
 }
 
-// TestManifestKeysFromBinary is R19: manifest --keys-from-binary fills
-// manifest.keys with exactly the compiled-in key set (base64), so cosign's
-// rotation review compares like with like.
+// TestManifestKeysFromBinary: manifest --keys-from-binary fills manifest.keys with exactly
+// the compiled-in key set (base64), so cosign's rotation review compares like with like.
 func TestManifestKeysFromBinary(t *testing.T) {
 	dir := t.TempDir()
 	writeAllReleaseFiles(t, dir)

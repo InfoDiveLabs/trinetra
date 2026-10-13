@@ -1,10 +1,5 @@
-// channels.go holds the Channels screen's PURE logic: the add/edit/remove
-// config mutations and the #79-safe validate-before-save gate, all unit-
-// tested (channels_test.go) against a plain *config.Config and the fake
-// core.API (run_test.go) with no terminal involved. The Bubble Tea glue
-// that walks the user through these (manage_channels.go) is deliberately
-// thin, mirroring the split manage_schedule.go/setup_web.go already
-// establish for their own screens.
+// channels.go holds the Channels screen's PURE logic: the add/edit/remove config mutations
+// and the #79-safe validate-before-save gate, all unit- tested.
 package main
 
 import (
@@ -16,26 +11,19 @@ import (
 )
 
 // channelTypeChoices enumerates every channel type buildNotifier
-// (internal/trinetra/channels.go) implements, in the order offered when
-// adding a channel.
+// (internal/trinetra/channels.go) implements, in the order offered when adding a channel.
 var channelTypeChoices = []string{"telegram", "email", "webhook", "slack", "discord", "ntfy", "gotify"}
 
-// channelFieldDef is one per-type Settings field the add/edit screen walks
-// the user through, in order. Key matches the Settings map key buildNotifier
-// reads for that type (internal/trinetra/channels.go); Required is
-// informational only here -- buildNotifier (via the validate-before-save
-// gate below) is still the source of truth an empty required field fails
-// against, this package does not duplicate that check.
+// channelFieldDef is one per-type Settings field the add/edit screen walks the user
+// through, in order.
 type channelFieldDef struct {
 	Key      string
 	Label    string
 	Required bool
 }
 
-// channelTypeFields lists channelFieldDefs per channel type, mirroring
-// exactly what buildNotifier reads out of cc.Settings for that type
-// (internal/trinetra/channels.go), so the ctl screen never asks for (or
-// omits) a field the daemon doesn't actually use.
+// channelTypeFields lists channelFieldDefs per channel type, mirroring exactly what
+// buildNotifier reads out of cc.Settings for that type (internal/trinetra/channels.go).
 var channelTypeFields = map[string][]channelFieldDef{
 	"telegram": {
 		{Key: "token", Label: "bot token (blank: use the global telegram.token)"},
@@ -73,11 +61,8 @@ var channelTypeFields = map[string][]channelFieldDef{
 	},
 }
 
-// channelAnswers accumulates the Channels screen's add/edit input: which
-// type, whether it's enabled, and that type's Settings fields
-// (channelTypeFields), keyed the same as config.ChannelConfig.Settings. Name
-// is only meaningful for add (edit identifies the channel by its existing
-// name, passed separately -- see applyChannelEdit/saveChannel).
+// channelAnswers accumulates the Channels screen's add/edit input: which type, whether it's
+// enabled, and that type's Settings fields (channelTypeFields).
 type channelAnswers struct {
 	Name     string
 	Type     string
@@ -85,12 +70,8 @@ type channelAnswers struct {
 	Settings map[string]string
 }
 
-// buildChannelConfig turns ans into a config.ChannelConfig ready to add or
-// validate: MinSeverity defaults to "info" (empty is the permissive default
-// wherever routing is evaluated, see ChannelConfig.MinSeverity's doc), and
-// Settings only carries non-empty values so a blank optional field (e.g.
-// telegram's token/chat_id, meant to fall back to the global telegram.*
-// keys per buildNotifier) doesn't shadow that fallback with an explicit "".
+// buildChannelConfig turns ans into a config.ChannelConfig ready to add or validate:
+// MinSeverity defaults to "info".
 func buildChannelConfig(ans channelAnswers) config.ChannelConfig {
 	cc := config.ChannelConfig{
 		Name:        ans.Name,
@@ -110,10 +91,8 @@ func buildChannelConfig(ans channelAnswers) config.ChannelConfig {
 	return cc
 }
 
-// applyChannelAdd appends a new channel built from ans onto cfg, mirroring
-// `trinetra channel add`'s (internal/trinetra/channel.go) own
-// duplicate-name check: it refuses, leaving cfg untouched, if a channel
-// named ans.Name already exists (or ans.Name is empty).
+// applyChannelAdd appends a new channel built from ans onto cfg, mirroring `trinetra
+// channel add`'s (internal/trinetra/channel.go) own duplicate-name check: it refuses.
 func applyChannelAdd(cfg *config.Config, ans channelAnswers) error {
 	if ans.Name == "" {
 		return fmt.Errorf("channel name is required")
@@ -125,12 +104,8 @@ func applyChannelAdd(cfg *config.Config, ans channelAnswers) error {
 	return nil
 }
 
-// applyChannelEdit replaces the named channel's Type/Enabled/Settings with
-// ans's, in place, preserving its routing fields (MinSeverity/
-// IncludeKinds/ExcludeKinds/CriticalOverridesQuiet) exactly as `channel
-// set`'s per-field setters would leave them untouched -- editing a
-// channel's delivery settings on this screen was never meant to reset
-// routing rules set elsewhere.
+// applyChannelEdit replaces the named channel's Type/Enabled/Settings with ans's, in place,
+// preserving its routing fields.
 func applyChannelEdit(cfg *config.Config, name string, ans channelAnswers) error {
 	cc, ok := cfg.GetChannel(name)
 	if !ok {
@@ -151,25 +126,14 @@ func applyChannelRemove(cfg *config.Config, name string) error {
 	return nil
 }
 
-// channelNeedsValidation reports whether cc must pass api.ValidateChannel
-// before being persisted: only ENABLED channels are gated (the #79-safe
-// pattern) -- a disabled channel can't misdeliver, so saving one with an
-// incomplete/invalid Settings map is harmless, and is exactly how a user
-// stages a channel's config before turning it on.
+// channelNeedsValidation reports whether cc must pass api.ValidateChannel before being
+// persisted: only ENABLED channels are gated (the #79-safe pattern).
 func channelNeedsValidation(cc config.ChannelConfig) bool {
 	return cc.Enabled
 }
 
-// saveChannel is the Channels screen's single save path for BOTH add and
-// edit: it builds cc from ans and, when cc is enabled, checks it against
-// api.ValidateChannel BEFORE touching cfg at all -- refusing to persist an
-// enabled channel that would be silently dropped at delivery time (issue
-// #79, the same concern core.API.ValidateChannel's doc describes). Only
-// once that gate passes (or cc is disabled, so there's nothing to
-// misdeliver) does it apply the actual mutation via applyChannelAdd/
-// applyChannelEdit. Nothing is applied to cfg, and nothing needs undoing,
-// when the gate rejects cc. name is the existing channel's name for an edit
-// (ignored for add, where ans.Name is used instead).
+// saveChannel is the Channels screen's single save path for BOTH add and edit: it builds cc
+// from ans and, when cc is enabled.
 func saveChannel(api core.API, cfg *config.Config, name string, ans channelAnswers, isEdit bool) error {
 	cc := buildChannelConfig(ans)
 	if isEdit {
@@ -186,21 +150,15 @@ func saveChannel(api core.API, cfg *config.Config, name string, ans channelAnswe
 	return applyChannelAdd(cfg, ans)
 }
 
-// sortedChannels returns a stable-ordered copy of cfg's channels sorted by
-// name, the same order printChannelList (internal/trinetra/channel.go)
-// uses for `channel list`, so the ctl screen's row order never depends on
-// json.Unmarshal's (unspecified) slice order.
+// sortedChannels returns a stable-ordered copy of cfg's channels sorted by name, the same
+// order printChannelList (internal/trinetra/channel.go) uses for `channel list`.
 func sortedChannels(cfg *config.Config) []config.ChannelConfig {
 	out := append([]config.ChannelConfig(nil), cfg.Channels...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// copyChannelSettings returns a shallow copy of m, so seeding an edit's
-// channelAnswers.Settings from an existing channel's Settings never lets
-// typing in the field screen mutate the config the list screen is still
-// displaying (that config is only replaced wholesale once saveChannelCmd's
-// ApplyConfig round trip lands).
+// copyChannelSettings returns a shallow copy of m.
 func copyChannelSettings(m map[string]string) map[string]string {
 	if len(m) == 0 {
 		return map[string]string{}
@@ -212,9 +170,8 @@ func copyChannelSettings(m map[string]string) map[string]string {
 	return out
 }
 
-// indexOfChannelType returns typ's index in channelTypeChoices, or 0 (the
-// first choice) if typ is empty/unrecognized -- e.g. a brand-new add flow,
-// or an edit of a channel whose Type predates channelTypeChoices somehow.
+// indexOfChannelType returns typ's index in channelTypeChoices, or 0 (the first choice) if
+// typ is empty/unrecognized -- e.g. a brand-new add flow.
 func indexOfChannelType(typ string) int {
 	for i, t := range channelTypeChoices {
 		if t == typ {

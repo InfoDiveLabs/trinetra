@@ -1,0 +1,72 @@
+{{/* statuspage_incident.html (#157): one public incident, its timeline and
+     the responder forms (post/edit update, edit title, admin delete). */}}
+{{define "content"}}
+<div id="status-incident-page">
+  {{if .Error}}<div class="flash err" role="alert">{{.Error}}</div>{{end}}
+  {{if .Incident.ID}}{{with .Incident}}
+  <div class="section-label"><span class="eyebrow">{{.Title}}</span>
+    <span class="badge pill-{{.Impact}}">{{.Impact}}</span> <span class="badge">{{.Status}}</span></div>
+  <p class="note" style="margin:0 0 12px">Affects: {{range $i, $s := .Services}}{{if $i}}, {{end}}{{index $.ServiceName $s}}{{end}}{{if .Auto}} &middot; opened automatically{{end}} &middot; <a href="/status-page/incidents">all status updates</a></p>
+  {{if .Triggers}}<details style="margin-bottom:12px"><summary class="note">Internal triggers (never shown publicly)</summary><ul class="mono">{{range .Triggers}}<li>{{.}}</li>{{end}}</ul></details>{{end}}
+
+  <div class="panel" style="margin-bottom:18px">
+    <div class="head"><span class="eyebrow">Post an update</span></div>
+    <form method="post" action="/status-page/incidents/{{.ID}}/updates">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <label class="field"><span class="lb">Status</span><select name="status">{{range $.Statuses}}<option {{if eq . (or $.PostDraft.Status $.Incident.Status)}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+      <label class="field" style="margin-top:8px"><span class="lb">Message (plain text, shown publicly)</span><textarea name="message" required maxlength="4096" rows="3">{{$.PostDraft.Message}}</textarea></label>
+      <button class="btn primary" type="submit" style="margin-top:10px">Publish update</button>
+    </form>
+  </div>
+
+  <div class="section-label"><span class="eyebrow">Timeline</span></div>
+  <div class="panel pad0 cardpanel" style="margin-bottom:18px"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>When</th><th>Status</th><th>Update</th><th>Author</th></tr></thead>
+    <tbody>
+    {{range $i, $u := .Updates}}
+      <tr>
+        <td class="mono note" data-label="When">{{timeText $u.TS}}</td>
+        <td data-label="Status"><span class="badge">{{$u.Status}}</span></td>
+        <td data-label="Update">{{multiline $u.Message}}{{if $u.Edits}} <span class="note">(edited)</span>{{end}}
+          <details style="margin-top:6px"{{if eq $.EditUID $u.ID}} open{{end}}><summary class="note">Edit</summary>
+            <form method="post" action="/status-page/incidents/{{$.Incident.ID}}/updates/{{$u.ID}}">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <label class="field"><span class="lb">Status</span><select name="status">{{range $.Statuses}}<option {{if eq . (or (and (eq $.EditUID $u.ID) $.EditDraft.Status) $u.Status)}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+              <label class="field" style="margin-top:8px"><span class="lb">Message</span><textarea name="message" required maxlength="4096" rows="3">{{if eq $.EditUID $u.ID}}{{$.EditDraft.Message}}{{else}}{{$u.Message}}{{end}}</textarea></label>
+              <button class="btn" type="submit" style="margin-top:8px">Save edit</button>
+            </form>
+          </details>
+        </td>
+        <td class="mono note" data-label="Author">{{$u.Author}}</td>
+      </tr>
+    {{else}}<tr><td colspan="4" class="note">No updates yet.</td></tr>{{end}}
+    </tbody>
+  </table></div></div>
+
+  <div class="panel">
+    <div class="head"><span class="eyebrow">Edit title</span></div>
+    <form method="post" action="/status-page/incidents/{{.ID}}/edit">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <label class="field"><span class="lb">Title</span><input name="title" value="{{or $.TitleDraft .Title}}" required maxlength="200"></label>
+      {{range .Services}}<input type="hidden" name="services" value="{{.}}">{{end}}
+      <button class="btn" type="submit" style="margin-top:10px">Save</button>
+    </form>
+    {{if $.IsAdmin}}
+    <div class="card-actions" style="margin-top:14px">
+      <span class="confirm-toggle">
+        <input type="checkbox" id="del-incident" class="confirm-check">
+        <label for="del-incident" class="btn ghost confirm-ask">Delete incident</label>
+        <span class="confirm-armed">
+          <form method="post" action="/status-page/incidents/{{.ID}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="btn danger" type="submit">Confirm delete</button>
+          </form>
+          <label for="del-incident" class="btn ghost">Cancel</label>
+        </span>
+      </span>
+    </div>
+    {{end}}
+  </div>
+  {{end}}{{end}}
+</div>
+{{end}}

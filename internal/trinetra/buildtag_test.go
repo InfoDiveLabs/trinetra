@@ -7,30 +7,8 @@ import (
 	"testing"
 )
 
-// TestDefaultBuildIsStdlibOnly asserts the DEFAULT build of the trinetra
-// DAEMON BINARY (cmd/trinetra) imports no third-party packages: the
-// daemon simply does not import internal/web, so go-webauthn,
-// x/crypto/autocert, etc. never enter its module graph. There is no build
-// tag involved -- internal/web is an untagged package built into its own
-// separate trinetra-web binary (cmd/trinetra-web), and cmd/trinetra
-// never references it. This is the guard that makes that isolation promise
-// checkable rather than aspirational.
-//
-// Scope is deliberately cmd/trinetra's own dependency graph, not
-// "./..." (the whole module): cmd/trinetra-ctl is a separate binary that
-// carries its own third-party dependency (Bubble Tea, for its interactive
-// TUI -- see cmd/trinetra-ctl/tui.go) and is never imported by
-// cmd/trinetra, so it must not trip this guard. What the guard actually
-// promises -- "the daemon you `systemctl start` is stdlib-only by default"
-// -- only concerns cmd/trinetra's own graph; scoping to "./..." would
-// conflate the two binaries and make the daemon's guarantee unverifiable
-// without also freezing every plugin command to stdlib.
-//
-// `go test` runs this package's tests with cwd == this directory
-// (internal/trinetra), but "go list -deps ./cmd/trinetra" must
-// expand from the MODULE ROOT, so the command's working directory is
-// explicitly set to the module root (two levels up from this file) rather
-// than relying on the test binary's default cwd.
+// TestDefaultBuildIsStdlibOnly asserts the DEFAULT build of the trinetra DAEMON BINARY
+// (cmd/trinetra) imports no third-party packages.
 func TestDefaultBuildIsStdlibOnly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping go list in short mode")

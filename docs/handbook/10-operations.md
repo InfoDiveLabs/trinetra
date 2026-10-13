@@ -93,6 +93,9 @@ sudo trinetra update rollback           # go back to the previously installed bu
 4. **Stages and re-verifies** every binary file's size and SHA-256 against
    the signed manifest as it downloads, then **smoke-tests** the staged core
    binary (`trinetra version --json`) before touching anything installed.
+   If `/var/lib` is mounted `noexec` (or SELinux refuses to run files
+   there), the smoke test runs a temporary copy from `/usr/local/lib/trinetra`
+   instead, so that directory must stay executable.
 5. **Swaps it in** atomically -- the same rename-based, live-file-safe,
    fsynced swap `install` uses. Before the first binary is replaced it keeps
    a copy of the current build in `update/previous/`, copies the binary
@@ -110,6 +113,13 @@ sudo trinetra update rollback           # go back to the previously installed bu
      restarts onto it, marks the failed version bad (a plain re-`apply` of it
      is then refused; `--force` overrides that), and sends a critical alert.
      Your data, config, and the floor are untouched.
+   - **Not healthy in time, and restoring the previous build also fails**
+     (e.g. a write error): the pending update is kept, not cleared, so the
+     update watchdog retries the restore every minute until it succeeds;
+     nothing is marked bad yet and a critical alert fires once (`trinetra
+     update status` shows the failure under `pending`). Once a retry
+     restores successfully, it proceeds exactly like an ordinary rollback
+     above.
 
 #### The update watchdog
 
@@ -127,7 +137,10 @@ once and does nothing. Otherwise it finishes the job:
   recorded as `swapping` and no apply holds `update/apply.lock` any more):
   it restores the previous build and restarts onto it;
 - a `rollback` whose restore was interrupted: it finishes the restore and
-  confirms it through the same health check.
+  confirms it through the same health check;
+- a forward update whose health-gate rollback could not restore the
+  previous build: it retries the restore; the pending update stays until a
+  retry succeeds (see above).
 
 Because the watchdog runs the pinned guard, recovery never depends on the new
 build being able to start -- a release whose daemon exits at once is rolled

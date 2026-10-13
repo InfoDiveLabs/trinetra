@@ -208,10 +208,8 @@ func TestOpenStoreBackendSelection(t *testing.T) {
 	}
 }
 
-// TestOpenStoreOptionsPlumbed asserts that a StoreOptions passed to OpenStore
-// actually governs Prune for both backends: a custom, short RawRetention
-// should cause data older than that window (but within the default 30d) to
-// be pruned, which would NOT be pruned under the package defaults.
+// TestOpenStoreOptionsPlumbed asserts that a StoreOptions passed to OpenStore actually
+// governs Prune for both backends: a custom.
 func TestOpenStoreOptionsPlumbed(t *testing.T) {
 	const day = int64(86400)
 	now := int64(60 * day)

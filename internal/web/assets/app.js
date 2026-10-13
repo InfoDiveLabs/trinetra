@@ -49,6 +49,14 @@
   // active theme -- call it at chart-build time, not once at load, so a
   // rebuild after a theme toggle (see the 'sw-theme' listeners below) picks
   // up the new theme's colors.
+  function swCompact(v){
+    if(v==null) return '';
+    var a=Math.abs(v);
+    if(a>=1e9) return +(v/1e9).toFixed(1)+'G';
+    if(a>=1e6) return +(v/1e6).toFixed(1)+'M';
+    if(a>=1e4) return +(v/1e3).toFixed(0)+'k';
+    return +v.toFixed(2)+'';
+  }
   function swAxesOpt(){
     var c=swAxisColors();
     var ax={stroke:c.stroke,ticks:{stroke:c.grid},grid:{stroke:c.grid}};
@@ -170,6 +178,7 @@
   // only for the fixed chart/action templates below, never for data-* values.
   function staticInto(parent,html){var t=document.createElement('div'); t.innerHTML=html; while(t.firstChild)parent.appendChild(t.firstChild);}
   document.addEventListener('click',function(e){
+    if(e.target.closest('.pick')) return;
     var row=e.target.closest('[data-detail]'); if(!row) return;
     var d=row.dataset, kind=d.kind||'item';
     var role=document.body.dataset.role||'admin';
@@ -229,7 +238,7 @@
       }
       staticInto(actionRow,'<button class="btn ghost" disabled title="Not available yet">Pause monitoring</button>');
     } else {
-      staticInto(actionRow,'<span class="note">viewer -- read-only</span>');
+      staticInto(actionRow,'<span class="note">'+role+' -- read-only</span>');
     }
     body.appendChild(actionRow);
     // Log output area, filled on demand when "View logs" is clicked. Built with
@@ -297,8 +306,70 @@
   document.addEventListener('change',function(e){ if(e.target.matches('[data-autosubmit]')&&e.target.form){ e.target.form.submit(); } });
 
   // ---- tabs / filter / chips / switches ----
-  document.addEventListener('click',function(e){var b=e.target.closest('.tabs button');if(!b)return;var w=b.closest('[data-tabs]');w.querySelectorAll('.tabs button').forEach(function(x){x.classList.toggle('on',x===b)});w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===b.dataset.tab)});});
+  function swShowTab(w,name){
+    var found=false;
+    w.querySelectorAll('.tabs button[data-tab]').forEach(function(x){var on=x.dataset.tab===name; if(on) found=true; x.classList.toggle('on',on); x.setAttribute('aria-selected',on?'true':'false');});
+    if(!found) return false;
+    w.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('on',p.dataset.pane===name)});
+    return true;
+  }
+  document.addEventListener('click',function(e){var b=e.target.closest('.tabs button[data-tab]');if(!b)return;var w=b.closest('[data-tabs]');if(!w)return;swShowTab(w,b.dataset.tab);if(w.hasAttribute('data-tabs-hash')) history.replaceState(null,'','#'+b.dataset.tab);});
+  // Settings-style tabs live in the URL (#alerts), and a field that fails
+  // validation on save brings its tab forward so the browser can show why.
+  function swRestoreTabs(root){ (root||document).querySelectorAll('[data-tabs-hash]').forEach(function(w){ if(location.hash) swShowTab(w,location.hash.slice(1)); }); }
+  swRestoreTabs();
+  // htmx re-renders a whole tabbed page after an action; keep the open tab.
+  document.addEventListener("htmx:afterSwap",function(){ swRestoreTabs(); });
+  window.addEventListener('hashchange',function(){ swRestoreTabs(); });
+  document.addEventListener('invalid',function(e){var p=e.target.closest&&e.target.closest('.tabpane');if(!p||p.classList.contains('on'))return;var w=p.closest('[data-tabs]');if(w) swShowTab(w,p.dataset.pane);},true);
   document.querySelectorAll('[data-filter]').forEach(function(inp){inp.addEventListener('input',function(){var q=inp.value.toLowerCase();document.querySelectorAll(inp.dataset.filter).forEach(function(tbl){tbl.querySelectorAll('tbody tr').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>-1?'':'none';});});});});
+  document.querySelectorAll('[data-dismiss]').forEach(function(el){
+    var key='dismiss:'+el.dataset.dismiss;
+    try{ if(localStorage.getItem(key)){ el.remove(); return; } }catch(e){}
+    var b=el.querySelector('[data-dismiss-btn]');
+    if(b) b.addEventListener('click',function(){ try{localStorage.setItem(key,'1');}catch(e){} el.remove(); });
+  });
+  var pickBar=document.getElementById('pick-bar');
+  function pickBoxes(){return document.querySelectorAll('input[name=target][form=sp-add]');}
+  function pickSync(){
+    if(!pickBar) return;
+    var n=0; pickBoxes().forEach(function(b){if(b.checked)n++;});
+    document.querySelectorAll('[data-pick-count]').forEach(function(el){el.textContent=n;});
+    pickBar.hidden=n===0;
+  }
+  document.addEventListener('change',function(e){
+    var t=e.target;
+    if(t.matches('[data-pick-all]')){
+      document.querySelectorAll(t.dataset.pickAll+' tbody tr').forEach(function(tr){
+        var b=tr.querySelector('input[name=target]'); if(b&&tr.style.display!=='none') b.checked=t.checked;
+      });
+    }
+    if(t.matches('[data-pick-mode]')){
+      t.form.querySelectorAll('[data-pick-for]').forEach(function(fs){var on=fs.dataset.pickFor===t.value; fs.disabled=!on; fs.hidden=!on;});
+    }
+    if(t.name==='target'||t.matches('[data-pick-all]')) pickSync();
+  });
+  document.addEventListener('click',function(e){
+    var t=e.target.closest('[data-pick-open],[data-pick-close],[data-pick-clear]'); if(!t) return;
+    if(t.hasAttribute('data-pick-open')){
+      var dlg=document.querySelector(t.dataset.pickOpen); if(!dlg||!dlg.showModal) return;
+      dlg.showModal();
+      var first=dlg.querySelector('fieldset:not([disabled]) input, fieldset:not([disabled]) select'); if(first) first.focus();
+    }else if(t.hasAttribute('data-pick-close')){
+      var d=t.closest('dialog'); if(d) d.close();
+    }else{
+      pickBoxes().forEach(function(b){b.checked=false;});
+      document.querySelectorAll('[data-pick-all]').forEach(function(b){b.checked=false;});
+      pickSync();
+    }
+  });
+  document.addEventListener('input',function(e){
+    var t=e.target; if(!t.matches('[data-pick-filter]')) return;
+    var q=t.value.toLowerCase();
+    t.closest('.pick-node').querySelectorAll('.pick-cols .pick-row').forEach(function(r){r.style.display=r.textContent.toLowerCase().indexOf(q)>-1?'':'none';});
+  });
+  window.addEventListener('pageshow',pickSync);
+  pickSync();
   document.addEventListener('click',function(e){var c=e.target.closest('.chip');if(c&&c.parentElement&&c.parentElement.classList.contains('chips')){c.parentElement.querySelectorAll('.chip').forEach(function(x){x.classList.remove('on')});c.classList.add('on');}});
   // fleet admin (task 7): a generic "copy this element's text" button --
   // data-copy names the id of the element to copy (fleet_admin.html's
@@ -434,7 +505,12 @@
       if(!el||!window.uPlot) return null;
       var uSeries=[{}];
       series.forEach(function(lbl,i){uSeries.push({label:lbl,stroke:colors[i],width:1.8,fill:colors[i]+'22'});});
-      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:swAxesOpt()};
+      var axes=swAxesOpt();
+      axes[1]=Object.assign({},axes[1],{size:52,values:function(u,vals){return vals.map(swCompact);}});
+      // At least a 5-minute window from the data itself: for a single
+      // sample uPlot pads the range by ~1000 days.
+      var opts={width:el.clientWidth||400,height:el.clientHeight||160,series:uSeries,cursor:{show:false},legend:{show:false},axes:axes,
+        scales:{x:{time:true,range:function(u,min,max){ var d=u.data[0]; if(!d||!d.length) return [min,max]; var hi=d[d.length-1]; return [Math.min(d[0],hi-300),hi]; }}}};
       var data=[[]]; series.forEach(function(){data.push([]);});
       var u=new uPlot(opts,data,el);
       charts[id]=u;
@@ -743,68 +819,134 @@
 
     // renderDowntime fills the "Downtime · 30d" panel from /api/downtime: a
     // proportional timeline bar (green "up" base + a colored segment per
-    // event) and one row per event, mirroring ui-mockup/history.html.
+    // bucket with downtime) and one row per event, mirroring
+    // ui-mockup/history.html -- now paged server-side (Task 117) instead of
+    // fetching every event in the range up front:
+    //   - The first request only asks for CAP events (limit=CAP,offset=0),
+    //     exactly enough to fill the always-visible 8-row view, so a long
+    //     history's /api/downtime payload stays small by default.
+    //   - "Show all N incidents" fetches the rest of the range in one more
+    //     request (bounded to at most 500 events, the server's max limit)
+    //     and reveals everything loaded so far; if that still leaves more
+    //     (a truly enormous history), the button relabels to "Show more" and
+    //     repeats for the next chunk -- so no single request is ever
+    //     unbounded, however large the history gets.
+    //   - The "total Xs · YY.YY%" summary uses the response's total/
+    //     total_seconds (computed server-side over the WHOLE range), not a
+    //     sum over whatever's currently loaded, so it reads the same
+    //     whether zero, one, or every page has been fetched.
+    //   - The timeline bar is drawn once, from the FIRST response's
+    //     `timeline` field (handlers_history.go's buildDowntimeTimeline: a
+    //     fixed downtimeTimelineBuckets-length array of {start,end,
+    //     down_seconds,type} buckets covering the whole range, computed
+    //     server-side over every in-range event regardless of paging) --
+    //     never from `loaded`, so the bar always shows the full 30-day
+    //     picture even before "Show all"/"Show more" is clicked. Only the
+    //     row LIST is paged; the bar isn't.
     function renderDowntime(){
       var panel=document.querySelector('[data-downtime]');
       if(!panel) return;
       var span=HISTORY_RANGE_SECONDS['30d'];
       var to=Math.floor(Date.now()/1000), from=to-span;
-      fetch(nodeURL('/api/downtime?from='+from+'&to='+to),{credentials:'same-origin'})
-        .then(function(r){ if(!r.ok) throw new Error('downtime fetch failed'); return r.json(); })
-        .then(function(data){
-          var events=(data&&data.events)||[];
-          var rows=document.getElementById('downtimeRows');
-          var timeline=document.getElementById('downtimeTimeline');
-          var summary=document.getElementById('downtimeSummary');
+      var rows=document.getElementById('downtimeRows');
+      var timeline=document.getElementById('downtimeTimeline');
+      var summary=document.getElementById('downtimeSummary');
 
-          var W=1200, total=0, segs='';
-          events.forEach(function(e){
-            total+=e.duration_sec||Math.max(0,(e.end-e.start));
-            var x=Math.max(0,Math.min(W,(e.start-from)/span*W));
-            var w=Math.max(2,((e.end-e.start)/span)*W);
-            var color=e.type==='power_down'?'var(--crit)':'var(--warn)';
-            segs+='<rect x="'+x.toFixed(1)+'" y="14" width="'+w.toFixed(1)+'" height="16" fill="'+color+'"/>';
+      var CAP=8, MAX_CHUNK=500;
+      var loaded=[], total=0, totalSeconds=0, loading=false;
+
+      function fetchPage(offset,limit){
+        var url=nodeURL('/api/downtime?from='+from+'&to='+to+'&limit='+limit+'&offset='+offset);
+        return fetch(url,{credentials:'same-origin'})
+          .then(function(r){ if(!r.ok) throw new Error('downtime fetch failed'); return r.json(); });
+      }
+
+      // drawTimeline renders the bar from the server-computed bucket array
+      // (one rect per bucket with any down_seconds -- an empty/all-zero
+      // bucket leaves the base "up" bar showing through), not from any
+      // paged event list. A <title> gives each colored bucket a basic
+      // hover tooltip in place of the old per-incident segments.
+      function drawTimeline(buckets){
+        if(!timeline) return;
+        if(!buckets||!buckets.length){ timeline.innerHTML=''; return; }
+        var W=1200, bw=W/buckets.length, segs='';
+        buckets.forEach(function(b,i){
+          if(!b.down_seconds) return;
+          var x=i*bw;
+          var color=b.type==='power_down'?'var(--crit)':'var(--warn)';
+          segs+='<rect x="'+x.toFixed(2)+'" y="14" width="'+Math.max(1,bw).toFixed(2)+'" height="16" fill="'+color+'">'+
+            '<title>'+historyFmtDur(b.down_seconds)+' down in '+historyFmtTs(b.start)+' → '+historyFmtTs(b.end)+'</title></rect>';
+        });
+        timeline.innerHTML='<svg width="100%" height="46" viewBox="0 0 '+W+' 46" preserveAspectRatio="none">'+
+          '<rect x="0" y="14" width="'+W+'" height="16" rx="3" fill="var(--ok)" opacity=".65"/>'+segs+'</svg>';
+      }
+
+      function drawSummary(){
+        if(!summary) return;
+        var pct=(100*(1-totalSeconds/span));
+        summary.textContent='total '+historyFmtDur(totalSeconds)+' · '+pct.toFixed(2)+'%';
+      }
+
+      function rowHTML(e){
+        var led=e.type==='power_down'?'crit':'warn';
+        var dur=historyFmtDur(e.duration_sec||Math.max(0,(e.end-e.start)));
+        return '<div class="row"><span class="led '+led+'"></span>'+
+          '<div class="name">'+e.type+' · '+historyFmtTs(e.start)+' → '+historyFmtTs(e.end)+'</div>'+
+          '<span class="mono note">'+dur+'</span></div>';
+      }
+
+      function paint(showAll){
+        if(!rows) return;
+        if(!total){
+          rows.innerHTML='<div class="row"><span class="led ok"></span><div class="name"><b>No downtime recorded</b><div class="note">100% uptime over the last 30 days</div></div></div>';
+          return;
+        }
+        var shown=showAll?loaded:loaded.slice(0,CAP);
+        var html=shown.map(rowHTML).join('');
+        if(!showAll && total>CAP){
+          html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show all '+total+' incidents</button>';
+        } else if(showAll && loaded.length<total){
+          html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show more ('+(total-loaded.length)+' remaining)</button>';
+        }
+        rows.innerHTML=html;
+        var more=document.getElementById('dtMore');
+        if(more) more.addEventListener('click',loadMore);
+      }
+
+      // loadMore fetches the next chunk (bounded to MAX_CHUNK) starting
+      // right after what's already loaded, appends it (loaded stays
+      // newest-first since every page from the server already is), and
+      // repaints fully expanded -- driving both "Show all" (the first
+      // click, usually satisfied in one request) and "Show more" (a later
+      // click, only shown once a single MAX_CHUNK-sized fetch still wasn't
+      // the whole range). Doesn't touch the timeline bar -- it was already
+      // complete from the first response.
+      function loadMore(){
+        if(loading || loaded.length>=total) return;
+        loading=true;
+        var limit=Math.min(total-loaded.length,MAX_CHUNK);
+        fetchPage(loaded.length,limit)
+          .then(function(data){
+            loaded=loaded.concat((data&&data.events)||[]);
+            loading=false;
+            paint(true);
+          })
+          .catch(function(){
+            loading=false;
+            paint(true);
           });
-          if(timeline){
-            timeline.innerHTML='<svg width="100%" height="46" viewBox="0 0 '+W+' 46" preserveAspectRatio="none">'+
-              '<rect x="0" y="14" width="'+W+'" height="16" rx="3" fill="var(--ok)" opacity=".65"/>'+segs+'</svg>';
-          }
-          if(summary){
-            var pct=(100*(1-total/span));
-            summary.textContent='total '+historyFmtDur(total)+' · '+pct.toFixed(2)+'%';
-          }
-          if(rows){
-            if(!events.length){
-              rows.innerHTML='<div class="row"><span class="led ok"></span><div class="name"><b>No downtime recorded</b><div class="note">100% uptime over the last 30 days</div></div></div>';
-              return;
-            }
-            // Paginate: the list can run to dozens of incidents (e.g. after a
-            // crash loop), so show the most recent CAP and reveal the rest on
-            // demand rather than dumping an unbounded wall of rows.
-            var CAP=8;
-            var sorted=events.slice().sort(function(a,b){return b.start-a.start;});
-            function rowHTML(e){
-              var led=e.type==='power_down'?'crit':'warn';
-              var dur=historyFmtDur(e.duration_sec||Math.max(0,(e.end-e.start)));
-              return '<div class="row"><span class="led '+led+'"></span>'+
-                '<div class="name">'+e.type+' · '+historyFmtTs(e.start)+' → '+historyFmtTs(e.end)+'</div>'+
-                '<span class="mono note">'+dur+'</span></div>';
-            }
-            function paint(showAll){
-              var shown=showAll?sorted:sorted.slice(0,CAP);
-              var html=shown.map(rowHTML).join('');
-              if(!showAll && sorted.length>CAP){
-                html+='<button type="button" class="btn ghost" id="dtMore" style="margin-top:8px">Show all '+sorted.length+' incidents</button>';
-              }
-              rows.innerHTML=html;
-              var more=document.getElementById('dtMore');
-              if(more) more.addEventListener('click',function(){paint(true);});
-            }
-            paint(false);
-          }
+      }
+
+      fetchPage(0,CAP)
+        .then(function(data){
+          loaded=(data&&data.events)||[];
+          total=(data&&data.total)||0;
+          totalSeconds=(data&&data.total_seconds)||0;
+          drawTimeline((data&&data.timeline)||[]);
+          drawSummary();
+          paint(false);
         })
         .catch(function(){
-          var rows=document.getElementById('downtimeRows');
           if(rows) rows.innerHTML='<div class="note">could not load downtime</div>';
         });
     }
@@ -971,6 +1113,8 @@
       var name=(nameEl&&nameEl.value||'').trim();
       var token=(tokenEl&&tokenEl.value||'').trim();
       if(!name){ if(statusEl) statusEl.textContent='Enter a name first.'; return; }
+      var why=pkUnsupportedReason();
+      if(why){ if(statusEl) statusEl.textContent=why; return; }
       if(statusEl) statusEl.textContent='Waiting for your device…';
       fetch('/enroll/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,token:token})})
         .then(function(r){
@@ -988,57 +1132,107 @@
           return navigator.credentials.create({publicKey:pk});
         })
         .then(function(cred){
+          // transports tell later sign-ins where this passkey lives (this
+          // device, a phone via QR, a USB/NFC key), so browsers offer the
+          // right option.
           return fetch('/enroll/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
             id:cred.id,
             rawId:bufToB64url(cred.rawId),
             type:cred.type,
+            authenticatorAttachment:cred.authenticatorAttachment||undefined,
+            clientExtensionResults:cred.getClientExtensionResults?cred.getClientExtensionResults():{},
             response:{
               clientDataJSON:bufToB64url(cred.response.clientDataJSON),
-              attestationObject:bufToB64url(cred.response.attestationObject)
+              attestationObject:bufToB64url(cred.response.attestationObject),
+              transports:cred.response.getTransports?cred.response.getTransports():[]
             }
           })});
         })
-        .then(function(r){ if(!r.ok) throw new Error('could not finish enrollment'); if(statusEl) statusEl.textContent='Passkey created -- you can sign in now.'; })
-        .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
+        .then(function(r){ if(!r.ok) throw new Error('could not finish enrollment'); if(statusEl) statusEl.textContent='Passkey created — you can sign in now.'; })
+        .catch(function(e){ if(statusEl) statusEl.textContent=e&&e.name?pkErrorText(e,true):'Error: '+e.message; });
     });
   }
 
   // ---- passkey login (templates/login.html) ----
-  // No username field -- the mockup's login page is a single "Continue with
-  // passkey" button, so this uses navigator.credentials.get() against a
-  // client-side discoverable ("resident key") credential: the authenticator
-  // itself surfaces which stored passkey matches this site, and the server
-  // resolves the account afterward from the assertion's userHandle
-  // (internal/web/auth_webauthn.go's beginLogin/finishLogin).
+  // The button asks the device for any passkey it has for this site
+  // (discoverable credentials). Typing a name lists that account's passkeys
+  // instead, which also covers keys that are not discoverable. Where the
+  // browser supports it, focusing the name field offers saved passkeys as
+  // autofill (conditional mediation).
+  function pkUnsupportedReason(){
+    if(!window.isSecureContext) return 'Passkeys only work on a secure (https://) address or on localhost. Open this page using its https:// address.';
+    if(!window.PublicKeyCredential||!navigator.credentials) return 'This browser does not support passkeys. Update it, or use Chrome, Safari, Edge or Firefox.';
+    var h=location.hostname;
+    if(/^\d+\.\d+\.\d+\.\d+$/.test(h)||h.indexOf(':')>=0) return 'Passkeys need a domain name, not an IP address. Open this page using its domain name (ask your admin which one).';
+    return '';
+  }
+  function pkErrorText(e,creating){
+    var n=e&&e.name;
+    if(n==='NotAllowedError') return creating
+      ? 'Passkey creation was cancelled or timed out. Try again; if your browser offers several places to save it, pick one.'
+      : 'Sign-in was cancelled or timed out, or this device has no passkey for this site. Try again, type your name below, or choose “use another device” to scan a QR code with your phone.';
+    if(n==='SecurityError') return 'This address does not match the site the passkey belongs to. Open the site using its usual address.';
+    if(n==='InvalidStateError') return 'This device already has a passkey for this account. Sign in with it instead.';
+    if(n==='NotSupportedError') return 'This device cannot create the kind of passkey needed. Try another device, a password manager or a security key.';
+    return (e&&e.message)||'Something went wrong. Please try again.';
+  }
+  function pkLoginOptions(opts){
+    var pk=opts.publicKey;
+    pk.challenge=b64urlToBuf(pk.challenge);
+    if(pk.allowCredentials) pk.allowCredentials.forEach(function(c){ c.id=b64urlToBuf(c.id); });
+    return pk;
+  }
+  function pkFinishLogin(cred){
+    return fetch('/login/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      id:cred.id,
+      rawId:bufToB64url(cred.rawId),
+      type:cred.type,
+      authenticatorAttachment:cred.authenticatorAttachment||undefined,
+      clientExtensionResults:cred.getClientExtensionResults?cred.getClientExtensionResults():{},
+      response:{
+        clientDataJSON:bufToB64url(cred.response.clientDataJSON),
+        authenticatorData:bufToB64url(cred.response.authenticatorData),
+        signature:bufToB64url(cred.response.signature),
+        userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null
+      }
+    })}).then(function(r){ if(!r.ok) throw new Error('That passkey was not accepted. If it was set up a while ago, ask an admin for a new invite.'); });
+  }
   var loginBtn=document.getElementById('loginBtn');
   if(loginBtn){
+    var loginStatus=document.getElementById('loginStatus'), loginName=document.getElementById('loginName');
+    var unsupported=pkUnsupportedReason();
+    if(unsupported){
+      var box=document.getElementById('pkUnsupported');
+      if(box){ box.textContent=unsupported; box.hidden=false; }
+      loginBtn.disabled=true;
+    }
+    var autofill=null;
+    function signedIn(){ if(loginStatus) loginStatus.textContent='Signed in — redirecting…'; window.location.assign('/'); }
+    function startAutofill(){
+      if(unsupported||!PublicKeyCredential.isConditionalMediationAvailable) return;
+      PublicKeyCredential.isConditionalMediationAvailable().then(function(ok){
+        if(!ok) return;
+        autofill=new AbortController();
+        var signal=autofill.signal;
+        fetch('/login/begin',{method:'POST',credentials:'same-origin'})
+          .then(function(r){ if(!r.ok) throw new Error('could not start sign-in'); return r.json(); })
+          .then(function(opts){ return navigator.credentials.get({publicKey:pkLoginOptions(opts),mediation:'conditional',signal:signal}); })
+          .then(function(cred){ return pkFinishLogin(cred).then(signedIn); })
+          .catch(function(e){ if(e&&e.name==='AbortError') return; if(loginStatus) loginStatus.textContent=pkErrorText(e,false); });
+      }).catch(function(){});
+    }
     loginBtn.addEventListener('click',function(){
-      var statusEl=document.getElementById('loginStatus');
-      if(statusEl) statusEl.textContent='Waiting for your device…';
-      fetch('/login/begin',{method:'POST',credentials:'same-origin'})
-        .then(function(r){ if(!r.ok) throw new Error('could not start sign-in'); return r.json(); })
-        .then(function(opts){
-          var pk=opts.publicKey;
-          pk.challenge=b64urlToBuf(pk.challenge);
-          if(pk.allowCredentials) pk.allowCredentials.forEach(function(c){ c.id=b64urlToBuf(c.id); });
-          return navigator.credentials.get({publicKey:pk});
-        })
-        .then(function(cred){
-          return fetch('/login/finish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-            id:cred.id,
-            rawId:bufToB64url(cred.rawId),
-            type:cred.type,
-            response:{
-              clientDataJSON:bufToB64url(cred.response.clientDataJSON),
-              authenticatorData:bufToB64url(cred.response.authenticatorData),
-              signature:bufToB64url(cred.response.signature),
-              userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null
-            }
-          })});
-        })
-        .then(function(r){ if(!r.ok) throw new Error('sign-in failed'); if(statusEl) statusEl.textContent='Signed in -- redirecting…'; window.location.assign('/'); })
-        .catch(function(e){ if(statusEl) statusEl.textContent='Error: '+e.message; });
+      if(autofill){ autofill.abort(); autofill=null; }
+      var name=(loginName&&loginName.value||'').trim();
+      if(loginStatus) loginStatus.textContent='Waiting for your device…';
+      fetch('/login/begin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
+        .then(function(r){ if(!r.ok) throw new Error('Could not start sign-in. Reload the page and try again.'); return r.json(); })
+        .then(function(opts){ return navigator.credentials.get({publicKey:pkLoginOptions(opts)}); })
+        .then(function(cred){ return pkFinishLogin(cred).then(signedIn); })
+        .catch(function(e){ if(loginStatus) loginStatus.textContent=pkErrorText(e,false); startAutofill(); });
     });
+    if(loginName) loginName.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); loginBtn.click(); } });
+    startAutofill();
   }
 
   // ---- quiet-hours preview (templates/config.html, Task 10/#66) ----

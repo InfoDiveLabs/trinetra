@@ -2,10 +2,7 @@ package web
 
 import "github.com/InfoDiveLabs/trinetra/internal/core"
 
-// MonitoringView and its nested types moved to internal/core/dto.go (core.API
-// contract task 2). See dashboard_view.go's equivalent note: these are Go
-// type aliases, not new types, so every existing handler/template reference
-// in this package keeps compiling unchanged.
+// MonitoringView and its nested types moved to internal/core/dto.go.
 type MonitoringView = core.MonitoringView
 type MonitoringContainerView = core.MonitoringContainerView
 type MonitoringUnitView = core.MonitoringUnitView

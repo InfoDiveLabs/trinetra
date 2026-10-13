@@ -1,8 +1,4 @@
-// Package trinetra: fleet_cmd.go is the `trinetra fleet` command. Role
-// changes (init/join/leave/disable) edit config and PKI files directly and
-// ask for a restart, because the daemon reads the role once at start. Every
-// other subcommand goes through the running daemon's control socket, which
-// owns the node registry and token store.
+// Package trinetra: fleet_cmd.go is the `trinetra fleet` command.
 package trinetra
 
 import (
@@ -131,9 +127,8 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// rejectPositionals prints and returns true if pos is non-empty: a command
-// that takes no positional arguments (init, leave, disable, nodes, token
-// create/list) but received one is a usage error, not silently ignored.
+// rejectPositionals prints and returns true if pos is non-empty: a command that takes no
+// positional arguments.
 func rejectPositionals(cmd, usage string, pos []string) bool {
 	if len(pos) == 0 {
 		return false
@@ -242,12 +237,8 @@ func fleetJoinCmd(args []string) int {
 		fmt.Fprintln(stderr, "fleet join: save config:", err)
 		return 1
 	}
-	// An older master's JoinResponse has no "name" field at all, which
-	// decodes as "" here -- that must read as "the master didn't report a
-	// final name" (fall back to what was requested), never as "the master
-	// registered this node under the empty string" (review round 3, item 1:
-	// the old code printed a false "registered as \"\" instead" note against
-	// any pre-round-2 master).
+	// An older master's JoinResponse has no "name" field, which decodes as ""; that must read
+	// as "the master didn't report a final name" (fall back to the requested one).
 	finalName := res.Name
 	if finalName == "" {
 		finalName = n
@@ -284,11 +275,8 @@ func fleetLeave(args []string) int {
 		fmt.Fprintln(stderr, "fleet leave: save config:", err)
 		return 1
 	}
-	// task 8 ruling: the last managed values are kept as ordinary local
-	// config (they already are -- c above was never touched for them), only
-	// the managed-config sidecar itself is removed, so this host stops
-	// treating them as master-managed/read-only. Best-effort: a missing
-	// sidecar (never managed) is not an error.
+	// The last managed values stay as ordinary local config (c was never touched for them);
+	// only the managed-config sidecar is removed.
 	_ = os.Remove(managedChildPath(stateDir))
 	ok := true
 	if *purge {
@@ -353,13 +341,7 @@ type purgeTarget struct {
 	what string
 }
 
-// purgeAll removes each target's path with os.RemoveAll. Config has already
-// been switched back to solo by the time this runs, so a removal failure is
-// reported (which path, why) without pretending the role change failed too;
-// it just means the operator has cleanup left to do. verb is the sentence
-// prefix used in a failure line ("left the fleet" / "disabled the fleet
-// master"). The success line lists only the targets that were actually
-// removed. It reports whether every target was removed.
+// purgeAll removes each target's path with os.RemoveAll.
 func purgeAll(verb string, targets []purgeTarget) bool {
 	var deleted []string
 	ok := true
@@ -485,9 +467,8 @@ func printNodes(w io.Writer, ns []core.NodeSummary) {
 	tw.Flush()
 }
 
-// printNodeWarnings lists (on a master's fleet status) every node whose
-// replica has refused points, with the counts, and warns about every node
-// whose clock is off by more than 30 s.
+// printNodeWarnings lists (on a master's fleet status) every node whose replica has refused
+// points, with the counts, and warns about every node whose clock is off by more than 30 s.
 func printNodeWarnings(w io.Writer, ns []core.NodeSummary) {
 	for _, n := range ns {
 		if n.Self {
@@ -765,8 +746,7 @@ func fleetExplainCmd(args []string) int {
 // --- silence / maintenance -------------------------------------------------
 
 // parseMatchSpec parses a comma-separated "key=value" matcher spec, e.g.
-// "tag=web,node=db*,rule=cpu*,severity=critical", into a single core.Matcher
-// (AND semantics across its fields; empty fields match anything).
+// "tag=web,node=db*,rule=cpu*,severity=critical", into a single core.Matcher.
 func parseMatchSpec(spec string) (core.Matcher, error) {
 	var m core.Matcher
 	if strings.TrimSpace(spec) == "" {
@@ -1087,11 +1067,7 @@ func fleetRouteTest(args []string) int {
 	})
 }
 
-// printRouteDecision prints d: the matched route, then EVERY matched policy
-// (more than one when Continue chained several routes together -- B5 fix
-// round 1: each escalates independently, so each gets its own steps and
-// repeat_every printed separately) and, last, whether a silence would
-// suppress this exact alert.
+// printRouteDecision prints d: the matched route, then EVERY matched policy.
 func printRouteDecision(w io.Writer, d core.RouteDecision) {
 	route := d.Route
 	if route == "" {
@@ -1147,9 +1123,8 @@ func fleetAlertingShow(args []string) int {
 	})
 }
 
-// fleetAlertingApply applies file's config with Version 0 (unconditional):
-// the CLI does not do optimistic locking (that is plan C's web editor's
-// job), so it always overwrites whatever is currently stored.
+// fleetAlertingApply applies file's config with Version 0 (unconditional): the
+// CLI does no optimistic locking, so it always overwrites what is stored.
 func fleetAlertingApply(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(stderr, "usage: trinetra fleet alerting apply <file.json>")
@@ -1175,7 +1150,7 @@ func fleetAlertingApply(args []string) int {
 	})
 }
 
-// fleetRulesCmd is `trinetra fleet rules` (task 7): a table of every
+// fleetRulesCmd is `trinetra fleet rules`: a table of every
 // configured aggregate rule's current value/firing state.
 func fleetRulesCmd(args []string) int {
 	if rejectPositionals("fleet rules", "trinetra fleet rules", args) {
@@ -1191,11 +1166,8 @@ func fleetRulesCmd(args []string) int {
 	})
 }
 
-// ruleStateLabel renders one rule's STATE column: an Error takes priority
-// (the Expr currently fails to parse -- shouldn't happen, since SetAlerting
-// validates it, but surfaced rather than hidden if it ever does), then
-// "no data" (task-7 ruling: never fires/recovers, holds the previous
-// firing/since), then firing/ok.
+// ruleStateLabel renders one rule's STATE column: an Error takes priority (the Expr fails
+// to parse; SetAlerting validates it, so this is surfaced rather than hidden).
 func ruleStateLabel(s core.RuleState) string {
 	switch {
 	case s.Error != "":
@@ -1208,7 +1180,7 @@ func ruleStateLabel(s core.RuleState) string {
 	return "ok"
 }
 
-// fleetManagedCmd is `trinetra fleet managed` (task 8): CRUD + status over
+// fleetManagedCmd is `trinetra fleet managed`: CRUD + status over
 // the master's managed-config fragments.
 func fleetManagedCmd(args []string) int {
 	if len(args) == 0 {
@@ -1257,8 +1229,7 @@ func printManagedFragments(w io.Writer, frags []core.ManagedFragment) {
 }
 
 // formatManagedValues renders values as "key=value,key=value,..." in
-// managedFragmentAllowlistKeys order, so the same fragment always prints
-// identically regardless of Go's randomized map iteration.
+// managedFragmentAllowlistKeys order.
 func formatManagedValues(values map[string]string) string {
 	var parts []string
 	for _, k := range managedFragmentAllowlistKeys {
@@ -1269,9 +1240,8 @@ func formatManagedValues(values map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
-// parseManagedKV parses one or more "key=value" positional arguments into a
-// map, rejecting anything malformed (no "=") -- the value itself is
-// whatever config.Set will ultimately validate, so no parsing happens here.
+// parseManagedKV parses one or more "key=value" positional arguments into a map, rejecting
+// anything malformed (no "=").
 func parseManagedKV(args []string) (map[string]string, error) {
 	if len(args) == 0 {
 		return nil, errors.New("at least one key=value is required")
@@ -1287,15 +1257,8 @@ func parseManagedKV(args []string) (map[string]string, error) {
 	return out, nil
 }
 
-// fleetManagedSet is `trinetra fleet managed set [--tag T] [--replace]
-// key=value ...`: creates a new fragment for --tag ("" = every node), or
-// updates the existing one for that tag if one already exists (task-8
-// ruling: "one fragment per tag, simplest"). By default (C5 review
-// carry-over ruling) it MERGES the given key=value pairs into that
-// fragment's existing Values -- so a second `set --tag web cpu=95` doesn't
-// silently drop every other key an earlier `set --tag web mem=80` put
-// there. --replace restores the old wholesale-replace behavior for anyone
-// who actually wants to drop every key not named on this call.
+// fleetManagedSet is `trinetra fleet managed set [--tag T] [--replace] key=value ...`:
+// creates a fragment for --tag ("" = every node), or updates the existing one for that tag.
 func fleetManagedSet(args []string) int {
 	fs := newFlags("fleet managed set")
 	tag := fs.String("tag", "", "target only nodes carrying this tag (default: every node)")
@@ -1310,14 +1273,8 @@ func fleetManagedSet(args []string) int {
 		return 2
 	}
 	return withDaemon(func(c *control.Client) error {
-		// Round-1 review MINOR: no list-then-decide here any more -- an
-		// empty ID is a server-side upsert-by-tag (managedFragmentStore.Save,
-		// atomic under its own lock), so this can never race a concurrent
-		// `fleet managed set --tag X` into creating two fragments for the
-		// same tag (the TOCTOU a client-side list+create/update used to
-		// have). The merge itself (Merge: !*replace) also happens under that
-		// same lock, so a concurrent set for the same tag can't interleave
-		// with it either.
+		// No list-then-decide here: an empty ID is a server-side upsert-by-tag
+		// (managedFragmentStore.Save, atomic under its own lock).
 		saved, err := c.Fleet().SaveManaged(core.ManagedFragment{Tag: *tag, Values: values, Merge: !*replace}, "cli")
 		if err != nil {
 			return err

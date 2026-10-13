@@ -9,16 +9,8 @@ import (
 	"time"
 )
 
-// TestSessionStoreConcurrentNewNoLostUpdate is the shared-per-path-lock
-// regression pin for sessions. Each handler builds a FRESH jsonSessionStore
-// per request (newSessionStore), so a per-INSTANCE mutex would serialize
-// nothing across concurrent requests: two New calls would each load the whole
-// file, append their own session, and save it back -- last-writer-wins -- losing
-// one session and, worse, colliding on the shared "sessions.json.tmp" temp
-// path. In production this is a concurrent login racing another login/logout/GC
-// clobbering a just-created session → intermittent auth failures. With the
-// process-wide per-path lock (fileStoreMutex), both New calls serialize and
-// both sessions must survive.
+// TestSessionStoreConcurrentNewNoLostUpdate is the shared-per-path-lock regression pin for
+// sessions.
 func TestSessionStoreConcurrentNewNoLostUpdate(t *testing.T) {
 	dir := t.TempDir()
 	const n = 8
@@ -32,9 +24,8 @@ func TestSessionStoreConcurrentNewNoLostUpdate(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			// A fresh store per goroutine, mirroring the per-request handler
-			// pattern -- the shared lock must be keyed on the file, not the
-			// instance.
+			// A fresh store per goroutine, mirroring the per-request handler pattern -- the shared
+			// lock must be keyed on the file, not the instance.
 			sess, err := newSessionStore(dir).New("user", time.Hour)
 			if err != nil {
 				errs[i] = err
@@ -64,9 +55,8 @@ func TestSessionStoreConcurrentNewNoLostUpdate(t *testing.T) {
 	}
 }
 
-// TestSessionStoreRoundTripsWith0600Perms pins the basic New/Get contract
-// and the on-disk file's permissions: sessions.json holds bearer-equivalent
-// session IDs and CSRF tokens, so it must never be group/world-readable.
+// TestSessionStoreRoundTripsWith0600Perms pins the basic New/Get contract and the on-disk
+// file's permissions: sessions.json holds bearer-equivalent session IDs and CSRF tokens.
 func TestSessionStoreRoundTripsWith0600Perms(t *testing.T) {
 	dir := t.TempDir()
 	store := newSessionStore(dir)
@@ -104,9 +94,8 @@ func TestSessionStoreRoundTripsWith0600Perms(t *testing.T) {
 	}
 }
 
-// TestSessionGetTreatsExpiredAsAbsent pins expiry: once the store's clock
-// passes a session's Expires, Get must report it not found even though GC
-// hasn't run yet (lazy expiry, decoupled from the GC ticker's timing).
+// TestSessionGetTreatsExpiredAsAbsent pins expiry: once the store's clock passes a
+// session's Expires, Get must report it not found even though GC hasn't run yet.
 func TestSessionGetTreatsExpiredAsAbsent(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store := &jsonSessionStore{path: filepath.Join(t.TempDir(), "sessions.json"), now: func() time.Time { return now }}
@@ -205,15 +194,11 @@ func TestSessionDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSessionNewRefusesWhenFull pins the pre-auth DoS bound (mirrors Task
-// 4's ceremonyStash.put): once the store is at sessionMaxEntries live
-// records, New refuses to mint another rather than growing without bound.
+// TestSessionNewRefusesWhenFull pins the pre-auth DoS bound: once the store is at
+// sessionMaxEntries live records.
 func TestSessionNewRefusesWhenFull(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	// A small maxEntries override keeps this test's O(n) read-modify-write
-	// disk round trips (jsonSessionStore doesn't cache between calls) fast
-	// while still exercising the exact same refusal path production hits at
-	// the real sessionMaxEntries.
+	// A small maxEntries override keeps this test's O(n) read-modify-write disk round trips.
 	const testCap = 20
 	store := &jsonSessionStore{path: filepath.Join(t.TempDir(), "sessions.json"), now: func() time.Time { return now }, maxEntries: testCap}
 

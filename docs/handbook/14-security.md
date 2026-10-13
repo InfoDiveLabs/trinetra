@@ -395,6 +395,14 @@ restore was interrupted, a reboot or a power cut inside the health window, and
 a new build whose daemon crashes the moment it starts. `update apply`
 re-creates the timer before swapping if it is missing.
 
+If a forward update fails its health gate and restoring the previous build
+itself then fails too (e.g. a write error), the pending update is kept, not
+cleared: nothing would otherwise make the watchdog retry. The failure is
+recorded on the pending update (`trinetra update status`) and a critical
+alert fires once, deduped across however many minute-by-minute retries it
+takes; the version is only marked bad and the pending marker only cleared
+once a retry actually restores the previous build.
+
 Every apply/rollback start and every guard commit or rollback is written to
 `/var/lib/trinetra/update/audit.jsonl` (on a fleet master, to the fleet audit
 log) with the actor: `cli:<user>`, `socket` or `guard`. The full operator

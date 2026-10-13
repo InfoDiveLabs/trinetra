@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// TestSaveStateSurfacesDirSyncError is R20: the directory fsync after the
-// rename is what makes the new state.json entry durable, so its failure
-// must reach the caller instead of being dropped.
+// TestSaveStateSurfacesDirSyncError is R20: the directory fsync after the rename is what
+// makes the new state.json entry durable.
 func TestSaveStateSurfacesDirSyncError(t *testing.T) {
 	dir := t.TempDir()
 	boom := errors.New("dir fsync failed")
@@ -21,9 +20,8 @@ func TestSaveStateSurfacesDirSyncError(t *testing.T) {
 	}
 }
 
-// TestCopyFileDurable is R20: CopyFile writes a random same-directory temp
-// file, fsyncs it, renames it over dst and fsyncs dst's directory; nothing
-// is left behind and dst gets the requested mode.
+// TestCopyFileDurable is R20: CopyFile writes a random same-directory temp file, fsyncs it,
+// renames it over dst and fsyncs dst's directory.
 func TestCopyFileDurable(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")

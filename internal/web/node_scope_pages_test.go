@@ -12,11 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// nodeScopedDeps builds a master Deps (fleetTestDeps, node_scope_test.go's
-// fixture wiring) with master as the daemon's own core.API and child
-// registered as fleet node "child1" (masterFleetWithChild's roster) -- the
-// shared fixture every test in this file uses to assert a /n/child1/...
-// page renders child's data, never master's.
+// nodeScopedDeps builds a master Deps (fleetTestDeps, node_scope_test.go's fixture wiring)
+// with master as the daemon's own core.API and child registered as fleet node "child1".
 func nodeScopedDeps(t *testing.T, master, child fakeAPI) Deps {
 	t.Helper()
 	master.fleet = masterFleetWithChild()
@@ -24,9 +21,8 @@ func nodeScopedDeps(t *testing.T, master, child fakeAPI) Deps {
 	return fleetTestDeps(t, master)
 }
 
-// TestNodeScopedDashboardShowsChildData pins that GET /n/child1/ (the
-// dashboard, "/{$}") renders child1's own live snapshot and host info, not
-// the master's -- Task 2's core obligation for handlers_dashboard.go.
+// TestNodeScopedDashboardShowsChildData pins that GET /n/child1/ (the dashboard, "/{$}")
+// renders child1's own live snapshot and host info, not the master's.
 func TestNodeScopedDashboardShowsChildData(t *testing.T) {
 	master := fakeAPI{
 		snap:     core.DashboardView{TopCPUContainers: []core.ContainerView{{Name: "master-only-svc", State: "running"}}},
@@ -61,12 +57,8 @@ func TestNodeScopedDashboardShowsChildData(t *testing.T) {
 	}
 }
 
-// TestNodeScopedDashboardHostStripShowsNodeName pins B3 (2026-09-25 UI
-// audit): the host strip's "HOST" field on /n/child1/ must name the VIEWED
-// node (masterFleetWithChild's child1 == "child-one"), not the master's own
-// configured server.name -- the host strip's data (OS/CPU/RAM/...) already
-// comes from child1's own Snapshot via apiFor, so labeling it with the
-// master's name is misleading even though every other field is correct.
+// TestNodeScopedDashboardHostStripShowsNodeName pins B3 (2026-09-25 UI audit): the host
+// strip's "HOST" field on /n/child1/ must name the VIEWED node.
 func TestNodeScopedDashboardHostStripShowsNodeName(t *testing.T) {
 	master := fakeAPI{hostInfo: core.HostInfoView{OS: "MasterOS 1.0"}}
 	child := fakeAPI{hostInfo: core.HostInfoView{OS: "ChildOS 2.0"}}
@@ -145,9 +137,8 @@ func TestNodeScopedHostShowsChildData(t *testing.T) {
 	}
 }
 
-// TestNodeScopedHistoryPageShowsChildDiskMounts pins that /n/child1/history's
-// disk panel graphs child1's own mounts (apiFor(r,d).Snapshot(), not the
-// master-only Deps.Snapshot() closure -- see historyDiskMounts's doc).
+// TestNodeScopedHistoryPageShowsChildDiskMounts pins that /n/child1/history's disk panel
+// graphs child1's own mounts.
 func TestNodeScopedHistoryPageShowsChildDiskMounts(t *testing.T) {
 	master := fakeAPI{}
 	child := fakeAPI{snap: core.DashboardView{Disks: []core.DiskView{{Mount: "/child1-only-mount"}}}}
@@ -217,16 +208,8 @@ func TestNodeScopedDowntimeAPIShowsChildData(t *testing.T) {
 	}
 }
 
-// TestNodeScopedAlertsPageShowsChildDataAndDisablesAck pins the alerts page's
-// node-scope behavior: active alerts + history come from child1, and (task
-// C6 ruling) the Ack action for an unacked active alert renders disabled
-// with the exact "node is not connected" reason and no POST form action
-// when the roster reports the node as anything other than "online" --
-// masterFleetWithChild's child1 fixture carries State "up" (a placeholder
-// value, not the real "online"/"down"/... vocabulary), so it's treated as
-// disconnected here. TestNodeScopedAlertsAckSucceedsWhenNodeConnected /
-// TestNodeScopedAlertsAckDisabledWhenNodeOffline (handlers_alerts_test.go)
-// cover the connected-vs-offline distinction directly.
+// TestNodeScopedAlertsPageShowsChildDataAndDisablesAck pins the alerts page's node-scope
+// behavior: active alerts + history come from child1.
 func TestNodeScopedAlertsPageShowsChildDataAndDisablesAck(t *testing.T) {
 	master := fakeAPI{active: []core.AlertRecord{{Key: "master-only", Time: 1, Source: "master alert"}}}
 	child := fakeAPI{
@@ -264,10 +247,8 @@ func TestNodeScopedAlertsPageShowsChildDataAndDisablesAck(t *testing.T) {
 	}
 }
 
-// TestNodeScopedContainerLogsCallsThroughToChildAPI pins task C6's ruling:
-// the 409 short-circuit for a remote node is gone -- GET
-// /n/child1/api/container/logs now goes through apiFor(r,d), reaching
-// child1's own fake API exactly like every other node-scoped GET.
+// TestNodeScopedContainerLogsCallsThroughToChildAPI pins that the 409 short-circuit for a
+// remote node is gone -- GET /n/child1/api/container/logs now goes through apiFor(r,d).
 func TestNodeScopedContainerLogsCallsThroughToChildAPI(t *testing.T) {
 	master := fakeAPI{}
 	child := fakeAPI{containerLogs: "child1's own log output"}
@@ -286,10 +267,8 @@ func TestNodeScopedContainerLogsCallsThroughToChildAPI(t *testing.T) {
 	}
 }
 
-// TestNodeScopedContainerLogsMapsRPCErrorsToFixedStatuses pins
-// containerLogsErrStatus's mapping end to end: each of replicaAPI.
-// ContainerLogs' three fixed stream/RPC error strings becomes the matching
-// JSON status/body on this endpoint.
+// TestNodeScopedContainerLogsMapsRPCErrorsToFixedStatuses pins containerLogsErrStatus's
+// mapping end to end: each of replicaAPI.
 func TestNodeScopedContainerLogsMapsRPCErrorsToFixedStatuses(t *testing.T) {
 	for _, tc := range []struct {
 		errText string
@@ -326,10 +305,8 @@ func TestNodeScopedContainerLogsMapsRPCErrorsToFixedStatuses(t *testing.T) {
 	}
 }
 
-// TestNodeScopedTopbarAndAlertBadgeReflectNode pins that a node-scoped
-// page's topbar status pill, sidebar Alerts badge, and CoreVersion footer
-// all reflect child1's own state, not the master's -- newPageData/
-// navCountsFor/coreVersionViaAPI all read through apiFor(r, d).
+// TestNodeScopedTopbarAndAlertBadgeReflectNode pins that a node-scoped page's topbar status
+// pill, sidebar Alerts badge, and CoreVersion footer all reflect child1's own state.
 func TestNodeScopedTopbarAndAlertBadgeReflectNode(t *testing.T) {
 	master := fakeAPI{version: "master-v1"} // no active alerts on master
 	child := fakeAPI{
@@ -367,17 +344,8 @@ func TestNodeScopedTopbarAndAlertBadgeReflectNode(t *testing.T) {
 	}
 }
 
-// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins the fleet-web-a
-// task 3 ruling (task-3-brief.md's "the admin group is hidden for remote
-// scope"): on a remote node page, master-local admin nav entries (Channels,
-// Users, Configuration, Public view) don't render AT ALL -- they're
-// reachable only from the master's own (self-scoped) nav -- while
-// Monitoring (a daemon concept, node-scoped) still renders and follows the
-// node scope. This supersedes this test's original task-2-era assumption
-// (that Channels/Users would render on a remote page showing the master's
-// own counts); task 3's brief settled on hiding them outright instead, so
-// this test was updated to match rather than left asserting the superseded
-// behavior.
+// TestNodeScopedChannelsAndUsersBadgesStayMasterLocal pins that on a remote node page,
+// master-local admin nav entries.
 func TestNodeScopedChannelsAndUsersBadgesStayMasterLocal(t *testing.T) {
 	master := fakeAPI{snap: core.DashboardView{ContainersTotal: 3}}
 	child := fakeAPI{snap: core.DashboardView{ContainersTotal: 9}}

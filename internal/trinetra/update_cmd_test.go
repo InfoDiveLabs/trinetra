@@ -36,10 +36,8 @@ func testKeys() update.KeySet {
 	return update.KeySet{CI: []update.PublicKey{updatetest.NewTestSigner(1).Public()}, Maint: []update.PublicKey{updatetest.NewTestSigner(2).Public()}, Pointer: []update.PublicKey{updatetest.NewTestSigner(3).Public()}}
 }
 
-// writeBundle writes a signed release bundle directory to disk (manifest,
-// both signatures, and the given asset files side by side), the on-disk
-// shape update.DirSource reads -- unlike signedRelease/mapSource, which only
-// exist in memory and can't back a real --bundle DIR.
+// writeBundle writes a signed release bundle directory to disk (manifest, both signatures,
+// and the given asset files side by side), the on-disk shape update.DirSource reads.
 func writeBundle(t *testing.T, version string, files map[string][]byte) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -66,15 +64,8 @@ func writeBundle(t *testing.T, version string, files map[string][]byte) string {
 	return dir
 }
 
-// NOTE (deviation from task-6-brief.md): testUpdatePaths (update_apply_test.go)
-// pre-populates BinDir with BOTH "trinetra" and "trinetra-web" as "installed"
-// binaries. planApply (task 5, already committed) requires a release asset
-// for every binary planApply's `installed` closure reports present -- so a
-// release that only ships trinetra-linux-amd64 is rejected once trinetra-web
-// is also "installed". The brief's TestUpdaterApplyLaunchesGuardAndRefusesDowngrade
-// only supplied a core asset; that combination cannot pass planApply given
-// testUpdatePaths' fixture, so trinetra-web-linux-amd64 is added to the
-// release here to keep reusing the existing fixture rather than forking it.
+// NOTE: testUpdatePaths (update_apply_test.go) pre-populates BinDir with BOTH "trinetra"
+// and "trinetra-web" as "installed" binaries.
 func TestUpdaterApplyLaunchesGuardAndRefusesDowngrade(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.5.0", map[string][]byte{
@@ -100,6 +91,55 @@ func TestUpdaterApplyLaunchesGuardAndRefusesDowngrade(t *testing.T) {
 	}
 }
 
+// TestUpdaterApplyNoFloorFallsBackToRunning pins #138 truth-table case (b): with nothing
+// persisted in state.json, FloorVersion falls back to the running version as the floor.
+func TestUpdaterApplyNoFloorFallsBackToRunning(t *testing.T) {
+	p := testUpdatePaths(t)
+	src := signedRelease(t, "0.5.0-rc.1", map[string][]byte{
+		"trinetra-linux-amd64":     []byte("NEW-core"),
+		"trinetra-web-linux-amd64": []byte("NEW-web"),
+	})
+	var m update.Manifest
+	if err := json.Unmarshal(src["manifest.json"], &m); err != nil {
+		t.Fatal(err)
+	}
+	m.Channel = "beta" // a pre-release version must not be on the stable channel
+	mb, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src["manifest.json"] = mb
+	src["manifest.ci.sig"] = updatetest.NewTestSigner(1).SignRelease(mb)
+	src["manifest.maint.sig"] = updatetest.NewTestSigner(2).SignRelease(mb)
+
+	u := updater{paths: p, keys: testKeys(), x: fakeVersionExec("0.5.0-rc.1"), now: time.Now,
+		arch: "amd64", running: mustVer("0.5.0"), launchGuard: func() error { return nil }, src: src}
+	c := config.Default()
+	if err := c.Set("update.channel", "beta"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.apply(context.Background(), c, applyOptions{Version: "0.5.0-rc.1"}); !errors.Is(err, update.ErrDowngrade) {
+		t.Fatalf("apply(0.5.0-rc.1, no floor, running 0.5.0) = %v, want update.ErrDowngrade", err)
+	}
+}
+
+// TestUpdaterApplyUnparsableFloorFailsClosed is #138 truth-table case (d)'s apply half.
+func TestUpdaterApplyUnparsableFloorFailsClosed(t *testing.T) {
+	p := testUpdatePaths(t)
+	src := signedRelease(t, "0.7.0", map[string][]byte{
+		"trinetra-linux-amd64":     []byte("NEW-core"),
+		"trinetra-web-linux-amd64": []byte("NEW-web"),
+	})
+	if err := update.SaveState(p.dir(), update.State{Floor: "not-a-version"}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	u := updater{paths: p, keys: testKeys(), x: fakeVersionExec("0.7.0"), now: time.Now,
+		arch: "amd64", running: mustVer("0.4.1"), launchGuard: func() error { return nil }, src: src}
+	if _, err := u.apply(context.Background(), config.Default(), applyOptions{Version: "0.7.0"}); err == nil || !strings.Contains(err.Error(), "not-a-version") {
+		t.Fatalf("apply() = %v, want an error naming the bad floor value", err)
+	}
+}
+
 func TestUpdaterApplyRefusesBadVersionWithoutForce(t *testing.T) {
 	p := testUpdatePaths(t)
 	src := signedRelease(t, "0.5.0", map[string][]byte{"trinetra-linux-amd64": []byte("NEW-core")})
@@ -111,13 +151,7 @@ func TestUpdaterApplyRefusesBadVersionWithoutForce(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyBundleWorksWhenChannelOff pins Ruling R7: an operator with
-// update.channel=off (updates disabled from the network) must still be able
-// to install an explicit local bundle via --bundle DIR. Policy.Channel comes
-// from the verified bundle manifest's own channel in that case, not the
-// host's "off" -- CheckPolicy would otherwise always refuse with
-// ErrWrongChannel. Floor/min_upgrade_from/signature checks are unaffected
-// (this bundle's version and MinUpgradeFrom are set up to pass them).
+// TestUpdaterApplyBundleWorksWhenChannelOff: an operator with update.channel=off.
 func TestUpdaterApplyBundleWorksWhenChannelOff(t *testing.T) {
 	p := testUpdatePaths(t)
 	bundleDir := writeBundle(t, "0.5.0", map[string][]byte{
@@ -139,9 +173,8 @@ func TestUpdaterApplyBundleWorksWhenChannelOff(t *testing.T) {
 	}
 }
 
-// TestUpdaterApplyRefusesChannelOffWithoutBundle is R7's other half: without
-// --bundle, update.channel=off must still refuse -- "off" only ever yields
-// to an explicit local bundle, never to the network source.
+// TestUpdaterApplyRefusesChannelOffWithoutBundle: without --bundle, update.channel=off must
+// still refuse -- "off" only ever yields to an explicit local bundle.
 func TestUpdaterApplyRefusesChannelOffWithoutBundle(t *testing.T) {
 	p := testUpdatePaths(t)
 	u := updater{paths: p, keys: testKeys(), running: mustVer("0.4.1"), launchGuard: func() error { return nil }}
@@ -154,11 +187,8 @@ func TestUpdaterApplyRefusesChannelOffWithoutBundle(t *testing.T) {
 	}
 }
 
-// TestConfigGetRedactsSecrets adapts task-6-brief.md's version (which called
-// a `run([]string{...})` helper and `withStdout`/`withTempConfig` that don't
-// exist in this codebase) to the real entry point: Main(), and the
-// cfgPath/stdout package vars main_test.go already overrides directly (see
-// TestConfigSetGetViaCLI).
+// TestConfigGetRedactsSecrets drives the real entry point, Main(), with the cfgPath/stdout
+// package vars main_test.go overrides directly (see TestConfigSetGetViaCLI).
 func TestConfigGetRedactsSecrets(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -181,14 +211,8 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 	}
 }
 
-// TestUpdaterRollbackNormalizesVersion is fix-round-1 F1: `version --json`
-// against the previous binary can report a "v"-prefixed version (git
-// describe-style tags, e.g. "v0.4.1" -- see internal/version's Makefile
-// stamping), and rollback() used to store that raw string as
-// Pending.Version verbatim. The guard's health check compares Pending.Version
-// against the RUNNING daemon's reported version (also normalised), so an
-// un-normalised Pending.Version made every `trinetra update rollback`
-// misreport a version mismatch and roll back a perfectly healthy restart.
+// TestUpdaterRollbackNormalizesVersion: `version --json` against the previous binary can
+// report a "v"-prefixed version (git describe-style tags, e.g. "v0.4.1").
 func TestUpdaterRollbackNormalizesVersion(t *testing.T) {
 	p := testUpdatePaths(t)
 	os.MkdirAll(p.previous(), 0o700)
@@ -216,12 +240,8 @@ func (f fakeVersionExec) Run(name string, args ...string) ([]byte, error) {
 
 func mustVer(s string) update.Version { v, _ := update.ParseVersion(s); return v }
 
-// TestUpdateStatusJSONWorksWithNoStateDir pins Ruling R2
-// (.superpowers/sdd/2026-09-29-signed-releases-self-update/progress.md):
-// `trinetra update status --json` must succeed for a non-root caller with
-// no /var/lib/trinetra present at all (a fresh CI runner before any update
-// has ever run), and the JSON must include a "fingerprints" field sourced
-// from update.Fingerprints(update.ProductionKeys()).
+// TestUpdateStatusJSONWorksWithNoStateDir: `trinetra update status --json` must succeed for
+// a non-root caller with no /var/lib/trinetra at all.
 func TestUpdateStatusJSONWorksWithNoStateDir(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -244,5 +264,42 @@ func TestUpdateStatusJSONWorksWithNoStateDir(t *testing.T) {
 	wantFP := update.Fingerprints(update.ProductionKeys())
 	if len(st.Fingerprints) != len(wantFP) {
 		t.Fatalf("fingerprints = %v, want %v", st.Fingerprints, wantFP)
+	}
+}
+
+// TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing is #138: `trinetra update status`
+// must still display when the persisted floor is unparsable.
+func TestUpdaterStatusShowsUnparsableFloorInsteadOfCrashing(t *testing.T) {
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Floor: "not-a-version"}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	u := updater{paths: p, running: mustVer("0.4.1")}
+	st, err := u.status()
+	if err != nil {
+		t.Fatalf("status() = %v, want nil (must still display, not crash)", err)
+	}
+	if !strings.Contains(st.Floor, "not-a-version") {
+		t.Fatalf("Floor = %q, want it to show the bad floor value", st.Floor)
+	}
+}
+
+// A release recorded as available stops being offered once it is the
+// running version, without waiting for the next channel check.
+func TestStatusHidesAvailableOnceInstalled(t *testing.T) {
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Available: "0.6.0-beta.1"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := updater{paths: p, running: mustVer("0.6.0-beta.1")}.status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Available != "" {
+		t.Fatalf("Available = %q while running it", st.Available)
+	}
+	st, _ = updater{paths: p, running: mustVer("0.5.0")}.status()
+	if st.Available != "0.6.0-beta.1" {
+		t.Fatalf("Available = %q, want it offered to 0.5.0", st.Available)
 	}
 }

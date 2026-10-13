@@ -87,6 +87,24 @@ usual persist-and-reload every `config set` already does. See [Fleet
 mode](02-architecture.md#fleet-mode) for where these two keys sit among the
 rest of the fleet configuration.
 
+## Status page keys
+
+These tune the [public status page](08-web-ui.md#public-status-page). All three
+apply live (the page title within a few seconds, because the public data is cached briefly), and the page itself only appears on a standalone host or a fleet
+master:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `status.title` | `Status` | Heading shown on the public page, at most 60 characters. |
+| `status.auto_resolve_after` | `24h` | When an automatic incident resolves itself after recovery. `0` never resolves; the minimum is `1h`. |
+| `status.echo_channels` | none | Comma-separated channels that also receive each new incident update. |
+
+```bash
+sudo trinetra config set status.title "Acme status"
+sudo trinetra config set status.auto_resolve_after 12h
+sudo trinetra config set status.echo_channels telegram,slack
+```
+
 ## Self-update settings
 
 `sudo trinetra update check` / `apply` (see [Operations: Updating](10-operations.md#updating))

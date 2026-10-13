@@ -1,22 +1,5 @@
-// handlers_fleet_audit.go (task C5, fleet phase 2 web UI plan C): GET
-// /fleet/audit -- the fleet audit log, over core.FleetAPI.Audit(limit)
-// (internal/core/fleet.go). Admin-only end to end (RoleAdmin at the route,
-// routes.go; fleetGateHTML here for "master only, else 404" -- exactly like
-// the rest of "Monitor"/"Admin"), unlike Managed config/Alerting/Admin,
-// which stay viewer-readable: this page has no viewer-facing read at all
-// (task-5-brief.md's route list is a single admin GET).
-//
-// Filters (?actor=, ?action=) are GET params, applied IN MEMORY over one
-// Audit(limit=fleetAuditQueryLimit) read (task-5-brief.md's exact ruling),
-// same convention buildFleetRows/fleetFilterMatch use for the roster
-// table -- there is no server-side filtered query on core.FleetAPI.Audit
-// itself, only a limit. Paginated 50/page (fleetIncidentsPageSize, this
-// package's one shared page-size constant -- global-constraints.md: "Lists
-// are paginated (50 per page)"). Every displayed time is the master's own
-// local zone (silenceTimeText, task C4's shared helper) with its
-// abbreviation shown; Detail is rendered through html/template's normal
-// auto-escaping like everything else on this page -- no template.HTML
-// anywhere in this file.
+// handlers_fleet_audit.go: GET /fleet/audit -- the fleet audit log, over
+// core.FleetAPI.Audit(limit) (internal/core/fleet.go).
 package web
 
 import (
@@ -29,19 +12,11 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// fleetAuditQueryLimit is how many of the most recent audit entries this
-// page reads before filtering/paginating in memory -- task-5-brief.md's
-// exact value ("applied in memory over Audit(limit=5000)"). Filtering
-// narrows this same window; a filter matching something older than the
-// 5000th-most-recent entry simply won't show it, exactly like `fleet audit`
-// CLI's own --limit.
+// fleetAuditQueryLimit is how many of the most recent audit entries this page reads before
+// filtering/paginating in memory.
 const fleetAuditQueryLimit = 5000
 
-// AuditRow is one row of the audit table: core.AuditEntry's fields
-// formatted for display. Time is rendered through silenceTimeText (task
-// C4's shared "master's own local zone, with abbreviation" helper) rather
-// than a bare timestamp -- every datetime this page shows follows that same
-// rule.
+// AuditRow is one row of the audit table: core.AuditEntry's fields formatted for display.
 type AuditRow struct {
 	TimeText string
 	Actor    string
@@ -60,9 +35,8 @@ func newAuditRow(e core.AuditEntry) AuditRow {
 	}
 }
 
-// auditQuery is GET /fleet/audit's parsed query: Actor/Action filters plus
-// Page, mirroring incidentQuery's shape (handlers_fleet.go) but over
-// core.AuditEntry's own fields.
+// auditQuery is GET /fleet/audit's parsed query: Actor/Action filters plus Page, mirroring
+// incidentQuery's shape (handlers_fleet.go) but over core.AuditEntry's own fields.
 type auditQuery struct {
 	Actor  string
 	Action string
@@ -82,9 +56,8 @@ func parseAuditQuery(r *http.Request) auditQuery {
 	}
 }
 
-// encode rebuilds q's own query string (actor/action, never page -- callers
-// append their own page= when building a specific page's link), for the
-// filter form's action and the pagination links' shared prefix.
+// encode rebuilds q's own query string (actor/action, never page -- callers append their
+// own page= when building a specific page's link).
 func (q auditQuery) encode() string {
 	v := url.Values{}
 	if q.Actor != "" {
@@ -96,12 +69,7 @@ func (q auditQuery) encode() string {
 	return v.Encode()
 }
 
-// filterAuditEntries returns the subset of all matching q's Actor/Action
-// (case-insensitive exact match on Actor -- audit actors are account names/
-// "cli", not free text to substring-search; Action is matched exactly too,
-// since it's a closed, machine-chosen vocabulary like "fleet.node.rename",
-// never something an operator would partially remember). Both filters are
-// ANDed when both are set.
+// filterAuditEntries returns the subset of all matching q's Actor/Action.
 func filterAuditEntries(all []core.AuditEntry, q auditQuery) []core.AuditEntry {
 	if q.Actor == "" && q.Action == "" {
 		return all
@@ -119,10 +87,8 @@ func filterAuditEntries(all []core.AuditEntry, q auditQuery) []core.AuditEntry {
 	return out
 }
 
-// paginateAuditEntries slices all (already filtered, newest-first per
-// core.FleetAPI.Audit's own contract) into page's 50-row window, clamping
-// page into [1, totalPages] first -- mirrors paginateIncidents/
-// paginateSilences exactly, over core.AuditEntry.
+// paginateAuditEntries slices all (already filtered, newest-first per core.FleetAPI.Audit's
+// own contract) into page's 50-row window, clamping page into [1, totalPages] first.
 func paginateAuditEntries(all []core.AuditEntry, page int) (pageItems []core.AuditEntry, totalPages, clampedPage int) {
 	total := len(all)
 	totalPages = (total + fleetIncidentsPageSize - 1) / fleetIncidentsPageSize
@@ -146,8 +112,7 @@ func paginateAuditEntries(all []core.AuditEntry, page int) (pageItems []core.Aud
 	return all[start:end], totalPages, page
 }
 
-// AuditPageData is what templates/fleet_audit.html's "content" block
-// renders against.
+// AuditPageData is what templates/fleet_audit.html's "content" block renders against.
 type AuditPageData struct {
 	PageData
 

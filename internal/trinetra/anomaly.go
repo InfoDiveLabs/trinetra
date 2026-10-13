@@ -9,20 +9,11 @@ import (
 type ActiveAlert struct {
 	Since  int64  `json:"since"`
 	Reason string `json:"reason"`
-	// Acked/AckedAt record a manual `trinetra alerts ack <key>`. Both are
-	// omitempty so an alerts.json written before these fields existed still
-	// unmarshals cleanly (missing fields simply zero-value: Acked=false,
-	// AckedAt=0), and so a not-yet-acked alert doesn't grow the JSON.
+	// Acked/AckedAt record a manual `trinetra alerts ack <key>`.
 	Acked   bool  `json:"acked,omitempty"`
 	AckedAt int64 `json:"acked_at,omitempty"`
-	// Critical mirrors the firing Check's own Critical field (the severity
-	// of whatever condition raised this alert), recorded at fire time so
-	// consumers of alerts.json -- notably internal/web's topbar status pill
-	// (which needs to tell a critical alert from a mere warning among
-	// CURRENTLY ACTIVE alerts) -- don't have to re-derive it. omitempty so
-	// an alerts.json written before this field existed still unmarshals
-	// cleanly (Critical simply zero-values to false), mirroring
-	// Acked/AckedAt's own back-compat doc above.
+	// Critical mirrors the firing Check's own Critical field (the severity of whatever
+	// condition raised this alert), recorded at fire time so consumers of alerts.json.
 	Critical bool `json:"critical,omitempty"`
 }
 
@@ -50,10 +41,8 @@ type Event struct {
 	Critical bool
 }
 
-// Evaluate checks each of checks for a breach and fires/recovers its active
-// state accordingly. baselineAlerts gates the baseline (z-score) deviation
-// branch of each Check's breach() (see that method's doc) -- threshold-based
-// breaches are unaffected and always evaluated regardless of its value.
+// Evaluate checks each of checks for a breach and fires/recovers its active state
+// accordingly. baselineAlerts gates the baseline.
 func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma, minPct float64, baselineAlerts bool, nowUnix int64) []Event {
 	var events []Event
 	for _, c := range checks {
@@ -77,8 +66,7 @@ func (s *AlertState) Evaluate(checks []Check, b *Baseline, sigma, minPct float64
 	return events
 }
 
-// Ack marks the active alert at key as acknowledged, recording nowUnix as
-// AckedAt. It errors if key has no active alert (nothing to acknowledge).
+// Ack marks the active alert at key as acknowledged, recording nowUnix as AckedAt.
 func (s *AlertState) Ack(key string, nowUnix int64) error {
 	a, ok := s.Active[key]
 	if !ok {
@@ -90,14 +78,8 @@ func (s *AlertState) Ack(key string, nowUnix int64) error {
 	return nil
 }
 
-// MergeAckFromDisk reconciles the in-memory AlertState with ack flags that a
-// CLI `alerts ack`/`unack` may have written to disk while the daemon was
-// running. The daemon holds AlertState in memory and re-saves its own copy on
-// every fire/recover transition, which would otherwise clobber a CLI ack; so
-// immediately before each save the daemon calls this to pull the on-disk
-// Acked/AckedAt back onto any key that is STILL active in memory. Keys not
-// active in memory are ignored (a stale on-disk ack for a since-recovered
-// alert must not resurrect it), and keys absent from disk are left untouched.
+// MergeAckFromDisk reconciles the in-memory AlertState with ack flags that a CLI `alerts
+// ack`/`unack` may have written to disk while the daemon was running.
 func (s *AlertState) MergeAckFromDisk(path string, fs FileSource) {
 	disk := LoadAlertState(path, fs)
 	for key, mem := range s.Active {
@@ -111,8 +93,7 @@ func (s *AlertState) MergeAckFromDisk(path string, fs FileSource) {
 	}
 }
 
-// Unack clears a prior acknowledgement on the active alert at key. It errors
-// if key has no active alert.
+// Unack clears a prior acknowledgement on the active alert at key.
 func (s *AlertState) Unack(key string) error {
 	a, ok := s.Active[key]
 	if !ok {
@@ -124,19 +105,11 @@ func (s *AlertState) Unack(key string) error {
 	return nil
 }
 
-// meanFloor bounds the denominator of the minPct relative-deviation gate so
-// a metric whose baseline mean sits near zero doesn't divide by (near) zero
-// -- without it, a metric like a rarely-nonzero counter would satisfy the
-// "relative" gate trivially for any nonzero value, defeating its purpose.
+// meanFloor bounds the denominator of the minPct relative-deviation gate so a metric whose
+// baseline mean sits near zero doesn't divide by (near) zero -- without it.
 const meanFloor = 1.0
 
 // breach reports whether c currently breaches, and its human reason text.
-// Threshold breaches (c.HasThreshold) are always evaluated. The baseline
-// (z-score) deviation branch below only runs when baselineAlerts is true --
-// field feedback showed cpu/mem/temp's low, unstable mean firing/recovering
-// on sigma-deviation alone every minute even with the sigma+minPct gates
-// below, so baseline alerting is opt-in (internal/config's baseline_alerts,
-// default false) and threshold alerting stays always on regardless.
 func (c Check) breach(b *Baseline, sigma, minPct float64, baselineAlerts bool) (bool, string) {
 	if c.HasThreshold && c.Value >= c.Threshold {
 		if c.FireMsg != "" {
@@ -148,13 +121,8 @@ func (c Check) breach(b *Baseline, sigma, minPct float64, baselineAlerts bool) (
 		return false, ""
 	}
 	if z, ready := b.Z(c.Key, c.Value); ready && math.Abs(z) >= sigma {
-		// A metric can be many sigma from its mean while barely moving in
-		// absolute/relative terms if its EWMA variance is underestimated
-		// (e.g. a temp sensor cycling narrowly, or ~stable mem%) -- that's
-		// exactly the "noisy but stable" flapping this gate exists to
-		// suppress. Only fire the baseline alert when the value is ALSO
-		// materially far from the mean, not just many (underestimated)
-		// standard deviations from it.
+		// A metric can be many sigma from its mean while barely moving in absolute/relative terms
+		// if its EWMA variance is underestimated.
 		mean, _ := b.Mean(c.Key)
 		denom := math.Abs(mean)
 		if denom < meanFloor {

@@ -10,9 +10,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 )
 
-// newFullSnapshot returns a Snapshot with every extended-collection field
-// from Epic #69 populated (ContainerStats, NetRates, Units, Processes,
-// DiskDetail, SmartAttrs), for TestSnapshotJSONRoundTripsExtendedFields.
+// newFullSnapshot returns a Snapshot with every extended-collection field from Epic #69
+// populated (ContainerStats, NetRates, Units, Processes, DiskDetail, SmartAttrs).
 func newFullSnapshot() Snapshot {
 	return Snapshot{
 		TS:           1700000000,
@@ -62,13 +61,8 @@ func newFullSnapshot() Snapshot {
 	}
 }
 
-// TestSnapshotJSONRoundTripsExtendedFields marshals a fully-populated
-// Snapshot to JSON and unmarshals it back, asserting every extended-
-// collection field (issue #77, Epic #69) survives intact. This is the
-// contract status.json makes with the UI: Store.WriteStatus (store.go) does
-// a plain json.MarshalIndent of whatever Snapshot the daemon hands it, so
-// any field that doesn't round-trip here wouldn't be readable from
-// status.json either.
+// TestSnapshotJSONRoundTripsExtendedFields marshals a fully-populated Snapshot to JSON and
+// unmarshals it back, asserting every extended- collection field.
 func TestSnapshotJSONRoundTripsExtendedFields(t *testing.T) {
 	want := newFullSnapshot()
 
@@ -107,20 +101,8 @@ func TestSnapshotJSONRoundTripsExtendedFields(t *testing.T) {
 	}
 }
 
-// slowMergeExcludedFields lists the Snapshot fields mergeSlowFields
-// deliberately does NOT copy, and why, so
-// TestMergeSlowFieldsCopiesEverySlowTierField can tell "intentionally
-// excluded" apart from "forgotten":
-//   - TS, CPU, MemPct, SwapPct, Load1, Load5, Load15, TempC: fast-tier fields,
-//     collectSlow never sets them (collectFast does).
-//   - NetRates, Processes: populated by the caller directly from stateful
-//     calculators (NetRateCalc/ProcCPUCalc) that collectSlow has no access
-//     to, not by collectSlow itself -- see mergeSlowFields's doc comment.
-//   - SlowStale: a sampler-loop freshness flag (set from the slow-hub version),
-//     not a collected field at all -- collectSlow never touches it.
-//   - CollectorErrors: a transient per-cycle signal consumed by the
-//     slow-collector goroutine (carry-forward + health update), not merged into
-//     the published snapshot; CollectorHealth carries the durable state instead.
+// slowMergeExcludedFields lists the Snapshot fields mergeSlowFields deliberately does NOT
+// copy, and why.
 var slowMergeExcludedFields = map[string]bool{
 	"TS": true, "CPU": true, "MemPct": true, "SwapPct": true,
 	"Load1": true, "Load5": true, "Load15": true, "TempC": true,
@@ -128,17 +110,8 @@ var slowMergeExcludedFields = map[string]bool{
 	"CollectorErrors": true,
 }
 
-// TestMergeSlowFieldsCopiesEverySlowTierField guards the exact bug class
-// issue #77 asks for: a new Snapshot field that collectSlow populates but
-// that mergeSlowFields (shared by cmdDaemon's sampler loop and
-// collectSnapshot, daemon.go) forgets to copy, which would silently vanish
-// from status.json between slow ticks. It works by reflecting over every
-// field of a fully-populated Snapshot (newFullSnapshot) and asserting
-// mergeSlowFields copied it onto an empty merged Snapshot, for every field
-// not in the explicit, documented exclusion list above. Adding a Snapshot
-// field without updating either mergeSlowFields or
-// slowMergeExcludedFields makes this test fail with the specific field name,
-// rather than the gap going unnoticed.
+// TestMergeSlowFieldsCopiesEverySlowTierField guards the exact bug class issue #77 asks
+// for: a new Snapshot field that collectSlow populates but that mergeSlowFields.
 func TestMergeSlowFieldsCopiesEverySlowTierField(t *testing.T) {
 	slow := newFullSnapshot()
 	var merged Snapshot
@@ -165,10 +138,8 @@ func TestMergeSlowFieldsCopiesEverySlowTierField(t *testing.T) {
 	}
 }
 
-// TestRenderStatusAllClear asserts the redesigned /stats,/status overview:
-// a header, a <pre> resource table, one summary-count line per category, and
-// (since nothing is failing) a single "all systems normal" line with no
-// per-mount/per-container detail enumeration.
+// TestRenderStatusAllClear asserts the redesigned /stats,/status overview: a header, a
+// <pre> resource table, one summary-count line per category.
 func TestRenderStatusAllClear(t *testing.T) {
 	s := Snapshot{
 		CPU: 10, MemPct: 20, SwapPct: 0, Load1: 0.1, TempC: 40,
@@ -207,10 +178,8 @@ func TestRenderStatusAllClear(t *testing.T) {
 	}
 }
 
-// TestRenderStatusOnlyFailures asserts that when something IS failing, the
-// header reflects severity and the detail section lists ONLY the failing
-// disk/container/unit/smart entries (not the healthy ones), each with its
-// value, and never lists a healthy disk in the failure detail.
+// TestRenderStatusOnlyFailures asserts that when something IS failing, the header reflects
+// severity and the detail section lists ONLY the failing disk/container/unit/smart entries.
 func TestRenderStatusOnlyFailures(t *testing.T) {
 	c := config.Default() // Thresholds.DiskPct = 90 by default
 	s := Snapshot{
@@ -246,10 +215,8 @@ func TestRenderStatusOnlyFailures(t *testing.T) {
 	}
 }
 
-// TestRenderStatusCapsFailureDetailLists asserts a long list of failures
-// (e.g. many down containers) is bounded to a sane max with a "+N more"
-// suffix, so the message can never overflow Telegram's 4096-char limit
-// regardless of how many things are broken.
+// TestRenderStatusCapsFailureDetailLists asserts a long list of failures (e.g. many down
+// containers) is bounded to a sane max with a "+N more" suffix.
 func TestRenderStatusCapsFailureDetailLists(t *testing.T) {
 	containers := map[string]string{}
 	for i := 0; i < 15; i++ {
@@ -262,9 +229,8 @@ func TestRenderStatusCapsFailureDetailLists(t *testing.T) {
 	}
 }
 
-// TestRenderStatusEscapesHTML asserts dynamic content (container/unit/mount
-// names) is HTML-escaped, since SendMessage now sends with parse_mode=HTML:
-// an unescaped '<'/'>'/'&' in a name would corrupt the whole message.
+// TestRenderStatusEscapesHTML asserts dynamic content (container/unit/mount names) is
+// HTML-escaped, since SendMessage now sends with parse_mode=HTML.
 func TestRenderStatusEscapesHTML(t *testing.T) {
 	s := Snapshot{
 		Online:      true,
@@ -286,10 +252,8 @@ func TestRenderStatusEscapesHTML(t *testing.T) {
 	}
 }
 
-// TestRenderStatusNilConfigDoesNotPanic guards handleCommand's nil-config
-// degrade path (mirrors the existing nil-store guard style in this
-// package): a caller without a config handy still gets a rendered reply
-// rather than a panic.
+// TestRenderStatusNilConfigDoesNotPanic guards handleCommand's nil-config degrade path
+// (mirrors the existing nil-store guard style in this package).
 func TestRenderStatusNilConfigDoesNotPanic(t *testing.T) {
 	s := Snapshot{CPU: 50, Online: true}
 	r := renderStatus(s, nil)
@@ -298,10 +262,8 @@ func TestRenderStatusNilConfigDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestRenderDisksTableSortedAndCapped asserts /disk's redesigned compact
-// table: a summary count line, mounts sorted by use%% descending, free space
-// shown from DiskDetail, and a top-15 cap ("+N more") as a guarantee even
-// though Part A already keeps the real-mount count small.
+// TestRenderDisksTableSortedAndCapped asserts /disk's redesigned compact table: a summary
+// count line, mounts sorted by use%% descending, free space shown from DiskDetail.
 func TestRenderDisksTableSortedAndCapped(t *testing.T) {
 	disks := map[string]float64{"/": 10, "/boot": 90, "/mnt/data": 50}
 	detail := map[string]DiskDetail{

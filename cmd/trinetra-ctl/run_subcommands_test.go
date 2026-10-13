@@ -10,9 +10,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestRunStatusJSON: `status --json` emits valid JSON carrying the snapshot's
-// fields (json tags), for piping into jq etc. The --json flag may appear
-// anywhere in the args.
+// TestRunStatusJSON: `status --json` emits valid JSON carrying the snapshot's fields (json
+// tags), for piping into jq etc. The --json flag may appear anywhere in the args.
 func TestRunStatusJSON(t *testing.T) {
 	api := &fakeAPI{snapshot: core.DashboardView{Online: true, CPU: 42.5, Cores: 8}}
 	var buf bytes.Buffer
@@ -44,8 +43,7 @@ func TestRunAlertsJSON(t *testing.T) {
 	}
 }
 
-// TestRunConfigGet: `config get <key>` prints the current value of a known
-// flat config key.
+// TestRunConfigGet: `config get <key>` prints the current value of a known flat config key.
 func TestRunConfigGet(t *testing.T) {
 	cfg := &config.Config{}
 	if err := cfg.Set("web.enabled", "true"); err != nil {
@@ -103,10 +101,8 @@ func TestRunConfigSetInvalidNotApplied(t *testing.T) {
 	}
 }
 
-// TestRunConfigSetRefusedWhenManaged pins `trinetra-ctl config set`'s
-// managed-key refusal (round-1 review IMPORTANT 2's audit): identical
-// message to the CLI/web/TUI, and neither Config() nor ApplyConfig is ever
-// called.
+// TestRunConfigSetRefusedWhenManaged pins `trinetra-ctl config set`'s managed-key refusal:
+// identical message to the CLI/web/TUI.
 func TestRunConfigSetRefusedWhenManaged(t *testing.T) {
 	base := &fakeAPI{cfg: config.Default()}
 	api := fleetAwareFakeAPI{fakeAPI: base, status: managedStatus("thresholds.cpu_pct", "fragcpu654321")}

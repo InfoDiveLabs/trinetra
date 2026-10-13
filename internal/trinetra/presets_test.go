@@ -31,8 +31,7 @@ func TestSlackPreset(t *testing.T) {
 		t.Fatalf("buildNotifier: %v", err)
 	}
 
-	// Title deliberately contains a quote: the preset must still produce
-	// valid JSON.
+	// Title deliberately contains a quote: the preset must still produce valid JSON.
 	a := Alert{
 		Title:    `disk "full"`,
 		Body:     "disk:/ at 95%",

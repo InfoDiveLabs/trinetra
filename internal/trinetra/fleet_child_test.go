@@ -151,8 +151,7 @@ func TestChildLinkAlerts(t *testing.T) {
 }
 
 // The warn-after threshold comes from config.Config.FleetLinkDownWarnAfter
-// (fleet.link_down_warn_after), not a fixed constant: a shorter threshold
-// must fire sooner, a longer one later.
+// (fleet.link_down_warn_after), not a fixed constant: a shorter threshold must fire sooner.
 func TestChildLinkAlertsUsesConfiguredWarnAfter(t *testing.T) {
 	var c childLinkAlerts
 	start := int64(1000)
@@ -165,9 +164,8 @@ func TestChildLinkAlertsUsesConfiguredWarnAfter(t *testing.T) {
 	}
 }
 
-// "catching up" means the master is reachable again (live updates get
-// through while the backlog drains): it resolves the link-down warning and
-// never raises one.
+// "catching up" means the master is reachable again (live updates get through while the
+// backlog drains): it resolves the link-down warning and never raises one.
 func TestChildLinkAlertsCatchingUpIsReachable(t *testing.T) {
 	var c childLinkAlerts
 	start := int64(1000)

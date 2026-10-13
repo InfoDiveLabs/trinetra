@@ -173,8 +173,7 @@ func TestManagedFragmentDesiredMergeOrderTagAlphabeticalLaterWins(t *testing.T) 
 		t.Fatalf("conflicts (app only) = %+v, want one conflict ('' and 'app' both set cpu_pct)", conflicts2)
 	}
 
-	// A node with no tags at all only ever sees the all-nodes fragment, no
-	// conflicts.
+	// A node with no tags at all only ever sees the all-nodes fragment, no conflicts.
 	values3, _, conflicts3 := s.Desired(nil)
 	if values3["thresholds.cpu_pct"] != "50" || len(conflicts3) != 0 {
 		t.Fatalf("cpu_pct (no tags) = %q conflicts=%+v, want 50 and no conflicts", values3["thresholds.cpu_pct"], conflicts3)
@@ -183,9 +182,8 @@ func TestManagedFragmentDesiredMergeOrderTagAlphabeticalLaterWins(t *testing.T) 
 
 // --- master-side: push on change / connect / periodic ---------------------
 
-// pushCapture is a tiny fleet.Frame push/connected double for managedPusher
-// tests: every push overwrites that node's last frame (mirroring the "push
-// the CURRENT desired set" semantics -- there is no queue).
+// pushCapture is a tiny fleet.Frame push/connected double for managedPusher tests: every
+// push overwrites that node's last frame.
 type pushCapture struct {
 	frames    map[string]fleet.Frame
 	connected map[string]bool
@@ -293,10 +291,8 @@ func TestManagedPusherTickManagedSelfGates(t *testing.T) {
 
 // --- fleetAPIImpl: SaveManaged/DeleteManaged push on change, ManagedStatus -
 
-// managedTestMasterState extends newTestMasterState (fleet_provider_test.go)
-// with a managed-config store/pusher wired to a pushCapture, so
-// fleetAPIImpl.SaveManaged/DeleteManaged/ManagedStatus can be exercised
-// without a full startMaster/real network Hub.
+// managedTestMasterState extends newTestMasterState (fleet_provider_test.go) with a
+// managed-config store/pusher wired to a pushCapture.
 func managedTestMasterState(t *testing.T) (*masterState, *pushCapture) {
 	t.Helper()
 	m := newTestMasterState(t)
@@ -389,10 +385,8 @@ func TestFleetAPISaveManagedRejectsBadKeyNoAuditNoPush(t *testing.T) {
 	}
 }
 
-// TestFleetAPIManagedStatusComputesDriftAndConflicts drives ManagedStatus
-// against a node whose LiveUpdate.Managed reports stale values for one
-// desired key, and never reported another (never connected before) -- both
-// must appear in Drift; a second, fully-in-sync node must report no drift.
+// TestFleetAPIManagedStatusComputesDriftAndConflicts drives ManagedStatus against a node
+// whose LiveUpdate.Managed reports stale values for one desired key.
 func TestFleetAPIManagedStatusComputesDriftAndConflicts(t *testing.T) {
 	m, _ := managedTestMasterState(t)
 	nodeID, err := fleet.NewNodeID()
@@ -455,14 +449,8 @@ func TestFleetAPIManagedStatusComputesDriftAndConflicts(t *testing.T) {
 
 // --- child-side: apply, live-apply-no-restart, invalid rejects whole ------
 
-// managedApplyAPI is a minimal core.API double for managedChild.Apply tests:
-// it embeds fleetCLIFakeAPI (fleet_cmd_test.go, a full core.API stub) for
-// every method except ApplyConfig, which it overrides to actually mimic the
-// real reload path: it stores whatever config was applied so Get(key) after
-// Apply proves the value took effect live, with no restart, and can be
-// primed to fail (an invalid managed-config value must never even reach
-// here -- see the "invalid value rejects the whole fragment" tests -- but a
-// downstream apply failure, e.g. a full reload error, must still surface).
+// managedApplyAPI is a minimal core.API double for managedChild.Apply tests: it embeds
+// fleetCLIFakeAPI.
 type managedApplyAPI struct {
 	fleetCLIFakeAPI
 	applied    *config.Config
@@ -482,11 +470,8 @@ func (a *managedApplyAPI) ApplyConfig(c *config.Config) error {
 func TestManagedChildAppliesLiveNoRestart(t *testing.T) {
 	cfg := config.Default()
 	self := &managedApplyAPI{}
-	// getCfg mirrors the real daemon's reload semantics (fleetDeps.getCfg
-	// reads whatever ApplyConfig's reload closure last swapped in): once
-	// self.applied is set, subsequent reads see the NEW config, not the
-	// original -- this is what lets Report()/`config get` observe the
-	// applied value with no restart.
+	// getCfg mirrors the real daemon's reload semantics (fleetDeps.getCfg reads whatever
+	// ApplyConfig's reload closure last swapped in): once self.applied is set.
 	getCfg := func() *config.Config {
 		if self.applied != nil {
 			return self.applied
@@ -578,7 +563,7 @@ func TestManagedChildEmptyValuesClearsSidecarKeepsLocalConfig(t *testing.T) {
 	if appliedCPU != 77 {
 		t.Fatalf("sanity: the earlier apply should have set CPUPct=77, got %v", appliedCPU)
 	}
-	// Local values are left exactly as they were (task-8 ruling): nothing
+	// Local values are left exactly as they were: nothing
 	// un-applies them, ApplyConfig is not called again with a reverted value.
 	if self.applied.Thresholds.CPUPct != 77 {
 		t.Fatalf("CPUPct after clearing = %v, want unchanged 77 (local values stay at their last managed values)", self.applied.Thresholds.CPUPct)
@@ -592,11 +577,8 @@ func TestManagedChildEmptyValuesClearsSidecarKeepsLocalConfig(t *testing.T) {
 	}
 }
 
-// TestManagedChildReportNilBeforeAnyFrameReceived pins "an old master (no
-// frames) leaves the child unaffected": a managedChild that has never had
-// Apply called on it (no "managed_config" frame ever arrived) reports nil,
-// so LiveUpdate.Managed is omitted entirely, exactly as if task 8 did not
-// exist for this child.
+// TestManagedChildReportNilBeforeAnyFrameReceived pins that an old master (no frames)
+// leaves the child unaffected: a managedChild never Applied reports nil.
 func TestManagedChildReportNilBeforeAnyFrameReceived(t *testing.T) {
 	cfg := config.Default()
 	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), func() *config.Config { return cfg }, &managedApplyAPI{}, nil)
@@ -610,10 +592,8 @@ func TestManagedChildReportNilBeforeAnyFrameReceived(t *testing.T) {
 	}
 }
 
-// TestManagedFragmentForReadsRestoredSidecar exercises the exported helper
-// `trinetra config set`'s cmdConfig calls: a fresh managedChild loaded from
-// a sidecar written by a PREVIOUS process must still name the right
-// fragment for a managed key, and report not-managed for anything else.
+// TestManagedFragmentForReadsRestoredSidecar exercises the exported helper `trinetra config
+// set`'s cmdConfig calls.
 func TestManagedFragmentForReadsRestoredSidecar(t *testing.T) {
 	dir := t.TempDir()
 	path := managedChildPath(dir)
@@ -651,13 +631,10 @@ func TestManagedFragmentForReadsRestoredSidecar(t *testing.T) {
 	}
 }
 
-// --- round-1 review, IMPORTANT 1: shared full-config apply path re-imposes -
+// --- shared full-config apply path re-imposes managed values -
 
-// TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits pins the central
-// round-1 fix: the shared full-config apply path (daemon.go's reload, which
-// calls reimposeManagedValues before persisting) must force a managed key
-// back to its committed value even when the incoming config carries a stale
-// read of it, while leaving every OTHER edit in that same config alone.
+// TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits pins that the shared full-config
+// apply path.
 func TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits(t *testing.T) {
 	cfg := config.Default()
 	self := &managedApplyAPI{}
@@ -670,9 +647,8 @@ func TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits(t *testing.T) {
 	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), getCfg, self, nil)
 	mc.Apply(managedConfigFrameData{Version: 1, Values: map[string]string{"thresholds.cpu_pct": "85"}})
 
-	// A full-config edit built from a STALE read (e.g. the channels page,
-	// which loaded the config before this push landed) that also carries a
-	// legitimate, unrelated edit of its own.
+	// A full-config edit built from a STALE read (e.g. the channels page, which loaded the
+	// config before this push landed) that also carries a legitimate.
 	stale, err := cloneConfigJSON(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -692,8 +668,8 @@ func TestReimposeManagedValuesForcesManagedKeyKeepsOtherEdits(t *testing.T) {
 	}
 }
 
-// TestReimposeManagedValuesNoOpWhenNilOrNothingManaged pins the ruling's
-// "no-op on solo and master, and when nothing is managed".
+// TestReimposeManagedValuesNoOpWhenNilOrNothingManaged pins the no-op on solo
+// and master, and when nothing is managed.
 func TestReimposeManagedValuesNoOpWhenNilOrNothingManaged(t *testing.T) {
 	cfg := config.Default()
 	cfg.Thresholds.CPUPct = 42
@@ -710,10 +686,8 @@ func TestReimposeManagedValuesNoOpWhenNilOrNothingManaged(t *testing.T) {
 	}
 }
 
-// funcApplyAPI is a core.API double whose ApplyConfig runs an arbitrary
-// closure -- used to build a small harness mirroring daemon.go's reload
-// (reimpose, then persist under a lock) for the concurrency test below,
-// without needing to spin up the whole daemon.
+// funcApplyAPI is a core.API double whose ApplyConfig runs an arbitrary closure, used to
+// mirror daemon.go's reload.
 type funcApplyAPI struct {
 	fleetCLIFakeAPI
 	apply func(*config.Config) error
@@ -721,20 +695,8 @@ type funcApplyAPI struct {
 
 func (a *funcApplyAPI) ApplyConfig(c *config.Config) error { return a.apply(c) }
 
-// TestManagedValueWinsOverConcurrentFullConfigApply is the round-1 review's
-// second IMPORTANT-1 test: a push (managedChild.Apply) racing a concurrent,
-// unrelated full-config apply (mirroring the channels/public-settings
-// pages, which read-then-write-back the WHOLE config with no idea a key is
-// managed), run under -race to prove no data race on managedChild's
-// internal state while both paths hit it simultaneously.
-//
-// The concurrent phase alone would make a strict "who wrote last" assertion
-// timing-dependent (whichever goroutine's persist call physically executes
-// last determines the harness's cfg, though every persist call already
-// individually reimposes correctly) -- so the actual "managed value wins"
-// property is pinned deterministically, AFTER both goroutines have
-// finished, by a single additional stale full-config apply. It proves the
-// invariant this fix exists for is not a matter of lucky timing.
+// TestManagedValueWinsOverConcurrentFullConfigApply: a push (managedChild.Apply) races a
+// concurrent, unrelated full-config apply.
 func TestManagedValueWinsOverConcurrentFullConfigApply(t *testing.T) {
 	var mu sync.Mutex
 	cfg := config.Default()
@@ -779,9 +741,8 @@ func TestManagedValueWinsOverConcurrentFullConfigApply(t *testing.T) {
 	}()
 	wg.Wait()
 
-	// Deterministic pin: one more full-config apply, deliberately built with
-	// a WRONG value for the managed key (simulating the worst-case stale
-	// read), must still come out re-imposed to the settled committed value.
+	// Deterministic pin: one more full-config apply, deliberately built with a WRONG value for
+	// the managed key (simulating the worst-case stale read).
 	stale, err := cloneConfigJSON(getCfg())
 	if err != nil {
 		t.Fatal(err)
@@ -802,7 +763,7 @@ func TestManagedValueWinsOverConcurrentFullConfigApply(t *testing.T) {
 	}
 }
 
-// --- round-1 review, MINOR: Apply short-circuits an unchanged push --------
+// --- Apply short-circuits an unchanged push --------
 
 func TestManagedChildApplyShortCircuitsWhenUnchanged(t *testing.T) {
 	dir := t.TempDir()
@@ -827,9 +788,8 @@ func TestManagedChildApplyShortCircuitsWhenUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The identical version+values arriving again (e.g. the periodic 10m
-	// re-push, unchanged): must not re-validate, re-apply, or rewrite the
-	// sidecar.
+	// The identical version+values arriving again (e.g. the periodic 10m re-push, unchanged):
+	// must not re-validate, re-apply, or rewrite the sidecar.
 	mc.Apply(frame)
 	if self.applyCalls != 1 {
 		t.Fatalf("applyCalls = %d, want still 1 (an unchanged push must short-circuit)", self.applyCalls)
@@ -850,14 +810,10 @@ func TestManagedChildApplyShortCircuitsWhenUnchanged(t *testing.T) {
 	}
 }
 
-// --- round-1 review, MINOR: server-side upsert-by-tag ----------------------
+// --- server-side upsert-by-tag ----------------------
 
-// TestManagedFragmentSaveUpsertsByTagAtomically pins the round-1 review's
-// MINOR fix: Save with an empty ID and an existing fragment for the SAME
-// tag updates that fragment in place (same id, values replaced, version
-// bumped) rather than creating a duplicate -- "one fragment per tag" is a
-// server-side, lock-held guarantee now, not something the CLI has to get
-// right itself.
+// TestManagedFragmentSaveUpsertsByTagAtomically: Save with an empty ID and an existing
+// fragment for the SAME tag updates it in place.
 func TestManagedFragmentSaveUpsertsByTagAtomically(t *testing.T) {
 	s, err := loadManagedFragmentStore(filepath.Join(t.TempDir(), "managed.json"))
 	if err != nil {
@@ -905,11 +861,8 @@ func TestManagedFragmentSaveUpsertsByTagAtomically(t *testing.T) {
 	}
 }
 
-// TestManagedFragmentSaveMergeKeepsOtherKeys is the C5 review carry-over's
-// core obligation: Merge:true folds the posted Values into the EXISTING
-// tag's fragment rather than replacing it wholesale, so a second `set --tag
-// web mem=80` (Merge defaults to true, fleetManagedSet) doesn't drop the
-// cpu_pct an earlier `set --tag web cpu_pct=70` already set.
+// TestManagedFragmentSaveMergeKeepsOtherKeys: Merge:true folds the posted Values into the
+// EXISTING tag's fragment rather than replacing it.
 func TestManagedFragmentSaveMergeKeepsOtherKeys(t *testing.T) {
 	s, err := loadManagedFragmentStore(filepath.Join(t.TempDir(), "managed.json"))
 	if err != nil {
@@ -948,10 +901,8 @@ func TestManagedFragmentSaveMergeKeepsOtherKeys(t *testing.T) {
 	}
 }
 
-// TestManagedFragmentSaveReplaceDropsOtherKeys pins --replace's restored
-// wholesale-replace behavior: Merge:false (the zero value) replaces the
-// existing fragment's Values entirely, dropping any key not named on this
-// call -- the pre-C5-review-fix default.
+// TestManagedFragmentSaveReplaceDropsOtherKeys pins --replace: Merge:false (the zero value)
+// replaces the existing fragment's Values entirely.
 func TestManagedFragmentSaveReplaceDropsOtherKeys(t *testing.T) {
 	s, err := loadManagedFragmentStore(filepath.Join(t.TempDir(), "managed.json"))
 	if err != nil {
@@ -972,16 +923,10 @@ func TestManagedFragmentSaveReplaceDropsOtherKeys(t *testing.T) {
 	}
 }
 
-// --- round-2 review: startup reconciliation + tightened short-circuit -----
+// --- startup reconciliation + tightened short-circuit -----
 
-// TestReconcileManagedValuesAtStartFixesDivergedConfig is the round-2
-// review's first required test: a restart where the live config holds a
-// diverged value for a managed key (simulating config.json having been
-// hand-edited, restored from a backup, or written to offline while the
-// daemon wasn't running) -- after reconcileManagedValuesAtStart runs (which
-// startChild now calls immediately after loadManagedChild, before the
-// shipper starts), both the live config AND whatever ApplyConfig persisted
-// must hold the managed value again.
+// TestReconcileManagedValuesAtStartFixesDivergedConfig: on a restart where the live config
+// holds a diverged value for a managed key.
 func TestReconcileManagedValuesAtStartFixesDivergedConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "managed.json")
@@ -1022,10 +967,8 @@ func TestReconcileManagedValuesAtStartFixesDivergedConfig(t *testing.T) {
 	}
 }
 
-// TestReconcileManagedValuesAtStartNoOpWhenAlreadyConverged pins the
-// "otherwise a no-op" half: no ApplyConfig call at all when the live config
-// already matches the committed values (the common, non-diverged case on
-// every ordinary restart).
+// TestReconcileManagedValuesAtStartNoOpWhenAlreadyConverged pins the "otherwise a no-op"
+// half.
 func TestReconcileManagedValuesAtStartNoOpWhenAlreadyConverged(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "managed.json")
@@ -1046,9 +989,8 @@ func TestReconcileManagedValuesAtStartNoOpWhenAlreadyConverged(t *testing.T) {
 	}
 }
 
-// TestReconcileManagedValuesAtStartNoOpWhenNothingManaged covers a plain
-// solo/master-like managedChild (nil) and a child that has never managed
-// anything -- both must be complete no-ops.
+// TestReconcileManagedValuesAtStartNoOpWhenNothingManaged covers a plain solo/master-like
+// managedChild (nil) and a child that has never managed anything.
 func TestReconcileManagedValuesAtStartNoOpWhenNothingManaged(t *testing.T) {
 	reconcileManagedValuesAtStart(nil, nil) // must not panic
 
@@ -1061,12 +1003,8 @@ func TestReconcileManagedValuesAtStartNoOpWhenNothingManaged(t *testing.T) {
 	}
 }
 
-// TestManagedChildApplyReAppliesWhenLiveConfigDiverged is the round-2
-// review's third required test: a same-version, same-values push arrives
-// (previously a guaranteed short-circuit) while the live config has
-// diverged from what was committed -- Apply must notice via
-// configMatchesValues and re-apply instead of trusting the stale
-// version/values match.
+// TestManagedChildApplyReAppliesWhenLiveConfigDiverged: a same-version, same-values push
+// arrives while the live config has diverged from what was committed.
 func TestManagedChildApplyReAppliesWhenLiveConfigDiverged(t *testing.T) {
 	cfg := config.Default()
 	self := &managedApplyAPI{}
@@ -1084,9 +1022,8 @@ func TestManagedChildApplyReAppliesWhenLiveConfigDiverged(t *testing.T) {
 		t.Fatalf("applyCalls = %d, want 1 after the first apply", self.applyCalls)
 	}
 
-	// Simulate external drift: something (a direct edit, a SIGHUP that
-	// predates round 2, ...) changed the live config's managed key without
-	// going through managedChild at all.
+	// Simulate external drift: something (a direct edit, a SIGHUP) changed the
+	// live config's managed key without going through managedChild.
 	self.applied.Thresholds.CPUPct = 12
 
 	// The identical version+values arrives again.
@@ -1099,10 +1036,8 @@ func TestManagedChildApplyReAppliesWhenLiveConfigDiverged(t *testing.T) {
 	}
 }
 
-// TestManagedChildApplyShortCircuitsWhenNoDivergence is the round-2 review's
-// fourth required test: a same-version push with NO divergence stays
-// short-circuited -- no re-apply, no disk write -- confirming the tightened
-// check did not regress the round-1 short-circuit for the common case.
+// TestManagedChildApplyShortCircuitsWhenNoDivergence: a same-version push with
+// NO divergence stays short-circuited (no re-apply, no disk write).
 func TestManagedChildApplyShortCircuitsWhenNoDivergence(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "managed.json")
@@ -1139,12 +1074,8 @@ func TestManagedChildApplyShortCircuitsWhenNoDivergence(t *testing.T) {
 	}
 }
 
-// TestManagedChildSetAppliedHoldsMutexThroughWrite reproduces final-review
-// engine I2's second half for managedChild: setApplied released its mutex
-// before marshaling and writing the sidecar, so two concurrent setApplied
-// calls (stacked managed_config pushes) could complete their writes out of
-// order, leaving the sidecar stale relative to mc's in-memory version. The
-// mutex must be held for the entire call, including the write.
+// TestManagedChildSetAppliedHoldsMutexThroughWrite: setApplied must hold its mutex for the
+// entire call, including the sidecar write; otherwise two concurrent setApplied calls.
 func TestManagedChildSetAppliedHoldsMutexThroughWrite(t *testing.T) {
 	mc := newManagedChild(filepath.Join(t.TempDir(), "managed.json"), func() *config.Config { return config.Default() }, &managedApplyAPI{}, nil)
 

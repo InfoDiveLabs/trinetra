@@ -30,11 +30,8 @@ func TestConfigSetGetViaCLI(t *testing.T) {
 	}
 }
 
-// TestConfigGetAllShowsAllCollectKeys asserts the full-dump `config get` (no
-// key argument) surfaces every collect.* toggle, including ones left unset
-// (nil pointer -> "use the default"). A raw json.Marshal of Config would omit
-// unset *bool fields entirely (they carry `omitempty`), so cmdConfig must
-// render effective values for display rather than the raw struct.
+// TestConfigGetAllShowsAllCollectKeys asserts the full-dump `config get` (no key argument)
+// surfaces every collect.* toggle, including ones left unset.
 func TestConfigGetAllShowsAllCollectKeys(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, "config.json")
@@ -50,9 +47,8 @@ func TestConfigGetAllShowsAllCollectKeys(t *testing.T) {
 			t.Errorf("config get (full dump) missing %q; output:\n%s", key, got)
 		}
 	}
-	// smart_interval is an int (not a *bool) but is likewise omitted from a raw
-	// marshal when unset; the full dump must still surface its effective 1800s
-	// default (see configForDisplay).
+	// smart_interval is an int (not a *bool) but is likewise omitted from a raw marshal when
+	// unset; the full dump must still surface its effective 1800s default.
 	if !strings.Contains(got, `"smart_interval": 1800`) {
 		t.Errorf("config get (full dump) missing smart_interval default 1800; output:\n%s", got)
 	}

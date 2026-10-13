@@ -49,9 +49,8 @@ func TestNtfyNotifierSend(t *testing.T) {
 		t.Errorf("body = %q, want it to contain the message", gotBody)
 	}
 
-	// A Title containing CR/LF must not produce a multi-line Title header:
-	// net/http would reject/mangle a raw CR/LF in a header value, so the
-	// notifier must sanitize it to a single line first.
+	// A Title containing CR/LF must not produce a multi-line Title header: net/http would
+	// reject/mangle a raw CR/LF in a header value.
 	a2 := Alert{Title: "disk full\r\nX-Injected: evil", Body: "b", Severity: SevWarning, Kind: "fire"}
 	if err := n.Send(context.Background(), a2); err != nil {
 		t.Fatalf("Send (CRLF title): %v", err)
@@ -201,10 +200,8 @@ func TestGotifyTokenNotInErrorString(t *testing.T) {
 	}
 }
 
-// TestGotifyMalformedServerNoTokenLeak covers the http.NewRequestWithContext
-// error branch: a malformed server URL makes url.Parse fail, and the raw
-// *url.Error embeds the whole request URL (token and all). The returned
-// error must be a static, token-free message.
+// TestGotifyMalformedServerNoTokenLeak covers the http.NewRequestWithContext error branch:
+// a malformed server URL makes url.Parse fail.
 func TestGotifyMalformedServerNoTokenLeak(t *testing.T) {
 	const secret = "super-secret-token"
 	n := &gotifyNotifier{name: "gotify", server: "http://exa mple.com", token: secret}

@@ -2,14 +2,8 @@ package trinetra
 
 import "github.com/InfoDiveLabs/trinetra/internal/config"
 
-// projectMountDaysToFull queries store's "disk:<mount>" series over roughly
-// the last 7 days (at whichever resolution PickResolution says covers that
-// window relative to nowUnix) and runs projectDaysToFull over the result,
-// using currentPct as the reference point. ok is false whenever store is
-// nil (no SampleStore configured, or a one-shot caller with none handy), the
-// query itself errors, or the projection isn't meaningful (see
-// projectDaysToFull). c may be nil (falls back to defaultRawRetention),
-// mirroring collectSlow's other nil-config guards.
+// projectMountDaysToFull queries store's "disk:<mount>" series over roughly the last 7
+// days.
 func projectMountDaysToFull(store SampleStore, mount string, currentPct float64, c *config.Config, nowUnix int64) (days float64, ok bool) {
 	if store == nil {
 		return 0, false
@@ -28,21 +22,7 @@ func projectMountDaysToFull(store SampleStore, mount string, currentPct float64,
 	return projectDaysToFull(pts, currentPct)
 }
 
-// projectDaysToFull fits a linear least-squares trend line to pts (x = TS in
-// unix seconds, y = Max -- the peak usage percentage within each point's
-// bucket) and projects how many days until that trend would cross 100%,
-// starting from currentPct (the freshest known usage percentage, which may
-// differ slightly from pts' own last value if it was collected more
-// recently than the store's last append).
-//
-// ok is false -- and days is meaningless -- whenever the projection wouldn't
-// be meaningful:
-//   - fewer than 2 points (can't fit a line through one point);
-//   - a non-positive slope (flat or declining usage never reaches 100%).
-//
-// This is a pure function over Points; callers (collectSlow) are
-// responsible for querying the right window (PickResolution over the
-// mount's "disk:<mount>" series) and guarding a nil store before calling it.
+// projectDaysToFull fits a linear least-squares trend line to pts.
 func projectDaysToFull(pts []Point, currentPct float64) (days float64, ok bool) {
 	n := len(pts)
 	if n < 2 {

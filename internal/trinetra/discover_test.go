@@ -16,12 +16,8 @@ func (f fakeFS) Read(p string) ([]byte, error) {
 }
 func (f fakeFS) Glob(p string) ([]string, error) { return f.globs[p], nil }
 
-// TestDiscoverLocalReturnsSlice is a smoke test for the exported OS-backed
-// wrapper (osExec{}/osFS{} instead of a fake): it just asserts DiscoverLocal
-// runs to completion and returns a (possibly empty, on a CI sandbox with no
-// docker/smartctl) non-nil-or-nil slice without panicking. Discover itself
-// (with fakeExec/fakeFS) is exercised in detail by the rest of this file;
-// this only pins that the real Exec/FileSource wiring compiles and runs.
+// TestDiscoverLocalReturnsSlice is a smoke test for the exported OS-backed wrapper
+// (osExec{}/osFS{} instead of a fake).
 func TestDiscoverLocalReturnsSlice(t *testing.T) {
 	got := DiscoverLocal()
 	if got == nil {
@@ -93,11 +89,8 @@ func TestDiscoverTempSingleID(t *testing.T) {
 	}
 }
 
-// TestDiscoverFiltersPseudoAndOverlayMounts asserts Discover applies the
-// same isRealMount && isRealFsType gate as collectSlow (via the typed
-// `df -PT`), so `monitor list`/`monitor threshold` can't surface docker
-// overlay / squashfs / tmpfs mounts that never populate snap.Disks. The two
-// paths must agree on which mounts are real disk targets.
+// TestDiscoverFiltersPseudoAndOverlayMounts asserts Discover applies the same isRealMount
+// && isRealFsType gate as collectSlow (via the typed `df -PT`).
 func TestDiscoverFiltersPseudoAndOverlayMounts(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "df" && len(args) > 0 && args[0] == "-PT" {
@@ -137,10 +130,8 @@ func TestParseSmartScan(t *testing.T) {
 	}
 }
 
-// TestIsRealFsType asserts the fstype denylist: real block-device
-// filesystems (ext4/xfs/btrfs/...) pass, pseudo/virtual/container
-// filesystems (overlay, tmpfs, squashfs, proc, ...) are rejected, matching
-// case-insensitively, with fuseblk kept but other fuse.* rejected.
+// TestIsRealFsType asserts the fstype denylist: real block-device filesystems
+// (ext4/xfs/btrfs/...) pass, pseudo/virtual/container filesystems.
 func TestIsRealFsType(t *testing.T) {
 	real := []string{"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "vfat", "exfat", "f2fs", "ntfs", "reiserfs", "jfs", "EXT4", "fuseblk"}
 	for _, f := range real {
@@ -162,10 +153,8 @@ func TestIsRealFsType(t *testing.T) {
 	}
 }
 
-// TestIsRealMountRejectsContainerAndSnapPrefixes is defense-in-depth
-// alongside isRealFsType: even if a mount's reported fstype looked
-// real-ish, a mount path under a known container-runtime or snap root
-// should never surface as a monitored disk.
+// TestIsRealMountRejectsContainerAndSnapPrefixes is defense-in-depth alongside
+// isRealFsType: even if a mount's reported fstype looked real-ish.
 func TestIsRealMountRejectsContainerAndSnapPrefixes(t *testing.T) {
 	rejected := []string{
 		"/var/lib/docker/overlay2/abc123/merged",

@@ -77,9 +77,7 @@ func TestParseDockerStatsEmpty(t *testing.T) {
 	}
 }
 
-// fakeExecMulti differentiates docker ps vs docker stats by args[0], since
-// dockerAccess.stats and dockerAccess.list both dispatch through "docker"/
-// "sudo docker" with a different subcommand as the first arg.
+// fakeExecMulti differentiates docker ps vs docker stats by args[0].
 func TestDockerAccessStats(t *testing.T) {
 	x := fakeExec{fn: func(name string, args ...string) ([]byte, error) {
 		if name == "docker" && len(args) > 0 && args[0] == "stats" {

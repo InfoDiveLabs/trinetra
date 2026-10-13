@@ -12,10 +12,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// End-to-end store-and-forward tests: a real fleet.Master over TLS with a
-// real replicaSink, and a child made of a real tsfile store, outboxTee,
-// outbox and shipper. The invariant under test is "no data lost, none
-// duplicated": the master's replica must equal the child's local store.
+// End-to-end store-and-forward tests: a real fleet.Master over TLS with a real replicaSink,
+// and a child made of a real tsfile store, outboxTee, outbox and shipper.
 
 type e2eMaster struct {
 	mdir string
@@ -136,9 +134,8 @@ func (c *e2eChild) write(t *testing.T, ts int64, v float64) {
 	c.tee.Samples(ts, ms)
 }
 
-// assertReplicaEqual polls (never a fixed sleep) until the master's replica
-// of c holds want points, then requires it to equal the child's local store
-// point for point: nothing lost, nothing duplicated, nothing reordered.
+// assertReplicaEqual polls (never a fixed sleep) until the master's replica of c holds want
+// points, then requires it to equal the child's local store point for point: nothing lost.
 func assertReplicaEqual(t *testing.T, m *e2eMaster, c *e2eChild, want int) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)

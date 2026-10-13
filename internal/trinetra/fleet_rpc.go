@@ -1,17 +1,5 @@
-// Package trinetra: fleet_rpc.go is the master's side of an on-demand,
-// request/response call to a connected child over the master-to-child
-// stream (spec 6, task 9): today the only method is "container_logs", used
-// by replicaAPI.ContainerLogs (fleet_replica.go) so a remote node's Docker
-// logs can be fetched exactly like a local one's, without a direct
-// connection to the child at all.
-//
-// The request travels down as an "rpc" stream Frame; the child answers by
-// POSTing to fleet.PathRPC (Shipper.PostRPCResult), which the master's
-// fleet.Hub hands to rpcRegistry.Deliver via Hub.OnRPCResult. Hub.OnRPCResult's
-// own doc comment is explicit that the id in that POST is untrusted input
-// from the wire -- rpcRegistry is the consumer it warns must verify the id
-// actually names a pending call sent to that exact node before trusting the
-// body; see Deliver.
+// Package trinetra: fleet_rpc.go is the master's side of an on-demand, request/response
+// call to a connected child over the master-to-child stream.
 package trinetra
 
 import (
@@ -25,39 +13,28 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 )
 
-// rpcCallTimeout is how long Call waits for a child's result before giving
-// up (task-9 ruling: 10s). A package-level var, not a const -- like
-// pingInterval (internal/fleet/stream.go) and backoffBase (internal/fleet/
-// child.go) -- so a test can shorten it instead of actually waiting out a
-// real 10s timeout.
+// rpcCallTimeout is how long Call waits for a child's result before giving up.
 var rpcCallTimeout = 10 * time.Second
 
-// rpcSweepAfter/rpcMaxPendingPerNode are rpcRegistry's other two bounds
-// (task-9 ruling): an entry is swept once it has been sitting unanswered for
-// this long past its own timeout (defense in depth -- Call already deletes
-// its own entry the moment it times out; this only matters if that never
-// happens, e.g. a future caller that doesn't wait), and no node may have
-// more than this many calls pending at once.
+// rpcSweepAfter/rpcMaxPendingPerNode are rpcRegistry's other two bounds an entry is swept
+// once it has been sitting unanswered for this long past its own timeout.
 var rpcSweepAfter = 60 * time.Second
 
 const rpcMaxPendingPerNode = 32
 
 var (
-	// errNodeNotConnected is replicaAPI's exact wording (task-9 ruling) for
-	// both the remote-ack and the remote-RPC paths: the target node has no
-	// open stream connection right now.
+	// errNodeNotConnected is replicaAPI's exact wording for both the remote-ack and the
+	// remote-RPC paths: the target node has no open stream connection right now.
 	errNodeNotConnected = errors.New("node is not connected")
-	// errRPCTimeout is Call's exact wording (task-9 ruling) when no result
-	// arrives within rpcCallTimeout.
+	// errRPCTimeout is Call's exact wording when no result arrives within rpcCallTimeout.
 	errRPCTimeout = errors.New("node did not answer in 10s")
-	// errTooManyPendingRPCs is Call's exact wording (task-9 ruling) once a
+	// errTooManyPendingRPCs is Call's exact wording once a
 	// node already has rpcMaxPendingPerNode calls outstanding.
 	errTooManyPendingRPCs = errors.New("too many pending requests for this node")
 )
 
-// rpcFrameData is the "rpc" stream Frame's Data shape (task-9 ruling):
-// {"id","method","args"}. args is opaque to the transport -- its shape
-// depends entirely on method (see rpcContainerLogsArgs).
+// rpcFrameData is the "rpc" stream Frame's Data shape: {"id","method","args"}. args is
+// opaque to the transport -- its shape depends entirely on method.
 type rpcFrameData struct {
 	ID     string          `json:"id"`
 	Method string          `json:"method"`
@@ -70,8 +47,8 @@ type rpcContainerLogsArgs struct {
 	Lines int    `json:"lines"`
 }
 
-// rpcResultData is the body a child POSTs back via PostRPCResult (task-9
-// ruling): {"ok":true,"output":...} or {"ok":false,"error":...}.
+// rpcResultData is the body a child POSTs back via PostRPCResult:
+// {"ok":true,"output":...} or {"ok":false,"error":...}.
 type rpcResultData struct {
 	OK     bool   `json:"ok"`
 	Output string `json:"output,omitempty"`
@@ -85,14 +62,7 @@ type pendingCall struct {
 	ch      chan rpcResultData
 }
 
-// rpcRegistry is the master's pending-RPC registry: id -> {node, created,
-// ch}, per the task-9 ruling. now is injected so a test can control sweep
-// timing without sleeping; production passes time.Now. logf receives one
-// line per rejected result (unknown id, wrong node, or a duplicate/already-
-// completed id) -- Hub.OnRPCResult's doc comment requires this never be
-// silent, since a rejected result is either a bug or an attempted spoof --
-// rate-limited per node (see logRejectRateLimited) so a wedged or hostile
-// child retrying the same bad id in a loop cannot flood the log.
+// rpcRegistry is the master's pending-RPC registry: id -> {node, created.
 type rpcRegistry struct {
 	now  func() time.Time
 	logf func(format string, args ...any)
@@ -104,8 +74,7 @@ type rpcRegistry struct {
 	lastReject map[string]time.Time
 }
 
-// newRPCRegistry builds an rpcRegistry. A nil now defaults to time.Now, a
-// nil logf discards log lines.
+// newRPCRegistry builds an rpcRegistry.
 func newRPCRegistry(now func() time.Time, logf func(string, ...any)) *rpcRegistry {
 	if now == nil {
 		now = time.Now
@@ -116,12 +85,8 @@ func newRPCRegistry(now func() time.Time, logf func(string, ...any)) *rpcRegistr
 	return &rpcRegistry{now: now, logf: logf, pending: map[string]*pendingCall{}, lastReject: map[string]time.Time{}}
 }
 
-// logRejectRateLimited logs one Deliver-rejection line for nodeID, at most
-// once per second per node -- the same rate-limit shape as fleet.Hub's own
-// logDrop (internal/fleet/stream.go), for the same reason: a rejected
-// result is attacker- or bug-triggerable on every single POST a child (or
-// something impersonating one) makes, so without this a fast retry loop
-// could flood the master's log.
+// logRejectRateLimited logs one Deliver-rejection line for nodeID, at most once per second
+// per node -- the same rate-limit shape as fleet.Hub's own logDrop.
 func (r *rpcRegistry) logRejectRateLimited(nodeID, format string, args ...any) {
 	now := r.now()
 	r.rejectMu.Lock()
@@ -135,7 +100,7 @@ func (r *rpcRegistry) logRejectRateLimited(nodeID, format string, args ...any) {
 	r.logf(format, args...)
 }
 
-// randomRPCID returns 16 random bytes, hex-encoded (task-9 ruling).
+// randomRPCID returns 16 random bytes, hex-encoded.
 func randomRPCID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -144,9 +109,8 @@ func randomRPCID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// sweepLocked drops every entry that expired (its own rpcCallTimeout has
-// already passed) more than rpcSweepAfter ago (task-9 ruling). Called with
-// mu held.
+// sweepLocked drops every entry that expired (its own rpcCallTimeout has already passed)
+// more than rpcSweepAfter ago.
 func (r *rpcRegistry) sweepLocked() {
 	cutoff := r.now().Add(-(rpcCallTimeout + rpcSweepAfter))
 	for id, p := range r.pending {
@@ -156,8 +120,7 @@ func (r *rpcRegistry) sweepLocked() {
 	}
 }
 
-// countForNodeLocked returns how many calls are currently pending for
-// nodeID. Called with mu held.
+// countForNodeLocked returns how many calls are currently pending for nodeID.
 func (r *rpcRegistry) countForNodeLocked(nodeID string) int {
 	n := 0
 	for _, p := range r.pending {
@@ -168,14 +131,8 @@ func (r *rpcRegistry) countForNodeLocked(nodeID string) int {
 	return n
 }
 
-// Call pushes an "rpc" frame for method/args to nodeID over hub and waits up
-// to rpcCallTimeout for the child's result, delivered via Deliver (wired to
-// hub.OnRPCResult by startMaster). It returns errNodeNotConnected if nodeID
-// has no open stream connection (checked both before registering the call
-// and, defensively, if the push itself reports the node gone -- Hub.Push
-// can race a disconnect that happened between the two), errTooManyPendingRPCs
-// if nodeID already has rpcMaxPendingPerNode calls outstanding, and
-// errRPCTimeout if no result arrives in time.
+// Call pushes an "rpc" frame for method/args to nodeID over hub and waits up to
+// rpcCallTimeout for the child's result, delivered via Deliver.
 func (r *rpcRegistry) Call(hub *fleet.Hub, nodeID, method string, args json.RawMessage) (rpcResultData, error) {
 	if hub == nil || !hub.Connected(nodeID) {
 		return rpcResultData{}, errNodeNotConnected
@@ -224,13 +181,8 @@ func (r *rpcRegistry) remove(id string) {
 	r.mu.Unlock()
 }
 
-// Deliver is wired as hub.OnRPCResult: nodeID is authenticated (mTLS), id
-// and body come straight off the wire and are untrusted (see Hub.
-// OnRPCResult's doc comment). A result is only ever delivered once: id must
-// name a call this registry actually sent, still pending, and sent to this
-// exact nodeID -- anything else (an unknown id, a result posted by a node
-// other than the one the call was sent to, or a second result for an id
-// already delivered/removed) is rejected and logged, never delivered.
+// Deliver is wired as hub.OnRPCResult: nodeID is authenticated (mTLS), id and body come
+// straight off the wire and are untrusted (see Hub.
 func (r *rpcRegistry) Deliver(nodeID, id string, body []byte) {
 	r.mu.Lock()
 	p, ok := r.pending[id]

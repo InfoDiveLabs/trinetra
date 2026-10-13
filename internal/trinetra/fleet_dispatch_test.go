@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// TestKeyedDispatcherPreservesOrderPerKey covers the B3 review round 2
-// ruling: a fire and its later recover on the SAME key are always run in
-// order, even when the fire's own job is slow -- the recover must wait for
-// it, never race ahead.
+// TestKeyedDispatcherPreservesOrderPerKey: a fire and its later recover on the
+// SAME key always run in order, even when the fire's job is slow.
 func TestKeyedDispatcherPreservesOrderPerKey(t *testing.T) {
 	d := newKeyedDispatcher()
 	var mu sync.Mutex
@@ -37,9 +35,8 @@ func TestKeyedDispatcherPreservesOrderPerKey(t *testing.T) {
 	}
 }
 
-// TestKeyedDispatcherDifferentKeysRunConcurrently is the flip side: two
-// DIFFERENT keys must not serialize behind each other the way same-key jobs
-// do.
+// TestKeyedDispatcherDifferentKeysRunConcurrently is the flip side: two DIFFERENT keys must
+// not serialize behind each other the way same-key jobs do.
 func TestKeyedDispatcherDifferentKeysRunConcurrently(t *testing.T) {
 	d := newKeyedDispatcher()
 	release := make(chan struct{})
@@ -54,9 +51,8 @@ func TestKeyedDispatcherDifferentKeysRunConcurrently(t *testing.T) {
 		<-release
 	})
 
-	// Both must start without either finishing first -- if they were
-	// serialized, the second would never signal "started" until release is
-	// closed, and this would time out.
+	// Both must start without either finishing first -- if they were serialized, the second
+	// would never signal "started" until release is closed, and this would time out.
 	deadline := time.After(2 * time.Second)
 	for i := 0; i < 2; i++ {
 		select {
@@ -69,9 +65,8 @@ func TestKeyedDispatcherDifferentKeysRunConcurrently(t *testing.T) {
 	d.waitIdleForTest()
 }
 
-// TestKeyedDispatcherBoundsGlobalConcurrency is the B3 review round 2
-// ruling: 200 concurrent Enqueue calls across many different keys must
-// never exceed dispatchConcurrency (8) jobs actually running at once.
+// TestKeyedDispatcherBoundsGlobalConcurrency: 200 concurrent Enqueue calls
+// across many keys must never exceed dispatchConcurrency (8) running jobs.
 func TestKeyedDispatcherBoundsGlobalConcurrency(t *testing.T) {
 	d := newKeyedDispatcher()
 
@@ -80,9 +75,8 @@ func TestKeyedDispatcherBoundsGlobalConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 200; i++ {
 		wg.Add(1)
-		// A distinct key per job, so the global semaphore -- not the
-		// per-key FIFO (which would trivially cap a single key's own
-		// concurrency at 1 regardless) -- is what's actually exercised.
+		// A distinct key per job, so the global semaphore -- not the per-key FIFO (which would
+		// trivially cap a single key's own concurrency at 1 regardless).
 		key := keyFor(i)
 		go func(key string) {
 			defer wg.Done()
@@ -128,9 +122,8 @@ func keyFor(i int) string {
 	return string(b)
 }
 
-// TestKeyedDispatcherEnqueueNeverBlocks covers "waiting must never block
-// Submit's callers": Enqueue must return immediately even while a job for
-// the SAME key is already running (and blocked).
+// TestKeyedDispatcherEnqueueNeverBlocks covers "waiting must never block Submit's callers":
+// Enqueue must return immediately even while a job for the SAME key is already running.
 func TestKeyedDispatcherEnqueueNeverBlocks(t *testing.T) {
 	d := newKeyedDispatcher()
 	blocking := make(chan struct{})
@@ -150,10 +143,8 @@ func TestKeyedDispatcherEnqueueNeverBlocks(t *testing.T) {
 	d.waitIdleForTest()
 }
 
-// TestKeyedDispatcherRetiresDrainedLanes is the B3 review round 3 minor 1:
-// a lane whose queue drains to empty must be removed from d.lanes, not held
-// forever, so a long-lived dispatcher with high key churn doesn't leak one
-// lane object per key it has ever seen.
+// TestKeyedDispatcherRetiresDrainedLanes: a lane whose queue drains must be removed from
+// d.lanes, so a long-lived dispatcher with high key churn doesn't leak a lane per key.
 func TestKeyedDispatcherRetiresDrainedLanes(t *testing.T) {
 	d := newKeyedDispatcher()
 	var wg sync.WaitGroup
@@ -168,10 +159,8 @@ func TestKeyedDispatcherRetiresDrainedLanes(t *testing.T) {
 	wg.Wait()
 	d.waitIdleForTest()
 
-	// waitIdleForTest only guarantees every job RAN; pump's own lane
-	// deletion happens immediately after, in the same loop iteration that
-	// observed the queue empty, so poll briefly rather than assuming it has
-	// already happened by the time wg.Wait() returns.
+	// waitIdleForTest only guarantees every job RAN; pump's own lane deletion happens
+	// immediately after, in the same loop iteration that observed the queue empty.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		if n := d.laneCountForTest(); n == 0 {
@@ -183,11 +172,8 @@ func TestKeyedDispatcherRetiresDrainedLanes(t *testing.T) {
 	}
 }
 
-// TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait is the B3 review round
-// 3 minor 2: Stop returns promptly (bounded by its own timeout) even while
-// a job is still blocked, work enqueued after Stop is dropped rather than
-// queued forever, and no goroutine is left running once everything that WAS
-// queued before Stop actually finishes.
+// TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait: Stop returns promptly (bounded by its
+// own timeout) even while a job is blocked, work enqueued after Stop is dropped.
 func TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait(t *testing.T) {
 	before := runtime.NumGoroutine()
 
@@ -244,8 +230,7 @@ func TestKeyedDispatcherStopRejectsNewWorkAndBoundsWait(t *testing.T) {
 }
 
 // A pump already draining a lane can take and finish a freshly appended job
-// before Enqueue returns; the WaitGroup must never go negative (it used to
-// panic with "sync: negative WaitGroup counter" under load).
+// before Enqueue returns; the WaitGroup must never go negative.
 func TestKeyedDispatcherEnqueueWhilePumpRunningNeverNegative(t *testing.T) {
 	d := newKeyedDispatcher()
 	var ran atomic.Int64

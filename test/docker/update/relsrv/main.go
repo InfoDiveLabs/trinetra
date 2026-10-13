@@ -1,27 +1,5 @@
-// Command relsrv is a stdlib-only stand-in for the parts of the GitHub REST
-// API internal/update.GitHubSource talks to, used by the update-e2e docker
-// harness (test/docker/update). It serves a directory of pre-built,
-// pre-signed release fixtures (see test/docker/update/Dockerfile, which
-// produces them at image build time with cmd/trinetra-release) exactly the
-// way a real GitHub release's tag and assets would look to GitHubSource:
-//
-//	GET /repos/InfoDiveLabs/trinetra/releases/tags/{tag}
-//	    -> {"assets":[{"name":"manifest.json","url":".../assets/{tag}/manifest.json"}, ...]}
-//	GET /assets/{tag}/{name}
-//	    -> the raw file bytes (application/octet-stream)
-//
-// Every request must carry "Authorization: Bearer <token>" (the token
-// defaults to "e2etoken", overridable with the TOKEN env var, matching
-// GitHubSource.Token / update.github_token) or the request is refused with
-// 401 -- this is what update-e2e scenario 9 ("config get and dump never
-// print e2etoken") is guarding.
-//
-// One tag directory under RELEASES_DIR (default /releases) per release: for
-// example RELEASES_DIR/v0.5.1/ holds manifest.json, manifest.ci.sig,
-// manifest.maint.sig and the nine trinetra*-linux-* binaries, and
-// RELEASES_DIR/channels/ holds the signed channel pointers (beta.json,
-// beta.json.sig). A tag directory that does not exist on disk 404s, exactly
-// like a real GitHub tag that was never published.
+// Command relsrv is a stdlib-only stand-in for the parts of the GitHub REST API
+// internal/update.GitHubSource talks to, used by the update-e2e docker harness.
 package main
 
 import (
@@ -38,9 +16,8 @@ type asset struct {
 	URL  string `json:"url"`
 }
 
-// server bundles the fixture directory, the base URL this process is
-// reachable at (so asset URLs it hands out resolve back to itself), and the
-// bearer token every request must present.
+// server bundles the fixture directory, the base URL this process is reachable at (so asset
+// URLs it hands out resolve back to itself).
 type server struct {
 	dir     string
 	baseURL string
@@ -52,10 +29,8 @@ func (s *server) authorized(r *http.Request) bool {
 	return r.Header.Get("Authorization") == want
 }
 
-// releaseTags handles GET /repos/InfoDiveLabs/trinetra/releases/tags/{tag}:
-// lists every regular file directly under RELEASES_DIR/<tag>/ as a release
-// asset, exactly the shape internal/update.GitHubSource.asset decodes
-// (assets[].name / assets[].url).
+// releaseTags handles GET /repos/InfoDiveLabs/trinetra/releases/tags/{tag}: lists every
+// regular file directly under RELEASES_DIR/<tag>/ as a release asset.
 func (s *server) releaseTags(w http.ResponseWriter, r *http.Request) {
 	if !s.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -81,10 +56,8 @@ func (s *server) releaseTags(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"assets": assets})
 }
 
-// assetFile handles GET /assets/{tag}/{name}: the raw bytes of
-// RELEASES_DIR/<tag>/<name>. filepath.Join cleans ".." segments, and the
-// result is additionally required to stay under dir, so this can never read
-// outside the fixture tree.
+// assetFile handles GET /assets/{tag}/{name}: the raw bytes of RELEASES_DIR/<tag>/<name>.
+// filepath.Join cleans ".." segments.
 func (s *server) assetFile(w http.ResponseWriter, r *http.Request) {
 	if !s.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

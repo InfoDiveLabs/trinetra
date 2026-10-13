@@ -8,10 +8,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// HostPageData is what templates/host.html renders against: the static host
-// hardware/OS inventory (#100), fetched over the control socket via
-// Deps.API.HostInfo and pre-formatted for display. It embeds PageData for the
-// shared shell.
+// HostPageData is what templates/host.html renders against: the static host hardware/OS
+// inventory (#100).
 type HostPageData struct {
 	PageData
 	Available bool // false when the API is unavailable or errored
@@ -30,10 +28,8 @@ type hostDiskRow struct {
 	Device, Model, Kind, Size, FSType, Mount string
 }
 
-// HostSummary is the compact host strip shown on the dashboard (#100 followup):
-// a one-line-per-field digest of the same inventory the /host page renders in
-// full. Available is false when host info could not be fetched, in which case
-// the dashboard simply omits the strip.
+// HostSummary is the compact host strip shown on the dashboard (#100 followup): a
+// one-line-per-field digest of the same inventory the /host page renders in full.
 type HostSummary struct {
 	Available bool
 	Name      string
@@ -44,11 +40,7 @@ type HostSummary struct {
 	LocalIP   string
 }
 
-// buildHostSummary fetches host info via the API and renders the compact
-// dashboard strip. Best-effort: any failure yields an unavailable summary the
-// dashboard omits, never an error that breaks the page. Reads through
-// apiFor(r, d) so the dashboard's host strip reflects the request's node
-// scope, same as buildHostPageData.
+// buildHostSummary fetches host info via the API and renders the compact dashboard strip.
 func buildHostSummary(r *http.Request, d Deps) HostSummary {
 	api := apiFor(r, d)
 	if api == nil {
@@ -70,8 +62,7 @@ func buildHostSummary(r *http.Request, d Deps) HostSummary {
 }
 
 // shortCPU is formatCPU's compact cousin for the dashboard strip: the model
-// (socket-prefixed when multi-socket) plus a "(Nt)" thread count, e.g.
-// "2x Intel Xeon Platinum 8153 (64t)".
+// (socket-prefixed when multi-socket) plus a "(Nt)" thread count.
 func shortCPU(h core.HostInfoView) string {
 	s := h.CPUModel
 	if s == "" {

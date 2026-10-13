@@ -22,12 +22,8 @@ func keyType(t tea.KeyType) tea.KeyMsg {
 	return tea.KeyMsg{Type: t}
 }
 
-// typeString feeds each rune of s into m as individual keystrokes, mirroring
-// how a real terminal delivers typed text one KeyMsg at a time, and returns
-// the resulting model. Any tea.Cmd returned along the way is discarded: none
-// of the wizard's text steps issue a command worth observing per keystroke
-// (only the transition-triggering "enter" does, and callers press that
-// separately so its Cmd isn't lost).
+// typeString feeds each rune of s into m as individual keystrokes, mirroring how a real
+// terminal delivers typed text one KeyMsg at a time, and returns the resulting model.
 func typeString(t *testing.T, m tea.Model, s string) tea.Model {
 	t.Helper()
 	for _, r := range s {
@@ -36,10 +32,8 @@ func typeString(t *testing.T, m tea.Model, s string) tea.Model {
 	return m
 }
 
-// runCmd executes a tea.Cmd synchronously and returns the tea.Msg it
-// produces, standing in for the runtime loop a real tea.Program would run
-// the Cmd on. Bubble Tea Cmds are plain `func() tea.Msg` values, so this is
-// just a direct call -- no fake terminal or goroutine needed.
+// runCmd executes a tea.Cmd synchronously and returns the tea.Msg it produces, standing in
+// for the runtime loop a real tea.Program would run the Cmd on.
 func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()
 	if cmd == nil {
@@ -75,10 +69,8 @@ func TestHomeKeyQQuits(t *testing.T) {
 	}
 }
 
-// TestWizardProxyModeDomainOptional pins #106: proxy mode now visits the domain
-// step (rather than skipping it), and a BLANK domain preserves the old default
-// -- straight to confirm with rp_id/origin unset (derived from forwarded
-// headers), and the confirm summary documents that assumption.
+// TestWizardProxyModeDomainOptional pins #106: proxy mode now visits the domain step
+// (rather than skipping it), and a BLANK domain preserves the old default.
 func TestWizardProxyModeDomainOptional(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{})
 	mm, _ = mm.Update(keyRunes('s'))
@@ -109,9 +101,7 @@ func TestWizardProxyModeDomainOptional(t *testing.T) {
 	}
 }
 
-// TestWizardProxyModeWithDomainDerivesRPIDOrigin pins the other half of #106:
-// an operator whose proxy does not forward headers can type a domain in proxy
-// mode and get rp_id/origin derived from it (no drop to `config set`).
+// TestWizardProxyModeWithDomainDerivesRPIDOrigin pins the other half of #106.
 func TestWizardProxyModeWithDomainDerivesRPIDOrigin(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{})
 	mm, _ = mm.Update(keyRunes('s'))
@@ -131,12 +121,8 @@ func TestWizardProxyModeWithDomainDerivesRPIDOrigin(t *testing.T) {
 	}
 }
 
-// TestWizardAutocertDerivesRPIDAndOrigin is the scenario the task spec calls
-// out explicitly: selecting autocert then entering a domain produces the
-// expected config to apply. It drives mode -> listen -> domain and asserts
-// rp_id/origin were derived from the typed domain (deriveRPIDOrigin), then
-// walks through to confirm and checks applyWebSetup's resulting
-// *config.Config against a fake API's captured ApplyConfig call.
+// TestWizardAutocertDerivesRPIDAndOrigin is the scenario the task spec calls out
+// explicitly.
 func TestWizardAutocertDerivesRPIDAndOrigin(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	var mm tea.Model = newModel(api)
@@ -277,9 +263,7 @@ func TestWizardConfirmCancelReturnsHome(t *testing.T) {
 	}
 }
 
-// TestWizardApplyErrorSurfaces asserts a failing ApplyConfig (as the daemon
-// would return on a rejected config) reaches the result screen's applyErr
-// rather than being silently swallowed.
+// TestWizardApplyErrorSurfaces asserts a failing ApplyConfig.
 func TestWizardApplyErrorSurfaces(t *testing.T) {
 	wantErr := errors.New("web.rp_id does not match web.origin")
 	api := &fakeAPI{cfg: &config.Config{}, applyErr: wantErr}
@@ -302,9 +286,8 @@ func TestWizardApplyErrorSurfaces(t *testing.T) {
 	}
 }
 
-// TestWizardEscBacksOutOfTextStep asserts esc on a text step (e.g. listen)
-// returns to mode selection without losing the ability to pick a different
-// mode, rather than exiting the whole wizard.
+// TestWizardEscBacksOutOfTextStep asserts esc on a text step (e.g. listen) returns to mode
+// selection without losing the ability to pick a different mode.
 func TestWizardEscBacksOutOfTextStep(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{})
 	mm, _ = mm.Update(keyRunes('s'))
@@ -337,12 +320,7 @@ func TestSnapshotMsgUpdatesHome(t *testing.T) {
 	}
 }
 
-// TestWizardManualModeCollectsCertAndKey drives the full manual-mode path
-// (mode -> listen -> domain -> rp_id -> origin -> cert -> key -> confirm)
-// and asserts the two new steps appear in the right place and their typed
-// values land on ans.TLSCert/TLSKey, then confirms and checks ApplyConfig
-// received a config with web.tls_cert/web.tls_key set -- the actual bug
-// this task closes (manual mode used to apply with no cert/key at all).
+// TestWizardManualModeCollectsCertAndKey drives the full manual-mode path.
 func TestWizardManualModeCollectsCertAndKey(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	var mm tea.Model = newModel(api)
@@ -409,9 +387,8 @@ func TestWizardManualModeCollectsCertAndKey(t *testing.T) {
 	}
 }
 
-// TestWizardAutocertModeSkipsCertAndKey asserts autocert mode (which gets
-// its certificate from Let's Encrypt) goes straight from origin to confirm,
-// never visiting the manual-only cert/key steps.
+// TestWizardAutocertModeSkipsCertAndKey asserts autocert mode (which gets its certificate
+// from Let's Encrypt) goes straight from origin to confirm.
 func TestWizardAutocertModeSkipsCertAndKey(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{cfg: &config.Config{}})
 	mm, _ = mm.Update(keyRunes('s'))
@@ -428,10 +405,8 @@ func TestWizardAutocertModeSkipsCertAndKey(t *testing.T) {
 	}
 }
 
-// TestWizardManualModeRejectsEmptyCert asserts pressing enter on the cert
-// step with a blank value does not advance to the key step, and shows an
-// inline message explaining why, so the wizard cannot be walked through to
-// confirm/apply with a cert path that was never actually typed.
+// TestWizardManualModeRejectsEmptyCert asserts pressing enter on the cert step with a blank
+// value does not advance to the key step, and shows an inline message explaining why.
 func TestWizardManualModeRejectsEmptyCert(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{cfg: &config.Config{}})
 	mm, _ = mm.Update(keyRunes('s'))
@@ -471,10 +446,8 @@ func TestWizardManualModeRejectsEmptyCert(t *testing.T) {
 	}
 }
 
-// TestWizardManualModeRejectsEmptyKey mirrors
-// TestWizardManualModeRejectsEmptyCert for the key step, and additionally
-// asserts ApplyConfig is never reachable without ever confirming, so an
-// incomplete manual-mode config can never be applied through the wizard.
+// TestWizardManualModeRejectsEmptyKey mirrors TestWizardManualModeRejectsEmptyCert for the
+// key step.
 func TestWizardManualModeRejectsEmptyKey(t *testing.T) {
 	api := &fakeAPI{cfg: &config.Config{}}
 	var mm tea.Model = newModel(api)
@@ -506,9 +479,8 @@ func TestWizardManualModeRejectsEmptyKey(t *testing.T) {
 	}
 }
 
-// TestWizardCertStepEscReturnsToMode asserts esc on the cert step follows
-// the same rule every other text step does (updateTextKey): back to mode
-// selection, not a partial step back.
+// TestWizardCertStepEscReturnsToMode asserts esc on the cert step follows the same rule
+// every other text step does (updateTextKey): back to mode selection.
 func TestWizardCertStepEscReturnsToMode(t *testing.T) {
 	var mm tea.Model = newModel(&fakeAPI{cfg: &config.Config{}})
 	mm, _ = mm.Update(keyRunes('s'))

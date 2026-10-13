@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// TestNextMaintenanceOccurrenceUpcoming covers a window that hasn't started
-// yet today: NextMaintenanceOccurrence must return its next start, not
-// something from a later week.
+// TestNextMaintenanceOccurrenceUpcoming covers a window that hasn't started yet today:
+// NextMaintenanceOccurrence must return its next start, not something from a later week.
 func TestNextMaintenanceOccurrenceUpcoming(t *testing.T) {
 	// 2024-01-01 is a Monday.
 	now := time.Date(2024, 1, 1, 6, 0, 0, 0, time.UTC)
@@ -22,9 +21,8 @@ func TestNextMaintenanceOccurrenceUpcoming(t *testing.T) {
 	}
 }
 
-// TestNextMaintenanceOccurrenceCurrentlyActive covers a window that is
-// active RIGHT NOW: NextMaintenanceOccurrence must return that occurrence
-// (Start in the past, End in the future), not skip ahead to next week's.
+// TestNextMaintenanceOccurrenceCurrentlyActive covers a window that is active RIGHT NOW:
+// NextMaintenanceOccurrence must return that occurrence.
 func TestNextMaintenanceOccurrenceCurrentlyActive(t *testing.T) {
 	now := time.Date(2024, 1, 1, 22, 30, 0, 0, time.UTC) // Monday, mid-window
 	m := Maintenance{Weekdays: []int{int(time.Monday)}, From: "22:00", To: "23:00", TZ: "UTC"}
@@ -39,9 +37,8 @@ func TestNextMaintenanceOccurrenceCurrentlyActive(t *testing.T) {
 	}
 }
 
-// TestNextMaintenanceOccurrenceNextWeek covers a window whose day already
-// passed this week: the next occurrence must land 7 days later, not be
-// missing.
+// TestNextMaintenanceOccurrenceNextWeek covers a window whose day already passed this week:
+// the next occurrence must land 7 days later, not be missing.
 func TestNextMaintenanceOccurrenceNextWeek(t *testing.T) {
 	now := time.Date(2024, 1, 2, 6, 0, 0, 0, time.UTC) // Tuesday, after Monday's window ended
 	m := Maintenance{Weekdays: []int{int(time.Monday)}, From: "22:00", To: "23:00", TZ: "UTC"}
@@ -55,9 +52,8 @@ func TestNextMaintenanceOccurrenceNextWeek(t *testing.T) {
 	}
 }
 
-// TestNextMaintenanceOccurrenceBadTZ covers an unparsable TZ (should never
-// happen for anything SaveMaintenance already validated and stored) --
-// degrades to ok=false rather than panicking.
+// TestNextMaintenanceOccurrenceBadTZ covers an unparsable TZ (should never happen for
+// anything SaveMaintenance already validated and stored).
 func TestNextMaintenanceOccurrenceBadTZ(t *testing.T) {
 	m := Maintenance{Weekdays: []int{1}, From: "22:00", To: "23:00", TZ: "Not/AZone"}
 	if _, ok := NextMaintenanceOccurrence(m, time.Now()); ok {
@@ -65,10 +61,8 @@ func TestNextMaintenanceOccurrenceBadTZ(t *testing.T) {
 	}
 }
 
-// TestMaintenanceOccurrencesCrossesMidnight covers a window crossing
-// midnight (From > To lexicographically): its END must be computed as
-// start+duration, landing on the following calendar day, while the
-// occurrence is still "owned" by its start weekday.
+// TestMaintenanceOccurrencesCrossesMidnight covers a window crossing midnight (From > To
+// lexicographically): its END must be computed as start+duration.
 func TestMaintenanceOccurrencesCrossesMidnight(t *testing.T) {
 	m := Maintenance{Weekdays: []int{int(time.Sunday)}, From: "22:00", To: "02:00", TZ: "UTC"}
 	from := time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC) // a Sunday

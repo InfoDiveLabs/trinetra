@@ -5,44 +5,32 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// maxSeriesRangeSeconds bounds a single /api/series request's [from, to]
-// span: 400 days, generously beyond the 30-day rollup-retention default
-// (docs/handbook/09-storage-and-data-model.md) so any legitimate history query (even the
-// mockup's widest "30d" chip) fits comfortably, while still rejecting the
-// "absurd range" case this task's validation requires (e.g. from=0, a
-// multi-century span) before it ever reaches the store.
+// maxSeriesRangeSeconds bounds a single /api/series request's [from, to] span: 400 days,
+// generously beyond the 30-day rollup-retention default.
 const maxSeriesRangeSeconds = int64(400 * 24 * 3600)
 
-// seriesResponse is GET /api/series's JSON body: Series is uPlot's own data
-// shape -- parallel arrays, [0] the x/timestamp axis and [1..] the y series
-// (avg, then min, then max here) -- so assets/app.js can hand it to
-// `new uPlot(opts, data)`/`u.setData(data)` with no reshaping.
+// seriesResponse is GET /api/series's JSON body: Series is uPlot's own data shape --
+// parallel arrays, [0] the x/timestamp axis and [1..] the y series.
 type seriesResponse struct {
 	Metric string      `json:"metric"`
 	Series [][]float64 `json:"series"`
 }
 
-// emptySeriesResponse is what an unknown metric, a nil Deps.API, or a
-// Series error all render as: four empty arrays (ts/avg/min/max) rather than
-// omitting Series or erroring -- see seriesAPIHandler's doc for why none of
-// those cases is a 500.
+// emptySeriesResponse is what an unknown metric, a nil Deps.API, or a Series error all
+// render as: four empty arrays (ts/avg/min/max) rather than omitting Series or erroring.
 func emptySeriesResponse(metric string) seriesResponse {
 	return seriesResponse{Metric: metric, Series: [][]float64{{}, {}, {}, {}}}
 }
 
-// parseSeriesRange validates GET /api/series's from/to query parameters:
-// both must parse as Unix-seconds integers, from must be strictly less than
-// to, and the span must not exceed maxSeriesRangeSeconds. Returns ok=false
-// (caller responds 400) on any failure -- this is the only input validation
-// /api/series does; the metric parameter itself is deliberately unchecked
-// against an allowlist (see seriesAPIHandler's doc: an unrecognized metric
-// is a normal "no data" outcome, not a validation error).
+// parseSeriesRange validates GET /api/series's from/to query parameters: both must parse as
+// Unix-seconds integers.
 func parseSeriesRange(r *http.Request) (from, to int64, ok bool) {
 	q := r.URL.Query()
 	from, errFrom := strconv.ParseInt(q.Get("from"), 10, 64)
@@ -60,33 +48,7 @@ func parseSeriesRange(r *http.Request) (from, to int64, ok bool) {
 }
 
 // seriesAPIHandler serves GET /api/series?metric=&from=&to=: the JSON feed
-// templates/history.html's uPlot charts (assets/app.js's
-// swBootHistoryCharts) fetch per metric/time-range-chip selection.
-// requireRole(RoleViewer, ...) (routes.go's wiring) has already gated this
-// by the time it runs.
-//
-// Three distinct "no real data" cases all render as a 200 empty
-// seriesResponse rather than an error status, per this task's validation
-// contract:
-//   - Deps.API is nil (no core.API wired for this daemon, e.g. some tests).
-//   - The API returns an error for this metric/range (a query against a
-//     metric name that isn't tracked at all behaves this way in both the
-//     memStore and tsfile backends: no matching series, no error) -- treated
-//     the same as "no data" rather than surfaced as 500, since a client
-//     picking a metric this daemon's config doesn't collect is an ordinary,
-//     expected outcome (e.g. no "temp" sensor found on this host), not a
-//     server fault.
-//   - The API has no points at all for the metric (a real metric that
-//     simply hasn't reported yet, or an unrecognized name).
-//
-// Only the from/to range itself is validated as a hard client error (400):
-// unparseable, from>=to, or an absurdly wide span (parseSeriesRange).
-//
-// core.ResAuto is passed for the resolution: this endpoint preserves the
-// pre-core.API behavior of letting the implementation pick raw-vs-1m off the
-// requested range and the daemon's configured storage.raw_retention
-// (trinetra.PickResolution, wrapped by inprocAPI.Series) rather than this
-// package ever needing a Resolution type of its own.
+// templates/history.html's uPlot charts.
 func seriesAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		metric := r.URL.Query().Get("metric")
@@ -101,13 +63,7 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 			pts, err := api.Series(metric, from, to, core.ResAuto)
 			switch {
 			case err != nil:
-				// A genuine storage fault still renders as an empty 200 (the
-				// UI stays resilient -- a picked metric this daemon can't serve
-				// is an ordinary outcome, not a page-breaking error), but log
-				// it server-side so a real storage-layer failure isn't
-				// operationally invisible. An unrecognized metric is NOT an
-				// error in either backend (memStore/tsfile return an empty
-				// series, no error), so this path only fires on an actual fault.
+				// A genuine storage fault still renders as an empty 200.
 				log.Printf("web: /api/series query metric=%q from=%d to=%d: %v", metric, from, to, err)
 			case len(pts) > 0:
 				ts := make([]float64, len(pts))
@@ -131,19 +87,115 @@ func seriesAPIHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// downtimeResponse is GET /api/downtime's JSON body: the downtime events
-// overlapping the requested range, for templates/history.html's
-// "Downtime · 30d" timeline/rows (assets/app.js's swBootHistoryCharts).
+// downtimeDefaultLimit and downtimeMaxLimit bound GET /api/downtime's `limit` query
+// parameter (parseDowntimePagination): unset defaults to downtimeDefaultLimit.
+const (
+	downtimeDefaultLimit = 50
+	downtimeMaxLimit     = 500
+)
+
+// downtimeResponse is GET /api/downtime's JSON body: one page of the downtime events
+// overlapping the requested range (newest-first, sliced by Limit/Offset), plus Total.
 type downtimeResponse struct {
-	Events []DownEventView `json:"events"`
+	Events       []DownEventView          `json:"events"`
+	Total        int                      `json:"total"`
+	TotalSeconds int64                    `json:"total_seconds"`
+	Timeline     []DowntimeTimelineBucket `json:"timeline"`
+	Limit        int                      `json:"limit"`
+	Offset       int                      `json:"offset"`
 }
 
-// downtimeAPIHandler serves GET /api/downtime?from=&to=: the downtime-event
-// feed the history page's "Downtime · 30d" panel fetches. Same validation
-// and graceful-degradation contract as seriesAPIHandler -- from/to validated
-// as a hard 400 (parseSeriesRange), a nil Deps.API or an Events error both
-// render as an empty 200 (the latter logged server-side) rather than a 500.
-// requireRole(RoleViewer, ...) (routes.go) has already gated it.
+// downtimeTimelineBuckets is the fixed number of equal-width buckets GET /api/downtime's
+// Timeline field divides [from,to] into.
+const downtimeTimelineBuckets = 120
+
+// DowntimeTimelineBucket is one equal-width slice of GET /api/downtime's requested
+// [from,to] range: Start/End are its Unix-second boundaries.
+type DowntimeTimelineBucket struct {
+	Start       int64  `json:"start"`
+	End         int64  `json:"end"`
+	DownSeconds int64  `json:"down_seconds"`
+	Type        string `json:"type,omitempty"`
+}
+
+// buildDowntimeTimeline buckets evs (the caller passes every in-range event, never just one
+// page) into downtimeTimelineBuckets equal-width buckets spanning exactly [from,to].
+func buildDowntimeTimeline(evs []DownEventView, from, to int64) ([]DowntimeTimelineBucket, int64) {
+	n := downtimeTimelineBuckets
+	buckets := make([]DowntimeTimelineBucket, n)
+	span := to - from
+	for i := 0; i < n; i++ {
+		buckets[i].Start = from + span*int64(i)/int64(n)
+		buckets[i].End = from + span*int64(i+1)/int64(n)
+	}
+
+	var total int64
+	for _, e := range evs {
+		s, en := e.Start, e.End
+		if en == 0 {
+			en = to
+		}
+		if s < from {
+			s = from
+		}
+		if en > to {
+			en = to
+		}
+		if en <= s {
+			continue
+		}
+		for i := range buckets {
+			os, oe := s, en
+			if buckets[i].Start > os {
+				os = buckets[i].Start
+			}
+			if buckets[i].End < oe {
+				oe = buckets[i].End
+			}
+			if oe <= os {
+				continue
+			}
+			overlap := oe - os
+			buckets[i].DownSeconds += overlap
+			total += overlap
+			if e.Type == "power_down" {
+				buckets[i].Type = "power_down"
+			} else if buckets[i].Type == "" {
+				buckets[i].Type = e.Type
+			}
+		}
+	}
+	return buckets, total
+}
+
+// parseDowntimePagination validates GET /api/downtime's optional limit/ offset query
+// parameters: limit defaults to downtimeDefaultLimit and must parse as an integer in [1.
+func parseDowntimePagination(r *http.Request) (limit, offset int, ok bool) {
+	q := r.URL.Query()
+
+	limit = downtimeDefaultLimit
+	if s := q.Get("limit"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 || v > downtimeMaxLimit {
+			return 0, 0, false
+		}
+		limit = v
+	}
+
+	offset = 0
+	if s := q.Get("offset"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 {
+			return 0, 0, false
+		}
+		offset = v
+	}
+
+	return limit, offset, true
+}
+
+// downtimeAPIHandler serves GET /api/downtime?from=&to=&limit=&offset=: the downtime-event
+// feed the history page's "Downtime · 30d" panel fetches.
 func downtimeAPIHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		from, to, ok := parseSeriesRange(r)
@@ -151,15 +203,38 @@ func downtimeAPIHandler(d Deps) http.HandlerFunc {
 			http.Error(w, "invalid from/to range", http.StatusBadRequest)
 			return
 		}
+		limit, offset, ok := parseDowntimePagination(r)
+		if !ok {
+			http.Error(w, "invalid limit/offset", http.StatusBadRequest)
+			return
+		}
 
-		resp := downtimeResponse{Events: []DownEventView{}}
+		resp := downtimeResponse{Events: []DownEventView{}, Limit: limit, Offset: offset}
+		var sorted []DownEventView
 		if api := apiFor(r, d); api != nil {
 			evs, err := api.Events(from, to)
 			if err != nil {
 				log.Printf("web: /api/downtime query from=%d to=%d: %v", from, to, err)
 			} else if len(evs) > 0 {
-				resp.Events = evs
+				sorted = make([]DownEventView, len(evs))
+				copy(sorted, evs)
+				sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
 			}
+		}
+
+		resp.Total = len(sorted)
+		resp.Timeline, resp.TotalSeconds = buildDowntimeTimeline(sorted, from, to)
+
+		if len(sorted) > 0 {
+			start := offset
+			if start > len(sorted) {
+				start = len(sorted)
+			}
+			end := start + limit
+			if end > len(sorted) {
+				end = len(sorted)
+			}
+			resp.Events = sorted[start:end]
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -169,32 +244,21 @@ func downtimeAPIHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// HistoryPageData is what templates/history.html renders against: the shared
-// PageData plus the current filesystem mounts (from the live snapshot) the
-// "Disk usage" panel graphs one series per -- the mounts have to be resolved
-// server-side because internal/web can't enumerate the store's metric names,
-// and the live DashboardView (Deps.Snapshot) is the same mount list the
-// dashboard's filesystems table already uses.
+// HistoryPageData is what templates/history.html renders against: the shared PageData plus
+// the current filesystem mounts.
 type HistoryPageData struct {
 	PageData
 	// DiskMounts is the sorted mount paths (DashboardView.Disks) the disk
 	// panel graphs; empty when no filesystems are known (renders a note).
 	DiskMounts []string
-	// DiskMetrics is DiskMounts as the comma-joined "disk:<mount>" metric
-	// list history.html hands the disk chart's data-metrics attribute, and
-	// DiskLabels the parallel comma-joined mount labels for its legend.
+	// DiskMetrics is DiskMounts as the comma-joined "disk:<mount>" metric list history.html
+	// hands the disk chart's data-metrics attribute.
 	DiskMetrics string
 	DiskLabels  string
 }
 
-// historyPageHandler renders GET /history: ported from
-// ui-mockup/history.html (templates/history.html) through the full
-// app-shell layout, same as dashboardHandler. The metric charts carry no
-// server-rendered points -- assets/app.js's swBootHistoryCharts fetches them
-// from /api/series (and downtime from /api/downtime) client-side once the
-// page loads, driven by the metric/time-range chips' data attributes. The
-// one thing resolved server-side is the disk panel's per-mount series list,
-// since internal/web can't enumerate the store's metric names itself.
+// historyPageHandler renders GET /history (templates/history.html) through the full
+// app-shell layout, same as dashboardHandler.
 func historyPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mounts := historyDiskMounts(r, d)
@@ -214,11 +278,8 @@ func historyPageHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// renderHistoryPage renders templates/history.html through the full
-// app-shell layout (base.html) against HistoryPageData -- the same
-// parse/execute shape renderDashboardPage (handlers_dashboard.go) uses,
-// mirrored here because this page needs HistoryPageData's extra disk-mount
-// fields alongside the shared PageData ones.
+// renderHistoryPage renders templates/history.html through the full app-shell layout
+// (base.html) against HistoryPageData -- the same parse/execute shape renderDashboardPage.
 func renderHistoryPage(w http.ResponseWriter, data HistoryPageData) error {
 	tmpl, err := template.New("base.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base.html", "templates/history.html")
@@ -230,13 +291,6 @@ func renderHistoryPage(w http.ResponseWriter, data HistoryPageData) error {
 }
 
 // historyDiskMounts returns the current filesystem mounts (DashboardView.
-// Disks, already sorted by mount by coreapi_inproc.go's buildDashboardView
-// adapter) for the disk panel's per-mount series, or nil when there's no
-// snapshot/no disks. For the self scope it reads the cheap cached
-// Deps.Snapshot() closure, same as before; for a request scoped to a remote
-// fleet node (node_scope.go) it instead reads apiFor(r, d).Snapshot() --
-// Deps.Snapshot only ever reflects the master's own mounts, so the self-only
-// closure can't answer for a node scope.
 func historyDiskMounts(r *http.Request, d Deps) []string {
 	var view DashboardView
 	if nodeFrom(r).Self {

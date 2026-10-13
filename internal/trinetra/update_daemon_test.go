@@ -31,19 +31,80 @@ func TestUpdateResultAlert(t *testing.T) {
 	}
 }
 
+// TestNotifyRestoreFailedAlertsOnce is issue #136's alerting half: rollbackPending keeps
+// Pending set (with RestoreFailed recorded) when restoring the previous build fails.
+func TestNotifyRestoreFailedAlertsOnce(t *testing.T) {
+	p := testUpdatePaths(t)
+	now := time.Unix(5000, 0)
+	pending := update.Pending{Version: "0.5.0", From: "0.4.1", RestoreFailed: "restoring the previous build also failed: permission denied"}
+	if err := update.SaveState(p.dir(), update.State{Pending: &pending}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []Alert
+	notifyRestoreFailed(p, now, func(a Alert) { got = append(got, a) })
+	if len(got) != 1 {
+		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Severity != SevCritical {
+		t.Fatalf("severity = %v, want critical: %+v", got[0].Severity, got[0])
+	}
+	if !strings.Contains(got[0].Title, "0.5.0") || !strings.Contains(got[0].Body, "permission denied") {
+		t.Fatalf("alert does not explain the failure: %+v", got[0])
+	}
+
+	st, err := update.LoadState(p.dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending == nil || !st.Pending.RestoreFailedNotified {
+		t.Fatalf("RestoreFailedNotified not persisted: %+v", st.Pending)
+	}
+
+	// A repeated failing retry: the guard reran, restorePrevious failed again, and rewrote
+	// Pending.RestoreFailed -- but left RestoreFailedNotified as it was (true).
+	st.Pending.RestoreFailed = "restoring the previous build also failed: permission denied (retry)"
+	if err := update.SaveState(p.dir(), st); err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	notifyRestoreFailed(p, now, func(a Alert) { got = append(got, a) })
+	if len(got) != 0 {
+		t.Fatalf("re-alerted a still-failing retry: %+v", got)
+	}
+}
+
+// TestNotifyRestoreFailedNoPending covers the common case (nothing to do):
+// no Pending, or a Pending with no restore failure, must not alert.
+func TestNotifyRestoreFailedNoPending(t *testing.T) {
+	p := testUpdatePaths(t)
+	var got []Alert
+	notifyRestoreFailed(p, time.Unix(1, 0), func(a Alert) { got = append(got, a) })
+	if len(got) != 0 {
+		t.Fatalf("alerted with no state at all: %+v", got)
+	}
+
+	pending := update.Pending{Version: "0.5.0", From: "0.4.1"}
+	if err := update.SaveState(p.dir(), update.State{Pending: &pending}); err != nil {
+		t.Fatal(err)
+	}
+	notifyRestoreFailed(p, time.Unix(1, 0), func(a Alert) { got = append(got, a) })
+	if len(got) != 0 {
+		t.Fatalf("alerted for a Pending with no restore failure: %+v", got)
+	}
+}
+
 func TestUpdateAvailableAlertOncePerVersion(t *testing.T) {
-	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0"}); !ok {
+	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0"}, mustVer("0.4.1")); !ok {
 		t.Fatal("no alert for a new available version")
 	}
-	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0", AvailableNotified: "0.5.0"}); ok {
+	if _, ok := updateAvailableAlert(update.State{Available: "0.5.0", AvailableNotified: "0.5.0"}, mustVer("0.4.1")); ok {
 		t.Fatal("re-alerted the same available version")
 	}
 }
 
 // channelSource is a Source fake for runDueCheck tests: unlike mapSource
-// (update_apply_test.go), whose ChannelAsset always returns
-// update.ErrNoChannel, this also serves channel pointer bytes so a full
-// u.check() round trip (FetchLatest + FetchRelease) can succeed.
+// (update_apply_test.go), whose ChannelAsset always returns update.ErrNoChannel.
 type channelSource struct {
 	channel map[string][]byte
 	release mapSource
@@ -92,12 +153,7 @@ func staleAlerts(as []Alert) int {
 	return n
 }
 
-// TestRunDueCheckFreezeDetection is R17: the freeze alert must actually be
-// able to fire. An expired or missing pointer is the freeze signature and
-// alerts at once; a LastPointerIssued older than 14 days alerts whatever the
-// check's outcome; a plain network error alerts only once the last good
-// pointer is more than 14 days old. Each episode alerts once, and the dedup
-// is persisted in State so a daemon restart does not re-page.
+// TestRunDueCheckFreezeDetection: the freeze alert must actually be able to fire.
 func TestRunDueCheckFreezeDetection(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	fresh := now.Add(-2 * 24 * time.Hour).Format(time.RFC3339)
@@ -184,14 +240,8 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// TestRunDueCheckNeverVerifiedPointer is R25: freeze detection only makes
-// sense once a host has verified a channel pointer at least once
-// (State.LastPointerIssued). A fresh, unconfigured install (update.source=
-// github, private release repo, no update.github_token) 404s on every
-// check; before any pointer has ever verified, that must not raise the
-// stale/freeze alert on tick one, and must not spam a log line every tick --
-// just one line per distinct failure cause, and the cause surfaces via
-// State.LastCheckError (what `update status` reads).
+// TestRunDueCheckNeverVerifiedPointer: freeze detection only makes sense once a host has
+// verified a channel pointer at least once (State.LastPointerIssued).
 func TestRunDueCheckNeverVerifiedPointer(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	p := testUpdatePaths(t)
@@ -223,9 +273,7 @@ func TestRunDueCheckNeverVerifiedPointer(t *testing.T) {
 }
 
 // TestRunDueCheckSeenOnceThenExpired: once a pointer has verified once
-// (State.LastPointerIssued set), R17 applies unchanged -- an expired pointer
-// is the freeze signature and alerts at once, unlike
-// TestRunDueCheckNeverVerifiedPointer's silence before that.
+// (State.LastPointerIssued set).
 func TestRunDueCheckSeenOnceThenExpired(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	p := testUpdatePaths(t)
@@ -242,10 +290,8 @@ func TestRunDueCheckSeenOnceThenExpired(t *testing.T) {
 	}
 }
 
-// TestRunDueCheckSeenOnceThenMissing: once a pointer has verified once, a
-// 404/missing pointer (e.g. the token was removed afterward) still counts as
-// a real freeze signal and alerts, same as TestRunDueCheckFreezeDetection's
-// "missing pointer alerts at once" case.
+// TestRunDueCheckSeenOnceThenMissing: once a pointer has verified once, a 404/missing
+// pointer.
 func TestRunDueCheckSeenOnceThenMissing(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	p := testUpdatePaths(t)
@@ -257,5 +303,81 @@ func TestRunDueCheckSeenOnceThenMissing(t *testing.T) {
 	runDueCheck(context.Background(), u, config.Default(), func(a Alert) { got = append(got, a) })
 	if n := staleAlerts(got); n != 1 {
 		t.Fatalf("stale alerts = %d, want 1 (token removed after a pointer was once seen must still alert): %+v", n, got)
+	}
+}
+
+func TestUpdateAvailableAlertSkipsInstalledVersion(t *testing.T) {
+	st := update.State{Available: "0.6.0-beta.1"}
+	if _, ok := updateAvailableAlert(st, mustVer("0.6.0-beta.1")); ok {
+		t.Fatal("alerted that the running version is available")
+	}
+}
+
+func TestNotifyPendingResultDeliversEveryOutcome(t *testing.T) {
+	p := testUpdatePaths(t)
+	var st update.State
+	st.RecordResult(update.Result{Version: "0.5.0", From: "0.4.1", Outcome: "committed", At: 100})
+	st.RecordResult(update.Result{Version: "0.5.1", From: "0.5.0", Outcome: "rolled_back", Detail: "not active", At: 200})
+	if err := update.SaveState(p.dir(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []Alert
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 2 {
+		t.Fatalf("alerts = %d, want 2: %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].Title, "0.4.1 → 0.5.0") || !strings.Contains(got[1].Title, "0.5.1") || got[1].Severity != SevCritical {
+		t.Fatalf("alerts out of order or wrong: %+v", got)
+	}
+
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 2 {
+		t.Fatalf("re-notified on the next tick: %+v", got[2:])
+	}
+	after, err := update.LoadState(p.dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Unnotified) != 0 || after.Last == nil || !after.Last.Notified {
+		t.Fatalf("queue not drained or Last not marked: %+v / %+v", after.Unnotified, after.Last)
+	}
+}
+
+func TestNotifyPendingResultKeepsOutcomeRecordedMeanwhile(t *testing.T) {
+	p := testUpdatePaths(t)
+	var st update.State
+	st.RecordResult(update.Result{Version: "0.5.0", From: "0.4.1", Outcome: "committed", At: 100})
+	if err := update.SaveState(p.dir(), st); err != nil {
+		t.Fatal(err)
+	}
+	var got []Alert
+	notifyPendingResult(p, func(a Alert) {
+		got = append(got, a)
+		if len(got) == 1 {
+			if err := update.WithState(p.dir(), func(s *update.State) error {
+				s.RecordResult(update.Result{Version: "0.5.1", From: "0.5.0", Outcome: "rolled_back", At: 200})
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 2 || !strings.Contains(got[1].Title, "0.5.1") {
+		t.Fatalf("outcome recorded during delivery was lost: %+v", got)
+	}
+}
+
+func TestNotifyPendingResultLegacyLast(t *testing.T) {
+	p := testUpdatePaths(t)
+	if err := update.SaveState(p.dir(), update.State{Last: &update.Result{Version: "0.5.0", From: "0.4.1", Outcome: "committed", At: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	var got []Alert
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	notifyPendingResult(p, func(a Alert) { got = append(got, a) })
+	if len(got) != 1 {
+		t.Fatalf("alerts = %d, want 1: %+v", len(got), got)
 	}
 }

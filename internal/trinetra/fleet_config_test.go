@@ -36,9 +36,8 @@ func assertFleetOnDiskKept(t *testing.T) {
 	}
 }
 
-// A config saved by an older plugin (or a daemon holding a pre-`fleet join`
-// copy in memory) has an empty fleet block; saving it must not wipe the
-// fleet identity `trinetra fleet join` wrote to disk.
+// A config saved by an older plugin (or a daemon holding a pre-`fleet join` copy in memory)
+// has an empty fleet block.
 func TestApplyConfigWithEmptyFleetBlockKeepsOnDiskFleetKeys(t *testing.T) {
 	withFleetOnDisk(t)
 	c := config.Default()

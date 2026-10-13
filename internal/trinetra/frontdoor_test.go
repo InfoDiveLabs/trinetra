@@ -6,12 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-// fakeLaunch records the arguments it was called with and returns whatever
-// err is set, standing in for launchPlugin (which would otherwise
-// syscall.Exec and never return -- unusable directly from a test).
+// fakeLaunch records the arguments it was called with and returns whatever err is set,
+// standing in for launchPlugin.
 type fakeLaunch struct {
 	calledName       string
 	calledArgs       []string
@@ -165,4 +165,14 @@ func containsFold(s, substr string) bool {
 		bytes.ToLower([]byte(s)),
 		bytes.ToLower([]byte(substr)),
 	)
+}
+
+func TestUsersCommandGoesToTheWebPlugin(t *testing.T) {
+	t.Setenv("RUNTIME_DIRECTORY", t.TempDir())
+	f := &fakeLaunch{}
+	withFakeLaunch(t, f)
+	Main([]string{"users", "invite", "--role", "admin"})
+	if f.calledName != "web" || strings.Join(f.calledArgs, " ") != "users invite --role admin" {
+		t.Fatalf("launched %q with %v", f.calledName, f.calledArgs)
+	}
 }

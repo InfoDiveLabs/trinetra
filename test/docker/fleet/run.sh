@@ -62,6 +62,9 @@ dump_evidence() {
     on "$s" trinetra fleet status 2>&1 || true
     on "$s" sh -c 'echo "outbox: $(ls /var/lib/trinetra/outbox 2>/dev/null | tr "\n" " ") cursor=$(cat /var/lib/trinetra/outbox/cursor 2>/dev/null)"; echo "local cpu.tsd=$(stat -c %s /var/lib/trinetra/ts/raw/cpu.tsd 2>/dev/null)"' 2>/dev/null || true
   done
+  echo "--- master: status page ---"
+  on master trinetra status-page service list 2>&1 || true
+  on master trinetra status-page incident list --all 2>&1 || true
   echo "--- mocktg: messages ---"
   on mocktg curl -s http://localhost:8080/_messages 2>/dev/null || true
   echo
@@ -747,6 +750,54 @@ for path in /fleet /fleet/incidents /fleet/alerting /fleet/silences /fleet/manag
 done
 echo "  every fleet page 302'd an unauthenticated request to /login: /fleet /fleet/incidents /fleet/alerting /fleet/silences /fleet/managed /fleet/audit /n/<id>/monitoring /api/fleet/nodes"
 pass "trinetra-web verified and launched via plugins.json; unauthenticated fleet pages redirect to /login"
+
+# ---------------------------------------------------------------------------
+step "17 status page"
+# Map a public service to child1 (30s hold-down), take child1 down, and watch
+# the page: auto incident, a posted update on the public JSON/feed (without any
+# internal name), then recovery -> monitoring. The status runtime evaluates on
+# the slow sampler tick, so shorten it on the master.
+on master trinetra config set sample_interval 10 >/dev/null
+on master trinetra config set public.enabled true >/dev/null
+on master trinetra status-page service add api --name "API" --hold 30s --target "node:$ID_child1" >/dev/null \
+  || fail "status-page service add"
+stop_daemon master
+# stopping the daemon leaves its trinetra-web child running on :8088; the
+# restarted daemon's own web plugin could not bind it.
+on master sh -c 'pkill -f "[t]rinetra-web" || true'
+wait_until 30 "old trinetra-web to exit" on master sh -c '! pgrep -f "[t]rinetra-web"'
+start_daemon master
+wait_until 30 "trinetra-web listening again" on solo curl -sf -o /dev/null http://master:8088/login
+sp_service_operational() { on master trinetra status-page service list | grep -E '^api .*operational' >/dev/null; }
+wait_until 120 "service api listed operational" sp_service_operational
+STATUS_JSON() { on solo curl -fsS http://master:8088/status/api.json; }
+sp_json_has_api() { STATUS_JSON | grep -F '"API"' >/dev/null; }
+wait_until 60 "public JSON lists the API service" sp_json_has_api
+# Earlier steps leave child1 with unrelated alerts (the containers have no
+# systemd, so collector:services fires, and step 10 lowered a disk threshold),
+# which would keep the service in outage after child1 is back. Silence
+# child1's alerts; node-down is a liveness signal, not an alert, so the
+# silence does not hide the outage we are about to cause.
+on master trinetra fleet silence add --match "node=child1" --for 1h --comment "e2e step 17" >/dev/null \
+  || fail "silence add"
+compose stop child1 >/dev/null 2>&1 || fail "stop child1"
+sp_incident_open() { on master trinetra status-page incident list | grep -F 'API' >/dev/null; }
+wait_until 300 "auto incident opened for API" sp_incident_open
+SP_INC=$(on master trinetra status-page incident list | awk '/API/{print $1; exit}')
+[ -n "$SP_INC" ] || fail "no incident id in: $(on master trinetra status-page incident list)"
+on master trinetra status-page incident update "$SP_INC" --status identified --message "Root cause identified" >/dev/null \
+  || fail "incident update"
+sp_json_has_update() { STATUS_JSON | grep -F 'Root cause identified' >/dev/null; }
+wait_until 60 "public JSON shows the update" sp_json_has_update
+STATUS_JSON | grep -F "child1" >/dev/null && fail "public JSON leaks the node name"
+STATUS_JSON | grep -F "$ID_child1" >/dev/null && fail "public JSON leaks the node id"
+on solo curl -fsS http://master:8088/status/feed.atom | grep -F 'Root cause identified' >/dev/null \
+  || fail "feed lacks the update"
+compose start child1 >/dev/null 2>&1 || fail "start child1"
+start_daemon child1 # the container only runs `sleep infinity`; the daemon was exec'd into it
+sp_incident_monitoring() { on master trinetra status-page incident show "$SP_INC" | grep -i monitoring >/dev/null; }
+wait_until 300 "incident moves to monitoring" sp_incident_monitoring
+pass "service operational -> incident opened on child1 down -> update on public JSON/feed (no internal names) -> monitoring on recovery"
 
 STEP=""
 echo "ALL PASS ($(( $(date +%s) - T_START ))s)"

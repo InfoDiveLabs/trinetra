@@ -9,9 +9,11 @@
 <link rel="apple-touch-icon" href="{{asset "/assets/brand/icon-180.png"}}">
 <link rel="stylesheet" href="{{asset "/assets/style.css"}}">
 {{block "head_extra" .}}{{end}}
+<script type="application/ld+json" nonce="{{.Nonce}}">{{attributionJSONLD}}</script>
 </head>
 <body>
 {{block "content" .}}{{end}}
+<p class="attribution">powered by <a href="{{attributionProductURL}}">trinetra</a> · <a href="{{attributionRepoURL}}">GitHub</a> · <a href="{{attributionSiteURL}}">studio</a></p>
 <script src="{{asset "/assets/app.js"}}" nonce="{{.Nonce}}"></script>
 </body>
 </html>

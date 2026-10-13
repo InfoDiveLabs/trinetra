@@ -99,10 +99,8 @@ func TestMigrateLegacyImportsSamplesAndEvents(t *testing.T) {
 		t.Fatal("marker file .migrated should exist after import")
 	}
 
-	// The daemon dual-writes, so it can RECREATE the legacy samples/ with data
-	// already in the SampleStore. Simulate that: re-add a sample via the old
-	// Store, then re-run migrate. The marker must make it a no-op -- no
-	// re-import, no duplicate points.
+	// The daemon dual-writes, so it can RECREATE the legacy samples/ with data already in the
+	// SampleStore.
 	if err := old.AppendSample(Sample{TS: now.Add(-30 * time.Minute).Unix(), CPU: 99, Disks: map[string]float64{"/": 60}}); err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,174 @@ branch; stable releases are tagged on `main`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-13
+
+The stable cut of the `0.6.0-beta.1`…`beta.3` line. Everything below is the
+beta content promoted unchanged; see the beta entries for full detail.
+Highlights:
+
+- **Public status page.** Publish the containers, services and servers your
+  customers depend on as named services, with a plain-language banner, 90-day
+  uptime bars, incidents with team-posted updates, and Atom and JSON feeds.
+  Add services straight from Monitoring. Internal names never appear publicly.
+  (#157)
+- **Guided first run, Telegram optional.** `sudo trinetra cli` on a new server
+  walks through the web UI, the first admin's enroll link and where alerts go.
+  Every step can be skipped, and Telegram is one alert channel among the
+  others, not a requirement.
+- **Users from the terminal.** `trinetra users list`, `invite`, `set-role` and
+  `remove`, also while the daemon is stopped. A new `responder` role sits
+  between viewer and admin.
+- **Reworked web UI.** Grouped sidebar, tabbed Settings, Notifications and
+  Updates, every page usable on a phone, and channel secrets no longer shown
+  (#139).
+- **Passkeys that show up everywhere.** Discoverable credentials, sign-in by
+  name for older keys, and no more false clone rejections (#170).
+- **Sturdier self-update.** Works on `noexec` and SELinux hosts (#141), keeps
+  retrying a failed restore (#136), fails closed on an unreadable version floor
+  (#138), reports every outcome (#142), no longer offers the installed release
+  (#167), and the watchdog fires after reinstall (#140).
+- **Reliability.** `trinetra cli` right after install waits for the daemon
+  (#162); the web UI recovers after sitting idle and keeps its real config
+  across a daemon restart; user, invite and session stores are locked across
+  processes; downtime history is paged server-side (#117).
+
+### Upgrading from 0.5.0
+
+- The first admin sign-up now needs an invite link
+  (`sudo trinetra users invite --role admin`) unless the web UI is local-only.
+  Existing accounts are unaffected.
+- "View public page" now opens `/status`; old `/public` links redirect there.
+
+## [0.6.0-beta.3] - 2026-10-09
+
+Third beta of 0.6.0: a guided first run that doesn't need Telegram, user
+management from the terminal, and fixes for the web UI after idling or a
+daemon restart.
+
+### Added
+
+- **Guided first run.** `sudo trinetra cli` on a new server walks through the
+  web UI, the first admin's enroll link and where alerts go. Every step can be
+  skipped, and Telegram is now just one of the alert channels, not a
+  requirement.
+- **`trinetra users`.** `list`, `invite`, `set-role` and `remove` from the
+  terminal. They also work while the daemon is stopped, and `invite` prints the
+  enroll URL.
+- **No-channel reminders.** When no alert channel is enabled, the dashboard,
+  `trinetra status` and `trinetra cli` say so and point to where to add one.
+- The Notifications and Updates pages are split into tabs.
+
+### Changed
+
+- **First admin sign-up.** It needs an invite link
+  (`sudo trinetra users invite --role admin`) unless the web UI is local-only:
+  listening on loopback, with a loopback origin if one is set.
+- `trinetra install` ends with next steps instead of a Telegram prompt, and
+  `trinetra schedule off` turns the scheduled reports off.
+- Enrolling a Telegram chat adds the telegram alert channel right away.
+- "View public page" opens the public status page at `/status`, signed in or
+  not; old `/public` links redirect there.
+- The README is rebuilt around short clips of each feature.
+
+### Fixed
+
+- The web UI no longer shows an empty dashboard after sitting idle: the
+  control socket connection is re-dialed once the daemon drops it for idling.
+- After a daemon restart, the web UI keeps the real config instead of falling
+  back to defaults. It re-reads the control token on reconnect.
+- The user, invite and session stores are locked across processes, so the
+  terminal and the web UI can't overwrite each other's changes.
+
+## [0.6.0-beta.2] - 2026-10-09
+
+Second beta of 0.6.0: easier status page setup, a reworked web UI, passkey
+sign-in that works on every device, and self-update fixes.
+
+### Added
+
+- **Status page services from Monitoring.** Admins tick containers or systemd
+  services on Monitoring (this server or any fleet node) and add them to a new
+  status page service, in a new or existing group, or to an existing one. The
+  Services form picks targets from a per-server checklist and suggests existing
+  groups.
+- **Sign in by name.** The login page has an optional name field, so passkeys
+  that browsers can't list (older security keys, passkeys registered before
+  this release) still sign in. Where the browser supports it, the field offers
+  saved passkeys as autofill.
+- The anonymous pages (public status, history, login, enroll) end with a small
+  "powered by trinetra · GitHub · studio" footer and carry a JSON-LD
+  `SoftwareApplication` description for crawlers.
+
+### Changed
+
+- **Web UI.** The sidebar is grouped into Fleet, Monitor, Status page and
+  Settings, with one SVG icon set. Every page fits phones and tablets without
+  sideways scrolling, with 44 px touch targets. Column headers and controls
+  have tooltips.
+- **Settings.** Server settings are split into tabs (General, Alerts, What to
+  monitor, Reports, Data & performance) with one Save button and plain-language
+  labels. Users has People, Invite someone and role tabs, with a Copy button
+  for invite links.
+- **Public status page.** The banner says what is happening in words, services
+  come first with their state and 90-day uptime, a colour key explains the
+  bars, and incidents show their latest update first.
+
+### Fixed
+
+- **Passkeys** are now created as discoverable credentials where the device
+  supports it, so they show up at sign-in on Android and elsewhere. Synced
+  passkeys that stop counting sign-ins are no longer rejected as clones, and
+  the login page explains plain-`http://` or IP-address access, where browsers
+  block passkeys (#170).
+- **`trinetra cli` right after `install`** no longer fails on a missing control
+  socket: `install` waits for the daemon, and `cli` and `web` retry while it
+  starts (#162).
+- **Self-update** works on hosts where `/var/lib` is `noexec` or blocked by
+  SELinux (#141), and every update and rollback outcome is notified, not just
+  the last (#142).
+- **Updates** no longer offer a release that is already installed, in the web
+  UI, Telegram `/version` or the "update available" alert (#167).
+
+## [0.6.0-beta.1] - 2026-10-08
+
+Beta of the public status page. Install it on a beta-channel host
+(`sudo trinetra config set update.channel beta`) to try it before 0.6.0.
+
+### Added
+
+- **Public status page and incidents.** Admins define public services mapped to
+  a host, fleet nodes, tags, containers, systemd units or mounts. Their status
+  (operational, degraded, outage, maintenance) is evaluated on the slow sampler
+  tick with a per-service hold-down, shown on `/` with a banner and 90 day bars,
+  and published at `/status/history`, `/status/feed.atom` and `/status/api.json`.
+  Outages and degraded service open incidents automatically and responders post updates, echoed to
+  `status.echo_channels`. Internal names never appear publicly. Managed with
+  `trinetra status-page` and the new `status.*` keys; see the
+  [handbook](docs/handbook/08-web-ui.md#public-status-page).
+- **`responder` web role** (viewer < responder < admin): can ack alerts and fleet
+  incidents and run status-page incidents, without admin rights.
+
+### Fixed
+
+- **Self-update rollback** keeps the pending update when restoring the previous
+  build fails, so the watchdog retries the restore (without re-running the
+  health gate), and the web UI shows the failed restore (#136).
+- **Update floor**: an unreadable persisted floor version now fails closed
+  instead of being treated as "no floor" (#138).
+- **Update watchdog** timer fires shortly after it is (re)installed (#140).
+- **Channel secrets** are no longer shown on `/channels`: leaving a secret blank
+  keeps it, and a separate clear control removes it (#139).
+- **Downtime history** pages `/api/downtime` with `limit`/`offset`, and the
+  downtime bar is drawn from a server-side timeline, so paging can't hide
+  incidents (#117).
+- **Release notes** now come from this changelog instead of a placeholder.
+
+### Changed
+
+- Release and channel workflows use `actions/checkout` v7, `actions/setup-go` v7
+  and `actions/attest-build-provenance` v4 (Node 24 runtime).
+
 ## [0.5.0] - 2026-09-30
 
 The first release since the serverwatch rename, and the biggest yet: fleet
@@ -497,7 +665,11 @@ and management tooling move out of process.
 - Initial release: the stdlib-only `serverwatch` daemon with core metric
   collection, threshold and anomaly detection, and Telegram alerting.
 
-[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/InfoDiveLabs/trinetra/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0
+[0.6.0-beta.3]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.3
+[0.6.0-beta.2]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.2
+[0.6.0-beta.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.6.0-beta.1
 [0.5.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.5.0
 [0.4.1]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.4.1
 [0.4.0]: https://github.com/InfoDiveLabs/trinetra/releases/tag/v0.4.0

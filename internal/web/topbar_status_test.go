@@ -9,14 +9,8 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 )
 
-// TestTopbarStatusCriticalAlertsFiring pins Part 3 of the field-feedback fix:
-// N active CRITICAL alerts must drive the topbar to "crit" with real-count
-// text, not the old hardcoded "2 alerts firing" regardless of how many were
-// actually active. The count is the TOTAL active-alert count (B4, 2026-09-25
-// UI audit), not just the critical ones: /alerts, the dashboard's active
-// alerts panel and the sidebar Alerts badge all count every active alert
-// regardless of severity (NavCounts.Alerts, navCountsFor's doc), so the pill
-// must agree with them rather than silently dropping the warnings.
+// TestTopbarStatusCriticalAlertsFiring pins Part 3 of the field-feedback fix: N active
+// CRITICAL alerts must drive the topbar to "crit" with real-count text.
 func TestTopbarStatusCriticalAlertsFiring(t *testing.T) {
 	alerts := []activeAlertView{
 		{Key: "disk:/", Critical: true},
@@ -63,11 +57,8 @@ func TestTopbarStatusNoActiveAlertsIsOK(t *testing.T) {
 	}
 }
 
-// TestLoadActiveAlertsDecodesCritical confirms activeAlertsViaAPI carries the
-// per-record severity (core.AlertRecord.Severity, set at fire time from the
-// breaching Check's own severity) into activeAlertView.Critical, so
-// topbarStatus has real severity to work with: "critical" -> Critical true,
-// anything else -> false.
+// TestLoadActiveAlertsDecodesCritical confirms activeAlertsViaAPI carries the per-record
+// severity.
 func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
 	d := Deps{API: fakeAPI{active: []core.AlertRecord{
 		{Key: "disk:/", Time: 1, Source: "full", Severity: "critical"},
@@ -92,12 +83,8 @@ func TestLoadActiveAlertsDecodesCritical(t *testing.T) {
 	}
 }
 
-// TestConfigPageTopbarReflectsRealActiveCriticalAlert pins the "every page's
-// topbar is accurate" obligation end to end: GET /config used to always
-// pass the literal "ok" status into newPageData no matter what was actually
-// firing. With a critical alert active on disk, the rendered topbar pill
-// must show "crit" styling and a real "1 alert firing" count -- not the old
-// hardcoded-"ok" "All systems normal".
+// TestConfigPageTopbarReflectsRealActiveCriticalAlert pins that every page's topbar is
+// accurate.
 func TestConfigPageTopbarReflectsRealActiveCriticalAlert(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{{Key: "disk:/", Time: 1, Source: "disk full", Severity: "critical"}}}
@@ -122,11 +109,8 @@ func TestConfigPageTopbarReflectsRealActiveCriticalAlert(t *testing.T) {
 	}
 }
 
-// TestConfigPageTopbarCountMatchesNavBadge pins B4 (2026-09-25 UI audit)
-// end to end: with 1 critical + 1 warning alert active, the topbar pill's
-// count must equal navCountsFor's Alerts badge (both from the same
-// activeAlertsViaAPI read) -- "2 alerts firing", not "1 alert firing" from
-// counting only the critical one.
+// TestConfigPageTopbarCountMatchesNavBadge pins B4 (2026-09-25 UI audit) end to end: with 1
+// critical + 1 warning alert active.
 func TestConfigPageTopbarCountMatchesNavBadge(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 	d.API = fakeAPI{active: []core.AlertRecord{
@@ -151,10 +135,8 @@ func TestConfigPageTopbarCountMatchesNavBadge(t *testing.T) {
 	}
 }
 
-// TestConfigPageTopbarIsOKWithNoActiveAlerts is the negative case: no active
-// alerts at all renders the real "ok"/"All systems normal" pill (which,
-// before this fix, was ALSO what "ok" hardcoded -- so this pins that the
-// real computation doesn't regress the common case).
+// TestConfigPageTopbarIsOKWithNoActiveAlerts is the negative case: no active alerts at all
+// renders the real "ok"/"All systems normal" pill.
 func TestConfigPageTopbarIsOKWithNoActiveAlerts(t *testing.T) {
 	d, _, _ := configTestDeps(t)
 

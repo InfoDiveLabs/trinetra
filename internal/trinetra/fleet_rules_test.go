@@ -82,11 +82,8 @@ func TestParseRuleExprValidForms(t *testing.T) {
 	}
 }
 
-// TestParseRuleExprBadInputs covers the task-7 ruling's "6+ bad inputs with
-// position-bearing errors": every case's error must be a *ruleParseError
-// whose Pos matches wantPos exactly (computed via strings.Index against the
-// expression itself, so a test typo can never silently assert the wrong
-// position).
+// TestParseRuleExprBadInputs covers 6+ bad inputs with position-bearing errors: every
+// case's error must be a *ruleParseError whose Pos matches wantPos exactly.
 func TestParseRuleExprBadInputs(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -124,8 +121,7 @@ func TestParseRuleExprBadInputs(t *testing.T) {
 			if !strings.Contains(pe.Msg, tt.wantMsg) {
 				t.Fatalf("parseRuleExpr(%q) error = %q, want to contain %q", tt.expr, pe.Msg, tt.wantMsg)
 			}
-			// Every error names its position exactly per the ruling's own
-			// example format ("expected ',' at 12").
+			// Every error names its position ("expected ',' at 12").
 			if !strings.HasSuffix(err.Error(), " at "+itoa(pe.Pos)) {
 				t.Fatalf("parseRuleExpr(%q) error string = %q, want it to end with ' at %d'", tt.expr, err.Error(), pe.Pos)
 			}
@@ -213,10 +209,8 @@ func TestValidateRulesNameAndSeverity(t *testing.T) {
 	}
 }
 
-// TestValidateAlertingConfigAcceptsRulesOnlyConfig proves a config that only
-// sets Rules (no routes/policies/default_policy) validates without being
-// forced to also supply routing -- validateAlertingConfig's "totally empty
-// routing" shortcut must still run rule validation, not skip it outright.
+// TestValidateAlertingConfigAcceptsRulesOnlyConfig proves a config that only sets Rules (no
+// routes/policies/default_policy) validates without being forced to also supply routing.
 func TestValidateAlertingConfigAcceptsRulesOnlyConfig(t *testing.T) {
 	cfg := core.AlertingConfig{Rules: []core.AggregateRule{{Name: "r1", Expr: "absent(tag:x, 5m)"}}}
 	if err := validateAlertingConfig(cfg, allChannelsValid); err != nil {
@@ -230,10 +224,8 @@ func TestValidateAlertingConfigAcceptsRulesOnlyConfig(t *testing.T) {
 
 // ---- evaluation fixture ---------------------------------------------------
 
-// ruleFixture wires a fleetAlertEngine with rules, routing and silences all
-// active, over real on-disk registry/tracker/sink/incidents/alerting/silence
-// stores (like production), so a test can drive TickRules off a fake clock
-// and assert exactly what fired/recovered/delivered.
+// ruleFixture wires a fleetAlertEngine with rules, routing and silences all active, over
+// real on-disk registry/tracker/sink/incidents/alerting/silence stores (like production).
 type ruleFixture struct {
 	mu          sync.Mutex
 	deliveredTo []namedDelivery
@@ -248,9 +240,8 @@ type ruleFixture struct {
 	engine    *fleetAlertEngine
 	now       time.Time
 
-	// self (round-1 review fix, IMPORTANT 2: all/node:<glob> selectors
-	// include the master's own node) backs ruleSelfSource. selfMu guards
-	// selfName/selfSnap/hasSelf since a test may mutate them between ticks.
+	// self (all/node:<glob> selectors include the master's own node) backs ruleSelfSource.
+	// selfMu guards selfName/selfSnap/hasSelf since a test may mutate them between ticks.
 	selfMu      sync.Mutex
 	selfName    string
 	selfSnap    Snapshot
@@ -319,18 +310,15 @@ func newRuleFixture(t *testing.T) *ruleFixture {
 	return rf
 }
 
-// setSelfSnapshot posts the master's own current snapshot (round-1 review
-// fix, IMPORTANT 2's ruleSelfSource.Snap).
+// setSelfSnapshot posts the master's own current snapshot (ruleSelfSource.Snap).
 func (rf *ruleFixture) setSelfSnapshot(snap Snapshot) {
 	rf.selfMu.Lock()
 	defer rf.selfMu.Unlock()
 	rf.selfSnap, rf.hasSelf = snap, true
 }
 
-// appendSelfSeriesPoint appends one 1m-resolution rollup point to the
-// master's own local store (round-1 review fix, IMPORTANT 2's
-// ruleSelfSource.Store), exactly like appendSeriesPoint does for a
-// replicated fleet node.
+// appendSelfSeriesPoint appends one 1m-resolution rollup point to the master's own local
+// store (ruleSelfSource.Store), like appendSeriesPoint does for a replicated fleet node.
 func (rf *ruleFixture) appendSelfSeriesPoint(t *testing.T, metric string, ts int64, v float64) {
 	t.Helper()
 	if err := rf.selfTSStore.AppendRollup(metric, Point{TS: ts, Min: v, Avg: v, Max: v}); err != nil {
@@ -367,8 +355,7 @@ func (rf *ruleFixture) setOnline(id string) {
 	rf.tracker.Evaluate(rf.now.Unix())
 }
 
-// setSnapshot posts a live snapshot for id, exactly like a child's fast-tick
-// Live() call.
+// setSnapshot posts a live snapshot for id, exactly like a child's fast-tick Live() call.
 func (rf *ruleFixture) setSnapshot(t *testing.T, id string, snap Snapshot) {
 	t.Helper()
 	b, err := json.Marshal(snap)
@@ -380,9 +367,8 @@ func (rf *ruleFixture) setSnapshot(t *testing.T, id string, snap Snapshot) {
 	}
 }
 
-// appendSeriesPoint appends one 1m-resolution rollup point directly (the
-// same call fleet_replica.go's gap filler uses), so a series-based rule can
-// be tested without going through raw ingest + downsample.
+// appendSeriesPoint appends one 1m-resolution rollup point directly (the same call
+// fleet_replica.go's gap filler uses).
 func (rf *ruleFixture) appendSeriesPoint(t *testing.T, id, metric string, ts int64, v float64) {
 	t.Helper()
 	n, err := rf.sink.node(id)
@@ -502,8 +488,7 @@ func TestRuleAvgSeriesTwoNodesExcludesNoData(t *testing.T) {
 		rf.setOnline(id)
 	}
 	base := rf.now.Unix()
-	// db1 averages 90, db2 averages 80 over the 10m window -> avg across
-	// nodes = 85.
+	// db1 averages 90, db2 averages 80 over the 10m window -> avg across nodes = 85.
 	for _, ts := range []int64{base - 540, base - 480, base - 420} {
 		rf.appendSeriesPoint(t, db1.ID, "mem", ts, 90)
 		rf.appendSeriesPoint(t, db2.ID, "mem", ts, 80)
@@ -518,11 +503,8 @@ func TestRuleAvgSeriesTwoNodesExcludesNoData(t *testing.T) {
 	if st.Value != 85 {
 		t.Fatalf("db-mem value = %v, want 85", st.Value)
 	}
-	// Sustained for 0s so far, but the fixture's clock has not advanced past
-	// the 10m for-window since the condition became true; firing follows the
-	// same sustain state machine as count() (tested above), so here we only
-	// assert the aggregate value itself and that db3's absence didn't turn
-	// the whole rule into "no data".
+	// Sustained for 0s so far, but the fixture's clock has not advanced past the 10m
+	// for-window since the condition became true.
 }
 
 // ---- all-no-data holds the previous state ---------------------------------
@@ -575,9 +557,8 @@ func TestRuleOnlineUsesTracker(t *testing.T) {
 		t.Fatalf("web-quorum did not fire after 90s sustained: %+v", st)
 	}
 
-	// Bring web2 online too (both nodes freshly heartbeat, since
-	// Tracker.Evaluate reclassifies every tracked node, not just the one just
-	// Seen): 2 >= 2, condition clears, recovers.
+	// Bring web2 online too (both nodes freshly heartbeat, since Tracker.Evaluate reclassifies
+	// every tracked node, not just the one just Seen): 2 >= 2, condition clears, recovers.
 	rf.setOnline(web1.ID)
 	rf.setOnline(web2.ID)
 	_ = web3
@@ -596,9 +577,8 @@ func TestRuleOnlineUsesTracker(t *testing.T) {
 func TestRuleAbsentBlindWindow(t *testing.T) {
 	rf := newRuleFixture(t)
 	backup := rf.addNode(t, "backup1", []string{"backup"})
-	// backup1's LastSeen defaults to 0 (never reported since master start in
-	// this fixture) -- absent should still be forced false during the blind
-	// window itself.
+	// backup1's LastSeen defaults to 0 (never reported since master start in this fixture) --
+	// absent should still be forced false during the blind window itself.
 	_ = backup
 	rf.setRules(t, core.AggregateRule{Name: "backup-missing", Expr: "absent(tag:backup, 15m)"})
 
@@ -628,8 +608,8 @@ func TestRuleAbsentBlindWindow(t *testing.T) {
 	}
 }
 
-// TestRuleAbsentFiresWhenNoNodeMatchesAtAll covers the "including the case
-// where no node matches the selector at all" ruling.
+// TestRuleAbsentFiresWhenNoNodeMatchesAtAll covers the case where no node
+// matches the selector at all.
 func TestRuleAbsentFiresWhenNoNodeMatchesAtAll(t *testing.T) {
 	rf := newRuleFixture(t)
 	rf.setRules(t, core.AggregateRule{Name: "no-such-tag", Expr: "absent(tag:nonexistent, 5m)"})
@@ -674,13 +654,8 @@ func TestRuleDeletedWhileFiringRecovers(t *testing.T) {
 
 // ---- orphan recover via stillActive ----------------------------------------
 
-// TestRuleOrphanRecoverViaStillActive proves masterLoop.stillActive's
-// "fleet:rule:<name>" case recovers a stale open incident after a restart:
-// the fresh engine's in-memory rule state starts over (task-7 ruling), so
-// even though the rule still exists and its condition is (from a fresh
-// evaluator's point of view) unknown, stillActive must say "not still
-// active" -- there is nothing in the restarted process that remembers it
-// was firing.
+// TestRuleOrphanRecoverViaStillActive proves masterLoop.stillActive's "fleet:rule:<name>"
+// case recovers a stale open incident after a restart.
 func TestRuleOrphanRecoverViaStillActive(t *testing.T) {
 	rf := newRuleFixture(t)
 	node := rf.addNode(t, "web1", []string{"web"})
@@ -694,9 +669,8 @@ func TestRuleOrphanRecoverViaStillActive(t *testing.T) {
 		t.Fatalf("hot-web should be firing: %+v", st)
 	}
 
-	// Simulate a restart: a brand new engine/evaluator over the SAME
-	// incidents/alerting stores (on disk), with no memory of hot-web ever
-	// having fired.
+	// Simulate a restart: a brand new engine/evaluator over the SAME incidents/alerting stores
+	// (on disk), with no memory of hot-web ever having fired.
 	freshIncidents, err := loadIncidentStore(filepath.Join(rf.dir, "incidents.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -771,12 +745,7 @@ func TestRuleAlertRoutedNormallyWhenNotSilenced(t *testing.T) {
 	}
 }
 
-// =====================================================================
-// Round-1 review fixes
-// =====================================================================
-
-// ---- IMPORTANT 1: an in-place edit of a firing rule is no longer a
-// silent no-op --------------------------------------------------------
+// ---- an in-place edit of a firing rule is not a silent no-op ----
 
 func TestRuleInPlaceEditWhileFiringRecoversThenRefires(t *testing.T) {
 	rf := newRuleFixture(t)
@@ -813,9 +782,8 @@ func TestRuleInPlaceEditWhileFiringRecoversThenRefires(t *testing.T) {
 		t.Fatalf("hot-web must not still be firing right after an edit: %+v", st)
 	}
 
-	// The fresh evaluation under the new definition must NOT fire on this
-	// same tick (its own `for` sustain has not elapsed yet), even though the
-	// underlying condition (cpu 95 > 50) is already true.
+	// The fresh evaluation under the new definition must NOT fire on this same tick (its own
+	// `for` sustain has not elapsed yet), even though the underlying condition.
 	rf.advance(30 * time.Second)
 	rf.tick()
 	if rf.deliveredCount() != 2 {
@@ -871,7 +839,7 @@ func TestRuleInPlaceSeverityOnlyChangeWhileFiringRecoversThenRefires(t *testing.
 	}
 }
 
-// ---- IMPORTANT 2: `all`/`node:<glob>` include the master's own node -----
+// ---- `all`/`node:<glob>` include the master's own node -----
 
 func TestSelfSelectorMatching(t *testing.T) {
 	rf := newRuleFixture(t)
@@ -951,7 +919,7 @@ func TestRuleTagSelectorNeverMatchesSelf(t *testing.T) {
 	}
 }
 
-// ---- MINORS ---------------------------------------------------------------
+// ---- misc ---------------------------------------------------------------
 
 func TestParseRuleExprRejectsNaNAndInf(t *testing.T) {
 	tests := []struct{ expr, at string }{
@@ -1006,13 +974,8 @@ func TestRuleAbsentValueWhenLastSeenIsZero(t *testing.T) {
 	}
 }
 
-// TestRuleEngineRaceSetAlertingAndTickRules interleaves SetAlerting with
-// TickRules under -race: only the ticking goroutine ever touches rf.now (so
-// the test itself introduces no race), but TickRules reads the alertingStore
-// (e.alerting.Get()) and the rule evaluator's own state concurrently with
-// the other goroutine's alerting.Set calls, exactly the real concurrency
-// masterLoop.tick and a `fleet alerting apply`/SetAlerting control-socket
-// call have in production.
+// TestRuleEngineRaceSetAlertingAndTickRules interleaves SetAlerting with TickRules under
+// -race: only the ticking goroutine ever touches rf.now.
 func TestRuleEngineRaceSetAlertingAndTickRules(t *testing.T) {
 	rf := newRuleFixture(t)
 	node := rf.addNode(t, "web1", []string{"web"})

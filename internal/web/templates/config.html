@@ -1,31 +1,42 @@
 {{define "content"}}
-<div id="config-page">
-  <form method="post" action="/config">
+<div id="config-page" data-tabs data-tabs-hash>
+  <form method="post" action="/config" class="settings-form">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
 
-    <div class="section-label"><span class="eyebrow">Identity</span></div>
+    <div class="tabs settings-tabs" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" class="on" data-tab="general">General</button><button type="button" role="tab" data-tab="alerts">Alerts</button><button type="button" role="tab" data-tab="monitor">What to monitor</button><button type="button" role="tab" data-tab="reports">Reports</button><button type="button" role="tab" data-tab="data">Data &amp; performance</button>
+    </div>
+
+    <section class="tabpane on" data-pane="general" role="tabpanel">
+      <p class="note pane-intro">The basics: what this server is called and how people reach this page.</p>
     <div class="panel"><div class="head"><span class="eyebrow">This server</span></div>
       <label class="field"><span class="lb">Server name</span><input type="text" name="server_name" value="{{.ServerNameRaw}}" placeholder="{{.ServerName}}" maxlength="128"><span class="hint">Shown in the brand, alert titles, and <span class="mono">host</span> view. Leave blank to use the system hostname.</span></label>
-      <label class="field"><span class="lb">Look up public IP</span><input type="checkbox" class="switch" name="collect_public_ip" value="1" {{if .CollectPublicIP}}checked{{end}}><span class="hint">Opt-in: resolves this host's internet-facing IP via one outbound request. Off by default.</span></label>
+      <label class="field"><span class="lb">Show this server's public IP</span><input type="checkbox" class="switch" name="collect_public_ip" value="1" {{if .CollectPublicIP}}checked{{end}}><span class="hint">Looks up the address this server has on the internet (one small outbound request). Off by default.</span></label>
     </div>
 
     <div class="section-label"><span class="eyebrow">Access &amp; domain</span></div>
-    <p class="note" style="margin:-4px 0 14px">How people reach the web UI, and the address passkeys are bound to — read-only here: managed via the CLI (<span class="mono">trinetra config set web.*</span>). Editing the origin/RP&nbsp;ID from the web could lock you out of passkey login, so there's no form control for it on this page.</p>
+    <p class="note" style="margin:-4px 0 14px">How people reach this page. Shown for reference only: changing these from the browser could lock everyone out of sign-in, so they are changed on the server with <span class="mono">trinetra config set web.*</span>.</p>
     <div class="grid g-2">
       <div class="panel"><div class="head"><span class="eyebrow">How it's served</span></div>
         <label class="field"><span class="lb">Web UI enabled</span><span class="mono">{{if .WebEnabled}}yes{{else}}no{{end}}</span></label>
         <label class="field"><span class="lb">Serving mode</span><span class="mono">{{.WebMode}}</span></label>
-        <label class="field"><span class="lb">Public hostname (RP ID)</span><span class="mono">{{.WebRPID}}</span></label>
-        <label class="field"><span class="lb">Full site origin</span><span class="mono">{{.WebOrigin}}</span></label></div>
+        <label class="field"><span class="lb" title="The domain passkeys are tied to (WebAuthn RP ID)">Public hostname</span><span class="mono">{{.WebRPID}}</span></label>
+        <label class="field"><span class="lb">Site address</span><span class="mono">{{.WebOrigin}}</span></label></div>
       <div class="panel"><div class="head"><span class="eyebrow">Sign-in</span></div>
-        <label class="field"><span class="lb">Bind address</span><span class="mono">{{.WebListen}}</span></label>
+        <label class="field"><span class="lb" title="Address and port the web server listens on">Listening on</span><span class="mono">{{.WebListen}}</span></label>
         <label class="field"><span class="lb">Stay signed in for</span><span class="mono">{{.WebSessionTTL}}</span></label>
         <p class="note" style="margin-top:4px">Public status page exposure stays on <a href="/settings/public">Public view →</a>.</p></div>
     </div>
 
-    <div class="section-label"><span class="eyebrow">When to alert</span></div>
-    <p class="note" style="margin:-4px 0 14px">A metric triggers an alert if it crosses a fixed limit <em>or</em> deviates sharply from its own recent normal.</p>
-    <div class="panel"><div class="head"><span class="eyebrow">Thresholds</span></div>
+    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Update access</span><a href="/updates" class="btn ghost">Updates →</a></div>
+      <label class="field"><span class="lb">GitHub access token (read-only)</span><input type="password" name="update_github_token" placeholder="{{if .UpdateGitHubTokenSet}}(set){{else}}(not set){{end}}" autocomplete="off"><span class="hint">Only needed if updates come from a private GitHub repository. Leave blank to keep the current token.</span></label>
+      <label class="field"><span class="lb">Remove the saved token</span><input type="checkbox" class="switch" name="update_github_token_clear" value="1"></label>
+    </div>
+    </section>
+
+    <section class="tabpane" data-pane="alerts" role="tabpanel">
+    <p class="note pane-intro">You get an alert when a reading goes over one of these limits. Unusual-behaviour alerts (below) can also catch readings that are odd for this server even if they are under the limit.</p>
+    <div class="panel"><div class="head"><span class="eyebrow">Alert when usage goes over</span></div>
       <div class="grid g-4" style="gap:0 14px">
         <label class="field"><span class="lb">Disk full at (%)</span><input type="number" step="any" name="disk_pct" value="{{.DiskPct}}" {{if index .ManagedFragment "thresholds.disk_pct"}}disabled{{end}}><span class="hint">Alert when any filesystem is this full.{{with index .ManagedFragment "thresholds.disk_pct"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
         <label class="field"><span class="lb">Memory high at (%)</span><input type="number" step="any" name="mem_pct" value="{{.MemPct}}" {{if index .ManagedFragment "thresholds.mem_pct"}}disabled{{end}}>{{with index .ManagedFragment "thresholds.mem_pct"}}<span class="hint">Managed by the fleet master (fragment {{.}}); change it on the master.</span>{{end}}</label>
@@ -35,17 +46,17 @@
       </div>
     </div>
 
-    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Anomaly detection</span><input type="checkbox" class="switch" name="baseline_alerts" value="1" {{if .BaselineAlerts}}checked{{end}} {{if index .ManagedFragment "baseline_alerts"}}disabled{{end}}></div>
-      <p class="note" style="margin:-4px 0 14px">Off by default — flags readings that deviate from the 7-day norm. Can be noisy on spiky metrics.{{with index .ManagedFragment "baseline_alerts"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</p>
+    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Unusual-behaviour alerts</span><input type="checkbox" class="switch" name="baseline_alerts" value="1" {{if .BaselineAlerts}}checked{{end}} {{if index .ManagedFragment "baseline_alerts"}}disabled{{end}}></div>
+      <p class="note" style="margin:-4px 0 14px">Off by default. Alerts when a reading is very different from what is normal for this server over the last 7 days. Can be noisy on servers whose load jumps around a lot.{{with index .ManagedFragment "baseline_alerts"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</p>
       <div class="grid g-2" style="gap:0 14px">
-        <label class="field"><span class="lb">Anomaly sensitivity (σ)</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}" {{if index .ManagedFragment "baseline_sigma"}}disabled{{end}}><span class="hint">Flag a reading this many standard deviations from its 7-day norm. Lower = more sensitive (more alerts); 3 is a good default.{{with index .ManagedFragment "baseline_sigma"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
-        <label class="field"><span class="lb">Minimum deviation (fraction)</span><input type="number" step="any" name="baseline_min_pct" value="{{.BaselineMinPct}}" {{if index .ManagedFragment "baseline_min_pct"}}disabled{{end}}><span class="hint">A reading must ALSO be at least this far from the mean, as a fraction — e.g. 0.15 = 15% — before it counts as anomalous. Raw fraction, not a percent.{{with index .ManagedFragment "baseline_min_pct"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
+        <label class="field"><span class="lb" title="Standard deviations (σ) from the 7-day average">Sensitivity</span><input type="number" step="any" name="anomaly_sigma" value="{{.AnomalySigma}}" {{if index .ManagedFragment "baseline_sigma"}}disabled{{end}}><span class="hint">How far from normal a reading must be, in standard deviations. Lower means more alerts; 3 suits most servers.{{with index .ManagedFragment "baseline_sigma"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
+        <label class="field"><span class="lb">Minimum change</span><input type="number" step="any" name="baseline_min_pct" value="{{.BaselineMinPct}}" {{if index .ManagedFragment "baseline_min_pct"}}disabled{{end}}><span class="hint">Ignore small wobbles: a reading must also differ from average by at least this much. Written as a fraction, so 0.15 means 15%.{{with index .ManagedFragment "baseline_min_pct"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</span></label>
       </div>
     </div>
 
     <div class="panel" id="qh" style="margin-top:14px">
       <div class="head"><span class="eyebrow">Quiet hours</span><input type="checkbox" class="switch" id="qhOn" name="quiet_enabled" value="1" {{if .QuietEnabled}}checked{{end}} {{if index .ManagedFragment "quiet_hours"}}disabled{{end}}></div>
-      <p class="note" style="margin:-4px 0 14px">Mute non-critical alerts overnight. Critical alerts can still come through (set per channel). The blue line is now.{{with index .ManagedFragment "quiet_hours"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</p>
+      <p class="note" style="margin:-4px 0 14px">Hold back non-urgent alerts during these hours, for example overnight. The blue line marks the current time.{{with index .ManagedFragment "quiet_hours"}} Managed by the fleet master (fragment {{.}}); change it on the master.{{end}}</p>
       <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
         <label class="field" style="margin:0"><span class="lb">From</span>
           <select id="qhFrom" name="quiet_from" style="width:140px" {{if index .ManagedFragment "quiet_hours"}}disabled{{end}}>
@@ -59,45 +70,15 @@
       </div>
       <div id="qhBar" class="qh-bar" style="margin-top:16px"></div>
       <div class="note mono" style="display:flex;justify-content:space-between;margin-top:6px"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
-      <label class="field" style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;max-width:340px"><span class="lb" style="margin:0">Critical alerts bypass quiet hours</span><input type="checkbox" class="switch" name="critical_overrides_quiet" value="1" {{if .CriticalOverridesQuiet}}checked{{end}} {{if index .ManagedFragment "critical_overrides_quiet"}}disabled{{end}}></label>
+      <label class="field" style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;max-width:340px"><span class="lb" style="margin:0">Still send critical alerts during quiet hours</span><input type="checkbox" class="switch" name="critical_overrides_quiet" value="1" {{if .CriticalOverridesQuiet}}checked{{end}} {{if index .ManagedFragment "critical_overrides_quiet"}}disabled{{end}}></label>
       {{with index .ManagedFragment "critical_overrides_quiet"}}<p class="note" style="margin-top:4px">Managed by the fleet master (fragment {{.}}); change it on the master.</p>{{end}}
     </div>
+    </section>
 
-    <div class="section-label"><span class="eyebrow">How often it measures &amp; how long it keeps data</span></div>
-    <p class="note" style="margin:-4px 0 14px">Cheap resource metrics are sampled fast; expensive checks (disk, docker, SMART) run less often. Raw fast samples are kept briefly, then summarized to 1-minute points for long-term history.</p>
-    <div class="grid g-2">
-      <div class="panel"><div class="head"><span class="eyebrow">Sampling</span></div>
-        <label class="field"><span class="lb">Resource sampling (seconds)</span><input type="number" step="1" name="fast_interval" value="{{.FastInterval}}"><span class="hint">CPU, memory, load, swap — measured this often. Drives the live dashboard and fast spike detection.</span></label>
-        <label class="field"><span class="lb">Heavy checks (seconds)</span><input type="number" step="1" name="sample_interval" value="{{.SampleInterval}}"><span class="hint">Disk usage, docker, systemd, SMART, connectivity. Must be a multiple of the resource sampling interval.</span></label>
-        <label class="field"><span class="lb">Heartbeat (seconds)</span><input type="number" step="1" name="heartbeat_interval" value="{{.HeartbeatInterval}}"><span class="hint">How often "I'm alive" is written. Determines how precisely downtime is measured after an outage.</span></label></div>
-      <div class="panel"><div class="head"><span class="eyebrow">Data retention</span></div>
-        <label class="field"><span class="lb">Keep detailed (raw) data for</span><input type="text" name="raw_retention" value="{{.RawRetention}}" placeholder="48h"><span class="hint">Duration like "48h". Full-resolution samples for recent, zoomed-in graphs. Older than this is summarized, not deleted.</span></label>
-        <label class="field"><span class="lb">Keep 1-minute history for</span><input type="text" name="rollup_retention" value="{{.RollupRetention}}" placeholder="720h"><span class="hint">Duration like "720h". Averaged min/avg/max points used for long-range charts, digests, and downtime history.</span></label></div>
-    </div>
-
-    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Extended data collection</span></div>
-      <p class="note" style="margin:-4px 0 14px">Opt-in extra collectors feeding the dashboard/history. All default on; turn any off to reduce load on constrained hosts.</p>
-      <div class="grid g-2" style="gap:2px 14px">
-        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Docker container stats</span><input type="checkbox" class="switch" name="collect_container_stats" value="1" {{if .CollectContainerStats}}checked{{end}}></label>
-        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Network throughput</span><input type="checkbox" class="switch" name="collect_net_throughput" value="1" {{if .CollectNetThroughput}}checked{{end}}></label>
-        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Systemd services inventory</span><input type="checkbox" class="switch" name="collect_services" value="1" {{if .CollectServices}}checked{{end}}></label>
-        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Process table overview</span><input type="checkbox" class="switch" name="collect_processes" value="1" {{if .CollectProcesses}}checked{{end}}></label>
-        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">SMART attribute reads</span><input type="checkbox" class="switch" name="collect_smart_attrs" value="1" {{if .CollectSmartAttrs}}checked{{end}}></label>
-      </div>
-      <label class="field" style="margin-top:10px;max-width:260px"><span class="lb">SMART scan interval (seconds)</span><input type="number" step="1" name="smart_interval" value="{{.SmartInterval}}"><span class="hint">Minimum seconds between SMART scans (smartctl -A), the heaviest per-device call. Default 1800 (30 min).</span></label>
-    </div>
-
-    <div class="section-label"><span class="eyebrow">Self-update</span></div>
-    <p class="note" style="margin:-4px 0 14px">The signed release channel, floor, and manual actions live on the <a href="/updates">Updates</a> page. This is the one credential it needs.</p>
-    <div class="panel"><div class="head"><span class="eyebrow">GitHub token</span></div>
-      <label class="field"><span class="lb">Read-only GitHub token</span><input type="password" name="update_github_token" placeholder="{{if .UpdateGitHubTokenSet}}(set){{else}}(not set){{end}}" autocomplete="off"><span class="hint">Needed while the release repo is private. Leave blank to keep the current value.</span></label>
-      <label class="field"><span class="lb">Clear stored token</span><input type="checkbox" class="switch" name="update_github_token_clear" value="1"></label>
-    </div>
-
-    <div class="section-label"><span class="eyebrow">What to monitor</span></div>
-    <p class="note" style="margin:-4px 0 14px">Turn any target off, or set a per-target limit that overrides the global threshold above. Leave "Alert at" blank to use the global threshold.</p>
+    <section class="tabpane" data-pane="monitor" role="tabpanel">
+    <p class="note pane-intro">Everything trinetra found on this server. Switch off anything you do not want alerts for, or give one item its own limit. Leave "Alert at" blank to use the limit from the Alerts tab.</p>
     <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
-      <thead><tr><th>Target</th><th>Alert at</th><th style="text-align:right">Monitor</th></tr></thead>
+      <thead><tr><th>Item</th><th title="Overrides the limit from the Alerts tab for this item only">Alert at</th><th style="text-align:right">Monitor</th></tr></thead>
       <tbody>
         {{range $t := .Targets}}
         <tr>
@@ -107,29 +88,56 @@
           <td data-label="Monitor" style="text-align:right"><input type="checkbox" class="switch" name="target_enabled" value="{{$t.Name}}" {{if $t.Enabled}}checked{{end}}></td>
         </tr>
         {{else}}
-        <tr><td colspan="3" class="note">No targets discovered yet.</td></tr>
+        <tr><td colspan="3" class="note">Nothing found yet. Items appear here after the first full check, within a minute or two of starting.</td></tr>
         {{end}}
       </tbody></table></div></div>
 
-    <div class="section-label"><span class="eyebrow">Alerting</span></div>
-    <p class="note" style="margin:-4px 0 14px">Where alerts go, and a way to be told when the whole server is unreachable.</p>
-    <div class="panel"><div class="head"><span class="eyebrow">Delivery &amp; offline detection</span><a href="/channels" class="btn ghost">Manage channels →</a></div>
-      <label class="field"><span class="lb">Dead-man switch URL (optional)</span><input type="text" name="deadman_url" value="{{.DeadmanURL}}"><span class="hint">trinetra pings this URL on every heartbeat. If the server (or its internet) dies, the pings stop and the external service (e.g. healthchecks.io) alerts you — the one case the server can't report itself.</span></label></div>
+    <div class="panel" style="margin-top:14px"><div class="head"><span class="eyebrow">Extra details to collect</span></div>
+      <p class="note" style="margin:-4px 0 14px">All on by default. Turn any off to lighten the load on small servers; the matching parts of the dashboard will be empty.</p>
+      <div class="grid g-2" style="gap:2px 14px">
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Docker container stats</span><input type="checkbox" class="switch" name="collect_container_stats" value="1" {{if .CollectContainerStats}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Network throughput</span><input type="checkbox" class="switch" name="collect_net_throughput" value="1" {{if .CollectNetThroughput}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">System services (systemd)</span><input type="checkbox" class="switch" name="collect_services" value="1" {{if .CollectServices}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0">Running processes</span><input type="checkbox" class="switch" name="collect_processes" value="1" {{if .CollectProcesses}}checked{{end}}></label>
+        <label class="field" style="margin:0;display:flex;align-items:center;justify-content:space-between;padding:6px 0"><span class="lb" style="margin:0" title="SMART: the drive's own health counters">Drive health (SMART)</span><input type="checkbox" class="switch" name="collect_smart_attrs" value="1" {{if .CollectSmartAttrs}}checked{{end}}></label>
+      </div>
+      <label class="field" style="margin-top:10px;max-width:260px"><span class="lb">Check drive health every (seconds)</span><input type="number" step="1" name="smart_interval" value="{{.SmartInterval}}"><span class="hint">Reading drive health is the slowest check, so it runs rarely. Default 1800 (30 minutes).</span></label>
+    </div>
+    </section>
+
+    <section class="tabpane" data-pane="reports" role="tabpanel">
+    <p class="note pane-intro">A server that is switched off cannot send its own alert. An outside service can watch for it instead.</p>
+    <div class="panel"><div class="head"><span class="eyebrow">Offline check</span><a href="/channels" class="btn ghost">Where alerts go →</a></div>
+      <label class="field"><span class="lb" title="Also called a dead-man switch">Offline check URL (optional)</span><input type="text" name="deadman_url" value="{{.DeadmanURL}}"><span class="hint">trinetra visits this address regularly. If the visits stop, because the server or its internet is down, the outside service (for example healthchecks.io) alerts you.</span></label></div>
 
     <div class="grid g-2" style="margin-top:14px">
-      <div class="panel"><div class="head"><span class="eyebrow">Daily digest</span><input type="checkbox" class="switch" name="daily_enabled" value="1" {{if .DailyEnabled}}checked{{end}}></div>
-        <p class="note" style="margin:-4px 0 12px">A once-a-day summary: peaks, disk trend, and any downtime.</p>
+      <div class="panel"><div class="head"><span class="eyebrow">Daily summary</span><input type="checkbox" class="switch" name="daily_enabled" value="1" {{if .DailyEnabled}}checked{{end}}></div>
+        <p class="note" style="margin:-4px 0 12px">Once a day: busiest moments, how fast disks are filling, and any downtime.</p>
         <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
           <label class="field" style="margin:0"><span class="lb">Send at</span><input type="time" name="daily_time" value="{{.DailyTime}}" style="width:140px"></label></div></div>
-      <div class="panel"><div class="head"><span class="eyebrow">Weekly rollup</span><input type="checkbox" class="switch" name="weekly_enabled" value="1" {{if .WeeklyEnabled}}checked{{end}}></div>
-        <p class="note" style="margin:-4px 0 12px">A longer 7-day summary: trends, total downtime, top offenders.</p>
+      <div class="panel"><div class="head"><span class="eyebrow">Weekly summary</span><input type="checkbox" class="switch" name="weekly_enabled" value="1" {{if .WeeklyEnabled}}checked{{end}}></div>
+        <p class="note" style="margin:-4px 0 12px">Once a week: trends, total downtime and the busiest containers and services.</p>
         <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
           <label class="field" style="margin:0;min-width:120px"><span class="lb">Day</span>
             <select name="weekly_day">{{range .Weekdays}}<option value="{{.}}" {{if eq . $.WeeklyDay}}selected{{end}}>{{.}}</option>{{end}}</select></label>
           <label class="field" style="margin:0"><span class="lb">Send at</span><input type="time" name="weekly_time" value="{{.WeeklyTime}}" style="width:140px"></label></div></div>
     </div>
+    </section>
 
-    <div style="display:flex;gap:10px;margin-top:24px"><button class="btn primary" type="submit">Save changes</button><span class="spacer"></span><span class="note mono">saving reloads the daemon live — no restart</span></div>
+    <section class="tabpane" data-pane="data" role="tabpanel">
+    <p class="note pane-intro">Light readings (CPU, memory) are taken often; heavier checks (disks, containers, drive health) less often. Detailed readings are kept for a short time, then condensed to one point per minute for long-term charts. The defaults suit almost every server.</p>
+    <div class="grid g-2">
+      <div class="panel"><div class="head"><span class="eyebrow">Sampling</span></div>
+        <label class="field"><span class="lb">Measure CPU and memory every (seconds)</span><input type="number" step="1" name="fast_interval" value="{{.FastInterval}}"><span class="hint">CPU, memory, load, swap — measured this often. Drives the live dashboard and fast spike detection.</span></label>
+        <label class="field"><span class="lb">Run heavier checks every (seconds)</span><input type="number" step="1" name="sample_interval" value="{{.SampleInterval}}"><span class="hint">Disk space, containers, services, drive health and internet connectivity. Must be a multiple of the CPU and memory interval.</span></label>
+        <label class="field"><span class="lb">Record "still running" every (seconds)</span><input type="number" step="1" name="heartbeat_interval" value="{{.HeartbeatInterval}}"><span class="hint">After an outage, downtime is measured to within this many seconds.</span></label></div>
+      <div class="panel"><div class="head"><span class="eyebrow">Data retention</span></div>
+        <label class="field"><span class="lb">Keep detailed (raw) data for</span><input type="text" name="raw_retention" value="{{.RawRetention}}" placeholder="48h"><span class="hint">For example 48h. Used for zoomed-in charts of recent activity. Older data is condensed, not deleted.</span></label>
+        <label class="field"><span class="lb">Keep 1-minute history for</span><input type="text" name="rollup_retention" value="{{.RollupRetention}}" placeholder="720h"><span class="hint">For example 720h (30 days). Used for long-range charts, reports and downtime history.</span></label></div>
+    </div>
+    </section>
+
+    <div class="save-bar"><button class="btn primary" type="submit">Save changes</button><span class="note">Saves every tab. Changes apply right away, no restart needed.</span></div>
   </form>
 </div>
 {{end}}

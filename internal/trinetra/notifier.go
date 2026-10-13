@@ -49,9 +49,7 @@ func ParseSeverity(s string) (Severity, error) {
 	}
 }
 
-// Alert is a channel-agnostic notification payload. It is distinct from
-// Event (anomaly.go): Event is the internal alert-state transition, Alert
-// is what gets handed to a Notifier for delivery.
+// Alert is a channel-agnostic notification payload.
 type Alert struct {
 	Key      string
 	Title    string
@@ -60,12 +58,8 @@ type Alert struct {
 	Kind     string // "fire" | "recover"
 	Source   string
 	Time     int64
-	// Buttons (task 9), when non-nil, is an inline keyboard the telegram
-	// Notifier attaches to this Alert's message (SendMessageWithButtons):
-	// the master's alerting engine sets it on an incident's fire
-	// notification only. Every other Notifier ignores it -- this is a
-	// generic, channel-agnostic field so a future channel could use it too,
-	// not a Telegram-specific one.
+	// Buttons, when non-nil, is an inline keyboard the telegram Notifier attaches to this
+	// Alert's message (SendMessageWithButtons).
 	Buttons [][]telegram.Button
 }
 
@@ -90,8 +84,7 @@ func targetKind(key string) string {
 	return key
 }
 
-// Route describes the conditions under which a channel should receive an
-// Alert.
+// Route describes the conditions under which a channel should receive an Alert.
 type Route struct {
 	// MinSeverity is the lowest Severity this route will let through.
 	MinSeverity Severity
@@ -142,17 +135,14 @@ func containsString(ss []string, s string) bool {
 	return false
 }
 
-// Channel pairs a Notifier with the Route that gates which alerts it
-// receives.
+// Channel pairs a Notifier with the Route that gates which alerts it receives.
 type Channel struct {
 	N       Notifier
 	Route   Route
 	Enabled bool
 }
 
-// Dispatcher fans an Alert out to a set of enabled, routing-matched Channels
-// concurrently, bounding each delivery attempt with a timeout so one slow or
-// broken channel can't hold up the others.
+// Dispatcher fans an Alert out to a set of enabled, routing-matched Channels concurrently.
 type Dispatcher struct {
 	channels []Channel
 	timeout  time.Duration
@@ -164,18 +154,8 @@ func NewDispatcher(channels []Channel, timeout time.Duration) *Dispatcher {
 	return &Dispatcher{channels: channels, timeout: timeout}
 }
 
-// Dispatch sends a to every enabled channel whose Route allows it (given
-// whether quiet hours are active), returning one DeliveryResult per channel
-// actually attempted. It never panics: a Notifier.Send that panics is
-// recovered and reported as an error.
-//
-// Dispatch itself returns within roughly d.timeout regardless of whether a
-// given Notifier.Send honors its context: each send runs in its own
-// goroutine and Dispatch races that goroutine's result against a local
-// timer rather than blocking on it, so a Send that ignores ctx and hangs
-// forever cannot delay Dispatch's return (though its goroutine will leak
-// until the misbehaving call eventually completes -- cooperative
-// cancellation via ctx remains the well-behaved path).
+// Dispatch sends a to every enabled channel whose Route allows it (given whether quiet
+// hours are active), returning one DeliveryResult per channel actually attempted.
 func (d *Dispatcher) Dispatch(a Alert, quiet bool) []DeliveryResult {
 	var matched []Channel
 	for _, c := range d.channels {
@@ -186,13 +166,8 @@ func (d *Dispatcher) Dispatch(a Alert, quiet bool) []DeliveryResult {
 	return d.dispatchMatched(a, matched)
 }
 
-// DispatchTo is Dispatch narrowed to a specific channel-name subset (fleet
-// routing/escalation, task 5): a channel is sent to only if it is enabled,
-// its own Route still Allows a (quiet hours/severity/kind gating is never
-// bypassed by routing), AND either names contains the literal "*" or its
-// Name() is in names. names with neither "*" nor any matching name delivers
-// to nothing (an empty result), which is a valid outcome (e.g. a policy step
-// naming a channel that was since removed from config).
+// DispatchTo is Dispatch narrowed to a channel-name subset (fleet routing/escalation): a
+// channel is sent to only if it is enabled.
 func (d *Dispatcher) DispatchTo(a Alert, quiet bool, names []string) []DeliveryResult {
 	all := false
 	set := make(map[string]bool, len(names))
@@ -216,9 +191,8 @@ func (d *Dispatcher) DispatchTo(a Alert, quiet bool, names []string) []DeliveryR
 	return d.dispatchMatched(a, matched)
 }
 
-// dispatchMatched fans a out to every channel in matched concurrently,
-// bounding each by d.timeout -- the shared tail of Dispatch and DispatchTo,
-// which differ only in how they build matched.
+// dispatchMatched fans a out to every channel in matched concurrently, bounding each by
+// d.timeout -- the shared tail of Dispatch and DispatchTo.
 func (d *Dispatcher) dispatchMatched(a Alert, matched []Channel) []DeliveryResult {
 	results := make([]DeliveryResult, len(matched))
 
@@ -235,10 +209,8 @@ func (d *Dispatcher) dispatchMatched(a Alert, matched []Channel) []DeliveryResul
 	return results
 }
 
-// collect runs n.Send in its own goroutine and races its result against a
-// local timer, so it returns within roughly d.timeout even if n.Send
-// ignores its context and never returns (the goroutine then leaks until
-// that call eventually completes).
+// collect runs n.Send in its own goroutine and races its result against a local timer, so
+// it returns within roughly d.timeout even if n.Send ignores its context and never returns.
 func (d *Dispatcher) collect(n Notifier, a Alert) error {
 	done := make(chan error, 1)
 	go func() { done <- sendSafely(n, a, d.timeout) }()
@@ -267,30 +239,20 @@ func sendSafely(n Notifier, a Alert, timeout time.Duration) (err error) {
 }
 
 // notifierMaxAttempts/notifierUndroppableMaxAttempts and
-// notifierRetryWindow/notifierUndroppableRetryWindow bound how many times,
-// and for how long, NotifierQueue.Run retries a channel that failed to
-// deliver an alert before giving up and counting it permanently failed
-// (final-review engine I1/ruling (a)). Undroppable alerts (critical, or a
-// recover -- see undroppable) get the longer budget, since they already
-// bypass the capacity-drop path in Enqueue and so are the ones this
-// guarantee matters most for. Package vars, not consts, so a test can
-// shrink them instead of actually waiting out a real 30 minutes.
+// notifierRetryWindow/notifierUndroppableRetryWindow bound how many times.
 var (
 	notifierMaxAttempts            = 6
 	notifierUndroppableMaxAttempts = 10
 	notifierRetryWindow            = 30 * time.Minute
 	notifierUndroppableRetryWindow = 2 * time.Hour
-	// notifierBaseDelay/notifierMaxDelay set notifierBackoff's shape: delay
-	// doubles from notifierBaseDelay each attempt, capped at
-	// notifierMaxDelay. Package vars for the same test-speed reason as
-	// above.
+	// notifierBaseDelay/notifierMaxDelay set notifierBackoff's shape: delay doubles from
+	// notifierBaseDelay each attempt, capped at notifierMaxDelay.
 	notifierBaseDelay = 10 * time.Second
 	notifierMaxDelay  = 5 * time.Minute
 )
 
-// notifierBackoff returns the delay before retrying a channel for the
-// (1-based) attempt'th time it has failed: notifierBaseDelay * 2^(attempt-1),
-// capped at notifierMaxDelay.
+// notifierBackoff returns the delay before retrying a channel for the (1-based) attempt'th
+// time it has failed: notifierBaseDelay * 2^(attempt-1), capped at notifierMaxDelay.
 func notifierBackoff(attempt int) time.Duration {
 	d := notifierBaseDelay
 	for i := 1; i < attempt; i++ {
@@ -308,30 +270,20 @@ func notifierBackoff(attempt int) time.Duration {
 type queuedAlert struct {
 	a     Alert
 	quiet bool
-	// attempt counts how many delivery attempts this alert has already had
-	// (0 before the first). firstEnqueued is fixed at Enqueue time and never
-	// changes across retries -- it anchors the retry window
-	// (notifierRetryWindow/notifierUndroppableRetryWindow).
+	// attempt counts how many delivery attempts this alert has already had (0 before the
+	// first). firstEnqueued is fixed at Enqueue time and never changes across retries.
 	attempt       int
 	firstEnqueued time.Time
 	// retryAt gates when popDue will hand this item back out again: the
 	// zero value (a brand-new item from Enqueue) is always due immediately.
 	retryAt time.Time
-	// targetChannels is nil for a first attempt (deliver to every
-	// enabled+routed channel, i.e. Dispatch's normal behavior) or the exact
-	// set of channels that failed last time (DispatchTo) -- a channel that
-	// already succeeded is structurally excluded from every later attempt,
-	// so no channel ever receives the same alert twice.
+	// targetChannels is nil for a first attempt (deliver to every enabled+routed channel, i.e.
+	// Dispatch's normal behavior) or the exact set of channels that failed last time.
 	targetChannels []string
 }
 
-// NotifierQueue decouples alert delivery from the caller: Enqueue is
-// non-blocking and Run drains to the Dispatcher on its own goroutine. On a
-// slow uplink the queue bounds memory by dropping the OLDEST non-critical
-// alert; critical and recover alerts are never dropped. A channel that
-// fails is retried with backoff (see notifierBackoff) for up to
-// notifierMaxAttempts/notifierRetryWindow (longer for an undroppable
-// alert), rather than being attempted exactly once and then forgotten.
+// NotifierQueue decouples alert delivery from the caller: Enqueue is non-blocking and Run
+// drains to the Dispatcher on its own goroutine.
 type NotifierQueue struct {
 	mu      sync.Mutex
 	items   []queuedAlert
@@ -340,10 +292,8 @@ type NotifierQueue struct {
 	wake    chan struct{}
 	disp    atomic.Pointer[Dispatcher]
 	now     func() time.Time
-	// permanentlyFailed counts alerts that exhausted their retry budget
-	// with at least one channel still failing (Dropped, by contrast, counts
-	// alerts evicted by the capacity cap before any delivery attempt at
-	// all -- a different failure mode with a different counter).
+	// permanentlyFailed counts alerts that exhausted their retry budget with at least one
+	// channel still failing.
 	permanentlyFailed atomic.Int64
 }
 
@@ -359,9 +309,7 @@ func NewNotifierQueue(d *Dispatcher, capacity int) *NotifierQueue {
 func (q *NotifierQueue) SetDispatcher(d *Dispatcher) { q.disp.Store(d) }
 func (q *NotifierQueue) Dropped() int64              { return q.dropped.Load() }
 
-// PermanentlyFailed returns how many alerts have exhausted their retry
-// budget (notifierMaxAttempts/notifierRetryWindow, or the undroppable
-// variants) with at least one channel still failing.
+// PermanentlyFailed returns how many alerts have exhausted their retry budget.
 func (q *NotifierQueue) PermanentlyFailed() int64 { return q.permanentlyFailed.Load() }
 
 // setNowForTest overrides q's clock; tests use it to drive retry/exhaustion
@@ -403,13 +351,8 @@ func (q *NotifierQueue) indexOfOldestDroppable() int {
 	return -1
 }
 
-// popDue returns the first item (in slice order) whose retryAt is due
-// (<= now), removing it from the queue. If the queue has items but none are
-// due yet, it reports ok=false along with wait, the duration until the
-// earliest one becomes due, so Run knows how long it can sleep instead of
-// busy-polling. At this queue's scale (bounded by cap, plus a handful of
-// in-flight retries) a linear scan for the earliest retryAt is fine -- no
-// heap needed.
+// popDue returns the first item (in slice order) whose retryAt is due (<= now), removing it
+// from the queue.
 func (q *NotifierQueue) popDue() (it queuedAlert, wait time.Duration, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -464,11 +407,8 @@ func (q *NotifierQueue) Run(ctx context.Context) {
 	}
 }
 
-// deliverOnce runs one delivery attempt for it: the full matched set
-// (Dispatch) on a first attempt (it.targetChannels is nil/empty), or just
-// the channels that failed last time (DispatchTo) on a retry. A nil
-// dispatcher (SetDispatcher never called, or startup race) is a silent
-// no-op, exactly as before this change.
+// deliverOnce runs one delivery attempt for it: the full matched set (Dispatch) on a first
+// attempt (it.targetChannels is nil/empty), or just the channels that failed last time.
 func (q *NotifierQueue) deliverOnce(it queuedAlert) []DeliveryResult {
 	d := q.disp.Load()
 	if d == nil {
@@ -480,20 +420,8 @@ func (q *NotifierQueue) deliverOnce(it queuedAlert) []DeliveryResult {
 	return d.DispatchTo(it.a, it.quiet, it.targetChannels)
 }
 
-// nextRetry inspects results (from deliverOnce(it)) and decides whether to
-// retry: nil/no error results in no retry (retry=false, nothing to do --
-// either every channel succeeded, or there was no dispatcher to try).
-// Otherwise, if it has budget left (notifierMaxAttempts/notifierRetryWindow,
-// or the undroppable variants), it returns the updated item -- attempt
-// incremented, targetChannels narrowed to just the channels that failed
-// (never one that already succeeded, so no channel is ever double-delivered
-// across the whole retry sequence), retryAt set via notifierBackoff -- for
-// the caller to requeue. If the budget is exhausted, it logs and counts
-// permanentlyFailed instead.
-//
-// A separate method (not inlined into Run) so a test can drive the
-// retry/exhaustion decision directly against q's injected clock, without
-// waiting on Run's own timers.
+// nextRetry inspects results (from deliverOnce(it)) and decides whether to retry: nil/no
+// error results in no retry.
 func (q *NotifierQueue) nextRetry(it queuedAlert, results []DeliveryResult) (next queuedAlert, retry bool) {
 	var failed []string
 	for _, r := range results {
@@ -522,9 +450,7 @@ func (q *NotifierQueue) nextRetry(it queuedAlert, results []DeliveryResult) (nex
 	return it, true
 }
 
-// attemptDelivery runs one delivery attempt for it and, if nextRetry says
-// to, requeues the updated item and wakes Run's loop so it can recompute
-// how long to wait for the new retryAt.
+// attemptDelivery runs one delivery attempt for it and, if nextRetry says to, requeues.
 func (q *NotifierQueue) attemptDelivery(it queuedAlert) {
 	results := q.deliverOnce(it)
 	next, retry := q.nextRetry(it, results)

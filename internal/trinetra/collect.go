@@ -127,13 +127,8 @@ func parseDF(s string) ([]DiskUsage, error) {
 	return out, nil
 }
 
-// parseDFTypes parses `df -PT -B1` output (POSIX 1-byte blocks, with the
-// filesystem-type column -T inserts after the device column): "Filesystem
-// Type 1-blocks Used Available Capacity Mounted on". Returns a map keyed by
-// mount, filling everything parseDF captures (device path is column 0,
-// implicitly) plus FsType, so it can be merged with parseDFInodes into a
-// Snapshot.DiskDetail map. Malformed lines (fewer than 7 fields) are skipped
-// rather than aborting the batch.
+// parseDFTypes parses `df -PT -B1` output (POSIX 1-byte blocks, with the filesystem-type
+// column -T inserts after the device).
 func parseDFTypes(s string) map[string]DiskDetail {
 	out := map[string]DiskDetail{}
 	sc := bufio.NewScanner(strings.NewReader(s))
@@ -165,10 +160,7 @@ func parseDFTypes(s string) map[string]DiskDetail {
 	return out
 }
 
-// parseDFInodes parses `df -Pi` output: "Filesystem Inodes IUsed IFree
-// IUse% Mounted on". Returns a map of mount -> inode-used percentage.
-// Malformed lines (fewer than 6 fields, or a non-numeric IUse% such as the
-// "-" some filesystems report when they don't track inodes) are skipped.
+// parseDFInodes parses `df -Pi` output: "Filesystem Inodes IUsed IFree IUse% Mounted on".
 func parseDFInodes(s string) map[string]float64 {
 	out := map[string]float64{}
 	sc := bufio.NewScanner(strings.NewReader(s))
