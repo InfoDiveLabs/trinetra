@@ -16,11 +16,15 @@ No agent zoo, no cloud, no Prometheus, no external database.
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-stable-brightgreen" alt="status: stable">
-  <img src="https://img.shields.io/badge/version-v0.5.0-blue" alt="version: v0.5.0">
+  <img src="https://img.shields.io/badge/version-v0.6.0-blue" alt="version: v0.6.0">
   <img src="https://img.shields.io/badge/core-stdlib%20only-00ADD8" alt="core: stdlib only">
   <img src="https://img.shields.io/badge/RAM-~12%20MB-6f42c1" alt="RAM: about 12 MB">
   <img src="https://img.shields.io/badge/platform-Linux%20%2B%20systemd-333" alt="platform: Linux + systemd">
   <img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-orange" alt="license: FSL-1.1-ALv2">
+</p>
+
+<p align="center">
+  <a href="https://www.producthunt.com/products/trinetra-2?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-trinetra-2" target="_blank" rel="noopener noreferrer"><img alt="Trinetra - Self-hosted server monitoring in one ~12 MB daemon | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1275019&amp;theme=light&amp;t=1791874017742"></a>
 </p>
 
 <p align="center">
@@ -416,10 +420,10 @@ Everything is in the handbook, one concern per chapter.
 
 ## Status
 
-The current stable release is **v0.5.0**: the Trinetra rename (from
-serverwatch, with an automatic in-place migration), fleet mode (master/child,
-phases 1-3), and signed releases with a self-verifying, self-rolling-back
-update path. See the [changelog](CHANGELOG.md) and [Roadmap and
+The current stable release is **v0.6.0**: the public status page, a guided
+first run where Telegram is optional, `trinetra users`, a reworked web UI, and
+a sturdier self-update. It builds on v0.5.0's fleet mode and signed,
+self-rolling-back releases. See the [changelog](CHANGELOG.md) and [Roadmap and
 status](docs/handbook/12-roadmap-and-status.md).
 
 ## License
