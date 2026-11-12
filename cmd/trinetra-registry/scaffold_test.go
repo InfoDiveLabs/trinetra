@@ -36,6 +36,16 @@ func TestTemplatePassesCheck(t *testing.T) {
 	}
 }
 
+func TestTemplateBuildsAgainstSDK(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go vet")
+	}
+	out, err := exec.Command("go", "vet", "./"+filepath.ToSlash(filepath.Join(scaffoldDir, "plugins/_template"))).CombinedOutput()
+	if err != nil {
+		t.Fatalf("go vet template: %v\n%s", err, out)
+	}
+}
+
 var subcommandRef = regexp.MustCompile(`(?:^|[\s(])trinetra-registry\s+([a-z][a-z-]*)`)
 
 func TestWorkflowsReferenceExistingSubcommands(t *testing.T) {
