@@ -84,6 +84,11 @@ type e2eDaemon struct {
 
 func startE2EDaemon(t *testing.T, key ed25519.PublicKey, cfg *config.Config) *e2eDaemon {
 	t.Helper()
+	return startE2EDaemonAt(t, plugintest.ShortDir(t), key, cfg)
+}
+
+func startE2EDaemonAt(t *testing.T, root string, key ed25519.PublicKey, cfg *config.Config) *e2eDaemon {
+	t.Helper()
 	fastSupervisor(t)
 	prevSys, prevRoot, prevSock, prevReg := hasSystemd, pluginIsRoot, pluginrt.SocketRoot, wireRegistryFn
 	prevDeps := currentPluginDeps
@@ -93,7 +98,6 @@ func startE2EDaemon(t *testing.T, key ed25519.PublicKey, cfg *config.Config) *e2
 	})
 	hasSystemd = func() bool { return false }
 	pluginIsRoot = func() bool { return false }
-	root := plugintest.ShortDir(t)
 	pluginrt.SocketRoot = filepath.Join(root, "p")
 	stateDir := filepath.Join(root, "state")
 	if key != nil {
@@ -385,4 +389,52 @@ func TestRuntimeMintedPluginTokenIsConfinedToItsGrant(t *testing.T) {
 		st, err := e.mgr.Get(plugintest.ID)
 		return err == nil && st.Health.Connected
 	})
+}
+
+func TestPluginsSurviveDaemonRestart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a plugin binary")
+	}
+	pkg := plugintest.Build(t, t.TempDir())
+	root := plugintest.ShortDir(t)
+	e := startE2EDaemonAt(t, root, pkg.Key, config.Default())
+	if _, err := e.mgr.Install(plugin.InstallRequest{Ref: pkg.Path, Actor: "root", Via: "cli"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mgr.Enable(plugin.EnableRequest{ID: plugintest.ID, Actor: "root", Via: "cli", Accepted: pkg.Manifest.Permissions}); err != nil {
+		t.Fatal(err)
+	}
+	alertKey := "plugin.e2e.probe.down"
+	e2eWait(t, "first alert", 30*time.Second, func() bool { return e.sink.count(alertKey, "fire") == 1 })
+	tokPath := filepath.Join(e.stateDir, "plugins", plugintest.ID, plugin.TokenFileName)
+	tok1, _ := os.ReadFile(tokPath)
+	e.stop()
+	if st, _ := e.mgr.Get(plugintest.ID); st.Running {
+		t.Fatal("plugin still running after daemon stop")
+	}
+
+	e2 := startE2EDaemonAt(t, root, pkg.Key, config.Default())
+	e2eWait(t, "plugin restarted and connected", 30*time.Second, func() bool {
+		st, err := e2.mgr.Get(plugintest.ID)
+		return err == nil && st.State == plugin.StateEnabled && st.Running && st.Health.Connected
+	})
+	e2eWait(t, "series after restart", 10*time.Second, func() bool {
+		_, ok := e2.sink.metric("plugin.e2e.latency")
+		return ok
+	})
+	tok2, _ := os.ReadFile(tokPath)
+	if len(tok2) == 0 || string(tok1) == string(tok2) {
+		t.Error("restart did not mint a fresh token")
+	}
+	recs, _ := e2.api.ActiveAlerts()
+	if len(recs) != 1 || recs[0].Key != alertKey {
+		t.Fatalf("plugin alert lost across restart: %+v", recs)
+	}
+	if n := e2.sink.count(alertKey, "fire"); n != 0 {
+		t.Errorf("alert re-fired %d times after restart", n)
+	}
+	st, _ := e2.mgr.Get(plugintest.ID)
+	if st.Health.SeriesCount != 1 {
+		t.Errorf("series count after restart = %d, want 1", st.Health.SeriesCount)
+	}
 }
