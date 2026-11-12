@@ -38,6 +38,11 @@ func OpenStore(stateDir, libDir string) (*Store, error) {
 	}
 	_ = os.Chmod(root, 0o700)
 	_ = os.Chmod(libDir, 0o755)
+	if stale, _ := filepath.Glob(filepath.Join(libDir, ".stage-*")); len(stale) > 0 {
+		for _, d := range stale {
+			_ = os.RemoveAll(d)
+		}
+	}
 	return &Store{stateDir: stateDir, libDir: libDir, goos: runtime.GOOS, goarch: runtime.GOARCH}, nil
 }
 
