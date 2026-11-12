@@ -1,0 +1,47 @@
+name: resign
+on:
+  schedule: [{ cron: "23 4 * * 1" }]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: registry-publish
+  cancel-in-progress: false
+env:
+  TRINETRA_REF: main
+jobs:
+  resign:
+    runs-on: ubuntu-latest
+    environment: registry
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: InfoDiveLabs/trinetra
+          ref: ${{ env.TRINETRA_REF }}
+          path: .trinetra
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version-file: .trinetra/go.mod }
+      - name: Build registry tool
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          (cd .trinetra && go build -o "$RUNNER_TEMP/bin/trinetra-registry" ./cmd/trinetra-registry)
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Re-issue and sign the index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY_SIGNING_KEY: ${{ secrets.REGISTRY_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/prev"
+          gh release download index -p index.json -D "$RUNNER_TEMP/prev"
+          printf '%s\n' "$REGISTRY_SIGNING_KEY" > "$RUNNER_TEMP/registry.key"
+          trinetra-registry index -serial "$(date +%s)" -lifetime 21d -prev "$RUNNER_TEMP/prev/index.json" -revoked revoked.json -out "$RUNNER_TEMP/index.json"
+          trinetra-registry sign -key "$RUNNER_TEMP/registry.key" -kind index -in "$RUNNER_TEMP/index.json" -out "$RUNNER_TEMP/index.json.sig"
+          gh release upload index "$RUNNER_TEMP/index.json" "$RUNNER_TEMP/index.json.sig" --clobber
+          rm -f "$RUNNER_TEMP/registry.key"

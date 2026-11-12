@@ -1,0 +1,90 @@
+name: publish
+on:
+  push:
+    branches: [main]
+    paths: ["plugins/**", "revoked.json"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: registry-publish
+  cancel-in-progress: false
+env:
+  TRINETRA_REF: main
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: registry
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: InfoDiveLabs/trinetra
+          ref: ${{ env.TRINETRA_REF }}
+          path: .trinetra
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version-file: .trinetra/go.mod }
+      - name: Build registry tool
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          (cd .trinetra && go build -o "$RUNNER_TEMP/bin/trinetra-registry" ./cmd/trinetra-registry)
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build every plugin
+        env:
+          ARCHES: "amd64 arm64 arm"
+        run: scripts/build-all.sh "$RUNNER_TEMP/build"
+      - name: Sign manifests and package
+        env:
+          REGISTRY_SIGNING_KEY: ${{ secrets.REGISTRY_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$REGISTRY_SIGNING_KEY" > "$RUNNER_TEMP/registry.key"
+          mkdir -p "$RUNNER_TEMP/dist"
+          for d in "$RUNNER_TEMP"/build/*/; do
+            id=$(basename "$d")
+            version=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$d/plugin.json" | head -n1)
+            trinetra-registry sign -key "$RUNNER_TEMP/registry.key" -kind manifest -in "$d/plugin.json" -out "$d/plugin.json.sig"
+            for arch in amd64 arm64 arm; do
+              trinetra-registry package -dir "$d" -os linux -arch "$arch" -out "$RUNNER_TEMP/dist/$id-$version-linux-$arch.tgz"
+            done
+          done
+      - name: Upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/new"
+          for d in "$RUNNER_TEMP"/build/*/; do
+            id=$(basename "$d")
+            version=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$d/plugin.json" | head -n1)
+            tag="$id-v$version"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "$tag already published; leaving it unchanged"
+              continue
+            fi
+            gh release create "$tag" --title "$tag" --notes "Plugin $id $version"
+            gh release upload "$tag" "$RUNNER_TEMP"/dist/"$id-$version"-linux-*.tgz
+            cp "$RUNNER_TEMP"/dist/"$id-$version"-linux-*.tgz "$RUNNER_TEMP/new/"
+          done
+      - name: Build, sign and upload the index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prev"
+          prev=()
+          if gh release download index -p index.json -D "$RUNNER_TEMP/prev" 2>/dev/null; then
+            prev=(-prev "$RUNNER_TEMP/prev/index.json")
+          fi
+          trinetra-registry index -packages "$RUNNER_TEMP/new" \
+            -base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/{id}-v{version}" \
+            -serial "$(date +%s)" -lifetime 21d "${prev[@]}" -revoked revoked.json -out "$RUNNER_TEMP/index.json"
+          trinetra-registry sign -key "$RUNNER_TEMP/registry.key" -kind index -in "$RUNNER_TEMP/index.json" -out "$RUNNER_TEMP/index.json.sig"
+          gh release view index >/dev/null 2>&1 || gh release create index --title index --notes "Signed plugin index"
+          gh release upload index "$RUNNER_TEMP/index.json" "$RUNNER_TEMP/index.json.sig" --clobber
+          rm -f "$RUNNER_TEMP/registry.key"
