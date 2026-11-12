@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "hello",
+  "name": "Hello",
+  "version": "0.1.0",
+  "publisher": "Your Name",
+  "description": "Template plugin that shows a greeting on its own page.",
+  "host_api": "^1.0",
+  "permissions": [],
+  "binaries": [],
+  "contributes": {
+    "slots": [
+      {"slot": "nav.page", "id": "hello", "title": "Hello", "min_role": "viewer"}
+    ]
+  }
+}

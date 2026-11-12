@@ -1,0 +1,53 @@
+name: pr
+on:
+  pull_request:
+    paths: ["plugins/**", "scripts/**", ".github/workflows/**"]
+permissions:
+  contents: read
+env:
+  TRINETRA_REF: main
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux]
+        goarch: [amd64, arm64, arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: InfoDiveLabs/trinetra
+          ref: ${{ env.TRINETRA_REF }}
+          path: .trinetra
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version-file: .trinetra/go.mod }
+      - name: Build registry tool
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          (cd .trinetra && go build -o "$RUNNER_TEMP/bin/trinetra-registry" ./cmd/trinetra-registry)
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Check, test, build and hash changed plugins
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GOOS: ${{ matrix.goos }}
+          ARCHES: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          ids=$(git diff --name-only "$BASE_SHA"...HEAD -- plugins | cut -d/ -f2 | sort -u | grep -v '^_' | grep -v '\.md$' || true)
+          if [ -z "$ids" ]; then
+            echo "no plugin changes"
+            exit 0
+          fi
+          for id in $ids; do
+            [ -d "plugins/$id" ] || continue
+            echo "== $id"
+            trinetra-registry check -dir "plugins/$id"
+            scripts/build-all.sh "$RUNNER_TEMP/build" "$id"
+          done
