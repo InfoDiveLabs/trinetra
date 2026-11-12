@@ -1,0 +1,73 @@
+{{define "content"}}
+<div id="integrations-page">
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+  {{if .Unavailable}}
+  <div class="panel"><div class="note">Plugins are unavailable: the daemon did not provide a plugin manager.</div></div>
+  {{else}}
+  <div class="section-label"><span class="eyebrow">Installed</span></div>
+  {{if .Installed}}
+  <div class="grid g-2 plugin-cards">
+    {{range .Installed}}
+    <div class="panel plugin-card">
+      <div class="head">
+        <a href="/integrations/{{.ID}}"><b>{{.Manifest.Name}}</b></a>
+        <span class="badge {{.TrustClass}}">{{.TrustLabel}}</span>
+      </div>
+      <div class="note mono">{{.ID}} {{.Version}} &middot; {{.Manifest.Publisher}}</div>
+      <p class="note">{{.Manifest.Description}}</p>
+      <div class="plugin-badges">
+        <span class="badge">{{.StateLabel}}</span>
+        <span class="badge {{.HealthClass}}">{{.HealthLabel}}</span>
+        {{if .UpdateAvailable}}<span class="badge ok">Update available: {{.UpdateAvailable}}</span>{{end}}
+      </div>
+      {{if .RevokedReason}}<div class="flash err">Revoked: {{.RevokedReason}}</div>{{else if eq (printf "%s" .State) "revoked"}}<div class="flash err">Revoked by the registry.</div>{{end}}
+      {{if .Reason}}<div class="note">{{.Reason}}</div>{{end}}
+      <div class="plugin-actions">
+        <a class="btn ghost" href="/integrations/{{.ID}}">Open</a>
+        {{if .UpdateAvailable}}<form method="post" action="/integrations/{{.ID}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button class="btn primary" type="submit">Update to {{.UpdateAvailable}}</button></form>{{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="panel"><div class="note">No plugins installed yet.</div></div>
+  {{end}}
+
+  <div class="section-label"><span class="eyebrow">Catalog</span>
+    <form method="post" action="/integrations/catalog/refresh" style="display:inline"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="btn ghost" type="submit">Refresh</button></form>
+  </div>
+  {{if .NotConfigured}}
+  <div class="panel"><div class="note">The catalog is empty: registry not configured in this build. You can still install from an https:// URL below.</div></div>
+  {{else}}
+    {{if .CatalogStale}}<div class="flash err" role="status">The catalog is stale. Refresh it before installing from the registry.</div>{{end}}
+    {{if .CatalogNote}}<div class="flash err" role="status">{{.CatalogNote}}</div>{{end}}
+    {{if .Available}}
+    <div class="grid g-2 plugin-cards">
+      {{range .Available}}
+      <div class="panel plugin-card">
+        <div class="head"><b>{{.Name}}</b><span class="badge ok">Verified</span></div>
+        <div class="note mono">{{.ID}} {{.Latest}} &middot; {{.Publisher}}</div>
+        <p class="note">{{.Description}}</p>
+        <div class="note">{{range .Permissions}}<span class="badge">{{.}}</span> {{end}}</div>
+        {{if .Revoked}}<div class="flash err">Revoked: {{.Revoked}}</div>{{else}}
+        <form method="post" action="/integrations/install"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="ref" value="{{.ID}}@{{.Latest}}"><button class="btn primary" type="submit">Install</button></form>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="panel"><div class="note">Nothing else in the catalog.</div></div>
+    {{end}}
+  {{end}}
+
+  <div class="section-label"><span class="eyebrow">Install from URL</span></div>
+  <div class="panel">
+    <form method="post" action="/integrations/install">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field"><span class="lb">Catalog id or https:// URL</span><input type="text" name="ref" placeholder="uptime or https://example.com/plugin.tar.gz" required>
+        <span class="hint">Local files can only be installed with the trinetra CLI.</span></label>
+      <button class="btn primary" type="submit">Install</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+{{end}}

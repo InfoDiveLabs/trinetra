@@ -200,6 +200,7 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/config", Icon: "sliders", Label: "Server settings"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/channels", Icon: "send", Label: "Notifications"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "users", Label: "Users"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/integrations", Icon: "plug", Label: "Integrations"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/updates", Icon: "update", Label: "Updates"}, AdminOnly: true},
 }
 

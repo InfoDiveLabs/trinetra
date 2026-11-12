@@ -120,6 +120,10 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /updates/check", updatesMutation(d, updatesCheckHandler(d)))
 	mux.HandleFunc("POST /updates/apply", updatesMutation(d, updatesApplyHandler(d)))
 	mux.HandleFunc("POST /updates/rollback", updatesMutation(d, updatesRollbackHandler(d)))
+	mux.HandleFunc("GET /integrations", requireRole(RoleAdmin, d, integrationsPageHandler(d)))
+	mux.HandleFunc("POST /integrations/install", integrationsMutation(d, integrationsInstallHandler(d)))
+	mux.HandleFunc("POST /integrations/catalog/refresh", integrationsMutation(d, integrationsRefreshHandler(d)))
+	mux.HandleFunc("POST /integrations/{id}/update", integrationsMutation(d, integrationsUpdateHandler(d)))
 	// /channels: CRUD over config.Channels (table + add/edit modal).
 	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, d, channelsPageHandler(d)))
 	mux.HandleFunc("POST /channels", channelsMutation(d, channelsAddHandler(d)))

@@ -26,6 +26,7 @@ var navIcons = map[string]string{
 	"shield":    `<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/>`,
 	"file":      `<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>`,
 	"list":      `<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>`,
+	"plug":      `<path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/>`,
 	"more":      `<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>`,
 	// service states on the status page
 	"operational": `<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>`,

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -211,6 +212,12 @@ func (f *fakeManager) NodeStates(id string) ([]plugin.NodeState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.nodes, nil
+}
+
+func readAuditActions(t *testing.T, stateDir string) string {
+	t.Helper()
+	b, _ := os.ReadFile(auditLogPath(stateDir))
+	return string(b)
 }
 
 func sortStatuses(s []plugin.Status) {
