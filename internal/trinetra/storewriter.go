@@ -47,11 +47,16 @@ func newStoreWriter(store SampleStore, capacity int) *storeWriter {
 func (w *storeWriter) Dropped() int64 { return w.dropped.Load() }
 
 // submit hands one cycle's batch to the writer WITHOUT blocking.
-func (w *storeWriter) submit(sw storeWrite) {
+func (w *storeWriter) submit(sw storeWrite) { w.trySubmit(sw) }
+
+// trySubmit is submit that reports whether the batch was queued.
+func (w *storeWriter) trySubmit(sw storeWrite) bool {
 	select {
 	case w.ch <- sw:
+		return true
 	default:
 		w.dropped.Add(1)
+		return false
 	}
 }
 

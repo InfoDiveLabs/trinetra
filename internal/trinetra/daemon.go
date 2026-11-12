@@ -18,6 +18,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/telegram"
+	"github.com/InfoDiveLabs/trinetra/internal/version"
 )
 
 // buildFastChecks builds anomaly Checks for the cheap, high-frequency metrics
@@ -820,7 +821,25 @@ func cmdDaemon(args []string) int {
 			}()
 		},
 		func(f string, a ...any) { fmt.Fprintf(stderr, f+"\n", a...) })
-	stopControl, socketPath, token, err := serveControlSocket(&fleetAwareAPI{API: controlAPI, fleetProvider: fleetRT.provider, status: statusRT})
+	pd := &pluginDeps{
+		stateDir: stateDir, libDir: pluginLibDir, hostDir: pluginHostDir, getCfg: getCfg,
+		self: controlAPI, fleet: fleetRT.provider,
+		submitSeries: func(ts int64, ms MetricSet) bool {
+			if sw == nil {
+				return false
+			}
+			return sw.trySubmit(storeWrite{ts: ts, sets: []MetricSet{ms}})
+		},
+		deliverAlert: func(a Alert) {
+			enqueueAndLog(alog, bus, q, a, inQuietHours(getCfg().QuietHours, time.Now()))
+		},
+		logf:        func(format string, args ...any) { fmt.Fprintf(stderr, format+"\n", args...) },
+		now:         time.Now,
+		coreVersion: version.String(),
+	}
+	pluginMgr, stopPlugins := startPlugins(pd)
+	defer stopPlugins()
+	stopControl, socketPath, token, err := serveControlSocket(&fleetAwareAPI{API: controlAPI, fleetProvider: fleetRT.provider, status: statusRT, plugins: pluginMgr})
 	if err != nil {
 		fmt.Fprintln(stderr, "control socket: failed to start, continuing without it:", err)
 	} else {

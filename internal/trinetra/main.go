@@ -96,6 +96,10 @@ func Main(args []string) int {
 		return cmdStatusPage(args[1:])
 	case "update":
 		return cmdUpdate(args[1:])
+	case "plugin":
+		return cmdPlugin(args[1:])
+	case "plugin-exec":
+		return cmdPluginExec(args[1:])
 	case "cli":
 		return cmdFrontDoor("cli", "ctl", args[1:])
 	case "web":
@@ -186,6 +190,7 @@ usage:
   trinetra fleet token create [--tags a,b] [--ttl 1h] [--uses 1] | list | delete <id>
   trinetra status-page service|incident ...   # manage the public status page (services, incidents)
   trinetra update status [--json] | check | apply [--version V] [--bundle DIR] [--channel C] [--force] | rollback
+  trinetra plugin catalog|install|enable|disable|remove|update|set|list|status|push|dev ...   # manage plugins
   trinetra cli                       # interactive management (trinetra-ctl)
   trinetra web                       # web UI (trinetra-web)
   trinetra users list | invite --role R | set-role <name> <role> | remove <name>   # web UI users`

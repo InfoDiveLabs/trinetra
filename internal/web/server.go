@@ -6,6 +6,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 // sessionGCInterval is how often Start's background sweep removes expired records from
@@ -18,6 +19,8 @@ const sessionGCInterval = 10 * time.Minute
 // Deps is what the web server needs from the running daemon, expressed without importing
 // internal/trinetra.
 type Deps struct {
+	// Plugins returns the daemon's plugin manager; nil or a nil result means plugins are unavailable.
+	Plugins func() plugin.Manager
 	// Cfg returns the current config (race-safe against the daemon's reload).
 	Cfg func() *config.Config
 	// Reload validates, persists, and applies a new config in-process.
