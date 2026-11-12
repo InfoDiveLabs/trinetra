@@ -18,6 +18,8 @@
     <nav class="nav">
       {{range .Nav}}{{if .Heading}}<div class="grp eyebrow">{{.Heading}}</div>{{else}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}} title="{{.Label}}" aria-label="{{.Label}}"><span class="ic">{{icon .Icon}}</span><span class="lb">{{.Label}}</span>{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}
       {{end}}
+      {{if .PluginNav}}<div class="grp eyebrow">Plugins</div>{{range .PluginNav}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}} title="{{.Label}}" aria-label="{{.Label}}"><span class="ic">{{icon .Icon}}</span><span class="lb">{{.Label}}</span></a>
+      {{end}}{{end}}
     </nav>
     <div class="foot">
       <div class="who">
@@ -79,6 +81,7 @@
     <div class="sheet-grip"></div>
     <nav class="sheet-nav">
       {{range .Nav}}{{if not .Heading}}{{if and (ne .Href (nodeHref $.Node.Prefix "/")) (ne .Href (nodeHref $.Node.Prefix "/monitoring")) (ne .Href (nodeHref $.Node.Prefix "/history")) (ne .Href (nodeHref $.Node.Prefix "/alerts"))}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{icon .Icon}}</span> {{.Label}}{{if .Badge}}<span class="ct">{{.Badge}}</span>{{end}}</a>{{end}}{{end}}{{end}}
+      {{range .PluginNav}}<a href="{{.Href}}"{{if eq .Href $.Active}} class="active"{{end}}><span class="ic">{{icon .Icon}}</span> {{.Label}}</a>{{end}}
     </nav>
     <div class="sheet-foot">
       <div class="who">

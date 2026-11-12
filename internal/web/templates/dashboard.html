@@ -143,5 +143,13 @@
       <div class="legend" style="margin-top:6px"><span><i style="background:var(--cyan)"></i>download</span><span><i style="background:var(--pink)"></i>upload</span></div></div>
   </div>
 
+  {{if or .PluginPanels .CanPickPanels}}
+  <div class="section-label"><span class="eyebrow">Plugins</span>{{if .CanPickPanels}}<a href="/dashboard/panels" class="note mono">choose panels →</a>{{end}}</div>
+  {{if .PluginPanels}}<div class="grid g-2 plugin-panels">
+    {{range .PluginPanels}}<div class="plugin-panel" hx-get="{{.Src}}" hx-trigger="load" hx-swap="innerHTML"><div class="panel"><div class="note">Loading {{.Title}}&hellip;</div></div></div>
+    {{end}}
+  </div>{{end}}
+  {{end}}
+
 </div>
 {{end}}

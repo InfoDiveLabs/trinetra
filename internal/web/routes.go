@@ -131,6 +131,16 @@ func newHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /integrations/{id}/disable", integrationsMutation(d, integrationDisableHandler(d)))
 	mux.HandleFunc("POST /integrations/{id}/remove", integrationsMutation(d, integrationRemoveHandler(d)))
 	mux.HandleFunc("POST /integrations/{id}/push", integrationsMutation(d, integrationPushHandler(d)))
+	mux.HandleFunc("GET /p/{plugin}/{page}", requireRole(RoleViewer, d, pluginPageHandler(d)))
+	mux.HandleFunc("GET /plugins/slot", requireRole(RoleViewer, d, pluginSlotHandler(d)))
+	mux.HandleFunc("POST /plugins/action", requireRole(RoleViewer, d, func(w http.ResponseWriter, r *http.Request) {
+		requireCSRF(pluginActionHandler(d)).ServeHTTP(w, r)
+	}))
+	mux.HandleFunc("GET /plugins/{id}/files/{name}", requireRole(RoleViewer, d, pluginFileHandler(d)))
+	mux.HandleFunc("GET /dashboard/panels", requireRole(RoleViewer, d, panelsPageHandler(d)))
+	mux.HandleFunc("POST /dashboard/panels", requireRole(RoleViewer, d, func(w http.ResponseWriter, r *http.Request) {
+		requireCSRF(panelsSaveHandler(d)).ServeHTTP(w, r)
+	}))
 	// /channels: CRUD over config.Channels (table + add/edit modal).
 	mux.HandleFunc("GET /channels", requireRole(RoleAdmin, d, channelsPageHandler(d)))
 	mux.HandleFunc("POST /channels", channelsMutation(d, channelsAddHandler(d)))
