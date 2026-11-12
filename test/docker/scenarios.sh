@@ -100,7 +100,14 @@ wait_for_message "CPU" 30
 # Scenario 3: anomaly (CPU spike -> ALERT)
 # ---------------------------------------------------------------------------
 echo "== scenario 3: CPU anomaly =="
-compose exec -d sw stress-ng --cpu 0 --timeout 45s
+# A VM (e.g. OrbStack, Docker Desktop) can top out well below the default
+# 95% threshold even with every core hogged, so lower it for this scenario.
+compose exec -T sw trinetra monitor threshold cpu 50
+compose exec -d sw sh -c 'stress-ng --cpu 0 --timeout 45s >/tmp/stress.log 2>&1'
+sleep 2
+if ! compose exec -T sw pgrep -x stress-ng >/dev/null; then
+  echo "ASSERT FAIL: stress-ng did not start:"; compose exec -T sw cat /tmp/stress.log; exit 1
+fi
 # Bind the assertion to an actual CPU breach (anomaly.go breach-reason format,
 # e.g. "cpu = 97.0 ≥ threshold 95.0") so unrelated docker noise can't satisfy it.
 wait_for_message "cpu =" 45
@@ -112,7 +119,7 @@ echo "== scenario 5: docker-down alert =="
 docker run -d --name "$VICTIM" busybox sleep 3600 >/dev/null
 sleep 8   # let a sample discover it while it is running
 docker stop "$VICTIM" >/dev/null
-wait_for_message "docker:$VICTIM" 45
+wait_for_message "container $VICTIM is down" 45
 # and it should be visible via the /docker command. /_messages is cumulative,
 # so assert on a string only renderDocker emits ("name (state)") -- never the
 # alert text -- to actually exercise the command round-trip.
@@ -120,12 +127,26 @@ inject "/docker"
 wait_for_message "$VICTIM (exited)" 30
 
 # ---------------------------------------------------------------------------
-# Scenario 4 (downtime): kill daemon, wait > 2*interval, restart -> boot report
+# Scenario 4 (restart): an unclean daemon restart on a host that stayed up is a
+# monitoring gap, not host downtime (#116), so it must not send a boot report.
 # ---------------------------------------------------------------------------
-echo "== scenario 4: downtime / boot report =="
-compose exec -T sw pkill -f 'trinetra daemon' || true
-sleep 25   # gap > 2*sample_interval (2*5s)
+echo "== scenario 4: daemon restart is not reported as downtime =="
+compose exec -T sw trinetra config set heartbeat_interval 5
+sleep 6   # let the reloaded daemon write a heartbeat at the new interval
+compose exec -T sw pkill -9 -f 'trinetra daemon' || true
+sleep 15  # gap > 2*heartbeat_interval, unclean (no clean-stop marker)
+BEAT=$(compose exec -T sw cat /var/lib/trinetra/heartbeat)
 compose exec -d sw trinetra daemon
-wait_for_message "back online" 30
+i=0
+until [ "$(compose exec -T sw cat /var/lib/trinetra/heartbeat)" != "$BEAT" ]; do
+  i=$((i+1)); [ "$i" -lt 15 ] || { echo "ASSERT FAIL: daemon did not resume heartbeats"; exit 1; }
+  sleep 1
+done
+echo "ok: daemon resumed after unclean restart"
+sleep 10  # give a (wrong) boot report time to be delivered
+if grep -qF "back online" <<<"$(fetch_messages)"; then
+  echo "ASSERT FAIL: daemon restart was reported as host downtime:"; fetch_messages; exit 1
+fi
+echo "ok: no boot report for a daemon-only restart"
 
 echo "ALL SCENARIOS PASSED"
