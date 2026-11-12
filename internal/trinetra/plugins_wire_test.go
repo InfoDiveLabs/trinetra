@@ -38,13 +38,13 @@ func TestStartPluginsRunsStartsAfterAllWired(t *testing.T) {
 	wireRegistryFn, wireRuntimeFn, wireHostFn, wireFleetFn = rec("registry"), rec("runtime"), rec("host"), rec("fleet")
 
 	_, stop := startPlugins(&pluginDeps{})
-	want := []string{"registry", "runtime", "host", "fleet", "start-registry", "start-runtime", "start-host", "start-fleet"}
+	want := []string{"registry", "host", "runtime", "fleet", "start-registry", "start-host", "start-runtime", "start-fleet"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("order = %v", order)
 	}
 	order = nil
 	stop()
-	wantStop := []string{"stop-fleet", "stop-host", "stop-runtime", "stop-registry"}
+	wantStop := []string{"stop-fleet", "stop-runtime", "stop-host", "stop-registry"}
 	if !reflect.DeepEqual(order, wantStop) {
 		t.Fatalf("stop order = %v", order)
 	}

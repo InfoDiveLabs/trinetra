@@ -45,11 +45,11 @@ var (
 	wireFleetFn    = wireFleet
 )
 
-// startPlugins wires registry, runtime, hostapi, fleet (in that order), runs starts, and returns the Manager and a stop func (stops in reverse).
+// startPlugins wires registry, hostapi, runtime, fleet (in that order) so the host socket listens before plugins start, runs starts, and returns the Manager and a stop func (stops in reverse).
 func startPlugins(d *pluginDeps) (plugin.Manager, func()) {
 	wireRegistryFn(d)
-	wireRuntimeFn(d)
 	wireHostFn(d)
+	wireRuntimeFn(d)
 	wireFleetFn(d)
 	var catalog plugin.CatalogSource
 	if d.registry != nil {
