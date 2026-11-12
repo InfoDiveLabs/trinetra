@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -96,7 +97,7 @@ func (r *Registry) Refresh(ctx context.Context) error {
 		r.lastErr = ""
 	}
 	r.mu.Unlock()
-	if err != nil {
+	if err != nil && !errors.Is(err, plugin.ErrNoRegistryKeys) {
 		r.o.Logf("registry: refresh failed: %v", err)
 	}
 	return err
