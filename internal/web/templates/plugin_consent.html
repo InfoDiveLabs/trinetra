@@ -1,0 +1,30 @@
+{{define "content"}}
+<div id="plugin-consent" class="panel">
+  <div class="head"><b>{{.Plugin.Manifest.Name}}</b> <span class="badge {{.Plugin.TrustClass}}">{{.Plugin.TrustLabel}}</span></div>
+  {{if .Pending}}<p class="note">This update asks for additional permissions.</p>{{end}}
+  {{if and .Unverified .Disallowed}}
+  <div class="flash err">Unverified plugins are disabled on this host (<span class="mono">plugins.allow_unverified</span> is false), so this plugin cannot be enabled.</div>
+  <a class="btn ghost" href="/integrations/{{.Plugin.ID}}">Back</a>
+  {{else}}
+  <form method="post" action="/integrations/{{.Plugin.ID}}/enable">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    {{if .Pending}}<input type="hidden" name="pending" value="1">{{end}}
+    {{if .Unverified}}<div class="flash err plugin-risk">{{range .Warning}}<p>{{.}}</p>{{end}}</div>{{end}}
+    {{if .Perms}}
+    <div class="note">This plugin will be allowed to:</div>
+    {{range .Perms}}
+    <div class="row">
+      {{if $.Unverified}}<label class="chk"><input type="checkbox" name="accept" value="{{.Name}}" required> <span class="mono">{{.Name}}</span> &mdash; {{.Desc}}</label>
+      {{else}}<span class="mono">{{.Name}}</span> &mdash; {{.Desc}}{{end}}
+    </div>
+    {{end}}
+    {{else}}<div class="note">No special permissions are requested.</div>{{end}}
+    {{if .Unverified}}<label class="chk"><input type="checkbox" name="ack_risk" value="1" required> I understand this plugin is unverified and I trust its publisher.</label>{{end}}
+    <div class="plugin-actions">
+      <button class="btn primary" type="submit">Grant and enable</button>
+      <a class="btn ghost" href="/integrations/{{.Plugin.ID}}">Cancel</a>
+    </div>
+  </form>
+  {{end}}
+</div>
+{{end}}
