@@ -1,7 +1,13 @@
 package fleet
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
@@ -52,4 +58,80 @@ type PluginReport struct {
 // PluginPackageSource serves offered packages; Open fails unless nodeID has an outstanding offer for sha.
 type PluginPackageSource interface {
 	Open(nodeID, sha string) (io.ReadSeekCloser, int64, error)
+}
+
+// HeaderPluginSize carries the total package size on a chunk response.
+const HeaderPluginSize = "X-Trinetra-Size"
+
+func (m *Master) handlePluginPackage(w http.ResponseWriter, r *http.Request, nodeID string) {
+	src := m.cfg.PluginPackages
+	if src == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var offset int64
+	if v := r.URL.Query().Get("offset"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			http.Error(w, "bad offset", http.StatusBadRequest)
+			return
+		}
+		offset = n
+	}
+	rc, size, err := src.Open(nodeID, r.PathValue("sha"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer rc.Close()
+	if offset > size {
+		http.Error(w, "offset beyond end", http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	w.Header().Set(HeaderPluginSize, strconv.FormatInt(size, 10))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if offset == size {
+		return
+	}
+	if _, err := rc.Seek(offset, io.SeekStart); err != nil {
+		http.Error(w, "seek failed", http.StatusInternalServerError)
+		return
+	}
+	buf := make([]byte, min(int64(PluginChunkSize), size-offset))
+	n, err := io.ReadFull(rc, buf)
+	if err != nil && n == 0 {
+		http.Error(w, "read failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(n))
+	_, _ = w.Write(buf[:n])
+}
+
+// FetchPluginChunk reads one chunk of the offered package sha starting at offset and returns it with the package's total size.
+func (s *Shipper) FetchPluginChunk(ctx context.Context, sha string, offset int64) ([]byte, int64, error) {
+	u := s.cfg.MasterURL + PathPluginPackage + url.PathEscape(sha) + "?offset=" + strconv.FormatInt(offset, 10)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("fleet: plugin package fetch returned %d", resp.StatusCode)
+	}
+	size, err := strconv.ParseInt(resp.Header.Get(HeaderPluginSize), 10, 64)
+	if err != nil || size < 0 {
+		return nil, 0, errors.New("fleet: plugin package response lacks a valid size")
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, PluginChunkSize+1))
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(b) > PluginChunkSize {
+		return nil, 0, errors.New("fleet: plugin chunk exceeds the chunk size")
+	}
+	return b, size, nil
 }

@@ -50,7 +50,9 @@ type MasterConfig struct {
 	// OnSkew receives the child's send time (unix seconds) for every request that carries one
 	// (HeaderSentAt on ingest/backfill, SentAt on live).
 	OnSkew func(nodeID string, now time.Time, sentAt int64)
-	Logf   func(format string, args ...any)
+	// PluginPackages serves offered plugin packages on PathPluginPackage; nil answers 404.
+	PluginPackages PluginPackageSource
+	Logf           func(format string, args ...any)
 }
 
 // Master serves the fleet endpoints.
@@ -102,6 +104,7 @@ func (m *Master) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathLive, m.requireNode(m.handleLive))
 	mux.HandleFunc("GET "+PathStream, m.requireNode(m.handleStream))
 	mux.HandleFunc("POST "+PathRPC+"{id}", m.requireNode(m.handleRPC))
+	mux.HandleFunc("GET "+PathPluginPackage+"{sha}", m.requireNode(m.handlePluginPackage))
 	return mux
 }
 
