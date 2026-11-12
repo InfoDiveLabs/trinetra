@@ -97,6 +97,7 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	ensurePluginSystemBestEffort()
 	// Only nudge the operator to set a Telegram token on a genuinely unconfigured host.
 	waitErr := waitForDaemonFn()
 	switch {
@@ -512,6 +513,7 @@ func removeInstalledPlugins(binDir string) {
 func cmdUninstall(args []string) int {
 	x := osExec{}
 	_, _ = x.Run("systemctl", "disable", "--now", "trinetra")
+	removePluginSystem()
 	_ = os.Remove(unitPath)
 	removeWatchdog(defaultUpdatePaths(), x)
 	// Remove the /usr/bin shortcut, but only if it is still OUR symlink into

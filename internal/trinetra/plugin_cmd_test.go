@@ -74,10 +74,6 @@ func TestPluginStubsReportNotImplemented(t *testing.T) {
 	var buf bytes.Buffer
 	stderr = &buf
 	t.Cleanup(func() { stderr = prev })
-	if code := cmdPluginRuntime("list", nil); code != 1 || !strings.Contains(buf.String(), "trinetra plugin list: not implemented yet") {
-		t.Fatalf("runtime stub: %d %q", code, buf.String())
-	}
-	buf.Reset()
 	if code := cmdPluginCatalog(nil); code != 1 || !strings.Contains(buf.String(), "trinetra plugin catalog: not implemented yet") {
 		t.Fatalf("catalog stub: %d %q", code, buf.String())
 	}
@@ -96,8 +92,8 @@ func TestMainRoutesPluginAndHiddenPluginExec(t *testing.T) {
 	var buf bytes.Buffer
 	stderr = &buf
 	t.Cleanup(func() { stderr = prev })
-	if code := cmdPluginExec(nil); code != 1 {
-		t.Fatalf("plugin-exec stub exit %d", code)
+	if code := cmdPluginExec(nil); code != 2 {
+		t.Fatalf("plugin-exec without args exit %d", code)
 	}
 	if strings.Contains(usage, "plugin-exec") {
 		t.Fatal("plugin-exec must stay hidden from usage")
