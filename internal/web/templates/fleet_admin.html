@@ -145,5 +145,23 @@
       {{end}}
     </tbody>
   </table></div></div>
+
+  {{if .PluginStates}}
+  <div class="section-label"><span class="eyebrow">Plugins</span></div>
+  <div class="panel pad0 cardpanel"><div class="tablewrap"><table class="cards">
+    <thead><tr><th>Node</th><th>Plugin</th><th>Version</th><th>Phase</th><th>Detail</th></tr></thead>
+    <tbody>
+      {{range .PluginStates}}
+      <tr>
+        <td class="mono card-title" data-label="Node">{{.NodeName}}</td>
+        <td data-label="Plugin">{{.Plugin}}</td>
+        <td class="mono note" data-label="Version">{{orDash .Version}}</td>
+        <td data-label="Phase"><span class="badge{{if eq .Phase "failed"}} crit{{else if or (eq .Phase "installed") (eq .Phase "enabled")}} ok{{end}}">{{.Phase}}</span></td>
+        <td class="note" data-label="Detail">{{if .Error}}{{.Error}}{{else if .Size}}{{.Received}} / {{.Size}} bytes{{else}}-{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table></div></div>
+  {{end}}
 </div>
 {{end}}
