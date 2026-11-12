@@ -167,11 +167,11 @@ type applyPlan struct {
 // planApply/swapIn/restorePrevious always process them: "trinetra".
 var updateBinaries = append([]string{"trinetra"}, pluginNamesWithPrefix()...)
 
-// pluginNamesWithPrefix turns pluginManifestNames ("ctl", "web", from systemd.go) into
+// pluginNamesWithPrefix turns firstPartyCompanionNames ("ctl", "web") into
 // their installed binary names ("trinetra-ctl", "trinetra-web").
 func pluginNamesWithPrefix() []string {
-	names := make([]string, len(pluginManifestNames))
-	for i, n := range pluginManifestNames {
+	names := make([]string, len(firstPartyCompanionNames()))
+	for i, n := range firstPartyCompanionNames() {
 		names[i] = "trinetra-" + n
 	}
 	return names

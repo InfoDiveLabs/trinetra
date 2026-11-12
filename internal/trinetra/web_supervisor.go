@@ -74,75 +74,19 @@ func shouldStartWeb(cfg *config.Config, socketUp bool) bool {
 // startWeb launches the web supervisor goroutine and returns a stop func that signals the
 // loop to exit, kills any running child, and blocks until the loop has actually exited.
 func startWeb(socketPath, token string) (stop func()) {
-	stopCh := make(chan struct{})
-	done := make(chan struct{})
-	go superviseWeb(socketPath, token, stopCh, done)
-	return func() {
-		close(stopCh)
-		<-done
-	}
-}
-
-// superviseWeb resolves and spawns trinetra-web, then restarts it with capped backoff
-// whenever it exits on its own, until stopCh closes.
-func superviseWeb(socketPath, token string, stopCh <-chan struct{}, done chan<- struct{}) {
-	defer close(done)
-	env := append(os.Environ(),
-		"TRINETRA_CONTROL_SOCKET="+socketPath,
-		"TRINETRA_CONTROL_TOKEN="+token,
-		// Compat: kept for one release so a pre-rename serverwatch-web binary (which only reads
-		// the old names) still works when spawned by a new core.
-		"SERVERWATCH_CONTROL_SOCKET="+socketPath,
-		"SERVERWATCH_CONTROL_TOKEN="+token,
-	)
-
-	backoff := webBackoffMin
-	for {
-		select {
-		case <-stopCh:
-			return
-		default:
-		}
-
-		path, err := resolveWebPlugin()
-		if err != nil {
-			supervisorLog("web: refusing to start trinetra-web: %v (run `trinetra install` after a rebuild)", err)
-			if !sleepOrStop(backoff, stopCh) {
-				return
-			}
-			backoff = nextBackoff(backoff)
-			continue
-		}
-
-		proc, err := startWebProc(path, env)
-		if err != nil {
-			supervisorLog("web: failed to spawn %s: %v", path, err)
-			if !sleepOrStop(backoff, stopCh) {
-				return
-			}
-			backoff = nextBackoff(backoff)
-			continue
-		}
-
-		start := timeNow()
-		waitCh := make(chan error, 1)
-		go func() { waitCh <- proc.Wait() }()
-		select {
-		case <-stopCh:
-			_ = proc.Kill()
-			<-waitCh
-			return
-		case werr := <-waitCh:
-			supervisorLog("web: trinetra-web exited: %v", werr)
-			if timeNow().Sub(start) >= webBackoffReset {
-				backoff = webBackoffMin
-			}
-			if !sleepOrStop(backoff, stopCh) {
-				return
-			}
-			backoff = nextBackoff(backoff)
-		}
-	}
+	return startCompanion(companionSpec{
+		Name:    "web",
+		Resolve: func() (string, error) { return resolveWebPlugin() },
+		Env: append(os.Environ(),
+			"TRINETRA_CONTROL_SOCKET="+socketPath,
+			"TRINETRA_CONTROL_TOKEN="+token,
+			// Compat: kept for one release so a pre-rename serverwatch-web binary (which only reads
+			// the old names) still works when spawned by a new core.
+			"SERVERWATCH_CONTROL_SOCKET="+socketPath,
+			"SERVERWATCH_CONTROL_TOKEN="+token,
+		),
+		Start: func(path string, env []string) (supervisedProc, error) { return startWebProc(path, env) },
+	})
 }
 
 // nextBackoff doubles d, capped at webBackoffMax.
