@@ -116,6 +116,33 @@ func TestChildRemoveAndRevoke(t *testing.T) {
 	}
 }
 
+type revokingLifecycle struct {
+	*fleetFakeLifecycle
+	applied []plugin.Revocation
+}
+
+func (r *revokingLifecycle) ApplyRevocations(rv []plugin.Revocation) {
+	r.mu.Lock()
+	r.applied = append(r.applied, rv...)
+	r.mu.Unlock()
+}
+
+func TestChildRevokeMatchesEquivalentVersionsAndMarksRevoked(t *testing.T) {
+	lc := &revokingLifecycle{fleetFakeLifecycle: newFleetFakeLifecycle()}
+	lc.installed["y"] = plugin.Status{Installed: plugin.Installed{ID: "y", Version: "2.0.0", State: plugin.StateEnabled}}
+	c := newPluginChild(func() plugin.Lifecycle { return lc }, nil, func() bool { return false }, "master-1", t.TempDir(), nil)
+	rv, _ := json.Marshal(fleet.PluginRevoke{Revocations: []plugin.Revocation{{ID: "y", Versions: []string{"v2.0.0"}, Reason: "bad"}}})
+	c.HandleFrame(fleet.Frame{Type: fleet.FramePluginRevoke, Data: rv}, nil)
+	c.wg.Wait()
+	if len(lc.applied) != 1 || lc.applied[0].ID != "y" || lc.applied[0].Reason != "bad" {
+		t.Fatalf("applied = %+v", lc.applied)
+	}
+	r := c.Reports()
+	if len(r) != 1 || r[0].State != plugin.StateRevoked {
+		t.Fatalf("reports = %+v", r)
+	}
+}
+
 func TestChildReportsPhases(t *testing.T) {
 	lc := newFleetFakeLifecycle()
 	lc.installErr = errors.New("bad signature")

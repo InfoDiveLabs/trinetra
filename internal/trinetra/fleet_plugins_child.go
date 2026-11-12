@@ -19,6 +19,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/fleet"
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
+	"github.com/InfoDiveLabs/trinetra/internal/pluginrt"
 )
 
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -309,12 +310,15 @@ func (c *pluginChild) handleRevoke(r fleet.PluginRevoke) {
 		if err != nil {
 			return
 		}
+		revoker, canRevoke := lc.(interface{ ApplyRevocations([]plugin.Revocation) })
 		for _, rv := range r.Revocations {
 			for _, st := range list {
-				if st.ID != rv.ID || (len(rv.Versions) > 0 && !slices.Contains(rv.Versions, st.Version)) {
+				if !pluginrt.RevocationCovers(rv, st.ID, st.Version) {
 					continue
 				}
-				if err := lc.Disable(st.ID, "fleet", c.via()); err != nil {
+				if canRevoke {
+					revoker.ApplyRevocations([]plugin.Revocation{rv})
+				} else if err := lc.Disable(st.ID, "fleet", c.via()); err != nil {
 					c.logf("plugins: revoke of %s %s from %s failed: %v", st.ID, st.Version, c.via(), err)
 					continue
 				}
