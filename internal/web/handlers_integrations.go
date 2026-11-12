@@ -125,19 +125,21 @@ func buildIntegrationsPageData(r *http.Request, d Deps) IntegrationsPageData {
 	return data
 }
 
-func renderIntegrationsPage(w http.ResponseWriter, page string, data any) error {
+func renderIntegrationsPageStatus(w http.ResponseWriter, page string, data any, status int) error {
 	tmpl, err := template.New("base.html").Funcs(funcMap).
 		ParseFS(templatesFS, "templates/base.html", "templates/"+page)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
 func integrationsPageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := renderIntegrationsPage(w, "integrations.html", buildIntegrationsPageData(r, d)); err != nil {
+		if err := renderIntegrationsPageStatus(w, "integrations.html", buildIntegrationsPageData(r, d), http.StatusOK); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}

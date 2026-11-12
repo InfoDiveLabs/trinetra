@@ -1,0 +1,101 @@
+{{define "cfgfields"}}{{range .}}
+{{if eq .Kind "checkbox"}}
+<label class="field chk"><input type="checkbox" name="{{.Key}}" value="true"{{if .Checked}} checked{{end}}> <span class="lb">{{.Title}}</span>{{if .Description}}<span class="hint">{{.Description}}</span>{{end}}{{if .Err}}<span class="field-err">{{.Err}}</span>{{end}}</label>
+{{else}}
+<label class="field"><span class="lb">{{.Title}}</span>
+{{if eq .Kind "password"}}<input type="password" name="{{.Key}}" value="" autocomplete="new-password" placeholder="{{.Placeholder}}">
+{{else if eq .Kind "select"}}{{$cur := .Value}}<select name="{{.Key}}">{{range .Options}}<option value="{{.}}"{{if eq . $cur}} selected{{end}}>{{.}}</option>{{end}}</select>
+{{else if eq .Kind "textarea"}}<textarea name="{{.Key}}" rows="4">{{.Value}}</textarea>
+{{else if eq .Kind "number"}}<input type="number" name="{{.Key}}" value="{{.Value}}" step="{{.Step}}"{{if .Min}} min="{{.Min}}"{{end}}{{if .Max}} max="{{.Max}}"{{end}}>
+{{else}}<input type="text" name="{{.Key}}" value="{{.Value}}">{{end}}
+{{if .Description}}<span class="hint">{{.Description}}</span>{{end}}
+{{if .Err}}<span class="field-err">{{.Err}}</span>{{end}}
+</label>
+{{end}}
+{{end}}{{end}}
+
+{{define "content"}}
+<div id="integration-page">
+  {{if .Flash}}<div class="flash{{if .FlashErr}} err{{end}}" role="status">{{.Flash}}</div>{{end}}
+
+  <div class="panel plugin-card">
+    <div class="head"><b>{{.Plugin.Manifest.Name}}</b><span class="badge {{.Plugin.TrustClass}}">{{.Plugin.TrustLabel}}</span></div>
+    <div class="note mono">{{.Plugin.ID}} {{.Plugin.Version}} &middot; {{.Plugin.Manifest.Publisher}}</div>
+    <p class="note">{{.Plugin.Manifest.Description}}</p>
+    <div class="plugin-badges">
+      <span class="badge">{{.Plugin.StateLabel}}</span>
+      <span class="badge {{.Plugin.HealthClass}}">{{.Plugin.HealthLabel}}</span>
+      {{if .Plugin.UpdateAvailable}}<span class="badge ok">Update available: {{.Plugin.UpdateAvailable}}</span>{{end}}
+    </div>
+    {{if .Plugin.RevokedReason}}<div class="flash err">Revoked: {{.Plugin.RevokedReason}}</div>{{end}}
+    {{if .Plugin.Reason}}<div class="note">{{.Plugin.Reason}}</div>{{end}}
+    <div class="plugin-actions">
+      {{if .HasPending}}<a class="btn primary" href="/integrations/{{.Plugin.ID}}/enable?pending=1">Review pending update</a>{{end}}
+      {{if .NeedsConsent}}<a class="btn primary" href="/integrations/{{.Plugin.ID}}/enable">Review permissions and enable</a>{{end}}
+      {{if eq (printf "%s" .Plugin.State) "enabled"}}<form method="post" action="/integrations/{{.Plugin.ID}}/disable"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="btn ghost" type="submit">Disable</button></form>{{end}}
+      {{if .Plugin.UpdateAvailable}}<form method="post" action="/integrations/{{.Plugin.ID}}/update"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="btn" type="submit">Update to {{.Plugin.UpdateAvailable}}</button></form>{{end}}
+      <form method="post" action="/integrations/{{.Plugin.ID}}/remove"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><label class="pw-confirm"><input type="checkbox" required> Remove this plugin</label> <button class="btn danger" type="submit">Remove</button></form>
+    </div>
+  </div>
+
+  <div class="grid g-2">
+    <div class="panel"><div class="head"><span class="eyebrow">Permissions</span></div>
+      {{if .Perms}}{{range .Perms}}<div class="row"><span class="mono">{{.Name}}</span><div class="note">{{.Desc}}</div></div>{{end}}{{else}}<div class="note">No special permissions.</div>{{end}}
+      {{if .Consents}}<div class="head" style="margin-top:14px"><span class="eyebrow">Consents</span></div>
+      {{range .Consents}}<div class="note">{{timeText .Time}} &middot; {{.Actor}} via {{.Via}} &middot; v{{.Version}}</div>{{end}}{{end}}
+    </div>
+    <div class="panel"><div class="head"><span class="eyebrow">Recent logs</span></div>
+      {{if .Logs}}<pre class="plugin-log mono">{{range .Logs}}{{.Level}} {{.Message}}
+{{end}}</pre>{{else}}<div class="note">No log lines yet.</div>{{end}}
+      {{if .Files}}<div class="head" style="margin-top:14px"><span class="eyebrow">Files</span></div>
+      {{range .Files}}<div><a href="/plugins/{{$.Plugin.ID}}/files/{{.Name}}" download>{{.Title}}</a> <span class="note mono">{{.Name}}</span></div>{{end}}{{end}}
+    </div>
+  </div>
+
+  {{if .Settings}}
+  <div class="panel" id="plugin-settings"><div class="head"><span class="eyebrow">Settings</span></div>
+    <form method="post" action="/integrations/{{.Plugin.ID}}/config">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="section" value="settings">
+      {{template "cfgfields" .Settings}}
+      <button class="btn primary" type="submit">Save settings</button>
+    </form>
+  </div>
+  {{end}}
+
+  {{if .AlertRules}}
+  <div class="panel" id="plugin-alert-rules"><div class="head"><span class="eyebrow">Alert rules</span></div>
+    <form method="post" action="/integrations/{{.Plugin.ID}}/config">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="section" value="alerts">
+      {{template "cfgfields" .AlertRules}}
+      <button class="btn primary" type="submit">Save alert rules</button>
+    </form>
+  </div>
+  {{end}}
+
+  {{if .Push}}
+  <div class="panel" id="plugin-push"><div class="head"><span class="eyebrow">Push to nodes</span></div>
+    <form method="post" action="/integrations/{{.Plugin.ID}}/push">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      {{if .Push.Nodes}}
+      <div class="field"><span class="lb">Nodes</span>
+        {{range .Push.Nodes}}<label class="chk"><input type="checkbox" name="node" value="{{.ID}}"> {{.Name}}</label> {{end}}
+      </div>
+      {{if .Push.Tags}}<label class="field"><span class="lb">Or every node with tag</span><select name="tag"><option value="">(none)</option>{{range .Push.Tags}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>{{end}}
+      {{if .Push.Unverified}}
+      <div class="flash err">{{range .Push.Warning}}<p>{{.}}</p>{{end}}</div>
+      <div class="note">The permissions below will be granted on every selected node.</div>
+      {{range .Push.Perms}}<label class="chk"><input type="checkbox" name="accept" value="{{.Name}}" required> <span class="mono">{{.Name}}</span> {{.Desc}}</label>{{end}}
+      <label class="chk"><input type="checkbox" name="ack_risk" value="1" required> I understand the risk of running this unverified plugin on those nodes.</label>
+      {{end}}
+      <button class="btn primary" type="submit">Push</button>
+      {{else}}<div class="note">No other nodes to push to.</div>{{end}}
+    </form>
+    {{if .Push.States}}
+    <div class="plugin-table-wrap"><table><thead><tr><th>Node</th><th>Phase</th><th>Version</th><th>State</th></tr></thead><tbody>
+      {{range .Push.States}}<tr><td>{{.NodeName}}</td><td>{{.Phase}}{{if .Error}} <span class="note">{{.Error}}</span>{{end}}</td><td class="mono">{{.Version}}</td><td>{{.State}}</td></tr>{{end}}
+    </tbody></table></div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
