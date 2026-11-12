@@ -167,6 +167,9 @@ func (s *Service) Health(id string) plugin.Health {
 	}
 }
 
+// Forget drops id's series cap state; the runtime calls it when a plugin is removed.
+func (s *Service) Forget(id string) { s.Series.Forget(id) }
+
 // ResolveAll resolves every active alert of id.
 func (s *Service) ResolveAll(id, reason string) { s.Alerts.ResolveAll(id, reason) }
 

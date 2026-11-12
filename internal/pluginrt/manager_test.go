@@ -26,6 +26,7 @@ type fakeHost struct {
 	seq        int
 	notified   []plugin.ConfigResponse
 	resolved   []string
+	forgotten  []string
 	validate   func(id string, v map[string]json.RawMessage) (plugin.FieldErrors, error)
 }
 
@@ -70,6 +71,12 @@ func (h *fakeHost) ResolveAll(id, reason string) {
 }
 
 func (h *fakeHost) HostSocket() string { return "/run/trinetra-plugins/host.sock" }
+
+func (h *fakeHost) Forget(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.forgotten = append(h.forgotten, id)
+}
 
 func (h *fakeHost) isRegistered(id string) bool {
 	h.mu.Lock()
@@ -440,6 +447,9 @@ func TestRemoveDeletesFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(e.store.VersionDir("demo", "1.0.0")); !os.IsNotExist(err) {
 		t.Fatal("binaries remain")
+	}
+	if len(e.host.forgotten) != 1 || e.host.forgotten[0] != "demo" {
+		t.Fatalf("series state not forgotten: %v", e.host.forgotten)
 	}
 }
 

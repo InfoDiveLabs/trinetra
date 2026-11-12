@@ -18,13 +18,20 @@ import (
 )
 
 const (
-	maxFileBytes   = 1 << 20
-	fetchTimeout   = 5 * time.Minute
-	pluginSockRoot = "/run/trinetra-plugin"
+	maxFileBytes = 1 << 20
+	fetchTimeout = 5 * time.Minute
 )
 
+// SocketRoot is the directory holding each plugin's runtime dir; tests point it at a short temp path.
+var SocketRoot = "/run/trinetra-plugin"
+
 // PluginSocketPath is where a sandboxed plugin serves core calls.
-func PluginSocketPath(id string) string { return pluginSockRoot + "/" + id + "/plugin.sock" }
+func PluginSocketPath(id string) string { return SocketRoot + "/" + id + "/plugin.sock" }
+
+// SeriesForgetter is implemented by a HostRegistry that keeps per-plugin series state to drop on removal.
+type SeriesForgetter interface {
+	Forget(id string)
+}
 
 // Supervisor runs plugin processes (implemented in internal/trinetra).
 type Supervisor interface {
@@ -612,6 +619,9 @@ func (m *Manager) Remove(id, actor, via string) error {
 	}
 	if err := m.d.Store.Delete(id); err != nil {
 		return err
+	}
+	if f, ok := m.host().(SeriesForgetter); ok {
+		f.Forget(id)
 	}
 	m.audit(actor, via, "plugin.remove", id, rec.Version, "")
 	return nil
