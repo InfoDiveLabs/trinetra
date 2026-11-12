@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -237,7 +238,7 @@ func (m *Manager) ApplyRevocations(rv []plugin.Revocation) {
 	}
 	for _, rec := range recs {
 		for _, r := range rv {
-			if r.ID != rec.ID || !(len(r.Versions) == 0 || containsStr(r.Versions, rec.Version)) {
+			if !RevocationCovers(r, rec.ID, rec.Version) {
 				continue
 			}
 			if rec.State == plugin.StateRevoked {
@@ -271,13 +272,26 @@ func (m *Manager) MarkFailed(id, reason string) {
 	m.setStateLocked(rec, plugin.StateFailed, reason, "plugin.failed")
 }
 
-func containsStr(l []string, s string) bool {
-	for _, v := range l {
-		if v == s {
+// RevocationCovers reports whether r revokes id at version, comparing versions semantically.
+func RevocationCovers(r plugin.Revocation, id, version string) bool {
+	if r.ID != id {
+		return false
+	}
+	if len(r.Versions) == 0 {
+		return true
+	}
+	for _, v := range r.Versions {
+		if v == version || sameVersion(v, version) {
 			return true
 		}
 	}
 	return false
+}
+
+func sameVersion(a, b string) bool {
+	va, ea := update.ParseVersion(a)
+	vb, eb := update.ParseVersion(b)
+	return ea == nil && eb == nil && update.CompareVersions(va, vb) == 0
 }
 
 // Install implements plugin.Lifecycle.
@@ -425,6 +439,9 @@ func (m *Manager) commitInstall(req plugin.InstallRequest, v *verified) (plugin.
 		return res, err
 	}
 	known := err == nil
+	if known && cur.Version == mf.Version && cur.PackageSHA256 != v.pkg.SHA256 && needsConsent(cur, mf, v.trust) {
+		return res, fmt.Errorf("plugin %s %s is installed with different content and this package needs new consent; give it a new version", mf.ID, mf.Version)
+	}
 	if _, err := m.d.Store.Install(v.pkg, mf.Version); err != nil {
 		return res, err
 	}
@@ -464,8 +481,7 @@ func (m *Manager) swapLocked(req plugin.InstallRequest, cur plugin.Installed, v 
 	mf := v.pkg.Manifest
 	res.Updated = true
 	newPerms := PlanUpdate(cur, mf)
-	downgrade := cur.Trust == plugin.TrustVerified && v.trust != plugin.TrustVerified
-	if cur.State == plugin.StateEnabled && (len(newPerms) > 0 || downgrade) {
+	if needsConsent(cur, mf, v.trust) {
 		cur.Pending = &plugin.PendingUpdate{Version: mf.Version, Manifest: mf, PackageSHA256: v.pkg.SHA256, Trust: v.trust, NewPermissions: newPerms}
 		if err := m.d.Store.Save(cur); err != nil {
 			return false, err
@@ -482,6 +498,7 @@ func (m *Manager) swapLocked(req plugin.InstallRequest, cur plugin.Installed, v 
 	}
 	cur.Version, cur.Manifest, cur.Trust, cur.Source = mf.Version, mf, v.trust, v.source
 	cur.PackageSHA256, cur.UpdatedAt, cur.Pending = v.pkg.SHA256, m.now(), nil
+	cur.Granted = slices.DeleteFunc(slices.Clone(cur.Granted), func(p plugin.Permission) bool { return !slices.Contains(mf.Permissions, p) })
 	if !wasEnabled {
 		cur.State, cur.Reason, cur.Granted = plugin.StateInstalled, "", nil
 	}
@@ -498,6 +515,12 @@ func (m *Manager) swapLocked(req plugin.InstallRequest, cur plugin.Installed, v 
 	_ = m.d.Store.PruneVersions(cur.ID, cur.Version)
 	m.audit(req.Actor, req.Via, "plugin.update", cur.ID, mf.Version, "from "+old)
 	return false, nil
+}
+
+// needsConsent reports whether replacing enabled cur with mf at trust must wait for consent.
+func needsConsent(cur plugin.Installed, mf plugin.Manifest, trust plugin.Trust) bool {
+	downgrade := cur.Trust == plugin.TrustVerified && trust != plugin.TrustVerified
+	return cur.State == plugin.StateEnabled && (len(PlanUpdate(cur, mf)) > 0 || downgrade)
 }
 
 func (m *Manager) restoreManifest(id, version string, fallback plugin.Manifest) plugin.Manifest {

@@ -473,6 +473,25 @@ func TestUpdateSamePermissionsSwapsVersion(t *testing.T) {
 	}
 }
 
+func TestUpdateDroppingAPermissionNarrowsTheGrant(t *testing.T) {
+	e := newEnv(t)
+	e.installEnabled("demo", plugin.PermMetricsRead, plugin.PermNetOutbound)
+	e.addRegistryPackage("demo", "1.1.0", true, plugin.PermMetricsRead)
+	if _, err := e.m.Update(plugin.UpdateRequest{Actor: "root", Via: "cli"}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := e.store.Load("demo")
+	if rec.Version != "1.1.0" || len(rec.Granted) != 1 || rec.Granted[0] != plugin.PermMetricsRead {
+		t.Fatalf("granted = %v", rec.Granted)
+	}
+	e.host.mu.Lock()
+	reg := e.host.registered["demo"]
+	e.host.mu.Unlock()
+	if len(reg) != 1 || reg[0] != plugin.PermMetricsRead {
+		t.Fatalf("token grant = %v", reg)
+	}
+}
+
 func TestUpdateNewPermissionsStaysPendingAndOldKeepsRunning(t *testing.T) {
 	e := newEnv(t)
 	e.installEnabled("demo")
@@ -662,6 +681,39 @@ func TestApplyRevocationsDisables(t *testing.T) {
 	st, _ := e.m.Get("demo")
 	if st.RevokedReason != "malware" {
 		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestApplyRevocationsMatchesEquivalentVersions(t *testing.T) {
+	e := newEnv(t)
+	e.installEnabled("demo")
+	e.m.ApplyRevocations([]plugin.Revocation{{ID: "demo", Versions: []string{"v1.0.0"}, Reason: "bad build"}})
+	if rec, _ := e.store.Load("demo"); rec.State != plugin.StateRevoked || e.sup.running["demo"] {
+		t.Fatalf("state = %s, running = %v", rec.State, e.sup.running["demo"])
+	}
+}
+
+func TestReinstallSameVersionNeedingConsentKeepsRunningFiles(t *testing.T) {
+	e := newEnv(t)
+	e.installEnabled("demo")
+	url := e.addRegistryPackage("demo", "1.0.0", false, plugin.PermMetricsRead, plugin.PermNetOutbound)
+	if _, err := e.m.Install(plugin.InstallRequest{Ref: url, Actor: "root", Via: "cli"}); err == nil {
+		t.Fatal("same-version reinstall needing consent was accepted")
+	}
+	rec, _ := e.store.Load("demo")
+	if rec.Pending != nil || rec.State != plugin.StateEnabled {
+		t.Fatalf("rec = %+v", rec)
+	}
+	b, err := e.store.ReadFile("demo", "1.0.0", "plugin.json", plugin.MaxManifestBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf, err := plugin.DecodeManifest(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mf.Permissions) != 1 || mf.Permissions[0] != plugin.PermMetricsRead {
+		t.Fatalf("running version's manifest was replaced: %v", mf.Permissions)
 	}
 }
 
