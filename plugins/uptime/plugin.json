@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "id": "uptime",
+  "name": "Uptime",
+  "version": "0.1.0",
+  "publisher": "InfoDiveLabs",
+  "description": "HTTP(S), TCP, TLS certificate expiry and DNS checks with latency graphs and down/expiry alerts.",
+  "host_api": "^1.0",
+  "permissions": ["net.outbound", "metrics.publish", "alerts.raise"],
+  "binaries": [],
+  "config_schema": {
+    "type": "object",
+    "x-order": ["checks", "default_interval", "default_timeout", "down_after_runs", "cert_warn_days"],
+    "properties": {
+      "checks": {
+        "type": "array",
+        "title": "Checks",
+        "description": "One check per line: <kind> <target> [name=] [interval=] [timeout=] [keyword=] [expect=] [record=] [value=]. Kinds: http, tcp, tls, dns.",
+        "items": {"type": "string", "title": "Check"},
+        "maxItems": 200,
+        "default": []
+      },
+      "default_interval": {
+        "type": "string",
+        "format": "duration",
+        "title": "Default interval",
+        "description": "How often each check runs unless it sets interval=.",
+        "minimum": 10,
+        "default": "60s"
+      },
+      "default_timeout": {
+        "type": "string",
+        "format": "duration",
+        "title": "Default timeout",
+        "description": "How long a check may take unless it sets timeout=.",
+        "minimum": 1,
+        "maximum": 60,
+        "default": "10s"
+      },
+      "down_after_runs": {
+        "type": "integer",
+        "title": "Down after failed runs",
+        "description": "Raise a critical alert after this many consecutive failures.",
+        "x-section": "alert.rules",
+        "minimum": 1,
+        "maximum": 20,
+        "default": 3
+      },
+      "cert_warn_days": {
+        "type": "integer",
+        "title": "Warn when a certificate expires in fewer than (days)",
+        "x-section": "alert.rules",
+        "minimum": 1,
+        "maximum": 365,
+        "default": 14
+      }
+    }
+  },
+  "contributes": {
+    "slots": [
+      {"slot": "settings.form", "id": "settings", "title": "Uptime settings", "min_role": "admin"},
+      {"slot": "alert.rules", "id": "rules", "title": "Uptime alert rules", "min_role": "admin"},
+      {"slot": "nav.page", "id": "checks", "title": "Uptime", "min_role": "viewer"},
+      {"slot": "dashboard.panel", "id": "overview", "title": "Uptime overview", "min_role": "viewer"}
+    ]
+  }
+}

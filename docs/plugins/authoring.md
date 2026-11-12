@@ -130,7 +130,7 @@ The environment a plugin process receives is `TRINETRA_PLUGIN_ID`, `TRINETRA_PLU
 make plugins
 ```
 
-builds every directory under `plugins/` for the host platform into `dist/plugins/<id>/` as `bin/<os>-<arch>/trinetra-plugin-<id>`, next to a copy of `plugin.json` and `files/`. To build the Linux matrix (amd64, arm64, arm) set `PLUGIN_MATRIX=1`. Hashing, signing and packaging into `.tar.gz` is done by `trinetra-registry` (`hash`, then `sign`, then `package`) and by CI when a plugin is merged into the registry.
+checks each manifest under `plugins/` and builds it for the host platform into `dist/plugins/<id>/` as `bin/<os>-<arch>/trinetra-plugin-<id>`, next to `plugin.json` (with its hashes filled in) and `files/`. Set `PLUGINS="uptime"` to build one plugin, or `PLUGIN_MATRIX=1` to build the Linux matrix (amd64, arm64, arm) instead. Signing and packaging into `.tar.gz` is done by `trinetra-registry` (`sign`, then `package`) and by CI when a plugin is merged into the registry.
 
 Install a package with `trinetra plugin install <file>` and enable it with `trinetra plugin enable <id>`, which shows the permission prompt.
 
