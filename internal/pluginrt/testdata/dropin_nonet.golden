@@ -1,0 +1,15 @@
+[Service]
+ExecStart=
+ExecStart=/usr/local/lib/trinetra/plugins/demo/1.0.0/bin/linux-amd64/trinetra-plugin-demo
+LoadCredential=token:/var/lib/trinetra/plugins/demo/token
+Environment=TRINETRA_PLUGIN_ID=demo
+Environment=TRINETRA_PLUGIN_HOST_SOCKET=/run/trinetra-plugins/host.sock
+Environment=TRINETRA_PLUGIN_SOCKET=/run/trinetra-plugin/demo/plugin.sock
+Environment=TRINETRA_PLUGIN_TOKEN_FILE=%d/token
+Environment=TRINETRA_PLUGIN_DATA_DIR=%S/trinetra-plugins/demo
+MemoryMax=256M
+CPUQuota=50%%
+TasksMax=64
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+SocketBindDeny=any
