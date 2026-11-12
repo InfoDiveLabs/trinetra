@@ -28,6 +28,7 @@ type exporter struct {
 	src    source
 	report func(state, msg string)
 
+	applyMu sync.Mutex
 	mu      sync.Mutex
 	cur     settings
 	srv     *http.Server
@@ -46,18 +47,25 @@ func (e *exporter) addr() string {
 }
 
 func (e *exporter) apply(s settings) {
+	e.applyMu.Lock()
+	defer e.applyMu.Unlock()
+	if state, msg := e.swap(s); state != "" {
+		e.report(state, msg)
+	}
+}
+
+func (e *exporter) swap(s settings) (state, msg string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.srv != nil && e.cur.listen == s.listen {
 		e.cur = s
-		return
+		return "", ""
 	}
 	e.stopLocked()
 	e.cur = s
 	ln, err := net.Listen("tcp", s.listen)
 	if err != nil {
-		e.report("error", "listen "+s.listen+": "+err.Error())
-		return
+		return "error", "listen " + s.listen + ": " + err.Error()
 	}
 	srv := &http.Server{Handler: e.handler(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 30 * time.Second}
 	stopped := make(chan struct{})
@@ -68,7 +76,7 @@ func (e *exporter) apply(s settings) {
 		}
 	}()
 	e.srv, e.stopped, e.bound = srv, stopped, ln.Addr().String()
-	e.report("ok", "serving on "+e.bound)
+	return "ok", "serving on " + e.bound
 }
 
 func (e *exporter) stopLocked() {

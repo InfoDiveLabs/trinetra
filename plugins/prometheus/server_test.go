@@ -208,3 +208,27 @@ func TestListenFailureReportsError(t *testing.T) {
 		t.Fatalf("addr = %q after failed listen", b.addr())
 	}
 }
+
+func TestScrapeNotBlockedBySlowStatusReport(t *testing.T) {
+	release := make(chan struct{})
+	addr := make(chan string, 1)
+	e := newExporter(&fakeSource{view: testView()}, func(state, msg string) {
+		if a, ok := strings.CutPrefix(msg, "serving on "); ok {
+			addr <- a
+			<-release
+		}
+	})
+	t.Cleanup(e.close)
+	t.Cleanup(func() { close(release) })
+	go e.apply(settings{listen: "127.0.0.1:0"})
+	url := "http://" + <-addr + "/metrics"
+	c := http.Client{Timeout: 2 * time.Second}
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatalf("scrape during a status report: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("code = %d", resp.StatusCode)
+	}
+}
