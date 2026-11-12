@@ -58,16 +58,21 @@ func Build(t testing.TB, dir string) Package {
 	if !ok {
 		t.Fatal("plugintest: cannot locate source")
 	}
-	src := filepath.Join(filepath.Dir(self), "testdata", "e2eplugin")
+	return BuildFrom(t, dir, ID, filepath.Join(filepath.Dir(self), "testdata", "e2eplugin"), []byte(Manifest))
+}
+
+// BuildFrom compiles the main package in srcDir as plugin id, signs manifest with a fresh key and packages it under dir.
+func BuildFrom(t testing.TB, dir, id, srcDir string, manifest []byte) Package {
+	t.Helper()
 	build := filepath.Join(dir, "build")
-	bin := filepath.Join(build, filepath.FromSlash(plugin.BinaryPath(runtime.GOOS, runtime.GOARCH, ID)))
+	bin := filepath.Join(build, filepath.FromSlash(plugin.BinaryPath(runtime.GOOS, runtime.GOARCH, id)))
 	cmd := exec.Command("go", "build", "-o", bin, ".")
-	cmd.Dir = src
+	cmd.Dir = srcDir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("plugintest: go build: %v\n%s", err, out)
 	}
-	if err := os.WriteFile(filepath.Join(build, "plugin.json"), []byte(Manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(build, "plugin.json"), manifest, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m, err := regtool.FillHashes(build, "plugin.json")
@@ -82,7 +87,7 @@ func Build(t testing.TB, dir string) Package {
 	if err := regtool.SignFile(key, "manifest", filepath.Join(build, "plugin.json"), filepath.Join(build, "plugin.json.sig")); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(dir, ID+"-"+m.Version+".tar.gz")
+	out := filepath.Join(dir, id+"-"+m.Version+".tar.gz")
 	if _, _, err := regtool.Package(build, runtime.GOOS, runtime.GOARCH, out); err != nil {
 		t.Fatalf("plugintest: package: %v", err)
 	}

@@ -2,7 +2,7 @@ BIN=trinetra
 CTL_BIN=trinetra-ctl
 WEB_BIN=trinetra-web
 
-.PHONY: test vet build linux cross release release-prod validate fleet-e2e migration-e2e update-e2e test-all fmt
+.PHONY: plugin-uptime test vet build linux cross release release-prod validate fleet-e2e migration-e2e update-e2e test-all fmt
 
 # Build flags, per release channel:
 #   Beta/dev builds keep the symbol table and DWARF so stack traces, delve, and
@@ -89,6 +89,11 @@ release-prod: GO_TRIMPATH := -trimpath
 release-prod: cross
 	rm -f dist/checksums.txt
 	cd dist && sha256sum trinetra*-linux-* > checksums.txt
+
+# plugin-uptime builds the uptime plugin and fills its manifest hashes under dist/plugins/uptime;
+# PLUGIN_MATRIX=1 adds linux amd64/arm64/arm.
+plugin-uptime:
+	bash scripts/build-plugin.sh uptime
 
 validate:
 	bash test/docker/scenarios.sh
