@@ -3,10 +3,12 @@ package trinetra
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/internal/pluginhost"
 )
@@ -125,6 +127,30 @@ func TestActiveAlertsIncludesPluginAlerts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(recs) != 1 || recs[0].Key != "plugin.probe.check.down" || recs[0].Source != "plugin:probe" || recs[0].Severity != "warning" {
+		t.Fatalf("%+v", recs)
+	}
+}
+
+func TestFileAPIActiveAlertsIncludesPluginAlerts(t *testing.T) {
+	stateDir := t.TempDir()
+	d := &pluginDeps{stateDir: stateDir, inventory: newHostTestInventory(enabledInstalled("probe", plugin.PermAlertsRaise))}
+	wireHost(d)
+	svc := d.hostReg.(*pluginhost.Service)
+	_, _ = svc.Register("probe", []plugin.Permission{plugin.PermAlertsRaise}, false)
+	if err := svc.Host.RaiseAlert("probe", plugin.AlertRequest{Key: "check.down", Severity: "critical", Title: "T"}); err != nil {
+		t.Fatal(err)
+	}
+	d.stops[0]()
+	state := NewAlertState()
+	state.Active["cpu"] = ActiveAlert{Since: 1000, Reason: "cpu high", Critical: true}
+	if err := state.Save(filepath.Join(stateDir, "alerts.json")); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := newFileAPI(stateDir, config.Default()).ActiveAlerts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || recs[0].Key != "cpu" || recs[1].Key != "plugin.probe.check.down" || recs[1].Severity != "critical" {
 		t.Fatalf("%+v", recs)
 	}
 }
