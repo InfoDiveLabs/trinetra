@@ -114,9 +114,28 @@ func TestConsentPendingUpdateShowsOnlyNewPermissions(t *testing.T) {
 	if !strings.Contains(body, `name="pending" value="1"`) {
 		t.Error("pending flag missing from form")
 	}
-	e.post(RoleAdmin, "/integrations/demo/enable", map[string][]string{"pending": {"1"}})
-	if len(m.enabled) != 1 || !m.enabled[0].Pending || len(m.enabled[0].Accepted) != 1 || m.enabled[0].Accepted[0] != plugin.PermNetOutbound {
-		t.Errorf("pending enable: %+v", m.enabled)
+	if !strings.Contains(body, `name="version" value="2.0.0"`) {
+		t.Error("version binding missing from form")
+	}
+	e.post(RoleAdmin, "/integrations/demo/enable", map[string][]string{"pending": {"1"}, "version": {"2.0.0"}})
+	if len(m.enabled) != 1 || !m.enabled[0].Pending || len(plugin.Missing(m.enabled[0].Accepted, st.Pending.Manifest.Permissions)) != 0 {
+		t.Errorf("pending enable must accept every permission of the new version: %+v", m.enabled)
+	}
+}
+
+func TestConsentRefusedWhenVersionChangedSincePageWasShown(t *testing.T) {
+	st := demoStatus()
+	st.Pending = &plugin.PendingUpdate{
+		Version:        "3.0.0",
+		Manifest:       plugin.Manifest{ID: "demo", Version: "3.0.0", Permissions: []plugin.Permission{plugin.PermNetOutbound, plugin.PermFleetRead}},
+		NewPermissions: []plugin.Permission{plugin.PermNetOutbound, plugin.PermFleetRead},
+		Trust:          plugin.TrustVerified,
+	}
+	m := newFakeManager(st)
+	e := newPluginEnv(t, m)
+	rr := e.post(RoleAdmin, "/integrations/demo/enable", map[string][]string{"pending": {"1"}, "version": {"2.0.0"}})
+	if rr.Code != http.StatusConflict || len(m.enabled) != 0 {
+		t.Fatalf("code = %d, enabled = %+v", rr.Code, m.enabled)
 	}
 }
 

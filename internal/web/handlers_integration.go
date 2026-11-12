@@ -137,6 +137,7 @@ type ConsentPageData struct {
 	Unverified bool
 	Disallowed bool
 	Pending    bool
+	Version    string
 	Warning    []string
 }
 
@@ -188,6 +189,7 @@ func integrationEnablePageHandler(d Deps) http.HandlerFunc {
 			Plugin:   newIntegrationRow(st),
 			Perms:    permLines(perms),
 			Pending:  pending,
+			Version:  mf.Version,
 		}
 		if isUnverifiedTrust(trust) {
 			data.Unverified = true
@@ -233,9 +235,13 @@ func integrationEnableHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		pending := r.PostForm.Get("pending") == "1"
-		perms, trust, _, ok := consentTarget(st, pending)
+		perms, trust, mf, ok := consentTarget(st, pending)
 		if !ok {
 			renderNotFound(w, r, d, "no pending update")
+			return
+		}
+		if v, sent := r.PostForm["version"]; sent && (len(v) != 1 || v[0] != mf.Version) {
+			http.Error(w, "the plugin changed since this page was shown; review it again", http.StatusConflict)
 			return
 		}
 		expected := make([]string, len(perms))
@@ -258,7 +264,11 @@ func integrationEnableHandler(d Deps) http.HandlerFunc {
 			}
 			ack = true
 		}
-		err = m.Enable(plugin.EnableRequest{ID: id, Actor: auditUser(r), Via: "web", Accepted: perms, AcknowledgedRisk: ack, Pending: pending})
+		accepted := perms
+		if pending {
+			accepted = mf.Permissions
+		}
+		err = m.Enable(plugin.EnableRequest{ID: id, Actor: auditUser(r), Via: "web", Accepted: accepted, AcknowledgedRisk: ack, Pending: pending})
 		if err != nil {
 			log.Printf("web: plugin enable %q: %v", id, err)
 			if errors.Is(err, plugin.ErrUnverifiedDisallowed) {
