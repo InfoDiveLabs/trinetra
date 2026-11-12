@@ -3,7 +3,6 @@ package control
 import (
 	"bufio"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 // helloMagic is the Hello value both ends must send, alongside a matching ProtocolVersion.
@@ -32,20 +32,33 @@ const streamWriteTimeout = 30 * time.Second
 var emptyResult = json.RawMessage("{}")
 
 // Serve accepts connections on ln and handles each in its own goroutine against api. token
-// is the per-launch secret each hello must present (constant-time compared in handleConn).
+// is the per-launch secret each hello must present; "" means no auth. It grants full access.
 func Serve(api core.API, ln net.Listener, token string) error {
+	return ServeAuth(api, nil, ln, singleToken(token))
+}
+
+// ServeAuth serves ln with per-token grants; host serves Plugin.* (nil = unavailable).
+func ServeAuth(api core.API, host plugin.Host, ln net.Listener, auth Authorizer) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		go handleConn(api, conn, token)
+		go serveConn(api, host, conn, auth)
 	}
 }
 
-// handleConn validates the client's hello (version, then token), echoes its own, and
-// services requests until the peer disconnects.
 func handleConn(api core.API, conn net.Conn, token string) {
+	serveConn(api, nil, conn, singleToken(token))
+}
+
+func notPermitted(method string) string {
+	return fmt.Sprintf("control: method %q not permitted for this token", method)
+}
+
+// serveConn validates the client's hello (version, then token), echoes its own, and
+// services requests under the token's grant until the peer disconnects.
+func serveConn(api core.API, host plugin.Host, conn net.Conn, auth Authorizer) {
 	defer conn.Close()
 
 	r := bufio.NewReader(conn)
@@ -54,7 +67,7 @@ func handleConn(api core.API, conn net.Conn, token string) {
 		return
 	}
 	var clientHello hello
-	if err := readFrame(r, &clientHello); err != nil {
+	if err := plugin.ReadFrame(r, &clientHello); err != nil {
 		// Peer disconnected or missed helloTimeout; nothing to reply to.
 		return
 	}
@@ -66,7 +79,8 @@ func handleConn(api core.API, conn net.Conn, token string) {
 		})
 		return
 	}
-	if token != "" && subtle.ConstantTimeCompare([]byte(clientHello.Token), []byte(token)) != 1 {
+	grant, ok := auth.Authorize(clientHello.Token)
+	if !ok {
 		_ = writeFrame(conn, response{
 			OK:    false,
 			Error: "control: invalid token",
@@ -76,15 +90,29 @@ func handleConn(api core.API, conn net.Conn, token string) {
 	if err := writeFrame(conn, hello{Hello: helloMagic, Version: ProtocolVersion}); err != nil {
 		return
 	}
+	capped := grant.PluginID != ""
 
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(idleTimeout)); err != nil {
 			return
 		}
 		var req request
-		if err := readFrame(r, &req); err != nil {
-			// EOF, idle past idleTimeout, or a partial final frame: end quietly.
+		var err error
+		if capped {
+			err = plugin.ReadFrame(r, &req)
+		} else {
+			err = readFrame(r, &req)
+		}
+		if err != nil {
+			// EOF, idle past idleTimeout, an oversized or partial final frame: end quietly.
 			return
+		}
+
+		if !grant.Allows(req.Method) || (capped && !plugin.IsLocalNode(req.Node)) {
+			if err := writeFrame(conn, response{ID: req.ID, Node: req.Node, OK: false, Error: notPermitted(req.Method)}); err != nil {
+				return
+			}
+			continue
 		}
 
 		if req.Method == "Subscribe" {
@@ -97,10 +125,18 @@ func handleConn(api core.API, conn net.Conn, token string) {
 			streamSubscribe(api, conn, r, req.ID)
 			return
 		}
+		if req.Method == plugin.MethodWatchConfig {
+			streamWatchConfig(host, grant.PluginID, conn, r, req.ID)
+			return
+		}
 
 		var result json.RawMessage
 		var callErr error
 		switch {
+		case strings.HasPrefix(req.Method, "Plugin."):
+			result, callErr = dispatchPluginHost(host, grant, req.Method, req.Params)
+		case strings.HasPrefix(req.Method, "Plugins."):
+			result, callErr = dispatchPlugins(api, req.Method, req.Params)
 		case strings.HasPrefix(req.Method, "Fleet."):
 			result, callErr = dispatchFleet(api, req.Method, req.Params)
 		case strings.HasPrefix(req.Method, "StatusPage."):
