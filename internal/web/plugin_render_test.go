@@ -57,7 +57,9 @@ func TestRenderSlotErrorCardOnDeadlineError(t *testing.T) {
 
 func TestRenderSlotNotRunning(t *testing.T) {
 	m := newFakeManager(demoStatus())
-	m.renderFn = func(plugin.UIRequest) (plugin.RenderResult, error) { return plugin.RenderResult{}, plugin.ErrNotRunning }
+	m.renderFn = func(plugin.UIRequest) (plugin.RenderResult, error) {
+		return plugin.RenderResult{}, plugin.ErrNotRunning
+	}
 	if out := renderWith(t, m, slotReq("main")); !strings.Contains(out, "is not running") {
 		t.Errorf("want not running: %s", out)
 	}
