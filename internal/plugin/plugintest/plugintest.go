@@ -3,6 +3,9 @@ package plugintest
 
 import (
 	"crypto/ed25519"
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,17 +61,42 @@ func Build(t testing.TB, dir string) Package {
 	if !ok {
 		t.Fatal("plugintest: cannot locate source")
 	}
-	src := filepath.Join(filepath.Dir(self), "testdata", "e2eplugin")
+	return buildPackage(t, dir, filepath.Join(filepath.Dir(self), "testdata", "e2eplugin"), ID, []byte(Manifest), "")
+}
+
+// BuildFrom builds the plugin in srcDir (its plugin.json and optional files/ directory) the way Build does.
+func BuildFrom(t testing.TB, dir, srcDir string) Package {
+	t.Helper()
+	mb, err := os.ReadFile(filepath.Join(srcDir, "plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var head struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(mb, &head); err != nil {
+		t.Fatal(err)
+	}
+	return buildPackage(t, dir, srcDir, head.ID, mb, filepath.Join(srcDir, "files"))
+}
+
+func buildPackage(t testing.TB, dir, src, id string, manifest []byte, filesDir string) Package {
+	t.Helper()
 	build := filepath.Join(dir, "build")
-	bin := filepath.Join(build, filepath.FromSlash(plugin.BinaryPath(runtime.GOOS, runtime.GOARCH, ID)))
+	bin := filepath.Join(build, filepath.FromSlash(plugin.BinaryPath(runtime.GOOS, runtime.GOARCH, id)))
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("plugintest: go build: %v\n%s", err, out)
 	}
-	if err := os.WriteFile(filepath.Join(build, "plugin.json"), []byte(Manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(build, "plugin.json"), manifest, 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if filesDir != "" {
+		if err := os.CopyFS(filepath.Join(build, "files"), os.DirFS(filesDir)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
 	}
 	m, err := regtool.FillHashes(build, "plugin.json")
 	if err != nil {
@@ -82,7 +110,7 @@ func Build(t testing.TB, dir string) Package {
 	if err := regtool.SignFile(key, "manifest", filepath.Join(build, "plugin.json"), filepath.Join(build, "plugin.json.sig")); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(dir, ID+"-"+m.Version+".tar.gz")
+	out := filepath.Join(dir, id+"-"+m.Version+".tar.gz")
 	if _, _, err := regtool.Package(build, runtime.GOOS, runtime.GOARCH, out); err != nil {
 		t.Fatalf("plugintest: package: %v", err)
 	}

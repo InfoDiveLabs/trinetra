@@ -1,0 +1,76 @@
+{
+  "__inputs": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "pluginId": "prometheus", "pluginName": "Prometheus"}
+  ],
+  "title": "Trinetra host",
+  "uid": "trinetra-host",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "tags": ["trinetra"],
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "CPU", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "trinetra_cpu_usage_percent", "legendFormat": "cpu"}]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Memory and swap", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "targets": [
+        {"refId": "A", "expr": "trinetra_memory_usage_percent", "legendFormat": "memory"},
+        {"refId": "B", "expr": "trinetra_swap_usage_percent", "legendFormat": "swap"}
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Load average", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"refId": "A", "expr": "trinetra_load1", "legendFormat": "1m"},
+        {"refId": "B", "expr": "trinetra_load5", "legendFormat": "5m"},
+        {"refId": "C", "expr": "trinetra_load15", "legendFormat": "15m"}
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Disk usage", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "trinetra_disk_usage_percent", "legendFormat": "{{mount}}"}]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Network throughput", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
+      "targets": [
+        {"refId": "A", "expr": "trinetra_network_receive_bytes_per_second", "legendFormat": "rx {{interface}}"},
+        {"refId": "B", "expr": "trinetra_network_transmit_bytes_per_second", "legendFormat": "tx {{interface}}"}
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Temperature", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "celsius"}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "trinetra_temperature_celsius", "legendFormat": "temp"}]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Container CPU", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "trinetra_container_cpu_usage_percent", "legendFormat": "{{name}}"}]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Container memory", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "decmbytes"}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "trinetra_container_memory_mebibytes", "legendFormat": "{{name}}"}]
+    },
+    {
+      "id": 9, "type": "state-timeline", "title": "Fleet nodes up", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"refId": "A", "expr": "trinetra_node_up", "legendFormat": "{{node}}"}]
+    }
+  ]
+}
