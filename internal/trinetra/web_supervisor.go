@@ -98,8 +98,9 @@ func nextBackoff(d time.Duration) time.Duration {
 // for the sleep to finish) if stopCh closes first.
 func sleepOrStop(d time.Duration, stopCh <-chan struct{}) bool {
 	slept := make(chan struct{})
+	sleep := supervisorSleep
 	go func() {
-		supervisorSleep(d)
+		sleep(d)
 		close(slept)
 	}()
 	select {
