@@ -93,6 +93,9 @@ func dispatchRPC(self core.API, req rpcFrameData) rpcResultData {
 	case "container_logs":
 		return dispatchContainerLogs(self, req.Args)
 	default:
+		if res, ok := dispatchPluginRPC(req); ok {
+			return res
+		}
 		return rpcResultData{OK: false, Error: "unknown method"}
 	}
 }

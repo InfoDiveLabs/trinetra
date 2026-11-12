@@ -99,6 +99,8 @@ type LiveUpdate struct {
 	// Managed reports this child's managed-config state: nil until the child has
 	// received a "managed_config" frame, so an old master leaves it nil forever.
 	Managed *ManagedReport `json:"managed,omitempty"`
+	// Plugins reports plugin push progress on this child.
+	Plugins []PluginReport `json:"plugins,omitempty"`
 }
 
 // ManagedReport is a child's managed-config state, carried on every LiveUpdate once it has

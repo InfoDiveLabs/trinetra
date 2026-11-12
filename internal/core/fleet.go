@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -288,8 +289,12 @@ var ManagedKeys = []string{
 	"quiet_hours", "critical_overrides_quiet",
 }
 
+// ManagedPluginKeyPattern matches the fragment keys that configure a plugin: plugin.<id>.<key>.
+var ManagedPluginKeyPattern = regexp.MustCompile(`^plugin\.[a-z][a-z0-9-]{1,31}\.[a-z][a-z0-9_]{0,63}$`)
+
 // ManagedFragment is one master-pushed config fragment: allowlisted config.Config
-// keys/values for every node (Tag "") or every node carrying Tag.
+// keys/values for every node (Tag "") or every node carrying Tag. Keys matching
+// ManagedPluginKeyPattern set plugin settings; array values are newline-joined.
 type ManagedFragment struct {
 	ID      string            `json:"id"`
 	Tag     string            `json:"tag,omitempty"` // "" = every node

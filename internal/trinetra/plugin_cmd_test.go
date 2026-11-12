@@ -69,16 +69,6 @@ func TestCmdPluginUnknownPrintsUsage(t *testing.T) {
 	}
 }
 
-func TestPluginStubsReportNotImplemented(t *testing.T) {
-	prev := stderr
-	var buf bytes.Buffer
-	stderr = &buf
-	t.Cleanup(func() { stderr = prev })
-	if code := cmdPluginPush(nil); code != 1 || !strings.Contains(buf.String(), "trinetra plugin push: not implemented yet") {
-		t.Fatalf("push stub: %d %q", code, buf.String())
-	}
-}
-
 func TestMainRoutesPluginAndHiddenPluginExec(t *testing.T) {
 	ran := stubPluginHandlers(t)
 	if code := Main([]string{"plugin", "list"}); code != 0 || len(*ran) != 1 {
