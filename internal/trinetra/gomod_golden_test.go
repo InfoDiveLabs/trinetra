@@ -2,6 +2,7 @@ package trinetra
 
 import (
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"testing"
@@ -40,5 +41,34 @@ func TestGoModRequiresGolden(t *testing.T) {
 	got := strings.Join(goModRequires(t), "\n") + "\n"
 	if got != string(want) {
 		t.Fatalf("go.mod requires changed: the plugin system must not add third-party modules (spec §4)\n--- want\n%s--- got\n%s", want, got)
+	}
+}
+
+func TestCoreBinaryThirdPartyModulesGolden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{with .Module}}{{.Path}}{{end}}{{end}}", "./cmd/trinetra")
+	cmd.Dir = "../.."
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	seen := map[string]bool{}
+	var mods []string
+	for _, m := range strings.Fields(string(out)) {
+		if m != "github.com/InfoDiveLabs/trinetra" && !seen[m] {
+			seen[m] = true
+			mods = append(mods, m)
+		}
+	}
+	sort.Strings(mods)
+	got := strings.Join(mods, "\n")
+	want, err := os.ReadFile("testdata/core_modules.golden")
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	if got != strings.TrimSpace(string(want)) {
+		t.Fatalf("third-party modules linked into cmd/trinetra changed (spec §4)\n--- want\n%s\n--- got\n%s", want, got)
 	}
 }
