@@ -63,6 +63,17 @@ func TestManagedRejectsUnknownPluginKey(t *testing.T) {
 	}
 }
 
+func TestManagedRejectsPluginValueOfWrongType(t *testing.T) {
+	withManagedPluginSchema(t, uptimeSchema)
+	err := validateManagedFragmentValues(map[string]string{"plugin.uptime.interval": "soon"})
+	if err == nil || !strings.Contains(err.Error(), "plugin.uptime.interval") {
+		t.Fatalf("non-integer accepted: %v", err)
+	}
+	if err := validateManagedFragmentValues(map[string]string{"plugin.uptime.interval": "45"}); err != nil {
+		t.Fatalf("valid integer rejected: %v", err)
+	}
+}
+
 func TestManagedChildAppliesPluginKeysViaSetConfig(t *testing.T) {
 	lc := newFleetFakeLifecycle()
 	lc.installed["uptime"] = plugin.Status{Installed: plugin.Installed{ID: "uptime"}}

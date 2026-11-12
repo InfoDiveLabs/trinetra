@@ -58,7 +58,7 @@ func splitManagedPluginKey(k string) (id, key string, ok bool) {
 	return rest[:i], rest[i+1:], true
 }
 
-func validateManagedPluginKey(k string) error {
+func validateManagedPluginKey(k, v string) error {
 	id, key, _ := splitManagedPluginKey(k)
 	if managedPluginSchema == nil {
 		return fmt.Errorf("%q: plugin configuration is not available on this node", k)
@@ -69,6 +69,14 @@ func validateManagedPluginKey(k string) error {
 	}
 	if schema == nil || schema.Properties[key] == nil {
 		return fmt.Errorf("%q: %q is not a setting of plugin %q", k, key, id)
+	}
+	one := &plugin.ConfigSchema{Type: "object", Properties: map[string]*plugin.SchemaProp{key: schema.Properties[key]}}
+	typed, ferrs := plugin.CoerceStrings(one, map[string]string{key: v})
+	if len(ferrs) == 0 {
+		ferrs = plugin.ValidateValues(one, typed)
+	}
+	if msg, bad := ferrs[key]; bad {
+		return fmt.Errorf("%q: %s", k, msg)
 	}
 	return nil
 }
@@ -106,14 +114,14 @@ func splitManagedValues(values map[string]string) (cfg, plug map[string]string) 
 	return cfg, plug
 }
 
-// validateManagedFragmentValues rejects any key outside the allowlist and plugin.<id>.<key> keys the master cannot resolve.
+// validateManagedFragmentValues rejects any key outside the allowlist and plugin.<id>.<key> entries the master cannot resolve or whose value fails the plugin schema.
 func validateManagedFragmentValues(values map[string]string) error {
 	for k := range values {
 		if managedFragmentAllowlist[k] {
 			continue
 		}
 		if core.ManagedPluginKeyPattern.MatchString(k) {
-			if err := validateManagedPluginKey(k); err != nil {
+			if err := validateManagedPluginKey(k, values[k]); err != nil {
 				return err
 			}
 			continue
