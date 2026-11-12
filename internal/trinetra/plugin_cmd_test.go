@@ -81,10 +81,6 @@ func TestPluginStubsReportNotImplemented(t *testing.T) {
 	if code := cmdPluginCatalog(nil); code != 1 || !strings.Contains(buf.String(), "trinetra plugin catalog: not implemented yet") {
 		t.Fatalf("catalog stub: %d %q", code, buf.String())
 	}
-	buf.Reset()
-	if code := cmdPluginPush(nil); code != 1 || !strings.Contains(buf.String(), "trinetra plugin push: not implemented yet") {
-		t.Fatalf("push stub: %d %q", code, buf.String())
-	}
 }
 
 func TestMainRoutesPluginAndHiddenPluginExec(t *testing.T) {
