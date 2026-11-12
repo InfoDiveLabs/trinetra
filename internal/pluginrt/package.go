@@ -43,6 +43,7 @@ type Package struct {
 	Manifest      plugin.Manifest
 	SHA256        string
 	Size          int64
+	Archive       string
 }
 
 type countingReader struct {

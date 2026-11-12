@@ -138,4 +138,3 @@ func (r *fakeRegistry) Revocation(id, version string) (string, bool) {
 func (r *fakeRegistry) OnRevoke(f func([]plugin.Revocation)) { r.onRev = f }
 
 func (r *fakeRegistry) Catalog(bool) (plugin.Catalog, error) { return plugin.Catalog{}, nil }
-
