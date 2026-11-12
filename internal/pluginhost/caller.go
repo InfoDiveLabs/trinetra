@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,7 +80,7 @@ func (c *Caller) Call(ctx context.Context, id, method string, params, result any
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	err := c.roundTrip(ctx, sock, tok, method, params, result)
-	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(err, plugin.ErrTooLarge) {
+	if err != nil && (errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded)) && !errors.Is(err, plugin.ErrTooLarge) {
 		return fmt.Errorf("%w: %s.%s after %v", plugin.ErrDeadline, id, method, timeout)
 	}
 	return err
