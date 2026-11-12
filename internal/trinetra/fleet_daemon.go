@@ -567,6 +567,7 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 		engine.PushLeaseNow(id, now)
 		engine.PushSilencesNow(id, now)
 		managedPush.PushOne(id)
+		masterPlugins.onConnect(id)
 	})
 
 	sink := newReplicaSink(filepath.Join(dir, "nodes"), storeOptionsFor(cfg), func(nodeID string, ev AlertEvent) {
@@ -610,8 +611,12 @@ func startMaster(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleet
 	loop.managed = managedPush
 	m := fleet.NewMaster(fleet.MasterConfig{
 		CA: ca, Leaf: leaf, Registry: reg, Tokens: toks, Sink: sink, Hub: hub, Logf: d.logf,
-		OnSkew: loop.observeSkew,
+		OnSkew:         loop.observeSkew,
+		PluginPackages: &masterPlugins,
 		OnContact: func(id string, now time.Time, u *fleet.LiveUpdate) {
+			if u != nil {
+				masterPlugins.onReport(id, u.Plugins)
+			}
 			backlog := int64(-1)
 			if u != nil {
 				backlog = 0
