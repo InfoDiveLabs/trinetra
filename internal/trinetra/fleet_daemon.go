@@ -722,8 +722,14 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 	var sh *fleet.Shipper
 	sh = fleet.NewShipper(fleet.ShipperConfig{
 		MasterURL: cfg.Fleet.MasterURL, Pin: cfg.Fleet.CAPin, Identity: id, Outbox: ob,
-		Gaps:      &localGapFiller{store: d.store, alog: d.alog, rawRetention: configuredRawRetention(cfg), now: time.Now},
-		Live:      live.Build,
+		Gaps: &localGapFiller{store: d.store, alog: d.alog, rawRetention: configuredRawRetention(cfg), now: time.Now},
+		Live: func() (fleet.LiveUpdate, error) {
+			u, err := live.Build()
+			if err == nil {
+				u.Plugins = childPluginReports()
+			}
+			return u, err
+		},
 		LiveEvery: time.Duration(cfg.FastInterval) * time.Second,
 		Logf:      d.logf,
 		OnFrame: func(f fleet.Frame) {
@@ -731,6 +737,7 @@ func startChild(ctx context.Context, cfg *config.Config, d fleetDeps, rt *fleetR
 			applyAckFrame(d.self, f)
 			applyManagedConfigFrame(managedState, f)
 			handleRPCFrame(d.self, sh, d.logf, f)
+			handleChildPluginFrame(sh.FetchPluginChunk, f)
 		},
 	})
 	cctx, cancel := context.WithCancel(ctx)
