@@ -1,0 +1,12 @@
+{{define "content"}}
+<div id="plugin-panels" class="panel">
+  <div class="head"><span class="eyebrow">Dashboard panels</span></div>
+  {{if .Choices}}
+  <form method="post" action="/dashboard/panels">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    {{range .Choices}}<label class="field chk"><input type="checkbox" name="panel" value="{{.Key}}"{{if .Checked}} checked{{end}}> <span class="lb">{{.Title}}</span> <span class="note">{{.Plugin}}</span></label>{{end}}
+    <button class="btn primary" type="submit">Save</button>
+  </form>
+  {{else}}<div class="note">No installed plugin offers a dashboard panel.</div>{{end}}
+</div>
+{{end}}

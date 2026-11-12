@@ -116,6 +116,7 @@ var masterLocalPrefixes = []string{
 	"/channels",
 	"/users",
 	"/settings",
+	"/integrations",
 	"/enroll",
 	"/login",
 	"/logout",

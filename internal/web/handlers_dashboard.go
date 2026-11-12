@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/InfoDiveLabs/trinetra/internal/config"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 // activeAlertView is one row of the dashboard's "Active alerts" panel, projected from
@@ -107,6 +108,9 @@ type DashboardPageData struct {
 	TopCPUBars []containerBar
 	TopMemBars []containerBar
 	NoChannels bool
+	// PluginPanels are the signed-in user's chosen plugin panels, each loaded by htmx.
+	PluginPanels  []pluginSlotRef
+	CanPickPanels bool
 }
 
 // buildDashboardPageData assembles DashboardPageData from Deps: the live snapshot.
@@ -124,11 +128,13 @@ func buildDashboardPageData(r *http.Request, d Deps) DashboardPageData {
 	}
 	alerts := activeAlertsViaAPI(r, d)
 	return DashboardPageData{
-		NoChannels: currentRole(r) == string(RoleAdmin) && !anyChannelEnabled(d.Cfg()),
-		PageData:   newPageData(r, d, "Dashboard", "Overview · live"),
-		View:       view,
-		Host:       buildHostSummary(r, d),
-		Alerts:     alerts,
+		NoChannels:    currentRole(r) == string(RoleAdmin) && !anyChannelEnabled(d.Cfg()),
+		PageData:      newPageData(r, d, "Dashboard", "Overview · live"),
+		View:          view,
+		Host:          buildHostSummary(r, d),
+		PluginPanels:  chosenPanels(r, d),
+		CanPickPanels: len(slotOffers(r, d, plugin.SlotDashboardPanel)) > 0,
+		Alerts:        alerts,
 		TopCPUBars: containerBars(view.TopCPUContainers,
 			func(c ContainerView) float64 { return c.CPUPct },
 			func(v float64) string { return fmt.Sprintf("%.0f%%", v) }),

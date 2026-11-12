@@ -811,3 +811,34 @@ td.pick input,th.pick input{cursor:pointer}
 .update-hero .update-state strong{font-size:17px}
 .update-hero form{flex:none}
 .deliv-list{display:block; flex:1; text-align:left}
+
+/* Plugins: integrations, consent, slot widgets */
+.plugin-cards{align-items:start}
+.plugin-card .head{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap}
+.plugin-card p.note{margin:8px 0}
+.plugin-badges{display:flex; gap:6px; flex-wrap:wrap; margin:8px 0}
+.plugin-actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px}
+.plugin-actions form{margin:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.plugin-risk p{margin:0 0 6px}
+#plugin-consent,#plugin-panels{max-width:720px}
+#integration-page>.panel,#integration-page>.grid{margin-bottom:14px}
+label.chk,.pw-confirm{display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-bottom:10px}
+label.chk input,.pw-confirm input{margin-top:3px; flex:none}
+.plugin-slot{display:grid; gap:12px; min-width:0}
+.plugin-slot-host{min-width:0}
+.plugin-widget{min-width:0}
+.plugin-error{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px 14px; border:1px solid color-mix(in oklab,var(--warn) 45%,var(--border)); border-radius:var(--r); background:var(--surface); font-size:13px}
+.pw-stat-val .val{font-size:26px; font-weight:600; font-family:var(--font-mono)}
+.pw-stat-val.tone-ok .val{color:var(--ok)} .pw-stat-val.tone-warn .val{color:var(--warn)} .pw-stat-val.tone-crit .val{color:var(--crit)}
+.plugin-table-wrap{overflow-x:auto; max-width:100%}
+.plugin-table-wrap table{width:100%; border-collapse:collapse; font-size:13px}
+.plugin-table-wrap th,.plugin-table-wrap td{text-align:left; padding:6px 10px; border-top:1px solid var(--border-soft); white-space:nowrap}
+.pw-kv{display:grid; grid-template-columns:minmax(0,max-content) minmax(0,1fr); gap:6px 14px; margin:0}
+.pw-kv dt{color:var(--muted); font-size:12px} .pw-kv dd{margin:0; overflow-wrap:anywhere}
+.plugin-log{margin:0; max-height:320px; overflow:auto; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere}
+.pw-text p{margin:0 0 8px} .pw-plain{white-space:pre-wrap}
+.pw-form,.pw-action{display:grid; gap:8px; justify-items:start}
+.pw-form label.field{width:100%; max-width:420px; margin-bottom:6px}
+.pw-form input[type=text],.pw-form input[type=number],.pw-form input[type=password],.pw-form select,#integration-page input[type=text],#integration-page input[type=number],#integration-page input[type=password],#integration-page select,#integration-page textarea{width:100%; max-width:420px}
+.plugin-panels>.plugin-panel{min-width:0}
+@media (max-width:640px){.plugin-actions .btn{flex:1 1 auto; justify-content:center}}

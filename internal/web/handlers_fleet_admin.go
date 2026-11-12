@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/InfoDiveLabs/trinetra/internal/core"
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
 // fleetTokenTTLMin/Max/Default bound the TTL for POST /fleet/tokens: a Go duration string,
@@ -250,6 +251,35 @@ type FleetAdminPageData struct {
 	TokenUses string
 	TokenTags string
 	TokenErr  string
+
+	PluginStates []pluginNodeRow
+}
+
+type pluginNodeRow struct {
+	Plugin string
+	plugin.NodeState
+}
+
+func pluginNodeRows(d Deps) []pluginNodeRow {
+	m := pluginManager(d)
+	if m == nil {
+		return nil
+	}
+	list, err := m.List()
+	if err != nil {
+		return nil
+	}
+	var rows []pluginNodeRow
+	for _, st := range list {
+		states, err := m.NodeStates(st.ID)
+		if err != nil {
+			continue
+		}
+		for _, ns := range states {
+			rows = append(rows, pluginNodeRow{Plugin: orDash(st.Manifest.Name), NodeState: ns})
+		}
+	}
+	return rows
 }
 
 // fleetAdminNodesAndTokens reads the CURRENT roster and token list straight from d.Fleet()
@@ -315,6 +345,8 @@ func buildFleetAdminPageData(r *http.Request, d Deps, opts fleetAdminOptions) Fl
 		TokenUses: tokenUses,
 		TokenTags: opts.TokenTags,
 		TokenErr:  opts.TokenErr,
+
+		PluginStates: pluginNodeRows(d),
 	}
 }
 

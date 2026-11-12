@@ -1,0 +1,5 @@
+{{define "content"}}
+<div id="plugin-page">
+  <div hx-get="{{.Slot.Src}}" hx-trigger="load" hx-swap="innerHTML"><div class="note">Loading {{.Slot.Title}}&hellip;</div></div>
+</div>
+{{end}}

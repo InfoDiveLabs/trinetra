@@ -200,6 +200,7 @@ var navItems = []navEntry{
 	{NavItem: NavItem{Href: "/config", Icon: "sliders", Label: "Server settings"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/channels", Icon: "send", Label: "Notifications"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/users", Icon: "users", Label: "Users"}, AdminOnly: true},
+	{NavItem: NavItem{Href: "/integrations", Icon: "plug", Label: "Integrations"}, AdminOnly: true},
 	{NavItem: NavItem{Href: "/updates", Icon: "update", Label: "Updates"}, AdminOnly: true},
 }
 
@@ -324,6 +325,8 @@ type PageData struct {
 	// NodeLabel is the switcher button's own text: "this server" for a self-scoped page (solo,
 	// a master's own view, a child's own view -- Node.Self).
 	NodeLabel string
+	// PluginNav is the sidebar "Plugins" section from nav.page slots the role may see.
+	PluginNav []NavItem
 }
 
 // switcherNodeCap is the most nodes the topbar switcher/Ctrl-K palette lists.
@@ -494,6 +497,7 @@ func newPageData(r *http.Request, d Deps, title, sub string) PageData {
 		MasterURL:       fleetInfo.masterURL,
 		Switcher:        switcher,
 		NodeLabel:       nodeLabelFor(node, r.URL.Path),
+		PluginNav:       pluginNavFor(r, d),
 	}
 }
 
