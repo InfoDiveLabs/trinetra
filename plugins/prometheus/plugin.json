@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "id": "prometheus",
+  "name": "Prometheus exporter",
+  "version": "0.1.0",
+  "publisher": "InfoDiveLabs",
+  "description": "Serves this host's metrics (and, on a fleet master, every node's status) at /metrics in Prometheus text format, with a ready-made Grafana dashboard.",
+  "host_api": "^1.0",
+  "permissions": ["metrics.read", "net.listen", "fleet.read"],
+  "binaries": [],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "listen": {
+        "type": "string",
+        "title": "Listen address",
+        "description": "host:port the /metrics endpoint binds to. Use 0.0.0.0:9469 to expose it beyond this host, and set a bearer token when you do.",
+        "pattern": "^[A-Za-z0-9.:\\[\\]-]*:[0-9]{1,5}$",
+        "default": "127.0.0.1:9469"
+      },
+      "bearer_token": {
+        "type": "string",
+        "format": "secret",
+        "title": "Bearer token",
+        "description": "When set, scrapes must send Authorization: Bearer <token>."
+      },
+      "include_fleet": {
+        "type": "boolean",
+        "title": "Include fleet nodes",
+        "description": "On a fleet master, also export per-node up, CPU, memory and disk series.",
+        "default": false
+      }
+    },
+    "x-order": ["listen", "bearer_token", "include_fleet"]
+  },
+  "contributes": {
+    "slots": [
+      {"slot": "settings.form", "id": "settings", "title": "Prometheus exporter", "min_role": "admin"}
+    ],
+    "files": [
+      {"name": "grafana-dashboard.json", "title": "Grafana dashboard", "content_type": "application/json"}
+    ]
+  }
+}

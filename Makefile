@@ -2,7 +2,7 @@ BIN=trinetra
 CTL_BIN=trinetra-ctl
 WEB_BIN=trinetra-web
 
-.PHONY: test vet build linux cross release release-prod validate fleet-e2e migration-e2e update-e2e test-all fmt
+.PHONY: test vet build plugins linux cross release release-prod validate fleet-e2e migration-e2e update-e2e test-all fmt
 
 # Build flags, per release channel:
 #   Beta/dev builds keep the symbol table and DWARF so stack traces, delve, and
@@ -46,6 +46,11 @@ build:
 	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(BIN) ./cmd/trinetra
 	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(CTL_BIN) ./cmd/trinetra-ctl
 	go build -ldflags "$(VERSION_LDFLAGS)" -o dist/$(WEB_BIN) ./cmd/trinetra-web
+
+# plugins builds plugins/<id> into dist/plugins/<id>/ (host platform; PLUGIN_MATRIX=1
+# adds linux amd64/arm64/arm). Limit it with PLUGINS="prometheus".
+plugins:
+	bash scripts/build-plugins.sh $(PLUGINS)
 
 linux:
 	GOOS=linux GOARCH=amd64 go build -o dist/$(BIN)-linux-amd64 ./cmd/trinetra

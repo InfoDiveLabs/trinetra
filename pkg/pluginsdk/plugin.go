@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 )
 
@@ -227,6 +228,20 @@ func (p *Plugin) connect(ctx context.Context, h *hostConn) error {
 func (p *Plugin) Publish(ts int64, metrics map[string]float64) (plugin.PublishResponse, error) {
 	var out plugin.PublishResponse
 	err := p.hostCall(plugin.MethodPublishSeries, plugin.PublishRequest{TS: ts, Metrics: metrics}, &out)
+	return out, err
+}
+
+// Snapshot returns the host's live metrics view; it needs metrics.read.
+func (p *Plugin) Snapshot() (core.DashboardView, error) {
+	var out core.DashboardView
+	err := p.hostCall(plugin.MethodSnapshot, struct{}{}, &out)
+	return out, err
+}
+
+// FleetNodes returns the fleet roster (the node itself alone when not a master); it needs fleet.read.
+func (p *Plugin) FleetNodes() ([]core.NodeSummary, error) {
+	var out []core.NodeSummary
+	err := p.hostCall(plugin.MethodFleetNodes, struct{}{}, &out)
 	return out, err
 }
 

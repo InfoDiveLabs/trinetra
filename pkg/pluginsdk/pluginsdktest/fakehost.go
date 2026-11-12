@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/InfoDiveLabs/trinetra/internal/core"
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/pkg/pluginsdk"
 )
@@ -39,6 +40,8 @@ type FakeHost struct {
 	status    plugin.StatusReport
 	logs      []plugin.LogEntry
 	hellos    int
+	snapshot  core.DashboardView
+	fleet     []core.NodeSummary
 	watchers  map[chan plugin.ConfigResponse]struct{}
 	cancel    context.CancelFunc
 	done      chan struct{}
@@ -148,6 +151,20 @@ func (h *FakeHost) SetConfig(values map[string]any) {
 			ch <- cfg
 		}
 	}
+	h.mu.Unlock()
+}
+
+// SetSnapshot sets the view Plugin.Snapshot returns.
+func (h *FakeHost) SetSnapshot(v core.DashboardView) {
+	h.mu.Lock()
+	h.snapshot = v
+	h.mu.Unlock()
+}
+
+// SetFleetNodes sets the roster Plugin.FleetNodes returns.
+func (h *FakeHost) SetFleetNodes(n []core.NodeSummary) {
+	h.mu.Lock()
+	h.fleet = n
 	h.mu.Unlock()
 }
 
@@ -355,6 +372,10 @@ func (h *FakeHost) handle(req plugin.Request) (any, error) {
 		return plugin.HelloResponse{HostAPI: plugin.HostAPIString(), PluginID: h.id, Granted: h.granted, NodeID: "fake-node", TrinetraVersion: "fake"}, nil
 	case plugin.MethodGetConfig:
 		return h.cfg, nil
+	case plugin.MethodSnapshot:
+		return h.snapshot, nil
+	case plugin.MethodFleetNodes:
+		return h.fleet, nil
 	case plugin.MethodReportStatus:
 		var s plugin.StatusReport
 		if err := decode(req, &s); err != nil {
