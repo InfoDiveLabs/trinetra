@@ -16,6 +16,7 @@ type fleetFakeLifecycle struct {
 	configs    []plugin.SetConfigRequest
 	installed  map[string]plugin.Status
 	pkgs       map[string]plugin.PackageInfo
+	current    map[string]plugin.RedactedConfig
 	installErr error
 	enabled    bool
 	vias       []string
@@ -89,8 +90,13 @@ func (f *fleetFakeLifecycle) SetConfig(r plugin.SetConfigRequest) error {
 	return nil
 }
 
-func (f *fleetFakeLifecycle) Config(string) (plugin.RedactedConfig, error) {
-	return plugin.RedactedConfig{}, nil
+func (f *fleetFakeLifecycle) Config(id string) (plugin.RedactedConfig, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.installed[id]; !ok {
+		return plugin.RedactedConfig{}, plugin.ErrNotFound
+	}
+	return f.current[id], nil
 }
 
 func (f *fleetFakeLifecycle) File(string, string) (plugin.FileDecl, []byte, error) {

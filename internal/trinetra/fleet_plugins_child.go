@@ -53,6 +53,40 @@ type inflightDownload struct {
 	cancel context.CancelFunc
 }
 
+func newManagedPluginApplier(lifecycle func() plugin.Lifecycle, via string) ManagedPluginApplier {
+	return func(id string, values, last map[string]string) (bool, error) {
+		lc := lifecycle()
+		if lc == nil {
+			return false, plugin.ErrUnavailable
+		}
+		cur, err := lc.Config(id)
+		if errors.Is(err, plugin.ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		have := configStrings(cur.Values)
+		need := map[string]string{}
+		for k, v := range values {
+			if slices.Contains(cur.SecretsSet, k) {
+				if last[k] != v {
+					need[k] = v
+				}
+			} else if have[k] != v {
+				need[k] = v
+			}
+		}
+		if len(need) == 0 {
+			return true, nil
+		}
+		if err := lc.SetConfig(plugin.SetConfigRequest{ID: id, Values: need, Actor: "fleet", Via: via}); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+}
+
 var activePluginChild atomic.Pointer[pluginChild]
 
 func handleChildPluginFrame(fetch chunkFetcher, f fleet.Frame) {
