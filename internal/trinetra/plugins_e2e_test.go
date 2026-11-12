@@ -1,7 +1,10 @@
 package trinetra
 
 import (
+	"bufio"
 	"crypto/ed25519"
+	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -263,4 +266,123 @@ func TestDaemonWithZeroPluginsUnchanged(t *testing.T) {
 	if len(outside) != 0 {
 		t.Fatalf("files written outside <stateDir>/plugins: %v", outside)
 	}
+}
+
+type rawHostConn struct {
+	c  net.Conn
+	r  *bufio.Reader
+	id int
+}
+
+func dialHostRaw(t *testing.T, sock, token string) (*rawHostConn, error) {
+	t.Helper()
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		return nil, err
+	}
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	h := &rawHostConn{c: c, r: bufio.NewReader(c)}
+	if err := plugin.WriteFrame(c, plugin.Hello{Hello: plugin.ControlHelloMagic, Version: plugin.ControlProtocolVersion, Token: token}); err != nil {
+		c.Close()
+		return nil, err
+	}
+	var rep struct {
+		Hello string `json:"hello"`
+		Error string `json:"error"`
+	}
+	if err := plugin.ReadFrame(h.r, &rep); err != nil {
+		c.Close()
+		return nil, err
+	}
+	if rep.Hello != plugin.ControlHelloMagic {
+		c.Close()
+		return nil, errors.New("hello refused: " + rep.Error)
+	}
+	return h, nil
+}
+
+func (h *rawHostConn) call(method string, params any) (plugin.Response, error) {
+	h.id++
+	raw, _ := json.Marshal(params)
+	if err := plugin.WriteFrame(h.c, plugin.Request{ID: h.id, Method: method, Params: raw}); err != nil {
+		return plugin.Response{}, err
+	}
+	var resp plugin.Response
+	err := plugin.ReadFrame(h.r, &resp)
+	return resp, err
+}
+
+func TestRuntimeMintedPluginTokenIsConfinedToItsGrant(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a plugin binary")
+	}
+	pkg := plugintest.Build(t, t.TempDir())
+	e := startE2EDaemon(t, pkg.Key, config.Default())
+	if _, err := e.mgr.Install(plugin.InstallRequest{Ref: pkg.Path, Actor: "root", Via: "cli"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mgr.Enable(plugin.EnableRequest{ID: plugintest.ID, Actor: "root", Via: "cli", Accepted: pkg.Manifest.Permissions}); err != nil {
+		t.Fatal(err)
+	}
+	e2eWait(t, "plugin connected", 30*time.Second, func() bool {
+		st, err := e.mgr.Get(plugintest.ID)
+		return err == nil && st.Health.Connected
+	})
+	tokPath := filepath.Join(e.stateDir, "plugins", plugintest.ID, plugin.TokenFileName)
+	tb, err := os.ReadFile(tokPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(tokPath); info.Mode().Perm() != 0o600 {
+		t.Errorf("token file mode %v", info.Mode().Perm())
+	}
+	tok := strings.TrimSpace(string(tb))
+	hostSock := filepath.Join(e.root, "h", "host.sock")
+	h, err := dialHostRaw(t, hostSock, tok)
+	if err != nil {
+		t.Fatalf("plugin token refused on the host socket: %v", err)
+	}
+	defer h.c.Close()
+	if resp, err := h.call(plugin.MethodPublishSeries, plugin.PublishRequest{Metrics: map[string]float64{"other": 1}}); err != nil || !resp.OK {
+		t.Fatalf("granted method refused: %+v %v", resp, err)
+	}
+	for _, m := range []string{plugin.MethodSnapshot, plugin.MethodSeries, plugin.MethodActiveAlerts, plugin.MethodContainers, plugin.MethodFleetNodes, "Plugins.List", "Plugins.Install", "Snapshot", "Config", "AckAlert"} {
+		resp, err := h.call(m, struct{}{})
+		if err != nil {
+			h.c.Close()
+			if h, err = dialHostRaw(t, hostSock, tok); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if resp.OK {
+			t.Errorf("%s allowed for a plugin token", m)
+		}
+	}
+
+	e.controlClient(t)
+	if _, err := dialHostRaw(t, hostSock, "e2e-control-token"); err == nil {
+		t.Error("full-access token accepted on the host socket")
+	}
+	if _, err := dialHostRaw(t, filepath.Join(e.root, "c.sock"), tok); err == nil {
+		t.Error("plugin token accepted on the control socket")
+	}
+
+	if err := e.mgr.Disable(plugintest.ID, "root", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dialHostRaw(t, hostSock, tok); err == nil {
+		t.Error("token still valid after disable")
+	}
+	if err := e.mgr.Enable(plugin.EnableRequest{ID: plugintest.ID, Actor: "root", Via: "cli", Accepted: pkg.Manifest.Permissions}); err != nil {
+		t.Fatal(err)
+	}
+	tb2, _ := os.ReadFile(tokPath)
+	if strings.TrimSpace(string(tb2)) == tok {
+		t.Error("token not rotated on restart")
+	}
+	e2eWait(t, "plugin reconnected with the new token", 30*time.Second, func() bool {
+		st, err := e.mgr.Get(plugintest.ID)
+		return err == nil && st.Health.Connected
+	})
 }
