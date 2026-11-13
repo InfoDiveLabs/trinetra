@@ -685,6 +685,7 @@ func cmdDaemon(args []string) int {
 	// SIGTERM/SIGINT: write the clean-stop marker (so the NEXT boot's downtime reconstruction
 	// knows this stop was intentional, not a crash/power loss).
 	var fleetStop atomic.Pointer[func()]
+	var onTerm shutdownHooks
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
@@ -694,6 +695,7 @@ func cmdDaemon(args []string) int {
 		if stop := fleetStop.Load(); stop != nil {
 			(*stop)()
 		}
+		onTerm.run(10 * time.Second)
 		os.Exit(0)
 	}()
 	getCfg := func() *config.Config { mu.RLock(); defer mu.RUnlock(); return cfg }
@@ -838,6 +840,8 @@ func cmdDaemon(args []string) int {
 		coreVersion: version.String(),
 	}
 	pluginMgr, stopPlugins := startPlugins(pd)
+	stopPlugins = sync.OnceFunc(stopPlugins)
+	onTerm.add(stopPlugins)
 	defer stopPlugins()
 	stopControl, socketPath, token, err := serveControlSocket(&fleetAwareAPI{API: controlAPI, fleetProvider: fleetRT.provider, status: statusRT, plugins: pluginMgr})
 	if err != nil {
@@ -847,7 +851,8 @@ func cmdDaemon(args []string) int {
 		// web UI: when enabled, supervise the trinetra-web plugin as a verified child process (it
 		// dials the control socket above).
 		if shouldStartWeb(cfgAtStart, true) {
-			stopWeb := startWeb(socketPath, token)
+			stopWeb := sync.OnceFunc(startWeb(socketPath, token))
+			onTerm.add(stopWeb)
 			defer stopWeb()
 		}
 	}
