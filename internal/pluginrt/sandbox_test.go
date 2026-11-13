@@ -76,8 +76,11 @@ func TestRlimits(t *testing.T) {
 	for _, r := range rl {
 		got[r.Resource] = r
 	}
-	if got[syscall.RLIMIT_AS].Cur != 2*256<<20 || got[rlimitNproc].Cur != 64 ||
+	if got[syscall.RLIMIT_DATA].Cur != 256<<20 || got[rlimitNproc].Cur != 64 ||
 		got[syscall.RLIMIT_NOFILE].Cur != 1024 || got[syscall.RLIMIT_CORE].Max != 0 || len(got) != 4 {
+		t.Fatalf("rlimits = %+v", rl)
+	}
+	if _, ok := got[syscall.RLIMIT_AS]; ok {
 		t.Fatalf("rlimits = %+v", rl)
 	}
 	if _, err := Rlimits(Limits{MemoryMax: "lots", TasksMax: 1}); err == nil {

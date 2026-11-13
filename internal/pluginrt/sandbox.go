@@ -134,7 +134,8 @@ func parseSize(s string) (uint64, error) {
 	return n * mult, nil
 }
 
-// Rlimits is the non-systemd fallback: RLIMIT_AS = 2×MemoryMax, NPROC = TasksMax, NOFILE 1024, CORE 0.
+// Rlimits is the non-systemd fallback: RLIMIT_DATA = MemoryMax, NPROC = TasksMax, NOFILE 1024, CORE 0.
+// RLIMIT_AS is not used: the Go runtime reserves far more address space than it touches and cannot start under it.
 func Rlimits(lim Limits) ([]Rlimit, error) {
 	mem, err := parseSize(lim.MemoryMax)
 	if err != nil {
@@ -144,7 +145,7 @@ func Rlimits(lim Limits) ([]Rlimit, error) {
 		return nil, fmt.Errorf("tasks max %d must be positive", lim.TasksMax)
 	}
 	return []Rlimit{
-		{Resource: syscall.RLIMIT_AS, Cur: 2 * mem, Max: 2 * mem},
+		{Resource: syscall.RLIMIT_DATA, Cur: mem, Max: mem},
 		{Resource: rlimitNproc, Cur: uint64(lim.TasksMax), Max: uint64(lim.TasksMax)},
 		{Resource: syscall.RLIMIT_NOFILE, Cur: 1024, Max: 1024},
 		{Resource: syscall.RLIMIT_CORE, Cur: 0, Max: 0},
