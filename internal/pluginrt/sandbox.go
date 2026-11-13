@@ -16,6 +16,9 @@ type Limits struct {
 	TasksMax  int
 }
 
+// SharedNprocCap bounds the tasks of all fallback plugins together; they share one user.
+const SharedNprocCap = 512
+
 // DefaultLimits applies to every plugin.
 var DefaultLimits = Limits{MemoryMax: "256M", CPUQuota: "50%", TasksMax: 64}
 
@@ -134,8 +137,9 @@ func parseSize(s string) (uint64, error) {
 	return n * mult, nil
 }
 
-// Rlimits is the non-systemd fallback: RLIMIT_DATA = MemoryMax, NPROC = TasksMax, NOFILE 1024, CORE 0.
+// Rlimits is the non-systemd fallback: RLIMIT_DATA = MemoryMax, NPROC = SharedNprocCap, NOFILE 1024, CORE 0.
 // RLIMIT_AS is not used: the Go runtime reserves far more address space than it touches and cannot start under it.
+// NPROC counts every process and thread of the shared plugin user, so it is a ceiling for all plugins together, not TasksMax.
 func Rlimits(lim Limits) ([]Rlimit, error) {
 	mem, err := parseSize(lim.MemoryMax)
 	if err != nil {
@@ -146,7 +150,7 @@ func Rlimits(lim Limits) ([]Rlimit, error) {
 	}
 	return []Rlimit{
 		{Resource: syscall.RLIMIT_DATA, Cur: mem, Max: mem},
-		{Resource: rlimitNproc, Cur: uint64(lim.TasksMax), Max: uint64(lim.TasksMax)},
+		{Resource: rlimitNproc, Cur: SharedNprocCap, Max: SharedNprocCap},
 		{Resource: syscall.RLIMIT_NOFILE, Cur: 1024, Max: 1024},
 		{Resource: syscall.RLIMIT_CORE, Cur: 0, Max: 0},
 	}, nil

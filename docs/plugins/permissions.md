@@ -44,6 +44,6 @@ Each plugin runs as its own process, as a systemd service with a dynamic user:
 - Without `net.outbound` or `net.listen` the plugin gets Unix sockets only and all IP traffic is denied. With either, IPv4 and IPv6 are allowed.
 - Without `net.listen`, binding sockets is denied.
 
-Where systemd is not available, the runtime falls back to a plain child process with resource limits. Treat that as development only.
+Where systemd is not available, the runtime falls back to a child process running as the `trinetra-plugin` user with `no_new_privs` and resource limits: data memory capped at the plugin's memory limit, and a task ceiling of 512 shared by all plugins (they share one user, so per-plugin task and CPU limits need systemd). There is no filesystem or system call sandbox. Treat it as development only.
 
 A plugin that serves its own endpoint, like `/metrics`, does so on its own listener under `net.listen` and must do its own authentication. The browser never reaches a plugin through `trinetra-web`; only JSON slot and action calls pass through.
