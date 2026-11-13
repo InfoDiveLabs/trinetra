@@ -63,6 +63,11 @@ func wireHost(d *pluginDeps) {
 		if d.hostDir == "" {
 			return
 		}
+		if pluginIsRoot() && !hasSystemd() {
+			if err := pluginEnsureUser(); err != nil {
+				logf("plugins: %v", err)
+			}
+		}
 		if err := svc.Listen(d.hostDir); err != nil {
 			logf("plugins: host socket: %v", err)
 		}

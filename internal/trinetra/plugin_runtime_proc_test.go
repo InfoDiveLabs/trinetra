@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
+	"github.com/InfoDiveLabs/trinetra/internal/pluginrt"
 )
 
 func pluginTestRecord(t *testing.T, body string) (plugin.Installed, string) {
@@ -325,4 +326,21 @@ func TestPluginCompanionTamperedBinaryTripsBreaker(t *testing.T) {
 		t.Fatal("tampered binary never tripped the breaker")
 	}
 	_ = sup.Stop("demo")
+}
+
+func TestPrepareRuntimeDirLetsPluginUsersTraverseTheRoot(t *testing.T) {
+	prev := pluginrt.SocketRoot
+	t.Cleanup(func() { pluginrt.SocketRoot = prev })
+	pluginrt.SocketRoot = filepath.Join(t.TempDir(), "trinetra-plugin")
+	if err := prepareRuntimeDir("demo", false); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(pluginrt.SocketRoot)
+	if err != nil || st.Mode().Perm() != 0o711 {
+		t.Fatalf("socket root mode %v, %v; want 0711", st.Mode().Perm(), err)
+	}
+	st, err = os.Stat(filepath.Join(pluginrt.SocketRoot, "demo"))
+	if err != nil || st.Mode().Perm() != 0o700 {
+		t.Fatalf("plugin dir mode %v, %v; want 0700", st.Mode().Perm(), err)
+	}
 }

@@ -40,6 +40,9 @@ func pluginExecLaunch(id, binPath, tokenPath string) error {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
+		if err := os.Chmod(filepath.Dir(d), 0o711); err != nil {
+			return err
+		}
 		if err := os.Chown(d, uid, gid); err != nil {
 			return err
 		}

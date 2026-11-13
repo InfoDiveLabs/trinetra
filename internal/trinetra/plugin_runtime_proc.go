@@ -317,6 +317,9 @@ func prepareRuntimeDir(id string, chownToPluginUser bool) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	if err := os.Chmod(pluginrt.SocketRoot, 0o711); err != nil {
+		return err
+	}
 	if chownToPluginUser {
 		u, err := user.Lookup(pluginSystemUser)
 		if err != nil {
@@ -333,11 +336,6 @@ func prepareRuntimeDir(id string, chownToPluginUser bool) error {
 
 func startExecProc(rec plugin.Installed, binPath, hostSock, tokenPath string) (supervisedProc, error) {
 	root := pluginIsRoot()
-	if root {
-		if err := pluginEnsureUser(); err != nil {
-			return nil, err
-		}
-	}
 	if err := pluginPrepareRuntimeDir(rec.ID, root); err != nil {
 		return nil, err
 	}
