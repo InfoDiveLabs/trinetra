@@ -48,6 +48,8 @@ func newIntegrationRow(st plugin.Status) integrationRow {
 		row.HealthLabel = "not running"
 	case !st.Running:
 		row.HealthLabel, row.HealthClass = "stopped", "crit"
+	case !st.Health.Connected:
+		row.HealthLabel, row.HealthClass = "starting", "warn"
 	case st.Health.Status.State == "error":
 		row.HealthLabel, row.HealthClass = "error", "crit"
 	case st.Health.Status.State == "degraded":

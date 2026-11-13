@@ -20,8 +20,9 @@
         <span class="badge {{.HealthClass}}">{{.HealthLabel}}</span>
         {{if .UpdateAvailable}}<span class="badge ok">Update available: {{.UpdateAvailable}}</span>{{end}}
       </div>
+      {{if and .Running .Health.Status.Message}}<div class="note mono plugin-status">{{.Health.Status.Message}}</div>{{end}}
       {{if .RevokedReason}}<div class="flash err">Revoked: {{.RevokedReason}}</div>{{else if eq (printf "%s" .State) "revoked"}}<div class="flash err">Revoked by the registry.</div>{{end}}
-      {{if .Reason}}<div class="note">{{.Reason}}</div>{{end}}
+      {{if .Reason}}<div class="{{if eq (printf "%s" .State) "failed"}}flash err{{else}}note{{end}}">{{.Reason}}</div>{{end}}
       <div class="plugin-actions">
         <a class="btn ghost" href="/integrations/{{.ID}}">Open</a>
         {{if .UpdateAvailable}}<form method="post" action="/integrations/{{.ID}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button class="btn primary" type="submit">Update to {{.UpdateAvailable}}</button></form>{{end}}

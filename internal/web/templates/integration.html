@@ -27,8 +27,9 @@
       <span class="badge {{.Plugin.HealthClass}}">{{.Plugin.HealthLabel}}</span>
       {{if .Plugin.UpdateAvailable}}<span class="badge ok">Update available: {{.Plugin.UpdateAvailable}}</span>{{end}}
     </div>
+    {{if and .Plugin.Running .Plugin.Health.Status.Message}}<div class="note mono plugin-status">{{.Plugin.Health.Status.Message}}</div>{{end}}
     {{if .Plugin.RevokedReason}}<div class="flash err">Revoked: {{.Plugin.RevokedReason}}</div>{{end}}
-    {{if .Plugin.Reason}}<div class="note">{{.Plugin.Reason}}</div>{{end}}
+    {{if .Plugin.Reason}}<div class="{{if eq (printf "%s" .Plugin.State) "failed"}}flash err{{else}}note{{end}}">{{.Plugin.Reason}}</div>{{end}}
     <div class="plugin-actions">
       {{if .HasPending}}<a class="btn primary" href="/integrations/{{.Plugin.ID}}/enable?pending=1">Review pending update</a>{{end}}
       {{if .NeedsConsent}}<a class="btn primary" href="/integrations/{{.Plugin.ID}}/enable">Review permissions and enable</a>{{end}}
