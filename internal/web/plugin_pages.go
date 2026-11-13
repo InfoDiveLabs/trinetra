@@ -111,6 +111,9 @@ func pluginSlotHandler(d Deps) http.HandlerFunc {
 		if pid == "" {
 			for _, o := range offers {
 				ref := slotRefFor(r, o, container)
+				if slot == plugin.SlotContainerSection && o.Title != "" {
+					fmt.Fprintf(w, `<div class="section-label plugin-section-label"><span class="eyebrow">%s</span></div>`, html.EscapeString(o.Title))
+				}
 				fmt.Fprintf(w, `<div class="plugin-slot-host" hx-get="%s" hx-trigger="load" hx-swap="innerHTML"><div class="note">Loading %s&hellip;</div></div>`,
 					html.EscapeString(ref.Src), html.EscapeString(o.PluginName))
 			}

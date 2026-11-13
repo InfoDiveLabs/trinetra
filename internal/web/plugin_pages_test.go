@@ -343,3 +343,21 @@ func TestActionBackPathStaysOnThisSite(t *testing.T) {
 		}
 	}
 }
+
+func TestContainerSectionPlaceholderNamesThePlugin(t *testing.T) {
+	m := newFakeManager(demoStatus())
+	o := offer("demo", plugin.SlotContainerSection, "cs", plugin.RoleViewer)
+	o.Title = "Resource <watch>"
+	a := offer("demo", plugin.SlotContainerAction, "ca", plugin.RoleViewer)
+	a.Title = "ActionTitle"
+	m.offers = []plugin.SlotOffer{o, a}
+	e := newPluginEnv(t, m)
+	_, body := fragment(t, e, RoleViewer, "/plugins/slot?slot=container.section&container=web")
+	if !strings.Contains(body, "Resource &lt;watch&gt;") {
+		t.Errorf("section placeholder lacks its title: %s", body)
+	}
+	_, body = fragment(t, e, RoleViewer, "/plugins/slot?slot=container.action&container=web")
+	if strings.Contains(body, "ActionTitle") {
+		t.Errorf("action placeholder should not carry a section heading: %s", body)
+	}
+}
