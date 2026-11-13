@@ -41,10 +41,14 @@ func pack(buildDir, goos, goarch, out string, signed bool) (string, int64, error
 	if err != nil {
 		return "", 0, err
 	}
-	var sig []byte
+	var sigs []packEntry
 	if signed {
-		if sig, err = os.ReadFile(filepath.Join(buildDir, "plugin.json.sig")); err != nil {
-			return "", 0, fmt.Errorf("regtool: package needs a signed manifest (use -unsigned to share outside the registry): %w", err)
+		for _, name := range []string{plugin.ManifestCISigName, plugin.ManifestMaintSigName} {
+			b, err := os.ReadFile(filepath.Join(buildDir, name))
+			if err != nil {
+				return "", 0, fmt.Errorf("regtool: a registry package needs CI and maintainer signatures (use -unsigned to share outside the registry): %w", err)
+			}
+			sigs = append(sigs, packEntry{name, 0o644, b})
 		}
 	}
 	want, ok := m.BinaryFor(goos, goarch)
@@ -60,9 +64,7 @@ func pack(buildDir, goos, goarch, out string, signed bool) (string, int64, error
 		return "", 0, fmt.Errorf("regtool: %s does not match the manifest hash; run hash again", binRel)
 	}
 	entries := []packEntry{{"plugin.json", 0o644, mb}, {binRel, 0o755, bin}}
-	if signed {
-		entries = append(entries, packEntry{"plugin.json.sig", 0o644, sig})
-	}
+	entries = append(entries, sigs...)
 	files, err := filepath.Glob(filepath.Join(buildDir, "files", "*"))
 	if err != nil {
 		return "", 0, err

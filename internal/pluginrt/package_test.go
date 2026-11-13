@@ -35,7 +35,7 @@ func TestReadPackageExtractsManifestSigBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Manifest.ID != "demo" || len(p.Sig) == 0 || len(p.ManifestBytes) == 0 || p.Size != int64(len(data)) {
+	if p.Manifest.ID != "demo" || len(p.Sigs.CI) == 0 || len(p.Sigs.Maint) == 0 || len(p.ManifestBytes) == 0 || p.Size != int64(len(data)) {
 		t.Fatalf("package = %+v", p)
 	}
 	bin := filepath.Join(dst, "bin", "linux-amd64", "trinetra-plugin-demo")

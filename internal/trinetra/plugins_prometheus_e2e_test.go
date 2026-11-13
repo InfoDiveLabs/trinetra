@@ -38,7 +38,7 @@ func TestPrometheusPluginEndToEnd(t *testing.T) {
 		t.Skip("builds and runs a plugin binary")
 	}
 	pkg := plugintest.BuildFrom(t, t.TempDir(), filepath.Join("..", "..", "plugins", "prometheus"))
-	e := startE2EDaemon(t, pkg.Key, config.Default())
+	e := startE2EDaemon(t, pkg.Keys, config.Default())
 
 	snap, _ := json.Marshal(Snapshot{TS: 1700000000, CPU: 33.5, MemPct: 50, Load1: 1.25, Disks: map[string]float64{"/": 61.5}})
 	if err := os.MkdirAll(e.stateDir, 0o755); err != nil {

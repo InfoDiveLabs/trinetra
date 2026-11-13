@@ -45,7 +45,7 @@ func TestUptimePluginEndToEnd(t *testing.T) {
 	if err := cfg.Set("plugins.allow_unverified", "false"); err != nil {
 		t.Fatal(err)
 	}
-	e := startE2EDaemon(t, pkg.Key, cfg)
+	e := startE2EDaemon(t, pkg.Keys, cfg)
 	if _, err := e.mgr.Install(plugin.InstallRequest{Ref: pkg.Path, Actor: "root", Via: "cli"}); err != nil {
 		t.Fatalf("install: %v", err)
 	}

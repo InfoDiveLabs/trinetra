@@ -39,7 +39,7 @@ var (
 type Package struct {
 	Dir           string
 	ManifestBytes []byte
-	Sig           []byte
+	Sigs          plugin.ManifestSigs
 	Manifest      plugin.Manifest
 	SHA256        string
 	Size          int64
@@ -61,7 +61,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// ReadPackage hashes and extracts a tar.gz into dst (which must be empty), allowing only plugin.json, plugin.json.sig, bin/<os>-<arch>/trinetra-plugin-<id>, files/<name>.
+// ReadPackage hashes and extracts a tar.gz into dst (which must be empty), allowing only plugin.json, its CI and maintainer .sig files, bin/<os>-<arch>/trinetra-plugin-<id>, files/<name>.
 func ReadPackage(r io.Reader, dst string) (Package, error) {
 	ents, err := os.ReadDir(dst)
 	if err != nil {
@@ -105,7 +105,7 @@ func extract(r io.Reader, dst string) (Package, error) {
 		seen      = map[string]bool{}
 		total     int64
 		manifestB []byte
-		sig       []byte
+		sigs      plugin.ManifestSigs
 		bins      []string
 		files     []string
 		count     int
@@ -144,7 +144,7 @@ func extract(r io.Reader, dst string) (Package, error) {
 		switch {
 		case name == "plugin.json":
 			limit = min(limit, plugin.MaxManifestBytes)
-		case name == "plugin.json.sig":
+		case name == plugin.ManifestCISigName || name == plugin.ManifestMaintSigName:
 			limit = min(limit, maxSigBytes)
 		case binEntryRe.MatchString(name):
 			mode = 0o755
@@ -182,8 +182,10 @@ func extract(r io.Reader, dst string) (Package, error) {
 		switch name {
 		case "plugin.json":
 			manifestB, err = os.ReadFile(full)
-		case "plugin.json.sig":
-			sig, err = os.ReadFile(full)
+		case plugin.ManifestCISigName:
+			sigs.CI, err = os.ReadFile(full)
+		case plugin.ManifestMaintSigName:
+			sigs.Maint, err = os.ReadFile(full)
 		}
 		if err != nil {
 			return Package{}, fmt.Errorf("package: %w", err)
@@ -213,6 +215,6 @@ func extract(r io.Reader, dst string) (Package, error) {
 			return Package{}, fmt.Errorf("package: file %q is not declared in contributes.files", f)
 		}
 	}
-	return Package{Dir: dst, ManifestBytes: manifestB, Sig: sig, Manifest: m,
+	return Package{Dir: dst, ManifestBytes: manifestB, Sigs: sigs, Manifest: m,
 		SHA256: hex.EncodeToString(h.Sum(nil)), Size: cr.n}, nil
 }

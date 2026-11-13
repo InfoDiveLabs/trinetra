@@ -2,7 +2,6 @@ package trinetra
 
 import (
 	"bufio"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net"
@@ -21,6 +20,7 @@ import (
 	"github.com/InfoDiveLabs/trinetra/internal/plugin/plugintest"
 	"github.com/InfoDiveLabs/trinetra/internal/pluginrt"
 	"github.com/InfoDiveLabs/trinetra/internal/registry"
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
 type e2eSink struct {
@@ -82,12 +82,12 @@ type e2eDaemon struct {
 	stop           func()
 }
 
-func startE2EDaemon(t *testing.T, key ed25519.PublicKey, cfg *config.Config) *e2eDaemon {
+func startE2EDaemon(t *testing.T, keys update.KeySet, cfg *config.Config) *e2eDaemon {
 	t.Helper()
-	return startE2EDaemonAt(t, plugintest.ShortDir(t), key, cfg)
+	return startE2EDaemonAt(t, plugintest.ShortDir(t), keys, cfg)
 }
 
-func startE2EDaemonAt(t *testing.T, root string, key ed25519.PublicKey, cfg *config.Config) *e2eDaemon {
+func startE2EDaemonAt(t *testing.T, root string, keys update.KeySet, cfg *config.Config) *e2eDaemon {
 	t.Helper()
 	fastSupervisor(t)
 	prevSys, prevRoot, prevSock, prevReg := hasSystemd, pluginIsRoot, pluginrt.SocketRoot, wireRegistryFn
@@ -100,9 +100,9 @@ func startE2EDaemonAt(t *testing.T, root string, key ed25519.PublicKey, cfg *con
 	pluginIsRoot = func() bool { return false }
 	pluginrt.SocketRoot = filepath.Join(root, "p")
 	stateDir := filepath.Join(root, "state")
-	if key != nil {
+	if len(keys.CI) > 0 {
 		wireRegistryFn = func(d *pluginDeps) {
-			d.registry = registry.New(registry.Options{Dir: filepath.Join(d.stateDir, "plugins", "registry"), Keys: []ed25519.PublicKey{key}, Now: d.now})
+			d.registry = registry.New(registry.Options{Dir: filepath.Join(d.stateDir, "plugins", "registry"), Keys: keys, Now: d.now})
 		}
 	}
 	sink := &e2eSink{series: map[string]float64{}}
@@ -144,7 +144,7 @@ func TestPluginEndToEnd(t *testing.T) {
 	if err := cfg.Set("plugins.allow_unverified", "false"); err != nil {
 		t.Fatal(err)
 	}
-	e := startE2EDaemon(t, pkg.Key, cfg)
+	e := startE2EDaemon(t, pkg.Keys, cfg)
 	mgr := e.mgr
 
 	res, err := mgr.Install(plugin.InstallRequest{Ref: pkg.Path, Actor: "root", Via: "cli"})
@@ -238,7 +238,7 @@ func TestDaemonWithZeroPluginsUnchanged(t *testing.T) {
 	if err := cfg.Set("plugins.registry_url", "https://127.0.0.1:9/"); err != nil {
 		t.Fatal(err)
 	}
-	e := startE2EDaemon(t, nil, cfg)
+	e := startE2EDaemon(t, update.KeySet{}, cfg)
 	list, err := e.mgr.List()
 	if err != nil || len(list) != 0 {
 		t.Fatalf("list %v %v", list, err)
@@ -321,7 +321,7 @@ func TestRuntimeMintedPluginTokenIsConfinedToItsGrant(t *testing.T) {
 		t.Skip("builds and runs a plugin binary")
 	}
 	pkg := plugintest.Build(t, t.TempDir())
-	e := startE2EDaemon(t, pkg.Key, config.Default())
+	e := startE2EDaemon(t, pkg.Keys, config.Default())
 	if _, err := e.mgr.Install(plugin.InstallRequest{Ref: pkg.Path, Actor: "root", Via: "cli"}); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestPluginsSurviveDaemonRestart(t *testing.T) {
 	}
 	pkg := plugintest.Build(t, t.TempDir())
 	root := plugintest.ShortDir(t)
-	e := startE2EDaemonAt(t, root, pkg.Key, config.Default())
+	e := startE2EDaemonAt(t, root, pkg.Keys, config.Default())
 	if _, err := e.mgr.Install(plugin.InstallRequest{Ref: pkg.Path, Actor: "root", Via: "cli"}); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +413,7 @@ func TestPluginsSurviveDaemonRestart(t *testing.T) {
 		t.Fatal("plugin still running after daemon stop")
 	}
 
-	e2 := startE2EDaemonAt(t, root, pkg.Key, config.Default())
+	e2 := startE2EDaemonAt(t, root, pkg.Keys, config.Default())
 	e2eWait(t, "plugin restarted and connected", 30*time.Second, func() bool {
 		st, err := e2.mgr.Get(plugintest.ID)
 		return err == nil && st.State == plugin.StateEnabled && st.Running && st.Health.Connected

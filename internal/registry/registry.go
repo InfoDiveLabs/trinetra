@@ -2,7 +2,6 @@ package registry
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -23,7 +22,7 @@ const refreshEvery = 24 * time.Hour
 type Options struct {
 	Dir       string // <stateDir>/plugins/registry (index.json, index.json.sig, state.json)
 	BaseURL   func() string
-	Keys      []ed25519.PublicKey
+	Keys      update.KeySet
 	HTTP      *http.Client // 30s timeout
 	Now       func() time.Time
 	Installed func() map[string]string // id -> version, for catalog flags
@@ -60,7 +59,7 @@ func New(o Options) *Registry {
 func (r *Registry) path(name string) string { return filepath.Join(r.o.Dir, name) }
 
 func (r *Registry) loadCache() {
-	if r.o.Dir == "" || len(r.o.Keys) == 0 {
+	if r.o.Dir == "" || len(r.o.Keys.Pointer) == 0 {
 		return
 	}
 	st, err := LoadState(r.path("state.json"))
@@ -104,7 +103,7 @@ func (r *Registry) Refresh(ctx context.Context) error {
 }
 
 func (r *Registry) refresh(ctx context.Context) error {
-	if len(r.o.Keys) == 0 {
+	if len(r.o.Keys.Pointer) == 0 {
 		return plugin.ErrNoRegistryKeys
 	}
 	b, sig, err := r.fetchIndex(ctx)
@@ -189,9 +188,9 @@ func (r *Registry) OnRevoke(f func([]plugin.Revocation)) {
 	r.mu.Unlock()
 }
 
-// VerifyManifest checks a plugin.json signature against the registry keys.
-func (r *Registry) VerifyManifest(manifest, sig []byte) error {
-	return VerifyManifest(r.o.Keys, manifest, sig)
+// VerifyManifest checks plugin.json's CI and maintainer signatures against the release keys.
+func (r *Registry) VerifyManifest(manifest []byte, sigs plugin.ManifestSigs) error {
+	return VerifyManifest(r.o.Keys, manifest, sigs)
 }
 
 func (r *Registry) stale() bool {
@@ -289,7 +288,7 @@ func (r *Registry) Latest(id string) (string, bool) {
 
 // Resolve finds the package of id@version (empty = latest) for goos/goarch.
 func (r *Registry) Resolve(id, version, goos, goarch string) (plugin.PackageRef, error) {
-	if len(r.o.Keys) == 0 {
+	if len(r.o.Keys.Pointer) == 0 {
 		return plugin.PackageRef{}, plugin.ErrNoRegistryKeys
 	}
 	r.mu.Lock()
@@ -345,7 +344,7 @@ func (r *Registry) Catalog(refresh bool) (plugin.Catalog, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := plugin.Catalog{Stale: r.stale(), Error: r.lastErr, Entries: []plugin.CatalogEntry{}}
-	if len(r.o.Keys) == 0 {
+	if len(r.o.Keys.Pointer) == 0 {
 		c.Error = plugin.ErrNoRegistryKeys.Error()
 		return c, nil
 	}

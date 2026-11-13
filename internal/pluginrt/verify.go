@@ -37,7 +37,7 @@ func Verify(p Package, reg plugin.Registry, goos, goarch, coreVersion string) (p
 		}
 	}
 	trust := plugin.TrustUnverified
-	if len(p.Sig) > 0 && reg != nil && reg.VerifyManifest(p.ManifestBytes, p.Sig) == nil {
+	if !p.Sigs.Empty() && reg != nil && reg.VerifyManifest(p.ManifestBytes, p.Sigs) == nil {
 		trust = plugin.TrustVerified
 	}
 	if err := checkBinary(p, goos, goarch); err != nil {

@@ -134,7 +134,7 @@ The environment a plugin process receives is `TRINETRA_PLUGIN_ID`, `TRINETRA_PLU
 make plugins
 ```
 
-checks each manifest under `plugins/` and builds it for the host platform into `dist/plugins/<id>/` as `bin/<os>-<arch>/trinetra-plugin-<id>`, next to `plugin.json` (with its hashes filled in) and `files/`. Set `PLUGINS="uptime"` to build one plugin, or `PLUGIN_MATRIX=1` to build the Linux matrix (amd64, arm64, arm) instead. Signing and packaging into `.tar.gz` is done by `trinetra-registry` (`sign`, then `package`) and by CI when a plugin is merged into the registry.
+checks each manifest under `plugins/` and builds it for the host platform into `dist/plugins/<id>/` as `bin/<os>-<arch>/trinetra-plugin-<id>`, next to `plugin.json` (with its hashes filled in) and `files/`. Set `PLUGINS="uptime"` to build one plugin, or `PLUGIN_MATRIX=1` to build the Linux matrix (amd64, arm64, arm) instead. Verified packages carry two signatures over `plugin.json`, made with Trinetra's release keys: CI's (`plugin.json.ci.sig`) and a maintainer's (`plugin.json.maint.sig`). The registry's CI and maintainers add them when a plugin is merged; see the registry README.
 
 Install a package with `trinetra plugin install <file>` and enable it with `trinetra plugin enable <id>`, which shows the permission prompt.
 
@@ -150,7 +150,7 @@ trinetra-registry hash -dir build -manifest plugin.json
 trinetra-registry package -dir build -os linux -arch amd64 -out <id>-<version>-linux-amd64.tgz -unsigned
 ```
 
-Hosts install it as unverified: the operator sees a risk warning and confirms each permission, and nothing installs if `plugins.allow_unverified` is off. Submit it to the registry to have it signed and listed as verified.
+Hosts install it as unverified: the operator sees a risk warning and confirms each permission, and nothing installs if `plugins.allow_unverified` is off. Submit it to the registry to have it signed by CI and a maintainer and listed as verified.
 
 ## Checklist
 

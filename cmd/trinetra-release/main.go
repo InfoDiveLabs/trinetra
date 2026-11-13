@@ -39,7 +39,7 @@ var errTestKeysUnavailable = errors.New("--testkeys is only available in a trine
 
 func run(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: trinetra-release <keygen|manifest|sign|pointer|latest|verify|fingerprints|cosign> [args]")
+		fmt.Fprintln(os.Stderr, "usage: trinetra-release <keygen|manifest|sign|pointer|latest|verify|fingerprints|cosign|plugin-cosign> [args]")
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
@@ -61,6 +61,8 @@ func run(args []string) int {
 		err = cmdFingerprints(rest)
 	case "cosign":
 		err = cmdCosign(rest)
+	case "plugin-cosign":
+		err = cmdPluginCosign(rest)
 	default:
 		err = fmt.Errorf("unknown command %q", cmd)
 	}

@@ -34,14 +34,14 @@ jobs:
       - name: Re-issue and sign the index
         env:
           GH_TOKEN: ${{ github.token }}
-          REGISTRY_SIGNING_KEY: ${{ secrets.REGISTRY_SIGNING_KEY }}
+          TRINETRA_POINTER_SIGNING_KEY: ${{ secrets.TRINETRA_POINTER_SIGNING_KEY }}
         run: |
           set -euo pipefail
           umask 077
           mkdir -p "$RUNNER_TEMP/prev"
           gh release download index -p index.json -D "$RUNNER_TEMP/prev"
-          printf '%s\n' "$REGISTRY_SIGNING_KEY" > "$RUNNER_TEMP/registry.key"
+          printf '%s\n' "$TRINETRA_POINTER_SIGNING_KEY" > "$RUNNER_TEMP/pointer.key"
           trinetra-registry index -serial "$(date +%s)" -lifetime 21d -prev "$RUNNER_TEMP/prev/index.json" -revoked revoked.json -out "$RUNNER_TEMP/index.json"
-          trinetra-registry sign -key "$RUNNER_TEMP/registry.key" -kind index -in "$RUNNER_TEMP/index.json" -out "$RUNNER_TEMP/index.json.sig"
+          trinetra-registry sign -key "$RUNNER_TEMP/pointer.key" -kind index -in "$RUNNER_TEMP/index.json" -out "$RUNNER_TEMP/index.json.sig"
           gh release upload index "$RUNNER_TEMP/index.json" "$RUNNER_TEMP/index.json.sig" --clobber
-          rm -f "$RUNNER_TEMP/registry.key"
+          rm -f "$RUNNER_TEMP/pointer.key"

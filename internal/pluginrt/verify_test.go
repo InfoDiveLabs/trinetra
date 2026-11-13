@@ -39,7 +39,7 @@ func TestVerifyUnsignedIsUnverified(t *testing.T) {
 
 func TestVerifyUnknownKeyIsUnverified(t *testing.T) {
 	p := readPkg(t, testManifest("demo"), true)
-	p.Sig = bytes.Repeat([]byte{1}, 64)
+	p.Sigs.Maint = bytes.Repeat([]byte{1}, 64)
 	tr, err := Verify(p, &fakeRegistry{}, "linux", "amd64", "1.0.0")
 	if err != nil || tr != plugin.TrustUnverified {
 		t.Fatalf("%v %v", tr, err)
@@ -88,5 +88,14 @@ func TestVerifyRevoked(t *testing.T) {
 	_, err := Verify(readPkg(t, testManifest("demo"), true), reg, "linux", "amd64", "1.0.0")
 	if !errors.Is(err, plugin.ErrRevoked) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestVerifyCIOnlyIsUnverified(t *testing.T) {
+	p := readPkg(t, testManifest("demo"), true)
+	p.Sigs.Maint = nil
+	tr, err := Verify(p, &fakeRegistry{}, "linux", "amd64", "1.0.0")
+	if err != nil || tr != plugin.TrustUnverified {
+		t.Fatalf("a CI signature alone must not make a plugin verified: %v %v", tr, err)
 	}
 }

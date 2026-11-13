@@ -26,7 +26,7 @@ func TestWireRegistrySetsRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(registry.Keys()) == 0 && cat.Error != plugin.ErrNoRegistryKeys.Error() {
+	if len(registry.Keys().Pointer) == 0 && cat.Error != plugin.ErrNoRegistryKeys.Error() {
 		t.Fatalf("no-keys build should explain: %+v", cat)
 	}
 	d.stops[0]()

@@ -1,0 +1,75 @@
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Co-signed draft to publish, e.g. uptime-v0.1.0"
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: registry-publish
+  cancel-in-progress: false
+env:
+  TRINETRA_REF: main
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: registry
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: InfoDiveLabs/trinetra
+          ref: ${{ env.TRINETRA_REF }}
+          path: .trinetra
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version-file: .trinetra/go.mod }
+      - name: Build registry tool
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          (cd .trinetra && go build -o "$RUNNER_TEMP/bin/trinetra-registry" ./cmd/trinetra-registry)
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Package the co-signed build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in *-v*) ;; *) echo "tag must look like <id>-v<version>"; exit 1 ;; esac
+          id=${TAG%-v*}; version=${TAG##*-v}
+          mkdir -p "$RUNNER_TEMP/in" "$RUNNER_TEMP/b" "$RUNNER_TEMP/new"
+          gh release download "$TAG" -p "$id-$version-build.tgz" -p plugin.json.maint.sig -D "$RUNNER_TEMP/in"
+          tar -xzf "$RUNNER_TEMP/in/$id-$version-build.tgz" -C "$RUNNER_TEMP/b"
+          cp "$RUNNER_TEMP/in/plugin.json.maint.sig" "$RUNNER_TEMP/b/"
+          for arch in amd64 arm64 arm; do
+            trinetra-registry package -dir "$RUNNER_TEMP/b" -os linux -arch "$arch" -out "$RUNNER_TEMP/new/$id-$version-linux-$arch.tgz"
+          done
+          # index refuses packages whose CI and maintainer signatures do not verify against the release keys
+          trinetra-registry index -packages "$RUNNER_TEMP/new" -base-url "https://example.invalid/" -serial 1 -lifetime 1d -out "$RUNNER_TEMP/check.json"
+          gh release upload "$TAG" "$RUNNER_TEMP"/new/*.tgz --clobber
+          gh release edit "$TAG" --draft=false
+      - name: Rebuild and sign the index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRINETRA_POINTER_SIGNING_KEY: ${{ secrets.TRINETRA_POINTER_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/prev"
+          prev=()
+          if gh release download index -p index.json -D "$RUNNER_TEMP/prev" 2>/dev/null; then
+            prev=(-prev "$RUNNER_TEMP/prev/index.json")
+          fi
+          printf '%s\n' "$TRINETRA_POINTER_SIGNING_KEY" > "$RUNNER_TEMP/pointer.key"
+          trinetra-registry index -packages "$RUNNER_TEMP/new" \
+            -base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/{id}-v{version}/" \
+            -serial "$(date +%s)" -lifetime 21d "${prev[@]}" -revoked revoked.json -out "$RUNNER_TEMP/index.json"
+          trinetra-registry sign -key "$RUNNER_TEMP/pointer.key" -kind index -in "$RUNNER_TEMP/index.json" -out "$RUNNER_TEMP/index.json.sig"
+          gh release view index >/dev/null 2>&1 || gh release create index --title index --notes "Signed plugin index"
+          gh release upload index "$RUNNER_TEMP/index.json" "$RUNNER_TEMP/index.json.sig" --clobber
+          rm -f "$RUNNER_TEMP/pointer.key"

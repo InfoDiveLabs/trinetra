@@ -27,7 +27,7 @@ Container series in the Prometheus export appear only on a host where the operat
 ## Consent
 
 - Install does not enable. Enabling shows each permission with its consent line.
-- Registry plugins (signature verified): the permissions are listed and confirmed once.
+- Registry plugins (verified: `plugin.json` signed with Trinetra's release keys by both CI and a maintainer): the permissions are listed and confirmed once.
 - Community plugins (unverified): a risk warning first, then the operator acknowledges the risk. Administrators can turn unverified plugins off with the `plugins.allow_unverified` setting.
 - An update that requests new permissions needs re-consent. Until then the plugin keeps running on its old grant.
 - Install, enable, consent, config changes and disable are written to the plugin audit log.

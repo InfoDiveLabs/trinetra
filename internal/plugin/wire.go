@@ -16,7 +16,17 @@ const (
 	StreamID               = -1
 	ManifestSigPrefix      = "trinetra-plugin-v1\n"
 	IndexSigPrefix         = "trinetra-plugin-index-v1\n"
+	ManifestCISigName      = "plugin.json.ci.sig"
+	ManifestMaintSigName   = "plugin.json.maint.sig"
 )
+
+// ManifestSigs are the two signatures a verified plugin.json carries: CI and maintainer, made with the release keys.
+type ManifestSigs struct {
+	CI, Maint []byte
+}
+
+// Empty reports whether neither signature is present.
+func (s ManifestSigs) Empty() bool { return len(s.CI) == 0 && len(s.Maint) == 0 }
 
 // Env vars set on every plugin process.
 const (

@@ -90,8 +90,17 @@ var testPub, testPriv = func() (ed25519.PublicKey, ed25519.PrivateKey) {
 	return k.Public().(ed25519.PublicKey), k
 }()
 
+var testMaintPub, testMaintPriv = func() (ed25519.PublicKey, ed25519.PrivateKey) {
+	k := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, ed25519.SeedSize))
+	return k.Public().(ed25519.PublicKey), k
+}()
+
 func signManifest(mb []byte) []byte {
 	return ed25519.Sign(testPriv, append([]byte(plugin.ManifestSigPrefix), mb...))
+}
+
+func signManifestMaint(mb []byte) []byte {
+	return ed25519.Sign(testMaintPriv, append([]byte(plugin.ManifestSigPrefix), mb...))
 }
 
 func packageFiles(t *testing.T, m plugin.Manifest, signed bool) map[string][]byte {
@@ -102,7 +111,8 @@ func packageFiles(t *testing.T, m plugin.Manifest, signed bool) map[string][]byt
 	}
 	f := map[string][]byte{"plugin.json": mb, plugin.BinaryPath("linux", "amd64", m.ID): testBinary}
 	if signed {
-		f["plugin.json.sig"] = signManifest(mb)
+		f[plugin.ManifestCISigName] = signManifest(mb)
+		f[plugin.ManifestMaintSigName] = signManifestMaint(mb)
 	}
 	return f
 }
@@ -114,8 +124,11 @@ type fakeRegistry struct {
 	onRev   func([]plugin.Revocation)
 }
 
-func (r *fakeRegistry) VerifyManifest(m, sig []byte) error {
-	if len(sig) == ed25519.SignatureSize && ed25519.Verify(testPub, append([]byte(plugin.ManifestSigPrefix), m...), sig) {
+func (r *fakeRegistry) VerifyManifest(m []byte, sigs plugin.ManifestSigs) error {
+	ok := func(pub ed25519.PublicKey, sig []byte) bool {
+		return len(sig) == ed25519.SignatureSize && ed25519.Verify(pub, append([]byte(plugin.ManifestSigPrefix), m...), sig)
+	}
+	if ok(testPub, sigs.CI) && ok(testMaintPub, sigs.Maint) {
 		return nil
 	}
 	return plugin.ErrBadSignature

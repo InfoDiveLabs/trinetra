@@ -14,6 +14,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/internal/registry/regtool"
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
 // ID is the test plugin's id.
@@ -50,11 +51,11 @@ const Manifest = `{
 // Package is a built test plugin package.
 type Package struct {
 	Path     string
-	Key      ed25519.PublicKey
+	Keys     update.KeySet // fresh CI and maintainer keys that signed the manifest
 	Manifest plugin.Manifest
 }
 
-// Build compiles the test plugin for the host platform, signs its manifest with a fresh key and packages it under dir.
+// Build compiles the test plugin for the host platform, signs its manifest with fresh CI and maintainer keys and packages it under dir.
 func Build(t testing.TB, dir string) Package {
 	t.Helper()
 	_, self, _, ok := runtime.Caller(0)
@@ -102,19 +103,26 @@ func buildPackage(t testing.TB, dir, src, id string, manifest []byte, filesDir s
 	if err != nil {
 		t.Fatalf("plugintest: hash: %v", err)
 	}
-	key := filepath.Join(dir, "signing.key")
-	pub, err := regtool.Keygen(key)
-	if err != nil {
-		t.Fatal(err)
+	sign := func(role, sigName string) ed25519.PublicKey {
+		key := filepath.Join(dir, role+".key")
+		pub, err := regtool.Keygen(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := regtool.SignFile(key, "manifest", filepath.Join(build, "plugin.json"), filepath.Join(build, sigName)); err != nil {
+			t.Fatal(err)
+		}
+		return pub
 	}
-	if err := regtool.SignFile(key, "manifest", filepath.Join(build, "plugin.json"), filepath.Join(build, "plugin.json.sig")); err != nil {
-		t.Fatal(err)
+	keys := update.KeySet{
+		CI:    []ed25519.PublicKey{sign("ci", plugin.ManifestCISigName)},
+		Maint: []ed25519.PublicKey{sign("maint", plugin.ManifestMaintSigName)},
 	}
 	out := filepath.Join(dir, id+"-"+m.Version+".tar.gz")
 	if _, _, err := regtool.Package(build, runtime.GOOS, runtime.GOARCH, out); err != nil {
 		t.Fatalf("plugintest: package: %v", err)
 	}
-	return Package{Path: out, Key: pub, Manifest: m}
+	return Package{Path: out, Keys: keys, Manifest: m}
 }
 
 // ShortDir returns a fresh directory under /tmp, short enough for unix socket paths on macOS.

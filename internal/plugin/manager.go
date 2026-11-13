@@ -212,7 +212,7 @@ type ManagerProvider interface {
 
 // Registry verifies registry signatures and resolves catalog packages (registry track).
 type Registry interface {
-	VerifyManifest(manifest, sig []byte) error
+	VerifyManifest(manifest []byte, sigs ManifestSigs) error
 	Resolve(id, version, goos, goarch string) (PackageRef, error)
 	Latest(id string) (version string, ok bool)
 	Revocation(id, version string) (reason string, revoked bool)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
 var (
@@ -35,13 +36,13 @@ func verifySig(keys []ed25519.PublicKey, prefix string, msg, sigFile []byte) err
 	return plugin.ErrBadSignature
 }
 
-// VerifyIndex checks signature (plugin.IndexSigPrefix), lifetime, expiry and serial against st.
-func VerifyIndex(keys []ed25519.PublicKey, b, sig []byte, now time.Time, st State) (Index, State, error) {
+// VerifyIndex checks the pointer-key signature (plugin.IndexSigPrefix), lifetime, expiry and serial against st.
+func VerifyIndex(keys update.KeySet, b, sig []byte, now time.Time, st State) (Index, State, error) {
 	return verifyIndex(keys, b, sig, now, st, true)
 }
 
-func verifyIndex(keys []ed25519.PublicKey, b, sig []byte, now time.Time, st State, checkExpiry bool) (Index, State, error) {
-	if err := verifySig(keys, plugin.IndexSigPrefix, b, sig); err != nil {
+func verifyIndex(keys update.KeySet, b, sig []byte, now time.Time, st State, checkExpiry bool) (Index, State, error) {
+	if err := verifySig(keys.Pointer, plugin.IndexSigPrefix, b, sig); err != nil {
 		return Index{}, st, err
 	}
 	ix, err := DecodeIndex(b)
@@ -67,7 +68,16 @@ func verifyIndex(keys []ed25519.PublicKey, b, sig []byte, now time.Time, st Stat
 	return ix, State{LastSerial: ix.Serial, LastSHA256: digest, FetchedAt: now.Unix(), Expires: expires.Unix()}, nil
 }
 
-// VerifyManifest checks plugin.json.sig (plugin.ManifestSigPrefix) against keys; plugin.ErrNoRegistryKeys when keys is empty.
-func VerifyManifest(keys []ed25519.PublicKey, manifest, sig []byte) error {
-	return verifySig(keys, plugin.ManifestSigPrefix, manifest, sig)
+// VerifyManifest requires both a CI and a maintainer signature over plugin.json (plugin.ManifestSigPrefix).
+func VerifyManifest(keys update.KeySet, manifest []byte, sigs plugin.ManifestSigs) error {
+	if len(keys.CI) == 0 || len(keys.Maint) == 0 {
+		return plugin.ErrNoRegistryKeys
+	}
+	if err := verifySig(keys.CI, plugin.ManifestSigPrefix, manifest, sigs.CI); err != nil {
+		return fmt.Errorf("CI signature: %w", err)
+	}
+	if err := verifySig(keys.Maint, plugin.ManifestSigPrefix, manifest, sigs.Maint); err != nil {
+		return fmt.Errorf("maintainer signature: %w", err)
+	}
+	return nil
 }

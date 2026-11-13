@@ -16,6 +16,7 @@ import (
 
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/internal/registry"
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
 const manifestSrc = `{
@@ -51,21 +52,25 @@ func newBuild(t *testing.T, version string) string {
 	return dir
 }
 
-func signedBuild(t *testing.T, version string) (dir string, pub ed25519.PublicKey, keyPath string) {
+// signedBuild hashes and signs a build with fresh CI and maintainer keys.
+func signedBuild(t *testing.T, version string) (dir string, ci, maint ed25519.PublicKey) {
 	t.Helper()
 	dir = newBuild(t, version)
-	keyPath = filepath.Join(t.TempDir(), "key")
-	pub, err := Keygen(keyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := FillHashes(dir, "plugin.json"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SignFile(keyPath, "manifest", filepath.Join(dir, "plugin.json"), filepath.Join(dir, "plugin.json.sig")); err != nil {
-		t.Fatal(err)
+	sign := func(sigName string) ed25519.PublicKey {
+		keyPath := filepath.Join(t.TempDir(), "key")
+		pub, err := Keygen(keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SignFile(keyPath, "manifest", filepath.Join(dir, "plugin.json"), filepath.Join(dir, sigName)); err != nil {
+			t.Fatal(err)
+		}
+		return pub
 	}
-	return dir, pub, keyPath
+	return dir, sign(plugin.ManifestCISigName), sign(plugin.ManifestMaintSigName)
 }
 
 func TestKeygenWritesPrivate0600(t *testing.T) {
@@ -175,23 +180,25 @@ func TestPackageReadableByPluginrt(t *testing.T) {
 			t.Errorf("%s mode %o", h.Name, h.Mode)
 		}
 	}
-	want := []string{"bin/linux-arm64/trinetra-plugin-hello", "files/report.txt", "plugin.json", "plugin.json.sig"}
+	want := []string{"bin/linux-arm64/trinetra-plugin-hello", "files/report.txt", "plugin.json", "plugin.json.ci.sig", "plugin.json.maint.sig"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("entries = %v", names)
 	}
 }
 
 func TestSignVerifyRoundTripWithInternalRegistry(t *testing.T) {
-	dir, pub, _ := signedBuild(t, "1.0.0")
+	dir, ci, maint := signedBuild(t, "1.0.0")
 	mb, _ := os.ReadFile(filepath.Join(dir, "plugin.json"))
-	sig, _ := os.ReadFile(filepath.Join(dir, "plugin.json.sig"))
-	if err := registry.VerifyManifest([]ed25519.PublicKey{pub}, mb, sig); err != nil {
+	ciSig, _ := os.ReadFile(filepath.Join(dir, plugin.ManifestCISigName))
+	maintSig, _ := os.ReadFile(filepath.Join(dir, plugin.ManifestMaintSigName))
+	keys := update.KeySet{CI: []ed25519.PublicKey{ci}, Maint: []ed25519.PublicKey{maint}}
+	if err := registry.VerifyManifest(keys, mb, plugin.ManifestSigs{CI: ciSig, Maint: maintSig}); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyFile(pub, "manifest", filepath.Join(dir, "plugin.json"), filepath.Join(dir, "plugin.json.sig")); err != nil {
+	if err := VerifyFile(ci, "manifest", filepath.Join(dir, "plugin.json"), filepath.Join(dir, plugin.ManifestCISigName)); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyFile(pub, "index", filepath.Join(dir, "plugin.json"), filepath.Join(dir, "plugin.json.sig")); !errors.Is(err, plugin.ErrBadSignature) {
+	if err := VerifyFile(ci, "index", filepath.Join(dir, "plugin.json"), filepath.Join(dir, plugin.ManifestCISigName)); !errors.Is(err, plugin.ErrBadSignature) {
 		t.Fatalf("manifest sig accepted as index sig: %v", err)
 	}
 
@@ -204,7 +211,7 @@ func TestSignVerifyRoundTripWithInternalRegistry(t *testing.T) {
 	pub2, _ := Keygen(kp)
 	p2, _ := LoadKey(kp)
 	isig := SignBytes(p2, "index", ib)
-	if _, _, err := registry.VerifyIndex([]ed25519.PublicKey{pub2}, ib, isig, now, registry.State{}); err != nil {
+	if _, _, err := registry.VerifyIndex(update.KeySet{Pointer: []ed25519.PublicKey{pub2}}, ib, isig, now, registry.State{}); err != nil {
 		t.Fatal(err)
 	}
 	if SignBytes(p2, "bogus", ib) != nil {
@@ -355,5 +362,29 @@ func TestPackageUnsignedForCommunityShare(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "bin/linux-amd64/trinetra-plugin-hello,files/report.txt,plugin.json" {
 		t.Fatalf("entries %v", names)
+	}
+}
+
+func TestIndexRefusesPackagesNotSignedByBothKeys(t *testing.T) {
+	dir, ci, maint := signedBuild(t, "1.0.0")
+	keys := update.KeySet{CI: []ed25519.PublicKey{ci}, Maint: []ed25519.PublicKey{maint}}
+	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	good := t.TempDir()
+	if _, _, err := Package(dir, "linux", "amd64", filepath.Join(good, "hello-1.0.0-linux-amd64.tgz")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := BuildIndex(IndexOptions{PackagesDir: good, BaseURL: "https://example.com/dl/", Serial: 1, Lifetime: 24 * time.Hour, Now: now, Keys: keys}); err != nil {
+		t.Fatalf("dual-signed package refused: %v", err)
+	}
+	other, _, _ := signedBuild(t, "1.0.0")
+	if err := os.Rename(filepath.Join(other, plugin.ManifestMaintSigName), filepath.Join(dir, plugin.ManifestMaintSigName)); err != nil {
+		t.Fatal(err)
+	}
+	bad := t.TempDir()
+	if _, _, err := Package(dir, "linux", "amd64", filepath.Join(bad, "hello-1.0.0-linux-amd64.tgz")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := BuildIndex(IndexOptions{PackagesDir: bad, BaseURL: "https://example.com/dl/", Serial: 1, Lifetime: 24 * time.Hour, Now: now, Keys: keys}); err == nil {
+		t.Fatal("indexed a package whose maintainer signature is from an unknown key")
 	}
 }

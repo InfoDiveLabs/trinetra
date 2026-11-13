@@ -63,7 +63,7 @@ func TestStartPluginsPassesRegistryAsCatalog(t *testing.T) {
 
 type fakeRegistry struct{}
 
-func (fakeRegistry) VerifyManifest(m, s []byte) error { return nil }
+func (fakeRegistry) VerifyManifest([]byte, plugin.ManifestSigs) error { return nil }
 func (fakeRegistry) Resolve(id, v, goos, arch string) (plugin.PackageRef, error) {
 	return plugin.PackageRef{}, nil
 }

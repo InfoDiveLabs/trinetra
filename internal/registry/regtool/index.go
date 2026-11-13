@@ -32,15 +32,19 @@ type IndexOptions struct {
 	Prev        *registry.Index
 	Revoked     []plugin.Revocation // nil keeps Prev's list
 	Now         time.Time
+	// Keys, when set, must verify each package's CI and maintainer manifest signatures.
+	Keys update.KeySet
 }
 
 type pkgInfo struct {
-	manifest plugin.Manifest
-	goos     string
-	goarch   string
-	file     string
-	sha      string
-	size     int64
+	manifestBytes []byte
+	sigs          plugin.ManifestSigs
+	manifest      plugin.Manifest
+	goos          string
+	goarch        string
+	file          string
+	sha           string
+	size          int64
 }
 
 // ParseLifetime parses durations with a "d" day suffix ("21d") as well as time.ParseDuration forms.
@@ -85,6 +89,14 @@ func readPackage(file string) (pkgInfo, error) {
 			if mb, err = io.ReadAll(io.LimitReader(tr, plugin.MaxManifestBytes+1)); err != nil {
 				return pkgInfo{}, err
 			}
+		case h.Name == plugin.ManifestCISigName:
+			if info.sigs.CI, err = io.ReadAll(io.LimitReader(tr, 4096)); err != nil {
+				return pkgInfo{}, err
+			}
+		case h.Name == plugin.ManifestMaintSigName:
+			if info.sigs.Maint, err = io.ReadAll(io.LimitReader(tr, 4096)); err != nil {
+				return pkgInfo{}, err
+			}
 		case strings.HasPrefix(h.Name, "bin/"):
 			parts := strings.Split(path.Dir(h.Name), "/")
 			if len(parts) == 2 {
@@ -99,7 +111,7 @@ func readPackage(file string) (pkgInfo, error) {
 	if info.goos == "" || info.goarch == "" {
 		return pkgInfo{}, fmt.Errorf("regtool: %s: no binary entry", file)
 	}
-	info.manifest = m
+	info.manifest, info.manifestBytes = m, mb
 	return info, nil
 }
 
@@ -140,6 +152,11 @@ func BuildIndex(o IndexOptions) (registry.Index, []byte, error) {
 			p, err := readPackage(f)
 			if err != nil {
 				return ix, nil, err
+			}
+			if len(o.Keys.CI) > 0 || len(o.Keys.Maint) > 0 {
+				if err := registry.VerifyManifest(o.Keys, p.manifestBytes, p.sigs); err != nil {
+					return ix, nil, fmt.Errorf("regtool: %s: %w", p.file, err)
+				}
 			}
 			pkgs = append(pkgs, p)
 		}

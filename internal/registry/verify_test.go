@@ -8,9 +8,13 @@ import (
 	"time"
 
 	"github.com/InfoDiveLabs/trinetra/internal/plugin"
+	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-func keys() []ed25519.PublicKey { return []ed25519.PublicKey{testPub(7)} }
+// keys is a release-shaped key set: CI 5, maintainer 6, pointer 7 (the index signer).
+func keys() update.KeySet {
+	return update.KeySet{CI: []ed25519.PublicKey{testPub(5)}, Maint: []ed25519.PublicKey{testPub(6)}, Pointer: []ed25519.PublicKey{testPub(7)}}
+}
 
 func TestDecodeIndexStrict(t *testing.T) {
 	good, _ := marshalSigned(t, sampleIndex(1), testPriv(7))
@@ -130,17 +134,42 @@ func TestVerifyIndexRejectsHTTPURL(t *testing.T) {
 	}
 }
 
-func TestVerifyManifestNoKeys(t *testing.T) {
-	if err := VerifyManifest(nil, []byte("m"), []byte("s")); !errors.Is(err, plugin.ErrNoRegistryKeys) {
-		t.Fatalf("err = %v", err)
-	}
+func TestVerifyManifestNeedsCIAndMaintainer(t *testing.T) {
 	m := []byte(`{"id":"x"}`)
-	sig := signWith(testPriv(7), plugin.ManifestSigPrefix, m)
-	if err := VerifyManifest(keys(), m, sig); err != nil {
+	ci := signWith(testPriv(5), plugin.ManifestSigPrefix, m)
+	maint := signWith(testPriv(6), plugin.ManifestSigPrefix, m)
+	if err := VerifyManifest(update.KeySet{}, m, plugin.ManifestSigs{CI: ci, Maint: maint}); !errors.Is(err, plugin.ErrNoRegistryKeys) {
+		t.Fatalf("no keys: %v", err)
+	}
+	if err := VerifyManifest(keys(), m, plugin.ManifestSigs{CI: ci, Maint: maint}); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyManifest(keys(), []byte(`{"id":"y"}`), sig); !errors.Is(err, plugin.ErrBadSignature) {
+	cases := map[string]plugin.ManifestSigs{
+		"CI only":                {CI: ci},
+		"maintainer only":        {Maint: maint},
+		"CI twice":               {CI: ci, Maint: ci},
+		"maintainer twice":       {CI: maint, Maint: maint},
+		"pointer key as CI":      {CI: signWith(testPriv(7), plugin.ManifestSigPrefix, m), Maint: maint},
+		"release prefix":         {CI: signWith(testPriv(5), update.ReleasePrefix, m), Maint: signWith(testPriv(6), update.ReleasePrefix, m)},
+		"index prefix":           {CI: signWith(testPriv(5), plugin.IndexSigPrefix, m), Maint: maint},
+		"unknown maintainer key": {CI: ci, Maint: signWith(testPriv(9), plugin.ManifestSigPrefix, m)},
+	}
+	for name, sigs := range cases {
+		if err := VerifyManifest(keys(), m, sigs); !errors.Is(err, plugin.ErrBadSignature) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if err := VerifyManifest(keys(), []byte(`{"id":"y"}`), plugin.ManifestSigs{CI: ci, Maint: maint}); !errors.Is(err, plugin.ErrBadSignature) {
 		t.Fatalf("tampered: %v", err)
+	}
+}
+
+func TestVerifyIndexNeedsThePointerKey(t *testing.T) {
+	b, _ := marshalSigned(t, sampleIndex(1), testPriv(7))
+	for _, k := range []byte{5, 6} {
+		if _, _, err := VerifyIndex(keys(), b, signWith(testPriv(k), plugin.IndexSigPrefix, b), testNow, State{}); !errors.Is(err, plugin.ErrBadSignature) {
+			t.Errorf("index signed by key %d: %v", k, err)
+		}
 	}
 }
 

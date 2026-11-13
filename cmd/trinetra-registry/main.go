@@ -26,7 +26,10 @@ commands:
   sign     -key <file> -kind manifest|index -in <f> -out <f.sig>
   index    -packages <dir> -base-url <url> -serial <n> -lifetime 21d [-prev <index.json>] [-revoked <revoked.json>] -out index.json
   verify   -pubkey <b64> -kind manifest|index -in <f> -sig <f.sig>
-  check    -dir <plugin dir>`
+  check    -dir <plugin dir>
+
+A registry package needs plugin.json.ci.sig (sign -kind manifest with the release CI key) and
+plugin.json.maint.sig (trinetra-release plugin-cosign); the index is signed with the release pointer key.`
 
 var commands = map[string]func(args []string, stdout, stderr io.Writer) error{
 	"keygen":  cmdKeygen,
@@ -175,7 +178,7 @@ func cmdIndex(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	o := regtool.IndexOptions{PackagesDir: *pkgs, BaseURL: *base, Serial: *serial, Lifetime: lifetime, Now: time.Now()}
+	o := regtool.IndexOptions{PackagesDir: *pkgs, BaseURL: *base, Serial: *serial, Lifetime: lifetime, Now: time.Now(), Keys: registry.Keys()}
 	if *prev != "" {
 		b, err := os.ReadFile(*prev)
 		if err != nil {

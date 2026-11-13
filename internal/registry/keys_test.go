@@ -1,30 +1,23 @@
-//go:build !trinetra_testkeys
-
 package registry
 
 import (
-	"bytes"
+	"reflect"
 	"testing"
 
+	"github.com/InfoDiveLabs/trinetra/internal/plugin"
 	"github.com/InfoDiveLabs/trinetra/internal/update"
 )
 
-func TestProductionRegistryKeysDecode(t *testing.T) {
-	for _, k := range Keys() {
-		if len(k) != 32 {
-			t.Fatalf("bad key length %d", len(k))
-		}
+func TestRegistryTrustsTheReleaseKeys(t *testing.T) {
+	if !reflect.DeepEqual(Keys(), update.ProductionKeys()) {
+		t.Fatal("registry keys differ from the release key set")
 	}
 }
 
-func TestRegistryKeysDistinctFromReleaseKeys(t *testing.T) {
-	rel := update.ProductionKeys()
-	all := append(append(append([]update.PublicKey{}, rel.CI...), rel.Maint...), rel.Pointer...)
-	for _, k := range Keys() {
-		for _, r := range all {
-			if bytes.Equal(k, r) {
-				t.Fatal("registry key overlaps a release key")
-			}
+func TestPluginPrefixesDifferFromReleasePrefixes(t *testing.T) {
+	for _, p := range []string{plugin.ManifestSigPrefix, plugin.IndexSigPrefix} {
+		if p == update.ReleasePrefix || p == update.ChannelPrefix {
+			t.Fatalf("plugin prefix %q collides with a release prefix", p)
 		}
 	}
 }
