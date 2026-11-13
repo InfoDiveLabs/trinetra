@@ -22,7 +22,7 @@ const usage = `usage: trinetra-registry <command> [flags]
 commands:
   keygen   -out <file>
   hash     -dir <build> -manifest plugin.json
-  package  -dir <build> -os <os> -arch <arch> -out <tgz>
+  package  -dir <build> -os <os> -arch <arch> -out <tgz> [-unsigned]
   sign     -key <file> -kind manifest|index -in <f> -out <f.sig>
   index    -packages <dir> -base-url <url> -serial <n> -lifetime 21d [-prev <index.json>] [-revoked <revoked.json>] -out index.json
   verify   -pubkey <b64> -kind manifest|index -in <f> -sig <f.sig>
@@ -116,13 +116,18 @@ func cmdPackage(args []string, stdout, stderr io.Writer) error {
 	goos := fs.String("os", "", "target os")
 	goarch := fs.String("arch", "", "target arch")
 	out := fs.String("out", "", "tar.gz to write")
+	unsigned := fs.Bool("unsigned", false, "package without plugin.json.sig, for sharing outside the registry (installs as unverified)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if err := need(fs, map[string]string{"dir": *dir, "os": *goos, "arch": *goarch, "out": *out}); err != nil {
 		return err
 	}
-	sum, size, err := regtool.Package(*dir, *goos, *goarch, *out)
+	pack := regtool.Package
+	if *unsigned {
+		pack = regtool.PackageUnsigned
+	}
+	sum, size, err := pack(*dir, *goos, *goarch, *out)
 	if err != nil {
 		return err
 	}

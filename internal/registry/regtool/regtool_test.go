@@ -322,3 +322,38 @@ func TestParseLifetime(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageUnsignedForCommunityShare(t *testing.T) {
+	dir := newBuild(t, "1.0.0")
+	if _, err := FillHashes(dir, "plugin.json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Package(dir, "linux", "amd64", filepath.Join(t.TempDir(), "x.tgz")); err == nil {
+		t.Fatal("registry package built without a signature")
+	}
+	out := filepath.Join(t.TempDir(), "u.tgz")
+	if _, _, err := PackageUnsigned(dir, "linux", "amd64", out); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := os.Open(out)
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, h.Name)
+	}
+	if strings.Join(names, ",") != "bin/linux-amd64/trinetra-plugin-hello,files/report.txt,plugin.json" {
+		t.Fatalf("entries %v", names)
+	}
+}

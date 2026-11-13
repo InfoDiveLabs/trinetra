@@ -24,6 +24,15 @@ type packEntry struct {
 
 // Package writes a deterministic tar.gz of one platform's plugin package and returns its sha256 and size.
 func Package(buildDir, goos, goarch, out string) (string, int64, error) {
+	return pack(buildDir, goos, goarch, out, true)
+}
+
+// PackageUnsigned is Package without a manifest signature; hosts install the result as unverified.
+func PackageUnsigned(buildDir, goos, goarch, out string) (string, int64, error) {
+	return pack(buildDir, goos, goarch, out, false)
+}
+
+func pack(buildDir, goos, goarch, out string, signed bool) (string, int64, error) {
 	mb, err := os.ReadFile(filepath.Join(buildDir, "plugin.json"))
 	if err != nil {
 		return "", 0, err
@@ -32,9 +41,11 @@ func Package(buildDir, goos, goarch, out string) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	sig, err := os.ReadFile(filepath.Join(buildDir, "plugin.json.sig"))
-	if err != nil {
-		return "", 0, fmt.Errorf("regtool: package needs a signed manifest: %w", err)
+	var sig []byte
+	if signed {
+		if sig, err = os.ReadFile(filepath.Join(buildDir, "plugin.json.sig")); err != nil {
+			return "", 0, fmt.Errorf("regtool: package needs a signed manifest (use -unsigned to share outside the registry): %w", err)
+		}
 	}
 	want, ok := m.BinaryFor(goos, goarch)
 	if !ok {
@@ -48,10 +59,9 @@ func Package(buildDir, goos, goarch, out string) (string, int64, error) {
 	if sum := sha256.Sum256(bin); hex.EncodeToString(sum[:]) != want.SHA256 || int64(len(bin)) != want.Size {
 		return "", 0, fmt.Errorf("regtool: %s does not match the manifest hash; run hash again", binRel)
 	}
-	entries := []packEntry{
-		{"plugin.json", 0o644, mb},
-		{"plugin.json.sig", 0o644, sig},
-		{binRel, 0o755, bin},
+	entries := []packEntry{{"plugin.json", 0o644, mb}, {binRel, 0o755, bin}}
+	if signed {
+		entries = append(entries, packEntry{"plugin.json.sig", 0o644, sig})
 	}
 	files, err := filepath.Glob(filepath.Join(buildDir, "files", "*"))
 	if err != nil {

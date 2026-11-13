@@ -138,6 +138,20 @@ checks each manifest under `plugins/` and builds it for the host platform into `
 
 Install a package with `trinetra plugin install <file>` and enable it with `trinetra plugin enable <id>`, which shows the permission prompt.
 
+### Sharing outside the registry
+
+A plugin in its own repository imports only `pkg/pluginsdk` (and `pkg/pluginsdk/pluginsdktest` in tests). To hand someone a package without going through the registry:
+
+```
+mkdir -p build/bin/linux-amd64
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o build/bin/linux-amd64/trinetra-plugin-<id> .
+cp plugin.json build/
+trinetra-registry hash -dir build -manifest plugin.json
+trinetra-registry package -dir build -os linux -arch amd64 -out <id>-<version>-linux-amd64.tgz -unsigned
+```
+
+Hosts install it as unverified: the operator sees a risk warning and confirms each permission, and nothing installs if `plugins.allow_unverified` is off. Submit it to the registry to have it signed and listed as verified.
+
 ## Checklist
 
 - Smallest permission set that works.
